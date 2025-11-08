@@ -1,6 +1,6 @@
   .text
   .globl _start
-  .extern kmain
+  .extern main
 _start:
   /*
    Choose a hart to boot to boot the kernel
@@ -20,7 +20,8 @@ _start:
   /*
    Jump to C
    */
-  call     kmain
+  csrr     a0,    mhartid
+  call     main
 
 wait:
   wfi

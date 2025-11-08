@@ -1,4 +1,4 @@
-void kmain() {
+void main(int hartid) {
   for (;;) {
     
   }
