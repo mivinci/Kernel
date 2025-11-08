@@ -9,27 +9,27 @@ PHDRS {
 }
 
 SECTIONS {
-  /* QEMU -kernel loads our kernel onto 0x80000000 */
+  /* QEMU -kernel loads our kernel at 0x80000000 */
   . = 0x80000000;
 
   .text : {
     *(.text .text.*)
-    . = ALIGN(8);
+    . = ALIGN(0x1000);
   } :text
 
   .rodata : {
 		*(.rodata .rodata.*)
-    . = ALIGN(8);
+    . = ALIGN(16);
 	} :rodata
 
   .data : {
     *(.data .data.*)
-    . = ALIGN(8);
+    . = ALIGN(16);
   } :data
 
   .bss : {
     *(.bss .bss.*)
-    . = ALIGN(8);
+    . = ALIGN(16);
   } :bss
 
   /* Ensures the kernel is page aligned */

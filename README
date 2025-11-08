@@ -1,1 +1,9 @@
 A Kernel
+========
+
+To run:
+
+1. Edit `ARCH` in Makefile  (default: riscv)
+2. Run `make` to build the kernel
+3. Run `make qemu-gdb` to boot the kernel with QEMU
+4. Run `gdb` to debug
