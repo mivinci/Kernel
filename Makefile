@@ -16,7 +16,6 @@ QEMU    := qemu-system-$(QARCH)
 
 QFLAGS  :=                       \
   -machine virt                  \
-	-cpu rv64                      \
 	-bios none                     \
 	-m 64M                         \
 	-smp $(SMP)                    \
