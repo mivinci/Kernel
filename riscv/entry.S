@@ -1,5 +1,5 @@
   .text
-  .globl _start
+  .globl  _start
   .extern main
 _start:
   /*
@@ -28,7 +28,7 @@ wait:
   j        wait
 
   .bss
-  .align 3
+  .align 4
 lottery:
   .word  0
 stack0:

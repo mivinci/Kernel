@@ -22,6 +22,9 @@ QFLAGS  :=                       \
 	-nographic
 
 
+.PHONY: clean qemu-gdb $(KERNEL)
+
+
 all: $(KERNEL)
 
 

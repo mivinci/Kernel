@@ -30,13 +30,15 @@ CFLAGS  :=                       \
 	-fno-omit-frame-pointer        \
 	-fno-common                    \
 	-mcmodel=medany                \
+	-I ../include                  \
 	-Wall                          \
 	-g
 
 
-OFILES  :=                       \
-  entry.o                        \
-	main.o
+CFILES  :=  $(wildcard *.c)
+SFILES  :=  $(wildcard *.S)
+OFILES  :=  $(CFILES:.c=.o)
+OFILES	+=  $(SFILES:.S=.o)
 
 
 all: $(KERNEL)	
@@ -51,9 +53,9 @@ all: $(KERNEL)
 
 $(KERNEL): $(OFILES) $(LINKER)
 	$(LD) -T $(LINKER) -o $@ $(OFILES)
-	$(OBJDUMP) -S $@ > $@.asm
+	$(OBJDUMP) -S $@ > $@.dis
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $@.sym
 
 
 clean:
-	rm -f *.o *.d $(KERNEL) $(KERNEL).asm $(KERNEL).sym
+	rm -f *.o *.d $(KERNEL) $(KERNEL).dis $(KERNEL).sym

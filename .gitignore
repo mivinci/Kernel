@@ -1,9 +1,10 @@
 .DS_Store
 .gdbinit
+.vscode
 
 *.o
 *.d
 *.elf
-*.asm
+*.dis
 *.sym
 

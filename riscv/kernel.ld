@@ -13,6 +13,7 @@ SECTIONS {
   . = 0x80000000;
 
   .text : {
+    entry.o(_start)
     *(.text .text.*)
     . = ALIGN(0x1000);
   } :text

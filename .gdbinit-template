@@ -1,4 +1,4 @@
-file   kernel.elf
-target remote localhost:1234
-b      kmain
-c
+set     confirm     off
+file    kernel.elf
+target  remote      localhost:1234
+break   main
