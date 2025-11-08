@@ -1,16 +1,16 @@
 ARCH           ?=  riscv
 CROSS_COMPILE  ?=  riscv64-elf-
 NAME           ?=  kernel
-SMP						 ?=  2
+SMP            ?=  2
 MM             ?=  64M
 DEBUG          ?=  true
 
 
 KERNEL     :=  $(ARCH)/$(NAME).elf
-LINKER 		 :=  $(ARCH)/$(NAME).ld
+LINKER     :=  $(ARCH)/$(NAME).ld
 
 
-CC 		   :=  $(CROSS_COMPILE)gcc
+CC       :=  $(CROSS_COMPILE)gcc
 LD       :=  $(CROSS_COMPILE)ld
 OBJDUMP  :=  $(CROSS_COMPILE)objdump
 
@@ -22,11 +22,11 @@ ARCH_OBJ_Y  :=
 
 CFLAGS  :=  -nostdlib -nostartfiles        \
             -ffreestanding                 \
- 	          -fno-omit-frame-pointer        \
- 	          -fno-common                    \
- 	          -mcmodel=medany                \
-	          -Wall                          \
-						-I include
+            -fno-omit-frame-pointer        \
+            -fno-common                    \
+            -mcmodel=medany                \
+            -Wall                          \
+            -I include
 
 
 ifeq ($(DEBUG), true)
@@ -42,8 +42,8 @@ include $(ARCH)/Makefile
 
 
 OBJ_Y  :=  $(addprefix lib/, $(LIB_OBJ_Y)) \
-					 $(addprefix sys/, $(SYS_OBJ_Y)) \
-					 $(addprefix $(ARCH)/, $(ARCH_OBJ_Y))
+           $(addprefix sys/, $(SYS_OBJ_Y)) \
+           $(addprefix $(ARCH)/, $(ARCH_OBJ_Y))
 
 
 .PHONY: all
