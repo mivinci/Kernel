@@ -1,7 +1,7 @@
-#include "c.h"
+#include <kernel.h>
 
 void main(int hartid) {
-  puts("Booting...");
+  printk("[kernel] Booting by hart %d ...\n", hartid);
   for (;;) {
     
   }

@@ -1,3 +1,6 @@
+#include <kernel.h>
+#include <libc.h>
+
 #define UART_BASE 0x10000000L
 
 #define THR 0x00  // 发送保持寄存器
@@ -24,4 +27,17 @@ void puts(char *p) {
     if (*p == '\n')
       putc('\r');
   }
+}
+
+
+int printk(const char *fmt, ...) {
+  va_list args;
+  char buf[1024];
+
+  va_start(args, fmt);
+  vsprintf(buf, fmt, args);
+  va_end(args);
+
+  puts(buf);
+  return 0;
 }
