@@ -1,0 +1,15 @@
+CC      := $(CROSS_COMPILE)gcc
+AS      := $(CROSS_COMPILE)as
+LD      := $(CROSS_COMPILE)ld
+AR      := $(CROSS_COMPILE)ar
+OBJDUMP := $(CROSS_COMPILE)objdump
+
+ccflags-y += -nostdlib -nostartfiles
+ccflags-y += -ffreestanding
+ccflags-y += -fno-omit-frame-pointer
+ccflags-y += -fno-common
+ccflags-y += -mcmodel=medany
+ccflags-y += -Wall
+ccflags-y += -Iinclude
+
+ccflags-$(ENABLE_DEBUG) += -g

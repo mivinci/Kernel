@@ -1,0 +1,36 @@
+PHONY :=
+
+obj-y     :=
+asflags-y :=
+ccflags-y :=
+ldflags-y :=
+
+include scripts/Makefile.config
+include scripts/Makefile.compiler
+include $(obj)/Makefile
+
+__dir-y := $(filter %/, $(obj-y))
+__dir-y-builtin := $(addprefix $(obj)/, $(addsuffix builtin.a, $(__dir-y)))
+dir-y := $(patsubst %/,%, $(__dir-y))
+obj-y := $(addprefix $(obj)/, $(filter-out $(__dir-y), $(obj-y)))
+
+$(obj)/builtin.a: $(obj-y) $(__dir-y-builtin)
+	@echo "[kbuild] AR $@ $^"
+	$(Q)$(AR) rcs $@ $^
+
+$(obj)/%.o: $(obj)/%.c
+	@echo "[kbuild] CC $@"
+	$(Q)$(CC) $(ccflags-y) -c -o $@ $^
+
+$(obj)/%.o: $(obj)/%.S
+	@echo "[kbuild] CC $@"
+	$(Q)$(CC) $(ccflags-y) -c -o $@ $^
+
+$(__dir-y-builtin): $(dir-y)
+
+$(dir-y):
+	@echo "[kbuild] Enter $(obj)/$@"
+	$(Q)$(MAKE) -f scripts/Makefile.build obj=$(obj)/$@
+	@echo "[kbuild] Leave $(obj)/$@"
+
+.PHONY: $(PHONY)
