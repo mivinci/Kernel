@@ -7,7 +7,7 @@ PHONY :=
 
 all: kernel.elf
 
-obj-y := lib/ arch/$(ARCH)/
+obj-y := lib/ arch/$(ARCH)/ sys/
 dir-y := $(patsubst %/, %,$(obj-y))
 dir-y-builtin := $(addsuffix builtin.a, $(obj-y))
 

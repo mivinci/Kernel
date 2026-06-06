@@ -1,1 +1,1 @@
-# sys/ — placeholder for future system call implementation
+obj-y += pmm.o
