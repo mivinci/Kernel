@@ -72,7 +72,7 @@ This is a **bare-metal educational RISC-V 64-bit kernel** written in C and RISC-
 
 ### Directory Map
 
-```
+```text
 arch/riscv/     # Active: RISC-V 64-bit implementation (entry.S, main.c, uart.c, kernel.ld)
 arch/arm/       # Placeholder: empty Makefile, no ARM code yet
 include/        # Shared headers (kernel.h, libc.h)
@@ -85,7 +85,7 @@ sys/            # Placeholder: empty, reserved for future system calls
 ### Module Detail
 
 | Module | Files | Purpose |
-|--------|-------|---------|
+| -------- | ------- | --------- |
 | **Boot / Entry** | `arch/riscv/entry.S` | Multi-hart bootstrap via atomic lottery (`amoadd.w`). Winning hart sets up 4KB stack and calls `main(hartid)`. Losing harts spin in `wfi`. |
 | **Kernel Main** | `arch/riscv/main.c` | Kernel init — currently prints boot message and enters infinite idle loop. |
 | **UART Driver** | `arch/riscv/uart.c` | NS16550-compatible UART at MMIO address `0x10000000`. Provides `putc()`, `puts()`, and `printk()` (see below). |
@@ -95,7 +95,7 @@ sys/            # Placeholder: empty, reserved for future system calls
 
 ### Boot Flow
 
-```
+```text
 QEMU loads kernel at 0x80000000
   → _start (entry.S)
     → atomic lottery: one hart wins
@@ -120,7 +120,7 @@ QEMU loads kernel at 0x80000000
 
 ### Build System (kbuild Pattern)
 
-```
+```text
 Top-level Makefile
   → scripts/Makefile.config (ARCH, CROSS_COMPILE, etc.)
   → scripts/Makefile.compiler (CC, AS, LD, AR, ccflags-y)
@@ -140,5 +140,8 @@ To add a new source file, add its `.o` to the `obj-y` list in the directory's `M
 
 - LLVM code style, configured in `.clang-format`
 - C headers use `#ifndef _NAME_H` / `#define _NAME_H` guard pattern
+- **Struct/enum naming**: CamelCase (PascalCase) — each word capitalized, e.g. `TrapFrame`, `PageTableEntry`
+- **Function/variable naming**: snake_case — lowercase with underscores, e.g. `trap_init`, `trap_handler`
+- **Macro naming**: UPPER_SNAKE_CASE — e.g. `MCAUSE_MTIMER`, `MSTATUS_MIE`
 - The kernel currently has **no tests** and **no CI**
 - All code runs in machine mode (M-mode) on RISC-V

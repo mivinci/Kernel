@@ -1,6 +1,7 @@
 #include <kernel.h>
 #include <arch/riscv/trap.h>
 #include <arch/riscv/csr.h>
+#include <arch/riscv/timer.h>
 
 extern void trap_entry(void);
 
@@ -20,7 +21,7 @@ void trap_init(void) {
   printk("[trap] mtvec=%p mstatus=%p\n", trap_entry, csr_read(mstatus));
 }
 
-void trap_handler(struct trap_frame *tf) {
+void trap_handler(struct TrapFrame *tf) {
   /*
    * mcause high bit indicates interrupt vs exception.
    * Interrupt: mcause[63] == 1 (unsigned, top bit set)
@@ -33,7 +34,7 @@ void trap_handler(struct trap_frame *tf) {
     cause &= ~(1UL << 63);
     switch (cause) {
     case MCAUSE_MTIMER:
-      /* TODO: timer interrupt handler (Phase 2) */
+      timer_handle();
       break;
     case MCAUSE_MEXT:
       /* TODO: external interrupt handler (Phase 6) */

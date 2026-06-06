@@ -24,7 +24,7 @@
  * Trap frame saved on stack by trap_entry.
  * Layout must match trap.S save order.
  */
-struct trap_frame {
+struct TrapFrame {
   unsigned long ra;
   unsigned long sp;
   unsigned long gp;
@@ -64,6 +64,6 @@ struct trap_frame {
 };
 
 void trap_init(void);
-void trap_handler(struct trap_frame *tf);
+void trap_handler(struct TrapFrame *tf);
 
 #endif /* _ARCH_RISCV_TRAP_H */
