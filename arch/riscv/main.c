@@ -2,6 +2,7 @@
 #include <arch/riscv/trap.h>
 #include <arch/riscv/timer.h>
 #include <arch/riscv/spinlock.h>
+#include <arch/riscv/mmu.h>
 #include <pmm.h>
 
 void main(int hartid) {
@@ -25,6 +26,9 @@ void main(int hartid) {
   spin_lock(&lk);
   spin_unlock(&lk);
   printk("[spinlock] lock/unlock passed\n");
+
+  /* Sv39 identity mapping and MMU enable */
+  vmm_init();
 
   for (;;) {
     __asm__ __volatile__("wfi");
