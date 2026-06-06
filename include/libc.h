@@ -4,6 +4,27 @@
 #define NULL ((void *)0)
 #define EOF  (-1)
 
+/*
+ * Convenience macros to avoid writing "struct" / "enum" everywhere.
+ * Usage:
+ *   XDEF_STRUCT(TrapFrame) { int field; };
+ *   XDEF_ENUM(Color) { RED, BLUE };
+ *   void foo(TrapFrame *tf);  // no "struct" needed
+ */
+#define XDEF_STRUCT(T)            \
+  typedef struct T##_s T;         \
+  struct T##_s
+
+#define XDEF_ENUM(T)              \
+  typedef int T;                  \
+  enum
+
+#define XDEF_HANDLE(T)            \
+  typedef void *T
+
+#define XDEF_HANDLE_EXPLICIT(T)   \
+  typedef struct T##_s *T
+
 typedef unsigned long size_t;
 typedef __builtin_va_list va_list;
 

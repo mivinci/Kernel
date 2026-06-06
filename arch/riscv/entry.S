@@ -3,7 +3,8 @@
   .extern main
 _start:
   /*
-   Choose a hart to boot to boot the kernel
+   * Choose a hart to boot the kernel via atomic lottery.
+   * Only the winning hart continues; losers spin in wfi.
    */
   la       a3, lottery
   li       a2, 1
@@ -11,20 +12,21 @@ _start:
   bnez     a3, wait
 
   /*
-   * Set up stack for the lucky hart.
-   * Stack grows downward from stack0 + 16384.
-   *  - 16 KB is generous for early kernel init without heap
-   *  - .align 12 (4 KB) ensures bottom of stack is page-aligned,
-   *    and sp = stack0 + 16384 is 16-byte aligned (RISC-V ABI)
+   * Set up per-hart stack. Stacks are contiguous in .bss,
+   * each 16 KB (1 << 14). The winning hart computes:
+   *   sp = stack0 + hartid * 16384 + 16384
+   * NSTACK is defined via -D from the Makefile (matches SMP).
    */
+  csrr     a0, mhartid
   la       a3, stack0
   li       a4, 16384
+  mul      a5, a4, a0
+  add      a3, a3, a5
   add      sp, a3, a4
 
   /*
-   Jump to C
+   * Jump to C with hartid in a0.
    */
-  csrr     a0,    mhartid
   call     main
 
 wait:
@@ -36,4 +38,4 @@ wait:
 lottery:
   .word  0
 stack0:
-  .skip 16384         /* 16 KB bootstrap stack */
+  .skip 16384 * NSTACK  /* Total: NSTACK × 16 KB bootstrap stacks */

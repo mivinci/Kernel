@@ -1,6 +1,8 @@
 #ifndef _ARCH_RISCV_TRAP_H
 #define _ARCH_RISCV_TRAP_H
 
+#include <libc.h>
+
 /* Exception cause codes (mcause) */
 #define MCAUSE_ECALL_U  8  /* Environment call from U-mode */
 #define MCAUSE_ECALL_S  9  /* Environment call from S-mode */
@@ -24,7 +26,7 @@
  * Trap frame saved on stack by trap_entry.
  * Layout must match trap.S save order.
  */
-struct TrapFrame {
+XDEF_STRUCT(TrapFrame) {
   unsigned long ra;
   unsigned long sp;
   unsigned long gp;
@@ -64,6 +66,6 @@ struct TrapFrame {
 };
 
 void trap_init(void);
-void trap_handler(struct TrapFrame *tf);
+void trap_handler(TrapFrame *tf);
 
 #endif /* _ARCH_RISCV_TRAP_H */

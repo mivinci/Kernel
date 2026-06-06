@@ -9,17 +9,17 @@ trap_entry:
    * this point since we're running in M-mode.
    */
 
-  /* Make room for struct trap_frame (32 regs + 4 CSRs = 36 * 8 = 288 bytes) */
+  /* Make room for struct TrapFrame (32 regs + 4 CSRs = 36 * 8 = 288 bytes) */
   addi    sp, sp, -288
 
-  /* Save general-purpose registers */
+  /* Save general-purpose registers.
+   * Save t0 first so we can use it as scratch for sp computation. */
   sd      ra,  0(sp)
-  /* Save pre-trap sp (current sp + 288) */
-  addi    t0, sp, 288
-  sd      t0,  8(sp)
+  sd      t0,  32(sp)        /* original t0 saved */
+  addi    t0, sp, 288        /* t0 = pre-trap sp */
+  sd      t0,  8(sp)         /* pre-trap sp */
   sd      gp,  16(sp)
   sd      tp,  24(sp)
-  sd      t0,  32(sp)
   sd      t1,  40(sp)
   sd      t2,  48(sp)
   sd      s0,  56(sp)
@@ -57,7 +57,7 @@ trap_entry:
   csrr    t0, mtval
   sd      t0,  272(sp)
 
-  /* Call C handler: trap_handler(struct trap_frame *tf) */
+  /* Call C handler: trap_handler(TrapFrame *tf) */
   mv      a0, sp
   call    trap_handler
 

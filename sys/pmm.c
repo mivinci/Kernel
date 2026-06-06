@@ -10,11 +10,11 @@
 /* Linker script exports this symbol at the end of the kernel image */
 extern char _end[];
 
-struct FreePage {
-  struct FreePage *next;
+XDEF_STRUCT(FreePage) {
+  FreePage *next;
 };
 
-static struct FreePage *free_list;
+static FreePage *free_list;
 
 void pmm_init(void) {
   unsigned long start = (unsigned long)_end;
@@ -27,7 +27,7 @@ void pmm_init(void) {
 
   for (unsigned long addr = start; addr + PAGE_SIZE <= RAM_END;
        addr += PAGE_SIZE) {
-    struct FreePage *page = (struct FreePage *)addr;
+    FreePage *page = (FreePage *)addr;
     page->next = free_list;
     free_list = page;
     count++;
@@ -41,7 +41,7 @@ void *kalloc(void) {
   if (!free_list)
     return NULL;
 
-  struct FreePage *page = free_list;
+  FreePage *page = free_list;
   free_list = page->next;
 
   /* Zero the page before handing it out */
@@ -53,7 +53,7 @@ void kfree(void *ptr) {
   if (!ptr)
     return;
 
-  struct FreePage *page = (struct FreePage *)ptr;
+  FreePage *page = (FreePage *)ptr;
   page->next = free_list;
   free_list = page;
 }

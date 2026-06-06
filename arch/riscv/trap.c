@@ -21,7 +21,7 @@ void trap_init(void) {
   printk("[trap] mtvec=%p mstatus=%p\n", trap_entry, csr_read(mstatus));
 }
 
-void trap_handler(struct TrapFrame *tf) {
+void trap_handler(TrapFrame *tf) {
   /*
    * mcause high bit indicates interrupt vs exception.
    * Interrupt: mcause[63] == 1 (unsigned, top bit set)
