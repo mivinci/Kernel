@@ -22,9 +22,9 @@ static int skip_atoi(const char **s) {
   return i;
 }
 
-static char *number(char *str, int num, int base, int size, int precision,
-                    int type) {
-  char c, sign, tmp[36];
+static char *number(char *str, unsigned long num, int base, int size,
+                    int precision, int type) {
+  char c, sign, tmp[64];
   const char *digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   int i;
 
@@ -35,11 +35,17 @@ static char *number(char *str, int num, int base, int size, int precision,
   if (base < 2 || base > 36)
     return 0;
   c = (type & ZEROPAD) ? '0' : ' ';
-  if (type & SIGN && num < 0) {
-    sign = '-';
-    num = -num;
-  } else
-    sign = (type & PLUS) ? '+' : ((type & SPACE) ? ' ' : 0);
+  sign = 0;
+  if (type & SIGN) {
+    if ((long)num < 0) {
+      sign = '-';
+      num = -(long)num;
+    } else if (type & PLUS) {
+      sign = '+';
+    } else if (type & SPACE) {
+      sign = ' ';
+    }
+  }
   if (sign)
     size--;
   if (type & SPECIAL) {

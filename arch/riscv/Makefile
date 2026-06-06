@@ -1,5 +1,7 @@
 obj-y += entry.o
 obj-y += main.o
+obj-y += trap_entry.o
+obj-y += trap.o
 obj-y += uart.o
 
 
