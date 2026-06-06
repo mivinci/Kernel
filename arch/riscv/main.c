@@ -2,7 +2,9 @@
 #include <arch/riscv/trap.h>
 #include <arch/riscv/timer.h>
 #include <arch/riscv/spinlock.h>
+#include <arch/riscv/plic.h>
 #include <arch/riscv/mmu.h>
+#include <uart.h>
 #include <pmm.h>
 
 void main(int hartid) {
@@ -26,6 +28,10 @@ void main(int hartid) {
   spin_lock(&lk);
   spin_unlock(&lk);
   printk("[spinlock] lock/unlock passed\n");
+
+  /* PLIC and UART interrupt-driven receive (before MMU enable) */
+  uart_init();
+  plic_init();
 
   /* Sv39 identity mapping and MMU enable */
   vmm_init();

@@ -1,11 +1,12 @@
-#include <kernel.h>
-#include <arch/riscv/trap.h>
 #include <arch/riscv/csr.h>
+#include <arch/riscv/plic.h>
 #include <arch/riscv/timer.h>
+#include <arch/riscv/trap.h>
+#include <kernel.h>
 
 extern void trap_entry(void);
 
-void trap_init(void) {
+void        trap_init(void) {
   /*
    * Set the machine trap vector to our trap_entry.
    * Mode 0 = direct (all traps go to the same address).
@@ -37,7 +38,7 @@ void trap_handler(TrapFrame *tf) {
       timer_handle();
       break;
     case MCAUSE_MEXT:
-      /* TODO: external interrupt handler (Phase 6) */
+      plic_handle();
       break;
     case MCAUSE_MSI:
       /* TODO: software interrupt handler (Phase 4) */
@@ -47,8 +48,7 @@ void trap_handler(TrapFrame *tf) {
       break;
     }
   } else {
-    printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n",
-           tf->mepc, cause, tf->mtval);
+    printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n", tf->mepc, cause, tf->mtval);
     /* Increment mepc past the faulting instruction for resumable exceptions.
      * For fatal exceptions the kernel will halt. */
     tf->mepc += 4;
