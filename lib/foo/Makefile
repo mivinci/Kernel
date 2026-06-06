@@ -1,1 +1,1 @@
-obj-y += bar.o
+# obj-y += bar.o  # placeholder, uncomment when bar.c is implemented

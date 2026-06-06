@@ -11,10 +11,14 @@ _start:
   bnez     a3, wait
 
   /*
-   Set up stack for the lucky hart
+   * Set up stack for the lucky hart.
+   * Stack grows downward from stack0 + 16384.
+   *  - 16 KB is generous for early kernel init without heap
+   *  - .align 12 (4 KB) ensures bottom of stack is page-aligned,
+   *    and sp = stack0 + 16384 is 16-byte aligned (RISC-V ABI)
    */
   la       a3, stack0
-  li       a4, 4096
+  li       a4, 16384
   add      sp, a3, a4
 
   /*
@@ -28,8 +32,8 @@ wait:
   j        wait
 
   .bss
-  .align 4
+  .align 12           /* 4 KB alignment for page tables / guard page */
 lottery:
   .word  0
 stack0:
-  .skip 4096
+  .skip 16384         /* 16 KB bootstrap stack */

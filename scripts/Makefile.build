@@ -33,4 +33,6 @@ $(dir-y):
 	$(Q)$(MAKE) -f scripts/Makefile.build obj=$(obj)/$@
 	@echo "[kbuild] Leave $(obj)/$@"
 
+-include $(obj-y:.o=.d)
+
 .PHONY: $(PHONY)

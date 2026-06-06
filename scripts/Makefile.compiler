@@ -11,5 +11,6 @@ ccflags-y += -fno-common
 ccflags-y += -mcmodel=medany
 ccflags-y += -Wall
 ccflags-y += -Iinclude
+ccflags-y += -MMD -MP
 
 ccflags-$(ENABLE_DEBUG) += -g
