@@ -6,6 +6,7 @@ obj-y += timer.o
 obj-y += trap_entry.o
 obj-y += trap.o
 obj-y += uart.o
+obj-y += virtio.o
 
 
 ccflags-y += -march=rv64gc

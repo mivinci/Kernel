@@ -5,6 +5,7 @@
 #include <arch/riscv/spinlock.h>
 #include <arch/riscv/plic.h>
 #include <arch/riscv/mmu.h>
+#include <arch/riscv/virtio.h>
 #include <uart.h>
 #include <pmm.h>
 #include <proc.h>
@@ -63,46 +64,11 @@ void main(int hartid) {
 
   uart_init();
   plic_init();
+
+  /* Virtio block device init (before MMU, uses physical addresses) */
+  virtio_blk_init();
+
   vmm_init();
-
-  /* FS test: direct function calls (no ecall) */
-  printk("[fs] test: direct ialloc/iname\n");
-  Inode *ip = ialloc("/hello");
-  printk("[fs] ip=%p\n", ip);
-  if (ip) {
-    igrow(ip, 32);
-    memcpy(ip->data, "Hello, filesystem!", 19);
-    ip->size = 19;
-  }
-  ip = iname("/hello");
-  if (ip) {
-    printk("[fs] read: ");
-    for (int i = 0; i < ip->size; i++)
-      putc(ip->data[i]);
-    putc('\n');
-  }
-
-  /* FS test via ecall */
-  printk("[fs] test: creating /hello\n");
-  int fd = syscall(SYS_OPEN, (unsigned long)"/hello2", 1, 0);
-  printk("[fs] fd=%d\n", fd);
-  if (fd >= 0) {
-    const char *msg = "Hello, filesystem!";
-    syscall(SYS_WRITE, fd, (unsigned long)msg, strlen(msg));
-    syscall(SYS_CLOSE, fd, 0, 0);
-  }
-
-  fd = syscall(SYS_OPEN, (unsigned long)"/hello", 0, 0);
-  printk("[fs] read fd=%d\n", fd);
-  if (fd >= 0) {
-    char buf[64];
-    int n = syscall(SYS_READ, fd, (unsigned long)buf, sizeof(buf) - 1);
-    if (n > 0) {
-      buf[n] = '\0';
-      printk("[fs] read: %s\n", buf);
-    }
-    syscall(SYS_CLOSE, fd, 0, 0);
-  }
 
   proc_create(proc_a, "A");
   proc_create(proc_b, "B");
