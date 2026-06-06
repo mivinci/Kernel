@@ -3,6 +3,7 @@
 #include <pmm.h>
 #include <arch/riscv/virtio.h>
 
+/* Per-device access helpers */
 static inline unsigned int vr(unsigned long off) {
   extern unsigned long __virtio_mmio_base;
   return *(volatile unsigned int *)(__virtio_mmio_base + off);
@@ -21,7 +22,6 @@ static unsigned short last_avail_idx;
 static char blk_buf[SECTOR_SIZE] __attribute__((aligned(16)));
 
 void virtio_blk_init(void) {
-  /* Scan 8 virtio-mmio slots for a block device */
   unsigned long slots[] = {0x10001000, 0x10002000, 0x10003000,
                            0x10004000, 0x10005000, 0x10006000,
                            0x10007000, 0x10008000};
@@ -34,9 +34,8 @@ void virtio_blk_init(void) {
     *(volatile unsigned int *)(base + VIRTIO_STATUS) |=
         VIRTIO_STATUS_ACK;
 
-    unsigned int id =
-        *(volatile unsigned int *)(base + VIRTIO_DEVICE_ID);
-    if (id != VIRTIO_ID_BLOCK)
+    if (*(volatile unsigned int *)(base + VIRTIO_DEVICE_ID) !=
+        VIRTIO_ID_BLOCK)
       continue;
 
     __virtio_mmio_base = base;
@@ -48,23 +47,40 @@ void virtio_blk_init(void) {
     return;
   }
 
+  /* Feature negotiation: read features (for future use) */
+  unsigned int feat_lo =
+      *(volatile unsigned int *)(__virtio_mmio_base + 0x010);
+  if (feat_lo & 0x80000000) {
+    *(volatile unsigned int *)(__virtio_mmio_base + 0x014) = 1;
+    *(volatile unsigned int *)(__virtio_mmio_base + 0x014) = 0;
+  }
+
+  /* Negotiate: accept nothing (legacy mode) */
+  *(volatile unsigned int *)(__virtio_mmio_base + 0x024) = 0;
   vw(VIRTIO_DRIVER_FEATURES, 0);
+
   vw(VIRTIO_STATUS,
      vr(VIRTIO_STATUS) | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEAT_OK);
 
+  /* Read capacity */
   unsigned int cl =
       *(volatile unsigned int *)(__virtio_mmio_base + 0x100);
   unsigned int ch =
       *(volatile unsigned int *)(__virtio_mmio_base + 0x104);
   capacity = ((unsigned long)ch << 32) | cl;
 
+  /* Allocate virtqueue rings on separate pages */
   descs = (VRingDesc *)kalloc();
+  avail = (VRingAvail *)kalloc();
+  used  = (VRingUsed *)kalloc();
   memset(descs, 0, PAGE_SIZE);
-  avail = (VRingAvail *)(descs + VIRTQ_SIZE);
-  used = (VRingUsed *)(((unsigned long)(avail + 1) + 3) & ~3UL);
+  memset(avail, 0, PAGE_SIZE);
+  memset(used, 0, PAGE_SIZE);
 
+  /* Set up virtqueue 0 */
   vw(VIRTIO_QUEUE_SEL, 0);
   vw(VIRTIO_QUEUE_NUM, VIRTQ_SIZE);
+
   unsigned long pa = (unsigned long)descs;
   vw(VIRTIO_QUEUE_DESC_LOW, pa & 0xffffffff);
   vw(VIRTIO_QUEUE_DESC_HIGH, pa >> 32);
@@ -74,6 +90,7 @@ void virtio_blk_init(void) {
   pa = (unsigned long)used;
   vw(VIRTIO_DEVICE_DESC_LOW, pa & 0xffffffff);
   vw(VIRTIO_DEVICE_DESC_HIGH, pa >> 32);
+
   vw(VIRTIO_QUEUE_READY, 1);
   vw(VIRTIO_STATUS,
      vr(VIRTIO_STATUS) | VIRTIO_STATUS_DRIVER_OK);
@@ -92,6 +109,7 @@ static int blk_request(int type, unsigned long sector, void *buf) {
   req.type   = type;
   req.sector = sector;
 
+  /* Build descriptor chain: header → data → status */
   descs[0].addr  = (unsigned long)&req;
   descs[0].len   = sizeof(req);
   descs[0].flags = VRING_DESC_F_NEXT;
@@ -105,24 +123,24 @@ static int blk_request(int type, unsigned long sector, void *buf) {
   descs[2].flags = VRING_DESC_F_WRITE;
   descs[2].next  = 0;
 
+  /* Submit to device */
   avail->ring[avail->idx % VIRTQ_SIZE] = 0;
   __asm__ __volatile__("fence w,w" ::: "memory");
   avail->idx += 1;
   __asm__ __volatile__("fence w,w" ::: "memory");
   vw(VIRTIO_QUEUE_NOTIFY, 0);
 
-  /* TODO: device not processing requests on QEMU 10.1 —
-   * polling loop currently times out. */
+  /* Poll for completion (timeout after 1M iterations) */
   for (int retry = 0; retry < 1000000; retry++) {
     if (used->idx != last_avail_idx)
       break;
+    __asm__ __volatile__("" ::: "memory");
   }
   if (used->idx == last_avail_idx)
     return -1;
 
   __asm__ __volatile__("fence r,r" ::: "memory");
   last_avail_idx++;
-
   return (status == 0) ? 0 : -1;
 }
 

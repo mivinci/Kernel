@@ -64,14 +64,10 @@ void main(int hartid) {
 
   uart_init();
   plic_init();
-
-  /* Virtio block device init (before MMU, uses physical addresses) */
   virtio_blk_init();
 
   vmm_init();
-
   proc_create(proc_a, "A");
   proc_create(proc_b, "B");
-
   scheduler();
 }
