@@ -96,3 +96,7 @@ void sched_tick(void) {
     swtch(&cpu.proc->context, &cpu.context);
   }
 }
+
+Proc *cpu_proc(void) {
+  return cpu.proc;
+}

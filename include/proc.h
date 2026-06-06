@@ -51,5 +51,6 @@ void swtch(Context *old, Context *new);
 int  proc_create(void (*fn)(void), const char *name);
 void yield(void);
 void sched_tick(void);
+Proc *cpu_proc(void);
 
 #endif /* _PROC_H */

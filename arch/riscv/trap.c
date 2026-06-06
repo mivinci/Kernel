@@ -2,6 +2,7 @@
 #include <arch/riscv/plic.h>
 #include <arch/riscv/timer.h>
 #include <arch/riscv/trap.h>
+#include <syscall.h>
 #include <kernel.h>
 
 extern void trap_entry(void);
@@ -48,9 +49,15 @@ void trap_handler(TrapFrame *tf) {
       break;
     }
   } else {
-    printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n", tf->mepc, cause, tf->mtval);
-    /* Increment mepc past the faulting instruction for resumable exceptions.
-     * For fatal exceptions the kernel will halt. */
-    tf->mepc += 4;
+    switch (cause) {
+    case MCAUSE_ECALL_M:
+      syscall_handler(tf);
+      break;
+    default:
+      printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n", tf->mepc, cause,
+             tf->mtval);
+      tf->mepc += 4;
+      break;
+    }
   }
 }
