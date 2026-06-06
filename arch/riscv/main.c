@@ -6,6 +6,27 @@
 #include <arch/riscv/mmu.h>
 #include <uart.h>
 #include <pmm.h>
+#include <proc.h>
+
+static unsigned long count_a, count_b;
+
+static void proc_a(void) {
+  for (;;) {
+    count_a++;
+    if (count_a % 1000000 == 0)
+      printk("[A] count=%d\n", count_a / 1000000);
+    yield();
+  }
+}
+
+static void proc_b(void) {
+  for (;;) {
+    count_b++;
+    if (count_b % 1000000 == 0)
+      printk("[B] count=%d\n", count_b / 1000000);
+    yield();
+  }
+}
 
 void main(int hartid) {
   printk("[kernel] Booting by hart %d ...\n", hartid);
@@ -13,6 +34,7 @@ void main(int hartid) {
   trap_init();
   pmm_init();
   timer_init();
+  proc_init();
 
   /* PMM smoke test */
   void *page = kalloc();
@@ -36,7 +58,10 @@ void main(int hartid) {
   /* Sv39 identity mapping and MMU enable */
   vmm_init();
 
-  for (;;) {
-    __asm__ __volatile__("wfi");
-  }
+  /* Create test processes */
+  proc_create(proc_a, "A");
+  proc_create(proc_b, "B");
+
+  /* Enter scheduler (never returns) */
+  scheduler();
 }

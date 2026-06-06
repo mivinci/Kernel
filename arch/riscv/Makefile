@@ -1,6 +1,7 @@
 obj-y += entry.o
 obj-y += main.o
 obj-y += plic.o
+obj-y += swtch.o
 obj-y += timer.o
 obj-y += trap_entry.o
 obj-y += trap.o
