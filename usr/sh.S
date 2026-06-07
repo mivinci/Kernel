@@ -78,14 +78,6 @@ process_line:
   add   t1, t1, t0
   sb    x0, 0(t1)       /* inbuf[t0] = 0 */
 
-  /* Print the received command for debugging */
-  li    a7, 1           /* SYS_WRITE */
-  li    a0, 1
-  .Lca: auipc a1, %pcrel_hi(inbuf)
-  addi  a1, a1, %pcrel_lo(.Lca)
-  li    a2, 64
-  ecall
-
   /* Try to match "x" (exit) */
   .Lcx: auipc a0, %pcrel_hi(inbuf)
   addi  a0, a0, %pcrel_lo(.Lcx)
