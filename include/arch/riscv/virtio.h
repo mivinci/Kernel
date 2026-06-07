@@ -1,7 +1,7 @@
 #ifndef _ARCH_RISCV_VIRTIO_H
 #define _ARCH_RISCV_VIRTIO_H
 
-#include <libc.h>
+#include <types.h>
 
 /* QEMU RISC-V virt machine: virtio-blk at MMIO 0x10001000 */
 #define VIRTIO0     0x10001000UL

@@ -1,6 +1,6 @@
 #include <arch/riscv/pci.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 
 /*
  * Find a virtio-blk device on the PCI bus.

@@ -1,4 +1,4 @@
-#include <libc.h>
+#include <types.h>
 
 size_t strlen(const char *p) {
   size_t n = 0;

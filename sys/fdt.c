@@ -1,6 +1,6 @@
 #include <fdt.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 
 /* Simple prefix check: returns 1 if str starts with prefix */
 static int starts_with(const char *str, const char *prefix) {

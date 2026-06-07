@@ -1,7 +1,7 @@
 #ifndef _PROC_H
 #define _PROC_H
 
-#include <libc.h>
+#include <types.h>
 
 #define NPROC  16
 #define KSTACK (4 * 4096) /* 16 KB kernel stack per process */

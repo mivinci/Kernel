@@ -2,7 +2,7 @@
 #include <arch/riscv/trap.h>
 #include <fs.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <pmm.h>
 #include <proc.h>
 #include <usr.h>

@@ -1,7 +1,7 @@
 #ifndef _FDT_H
 #define _FDT_H
 
-#include <libc.h>
+#include <types.h>
 
 /* FDT header (big-endian, all fields 32-bit) */
 struct FdtHeader {

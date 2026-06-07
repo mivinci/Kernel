@@ -1,7 +1,7 @@
 #ifndef _ARCH_RISCV_PCI_H
 #define _ARCH_RISCV_PCI_H
 
-#include <libc.h>
+#include <types.h>
 
 /* QEMU RISC-V virt: PCI-e ECAM at 0x30000000, bus 0 */
 #define PCI_ECAM_BASE 0x30000000UL

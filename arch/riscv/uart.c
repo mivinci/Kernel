@@ -1,5 +1,5 @@
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <uart.h>
 
 /* Runtime UART base — initialized to QEMU default, updated by FDT */

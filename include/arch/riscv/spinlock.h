@@ -1,7 +1,7 @@
 #ifndef _ARCH_RISCV_SPINLOCK_H
 #define _ARCH_RISCV_SPINLOCK_H
 
-#include <libc.h>
+#include <types.h>
 
 XDEF_STRUCT(SpinLock) {
   int locked;

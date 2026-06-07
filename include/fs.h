@@ -1,7 +1,7 @@
 #ifndef _FS_H
 #define _FS_H
 
-#include <libc.h>
+#include <types.h>
 
 #define NFILE    16 /* Max open files in file table */
 #define NINODE   16 /* Max inodes (named files) */

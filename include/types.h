@@ -1,5 +1,7 @@
-#ifndef _LIBC_H
-#define _LIBC_H
+#ifndef _TYPES_H
+#define _TYPES_H
+
+/* Kernel-internal type definitions and utility macros */
 
 #define NULL ((void *)0)
 #define EOF  (-1)
@@ -39,4 +41,4 @@ int    memcmp(const void *, const void *, size_t);
 int    strcmp(const char *, const char *);
 char  *strcpy(char *, const char *);
 
-#endif /* _LIBC_H */
+#endif /* _TYPES_H */

@@ -1,7 +1,7 @@
 #include <arch/riscv/pci.h>
 #include <arch/riscv/virtio.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <pmm.h>
 
 /*

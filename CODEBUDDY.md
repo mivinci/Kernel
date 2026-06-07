@@ -96,9 +96,7 @@ This is a **bare-metal educational RISC-V 64-bit kernel** written in C and RISC-
 arch/riscv/     # RISC-V 64-bit: boot, drivers, trap handling
 include/        # Shared headers and arch-specific headers
 include/arch/riscv/ # RISC-V ISA headers (csr.h, mmu.h, trap.h, timer.h, etc.)
-lib/            # Core library (string.c, vsprintf.c)
-scripts/        # Build system (Makefile.config, Makefile.compiler, Makefile.build)
-sys/            # Kernel subsystems (pmm, vmm, proc, syscall, fs, file)
+sys/            # Kernel subsystems + utilities (pmm, vmm, proc, syscall, fs, file, string, vsprintf, fdt)
 ```
 
 ### Module Detail
@@ -120,8 +118,8 @@ sys/            # Kernel subsystems (pmm, vmm, proc, syscall, fs, file)
 | **Process / Sched** | `sys/proc.c`, `include/proc.h` | Round-robin scheduler, `proc_create`, `yield`, timer preemption. |
 | **System Calls** | `sys/syscall.c`, `include/syscall.h` | ECALL handler: write, exit, yield, getpid, open, close, read. |
 | **VFS / Ramfs** | `sys/fs.c`, `sys/file.c`, `include/fs.h` | Named inodes with dynamically-resized buffers. Per-process file descriptor table. |
-| **String / printf** | `lib/string.c`, `lib/vsprintf.c` | `strlen`/`memcpy`/`memset`/etc. `vsprintf` ported from Linux 0.12. |
-| **libc Stubs** | `include/libc.h` | `NULL`, `size_t`, `va_list` (GCC builtins), `XDEF_STRUCT/ENUM/HANDLE` macros. |
+| **String / printf** | `sys/string.c`, `sys/vsprintf.c` | `strlen`/`memcpy`/`memset`/etc. `vsprintf` ported from Linux 0.12. |
+| **Kernel Types** | `include/types.h` | `NULL`, `size_t`, `va_list` (GCC builtins), `XDEF_STRUCT/ENUM/HANDLE` macros. |
 
 ### Boot Flow
 
@@ -180,7 +178,7 @@ The core kernel (scheduler, memory management, file system, syscalls, trap frame
 
 ### printk Architecture
 
-`printk()` in `arch/riscv/uart.c` formats into a 1024-byte stack buffer using `vsprintf()` (from `lib/vsprintf.c`), then sends the buffer character-by-character over UART via `putc()`. `puts()` auto-appends `\r` before `\n` for terminal CRLF.
+`printk()` in `arch/riscv/uart.c` formats into a 1024-byte stack buffer using `vsprintf()` (from `sys/vsprintf.c`), then sends the buffer character-by-character over UART via `putc()`. `puts()` auto-appends `\r` before `\n` for terminal CRLF.
 
 ### Build System (kbuild Pattern)
 
@@ -188,7 +186,7 @@ The core kernel (scheduler, memory management, file system, syscalls, trap frame
 Top-level Makefile
   → scripts/Makefile.config (ARCH, CROSS_COMPILE, etc.)
   → scripts/Makefile.compiler (CC, AS, LD, AR, ccflags-y)
-  → obj-y = lib/ arch/riscv/
+  → obj-y = arch/riscv/
   → For each directory:
       → scripts/Makefile.build
         → includes <dir>/Makefile (which sets obj-y for that directory)
@@ -205,7 +203,7 @@ To add a new source file, add its `.o` to the `obj-y` list in the directory's `M
 - LLVM code style, configured in `.clang-format`
 - C headers use `#ifndef _NAME_H` / `#define _NAME_H` guard pattern
 - **Struct/enum naming**: CamelCase (PascalCase) — each word capitalized, e.g. `TrapFrame`, `PageTableEntry`
-- **Struct/enum definitions**: Use `XDEF_STRUCT(T)` / `XDEF_ENUM(T)` macros (defined in `include/libc.h`) to avoid `struct`/`enum` keywords everywhere
+- **Struct/enum definitions**: Use `XDEF_STRUCT(T)` / `XDEF_ENUM(T)` macros (defined in `include/types.h`) to avoid `struct`/`enum` keywords everywhere
 - **Function/variable naming**: snake_case — lowercase with underscores, e.g. `trap_init`, `trap_handler`
 - **Macro naming**: UPPER_SNAKE_CASE — e.g. `MCAUSE_MTIMER`, `MSTATUS_MIE`
 - The kernel currently has **no tests** and **no CI**

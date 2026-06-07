@@ -6,7 +6,7 @@
 #include <fdt.h>
 #include <fs.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <pmm.h>
 #include <proc.h>
 #include <uart.h>

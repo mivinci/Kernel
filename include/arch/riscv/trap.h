@@ -1,7 +1,7 @@
 #ifndef _ARCH_RISCV_TRAP_H
 #define _ARCH_RISCV_TRAP_H
 
-#include <libc.h>
+#include <types.h>
 
 /* Exception cause codes (mcause) */
 #define MCAUSE_ECALL_U  8  /* Environment call from U-mode */

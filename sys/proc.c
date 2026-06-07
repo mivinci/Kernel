@@ -1,6 +1,6 @@
 #include <arch/riscv/csr.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <pmm.h>
 #include <proc.h>
 

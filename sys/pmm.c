@@ -1,6 +1,6 @@
 #include <fdt.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <pmm.h>
 
 /* Linker script exports this symbol at the end of the kernel image */

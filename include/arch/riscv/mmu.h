@@ -1,7 +1,7 @@
 #ifndef _ARCH_RISCV_MMU_H
 #define _ARCH_RISCV_MMU_H
 
-#include <libc.h>
+#include <types.h>
 
 /* Sv39 page table entry flags */
 #define PTE_V (1UL << 0) /* Valid */

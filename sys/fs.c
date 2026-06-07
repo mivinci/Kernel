@@ -1,6 +1,6 @@
 #include <fs.h>
 #include <kernel.h>
-#include <libc.h>
+#include <types.h>
 #include <pmm.h>
 
 static Inode itable[NINODE];

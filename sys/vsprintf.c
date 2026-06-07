@@ -3,7 +3,7 @@
  * Wirzenius wrote this portably, Torvalds fucked it up :-)
  */
 
-#include <libc.h>
+#include <types.h>
 
 #define ZEROPAD 1
 #define SIGN    2
