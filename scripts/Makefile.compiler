@@ -12,5 +12,6 @@ ccflags-y += -mcmodel=medany
 ccflags-y += -Wall
 ccflags-y += -Iinclude
 ccflags-y += -MMD -MP
+ccflags-y += -Wno-int-to-pointer-cast
 
 ccflags-$(ENABLE_DEBUG) += -g

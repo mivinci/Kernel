@@ -19,6 +19,7 @@
 #define VIRTIO_QUEUE_SEL        0x030
 #define VIRTIO_QUEUE_NUM_MAX    0x034
 #define VIRTIO_QUEUE_NUM        0x038
+#define VIRTIO_QUEUE_ALIGN      0x03c
 #define VIRTIO_QUEUE_READY      0x044
 #define VIRTIO_QUEUE_NOTIFY     0x050
 #define VIRTIO_INTR_STATUS      0x060

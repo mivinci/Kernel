@@ -1,5 +1,6 @@
 obj-y += entry.o
 obj-y += main.o
+obj-y += pci.o
 obj-y += plic.o
 obj-y += swtch.o
 obj-y += timer.o
