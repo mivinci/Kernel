@@ -81,6 +81,7 @@ void hart_start(void) {
 
 void scheduler(int hartid) {
   printk("[sched] hart %d starting\n", hartid);
+  int last = 0;
 
   for (;;) {
     /* Collect unreaped zombies */
@@ -95,13 +96,15 @@ void scheduler(int hartid) {
     }
     spin_unlock(&ptable_lock);
 
-    /* Pick next RUNNABLE process (atomic check-and-transition) */
+    /* Round-robin pick: start from last + 1, wrap around */
     Proc *p = NULL;
     spin_lock(&ptable_lock);
     for (int i = 0; i < NPROC; i++) {
-      if (ptable[i].state == RUNNABLE) {
-        ptable[i].state = RUNNING;
-        p = &ptable[i];
+      int idx = (last + 1 + i) % NPROC;
+      if (ptable[idx].state == RUNNABLE) {
+        ptable[idx].state = RUNNING;
+        p = &ptable[idx];
+        last = idx;
         break;
       }
     }
