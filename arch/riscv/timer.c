@@ -24,7 +24,7 @@ void timer_handle(void) {
   write_mtimecmp(hartid, read_mtime() + TIMER_INTERVAL);
 
   ticks++;
-  if (ticks % 5 == 0) printk("[timer] tick=%d (hart %d)\n", ticks, hartid);
+  /* if (ticks % 5 == 0) printk("[timer] tick=%d (hart %d)\n", ticks, hartid); */
 
   /* Preempt current process if one is running */
   sched_tick();
