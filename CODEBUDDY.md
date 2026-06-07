@@ -53,18 +53,38 @@ There is no CI or automated formatting check in place.
 
 ## Debugging / Running
 
-The kernel runs under QEMU as a RISC-V machine. The README documents this workflow:
+The kernel runs under QEMU as a RISC-V virt machine. Uses `-bios none` for direct M-mode boot.
 
-1. Edit `ARCH` in `scripts/Makefile.config` (default is `riscv`)
-2. Run `make` to build
-3. Run `make qemu-gdb` to boot with QEMU (target not yet implemented in Makefile)
-4. Run `gdb` — loads kernel symbols and connects to QEMU GDB stub
+### Quick Run
 
-### GDB Configuration
+```bash
+make
+qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+  -nographic -smp 2
+```
 
-- `.gdbinit-template` is the GDB config template (connects to `localhost:1234`)
-- The template is copied per-architecture; for RISC-V, the port is `25501`
-- GDB commands: `file kernel.elf`, `target remote localhost:<port>`, `break main`
+### With Block Device
+
+```bash
+# Create disk image
+dd if=/dev/zero of=disk.img bs=512 count=2048
+
+# Run with virtio-blk-pci
+qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+  -nographic -smp 2 \
+  -drive file=disk.img,format=raw,if=none,id=blk \
+  -device virtio-blk-pci,drive=blk
+```
+
+### GDB Debugging
+
+```bash
+qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf -s -S &
+riscv64-elf-gdb kernel.elf -ex "target remote localhost:1234"
+```
+
+- Port: `1234` (QEMU default)
+- GDB commands: `file kernel.elf`, `target remote localhost:1234`, `break main`
 
 ## Architecture Overview
 
@@ -73,38 +93,82 @@ This is a **bare-metal educational RISC-V 64-bit kernel** written in C and RISC-
 ### Directory Map
 
 ```text
-arch/riscv/     # Active: RISC-V 64-bit implementation (entry.S, main.c, uart.c, kernel.ld)
-arch/arm/       # Placeholder: empty Makefile, no ARM code yet
-include/        # Shared headers (kernel.h, libc.h)
+arch/riscv/     # RISC-V 64-bit: boot, drivers, trap handling
+include/        # Shared headers and arch-specific headers
+include/arch/riscv/ # RISC-V ISA headers (csr.h, mmu.h, trap.h, timer.h, etc.)
 lib/            # Core library (string.c, vsprintf.c)
-lib/foo/        # Placeholder subdirectory (empty bar.c)
 scripts/        # Build system (Makefile.config, Makefile.compiler, Makefile.build)
-sys/            # Placeholder: empty, reserved for future system calls
+sys/            # Kernel subsystems (pmm, vmm, proc, syscall, fs, file)
 ```
 
 ### Module Detail
 
 | Module | Files | Purpose |
-| -------- | ------- | --------- |
-| **Boot / Entry** | `arch/riscv/entry.S` | Multi-hart bootstrap via atomic lottery (`amoadd.w`). Winning hart sets up 4KB stack and calls `main(hartid)`. Losing harts spin in `wfi`. |
-| **Kernel Main** | `arch/riscv/main.c` | Kernel init — currently prints boot message and enters infinite idle loop. |
-| **UART Driver** | `arch/riscv/uart.c` | NS16550-compatible UART at MMIO address `0x10000000`. Provides `putc()`, `puts()`, and `printk()` (see below). |
-| **String / printf** | `lib/string.c`, `lib/vsprintf.c` | `strlen()` and a `vsprintf()` ported from Linux 0.12. |
-| **libc Stubs** | `include/libc.h` | Minimal type definitions (`NULL`, `size_t`, `va_list`) and varargs macros — no actual libc dependency. |
-| **Kernel API** | `include/kernel.h` | Declares `printk()`. |
+|--------|-------|---------|
+| **Boot / Entry** | `arch/riscv/entry.S` | Multi-hart bootstrap via atomic lottery. Per-hart stacks (NSTACK × 16KB). |
+| **Kernel Main** | `arch/riscv/main.c` | Init sequence: trap → pmm → timer → proc → fs → plic → virtio-blk → vmm → scheduler. |
+| **UART Driver** | `arch/riscv/uart.c`, `include/uart.h` | NS16550A at `0x10000000`. TX via `putc()`/`printk()`, RX via `getc()` polling + interrupt handler. |
+| **Trap Handling** | `arch/riscv/trap_entry.S`, `trap.c`, `include/arch/riscv/trap.h` | Full register save/restore. Dispatches timer, external (PLIC), and ecall. |
+| **Timer (CLINT)** | `arch/riscv/timer.c`, `include/arch/riscv/timer.h` | ACLINT MTIMER at `0x2004000`. 1s periodic interrupts. |
+| **PLIC** | `arch/riscv/plic.c`, `include/arch/riscv/plic.h` | PLIC at `0x0c000000`. Routes UART0 (IRQ 10) and future devices. |
+| **Spinlock** | `include/arch/riscv/spinlock.h` | `amoswap.w`-based spinlock, fully inline. |
+| **Context Switch** | `arch/riscv/swtch.S` | Callee-saved register save/restore for process switching. |
+| **PCI** | `arch/riscv/pci.c`, `include/arch/riscv/pci.h` | ECAM config space scanning, capability parsing, BAR assignment. |
+| **Virtio Block** | `arch/riscv/virtio.c`, `include/arch/riscv/virtio.h` | PCI (preferred) + MMIO transports. Device detection and init. |
+| **Physical MM** | `sys/pmm.c`, `include/pmm.h` | Linked-list free page allocator. Uses `_end` from linker script for RAM range. |
+| **Virtual MM** | `sys/vmm.c`, `include/arch/riscv/mmu.h` | Sv39 page tables. 128MB identity map with 2MB megapages. |
+| **Process / Sched** | `sys/proc.c`, `include/proc.h` | Round-robin scheduler, `proc_create`, `yield`, timer preemption. |
+| **System Calls** | `sys/syscall.c`, `include/syscall.h` | ECALL handler: write, exit, yield, getpid, open, close, read. |
+| **VFS / Ramfs** | `sys/fs.c`, `sys/file.c`, `include/fs.h` | Named inodes with dynamically-resized buffers. Per-process file descriptor table. |
+| **String / printf** | `lib/string.c`, `lib/vsprintf.c` | `strlen`/`memcpy`/`memset`/etc. `vsprintf` ported from Linux 0.12. |
+| **libc Stubs** | `include/libc.h` | `NULL`, `size_t`, `va_list` (GCC builtins), `XDEF_STRUCT/ENUM/HANDLE` macros. |
 
 ### Boot Flow
 
 ```text
-QEMU loads kernel at 0x80000000
+QEMU loads kernel at 0x80000000 ( -bios none, M-mode direct boot)
   → _start (entry.S)
     → atomic lottery: one hart wins
-    → sets up 4KB stack
-    → reads mhartid CSR
+    → per-hart stack (NSTACK × 16KB, matched to SMP config)
     → call main(hartid)
-      → printk(...) via UART
-      → infinite idle loop
+      → trap_init()          # mtvec, mstatus.MIE
+      → pmm_init()           # physical page allocator from _end
+      → timer_init()         # periodic 1s timer interrupts
+      → proc_init()          # process table
+      → fs_init()            # inode/file tables
+      → plic_init()          # external interrupt controller
+      → virtio_blk_init()    # PCI then MMIO block device
+      → vmm_init()           # Sv39 identity mapping (128 MB)
+      → proc_create(proc_a/proc_b)
+      → scheduler()          # never returns
 ```
+
+## QEMU Hardware Dependencies
+
+The kernel targets **QEMU RISC-V `virt` machine** with `-bios none` (M-mode direct boot). All device addresses are hardcoded for this platform:
+
+| Device | Address | Driver | Notes |
+|--------|---------|--------|-------|
+| RAM | `0x80000000`–`0x88000000` (128 MB) | `sys/pmm.c` | `RAM_SIZE` constant in `pmm.c` |
+| UART (NS16550A) | `0x10000000` | `uart.c` / `uart.h` | TX polling, RX interrupt via PLIC (IRQ 10) |
+| ACLINT MTIMER | `0x2004000` | `timer.c` / `timer.h` | `mtime` at base+`0x7FF8`, per-hart `mtimecmp` |
+| PLIC | `0x0c000000` | `plic.c` / `plic.h` | M-mode contexts, UART0 at IRQ 10 |
+| Virtio-MMIO slots | `0x10001000`–`0x10008000` (8 slots) | `virtio.c` | Legacy virtio 0.9.5 transport |
+| PCI-e ECAM | `0x30000000` | `pci.c` / `pci.h` | Bus 0 only, BAR4 in window `0x40000000`–`0x7FFFFFFF` |
+| Virtio-blk (PCI) | PCI device `1af4:1001` | `virtio.c` | Transitional device, modern cfg on BAR4 |
+| Sv39 Page Tables | N/A | `vmm.c` / `mmu.h` | 128 MB identity map (`0x80000000`–`0x88000000`) |
+| Stack | Per-hart `NSTACK × 16KB` | `entry.S` | `NSTACK` passed via `-DNSTACK=$(SMP)` |
+
+### Porting to Other Platforms / Real Hardware
+
+The core kernel (scheduler, memory management, file system, syscalls, trap framework) is platform-independent. To run on other platforms or real RISC-V hardware:
+
+1. **Device Tree** — parse FDT instead of hardcoded addresses
+2. **UART driver** — replace NS16550A with platform-specific driver
+3. **Timer** — replace ACLINT with platform-specific timer (e.g., SiFive CLINT)
+4. **Block device** — replace virtio-blk with SD/MMC, NVMe, or AHCI
+5. **Bootloader** — add OpenSBI + U-Boot boot chain instead of `-bios none`
+6. **RAM detection** — read memory size from device tree instead of `RAM_SIZE`
 
 ### Linker Script (`arch/riscv/kernel.ld`)
 
@@ -141,6 +205,7 @@ To add a new source file, add its `.o` to the `obj-y` list in the directory's `M
 - LLVM code style, configured in `.clang-format`
 - C headers use `#ifndef _NAME_H` / `#define _NAME_H` guard pattern
 - **Struct/enum naming**: CamelCase (PascalCase) — each word capitalized, e.g. `TrapFrame`, `PageTableEntry`
+- **Struct/enum definitions**: Use `XDEF_STRUCT(T)` / `XDEF_ENUM(T)` macros (defined in `include/libc.h`) to avoid `struct`/`enum` keywords everywhere
 - **Function/variable naming**: snake_case — lowercase with underscores, e.g. `trap_init`, `trap_handler`
 - **Macro naming**: UPPER_SNAKE_CASE — e.g. `MCAUSE_MTIMER`, `MSTATUS_MIE`
 - The kernel currently has **no tests** and **no CI**
