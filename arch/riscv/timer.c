@@ -3,8 +3,9 @@
 #include <kernel.h>
 #include <proc.h>
 
-/* Runtime MTIMER base — initialized to QEMU default, updated by FDT */
+/* Runtime MTIMER base — initialized to QEMU ACLINT default, updated by FDT */
 unsigned long mtimer_mmio_base = 0x2004000UL;
+int           timer_is_aclint  = 1;
 
 static unsigned long ticks = 0;
 

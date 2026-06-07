@@ -28,6 +28,8 @@ static unsigned int fdt_strings_off;
 /* Cached addresses (defaults for QEMU virt) */
 static unsigned long uart_base   = 0x10000000UL;
 static unsigned long plic_base   = 0x0c000000UL;
+static unsigned long timer_base  = 0x2004000UL;
+static int           timer_is_acl = 1; /* 1=ACLINT, 0=CLINT */
 static unsigned long memory_base = 0x80000000UL;
 static unsigned long memory_size = 128UL * 1024 * 1024;
 
@@ -102,6 +104,27 @@ void fdt_init(void *fdt_ptr) {
           plic_base = fdt_be64(pdata);
           printk("[fdt] PLIC: %p\n", plic_base);
         }
+        if (contains(path, "timer") || contains(path, "clint") ||
+            contains(path, "aclint")) {
+          timer_base = fdt_be64(pdata);
+          printk("[fdt] TIMER: %p\n", timer_base);
+        }
+      }
+      if (strcmp(pname, "compatible") == 0) {
+        /* Detect timer type from device tree compatible string.
+         * ACLINT: "riscv,aclint-mtimer"   — offset 0x7FF8
+         * CLINT:  "riscv,clint0"          — offset 0xBFF8
+         */
+        if (contains(path, "timer") || contains(path, "clint") ||
+            contains(path, "aclint")) {
+          const char *compat = (const char *)pdata;
+          if (contains(compat, "aclint") || contains(compat, "mtimer"))
+            timer_is_acl = 1;
+          else if (contains(compat, "clint"))
+            timer_is_acl = 0;
+          printk("[fdt] TIMER type: %s (%s)\n", compat,
+                 timer_is_acl ? "ACLINT" : "CLINT");
+        }
       }
 
       sp += (plen + 3) / 4;
@@ -120,21 +143,17 @@ void fdt_apply(void) {
   if (!fdt_base)
     return;
 
-  /* Apply FDT addresses to driver globals */
   extern unsigned long uart_mmio_base;
   extern unsigned long plic_mmio_base;
   extern unsigned long mtimer_mmio_base;
+  extern int           timer_is_aclint;
 
   uart_mmio_base   = uart_base;
   plic_mmio_base   = plic_base;
-  /* Timer: QEMU virt FDT reports CLINT at 0x2000000, but our
-   * timer driver is written for ACLINT at 0x2004000 (different
-   * register layout).  Keep hardcoded until an ACLINT/CLINT
-   * detection is added. */
-  mtimer_mmio_base = 0x2004000UL;
-  ram_base         = memory_base;
-  ram_size         = memory_size;
+  mtimer_mmio_base = timer_base;
+  timer_is_aclint  = timer_is_acl;
 
-  printk("[fdt] applied: UART=%p PLIC=%p RAM=%p+%p\n", uart_mmio_base,
-         plic_mmio_base, ram_base, ram_size);
+  printk("[fdt] applied: UART=%p PLIC=%p TIMER=%p (%s) RAM=%p+%p\n",
+         uart_mmio_base, plic_mmio_base, mtimer_mmio_base,
+         timer_is_aclint ? "ACLINT" : "CLINT", ram_base, ram_size);
 }

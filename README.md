@@ -26,7 +26,7 @@ qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
 
 ## What Happens
 
-```
+```text
 QEMU loads kernel at 0x80000000
   → hart 0 wins atomic lottery, calls kmain()
     → traps, timers, memory allocator
@@ -84,7 +84,7 @@ Sector 1+: data blocks (512 bytes each, one per file sector)
 
 The kernel tries init paths in order and runs the first one found:
 
-```
+```text
 /bin/init   (default)
 /bin/sh     (shell fallback)
 /bin/hello  (smoke test)
