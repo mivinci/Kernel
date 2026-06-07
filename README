@@ -1,8 +1,8 @@
-A Bare-Metal RISC-V 64 Kernel
-================================
+A Bare-Metal Kernel
+====================
 
-A minimal, educational kernel written in C and RISC-V assembly.  Boots
-directly in M-mode on QEMU with no BIOS, bootloader, or runtime.  Supports
+A minimal, educational kernel written in C and assembly.  Boots directly
+in M-mode on QEMU with no BIOS, bootloader, or runtime.  Supports
 user-mode processes, a virtual filesystem, a shell, and multiple programs.
 
 
@@ -11,8 +11,8 @@ Quick Start
 
 ```bash
 # 1.  Build kernel + user programs
-make                  # build kernel
-cd usr && make        # build hello, init, sh, cat
+make ARCH=riscv        # default, also works: ARCH=arm
+cd usr && make         # build hello, init, sh, cat
 
 # 2.  Create disk image
 python3 tools/mkdisk.py disk.img \
@@ -135,9 +135,10 @@ Build Options
 -------------
 
 ```bash
-make ARCH=arm CROSS_COMPILE=arm-none-eabi-   # cross-compile
-make ENABLE_DEBUG=1                          # debug symbols
-make SMP=4                                   # 4 simulated harts
+make ARCH=riscv                       # default (RISCV 64)
+make ARCH=arm CROSS_COMPILE=arm-none-eabi-  # ARM
+make ENABLE_DEBUG=1                        # debug symbols
+make SMP=4                                 # 4 simulated harts
 ```
 
 
@@ -159,5 +160,6 @@ scripts/              # build system internals
 Requirements
 ------------
 
-- riscv64-elf-gcc (or any RISC-V 64 cross-compiler)
-- QEMU (riscv64-softmmu) for emulation
+- RISC-V: `riscv64-elf-gcc`, `qemu-system-riscv64`
+- ARM (WIP): `arm-none-eabi-gcc`, `qemu-system-arm`
+- Python 3 (for disk image builder)
