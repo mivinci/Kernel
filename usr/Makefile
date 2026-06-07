@@ -10,7 +10,7 @@ TARGETS = hello init sh
 
 all: $(foreach t,$(TARGETS),$(t).bin)
 
-%.elf: %.c crt0.S syscall.h
+%.elf: %.c crt0.S usr.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ crt0.S $<
 
 %.bin: %.elf

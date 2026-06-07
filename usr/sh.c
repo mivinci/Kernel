@@ -1,4 +1,4 @@
-#include "syscall.h"
+#include "usr.h"
 
 static int strcmp(const char *a, const char *b) {
   while (*a && *a == *b) { a++; b++; }
