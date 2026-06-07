@@ -41,6 +41,13 @@ void main(void) {
       path[i] = '\0';
     }
 
-    spawn(path);
+    int pid = spawn(path);
+    if (pid < 0) {
+      write(1, "not found: ", 11);
+      write(1, buf, strlen(buf));
+      write(1, "\n", 1);
+    } else {
+      wait(pid);
+    }
   }
 }

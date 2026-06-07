@@ -13,6 +13,12 @@ static inline void *memcpy(void *dst, const void *src, int n) {
   return dst;
 }
 
+static inline int strlen(const char *s) {
+  int n = 0;
+  while (*s++) n++;
+  return n;
+}
+
 static inline int write(int fd, const char *buf, int len) {
   register long r0 asm("a0") = fd;
   register long r1 asm("a1") = (long)buf;
