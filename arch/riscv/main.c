@@ -3,6 +3,7 @@
 #include <arch/riscv/timer.h>
 #include <arch/riscv/trap.h>
 #include <arch/riscv/virtio.h>
+#include <diskfs.h>
 #include <fdt.h>
 #include <fs.h>
 #include <kernel.h>
@@ -47,31 +48,8 @@ void kmain(int hartid, void *fdt) {
   fs_init();
   fdtable_init();
 
-  /*
-   * Register user binaries from the block device.
-   * Only metadata is stored; data is read on demand when
-   * usr_spawn loads a program (usr_load → virtio_blk_read).
-   */
-  if (virtio_blk_capacity() > 0) {
-    char s[SECTOR_SIZE];
-    if (virtio_blk_read(0, s) == 0) {
-      unsigned int magic = *(unsigned int *)(s + 0);
-      unsigned int nfile = *(unsigned int *)(s + 4);
-      if (magic == 0x52414D46 && nfile > 0 && nfile <= 6) {
-        for (unsigned int i = 0; i < nfile; i++) {
-          char        *entry   = s + 8 + i * 72;
-          char        *name    = entry;
-          unsigned int fsize   = *(unsigned int *)(entry + 64);
-          unsigned int fsector = *(unsigned int *)(entry + 68);
-          Inode *ip = idiskslot(name, fsector, fsize);
-          if (ip)
-            printk("[boot] %-16s sector=%d size=%d\n", name, fsector, fsize);
-          else
-            printk("[boot] %-16s slot full\n", name);
-        }
-      }
-    }
-  }
+  /* Mount on-disk filesystem — registers inodes, reads superblock */
+  dfs_init();
 
   /* PMM smoke test */
   void *page = kalloc();
