@@ -12,6 +12,7 @@
 #include <proc.h>
 #include <syscall.h>
 #include <uart.h>
+#include <usr.h>
 
 static unsigned long count_a, count_b;
 
@@ -68,6 +69,10 @@ void kmain(int hartid, void *fdt) {
   uart_init();
   plic_init();
   virtio_blk_init();
+
+  /* User mode setup and test */
+  usr_init();
+  usr_spawn();
 
   vmm_init();
   proc_create(proc_a, "A");

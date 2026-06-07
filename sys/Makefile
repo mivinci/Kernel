@@ -3,4 +3,5 @@ obj-y += fs.o
 obj-y += pmm.o
 obj-y += proc.o
 obj-y += syscall.o
+obj-y += usr.o
 obj-y += vmm.o

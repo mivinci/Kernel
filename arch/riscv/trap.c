@@ -45,6 +45,7 @@ void trap_handler(TrapFrame *tf) {
   } else {
     switch (cause) {
     case MCAUSE_ECALL_M: syscall_handler(tf); break;
+    case MCAUSE_ECALL_U: syscall_handler(tf); break;
     default:
       printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n", tf->mepc, cause, tf->mtval);
       tf->mepc += 4;
