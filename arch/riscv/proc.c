@@ -1,5 +1,7 @@
 #include <arch/riscv/csr.h>
 #include <arch/riscv/mmu.h>
+#include <arch/riscv/plic.h>
+#include <arch/riscv/timer.h>
 #include <arch/riscv/trap.h>
 #include <kernel.h>
 #include <types.h>
@@ -61,6 +63,20 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
 
   printk("[proc] create pid=%d kstack=%p upage=%p\n", p->pid, p->kstack, upage);
   return p->pid;
+}
+
+/*
+ * Per-hart setup for non-0 harts: trap, timer, PLIC.
+ * Called from entry.S after hart 0 signals hart_ready.
+ */
+void hart_start(void) {
+  int hid = csr_read(mhartid);
+
+  trap_init();
+  timer_init();
+  plic_init();
+  printk("[hart %d] ready\n", hid);
+  scheduler(hid);
 }
 
 void scheduler(int hartid) {

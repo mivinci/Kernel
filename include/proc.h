@@ -57,6 +57,7 @@ XDEF_STRUCT(Cpu) {
 
 void  proc_init(void);
 void  scheduler(int hartid) __attribute__((noreturn));
+void  hart_start(void) __attribute__((noreturn));
 void  swtch(Context *old, Context *new);
 int   proc_create(void (*fn)(void), const char *name, void *upage);
 void  proc_exit(int code);

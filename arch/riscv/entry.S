@@ -1,11 +1,11 @@
 # Multi-hart bootstrap.  Every hart sets up its own stack.
 # Hart 0 boots the kernel.  Others wait for hart_ready, then
-# enter the scheduler with their hartid.
+# run per-hart init before entering the scheduler.
 
   .text
   .globl  _start
   .extern kmain
-  .extern scheduler
+  .extern hart_start
 
 _start:
   /* Per-hart stack: sp = stack0 + hartid * 16384 + 16384 */
@@ -19,14 +19,13 @@ _start:
 
   beqz     s0, boot_kernel
 
-  /* Non-zero harts: wait for hart 0 to finish init */
+  /* Non-zero harts: wait for hart 0 to finish init, then
+   * run per-hart setup and enter the scheduler. */
   la       a3, hart_ready
 1:
   lw       a4, 0(a3)
   beqz     a4, 1b
-  /* Enter scheduler with hartid in a0 */
-  mv       a0, s0
-  call     scheduler
+  call     hart_start
   wfi
   j        1b
 
