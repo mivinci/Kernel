@@ -12,6 +12,22 @@
 #include <uart.h>
 #include <usr.h>
 
+/*
+ * Init path — the first user-mode process.
+ * Like Unix System V /etc/inittab, the kernel tries each
+ * path in order and runs the first one that exists in ramfs.
+ * Change INIT_PATH if your init has a different name/location.
+ */
+#ifndef INIT_PATH
+#define INIT_PATH "/bin/init"
+#endif
+
+static const char *init_fallbacks[] = {
+  INIT_PATH,      /* try user-specified first    */
+  "/bin/sh",      /* then a shell                */
+  "/bin/hello",   /* finally the smoke-test app  */
+};
+
 
 void kmain(int hartid, void *fdt) {
   printk("[kernel] Booting by hart %d ...\n", hartid);
@@ -83,7 +99,18 @@ void kmain(int hartid, void *fdt) {
   }
 
   usr_init();
-  usr_spawn("/bin/init");
+
+  /* Try init paths in order — first one on disk wins */
+  int pid = -1;
+  for (int i = 0; i < 3; i++) {
+    pid = usr_spawn(init_fallbacks[i]);
+    if (pid >= 0) {
+      printk("[boot] init: %s (pid=%d)\n", init_fallbacks[i], pid);
+      break;
+    }
+  }
+  if (pid < 0)
+    printk("[boot] PANIC: no init found, idle loop\n");
 
   vmm_init();
   scheduler();
