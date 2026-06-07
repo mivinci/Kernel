@@ -62,6 +62,7 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (unsigned long)fn;
   p->context.sp = (unsigned long)p->kstack + KSTACK;
+  p->pid        = (int)(p - ptable);
   p->upage      = upage;
   p->parent     = -1;
   p->nchild     = 0;
