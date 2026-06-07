@@ -1,5 +1,6 @@
 #include <arch/riscv/csr.h>
 #include <arch/riscv/trap.h>
+#include <arch/riscv/virtio.h>
 #include <fs.h>
 #include <kernel.h>
 #include <types.h>
@@ -35,11 +36,23 @@ int usr_load(const char *path, void **out_page, int *out_size) {
     return -1;
   }
 
-  memcpy(page, ip->data, ip->size);
+  if (ip->data) {
+    /* In-memory (ramfs) */
+    memcpy(page, ip->data, ip->size);
+    printk("[usr] loaded %s from ram (%d bytes at %p)\n", path, ip->size, page);
+  } else {
+    /* Disk-backed — read on demand */
+    if (virtio_blk_read(ip->sector, page) != 0) {
+      printk("[usr] disk read failed for %s (sector %d)\n", path, ip->sector);
+      kfree(page);
+      return -1;
+    }
+    printk("[usr] loaded %s from disk (%d bytes at %p, sector %d)\n",
+           path, ip->size, page, ip->sector);
+  }
+
   *out_page = page;
   *out_size = ip->size;
-
-  printk("[usr] loaded %s: %d bytes at %p\n", path, ip->size, page);
   return 0;
 }
 

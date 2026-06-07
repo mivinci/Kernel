@@ -17,10 +17,11 @@ typedef enum {
 /* In-memory inode (file) */
 XDEF_STRUCT(Inode) {
   char  name[FNAMELEN];
-  char *data; /* file data buffer */
-  int   size; /* current file size */
-  int   cap;  /* capacity of data buffer */
+  char *data; /* data buffer (NULL when disk-backed) */
+  int   size; /* logical size (byte count) */
+  int   cap;  /* buffer capacity (0 when disk-backed) */
   int   ref;  /* reference count */
+  int   sector; /* disk sector (0 = non-disk) */
 };
 
 /* Open file entry (file descriptor table) */
@@ -41,6 +42,7 @@ XDEF_STRUCT(FileTable) {
 void   fs_init(void);
 Inode *ialloc(const char *name);
 Inode *iname(const char *name);
+Inode *idiskslot(const char *name, int sector, int size);
 void   igrow(Inode *ip, int newsize);
 void   ifree(Inode *ip);
 

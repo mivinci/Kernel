@@ -48,11 +48,9 @@ void kmain(int hartid, void *fdt) {
   fdtable_init();
 
   /*
-   * Load user programs from block device into ramfs.
-   * Sector 0 header: [magic:4][count:4][entries:count*72]
-   *   entry = name[64] | size[4] | sector[4]
-   * File data at the named sector.
-   * Built by tools/mkdisk.py.
+   * Register user binaries from the block device.
+   * Only metadata is stored; data is read on demand when
+   * usr_spawn loads a program (usr_load → virtio_blk_read).
    */
   if (virtio_blk_capacity() > 0) {
     char s[SECTOR_SIZE];
@@ -65,38 +63,23 @@ void kmain(int hartid, void *fdt) {
           char        *name    = entry;
           unsigned int fsize   = *(unsigned int *)(entry + 64);
           unsigned int fsector = *(unsigned int *)(entry + 68);
-          char         buf[SECTOR_SIZE];
-          if (fsize > SECTOR_SIZE) continue;
-          if (virtio_blk_read(fsector, buf) != 0) continue;
-          Inode *bin = ialloc(name);
-          if (bin) {
-            igrow(bin, fsize);
-            memcpy(bin->data, buf, fsize);
-            bin->size = fsize;
-            printk("[boot] loaded %s from disk (%d bytes)\n", name, fsize);
-          }
+          Inode *ip = idiskslot(name, fsector, fsize);
+          if (ip)
+            printk("[boot] %-16s sector=%d size=%d\n", name, fsector, fsize);
+          else
+            printk("[boot] %-16s slot full\n", name);
         }
       }
     }
   }
 
-  /* Smoke tests */
+  /* PMM smoke test */
   void *page = kalloc();
   printk("[pmm] test: kalloc -> %p\n", page);
   kfree(page);
   void *page2 = kalloc();
   printk("[pmm] test: kfree/kalloc -> %p (same)\n", page2);
   kfree(page2);
-
-  /* Test block I/O on a safe sector (not 0 — that's the header) */
-  if (virtio_blk_capacity() > 1) {
-    char w[SECTOR_SIZE], v[SECTOR_SIZE];
-    for (int i = 0; i < SECTOR_SIZE; i++) w[i] = (char)(i & 0xff);
-    printk("[blk] write sec1: %s\n", virtio_blk_write(1, w) == 0 ? "OK" : "FAIL");
-    int ok = virtio_blk_read(1, v) == 0;
-    for (int i = 0; ok && i < SECTOR_SIZE; i++) { if (v[i] != w[i]) { ok = 0; break; } }
-    printk("[blk] verify:   %s\n", ok ? "OK" : "FAIL");
-  }
 
   usr_init();
 
