@@ -8,29 +8,29 @@
 #define SECTOR_SIZE 512
 
 /* Virtio MMIO register offsets */
-#define VIRTIO_MAGIC            0x000
-#define VIRTIO_VERSION          0x004
-#define VIRTIO_DEVICE_ID        0x008
-#define VIRTIO_VENDOR_ID        0x00c
-#define VIRTIO_DEVICE_FEATURES      0x010
-#define VIRTIO_DEVICE_FEATURES_SEL  0x014
-#define VIRTIO_DRIVER_FEATURES      0x020
-#define VIRTIO_DRIVER_FEATURES_SEL  0x024
-#define VIRTIO_QUEUE_SEL        0x030
-#define VIRTIO_QUEUE_NUM_MAX    0x034
-#define VIRTIO_QUEUE_NUM        0x038
-#define VIRTIO_QUEUE_ALIGN      0x03c
-#define VIRTIO_QUEUE_READY      0x044
-#define VIRTIO_QUEUE_NOTIFY     0x050
-#define VIRTIO_INTR_STATUS      0x060
-#define VIRTIO_INTR_ACK         0x064
-#define VIRTIO_STATUS           0x070
-#define VIRTIO_QUEUE_DESC_LOW   0x080
-#define VIRTIO_QUEUE_DESC_HIGH  0x084
-#define VIRTIO_DRIVER_DESC_LOW  0x090
-#define VIRTIO_DRIVER_DESC_HIGH 0x094
-#define VIRTIO_DEVICE_DESC_LOW  0x0a0
-#define VIRTIO_DEVICE_DESC_HIGH 0x0a4
+#define VIRTIO_MAGIC               0x000
+#define VIRTIO_VERSION             0x004
+#define VIRTIO_DEVICE_ID           0x008
+#define VIRTIO_VENDOR_ID           0x00c
+#define VIRTIO_DEVICE_FEATURES     0x010
+#define VIRTIO_DEVICE_FEATURES_SEL 0x014
+#define VIRTIO_DRIVER_FEATURES     0x020
+#define VIRTIO_DRIVER_FEATURES_SEL 0x024
+#define VIRTIO_QUEUE_SEL           0x030
+#define VIRTIO_QUEUE_NUM_MAX       0x034
+#define VIRTIO_QUEUE_NUM           0x038
+#define VIRTIO_QUEUE_ALIGN         0x03c
+#define VIRTIO_QUEUE_READY         0x044
+#define VIRTIO_QUEUE_NOTIFY        0x050
+#define VIRTIO_INTR_STATUS         0x060
+#define VIRTIO_INTR_ACK            0x064
+#define VIRTIO_STATUS              0x070
+#define VIRTIO_QUEUE_DESC_LOW      0x080
+#define VIRTIO_QUEUE_DESC_HIGH     0x084
+#define VIRTIO_DRIVER_DESC_LOW     0x090
+#define VIRTIO_DRIVER_DESC_HIGH    0x094
+#define VIRTIO_DEVICE_DESC_LOW     0x0a0
+#define VIRTIO_DEVICE_DESC_HIGH    0x0a4
 
 /* Virtio status bits */
 #define VIRTIO_STATUS_ACK       (1 << 0)

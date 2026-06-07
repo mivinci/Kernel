@@ -1,7 +1,7 @@
+#include <fs.h>
 #include <kernel.h>
 #include <libc.h>
 #include <pmm.h>
-#include <fs.h>
 
 static Inode itable[NINODE];
 
@@ -14,8 +14,7 @@ void fs_init(void) {
  * Allocate or find an inode by name.
  */
 Inode *ialloc(const char *name) {
-  if (!name)
-    return NULL;
+  if (!name) return NULL;
 
   /* First, search for existing file */
   for (int i = 0; i < NINODE; i++) {
@@ -43,11 +42,9 @@ Inode *ialloc(const char *name) {
  * Find an inode by name (without incrementing ref).
  */
 Inode *iname(const char *name) {
-  if (!name)
-    return NULL;
+  if (!name) return NULL;
   for (int i = 0; i < NINODE; i++) {
-    if (itable[i].ref > 0 && strcmp(itable[i].name, name) == 0)
-      return &itable[i];
+    if (itable[i].ref > 0 && strcmp(itable[i].name, name) == 0) return &itable[i];
   }
   return NULL;
 }
@@ -56,19 +53,16 @@ Inode *iname(const char *name) {
  * Grow an inode's data buffer to at least newsize bytes.
  */
 void igrow(Inode *ip, int newsize) {
-  if (newsize <= ip->cap)
-    return;
+  if (newsize <= ip->cap) return;
 
-  int newcap = (newsize + 4095) & ~4095; /* page-align */
+  int   newcap  = (newsize + 4095) & ~4095; /* page-align */
   char *newdata = (char *)kalloc();
-  if (!newdata)
-    return;
+  if (!newdata) return;
 
   memcpy(newdata, ip->data, ip->size);
   memset(newdata + ip->size, 0, newcap - ip->size);
 
-  if (ip->data)
-    kfree(ip->data);
+  if (ip->data) kfree(ip->data);
 
   ip->data = newdata;
   ip->cap  = newcap;
@@ -79,8 +73,7 @@ void igrow(Inode *ip, int newsize) {
  */
 void ifree(Inode *ip) {
   if (--ip->ref == 0) {
-    if (ip->data)
-      kfree(ip->data);
+    if (ip->data) kfree(ip->data);
     memset(ip, 0, sizeof(*ip));
   }
 }

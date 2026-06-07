@@ -35,15 +35,14 @@ int proc_create(void (*fn)(void), const char *name) {
     return -1;
   }
 
-  /* Allocate kernel stack */
+  /* Allocate kernel stack (single page for now) */
   p->kstack = kalloc();
   if (!p->kstack) {
     printk("[proc] create: kalloc failed\n");
     return -1;
   }
 
-  /* Set up initial context: when swtch restores this context,
-   * ra = fn means ret will jump to fn(). sp points to top of kstack. */
+  /* Set up initial context: sp points to top of kstack. */
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (unsigned long)fn;
   p->context.sp = (unsigned long)p->kstack + PAGE_SIZE;

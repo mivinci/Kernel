@@ -65,7 +65,7 @@ static inline unsigned int pci_read32(int bus, int dev, int func, int off) {
 }
 
 static inline void pci_write32(int bus, int dev, int func, int off, unsigned int val) {
-  unsigned long addr = pci_config_addr(bus, dev, func, off);
+  unsigned long addr                            = pci_config_addr(bus, dev, func, off);
   *(volatile unsigned int *)(unsigned long)addr = val;
 }
 

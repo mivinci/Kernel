@@ -28,10 +28,11 @@
 #define SATP_ASID 0x0FFF000000000000UL
 #define SATP_PPN  0x00000FFFFFFFFFFFUL
 
-#define MAKE_SATP(pgd_pa)                                                      \
-  (SATP_SV39 | (((unsigned long)(pgd_pa) >> 12) & SATP_PPN))
+#define MAKE_SATP(pgd_pa) (SATP_SV39 | (((unsigned long)(pgd_pa) >> 12) & SATP_PPN))
 
-XDEF_STRUCT(PageTableEntry) { unsigned long raw; };
+XDEF_STRUCT(PageTableEntry) {
+  unsigned long raw;
+};
 
 void vmm_init(void);
 

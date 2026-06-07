@@ -1,6 +1,6 @@
-#include <kernel.h>
 #include <arch/riscv/csr.h>
 #include <arch/riscv/timer.h>
+#include <kernel.h>
 #include <proc.h>
 
 static unsigned long ticks = 0;
@@ -11,8 +11,7 @@ void timer_init(void) {
   write_mtimecmp(hartid, read_mtime() + TIMER_INTERVAL);
   csr_write(mie, csr_read(mie) | MIE_MTIE);
 
-  printk("[timer] hart=%d interval=%dms\n", hartid,
-         TIMER_INTERVAL / 10000);
+  printk("[timer] hart=%d interval=%dms\n", hartid, TIMER_INTERVAL / 10000);
 }
 
 void timer_handle(void) {
@@ -21,8 +20,7 @@ void timer_handle(void) {
   write_mtimecmp(hartid, read_mtime() + TIMER_INTERVAL);
 
   ticks++;
-  if (ticks % 5 == 0)
-    printk("[timer] tick=%d (hart %d)\n", ticks, hartid);
+  if (ticks % 5 == 0) printk("[timer] tick=%d (hart %d)\n", ticks, hartid);
 
   /* Preempt current process if one is running */
   sched_tick();

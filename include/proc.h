@@ -3,8 +3,8 @@
 
 #include <libc.h>
 
-#define NPROC   16
-#define KSTACK  (4 * 4096) /* 16 KB kernel stack per process */
+#define NPROC  16
+#define KSTACK (4 * 4096) /* 16 KB kernel stack per process */
 
 typedef enum {
   UNUSED,
@@ -32,25 +32,25 @@ XDEF_STRUCT(Context) {
 
 /* Per-process state */
 XDEF_STRUCT(Proc) {
-  Context   context;   /* swtch() save/restore area */
-  void      *kstack;   /* kernel stack bottom */
-  ProcState state;     /* UNUSED / RUNNABLE / RUNNING */
-  int       pid;       /* process id */
+  Context   context;  /* swtch() save/restore area */
+  void     *kstack;   /* kernel stack bottom */
+  ProcState state;    /* UNUSED / RUNNABLE / RUNNING */
+  int       pid;      /* process id */
   char      name[16]; /* debug name */
 };
 
 /* Per-CPU state */
 XDEF_STRUCT(Cpu) {
-  Proc    *proc;    /* currently running process */
-  Context  context; /* swtch() save area for scheduler */
+  Proc   *proc;    /* currently running process */
+  Context context; /* swtch() save area for scheduler */
 };
 
-void proc_init(void);
-void scheduler(void) __attribute__((noreturn));
-void swtch(Context *old, Context *new);
-int  proc_create(void (*fn)(void), const char *name);
-void yield(void);
-void sched_tick(void);
+void  proc_init(void);
+void  scheduler(void) __attribute__((noreturn));
+void  swtch(Context *old, Context *new);
+int   proc_create(void (*fn)(void), const char *name);
+void  yield(void);
+void  sched_tick(void);
 Proc *cpu_proc(void);
 
 #endif /* _PROC_H */

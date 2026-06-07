@@ -22,32 +22,27 @@ static int skip_atoi(const char **s) {
   return i;
 }
 
-static char *number(char *str, unsigned long num, int base, int size,
-                    int precision, int type) {
-  char c, sign, tmp[64];
+static char *number(char *str, unsigned long num, int base, int size, int precision, int type) {
+  char        c, sign, tmp[64];
   const char *digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  int i;
+  int         i;
 
-  if (type & SMALL)
-    digits = "0123456789abcdefghijklmnopqrstuvwxyz";
-  if (type & LEFT)
-    type &= ~ZEROPAD;
-  if (base < 2 || base > 36)
-    return 0;
-  c = (type & ZEROPAD) ? '0' : ' ';
+  if (type & SMALL) digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+  if (type & LEFT) type &= ~ZEROPAD;
+  if (base < 2 || base > 36) return 0;
+  c    = (type & ZEROPAD) ? '0' : ' ';
   sign = 0;
   if (type & SIGN) {
     if ((long)num < 0) {
       sign = '-';
-      num = -(long)num;
+      num  = -(long)num;
     } else if (type & PLUS) {
       sign = '+';
     } else if (type & SPACE) {
       sign = ' ';
     }
   }
-  if (sign)
-    size--;
+  if (sign) size--;
   if (type & SPECIAL) {
     if (base == 16)
       size -= 2;
@@ -62,14 +57,12 @@ static char *number(char *str, unsigned long num, int base, int size,
       tmp[i++] = digits[num % base];
       num /= base;
     }
-  if (i > precision)
-    precision = i;
+  if (i > precision) precision = i;
   size -= precision;
   if (!(type & (ZEROPAD + LEFT)))
     while (size-- > 0)
       *str++ = ' ';
-  if (sign)
-    *str++ = sign;
+  if (sign) *str++ = sign;
   if (type & SPECIAL) {
     if (base == 8)
       *str++ = '0';
@@ -91,11 +84,11 @@ static char *number(char *str, unsigned long num, int base, int size,
 }
 
 int vsprintf(char *buf, const char *fmt, va_list args) {
-  int len;
-  int i;
+  int   len;
+  int   i;
   char *str;
   char *s;
-  int *ip;
+  int  *ip;
 
   int flags; /* flags to number() */
 
@@ -114,21 +107,11 @@ int vsprintf(char *buf, const char *fmt, va_list args) {
   repeat:
     ++fmt; /* this also skips first '%' */
     switch (*fmt) {
-    case '-':
-      flags |= LEFT;
-      goto repeat;
-    case '+':
-      flags |= PLUS;
-      goto repeat;
-    case ' ':
-      flags |= SPACE;
-      goto repeat;
-    case '#':
-      flags |= SPECIAL;
-      goto repeat;
-    case '0':
-      flags |= ZEROPAD;
-      goto repeat;
+    case '-': flags |= LEFT; goto repeat;
+    case '+': flags |= PLUS; goto repeat;
+    case ' ': flags |= SPACE; goto repeat;
+    case '#': flags |= SPECIAL; goto repeat;
+    case '0': flags |= ZEROPAD; goto repeat;
     }
 
     /* get field width */
@@ -154,8 +137,7 @@ int vsprintf(char *buf, const char *fmt, va_list args) {
         /* it's the next argument */
         precision = va_arg(args, int);
       }
-      if (precision < 0)
-        precision = 0;
+      if (precision < 0) precision = 0;
     }
 
     switch (*fmt) {
@@ -169,7 +151,7 @@ int vsprintf(char *buf, const char *fmt, va_list args) {
       break;
 
     case 's':
-      s = va_arg(args, char *);
+      s   = va_arg(args, char *);
       len = strlen(s);
       if (precision < 0)
         precision = len;
@@ -199,29 +181,26 @@ int vsprintf(char *buf, const char *fmt, va_list args) {
                    field_width, precision, flags);
       break;
 
-    case 'x':
-      flags |= SMALL;
+    case 'x': flags |= SMALL;
     case 'X':
       str = number(str, va_arg(args, unsigned long), 16, //
                    field_width, precision, flags);
       break;
 
     case 'd':
-    case 'i':
-      flags |= SIGN;
+    case 'i': flags |= SIGN;
     case 'u':
       str = number(str, va_arg(args, unsigned long), 10, //
                    field_width, precision, flags);
       break;
 
     case 'n':
-      ip = va_arg(args, int *);
+      ip  = va_arg(args, int *);
       *ip = (str - buf);
       break;
 
     default:
-      if (*fmt != '%')
-        *str++ = '%';
+      if (*fmt != '%') *str++ = '%';
       if (*fmt)
         *str++ = *fmt;
       else

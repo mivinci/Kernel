@@ -25,7 +25,8 @@ void uart_init(void) {
 
 /* 同步发送一个字符 */
 void putc(char c) {
-  while ((READ(LSR) & LSR_TX_READY) == 0);
+  while ((READ(LSR) & LSR_TX_READY) == 0)
+    ;
   WRITE(THR, c);
 }
 
@@ -34,8 +35,7 @@ void puts(char *p) {
   char c;
   while ((c = *p++) != '\0') {
     putc(c);
-    if (c == '\n')
-      putc('\r');
+    if (c == '\n') putc('\r');
   }
 }
 
@@ -43,8 +43,7 @@ void puts(char *p) {
  * Polling-based character receive. Returns -1 if no data available.
  */
 int getc(void) {
-  if (READ(LSR) & LSR_RX_READY)
-    return (unsigned char)READ(RBR);
+  if (READ(LSR) & LSR_RX_READY) return (unsigned char)READ(RBR);
   return -1;
 }
 
@@ -61,7 +60,7 @@ void uart_handle(void) {
 
 int printk(const char *fmt, ...) {
   va_list args;
-  char buf[1024];
+  char    buf[1024];
 
   va_start(args, fmt);
   vsprintf(buf, fmt, args);

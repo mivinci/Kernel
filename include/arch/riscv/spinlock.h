@@ -13,13 +13,12 @@ XDEF_STRUCT(SpinLock) {
  */
 static inline void spin_lock(SpinLock *lk) {
   int old;
-  __asm__ __volatile__(
-      "1:"
-      "  amoswap.w %0, %1, (%2)\n"
-      "  bnez     %0, 1b"
-      : "=&r"(old)
-      : "r"(1), "r"(&lk->locked)
-      : "memory");
+  __asm__ __volatile__("1:"
+                       "  amoswap.w %0, %1, (%2)\n"
+                       "  bnez     %0, 1b"
+                       : "=&r"(old)
+                       : "r"(1), "r"(&lk->locked)
+                       : "memory");
 }
 
 /*

@@ -1,8 +1,8 @@
+#include <arch/riscv/pci.h>
+#include <arch/riscv/virtio.h>
 #include <kernel.h>
 #include <libc.h>
 #include <pmm.h>
-#include <arch/riscv/virtio.h>
-#include <arch/riscv/pci.h>
 
 /*
  * NOTE: virtio-blk I/O (both mmio and pci) hangs on QEMU 10.1 —
@@ -27,16 +27,16 @@ struct VirtioPciCfg {
   unsigned char  device_status;
 };
 
-static unsigned long   mmio_base;
-static unsigned long  *pci_bar;
-static int             use_pci;
+static unsigned long  mmio_base;
+static unsigned long *pci_bar;
+static int            use_pci;
 
-static VRingDesc      *descs;
-static VRingAvail     *avail;
-static VRingUsed      *used;
-static unsigned long   capacity;
-static unsigned short  last_avail_idx;
-static char            blk_buf[SECTOR_SIZE] __attribute__((aligned(16)));
+static VRingDesc     *descs;
+static VRingAvail    *avail;
+static VRingUsed     *used;
+static unsigned long  capacity;
+static unsigned short last_avail_idx;
+static char           blk_buf[SECTOR_SIZE] __attribute__((aligned(16)));
 
 static unsigned long pci_notify_addr;
 
@@ -52,18 +52,14 @@ static inline void pci_notify(int qidx) {
 
 static int virtio_pci_blk_init(void) {
   int bus, dev, func;
-  if (pci_find_virtio_blk(&bus, &dev, &func) < 0)
-    return -1;
+  if (pci_find_virtio_blk(&bus, &dev, &func) < 0) return -1;
 
   pci_enable_bus_master(bus, dev, func);
 
   /* Read BAR4 — pre-assigned by firmware, or assign to PCI-e window */
-  unsigned int bar4_lo =
-      pci_read32(bus, dev, func, PCI_BAR0 + 4 * 4);
-  unsigned int bar4_hi =
-      pci_read32(bus, dev, func, PCI_BAR0 + 4 * 4 + 4);
-  unsigned long bar4_addr =
-      ((unsigned long)bar4_hi << 32) | (bar4_lo & ~0xfUL);
+  unsigned int  bar4_lo   = pci_read32(bus, dev, func, PCI_BAR0 + 4 * 4);
+  unsigned int  bar4_hi   = pci_read32(bus, dev, func, PCI_BAR0 + 4 * 4 + 4);
+  unsigned long bar4_addr = ((unsigned long)bar4_hi << 32) | (bar4_lo & ~0xfUL);
 
   if (!bar4_addr) {
     bar4_addr = 0x40000000; /* PCI-e 32-bit MMIO window */
@@ -72,26 +68,24 @@ static int virtio_pci_blk_init(void) {
   }
 
   /* Parse PCI capabilities for virtio config offsets */
-  unsigned char cap_ptr = pci_read8(bus, dev, func, PCI_CAP_PTR);
+  unsigned char cap_ptr    = pci_read8(bus, dev, func, PCI_CAP_PTR);
   unsigned long common_off = 0, notify_off = 0, devcfg_off = 0;
-  int found_common = 0, found_notify = 0;
+  int           found_common = 0, found_notify = 0;
 
   while (cap_ptr) {
-    unsigned int ca = pci_config_addr(bus, dev, func, cap_ptr);
+    unsigned int  ca  = pci_config_addr(bus, dev, func, cap_ptr);
     unsigned char id  = *(volatile unsigned char *)(unsigned long)ca;
     unsigned char nxt = *(volatile unsigned char *)(unsigned long)(ca + 1);
 
     if (id == VIRTIO_PCI_CAP_VENDOR) {
-      unsigned char type =
-          *(volatile unsigned char *)(unsigned long)(ca + 3);
-      unsigned int off =
-          *(volatile unsigned int *)(unsigned long)(ca + 8);
+      unsigned char type = *(volatile unsigned char *)(unsigned long)(ca + 3);
+      unsigned int  off  = *(volatile unsigned int *)(unsigned long)(ca + 8);
 
       if (type == VIRTIO_PCI_CAP_COMMON_CFG) {
-        common_off = off;
+        common_off   = off;
         found_common = 1;
       } else if (type == VIRTIO_PCI_CAP_NOTIFY_CFG) {
-        notify_off = off;
+        notify_off   = off;
         found_notify = 1;
       } else if (type == VIRTIO_PCI_CAP_DEVICE_CFG) {
         devcfg_off = off;
@@ -100,12 +94,10 @@ static int virtio_pci_blk_init(void) {
     cap_ptr = nxt;
   }
 
-  if (!found_common || !found_notify)
-    return -1;
+  if (!found_common || !found_notify) return -1;
 
-  pci_bar = (unsigned long *)(bar4_addr + common_off);
-  pci_notify_addr =
-      bar4_addr + notify_off;
+  pci_bar         = (unsigned long *)(bar4_addr + common_off);
+  pci_notify_addr = bar4_addr + notify_off;
 
   /* Init sequence: reset → ACK → DRIVER → FEAT_OK */
   pci_set_status(0);
@@ -115,15 +107,13 @@ static int virtio_pci_blk_init(void) {
   /* Feature negotiation */
   pci_cfg()->device_feature_select = 0;
   pci_cfg()->driver_feature_select = 0;
-  pci_cfg()->driver_feature = 0;
+  pci_cfg()->driver_feature        = 0;
   pci_set_status(pci_cfg()->device_status | VIRTIO_STATUS_FEAT_OK);
 
   /* Read capacity */
-  unsigned int cap_lo =
-      *(volatile unsigned int *)(bar4_addr + devcfg_off);
-  unsigned int cap_hi =
-      *(volatile unsigned int *)(bar4_addr + devcfg_off + 4);
-  capacity = ((unsigned long)cap_hi << 32) | cap_lo;
+  unsigned int cap_lo = *(volatile unsigned int *)(bar4_addr + devcfg_off);
+  unsigned int cap_hi = *(volatile unsigned int *)(bar4_addr + devcfg_off + 4);
+  capacity            = ((unsigned long)cap_hi << 32) | cap_lo;
 
   /* Allocate virtqueue rings */
   descs = (VRingDesc *)kalloc();
@@ -147,46 +137,37 @@ static int virtio_pci_blk_init(void) {
   pci_notify_addr += qnotify * 2;
 
   last_avail_idx = 0;
-  use_pci         = 1;
+  use_pci        = 1;
 
-  printk("[virtio-pci] ready, cap=%d MB (%d sectors)\n",
-         (capacity / 2) / 1024, capacity);
+  printk("[virtio-pci] ready, cap=%d MB (%d sectors)\n", (capacity / 2) / 1024, capacity);
   return 0;
 }
 
 static int virtio_mmio_blk_init(void) {
-  unsigned long slots[] = {0x10001000, 0x10002000, 0x10003000,
-                           0x10004000, 0x10005000, 0x10006000,
-                           0x10007000, 0x10008000};
+  unsigned long slots[] = {0x10001000, 0x10002000, 0x10003000, 0x10004000,
+                           0x10005000, 0x10006000, 0x10007000, 0x10008000};
   for (int i = 0; i < 8; i++) {
     unsigned long base = slots[i];
-    if (*(volatile unsigned int *)(base) != 0x74726976)
-      continue;
+    if (*(volatile unsigned int *)(base) != 0x74726976) continue;
 
     *(volatile unsigned int *)(base + VIRTIO_STATUS) = 0;
-    *(volatile unsigned int *)(base + VIRTIO_STATUS) |=
-        VIRTIO_STATUS_ACK;
+    *(volatile unsigned int *)(base + VIRTIO_STATUS) |= VIRTIO_STATUS_ACK;
 
-    if (*(volatile unsigned int *)(base + VIRTIO_DEVICE_ID) !=
-        VIRTIO_ID_BLOCK)
-      continue;
+    if (*(volatile unsigned int *)(base + VIRTIO_DEVICE_ID) != VIRTIO_ID_BLOCK) continue;
 
     mmio_base = base;
     break;
   }
 
-  if (!mmio_base)
-    return -1;
+  if (!mmio_base) return -1;
 
   *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES) = 0;
   *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS) |=
-      (VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEAT_OK);
+    (VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEAT_OK);
 
-  unsigned int cl =
-      *(volatile unsigned int *)(mmio_base + 0x100);
-  unsigned int ch =
-      *(volatile unsigned int *)(mmio_base + 0x104);
-  capacity = ((unsigned long)ch << 32) | cl;
+  unsigned int cl = *(volatile unsigned int *)(mmio_base + 0x100);
+  unsigned int ch = *(volatile unsigned int *)(mmio_base + 0x104);
+  capacity        = ((unsigned long)ch << 32) | cl;
 
   descs = (VRingDesc *)kalloc();
   avail = (VRingAvail *)kalloc();
@@ -195,50 +176,39 @@ static int virtio_mmio_blk_init(void) {
   memset(avail, 0, PAGE_SIZE);
   memset(used, 0, PAGE_SIZE);
 
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_SEL)  = 0;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NUM)  = VIRTQ_SIZE;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_SEL) = 0;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NUM) = VIRTQ_SIZE;
 
-  unsigned long pa = (unsigned long)descs;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_LOW) =
-      pa & 0xffffffff;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_HIGH) =
-      pa >> 32;
-  pa = (unsigned long)avail;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_LOW) =
-      pa & 0xffffffff;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_HIGH) =
-      pa >> 32;
-  pa = (unsigned long)used;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_LOW) =
-      pa & 0xffffffff;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_HIGH) =
-      pa >> 32;
+  unsigned long pa                                                = (unsigned long)descs;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_LOW)   = pa & 0xffffffff;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_HIGH)  = pa >> 32;
+  pa                                                              = (unsigned long)avail;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_LOW)  = pa & 0xffffffff;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_HIGH) = pa >> 32;
+  pa                                                              = (unsigned long)used;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_LOW)  = pa & 0xffffffff;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_HIGH) = pa >> 32;
 
   *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_READY) = 1;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS) |=
-      VIRTIO_STATUS_DRIVER_OK;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS) |= VIRTIO_STATUS_DRIVER_OK;
 
   last_avail_idx = 0;
-  use_pci         = 0;
+  use_pci        = 0;
 
-  printk("[virtio-mmio] ready, cap=%d MB (%d sectors)\n",
-         (capacity / 2) / 1024, capacity);
+  printk("[virtio-mmio] ready, cap=%d MB (%d sectors)\n", (capacity / 2) / 1024, capacity);
   return 0;
 }
 
 void virtio_blk_init(void) {
-  if (virtio_pci_blk_init() == 0)
-    return;
-  if (virtio_mmio_blk_init() == 0)
-    return;
+  if (virtio_pci_blk_init() == 0) return;
+  if (virtio_mmio_blk_init() == 0) return;
   printk("[virtio] no block device found\n");
 }
 
 static int blk_request(int type, unsigned long sector, void *buf) {
-  if ((!use_pci && !mmio_base) || (use_pci && !pci_bar) || !descs)
-    return -1;
+  if ((!use_pci && !mmio_base) || (use_pci && !pci_bar) || !descs) return -1;
 
-  static VirtioBlkReq req __attribute__((aligned(16)));
+  static VirtioBlkReq  req __attribute__((aligned(16)));
   static unsigned char status __attribute__((aligned(4)));
   req.type   = type;
   req.sector = sector;
@@ -249,8 +219,7 @@ static int blk_request(int type, unsigned long sector, void *buf) {
   descs[0].next  = 1;
   descs[1].addr  = (unsigned long)buf;
   descs[1].len   = SECTOR_SIZE;
-  descs[1].flags =
-      (type == VIRTIO_BLK_T_IN) ? VRING_DESC_F_WRITE : 0;
+  descs[1].flags = (type == VIRTIO_BLK_T_IN) ? VRING_DESC_F_WRITE : 0;
   descs[1].next  = 2;
   descs[2].addr  = (unsigned long)&status;
   descs[2].len   = 1;
@@ -268,12 +237,10 @@ static int blk_request(int type, unsigned long sector, void *buf) {
     *(volatile unsigned short *)(mmio_base + VIRTIO_QUEUE_NOTIFY) = 0;
 
   for (int retry = 0; retry < 1000000; retry++) {
-    if (used->idx != last_avail_idx)
-      break;
+    if (used->idx != last_avail_idx) break;
     __asm__ __volatile__("" ::: "memory");
   }
-  if (used->idx == last_avail_idx)
-    return -1;
+  if (used->idx == last_avail_idx) return -1;
 
   __asm__ __volatile__("fence r,r" ::: "memory");
   last_avail_idx++;
@@ -285,8 +252,7 @@ int virtio_blk_read(unsigned long sector, void *buf) {
 }
 
 int virtio_blk_write(unsigned long sector, const void *buf) {
-  if ((!use_pci && !mmio_base) || (use_pci && !pci_bar))
-    return -1;
+  if ((!use_pci && !mmio_base) || (use_pci && !pci_bar)) return -1;
   memcpy(blk_buf, buf, SECTOR_SIZE);
   return blk_request(VIRTIO_BLK_T_OUT, sector, blk_buf);
 }

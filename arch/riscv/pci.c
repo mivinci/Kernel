@@ -1,6 +1,6 @@
+#include <arch/riscv/pci.h>
 #include <kernel.h>
 #include <libc.h>
-#include <arch/riscv/pci.h>
 
 /*
  * Find a virtio-blk device on the PCI bus.
@@ -11,13 +11,11 @@ int pci_find_virtio_blk(int *bus, int *dev, int *func) {
     for (int d = 0; d <= PCI_DEV_MAX; d++) {
       for (int f = 0; f <= PCI_FUNC_MAX; f++) {
         unsigned short vendor = pci_read16(b, d, f, PCI_VENDOR_ID);
-        if (vendor == 0xffff)
-          continue;
+        if (vendor == 0xffff) continue;
 
         unsigned short device = pci_read16(b, d, f, PCI_DEVICE_ID);
         if (vendor == VIRTIO_PCI_VENDOR &&
-            (device == VIRTIO_PCI_DEV_BLK_TRANS ||
-             device == VIRTIO_PCI_DEV_BLK_MODERN)) {
+            (device == VIRTIO_PCI_DEV_BLK_TRANS || device == VIRTIO_PCI_DEV_BLK_MODERN)) {
           *bus  = b;
           *dev  = d;
           *func = f;
@@ -35,18 +33,15 @@ int pci_find_virtio_blk(int *bus, int *dev, int *func) {
 /*
  * Parse a PCI capability entry.
  */
-int pci_read_cap(int bus, int dev, int func, int cap_off,
-                 struct PciCap *cap) {
+int pci_read_cap(int bus, int dev, int func, int cap_off, struct PciCap *cap) {
   memset(cap, 0, sizeof(*cap));
 
-  unsigned int addr =
-      pci_config_addr(bus, dev, func, cap_off);
+  unsigned int addr = pci_config_addr(bus, dev, func, cap_off);
 
   cap->id   = *(volatile unsigned char *)(addr + 0);
   cap->next = *(volatile unsigned char *)(addr + 1);
 
-  if (cap->id != VIRTIO_PCI_CAP_VENDOR)
-    return -1;
+  if (cap->id != VIRTIO_PCI_CAP_VENDOR) return -1;
 
   cap->cfg_type = *(volatile unsigned char *)(addr + 3);
   cap->bar      = *(volatile unsigned char *)(addr + 4);

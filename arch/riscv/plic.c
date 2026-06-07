@@ -28,8 +28,7 @@ void plic_handle(void) {
   /* Claim the highest-priority pending interrupt */
   unsigned long irq = plic_read(PLIC_CLAIM(hartid, PLIC_MODE_M));
 
-  if (irq == 0)
-    return; /* Spurious */
+  if (irq == 0) return; /* Spurious */
 
   if (irq == UART0_IRQ) {
     uart_handle();

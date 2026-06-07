@@ -1,6 +1,6 @@
   .text
   .globl  _start
-  .extern main
+  .extern kmain
 _start:
   /*
    * Choose a hart to boot the kernel via atomic lottery.
@@ -16,18 +16,23 @@ _start:
    * each 16 KB (1 << 14). The winning hart computes:
    *   sp = stack0 + hartid * 16384 + 16384
    * NSTACK is defined via -D from the Makefile (matches SMP).
+   *
+   * Save a0 (hartid) and a1 (FDT pointer) before clobbering.
    */
-  csrr     a0, mhartid
+  mv       s0, a0           /* s0 = hartid */
+  mv       s1, a1           /* s1 = FDT pointer */
   la       a3, stack0
   li       a4, 16384
-  mul      a5, a4, a0
+  mul      a5, a4, s0
   add      a3, a3, a5
   add      sp, a3, a4
 
   /*
-   * Jump to C with hartid in a0.
+   * Jump to C with hartid in a0, FDT pointer in a1.
    */
-  call     main
+  mv       a0, s0
+  mv       a1, s1
+  call     kmain
 
 wait:
   wfi

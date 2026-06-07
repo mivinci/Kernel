@@ -18,8 +18,7 @@
  * Return value in a0.
  */
 static inline __attribute__((always_inline)) unsigned long
-syscall(unsigned long nr, unsigned long a0, unsigned long a1,
-        unsigned long a2) {
+syscall(unsigned long nr, unsigned long a0, unsigned long a1, unsigned long a2) {
   register unsigned long r0 asm("a0") = a0;
   register unsigned long r1 asm("a1") = a1;
   register unsigned long r2 asm("a2") = a2;

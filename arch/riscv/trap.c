@@ -2,12 +2,12 @@
 #include <arch/riscv/plic.h>
 #include <arch/riscv/timer.h>
 #include <arch/riscv/trap.h>
-#include <syscall.h>
 #include <kernel.h>
+#include <syscall.h>
 
 extern void trap_entry(void);
 
-void        trap_init(void) {
+void trap_init(void) {
   /*
    * Set the machine trap vector to our trap_entry.
    * Mode 0 = direct (all traps go to the same address).
@@ -29,33 +29,24 @@ void trap_handler(TrapFrame *tf) {
    * Interrupt: mcause[63] == 1 (unsigned, top bit set)
    * Exception: mcause[63] == 0
    */
-  unsigned long cause = tf->mcause;
+  unsigned long cause   = tf->mcause;
   unsigned long is_intr = cause >> 63;
 
   if (is_intr) {
     cause &= ~(1UL << 63);
     switch (cause) {
-    case MCAUSE_MTIMER:
-      timer_handle();
-      break;
-    case MCAUSE_MEXT:
-      plic_handle();
-      break;
+    case MCAUSE_MTIMER: timer_handle(); break;
+    case MCAUSE_MEXT:   plic_handle(); break;
     case MCAUSE_MSI:
       /* TODO: software interrupt handler (Phase 4) */
       break;
-    default:
-      printk("[trap] unhandled interrupt: cause=%d\n", cause);
-      break;
+    default: printk("[trap] unhandled interrupt: cause=%d\n", cause); break;
     }
   } else {
     switch (cause) {
-    case MCAUSE_ECALL_M:
-      syscall_handler(tf);
-      break;
+    case MCAUSE_ECALL_M: syscall_handler(tf); break;
     default:
-      printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n", tf->mepc, cause,
-             tf->mtval);
+      printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n", tf->mepc, cause, tf->mtval);
       tf->mepc += 4;
       break;
     }

@@ -84,7 +84,7 @@ riscv64-elf-gdb kernel.elf -ex "target remote localhost:1234"
 ```
 
 - Port: `1234` (QEMU default)
-- GDB commands: `file kernel.elf`, `target remote localhost:1234`, `break main`
+- GDB commands: `file kernel.elf`, `target remote localhost:1234`, `break kmain`
 
 ## Architecture Overview
 
@@ -130,7 +130,7 @@ QEMU loads kernel at 0x80000000 ( -bios none, M-mode direct boot)
   → _start (entry.S)
     → atomic lottery: one hart wins
     → per-hart stack (NSTACK × 16KB, matched to SMP config)
-    → call main(hartid)
+    → call kmain(hartid, fdt)
       → trap_init()          # mtvec, mstatus.MIE
       → pmm_init()           # physical page allocator from _end
       → timer_init()         # periodic 1s timer interrupts

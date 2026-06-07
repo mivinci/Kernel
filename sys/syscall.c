@@ -1,9 +1,9 @@
 #include <arch/riscv/csr.h>
+#include <fs.h>
 #include <kernel.h>
 #include <libc.h>
 #include <pmm.h>
 #include <proc.h>
-#include <fs.h>
 #include <syscall.h>
 #include <uart.h>
 
@@ -14,7 +14,7 @@
  *   a2 = length
  */
 static unsigned long sys_write(TrapFrame *tf) {
-  int fd = tf->a0;
+  int           fd  = tf->a0;
   unsigned long len = tf->a2;
 
   if (fd == 1) { /* stdout: write to UART */
@@ -24,18 +24,15 @@ static unsigned long sys_write(TrapFrame *tf) {
   }
 
   File *f = fdget(fd);
-  if (!f || f->writable == 0)
-    return -1;
+  if (!f || f->writable == 0) return -1;
 
   Inode *ip = f->ip;
-  if (!ip)
-    return -1;
+  if (!ip) return -1;
 
   igrow(ip, f->off + len);
   memcpy(ip->data + f->off, (void *)tf->a1, len);
   f->off += len;
-  if (f->off > ip->size)
-    ip->size = f->off;
+  if (f->off > ip->size) ip->size = f->off;
   return len;
 }
 
@@ -48,8 +45,7 @@ static void sys_exit(TrapFrame *tf) {
   Proc *p = cpu_proc();
   if (p) {
     p->state = UNUSED;
-    if (p->kstack)
-      kfree(p->kstack);
+    if (p->kstack) kfree(p->kstack);
     p->kstack = NULL;
   }
   yield();
@@ -84,14 +80,13 @@ static unsigned long sys_getpid(TrapFrame *tf) {
  * Returns fd on success, -1 on error.
  */
 static unsigned long sys_open(TrapFrame *tf) {
-  const char *name = (const char *)tf->a0;
-  int flags = tf->a1;
+  const char *name  = (const char *)tf->a0;
+  int         flags = tf->a1;
 
   printk("[sys_open] name=%p flags=%d\n", name, flags);
 
   Inode *ip = ialloc(name);
-  if (!ip)
-    return -1;
+  if (!ip) return -1;
 
   File *f = (File *)kalloc();
   if (!f) {
@@ -132,7 +127,7 @@ static unsigned long sys_close(TrapFrame *tf) {
  * Returns bytes read, -1 on error.
  */
 static unsigned long sys_read(TrapFrame *tf) {
-  int fd = tf->a0;
+  int           fd  = tf->a0;
   unsigned long len = tf->a2;
 
   if (fd == 0) { /* stdin: not supported yet */
@@ -140,18 +135,14 @@ static unsigned long sys_read(TrapFrame *tf) {
   }
 
   File *f = fdget(fd);
-  if (!f || f->readable == 0)
-    return -1;
+  if (!f || f->readable == 0) return -1;
 
   Inode *ip = f->ip;
-  if (!ip)
-    return -1;
+  if (!ip) return -1;
 
-  if (f->off >= ip->size)
-    return 0; /* EOF */
+  if (f->off >= ip->size) return 0; /* EOF */
 
-  if (f->off + len > (unsigned long)ip->size)
-    len = ip->size - f->off;
+  if (f->off + len > (unsigned long)ip->size) len = ip->size - f->off;
 
   memcpy((void *)tf->a1, ip->data + f->off, len);
   f->off += len;
@@ -161,13 +152,9 @@ static unsigned long sys_read(TrapFrame *tf) {
 typedef unsigned long (*SysFn)(TrapFrame *);
 
 static SysFn syscall_table[] = {
-    [SYS_WRITE]  = sys_write,
-    [SYS_EXIT]   = (SysFn)sys_exit,
-    [SYS_YIELD]  = (SysFn)sys_yield,
-    [SYS_GETPID] = sys_getpid,
-    [SYS_OPEN]   = sys_open,
-    [SYS_CLOSE]  = sys_close,
-    [SYS_READ]   = sys_read,
+  [SYS_WRITE] = sys_write,   [SYS_EXIT] = (SysFn)sys_exit, [SYS_YIELD] = (SysFn)sys_yield,
+  [SYS_GETPID] = sys_getpid, [SYS_OPEN] = sys_open,        [SYS_CLOSE] = sys_close,
+  [SYS_READ] = sys_read,
 };
 
 #define NSYSCALLS (sizeof(syscall_table) / sizeof(syscall_table[0]))

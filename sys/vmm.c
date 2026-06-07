@@ -1,6 +1,6 @@
-#include <kernel.h>
-#include <arch/riscv/mmu.h>
 #include <arch/riscv/csr.h>
+#include <arch/riscv/mmu.h>
+#include <kernel.h>
 #include <pmm.h>
 
 /* Map this range with 2 MB megapages */
@@ -18,12 +18,12 @@ void vmm_init(void) {
 
   for (unsigned long pa = MAP_START; pa < MAP_END; pa += MEGAPAGE_SIZE) {
     unsigned long vpn = (pa >> 21) & 0x1FF; /* VPN[1] for 2MB megapage */
-    pmd[vpn].raw = PA2PTE(pa) | flags;
+    pmd[vpn].raw      = PA2PTE(pa) | flags;
   }
 
   /* PGD entry: VPN[2] = 0x80000000 >> 30 = 2 */
   unsigned long pgd_idx = (MAP_START >> 30) & 0x1FF;
-  pgd[pgd_idx].raw = PA2PTE((unsigned long)pmd) | PTE_V;
+  pgd[pgd_idx].raw      = PA2PTE((unsigned long)pmd) | PTE_V;
 
   /* Enable Sv39 paging */
   unsigned long satp = MAKE_SATP((unsigned long)pgd);
@@ -40,7 +40,7 @@ void vmm_init(void) {
   /* Quick test: read/write to an unmapped physical page via identity map.
    * Use a high address outside the kernel image. */
   volatile unsigned long *test = (volatile unsigned long *)0x87F00000UL;
-  *test = 0xDEADBEEF;
+  *test                        = 0xDEADBEEF;
   if (*test == 0xDEADBEEF)
     printk("[vmm] test: r/w OK at 0x%p\n", test);
   else
