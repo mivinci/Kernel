@@ -311,30 +311,39 @@ static int blk_request(int type, unsigned long sector, void *buf) {
     *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NOTIFY) = 0;
 
   /*
-   * Wait for completion.  If a process is running, block via
-   * IOWAIT and yield instead of busy-spinning.  The virtio
-   * interrupt handler will wake us.
+   * Wait for completion.  If a process is running, spin briefly
+   * then yield to give other processes CPU time; the virtio
+   * interrupt handler will wake us via proc_iowait_wake().
    * During boot (no process yet), fall back to busy-wait.
    */
   Proc *cur = cpu_proc();
   if (cur) {
-    /* Block current process on I/O */
-    cur->state = IOWAIT;
-    yield();
+    for (int retry = 0; retry < 1000000; retry++) {
+      __asm__ __volatile__("fence r,r" ::: "memory");
+      if (used->idx != last_avail_idx) break;
+      if (retry > 0 && (retry % 10000) == 0) {
+        cur->state = IOWAIT;
+        yield();
+      }
+    }
+    if (used->idx == last_avail_idx) return -1;
     blk_pending = 0;
-
     __asm__ __volatile__("fence r,r" ::: "memory");
     last_avail_idx++;
     return (status == 0) ? 0 : -1;
   } else {
-    /* Boot-time: busy-wait */
+    /* Boot-time: busy-wait without yielding */
     for (int retry = 0; retry < 1000000; retry++) {
       if (used->idx != last_avail_idx) break;
       __asm__ __volatile__("" ::: "memory");
     }
-    blk_pending = 0;
     if (used->idx == last_avail_idx) return -1;
 
+    /* Acknowledge interrupt so it doesn't fire as a stale IRQ later */
+    if (!use_pci && mmio_base)
+      *(volatile unsigned int *)(mmio_base + VIRTIO_INTR_ACK) = 1;
+
+    blk_pending = 0;
     __asm__ __volatile__("fence r,r" ::: "memory");
     last_avail_idx++;
     return (status == 0) ? 0 : -1;

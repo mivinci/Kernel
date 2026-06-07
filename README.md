@@ -56,6 +56,7 @@ void main(void) {
 ```bash
 riscv64-elf-gcc -nostdlib -ffreestanding -fno-builtin -Os \
     -march=rv64gc -mabi=lp64d -mcmodel=medany \
+    -fno-pic -fno-PIE \
     -Wl,-Ttext=0 -o myapp.elf crt0.S myapp.c
 riscv64-elf-objcopy -O binary myapp.elf myapp.bin
 ```
@@ -115,6 +116,63 @@ riscv64-elf-gdb kernel.elf -ex "target remote localhost:1234"
 #   break trap_handler — break on any trap
 #   info registers     — dump all registers
 ```
+
+## Interactive Testing with expect
+
+Use `expect` to script terminal interactions with the kernel shell. This is the
+recommended way to test user programs — it sends characters one at a time over a
+pseudo-terminal, matching the UART interrupt-driven input path.
+
+> **Do not pipe input** (e.g. `echo hello | qemu ...`).  Piped stdin delivers all
+> data at once, which races with the kernel's `read()` / `yield()` loop and causes
+> the shell to miss input.
+
+### Run a single command
+
+```bash
+timeout 20 expect -c '
+set timeout 10
+spawn qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+    -nographic -smp 2 \
+    -drive file=disk.img,format=raw,if=none,id=blk \
+    -device virtio-blk-device,drive=blk
+expect "$ "
+send "hello\r"
+expect "$ "
+puts "=== hello ran, shell returned ==="
+'
+```
+
+### Run and exit
+
+```bash
+timeout 20 expect -c '
+set timeout 10
+spawn qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+    -nographic -smp 2 \
+    -drive file=disk.img,format=raw,if=none,id=blk \
+    -device virtio-blk-device,drive=blk
+expect "$ "
+send "hello\r"
+expect "$ "
+send "x\r"
+expect eof
+'
+```
+
+### Non-interactive smoke test
+
+To verify boot without sending any input (e.g. in CI), use `timeout`:
+
+```bash
+timeout 5 qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+    -nographic -smp 2 \
+    -drive file=disk.img,format=raw,if=none,id=blk \
+    -device virtio-blk-device,drive=blk
+```
+
+This prints boot log and exits after 5 seconds. Look for `$ ` in the output to
+confirm the shell started.
 
 ## Build Options
 

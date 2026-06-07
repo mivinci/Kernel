@@ -130,7 +130,8 @@ void yield(void) {
   Proc *p   = cpu[hid].proc;
   if (!p || p->state == ZOMBIE) return;
   spin_lock(&ptable_lock);
-  p->state = RUNNABLE;
+  if (p->state == RUNNING)
+    p->state = RUNNABLE;
   spin_unlock(&ptable_lock);
   swtch(&p->context, &cpu[hid].context);
 }
