@@ -138,8 +138,15 @@ static unsigned long sys_read(TrapFrame *tf) {
   int           fd  = tf->a0;
   unsigned long len = tf->a2;
 
-  if (fd == 0) { /* stdin: not supported yet */
-    return 0;
+  if (fd == 0) { /* stdin: read from UART (polling) */
+    unsigned long i;
+    for (i = 0; i < len; i++) {
+      int c;
+      while ((c = getc()) == -1)
+        ; /* busy-wait for character */
+      ((char *)tf->a1)[i] = (char)c;
+    }
+    return i;
   }
 
   File *f = fdget(fd);

@@ -9,12 +9,12 @@ _start:
   li    a0, 1           /* stdout */
 .La:  auipc a1, %pcrel_hi(init_msg)
   addi  a1, a1, %pcrel_lo(.La)
-  li    a2, 21          /* strlen("init: starting hello\n") = 20 */
+  li    a2, 18          /* strlen("init: starting sh\n") = 18 */
   ecall
 
-  /* SYS_SPAWN: start hello */
+  /* SYS_SPAWN: start the shell */
   li    a7, 8           /* SYS_SPAWN */
-.Lb:  auipc a0, %pcrel_hi(hello_path)
+.Lb:  auipc a0, %pcrel_hi(shell_path)
   addi  a0, a0, %pcrel_lo(.Lb)
   ecall
   /* a0 = child pid (ignored for now) */
@@ -25,17 +25,17 @@ _start:
   li    a0, -1          /* wait for any child */
   ecall
   /* a0 = child pid or -1 */
-  /* Re-spawn */
+  /* Re-spawn the shell */
   li    a7, 8           /* SYS_SPAWN */
-.Lc:  auipc a0, %pcrel_hi(hello_path)
+.Lc:  auipc a0, %pcrel_hi(shell_path)
   addi  a0, a0, %pcrel_lo(.Lc)
   ecall
   j     1b
 
   .balign 4
 init_msg:
-  .asciz "init: starting hello\n"
+  .asciz "init: starting sh\n"
 
   .balign 4
-hello_path:
-  .asciz "/bin/hello"
+shell_path:
+  .asciz "/bin/sh"
