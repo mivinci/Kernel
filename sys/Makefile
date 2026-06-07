@@ -1,3 +1,4 @@
+obj-y += blk.o
 obj-y += diskfs.o
 obj-y += fdt.o
 obj-y += file.o

@@ -1,4 +1,4 @@
-#include <arch/riscv/virtio.h>
+#include <blk.h>
 #include <diskfs.h>
 #include <kernel.h>
 #include <types.h>
@@ -8,11 +8,11 @@ static DfsInode     inode_cache[12];
 static int          inode_cache_valid;
 
 static int dfs_read_sector(int sector, void *buf) {
-  return virtio_blk_read(sector, buf);
+  return blk_read(sector, buf);
 }
 
 void dfs_init(void) {
-  if (virtio_blk_capacity() == 0) {
+  if (blk_capacity() == 0) {
     printk("[diskfs] no block device\n");
     return;
   }
