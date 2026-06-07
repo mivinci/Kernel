@@ -5,6 +5,7 @@
 
 #define NPROC  16
 #define KSTACK PAGE_SIZE /* 4 KB kernel stack per process */
+#define NCPU   SMP       /* max harts (from Makefile -DSMP) */
 
 typedef enum {
   UNUSED,
@@ -55,7 +56,7 @@ XDEF_STRUCT(Cpu) {
 };
 
 void  proc_init(void);
-void  scheduler(void) __attribute__((noreturn));
+void  scheduler(int hartid) __attribute__((noreturn));
 void  swtch(Context *old, Context *new);
 int   proc_create(void (*fn)(void), const char *name, void *upage);
 void  proc_exit(int code);

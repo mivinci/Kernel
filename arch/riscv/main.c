@@ -74,10 +74,10 @@ void kmain(int hartid, void *fdt) {
 
   vmm_init();
 
-  /*
-   * Multi-hart: entry.S holds non-0 harts in wfi until a flag
-   * is set.  For now only hart 0 enters the scheduler; once the
-   * flag mechanism is wired, each hart calls scheduler().
-   */
-  scheduler();
+  /* Signal other harts that the kernel is ready */
+  extern int hart_ready;
+  hart_ready = 1;
+  __asm__ __volatile__("fence w,w" ::: "memory");
+
+  scheduler(hartid);
 }
