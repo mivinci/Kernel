@@ -38,14 +38,18 @@ void dfs_init(void) {
   printk("[diskfs] %d inodes, %d blocks\n", sb.ninodes, sb.nblocks);
 
   /* Backward compat: also register as ramfs idiskslot entries.
-   * usr_load (old code) uses iname/Inode lookup. */
+   * usr_load (old code) uses iname/Inode lookup.
+   * Only read populated inode sectors to minimize boot I/O. */
   char secbuf[SECTOR_SIZE];
-  for (int sec = 0; sec < 7; sec++) {
+  for (int sec = 0; sec < 7 && sb.ninodes > 0; sec++) {
+    int remaining = sb.ninodes - sec * 16;
+    if (remaining <= 0) break;
     if (dfs_read_sector(DFS_INODE_SECTOR + sec, secbuf) != 0) continue;
-    for (int i = 0; i < 16; i++) {
+    int max = 16;
+    if (remaining < max) max = remaining;
+    for (int i = 0; i < max; i++) {
       DfsInode *ino = (DfsInode *)(secbuf + i * DFS_INODE_SIZE);
       if (ino->mode != DFS_MODE_REGULAR) continue;
-      /* Register: name → sector */
       Inode *ip = idiskslot(ino->name, ino->block[0], ino->size);
       if (ip)
         printk("[boot] %-16s sector=%d size=%d\n", ino->name, ino->block[0], ino->size);
