@@ -12,6 +12,39 @@ The project uses a hand-written GNU Make system inspired by Linux `kbuild`.
 make                  # builds kernel.a (default ARCH=riscv)
 ```
 
+### Building User Programs
+
+User programs are in `usr/` and compile as flat binaries loaded at VA 0. The
+custom linker script `usr/user.ld` defines explicit PHDRS to avoid the
+`PHDR segment not covered by LOAD segment` error with newer GNU ld (≥ 2.39).
+
+```bash
+# With riscv64-elf- (original toolchain)
+make -C usr
+
+# With riscv64-linux-gnu- (Debian/Ubuntu cross-compiler)
+make -C usr CROSS_COMPILE=riscv64-linux-gnu- CFLAGS="-nostdlib -ffreestanding \
+    -fno-builtin -march=rv64gc -mabi=lp64d -mcmodel=medany -Os -fno-pic -fno-PIE" \
+    LDFLAGS="-Wl,-T,user.ld -Wl,-z,execstack -Wl,--no-warn-rwx-segments"
+```
+
+Key flags for `riscv64-linux-gnu-`:
+- `-fno-pic -fno-PIE` — disable GOT/PLT generation (flat binaries have no dynamic linker)
+- `-Wl,-T,user.ld` — use the custom linker script with explicit PHDRS
+- `-Wl,-z,execstack -Wl,--no-warn-rwx-segments` — suppress ld warnings for RWX segments
+
+### Creating the Disk Image
+
+```bash
+dd if=/dev/zero of=disk.img bs=512 count=2048
+python3 tools/mkfs.py disk.img \
+    /bin/init=usr/init.bin \
+    /bin/sh=usr/sh.bin     \
+    /bin/hello=usr/hello.bin
+```
+
+The disk image must exist before running `mkfs.py` (it opens `r+b`, not `w+b`).
+
 ### Configuration
 
 Configuration is in `scripts/Makefile.config`:
@@ -68,12 +101,44 @@ qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
 ```bash
 # Create disk image
 dd if=/dev/zero of=disk.img bs=512 count=2048
+python3 tools/mkfs.py disk.img \
+    /bin/init=usr/init.bin \
+    /bin/sh=usr/sh.bin     \
+    /bin/hello=usr/hello.bin
 
-# Run with virtio-blk-pci
+# Run with virtio-blk-device
 qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
   -nographic -smp 2 \
   -drive file=disk.img,format=raw,if=none,id=blk \
-  -device virtio-blk-pci,drive=blk
+  -device virtio-blk-device,drive=blk
+```
+
+### Interactive Testing with expect
+
+**Always use `expect`** (or a real terminal) to send commands to the kernel shell. Do not pipe stdin — piped data arrives in a burst that races with the UART interrupt path and the shell misses input.
+
+```bash
+timeout 20 expect -c '
+set timeout 10
+spawn qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+    -nographic -smp 2 \
+    -drive file=disk.img,format=raw,if=none,id=blk \
+    -device virtio-blk-device,drive=blk
+expect "$ "
+send "hello\r"
+expect "$ "
+'
+```
+
+### Non-Interactive Smoke Test
+
+Use `timeout` to verify boot without sending input:
+
+```bash
+timeout 5 qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+    -nographic -smp 2 \
+    -drive file=disk.img,format=raw,if=none,id=blk \
+    -device virtio-blk-device,drive=blk
 ```
 
 ### GDB Debugging
@@ -85,6 +150,16 @@ riscv64-elf-gdb kernel.elf -ex "target remote localhost:1234"
 
 - Port: `1234` (QEMU default)
 - GDB commands: `file kernel.elf`, `target remote localhost:1234`, `break kmain`
+
+### QEMU Debug Flags
+
+Trace interrupts and guest errors:
+
+```bash
+qemu-system-riscv64 ... -d int,guest_errors
+```
+
+Useful for diagnosing ecall loops, page faults, and PLIC routing issues.
 
 ## Architecture Overview
 
