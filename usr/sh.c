@@ -28,12 +28,18 @@ void main(void) {
     if (strcmp(buf, "x") == 0)
       exit(0);
 
-    /* Build "/bin/<cmd>" and spawn */
+    /* Build absolute path: "/bin/<cmd>", or use as-is if absolute */
     char path[64];
-    path[0] = '/'; path[1] = 'b'; path[2] = 'i'; path[3] = 'n'; path[4] = '/';
-    int i = 5;
-    for (int j = 0; buf[j]; j++) path[i++] = buf[j];
-    path[i] = '\0';
+    if (buf[0] == '/') {
+      int j;
+      for (j = 0; buf[j]; j++) path[j] = buf[j];
+      path[j] = '\0';
+    } else {
+      path[0] = '/'; path[1] = 'b'; path[2] = 'i'; path[3] = 'n'; path[4] = '/';
+      int i = 5;
+      for (int j = 0; buf[j]; j++) path[i++] = buf[j];
+      path[i] = '\0';
+    }
 
     spawn(path);
   }
