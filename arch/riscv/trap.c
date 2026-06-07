@@ -23,9 +23,16 @@ extern void trap_entry(void);
  * via `qemu-system-riscv64 -d int,guest_errors`.
  */
 
+/*
+ * Initialize trap handling for this hart.
+ *
+ * ORDER MATTERS: mscratch must be written BEFORE enabling
+ * MSTATUS_MIE.  If a timer or PLIC interrupt is pending
+ * (common on non-0 harts that initialized late), the
+ * trap_entry csrrw will swap sp with mscratch.  If mscratch
+ * is garbage (0), sp becomes 0 → all frame STOREs fault.
+ */
 void trap_init(void) {
-  /* Set mscratch FIRST — before enabling interrupts, so any
-   * pending timer interrupt doesn't fault on entry. */
   unsigned long sp;
   __asm__ __volatile__("mv %0, sp" : "=r"(sp));
   csr_write(mscratch, sp);

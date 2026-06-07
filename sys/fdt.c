@@ -127,7 +127,11 @@ void fdt_apply(void) {
 
   uart_mmio_base   = uart_base;
   plic_mmio_base   = plic_base;
-  mtimer_mmio_base = 0x2004000UL; /* FDT timer address (same for now) */
+  /* Timer: QEMU virt FDT reports CLINT at 0x2000000, but our
+   * timer driver is written for ACLINT at 0x2004000 (different
+   * register layout).  Keep hardcoded until an ACLINT/CLINT
+   * detection is added. */
+  mtimer_mmio_base = 0x2004000UL;
   ram_base         = memory_base;
   ram_size         = memory_size;
 
