@@ -2,6 +2,9 @@
 #include <libc.h>
 #include <uart.h>
 
+/* Runtime UART base — initialized to QEMU default, updated by FDT */
+unsigned long uart_mmio_base = 0x10000000UL;
+
 void uart_init(void) {
   /* Disable interrupts during init */
   WRITE(IER, 0);

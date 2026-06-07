@@ -112,15 +112,25 @@ void fdt_init(void *fdt_ptr) {
   }
 }
 
-void fdt_get_memory(unsigned long *base, unsigned long *size) {
-  if (base) *base = memory_base;
-  if (size) *size = memory_size;
-}
+/* Public globals set by fdt_apply */
+unsigned long ram_base = 0x80000000UL;
+unsigned long ram_size = 128UL * 1024 * 1024;
 
-void fdt_get_uart(unsigned long *base) {
-  if (base) *base = uart_base;
-}
+void fdt_apply(void) {
+  if (!fdt_base)
+    return;
 
-void fdt_get_plic(unsigned long *base) {
-  if (base) *base = plic_base;
+  /* Apply FDT addresses to driver globals */
+  extern unsigned long uart_mmio_base;
+  extern unsigned long plic_mmio_base;
+  extern unsigned long mtimer_mmio_base;
+
+  uart_mmio_base   = uart_base;
+  plic_mmio_base   = plic_base;
+  mtimer_mmio_base = 0x2004000UL; /* FDT timer address (same for now) */
+  ram_base         = memory_base;
+  ram_size         = memory_size;
+
+  printk("[fdt] applied: UART=%p PLIC=%p RAM=%p+%p\n", uart_mmio_base,
+         plic_mmio_base, ram_base, ram_size);
 }

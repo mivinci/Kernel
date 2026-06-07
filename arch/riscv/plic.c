@@ -3,6 +3,9 @@
 #include <kernel.h>
 #include <uart.h>
 
+/* Runtime PLIC base — initialized to QEMU default, updated by FDT */
+unsigned long plic_mmio_base = 0x0c000000UL;
+
 void plic_init(void) {
   unsigned long hartid = csr_read(mhartid);
 

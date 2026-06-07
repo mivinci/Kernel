@@ -20,13 +20,15 @@
 /* mie bit for machine external interrupt */
 #define MIE_MEIE (1 << 11)
 
+extern unsigned long plic_mmio_base;
+
 /* Volatile MMIO helpers (PLIC registers are 32-bit) */
 static inline void plic_write(unsigned long reg, unsigned int val) {
-  *(volatile unsigned int *)(PLIC_BASE + reg) = val;
+  *(volatile unsigned int *)(plic_mmio_base + reg) = val;
 }
 
 static inline unsigned int plic_read(unsigned long reg) {
-  return *(volatile unsigned int *)(PLIC_BASE + reg);
+  return *(volatile unsigned int *)(plic_mmio_base + reg);
 }
 
 void plic_init(void);

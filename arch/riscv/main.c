@@ -40,19 +40,9 @@ void kmain(int hartid, void *fdt) {
   printk("[kernel] Booting by hart %d ...\n", hartid);
 
   trap_init();
-
-  /* Parse device tree */
-  printk("[fdt] pointer=%p\n", fdt);
   fdt_init(fdt);
+  fdt_apply();
 
-  /* Print detected hardware */
-  unsigned long mem_base, mem_size;
-  unsigned long uart_addr, plic_addr;
-  fdt_get_memory(&mem_base, &mem_size);
-  fdt_get_uart(&uart_addr);
-  fdt_get_plic(&plic_addr);
-  printk("[fdt] RAM: %p-%p (%d MB)\n", mem_base, mem_base + mem_size, mem_size / (1024 * 1024));
-  printk("[fdt] UART=%p PLIC=%p\n", uart_addr, plic_addr);
   pmm_init();
   timer_init();
   proc_init();

@@ -1,11 +1,7 @@
+#include <fdt.h>
 #include <kernel.h>
 #include <libc.h>
 #include <pmm.h>
-
-/* QEMU virt machine default RAM size: 128 MB */
-#define RAM_START 0x80000000UL
-#define RAM_SIZE  (128UL * 1024 * 1024)
-#define RAM_END   (RAM_START + RAM_SIZE)
 
 /* Linker script exports this symbol at the end of the kernel image */
 extern char _end[];
@@ -25,7 +21,8 @@ void pmm_init(void) {
   free_list           = NULL;
   unsigned long count = 0;
 
-  for (unsigned long addr = start; addr + PAGE_SIZE <= RAM_END; addr += PAGE_SIZE) {
+  for (unsigned long addr = start; addr + PAGE_SIZE <= ram_base + ram_size;
+       addr += PAGE_SIZE) {
     FreePage *page = (FreePage *)addr;
     page->next     = free_list;
     free_list      = page;

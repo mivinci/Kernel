@@ -1,8 +1,8 @@
 #ifndef _UART_H
 #define _UART_H
 
-/* NS16550-compatible UART base address */
-#define UART_BASE 0x10000000L
+/* Default UART base (QEMU virt) — overridden by FDT at runtime */
+extern unsigned long uart_mmio_base;
 
 /* Register offsets */
 #define THR 0x00 /* Transmit Holding Register (DLAB=0) */
@@ -33,8 +33,8 @@
 #define LSR_RX_READY 0x01 /* Data ready */
 
 /* MMIO read/write macros */
-#define READ(reg)       (*(volatile char *)(UART_BASE + (reg)))
-#define WRITE(reg, val) (*(volatile char *)(UART_BASE + (reg))) = (val)
+#define READ(reg)       (*(volatile char *)(uart_mmio_base + (reg)))
+#define WRITE(reg, val) (*(volatile char *)(uart_mmio_base + (reg))) = (val)
 
 void putc(char c);
 void uart_init(void);

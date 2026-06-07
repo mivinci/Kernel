@@ -34,14 +34,15 @@ static inline unsigned int fdt_be32(const void *p) {
 
 static inline unsigned long fdt_be64(const void *p) {
   unsigned int hi = fdt_be32(p);
-  unsigned int lo = fdt_be32((const char *)p + 4);
+  unsigned int lo  = fdt_be32((const char *)p + 4);
   return ((unsigned long)hi << 32) | lo;
 }
 
-/* FDT parser state */
 void fdt_init(void *fdt_ptr);
-void fdt_get_memory(unsigned long *base, unsigned long *size);
-void fdt_get_uart(unsigned long *base);
-void fdt_get_plic(unsigned long *base);
+void fdt_apply(void);
+
+/* Globals set by fdt_apply */
+extern unsigned long ram_base;
+extern unsigned long ram_size;
 
 #endif /* _FDT_H */

@@ -1,18 +1,18 @@
 #ifndef _ARCH_RISCV_TIMER_H
 #define _ARCH_RISCV_TIMER_H
 
-/* ACLINT MTIMER base address for QEMU RISC-V virt machine */
-#define MTIMER_BASE 0x2004000UL
+/* ACLINT MTIMER base — runtime variable, default QEMU virt */
+extern unsigned long mtimer_mmio_base;
 
 /*
  * ACLINT MTIMER register layout:
- *   mtimecmp[hartid] at MTIMER_BASE + 8 * hartid
- *   mtime             at MTIMER_BASE + 0x7FF8
+ *   mtimecmp[hartid] at base + 8 * hartid
+ *   mtime             at base + 0x7FF8
  *
  * QEMU default timebase frequency: 10 MHz (10,000,000 Hz)
  */
-#define MTIMECMP(hartid) (MTIMER_BASE + 8 * (hartid))
-#define MTIME            (MTIMER_BASE + 0x7FF8)
+#define MTIMECMP(hartid) (mtimer_mmio_base + 8 * (hartid))
+#define MTIME            (mtimer_mmio_base + 0x7FF8)
 
 /* Timer interval: 1 second at 10 MHz = 10,000,000 ticks */
 #define TIMER_INTERVAL 10000000UL
