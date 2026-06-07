@@ -27,11 +27,12 @@ void trap_init(void) {
   csr_write(mtvec, (unsigned long)trap_entry);
   csr_write(mstatus, csr_read(mstatus) | MSTATUS_MIE);
 
-  /*
-   * Each process sets mscratch to its kstack top in proc_create.
-   * kernel threads (M-mode) and user processes (U-mode) both use
-   * their process kernel stack for trap frames.
-   */
+  /* Set mscratch to current sp so interrupts during early boot
+   * (before any process is created) use the bootstrap stack. */
+  unsigned long sp;
+  __asm__ __volatile__("mv %0, sp" : "=r"(sp));
+  csr_write(mscratch, sp);
+
   printk("[trap] mtvec=%p mstatus=%p\n", trap_entry, csr_read(mstatus));
 }
 

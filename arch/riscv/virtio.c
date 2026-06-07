@@ -3,6 +3,7 @@
 #include <kernel.h>
 #include <types.h>
 #include <pmm.h>
+#include <proc.h>
 
 /*
  * virtio-blk driver with dual-mode (legacy + non-legacy) MMIO queue
@@ -38,6 +39,9 @@ static unsigned short last_avail_idx;
 static char           blk_buf[SECTOR_SIZE] __attribute__((aligned(16)));
 
 static unsigned long pci_notify_addr;
+
+/* Interrupt-driven I/O state (per-request) */
+static volatile int blk_pending; /* 1 = request submitted, waiting for completion */
 
 static inline volatile struct VirtioPciCfg *pci_cfg(void) {
   return (volatile struct VirtioPciCfg *)pci_bar;
@@ -298,21 +302,58 @@ static int blk_request(int type, unsigned long sector, void *buf) {
   avail->idx += 1;
   __asm__ __volatile__("fence w,w" ::: "memory");
 
+  /* Reset completion flag before notifying device */
+  blk_pending = 1;
+
   if (use_pci)
     pci_notify(0);
-  else {
+  else
     *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NOTIFY) = 0;
-  }
 
-  for (int retry = 0; retry < 1000000; retry++) {
-    if (used->idx != last_avail_idx) break;
-    __asm__ __volatile__("" ::: "memory");
-  }
-  if (used->idx == last_avail_idx) return -1;
+  /*
+   * Wait for completion.  If a process is running, block via
+   * IOWAIT and yield instead of busy-spinning.  The virtio
+   * interrupt handler will wake us.
+   * During boot (no process yet), fall back to busy-wait.
+   */
+  Proc *cur = cpu_proc();
+  if (cur) {
+    /* Block current process on I/O */
+    cur->state = IOWAIT;
+    yield();
+    blk_pending = 0;
 
-  __asm__ __volatile__("fence r,r" ::: "memory");
-  last_avail_idx++;
-  return (status == 0) ? 0 : -1;
+    __asm__ __volatile__("fence r,r" ::: "memory");
+    last_avail_idx++;
+    return (status == 0) ? 0 : -1;
+  } else {
+    /* Boot-time: busy-wait */
+    for (int retry = 0; retry < 1000000; retry++) {
+      if (used->idx != last_avail_idx) break;
+      __asm__ __volatile__("" ::: "memory");
+    }
+    blk_pending = 0;
+    if (used->idx == last_avail_idx) return -1;
+
+    __asm__ __volatile__("fence r,r" ::: "memory");
+    last_avail_idx++;
+    return (status == 0) ? 0 : -1;
+  }
+}
+
+/*
+ * Interrupt handler: invoked by PLIC when the device finishes
+ * an I/O request and updates used->idx.  Advance last_avail_idx
+ * and wake the blocked process.
+ */
+void virtio_blk_intr_handler(void) {
+  /* Acknowledge interrupt on MMIO device */
+  if (!use_pci && mmio_base) {
+    unsigned int st = *(volatile unsigned int *)(mmio_base + VIRTIO_INTR_STATUS);
+    if (st & 1)
+      *(volatile unsigned int *)(mmio_base + VIRTIO_INTR_ACK) = 1;
+  }
+  proc_iowait_wake();
 }
 
 int virtio_blk_read(unsigned long sector, void *buf) {

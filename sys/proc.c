@@ -167,6 +167,20 @@ Proc *get_proc(int pid) {
 }
 
 /*
+ * Wake the first IOWAIT process (block device interrupt handler).
+ */
+void proc_iowait_wake(void) {
+  spin_lock(&ptable_lock);
+  for (int i = 0; i < NPROC; i++) {
+    if (ptable[i].state == IOWAIT) {
+      ptable[i].state = RUNNABLE;
+      break;
+    }
+  }
+  spin_unlock(&ptable_lock);
+}
+
+/*
  * Exit current process with status code.
  * Marks process as ZOMBIE.  Frees user page here, kstack is
  * freed by proc_wait or the scheduler (for unreaped zombies).

@@ -103,5 +103,6 @@ void          virtio_blk_init(void);
 int           virtio_blk_read(unsigned long sector, void *buf);
 int           virtio_blk_write(unsigned long sector, const void *buf);
 unsigned long virtio_blk_capacity(void);
+void          virtio_blk_intr_handler(void);
 
 #endif /* _ARCH_RISCV_VIRTIO_H */

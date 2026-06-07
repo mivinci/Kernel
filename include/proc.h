@@ -11,6 +11,7 @@ typedef enum {
   RUNNABLE,
   RUNNING,
   ZOMBIE,
+  IOWAIT,   /* blocked on block-device I/O */
 } ProcState;
 
 /* Callee-saved registers saved by swtch() */
@@ -63,5 +64,6 @@ void  yield(void);
 void  sched_tick(void);
 Proc *cpu_proc(void);
 Proc *get_proc(int pid);
+void  proc_iowait_wake(void);
 
 #endif /* _PROC_H */

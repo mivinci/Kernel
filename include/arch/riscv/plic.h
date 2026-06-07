@@ -16,6 +16,7 @@
 
 /* Interrupt source numbers */
 #define UART0_IRQ 10
+#define VIRTIO_IRQ 1   /* virtio-mmio slot 0 (0x10001000) */
 
 /* mie bit for machine external interrupt */
 #define MIE_MEIE (1 << 11)
