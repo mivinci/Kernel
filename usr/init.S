@@ -34,7 +34,7 @@ _start:
 
   .balign 4
 init_msg:
-  .asciz "init: starting sh\n"
+  .asciz "init: starting\n"
 
   .balign 4
 shell_path:

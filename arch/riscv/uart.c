@@ -5,6 +5,12 @@
 /* Runtime UART base — initialized to QEMU default, updated by FDT */
 unsigned long uart_mmio_base = 0x10000000UL;
 
+/* Console input circular buffer */
+#define CONSBUF 128
+static char cons_buf[CONSBUF];
+static int  cons_r; /* read index */
+static int  cons_w; /* write index */
+
 void uart_init(void) {
   /* Disable interrupts during init */
   WRITE(IER, 0);
@@ -22,8 +28,11 @@ void uart_init(void) {
   /* Enable interrupt output (OUT2) */
   WRITE(MCR, MCR_OUT2);
 
-  /* Enable receive interrupt */
+  /* Enable receive interrupt for console input buffer */
   WRITE(IER, IER_RDA);
+
+  cons_r = 0;
+  cons_w = 0;
 }
 
 /* 同步发送一个字符 */
@@ -43,21 +52,37 @@ void puts(char *p) {
 }
 
 /*
- * Polling-based character receive. Returns -1 if no data available.
+ * Read a character from console input.
+ * Checks interrupt buffer first, then polls hardware directly.
+ * Returns -1 if no data available.
  */
 int getc(void) {
-  if (READ(LSR) & LSR_RX_READY) return (unsigned char)READ(RBR);
+  if (cons_r != cons_w) {
+    int c = (unsigned char)cons_buf[cons_r];
+    cons_r = (cons_r + 1) % CONSBUF;
+    return c;
+  }
+  if (READ(LSR) & LSR_RX_READY) {
+    char c = READ(RBR);
+    putc(c); /* echo when reading directly */
+    return (unsigned char)c;
+  }
   return -1;
 }
 
 /*
  * Handle a UART interrupt (called from PLIC handler).
- * Reads all available received characters and echoes them.
+ * Reads all available received characters into the console buffer.
  */
 void uart_handle(void) {
   while (READ(LSR) & LSR_RX_READY) {
     char c = READ(RBR);
     putc(c); /* echo */
+    int next = (cons_w + 1) % CONSBUF;
+    if (next != cons_r) {
+      cons_buf[cons_w] = c;
+      cons_w = next;
+    }
   }
 }
 

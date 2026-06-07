@@ -18,7 +18,6 @@ static unsigned long count_a, count_b;
 
 static void proc_a(void) {
   printk("[A] started\n");
-  /* Warmup ecall (SYS_YIELD instead of SYS_GETPID for RV32 compat) */
   syscall(SYS_YIELD, 0, 0, 0);
   printk("[A] after warmup\n");
 

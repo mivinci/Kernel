@@ -56,7 +56,7 @@ def main():
         sector0[entry_offset : entry_offset + 72] = entry
         entry_offset += 72
         file_data.append(data)
-        print(f"[mkdisk] {bin_path} ({len(data)} bytes) -> '/{name.decode()}'")
+        print(f"[mkdisk] {bin_path} ({len(data)} bytes) -> '{name.decode()}'")
 
     # Write disk image
     with open(disk_path, "r+b") as f:

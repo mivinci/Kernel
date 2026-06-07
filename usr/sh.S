@@ -13,7 +13,8 @@ prompt:
   li    a2, 2           /* len */
   ecall
 
-  /* Read one character from stdin (fd 0) */
+  /* Read one character from stdin (fd 0) — non-blocking */
+1:
   li    a7, 7           /* SYS_READ */
   li    a0, 0           /* stdin */
   .Lra: auipc a1, %pcrel_hi(inbuf)
@@ -22,43 +23,85 @@ prompt:
   ecall
   /* a0 = bytes read */
 
-  /* If no data, skip */
-  beqz  a0, prompt
+  /* If no data, yield and try again */
+  bnez  a0, have_char
+  li    a7, 3           /* SYS_YIELD */
+  ecall
+  j     1b
 
-  /* Read rest of line until newline or more data */
-  li    t0, 0           /* total read */
-1:
-  addi  t0, t0, 1       /* one char already read */
+have_char:
+  /* Check for CR or LF — ignore empty lines */
+  .Lra2: auipc t0, %pcrel_hi(inbuf)
+  addi  t0, t0, %pcrel_lo(.Lra2)
+  lbu   t1, 0(t0)
+  li    t2, 10          /* '\n' */
+  beq   t1, t2, prompt
+  li    t2, 13          /* '\r' */
+  beq   t1, t2, prompt
+
+  /* Read rest of line */
+  li    t0, 0           /* chars read (starting fresh since first char is kept) */
+  addi  t0, t0, 1       /* count the first char */
+  li    t3, 10          /* '\n' for comparison later */
+
+read_loop:
+  li    a7, 7           /* SYS_READ */
+  li    a0, 0           /* stdin */
   .Lrb: auipc a1, %pcrel_hi(inbuf)
   addi  a1, a1, %pcrel_lo(.Lrb)
   add   a1, a1, t0      /* buf + offset */
-  li    a7, 7           /* SYS_READ */
-  li    a0, 0           /* stdin */
   li    a2, 1           /* 1 byte */
   ecall
-  beqz  a0, 2f          /* no more data -> process */
-  /* Check for newline */
+  bnez  a0, got_char
+
+  /* No data — yield and retry */
+  li    a7, 3           /* SYS_YIELD */
+  ecall
+  j     read_loop
+
+got_char:
+  /* Check last char for newline */
   .Lcb: auipc t1, %pcrel_hi(inbuf)
   addi  t1, t1, %pcrel_lo(.Lcb)
   add   t1, t1, t0
-  lbu   t2, 0(t1)
-  li    t3, 10          /* '\n' */
-  beq   t2, t3, 2f      /* newline -> process */
+  lbu   t4, 0(t1)
+  beq   t4, t3, process_line
   /* Check buffer limit */
-  li    t3, 63
-  bge   t0, t3, 2f      /* full -> process */
-  j     1b
+  li    t4, 63
+  addi  t0, t0, 1
+  blt   t0, t4, read_loop
 
-2:
-  /* Null-terminate */
+process_line:
+  /* Null-terminate the command */
   .Lta: auipc t1, %pcrel_hi(inbuf)
   addi  t1, t1, %pcrel_lo(.Lta)
   add   t1, t1, t0
   sb    x0, 0(t1)       /* inbuf[t0] = 0 */
 
+  /* Print the received command for debugging */
+  li    a7, 1           /* SYS_WRITE */
+  li    a0, 1
+  .Lca: auipc a1, %pcrel_hi(inbuf)
+  addi  a1, a1, %pcrel_lo(.Lca)
+  li    a2, 64
+  ecall
+
+  /* Try to match "x" (exit) */
+  .Lcx: auipc a0, %pcrel_hi(inbuf)
+  addi  a0, a0, %pcrel_lo(.Lcx)
+  .Lxa: auipc a1, %pcrel_hi(exit_cmd)
+  addi  a1, a1, %pcrel_lo(.Lxa)
+  jal   ra, strcmp
+  bnez  a0, try_hello
+  /* Exit */
+  li    a7, 2           /* SYS_EXIT */
+  li    a0, 0
+  ecall
+
+try_hello:
   /* Try to match "hello" */
-  .Lca: auipc a0, %pcrel_hi(inbuf)
-  addi  a0, a0, %pcrel_lo(.Lca)
+  .Lca2: auipc a0, %pcrel_hi(inbuf)
+  addi  a0, a0, %pcrel_lo(.Lca2)
   .Lha: auipc a1, %pcrel_hi(hello_cmd)
   addi  a1, a1, %pcrel_lo(.Lha)
   jal   ra, strcmp
@@ -102,6 +145,9 @@ prompt_str:
 
 not_found_str:
   .asciz "not found\n\r"
+
+exit_cmd:
+  .asciz "x"
 
 hello_cmd:
   .asciz "hello"

@@ -10,4 +10,5 @@
 *.dis
 *.sym
 
-disk*.img
+*.img
+*.bin
