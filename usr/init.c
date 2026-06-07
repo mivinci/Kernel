@@ -5,7 +5,7 @@ void main(void) {
   write(1, msg, 18);
 
   for (;;) {
-    int pid = spawn("/bin/bighello");
+    int pid = spawn("/bin/sh");
     if (pid >= 0) {
       while (wait(-1) >= 0)
         ;

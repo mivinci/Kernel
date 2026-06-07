@@ -39,10 +39,11 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
     return -1;
   }
 
-  /* Allocate kernel stack (KSTACK bytes) */
+  /* Allocate kernel stack (1 page = 4 KB) */
   p->kstack = kalloc();
   if (!p->kstack) {
     printk("[proc] create: kalloc failed\n");
+    p->state = UNUSED;
     return -1;
   }
 
@@ -81,18 +82,27 @@ void scheduler(void) {
   printk("[sched] starting round-robin\n");
 
   for (;;) {
+    /* Collect any unreaped zombies (no living parent or parent exited) */
+    for (int i = 0; i < NPROC; i++) {
+      Proc *p = &ptable[i];
+      if (p->state != ZOMBIE) continue;
+      int parent = p->parent;
+      if (parent < 0 || parent >= NPROC || ptable[parent].state == UNUSED) {
+        kfree(p->kstack);
+        p->kstack = NULL;
+        p->state  = UNUSED;
+      }
+    }
+
     for (int i = 0; i < NPROC; i++) {
       Proc *p = &ptable[i];
       if (p->state == RUNNABLE) {
-        /* Restore mscratch: holds old_sp during trap, kstack_top otherwise */
         csr_write(mscratch, p->mscratch);
 
         p->state = RUNNING;
         cpu.proc = p;
         swtch(&cpu.context, &p->context);
-        /* swtch() returns here when p yields or timer preempts */
 
-        /* Save mscratch for next time */
         p->mscratch = csr_read(mscratch);
         cpu.proc = NULL;
       }
@@ -129,8 +139,8 @@ Proc *cpu_proc(void) {
 
 /*
  * Exit current process with status code.
- * Marks process as ZOMBIE, wakes up parent waiting via proc_wait.
- * Frees user page but keeps kernel stack until parent collects.
+ * Marks process as ZOMBIE.  Frees user page here, kstack is
+ * freed by proc_wait or the scheduler (for unreaped zombies).
  */
 void proc_exit(int code) {
   Proc *p = cpu.proc;
@@ -139,17 +149,29 @@ void proc_exit(int code) {
   p->exitcode = code;
   p->state    = ZOMBIE;
 
-  /* Free user page */
+  /* Free user page — kstack stays until parent collects */
   if (p->upage) {
     kfree(p->upage);
     p->upage = NULL;
   }
 
+  /* Orphan children to init (pid 0) */
+  Proc *init = &ptable[0];
+  for (int i = 0; i < p->nchild; i++) {
+    int   cid = p->child[i];
+    Proc *cp  = &ptable[cid];
+    if (cp->state == UNUSED) continue;
+    cp->parent = 0;
+    if (init->state != UNUSED && init->nchild < 8)
+      init->child[init->nchild++] = cid;
+  }
+  p->nchild = 0;
+
   printk("[proc] exit pid=%d code=%d\n", p->pid, code);
 
-  /* Switch directly to scheduler. yield() would reset state to RUNNABLE. */
+  /* Switch out — state=ZOMBIE, scheduler won't pick us again. */
   swtch(&p->context, &cpu.context);
-  /* paranoid: should never reach here since state=ZOMBIE */
+  /* paranoid */
   for (;;)
     ;
 }
