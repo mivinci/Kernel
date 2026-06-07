@@ -1,5 +1,6 @@
 #include <arch/riscv/csr.h>
 #include <arch/riscv/spinlock.h>
+#include <arch/riscv/trap.h>
 #include <kernel.h>
 #include <types.h>
 #include <pmm.h>
@@ -91,6 +92,8 @@ void scheduler(void) {
   printk("[sched] starting round-robin\n");
 
   for (;;) {
+    int found = 0;
+
     /* Collect unreaped zombies with dead/no parent */
     spin_lock(&ptable_lock);
     for (int i = 0; i < NPROC; i++) {
@@ -108,8 +111,9 @@ void scheduler(void) {
     for (int i = 0; i < NPROC; i++) {
       Proc *p = &ptable[i];
       if (p->state == RUNNABLE) {
-        csr_write(mscratch, p->mscratch);
+        found = 1;
 
+        csr_write(mscratch, p->mscratch);
         p->state = RUNNING;
         cpu.proc = p;
         swtch(&cpu.context, &p->context);
@@ -117,6 +121,13 @@ void scheduler(void) {
         p->mscratch = csr_read(mscratch);
         cpu.proc = NULL;
       }
+    }
+
+    /* No runnable process — wait for interrupt */
+    if (!found) {
+      csr_set(mstatus, MSTATUS_MIE);
+      __asm__ __volatile__("wfi");
+      csr_clear(mstatus, MSTATUS_MIE);
     }
   }
 }
