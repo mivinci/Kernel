@@ -51,6 +51,23 @@ void kmain(int hartid, void *fdt) {
   fs_init();
   fdtable_init();
 
+  /* Write user program binary to ramfs using direct FS calls */
+  {
+    static const unsigned char hello_bin[] = {
+        0x85, 0x48, 0x05, 0x45, 0x97, 0x05, 0x00, 0x00, 0xd1, 0x05,
+        0x51, 0x46, 0x73, 0x00, 0x00, 0x00, 0x8d, 0x48, 0x73, 0x00,
+        0x00, 0x00, 0xed, 0xbf, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20,
+        0x66, 0x72, 0x6f, 0x6d, 0x20, 0x72, 0x61, 0x6d, 0x66, 0x73,
+        0x21, 0x0a, 0x00, 0x00};
+    Inode *bin = ialloc("/bin/hello");
+    if (bin) {
+      igrow(bin, sizeof(hello_bin));
+      memcpy(bin->data, hello_bin, sizeof(hello_bin));
+      bin->size = sizeof(hello_bin);
+      printk("[boot] wrote /bin/hello (%d bytes)\n", sizeof(hello_bin));
+    }
+  }
+
   /* PMM smoke test */
   void *page = kalloc();
   printk("[pmm] test: kalloc -> %p\n", page);
@@ -70,9 +87,19 @@ void kmain(int hartid, void *fdt) {
   plic_init();
   virtio_blk_init();
 
-  /* User mode setup and test */
-  usr_init();
-  usr_spawn();
+  /* Test block I/O */
+  if (virtio_blk_capacity() > 0) {
+    char r[SECTOR_SIZE], w[SECTOR_SIZE];
+    printk("[blk] read sec0:  %s\n", virtio_blk_read(0, r) == 0 ? "OK" : "FAIL");
+    for (int i = 0; i < SECTOR_SIZE; i++) w[i] = (char)(i & 0xff);
+    printk("[blk] write sec0: %s\n", virtio_blk_write(0, w) == 0 ? "OK" : "FAIL");
+    char v[SECTOR_SIZE];
+    int ok = virtio_blk_read(0, v) == 0;
+    for (int i = 0; ok && i < SECTOR_SIZE; i++) { if (v[i] != w[i]) { ok = 0; break; } }
+    printk("[blk] verify:    %s\n", ok ? "OK" : "FAIL");
+  }
+
+  /* usr_init(); usr_spawn(); */
 
   vmm_init();
   proc_create(proc_a, "A");

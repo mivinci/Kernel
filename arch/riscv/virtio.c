@@ -5,10 +5,9 @@
 #include <pmm.h>
 
 /*
- * NOTE: virtio-blk I/O (both mmio and pci) hangs on QEMU 10.1 —
- * the device accepts initialization and reports capacity correctly,
- * but does not process descriptor chains. PCI enumeration, BAR
- * assignment, and capability parsing all work correctly.
+ * virtio-blk driver with dual-mode (legacy + non-legacy) MMIO queue
+ * setup.  Single-page ring allocation compatible with all QEMU versions
+ * regardless of the force-legacy default.
  */
 
 struct VirtioPciCfg {
@@ -104,10 +103,17 @@ static int virtio_pci_blk_init(void) {
   pci_set_status(VIRTIO_STATUS_ACK);
   pci_set_status(pci_cfg()->device_status | VIRTIO_STATUS_DRIVER);
 
-  /* Feature negotiation */
+  /* Feature negotiation: read all feature pages and accept everything */
   pci_cfg()->device_feature_select = 0;
+  unsigned int feat_lo = pci_cfg()->device_feature;
+  pci_cfg()->device_feature_select = 1;
+  unsigned int feat_hi = pci_cfg()->device_feature;
+  printk("[virtio-pci] features=%x:%x\n", feat_lo, feat_hi);
+
   pci_cfg()->driver_feature_select = 0;
-  pci_cfg()->driver_feature        = 0;
+  pci_cfg()->driver_feature        = feat_lo;
+  pci_cfg()->driver_feature_select = 1;
+  pci_cfg()->driver_feature        = feat_hi;
   pci_set_status(pci_cfg()->device_status | VIRTIO_STATUS_FEAT_OK);
 
   /* Read capacity */
@@ -161,33 +167,92 @@ static int virtio_mmio_blk_init(void) {
 
   if (!mmio_base) return -1;
 
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES) = 0;
+  /*
+   * Feature negotiation: read device features, reject complex ones
+   * like event_idx and indirect_desc for simpler I/O path.
+   */
+  unsigned int feat_lo =
+      *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_FEATURES);
+  unsigned int feat_hi = 0;
+  if (feat_lo & 0x80000000) {
+    *(volatile unsigned int *)(mmio_base + 0x014) = 1;
+    feat_hi = *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_FEATURES);
+    *(volatile unsigned int *)(mmio_base + 0x014) = 0;
+  }
+  printk("[virtio-mmio] features=%x:%x\n", feat_lo, feat_hi);
+
+  /* Reject complex features for simple I/O */
+  feat_lo &= ~(1UL << 24); /* VIRTIO_F_NOTIFY_ON_EMPTY */
+  feat_lo &= ~(1UL << 27); /* VIRTIO_F_ANY_LAYOUT */
+  feat_lo &= ~(1UL << 28); /* VIRTIO_F_RING_EVENT_IDX */
+  feat_lo &= ~(1UL << 29); /* VIRTIO_F_RING_INDIRECT */
+  /* Accept VIRTIO_F_VERSION_1 for non-legacy queue setup.
+   * Without this, QEMU stays in legacy mode and ignores
+   * QUEUE_DESC/AVAIL/USED register writes — causing I/O hang. */
+
+  /* Set DRIVER first */
   *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS) |=
-    (VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEAT_OK);
+      VIRTIO_STATUS_DRIVER;
+
+  /* Write driver features — both pages for non-legacy */
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES_SEL) = 0;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES) =
+      feat_lo;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES_SEL) = 1;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES) =
+      feat_hi;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_FEATURES_SEL) = 0;
+
+  /* Set FEAT_OK */
+  *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS) |=
+      VIRTIO_STATUS_FEAT_OK;
+
+  /* Verify FEAT_OK */
+  unsigned int st =
+      *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS);
+  if (!(st & VIRTIO_STATUS_FEAT_OK))
+    printk("[virtio-mmio] FEAT_OK not accepted (status=%x)\n", st);
 
   unsigned int cl = *(volatile unsigned int *)(mmio_base + 0x100);
   unsigned int ch = *(volatile unsigned int *)(mmio_base + 0x104);
   capacity        = ((unsigned long)ch << 32) | cl;
 
-  descs = (VRingDesc *)kalloc();
-  avail = (VRingAvail *)kalloc();
-  used  = (VRingUsed *)kalloc();
-  memset(descs, 0, PAGE_SIZE);
-  memset(avail, 0, PAGE_SIZE);
-  memset(used, 0, PAGE_SIZE);
+  /*
+   * Single-page ring layout (all fit in 4KB). VIRTQ_SIZE=8:
+   *   descs at offset   0 (128 bytes)
+   *   avail at offset 128 ( 20 bytes)
+   *   used  at offset 160 ( 68 bytes, 16-byte aligned)
+   * This layout works with both legacy QUEUE_PFN and non-legacy
+   * QUEUE_DESC/AVAIL/USED register-based queue setup.
+   */
+  char         *ring_page = (char *)kalloc();
+  unsigned long ring_pa   = (unsigned long)ring_page;
+  memset(ring_page, 0, PAGE_SIZE);
 
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_SEL) = 0;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NUM) = VIRTQ_SIZE;
+  descs = (VRingDesc *)(ring_page + 0);
+  avail = (VRingAvail *)(ring_page + 128);
+  used  = (VRingUsed *)(ring_page + 160);
 
-  unsigned long pa                                                = (unsigned long)descs;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_LOW)   = pa & 0xffffffff;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_HIGH)  = pa >> 32;
-  pa                                                              = (unsigned long)avail;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_LOW)  = pa & 0xffffffff;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_HIGH) = pa >> 32;
-  pa                                                              = (unsigned long)used;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_LOW)  = pa & 0xffffffff;
-  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_HIGH) = pa >> 32;
+  /*
+   * Dual-mode queue setup: write both legacy and non-legacy
+   * registers.  QEMU ignores the ones that don't match its
+   * mode (force-legacy property).
+   */
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_SEL)   = 0;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_ALIGN) = 16;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NUM)   = VIRTQ_SIZE;
+
+  /* Non-legacy addresses */
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_LOW)   = (ring_pa + 0) & 0xffffffff;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_DESC_HIGH)  = (ring_pa + 0) >> 32;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_LOW)  = (ring_pa + 128) & 0xffffffff;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DRIVER_DESC_HIGH) = (ring_pa + 128) >> 32;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_LOW)  = (ring_pa + 160) & 0xffffffff;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_DEVICE_DESC_HIGH) = (ring_pa + 160) >> 32;
+
+  /* Legacy queue setup */
+  *(volatile unsigned int *)(mmio_base + VIRTIO_GUEST_PAGE_SIZE) = PAGE_SIZE;
+  *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_PFN)       = ring_pa >> 12;
 
   *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_READY) = 1;
   *(volatile unsigned int *)(mmio_base + VIRTIO_STATUS) |= VIRTIO_STATUS_DRIVER_OK;
@@ -219,7 +284,8 @@ static int blk_request(int type, unsigned long sector, void *buf) {
   descs[0].next  = 1;
   descs[1].addr  = (unsigned long)buf;
   descs[1].len   = SECTOR_SIZE;
-  descs[1].flags = (type == VIRTIO_BLK_T_IN) ? VRING_DESC_F_WRITE : 0;
+  descs[1].flags = VRING_DESC_F_NEXT |
+                   ((type == VIRTIO_BLK_T_IN) ? VRING_DESC_F_WRITE : 0);
   descs[1].next  = 2;
   descs[2].addr  = (unsigned long)&status;
   descs[2].len   = 1;
@@ -233,8 +299,9 @@ static int blk_request(int type, unsigned long sector, void *buf) {
 
   if (use_pci)
     pci_notify(0);
-  else
-    *(volatile unsigned short *)(mmio_base + VIRTIO_QUEUE_NOTIFY) = 0;
+  else {
+    *(volatile unsigned int *)(mmio_base + VIRTIO_QUEUE_NOTIFY) = 0;
+  }
 
   for (int retry = 0; retry < 1000000; retry++) {
     if (used->idx != last_avail_idx) break;
