@@ -1,3 +1,4 @@
+#include <arch/riscv/spinlock.h>
 #include <fdt.h>
 #include <kernel.h>
 #include <types.h>
@@ -11,8 +12,11 @@ XDEF_STRUCT(FreePage) {
 };
 
 static FreePage *free_list;
+static SpinLock  freelock;
 
 void pmm_init(void) {
+  spin_init(&freelock);
+
   unsigned long start = (unsigned long)_end;
 
   /* Page-align the start of free memory */
@@ -33,10 +37,11 @@ void pmm_init(void) {
 }
 
 void *kalloc(void) {
-  if (!free_list) return NULL;
-
+  spin_lock(&freelock);
+  if (!free_list) { spin_unlock(&freelock); return NULL; }
   FreePage *page = free_list;
   free_list      = page->next;
+  spin_unlock(&freelock);
 
   /* Zero the page before handing it out */
   memset(page, 0, PAGE_SIZE);
@@ -45,8 +50,9 @@ void *kalloc(void) {
 
 void kfree(void *ptr) {
   if (!ptr) return;
-
+  spin_lock(&freelock);
   FreePage *page = (FreePage *)ptr;
   page->next     = free_list;
   free_list      = page;
+  spin_unlock(&freelock);
 }

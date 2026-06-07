@@ -1,13 +1,16 @@
 #include <arch/riscv/csr.h>
+#include <arch/riscv/spinlock.h>
 #include <kernel.h>
 #include <types.h>
 #include <pmm.h>
 #include <proc.h>
 
-static Proc ptable[NPROC];
-static Cpu  cpu;
+static Proc     ptable[NPROC];
+static Cpu      cpu;
+static SpinLock ptable_lock;
 
 void proc_init(void) {
+  spin_init(&ptable_lock);
   memset(ptable, 0, sizeof(ptable));
   memset(&cpu, 0, sizeof(cpu));
 
@@ -27,6 +30,8 @@ void proc_init(void) {
 int proc_create(void (*fn)(void), const char *name, void *upage) {
   Proc *p = NULL;
 
+  spin_lock(&ptable_lock);
+
   /* Find an unused slot */
   for (int i = 0; i < NPROC; i++) {
     if (ptable[i].state == UNUSED) {
@@ -35,15 +40,20 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
     }
   }
   if (!p) {
+    spin_unlock(&ptable_lock);
     printk("[proc] create: no free slots\n");
     return -1;
   }
 
-  /* Allocate kernel stack (1 page = 4 KB) */
+  /* Reserve the slot early so kalloc failure returns it to pool */
+  p->state = RUNNABLE;
+
+  /* Allocate kernel stack */
   p->kstack = kalloc();
   if (!p->kstack) {
-    printk("[proc] create: kalloc failed\n");
     p->state = UNUSED;
+    spin_unlock(&ptable_lock);
+    printk("[proc] create: kalloc failed\n");
     return -1;
   }
 
@@ -51,8 +61,6 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (unsigned long)fn;
   p->context.sp = (unsigned long)p->kstack + KSTACK;
-  p->state      = RUNNABLE;
-  p->pid        = (int)(p - ptable);
   p->upage      = upage;
   p->parent     = -1;
   p->nchild     = 0;
@@ -69,6 +77,7 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
   }
 
   memcpy(p->name, name, strlen(name) + 1);
+  spin_unlock(&ptable_lock);
 
   return p->pid;
 }
@@ -82,7 +91,8 @@ void scheduler(void) {
   printk("[sched] starting round-robin\n");
 
   for (;;) {
-    /* Collect any unreaped zombies (no living parent or parent exited) */
+    /* Collect unreaped zombies with dead/no parent */
+    spin_lock(&ptable_lock);
     for (int i = 0; i < NPROC; i++) {
       Proc *p = &ptable[i];
       if (p->state != ZOMBIE) continue;
@@ -93,6 +103,7 @@ void scheduler(void) {
         p->state  = UNUSED;
       }
     }
+    spin_unlock(&ptable_lock);
 
     for (int i = 0; i < NPROC; i++) {
       Proc *p = &ptable[i];
@@ -115,20 +126,20 @@ void scheduler(void) {
  * Called by a running process (e.g., in a loop body).
  */
 void yield(void) {
-  Proc *p  = cpu.proc;
+  Proc *p = cpu.proc;
   if (!p || p->state == ZOMBIE) return;
+  spin_lock(&ptable_lock);
   p->state = RUNNABLE;
+  spin_unlock(&ptable_lock);
   swtch(&p->context, &cpu.context);
 }
 
-/*
- * Timer-tick driven scheduling. Called from the timer interrupt handler.
- * If the current process has run long enough, preempt it.
- */
 void sched_tick(void) {
   Proc *p = cpu.proc;
   if (p && p->state == RUNNING) {
+    spin_lock(&ptable_lock);
     p->state = RUNNABLE;
+    spin_unlock(&ptable_lock);
     swtch(&p->context, &cpu.context);
   }
 }
@@ -147,13 +158,9 @@ void proc_exit(int code) {
   if (!p) return;
 
   p->exitcode = code;
-  p->state    = ZOMBIE;
 
-  /* Free user page — kstack stays until parent collects */
-  if (p->upage) {
-    kfree(p->upage);
-    p->upage = NULL;
-  }
+  spin_lock(&ptable_lock);
+  p->state = ZOMBIE;
 
   /* Orphan children to init (pid 0) */
   Proc *init = &ptable[0];
@@ -166,6 +173,13 @@ void proc_exit(int code) {
       init->child[init->nchild++] = cid;
   }
   p->nchild = 0;
+  spin_unlock(&ptable_lock);
+
+  /* Free user page — kstack stays until parent collects */
+  if (p->upage) {
+    kfree(p->upage);
+    p->upage = NULL;
+  }
 
   printk("[proc] exit pid=%d code=%d\n", p->pid, code);
 
@@ -185,43 +199,38 @@ int proc_wait(int pid) {
   Proc *p = cpu.proc;
 
   for (;;) {
-    int         found = 0;
-    int         dead  = 1;
+    int found = 0;
+    int dead  = 1;
 
+    spin_lock(&ptable_lock);
     for (int i = 0; i < p->nchild; i++) {
       int   cid = p->child[i];
       Proc *cp  = &ptable[cid];
 
       if (cp->state == UNUSED) {
-        /* Already collected, remove from list */
         p->child[i] = p->child[--p->nchild];
         i--;
         continue;
       }
 
       found = 1;
-
       if (pid >= 0 && cid != pid) continue;
 
       if (cp->state == ZOMBIE) {
-        /* Collect child: free its kernel stack, mark UNUSED */
         printk("[proc] wait pid=%d collected child %d (exit=%d)\n",
                p->pid, cid, cp->exitcode);
         kfree(cp->kstack);
         cp->kstack = NULL;
         cp->state  = UNUSED;
-
-        /* Remove from child list */
         p->child[i] = p->child[--p->nchild];
+        spin_unlock(&ptable_lock);
         return cid;
       }
-
-      dead = 0; /* child alive, but not zombie */
+      dead = 0;
     }
+    spin_unlock(&ptable_lock);
 
     if (!found || (pid >= 0 && dead)) return -1;
-
-    /* No zombie children yet — yield and wait */
     yield();
   }
 }
