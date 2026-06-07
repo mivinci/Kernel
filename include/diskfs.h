@@ -14,13 +14,13 @@
 
 #define DFS_MAGIC   0x4449534BUL  /* "KSID" */
 
-#define DFS_NINODES  112
+#define DFS_NINODES  16
 #define DFS_NDIRECT  8
-#define DFS_INODE_SIZE  32
+#define DFS_INODE_SIZE  36 /* 2+2+16+16 */
 #define DFS_NAME_LEN    16
 #define DFS_SB_SECTOR    0
-#define DFS_INODE_SECTOR 1
-#define DFS_DATA_SECTOR  8
+#define DFS_INODE_SECTOR 0   /* inodes in sector 0 after superblock */
+#define DFS_DATA_SECTOR  1   /* data blocks start at sector 1 */
 
 #define DFS_MODE_FREE     0
 #define DFS_MODE_REGULAR  1

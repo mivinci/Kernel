@@ -39,7 +39,7 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
     return -1;
   }
 
-  /* Allocate kernel stack (single page for now) */
+  /* Allocate kernel stack (KSTACK bytes) */
   p->kstack = kalloc();
   if (!p->kstack) {
     printk("[proc] create: kalloc failed\n");
@@ -49,14 +49,16 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
   /* Set up initial context: sp points to top of kstack. */
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (unsigned long)fn;
-  p->context.sp = (unsigned long)p->kstack + PAGE_SIZE;
+  p->context.sp = (unsigned long)p->kstack + KSTACK;
   p->state      = RUNNABLE;
   p->pid        = (int)(p - ptable);
   p->upage      = upage;
   p->parent     = -1;
   p->nchild     = 0;
   p->exitcode   = 0;
-  p->mscratch   = (unsigned long)p->kstack + PAGE_SIZE;
+  p->mscratch   = (unsigned long)p->kstack + KSTACK;
+
+  printk("[proc] create pid=%d kstack=%p upage=%p\n", p->pid, p->kstack, upage);
 
   /* Track as child of current process */
   Proc *cur = cpu_proc();

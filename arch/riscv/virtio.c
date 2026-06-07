@@ -260,7 +260,8 @@ static int virtio_mmio_blk_init(void) {
   last_avail_idx = 0;
   use_pci        = 0;
 
-  printk("[virtio-mmio] ready, cap=%d MB (%d sectors)\n", (capacity / 2) / 1024, capacity);
+  printk("[virtio-mmio] ready, cap=%d MB (%d sectors) ring=%p\n",
+         (capacity / 2) / 1024, capacity, ring_page);
   return 0;
 }
 

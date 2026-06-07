@@ -1,6 +1,7 @@
 #include <arch/riscv/csr.h>
 #include <arch/riscv/trap.h>
 #include <arch/riscv/virtio.h>
+#include <diskfs.h>
 #include <fs.h>
 #include <kernel.h>
 #include <types.h>
@@ -13,33 +14,33 @@ void usr_init(void) {
 }
 
 int usr_load(const char *path, void **out_page, int *out_size) {
+  /* Try diskfs first, fall back to ramfs */
+  int fsize = 0;
+  int inum  = dfs_open(path, &fsize);
+  if (inum >= 0) {
+    void *page = kalloc();
+    if (!page) { printk("[usr] kalloc failed\n"); return -1; }
+    if (dfs_read(inum, page, 0, fsize) != fsize) {
+      printk("[usr] disk read failed\n"); kfree(page); return -1;
+    }
+    *out_page = page; *out_size = fsize;
+    printk("[usr] loaded %s via diskfs (%d bytes)\n", path, fsize);
+    return 0;
+  }
+
+  /* Fall back to ramfs (idiskslot entries) */
   Inode *ip = iname(path);
-  if (!ip) {
+  if (!ip || ip->size <= 0 || ip->size > PAGE_SIZE) {
     printk("[usr] not found: %s\n", path);
     return -1;
   }
-
-  if (ip->size <= 0 || ip->size > PAGE_SIZE) {
-    printk("[usr] bad size for %s: %d\n", path, ip->size);
-    return -1;
-  }
-
   void *page = kalloc();
-  if (!page) {
-    printk("[usr] kalloc failed\n");
-    return -1;
-  }
-
+  if (!page) { printk("[usr] kalloc failed\n"); return -1; }
   if (virtio_blk_read(ip->sector, page) != 0) {
-    printk("[usr] disk read failed for %s (sector %d)\n", path, ip->sector);
-    kfree(page);
-    return -1;
+    printk("[usr] disk read failed\n"); kfree(page); return -1;
   }
-
-  *out_page = page;
-  *out_size = ip->size;
-  printk("[usr] loaded %s from disk (%d bytes at %p, sector %d)\n",
-         path, ip->size, page, ip->sector);
+  *out_page = page; *out_size = ip->size;
+  printk("[usr] loaded %s from disk (%d bytes)\n", path, ip->size);
   return 0;
 }
 

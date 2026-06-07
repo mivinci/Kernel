@@ -4,7 +4,7 @@
 #include <types.h>
 
 #define NPROC  16
-#define KSTACK (4 * 4096) /* 16 KB kernel stack per process */
+#define KSTACK PAGE_SIZE /* 4 KB kernel stack per process */
 
 typedef enum {
   UNUSED,

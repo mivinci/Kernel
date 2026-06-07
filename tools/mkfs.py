@@ -2,26 +2,25 @@
 """
 Build a SimpleFS disk image from user binaries.
 
-Layout:
-  Sector 0:     Superblock  (magic, ninodes, nblocks)
-  Sectors 1-7:  Inode table (16 inodes/sector × 7 = 112)
-  Sectors 8+:   Data blocks (512 bytes each)
+Single-sector layout (sector 0):
+  [0..3]:   magic
+  [4..7]:   ninodes
+  [8..11]:  nblocks
+  [12..443]: inodes (12 × 36 bytes, max 12 files)
+  [444..511]: reserved
 
-Usage:
-  python3 tools/mkfs.py disk.img /bin/init=usr/init.bin /bin/sh=usr/sh.bin ...
+Data blocks start at sector 1.
 """
 
 import struct, sys
 
-MAGIC      = 0x4449534B  # "KSID"
+MAGIC      = 0x4449534B
 SECTOR     = 512
-INODE_SIZE = 32
+INODE_SIZE = 36
 NAMELEN    = 16
 NDIRECT    = 8
-INODE_SECTORS = 7
-INODES_PER_SECTOR = SECTOR // INODE_SIZE  # 16
-MAX_INODES = INODE_SECTORS * INODES_PER_SECTOR  # 112
-DATA_START = 8  # sector where data blocks begin
+SB_INODES  = 12
+DATA_START = 1
 
 
 def main():
@@ -40,18 +39,16 @@ def main():
             data = f.read()
         files.append((path, data))
 
-    if len(files) > MAX_INODES:
-        print(f"too many files (max {MAX_INODES})", file=sys.stderr)
+    if len(files) > SB_INODES:
+        print(f"too many files (max {SB_INODES})", file=sys.stderr)
         sys.exit(1)
 
-    # Build superblock
-    sb = bytearray(64)
-    struct.pack_into("<I", sb, 0, MAGIC)
-    struct.pack_into("<I", sb, 4, len(files))  # ninodes used
-    struct.pack_into("<I", sb, 8, 0)           # nblocks (unused for now)
+    sector0 = bytearray(SECTOR)
+    struct.pack_into("<I", sector0, 0, MAGIC)
+    struct.pack_into("<I", sector0, 4, len(files))
+    struct.pack_into("<I", sector0, 8, 0)
 
-    # Build inode table
-    inode_table = bytearray(SECTOR * INODE_SECTORS)
+    inode_off = 12
     data_sectors = []
     next_block = DATA_START
 
@@ -61,46 +58,31 @@ def main():
             print(f"name too long: {path}", file=sys.stderr)
             sys.exit(1)
 
-        # Calculate needed blocks
         nblocks = (len(data) + SECTOR - 1) // SECTOR
         if nblocks > NDIRECT:
-            print(f"file too large: {path} ({len(data)} bytes)", file=sys.stderr)
+            print(f"file too large: {path}", file=sys.stderr)
             sys.exit(1)
 
         ino = bytearray(INODE_SIZE)
-        struct.pack_into("<H", ino, 0, 1)     # mode = regular
-        struct.pack_into("<H", ino, 2, len(data))  # size
-
-        # Assign blocks
+        struct.pack_into("<H", ino, 0, 1)  # mode = regular
+        struct.pack_into("<H", ino, 2, len(data))
         for i in range(nblocks):
             struct.pack_into("<H", ino, 4 + i * 2, next_block)
             data_sectors.append((next_block, data[i * SECTOR : (i + 1) * SECTOR]))
             next_block += 1
-        for i in range(nblocks, NDIRECT):
-            struct.pack_into("<H", ino, 4 + i * 2, 0)  # unused block = 0
 
-        # Write name (13 bytes max + null)
         name_bytes = name[:NAMELEN - 1]
         ino[20 : 20 + len(name_bytes) + 1] = name_bytes + b"\0"
 
-        # Place in inode table
-        offset = idx * INODE_SIZE
-        inode_table[offset : offset + INODE_SIZE] = ino
+        offset = inode_off + idx * INODE_SIZE
+        sector0[offset : offset + INODE_SIZE] = ino
 
         print(f"[mkfs] {path:20s} {len(data):5d} bytes  "
-              f"inode={idx}  blocks={[sector for sector, _ in data_sectors[-nblocks:]]}")
+              f"inode={idx}  sector={next_block - nblocks}")
 
-    # Write disk image
     with open(disk_path, "r+b") as f:
-        # Superblock (sector 0)
         f.seek(0)
-        f.write(sb.ljust(SECTOR, b'\0'))
-
-        # Inode table (sectors 1-7)
-        f.seek(SECTOR)
-        f.write(inode_table.ljust(SECTOR * INODE_SECTORS, b'\0'))
-
-        # Data blocks
+        f.write(sector0)
         for sector_num, block_data in data_sectors:
             f.seek(sector_num * SECTOR)
             f.write(block_data.ljust(SECTOR, b'\0'))

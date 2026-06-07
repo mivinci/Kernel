@@ -43,11 +43,7 @@ void trap_handler(TrapFrame *tf) {
     case MCAUSE_STORE_PF:
       tf->mepc += 4;
       break;
-    default:
-      printk("[trap] exception: mepc=%p mcause=%d mtval=%p\n",
-             tf->mepc, cause, tf->mtval);
-      tf->mepc += 4;
-      break;
+    default: tf->mepc += 4; break;
     }
   }
 }
