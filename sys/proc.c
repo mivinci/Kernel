@@ -1,4 +1,5 @@
 #include <arch/riscv/csr.h>
+#include <arch/riscv/mmu.h>
 #include <arch/riscv/spinlock.h>
 #include <arch/riscv/trap.h>
 #include <kernel.h>
@@ -160,6 +161,11 @@ Proc *cpu_proc(void) {
   return cpu.proc;
 }
 
+Proc *get_proc(int pid) {
+  if (pid < 0 || pid >= NPROC) return NULL;
+  return &ptable[pid];
+}
+
 /*
  * Exit current process with status code.
  * Marks process as ZOMBIE.  Frees user page here, kstack is
@@ -191,6 +197,12 @@ void proc_exit(int code) {
   if (p->upage) {
     kfree(p->upage);
     p->upage = NULL;
+  }
+
+  /* Free user page table */
+  if (p->satp) {
+    vmm_free_user_pgdir(p->satp);
+    p->satp = 0;
   }
 
   printk("[proc] exit pid=%d code=%d\n", p->pid, code);

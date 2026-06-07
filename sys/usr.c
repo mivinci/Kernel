@@ -1,4 +1,5 @@
 #include <arch/riscv/csr.h>
+#include <arch/riscv/mmu.h>
 #include <arch/riscv/trap.h>
 #include <diskfs.h>
 #include <kernel.h>
@@ -63,9 +64,13 @@ __attribute__((noreturn)) void usr_enter(void) {
   csr_write(pmpaddr1, -1UL);
   csr_write(pmpcfg0, 0x0F08UL);  /* entry1=0x0F, entry0=0x08 */
 
+  /* Write process-specific page table */
+  csr_write(satp, p->satp);
+  __asm__ __volatile__("sfence.vma x0, x0");
+
   int retry = 0;
   for (;;) {
-    csr_write(mepc, (unsigned long)p->upage);
+    csr_write(mepc, 0);  /* VA 0 — page table maps upage here */
     __asm__ __volatile__("mret");
     if (++retry > 100) proc_exit(-1);
   }
@@ -75,8 +80,16 @@ int usr_spawn(const char *path) {
   void *page;
   int   size;
   if (usr_load(path, &page, &size) < 0) return -1;
+
+  /* Create user page table mapping this page at VA 0 */
+  unsigned long satp = vmm_create_user_pgdir(page);
+  if (!satp) { kfree(page); return -1; }
+
   int pid = proc_create((void (*)(void))usr_enter, path, page);
-  if (pid < 0) { kfree(page); return -1; }
+  if (pid < 0) { vmm_free_user_pgdir(satp); kfree(page); return -1; }
+
+  get_proc(pid)->satp = satp;
+
   printk("[usr] spawned %s as pid=%d\n", path, pid);
   return pid;
 }

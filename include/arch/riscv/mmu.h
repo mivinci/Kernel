@@ -35,5 +35,8 @@ XDEF_STRUCT(PageTableEntry) {
 };
 
 void vmm_init(void);
+unsigned long vmm_create_user_pgdir(void *upage);
+void         vmm_free_user_pgdir(unsigned long satp);
+unsigned long user_va2pa(unsigned long va);
 
 #endif /* _ARCH_RISCV_MMU_H */

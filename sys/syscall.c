@@ -1,4 +1,5 @@
 #include <arch/riscv/csr.h>
+#include <arch/riscv/mmu.h>
 #include <fs.h>
 #include <kernel.h>
 #include <types.h>
@@ -7,6 +8,15 @@
 #include <syscall.h>
 #include <uart.h>
 #include <usr.h>
+
+/*
+ * Translate a user virtual address to physical, for kernel access.
+ * Returns 0 if unmapped.
+ */
+static inline char *user_ptr(unsigned long va) {
+  unsigned long pa = user_va2pa(va);
+  return pa ? (char *)pa : NULL;
+}
 
 /*
  * System call: write to a file descriptor.
@@ -19,8 +29,10 @@ static unsigned long sys_write(TrapFrame *tf) {
   unsigned long len = tf->a2;
 
   if (fd == 1) { /* stdout: write to UART */
+    char *buf = user_ptr(tf->a1);
+    if (!buf) return -1;
     for (unsigned long i = 0; i < len; i++)
-      putc(((char *)tf->a1)[i]);
+      putc(buf[i]);
     return len;
   }
 
@@ -115,7 +127,9 @@ static unsigned long sys_close(TrapFrame *tf) {
  * Returns child pid on success, -1 on error.
  */
 static unsigned long sys_spawn(TrapFrame *tf) {
-  return usr_spawn((const char *)tf->a0);
+  char *path = user_ptr(tf->a0);
+  if (!path) return -1;
+  return usr_spawn(path);
 }
 
 /*
@@ -139,11 +153,13 @@ static unsigned long sys_read(TrapFrame *tf) {
   unsigned long len = tf->a2;
 
   if (fd == 0) { /* stdin: read from console buffer */
+    char *buf = user_ptr(tf->a1);
+    if (!buf) return -1;
     unsigned long i;
     for (i = 0; i < len; i++) {
       int c = getc();
-      if (c < 0) break; /* no more data */
-      ((char *)tf->a1)[i] = (char)c;
+      if (c < 0) break;
+      buf[i] = (char)c;
     }
     return i;
   }

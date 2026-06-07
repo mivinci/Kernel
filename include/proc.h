@@ -37,6 +37,7 @@ XDEF_STRUCT(Proc) {
   void     *kstack;   /* kernel stack bottom */
   void     *upage;    /* user page (U-mode binary) */
   unsigned long mscratch;/* per-process mscratch value */
+  unsigned long satp;    /* user page table (satp value) */
   ProcState state;    /* UNUSED / RUNNABLE / RUNNING / ZOMBIE */
   int       pid;      /* process id */
   int       parent;   /* parent pid, -1 if none */
@@ -61,5 +62,6 @@ int   proc_wait(int pid);
 void  yield(void);
 void  sched_tick(void);
 Proc *cpu_proc(void);
+Proc *get_proc(int pid);
 
 #endif /* _PROC_H */
