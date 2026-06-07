@@ -12,12 +12,13 @@ XDEF_STRUCT(SpinLock) {
  * Uses amoswap.w for atomic test-and-set.
  */
 static inline void spin_lock(SpinLock *lk) {
-  int old;
+  unsigned long old;
+  unsigned long one = 1;
   __asm__ __volatile__("1:"
                        "  amoswap.w %0, %1, (%2)\n"
                        "  bnez     %0, 1b"
                        : "=&r"(old)
-                       : "r"((int)1), "r"(&lk->locked)
+                       : "r"(one), "r"(&lk->locked)
                        : "memory");
 }
 
