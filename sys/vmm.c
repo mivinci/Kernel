@@ -19,7 +19,7 @@ void vmm_init(void) {
   PageTableEntry *pgd = (PageTableEntry *)kalloc();
   PageTableEntry *pmd = (PageTableEntry *)kalloc();
 
-  unsigned long flags = PTE_V | PTE_R | PTE_W | PTE_X;
+  unsigned long flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_U;
 
   for (unsigned long pa = MAP_START; pa < MAP_END; pa += MEGAPAGE_SIZE) {
     unsigned long vpn = (pa >> 21) & 0x1FF; /* VPN[1] for 2MB megapage */

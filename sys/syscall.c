@@ -6,6 +6,7 @@
 #include <proc.h>
 #include <syscall.h>
 #include <uart.h>
+#include <usr.h>
 
 /*
  * System call: write to a file descriptor.
@@ -38,21 +39,10 @@ static unsigned long sys_write(TrapFrame *tf) {
 
 /*
  * System call: exit the current process.
- *   a0 = exit code (unused for now)
+ *   a0 = exit code
  */
 static void sys_exit(TrapFrame *tf) {
-  (void)tf; /* exit code in a0, unused */
-  Proc *p = cpu_proc();
-  if (p) {
-    p->state = UNUSED;
-    if (p->kstack) kfree(p->kstack);
-    p->kstack = NULL;
-  }
-  yield();
-  /* yield() should not return here — the scheduler will never
-   * switch back to this process since it's UNUSED. */
-  for (;;)
-    ;
+  proc_exit((int)tf->a0);
 }
 
 /*
@@ -120,6 +110,24 @@ static unsigned long sys_close(TrapFrame *tf) {
 }
 
 /*
+ * System call: spawn a new user process from ramfs.
+ *   a0 = path (char *)
+ * Returns child pid on success, -1 on error.
+ */
+static unsigned long sys_spawn(TrapFrame *tf) {
+  return usr_spawn((const char *)tf->a0);
+}
+
+/*
+ * System call: wait for child to exit.
+ *   a0 = pid (-1 for any child)
+ * Returns child pid, or -1 if no children.
+ */
+static unsigned long sys_wait(TrapFrame *tf) {
+  return proc_wait((int)tf->a0);
+}
+
+/*
  * System call: read from a file descriptor.
  *   a0 = fd
  *   a1 = buf pointer
@@ -154,7 +162,7 @@ typedef unsigned long (*SysFn)(TrapFrame *);
 static SysFn syscall_table[] = {
   [SYS_WRITE] = sys_write,   [SYS_EXIT] = (SysFn)sys_exit, [SYS_YIELD] = (SysFn)sys_yield,
   [SYS_GETPID] = sys_getpid, [SYS_OPEN] = sys_open,        [SYS_CLOSE] = sys_close,
-  [SYS_READ] = sys_read,
+  [SYS_READ] = sys_read,     [SYS_SPAWN] = sys_spawn,      [SYS_WAIT] = sys_wait,
 };
 
 #define NSYSCALLS (sizeof(syscall_table) / sizeof(syscall_table[0]))

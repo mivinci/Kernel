@@ -48,23 +48,44 @@ void kmain(int hartid, void *fdt) {
   pmm_init();
   timer_init();
   proc_init();
+
+  uart_init();
+  plic_init();
+  virtio_blk_init();
+
   fs_init();
   fdtable_init();
 
-  /* Write user program binary to ramfs using direct FS calls */
-  {
-    static const unsigned char hello_bin[] = {
-        0x85, 0x48, 0x05, 0x45, 0x97, 0x05, 0x00, 0x00, 0xd1, 0x05,
-        0x51, 0x46, 0x73, 0x00, 0x00, 0x00, 0x8d, 0x48, 0x73, 0x00,
-        0x00, 0x00, 0xed, 0xbf, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20,
-        0x66, 0x72, 0x6f, 0x6d, 0x20, 0x72, 0x61, 0x6d, 0x66, 0x73,
-        0x21, 0x0a, 0x00, 0x00};
-    Inode *bin = ialloc("/bin/hello");
-    if (bin) {
-      igrow(bin, sizeof(hello_bin));
-      memcpy(bin->data, hello_bin, sizeof(hello_bin));
-      bin->size = sizeof(hello_bin);
-      printk("[boot] wrote /bin/hello (%d bytes)\n", sizeof(hello_bin));
+  /*
+   * Load user programs from block device into ramfs.
+   * Sector 0 header: [magic:4][count:4][entries:count*72]
+   *   entry = name[64] | size[4] | sector[4]
+   * File data at the named sector.
+   * Built by tools/mkdisk.py.
+   */
+  if (virtio_blk_capacity() > 0) {
+    char s[SECTOR_SIZE];
+    if (virtio_blk_read(0, s) == 0) {
+      unsigned int magic = *(unsigned int *)(s + 0);
+      unsigned int nfile = *(unsigned int *)(s + 4);
+      if (magic == 0x52414D46 && nfile > 0 && nfile <= 6) {
+        for (unsigned int i = 0; i < nfile; i++) {
+          char        *entry   = s + 8 + i * 72;
+          char        *name    = entry;
+          unsigned int fsize   = *(unsigned int *)(entry + 64);
+          unsigned int fsector = *(unsigned int *)(entry + 68);
+          char         buf[SECTOR_SIZE];
+          if (fsize > SECTOR_SIZE) continue;
+          if (virtio_blk_read(fsector, buf) != 0) continue;
+          Inode *bin = ialloc(name);
+          if (bin) {
+            igrow(bin, fsize);
+            memcpy(bin->data, buf, fsize);
+            bin->size = fsize;
+            printk("[boot] loaded %s from disk (%d bytes)\n", name, fsize);
+          }
+        }
+      }
     }
   }
 
@@ -83,10 +104,6 @@ void kmain(int hartid, void *fdt) {
   spin_unlock(&lk);
   printk("[spinlock] lock/unlock passed\n");
 
-  uart_init();
-  plic_init();
-  virtio_blk_init();
-
   /* Test block I/O */
   if (virtio_blk_capacity() > 0) {
     char r[SECTOR_SIZE], w[SECTOR_SIZE];
@@ -99,10 +116,11 @@ void kmain(int hartid, void *fdt) {
     printk("[blk] verify:    %s\n", ok ? "OK" : "FAIL");
   }
 
-  /* usr_init(); usr_spawn(); */
+  usr_init();
+  usr_spawn("/bin/init");
 
   vmm_init();
-  proc_create(proc_a, "A");
-  proc_create(proc_b, "B");
+  proc_create(proc_a, "A", NULL);
+  proc_create(proc_b, "B", NULL);
   scheduler();
 }

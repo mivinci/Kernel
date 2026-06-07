@@ -11,6 +11,8 @@
 #define SYS_OPEN   5
 #define SYS_CLOSE  6
 #define SYS_READ   7
+#define SYS_SPAWN  8
+#define SYS_WAIT   9
 
 /*
  * Invoke a system call via ecall.

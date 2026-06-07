@@ -6,9 +6,11 @@
 
 trap_entry:
   /*
-   * Save all general-purpose registers and CSRs onto the stack.
-   * Layout must match struct TrapFrame in trap.h.
+   * Swap sp with kernel trap stack (stored in mscratch).
+   * After swap: sp = kernel stack top, mscratch = original sp.
    */
+  csrrw   sp, mscratch, sp
+
 #if XLEN == 64
 #define FRAME_SIZE 288
 #define STORE       sd
@@ -111,4 +113,8 @@ trap_entry:
   LOAD    t6, 30*REGSZ(sp)
 
   addi    sp, sp, FRAME_SIZE
+
+  /* Restore original sp (saved in mscratch on entry) */
+  csrrw   sp, mscratch, sp
+
   mret
