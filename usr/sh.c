@@ -28,8 +28,10 @@ void main(void) {
     }
 
     int pid = spawn(path);
-    if (pid >= 0) {
-      while (wait(pid) >= 0) yield();
+    if (pid < 0) {
+      write(1, "sh: not found\n", 14);
+    } else {
+      wait(pid);
     }
   }
 }
