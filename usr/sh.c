@@ -28,11 +28,13 @@ void main(void) {
     if (strcmp(buf, "x") == 0)
       exit(0);
 
-    if (strcmp(buf, "hello") == 0) {
-      spawn("/bin/hello");
-      continue;
-    }
+    /* Build "/bin/<cmd>" and spawn */
+    char path[64];
+    path[0] = '/'; path[1] = 'b'; path[2] = 'i'; path[3] = 'n'; path[4] = '/';
+    int i = 5;
+    for (int j = 0; buf[j]; j++) path[i++] = buf[j];
+    path[i] = '\0';
 
-    write(1, "not found\n", 10);
+    spawn(path);
   }
 }

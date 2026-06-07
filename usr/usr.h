@@ -1,4 +1,17 @@
-/* User-space syscall wrappers — usable from usr/*.c programs */
+/* User-space mini libc: syscall wrappers and string functions */
+
+static inline void *memset(void *p, int c, int n) {
+  char *q = p;
+  while (n--) *q++ = (char)c;
+  return p;
+}
+
+static inline void *memcpy(void *dst, const void *src, int n) {
+  char       *d = dst;
+  const char *s = src;
+  while (n--) *d++ = *s++;
+  return dst;
+}
 
 static inline int write(int fd, const char *buf, int len) {
   register long r0 asm("a0") = fd;
