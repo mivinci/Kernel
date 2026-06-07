@@ -8,14 +8,8 @@
 #include <proc.h>
 #include <usr.h>
 
-/*
- * User code runs in U-mode with bare physical addressing.
- * Each process gets its own physical page (upage) for the user
- * binary, allocated by usr_load() and stored in Proc.upage.
- */
-
 void usr_init(void) {
-  printk("[usr] ready (per-process pages, bare addressing)\n");
+  printk("[usr] ready\n");
 }
 
 int usr_load(const char *path, void **out_page, int *out_size) {
@@ -32,48 +26,31 @@ int usr_load(const char *path, void **out_page, int *out_size) {
 
   void *page = kalloc();
   if (!page) {
-    printk("[usr] kalloc failed for %s\n", path);
+    printk("[usr] kalloc failed\n");
     return -1;
   }
 
-  if (ip->data) {
-    /* In-memory (ramfs) */
-    memcpy(page, ip->data, ip->size);
-    printk("[usr] loaded %s from ram (%d bytes at %p)\n", path, ip->size, page);
-  } else {
-    /* Disk-backed — read on demand */
-    if (virtio_blk_read(ip->sector, page) != 0) {
-      printk("[usr] disk read failed for %s (sector %d)\n", path, ip->sector);
-      kfree(page);
-      return -1;
-    }
-    printk("[usr] loaded %s from disk (%d bytes at %p, sector %d)\n",
-           path, ip->size, page, ip->sector);
+  if (virtio_blk_read(ip->sector, page) != 0) {
+    printk("[usr] disk read failed for %s (sector %d)\n", path, ip->sector);
+    kfree(page);
+    return -1;
   }
 
   *out_page = page;
   *out_size = ip->size;
+  printk("[usr] loaded %s from disk (%d bytes at %p, sector %d)\n",
+         path, ip->size, page, ip->sector);
   return 0;
 }
 
-/*
- * Enter U-mode. Sets MPP=0 and does mret to the user program's
- * physical address (read from Proc.upage).
- * Retry loop handles spurious mret faults (TLB warmup, PMP).
- */
 __attribute__((noreturn)) void usr_enter(void) {
   Proc *p = cpu_proc();
-  if (!p || !p->upage) {
-    printk("[usr] enter: no user page for pid=%d\n", p ? p->pid : -1);
-    proc_exit(-1);
-  }
+  if (!p || !p->upage) { proc_exit(-1); }
 
   unsigned long ms = csr_read(mstatus);
-  ms &= ~MSTATUS_MPP;      /* MPP = 0 (U-mode) */
+  ms &= ~MSTATUS_MPP;
   ms |= MSTATUS_MPIE;
   csr_write(mstatus, ms);
-
-  /* Configure PMP: allow U-mode access to all physical memory */
   csr_write(pmpaddr0, -1UL);
   csr_write(pmpcfg0, 0x1FUL);
 
@@ -81,30 +58,16 @@ __attribute__((noreturn)) void usr_enter(void) {
   for (;;) {
     csr_write(mepc, (unsigned long)p->upage);
     __asm__ __volatile__("mret");
-    /* mret faults: trap_handler advances tf->mepc past mret,
-     * so we land here and retry. After a few iterations the
-     * TLB is warm and mret succeeds, never returning here. */
-    retry++;
-    if (retry > 100) {
-      printk("[usr] mret stuck after 100 retries, exiting\n");
-      proc_exit(-1);
-    }
+    if (++retry > 100) proc_exit(-1);
   }
 }
 
 int usr_spawn(const char *path) {
   void *page;
   int   size;
-
-  if (usr_load(path, &page, &size) < 0)
-    return -1;
-
+  if (usr_load(path, &page, &size) < 0) return -1;
   int pid = proc_create((void (*)(void))usr_enter, path, page);
-  if (pid < 0) {
-    kfree(page);
-    return -1;
-  }
-
+  if (pid < 0) { kfree(page); return -1; }
   printk("[usr] spawned %s as pid=%d\n", path, pid);
   return pid;
 }

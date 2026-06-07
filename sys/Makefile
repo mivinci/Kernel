@@ -1,4 +1,3 @@
-obj-y += diskfs.o
 obj-y += fdt.o
 obj-y += file.o
 obj-y += fs.o
