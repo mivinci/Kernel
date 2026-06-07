@@ -70,7 +70,7 @@ __attribute__((noreturn)) void usr_enter(void) {
 
   int retry = 0;
   for (;;) {
-    csr_write(mepc, 0);  /* VA 0 — page table maps upage here */
+    csr_write(mepc, 0LU);  /* VA 0 — page table maps upage here */
     __asm__ __volatile__("mret");
     if (++retry > 100) proc_exit(-1);
   }

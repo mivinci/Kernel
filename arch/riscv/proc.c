@@ -1,6 +1,6 @@
 #include <arch/riscv/csr.h>
 #include <arch/riscv/mmu.h>
-#include <arch/riscv/spinlock.h>
+#include <spinlock.h>
 #include <arch/riscv/trap.h>
 #include <kernel.h>
 #include <types.h>

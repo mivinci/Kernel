@@ -3,6 +3,7 @@
   .text
   .globl  trap_entry
   .extern trap_handler
+  .align  2          /* mtvec requires 4-byte alignment */
 
 trap_entry:
   /*

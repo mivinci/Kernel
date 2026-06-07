@@ -1,4 +1,4 @@
-#include <arch/riscv/spinlock.h>
+#include <spinlock.h>
 #include <fdt.h>
 #include <kernel.h>
 #include <types.h>
