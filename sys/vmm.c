@@ -1,3 +1,4 @@
+#include <arch/riscv/arch.h>
 #include <arch/riscv/csr.h>
 #include <arch/riscv/mmu.h>
 #include <kernel.h>
@@ -11,6 +12,10 @@
 #define MEGAPAGE_SIZE (2UL * 1024 * 1024) /* 2 MB */
 
 void vmm_init(void) {
+#if __riscv_xlen == 32
+  printk("[vmm] skipped — Sv32 not yet implemented\n");
+  return;
+#endif
   PageTableEntry *pgd = (PageTableEntry *)kalloc();
   PageTableEntry *pmd = (PageTableEntry *)kalloc();
 
@@ -37,10 +42,8 @@ void vmm_init(void) {
 
   printk("[vmm] Sv39 paging enabled, identity map 128 MB\n");
 
-  /* Quick test: read/write to an unmapped physical page via identity map.
-   * Use a high address outside the kernel image. */
   volatile unsigned long *test = (volatile unsigned long *)0x87F00000UL;
-  *test                        = 0xDEADBEEF;
+  *test                         = 0xDEADBEEF;
   if (*test == 0xDEADBEEF)
     printk("[vmm] test: r/w OK at 0x%p\n", test);
   else

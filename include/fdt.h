@@ -32,10 +32,10 @@ static inline unsigned int fdt_be32(const void *p) {
   return ((unsigned int)b[0] << 24) | ((unsigned int)b[1] << 16) | ((unsigned int)b[2] << 8) | b[3];
 }
 
-static inline unsigned long fdt_be64(const void *p) {
+static inline unsigned long long fdt_be64(const void *p) {
   unsigned int hi = fdt_be32(p);
   unsigned int lo  = fdt_be32((const char *)p + 4);
-  return ((unsigned long)hi << 32) | lo;
+  return ((unsigned long long)hi << 32) | lo;
 }
 
 void fdt_init(void *fdt_ptr);

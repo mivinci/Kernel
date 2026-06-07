@@ -26,7 +26,11 @@ $(dir-y):
 
 kernel.elf: $(dir-y) arch/$(ARCH)/kernel.ld
 	@echo "[kbuild] LD $@"
+ifeq ($(MM), 32)
+	$(Q)$(LD) -melf32lriscv -T arch/$(ARCH)/kernel.ld -o $@ `find $(dir-y) -name '*.o'`
+else
 	$(Q)$(LD) -T arch/$(ARCH)/kernel.ld -o $@ `find $(dir-y) -name '*.o'`
+endif
 
 qemu-gdb:
 	@echo "WARNING: qemu-gdb target not yet implemented"

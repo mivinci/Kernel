@@ -10,6 +10,4 @@ obj-y += uart.o
 obj-y += virtio.o
 
 
-ccflags-y += -march=rv64gc
-ccflags-y += -mabi=lp64d
 ccflags-y += -DNSTACK=$(SMP)

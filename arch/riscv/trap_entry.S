@@ -1,3 +1,5 @@
+#include <arch/riscv/arch.h>
+
   .text
   .globl  trap_entry
   .extern trap_handler
@@ -5,108 +7,108 @@
 trap_entry:
   /*
    * Save all general-purpose registers and CSRs onto the stack.
-   * The stack pointer (sp) still points to the kernel stack at
-   * this point since we're running in M-mode.
+   * Layout must match struct TrapFrame in trap.h.
    */
+#if XLEN == 64
+#define FRAME_SIZE 288
+#define STORE       sd
+#define LOAD        ld
+#else
+#define FRAME_SIZE 144
+#define STORE       sw
+#define LOAD        lw
+#endif
 
-  /* Make room for struct TrapFrame (32 regs + 4 CSRs = 36 * 8 = 288 bytes) */
-  addi    sp, sp, -288
+  addi    sp, sp, -FRAME_SIZE
 
-  /* Save general-purpose registers.
-   * Save t0 first so we can use it as scratch for sp computation. */
-  sd      ra,  0(sp)
-  sd      t0,  32(sp)        /* original t0 saved */
-  addi    t0, sp, 288        /* t0 = pre-trap sp */
-  sd      t0,  8(sp)         /* pre-trap sp */
-  sd      gp,  16(sp)
-  sd      tp,  24(sp)
-  sd      t1,  40(sp)
-  sd      t2,  48(sp)
-  sd      s0,  56(sp)
-  sd      s1,  64(sp)
-  sd      a0,  72(sp)
-  sd      a1,  80(sp)
-  sd      a2,  88(sp)
-  sd      a3,  96(sp)
-  sd      a4,  104(sp)
-  sd      a5,  112(sp)
-  sd      a6,  120(sp)
-  sd      a7,  128(sp)
-  sd      s2,  136(sp)
-  sd      s3,  144(sp)
-  sd      s4,  152(sp)
-  sd      s5,  160(sp)
-  sd      s6,  168(sp)
-  sd      s7,  176(sp)
-  sd      s8,  184(sp)
-  sd      s9,  192(sp)
-  sd      s10, 200(sp)
-  sd      s11, 208(sp)
-  sd      t3,  216(sp)
-  sd      t4,  224(sp)
-  sd      t5,  232(sp)
-  sd      t6,  240(sp)
+  STORE   ra,  0(sp)
+  addi    t0, sp, FRAME_SIZE
+  STORE   t0,  1*REGSZ(sp)
+  STORE   gp,  2*REGSZ(sp)
+  STORE   tp,  3*REGSZ(sp)
+  STORE   t0,  4*REGSZ(sp)    /* original t0 saved above */
+  STORE   t1,  5*REGSZ(sp)
+  STORE   t2,  6*REGSZ(sp)
+  STORE   s0,  7*REGSZ(sp)
+  STORE   s1,  8*REGSZ(sp)
+  STORE   a0,  9*REGSZ(sp)
+  STORE   a1, 10*REGSZ(sp)
+  STORE   a2, 11*REGSZ(sp)
+  STORE   a3, 12*REGSZ(sp)
+  STORE   a4, 13*REGSZ(sp)
+  STORE   a5, 14*REGSZ(sp)
+  STORE   a6, 15*REGSZ(sp)
+  STORE   a7, 16*REGSZ(sp)
+  STORE   s2, 17*REGSZ(sp)
+  STORE   s3, 18*REGSZ(sp)
+  STORE   s4, 19*REGSZ(sp)
+  STORE   s5, 20*REGSZ(sp)
+  STORE   s6, 21*REGSZ(sp)
+  STORE   s7, 22*REGSZ(sp)
+  STORE   s8, 23*REGSZ(sp)
+  STORE   s9, 24*REGSZ(sp)
+  STORE   s10,25*REGSZ(sp)
+  STORE   s11,26*REGSZ(sp)
+  STORE   t3, 27*REGSZ(sp)
+  STORE   t4, 28*REGSZ(sp)
+  STORE   t5, 29*REGSZ(sp)
+  STORE   t6, 30*REGSZ(sp)
 
-  /* Save CSRs */
+  /* Save CSRs at offsets 31..34 */
   csrr    t0, mepc
-  sd      t0,  248(sp)
+  STORE   t0, 31*REGSZ(sp)
   csrr    t0, mstatus
-  sd      t0,  256(sp)
+  STORE   t0, 32*REGSZ(sp)
   csrr    t0, mcause
-  sd      t0,  264(sp)
+  STORE   t0, 33*REGSZ(sp)
   csrr    t0, mtval
-  sd      t0,  272(sp)
+  STORE   t0, 34*REGSZ(sp)
 
-  /* Call C handler: trap_handler(TrapFrame *tf) */
+  /* Call C handler */
   mv      a0, sp
   call    trap_handler
 
-  /*
-   * Restore CSRs (mepc must be last before mret)
-   */
-  ld      t0,  256(sp)
+  /* Restore CSRs */
+  LOAD    t0, 32*REGSZ(sp)
   csrw    mstatus, t0
-  ld      t0,  264(sp)
+  LOAD    t0, 33*REGSZ(sp)
   csrw    mcause,  t0
-  ld      t0,  272(sp)
+  LOAD    t0, 34*REGSZ(sp)
   csrw    mtval,   t0
-  ld      t0,  248(sp)
+  LOAD    t0, 31*REGSZ(sp)
   csrw    mepc,    t0
 
-  /* Restore general-purpose registers (skip sp at 8(sp)) */
-  ld      ra,  0(sp)
-  /* sp skipped — restored by addi below */
-  ld      gp,  16(sp)
-  ld      tp,  24(sp)
-  ld      t0,  32(sp)
-  ld      t1,  40(sp)
-  ld      t2,  48(sp)
-  ld      s0,  56(sp)
-  ld      s1,  64(sp)
-  ld      a0,  72(sp)
-  ld      a1,  80(sp)
-  ld      a2,  88(sp)
-  ld      a3,  96(sp)
-  ld      a4,  104(sp)
-  ld      a5,  112(sp)
-  ld      a6,  120(sp)
-  ld      a7,  128(sp)
-  ld      s2,  136(sp)
-  ld      s3,  144(sp)
-  ld      s4,  152(sp)
-  ld      s5,  160(sp)
-  ld      s6,  168(sp)
-  ld      s7,  176(sp)
-  ld      s8,  184(sp)
-  ld      s9,  192(sp)
-  ld      s10, 200(sp)
-  ld      s11, 208(sp)
-  ld      t3,  216(sp)
-  ld      t4,  224(sp)
-  ld      t5,  232(sp)
-  ld      t6,  240(sp)
+  /* Restore general registers */
+  LOAD    ra,  0(sp)
+  LOAD    gp,  2*REGSZ(sp)
+  LOAD    tp,  3*REGSZ(sp)
+  LOAD    t0,  4*REGSZ(sp)
+  LOAD    t1,  5*REGSZ(sp)
+  LOAD    t2,  6*REGSZ(sp)
+  LOAD    s0,  7*REGSZ(sp)
+  LOAD    s1,  8*REGSZ(sp)
+  LOAD    a0,  9*REGSZ(sp)
+  LOAD    a1, 10*REGSZ(sp)
+  LOAD    a2, 11*REGSZ(sp)
+  LOAD    a3, 12*REGSZ(sp)
+  LOAD    a4, 13*REGSZ(sp)
+  LOAD    a5, 14*REGSZ(sp)
+  LOAD    a6, 15*REGSZ(sp)
+  LOAD    a7, 16*REGSZ(sp)
+  LOAD    s2, 17*REGSZ(sp)
+  LOAD    s3, 18*REGSZ(sp)
+  LOAD    s4, 19*REGSZ(sp)
+  LOAD    s5, 20*REGSZ(sp)
+  LOAD    s6, 21*REGSZ(sp)
+  LOAD    s7, 22*REGSZ(sp)
+  LOAD    s8, 23*REGSZ(sp)
+  LOAD    s9, 24*REGSZ(sp)
+  LOAD    s10,25*REGSZ(sp)
+  LOAD    s11,26*REGSZ(sp)
+  LOAD    t3, 27*REGSZ(sp)
+  LOAD    t4, 28*REGSZ(sp)
+  LOAD    t5, 29*REGSZ(sp)
+  LOAD    t6, 30*REGSZ(sp)
 
-  /* Restore stack pointer */
-  addi    sp, sp, 288
-
+  addi    sp, sp, FRAME_SIZE
   mret

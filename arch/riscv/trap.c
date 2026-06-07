@@ -1,3 +1,4 @@
+#include <arch/riscv/arch.h>
 #include <arch/riscv/csr.h>
 #include <arch/riscv/plic.h>
 #include <arch/riscv/timer.h>
@@ -26,14 +27,13 @@ void trap_init(void) {
 void trap_handler(TrapFrame *tf) {
   /*
    * mcause high bit indicates interrupt vs exception.
-   * Interrupt: mcause[63] == 1 (unsigned, top bit set)
-   * Exception: mcause[63] == 0
+   * RV32: bit 31, RV64: bit 63.
    */
   unsigned long cause   = tf->mcause;
-  unsigned long is_intr = cause >> 63;
+  unsigned long is_intr = cause >> (XLEN - 1);
 
   if (is_intr) {
-    cause &= ~(1UL << 63);
+    cause &= ~(1UL << (XLEN - 1));
     switch (cause) {
     case MCAUSE_MTIMER: timer_handle(); break;
     case MCAUSE_MEXT:   plic_handle(); break;

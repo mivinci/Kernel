@@ -90,12 +90,12 @@ void fdt_init(void *fdt_ptr) {
       /* Check for known properties */
       if (strcmp(pname, "reg") == 0) {
         if (starts_with(path, "/memory")) {
-          memory_base = fdt_be64(pdata);
-          memory_size = fdt_be64((const char *)pdata + 8);
+          memory_base = (unsigned long)fdt_be64(pdata);
+          memory_size = (unsigned long)fdt_be64((const char *)pdata + 8);
           printk("[fdt] RAM: %p+%p\n", memory_base, memory_size);
         }
         if (contains(path, "serial") || contains(path, "uart")) {
-          uart_base = fdt_be64(pdata);
+          uart_base = (unsigned long)fdt_be64(pdata);
           printk("[fdt] UART: %p\n", uart_base);
         }
         if (contains(path, "plic") || contains(path, "interrupt-controller")) {

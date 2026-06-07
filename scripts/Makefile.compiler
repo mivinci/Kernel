@@ -14,4 +14,12 @@ ccflags-y += -Iinclude
 ccflags-y += -MMD -MP
 ccflags-y += -Wno-int-to-pointer-cast
 
+ifeq ($(MM), 32)
+  ccflags-y += -march=rv32gc
+  ccflags-y += -mabi=ilp32d
+else
+  ccflags-y += -march=rv64gc
+  ccflags-y += -mabi=lp64d
+endif
+
 ccflags-$(ENABLE_DEBUG) += -g
