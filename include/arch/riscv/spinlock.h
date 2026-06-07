@@ -17,7 +17,7 @@ static inline void spin_lock(SpinLock *lk) {
                        "  amoswap.w %0, %1, (%2)\n"
                        "  bnez     %0, 1b"
                        : "=&r"(old)
-                       : "r"(1), "r"(&lk->locked)
+                       : "r"((int)1), "r"(&lk->locked)
                        : "memory");
 }
 
