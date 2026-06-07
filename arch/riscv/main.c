@@ -17,14 +17,9 @@ static unsigned long count_a, count_b;
 
 static void proc_a(void) {
   printk("[A] started\n");
-  /*
-   * NOTE: An ecall before the first yield is required on both
-   * RV32 and RV64 for yield() to work correctly. Without this,
-   * the first swtch hangs. Root cause is under investigation.
-   * SYS_GETPID serves as the required warm-up ecall.
-   */
-  int pid = syscall(SYS_GETPID, 0, 0, 0);
-  printk("[A] pid=%d\n", pid);
+  /* Warmup ecall (SYS_YIELD instead of SYS_GETPID for RV32 compat) */
+  syscall(SYS_YIELD, 0, 0, 0);
+  printk("[A] after warmup\n");
 
   for (;;) {
     count_a++;
