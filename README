@@ -14,10 +14,10 @@ make ARCH=riscv        # default, also works: ARCH=arm
 cd usr && make         # build hello, init, sh, cat
 
 # 2.  Create disk image
-python3 tools/mkdisk.py disk.img \
-    usr/init.bin  /bin/init \
-    usr/sh.bin    /bin/sh   \
-    usr/hello.bin /bin/hello
+python3 tools/mkfs.py disk.img \
+    /bin/init=usr/init.bin \
+    /bin/sh=usr/sh.bin     \
+    /bin/hello=usr/hello.bin
 
 # 3.  Run
 qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
@@ -66,10 +66,10 @@ riscv64-elf-objcopy -O binary myapp.elf myapp.bin
 Then add it to the disk image:
 
 ```bash
-python3 tools/mkdisk.py disk.img \
-    usr/init.bin  /bin/init \
-    usr/sh.bin    /bin/sh   \
-    myapp.bin     /bin/myapp
+python3 tools/mkfs.py disk.img \
+    /bin/init=usr/init.bin \
+    /bin/sh=usr/sh.bin     \
+    /bin/myapp=myapp.bin
 ```
 
 Type `myapp` in the shell to run it.
@@ -146,7 +146,7 @@ include/              # kernel headers (types.h, proc.h, fs.h, ...)
 include/arch/riscv/   # RISC-V ISA headers (csr.h, mmu.h, trap.h, ...)
 sys/                  # kernel subsystems + utilities (pmm, proc, fs, ...)
 usr/                  # user programs (crt0, usr.h, hello, init, sh, cat)
-tools/mkdisk.py       # disk image builder
+tools/mkfs.py        # disk image builder
 scripts/              # build system internals
 ```
 

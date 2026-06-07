@@ -1,6 +1,5 @@
 #include <arch/riscv/virtio.h>
 #include <diskfs.h>
-#include <fs.h>
 #include <kernel.h>
 #include <types.h>
 
@@ -33,14 +32,6 @@ void dfs_init(void) {
   /* Inodes start right after the superblock (offset 12) */
   memcpy(inode_cache, buf + 12, 12 * DFS_INODE_SIZE);
   inode_cache_valid = 1;
-
-  /* Register idiskslot entries for old usr_load compat */
-  for (int i = 0; i < 12; i++) {
-    DfsInode *ino = &inode_cache[i];
-    if (ino->mode != DFS_MODE_REGULAR) continue;
-    idiskslot(ino->name, ino->block[0], ino->size);
-    printk("[boot] %-16s sector=%d size=%d\n", ino->name, ino->block[0], ino->size);
-  }
 
   printk("[diskfs] mounted: %d inodes, %d blocks\n", sb.ninodes, sb.nblocks);
 }

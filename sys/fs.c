@@ -82,12 +82,3 @@ void ifree(Inode *ip) {
  * Create a disk-backed inode — stores metadata only.
  * Data is read from disk on demand (by usr_load).
  */
-Inode *idiskslot(const char *name, int sector, int size) {
-  Inode *ip = ialloc(name);
-  if (!ip) return NULL;
-  ip->sector = sector;
-  ip->size   = size;
-  ip->cap    = 0;
-  ip->data   = NULL;
-  return ip;
-}
