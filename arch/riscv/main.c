@@ -73,5 +73,11 @@ void kmain(int hartid, void *fdt) {
     printk("[boot] PANIC: no init found, idle loop\n");
 
   vmm_init();
+
+  /*
+   * Multi-hart: entry.S holds non-0 harts in wfi until a flag
+   * is set.  For now only hart 0 enters the scheduler; once the
+   * flag mechanism is wired, each hart calls scheduler().
+   */
   scheduler();
 }

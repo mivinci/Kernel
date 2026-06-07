@@ -1,6 +1,8 @@
 #ifndef _DISKFS_H
 #define _DISKFS_H
 
+#include <types.h>
+
 /*
  * Simple on-disk filesystem.
  *

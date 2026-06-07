@@ -12,7 +12,7 @@ ccflags-y += -mcmodel=medany
 ccflags-y += -Wall
 ccflags-y += -Iinclude
 ccflags-y += -MMD -MP
-ccflags-y += -Wno-int-to-pointer-cast
+ccflags-y += -DSMP=$(SMP)
 
 ifeq ($(MM), 32)
   ccflags-y += -march=rv32gc
