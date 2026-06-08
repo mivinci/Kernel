@@ -15,15 +15,6 @@ static void tty_wake_reader(Tty *tty) {
   spin_unlock(&ptable_lock);
 }
 
-static void tty_echo_erase(void) {
-  chr_write('\b'); chr_write(' '); chr_write('\b');
-}
-
-static void tty_echo_erase_line(Tty *tty) {
-  for (int i = 0; i < tty->line_len; i++)
-    tty_echo_erase();
-}
-
 static void tty_send_sigint(Tty *tty) {
   spin_lock(&ptable_lock);
   for (int i = 0; i < NPROC; i++) {
@@ -43,6 +34,16 @@ void tty_init(Tty *tty) {
 }
 
 void tty_input(Tty *tty, char c) {
+  /*
+   * Collect echo characters to write outside the lock.
+   * chr_write may busy-wait on TX_READY; holding tty->lock
+   * across that wait would block any tty_read caller and
+   * freeze the terminal under multi-hart TX contention.
+   */
+  char echo_buf[4];
+  int  echo_n = 0;
+  int  wake   = 0;
+
   spin_lock(&tty->lock);
 
   switch ((unsigned char)c) {
@@ -51,22 +52,30 @@ void tty_input(Tty *tty, char c) {
     tty_send_sigint(tty);
     spin_lock(&tty->lock);
     tty->eof = 1;
-    tty_wake_reader(tty);
+    wake = 1;
     break;
   case TTY_CTRL_D:
     if (tty->line_len == 0) {
       tty->eof = 1;
-      tty_wake_reader(tty);
+      wake = 1;
     }
     break;
   case TTY_BS:
     if (tty->line_len > 0) {
       tty->line_len--;
-      if (tty->echo) tty_echo_erase();
+      if (tty->echo) {
+        echo_buf[echo_n++] = '\b';
+        echo_buf[echo_n++] = ' ';
+        echo_buf[echo_n++] = '\b';
+      }
     }
     break;
   case TTY_CTRL_U:
-    if (tty->echo) tty_echo_erase_line(tty);
+    if (tty->echo) {
+      for (int i = 0; i < tty->line_len; i++) {
+        if (echo_n < 3) { echo_buf[echo_n++] = '\b'; echo_buf[echo_n++] = ' '; echo_buf[echo_n++] = '\b'; }
+      }
+    }
     tty->line_len = 0;
     break;
   case '\r':
@@ -75,18 +84,23 @@ void tty_input(Tty *tty, char c) {
   case '\n':
     if (tty->line_len < TTY_LINE_MAX - 1)
       tty->line_buf[tty->line_len++] = '\n';
-    if (tty->echo) { chr_write('\r'); chr_write('\n'); }
-    tty_wake_reader(tty);
+    if (tty->echo) { echo_buf[echo_n++] = '\r'; echo_buf[echo_n++] = '\n'; }
+    wake = 1;
     break;
   default:
     if (c >= ' ' && tty->line_len < TTY_LINE_MAX - 1) {
       tty->line_buf[tty->line_len++] = c;
-      if (tty->echo) chr_write(c);
+      if (tty->echo) echo_buf[echo_n++] = c;
     }
     break;
   }
 
+  if (wake) tty_wake_reader(tty);
   spin_unlock(&tty->lock);
+
+  /* Echo after unlocking so TX-busy doesn't block tty_read */
+  for (int i = 0; i < echo_n; i++)
+    chr_write(echo_buf[i]);
 }
 
 int tty_read(Tty *tty, char *ubuf, int n) {
