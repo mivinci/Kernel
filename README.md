@@ -22,6 +22,12 @@ qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
     -nographic -smp 2 \
     -drive file=disk.img,format=raw,if=none,id=blk \
     -device virtio-blk-device,drive=blk
+
+# With virtio-blk-pci (PCI path, the kernel tries this first)
+qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+    -nographic -smp 2 \
+    -drive file=disk.img,format=raw,if=none,id=blk \
+    -device virtio-blk-pci,drive=blk
 ```
 
 ## What Happens

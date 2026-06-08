@@ -6,8 +6,8 @@ void main(void) {
     write(1, "$ ", 2);
     int i = 0;
     for (;;) {
-      while (read(0, &buf[i], 1) == 0)
-        yield();
+      int n = read(0, &buf[i], 1);
+      if (n <= 0) return;
       if (buf[i] == '\n') break;
       if (++i >= 62) break;
     }

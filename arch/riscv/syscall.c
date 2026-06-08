@@ -1,12 +1,13 @@
 #include <arch/riscv/csr.h>
 #include <arch/riscv/mmu.h>
+#include <chr.h>
 #include <fs.h>
 #include <kernel.h>
 #include <types.h>
 #include <pmm.h>
 #include <proc.h>
 #include <syscall.h>
-#include <uart.h>
+#include <tty.h>
 #include <usr.h>
 
 /*
@@ -28,11 +29,11 @@ static unsigned long sys_write(TrapFrame *tf) {
   int           fd  = tf->a0;
   unsigned long len = tf->a2;
 
-  if (fd == 1) { /* stdout: write to UART */
+  if (fd == 1) { /* stdout: write to console */
     char *buf = user_ptr(tf->a1);
     if (!buf) return -1;
     for (unsigned long i = 0; i < len; i++)
-      putc(buf[i]);
+      chr_write(buf[i]);
     return len;
   }
 
@@ -152,16 +153,13 @@ static unsigned long sys_read(TrapFrame *tf) {
   int           fd  = tf->a0;
   unsigned long len = tf->a2;
 
-  if (fd == 0) { /* stdin: read from console buffer */
+  if (fd == 0) { /* stdin: read from TTY (blocking, with poll fallback) */
     char *buf = user_ptr(tf->a1);
     if (!buf) return -1;
-    unsigned long i;
-    for (i = 0; i < len; i++) {
-      int c = getc();
-      if (c < 0) break;
-      buf[i] = (char)c;
-    }
-    return i;
+    /* Poll fallback: drain any chars that missed the interrupt */
+    while (chr_has_data())
+      tty_input(&console_tty, (char)chr_read());
+    return tty_read(&console_tty, buf, (int)len);
   }
 
   File *f = fdget(fd);

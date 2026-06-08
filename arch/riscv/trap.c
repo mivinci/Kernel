@@ -4,7 +4,9 @@
 #include <arch/riscv/timer.h>
 #include <arch/riscv/trap.h>
 #include <kernel.h>
+#include <proc.h>
 #include <syscall.h>
+#include <tty.h>
 
 extern void trap_entry(void);
 
@@ -68,5 +70,16 @@ void trap_handler(TrapFrame *tf) {
       break;
     default: tf->mepc += 4; break; /* no printk — see warning above */
     }
+  }
+
+  /* Deliver pending signals when returning to user mode */
+  Proc *cur = cpu_proc();
+  if (cur && ((tf->mstatus >> 11) & 3) == 0) {
+    spin_lock(&ptable_lock);
+    int sig = cur->sig_pending;
+    cur->sig_pending = 0;
+    spin_unlock(&ptable_lock);
+    if (sig & SIGINT)
+      proc_kill();
   }
 }

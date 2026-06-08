@@ -39,6 +39,5 @@ extern unsigned long uart_mmio_base;
 void putc(char c);
 void uart_init(void);
 void uart_handle(void);
-int  getc(void);
 
 #endif /* _UART_H */

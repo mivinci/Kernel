@@ -31,6 +31,10 @@ int usr_load(const char *path, void **out_page, int *out_size) {
     printk("[usr] disk read failed\n"); kfree(page); return -1;
   }
 
+  /* Zero the BSS region (rest of the page after the binary) */
+  if (fsize < PAGE_SIZE)
+    memset((char *)page + fsize, 0, PAGE_SIZE - fsize);
+
   *out_page = page;
   *out_size = fsize;
   printk("[usr] loaded %s via diskfs (%d bytes)\n", path, fsize);

@@ -9,9 +9,9 @@
 #include <proc.h>
 #include <spinlock.h>
 
-static Proc     ptable[NPROC];
+Proc     ptable[NPROC];
 static Cpu      cpu[NCPU];
-static SpinLock ptable_lock;
+SpinLock ptable_lock;
 
 void proc_init(void) {
   spin_init(&ptable_lock);
@@ -51,6 +51,8 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
   p->parent     = -1;
   p->nchild     = 0;
   p->exitcode   = 0;
+  p->pgid       = p->pid;
+  p->sig_pending = 0;
   p->mscratch   = (unsigned long)p->kstack + KSTACK;
 
   Proc *cur = (hid < NCPU) ? cpu[hid].proc : NULL;
@@ -166,6 +168,34 @@ void proc_iowait_wake(void) {
     }
   }
   spin_unlock(&ptable_lock);
+}
+
+void proc_kill(void) {
+  int   hid = csr_read(mhartid);
+  Proc *p   = cpu[hid].proc;
+  if (!p) return;
+
+  p->exitcode = -1;
+  spin_lock(&ptable_lock);
+  p->state = ZOMBIE;
+
+  Proc *init = &ptable[0];
+  for (int i = 0; i < p->nchild; i++) {
+    int   cid = p->child[i];
+    Proc *cp  = &ptable[cid];
+    if (cp->state == UNUSED) continue;
+    cp->parent = 0;
+    if (init->state != UNUSED && init->nchild < 8)
+      init->child[init->nchild++] = cid;
+  }
+  p->nchild = 0;
+  spin_unlock(&ptable_lock);
+
+  if (p->upage) { kfree(p->upage); p->upage = NULL; }
+  if (p->satp)  { vmm_free_user_pgdir(p->satp); p->satp = 0; }
+
+  swtch(&p->context, &cpu[hid].context);
+  for (;;) ;
 }
 
 void proc_exit(int code) {

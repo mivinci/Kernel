@@ -1,6 +1,7 @@
 #ifndef _PROC_H
 #define _PROC_H
 
+#include <spinlock.h>
 #include <types.h>
 
 #define NPROC  16
@@ -47,6 +48,8 @@ XDEF_STRUCT(Proc) {
   int       nchild;   /* number of live children */
   int       exitcode; /* exit status (valid when ZOMBIE) */
   char      name[16]; /* debug name */
+  int       pgid;       /* process group ID (default = pid) */
+  int       sig_pending;/* pending signal bitmap */
 };
 
 /* Per-CPU state */
@@ -61,11 +64,16 @@ void  hart_start(void) __attribute__((noreturn));
 void  swtch(Context *old, Context *new);
 int   proc_create(void (*fn)(void), const char *name, void *upage);
 void  proc_exit(int code);
+void  proc_kill(void);
 int   proc_wait(int pid);
 void  yield(void);
 void  sched_tick(void);
 Proc *cpu_proc(void);
 Proc *get_proc(int pid);
 void  proc_iowait_wake(void);
+
+/* Exported for TTY/signal delivery */
+extern Proc     ptable[NPROC];
+extern SpinLock ptable_lock;
 
 #endif /* _PROC_H */
