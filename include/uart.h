@@ -45,6 +45,7 @@ extern unsigned long uart_mmio_base;
 #define WRITE(reg, val) (*(volatile char *)(uart_mmio_base + (reg))) = (val)
 
 void putc(char c);
+void puts(char *p);
 void uart_init(void);
 void uart_handle(void);
 
