@@ -42,7 +42,6 @@ void kmain(int hartid, void *fdt) {
    */
   static int booted = 0;
   if (booted) {
-    printk("[kernel] re-entered kmain — skipping init\n");
     scheduler(hartid);
   }
   booted = 1;
