@@ -16,7 +16,15 @@ extern unsigned long uart_mmio_base;
 #define LSR 0x05 /* Line Status Register */
 
 /* Interrupt Enable Register bits */
-#define IER_RDA 0x01 /* Received Data Available */
+#define IER_RDA  0x01 /* Received Data Available */
+#define IER_THRE 0x02 /* Transmit Holding Register Empty */
+
+/* Interrupt Identification Register (read-only) */
+#define IIR         0x02
+#define IIR_NO_PEND 0x01 /* No interrupt pending */
+#define IIR_TX      0x02 /* THRE interrupt */
+#define IIR_RX      0x04 /* RDA interrupt */
+#define IIR_RX_TO   0x0c /* RDA timeout */
 
 /* Line Control Register bits */
 #define LCR_DLAB 0x80 /* Divisor Latch Access Bit */
