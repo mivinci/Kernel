@@ -34,22 +34,19 @@ void plic_handle(void) {
 
   /* Sanity check: a valid PLIC IRQ fits in 6 bits (0..63).
    * If we read garbage the plic_mmio_base may have been
-   * corrupted by a stack overflow — drop the spurious claim
-   * so we don't write back a bogus value. */
-  if (irq > 63) {
-    return;
-  }
-
-  if (irq == UART0_IRQ) {
-    uart_handle();
-  } else if (irq == VIRTIO_IRQ) {
-    virtio_blk_intr_handler();
-  } else {
-    /* puts() avoids the 1024-byte vsprintf buffer on the trap stack */
-    puts("[plic] unhandled irq=");
-    putc('0' + (char)(irq / 10));
-    if (irq >= 10) putc('0' + (char)(irq % 10));
-    puts("\n");
+   * corrupted by a stack overflow.  Still complete the claim
+   * so we don't wedge the interrupt controller. */
+  if (irq <= 63) {
+    if (irq == UART0_IRQ) {
+      uart_handle();
+    } else if (irq == VIRTIO_IRQ) {
+      virtio_blk_intr_handler();
+    } else {
+      puts("[plic] unhandled irq=");
+      putc('0' + (char)(irq / 10));
+      if (irq >= 10) putc('0' + (char)(irq % 10));
+      puts("\n");
+    }
   }
   plic_write(PLIC_CLAIM(hartid, PLIC_MODE_M), irq);
 }
