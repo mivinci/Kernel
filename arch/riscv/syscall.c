@@ -6,6 +6,7 @@
 #include <pmm.h>
 #include <proc.h>
 #include <syscall.h>
+#include <tty.h>
 #include <uart.h>
 #include <usr.h>
 
@@ -152,16 +153,13 @@ static unsigned long sys_read(TrapFrame *tf) {
   int           fd  = tf->a0;
   unsigned long len = tf->a2;
 
-  if (fd == 0) { /* stdin: read from console buffer */
+  if (fd == 0) { /* stdin: read from TTY (blocking, with poll fallback) */
     char *buf = user_ptr(tf->a1);
     if (!buf) return -1;
-    unsigned long i;
-    for (i = 0; i < len; i++) {
-      int c = getc();
-      if (c < 0) break;
-      buf[i] = (char)c;
-    }
-    return i;
+    /* Poll fallback: drain any UART chars that missed the interrupt */
+    while (READ(LSR) & LSR_RX_READY)
+      tty_input(&console_tty, READ(RBR));
+    return tty_read(&console_tty, buf, (int)len);
   }
 
   File *f = fdget(fd);

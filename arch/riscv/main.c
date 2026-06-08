@@ -10,6 +10,7 @@
 #include <types.h>
 #include <pmm.h>
 #include <proc.h>
+#include <tty.h>
 #include <uart.h>
 #include <usr.h>
 
@@ -42,6 +43,7 @@ void kmain(int hartid, void *fdt) {
   proc_init();
 
   uart_init();
+  tty_init(&console_tty);
   plic_init();
   virtio_blk_init();
 
