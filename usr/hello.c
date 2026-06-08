@@ -2,6 +2,6 @@
 
 void main(void) {
   const char *msg = "Hello from C!\n";
-  write(1, msg, 15);
+  write(1, msg, 14);
   exit(0);
 }

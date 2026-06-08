@@ -5,7 +5,7 @@
 #include <types.h>
 
 #define NPROC  16
-#define KSTACK PAGE_SIZE /* 4 KB kernel stack per process */
+#define KSTACK (PAGE_SIZE * 2) /* 8 KB kernel stack per process */
 #define NCPU   SMP       /* max harts (from Makefile -DSMP) */
 
 typedef enum {
