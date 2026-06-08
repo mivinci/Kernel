@@ -113,8 +113,9 @@ int tty_read(Tty *tty, char *ubuf, int n) {
     int sig = cur->sig_pending;
     spin_unlock(&ptable_lock);
     if (sig & SIGINT) {
+      tty->reader = NULL;
       spin_unlock(&tty->lock);
-      proc_kill();
+      return -1;
     }
   }
 

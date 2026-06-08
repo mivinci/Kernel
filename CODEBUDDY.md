@@ -106,11 +106,17 @@ python3 tools/mkfs.py disk.img \
     /bin/sh=usr/sh.bin     \
     /bin/hello=usr/hello.bin
 
-# Run with virtio-blk-device
+# Run with virtio-blk-device (MMIO path, prefered for testing)
 qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
   -nographic -smp 2 \
   -drive file=disk.img,format=raw,if=none,id=blk \
   -device virtio-blk-device,drive=blk
+
+# With virtio-blk-pci (PCI path, the kernel tries this first)
+qemu-system-riscv64 -machine virt -bios none -kernel kernel.elf \
+  -nographic -smp 2 \
+  -drive file=disk.img,format=raw,if=none,id=blk \
+  -device virtio-blk-pci,drive=blk
 ```
 
 ### Interactive Testing with expect
