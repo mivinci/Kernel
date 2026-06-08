@@ -3,13 +3,28 @@
 #include <types.h>
 #include <tty.h>
 #include <uart.h>
+#include <spinlock.h>
 
 unsigned long uart_mmio_base = 0x10000000UL;
+
+/*
+ * Serialize RX register access across harts.  TX (putc/chr_write) is
+ * intentionally left unlocked — adding a TX lock without disabling
+ * interrupts would deadlock when printk is called from trap context
+ * and the interrupt handler tries to write to the same lock.
+ */
+static SpinLock uart_rx_lock;
 
 /* ── ChrOps backing (called by chr_read / chr_write / chr_has_data) ── */
 
 static int uart_chr_read(void) {
-  if (READ(LSR) & LSR_RX_READY) return (unsigned char)READ(RBR);
+  spin_lock(&uart_rx_lock);
+  if (READ(LSR) & LSR_RX_READY) {
+    int c = (unsigned char)READ(RBR);
+    spin_unlock(&uart_rx_lock);
+    return c;
+  }
+  spin_unlock(&uart_rx_lock);
   return -1;
 }
 
@@ -20,7 +35,10 @@ static void uart_chr_write(int c) {
 }
 
 static int uart_chr_has_data(void) {
-  return (READ(LSR) & LSR_RX_READY) != 0;
+  spin_lock(&uart_rx_lock);
+  int rd = (READ(LSR) & LSR_RX_READY) != 0;
+  spin_unlock(&uart_rx_lock);
+  return rd;
 }
 
 static ChrOps uart_chr_ops = {
@@ -33,6 +51,7 @@ static ChrOps uart_chr_ops = {
 /* ── Hardware init ── */
 
 void uart_init(void) {
+  spin_init(&uart_rx_lock);
   WRITE(IER, 0);
   WRITE(LCR, LCR_DLAB);
   WRITE(DLL, 0x01);
@@ -59,8 +78,16 @@ void puts(char *p) {
 }
 
 void uart_handle(void) {
-  while (READ(LSR) & LSR_RX_READY)
-    tty_input(&console_tty, READ(RBR));
+  /* Buffer bytes under uart_rx_lock, then deliver outside the lock
+   * to avoid lock-ordering deadlock with tty->lock → chr_write. */
+  char buf[16];
+  int  n = 0;
+  spin_lock(&uart_rx_lock);
+  while (n < 16 && (READ(LSR) & LSR_RX_READY))
+    buf[n++] = READ(RBR);
+  spin_unlock(&uart_rx_lock);
+  for (int i = 0; i < n; i++)
+    tty_input(&console_tty, buf[i]);
 }
 
 int printk(const char *fmt, ...) {

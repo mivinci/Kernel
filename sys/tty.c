@@ -105,8 +105,10 @@ int tty_read(Tty *tty, char *ubuf, int n) {
     spin_unlock(&tty->lock);
     yield();
     /* Poll for chars that missed the interrupt */
-    while (chr_has_data())
-      tty_input(tty, (char)chr_read());
+    while (chr_has_data()) {
+      int c = chr_read();
+      if (c >= 0) tty_input(tty, (char)c);
+    }
     spin_lock(&tty->lock);
 
     spin_lock(&ptable_lock);

@@ -157,8 +157,10 @@ static unsigned long sys_read(TrapFrame *tf) {
     char *buf = user_ptr(tf->a1);
     if (!buf) return -1;
     /* Poll fallback: drain any chars that missed the interrupt */
-    while (chr_has_data())
-      tty_input(&console_tty, (char)chr_read());
+    while (chr_has_data()) {
+      int c = chr_read();
+      if (c >= 0) tty_input(&console_tty, (char)c);
+    }
     return tty_read(&console_tty, buf, (int)len);
   }
 
