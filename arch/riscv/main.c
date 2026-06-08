@@ -42,7 +42,11 @@ void kmain(int hartid, void *fdt) {
    */
   static int booted = 0;
   if (booted) {
-    scheduler(hartid);
+    /* Re-entry — the system is already running.  Halting this
+     * hart is safer than re-entering the scheduler, which could
+     * chain-restart from the same fault and flood the console
+     * with "[sched] hart 0 starting". */
+    for (;;) __asm__ __volatile__("wfi");
   }
   booted = 1;
 
