@@ -74,9 +74,12 @@ void trap_handler(TrapFrame *tf) {
 
   /* Deliver pending signals when returning to user mode */
   Proc *cur = cpu_proc();
-  if (cur && cur->sig_pending && ((tf->mstatus >> 11) & 3) == 0) {
-    if (cur->sig_pending & SIGINT)
-      proc_kill();
+  if (cur && ((tf->mstatus >> 11) & 3) == 0) {
+    spin_lock(&ptable_lock);
+    int sig = cur->sig_pending;
     cur->sig_pending = 0;
+    spin_unlock(&ptable_lock);
+    if (sig & SIGINT)
+      proc_kill();
   }
 }

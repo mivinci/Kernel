@@ -109,14 +109,12 @@ int tty_read(Tty *tty, char *ubuf, int n) {
       tty_input(tty, (char)chr_read());
     spin_lock(&tty->lock);
 
-    if (cur->sig_pending & SIGINT) {
+    spin_lock(&ptable_lock);
+    int sig = cur->sig_pending;
+    spin_unlock(&ptable_lock);
+    if (sig & SIGINT) {
       spin_unlock(&tty->lock);
-      spin_lock(&ptable_lock);
-      cur->state    = ZOMBIE;
-      cur->exitcode = -1;
-      spin_unlock(&ptable_lock);
-      yield();
-      return -1;
+      proc_kill();
     }
   }
 
