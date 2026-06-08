@@ -20,14 +20,18 @@ _start:
   beqz     s0, boot_kernel
 
   /* Non-zero harts: wait for hart 0 to finish init, then
-   * run per-hart setup and enter the scheduler. */
+   * run per-hart setup and enter the scheduler.
+   * Once hart_start is called it must never return (scheduler
+   * has for(;;)).  The infinite WFI below catches the impossible
+   * return to stop chain-re-entry loops. */
   la       a3, hart_ready
 1:
   lw       a4, 0(a3)
   beqz     a4, 1b
   call     hart_start
+2:
   wfi
-  j        1b
+  j        2b
 
 boot_kernel:
   mv       a0, s0
