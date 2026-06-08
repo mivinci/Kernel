@@ -32,6 +32,21 @@ static const char *init_fallbacks[] = {
 
 
 void kmain(int hartid, void *fdt) {
+  /*
+   * Guard against re-entry.  If kmain() is called a second time
+   * (e.g. after a stack overflow or exception that accidentally
+   * jumps back to _start), skip the full init sequence so we
+   * don't double-allocate pages, corrupt the FDT, or reset the
+   * process table.  Go straight to the scheduler so surviving
+   * harts and processes keep running.
+   */
+  static int booted = 0;
+  if (booted) {
+    printk("[kernel] re-entered kmain — skipping init\n");
+    scheduler(hartid);
+  }
+  booted = 1;
+
   printk("[kernel] Booting by hart %d ...\n", hartid);
 
   trap_init();
