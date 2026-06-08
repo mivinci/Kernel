@@ -1,9 +1,36 @@
+#include <chr.h>
 #include <kernel.h>
 #include <types.h>
 #include <tty.h>
 #include <uart.h>
 
 unsigned long uart_mmio_base = 0x10000000UL;
+
+/* ── ChrOps backing (called by chr_read / chr_write / chr_has_data) ── */
+
+static int uart_chr_read(void) {
+  if (READ(LSR) & LSR_RX_READY) return (unsigned char)READ(RBR);
+  return -1;
+}
+
+static void uart_chr_write(int c) {
+  while (!(READ(LSR) & LSR_TX_READY))
+    ;
+  WRITE(THR, c);
+}
+
+static int uart_chr_has_data(void) {
+  return (READ(LSR) & LSR_RX_READY) != 0;
+}
+
+static ChrOps uart_chr_ops = {
+    .read     = uart_chr_read,
+    .write    = uart_chr_write,
+    .has_data = uart_chr_has_data,
+    .init     = NULL,
+};
+
+/* ── Hardware init ── */
 
 void uart_init(void) {
   WRITE(IER, 0);
@@ -14,6 +41,7 @@ void uart_init(void) {
   WRITE(FCR, FCR_ENABLE);
   WRITE(MCR, MCR_OUT2);
   WRITE(IER, IER_RDA);
+  chr_set_console(&uart_chr_ops);
 }
 
 void putc(char c) {

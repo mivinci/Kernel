@@ -1,9 +1,9 @@
+#include <chr.h>
 #include <kernel.h>
 #include <types.h>
 #include <proc.h>
 #include <spinlock.h>
 #include <tty.h>
-#include <uart.h>
 
 Tty console_tty;
 
@@ -16,7 +16,7 @@ static void tty_wake_reader(Tty *tty) {
 }
 
 static void tty_echo_erase(void) {
-  putc('\b'); putc(' '); putc('\b');
+  chr_write('\b'); chr_write(' '); chr_write('\b');
 }
 
 static void tty_echo_erase_line(Tty *tty) {
@@ -75,13 +75,13 @@ void tty_input(Tty *tty, char c) {
   case '\n':
     if (tty->line_len < TTY_LINE_MAX - 1)
       tty->line_buf[tty->line_len++] = '\n';
-    if (tty->echo) { putc('\r'); putc('\n'); }
+    if (tty->echo) { chr_write('\r'); chr_write('\n'); }
     tty_wake_reader(tty);
     break;
   default:
     if (c >= ' ' && tty->line_len < TTY_LINE_MAX - 1) {
       tty->line_buf[tty->line_len++] = c;
-      if (tty->echo) putc(c);
+      if (tty->echo) chr_write(c);
     }
     break;
   }
@@ -104,13 +104,9 @@ int tty_read(Tty *tty, char *ubuf, int n) {
     cur->state  = IOWAIT;
     spin_unlock(&tty->lock);
     yield();
-    /* Poll UART for chars that missed the interrupt */
-    spin_unlock(&tty->lock);
-    yield();
-    /* Poll UART for chars that missed the interrupt */
-    while (READ(LSR) & LSR_RX_READY)
-      tty_input(tty, READ(RBR));
-    spin_lock(&tty->lock);
+    /* Poll for chars that missed the interrupt */
+    while (chr_has_data())
+      tty_input(tty, (char)chr_read());
     spin_lock(&tty->lock);
 
     if (cur->sig_pending & SIGINT) {
