@@ -9,20 +9,33 @@ trap_entry:
   /*
    * Swap sp with kernel trap stack (stored in mscratch).
    * After swap: sp = kernel stack top, mscratch = original sp.
+   *
+   * Immediately save the original sp and reset mscratch to the
+   * kernel stack top.  This prevents a nested trap from using the
+   * original (user-space) sp as its stack, which would fault
+   * because M-mode accesses user virtual addresses without
+   * translation.
    */
   csrrw   sp, mscratch, sp
+  csrr    t0, mscratch          /* t0 = original sp (just swapped out) */
 
 #if XLEN == 64
-#define FRAME_SIZE 288
+#define FRAME_SIZE 296
 #define STORE       sd
 #define LOAD        ld
 #else
-#define FRAME_SIZE 144
+#define FRAME_SIZE 148
 #define STORE       sw
 #define LOAD        lw
 #endif
 
   addi    sp, sp, -FRAME_SIZE
+
+  STORE   t0, 35*REGSZ(sp)     /* save old sp at offset 35 */
+
+  /* Reset mscratch to kernel stack top for nested-trap safety */
+  addi    t0, sp, FRAME_SIZE
+  csrw    mscratch, t0
 
   STORE   ra,  0(sp)
   addi    t0, sp, FRAME_SIZE
@@ -115,7 +128,11 @@ trap_entry:
 
   addi    sp, sp, FRAME_SIZE
 
-  /* Restore original sp (saved in mscratch on entry) */
+  /* Restore mscratch from saved old_sp, then swap.
+   * old_sp was saved at offset 35 from the bottom of the frame,
+   * which is sp - FRAME_SIZE + 35*REGSZ = sp - 16 (on RV64). */
+  LOAD    t0, -16(sp)
+  csrw    mscratch, t0
   csrrw   sp, mscratch, sp
 
   mret

@@ -26,6 +26,14 @@ void proc_init(void) {
   printk("[proc] %d slots, kstack=%d KB, %d hart(s)\n", NPROC, KSTACK / 1024, NCPU);
 }
 
+static void kstack_free(void *kstack) {
+  if (!kstack) return;
+  kfree(kstack);
+#if KSTACK > PAGE_SIZE
+  kfree((char *)kstack + PAGE_SIZE);
+#endif
+}
+
 int proc_create(void (*fn)(void), const char *name, void *upage) {
   Proc *p = NULL;
   int   hid = csr_read(mhartid);
@@ -37,11 +45,27 @@ int proc_create(void (*fn)(void), const char *name, void *upage) {
   if (!p) { spin_unlock(&ptable_lock); printk("[proc] no slots\n"); return -1; }
   p->state = RUNNABLE;
 
+  /*
+   * Allocate enough memory for KSTACK (might be > PAGE_SIZE).
+   * With KSTACK = 2 * PAGE_SIZE we need two consecutive pages.
+   */
   p->kstack = kalloc();
   if (!p->kstack) {
     p->state = UNUSED; spin_unlock(&ptable_lock);
     printk("[proc] kalloc failed\n"); return -1;
   }
+#if KSTACK > PAGE_SIZE
+  /* Allocate the second page; we rely on kalloc returning
+   * contiguous pages from the free list (built in-order by
+   * pmm_init from _end up to ram_top). */
+  void *p2 = kalloc();
+  if (!p2) {
+    kstack_free(p->kstack); p->kstack = NULL;
+    p->state = UNUSED; spin_unlock(&ptable_lock);
+    printk("[proc] kalloc failed\n"); return -1;
+  }
+  /* p->kstack points to the bottom of the two-page region */
+#endif
 
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (unsigned long)fn;
@@ -93,7 +117,7 @@ void scheduler(int hartid) {
       if (p->state != ZOMBIE) continue;
       int prt = p->parent;
       if (prt < 0 || prt >= NPROC || ptable[prt].state == UNUSED) {
-        kfree(p->kstack); p->kstack = NULL; p->state = UNUSED;
+        kstack_free(p->kstack); p->kstack = NULL; p->state = UNUSED;
       }
     }
     spin_unlock(&ptable_lock);
