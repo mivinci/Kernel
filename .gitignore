@@ -1,0 +1,9 @@
+# 构建产物
+build/
+user/build/
+
+# clangd 数据库：由 `make compdb` 生成，随架构变化，不入库。
+compile_commands.json
+.cache/
+
+.DS_Store
