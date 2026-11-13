@@ -12,10 +12,14 @@
 
 ![微内核架构](architecture.jpg)
 
-HAL 是内核机制与硬件操作之间的接口边界，实现在 `kernel/arm64/`、`kernel/riscv/`，
-公共契约放在 `include/hal/`；不是独立进程，也不要求新增 HAL 实现目录。
-图为分层示意，未展开共享内存及用户驱动直接访问授权 MMIO/DMA 的连接；这些访问不经过内核 IPC 数据搬运。
-HAL 只封装内核必需的硬件操作，不接管 serial/blk/net 等用户态驱动的设备协议。RISC-V 当前仅支持 RV64。
+最新图将 HAL 与 Arch 分层：HAL 表达 IRQ、CPU、内存和设备资源等硬件抽象，Arch 表达 arm64/riscv 的具体实现。
+HAL 公共契约放在 `include/hal/`；Arch 实现仍放在 `kernel/arm64/`、`kernel/riscv/`，不新增 `arch/` 中间目录。
+两层都是实现边界，不是新增运行态或服务进程。图中的 UART/Disk/NIC/GPU 表示硬件抽象类别，
+不表示把这些设备驱动或协议搬回内核；内核只提供必需的控制器/CPU/映射/授权机制，设备协议仍由 serial/blk/net/dis 等用户态服务处理。
+用户态驱动使用获授权的设备资源及适当的底层访问封装，不要求每次设备读写都通过 syscall 或内核 HAL 中转。
+图省略物理硬件层、共享数据通道及直接 MMIO/DMA 连接；实际依赖仍是抽象接口落到架构/设备实现。
+HAL 不需要强制为每个图标建立一套通用接口；IRQ/页表等内核契约与用户态设备封装的具体划分仍需逐项定义。
+RISC-V 当前仅支持 RV64。图中 syscall 名称是概览，实际接口分层以第 9 节为准。
 
 ## 已确定的命名约定
 
@@ -271,7 +275,8 @@ ASID、多核、异步共享环及零拷贝先不做。
 - mem：物理页、预算、共享内存。
 - vspace：映射、页表、安全访问。
 - syscall：ABI 解码和入口检查，调用具体机制。
-- HAL（include/hal 公共契约、kernel/arm64 与 kernel/riscv 实现）：CPU、页表、定时器和 PLIC/GIC 等内核必需硬件操作，不感知服务协议。
+- HAL：硬件抽象契约；内核必需的 CPU、地址空间、定时器和 IRQ 接口位于 include/hal，不接管设备协议。
+- Arch：kernel/arm64 与 kernel/riscv 实现陷阱、寄存器、页表、定时器及 PLIC/GIC 等操作；图中的 Arch 是层名，不是目录名。
 - kernel/boot：解析设备树并整理启动资源；普通设备协议由用户态驱动处理。
 - include/{arm64,riscv}、user/{arm64,riscv}：架构专用头文件和用户态架构适配。
 
