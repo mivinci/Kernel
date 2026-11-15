@@ -2,8 +2,12 @@
 build/
 user/build/
 
-# clangd 数据库：由 `make compdb` 生成，随架构变化，不入库。
+# clangd 数据库：由架构构建或 `make compdb ARCH=...` 生成，不入库。
 compile_commands.json
 .cache/
 
 .DS_Store
+
+# 主机工具生成的 Python 字节码。
+__pycache__/
+*.py[cod]

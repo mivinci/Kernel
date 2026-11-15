@@ -1,0 +1,376 @@
+# 终端、会话与信号
+
+[设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
+
+状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+
+职责修订：普通会话/进程组与前台操作由 sh、tty 直接请求内核并接受关系/权限校验；init 仅配置初始终端权限。wait/自动收取依内核退出记录，不再以 init 复制和 exack 为前置。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
+
+## 控制终端与交互
+
+已确定：serial 管 UART，tty 管终端实例，init 为 sh 指定控制终端，子命令默认继承，系统服务默认无终端。
+数据路径为 sh/程序 ↔ tty ↔ serial ↔ UART；tty 不持有 UART MMIO/IRQ，只有 serial 获授这些设备资源。
+tty与serial使用本篇固定SPSC共享环及静态用户通知位。
+禁止 tty 通过长期不返回的 call 等待 serial 输入；tty 暂存客户端读请求并继续处理输出，serial 依设备事件推进收发。
+待处理数据、通知重开、缓冲满、双方退出和共享区安全复用须在协议中明确。
+控制终端独立于标准流；重定向输出不改变控制终端，终端标识本身不授予权限。
+单串口首版支持回显、退格、行读取、换行处理和原始字节输出；定义输入缓冲满时的行为。
+进程查询可返回终端标识供 ps 显示，终端身份复用也不得把旧关联指向新实例。
+
+### 会话、作业与信号（按审查完善，已纳入本轮范围）
+
+撤回单个前台 PID、Ctrl-C 直接强杀以及不设计进程组/信号的简化方案。
+控制终端关联会话，前台目标为同会话进程组；子进程默认继承组，管道等同作业成员共享组而非依赖父子树。
+init 配置初始授权策略；sh 组织作业，tty 管终端状态，内核强制组/会话及前台权限边界；身份均须防复用。
+Ctrl-C 在启用终端特殊字符解释时产生前台组中断信号，默认终止，可捕获/屏蔽/忽略；强制终止另设不可捕获机制。
+信号由内核安全点处理，不依赖目标执行 recv；处理函数入口/用户信号帧/sigreturn 须校验用户地址和特权状态。
+需要 STOP/CONT、组级等待的停止/继续/退出状态、后台终端读规则、终端模式恢复及挂断/孤儿策略。
+这些语义纳入本轮设计和验收，不宣称完整 POSIX 兼容；不得再以单进程特例固定不可扩展 ABI。
+前台切换、组成员发布与 start 协调，失败可回滚；等待整个作业停止或退出后再交回 shell，不能仅看首个进程。
+控制路径不得同步依赖可能阻塞在 fs 的 init；具体内核授权及终端/组关联提交协议须按[全局设计与冻结条件](00-overview.md)冻结。
+
+内核是进程会话/组成员、终端会话关联及前台组的权威来源；tty 管输入缓冲/行模式，sh 管作业命令策略，init 管构造授权。
+会话/组/终端使用有配置上限的关系表，不引入通用对象方法或消息队列；组长退出不销毁仍有成员或管理引用的组。
+子进程默认继承组，可由获权 sh 按关系规则组织同会话作业组；运行期成员变更必须按权限和会话关系检查，不能加入他人作业或系统服务组。
+tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，与前台切换有明确先后序；不使用 tty 缓存的 PID 作为权威目标。
+暂存读取在实际交付前重查前台资格，前后台切换不能让旧读继续抢输入；输入的归属/丢弃策略由切换协议显式规定。
+终端挂断独立于 close(fd)：挂断唤醒等待者、拒绝后续 I/O 并向授权作业发送 HUP；关闭一个 fd 不解除整个会话控制终端。
+
+### 基础信号语义（已确定）
+
+首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
+WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
+KILL/STOP 不可捕获、忽略或屏蔽；KILL 对停止中的进程也立即进入内核退出处理，不等待 CONT。
+每进程保存 pending/mask 和有上限的 action 表，普通信号可合并、不按次数排队；数据消息仍走 IPC。
+忽略 CHLD 不丢弃持久子进程结果。CONT 即便被屏蔽也先解除 STOP，处理函数投递另按 mask/action；相互抵消过期 STOP/CONT 待处理状态。
+进程只改自身 action/mask，发送至他进程/组检查独立授权；处理函数恢复使用受检查 sigreturn，不以普通 ret 恢复被中断现场。
+后台终端读取采用 TTIN；启用相应终端策略时后台操作采用 TTOU。若停止信号被屏蔽/忽略或孤儿组无法由控制会话恢复，则返回明确 I/O 错误，不永久等待。
+终端挂断投递 HUP，TTY 的 Ctrl-C/Ctrl-Z 等映射由终端模式决定；原始模式可交付普通字节。
+孤儿组判定、停止/继续状态记录和 wait 的确认协议须在下一个生命周期规格中统一，不以信号位代替结果记录。
+
+### wait 与组状态（已确定）
+
+wait 可返回 STOPPED（停止信号）、CONTINUED、EXITED（退出码/终止信号/故障原因），附完整进程身份及单调状态序号。
+父直接 wait 的交付方案只消费选定状态版本，不清除更新状态，不另要求用户 waitack；服务生命周期观察仍独立确认。具体交付见 [进程设计](03-process.md#父直接-wait-与结果消费已冻结)。CHLD 仅提示变化，持久结果是权威来源。
+当前状态快照可更新，最终退出结果不可被后续通知覆盖，必须保留到确认；停止/继续不形成无限历史日志，不能把过期停止通知当作当前状态。
+用户态支持指定子进程、任一子进程、授权作业组和非阻塞查询；目标须有父子关系或明确观察授权。
+组中仍有运行成员则未停止，全部未退出成员停止才是组停止，全部成员退出才是组结束；组长先退出不销毁组。
+终端归还与结果消费分开，按组状态申请切换，内核在提交时重查状态/成员变化及前台关联代次，防止查询后状态改变。
+
+### 前台切换、模式与孤儿组（已确定）
+
+切换按准备/提交执行：校验会话/权限/旧代次，tty 暂停旧组的新输入提交并处理暂存读，准备模式，内核提交新前台及代次，再恢复输入分发。
+准备失败保留旧前台，提交后失败按新代次恢复；重入/过期控制请求不得覆盖更新关联。
+已交付旧组字节不可重复交付，未提交的旧读须重查资格；尚未分发的终端队列输入按显式保留/清空选项处理，不与旧请求私有缓冲混用。
+作业停止时保存其终端模式、恢复 shell 模式再交回前台；fg 先恢复模式并设置前台再 CONT，bg 只 CONT 不取得前台。
+后台读遵循 TTIN，后台模式修改/输出按已定义 TTOU 策略检查，不通过直接用户 RPC 绕过终端资格。
+若组内没有成员具有同会话且组外的父进程，则为孤儿组；父子/成员关系变化重新判定，孤儿组含停止成员时发送 HUP 与 CONT。
+验证原始模式程序异常、组长先退出、sh 退出、停止期间挂断及切换中 Ctrl-C，不能留下无法恢复的终端模式或停止作业。
+
+- [ ] 定义会话/组身份、成员继承、前台切换原子点及其授权。
+- [ ] 定义信号投递/屏蔽/合并、处理帧、sigreturn、阻塞 IPC 中断与共享缓冲收尾。
+- [ ] 测试命令派生子进程、组长先退出、组停止/继续、前后台切换同时 Ctrl-C、tty/sh 退出与模式恢复。
+- [ ] 忙循环进程不执行 syscall 也能接受信号；不得以普通事件位冒充异步信号。
+
+### 信号、执行上下文与 RPC
+
+独立内核栈路线要求：被中断 syscall 先沿原内核调用链退至统一用户出口，再递送 handler；不能挂着深层 C 栈直接进入用户 handler。handler 的 syscall 使用同一线程已退栈后的栈空间，sigreturn 仅恢复用户现场；具体组织见 [内核栈规格草案](03-process.md#独立内核栈的首轮实现组织已冻结)。
+
+- 用户线程保持单线程，但可有受 CONFIG_SIGDEPTH 限制的嵌套信号上下文；有效掩码按进入前掩码、sa_mask 及当前信号组成，不默认屏蔽全部可捕获信号，KILL/STOP 不可屏蔽。
+- 每层保存独立用户现场和同步等待引用；Rq 不嵌在单个可被覆盖的出站槽中。用户信号帧及内核校验记录在创建时预付。
+- 捕获信号中断已提交call/rqwait只退出等待，原QUEUED/ACCEPTED请求及槽保留，call返回原RPC。是否请求协作取消由库/原生调用者决定，内核不因信号自动摘队或转DRAINING。
+- 原请求后续reply固定结果到原Rq，不写handler当前现场；只有退出/exec等机制强制终结才转DRAINING、丢业务结果收尾。rqfinish仅用于rqcheck=4，不得丢弃仅协作取消（rqcheck=3）的实际结果。
+- 回复完成先于信号的原子提交点：保存成功结果再投递信号，不把已经成功的调用改写为 EINTR。信号先退出等待则保留原RPC，不自动重放原操作。
+- 信号处理函数的直接IPC使用该层独立预付Rq及同后端连接的专属页对（第1层2/3、第2层4/5），不再各持整条连接；遇外层接入中或本层旧页未安全归还时不等待外层、不窃取页，按10返回明确资源错误；stdio/malloc/一般服务库默认非异步信号安全，必须列出安全 API。
+- 运行库修改共享槽表、RPC结果归属等本地元数据时短暂屏蔽可捕获信号，提交后恢复掩码；不得屏蔽期间阻塞 RPC，也不持锁跨用户处理函数。
+- 为安全信号 I/O 提供独立的有界运行库上下文和缓冲，不复用被打断函数的锁/偏移临时状态；不能宣称所有 C 库函数均可在处理函数内调用。
+- STOP 保留阻塞调用并禁止回用户态，完成结果可保存；CONT 恢复，KILL 强制撤离请求并异步清理，不等待用户处理函数。
+- sigreturn 检查活动帧、用户 PC/SP、信号掩码和特权位，不能恢复内核地址或特权状态；达到配置嵌套上限时可捕获信号保留 pending，不丢弃。
+
+验收：排队/已接收/回复提交各阶段注入信号，处理函数再次 IPC，验证消息与返回现场独立；STOP/CONT/KILL、坏帧和嵌套上限均覆盖。
+
+### 信号中断与操作重启（已确定）
+
+等待被信号打断不终结原请求。原生IPC不按SA_RESTART自动重发，call/rqwait只退出当前等待；已提交call返回同一RPC，之后只从它取得实际结果。rqcancel对QUEUED原子摘队保证无效果，对ACCEPTED只置cancel_requested，服务reply业务EINTR（保证零效果）、实际部分量、完整结果或真实错误；rqfinish不能替代这份结果。
+
+POSIX信号入口先把中断返回的RPC/槽转交原Rctx；对read/write/open/poll等允许中断的等待，trampoline在调用应用handler前短调用rqcancel（poll按本轮已提交RPC列表处理），只提交标记、不等待服务，不占新Rq/共享槽。这样handler重入不会依赖外层先恢复才能提出取消。RESTART标志不改变这一步；handler正常返回后才决定继续领取原结果，或在原请求已经明确零效果且安全收尾后新发一次操作。close已摘除、exec替换准备等必须继续的事务按自身规则保留，不盲目对所有Rctx取消。原生ipc_*不注册这项POSIX取消策略，使用者自行决定。
+
+SA_RESTART不允许绕过原结果：已发生部分量保留、完整结果保留，仅QUEUED/CANCELLED或服务明确零效果EINTR才可安全新提交；数据/参数沿原稳定输入，不按handler修改后的fd整数重新定位。已接收且进展未明时继续查同一RPC；服务失效或规定故障期限到期按明确EIO等结束并转预付后台责任，未安全停止的槽不可复用，也不新发RESULT查询或自动重做业务。信号入口不能等设备/服务才调用handler；进入handler的取消请求亦不承诺它的I/O不等待外部设备。
+
+协作取消的故障等待采用CONTROL_NS=1秒，从第一次rqcancel记录成功起设置绝对逻辑截止，不因handler/STOP或重查重置，不转为内核请求deadline。handler返回/恢复时先查询原RPC，已固定实际结果优先；仍未终结且过期则当前read/write/open等报EIO并转预付后台记录。close已摘除按其原后台关闭规则，poll按已固定整体结局处理；不在handler执行期间强行向外层返回。后台只接管迟到结果/资源及排空，不再写已结束调用的应用缓冲；新资源晚安装时也须由该记录释放或交给既有补偿对象。
+
+实现后仍须逐接口核对POSIX及真实信号返回窗口；当前是设计契约，不把模型当作完整SA_RESTART合规证明。
+
+#### read/write 的中断与重启（已冻结）
+
+本表适用于本阶段普通文件、管道和终端的 read/write；网络及后端特定超时另行讨论。先递送 handler，不为查询原业务结果推迟 handler；下表决定 handler 正常返回后的外层调用行为。
+
+| 信号到达时原操作的状态 | 未设置 SA_RESTART | 设置 SA_RESTART |
+| --- | --- | --- |
+| 尚未提交，或服务确认零进展且不会继续产生效果 | 返回 EINTR | 继续确定安全的步骤/等待 |
+| 已确认部分进展且能交付对应结果 | 返回实际字节数 | 同样返回实际字节数，不补满原长度 |
+| 完整结果已固定 | 保留原结果 | 保留原结果 |
+| 已交付，进展尚不清楚 | 跟踪原操作，取得明确结局或报告明确故障，不能凭 Rq 中断伪报零进展 | 跟踪同一业务操作，不能另发一次读写 |
+
+服务消费输入、接受写入或推进File偏移时，记录实际完成量及原槽数据的归属；协作取消与业务提交在服务自己的状态机排序，但不提前终结Rq。read数据保持在原槽直到复制/保存，不通过第二次请求重读；原Rq保存短结果，服务reply后不再保留等待业务ACK的结果表。原槽安全归还前不复用。
+无 SA_RESTART 不表示允许无限等待故障服务；无法确认时按明确故障结束，不伪报 EINTR、成功或已知完成量。复制失败遵循运行库 EFAULT 规则，不把服务完成量直接冒充已交付字节数。
+每次操作固定原 File/会话引用；handler 关闭并复用同号 fd 后，外层不按 fd 整数重新定位对象。安全继续仍须遵循原 File 的有效性、关闭及取消协议，不隐式重新打开文件。
+
+示例：终端 read 等待100字节。信号先到且服务确认零进展，无 SA_RESTART 返回 EINTR，有则在 handler 后继续等待；若已经消费20字节，则保留这20字节，复制成功后返回20。handler 将原 fd3 关闭并复用给另一文件，外层仍只处理原终端操作；服务崩溃导致结果无法恢复时报告明确故障，不从新 fd3 补读。
+
+原生 IPC 的已接受方向统一见 [捕获信号中断矩阵](04-ipc.md#原生-ipc-的捕获信号中断矩阵第6项审查修订)：不按 SA_RESTART 自动重发；call/rqwait中断都只撤离等待，已入队call返回原RPC，rqcancel对排队/接收分开，recv/send 已提交的交付不重做。
+
+### sigaction 表示与安装（已确定）
+
+公开 sigaction(signum, action, old_action) 由 libc 将 SIG_DFL/SIG_IGN/用户函数转换为原生定宽动作类型 DEFAULT/IGNORE/HANDLER、入口地址、掩码及支持标志，不直接将特殊函数指针值当执行地址。
+只修改自身，校验信号/支持标志，未知位拒绝；KILL/STOP 不可修改。HANDLER包含handler和trampoline两个用户执行入口，均须合法且不能内核/MMIO地址；完整检查后原子替换，原生输入/输出校验失败保留旧动作。DEFAULT/IGNORE 的两个入口字段为零。
+trampoline是运行库提供的信号前置及返回入口；递送时先进入它，由它调用本次快照中的handler，最后sigreturn。自定义运行时可替换；递送时重新验证两入口，不依赖固定libc地址/符号。
+需要交付旧动作时，原生/兼容适配须保证输出路径及副作用契约，不在替换成功后才因无效输出返回“未安装”；具体输入/输出布局及受检查复制如何配合仍须在 ABI 冻结。
+递送时重新检查入口/执行映射，注册后被 unmap 则产生受控用户故障，不进入非法内核执行。IGNORE/掩码变更不取消已有请求收尾，不复用旧 IPC 缓冲。
+
+#### 示例：坏入口不改变旧动作
+
+SIGINT 初始 DEFAULT，安装的新 HANDLER 入口不合法，调用失败且原动作保持；安装成功后程序主动 unmap 处理代码，再递送不能触发内核异常或跳往内核空间。
+
+### sigreturn 与用户信号帧（已确定）
+
+内核先进入注册的信号trampoline，它完成必要前置操作、调用用户handler，handler返回后由同一trampoline执行sigreturn(frame)恢复用户上下文；自定义运行时可提供自身入口，不将 libc 私有符号硬编码进内核。
+仅允许当前最上层活动信号帧，校验所属上下文、地址/大小/对齐、用户 PC/SP 及架构允许的寄存器/FP状态；特权控制位由内核构造，不能照抄用户帧。
+恢复掩码不能屏蔽 KILL/STOP，帧成功消费后不可重复返回或影响新上下文。非法帧/恢复地址/特权位直接以 BAD_SIGNAL_FRAME 用户异常进入强制退出，POSIX 状态映射 SIGSEGV，不执行半恢复、不回 handler 继续或再递送可捕获 SIGSEGV 递归处理。
+内核 Rq/等待/取消结果及共享槽引用不由用户帧恢复；处理函数不能靠修改帧复活已取消请求或覆盖已提交终态，接口重启走既定协议。
+
+### 示例：伪造特权位不能复活 READ
+
+READ 被信号中断后，处理函数修改帧中的特权字段并 sigreturn；内核拒绝非法状态或按明确架构规则验证，不获得特权、不将旧 READ 重新置为等待。合法帧按约定恢复中断结果或已定义的重启路径。
+
+### sigprocmask 与 pending（已确定）
+
+公开 sigprocmask(how, set, oldset) 使用 SIG_BLOCK/SIG_UNBLOCK/SIG_SETMASK 增加/移除/替换当前上下文有效掩码；set 为空只查询，oldset 需要时交付修改前值，具体输出与原子副作用契约在 ABI 冻结。
+掩码更新与 pending 检查原子提交；KILL/STOP 位不进入有效屏蔽。被屏蔽普通信号保留 pending，相同信号按位合并，不承诺实时信号排队语义。
+解除屏蔽在返回用户态前安全出口检查递送，默认终止/停止不要求 recv；处理上下文基于旧掩码/动作附加掩码/支持标志建立，sigreturn 恢复保存掩码，不用单一全局保存值覆盖嵌套上下文。
+动作、掩码和请求收尾分别管理，不以掩码变更撤销旧 Rq；需要原子临时掩码等待时使用 sigsuspend，不拼接 unmask 与普通 recv。
+
+### 示例：屏蔽期间收到 SIGINT
+
+进程屏蔽 SIGINT，期间收到信号仅置 pending；解除屏蔽后安全出口按动作递送处理或默认行为，不需再次生成信号或等待普通消息。重复 SIGINT 可合并，但 pending 不因查询/掩码变化丢失。
+
+### sigsuspend 原子等待（已确定）
+
+公开 sigsuspend(mask) 保存当前掩码，并将安装临时掩码、检查 pending 和登记信号等待作为原子状态更新；使用当前上下文预付记录，不新增等待对象。
+符合条件的捕获信号执行处理函数后恢复原掩码，返回 -1/errno=EINTR，不因 SA_RESTART 自动重等；默认终止则结束进程，不返回，默认忽略不构成有效完成。
+STOP 暂停而不丢等待状态，CONT 恢复后按实际信号/等待条件继续；普通消息/通知/TIMER 不使 sigsuspend 假成功。KILL/STOP 仍不能被临时掩码屏蔽。
+SIGCHLD 等信号是提示，调用者醒来检查真实子进程状态，不按信号次数消费退出结果。
+
+#### sigsuspend 的掩码恢复位置（已冻结）
+
+用户已接受以下细化方向；信号/运行库布局和标准审计仍未完成。
+
+确定明确三份逻辑掩码：调用前 M、临时等待掩码 W、本次 handler 的有效掩码 H。校验并快照 W 后，内核原子保存 M、安装 W、检查可递送 pending 并登记等待；输入校验失败不安装 W。捕获信号 S 时，H 由 W、action.sa_mask 及未设 SA_NODEFER 时的 S 组成，不在 handler 执行前先恢复 M。
+
+本次handler正常返回且未主动修改合法返回mask时，经sigreturn恢复M 并让原 sigsuspend 返回 EINTR；不能先返回应用再由 libc 单独调用 sigprocmask 恢复，以免在临时掩码下出现应用执行窗口。信号上下文须能区分 handler 生效掩码基线 W 与最终恢复掩码 M；这是现有 Sigctx 的特殊恢复责任，不新增等待对象。
+
+handler中临时sigprocmask修改当前有效掩码，普通正常返回仍以该活动帧保存的M恢复；用户显式修改合法帧restore_mask时按新值校验恢复；嵌套 handler/嵌套 sigsuspend 各自保存自己的入口掩码，不覆盖外层 M。非局部跳转或用户主动修改恢复 context 的契约不由本例提前冻结。恢复 M 后立即重新检查 pending，不能让本应递送的信号永久滞留；允许在外层调用最终返回应用前先运行另一个合法 handler。
+
+被屏蔽或忽略的信号不结束等待；纯 STOP 不结束等待，CONT 只解除停止。若 CONT 本身配置了可递送 handler，则可按普通捕获信号结束 sigsuspend；KILL/默认终止不返回。SA_RESTART 均不让已经被捕获信号结束的本次等待重新挂接。
+
+示例：M 屏蔽 SIGCHLD，W 解除 SIGCHLD。登记时发现 pending SIGCHLD，立即进入 handler，其有效掩码按 W 和动作构造。正常返回原子恢复 M，随后 sigsuspend 返回 EINTR，调用者在 SIGCHLD 再次被屏蔽的状态下检查孩子结果；不需要第二个 SIGCHLD 才醒，也不会短暂把 W 暴露给恢复后的主程序。
+
+本段具体 Sigctx/原子恢复组织为本项目细化提案。本轮检索未取得可核验正文，POSIX.1-2024 完整标准核对仍未完成。
+待核对资料：[GNU C Library sigsuspend](https://sourceware.org/glibc/manual/2.29/html_node/Sigsuspend.html)。
+
+### 示例：等待子进程不丢 SIGCHLD
+
+调用者先屏蔽 SIGCHLD 并检查子进程结果，尚无结果时用临时解除 SIGCHLD 的掩码 sigsuspend。检查后到达的信号已置 pending，原子换掩码/等待时立即发现，不会错过后永久睡眠；返回后恢复调用前掩码再检查真实结果。
+
+### 信号投递的权限与目标（已确定）
+
+普通进程按可信凭据/自身权限/关系校验目标；tty 持终端授权只向当前前台组投递获准终端信号；init 持管理授权投递或强制终止。SIGKILL 不可捕获也不绕过发送权限。
+tty 提交终端 Handle 与允许信号，由内核在投递解析点取得当前前台组并固定关系身份，不接受 tty 缓存的任意 PID/组替代；与前台切换有明确原子先后。
+POSIX kill 正/零/负选择器由 libsys 转为明确目标种类与完整身份，内核最终授权；负数不能直接作为普通 Handle 解析。sig=0 仅检查存在/权限、不置 pending，组身份不依赖原组长仍存活。
+投递成功不等于处理函数已执行或目标已退出；管理者按退出记录确认终止。普通 notify 不伪造终端信号、SIGCHLD 或强制终止。
+
+### 示例：Ctrl-C 与前台切换
+
+tty 识别 Ctrl-C 后通过终端授权请求 SIGINT，内核按提交时明确顺序解析该终端当前前台组；前台若已切换则作用于新关联，若尚未切换则作用于原关联，不以 tty 旧 PID 缓存为准。组投递在当前线程内核栈固定组身份及最多64个成员PID/必要Life引用，每批32个只允许调度，不进入用户handler；同次游标到完整投递/失败端点才退栈。源STOP/退出仍可仅推进这份内核责任，已投递不重发；新入组成员不补投本次信号。
+
+### 用户同步故障与信号（已确定）
+
+普通用户代码故障按冻结的架构映射表转换为同步信号：地址/权限 SIGSEGV、非法指令 SIGILL、明确总线/对齐 SIGBUS、支持的算术异常 SIGFPE；有合法动作则递送，默认终止并保留硬件故障来源。
+处理函数合法返回通常恢复原故障位置，内核不擅自跳过指令；条件未修复可再次故障。处理成功继续执行不产生退出记录，最终终止才映射 POSIX wait 状态。
+处理入口/帧非法、信号栈无法安全使用，或同步故障信号被忽略/屏蔽时按本系统明确不可恢复策略直接受控终止，不在损坏环境递归投递。
+__sys_copy 受控检测到坏用户地址返回地址错误，不递送普通用户故障信号；内核自身异常仍保存诊断并停止，不包装成用户 SIGSEGV。异常映射不只依赖笼统 trap 类别。
+
+### 示例：非法访问与受检查复制
+
+应用直接读未映射地址，合法 SIGSEGV 处理函数可运行，未修复且返回原 PC 会再次故障；相同坏地址作为 __sys_copy 输入则得到错误，不能递归触发用户 handler。内核自己访问错误地址不走上述用户恢复路径。
+
+### 处理期间掩码与嵌套容量（已确定）
+
+处理期间有效掩码等于进入前掩码加动作 sa_mask，加当前正在处理信号；支持并设置 SA_NODEFER 时不自动加入当前信号，但不移除原掩码/sa_mask 中显式屏蔽位。
+其他未屏蔽可捕获信号可使用预付嵌套上下文，sigreturn 恢复对应层进入前掩码并重新检查 pending，不能以实现简化名义隐式屏蔽全部信号。
+每层现场/Rq/共享槽受 CONFIG_SIGDEPTH 及预付资源约束；达到上限时普通异步信号保留 pending，不能安全递送的同步故障按不可恢复策略终止。KILL/STOP/默认终止不需再分配 handler 上下文。
+
+### 示例：SIGINT 处理时屏蔽 SIGTERM
+
+SIGINT 动作的 sa_mask 含 SIGTERM，处理时新 INT/TERM 均 pending，其他允许信号可嵌套。返回后恢复原掩码再处理 pending；SA_NODEFER 仅取消自动加 INT 的步骤，不能清除显式 sa_mask 中的 INT。
+
+### 首批 sigaction 标志（已确定）
+
+本阶段纳入 SA_RESTART（逐接口等待重启，不重放副作用）、SA_NODEFER（不自动加入当前信号但保留显式掩码）、SA_RESETHAND（递送时恢复默认后进入本次 handler）及 SA_SIGINFO（三参数处理入口）。未知/尚未支持标志拒绝，不静默忽略。
+SA_SIGINFO 提供已完整初始化的信号/来源类别、适用的发送者 PID/UID、用户故障地址/原因，以及被打断用户 context；不适用字段清零，不泄漏内核地址。siginfo/context 布局在共享 ABI 冻结，架构寄存器部分隔离。
+context 的修改仍受 sigreturn 校验，不得恢复特权或内核地址。SA_NOCLDSTOP/SA_NOCLDWAIT 与 wait 策略联合冻结，SA_ONSTACK 须配完整 sigaltstack 契约，不能仅提供标志当作支持。
+
+### 示例：一次性 SIGINT 处理
+
+SIGINT 设置 HANDLER|SA_RESETHAND，第一次递送时动作先恢复 DEFAULT，再执行该 handler；后续 SIGINT 使用默认动作。SA_SIGINFO handler 则按 (sig, info, context) 调用，不按单参数函数错误传递。
+
+### SIGCHLD 策略与 wait（已确定）
+
+SIGCHLD 的 DEFAULT 默认忽略通知但保留子进程 wait 结果；显式 IGNORE 按自动收取策略处理，不与 DEFAULT 合并。纳入 SA_NOCLDWAIT，不保留普通可等待退出结果；纳入 SA_NOCLDSTOP，控制规定停止/继续通知而不删除实际状态。
+退出结果由内核按当前合法父关系及其 SIGCHLD 策略决定保留或自动收取，不再先交 init 复制/exack。自动收取只解除普通父收取责任，不跳过 Life/Acct/Rq/观察/DMA 清理。
+方案在退出结果提交点记录父完整身份及当时策略版本：DEFAULT/HANDLER 保留结果，显式 IGNORE 或 SA_NOCLDWAIT 不保留普通可收取退出结果。与 sigaction、wait 交付和孤儿转交原子排序，已经提交的 wait 返回不能被后续改策略夺走。
+方案采用 SA_NOCLDWAIT 且未显式 IGNORE 时仍生成退出 SIGCHLD；显式 IGNORE 不生成该通知。阻塞 wait 必须重新检查匹配孩子及结果：没有匹配孩子时返回无孩子错误，仍有存活匹配孩子时不能仅因暂时自动收取一个孩子就提前报告无孩子。此通知取舍参考 [Linux do_notify_parent](https://github.com/torvalds/linux/blob/master/kernel/signal.c)，不是已完成的 POSIX 审计。
+策略切换方案只影响后续退出提交，不追溯丢弃已经保留的结果；曾自动收取的结果也不因切回 DEFAULT 重建。历史结果与已提交交付保持稳定，首版行为已固定，标准兼容核对是交付验收。SA_NOCLDSTOP 影响通知，不删除可报告停止/继续状态。
+
+#### SIGCHLD 策略切换与历史结果（已冻结）
+
+确定保留前文“策略只影响后续退出提交”的方案，并把通知与收取责任分别裁决。sigaction 安装策略、孩子退出结果提交、wait 领取及父死亡转交在既有短临界区按顺序决定：退出先提交则保存其已决定的保留/自动收取结局；策略先提交则后续退出使用新策略。已提交给外层 wait 的结果始终保留，不被 handler 修改动作夺走。这里只要求裁决结果稳定，不要求每个 Life 永久保留完整 action 副本或新增全局策略对象。
+
+安装显式 SIG_IGN 时可按信号规则丢弃尚未递送的 SIGCHLD pending 提示，但不因此消费历史 wait 结果。改回 DEFAULT/HANDLER 不复活曾自动收取的结果，也不为现存结果伪造“每个孩子一份新 SIGCHLD”；调用者需要主动 drain wait，不能以没有 pending 提示推断没有历史结果。SA_NOCLDWAIT 只改变后续普通退出结果的保留决定，未 IGNORE 时仍通知的既有本系统方案保持；SA_NOCLDSTOP 不删除停止/继续状态。
+
+例子：A 的孩子 B 在 DEFAULT 下退出并留下结果，C 仍运行。A 改 SIG_IGN，B 的结果仍可由 wait 收取；C 此后退出自动收取，不留下普通结果。A 再改 HANDLER，不重建 C，也不合成 B 的退出事件；若 B 未被其他合法路径收取，主动 wait 仍得到 B。信号 pending 清除、父 wait 消费和 Life/Acct/设备实际清理是三个独立责任。
+
+孤儿接管及 exec 动作变化也不重新解释历史结果。已保留结果交接给 init 仍可收取；新镜像沿用同一 PID/Life 的父关系，已保留孩子结果不因 exec 重置 handler 而消失。后续退出使用实际父当时动作/标志，不以“此孩子创建时的策略”决定终生行为。SIGCHLD 明确 IGNORE 在 exec 后保留的本系统方向保持，SA_NOCLDWAIT 等标志的 exec 重置须与动作安装一起核对。
+
+局部依据：Linux do_sigaction 安装忽略动作时清 pending，而 do_notify_parent 在孩子退出时决定 autoreap；该源码为机制分工参考，不是本项目完整标准证明。POSIX.1-2024 sigaction/exec 正文本轮仍403，历史结果规则、NOCLDWAIT 通知及 exec 时序的完整审计未完成。
+参考：[Linux kernel/signal.c 的 do_sigaction/do_notify_parent](https://github.com/torvalds/linux/blob/master/kernel/signal.c)。本节细化由本轮自主决策授权确定。
+
+### 示例：显式忽略不跳过设备清理
+
+父进程显式忽略 SIGCHLD，内核在孩子退出结果提交时自动解除收取责任；孩子遗留 DMA 仍保留对应 Life/Acct，待设备停止再清理。父 DEFAULT 则即使无 handler 仍可 wait 取得退出结果，不需要 init 代办。
+
+### exec 的信号继承（已确定方向）
+
+exec成功将HANDLER动作重置DEFAULT，旧handler/trampoline不进入新镜像；显式IGNORE按本系统选定策略保留，包括SIGCHLD。动作附加掩码/处理标志重置，不继承旧handler配置；显式IGNORE导致的自动收取语义仍依动作存在。
+保留调用时应用有效掩码及尚未递送pending，按新动作/掩码继续处理；内部exec临时屏蔽不能混入继承掩码。已经递送的当前handler信号不重新变pending。
+所有旧活动帧失效，不能sigreturn回旧镜像；提交前失败则旧handler/帧/掩码仍可继续，成功进入新_start不再返回旧handler。STOP/EXIT独立于exec运行屏障，解除屏障不清STOP，KILL提交后不能再运行新镜像。
+新镜像首次回用户态前检查pending，不先运行任意新代码再补信号；具体动作表/掩码和镜像切换在同一提交关系中冻结，避免出现新地址空间搭配旧处理入口。
+
+### 示例：SIGINT handler中exec
+
+handler中exec成功，新程序不返回旧handler，SIGINT若仍在应用有效掩码中则继续屏蔽；调用者希望新程序接收INT可在exec前显式解除。exec提交前失败则返回原handler，随后能正常sigreturn。
+
+### fork 发布与信号的交接（已冻结）
+
+fork 的准备中断、发布后成功结果、STOP/CONT/KILL 与超时排序见 [进程设计](03-process.md#fork-失败信号与发布顺序已冻结)。STOP 不清除准备或自动唤醒，KILL 不等待用户态回滚。
+
+## 首版信号、恢复与历史结果规格（已冻结）
+
+支持信号编号：HUP=1、INT=2、QUIT=3、ILL=4、ABRT=6、BUS=7、FPE=8、KILL=9、USR1=10、SEGV=11、USR2=12、PIPE=13、ALRM=14、TERM=15、CHLD=17、CONT=18、STOP=19、TSTP=20、TTIN=21、TTOU=22、WINCH=28。其他编号EINVAL，不宣称实时信号队列。mask位为1<<(signum-1)；未知位拒绝，KILL/STOP不进入有效mask。CHLD/WINCH默认忽略通知，CONT先解除STOP再按动作处理；STOP/TSTP/TTIN/TTOU默认停止，其他默认终止。无core文件支持，诊断保留明确故障原因。
+
+Sigact见06。flags RESTART=1、NODEFER=2、RESETHAND=4、SIGINFO=8、NOCLDSTOP=16、NOCLDWAIT=32；后两位只允许CHLD，未知位拒绝，ONSTACK/sigaltstack首版不支持。DEFAULT/IGNORE的handler/trampoline必须0，HANDLER两入口合法且EXEC映射；注册和递送时都校验。handler可重入的标准接口按08预付上下文执行；普通fork钩子不声明异步安全，_Fork没有钩子。
+
+Sigframe前缀64字节：magic、bytes、depth、previous_user_frame、restore_mask、flags、reserved[2]八u64；magic=0x4b53494730303031、flags=0。Siginfo在64处占64字节：signum(u32)、code(u32)、pid(u64)、uid(u32)、reserved0(u32)、address(u64)、reason(u64)、status(u64)、reserved[2] (u64)。TF在128，FP在416；RV64总688、ARM64总944，均16字节对齐。previous仅用户帧地址，无内核指针；原用户现场仍保存在TF，不以信号入口当前寄存器覆盖它；具体trampoline六参数入口见下文，公共handler仍为一参数或SA_SIGINFO三参数。
+
+每进程预付2层Sigctx，普通帧位于当前用户栈下方、检查完整可写/普通内存和16字节对齐，不能向guard/MMIO写帧。栈不足/非法帧以BAD_SIGNAL_FRAME→SIGSEGV不可恢复退出；不靠递归SIGSEGV掩盖。用户可修改可合法恢复的PC/SP/GPR/FP及mask，但恢复时重新检查用户范围、执行映射、EL0/U态、允许特权位、FP控制合法值；不能修改内核保存的Rq终态/已经消费结果或重启责任。只能最上层当前帧，重复/旧image/其他PID拒绝并终止，sigreturn不回已退栈C续点。
+
+### 信号前置入口（交叉复核修订）
+
+Sigact仍48字节，offset16字段由旧草案的restorer改为trampoline；它不是仅供handler返回的地址。内核对本次动作取得稳定快照、保存完整原TF/FP及活动Sigctx、安装H掩码后，令用户PC=trampoline，a0..a5/x0..x5依次为[signum,frame+64,frame+128,handler,frame,action_flags]；SP=frame（16字节对齐，调用栈向更低地址增长），ra/x30置0，入口不得作为普通函数返回。原Sigframe大小/偏移和用户寄存器恢复规则不变，不新增syscall。
+
+trampoline从frame中的原TF及原Rctx识别被中断call的RPC，不能把入口a3/x3里的handler地址误当RPC。先把RPC/页归属稳定转交原Rctx、按既定策略短调用rqcancel，再进入应用handler；不等待服务。handler按本次action_flags选择一参数或三参数原型调用，保存并恢复libc层errno，返回后以frame调用sigreturn。libsys只提供前置/结果归属辅助，不反向调用libc errno或直接读取libc私有表。
+
+只有原TF的PC位于已声明的原始syscall返回窗口、且原Rctx阶段/镜像匹配时，才按06解码尚未接管的原始输出；桩在把结果写入稳定记录并发布完成标记前不能覆盖这些输出。任意应用寄存器数值不作为RPC。异步提交成功或已固定资源结果同样先接管归属，不因信号把它丢掉。
+
+子fork/_Fork在本地Fix完成前收到信号时，trampoline先运行与子返回桩相同的本地修复，再允许应用handler使用库。通过本次fork返回窗口、稳定Fix记录或有界Sigframe链定位子Fix，不扫描任意C栈；修复阶段以真实子身份为归属标记，幂等且仅短暂屏蔽可捕获信号，无远端RPC。嵌套在屏蔽前到达可先完成这同一修复，外层随后只确认完成；修复开始改动记录后保持短屏蔽直到表一致，KILL/STOP仍有效。不把临时屏蔽带到子应用或改变继承掩码。需要安全解除的父staging别名通过子自身unmap完成，父实际映射/在途访问不受影响，细节见08。
+
+handler、flags、掩码及trampoline均来自同一次内核动作快照；不采用先后更新“内核dispatcher入口+用户handler表”的双份动作状态，避免sigaction/RESETHAND/嵌套期间错用另一版本handler。原生调用者可以注册自己的trampoline，但跳过POSIX适配不自动获得库的中断/errno保证。NODEFER嵌套以各活动frame.depth选择预付Rctx，不能只靠一个可被打断的全局depth自增；原Rctx所有权未转交前不发布为可复用。fork子修复保留本层合法frame/入口，exec则使旧活动帧失效。
+
+例子：旧READ退出等待返回h，信号入口a3是本次handler地址，原TF里的a3才是h；trampoline登记h并请求协作取消后调用handler。此时另一个信号嵌套，使用下一frame/Rctx，不把h当作自己的新操作。sigaction在此期间换handler只影响后续递送，外层仍调用已快照的原handler。原回复中的资源/部分量仍从h领取。
+
+信号与运行库操作交接：内核Sigctx保存被打断返回寄存器/等待结局及必要Rq临时引用，建立用户帧前原syscall先退栈。Rctx在每次syscall前已登记准备，handler使用下一预付层；外层已提交结果保持，返回后先接管结果再改变库表。无需新增通用延迟信号syscall或公共OP；长克隆快照CPU阶段的handler推迟只到03规定完整提交/回滚端点。
+
+sigsuspend接受前保存M、临时W与handler H分开；原子换W/查pending/登记。捕获时H=W|action.mask|当前信号（NODEFER例外），正常sigreturn恢复M后原调用EINTR；嵌套各自保存。普通handler的sigprocmask变更不覆盖活动帧保存的返回mask，用户主动修改合法frame.restore_mask则按受检查新值恢复；不提供siglongjmp/setcontext承诺。恢复mask后立即复查pending，可能先递送另一handler才回应用。
+
+SIGCHLD在退出结果提交点决定保留/自动收取：DEFAULT/HANDLER保留，显式IGNORE/NOCLDWAIT自动收取；NOCLDWAIT未IGNORE仍通知，IGNORE不通知。切IGNORE丢待递送CHLD提示，不消费此前已保留结果；切回HANDLER不复活自动收取、不按历史结果数补信号。wait主动检查持久结果，不能靠信号次数。策略安装/退出提交/wait/孤儿迁移原子排序；已交付结果不得夺回。该选择作为首版接口行为固定，完整POSIX合规仍未完成，不因Linux参考路径而宣称所有Unix同一行为。
+
+例子：B在DEFAULT下退出→保留；改IGNORE→pending可清但B可wait；C随后退出→自动收取；改HANDLER→B仍可主动wait、C不复活。父exec保留PID/Life及历史结果，旧HANDLER重置DEFAULT、显式IGNORE保留、附加标志清零，后续退出按新动作，旧历史不重解释。只解除父收取责任，DMA/观察/Acct按真实清理继续。
+
+终端由init用ttycreate(SYSTEM POLICY,TTY CONTROL)建立，绑定TTY完整PID/image；返回的TERMINAL授权仅通过构造grant减权给TTY/sh。TTY镜像终结即撤销该终端新操作，旧SID/前台关联进入挂断清理，引用归零后回收，重建TTY使用新终端代次。内核不解析UART协议，也不由普通进程用整数自建终端。
+
+tty模式首版：ICANON、ECHO、ISIG、ICRNL、OPOST/ONLCR；控制字符VINTR=^C、VQUIT=^\、VSUSP=^Z、VERASE=DEL、VKILL=^U、VEOF=^D、VMIN/VTIME。规范行缓冲4096，原始环8192；溢出丢当前超限输入并记录计数，不覆盖已有待读内容。非规范模式固定四种组合：VMIN=0/VTIME=0立即返回已有字节或0；VMIN>0/VTIME=0等min(VMIN,请求长度)字节；VMIN=0/VTIME>0从接受READ起计时，有任意字节即返回、到期无数据返回0；VMIN>0/VTIME>0先无期限等首字节，再按每次到字节重置的间隔计时，达到min或间隔到期返回已有量。VTIME单位0.1秒，O_NONBLOCK优先返回现有数据或EAGAIN；不新增内核TTY等待对象。tcsetattr TCSANOW/TCSADRAIN/TCSAFLUSH顺序通过TTYCTL服务实现，排空只等已提交输出，不占死控制循环。
+
+后台读按终端/会话权威关系产生TTIN，后台设置前台/规定输出控制按TTOU，忽略/屏蔽时的错误明确EIO/接口规定失败，不任意杀PID。TERM前台信号入口只接受INT/QUIT/TSTP/HUP/WINCH及其授权mask；普通sigsend按相同凭据或固定CONTROL判断，CONT同会话规则保留，不把PID认识当管理权。
+
+### 串口环、公开标志与恢复限制
+
+serial/tty静态共享区包含两个独立SPSC方向环，各头64字节八u64=[magic,capacity,epoch,producer,consumer,flags,reserved,reserved]；magic=0x4b5352494e473031、capacity=8192、epoch从1起。单环映射16 KiB，其中头后8192字节有效数据，其余0；两环32 KiB。producer/consumer为单调u64，0<=producer-consumer<=8192，索引取模容量，release发布/acquire读取；索引溢出前双方在排空状态通过epoch握手重置，不能无声回绕。flags EOF=1、ERROR=2；持久位置/标志决定实际工作，notify只提示。
+
+RX_READY用用户bit32、TX_ROOM用bit33，静态授予对应目标掩码，不允许serial借通知发内核位。环满背压/设备FIFO溢出计数，不能覆盖未消费数据；驱动每批最多32字节/完成项后允许让出，仍有工作不睡等第二次通知。serial退出/授权撤销不是DMA设备停机证明。
+
+Termarg位：iflag ICRNL=1；oflag OPOST=1、ONLCR=2；lflag ICANON=1、ECHO=2、ISIG=4；cflag CS8=1；cc索引VINTR=0、VQUIT=1、VERASE=2、VKILL=3、VEOF=4、VTIME=5、VMIN=6、VSUSP=7，其他cc必须0。输入Ctrl字符按当前模式解释，不由serial直接kill前台PID。公开libc flag转换保持这些固定协议数值，未知配置拒绝。
+
+信号帧恢复时ARM64 pstate只接受用户NZCV字段变化，EL/中断屏蔽等由内核重建；FPCR只允许用户修改舍入/FZ/DN位，其他位须与该层可信快照一致并保留原合法状态，不能因库API子集较小而拒绝原本合法的FP控制现场；FPSR仅合法累积状态位。RV64 x0必须0，sstatus非用户字段与该层可信快照一致后由内核构造U态返回，FCSR允许fflags及0..4舍入模式；其他原始控制取值若未被用户改变则按该层可信快照保留，不把handler的临时舍入模式泄漏到外层。PC/SP和映射权限重新校验，不接受特权寄存器原值直写；保持合法非默认舍入模式的测试必须覆盖。
+
+异步安全允许表：read/write/close/dup/dup2、受检查信号配置/掩码/投递、waitpid、_exit、execve和_Fork按预付上下文支持；普通fork只在未使用不安全钩子时可用，malloc/free/stdio/目录流/posix_spawn不承诺handler重入。容量不足返回各接口明确错误，不借外层槽。handler中_Fork后，子不接管父未完成服务操作；外层尚未知且仅父能查询的业务在子固定EINTR、不自动SA_RESTART查询父身份；已完成快照仍可在子交付。这一首版边界明确列为兼容限制，不能重复父读写来补全未知结果。
+
+## 执行与验收
+
+- [ ] 两架构信号PC先进入trampoline，六个入口参数与原TF分开，a3/x3的handler地址不会被误读为原RPC；普通返回地址0不得跳回任意旧代码。
+- [ ] 子发布后第一条用户指令前及Fix半途注入HANDLER/NODEFER/STOP/KILL：应用handler只见修复后的子表，父staging内容不变；嵌套只完成同次Fix，不增加发布后ready syscall或远端握手。
+- [ ] sigaction/RESETHAND与前置取消、NODEFER嵌套交错仅使用本次动作快照；一/三参数handler及errno恢复正确，不维护第二份可竞态更新的handler表。
+
+- [ ] 信号trampoline保存原RPC后仅提出协作取消即进入handler，不等服务；handler重入/_Fork不接管或释放父/外层原Rq，RESTART只在明确零效果且旧请求结束后新提交。
+- [ ] 零进展、部分量、完整结果及服务失效四类均从原Rq裁定；原call中断返回码不被当作业务EINTR证据，资源/数据在保存前不ack/复用。
+
+- [ ] handler内exec成功丢弃旧帧/入口但保留应用有效掩码，失败旧handler可继续；pending不丢失也不重复生成已递送信号。
+- [ ] HANDLER重置/IGNORE保留/附加标志重置与地址切换一致，新镜像首次进入检查pending，STOP/KILL不被解除exec屏障绕过。
+
+- [ ] DEFAULT 与显式 IGNORE、NOCLDWAIT 分别验证 wait 结果保留，NOCLDSTOP 仅影响约定通知而不抹掉真实组状态。
+- [ ] 按历史结果审计候选覆盖 B先退出/改IGNORE/C后退出/改HANDLER；pending 清除不消费B，C自动收取不复活，策略改变/exec/孤儿转交不夺走已交付结果；通知与Life/Acct/DMA清理保持独立。
+- [ ] 退出与父策略变更/wait分配交错使用正确版本，不丢已交付结果；自动收取不跳过独立资源清理。
+
+- [ ] 各标志及组合有明确支持状态，未知位拒绝；一次性动作在递送提交点重置，NODEFER 不移除显式屏蔽。
+- [ ] SA_SIGINFO 原因/来源/故障地址正确且未用字段清零，两架构 context 校验与恢复一致，不泄漏特权信息。
+
+- [ ] 默认掩码、sa_mask、SA_NODEFER 和多层返回正确组合，未屏蔽其他信号可嵌套，显式当前信号屏蔽不被 NODEFER 清除。
+- [ ] 最大深度普通信号保留 pending，同步故障受控终止，KILL/STOP/默认终止不依赖新增上下文；逐层资源不串用。
+
+- [ ] 两架构逐类用户异常核对信号/诊断，合法 handler 可处理，坏入口/栈及屏蔽同步故障受控终止，无内核异常。
+- [ ] __sys_copy 地址错误不递送用户故障信号，内核异常不冒充用户异常；恢复 PC 不被隐式推进，处理继续不生成退出记录。
+
+- [ ] HANDLER 双入口校验/递送前重查，DEFAULT/IGNORE 非零入口拒绝，自定义trampoline可用；非法帧只受控终止一次，不递归投递或执行半恢复现场。
+
+- [ ] 普通/tty/init 信号权限独立，sig=0 不投递，负选择器及陈旧组身份正确拒绝；SIGKILL 不越权。
+- [ ] Ctrl-C 与前台切换/组长退出交错投向正确关联，不依赖 tty 缓存；投递成功不提前声称目标退出。
+
+- [ ] 信号在结果检查前后、临时掩码安装及等待登记边界到达均不丢唤醒，处理函数返回恢复原掩码并 EINTR。
+- [ ] 按上述方向核对 M/W/H、SA_NODEFER、handler 临时改掩码及嵌套 sigsuspend；正常 sigreturn 恢复入口 M 后才继续应用，坏输入不改掩码，纯 STOP/CONT 不假结束，捕获 CONT 与普通信号同样裁决。
+- [ ] 忽略信号/普通事件不假完成，STOP/CONT 保留等待；重复 SIGCHLD 合并后仍能取得全部真实子进程结果。
+
+- [ ] 掩码更新/pending 到达/用户返回各交错正确递送，KILL/STOP 不可屏蔽，重复普通信号不伪报排队次数。
+- [ ] 嵌套信号各层掩码保存恢复正确，只查询不修改状态，坏参数/输出不导致半更新；掩码变化不释放旧请求槽。
+
+- [ ] sigreturn 覆盖错误地址/大小/代次、非顶层/重复帧、内核 PC/SP 和特权位，拒绝后无半恢复或内核异常。
+- [ ] 通用/FP状态合法恢复，KILL/STOP 不可屏蔽；用户帧不能恢复内核请求生命周期或导致旧回复写入新上下文。
+
+- [ ] sigaction 无效信号/标志/入口、KILL/STOP 和坏输出路径均遵守失败不部分安装；递送时再检查映射，不因旧成功注册绕过权限。
+- [ ] 公共特殊动作值转换为明确原生类型，IGNORE/掩码变化不提前释放 IPC 收尾引用。
+
+- [ ] 在交付前、交付后、结果提交前后注入信号，覆盖 read/write、管道、终端和等待；检查偏移/数据只消费一次，部分完成量不丢失。
+- [ ] read/write 在零进展、部分进展、已固定结果及进展未知四阶段注入信号；handler 关闭/复用原 fd，外层不读写替代文件，read 快照不丢失，查询故障不伪报零进展。
+- [ ] 处理函数执行后按接口验证 SA_RESTART 或 EINTR；QUEUED取消已终结时不复活，ACCEPTED协作取消仍保留原结果，旧共享槽未收尾时不复用，服务崩溃不会无限重试。
+
+全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+
+### 阶段 13：IRQ、serial、tty 与控制终端
+
+依赖：12。产物：PLIC/GIC 接入、独立 serial 与 tty、共享收发协议、会话/进程组/前台状态和信号处理。
+
+测试方法：两架构注入串口输入，检查 IRQ 认领/屏蔽/确认，不以轮询回退冒充 IRQ 成功。
+核对只有 serial 持有 UART MMIO/IRQ，tty 未获设备权限；测试双方任一退出的取消与共享区回收。
+覆盖无输入时持续输出、serial RX/TX 缓冲满、通知合并/重开、行输入、回显、退格、并发输出、等待中关闭终端；sh 子进程继承控制终端，服务无控制终端。
+测试标准输出重定向后控制终端不变；前台忙循环可由约定的控制操作终止，不影响其他进程。
+
+验收：tty 不阻塞在长期 serial call 上，输入输出均有进展；无空闲中断风暴；控制终端标识不绕过资源授权；旧终端身份失效。
+使用单串口，验证本轮定义的会话/组/信号语义，不以仅杀单个前台 PID 通过验收；不宣称完整 POSIX 兼容。

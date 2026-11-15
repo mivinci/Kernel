@@ -41,7 +41,7 @@ typedef uint64_t usize;
 #define NORETURN      __attribute__((noreturn))
 #define PACKED        __attribute__((packed))
 #define ALIGNED(n)    __attribute__((aligned(n)))
-#define INLINE        static inline
+#define INLINE        static __inline__
 #define UNREACHABLE() __builtin_unreachable()
 
 #endif /* _TYPES_H */

@@ -57,24 +57,24 @@
 #define SATP_ASID_SHIFT 44
 #define SATP_PPN_MASK   ((1UL << 44) - 1)
 
-static inline u64
+INLINE u64
 csr_read_sstatus(void)
 {
   return csr_read(sstatus);
 }
-static inline u64
+INLINE u64
 csr_read_scause(void)
 {
   return csr_read(scause);
 }
-static inline u64
+INLINE u64
 csr_read_sepc(void)
 {
   return csr_read(sepc);
 }
 
 /* 读取时钟计数器。OpenSBI 会打开 mcounteren.TM。 */
-static inline u64
+INLINE u64
 rdtime(void)
 {
   u64 t;

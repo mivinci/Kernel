@@ -18,13 +18,13 @@
 
 #define LSR_THRE 0x20 /* 发送保持寄存器空 */
 
-static inline u8
+INLINE u8
 uartread(u32 off)
 {
   return *(volatile u8 *) (UART0_BASE + off);
 }
 
-static inline void
+INLINE void
 uartwrite(u32 off, u8 val)
 {
   *(volatile u8 *) (UART0_BASE + off) = val;
