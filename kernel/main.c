@@ -1,14 +1,17 @@
-/* Early physical bootstrap only: no allocator, scheduler or userspace. */
+/* Bootstrap initialization; explicit test images select their guest payloads. */
 #include <boot.h>
 #include <diag.h>
 #include <dtb.h>
 #include <page.h>
 #include <vm.h>
 #include <space.h>
+#include <kstack.h>
 #if BOOT_CASE != 0
 #include <ktest.h>
 #endif
 #include <hal/boot.h>
+#include <hal/clock.h>
+#include <clock.h>
 
 static volatile u64 zeroed;
 static volatile u64 initialized = 0x12345678;
@@ -154,6 +157,11 @@ discovery(u64 dtb, u64 available)
 static void
 virtualmain(Hvs *space)
 {
+  hal_clock_init(hardware.timebase);
+  if (clockinit())
+    panic("clock initialization");
+  if (kstackinit(space))
+    panic("kernel stack initialization");
   meminit();
   if (spaceinit(space))
     panic("user root initialization");

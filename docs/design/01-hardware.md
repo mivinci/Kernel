@@ -109,7 +109,7 @@ Kctx：RV64 ra@0、sp@8、s0..s11@16..111；ARM64 x19..x30@0..95、sp@96、reser
 
 紧急入口只作不可恢复内核异常诊断，不作为常规IRQ栈。用户/内核来源分别由受保护的scratch/异常级现场识别；入口不能在保存t0/x9前拿它当临时寄存器。guard或入口栈故障切CPU紧急栈记录最小故障并halt，禁止重入同一坏栈。正常IRQ使用当前线程栈或CPU调度栈；IRQ/C长循环栈深须在实现后以编译报告和故障注入核验，16 KiB只是首版预算选择。
 
-固定池采用03规定槽宽度上限；每进程另含32项48字节Sigact表。Page=32字节、Cowgroup=32、Cowbranch=24、Blockref=16。启动构建生成实际内存报告；固定表总大小超过16 MiB、总内核静态/栈/恢复预付侵占RAM保留范围、12*普通可准入进程+64恢复Rq>1024或观察配额总预付超1024均拒绝配置。按本轮槽上限计算固定池10,778,624字节，整区页对齐10,780,672字节（2632页），低于16 MiB上限；不含内核代码、线程/CPU栈和启动包，实际链接预算另验。不会承诺所有64进程同时使用各自最大内存。
+固定池采用03规定槽宽度上限；每进程另含32项48字节Sigact表。Page=32字节、Cowgroup=32、Cowbranch=24、Blockref=16。启动构建生成实际内存报告；固定表总大小超过16 MiB、总内核静态/栈/恢复预付侵占RAM保留范围、12*普通可准入进程+64恢复Rq>1024或观察配额总预付超1024均拒绝配置。按本轮槽上限及新增64个每槽80字节上限的Kstack记录计算固定池10,783,744字节，整区页对齐10,784,768字节（2633页），低于16 MiB上限；不含内核代码、线程/CPU栈和启动包，实际链接预算另验。不会承诺所有64进程同时使用各自最大内存。
 
 ### HAL签名与调用上下文
 
@@ -119,7 +119,7 @@ HAL只收Hctx/Hkctx/Hvs/Hboot等硬件类型或定宽标量，不收Proc/Rq/FS�
 | --- | --- |
 | IRQ临界/空闲 | u64 hal_irq_save(void); void hal_irq_restore(u64); void hal_idle(void)；save/restore配对，idle仅调度栈无锁 |
 | 陷阱/现场 | void hal_trap_init(void); void hal_trap_decode(const Hctx*,Htrap*); void hal_user_init(Hctx*,const Hinit*); void hal_user_enter(Hctx*)；最后不返回 |
-| 内核切换 | void hal_ctx_switch(Hkctx *from,const Hkctx *to)；短IRQ关闭、只能切独立线程/调度栈 |
+| 内核切换 | void hal_ctx_init(Hkctx*,u64 top,void (*entry)(void)); void hal_ctx_switch(Hkctx *from,const Hkctx *to)；构造受控首次入口，切换时短IRQ关闭、只能切独立线程/调度栈 |
 | 地址空间 | s64 hal_vm_create(Hvs*,Pgsource*); s64 hal_vm_map(Hvs*,u64 va,u64 pa,u64 prot,u32 attr); s64 hal_vm_unmap(Hvs*,u64 va); u32 hal_vm_lookup(const Hvs*,u64 va,Hpte*); void hal_vm_commit(Hvs*); void hal_vm_switch(const Hvs*); void hal_vm_destroy(Hvs*) |
 | 缓存/代码 | void hal_code_sync(u64 pa,u64 bytes); void hal_dma_sync(u64 pa,u64 bytes,u32 phase,u32 direction)；只由已验证内核机制调用，按32页分批 |
 | 时间 | u64 hal_clock_read(void); u64 hal_clock_freq(void); void hal_timer_set(u64 absolute_ticks)；不进行FS/调度策略 |
@@ -272,3 +272,15 @@ hal_ctx_switch按冻结的112字节Hkctx保存/恢复C调用约定现场：RV64 
 本地switch场景在新建16 KiB RW/NX高半区测试栈上运行独立C入口，两侧guard无映射。worker保留栈局部值并两次切回，主栈汇编探针核对所有可设置的被调用者保存整数寄存器；再次恢复worker核对SP和局部值。主栈取得控制后显式废弃worker续点，再撤映射/失效、归还原伙伴块，最终页表/物理占用恢复基线。RV64/ARM64 QEMU均已通过，并继续接受主机独立页表审计。
 
 此测试用独立测试栈/原始伙伴块验证切换机制；进程栈的Acct出资、每CPU调度栈、退出后栈回收、IRQ嵌套及真实调度队列仍须按03接入，不能因两次切换成功标记调度阶段完成。
+
+
+2026-11-15接续：03末尾的内核栈生命周期切片已将user测试迁到计费独立栈，CPU续点使用既有启动栈，取代本节早期“用户测试使用启动内核栈”的进度描述。新增hal_ctx_init只构造可信内核首次续点；用户PC/SP/权限仍须由独立构造与发布检查确认。编译帧报告和场景水位已建立，不能替代IRQ/信号/退出最深路径及真实栈溢出的后续验收。
+
+
+当前物理ELF在高半区别名继续运行而不执行通用代码重定位；编译器不能在只读表中嵌入用于运行期分支的物理代码地址。Local错误码分支在RV64曾被LLVM转为绝对地址跳转表，进入高半区后跳回已撤销的低PC并触发取指页故障，已通过objdump和异常PC直接确认。内核构建统一启用-fno-jump-tables，参数进入编译数据库与对象缓存签名；不是靠保留低地址别名或改变授权状态机绕过问题。跨地址切换的显式函数指针继续由所在地址域构造；该限制不代表已经审计任意第三方静态函数指针表。
+
+
+原生入口接续新增HAL内部寄存器读取/普通返回封装：hal_syscall_arg读取固定输入，hal_syscall_finish只更新规定的返回字和pc/image，不给核心散落架构寄存器分支。完整用户现场仍在先前保留帧保存；CPU选择新续点时先切相应根，线程yield/exit先撤根再切离。原生短map暂停/恢复根仍在同一受保护内核栈上，禁止暂停窗口调度；只有支持的有界同步事务采用此路径。
+
+
+时钟查询切片（2026-11-15）：新增include/hal/clock.h及两架构clock.c，hal_clock_init传入发现的timebase，read/freq提供硬件计数；公共层换算见05。hal_timer_set及IRQ路径尚未实现，不为未接功能提供空桩。

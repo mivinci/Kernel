@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订；尚未实现、未通过QEMU/CI。当前接口选择及交叉复核记录以正文/status为准，不把“已选定”当作全部验收，不保留旧ABI兼容层。
+状态：2026-11-15设计规格已逐项修订；Handle/错误和Config/Allocarg/Maparg/Boot等共享定义已落头文件，可信内核调用局部通过两架构QEMU；原生exit/yield/getid及自身内存调用已接通并局部验证，其余入口未接，未运行CI。当前接口选择及交叉复核记录以正文/status为准，不把“已选定”当作全部验收，不保留旧ABI兼容层。
 
 ## 模块边界
 
@@ -258,3 +258,16 @@ create、forkcommit等关键结果走寄存器。posix_spawn先核对pid输出�
 用户探针触发非法指令及非法访问，另一个探针或内核诊断仍可继续。
 
 验收：返回值和保留寄存器符合 ABI，用户异常不会成为内核异常；非法请求不改变资源快照。
+
+
+## 原生入口首个可运行切片（2026-11-15）
+
+当前实现0x01 exit、0x02 yield、0x21 clock_gettime、0x22 clock_getres、0x30 alloc、0x31 free、0x32 map、0x33 unmap、0x34 seal和0x4f getid，编号在include/abi/syscall.h；这是当前profile，不是完整ABI实现。exit保存code低8位；其他已实现调用拒绝未用输入寄存器非0，ARM x7也须0。已知未接入口返回NOTSUP，0及表外号（包括未分配0x57）返回NOSYS，不通过一组空实现伪造服务。
+
+入口以CPU当前Proc和其保留Hctx校验来源，不从用户参数选择资源表。Allocarg/Maparg先逐页预检并一次复制到可信内核快照，保留字段与未知映射位拒绝；用户不能传内核指针。成功alloc只输出本地MEM，其余普通返回字与image清零；错误所有输出清零。普通FP/SIMD和非指定整数输出保存，RV64 a7/ARM64 x8按既定规则解释。
+
+当前native profile仅开放自身ALLOC及普通MEM/SPACE，尚未预付完整Rq/准备期限，故CONSTRUCT/临时加载MEM即使来自可信引导安装，也不借这些普通内存调用绕过准入。0x40..管理流程和exec/IPC等仍按已知未实现机制NOTSUP。构造期ALLOC=0x10的已确认协议和可信实现见02/03，不等于0x40 create已可用。
+
+syscalls场景使用三个独立U/EL0空间，通过真实ecall/svc运行，无测试陷阱替身：检查NOSYS/NOTSUP/INVALID/FAULT、失效Handle、未用输出清零、free后已有映射仍有效、unmap、CODE写别名阻止seal、封存后RW拒绝、实际执行动态生成代码；协作yield后核对各进程不同PC哨兵对应的FP/SIMD及控制状态。六次FIFO运行后两个exit42，第三个在unmap后真实访问旧VA产生FAULT/SEGV，三者均由CPU清理并领取各自Life结果。
+
+尚无SDK/libsys桩或通用ELF装载，测试载荷是tests/kernel中的独立汇编。IRQ仍关闭、ARM缓存仍关闭，不将这些QEMU行为称为真实硬件缓存、性能、完整信号或时间片调度验收。

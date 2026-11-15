@@ -117,6 +117,24 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "syscalls":
+        if ready != ["READY syscalls-restored"] or panics or traps:
+            raise SmokeError("native syscall test did not finish")
+    elif case == "prep":
+        if ready != ["READY prep-restored"] or panics or traps:
+            raise SmokeError("preparation loading test did not finish")
+    elif case == "procs":
+        if ready != ["READY procs-restored"] or panics or traps:
+            raise SmokeError("process construction test did not finish")
+    elif case == "life":
+        if ready != ["READY life-restored"] or panics or traps:
+            raise SmokeError("life responsibility test did not finish")
+    elif case == "locals":
+        if ready != ["READY locals-restored"] or panics or traps:
+            raise SmokeError("local authorization test did not finish")
+    elif case == "stacks":
+        if ready != ["READY stacks-restored"] or panics or traps:
+            raise SmokeError("managed kernel stack test did not finish")
     elif case == "switch":
         if ready != ["READY switch-restored"] or panics or traps:
             raise SmokeError("kernel context switch test did not finish")
@@ -424,6 +442,12 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY syscalls-restored\n" if args.case == "syscalls" else
+                    "READY prep-restored\n" if args.case == "prep" else
+                    "READY procs-restored\n" if args.case == "procs" else
+                    "READY life-restored\n" if args.case == "life" else
+                    "READY locals-restored\n" if args.case == "locals" else
+                    "READY stacks-restored\n" if args.case == "stacks" else
                     "READY switch-restored\n" if args.case == "switch" else
                     "READY user-restored\n" if args.case == "user" else
                     "READY seal-restored\n" if args.case == "seal" else
@@ -493,6 +517,40 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "syscalls":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SYSCALLCHECK ")]
+                    if checks != [{"processes": 3, "turns": 6, "exit": 42, "charged": 0, "allocated": transition["tables"]}]:
+                        raise SmokeError("native syscall/continuation/reclamation mismatch")
+                    record["syscalls"] = checks[0]
+                if args.case == "prep":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("PREPCHECK ")]
+                    if checks != [{"runs": 1, "exit": 42, "retained": 1, "charged": 0, "allocated": transition["tables"]}]:
+                        raise SmokeError("preparation ownership/reclamation mismatch")
+                    record["prep"] = checks[0]
+                if args.case == "procs":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("PROCCHECK ")]
+                    if checks != [{"constructed": 63, "runs": 2, "exit": 42, "reused": 1, "charged": 0, "allocated": transition["tables"]}]:
+                        raise SmokeError("process construction/publication/cleanup mismatch")
+                    record["procs"] = checks[0]
+                if args.case == "life":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("LIFECHECK ")]
+                    if checks != [{"retained": 256, "reused": 1, "instances": 0, "allocated": transition["tables"]}]:
+                        raise SmokeError("life pool/result responsibility mismatch")
+                    record["life"] = checks[0]
+                if args.case == "locals":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("LOCALCHECK ")]
+                    if checks != [{"slots": 128, "charged": 0, "allocated": transition["tables"]}]:
+                        raise SmokeError("local table cleanup/count mismatch")
+                    record["locals"] = checks[0]
+                if args.case == "stacks":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("STACKCHECK ")]
+                    if len(checks) != 1 or not 0 < checks[0].get("depth", 0) <= 16384:
+                        raise SmokeError("missing kernel stack watermark")
+                    stack = checks[0].copy()
+                    del stack["depth"]
+                    if stack != {"created": 64, "resumed": 2, "charged": 0, "allocated": transition["tables"]}:
+                        raise SmokeError("managed kernel stack count/cleanup mismatch")
+                    record["stacks"] = checks[0]
                 if args.case == "switch":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SWITCHCHECK ")]
                     if checks != [{"resumed": 2, "allocated": transition["tables"]}]:
@@ -505,6 +563,11 @@ def exercise(args, run_dir, record):
                                 for i in range(7)]
                     if checks != expected:
                         raise SmokeError("user mode register/fault summary mismatch")
+                    stacks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("USERSTACK ")]
+                    if (len(stacks) != 1 or stacks[0].get("reclaimed") != 1 or
+                            not (560 if args.arch == "riscv" else 816) <= stacks[0].get("depth", 0) <= 16384):
+                        raise SmokeError("user kernel stack lifecycle/watermark mismatch")
+                    record["user_stack"] = stacks[0]
                     record["user"] = checks
                 if args.case == "seal":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SEALCHECK ")]
@@ -542,7 +605,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

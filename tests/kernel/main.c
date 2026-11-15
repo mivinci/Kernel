@@ -4,7 +4,25 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 17
+#if BOOT_CASE == 23
+  syscalltest();
+  putstr("READY syscalls-restored\n");
+#elif BOOT_CASE == 22
+  preptest();
+  putstr("READY prep-restored\n");
+#elif BOOT_CASE == 21
+  proctest();
+  putstr("READY procs-restored\n");
+#elif BOOT_CASE == 20
+  lifetest();
+  putstr("READY life-restored\n");
+#elif BOOT_CASE == 19
+  localtest();
+  putstr("READY locals-restored\n");
+#elif BOOT_CASE == 18
+  stacktest(space);
+  putstr("READY stacks-restored\n");
+#elif BOOT_CASE == 17
   switchtest(space);
   putstr("READY switch-restored\n");
 #elif BOOT_CASE == 16

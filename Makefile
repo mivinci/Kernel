@@ -42,7 +42,7 @@ unit:
 smoke: build
 	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio)
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 	$(MAKE) smoke ARCH="$(ARCH)" CASE="$(CASE)"
 
 test-all: unit fmt-check
@@ -66,6 +66,18 @@ test-all: unit fmt-check
 	$(MAKE) scenario ARCH=arm64 CASE=user
 	$(MAKE) scenario ARCH=riscv CASE=switch
 	$(MAKE) scenario ARCH=arm64 CASE=switch
+	$(MAKE) scenario ARCH=riscv CASE=stacks
+	$(MAKE) scenario ARCH=arm64 CASE=stacks
+	$(MAKE) scenario ARCH=riscv CASE=locals
+	$(MAKE) scenario ARCH=arm64 CASE=locals
+	$(MAKE) scenario ARCH=riscv CASE=life
+	$(MAKE) scenario ARCH=arm64 CASE=life
+	$(MAKE) scenario ARCH=riscv CASE=procs
+	$(MAKE) scenario ARCH=arm64 CASE=procs
+	$(MAKE) scenario ARCH=riscv CASE=prep
+	$(MAKE) scenario ARCH=arm64 CASE=prep
+	$(MAKE) scenario ARCH=riscv CASE=syscalls
+	$(MAKE) scenario ARCH=arm64 CASE=syscalls
 	@for test_case in textwrite rodatawrite dataexec guard null identity alias unmapped; do $(MAKE) scenario ARCH=riscv CASE=$$test_case || exit $$?; $(MAKE) scenario ARCH=arm64 CASE=$$test_case || exit $$?; done
 	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
 	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1

@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：2026-11-15设计规格已逐项修订；内核栈生命周期切片已实现并在两架构QEMU局部验证，见末尾。Local/Life/Proc可信基础切片也已局部实现，见末尾；原生完整管理授权、准备准入与IRQ/时间片调度尚未接通，不称全阶段、性能或CI验收。
 
 职责：普通 fork/spawn 由调用者运行库协调，父直接向内核领取退出结果；init 管系统策略、孤儿与服务监督。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -754,7 +754,7 @@ RESOURCE 子类型编号固定：1 CREATE、2 SPACE、3 ALLOC、4 MEM、5 CALL�
 | OBSERVE | SOURCE、CHILD、FUTURE、MONITOR | SOURCE/CHILD/FUTURE位0..2，MONITOR位3；basis前三种必须是本服务持有的REQUEST，MONITOR必须是固定进程CONTROL QUERY；不继承 |
 | IRQ_SOURCE/IRQ_BIND | BIND / ACK | 固定设备中断源/绑定；init管理与驱动确认分开，不继承 |
 | TERMINAL | QUERY、FG、SIGNAL、BIND | 固定终端实例；SIGNAL只可按规定字符/事件投递获准前台组信号，非任意sigsend |
-| EXEC_VIEW/CONSTRUCT | MAP、CONFIG、PUBLISH、ABORT | 固定source PID/image与一次准备；不可转授/继承，提交或撤销时统一失效 |
+| EXEC_VIEW/CONSTRUCT | MAP、CONFIG、PUBLISH、ABORT、ALLOC | 固定source PID/image与一次准备；不可转授/继承，提交或撤销时统一失效 |
 | SYSTEM | QUERY、CLOCK、HALT、REBOOT、POLICY | 仅启动清单指定的init；不继承、不通过运行中reply授予 |
 
 所有可转授RESOURCE统一使用bit63的GRANT；表内低位仅业务使用权，MEM READ/WRITE/EXEC/SEAL/DMA依次bit0..4，CALL/SEND USE为bit0。GRANT只控制普通grant源权限；target须是本次有效CONSTRUCT/EXEC_VIEW CONFIG或固定进程CONTROL INSTALL，不能以QUERY/CONNECT/GRANT替代。grant永不增权/扩窗口；CREATE的再授予还要求源SERVICE或init POLICY，普通CREATE不能任意传播给既有进程。grant的inherit字段仅两位：FORK=1、EXEC=2，默认0；目标子类型禁止的继承位一律拒绝。EXEC=2只适用显式共享MEM、CALL/SEND、必要启动SELF/CREATE重绑定；应用私有MEM不因设置EXEC而保留旧映射。运行中resource reply只允许受限SHARED MEM或后端CALL USE，默认FORK=1、EXEC=0；fd所需exec继承由服务交接重新建立，不把旧调用权盲目改绑对端。
@@ -950,3 +950,78 @@ wait(pid=0)在原wait接受时固定调用者当时PGID，SA_RESTART沿该选择
 
 验收：等待者得到约定错误，旧回复失效，退出状态可按约定查询；不在被回收栈/页表上执行。
 每轮应回收资源精确回归，持久记录数量有明确上限；不把删除句柄误当终止进程。
+
+
+### 阶段05内核栈生命周期切片（2026-11-15）
+
+本节落实已冻结的独立内核栈责任，不等于Proc/Life、发布协议或调度器已经实现。
+
+- [x] 可信内核Kstack池默认64槽；每栈4个零阶物理页和专属叶页表页分别由原Acct出资。创建先取得/初始化全部页，再提交RW/NX内核映射；任一步失败保留输出、归还页/表/引用/费用及槽名额。
+- [x] 每栈保留2 MiB虚拟槽，仅映射guard后的16 KiB，栈顶之后也留空；叶表不与其他栈共享，避免不同Acct之间出现“最后解除者释放另一账目的表页”。共同上层使用永久KIO父表，其费用仍属系统启动预付。
+- [x] 管理引用与可恢复续点引用分开：创建得到1份管理引用，构造Hkctx前hold；挂起时持有续点引用，free返回BUSY。代码正在该栈上时drop/free均拒绝；先切离并明确废弃续点，再drop/free，不能用停止运行代替废弃续点。
+- [x] 回收先核对全部页的PA/权限/属性，以及私有槽中没有外来叶，再逐页撤映射、TLB失效、释放原表/栈页，最后退Acct引用。账目关闭不改变既有栈的归属，代次复用不接纳旧Kstackid。
+- [x] 用户陷阱测试改用真实计费线程栈：CPU启动栈切入独立栈，构造完整Hctx并进入U/EL0；七次同步陷阱结束后先撤用户根、切回CPU栈，废弃线程续点，再回收其栈和地址空间。
+
+Kstackid是可信内核记录索引/代次，不是用户Handle；本切片仍串行、IRQ关闭。新HAL内部构造器`void hal_ctx_init(Hkctx*,u64 top,void (*entry)(void))`把干净内核现场设置为受控C入口，清零其余字段；调用者提供常驻、16字节对齐的栈顶与可信不返回内核入口。它补足首次进入新栈所需机制，不复制旧C栈，也不允许用户提供任意内核PC/SP。
+
+具体区域为0xffffffc101000000起、每槽0x200000，默认64槽；硬件窗口/对齐由断言保证与永久KIO共享同一上层。Kstack当前72字节，64槽4608字节在BSS整体预付，上限按每槽80字节计入固定池预算，不按活槽另扣物理页。每个活栈费用当前正好5页：16 KiB栈和4 KiB叶表；guard无物理页。父表永久存在、不同栈均独占叶表，是本切片单一释放责任的前提，不能随意在私有槽加别名。
+
+测试例：仅给Acct剩余0/1/2/3/4页额度，分别在第一个至第四个栈页或叶表处失败，全部回到原快照。两个不同Acct各持一栈，先关闭一个账目，释放另一栈不能结清被关闭账目的5页。挂起worker的续点仍持hold时CPU尝试free被拒绝；恢复后worker的SP/局部值保持，切回CPU并废弃续点后才归还栈。故意删除第二叶或在私有槽添加外来叶时，free预检失败，不得先删除第一叶。
+
+主机覆盖默认算法的4槽小配置、每步额度/物理页耗尽、双账目、旧代次、池复用、全部解除预检与已存在用户根借用新内核映射；guest默认64槽实测池耗尽/回收、费用守恒、guard/PTE、续点往返及运行栈拒绝释放。`user`额外验证完整用户现场确实落在独立栈上，并在CPU栈回收。
+
+栈审计：新栈先填0xa5水位标记，再构造干净现场；离栈后读取最深已修改位置，记录该场景的观测水位。编译器为每个内核C单元产生`.su`，汇总到镜像目录`stack-usage.json`，manifest记录路径，缺报告不命中缓存。报告仅为每函数编译帧，不包含手写汇编、完整调用链或所有可能路径；水位也不是安全上界证明。后续仍须覆盖IRQ/取消/信号/最深调用链及栈溢出注入，不能因此认定16 KiB最终足够。
+
+CPU侧本地测试继续使用启动时已经保留且有guard的16 KiB栈保存CPU续点；尚未实现调度队列、时钟抢占、Proc创建/退出/等待或清理链，不把两栈受控切换称为这些机制验收。接续实现Local授权、Proc/Life及configure/start时须沿用上述持有责任。
+
+
+本切片本地`make test-all`通过91项host、格式及42个QEMU场景，日志`build/host/stage05-stacks/test-all.log`。在当前LLVM18.1.8/QEMU11.1.3、256 MiB、IRQ关闭配置，独立C续点场景水位RV64 152字节/ARM64 160字节，用户往返场景776/1024字节；内核单函数报告最大2112字节为启动撤低映射的hal_vm_drop_low，不可将单函数帧与不同场景水位相加冒充完整路径证明。normal仍初始化后停机，无CI、真实硬件或性能结论。
+
+
+### 阶段05 Local、Life与Proc可信基础切片（2026-11-15）
+
+本节接续栈生命周期，只描述已实现的可信内核机制。未导出原生create/configure/start/grant/wait，也未以裸PID建立用户管理权限。
+
+- [x] `include/abi/base.h`定义有符号64位Handle、固定类别及21个错误；编码/类别检查使用无符号位运算，先识别保留PID 1。句柄语法有效不等于存在对应对象或拥有权限。
+- [x] Local为48字节，保存本地43位代次、完整对象代次/索引、子类型、rights、offset/length、inherit与来源类别；每次发布才递增代次，清理保留代次，耗尽不回绕。当前仅支持SELF SPACE、ALLOC和同Acct DATA/CODE MEM。
+- [x] Local分别检查目标SPACE与MEM权限，按Mem本体偏移检查授权子范围；普通复制引用要求GRANT、使用权/继承标记子集及当前Mem状态。封存后的旧WRITE位不能用于写入、RW映射或再次授写。删除MEM授权不撤销独立副本/既有Mmap；整条unmap只需SPACE UNMAP，不依赖旧MEM Handle。
+- [x] Local关闭先禁止新操作，随后每次至多处理32个槽，独立释放对象引用；这里只实现表机制，`localcopy`/`localrevoke`的目标选择来自可信调用者，不是省略INSTALL/CONSTRUCT检查的原生grant/revoke。
+- [x] Life独立保存完整PID、父身份、运行槽可空、第一份终态/故障快照，以及结果、CONTROL、观察、清理责任。已结束且切离运行槽后仍可保留结果/旧引用；收取结果解除集合实例额度，残余清理/观察继续占Life池。未发布撤销没有wait结果，切离后解除实例额度。
+- [x] Proc按自身运行槽43位代次发出唯一PID，Life只消费该可信身份，不充当授权或发号器。构造时先预占运行槽，再取得Life、Acct、用户根、计费内核栈和本地SELF授权；失败逐项回滚，且不发布PID。槽0保留给后续独立启动的初始init，normal不创建模拟init。
+- [x] 可信configure完整快照六字段，校验入口对齐/RX、整个64 KiB RW/NX用户栈及guard、只读Boot范围和头部长度/格式，成功才替换干净Hctx；失败保留原配置。publish重查映射与Boot，不信任旧configured位，再将Life发布并只入FIFO一次。
+- [x] CPU续点从FIFO选择一个干净线程栈进入U/EL0。当前仅受控协作运行到测试退出；没有时钟抢占、IRQ/IPC阻塞唤醒或时间片捐赠。退出先固定Life结果并撤用户根，切回CPU栈后按阶段清理：Local每次32槽、Mmap每次1条、废弃Hkctx/回收栈、销毁根、关闭解绑Acct、最后解除Life运行关联并回收Proc槽。
+
+当前构造器`procnew`等只接受可信内核输入；`proctable`只为构造期同步内核代码提供借用视图，禁止跨发布点/调度点保留它当目标授权。完整原生调用仍须独立校验当前调用者、CREATE/CONSTRUCT或固定CONTROL、凭据、准备归属/期限、请求与镜像记录预付。不能将本节返回PID当管理Handle，也不能因有内部入口便绕过尚未完成的准入。
+
+当前configure不支持非零signal配置或资源回复保底预留，明确返回NOTSUP且保留原配置；尚无信号基线继承、Rqs/Images/Preps准入或准备10秒期限。因此它不是完整原生configure/start验收。普通DATA/CODE仍限制同Acct；准备期加载采用用户已确认的02末尾ALLOC例外，具体准备绑定、失效和临时别名检查已实现，原生完整构造入口仍未接通。
+
+`spaceread`只供内核读入用户空间：最多64 KiB，先逐页检查完整范围的USER/READ/NORMAL，再通过内核映射复制到可信目标，失败不先修改目标。它不是跨空间`__sys_copy`或用户写接口，也不绕过COW。`spaceclear`仅在非活动根逐条解除有界Mmap，仍先TLB后回收。
+
+实际默认记录：Proc为336字节、64槽共21504字节；Life为112字节、256槽共28672字节；Local为48字节、64×128槽共393216字节，均低于已约定槽预算并在BSS整体预付。完整Hctx保留在线程栈，未放入Proc重复计费；PID代次与Local代次在槽复用中各自保留。Life未收取结果不保留无用的用户地址空间/栈。
+
+反例测试：
+
+1. 同Acct两个空间复制一个只读子窗口，越范围/写/无GRANT均拒绝；源授权释放不破坏目标或既有映射，最后解除才结清。CODE有RW别名则seal失败，撤最后写映射后成功；源旧WRITE位仍存在也不能突破SEALED。
+2. 旧PID占用运行槽1后退出，运行资源分批回收，Life保留退出42。新PID使用同一运行槽的新代次，旧Local数值不能释放新对象；按旧Life收取仍返回旧PID/42，不匹配新实例。收取、观察/清理ACK与物理费用归还分别进行。
+3. 构造仅给1..5页常规额度，或仅1个本地槽，均失败并恢复集合实例/费用/伙伴占用；默认63个普通运行槽耗尽明确失败，槽0仍保留。反复configure的坏栈不覆盖旧现场，configure后撤代码或篡改Boot长度使publish失败。
+4. 默认Life池保留256份已退出未收取结果，即使运行槽空闲仍拒绝新记录。收取一份但保留清理引用仍没有Life空槽；最后清理引用解除后才复用，内部Lifeid代次变化。
+
+本地完整回归通过107项host和48个QEMU场景，日志`build/host/stage05-procs/test-all.log`；随后构造槽预占修改单独复跑两架构procs，日志同目录`procs-riscv.log`/`procs-arm64.log`。guest的两个独立用户空间实际读取只读Boot并触发测试退出，各保存42，CPU侧完成清理与旧结果收取；退出接入是测试专用回调，不是已实现的原生syscall分发。无CI、真实硬件、性能或完整进程/调度/信号验收。
+
+
+### 准备期加载与原生内存入口接续（2026-11-15）
+
+CONSTRUCT/EXEC_VIEW新增ALLOC位及协议以02末尾为准。Rtable加入完整owner/image和不可回绕的绑定epoch，关闭/重绑不能复活旧准备。构造准备将源和目标的具体表、epoch、完整PID/image、Life/Acct/Space固定；源同时最多3份活动准备。源close先取消未发布目标，CPU逐批推进Proc和Prep清理，不在已退栈的局部变量中保留责任。
+
+Proc目前为368字节，Life仍112、Local仍48、Prep为160、Mmap为64，均低于既定槽预算；默认BSS按实际结构一次预付。Prep active时持目标Space租约及独立Life清理引用，提交/取消释放Space租约，临时别名和来源槽继续分别持Prep引用。目标运行槽可在临时别名消失前回收，旧Acct费用与旧Life清理责任不随之重绑。
+
+原生已接exit/yield/getid和自身alloc/free/map/unmap/seal。用户输入中的所有未用寄存器为0，结构一次复制到内核快照；返回仅写ABI指定输出，其余整数/FP现场恢复。RV64返回推进ecall的pc 4字节，ARM SVC的ELR已指下一指令。未知/表外号NOSYS，已知未实现的机制NOTSUP；普通错误清零输出。
+
+当前协作yield先把自己的续点入FIFO，撤用户根并切CPU栈；CPU更新current和用户根后恢复独立内核续点，再从完整Hctx返回用户。没有时钟抢占、时间片捐赠、IRQ唤醒、STOP/KILL等待或信号重入。退出与用户同步故障均进入Life结果/CPU清理，fault保留真实PC/VA/cause。
+
+仅支持至多16页的同步短映射：完整用户现场已保存，Proc/Space引用固定，短事务暂停当前用户根，完成Local校验/页表提交或回滚后恢复根，再返回用户。暂停窗口不得yield，仍为单核、IRQ关闭profile；这不是长Op、可抢占内核或任意长度运行期VM验收。
+
+原生构造/执行准备、CREATE/CONTROL、Rq/Image/期限、信号配置和服务管理尚未接通。为了不绕过这些准入，当前native profile对CONSTRUCT和临时加载MEM明确NOTSUP；已确认的构造操作由可信入口和独立prep场景验证，不能据此宣称完整create/configure/start/grant可用。EXEC_VIEW阶段仍待实现。
+
+
+接续验收：`build/host/stage05-prep/test-all.log`记录115项host及52个QEMU场景全通过，普通源资源表仍保留原隔离规则；最后补充的native profile构造/加载权隔离断言亦在`unit-final.log`通过。normal仍停机、没有init/SDK/CI/真实硬件结论。后续在这些基础上补请求与准备期限准入，不回退到裸PID构造权限。

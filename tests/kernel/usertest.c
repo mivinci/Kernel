@@ -1,5 +1,6 @@
 #include "ktest.h"
 #include <space.h>
+#include <kstack.h>
 #include <diag.h>
 #include <hal/boot.h>
 #include <vm.h>
@@ -9,20 +10,37 @@ static Memid    code, stack, boot;
 static Setid    group;
 static Acctid   acct;
 static Pgstat   baseline;
-static u32      phase;
+static u32      phase, finished;
+static Kstackid threadstack;
+static Hkctx    cpu, thread;
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
     if (!(c))                                                                                      \
       panic("user context");                                                                       \
   } while (0)
-NORETURN void
-usertest(Hvs *kernel)
+static NORETURN void
+launch(void)
 {
   Hctx  context;
   Hinit initial;
-  Hpte  pte;
-  u64   header[16];
   u32   i;
+  initial.entry = 0x10000;
+  initial.sp = 0x3fffff0000UL;
+  initial.arg = 0x3fff000000UL;
+  for (i = 0; i < sizeof(context); i++)
+    ((u8 *) &context)[i] = 0xff;
+  hal_user_init(&context, &initial);
+  REQUIRE(!spaceactivate(userspace));
+  REQUIRE(spaceunmap(userspace, 0x10000) == SP_BUSY && spacedestroy(userspace) == SP_BUSY);
+  hal_user_enter(&context);
+}
+NORETURN void
+usertest(Hvs *kernel)
+{
+  Hpte   pte;
+  u64    header[16], top, used;
+  Pgstat after;
+  u32    i;
   UNUSED(kernel);
   pgstat(&baseline);
   REQUIRE(!setcreate(128, 256, 2, &group) && !acctcreate(group, 128, 256, &acct));
@@ -42,21 +60,35 @@ usertest(Hvs *kernel)
   REQUIRE(!spacemap(userspace, stack, 0, 0x3ffffe0000UL, 16 * PAGE_SIZE, VM_READ | VM_WRITE));
   REQUIRE(!spacemap(userspace, boot, 0, 0x3fff000000UL, PAGE_SIZE, VM_READ));
   REQUIRE(!spacelookup(userspace, 0x3ffffdf000UL, &pte));
-  initial.entry = 0x10000;
-  initial.sp = 0x3fffff0000UL;
-  initial.arg = 0x3fff000000UL;
-  for (i = 0; i < sizeof(context); i++)
-    ((u8 *) &context)[i] = 0xff;
-  hal_user_init(&context, &initial);
-  REQUIRE(!spaceactivate(userspace));
-  REQUIRE(spaceunmap(userspace, 0x10000) == SP_BUSY && spacedestroy(userspace) == SP_BUSY);
-  hal_user_enter(&context);
+  REQUIRE(!kstackcreate(acct, &threadstack) && !kstackhold(threadstack));
+  REQUIRE(!kstacktop(threadstack, &top));
+  hal_ctx_init(&thread, top, launch);
+  hal_ctx_switch(&cpu, &thread);
+  REQUIRE(finished && phase == 7);
+  REQUIRE(!kstackused(threadstack, &used) && used >= sizeof(Hctx) &&
+          used <= KSTACK_PAGES * PAGE_SIZE);
+  for (i = 0; i < sizeof(thread); i++)
+    ((u8 *) &thread)[i] = 0;
+  REQUIRE(!kstackdrop(threadstack) && !kstackfree(threadstack));
+  REQUIRE(!spaceunmap(userspace, 0x10000) && !spaceunmap(userspace, 0x3ffffe0000UL));
+  REQUIRE(!spaceunmap(userspace, 0x3fff000000UL));
+  REQUIRE(!memfree(code) && !memfree(stack) && !memfree(boot));
+  REQUIRE(!spacedestroy(userspace) && !acctclose(acct) && !acctunbind(acct) && !setclose(group));
+  pgstat(&after);
+  REQUIRE(after.free == baseline.free && after.allocated == baseline.allocated && !pgcheck() &&
+          !acctcheck());
+  putstr("USERSTACK depth=");
+  puthex(used);
+  putstr(" reclaimed=");
+  puthex(1);
+  putstr("\n");
+  putstr("READY user-restored\n");
+  hal_halt();
 }
 NORETURN void
 usertesttrap(Hctx *context)
 {
-  Htrap  trap;
-  Pgstat after;
+  Htrap trap;
   hal_trap_decode(context, &trap);
   REQUIRE(trap.fromuser && trap.kind == (phase < 2 ? HT_SYSCALL : HT_PAGEFAULT));
   arch_usercheck(context, phase);
@@ -76,13 +108,8 @@ usertesttrap(Hctx *context)
   if (++phase < 7)
     hal_user_enter(context);
   REQUIRE(!spacedeactivate());
-  REQUIRE(!spaceunmap(userspace, 0x10000) && !spaceunmap(userspace, 0x3ffffe0000UL));
-  REQUIRE(!spaceunmap(userspace, 0x3fff000000UL));
-  REQUIRE(!memfree(code) && !memfree(stack) && !memfree(boot));
-  REQUIRE(!spacedestroy(userspace) && !acctclose(acct) && !acctunbind(acct) && !setclose(group));
-  pgstat(&after);
-  REQUIRE(after.free == baseline.free && after.allocated == baseline.allocated && !pgcheck() &&
-          !acctcheck());
-  putstr("READY user-restored\n");
-  hal_halt();
+  REQUIRE(kstackfree(threadstack) == KS_BUSY && kstackdrop(threadstack) == KS_BUSY);
+  finished = 1;
+  hal_ctx_switch(&thread, &cpu);
+  panic("discarded user kernel stack resumed");
 }
