@@ -28,7 +28,9 @@ class MemoryTests(unittest.TestCase):
                             'memhold': [Memid], 'memretain': [Memid], 'memrelease': [Memid],
                             'mempage': [Memid, C.c_uint32, C.POINTER(C.c_uint64)],
                             'spacemap': [support.Spaceid, Memid, C.c_uint64, C.c_uint64, C.c_uint64, C.c_uint64],
-                            'spaceunmap': [support.Spaceid, C.c_uint64]}
+                            'spaceunmap': [support.Spaceid, C.c_uint64],
+                            'spaceread': [support.Spaceid, C.c_uint64, C.c_void_p, C.c_uint64],
+                            'spaceclear': [support.Spaceid, C.c_uint32]}
             for name, args in declarations.items():
                 getattr(lib, name).argtypes = args
 
@@ -336,3 +338,39 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(self.mstat(mid).execs, 1)
         for lib in self.libs:
             self.exercise(lib, body)
+
+    def test_kernel_read_prechecks_all_user_pages_before_touching_destination(self):
+        def body():
+            sid = self.create()
+            mid = self.memory_create(8192)
+            text = C.create_string_buffer(b'abcdefgh')
+            self.assertEqual(self.lib.memwrite(mid, 4093, text, 8), 0)
+            self.assertEqual(self.map(sid,mid,length=8192,prot=1), 0)
+            out = C.create_string_buffer(8)
+            self.assertEqual(self.lib.spaceread(sid,0x10ffd,out,8), 0)
+            self.assertEqual(out.raw,b'abcdefgh')
+            C.memset(out,0x77,8)
+            self.assertEqual(self.lib.spaceread(sid,0x11ffd,out,8), -1)
+            self.assertEqual(out.raw,b'\x77'*8)
+            self.assertEqual(self.lib.spaceread(sid,0xffffffc000200000,out,8), -1)
+            self.assertEqual(out.raw,b'\x77'*8)
+        for lib in self.libs:
+            self.exercise(lib,body)
+
+    def test_space_clear_removes_bounded_whole_records_and_rejects_active_root(self):
+        def body():
+            sid=self.create()
+            mid=self.memory_create(8192)
+            self.assertEqual(self.map(sid,mid,prot=1),0)
+            self.assertEqual(self.map(sid,mid,address=0x20000,offset=4096,prot=1),0)
+            self.assertEqual(self.lib.spaceactivate(sid),0)
+            self.assertEqual(self.lib.spaceclear(sid,1),-4)
+            self.assertEqual(self.lib.spacedeactivate(),0)
+            self.assertEqual(self.lib.spaceclear(sid,33),-1)
+            self.assertEqual(self.lib.spaceclear(sid,1),1)
+            self.assertEqual(self.lookup(sid,0x20000)[-1],0)
+            self.assertEqual(self.lookup(sid,0x10000)[-1],1)
+            self.assertEqual(self.lib.spaceclear(sid,1),0)
+            self.assertEqual((self.stat(sid).pages,self.mstat(mid).refs),(1,1))
+        for lib in self.libs:
+            self.exercise(lib,body)

@@ -1,14 +1,16 @@
 #ifndef _RISCV_CONTEXT_H
 #define _RISCV_CONTEXT_H
 #include <riscv/trap.h>
-#define KC_SIZE     112
-#define KC_REG(n)   ((n) * 8)
-#define FP_REG(n)   ((n) * 8)
-#define FP_CONTROL  256
-#define FP_RESERVED 264
-#define FP_SIZE     272
-#define HC_FP       TF_SIZE
-#define HC_SIZE     (TF_SIZE + FP_SIZE)
+#define HAL_SYSCALL_ARGS 7
+#define HAL_ENTRY_ALIGN  2
+#define KC_SIZE          112
+#define KC_REG(n)        ((n) * 8)
+#define FP_REG(n)        ((n) * 8)
+#define FP_CONTROL       256
+#define FP_RESERVED      264
+#define FP_SIZE          272
+#define HC_FP            TF_SIZE
+#define HC_SIZE          (TF_SIZE + FP_SIZE)
 #ifndef __ASSEMBLER__
 typedef struct Hkctx   Hkctx;
 typedef struct Fpstate Fpstate;

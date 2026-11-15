@@ -1,14 +1,16 @@
 #ifndef _ARM64_CONTEXT_H
 #define _ARM64_CONTEXT_H
 #include <arm64/trap.h>
-#define KC_SIZE     112
-#define KC_REG(n)   ((n) * 8)
-#define FP_REG(n)   ((n) * 16)
-#define FP_CONTROL  512
-#define FP_RESERVED 520
-#define FP_SIZE     528
-#define HC_FP       TF_SIZE
-#define HC_SIZE     (TF_SIZE + FP_SIZE)
+#define HAL_SYSCALL_ARGS 8
+#define HAL_ENTRY_ALIGN  4
+#define KC_SIZE          112
+#define KC_REG(n)        ((n) * 8)
+#define FP_REG(n)        ((n) * 16)
+#define FP_CONTROL       512
+#define FP_RESERVED      520
+#define FP_SIZE          528
+#define HC_FP            TF_SIZE
+#define HC_SIZE          (TF_SIZE + FP_SIZE)
 #ifndef __ASSEMBLER__
 typedef struct Hkctx   Hkctx;
 typedef struct Fpstate Fpstate;

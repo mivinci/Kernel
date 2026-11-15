@@ -168,8 +168,11 @@ def build(args, directory, run_dir):
     work = directory / args.case if kernel else directory
     work.mkdir(exist_ok=True)
     if kernel:
-        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17}[args.case])]
-        sources += [ROOT / "kernel/main.c", ROOT / "kernel/context.c", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
+        # The physical ELF runs again at a high alias without runtime relocations.
+        # Compiler switch tables must not embed absolute physical code pointers.
+        flags += ["-fno-jump-tables"]
+        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23}[args.case])]
+        sources += [ROOT / "kernel/main.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
                     ROOT / "kernel" / args.arch / "entry.S"]
         if args.case != "normal":
             flags += ["-I" + str(ROOT / "tests/kernel"), "-I" + str(ROOT / "tests/kernel" / args.arch)]
@@ -178,6 +181,18 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):
             sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
+        if args.case == "syscalls":
+            sources += [ROOT / "tests/kernel/syscalltest.c", ROOT / "tests/kernel" / args.arch / "native.S"]
+        if args.case == "prep":
+            sources += [ROOT / "tests/kernel/preptest.c", ROOT / "tests/kernel" / args.arch / "procprobe.S", ROOT / "tests/kernel" / args.arch / "proctest.c"]
+        if args.case == "procs":
+            sources += [ROOT / "tests/kernel/proctest.c", ROOT / "tests/kernel" / args.arch / "procprobe.S", ROOT / "tests/kernel" / args.arch / "proctest.c"]
+        if args.case == "life":
+            sources.append(ROOT / "tests/kernel/lifetest.c")
+        if args.case == "locals":
+            sources.append(ROOT / "tests/kernel/localtest.c")
+        if args.case == "stacks":
+            sources += [ROOT / "tests/kernel/stacktest.c", ROOT / "tests/kernel" / args.arch / "switchprobe.S"]
         if args.case == "switch":
             sources += [ROOT / "tests/kernel/switchtest.c", ROOT / "tests/kernel" / args.arch / "switchprobe.S"]
         if args.case == "user":
@@ -205,31 +220,50 @@ def build(args, directory, run_dir):
         header_source.write_text(generated)
     units = [(p, work / "obj" / p.relative_to(ROOT).with_suffix(".o")) for p in sources]
     units.append((header_source, checks / "headers.o"))
+    def stack_source(source):
+        return kernel and source.suffix == ".c" and source != header_source
+    def unit_flags(source):
+        return flags + (["-fstack-usage"] if stack_source(source) else [])
     compilation_database(directory, [
         {"directory": str(ROOT), "file": str(source), "output": str(obj),
-         "arguments": [tools["cc"]["path"], *flags, "-c", str(source), "-o", str(obj)]}
+         "arguments": [tools["cc"]["path"], *unit_flags(source), "-c", str(source), "-o", str(obj)]}
         for source, obj in units
     ])
     objects = []
+    stack_frames = []
     for index, (source, obj) in enumerate(units):
         obj.parent.mkdir(parents=True, exist_ok=True)
+        compile_flags = unit_flags(source)
+        usage = obj.with_suffix(".su") if stack_source(source) else None
         signature = hashlib.sha256(json.dumps({
-            "source": digest(source), "headers": headers, "flags": flags,
+            "source": digest(source), "headers": headers, "flags": compile_flags,
             "compiler": tools["cc"], "output": str(obj),
         }, sort_keys=True).encode()).hexdigest()
         stamp = obj.with_suffix(".signature")
-        cached = obj.exists() and stamp.exists() and stamp.read_text() == signature
+        cached = (obj.exists() and stamp.exists() and stamp.read_text() == signature
+                  and (usage is None or usage.exists()))
         if not cached:
             temporary = obj.with_suffix(".tmp.o")
             invoke("compile-%d" % index,
-                   [tools["cc"]["path"], *flags, "-c", str(source), "-o", str(temporary)])
+                   [tools["cc"]["path"], *compile_flags, "-c", str(source), "-o", str(temporary)])
             read_elf(temporary, profile["machine"], allow_undefined=kernel)
+            if usage is not None:
+                if not temporary.with_suffix(".su").exists():
+                    raise BuildError("compiler did not produce stack usage: %s" % source)
+                os.replace(temporary.with_suffix(".su"), usage)
             os.replace(temporary, obj)
             stamp.write_text(signature)
+        if usage is not None:
+            for row in usage.read_text().splitlines():
+                location, amount, kind = row.split("\t")
+                stack_frames.append({"source": str(source.relative_to(ROOT)),
+                                     "function": location.rsplit(":", 1)[-1],
+                                     "bytes": int(amount), "kind": kind})
         elf = read_elf(obj, profile["machine"], allow_undefined=kernel)
         objects.append({"source": str(source.relative_to(ROOT)), "source_sha256": digest(source),
                         "object": str(obj.relative_to(ROOT)), "sha256": digest(obj),
-                        "cached": cached, "elf": elf})
+                        "cached": cached, "elf": elf,
+                        "stack_usage": str(usage.relative_to(ROOT)) if usage is not None else None})
     # Header checks are compile-only; never package them as kernel code.
     actual_objects = [str(obj) for source, obj in units[:-1]]
     linker = ROOT / "kernel" / args.arch / "kernel.ld"
@@ -257,12 +291,19 @@ def build(args, directory, run_dir):
         invoke("archive", [tools["ar"]["path"], "rcs", str(temporary_archive), str(combined)])
         os.replace(temporary_archive, artifact)
         invoke("inspect-hardware", [tools["readelf"]["path"], "-h", "-A", "-s", str(combined)])
+    stack_report = None
+    if kernel:
+        stack_report = work / "stack-usage.json"
+        stack_report.write_text(json.dumps({"format": 1, "arch": args.arch, "case": args.case,
+            "scope": "individual compiler frames; excludes assembly and complete call chains",
+            "functions": sorted(stack_frames, key=lambda x: (-x["bytes"], x["source"], x["function"]))}, indent=2) + "\n")
     manifest = {
         "format": 1, "arch": args.arch, "profile": "llvm", "case": args.case if kernel else None,
         "artifact_kind": "bootstrap_elf" if kernel else "hardware_archive",
         "bootable_kernel": kernel, "guest_executed": False,
         "head": git_output("rev-parse", "HEAD"), "dirty": bool(git_output("status", "--porcelain")),
         "tools": tools, "cflags": flags, "headers": headers, "objects": objects,
+        "stack_usage": str(stack_report.relative_to(ROOT)) if stack_report is not None else None,
         "artifact": str(artifact.relative_to(ROOT)), "artifact_sha256": digest(artifact),
         "elf": elf, "run_log": str(run_dir.relative_to(ROOT)),
         "linker_sha256": digest(linker) if kernel else None,
@@ -291,7 +332,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--kind", choices=("hardware", "kernel"), default="hardware")
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch"), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls"), default="normal")
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")

@@ -4,23 +4,25 @@
 
 ## 当前实现
 
-- PR #2已合入main；本轮实现集中在`codex/early-boot`，通过PR审阅，尚未合入main。
-- RV64/ARM64可启动ELF、先安装的内核异常入口、轮询诊断、受guard保护的启动/紧急栈；DTB发现、伙伴分配、高半区内核VM与权限隔离已接通。
-- 稳定Set/Acct及普通额度、物理块归属、关闭后费用滞留；Space用户根、DATA/CODE的Mem/Mmap、失败回滚和独立管理/映射引用已接通。当前每次最多16页，同Acct构造，未导出用户授权接口。
-- CODE可加载并LOADING→SEALED封存，统计全部写/执行映射，拒绝写别名及封存后的写路径，执行前完成架构缓存同步。
-- 用户根可激活/撤激活，持CPU引用并阻止活动根修改；完整用户整数及FP/SIMD现场可初始化、进入U/EL0、同步陷阱返回。测试复用当前内核栈上的保留帧，不累积栈帧。
-- 112字节内核切换现场已接通，独立guard栈上的C续点可挂起/恢复，callee-saved寄存器与栈局部值保持；不等于已有调度器或Proc线程。
-- guest测试均在`tests/kernel/`，normal不链接测试源码；正常镜像仍初始化后停机。编译数据库持续生成到`build/compile_commands.json`及架构副本。
+- PR #3已合入main（`1a825e0`）；本轮交付分支为`codex/kernel-stacks`，包含内核栈、进程生命周期、准备加载和原生调用切片。
+- 两架构启动/完整整数与FP现场、DTB、伙伴、内核高半区、Set/Acct及Space/Mem/Mmap已接通。CODE可加载/封存/同步缓存，普通映射与费用失败回滚。
+- 默认64个计费内核栈、独立续点引用与离栈回收；Local 48字节、Life 112、Proc 368、Prep 160、Mmap 64，均在既定槽预算内。旧结果、账目、运行槽和外部清理独立回收。
+- 用户已确认准备期ALLOC=0x10。可信构造权可为孩子Acct分配，加载权绑定源PID/image/表epoch，只可映射本次目标或创建者临时视图；发布要求全部临时别名解除，提交/取消立即失效加载权并分批退引用。EXEC_VIEW协议同位已冻结，完整exec准备尚未实现。
+- 原生exit/yield/getid及自身alloc/free/map/unmap/seal已接；参数一次快照、严格保留输入/错误输出、完整现场返回。FIFO协作yield切CPU栈后恢复独立续点；短map暂停用户根、提交或回滚后恢复，暂停窗口不调度。
+- 已接RV64 rdtime/DTB频率和ARM64虚拟计数器、公共无溢出换算及原生clock_gettime/getres；REALTIME当前未校准，与单调起点一起推进。校时、校准状态查询及用户态运行库仍待实现。
+- normal仍只初始化后停机，不创建模拟init。guest载荷在`tests/kernel/`，normal不链接；编译数据库、`.su`及`stack-usage.json`持续生成。物理ELF高半区别名执行，内核构建禁用绝对代码地址跳转表。
 
 ## 本地验证与边界
 
-- `make test-all`通过83项host、格式检查和40个QEMU场景（RV64/ARM64各18个基础场景，加4个RAM/virtio配置）。日志在`build/host/stage04-user/test-all.log`，完整串口、实际DTB、环境及独立页表审计在各架构`smoke/`目录。
-- 新增seal场景实际调用新加载代码并完整回收；user场景核对初始清零、Boot首参数、逐寄存器整数/FP哨兵和两次用户陷阱往返，实测Boot/CODE只读、内核不可访问、栈guard/NX。主机核对最终特权/根/停机PC及无遗留映射。
-- LLVM18.1.8、QEMU11.1.3、RV64 S态/OpenSBI v1.8.1、ARM EL1h。仅单核且IRQ关闭；ARM缓存仍关闭，缓存维护序列的QEMU执行不等于真实硬件缓存验收。
-- 用户测试使用启动内核栈和空Boot头，尚无Proc/Life、线程调度栈、Local授权、原生syscall分发、Boot解析/csu、ELF装载或init；也未实现SHARED/DMA、运行期长Op/取消、exec/COW、调度、IPC或服务。未运行CI、bench或真实硬件验收。
+- 完整`make test-all`通过118项host、格式及52个QEMU场景（两架构各24个基础场景，加4个RAM/virtio配置）。日志`build/host/stage06-clock/test-all.log`。主机继续独立审计页表与最终根/特权/停机PC。
+- prep实测目标出资、RW与只读别名发布屏障、加载权失效、取消后旧页/Acct/Life滞留及运行槽复用，孩子实际进入U/EL0并退出42。host另覆盖三准备上限、跨准备/第三方转授拒绝、源身份复查、临时页表逐步失败回滚。
+- syscalls通过真正原生分发运行三个用户程序、六次FIFO续点：检查错误与输出、free后映射保留、用户生成代码/seal/RX执行、跨yield不同FP/SIMD哨兵；两个exit42，第三个在unmap后实际访问旧VA产生FAULT/SEGV。均在CPU栈清理并领取各自结果。
+- 时钟host覆盖极端/随机频率、计数回绕、秒/纳秒溢出及错误保持输出；syscalls双架构实测计数推进、实际分辨率和真实用户态time/getres结果。
+- LLVM18.1.8、QEMU11.1.3、OpenSBI v1.8.1；仅单核、IRQ关闭、ARM缓存关闭。编译帧和水位不是最坏栈深证明，尚无完整IRQ/溢出、真实缓存、性能或CI验收。
+- 未接原生CREATE/CONSTRUCT/CONTROL管理准入、Rq/Image/准备期限、信号/作业关系、时间片/阻塞调度、用户ELF/csu/init、SHARED/DMA、exec/COW、IPC或服务。当前native profile对构造/临时加载权明确NOTSUP，不通过普通内存入口绕过准入；可信prep测试不冒充完整原生加载。非零signal配置/资源回复预留也明确NOTSUP。
 
 ## 接续
 
-继续按[内存](design/02-memory.md#执行与验收)、[硬件现场](design/01-hardware.md#执行与验收)和[进程](design/03-process.md#执行与验收)的依赖接入：线程栈生命周期/CPU调度栈、资源表授权、Proc/Life与configure/start，再接中断/调度和原生调用。运行期VM修改须先具备安全出口与有界Op，不能直接放开当前活动根保护。
+[构造期ALLOC协议](design/02-memory.md#构造期分配授权与出资2026-11-15已确认)及失败示例已写回02/03；没有待用户确认的问题。时钟查询切片已接；接续IRQ安全出口、Rq/Image/Prep准入和固定准备期限，再开放原生创建/管理及加载路径，继续IPC与运行库依赖。
 
-用户已授权持续推进，遇实质设计冲突再询问；技术验收写回对应主题，不自动提交或推送。
+本轮按用户要求提交PR，合并前暂停后续实现；合并后继续推进，遇实质设计冲突再询问。

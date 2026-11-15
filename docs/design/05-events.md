@@ -260,3 +260,12 @@ nanosleep固定D，进入捕获信号裁决时I<D固定EINTR/rem=D-I；I>=D或�
 ### IRQ 集成验收
 
 事件阶段完成后，按 [终端阶段 13](11-terminal.md) 验证真实 PLIC/GIC、serial IRQ 与 ACK；不得以轮询代替中断验证。
+
+
+### 时钟查询实现切片（2026-11-15）
+
+已接HAL计数读取/频率：RV64使用DTB timebase-frequency及rdtime，ARM64使用CNTFRQ_EL0/CNTVCT_EL0。公共clock模块在高半区初始化时固定起点，按商/余数转换；余数乘十亿用有界二进制运算避免u64溢出，不假定频率小于1GHz。单调绝对纳秒超出u64返回OVERFLOW，不改输出；秒超出s64同样拒绝。计数按u64模差处理一次回绕，超过完整计数周期不在支持范围。
+
+0x21/0x22已接原生time/getres，两种clockid和非法编号在真实U/EL0验证；分辨率为ceil(1e9/frequency)。REALTIME当前无校准入口，与MONOTONIC同起点推进，不能据此推断真实日期。clock_settime、校准状态query、用户态time.h/errno适配仍未实现。SYS_CLOCK_*及clockid定义在include/abi中。
+
+host测试以可注入HAL对照Python大整数，覆盖极端/随机频率、回绕、输出不变及纳秒溢出。syscalls场景检查真实计数推进、分辨率与频率一致，用户程序检查秒非负、纳秒规范化、非法编号及其他输出清零。IRQ、硬件timer设置、准备期限和alarm仍未实现，不能把计数查询称为定时中断验收。

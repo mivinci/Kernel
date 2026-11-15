@@ -28,8 +28,11 @@ struct Htrap
 STATIC_ASSERT(sizeof(Hinit) == 24, hinit_size);
 STATIC_ASSERT(sizeof(Htrap) == 32, htrap_size);
 /* IRQs disabled; caller owns independent resident stacks and their lifetimes. */
+void hal_ctx_init(Hkctx *context, u64 top, void (*entry)(void));
 void hal_ctx_switch(Hkctx *from, const Hkctx *to);
 void hal_user_init(Hctx *context, const Hinit *initial);
+u64  hal_syscall_arg(const Hctx *context, u32 slot);
+void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);
 void hal_trap_decode(const Hctx *context, Htrap *trap);
 /* Context is the reserved frame on the current guarded kernel stack.
    Entry discards the current C continuation; repeated returns reuse this frame. */

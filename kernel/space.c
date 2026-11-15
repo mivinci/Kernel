@@ -1,6 +1,7 @@
 #include <space.h>
 #include <diag.h>
 #include <vm.h>
+#include <prep.h>
 
 typedef struct Sourcectx Sourcectx;
 struct Sourcectx
@@ -212,8 +213,8 @@ spacelookup(Spaceid id, u64 va, Hpte *out)
   return hal_vm_lookup(&vs, va, out);
 }
 
-int
-spacemap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot)
+static int
+map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Prepid prep)
 {
   Space    *s = find(id);
   Mem       mem;
@@ -232,9 +233,12 @@ spacemap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot
       (prot & ~7UL))
     return SP_BAD;
   if (memstat(memory, &mem) || memcanmap(memory, prot) || !mem.managers ||
-      mem.acct.index != s->acct.index || mem.acct.generation != s->acct.generation ||
+      (!prep.generation &&
+       (mem.acct.index != s->acct.index || mem.acct.generation != s->acct.generation)) ||
       offset > mem.bytes || length > mem.bytes - offset || acctstat(s->acct, &account) ||
       account.state != AC_ACTIVE)
+    return SP_BAD;
+  if (prep.generation && preptempcheck(prep, id, memory))
     return SP_BAD;
   for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
     Mmap *m = &mappings[node];
@@ -247,6 +251,10 @@ spacemap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot
   error = memmapref(memory, prot);
   if (error)
     return error;
+  if (prep.generation && preptemphold(prep)) {
+    memunmapref(memory, prot);
+    return SP_BUSY;
+  }
   freemap = mappings[node].next;
   mappings[node].length = 1; /* Reserved, not linked into a visible address space. */
   s->busy = 1;
@@ -276,6 +284,8 @@ spacemap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot
     mappings[node].length = 0;
     mappings[node].next = freemap;
     freemap = node;
+    if (prep.generation && preptempdrop(prep))
+      panic("loading map rollback scope");
     if (memunmapref(memory, prot))
       panic("map reference rollback");
     return error;
@@ -286,6 +296,7 @@ spacemap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot
   mappings[node].offset = offset;
   mappings[node].mem = memory;
   mappings[node].prot = (u32) prot;
+  mappings[node].prep = prep;
   mappings[node].next = s->maps;
   s->pages = vs.pages;
   s->maps = node;
@@ -302,6 +313,7 @@ spaceunmap(Spaceid id, u64 address)
   Hpte      entry;
   Sourcectx context;
   Memid     memory;
+  Prepid    prep;
   u32       node, previous = PG_NONE, i, pages;
   u64       pa;
   if (!s)
@@ -333,11 +345,14 @@ spaceunmap(Spaceid id, u64 address)
   else
     mappings[previous].next = m->next;
   memory = m->mem;
+  prep = m->prep;
   m->length = 0;
   m->next = freemap;
   freemap = node;
   if (memunmapref(memory, m->prot))
     panic("unmap backing reference");
+  if (prep.generation && preptempdrop(prep))
+    panic("loading unmap scope");
   s->busy = 0;
   return 0;
 }
@@ -368,4 +383,71 @@ spacedeactivate(void)
   active = NULL;
   s->refs--;
   return 0;
+}
+
+int
+spaceread(Spaceid id, u64 address, void *target, u64 bytes)
+{
+  Space             *s = find(id);
+  Hpte               entry;
+  Hvs                vs;
+  Sourcectx          source;
+  u64                page, end, take, i;
+  u8                *output = target;
+  const volatile u8 *input;
+  if (!s || !target || !bytes || bytes > 65536 || address < 0x10000 || address >= (1UL << 38) ||
+      bytes > (1UL << 38) - address)
+    return SP_BAD;
+  if (s->busy)
+    return SP_BUSY;
+  view(s, &vs, &source);
+  end = address + bytes;
+  for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE)
+    if (!hal_vm_lookup(&vs, page, &entry) ||
+        (entry.prot & (VM_READ | VM_USER)) != (VM_READ | VM_USER) || entry.attr != VM_NORMAL)
+      return SP_BAD;
+  while (bytes) {
+    hal_vm_lookup(&vs, ALIGN_DOWN(address, PAGE_SIZE), &entry);
+    take = MIN(bytes, PAGE_SIZE - (address & PAGE_MASK));
+    input = (const volatile u8 *) kaddr(entry.pa) + (address & PAGE_MASK);
+    for (i = 0; i < take; i++)
+      output[i] = input[i];
+    output += take;
+    address += take;
+    bytes -= take;
+  }
+  return 0;
+}
+int
+spaceclear(Spaceid id, u32 records)
+{
+  Space *s = find(id);
+  u32    i;
+  int    error;
+  if (!s || !records || records > 32)
+    return SP_BAD;
+  if (s->busy || s == active)
+    return SP_BUSY;
+  for (i = 0; i < records && s->maps != PG_NONE; i++) {
+    error = spaceunmap(id, mappings[s->maps].address);
+    if (error)
+      return error;
+  }
+  return s->maps != PG_NONE;
+}
+
+int
+spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot)
+{
+  Prepid none;
+  none.generation = 0;
+  none.index = none.reserved = 0;
+  return map(id, mem, offset, address, length, prot, none);
+}
+int
+spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep)
+{
+  if (!prep.generation)
+    return SP_BAD;
+  return map(id, mem, offset, address, length, prot, prep);
 }

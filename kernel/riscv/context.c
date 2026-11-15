@@ -29,3 +29,30 @@ hal_trap_decode(const Hctx *context, Htrap *trap)
   else if (code == 2)
     trap->kind = HT_ILLEGAL;
 }
+
+void
+hal_ctx_init(Hkctx *context, u64 top, void (*entry)(void))
+{
+  u8 *bytes = (u8 *) context;
+  u32 i;
+  for (i = 0; i < sizeof(*context); i++)
+    bytes[i] = 0;
+  context->sp = top;
+  context->ra = (u64) entry;
+}
+
+u64
+hal_syscall_arg(const Hctx *context, u32 slot)
+{
+  return slot < HAL_SYSCALL_ARGS ? context->tf.x[10 + slot] : 0;
+}
+void
+hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7])
+{
+  u32 i;
+  context->tf.x[10] = (u64) status;
+  for (i = 0; i < 7; i++)
+    context->tf.x[11 + i] = status < 0 ? 0 : outputs[i];
+  context->tf.x[5] = 0;
+  context->tf.pc += 4;
+}
