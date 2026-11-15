@@ -1,4 +1,4 @@
-# 阶段01：保留硬件代码的构建与主机驱动；尚无可启动内核。
+# 阶段02：两架构物理启动与早期异常诊断。
 .DEFAULT_GOAL := all
 PYTHON ?= python3
 CLANG_FORMAT ?= clang-format
@@ -16,18 +16,19 @@ endif
 AR ?= llvm-ar
 READELF ?= llvm-readelf
 ARCH ?=
-SOURCES := $(shell find include kernel lib bin sbin -type f \( -name '*.h' -o -name '*.c' \))
+SOURCES := $(shell find include kernel lib bin sbin tests/kernel -type f \( -name '*.h' -o -name '*.c' \))
 
 .PHONY: all help build hardware compdb clean fmt fmt-check unit smoke scenario bench test-all
-all: $(if $(strip $(ARCH)),hardware,help)
+all: $(if $(strip $(ARCH)),build,help)
 help:
-	@echo "make ARCH=riscv|arm64 : 交叉编译保留硬件归档（不是可启动内核）"
+	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
 	@echo "make unit             : 主机驱动测试"
 	@echo "make fmt / fmt-check  : 源码格式"
 	@echo "make clean ARCH=...   : 清除该架构构建目录"
-	@echo "smoke/scenario/bench/test-all 尚不可用，调用会失败。"
-build: hardware
-compdb: hardware
+	@echo "make smoke ARCH=... / make scenario ARCH=... CASE=registers|fault|pages"
+build:
+	$(PYTHON) tools/build.py --kind kernel --case "$(if $(CASE),$(CASE),normal)" --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
+compdb: build
 hardware:
 	$(PYTHON) tools/build.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 clean:
@@ -38,6 +39,38 @@ fmt-check:
 	$(CLANG_FORMAT) --dry-run --Werror $(SOURCES)
 unit:
 	$(PYTHON) -m unittest discover -s tests/unit -p 'test_*.py' -v
-smoke scenario bench test-all:
-	@echo "$@: 尚无启动入口、kernel ELF及两架构运行场景；主机驱动/归档不能替代内核验收。" >&2
+smoke: build
+	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio)
+scenario:
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	$(MAKE) smoke ARCH="$(ARCH)" CASE="$(CASE)"
+
+test-all: unit fmt-check
+	$(MAKE) smoke ARCH=riscv CASE=normal
+	$(MAKE) smoke ARCH=arm64 CASE=normal
+	$(MAKE) scenario ARCH=riscv CASE=registers
+	$(MAKE) scenario ARCH=arm64 CASE=registers
+	$(MAKE) scenario ARCH=riscv CASE=fault
+	$(MAKE) scenario ARCH=arm64 CASE=fault
+	$(MAKE) scenario ARCH=riscv CASE=pages
+	$(MAKE) scenario ARCH=arm64 CASE=pages
+	$(MAKE) scenario ARCH=riscv CASE=budget
+	$(MAKE) scenario ARCH=arm64 CASE=budget
+	$(MAKE) scenario ARCH=riscv CASE=spaces
+	$(MAKE) scenario ARCH=arm64 CASE=spaces
+	$(MAKE) scenario ARCH=riscv CASE=memory
+	$(MAKE) scenario ARCH=arm64 CASE=memory
+	$(MAKE) scenario ARCH=riscv CASE=seal
+	$(MAKE) scenario ARCH=arm64 CASE=seal
+	$(MAKE) scenario ARCH=riscv CASE=user
+	$(MAKE) scenario ARCH=arm64 CASE=user
+	$(MAKE) scenario ARCH=riscv CASE=switch
+	$(MAKE) scenario ARCH=arm64 CASE=switch
+	@for test_case in textwrite rodatawrite dataexec guard null identity alias unmapped; do $(MAKE) scenario ARCH=riscv CASE=$$test_case || exit $$?; $(MAKE) scenario ARCH=arm64 CASE=$$test_case || exit $$?; done
+	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
+	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1
+	$(MAKE) smoke ARCH=riscv RAM=512 VIRTIO=1
+	$(MAKE) smoke ARCH=arm64 RAM=512 VIRTIO=1
+bench:
+	@echo "$@: 性能基准尚未实现；启动与异常检查不代表性能验收。" >&2
 	@exit 1

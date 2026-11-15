@@ -54,3 +54,33 @@ class ElfTests(unittest.TestCase):
             self.path.write_bytes(data)
             with self.assertRaises(BuildError):
                 read_elf(self.path, 243)
+
+
+class KernelElfTests(unittest.TestCase):
+    def check_image(self, mutate=None):
+        from build import read_kernel
+        data = bytearray(fixture(kind=2))
+        data.extend(bytes(4096 - len(data)) + bytes(16))
+        struct.pack_into("<QQ", data, 24, 0x80200000, 512)
+        struct.pack_into("<HH", data, 54, 56, 1)
+        struct.pack_into("<IIQQQQQQ", data, 512,
+                         1, 5, 4096, 0x80200000, 0x80200000, 16, 16, 4096)
+        if mutate:
+            mutate(data)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "kernel.elf"
+            path.write_bytes(data)
+            return read_kernel(path, 243, 0x80200000)
+
+    def test_executable_entry_and_load_window(self):
+        self.assertEqual(self.check_image()["entry"], 0x80200000)
+        for offset, value in ((24, 0), (24, 0x80200010), (528, 0x80400000),
+                              (536, 0x80400000), (552, 8), (560, 3)):
+            with self.assertRaises(BuildError):
+                self.check_image(lambda data: struct.pack_into("<Q", data, offset, value))
+
+    def test_writable_executable_and_truncated_load_are_rejected(self):
+        for offset, width, value in ((516, "I", 7), (544, "Q", 0x10000),
+                                      (520, "Q", 0x40000000)):
+            with self.assertRaises(BuildError):
+                self.check_image(lambda data: struct.pack_into("<" + width, data, offset, value))

@@ -4,10 +4,10 @@
  * 物理地址 0x09000000。这里只做轮询输出；输入与中断
  * 由用户态驱动接管（与 RISC-V 侧同样的划分）。
  */
-#include <console.h>
-#include <types.h>
+#include <hal/boot.h>
+#include <arm64/console.h>
 
-#define PL011_BASE 0x09000000UL
+static u64 uartbase = 0x09000000UL;
 
 #define PL011_DR   0x00
 #define PL011_FR   0x18
@@ -21,13 +21,13 @@
 INLINE u32
 plread(u32 off)
 {
-  return *(volatile u32 *) (PL011_BASE + off);
+  return *(volatile u32 *) (uartbase + off);
 }
 
 INLINE void
 plwrite(u32 off, u32 val)
 {
-  *(volatile u32 *) (PL011_BASE + off) = val;
+  *(volatile u32 *) (uartbase + off) = val;
 }
 
 /*
@@ -55,7 +55,7 @@ arch_console_init(void)
 }
 
 void
-arch_console_putc(char c)
+hal_debug_putc(u8 c)
 {
   while (plread(PL011_FR) & FR_TXFF) {
     /* 等 FIFO 有空间 */
@@ -64,13 +64,7 @@ arch_console_putc(char c)
 }
 
 void
-arch_console_write(const char *s, size_t n)
+hal_debug_rebase(u64 address)
 {
-  size_t i;
-  for (i = 0; i < n; i++) {
-    if (s[i] == '\n') {
-      arch_console_putc('\r');
-    }
-    arch_console_putc(s[i]);
-  }
+  uartbase = address;
 }

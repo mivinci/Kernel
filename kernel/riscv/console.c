@@ -4,10 +4,10 @@
  * 物理地址 0x10000000，IRQ 10。这里只做轮询输出，输入和中断
  * 由用户态串口服务器接管。
  */
-#include <console.h>
+#include <hal/boot.h>
 #include <types.h>
 
-#define UART0_BASE 0x10000000UL
+static u64 uartbase = 0x10000000UL;
 
 #define UART_RBR 0x00 /* 读：接收缓冲 */
 #define UART_THR 0x00 /* 写：发送保持 */
@@ -21,25 +21,17 @@
 INLINE u8
 uartread(u32 off)
 {
-  return *(volatile u8 *) (UART0_BASE + off);
+  return *(volatile u8 *) (uartbase + off);
 }
 
 INLINE void
 uartwrite(u32 off, u8 val)
 {
-  *(volatile u8 *) (UART0_BASE + off) = val;
+  *(volatile u8 *) (uartbase + off) = val;
 }
 
-/*
- * RISC-V 侧 UART 由 OpenSBI 配置好，这里只需空实现。
- * 统一接口的意义在于：启动顺序可以在两个架构上完全一致。
- */
 void
-arch_console_init(void)
-{}
-
-void
-arch_console_putc(char c)
+hal_debug_putc(u8 c)
 {
   while ((uartread(UART_LSR) & LSR_THRE) == 0) {
     /* 等发送缓冲空。QEMU 上几乎立即返回。 */
@@ -48,13 +40,7 @@ arch_console_putc(char c)
 }
 
 void
-arch_console_write(const char *s, size_t n)
+hal_debug_rebase(u64 address)
 {
-  size_t i;
-  for (i = 0; i < n; i++) {
-    if (s[i] == '\n') {
-      arch_console_putc('\r');
-    }
-    arch_console_putc(s[i]);
-  }
+  uartbase = address;
 }

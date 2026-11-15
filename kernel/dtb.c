@@ -1,0 +1,743 @@
+#include <dtb.h>
+
+#define NODES 192
+#define PROPS 1536
+#define DEPTH 16
+#define NONE  0xffffffffU
+
+typedef struct Prop   Prop;
+typedef struct Node   Node;
+typedef struct Parser Parser;
+
+struct Prop
+{
+  u32 name, data, size;
+};
+struct Node
+{
+  u32 name, parent, first, count, children, enabled, ac, sc, phandle, iparent, kind;
+};
+struct Parser
+{
+  const u8 *blob;
+  u32       strings, nodes, props;
+  Node      node[NODES];
+  Prop      prop[PROPS];
+};
+static Parser parser;
+
+static void
+clear(void *p, usize size)
+{
+  volatile u8 *bytes = p;
+  while (size--)
+    *bytes++ = 0;
+}
+
+static u32
+word(const u8 *p)
+{
+  return ((u32) p[0] << 24) | ((u32) p[1] << 16) | ((u32) p[2] << 8) | p[3];
+}
+
+static u64
+wide(const u8 *p)
+{
+  return ((u64) word(p) << 32) | word(p + 4);
+}
+
+static int
+span(u32 at, u32 size, u32 limit)
+{
+  return at <= limit && size <= limit - at;
+}
+
+static int
+overlap(u64 a, u64 n, u64 b, u64 m)
+{
+  return n && m && a < b + m && b < a + n;
+}
+
+static int
+textend(const u8 *p, u32 size, u32 *length)
+{
+  u32 i;
+  for (i = 0; i < size; i++) {
+    if (p[i] == 0) {
+      *length = i;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int
+equal(const u8 *p, const char *s)
+{
+  while (*s && *p == (u8) *s) {
+    p++;
+    s++;
+  }
+  return *p == 0 && *s == 0;
+}
+
+static const Prop *
+property(u32 node, const char *name)
+{
+  u32         i;
+  const Node *n = &parser.node[node];
+  for (i = n->first; i < n->first + n->count; i++) {
+    if (equal(parser.blob + parser.strings + parser.prop[i].name, name))
+      return &parser.prop[i];
+  }
+  return NULL;
+}
+
+static const u8 *
+value(const Prop *p)
+{
+  return parser.blob + p->data;
+}
+
+static int
+single(const Prop *p)
+{
+  u32 len;
+  return p && textend(value(p), p->size, &len) && len + 1 == p->size;
+}
+
+static int
+has(u32 node, const char *compatible)
+{
+  const Prop *p = property(node, "compatible");
+  u32         at = 0, len;
+  if (!p)
+    return 0;
+  while (at < p->size) {
+    if (!textend(value(p) + at, p->size - at, &len) || !len)
+      return 0;
+    if (equal(value(p) + at, compatible))
+      return 1;
+    at += len + 1;
+  }
+  return 0;
+}
+
+static int
+scalar(u32 node, const char *name, u32 fallback, u32 *out)
+{
+  const Prop *p = property(node, name);
+  *out = fallback;
+  if (!p)
+    return 0;
+  if (p->size != 4)
+    return DT_BAD;
+  *out = word(value(p));
+  return 0;
+}
+
+static int
+cells(const u8 *p, u32 count, u64 *out)
+{
+  if (count > 2)
+    return DT_UNSUPPORTED;
+  *out = count == 2 ? wide(p) : (count == 1 ? word(p) : 0);
+  return 0;
+}
+
+static int
+addrange(Dtrange *list, u32 *count, u32 capacity, u64 base, u64 size, int unique)
+{
+  u32 i;
+  if (!size || size > ~(u64) 0 - base)
+    return DT_BAD;
+  if (*count >= capacity)
+    return DT_FULL;
+  if (unique) {
+    for (i = 0; i < *count; i++)
+      if (overlap(base, size, list[i].base, list[i].size))
+        return DT_CONFLICT;
+  }
+  list[*count].base = base;
+  list[*count].size = size;
+  (*count)++;
+  return 0;
+}
+
+int
+dtreserve(Dtinfo *info, u64 base, u64 size)
+{
+  return addrange(info->reserved, &info->nreserved, DT_RESERVED, base, size, 0);
+}
+
+static int
+flatten(const u8 *blob, usize available, Dtinfo *info)
+{
+  u32       total, begin, size, strings, stringsize, reserve, endreserve, at, end;
+  u32       depth = 0, stack[DEPTH], tag, len, current = NONE, root = 0, finished = 0, i;
+  u64       base, bytes;
+  int       error;
+  const u8 *name;
+  if (available < 40 || word(blob) != 0xd00dfeed)
+    return DT_BAD;
+  total = word(blob + 4);
+  begin = word(blob + 8);
+  strings = word(blob + 12);
+  reserve = word(blob + 16);
+  stringsize = word(blob + 32);
+  size = word(blob + 36);
+  if (total < 40 || total > available || total > 0x200000 || word(blob + 20) < 17 ||
+      word(blob + 24) > 17 || begin < 40 || (begin & 3) || strings < 40 || reserve < 40 ||
+      (reserve & 7) || !span(begin, size, total) || !span(strings, stringsize, total) ||
+      overlap(begin, size, strings, stringsize))
+    return DT_BAD;
+  parser.blob = blob;
+  parser.strings = strings;
+  at = reserve;
+  for (;;) {
+    if (!span(at, 16, total))
+      return DT_BAD;
+    base = wide(blob + at);
+    bytes = wide(blob + at + 8);
+    at += 16;
+    if (!base && !bytes)
+      break;
+    error = dtreserve(info, base, bytes);
+    if (error)
+      return error;
+  }
+  endreserve = at;
+  if (overlap(reserve, endreserve - reserve, begin, size) ||
+      overlap(reserve, endreserve - reserve, strings, stringsize))
+    return DT_BAD;
+  at = begin;
+  end = begin + size;
+  while (at < end) {
+    if (!span(at, 4, end))
+      return DT_BAD;
+    tag = word(blob + at);
+    at += 4;
+    if (tag == 1) {
+      if (parser.nodes == NODES || depth == DEPTH)
+        return DT_FULL;
+      if (!textend(blob + at, end - at, &len) || len > 127)
+        return DT_BAD;
+      if ((!depth && (root || len)) || (depth && !len))
+        return DT_BAD;
+      for (i = 0; i < len; i++)
+        if (blob[at + i] == '/')
+          return DT_BAD;
+      if (!span(at, (len + 4) & ~3U, end))
+        return DT_BAD;
+      name = blob + at;
+      for (i = 0; i < parser.nodes; i++) {
+        if (parser.node[i].parent == current &&
+            equal(name, (const char *) blob + parser.node[i].name))
+          return DT_BAD;
+      }
+      if (depth)
+        parser.node[current].children = 1;
+      i = parser.nodes++;
+      parser.node[i].name = at;
+      parser.node[i].parent = current;
+      parser.node[i].first = parser.props;
+      stack[depth++] = i;
+      current = i;
+      root = 1;
+      at += (len + 4) & ~3U;
+    } else if (tag == 2) {
+      if (!depth)
+        return DT_BAD;
+      depth--;
+      current = depth ? stack[depth - 1] : NONE;
+    } else if (tag == 3) {
+      Prop *p;
+      if (!depth || parser.node[current].children || !span(at, 8, end))
+        return DT_BAD;
+      if (parser.props == PROPS)
+        return DT_FULL;
+      p = &parser.prop[parser.props];
+      p->size = word(blob + at);
+      p->name = word(blob + at + 4);
+      p->data = at + 8;
+      if (p->name >= stringsize || !textend(blob + strings + p->name, stringsize - p->name, &len) ||
+          !len || len > 127 || !span(p->data, p->size, end) || p->size > 0xfffffffcU ||
+          !span(p->data, (p->size + 3) & ~3U, end))
+        return DT_BAD;
+      for (i = parser.node[current].first; i < parser.props; i++) {
+        if (equal(blob + strings + p->name, (const char *) blob + strings + parser.prop[i].name))
+          return DT_BAD;
+      }
+      parser.node[current].count++;
+      parser.props++;
+      at = p->data + ((p->size + 3) & ~3U);
+    } else if (tag == 9) {
+      if (depth || !root || at != end)
+        return DT_BAD;
+      finished = 1;
+      break;
+    } else if (tag != 4)
+      return DT_BAD;
+  }
+  if (!finished)
+    return DT_BAD;
+  info->size = total;
+  return 0;
+}
+
+static int
+metadata(void)
+{
+  u32         i, j, at, len, linuxhandle;
+  const Prop *p;
+  Node       *n;
+  for (i = 0; i < parser.nodes; i++) {
+    n = &parser.node[i];
+    n->enabled = n->parent == NONE || parser.node[n->parent].enabled;
+    p = property(i, "status");
+    if (p) {
+      if (!single(p))
+        return DT_BAD;
+      n->enabled = n->enabled && (equal(value(p), "okay") || equal(value(p), "ok"));
+    }
+    p = property(i, "device_type");
+    if (p && !single(p))
+      return DT_BAD;
+    p = property(i, "compatible");
+    if (p) {
+      at = 0;
+      if (!p->size)
+        return DT_BAD;
+      while (at < p->size) {
+        if (!textend(value(p) + at, p->size - at, &len) || !len)
+          return DT_BAD;
+        at += len + 1;
+      }
+    }
+    if (scalar(i, "#address-cells", 2, &n->ac) || scalar(i, "#size-cells", 1, &n->sc) ||
+        scalar(i, "phandle", 0, &n->phandle) || scalar(i, "linux,phandle", 0, &linuxhandle) ||
+        scalar(i, "interrupt-parent", n->parent == NONE ? 0 : parser.node[n->parent].iparent,
+               &n->iparent))
+      return DT_BAD;
+    if (n->ac > 4 || n->sc > 4 || n->phandle == NONE || linuxhandle == NONE || n->iparent == NONE)
+      return DT_BAD;
+    if ((property(i, "phandle") && !n->phandle) || (property(i, "linux,phandle") && !linuxhandle) ||
+        (property(i, "interrupt-parent") && !n->iparent))
+      return DT_BAD;
+    if (linuxhandle) {
+      if (n->phandle && n->phandle != linuxhandle)
+        return DT_BAD;
+      n->phandle = linuxhandle;
+    }
+    if (n->phandle)
+      for (j = 0; j < i; j++)
+        if (parser.node[j].phandle == n->phandle)
+          return DT_BAD;
+    if (has(i, "ns16550a"))
+      n->kind = DT_UART16550;
+    else if (has(i, "arm,pl011"))
+      n->kind = DT_PL011;
+    else if (has(i, "virtio,mmio"))
+      n->kind = DT_VIRTIO;
+    else if (has(i, "riscv,plic0") || has(i, "sifive,plic-1.0.0"))
+      n->kind = DT_PLIC;
+    else if (has(i, "arm,cortex-a15-gic"))
+      n->kind = DT_GIC;
+    else if (has(i, "riscv,clint0") || has(i, "sifive,clint0"))
+      n->kind = DT_CLINT;
+    else if (has(i, "riscv,cpu-intc"))
+      n->kind = DT_CPUINTC;
+    else if (has(i, "arm,armv8-timer"))
+      n->kind = DT_TIMER;
+  }
+  return 0;
+}
+
+static int
+translate(u32 parent, u64 *address, u64 size)
+{
+  const Node *n, *p;
+  const Prop *ranges;
+  u32         at, width, matches;
+  u64         child, host, bytes, result = 0;
+  while (parent != 0) {
+    n = &parser.node[parent];
+    if (n->parent == NONE ||
+        (!has(parent, "simple-bus") && !equal(parser.blob + n->name, "reserved-memory") &&
+         n->kind != DT_GIC))
+      return DT_UNSUPPORTED;
+    p = &parser.node[n->parent];
+    ranges = property(parent, "ranges");
+    if (!ranges || !n->ac || !p->ac || !n->sc || n->ac > 2 || p->ac > 2 || n->sc > 2)
+      return DT_UNSUPPORTED;
+    if (ranges->size) {
+      width = (n->ac + p->ac + n->sc) * 4;
+      if (ranges->size % width)
+        return DT_BAD;
+      matches = 0;
+      for (at = 0; at < ranges->size; at += width) {
+        cells(value(ranges) + at, n->ac, &child);
+        cells(value(ranges) + at + n->ac * 4, p->ac, &host);
+        cells(value(ranges) + at + (n->ac + p->ac) * 4, n->sc, &bytes);
+        if (!bytes || bytes > ~(u64) 0 - child || bytes > ~(u64) 0 - host)
+          return DT_BAD;
+        if ((n->ac == 1 && child + bytes > 0x100000000UL) ||
+            (p->ac == 1 && host + bytes > 0x100000000UL))
+          return DT_BAD;
+        if (overlap(*address, size, child, bytes) &&
+            !(*address >= child && *address - child < bytes && size <= bytes - (*address - child)))
+          return DT_UNSUPPORTED;
+        if (*address >= child && *address - child < bytes && size <= bytes - (*address - child)) {
+          result = host + (*address - child);
+          matches++;
+        }
+      }
+      if (matches != 1)
+        return DT_UNSUPPORTED;
+      *address = result;
+    }
+    if (p->ac == 1 && (*address > 0x100000000UL || size > 0x100000000UL - *address))
+      return DT_UNSUPPORTED;
+    parent = n->parent;
+  }
+  return 0;
+}
+
+static int
+registers(u32 node, Dtrange *out, u32 *count, u32 capacity)
+{
+  const Node *n = &parser.node[node];
+  const Node *parent;
+  const Prop *p = property(node, "reg");
+  u32         width, at;
+  u64         address, size;
+  int         error;
+  if (n->parent == NONE || !p)
+    return DT_BAD;
+  parent = &parser.node[n->parent];
+  if (!parent->ac || parent->ac > 2 || !parent->sc || parent->sc > 2)
+    return DT_UNSUPPORTED;
+  width = (parent->ac + parent->sc) * 4;
+  if (!p->size || p->size % width)
+    return DT_BAD;
+  for (at = 0; at < p->size; at += width) {
+    cells(value(p) + at, parent->ac, &address);
+    cells(value(p) + at + parent->ac * 4, parent->sc, &size);
+    if (!size || size > ~(u64) 0 - address)
+      return DT_BAD;
+    if (parent->ac == 1 && (address >= 0x100000000UL || size > 0x100000000UL - address))
+      return DT_BAD;
+    error = translate(n->parent, &address, size);
+    if (error)
+      return error;
+    error = addrange(out, count, capacity, address, size, 1);
+    if (error)
+      return error;
+  }
+  return 0;
+}
+
+static int
+lookup(u32 phandle, u32 *node)
+{
+  u32 i;
+  if (!phandle)
+    return DT_BAD;
+  for (i = 0; i < parser.nodes; i++) {
+    if (parser.node[i].phandle == phandle && parser.node[i].enabled) {
+      *node = i;
+      return 0;
+    }
+  }
+  return DT_BAD;
+}
+
+static int
+irqspec(u32 parent, const u8 *p, Dtirq *irq)
+{
+  const Node *n = &parser.node[parent];
+  u32         count, kind, number, flags;
+  const Prop *marker = property(parent, "interrupt-controller");
+  if (!marker || marker->size || scalar(parent, "#interrupt-cells", 0, &count))
+    return DT_BAD;
+  irq->parent = n->phandle;
+  if ((n->kind == DT_PLIC || n->kind == DT_CPUINTC) && count == 1) {
+    number = word(p);
+    if (n->kind == DT_PLIC) {
+      if (scalar(parent, "riscv,ndev", 0, &kind) || !number || number > kind)
+        return DT_BAD;
+    } else if (number != 3 && number != 7 && number != 9 && number != 11)
+      return DT_UNSUPPORTED;
+    irq->number = number;
+    irq->flags = 0;
+    return 0;
+  }
+  if (n->kind == DT_GIC && count == 3) {
+    kind = word(p);
+    number = word(p + 4);
+    flags = word(p + 8);
+    if (kind > 1 || (kind == 0 && number > 987) || (kind == 1 && number > 15) ||
+        ((flags & 15) != 1 && (flags & 15) != 4) || flags & ~0xff0fU || (kind == 0 && flags & ~15U))
+      return DT_UNSUPPORTED;
+    irq->number = number + (kind == 0 ? 32 : 16);
+    irq->flags = flags;
+    return 0;
+  }
+  return DT_UNSUPPORTED;
+}
+
+static int
+interrupts(u32 node, Dtdev *dev)
+{
+  const Prop *p = property(node, "interrupts-extended");
+  u32         extended = p != NULL, parent = 0, handle, count, at = 0, ancestor;
+  int         error;
+  for (ancestor = node; ancestor != NONE; ancestor = parser.node[ancestor].parent) {
+    if (property(ancestor, "interrupt-map"))
+      return DT_UNSUPPORTED;
+  }
+  if (p && property(node, "interrupts"))
+    return DT_UNSUPPORTED;
+  if (!p)
+    p = property(node, "interrupts");
+  if (!p)
+    return DT_BAD;
+  if (!p->size || p->size % 4)
+    return DT_BAD;
+  while (at < p->size) {
+    if (dev->nirq == DT_IRQS)
+      return DT_FULL;
+    handle = extended ? word(value(p) + at) : parser.node[node].iparent;
+    if (extended)
+      at += 4;
+    if (lookup(handle, &parent) || scalar(parent, "#interrupt-cells", 0, &count))
+      return DT_BAD;
+    if (((dev->kind == DT_PLIC || dev->kind == DT_CLINT) &&
+         parser.node[parent].kind != DT_CPUINTC) ||
+        (dev->kind == DT_TIMER && parser.node[parent].kind != DT_GIC) ||
+        (dev->kind <= DT_VIRTIO && parser.node[parent].kind != DT_PLIC &&
+         parser.node[parent].kind != DT_GIC))
+      return DT_UNSUPPORTED;
+    if (!count || count > 3 || !span(at, count * 4, p->size))
+      return DT_UNSUPPORTED;
+    /* OpenSBI masks an M-mode PLIC context with UINT32_MAX. Preserve its
+       ordinal (PLIC context index), but never expose it as an available IRQ. */
+    if (dev->kind == DT_PLIC && extended && count == 1 && word(value(p) + at) == NONE) {
+      dev->irq[dev->nirq].parent = handle;
+      dev->irq[dev->nirq].number = NONE;
+      dev->nirq++;
+      at += 4;
+      continue;
+    }
+    error = irqspec(parent, value(p) + at, &dev->irq[dev->nirq]);
+    if (error)
+      return error;
+    dev->nirq++;
+    at += count * 4;
+  }
+  return 0;
+}
+
+static int
+discover(Dtinfo *info)
+{
+  u32         i, j, k, count, parent;
+  int         error;
+  const Prop *p;
+  Node       *n;
+  Dtdev      *dev;
+  Dtrange     range[DT_RAM];
+  for (i = 0; i < parser.nodes; i++) {
+    n = &parser.node[i];
+    if (!n->enabled)
+      continue;
+    if (equal(parser.blob + n->name, "reserved-memory")) {
+      p = property(i, "ranges");
+      if (n->parent != 0 || n->ac != parser.node[0].ac || n->sc != parser.node[0].sc || !p ||
+          p->size)
+        return DT_UNSUPPORTED;
+    }
+    p = property(i, "no-map");
+    if (p && (p->size || property(i, "reusable")))
+      return DT_BAD;
+    p = property(i, "reusable");
+    if (p && p->size)
+      return DT_BAD;
+    p = property(i, "device_type");
+    if (p && equal(value(p), "memory")) {
+      error = registers(i, info->ram, &info->nram, DT_RAM);
+      if (error)
+        return error;
+    }
+    if (p && equal(value(p), "cpu")) {
+      if (n->parent == NONE || !equal(parser.blob + parser.node[n->parent].name, "cpus"))
+        return DT_UNSUPPORTED;
+      p = property(i, "reg");
+      parent = n->parent;
+      if (!p || parser.node[parent].sc || parser.node[parent].ac < 1 ||
+          parser.node[parent].ac > 2 || p->size != parser.node[parent].ac * 4)
+        return DT_BAD;
+      {
+        u64 id;
+        cells(value(p), parser.node[parent].ac, &id);
+        if (id != 0)
+          return DT_UNSUPPORTED;
+      }
+      info->cpus++;
+    }
+    if (equal(parser.blob + n->name, "cpus")) {
+      if (n->parent != 0)
+        return DT_UNSUPPORTED;
+      p = property(i, "timebase-frequency");
+      if (p) {
+        if (p->size != 4 || !word(value(p)))
+          return DT_BAD;
+        info->timebase = word(value(p));
+      }
+    }
+    if (n->parent != NONE && equal(parser.blob + parser.node[n->parent].name, "reserved-memory")) {
+      if (parser.node[n->parent].parent != 0)
+        return DT_UNSUPPORTED;
+      if (property(i, "size") && !property(i, "reg"))
+        return DT_UNSUPPORTED;
+      count = 0;
+      error = registers(i, range, &count, DT_RAM);
+      if (error)
+        return error;
+      for (j = 0; j < count; j++) {
+        error = dtreserve(info, range[j].base, range[j].size);
+        if (error)
+          return error;
+      }
+    }
+    if (!n->kind)
+      continue;
+    if (property(i, "interrupt-map") || property(i, "msi-parent"))
+      return DT_UNSUPPORTED;
+    if (info->ndev == DT_DEVICES)
+      return DT_FULL;
+    dev = &info->dev[info->ndev++];
+    dev->kind = n->kind;
+    dev->phandle = n->phandle;
+    dev->protected = n->kind >= DT_PLIC;
+    if (n->kind != DT_CPUINTC && n->kind != DT_TIMER) {
+      error = registers(i, dev->reg, &dev->nreg, DT_REGS);
+      if (error)
+        return error;
+      if ((n->kind == DT_GIC && dev->nreg != 2) || (n->kind != DT_GIC && dev->nreg != 1))
+        return DT_UNSUPPORTED;
+    }
+    if (n->kind == DT_PLIC || n->kind == DT_GIC || n->kind == DT_CPUINTC) {
+      p = property(i, "interrupt-controller");
+      if (!n->phandle || !p || p->size || scalar(i, "#interrupt-cells", 0, &count) ||
+          count != (n->kind == DT_GIC ? 3U : 1U))
+        return DT_BAD;
+      if (n->kind == DT_PLIC &&
+          (scalar(i, "riscv,ndev", 0, &dev->limit) || !dev->limit || dev->limit > 1023))
+        return DT_UNSUPPORTED;
+      if (n->kind == DT_CPUINTC) {
+        p = n->parent == NONE ? NULL : property(n->parent, "device_type");
+        if (!p || !equal(value(p), "cpu"))
+          return DT_BAD;
+      }
+    }
+    if (n->kind != DT_GIC && n->kind != DT_CPUINTC) {
+      error = interrupts(i, dev);
+      if (error)
+        return error;
+      if ((n->kind <= DT_VIRTIO && dev->nirq != 1) || (n->kind == DT_PLIC && dev->nirq != 2) ||
+          (n->kind == DT_CLINT && dev->nirq != 2) || (n->kind == DT_TIMER && dev->nirq != 4))
+        return DT_UNSUPPORTED;
+      if (n->kind == DT_PLIC &&
+          (dev->irq[1].number != 9 || (dev->irq[0].number != 11 && dev->irq[0].number != NONE) ||
+           dev->irq[0].parent != dev->irq[1].parent))
+        return DT_UNSUPPORTED;
+      if (n->kind == DT_CLINT && (dev->irq[0].number != 3 || dev->irq[1].number != 7 ||
+                                  dev->irq[0].parent != dev->irq[1].parent))
+        return DT_UNSUPPORTED;
+    }
+  }
+  if (!info->nram || !info->cpus)
+    return DT_BAD;
+  for (i = 0; i < info->ndev; i++)
+    for (j = 0; j < info->dev[i].nreg; j++) {
+      Dtrange *r = &info->dev[i].reg[j];
+      for (k = 0; k < info->nram; k++)
+        if (overlap(r->base, r->size, info->ram[k].base, info->ram[k].size))
+          return DT_CONFLICT;
+      for (k = 0; k < info->nreserved; k++)
+        if (overlap(r->base, r->size, info->reserved[k].base, info->reserved[k].size))
+          return DT_CONFLICT;
+      for (k = 0; k < i; k++) {
+        u32 l;
+        for (l = 0; l < info->dev[k].nreg; l++)
+          if (overlap(r->base, r->size, info->dev[k].reg[l].base, info->dev[k].reg[l].size))
+            return DT_CONFLICT;
+      }
+    }
+  return 0;
+}
+
+int
+dtread(const void *blob, usize available, Dtinfo *info)
+{
+  int error;
+  clear(&parser, sizeof(parser));
+  clear(info, sizeof(*info));
+  error = flatten(blob, available, info);
+  if (!error)
+    error = metadata();
+  if (!error)
+    error = discover(info);
+  if (error)
+    clear(info, sizeof(*info));
+  return error;
+}
+
+int
+dtusable(Dtinfo *info)
+{
+  u32 i, j, k;
+  u64 start, end, next, stop, a, b;
+  int error;
+  info->nusable = 0;
+  for (i = 0; i < info->nram; i++) {
+    start = info->ram[i].base;
+    end = start + info->ram[i].size;
+    while (start < end) {
+      next = end;
+      stop = start;
+      for (j = 0; j < info->nreserved; j++) {
+        a = info->reserved[j].base;
+        b = a + info->reserved[j].size;
+        if (a <= start && b > stop)
+          stop = b;
+        else if (a > start && a < next)
+          next = a;
+      }
+      if (stop > start) {
+        start = MIN(stop, end);
+        continue;
+      }
+      if (start > ~(u64) 0 - PAGE_MASK)
+        return DT_BAD;
+      a = ALIGN_UP(start, PAGE_SIZE);
+      b = ALIGN_DOWN(next, PAGE_SIZE);
+      if (b > a) {
+        error = addrange(info->usable, &info->nusable, DT_USABLE, a, b - a, 1);
+        if (error) {
+          info->nusable = 0;
+          return error;
+        }
+      }
+      start = next;
+    }
+  }
+  /* Recheck the final page-aligned view before any allocator may use it. */
+  for (i = 0; i < info->nusable; i++)
+    for (k = 0; k < info->nreserved; k++)
+      if (overlap(info->usable[i].base, info->usable[i].size, info->reserved[k].base,
+                  info->reserved[k].size))
+        return DT_CONFLICT;
+  return 0;
+}

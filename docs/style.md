@@ -3,8 +3,9 @@
 C89/freestanding，格式以 `.clang-format` 为准。类型使用 u8/u16/u32/u64、isize/usize；ABI 定义只保留一个来源。
 共享 syscall/结构定义放 include/abi，内核硬件契约放 include/hal，用户态服务线上协议放 include/proto；按职责拆头，不默认聚合全部内容。
 内核不包含 proto，用户态不依赖内核 HAL；跨边界使用定宽字段/显式对齐和静态布局断言，不依赖裸指针、long 或 enum 存储宽度，不滥用 packed。
-裸 struct 加 typedef，枚举使用类型前缀。内部函数小写连写，硬件契约保留 arch_/hal_/plat_ 前缀。
+结构体别名在文件前部统一写 `typedef struct Name Name;`，定义处只写 `struct Name { ... };`，不连写 typedef 与结构体定义；私有类型留在所属源文件。枚举使用类型前缀。内部函数小写连写，硬件契约保留 arch_/hal_/plat_ 前缀。
 核心不得包含架构寄存器、架构头文件或架构条件分支。注释解释不变量与边界。
+主机测试放 `tests/unit/`，在QEMU内执行的测试载荷及专用C/汇编、头文件放 `tests/kernel/`；按需使用其 `arm64/`、`riscv/` 子目录。测试只链接进明确选择的测试镜像，普通内核不包含测试源码或专用声明。
 ABI、地址布局与上下文结构以对应设计为准，不沿用旧能力对象命名作为约束。
 
 ## 命名与表达

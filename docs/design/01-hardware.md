@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：2026-11-15设计规格已逐项修订；阶段01构建、阶段02物理启动/异常诊断和阶段03有界DTB发现已实现并在两架构QEMU局部验证。实际范围见status，未完成资源授权交付、全系统、性能或CI验收。
 
 ## 构建配置与支持矩阵（已确定）
 
@@ -120,7 +120,7 @@ HAL只收Hctx/Hkctx/Hvs/Hboot等硬件类型或定宽标量，不收Proc/Rq/FS�
 | IRQ临界/空闲 | u64 hal_irq_save(void); void hal_irq_restore(u64); void hal_idle(void)；save/restore配对，idle仅调度栈无锁 |
 | 陷阱/现场 | void hal_trap_init(void); void hal_trap_decode(const Hctx*,Htrap*); void hal_user_init(Hctx*,const Hinit*); void hal_user_enter(Hctx*)；最后不返回 |
 | 内核切换 | void hal_ctx_switch(Hkctx *from,const Hkctx *to)；短IRQ关闭、只能切独立线程/调度栈 |
-| 地址空间 | s64 hal_vm_create(Hvs*,Pgsource*); s64 hal_vm_map(Hvs*,u64 va,u64 pa,u64 prot,u32 attr); s64 hal_vm_unmap(Hvs*,u64 va); u32 hal_vm_lookup(const Hvs*,u64 va,Hpte*); void hal_vm_commit(Hvs*); void hal_vm_switch(const Hvs*); void hal_vm_destroy(Hvs*,Pgsource*) |
+| 地址空间 | s64 hal_vm_create(Hvs*,Pgsource*); s64 hal_vm_map(Hvs*,u64 va,u64 pa,u64 prot,u32 attr); s64 hal_vm_unmap(Hvs*,u64 va); u32 hal_vm_lookup(const Hvs*,u64 va,Hpte*); void hal_vm_commit(Hvs*); void hal_vm_switch(const Hvs*); void hal_vm_destroy(Hvs*) |
 | 缓存/代码 | void hal_code_sync(u64 pa,u64 bytes); void hal_dma_sync(u64 pa,u64 bytes,u32 phase,u32 direction)；只由已验证内核机制调用，按32页分批 |
 | 时间 | u64 hal_clock_read(void); u64 hal_clock_freq(void); void hal_timer_set(u64 absolute_ticks)；不进行FS/调度策略 |
 | 控制器 | u64 hal_irq_claim(void); u32 hal_irq_number(u64 token); void hal_irq_mask(u32); void hal_irq_complete(u64 token); void hal_irq_unmask(u32)；空认领token=0，硬件IRQ0用非零token封装 |
@@ -136,14 +136,14 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 - [ ] 总线地址翻译、保留区重叠、非页对齐及中断关联使用实际 DTB/构造坏输入核对；未知描述拒绝而非猜测。
 - [ ] init/驱动不能通过任意地址、伪造 DTB 或枚举结果创建 RAM/受保护 MMIO 权限；serial 实际授权范围与启动资源一致。
 
-全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+以下按勾选记录已实现的局部范围；未勾选项待执行。通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 阶段 01：工具链与测试框架
 
 依赖：00。产物：两架构独立构建目录、最小链接脚本、构建参数和主机场景驱动。
 
-- [ ] 建立本节约定的构建/测试入口及明确的能力检查；尚未实现的测试目标必须失败，不静默成功。
-- [ ] 准备独立测试镜像与日志目录，退出时回收 QEMU 子进程。
+- [x] 建立当前构建/unit/smoke/scenario/test-all入口及能力检查；bench未实现时明确失败。
+- [x] 准备独立启动/寄存器/异常ELF与日志目录，退出时回收自身QEMU进程组；尚无文件系统测试盘。
 
 测试方法：分别干净构建两架构；连续交替增量构建，检查没有使用另一架构产物；人为让测试镜像挂起或报错。
 检查 ELF 目标机器/位宽，验证主机脚本能够捕获超时、错误和意外退出。
@@ -159,7 +159,7 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 
 | 项 | RV64 | ARM64 |
 | --- | --- | --- |
-| C目标 | --target=riscv64-unknown-elf -march=rv64gc -mabi=lp64 -mno-implicit-float -mcmodel=medany | --target=aarch64-none-elf -mcpu=cortex-a53 -mgeneral-regs-only |
+| C目标 | --target=riscv64-unknown-elf -march=rv64gc -mabi=lp64 -mno-implicit-float -mcmodel=medany | --target=aarch64-none-elf -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align |
 | 公共C参数 | -std=c89 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -O2；-Wall/-Wextra/-Werror | 同左 |
 | ELF链接器 | ld.lld，elf64lriscv | ld.lld，aarch64elf |
 | 临时入口/物理装载候选 | 0x80200000，避开本次OpenSBI区间 | 0x40200000，在RAM起点上方2 MiB留出DTB空间 |
@@ -192,17 +192,17 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 
 manifest只在整次成功后更新，last-run.json记录最新尝试是否成功；失败保留runs/日志，旧归档不代表最新构建成功。当前profile仅LLVM，可覆盖CC/LD/AR/READELF路径；非空CROSS明确拒绝。make clean ARCH=...与构建共用架构锁，只清对应目录，并清理指向它的共享数据库。
 
-当前产物是libhardware.a而非kernel ELF，manifest的bootable_kernel/guest_executed均为false，QEMU/firmware字段为null。没有伪造链接脚本、启动代码或guest PASS；smoke/scenario/bench/test-all明确失败。阶段01的真实kernel、QEMU日志和完整环境记录仍未完成，以上仅勾选已交付的最小范围。
+上述阶段01首切片当时产物仅libhardware.a，没有guest执行；后续阶段02已建立真正bootstrap ELF与QEMU日志，当前可用范围以下节及README为准。构建manifest的guest_executed始终false，运行证据单独保存在smoke结果中，不用编译结果冒充执行。
 
 ### 阶段 02：硬件入口、陷阱与早期诊断
 
 依赖：01。产物：两架构启动、栈、异常入口和轮询控制台。
 
-- [ ] 最先建立有效异常入口，确认启动特权级和参数；其他 CPU 暂停，不错误进入单核状态。
+- [x] 物理入口最先屏蔽中断并安装异常向量，启动前检查/停驻非0号CPU；固定单核profile实测RV64 S态、ARM EL1h及启动参数，未验证多核启动。
 
 入口纪律：先安装有效陷阱入口，再处理中断；保存全部用户寄存器后才能使用临时寄存器，C/汇编共享布局必须用静态断言锁定。
-- [ ] 定义完整寄存器布局，用 C 静态断言锁定与汇编的偏移及大小。
-- [ ] 提供 halt/panic 和固件调试操作，普通启动不运行内核测试集合。
+- [x] 定义288字节整数现场，C静态断言锁定每个寄存器、控制字段的偏移、大小和16字节对齐；完成内核态往返验证，用户态和FP现场仍待后续阶段。
+- [x] 提供halt/panic和独立测试镜像，普通启动只完成启动检查后停机；固件关机/重启操作尚未实现。
 
 测试方法：两架构 smoke 打印启动握手；测试镜像主动触发受控内核异常，主机核对异常类型和地址。
 使用寄存器哨兵检查保存/恢复，后续阶段 05 补跨用户态陷阱检查。
@@ -210,14 +210,65 @@ manifest只在整次成功后更新，last-run.json记录最新尝试是否成�
 
 验收：能定位故意注入的异常，不重启循环、不跳地址零；寄存器布局断言通过，正常路径停止在预期阶段。
 
+#### 阶段02实现范围与验收记录（2026-11-15）
+
+- `make ARCH=...` 生成normal/kernel.elf，CASE=registers/fault有独立对象及ELF；`make hardware`保留归档入口。链接地址RV64=0x80200000、ARM=0x40200000；ELF检查ET_EXEC/目标、装载段边界/对齐/不重叠、入口落在文件内可执行字节、无RWX及未解决符号，链接脚本限制2 MiB启动窗口。
+- 公共C入口为kernel/main.c的main；putstr/puthex/panic归kernel/diag.c及include/diag.h，hal_halt声明归include/hal/boot.h。include/boot.h只保留物理启动入口与链接符号，不将通用诊断绑在启动模块。公共诊断只调用hal_debug_putc(u8)，PL011初始化由ARM arch_start调用架构私有函数；RV64沿用OpenSBI初始化，无空的初始化接口或公共arch_console调用，不保留未使用的字符串输出封装。
+- 启动栈16 KiB、诊断栈4 KiB，物理地址有效后才进C；BSS清零及.data初值经运行检查。当前没有页表和guard，不把物理预留描述成已实现的栈保护。
+- RV64在安装stvec前准备sscratch紧急栈；入口交换sp后先保存全部整数寄存器，再读sepc/sstatus/scause/stval。ARM先装只停机的早期向量，进入C前切换完整向量；正常EL1h、SP_EL0专作紧急栈，先切栈并保存所有x0..x30，再读原SP/ELR/SPSR/ESR/FAR。它不支持用户态入口，后续必须按正式现场规则替换SP_EL0职责，不能直接扩展为EL0返回。
+- 诊断期间切到不可重入的停机入口，避免二次故障重复使用损坏栈。寄存器测试才允许验证后的breakpoint返回：首陷阱检查整数寄存器与精确SP哨兵（ARM另检查NZCV），恢复后立即第二次陷阱再次检查，最后恢复调用者现场。故意非法指令只诊断并halt，不跳过后继续；普通镜像不链接测试probe。
+- 主机以QMP暂停启动、继续、读取完整串口，见预期结果后stop，核对实际特权/中断屏蔽和PC落在hal_halt，再quit并等退出0。结果保存实际命令、构建快照/hash、QEMU版本、OpenSBI路径/hash及串口报告的固件版本；超时或意外退出失败，清理只作用于自身进程组。可用TRACE=1取得int/guest_errors日志。
+- 本地两架构各normal/registers/fault通过；实际DTB头与范围已检查，RV64 a1=0x8fe00000，ARM裸ELF按RAM基址取得0x40000000。尚未解析节点/保留表或授予设备权，不能将此头检查当作阶段03完成。
+- 18项host测试通过，包含坏ELF装载段/入口、错误或重复启动、伪造READY搭配错误状态及错PC/原因等反例；临时破坏两架构各一个恢复指令，均在第二次陷阱报register sentinel，源码还原后通过。缺少QEMU/固件及超短超时均失败；干净和交替增量构建、两目标公共/架构C的clangd --check及统一test-all通过。日志在build/host/stage02/和各架构smoke/。
+
+`make test-all OPENSBI=...` 聚合当前host、格式及两架构六个启动场景，失败不得跳过。这里只验证物理启动与内核整数陷阱，不证明用户态/FP、中断控制器、虚拟内存、真实硬件、性能或CI；关机/重启、完整用户现场和guard仍按依赖阶段实现与验收。
+
 ### 阶段 03：设备树与启动资源
 
 依赖：02。产物：有边界检查的 DTB 解析、RAM/保留区、控制器及设备描述。
 
-- [ ] 两架构都使用实际启动传入的 DTB；早期诊断串口例外与常规资源发现明确区分。
-- [ ] 明确支持的地址翻译和中断类型；不支持的配置报错，不猜设备或内存地址。
+- [x] 两架构均解析实际启动DTB；早期诊断串口与资源发现分离，主机保存运行时blob。
+- [x] 明确支持的地址翻译和中断类型；不支持的编码报错，未知设备不发布。
 
 测试方法：host 构造截断 blob、错误偏移、缺少字符串终止、过深树、超数量、溢出、disabled 节点和保留区。
 QEMU 用不同 RAM 大小及额外设备启动，对照实际 DTB 核对发现结果；无效 DTB 必须有明确失败。
 
 验收：资源范围与固件一致，内核/DTB/固件保留区不进入可分配内存，坏输入不越界，未知设备不获默认权限。
+
+#### 阶段03发现切片与支持边界（2026-11-15）
+
+kernel/dtb.c使用单次启动的静态工作区，无堆/递归；不是用户态可提交DTB的授权入口。先校验头/版本、区块边界与不重叠、保留表终止、结构token与平衡、属性先于子节点、字符串终止、重复属性/兄弟节点/phandle、长度及地址溢出。失败清空结果，不发布半份资源列表。
+
+上限为2 MiB blob、192节点、1536属性、深度16；RAM8段、保留32段、设备64个、可用RAM64段，每设备2个reg/4个IRQ，超限失败不截断。仅供单核启动调用，重入需求另行设计。保留区可重叠，可用RAM扣除全部保留并向页内收；RAM之间、设备reg之间不得重叠，设备不得覆盖RAM或固件保留区。
+
+支持1/2个地址/尺寸cell、根总线及simple-bus的空ranges恒等或唯一完整匹配翻译；缺ranges不当恒等，跨窗口/歧义/未知总线拒绝。reserved-memory仅根节点、匹配根cell和空ranges，读取静态reg；no-map/reusable均保留，不提前回收；动态size分配未实现。头部保留表、OpenSBI reserved-memory、实际DTB及含栈的内核整体区间共同排除；DTB与内核须完整位于发现RAM，和固件保留冲突则失败。此时只计算可用页，不启动分配器。
+
+识别NS16550/PL011、virtio-mmio、PLIC/GICv2、CLINT、CPU中断控制器及ARM计时器。PLIC单cell、CPU中断关系与GIC三cell SPI/PPI编码经过校验；按真实phandle、继承interrupt-parent或interrupts-extended关联。OpenSBI将M态PLIC上下文IRQ置为0xffffffff，保留context序号但标记不可用；S态context须绑定9号CPU中断。保护标记区分普通设备与内核控制器/时钟，当前不安装用户态授权。未知设备不发布；已识别设备落未知总线或interrupt-map/MSI等不支持编码则失败。存在PCI节点不等于支持PCI。
+
+例：RV64先发现OpenSBI的0x80000000..0x80060000保留区，再加入内核和实际DTB；可用页不得覆盖任何一项。若UART reg落到RAM或PLIC窗口，解析失败并清空结果。simple-bus设备先按唯一完整ranges翻译CPU地址再核对，disabled节点及其后代不产生记录。
+
+物理启动只接受virt固定RAM基址附近、上限1 GiB的可信固件DTB候选地址，候选窗口仅限制首次读取，不据此创造RAM；真实容量来自DTB，blob另限2 MiB。测试profile支持128/256/512 MiB。早期UART常量不用于授权。ARM MMU关闭阶段增加-mstrict-align，避免聚合存储被编译为未对齐访问，进入虚拟内存后重新核对映射属性。
+
+本地验证：33项host通过，真实C解析器覆盖逐字节截断、500次种子变异、坏结构/字符串/数量/翻译/IRQ/保留区及失败清空。临时UBSan检查3818个截断、3000次变异和真实DTB输入通过；ASan在本机连空程序也不能完成启动，未取得ASan结果。macOS测试库通过xcrun选SDK及显式系统链接根，目标内核仍freestanding、不使用host SDK。
+
+两架构基础六场景及128/512 MiB附加virtio-rng四配置通过，make test-all统一执行。主机独立核对实际RAM、完整页对齐可用区间、保留关系、设备计数/保护/IRQ父及UART地址，保存runtime.dtb及串口/版本/hash/命令。virtio仅验证传输发现，不证明协商/DMA/I/O。日志在build/host/stage03/及各架构smoke/。CI、真实硬件、init Boot授权交付、映射页隔离及通用PCI仍未实现/验证；发现切片不等于完整资源授权阶段通过。
+
+
+### 完整同步用户入口切片（2026-11-15）
+
+在上述内核异常入口基础上，新增Hctx（288字节整数现场加独立FP），RV64共560字节、ARM64共816字节且16字节对齐；全部扩展寄存器、控制字段偏移由同源宏和静态断言锁定。hal_user_init构造确定的无旧数据现场、首参数、PC/SP及用户特权状态；不能由调用者传入任意CPU特权位。hal_user_enter不返回，丢弃当前C续点，完整保存后由公共usertrap接安全出口；当前非测试出口明确panic，未伪造syscall实现。
+
+Hctx必须是当前受guard保护内核栈上已分配、完整初始化且常驻的保留帧，用户不能选择它的地址，活动根也不能拆其高半映射。入口复用这份帧而不为每次用户往返继续压栈。RV64以受保护sscratch交换用户SP/帧基址，保存全部整数寄存器后才用临时寄存器、保存FP并接内核紧急向量。ARM从EL0同步向量使用SP_EL1保留帧，先保存全部整数和用户SP_EL0，再保存q0..q31/FPSR/FPCR；随后恢复SP_EL0为紧急指针和常规内核向量。不能沿用原来内核异常把SP_EL0当紧急栈的路径处理用户来源。
+
+中断控制器/定时器尚未接通，用户与内核IRQ仍屏蔽；ARM用户向量的未支持入口及保存窗口内异常安全halt，不把它称为完整IRQ/入口溢出诊断。完整帧保存后内核异常继续使用既有紧急诊断路径。后续线程栈构造必须在发布前取得/验证整帧、接CPU调度栈和重入故障测试，不能将测试启动栈视为调度器实现。
+
+本地user场景验证整数/FP初始清零、两次真实用户陷阱往返、不同寄存器哨兵及FP控制状态、五类用户权限故障；SVC的ELR已指向下一指令，RV64的sepc指向ecall本身，测试分别核对，避免统一加4漏执行。具体资源/页表回收与验证边界见02末尾。
+
+
+### 内核现场切换切片（2026-11-15）
+
+hal_ctx_switch按冻结的112字节Hkctx保存/恢复C调用约定现场：RV64 ra/sp/s0..s11，ARM64 x19..x30/sp及零reserved；同源宏和逐字段断言锁定布局。调用者须关闭IRQ、持有两份独立常驻栈及现场，直到明确丢弃续点前不能回收。它不携带Proc/Rq对象、不调度、不分配；用户FP由上一节完整保存，不混入只供内核C调用的Hkctx。
+
+本地switch场景在新建16 KiB RW/NX高半区测试栈上运行独立C入口，两侧guard无映射。worker保留栈局部值并两次切回，主栈汇编探针核对所有可设置的被调用者保存整数寄存器；再次恢复worker核对SP和局部值。主栈取得控制后显式废弃worker续点，再撤映射/失效、归还原伙伴块，最终页表/物理占用恢复基线。RV64/ARM64 QEMU均已通过，并继续接受主机独立页表审计。
+
+此测试用独立测试栈/原始伙伴块验证切换机制；进程栈的Acct出资、每CPU调度栈、退出后栈回收、IRQ嵌套及真实调度队列仍须按03接入，不能因两次切换成功标记调度阶段完成。
