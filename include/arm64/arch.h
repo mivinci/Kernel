@@ -108,7 +108,7 @@
 #define MAIR_ATTR_DEVICE_nGnRnE 0x00
 #define MAIR_ATTR_NORMAL_WB     0xFF
 
-static inline u64
+INLINE u64
 arch_daif_save(void)
 {
   u64 flags;
@@ -117,7 +117,7 @@ arch_daif_save(void)
   return flags;
 }
 
-static inline void
+INLINE void
 arch_daif_restore(u64 flags)
 {
   __asm__ __volatile__("msr daif, %0" ::"r"(flags));

@@ -18,13 +18,13 @@
 
 #define FR_TXFF (1 << 5) /* 发送 FIFO 满 */
 
-static inline u32
+INLINE u32
 plread(u32 off)
 {
   return *(volatile u32 *) (PL011_BASE + off);
 }
 
-static inline void
+INLINE void
 plwrite(u32 off, u32 val)
 {
   *(volatile u32 *) (PL011_BASE + off) = val;
