@@ -1,0 +1,33 @@
+#include <riscv/context.h>
+.section .text,"ax"
+.global hal_ctx_switch
+hal_ctx_switch:
+ sd ra, KC_REG(0)(a0)
+ sd sp, KC_REG(1)(a0)
+ sd s0, KC_REG(2)(a0)
+ sd s1, KC_REG(3)(a0)
+ sd s2, KC_REG(4)(a0)
+ sd s3, KC_REG(5)(a0)
+ sd s4, KC_REG(6)(a0)
+ sd s5, KC_REG(7)(a0)
+ sd s6, KC_REG(8)(a0)
+ sd s7, KC_REG(9)(a0)
+ sd s8, KC_REG(10)(a0)
+ sd s9, KC_REG(11)(a0)
+ sd s10, KC_REG(12)(a0)
+ sd s11, KC_REG(13)(a0)
+ ld ra, KC_REG(0)(a1)
+ ld sp, KC_REG(1)(a1)
+ ld s0, KC_REG(2)(a1)
+ ld s1, KC_REG(3)(a1)
+ ld s2, KC_REG(4)(a1)
+ ld s3, KC_REG(5)(a1)
+ ld s4, KC_REG(6)(a1)
+ ld s5, KC_REG(7)(a1)
+ ld s6, KC_REG(8)(a1)
+ ld s7, KC_REG(9)(a1)
+ ld s8, KC_REG(10)(a1)
+ ld s9, KC_REG(11)(a1)
+ ld s10, KC_REG(12)(a1)
+ ld s11, KC_REG(13)(a1)
+ ret

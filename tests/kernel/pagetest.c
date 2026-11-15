@@ -1,0 +1,120 @@
+/* Linked only into the explicit physical-page test image. */
+#include <boot.h>
+#include "ktest.h"
+#include <diag.h>
+#include <page.h>
+#include <vm.h>
+
+static void
+same(const Pgstat *before)
+{
+  Pgstat after;
+  u32    i;
+  pgstat(&after);
+  if (pgcheck() || after.free != before->free || after.managed != before->managed ||
+      after.allocated != before->allocated)
+    panic("page conservation");
+  for (i = 0; i <= PG_ORDER; i++)
+    if (after.blocks[i] != before->blocks[i])
+      panic("page coalescing");
+}
+
+void
+pgtest(void)
+{
+  Pgstat        initial, current;
+  Pgblk         block, invalid, out;
+  Pglim         lim;
+  u32           order, success = 0;
+  u64           i, count = 0, chain = 0, next, pa, checksum = 0;
+  volatile u64 *memory;
+  int           error;
+  pgstat(&initial);
+  if (pgcheck())
+    panic("page initial state");
+  for (order = 0; order <= PG_ORDER; order++) {
+    error = pgalloc(order, NULL, &block);
+    if (error == PG_NOMEM)
+      continue;
+    if (error)
+      panic("page allocation");
+    success++;
+    for (i = 0; i < (1UL << order); i++) {
+      pa = block.pa + i * PAGE_SIZE;
+      memory = (volatile u64 *) kaddr(pa);
+      memory[0] = pa ^ 0x12345678;
+      memory[PAGE_SIZE / sizeof(u64) - 1] = ~pa;
+    }
+    for (i = 0; i < (1UL << order); i++) {
+      pa = block.pa + i * PAGE_SIZE;
+      memory = (volatile u64 *) kaddr(pa);
+      if (memory[0] != (pa ^ 0x12345678) || memory[PAGE_SIZE / sizeof(u64) - 1] != ~pa)
+        panic("page physical readback");
+      checksum ^= memory[0];
+      /* Explicit diagnostic cleanup, not a promise that raw pgalloc zeroes. */
+      memory[0] = memory[PAGE_SIZE / sizeof(u64) - 1] = 0;
+    }
+    invalid = block;
+    invalid.order = order ? order - 1 : 1;
+    if (pgfree(invalid) != PG_BAD || pgcheck())
+      panic("wrong order accepted");
+    if (pgfree(block) || pgfree(block) != PG_BAD)
+      panic("page duplicate free");
+    same(&initial);
+  }
+  /* Choose a narrower aligned interior of a real free block. */
+  if (pgalloc(5, NULL, &block))
+    panic("page constraint preparation");
+  lim.minpa = block.pa + PAGE_SIZE;
+  lim.maxpa_exclusive = block.pa + (PAGE_SIZE << 5);
+  lim.align = PAGE_SIZE << 2;
+  if (pgfree(block) || pgalloc(1, &lim, &block))
+    panic("page constrained allocation");
+  if (block.pa < lim.minpa || block.pa + (PAGE_SIZE << block.order) > lim.maxpa_exclusive ||
+      block.pa & (lim.align - 1))
+    panic("page constraint mismatch");
+  if (pgfree(block))
+    panic("page constrained free");
+  same(&initial);
+  while ((error = pgalloc(0, NULL, &block)) == 0) {
+    if (++count > initial.managed)
+      panic("page allocation loop");
+    memory = (volatile u64 *) kaddr(block.pa);
+    memory[0] = chain;
+    memory[1] = block.pa ^ 0xabcdef;
+    chain = block.pa;
+  }
+  if (error != PG_NOMEM)
+    panic("page exhaustion result");
+  pgstat(&current);
+  if (current.free != initial.protected || count + initial.protected != initial.free ||
+      current.allocated != count + initial.allocated || pgcheck())
+    panic("page lowwater");
+  out.pa = 0x123;
+  out.order = 99;
+  out.reserved = 17;
+  if (pgalloc(0, NULL, &out) != PG_NOMEM || out.pa != 0x123 || out.order != 99 ||
+      out.reserved != 17)
+    panic("failed allocation output");
+  while (chain) {
+    memory = (volatile u64 *) kaddr(chain);
+    next = memory[0];
+    if (memory[1] != (chain ^ 0xabcdef))
+      panic("page exhaustion alias");
+    block.pa = chain;
+    block.order = 0;
+    block.reserved = 0;
+    memory[0] = memory[1] = 0;
+    if (pgfree(block))
+      panic("page exhaustion free");
+    chain = next;
+  }
+  same(&initial);
+  putstr("PAGECHECK orders=");
+  puthex(success);
+  putstr(" exhausted=");
+  puthex(count);
+  putstr(" checksum=");
+  puthex(checksum);
+  putstr("\n");
+}

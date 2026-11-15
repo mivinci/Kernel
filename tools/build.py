@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the retained hardware archive, not a bootable kernel."""
+"""Build the physical bootstrap ELF or the retained hardware archive."""
 
 import argparse
 from dataclasses import asdict
@@ -23,12 +23,12 @@ PROFILES = {
     "riscv": {
         "machine": 243, "emulation": "elf64lriscv",
         "flags": ["--target=riscv64-unknown-elf", "-march=rv64gc", "-mabi=lp64",
-                  "-mno-implicit-float", "-mcmodel=medany"],
+                  "-mno-implicit-float", "-mcmodel=medany", "-msmall-data-limit=0"],
         "headers": ["riscv/csr.h", "riscv/mmu.h"],
     },
     "arm64": {
         "machine": 183, "emulation": "aarch64elf",
-        "flags": ["--target=aarch64-none-elf", "-mcpu=cortex-a53", "-mgeneral-regs-only"],
+        "flags": ["--target=aarch64-none-elf", "-mcpu=cortex-a53", "-mgeneral-regs-only", "-mstrict-align"],
         "headers": ["arm64/arch.h"],
     },
 }
@@ -44,14 +44,14 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def read_elf(path, machine):
-    """Reject host formats/targets and unresolved references in our ET_REL output."""
+def read_elf(path, machine, kind=1, allow_undefined=False):
+    """Check target/type; intermediate kernel objects may refer to other units."""
     data = Path(path).read_bytes()
     if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01":
         raise BuildError("not a little-endian ELF64 object: %s" % path)
-    kind, actual = struct.unpack_from("<HH", data, 16)
-    if kind != 1 or actual != machine:
-        raise BuildError("wrong ELF type/machine: %s (%d/%d)" % (path, kind, actual))
+    actual_kind, actual = struct.unpack_from("<HH", data, 16)
+    if actual_kind != kind or actual != machine:
+        raise BuildError("wrong ELF type/machine: %s (%d/%d)" % (path, actual_kind, actual))
     offset = struct.unpack_from("<Q", data, 40)[0]
     width, count = struct.unpack_from("<HH", data, 58)
     if width != 64 or count == 0 or offset + width * count > len(data):
@@ -75,9 +75,37 @@ def read_elf(path, machine):
                 if name >= len(names) or b"\0" not in names[name:]:
                     raise BuildError("invalid symbol name: %s" % path)
                 undefined.append(names[name:].split(b"\0", 1)[0].decode("ascii", "replace"))
-    if undefined:
+    if undefined and not allow_undefined:
         raise BuildError("unresolved runtime symbols in %s: %s" % (path, ", ".join(undefined)))
-    return {"type": "ET_REL", "machine": actual, "bits": 64, "endian": "little"}
+    return {"type": "ET_REL" if kind == 1 else "ET_EXEC", "machine": actual, "bits": 64, "endian": "little"}
+
+
+def read_kernel(path, machine, base):
+    elf = read_elf(path, machine, kind=2)
+    data = Path(path).read_bytes()
+    entry, offset = struct.unpack_from("<QQ", data, 24)
+    width, count = struct.unpack_from("<HH", data, 54)
+    if width != 56 or not count or offset + width * count > len(data):
+        raise BuildError("invalid ELF program table")
+    segments = []
+    for i in range(count):
+        kind, flags, at, va, pa, filesz, memsz, align = struct.unpack_from(
+            "<IIQQQQQQ", data, offset + width * i)
+        if kind != 1:
+            continue
+        if (filesz > memsz or at + filesz > len(data) or va != pa or pa < base
+                or pa + memsz > base + 0x1000000 or flags & 3 == 3
+                or align < 4096 or align & (align - 1) or pa % align != at % align):
+            raise BuildError("invalid bootstrap load segment")
+        if any(pa < x["pa"] + x["memsz"] and pa + memsz > x["pa"] for x in segments):
+            raise BuildError("overlapping bootstrap load segments")
+        segments.append({"pa": pa, "filesz": filesz, "memsz": memsz, "flags": flags})
+    if (not segments or min(x["pa"] for x in segments) != base or
+            not any(x["flags"] & 1 and x["pa"] <= entry < x["pa"] + x["filesz"]
+                    for x in segments)):
+        raise BuildError("bootstrap entry outside executable bytes")
+    elf.update(entry=entry, segments=segments)
+    return elf
 
 
 def git_output(*args):
@@ -129,20 +157,53 @@ def build(args, directory, run_dir):
                        "real_path": str(Path(executable).resolve()), "version": version}
     if "clang" not in tools["cc"]["version"].lower():
         raise BuildError("this profile requires Clang; GCC/CROSS is not implemented")
-    include_files = sorted((ROOT / "include").rglob("*.h"))
+    include_files = list((ROOT / "include").rglob("*.h"))
+    if args.kind == "kernel" and args.case != "normal":
+        include_files += list((ROOT / "tests/kernel").rglob("*.h"))
+    include_files.sort()
     headers = {str(p.relative_to(ROOT)): digest(p) for p in include_files}
     flags = profile["flags"] + COMMON + ["-I" + str(ROOT / "include")]
     sources = [ROOT / "kernel" / args.arch / "console.c"]
-    checks = directory / "checks"
+    kernel = args.kind == "kernel"
+    work = directory / args.case if kernel else directory
+    work.mkdir(exist_ok=True)
+    if kernel:
+        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17}[args.case])]
+        sources += [ROOT / "kernel/main.c", ROOT / "kernel/context.c", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
+                    ROOT / "kernel" / args.arch / "entry.S"]
+        if args.case != "normal":
+            flags += ["-I" + str(ROOT / "tests/kernel"), "-I" + str(ROOT / "tests/kernel" / args.arch)]
+            sources.append(ROOT / "tests/kernel/main.c")
+        if args.case == "registers":
+            sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
+        if args.case in ("registers", "fault"):
+            sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
+        if args.case == "switch":
+            sources += [ROOT / "tests/kernel/switchtest.c", ROOT / "tests/kernel" / args.arch / "switchprobe.S"]
+        if args.case == "user":
+            sources += [ROOT / "tests/kernel/usertest.c", ROOT / "tests/kernel" / args.arch / "userprobe.S", ROOT / "tests/kernel" / args.arch / "usertest.c"]
+        if args.case == "seal":
+            sources += [ROOT / "tests/kernel/sealtest.c", ROOT / "tests/kernel" / args.arch / "code.S"]
+        if args.case == "memory":
+            sources.append(ROOT / "tests/kernel/memtest.c")
+        if args.case == "spaces":
+            sources.append(ROOT / "tests/kernel/spacetest.c")
+        if args.case == "budget":
+            sources.append(ROOT / "tests/kernel/accttest.c")
+        if args.case == "pages":
+            sources.append(ROOT / "tests/kernel/pagetest.c")
+    if kernel and args.case in ("textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped"):
+        sources += [ROOT / "tests/kernel/vmtest.c", ROOT / "tests/kernel" / args.arch / "vmprobe.S"]
+    checks = work / "checks"
     checks.mkdir(exist_ok=True)
     header_source = checks / "headers.c"
-    generated = "#include <console.h>\n" + "".join(
+    generated = "#include <hal/boot.h>\n" + "".join(
         "#include <%s>\n" % h for h in profile["headers"])
     generated += "STATIC_ASSERT(sizeof(u64) == 8, word64);\n"
     generated += "STATIC_ASSERT(sizeof(void *) == 8, pointer64);\n"
     if not header_source.exists() or header_source.read_text() != generated:
         header_source.write_text(generated)
-    units = [(p, directory / "obj" / p.relative_to(ROOT).with_suffix(".o")) for p in sources]
+    units = [(p, work / "obj" / p.relative_to(ROOT).with_suffix(".o")) for p in sources]
     units.append((header_source, checks / "headers.o"))
     compilation_database(directory, [
         {"directory": str(ROOT), "file": str(source), "output": str(obj),
@@ -162,44 +223,60 @@ def build(args, directory, run_dir):
             temporary = obj.with_suffix(".tmp.o")
             invoke("compile-%d" % index,
                    [tools["cc"]["path"], *flags, "-c", str(source), "-o", str(temporary)])
-            read_elf(temporary, profile["machine"])
+            read_elf(temporary, profile["machine"], allow_undefined=kernel)
             os.replace(temporary, obj)
             stamp.write_text(signature)
-        elf = read_elf(obj, profile["machine"])
+        elf = read_elf(obj, profile["machine"], allow_undefined=kernel)
         objects.append({"source": str(source.relative_to(ROOT)), "source_sha256": digest(source),
                         "object": str(obj.relative_to(ROOT)), "sha256": digest(obj),
                         "cached": cached, "elf": elf})
     # Header checks are compile-only; never package them as kernel code.
     actual_objects = [str(obj) for source, obj in units[:-1]]
-    combined = directory / "hardware.o"
-    temporary = directory / "hardware.tmp.o"
-    invoke("link-hardware", [tools["ld"]["path"], "-r", "-m", profile["emulation"],
-                             *actual_objects, "-o", str(temporary)])
-    elf = read_elf(temporary, profile["machine"])
-    os.replace(temporary, combined)
-    archive = directory / "libhardware.a"
-    temporary_archive = directory / "libhardware.tmp.a"
-    if temporary_archive.exists():
-        temporary_archive.unlink()
-    invoke("archive", [tools["ar"]["path"], "rcs", str(temporary_archive), str(combined)])
-    os.replace(temporary_archive, archive)
-    invoke("inspect-hardware", [tools["readelf"]["path"], "-h", "-A", "-s", str(combined)])
+    linker = ROOT / "kernel" / args.arch / "kernel.ld"
+    if kernel:
+        artifact = work / "kernel.elf"
+        temporary = work / "kernel.tmp.elf"
+        invoke("link-kernel", [tools["ld"]["path"], "-m", profile["emulation"],
+                              "-T", str(linker), "--build-id=none", "-Map=" + str(work / "kernel.map"),
+                              *actual_objects, "-o", str(temporary)])
+        elf = read_kernel(temporary, profile["machine"],
+                          0x80200000 if args.arch == "riscv" else 0x40200000)
+        os.replace(temporary, artifact)
+        invoke("inspect-kernel", [tools["readelf"]["path"], "-h", "-l", "-A", "-s", str(artifact)])
+    else:
+        combined = directory / "hardware.o"
+        temporary = directory / "hardware.tmp.o"
+        invoke("link-hardware", [tools["ld"]["path"], "-r", "-m", profile["emulation"],
+                                 *actual_objects, "-o", str(temporary)])
+        elf = read_elf(temporary, profile["machine"])
+        os.replace(temporary, combined)
+        artifact = directory / "libhardware.a"
+        temporary_archive = directory / "libhardware.tmp.a"
+        if temporary_archive.exists():
+            temporary_archive.unlink()
+        invoke("archive", [tools["ar"]["path"], "rcs", str(temporary_archive), str(combined)])
+        os.replace(temporary_archive, artifact)
+        invoke("inspect-hardware", [tools["readelf"]["path"], "-h", "-A", "-s", str(combined)])
     manifest = {
-        "format": 1, "arch": args.arch, "profile": "llvm", "artifact_kind": "hardware_archive",
-        "bootable_kernel": False, "guest_executed": False,
+        "format": 1, "arch": args.arch, "profile": "llvm", "case": args.case if kernel else None,
+        "artifact_kind": "bootstrap_elf" if kernel else "hardware_archive",
+        "bootable_kernel": kernel, "guest_executed": False,
         "head": git_output("rev-parse", "HEAD"), "dirty": bool(git_output("status", "--porcelain")),
         "tools": tools, "cflags": flags, "headers": headers, "objects": objects,
-        "archive": str(archive.relative_to(ROOT)), "archive_sha256": digest(archive),
-        "combined_elf": elf, "run_log": str(run_dir.relative_to(ROOT)),
+        "artifact": str(artifact.relative_to(ROOT)), "artifact_sha256": digest(artifact),
+        "elf": elf, "run_log": str(run_dir.relative_to(ROOT)),
+        "linker_sha256": digest(linker) if kernel else None,
         "qemu": None, "firmware": None,
     }
+    if kernel:
+        (work / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     # Replace the summary only after all checks pass; failures retain their run logs.
     target = directory / "manifest.json"
     temp_manifest = directory / "manifest.tmp.json"
     temp_manifest.write_text(json.dumps(manifest, indent=2) + "\n")
     os.replace(temp_manifest, target)
-    print("%s: %s (hardware only; %d/%d compile units cached)" %
-          (args.arch, archive.relative_to(ROOT), sum(x["cached"] for x in objects), len(objects)))
+    print("%s: %s (%d/%d compile units cached)" %
+          (args.arch, artifact.relative_to(ROOT), sum(x["cached"] for x in objects), len(objects)))
 
 
 def main():
@@ -213,6 +290,8 @@ def main():
     parser.add_argument("--cross", default="")
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--kind", choices=("hardware", "kernel"), default="hardware")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch"), default="normal")
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")
