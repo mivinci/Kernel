@@ -1,0 +1,123 @@
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/channel.h>
+#include "private/libc.h"
+volatile u64        runtime_trace[8];
+static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
+#define REQUIRE(c, n)                                                                              \
+  do {                                                                                             \
+    if (!(c))                                                                                      \
+      _exit(n);                                                                                    \
+  } while (0)
+static void
+preinit(void)
+{
+  REQUIRE(environ && !runtime_trace[0] && !runtime_trace[1], 150);
+  runtime_trace[1] = 1;
+}
+static Exitfn before ALIGNED(8) __attribute__((section(".preinit_array"), used)) = preinit;
+static void __attribute__((constructor(150)))
+first(void)
+{
+  REQUIRE(runtime_trace[1] == 1 && initialized == UINT64_C(0x123456789abcdef0), 151);
+  runtime_trace[1] = 12;
+}
+static void __attribute__((constructor))
+second(void)
+{
+  REQUIRE(runtime_trace[1] == 12 && environ, 152);
+  runtime_trace[1] = 123;
+}
+static void
+counted(void)
+{
+  runtime_trace[7]++;
+}
+static void
+callbackone(void)
+{
+  REQUIRE(runtime_trace[2] == 2, 153);
+  runtime_trace[2] = 21;
+}
+static void
+callbacktwo(void)
+{
+  REQUIRE(!runtime_trace[2] && errno == EDOM, 154);
+  runtime_trace[2] = 2;
+  REQUIRE(atexit(counted) != 0 && errno == EBUSY, 155);
+}
+static void __attribute__((destructor))
+finishlast(void)
+{
+  REQUIRE(runtime_trace[2] == 21 && !runtime_trace[3], 156);
+  REQUIRE(runtime_trace[7] == (runtime_trace[4] == 1 ? 30 : 0), 157);
+  runtime_trace[3] = 1;
+}
+static void __attribute__((destructor(150)))
+finishfirst(void)
+{
+  REQUIRE(runtime_trace[3] == 1, 158);
+  runtime_trace[3] = 12;
+}
+int
+main(int argc, char **argv)
+{
+  Bootview    view;
+  const char *mode;
+  char        scratch[128], other[128];
+  int         i;
+  REQUIRE(runtime_trace[1] == 123 && !runtime_trace[0], 159);
+  runtime_trace[0] = 1;
+  mode = getenv("MODE");
+  runtime_trace[4] = mode ? (u64) (mode[0] - '0') : argc ? 6 : 0;
+  REQUIRE(!bootcheck(libcboot(), libcboot()->bytes, &view), 160);
+  REQUIRE(argv && !argv[argc] && environ, 161);
+  REQUIRE(!getenv("") && !getenv("X=") && !getenv("MISSING"), 162);
+  if (runtime_trace[4] == 1) {
+    REQUIRE(argc == 3 && !strcmp(argv[0], "runtime") && !strcmp(argv[1], "alpha") &&
+                !strcmp(argv[2], "beta") && !strcmp(getenv("X"), "value"),
+            163);
+    argv[1][0] = 'A';
+    getenv("X")[0] = 'V';
+    REQUIRE(!strcmp(argv[1], "Alpha") && !strcmp(getenv("X"), "Value"), 164);
+    REQUIRE(bootarg(&view, 1, 0)[0] == 'a' && bootarg(&view, 1, 1)[2] == 'v', 165);
+    for (i = 0; i < 30; i++)
+      REQUIRE(!atexit(counted), 166);
+  } else if (runtime_trace[4] == 6) {
+    REQUIRE(argc == 1 && strlen(argv[0]) == BOOT_ARG_BYTES - 25 && !environ[0], 167);
+    argv[0][0] = 'Z';
+    argv[0][BOOT_ARG_BYTES - 26] = 'Z';
+    REQUIRE(bootarg(&view, 0, 0)[0] == 'A' && bootarg(&view, 0, 0)[BOOT_ARG_BYTES - 26] == 'A',
+            168);
+  } else if (!runtime_trace[4])
+    REQUIRE(argc == 0 && !argv[0] && !environ[0], 169);
+  else
+    REQUIRE(argc == 1 && !strcmp(argv[0], "runtime"), 170);
+  runtime_trace[5] = 1;
+  REQUIRE(!atexit(callbackone) && !atexit(callbacktwo), 171);
+  if (runtime_trace[4] == 1)
+    REQUIRE(atexit(counted) != 0 && errno == ENOMEM, 172);
+  errno = EDOM;
+  REQUIRE(!strcmp(strerror(ENOMEM), "Not enough memory") && errno == EDOM &&
+              !strcmp(strerror(9999), "Unknown error"),
+          173);
+  memset(scratch, 0xa5, sizeof(scratch));
+  REQUIRE(memcpy(other, scratch, sizeof(scratch)) == other &&
+              !memcmp(other, scratch, sizeof(scratch)),
+          174);
+  memcpy(scratch, "abcdef", 7);
+  memmove(scratch + 1, scratch, 6);
+  REQUIRE(!memcmp(scratch, "aabcdef", 7), 175);
+  memmove(scratch, scratch + 1, 6);
+  REQUIRE(!memcmp(scratch, "abcdef", 6) && strchr("abc", 'b')[0] == 'b' &&
+              strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
+          176);
+  runtime_trace[6] = 42;
+  if (runtime_trace[4] == 2)
+    exit(0x12a);
+  if (runtime_trace[4] == 3)
+    _exit(0x12a);
+  return 42;
+}

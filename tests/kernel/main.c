@@ -4,7 +4,10 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 39
+#if BOOT_CASE == 40
+  runtimetest();
+  putstr("READY runtime-restored\n");
+#elif BOOT_CASE == 39
   libsysload();
   putstr("READY libsys-restored\n");
 #elif BOOT_CASE == 38

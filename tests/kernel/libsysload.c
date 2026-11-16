@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include <proc.h>
 #include <bootimage.h>
+#include "load.h"
 #include <diag.h>
 extern const u8       libsys_image[], libsys_image_end[];
 typedef struct Packet Packet;
@@ -20,53 +21,18 @@ struct Packet
       panic("libsys user ELF");                                                                    \
     }                                                                                              \
   } while (0)
-static Handle
-resource(Rtable *table, u32 kind)
-{
-  u32 i;
-  for (i = 0; i < table->count; i++)
-    if (table->slots[i].subtype == kind)
-      return handlepack(HANDLE_RESOURCE, table->slots[i].generation, i);
-  panic("libsys fixture resource");
-}
 static void
 load(Handle pid, const Procinfo *peer, u32 client)
 {
   Rtable          *table = proctable(pid);
   const Bootimage *image;
-  const Bootseg   *segments;
-  Handle           space = resource(table, LOCAL_SPACE), allocator = resource(table, LOCAL_ALLOC);
-  Handle           memory, stack, boot, channel, sender;
-  Allocarg         args;
-  Config           config;
-  Packet           packet;
-  u64              i, page, copied;
-  const char      *arg = client ? "client" : "server";
-  const char      *env = "SAMPLE=yes";
+  Handle space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
+  Handle channel, sender;
+  Packet packet;
+  u64    i;
+  const char *arg = client ? "client" : "server";
+  const char *env = "SAMPLE=yes";
   REQUIRE(!bootimagecheck(libsys_image, (u64) (libsys_image_end - libsys_image), &image));
-  segments = (const Bootseg *) (libsys_image + image->segments_off);
-  args.bytes = PAGE_SIZE;
-  args.align = args.minaddr = args.maxaddr = args.reserved = 0;
-  for (i = 0; i < image->segment_count; i++) {
-    const Bootseg *segment = &segments[i];
-    for (page = 0; page < segment->mem_bytes; page += PAGE_SIZE) {
-      args.kind = segment->prot & VM_EXEC ? ALLOC_CODE : ALLOC_DATA;
-      REQUIRE(!localalloc(table, allocator, &args, &memory));
-      if (page < segment->file_bytes) {
-        copied = MIN(PAGE_SIZE, segment->file_bytes - page);
-        REQUIRE(!localwrite(table, memory, 0, libsys_image + segment->file_off + page, copied));
-      }
-      if (segment->prot & VM_EXEC)
-        REQUIRE(!localseal(table, memory));
-      REQUIRE(!localmap(table, space, memory, 0, segment->va + page, PAGE_SIZE, segment->prot));
-    }
-  }
-  args.bytes = 65536;
-  args.kind = ALLOC_DATA;
-  REQUIRE(!localalloc(table, allocator, &args, &stack));
-  REQUIRE(!localmap(table, space, stack, 0, 0x3ffffe0000UL, 65536, VM_READ | VM_WRITE));
-  args.bytes = PAGE_SIZE;
-  REQUIRE(!localalloc(table, allocator, &args, &boot));
   REQUIRE(!localendpoint(table, peer->identity, LOCAL_CALL, LOCAL_USE, 0, 0, &channel));
   REQUIRE(!localendpoint(table, peer->identity, LOCAL_SEND, LOCAL_USE, 0, 0, &sender));
   for (i = 0; i < sizeof(packet); i++)
@@ -95,14 +61,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.resources[2].handle = channel;
   packet.resources[3].tag = 257;
   packet.resources[3].handle = sender;
-  REQUIRE(!localwrite(table, boot, 0, &packet, sizeof(packet)));
-  REQUIRE(!localmap(table, space, boot, 0, 0x3fff000000UL, PAGE_SIZE, VM_READ));
-  config.entry = image->entry;
-  config.stack = 0x3fffff0000UL;
-  config.boot = 0x3fff000000UL;
-  config.bootsz = sizeof(packet);
-  config.sigmask = config.sigdefault = 0;
-  REQUIRE(!procconfigure(pid, &config, 0));
+  testload(pid, libsys_image, (u64) (libsys_image_end - libsys_image), &packet, sizeof(packet));
 }
 void
 libsysload(void)

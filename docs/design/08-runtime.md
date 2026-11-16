@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：设计规格已逐项修订；独立libsys、Boot校验及静态C用户ELF的局部实现/双架构验证见文末与status。csu/libc、普通装载/exec及文件适配尚未完成，不宣称全运行库、性能或CI验收。
+状态：设计规格已逐项修订；独立libsys、基础csu/libc、Boot校验及静态C用户ELF的局部实现/双架构验证见文末与status。完整libc、普通装载/exec及文件适配尚未完成，不宣称全运行库、性能或CI验收。
 
 职责修订：普通 spawn/fork/exec 由调用者 libsys、内核及 FS 等服务协调；ELF 加载逻辑为可复用用户态模块，init 仅复用它启动受管服务。exec 不可撤销点后的完成由新 csu/libsys 接续，不能依赖旧镜像。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -410,3 +410,19 @@ tools/elf.py为构建期ELF64校验/预校验镜像生成器；检查目标、ET
 执行与验收：新增CASE=libsys，两架构真实U/EL0程序只链接libsys，以独立C _start读取合法Boot；核对初始BSS/数据/只读常量、实际资源查询、内存申请/清零/解除/释放、异步/同步CALL、SEND及CALL/SEND类型隔离、四个不同64位业务字（含最高位）、source/image、请求检查/defer/确认及旧RPC失效，最后双方exit42并结清页/Set/引用。host覆盖畸形Boot/表与字符串重叠/资源/fd/16KiB边界、ELF对齐/边界共享/巨型BSS预算/描述畸形；模拟中断返回另核对错误携带原RPC且未用输入为0。
 
 本地完整test-all通过227项host、格式及84个QEMU场景；最终返回区布局和错误RPC反例补齐后再跑完整228项host、格式及两架构libsys。日志归档在build/host/stage32-libsys/。自定义入口验证的是可替换运行时基础；csu/main、可写argv/environ、libc/errno/exit回调、普通用户ELF加载、生产init/启动包和服务清单仍未接，不能称运行库/装载/操作系统已全部完成。
+
+### csu、main与基础libc接续（2026-11-16）
+
+已建立两架构_start汇编与公共csustart，显式输出crt0.o；它只调用libcstart，不放进libsys.a。常规链接顺序为crt0.o、应用对象、libc.a、libsys.a；原自定义C _start继续只链接libsys。user.ld明确将preinit/init/fini数组放到只读段，按初始化优先级排序并保留，入口地址仍是本程序静态ELF中的真实函数地址，不采用内核物理/高半区别名模型。
+
+libsys的私有sysstart先调用完整bootcheck，缓存借用且保持只读的Bootview；启动fd/Fix适配尚未接，非零fd_count/fix_bytes明确NOTSUP。libcenv只负责C参数表示，在目标ELF预付的私有BSS中分别建立argv/environ指针表及可修改字符串，全部复制成功后才公布environ与argc/argv。两张257项指针表和16384字节字符串工作区合计20496字节，计入镜像实际页预算，不在启动时依赖malloc或文件服务；逻辑参数与指针计数仍受既定16KiB限制。空参数得到argv[0]=NULL，空环境得到environ[0]=NULL，字符串不再引用只读Boot。getenv读取当前environ，支持应用替换该指针表；不写errno。
+
+校验/绑定失败由csu经直接退出返回127，不能先执行构造函数或main；有效启动按preinit、init、main进入。main返回调用正常exit。atexit有32个用户槽，libc自己的fini回调不占用户槽；正常exit逆序运行用户回调，之后逆序运行fini数组，最终仅传低8位给内核。_exit直接进入原生exit，跳过上述清理。首版明确：退出已经开始后atexit登记失败且errno=EBUSY，满表为ENOMEM、NULL回调为EINVAL；回调里再次exit直接进入_exit，不承诺递归exit的可移植语义。数量有界不等于能够限制任意用户回调自身的执行时间，stdio/后端刷新与故障收尾尚未接入，不以当前无I/O退出路径宣称它们已完成。
+
+公开基础头现含stdlib.h（exit/atexit/getenv）、unistd.h（_exit/environ）、errno.h及string.h的已实现函数。errno以单线程访问器隔离，每镜像初值0；常量和别名按15冻结全集，不将原生负状态直接当errno。strerror覆盖已冻结错误常量并保留errno，未知值返回固定文本。memcpy/memmove/memset/memcmp/strlen/strcmp/strchr已接，按C调用者有效内存契约操作，不冒充受检查__sys_copy。malloc/stdio/文件API、线程TLS与信号errno保存恢复仍未接。
+
+SDK同时输出libc.a、crt0.o、runtimeuser.elf及预校验镜像，并保留libsysuser.elf。libsys全库仍单独审计无未解析外部运行时符号；libc全库与libsys合并、只为链接脚本数组边界提供审计定义，确认没有隐藏的分配器/格式化或编译器运行时依赖；最终两个独立ELF再次检查实际未解析符号。已消除启动快照结构赋值引入的隐式memcpy，不能靠后续libc链接掩盖libsys反向依赖。
+
+验证：新增CASE=runtime，两架构各实际启动10个常规main镜像。空参数、多参数/环境、精确16KiB参数边界、main返回、exit和_exit均核对实际用户内存轨迹；合法路径5次main、38次atexit回调、8次fini，直接退出不执行清理。畸形字符串、参数超限、资源保留位及尚未支持的fd/Fix内容共5次在构造函数/main前以127退出。另检查32用户回调容量、环境/参数副本不改写原Boot、基础内存/字符串、errno与析构顺序；最后所有Set、页和引用回到基线。可信测试按预校验描述装载并逐页核对权限/普通内存属性，不是普通用户态ELF加载器。
+
+新增8项host覆盖独立参数副本、0/256条目与16KiB边界、初始化失败不公布半份环境、替换environ、正常/直接/递归退出、atexit容量及退出期再登记、完整errno文本/数值与字节内存操作。完整make test-all通过236项host、格式及86个两架构QEMU场景；最后补充条目边界的host重验及独立入口回归见build/host/stage33-runtime/。前次全库审计失败及现场保留，不将其称为通过；生产init/清单、普通ELF装载、fork/exec、fd/stdio/信号等仍待执行，没有CI/硬件/性能验收。
