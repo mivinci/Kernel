@@ -1292,9 +1292,11 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
       if (kind == IPC_CALL && error && !(info.flags & RQ_FINISHED))
         outputs[2] = (u64) rqhandle(id, HANDLE_RPC);
       else {
-        if (!error)
+        if (!error) {
+          outputs[0] = (u64) rqresultkind(id);
           for (i = 0; i < 4; i++)
             outputs[3 + i] = result.message.words[i];
+        }
         if (rqack(id, current->identity, 3))
           panic("synchronous IPC consumption");
       }
@@ -1358,9 +1360,11 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     error = waitresult(id, (u32) args[1], nr == SYS_RQWAIT, &result);
     if (!error) {
       error = (int) result.status;
-      if (!error)
+      if (!error) {
+        outputs[0] = args[1] & RQ_FINISH ? 0 : (u64) rqresultkind(id);
         for (i = 0; i < 4; i++)
           outputs[3 + i] = result.message.words[i];
+      }
     }
     if (rqdrop(id))
       panic("IPC result wait reference release");
@@ -1368,6 +1372,25 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   default:
     return -ERR_NOTSUP;
   }
+}
+
+int
+procreplyresource(Rtable *source, Handle request, const Resreply *reply)
+{
+  Proc *service, *caller;
+  int   error;
+  if (!source)
+    return -ERR_BAD_HANDLE;
+  service = find(source->owner);
+  if (!service || source != &service->resources || service->resources.image != source->image ||
+      (service->state != PROC_READY && service->state != PROC_RUNNING &&
+       service->state != PROC_BLOCKED))
+    return -ERR_BAD_HANDLE;
+  caller = requestcaller(request);
+  error = rqreplyresource(&service->incoming, source, request, reply);
+  if (!error)
+    wakeone(caller);
+  return error;
 }
 
 /* IRQs remain masked through resolution and publication. No borrowed target

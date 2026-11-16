@@ -4,12 +4,13 @@
 #include "load.h"
 #include <diag.h>
 extern const u8       libsys_image[], libsys_image_end[];
+extern const u64      libsys_resource_address;
 typedef struct Packet Packet;
 struct Packet
 {
   Boot     header;
   Strref   argv, env;
-  Resentry resources[5];
+  Resentry resources[6];
   char     arg[8], environment[16];
 };
 #define REQUIRE(c)                                                                                 \
@@ -27,7 +28,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   Rtable          *table = proctable(pid);
   const Bootimage *image;
   Handle space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
-  Handle channel, sender, management;
+  Handle channel, sender, management, backend;
   Packet packet;
   Config reserve;
   u64    i;
@@ -38,6 +39,12 @@ load(Handle pid, const Procinfo *peer, u32 client)
   REQUIRE(!localendpoint(table, peer->identity, LOCAL_SEND, LOCAL_USE, 0, 0, &sender));
   REQUIRE(!localcontrol(table, peer->life, CONTROL_INSTALL | CONTROL_REVOKE | CONTROL_QUERY,
                         &management));
+  {
+    Procinfo self;
+    REQUIRE(!procinfo(pid, &self));
+    REQUIRE(
+        !localendpoint(table, self.identity, LOCAL_CALL, LOCAL_USE | LOCAL_GRANT, 0, 0, &backend));
+  }
   for (i = 0; i < sizeof(packet); i++)
     ((u8 *) &packet)[i] = 0;
   for (i = 0; i < sizeof(Boot); i++)
@@ -46,7 +53,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.header.argc = packet.header.envc = 1;
   packet.header.argv_off = offsetof(Packet, argv);
   packet.header.env_off = offsetof(Packet, env);
-  packet.header.resource_count = 5;
+  packet.header.resource_count = 6;
   packet.header.resources_off = offsetof(Packet, resources);
   packet.argv.offset = offsetof(Packet, arg);
   packet.argv.length = 7;
@@ -66,6 +73,8 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.resources[3].handle = sender;
   packet.resources[4].tag = 258;
   packet.resources[4].handle = management;
+  packet.resources[5].tag = 259;
+  packet.resources[5].handle = backend;
   testload(pid, libsys_image, (u64) (libsys_image_end - libsys_image), &packet, sizeof(packet));
   reserve.entry = image->entry;
   reserve.stack = 0x3fffff0000UL;
@@ -85,7 +94,10 @@ libsysload(void)
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u32        i, ended, turns = 0, source_cleaned = 0;
+  u32        i, ended, turns = 0, source_cleaned = 0, resource_commits = 0;
+  Rtable    *service;
+  u64        handoff[16];
+  Resreply   descriptor;
   int        error;
   pgstat(&before);
   for (i = 0; i < 2; i++) {
@@ -94,9 +106,26 @@ libsysload(void)
   }
   load(pids[0], &info[1], 1);
   load(pids[1], &info[0], 0);
+  service = proctable(pids[1]);
   REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]));
   do {
     REQUIRE(!procrunone() && ++turns < 64);
+    REQUIRE(!spaceread(info[1].space, libsys_resource_address, handoff, sizeof(handoff)));
+    if (handoff[0] && handoff[0] != resource_commits) {
+      u64 done;
+      REQUIRE(handoff[0] == resource_commits + 1 && handoff[0] <= 2);
+      descriptor.source = (Handle) handoff[2];
+      descriptor.rights = handoff[3];
+      descriptor.offset = handoff[4];
+      descriptor.length = handoff[5];
+      for (i = 0; i < 3; i++)
+        descriptor.business[i] = handoff[6 + i];
+      /* A typed trusted bridge exercises the commit without inventing the
+         still-unconfirmed syscall descriptor-pointer register. */
+      REQUIRE(!procreplyresource(service, (Handle) handoff[1], &descriptor));
+      done = ++resource_commits;
+      REQUIRE(!spacewrite(info[1].space, libsys_resource_address + 10 * 8, &done, sizeof(done)));
+    }
     ended = 0;
     for (i = 0; i < 2; i++) {
       REQUIRE(!lifestat(info[i].life, &life));
@@ -129,6 +158,7 @@ libsysload(void)
     }
     REQUIRE(!error && !lifecollect(info[i].life, 1, &result) && result.code == 42);
   }
+  REQUIRE(resource_commits == 2);
   REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
   for (i = 0; i < 2; i++)
     REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
@@ -137,6 +167,8 @@ libsysload(void)
           !acctcheck());
   putstr("LIBSYSCHECK actors=");
   puthex(2);
+  putstr(" resource=");
+  puthex(resource_commits);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

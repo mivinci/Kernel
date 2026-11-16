@@ -733,3 +733,19 @@ QUEUED取消、机制强制终结或普通reply在唯一terminal提交点按原�
 terminate两架构真实载荷另让同步CALL和异步RQWAIT调用者带MEM/CALL接收同意，在被管理强杀时归还普通接收槽；旧Rq仍DRAINING，随后实际服务finish，运行槽/账目回收保持既有断言。procs两架构覆盖0/1/8预付成功、9无效及满表时有效Config替换失败不改变原PC/镜像reserve。6项host覆盖保底优先/原槽归还、旧Handle隐藏、满表与错误主体入队前失败、ACCEPTED取消保留、服务死亡与独立收尾、旧镜像结束后新表重绑及迟到reply。
 
 原生REPLY_RESOURCE仍NOTSUP：06缺少Resreply指针所在寄存器的精确定义，已向用户提出“reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)”的a1/x1方案，待确认后再实现。56字节布局/允许SHARED MEM与CALL范围本身不变；不得用普通reply、grant或直接表操作冒充资源回复原子安装。本地完整261项host、格式及92个两架构QEMU通过；增加服务死亡独立收尾反例后完整262项host、格式及两架构terminate专项再验通过，日志build/host/stage41-receive-slots/。资源reply安装、fork/exec保底交接、信号和DMA安全仍待执行。
+
+### 类型化资源提交核心接续（2026-11-16）
+
+已将既定Resreply56布局写入abi/ipc.h，并实现localreplycheck/localdeliver、rqreplyresource和类型化procreplyresource提交核心。服务源表必须匹配真实REQUEST接收者的PID/image且仍ACTIVE，接收种类只取Rq接受时保存的CALL选项；没有同意的普通CALL即使有空保底也不能被强行安装。来源只允许SHARED MEM的R/RW页窗口或CALL USE，源须含GRANT，禁止私有DATA/CODE、EXEC/SEAL/DMA、再次GRANT及准备期加载MEM逃逸；CALL的offset/length必须0。
+
+提交先验证源权限/对象、调用者原Image及请求预留槽的Rq代次/表epoch，再取得一份独立引用。取引用是最后可失败步骤；成功后在同一IRQ屏蔽短事务消耗对应保底计数（普通预留不扣保底）、原槽publish新Handle（代次推进）、保存kind=4/Handle+三业务字并完成服务回复。成功槽成为普通Local，后续free不恢复保底；不占新表或第129槽。Rq仍192字节，Resreply仅是有界栈快照，无新对象池/offer或第二份结果。
+
+ACK/RELEASE只确认Rq，不持有/释放已安装的MEM/CALL；接收者自己的Local/映射责任独立。资源先提交后晚到cancel不撤回，rqpoll/rqwait重复读取同一kind/Handle不再次安装。同步CALL在自动ACK前固定kind与四字结果；异步查询保存同样的kind，RQ_FINISH查询仍返回空普通结果，不能把独立收尾查询当作再一次资源交付。
+
+ACCEPTED协作取消保留槽，合法资源回复可按既定规则提交实际结果。调用者终结/镜像替换先强制TERMINAL时槽已经归还，合法迟到资源描述符只完成旧服务责任，不取对象引用、不写新表、不改变旧终态；非法描述符仍报错且不能假造finished。REQUEST已完成、错误接收者或错误来源表拒绝。CALL目标结束后新入口仍绑定旧Image，不跟随新镜像。
+
+边界：原生REPLY_RESOURCE描述符寄存器位置仍待用户确认，syscall解码继续NOTSUP；没有把候选a1/x1位置先写成可用ABI。QEMU使用一个明确的可信类型化桥：真实用户服务recv/defer后把已冻结字段写到其私有测试区并yield，可信CPU用spaceread取得Resreply，再调用上述提交核心，最后唤醒真实用户调用者。它不是用户态可用的新交付syscall或内核服务实现，测试不能冒充已接通原生资源reply。确认参数位置后应把同一核心接到用户指针整区预检/一次快照与libsys封装，而不是另写一套安装逻辑。
+
+验证：libsys两架构跨Set场景新增两次核心提交。异步MEM结果由真实rqpoll/rqwait读到kind4，保留三个64位业务字（含最高位），ACK后仍可map并读原页；无GRANT/只授页窗口，不能再grant。同步CALL结果在内核自动ACK后仍有可用后端USE入口，调用它得到真实业务303，free后旧Handle拒绝。原SHARED出资者退出/最后unmap及全部页/Set归零断言继续成立。
+
+6项新增host覆盖保底变普通/重复回复与查询无第二次安装、ACK独立引用、CALL固定后端及无GRANT、私有/超权/坏窗口/错接收者描述符原子拒绝、ACCEPTED取消后成功交付、CALL目标Image.cleanup计数耗尽OVERFLOW时不消耗槽/可重试、旧镜像表重绑后的合法/非法迟到资源回复，以及普通CALL不能被强装。本地完整267项host、格式及92个两架构QEMU通过；补齐普通CALL不能强装与迟到/重复引用反例后完整268项host、格式通过，日志build/host/stage42-resource-core/。两架构实际嵌入镜像/SDK/当前用户源码哈希一致；原生描述符输入、资源reply_recv（禁止）、实际exec、信号重启、DMA安全、FS连接补偿及性能/CI仍未完成。

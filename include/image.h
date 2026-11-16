@@ -35,6 +35,7 @@ STATIC_ASSERT(sizeof(Image) == 64, image_budget);
 int imagecreate(Lifeid life, u64 sourceimage, Imageid *out);
 int imageorigin(Imageid id, u64 sourceimage);
 int imagereserve(Imageid id, u32 count);
+int imageusefloor(Imageid id);
 int imageactivate(Imageid id);
 int imageend(Imageid id, u32 reason);
 int imagehold(Imageid id, u32 kind);

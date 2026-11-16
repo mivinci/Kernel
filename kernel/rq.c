@@ -10,6 +10,7 @@
 #define RF_ORPHAN         512
 #define RF_RECV_MEM       4096
 #define RF_RECV_CALL      8192
+#define RF_RESOURCE_REPLY 16384
 typedef struct Rq Rq;
 struct Rq
 {
@@ -429,6 +430,58 @@ rqreply(Rmail *mail, Handle request, const Msg *reply)
     return -ERR_STATE;
   finishowned(mail, r);
   return 0;
+}
+int
+rqreplyresource(Rmail *mail, Rtable *source, Handle request, const Resreply *reply)
+{
+  Rq    *r = received(mail, request);
+  Image  service;
+  Msg    message;
+  Handle handle;
+  u32    kind, i;
+  int    error;
+  if (!r)
+    return -ERR_BAD_HANDLE;
+  if (!source || source->state != LOCAL_OPEN || imagestat(mail->image, &service) ||
+      service.state != IMAGE_ACTIVE || source->owner != service.pid ||
+      source->image != service.number)
+    return -ERR_BAD_HANDLE;
+  kind = r->flags & RF_RECV_MEM ? LOCAL_MEM : r->flags & RF_RECV_CALL ? LOCAL_CALL : 0;
+  error = localreplycheck(source, kind, reply);
+  if (error)
+    return error;
+  if (r->state == RQ_TERMINAL) {
+    /* Forced termination already returned the receive slot. A valid late
+       descriptor can finish service responsibility, never install into a new table. */
+    finishowned(mail, r);
+    return 0;
+  }
+  if (r->state != RQ_ACCEPTED || !r->receiving)
+    return -ERR_STATE;
+  error = localdeliver(source, kind, reply, r->receiving, r->callerid,
+                       handlepack(HANDLE_RPC, r->generation, (u32) (r - requests)), r->resource,
+                       &handle);
+  if (error)
+    return error;
+  r->receiving = NULL;
+  r->resource = 0xffffU;
+  message.words[0] = (u64) handle;
+  for (i = 0; i < 3; i++)
+    message.words[i + 1] = reply->business[i];
+  r->flags |= RF_RESOURCE_REPLY;
+  terminal(r, 0, &message);
+  finishowned(mail, r);
+  return 0;
+}
+int
+rqresultkind(Rqid id)
+{
+  Rq *r = find(id);
+  if (!r)
+    return -ERR_STALE;
+  return r->state == RQ_TERMINAL && !r->status && (r->flags & RF_RESOURCE_REPLY)
+             ? IPC_RESOURCE_REPLY
+             : IPC_NONE;
 }
 int
 rqfinish(Rmail *mail, Handle request)

@@ -753,6 +753,85 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
   return error;
 }
 int
+localreplycheck(Rtable *source, u32 kind, const Resreply *reply)
+{
+  Local *entry;
+  Mem    backing;
+  Image  image;
+  if (!reply)
+    return -ERR_INVALID;
+  entry = find(source, reply->source, 0);
+  if (!entry)
+    return -ERR_BAD_HANDLE;
+  if (!(entry->rights & LOCAL_GRANT) || reply->rights & ~entry->rights || entry->subtype != kind)
+    return -ERR_DENIED;
+  if (kind == LOCAL_MEM) {
+    if (entry->source == LOCAL_LOAD ||
+        (reply->rights != VM_READ && reply->rights != (VM_READ | VM_WRITE)))
+      return -ERR_DENIED;
+    if (!reply->length || (reply->offset | reply->length) & PAGE_MASK)
+      return -ERR_INVALID;
+    if (!window(entry, reply->offset, reply->length))
+      return -ERR_DENIED;
+    if (memstat(memory(entry), &backing))
+      return -ERR_STALE;
+    if (backing.state != MEM_SHARED || !backing.managers)
+      return -ERR_DENIED;
+  } else if (kind == LOCAL_CALL) {
+    if (reply->rights != LOCAL_USE)
+      return -ERR_DENIED;
+    if (reply->offset || reply->length)
+      return -ERR_INVALID;
+    if (imagestat(endpoint(entry), &image))
+      return -ERR_STALE;
+    if (image.state == IMAGE_ENDED)
+      return -ERR_PEER;
+  } else
+    return -ERR_DENIED;
+  return 0;
+}
+int
+localdeliver(Rtable *source, u32 kind, const Resreply *reply, Rtable *target, Imageid id,
+             Handle rpc, u16 index, Handle *out)
+{
+  Local *entry, *slot;
+  Image  image;
+  u32    floor;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  error = localreplycheck(source, kind, reply);
+  if (error)
+    return error;
+  if (!target || target->state != LOCAL_OPEN || index >= target->count ||
+      handletype(rpc) != HANDLE_RPC || ownedimage(target, id, &image) ||
+      image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  slot = &target->slots[index];
+  if (slot->subtype != LOCAL_RECEIVE || slot->objectgen != handlegen(rpc) ||
+      slot->object != handleindex(rpc) || slot->offset != target->epoch ||
+      slot->length != image.number)
+    return -ERR_STATE;
+  if (slot->generation == HANDLE_GENERATION_MAX)
+    return -ERR_OVERFLOW;
+  floor = slot->source;
+  if (floor && !image.reserve)
+    return -ERR_STATE;
+  entry = find(source, reply->source, kind);
+  /* Ref acquisition is the last fallible step. No IRQ/checkpoint can change
+     the exact request slot or either table between validation and publication. */
+  error = kind == LOCAL_MEM ? convert(memhold(memory(entry)))
+                            : imagehold(endpoint(entry), IMAGE_CLEANUP);
+  if (error)
+    return error;
+  if (floor && imageusefloor(id))
+    panic("resource reply floor ownership");
+  publish(target, slot, kind, entry->objectgen, entry->object, reply->rights, reply->offset,
+          reply->length, LOCAL_FORK, 3, out);
+  return 0;
+}
+int
 localalloc(Rtable *t, Handle h, const Allocarg *a, Handle *out)
 {
   Local   *l = find(t, h, 0);

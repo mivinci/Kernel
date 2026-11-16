@@ -5,6 +5,7 @@
 #include <handle.h>
 #include <abi/mem.h>
 #include <abi/proc.h>
+#include <abi/ipc.h>
 #include <prepid.h>
 #include <image.h>
 #define LOCALS          128
@@ -70,6 +71,10 @@ int localreserve(Rtable *table, Imageid image, u32 count);
    before caller death has returned every outstanding receive slot. */
 int localreceive(Rtable *table, Imageid image, Handle rpc, u16 *slot);
 int localreturn(Rtable *table, Imageid image, Handle rpc, u16 slot);
+/* Typed cold path; only the request layer supplies target/slot and consent. */
+int localreplycheck(Rtable *source, u32 kind, const Resreply *reply);
+int localdeliver(Rtable *source, u32 kind, const Resreply *reply, Rtable *target, Imageid image,
+                 Handle rpc, u16 slot, Handle *out);
 /* Trusted boot policy installation; no native creation admission here. */
 int localcreate(Rtable *table, const Createpolicy *policy, Handle *out);
 int localcreator(Rtable *table, Handle authority, Createpolicy *out);

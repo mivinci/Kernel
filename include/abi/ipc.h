@@ -2,12 +2,21 @@
 #define _ABI_IPC_H
 #ifndef __ASSEMBLER__
 #include <types.h>
+#include <abi/base.h>
 typedef struct Msg Msg;
 struct Msg
 {
   u64 words[4];
 };
 STATIC_ASSERT(sizeof(Msg) == 32, msg_size);
+typedef struct Resreply Resreply;
+struct Resreply
+{
+  Handle source;
+  u64    rights, offset, length, business[3];
+};
+STATIC_ASSERT(sizeof(Resreply) == 56, resource_reply_size);
+STATIC_ASSERT(offsetof(Resreply, business) == 32, resource_reply_business);
 #endif
 #define RQ_QUEUED           1
 #define RQ_ACCEPTED         2

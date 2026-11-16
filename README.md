@@ -161,3 +161,5 @@ init场景另覆盖组wait的BLOCKED和结果唤醒READY两种续点被CONTROL t
 SHARED内存已接原生alloc和受权跨Set grant/map，默认SELF_ALLOC为DATA/SHARED/CODE。libsys两架构场景使用两个Set验证子窗口共享写、撤权后既有映射保留、原出资进程清理/收取后仍保留3页旧Acct费用，以及接收者最后unmap才结清。私有DATA/CODE仍不跨Acct，SHARED不可执行/封存；资源reply、DMA和fork/exec共享继承仍未接。
 
 configure现可为镜像预付0..8个资源回复保底空槽；CALL_RECV_MEM/CALL会在入队前优先借保底、再借普通空槽。libsys真实载荷验证满表、QUEUED取消归还、ACCEPTED取消保留及普通回复归还；terminate另验证调用者强杀回收。资源reply安装仍待Resreply指针参数位置确认，REPLY_RESOURCE仍NOTSUP，不将空槽预留当作资源已交付。
+
+类型化资源提交核心现可将SHARED MEM/CALL USE安装到原请求预留槽，ACK不回收资源、重复查询不重装。libsys两架构以可信CPU桥提交冻结描述符，验证真实调用者的异步MEM/同步CALL kind=4与可用授权；桥不是原生reply解码，REPLY_RESOURCE仍因参数位置待确认而NOTSUP。

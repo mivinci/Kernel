@@ -64,10 +64,12 @@ int     procdestroy(Handle pid);
 int     procrunone(void);
 Rtable *proccurrent(struct Hctx *frame);
 isize   procipc(u64 number, const u64 args[7], u64 outputs[8]);
-int     procidentity(Handle *pid, u64 *image, Handle *parent);
-void    procyield(void);
-void    procpausevm(void);
-void    procresumevm(void);
+/* Typed resource commit; syscall descriptor decoding is a separate ABI step. */
+int  procreplyresource(Rtable *source, Handle request, const Resreply *reply);
+int  procidentity(Handle *pid, u64 *image, Handle *parent);
+void procyield(void);
+void procpausevm(void);
+void procresumevm(void);
 /* Called on the running thread after complete user state has been saved. */
 NORETURN void procexit(u32 reason, u32 code, const Lifefault *fault);
 /* One cleanup phase or bounded Local/Mmap batch; off the target stack. */

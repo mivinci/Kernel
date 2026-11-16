@@ -90,6 +90,17 @@ imagereserve(Imageid id, u32 count)
   return 0;
 }
 int
+imageusefloor(Imageid id)
+{
+  Image *image = find(id);
+  if (!image)
+    return -ERR_STALE;
+  if (image->state != IMAGE_ACTIVE || !image->reserve)
+    return -ERR_STATE;
+  image->reserve--;
+  return 0;
+}
+int
 imageactivate(Imageid id)
 {
   Image *image = find(id);

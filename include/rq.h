@@ -90,6 +90,8 @@ int    rqlookup(Handle rpc, Imageid caller, Rqid *out);
 int    rqrecv(Rmail *mail, Rqrecv *out);
 int    rqdefer(Rmail *mail, Handle request);
 int    rqreply(Rmail *mail, Handle request, const Msg *reply);
+int    rqreplyresource(Rmail *mail, struct Rtable *source, Handle request, const Resreply *reply);
+int    rqresultkind(Rqid id);
 int    rqfinish(Rmail *mail, Handle request);
 int    rqcheck(Rmail *mail, Handle request);
 int    rqsource(Rmail *mail, Handle request, Imageid *out);

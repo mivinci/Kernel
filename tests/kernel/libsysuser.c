@@ -275,6 +275,134 @@ receiveserver(const Bootview *view)
   words.words[0] = 113;
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
+volatile u64 resource_trace[16];
+static void
+publishresource(Handle request, const Resreply *reply, u64 stage)
+{
+  u32 i;
+  u64 state;
+  resource_trace[1] = (u64) request;
+  resource_trace[2] = (u64) reply->source;
+  resource_trace[3] = reply->rights;
+  resource_trace[4] = reply->offset;
+  resource_trace[5] = reply->length;
+  for (i = 0; i < 3; i++)
+    resource_trace[6 + i] = reply->business[i];
+  resource_trace[10] = 0;
+  resource_trace[0] = stage;
+  /* The test CPU copies this frozen descriptor and invokes the typed kernel
+     core. No unconfirmed reply descriptor register ABI is exercised here. */
+  REQUIRE(!__sys_yield() && resource_trace[10] == stage, 210);
+  REQUIRE(ipc_rqcheck(request, &state) == -ERR_BAD_HANDLE, 211);
+}
+static void
+typedserver(const Bootview *view)
+{
+  Ipcmsg   received;
+  Allocarg arg;
+  Maparg   map;
+  Resreply reply;
+  Msg      words;
+  Handle   memory, space = bootresource(view, BOOT_SELF_SPACE);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 200, 212);
+  REQUIRE(!ipc_defer(received.request), 213);
+  arg.bytes = 3 * PAGE_SIZE;
+  arg.kind = ALLOC_SHARED;
+  arg.align = arg.minaddr = arg.maxaddr = arg.reserved = 0;
+  REQUIRE(!__sys_alloc(bootresource(view, BOOT_SELF_ALLOC), &arg, &memory), 214);
+  map.mem = memory;
+  map.offset = 0;
+  map.address = 0x1100000;
+  map.length = arg.bytes;
+  map.prot = MAP_READ | MAP_WRITE;
+  map.reserved = 0;
+  REQUIRE(!__sys_map(space, &map), 215);
+  *(volatile u64 *) (0x1100000 + PAGE_SIZE) = UINT64_C(0x123456789abcdef0);
+  reply.source = memory;
+  reply.rights = MAP_READ | MAP_WRITE;
+  reply.offset = PAGE_SIZE;
+  reply.length = PAGE_SIZE;
+  reply.business[0] = 17;
+  reply.business[1] = 23;
+  reply.business[2] = UINT64_C(0x8000000000000042);
+  publishresource(received.request, &reply, 1);
+  REQUIRE(!__sys_unmap(space, 0x1100000) && !__sys_free(memory), 216);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 201, 217);
+  REQUIRE(!ipc_defer(received.request), 218);
+  reply.source = bootresource(view, 259);
+  reply.rights = 1;
+  reply.offset = reply.length = 0;
+  publishresource(received.request, &reply, 2);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 202, 219);
+  words.words[0] = 303;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_reply(received.request, &words), 220);
+}
+static void
+checkreceived(Handle handle, u64 subtype, u64 offset, u64 length)
+{
+  Queryrec rows[4];
+  u64      cursor = 0, count, next, i, found = 0;
+  do {
+    REQUIRE(!__sys_query(0, QUERY_RESOURCE, cursor, rows, 4, &count, &next), 221);
+    for (i = 0; i < count; i++)
+      if ((Handle) rows[i].data[0] == handle) {
+        REQUIRE(rows[i].data[1] == subtype && rows[i].data[2] == (subtype == 4 ? 3U : 1U) &&
+                    rows[i].data[3] == offset && rows[i].data[4] == length && rows[i].data[5] == 1,
+                222);
+        found++;
+      }
+    cursor = next;
+  } while (cursor);
+  REQUIRE(found == 1, 223);
+}
+static void
+typedclient(const Bootview *view, Handle peer)
+{
+  Msg    words;
+  Ipcmsg result;
+  Handle rpc, memory, backend, space = bootresource(view, BOOT_SELF_SPACE), denied;
+  Maparg map;
+  words.words[0] = 200;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0, 224);
+  rpc = result.request;
+  REQUIRE(!ipc_rqwait(rpc, 0, &result) && result.kind == IPC_RESOURCE_REPLY && !result.source &&
+              !result.request && !result.image,
+          225);
+  REQUIRE(result.words[1] == 17 && result.words[2] == 23 &&
+              result.words[3] == UINT64_C(0x8000000000000042),
+          226);
+  memory = (Handle) result.words[0];
+  checkreceived(memory, 4, PAGE_SIZE, PAGE_SIZE);
+  REQUIRE(!ipc_rqcancel(rpc) && !ipc_rqpoll(rpc, 0, &result) && result.kind == IPC_RESOURCE_REPLY &&
+              (Handle) result.words[0] == memory,
+          227);
+  REQUIRE(!ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE), 228);
+  map.mem = memory;
+  map.offset = PAGE_SIZE;
+  map.address = 0x1000000;
+  map.length = PAGE_SIZE;
+  map.prot = MAP_READ | MAP_WRITE;
+  map.reserved = 0;
+  REQUIRE(!__sys_map(space, &map) && *(volatile u64 *) 0x1000000 == UINT64_C(0x123456789abcdef0),
+          229);
+  REQUIRE(__sys_grant(bootresource(view, 258), memory, 1, PAGE_SIZE, PAGE_SIZE, 1, &denied) ==
+                  -ERR_DENIED &&
+              !denied,
+          230);
+  REQUIRE(!__sys_unmap(space, 0x1000000) && !__sys_free(memory), 231);
+  words.words[0] = 201;
+  REQUIRE(!ipc_call(peer, &words, CALL_RECV_CALL, &result) && result.kind == IPC_RESOURCE_REPLY &&
+              !result.request && !result.source && !result.image,
+          232);
+  backend = (Handle) result.words[0];
+  checkreceived(backend, 5, 0, 0);
+  words.words[0] = 202;
+  REQUIRE(!ipc_call(backend, &words, 0, &result) && !result.kind && result.words[0] == 303, 236);
+  REQUIRE(!__sys_free(backend), 237);
+  REQUIRE(ipc_call(backend, &words, 0, &result) == -ERR_BAD_HANDLE, 238);
+}
 NORETURN void
 _start(const Boot *boot)
 {
@@ -319,6 +447,10 @@ _start(const Boot *boot)
     receiveclient(&view, peer);
   else
     receiveserver(&view);
+  if (client)
+    typedclient(&view, peer);
+  else
+    typedserver(&view);
   if (client) {
     REQUIRE(!ipc_call(peer, &words, CALL_ASYNC, &result) && result.request > 0, 118);
     checkempty(&result, 1);
