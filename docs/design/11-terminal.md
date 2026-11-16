@@ -374,3 +374,16 @@ Termarg位：iflag ICRNL=1；oflag OPOST=1、ONLCR=2；lflag ICANON=1、ECHO=2�
 
 验收：tty 不阻塞在长期 serial call 上，输入输出均有进展；无空闲中断风暴；控制终端标识不绕过资源授权；旧终端身份失效。
 使用单串口，验证本轮定义的会话/组/信号语义，不以仅杀单个前台 PID 通过验收；不宣称完整 POSIX 兼容。
+
+
+### 信号预付接续与帧身份开放问题（2026-11-16）
+
+已接可信sigreserve/sigrelease及每运行槽固定2份有类型Sigctx和动作表；记录含完整HAL用户整数/FP现场、动作快照、Rq/等待身份及三个掩码责任，当前RV64每份704字节、ARM64每份960字节，均16字节对齐且低于1024预算。不是用户Sigframe布局，不能把内核记录直接复制给用户。预付存储随编译容量驻留BSS，不临时在信号/低内存路径申请页面或引入通用对象池。
+
+每份预付绑定完整PID、镜像号与Imageid，持独立Image cleanup引用；同运行槽其他PID/镜像不能借用。ACTIVE镜像禁止提前释放，构造失败或ENDED镜像的CPU离栈清理才解除；当前没有激活帧或保留Rq责任，出现这类责任时拒绝释放，未来递送实现必须先明确退栈/转交，不能沿用空帧假设丢弃责任。原生sigaction/递送/sigreturn、STOP/CONT尚未接。
+
+- [x] 5项host在两种上下文布局检查固定2层、重复预付不多持引用、ACTIVE不可释放、完整镜像隔离、全运行槽容量、cleanup引用耗尽的原子失败，以及退出结果不继续占预付存储。
+- [x] 两架构sigreserve在真实Proc构造中注入早期费用不足和晚期资源槽不足，均回滚Sigctx/Image/Rq/Life/页/费用。实际U/EL0 exit42后仅到CPU清理phase2才解除预付，随后仍持观察的旧Image和新PID/同运行槽互不误选。
+- [x] 完整202项host、格式及80个QEMU场景通过，日志`build/host/stage27-signal-reserve/test-all.log`。当前normal仍只初始化停机，不模拟init或处理函数，不称信号递送或sigreturn通过。
+
+开放问题：既定sigreturn只接受frame地址，而固定栈地址可被重复使用；前缀只有depth/previous/mask和保留字，无法区分同地址的旧帧副本。已询问用户是否把offset48的一个reserved改为单调cookie，在内核预付槽跨PID/image复用时不重置，校验最上层地址/depth/cookie；保持64字节前缀和TF/FP偏移。此项待回复，当前没有Sigframe/sigreturn代码，未改变冻结的前缀。cookie仅区分未更新的旧帧副本，不替代对可修改寄存器、特权位和mask的独立校验。

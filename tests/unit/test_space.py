@@ -27,8 +27,11 @@ class AddressSpaceTests(unittest.TestCase):
             command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
                        '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
                        *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'group.c', 'image.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'pgt.c', 'mem.c', arch + '/vm.c')],
+                       *[str(ROOT / 'kernel' / x) for x in getattr(cls, 'extra_sources', ())],
                        str(shim), '-o', str(path)]
             command += list(getattr(cls, 'extra_flags', ()))
+            if getattr(cls, 'context_layout', False):
+                command += ['-D__riscv=1'] if arch == 'riscv' else ['-D__aarch64__=1']
             if sys.platform == 'darwin':
                 sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
                 command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]

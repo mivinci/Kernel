@@ -1248,3 +1248,11 @@ Rmail利用原有尾部空间增加limit，仍64字节；rqmailconfigure仅允�
 - [x] 两架构createauth在真实内核环境构造三代不可运行Proc，验证同Set/额度不复制、授权释放独立、满表回滚和旧Handle隔离；并用真实Life/Image/Rq走pending=1/2的接收/defer/回复/ACK与完整回收。
 - [ ] 本场景是可信内核机制验收，不是U/EL0原生create。Sigctx必需预付、原生Createarg身份准入、SERVICE CONTROL输出和加载路径仍待接；正常镜像未启动模拟init。
 - [x] 完整197项host、格式及78个QEMU场景通过，日志`build/host/stage26-create-authority/test-all.log`。新Set/Local/Rmail机制不称完整原生create或用户装载通过。
+
+
+### 构造与退出的Sigctx预付接续（2026-11-16）
+
+procnew在取得Image后、Rq/账目/栈之前预付该运行槽的2份Sigctx，新增失败出口按相反顺序解除；只有完整预付成功的Proc才可被可信调用者取得。Sigctx独立保留Image身份，构造回滚先退预付再end/detach镜像。退出或取消由CPU清理phase2、释放原内核栈前解除预付；旧Life结果/观察继续保留时不阻碍该运行索引的全新预付。Proc仍512字节，未在其中增加整份现场或指针表。实际记录预算、局部验证及待确认的用户帧cookie问题见11末尾。
+
+- [x] 两架构实际构造失败和用户exit路径验证Sigctx责任；旧合法Image仍在但预付已解除时返回STALE，不改绑新PID/image。
+- [ ] 原生Createarg身份核验、SERVICE输出、construct加载及完整创建准入仍待接；预付不代表信号投递/STOP/CONT/sigreturn已完成。

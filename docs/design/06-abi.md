@@ -316,3 +316,5 @@ LIFE/ACCT query接续（2026-11-16）：已接kind=4/3的自身或固定CONTROL 
 
 
 RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主体的匹配端，stamp为本条Rq索引/代次，next为下一可见条目；不授予RPC/REQUEST或跨主体权。data前7字仍按已有表，status以s64位模式存入data[5]，未终结不据0声称已成功；flags仅低4个既有责任/取消位，其余字0。RQ阶段/标志的唯一公共常量源为abi/ipc.h，所有内部通知/恢复/队列标志及消息内容均不输出。自身限定当前镜像且排除已完成的接收责任，固定CONTROL QUERY可看其Life保留历史，具体范围及验证见04末尾。
+
+信号预付接续（2026-11-16）：共享Sigact48布局和已冻结kind/flags已落在abi/signal.h，不代表sigaction可用。Sigframe前缀offset48改为单调cookie的提案仍待用户确认，见11末尾；当前未实现或扩展sigreturn。

@@ -9,6 +9,7 @@
 #include <hal/irq.h>
 #include <abi/syscall.h>
 #include <event.h>
+#include <signal.h>
 
 typedef struct Proc     Proc;
 typedef union Procstage Procstage;
@@ -145,9 +146,12 @@ procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *ou
   error = imagecreate(p->life, 0, &p->identity);
   if (error)
     goto failedlife;
-  error = rqreserve(&p->outgoing, p->life, 0);
+  error = sigreserve(p->identity);
   if (error)
     goto failedimage;
+  error = rqreserve(&p->outgoing, p->life, 0);
+  if (error)
+    goto failedsignals;
   if (rqmailinit(&p->incoming, p->identity))
     panic("process inbox reuse");
   error = acctcreate(set, limit, peak, &p->acct);
@@ -211,6 +215,9 @@ failedacct:
 failedmail:
   if (rqmailclose(&p->incoming, 32) || rqquotaend(&p->outgoing))
     panic("process request rollback");
+failedsignals:
+  if (sigrelease(p->identity))
+    panic("process signal rollback");
 failedimage:
   if (imageend(p->identity, IMAGE_ABORT) || imagedetach(p->identity))
     panic("process image rollback");
@@ -547,6 +554,8 @@ procclean(Handle pid)
     if (!error)
       p->phase++;
   } else if (p->phase == 2) {
+    if (sigrelease(p->identity))
+      panic("process signal cleanup");
     for (i = 0; i < sizeof(p->kernel); i++)
       ((u8 *) &p->kernel)[i] = 0;
     if (kstackdrop(p->stack) || kstackfree(p->stack))

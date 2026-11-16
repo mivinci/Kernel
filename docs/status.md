@@ -21,7 +21,7 @@
 
 ## 本地验证与边界
 
-- `make test-all`通过197项host、格式及78个QEMU场景（两架构各37个基础场景，加4个RAM/virtio配置），日志`build/host/stage26-create-authority/test-all.log`；diff检查通过。
+- `make test-all`通过202项host、格式及80个QEMU场景（两架构各38个基础场景，加4个RAM/virtio配置），日志`build/host/stage27-signal-reserve/test-all.log`；diff检查通过。
 - timer场景验证两个无主动syscall忙循环、完整用户整数/FP及ARM标志保持、10秒到期与旧临时映射滞留。irq场景验证内核全部整数/FP现场、WFI边界、仅靠CPU空闲完成目标/Prep/Life/Acct回收，再运行4096次64KiB原生分配/释放，实际收到内核IRQ并经检查点切换。主机独立审计全部内核页表、最终根/特权/停机PC。
 - images场景耗尽512槽并验证Proc构造失败回滚、恢复容量后构造/取消、旧Image/Life继续保留时同运行索引新PID的隔离；host另覆盖单ACTIVE、取消不复用号码、池满不烧号码、固定终结原因及旧观察不跟随新镜像。
 - requests场景以948份已接收未收尾请求加接收者12份预付占满普通池，旧调用者运行索引已释放仍拒绝普通构造，恢复64槽保留；确认旧收尾后构造恢复。host另覆盖预算隔离、原子ACK、15+1、精确revoke、临时引用及死亡来源不交付。
@@ -34,7 +34,7 @@
 
 ## 接续
 
-继续Sigctx必需预付、原生CREATE身份/SERVICE准入和构造加载，再接剩余管理、CHILD/LIFE与外设IRQ，以及信号/终端作业控制和加载；按01/03/04/06执行。当前固定CONTROL短事务不跨调度借表，CONSTRUCT/EXEC_VIEW与临时加载MEM操作仍受原生准入门禁，只读RESOURCE例外已接；SHARED/DMA、资源reply和完整创建装载未接。
+继续原生CREATE身份/SERVICE准入和构造加载，再接剩余管理、CHILD/LIFE与外设IRQ，以及信号/终端作业控制和加载；按01/03/04/06执行。当前固定CONTROL短事务不跨调度借表，CONSTRUCT/EXEC_VIEW与临时加载MEM操作仍受原生准入门禁，只读RESOURCE例外已接；SHARED/DMA、资源reply和完整创建装载未接。
 
 本轮预算与终止见02/03末尾，creds验证旧来源退出/槽复用、DRAINING/取消准备只读、证明释放后的STALE，以及CALL/NOTIFY解除后Image消失而Life凭据继续保留；memory另验证输出复制的完整区间预检。RQ、组关系及准备期只读查询已通过188项host/格式/74个QEMU回归。旧日志与失败现场均保留。
 
@@ -49,3 +49,5 @@
 本轮PROC实际统计已接并通过两架构stats局部验证：Proc仍512、Space64；真实组/账目/资源/映射/Rq计数与选中窗口CPU纳秒，阻塞不计费，旧CONTROL不跟随运行槽复用。完整189项host/格式/76个QEMU回归通过，日志见上；IPC/ipcdepth实测阻塞调用者强等待边和实际请求责任数。
 
 用户已确认普通孩子CREATE的内存/峰值/资源/pending上限夹到其Createarg，并清除CREDENTIAL/SERVICE/GRANT，仍共享原Set总额。可信授权/继承与Rmail构造期接收上限机制已接，6项CREATE及2项Rq新增host、两架构createauth局部通过；Set56、Local48、Rmail64，完整197项host/格式/78个QEMU回归通过。原生CREATE仍NOTSUP，接续Sigctx必需预付与创建身份/SERVICE/加载事务。
+
+Sigctx必需预付已接Proc构造回滚与CPU离栈回收；独立Image身份引用、每运行槽2份实际HAL现场，RV704/ARM960字节，Proc仍512。5项新增host及两架构sigreserve局部通过，完整202项host/格式/80个QEMU回归通过；不含信号递送/STOP/CONT/sigreturn。11末尾的用户帧cookie提案待回复，不阻塞当前创建准入。

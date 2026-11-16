@@ -4,7 +4,10 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 36
+#if BOOT_CASE == 37
+  signaltest();
+  putstr("READY sigreserve-restored\n");
+#elif BOOT_CASE == 36
   createtest();
   putstr("READY createauth-restored\n");
 #elif BOOT_CASE == 35
