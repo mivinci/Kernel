@@ -121,7 +121,7 @@ Budget CONTROL只改绑定目标Acct的limit/exec_limit，SYSTEM POLICY通过绑
 
 ### 标志、状态与原子性（已冻结）
 
-CALL_ASYNC=1、CALL_RECV_MEM=2、CALL_RECV_CALL=4，后两位互斥；REPLY_RESOURCE=1且仅reply支持。RECV_NONBLOCK=1、RECV_EVENTS_ONLY=2；reply_recv只解释这两位接收选项，不支持资源混合交付。RQ_FINISH=1；ACK_RESULT=1、ACK_RELEASE=2，组合先整体检查，失败不部分修改。inherit FORK=1、EXEC=2；资源GRANT为bit63，其他低位按03子类型解释。sigmask how BLOCK=0、UNBLOCK=1、SET=2。READ=1、WRITE=2、EXEC=4。wait WNOHANG=1、WUNTRACED=2、WCONTINUED=4；结果EXITED=1、STOPPED=2、CONTINUED=3，code低8位为正常退出码或信号号，bit8=SIGNALLED、bit9=CORE（首版恒0）、bit10=FAULT；STOPPED为停止信号号，CONTINUED=0。完整故障原因在query保存；libc按kind/位编码标准wait status。
+CALL_ASYNC=1、CALL_RECV_MEM=2、CALL_RECV_CALL=4、CALL_CONTROL=8，RECV_MEM与RECV_CALL互斥；REPLY_RESOURCE=1且仅reply支持。RECV_NONBLOCK=1、RECV_EVENTS_ONLY=2；reply_recv只解释这两位接收选项，不支持资源混合交付。RQ_FINISH=1；ACK_RESULT=1、ACK_RELEASE=2，组合先整体检查，失败不部分修改。inherit FORK=1、EXEC=2；资源GRANT为bit63，其他低位按03子类型解释。sigmask how BLOCK=0、UNBLOCK=1、SET=2。READ=1、WRITE=2、EXEC=4。wait WNOHANG=1、WUNTRACED=2、WCONTINUED=4；结果EXITED=1、STOPPED=2、CONTINUED=3，code低8位为正常退出码或信号号，bit8=SIGNALLED、bit9=CORE（首版恒0）、bit10=FAULT；STOPPED为停止信号号，CONTINUED=0。完整故障原因在query保存；libc按kind/位编码标准wait status。
 
 rqpoll/rqwait非消费；rqack只操作本主体RPC。rqcheck仅服务当前持有REQUEST，返回1（正常ACCEPTED）、3（ACCEPTED且cancel_requested）或4（强制终结/DRAINING）；不能读取他人请求。rqclean要求CONTROL覆盖已死亡服务且完成安全隔离责任已由可信恢复路径接管；不能将活服务或未知DMA直接标finished。即使调用者死代消费/释放，server_finished仍必须真实成立。
 
@@ -161,7 +161,7 @@ dma_sync保留0x36及五参数；phase BEFORE=0、AFTER=1，direction DEVICE_REA
 
 ### grant和observe的授权输入（第2项审查修订）
 
-grant的a0/x0必须是本次有效CONSTRUCT/EXEC_VIEW CONFIG，或绑定单一进程Life的CONTROL INSTALL。CONTROL QUERY=0x01、TERMINATE=0x02、BUDGET=0x04、IRQ=0x08、REVOKE=0x10、CONNECT=0x20、INSTALL=0x40；已有低位不移动，资源自身GRANT仍为bit63、只检查source的转授。revoke固定进程目标要求REVOKE，不能用INSTALL/QUERY替代。SERVICE创建返回的持续CONTROL包含INSTALL；普通create不多返回管理权。集合/域CONTROL不直接指定grant/固定监督目标，SYSTEM POLICY不替代所需目标句柄。
+grant的a0/x0必须是本次有效CONSTRUCT/EXEC_VIEW CONFIG，或绑定单一进程Life的CONTROL INSTALL。CONTROL QUERY=0x01、TERMINATE=0x02、BUDGET=0x04、IRQ=0x08、REVOKE=0x10、CONNECT=0x20、INSTALL=0x40；已有低位不移动，资源自身GRANT仍为bit63；grant检查source的转授，connect另要求输入CONTROL CONNECT+GRANT才能生成可转授入口。revoke固定进程目标要求REVOKE，不能用INSTALL/QUERY替代。SERVICE创建返回的持续CONTROL包含INSTALL；普通create不多返回管理权。集合/域CONTROL不直接指定grant/固定监督目标，SYSTEM POLICY不替代所需目标句柄。
 
 observe仍为0x50、五个输入，不增加结构或消息字段：a0/x0=OBSERVE permit；a1/x1=basis；a2/x2=relation；a3/x3=pid；a4/x4=image；a5/a6、x5/x6输入为0。relation SOURCE=0、CHILD=1、FUTURE=2、MONITOR=3，对应permit权位分别1、2、4、8。SOURCE/CHILD/FUTURE的basis必须是当前服务仍持有的REQUEST（合法DRAINING REQUEST也可用于接管终结）；MONITOR的basis必须是本地固定进程CONTROL并含QUERY。MONITOR的basis不得为0或REQUEST，init也不能省略它。
 
@@ -266,8 +266,25 @@ create、forkcommit等关键结果走寄存器。posix_spawn先核对pid输出�
 
 入口以CPU当前Proc和其保留Hctx校验来源，不从用户参数选择资源表。Allocarg/Maparg先逐页预检并一次复制到可信内核快照，保留字段与未知映射位拒绝；用户不能传内核指针。成功alloc只输出本地MEM，其余普通返回字与image清零；错误所有输出清零。普通FP/SIMD和非指定整数输出保存，RV64 a7/ARM64 x8按既定规则解释。
 
-当前native profile仅开放自身ALLOC及普通MEM/SPACE，尚未预付完整Rq/准备期限，故CONSTRUCT/临时加载MEM即使来自可信引导安装，也不借这些普通内存调用绕过准入。0x40..管理流程和exec/IPC等仍按已知未实现机制NOTSUP。构造期ALLOC=0x10的已确认协议和可信实现见02/03，不等于0x40 create已可用。
+当前native profile仅开放自身ALLOC及普通MEM/SPACE，已有可信Prep固定期限，但尚未预付完整Rq/Image准入，故CONSTRUCT/临时加载MEM即使来自可信引导安装，也不借这些普通内存调用绕过准入。0x40..管理流程和exec/IPC等仍按已知未实现机制NOTSUP。构造期ALLOC=0x10的已确认协议和可信实现见02/03，不等于0x40 create已可用。
 
 syscalls场景使用三个独立U/EL0空间，通过真实ecall/svc运行，无测试陷阱替身：检查NOSYS/NOTSUP/INVALID/FAULT、失效Handle、未用输出清零、free后已有映射仍有效、unmap、CODE写别名阻止seal、封存后RW拒绝、实际执行动态生成代码；协作yield后核对各进程不同PC哨兵对应的FP/SIMD及控制状态。六次FIFO运行后两个exit42，第三个在unmap后真实访问旧VA产生FAULT/SEGV，三者均由CPU清理并领取各自Life结果。
 
-尚无SDK/libsys桩或通用ELF装载，测试载荷是tests/kernel中的独立汇编。IRQ仍关闭、ARM缓存仍关闭，不将这些QEMU行为称为真实硬件缓存、性能、完整信号或时间片调度验收。
+尚无SDK/libsys桩或通用ELF装载，测试载荷是tests/kernel中的独立汇编。默认协作profile未开启timer；可信CPU入口可启用用户timer IRQ，内核C仅自身alloc受控窗口和CPU空闲开放IRQ，ARM缓存仍关闭，不将这些QEMU行为称为真实硬件缓存、性能、完整信号或时间片调度验收。
+
+
+Rq可信核心补充（2026-11-16）：Msg和既定IPC常量已落头文件，私有Rqid/队列函数不作为用户接口；该可信核心切片当时0x10..0x1c仍NOTSUP，后续原生消息接续见下节。用户已确认CALL_CONTROL=0x08，只选自身控制清理两槽，不增加授权；无该位按内核信号深度选普通/对应信号槽，SEND拒绝该位，调用数保持73。
+
+
+### 原生IPC寄存器接续（2026-11-16）
+
+当前新增0x10..0x1a/0x1c，具体支持边界见04末尾；0x1b仍NOTSUP，connect/管理流程尚未接。共享SYS_*编号保持既定值；abi/ipc.h的C结构受__ASSEMBLER__保护，汇编载荷和C使用同一份标志常量。HAL IPC返回在普通7字之外处理t0/x9来源image及同步未收尾失败的原RPC，不扩Msg或更改调用寄存器。原生call的CALL_CONTROL=8已实测；高u64未知位拒绝，不截断。该消息切片当时事件mask为NOTSUP，后续事件支持见下节；资源接收/回复及尚未实现的信号路径仍明确NOTSUP，不把预装入口的真实IPC场景当作已有connect权限校验或SDK桩。
+
+
+原生事件接续（2026-11-16）：新增notify(0x20)/alarmset(0x24)/alarmcancel(0x25)，recv/reply_recv支持匹配事件mask及EVENTS_ONLY；共享事件位见abi/event.h，EVENT返回按既定words/source/request/image布局。alarm当前要求可信CPU先启用timer profile，未启用为NOTSUP；call/send不会被普通事件中断。RQ_DONE/RQ_CANCEL为合并提示，不改变RPC查询/ACK协议。资源回复、CHILD/LIFE及原生管理路径仍待接，不改变其编号。
+
+
+固定CONTROL/connect接续（2026-11-16）：0x55已接四输入authority/kind/rights/bits，成功a1/x1为本地Handle，其余输出0；未知/保留输入失败输出清零。kind CALL=5、SEND=6、NOTIFY=7。当前固定CONTROL CONNECT生成USE入口；产物带GRANT时还要求输入CONTROL的GRANT，缺位DENIED，CONSTRUCT仍NOTSUP；不接受PID，不增加系统调用编号。固定CONTROL可经free解除引用，不能据此销毁目标。再授予策略已由用户确认，见03末尾；固定CONTROL的grant/revoke及inherit接续见下文。
+
+
+原生管理接续（2026-11-16）：0x46 grant六输入、0x47 revoke两输入及0x56 inherit两输入已接，均严格检查其余输入寄存器及未知高位；grant成功a1/x1为目标本地Handle，其他输出0，失败清零。当前仅固定进程CONTROL INSTALL/REVOKE选表，源另有GRANT；CONSTRUCT/EXEC_VIEW仍NOTSUP。inherit仅修改允许类型的本地保留标记，不新增GRANT或重绑定目标；NOTIFY可显式EXEC，私有MEM不行。当前实现与双架构反例详见03末尾，不能以这三个调用代表完整管理/构造准入或fork/exec已实现。

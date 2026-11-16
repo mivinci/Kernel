@@ -251,8 +251,11 @@ localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
   id->index = l->object;
   id->reserved = 0;
   error = prepcheck(*id, t, &info);
-  if (error)
+  if (error) {
+    if (rights == PREP_PUBLISH && error == -ERR_REVOKED && preppublishcheck(*id) == -ERR_TIMEDOUT)
+      return -ERR_TIMEDOUT;
     return -ERR_BAD_HANDLE;
+  }
   *pid = info.pid;
   return 0;
 }
@@ -298,11 +301,126 @@ localallocator(Rtable *t, u64 rights, Handle *out)
   publish(t, l, LOCAL_ALLOC, t->acct.generation, t->acct.index, rights, 0, 0, 0, 1, out);
   return 0;
 }
+static Imageid
+endpoint(const Local *l)
+{
+  Imageid id;
+  id.generation = l->objectgen;
+  id.index = l->object;
+  id.reserved = 0;
+  return id;
+}
+int
+localendpoint(Rtable *t, Imageid target, u32 kind, u64 rights, u64 bits, u32 inherit, Handle *out)
+{
+  Image  image;
+  Local *l;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!t || t->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  if ((kind != LOCAL_CALL && kind != LOCAL_SEND && kind != LOCAL_NOTIFY) || !(rights & LOCAL_USE) ||
+      rights & ~(LOCAL_USE | LOCAL_GRANT) || inherit & ~3U ||
+      (kind == LOCAL_NOTIFY ? (!bits || bits & 0xffffffffUL) : bits != 0))
+    return -ERR_INVALID;
+  if (imagestat(target, &image))
+    return -ERR_STALE;
+  if (image.state == IMAGE_ENDED)
+    return -ERR_PEER;
+  l = empty(t);
+  if (!l)
+    return sloterror(t);
+  error = imagehold(target, IMAGE_CLEANUP);
+  if (error)
+    return error;
+  publish(t, l, kind, target.generation, target.index, rights, bits, 0, inherit, 3, out);
+  return 0;
+}
+int
+localchannel(Rtable *t, Handle h, u32 kind, Imageid *target, u64 *bits)
+{
+  Local  *l;
+  Image   image;
+  Imageid id;
+  if (!target || !bits || (kind != LOCAL_CALL && kind != LOCAL_SEND && kind != LOCAL_NOTIFY))
+    return -ERR_INVALID;
+  l = find(t, h, kind);
+  if (!l)
+    return -ERR_BAD_HANDLE;
+  if (!(l->rights & LOCAL_USE))
+    return -ERR_DENIED;
+  id = endpoint(l);
+  if (imagestat(id, &image) || image.state == IMAGE_ENDED)
+    return -ERR_PEER;
+  if (image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  target->generation = id.generation;
+  target->index = id.index;
+  target->reserved = 0;
+  *bits = l->offset;
+  return 0;
+}
+static Lifeid
+controlled(const Local *l)
+{
+  Lifeid id;
+  id.generation = l->objectgen;
+  id.index = l->object;
+  id.reserved = 0;
+  return id;
+}
+int
+localcontrol(Rtable *t, Lifeid target, u64 rights, Handle *out)
+{
+  Local *l;
+  Life   life;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!t || t->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  if (!(rights & CONTROL_RIGHTS) || rights & ~(CONTROL_RIGHTS | LOCAL_GRANT))
+    return -ERR_INVALID;
+  if (lifestat(target, &life))
+    return -ERR_STALE;
+  l = empty(t);
+  if (!l)
+    return sloterror(t);
+  error = lifehold(target, LIFE_CONTROL);
+  if (error)
+    return error;
+  publish(t, l, LOCAL_CONTROL, target.generation, target.index, rights, 0, 0, 0, 3, out);
+  return 0;
+}
+int
+localcontrolled(Rtable *t, Handle h, u64 rights, Lifeid *life, u64 *available)
+{
+  Local *l = find(t, h, LOCAL_CONTROL);
+  Life   state;
+  Lifeid id;
+  if (!l)
+    return -ERR_BAD_HANDLE;
+  if (!life || !available || !rights || rights & ~CONTROL_RIGHTS)
+    return -ERR_INVALID;
+  if ((l->rights & rights) != rights)
+    return -ERR_DENIED;
+  id = controlled(l);
+  if (lifestat(id, &state))
+    return -ERR_STALE;
+  life->generation = id.generation;
+  life->index = id.index;
+  life->reserved = 0;
+  *available = l->rights;
+  return 0;
+}
 int
 localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 length, u32 inherit,
           Handle *out)
 {
-  Local   *l = find(source, h, LOCAL_MEM);
+  Local   *l = find(source, h, 0);
   Prepinfo info;
   int      error;
   if (!out)
@@ -312,6 +430,20 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
     return -ERR_BAD_HANDLE;
   if (!(l->rights & LOCAL_GRANT) || rights & ~l->rights)
     return -ERR_DENIED;
+  if (l->subtype == LOCAL_CONTROL) {
+    if (offset || length || inherit)
+      return -ERR_INVALID;
+    return localcontrol(target, controlled(l), rights, out);
+  }
+  if (l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND || l->subtype == LOCAL_NOTIFY) {
+    if (offset || length)
+      return -ERR_INVALID;
+    if (inherit & ~l->inherit)
+      return -ERR_DENIED;
+    return localendpoint(target, endpoint(l), l->subtype, rights, l->offset, inherit, out);
+  }
+  if (l->subtype != LOCAL_MEM)
+    return -ERR_BAD_HANDLE;
   error = allowed(source, l, offset, length);
   if (error)
     return error;
@@ -516,6 +648,20 @@ removeentry(Local *l)
       panic("construction local release");
     return 0;
   }
+  if (l->subtype == LOCAL_CONTROL) {
+    if (lifedrop(controlled(l), LIFE_CONTROL))
+      panic("local control reference");
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
+  if (l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND || l->subtype == LOCAL_NOTIFY) {
+    if (imagedrop(endpoint(l), IMAGE_CLEANUP))
+      panic("local endpoint reference");
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_MEM) {
     if (l->source == LOCAL_LOAD)
       scope = loadscope(l);
@@ -543,10 +689,34 @@ removeentry(Local *l)
   return 0;
 }
 int
+localinherit(Rtable *t, Handle h, u64 flags)
+{
+  Local *l;
+  int    error;
+  if (flags & ~3UL)
+    return -ERR_INVALID;
+  error = localnative(t, h);
+  if (error)
+    return error;
+  l = find(t, h, 0);
+  if (l->subtype == LOCAL_MEM) {
+    /* Current backing is private DATA/CODE only. SHARED EXEC retention belongs
+       to the later sharing profile; flags cannot turn private pages into it. */
+    if (flags & LOCAL_EXEC)
+      return -ERR_DENIED;
+  } else if (l->subtype != LOCAL_CALL && l->subtype != LOCAL_SEND && l->subtype != LOCAL_NOTIFY)
+    return -ERR_DENIED;
+  l->inherit = (u8) flags;
+  return 0;
+}
+int
 localfree(Rtable *t, Handle h)
 {
-  Local *l = find(t, h, LOCAL_MEM);
-  return l ? removeentry(l) : -ERR_BAD_HANDLE;
+  Local *l = find(t, h, 0);
+  return l && (l->subtype == LOCAL_MEM || l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND ||
+               l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL)
+             ? removeentry(l)
+             : -ERR_BAD_HANDLE;
 }
 int
 localrevoke(Rtable *t, Handle h)

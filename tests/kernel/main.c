@@ -4,7 +4,28 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 23
+#if BOOT_CASE == 31
+  controltest();
+  putstr("READY control-restored\n");
+#elif BOOT_CASE == 30
+  eventtest();
+  putstr("READY events-restored\n");
+#elif BOOT_CASE == 28 || BOOT_CASE == 29
+  ipctest();
+  putstr("READY ipc-restored\n");
+#elif BOOT_CASE == 27
+  rqtest();
+  putstr("READY requests-restored\n");
+#elif BOOT_CASE == 26
+  imagetest();
+  putstr("READY images-restored\n");
+#elif BOOT_CASE == 25
+  irqtest();
+  putstr("READY irq-restored\n");
+#elif BOOT_CASE == 24
+  timertest();
+  putstr("READY timer-restored\n");
+#elif BOOT_CASE == 23
   syscalltest();
   putstr("READY syscalls-restored\n");
 #elif BOOT_CASE == 22

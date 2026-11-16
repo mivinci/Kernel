@@ -4,4 +4,5 @@
 void hal_clock_init(u64 timebase);
 u64  hal_clock_read(void);
 u64  hal_clock_freq(void);
+void hal_timer_set(u64 absolute_ticks);
 #endif

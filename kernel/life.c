@@ -59,7 +59,7 @@ lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
   l->generation++;
   l->pid = pid;
   l->parent = parent;
-  l->sequence = 0;
+  l->sequence = l->imagegen = 0;
   l->set = set;
   l->fault.pc = l->fault.address = l->fault.cause = 0;
   l->state = LIFE_CONSTRUCT;
@@ -228,6 +228,7 @@ lifestat(Lifeid id, Life *out)
   out->pid = l->pid;
   out->parent = l->parent;
   out->sequence = l->sequence;
+  out->imagegen = l->imagegen;
   out->set = l->set;
   out->fault.pc = l->fault.pc;
   out->fault.address = l->fault.address;
@@ -241,5 +242,21 @@ lifestat(Lifeid id, Life *out)
   out->controls = l->controls;
   out->observers = l->observers;
   out->cleanup = l->cleanup;
+  return 0;
+}
+
+int
+lifeimage(Lifeid id, u64 *number)
+{
+  Life *life = find(id);
+  if (!life)
+    return -ERR_STALE;
+  if (!number)
+    return -ERR_INVALID;
+  if (life->state != LIFE_CONSTRUCT && life->state != LIFE_LIVE)
+    return -ERR_STATE;
+  if (life->imagegen == ~(u64) 0)
+    return -ERR_OVERFLOW;
+  *number = ++life->imagegen;
   return 0;
 }

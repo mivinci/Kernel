@@ -7,10 +7,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, call, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from run import run_command
+import run as runner
 
 FIXTURE = Path(__file__).with_name("process_fixture.py")
 
@@ -84,6 +86,49 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.exit_code, 1)
         self.assert_stopped(path)
+
+    def test_denied_group_probe_does_not_claim_the_group_is_empty(self):
+        with patch("run.os.killpg", side_effect=PermissionError("denied")):
+            self.assertTrue(runner._group_exists(123))
+
+    def test_signal_denied_during_exit_waits_for_confirmed_disappearance(self):
+        denied = PermissionError("group is exiting")
+        with patch("run.os.killpg", side_effect=[denied, denied, ProcessLookupError()]) as kill:
+            with patch("run.time.sleep"), patch("run.time.monotonic", side_effect=[0, 0.1]):
+                runner._signal_group(123, signal.SIGKILL)
+        self.assertEqual(kill.call_args_list,
+                         [call(123, signal.SIGKILL), call(123, 0), call(123, 0)])
+
+    def test_persistent_signal_denial_is_not_accepted_as_cleanup(self):
+        denied = PermissionError("group remains inaccessible")
+        with patch("run.os.killpg", side_effect=denied):
+            with patch("run.time.monotonic", side_effect=[0, 0.25]):
+                with self.assertRaises(PermissionError) as error:
+                    runner._signal_group(123, signal.SIGKILL)
+        self.assertIs(error.exception, denied)
+
+    def test_group_remaining_after_kill_is_cleanup_failure(self):
+        proc = Mock(pid=123)
+        with patch("run._signal_group"), patch("run._group_exists", return_value=True):
+            with patch("run.time.monotonic", side_effect=[0, 0.25]):
+                with self.assertRaisesRegex(TimeoutError, "remained after SIGKILL"):
+                    runner._stop_group(proc)
+        self.assertEqual(proc.wait.call_count, 2)
+
+    def test_cleanup_failure_preserves_result_log_and_fails_the_cli(self):
+        root = self.directory / "denied"
+        argv = ["run.py", "--timeout", "3", "--log-root", str(root), "--",
+                sys.executable, str(FIXTURE), "exit", "0"]
+        # The real command exits and is reaped; only cleanup reporting is denied.
+        with patch("run._stop_group", side_effect=PermissionError("cleanup denied")):
+            with patch("run.install_stop_handlers"), patch("sys.argv", argv), patch("builtins.print"):
+                self.assertEqual(runner.main(), 1)
+        record = json.loads(next(root.glob("*/result.json")).read_text())
+        self.assertEqual(record["returncode"], 0)
+        self.assertEqual(record["cleanup_error"], "cleanup denied")
+        self.assertFalse(record["ok"])
+        self.assertEqual(record["exit_code"], 1)
+        self.assertIn("process group cleanup failed: cleanup denied", Path(record["log"]).read_text())
 
     def test_missing_command_is_explicit_failure(self):
         result = run_command([str(self.directory / "missing-command")],

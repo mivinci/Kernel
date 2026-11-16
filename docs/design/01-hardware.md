@@ -283,4 +283,41 @@ hal_ctx_switch按冻结的112字节Hkctx保存/恢复C调用约定现场：RV64 
 原生入口接续新增HAL内部寄存器读取/普通返回封装：hal_syscall_arg读取固定输入，hal_syscall_finish只更新规定的返回字和pc/image，不给核心散落架构寄存器分支。完整用户现场仍在先前保留帧保存；CPU选择新续点时先切相应根，线程yield/exit先撤根再切离。原生短map暂停/恢复根仍在同一受保护内核栈上，禁止暂停窗口调度；只有支持的有界同步事务采用此路径。
 
 
-时钟查询切片（2026-11-15）：新增include/hal/clock.h及两架构clock.c，hal_clock_init传入发现的timebase，read/freq提供硬件计数；公共层换算见05。hal_timer_set及IRQ路径尚未实现，不为未接功能提供空桩。
+时钟查询切片（2026-11-15）：新增include/hal/clock.h及两架构clock.c，hal_clock_init传入发现的timebase，read/freq提供硬件计数；公共层换算见05。该查询切片当时尚未接hal_timer_set及IRQ路径；后续实现见下节，不为未接功能提供空桩。
+
+
+### 用户态定时中断切片（2026-11-15）
+
+新增hal_timer_set、hal_timer_init/ack及hal_irq_save/restore。Htimer仅携带映射后的控制器窗口和四组发现的IRQ/flags，不接受Proc等核心对象；RV64通过SBI BASE探测TIME并设置绝对ticks，初始化关闭所有S态IRQ源，仅定时器编程时启用STIE。ARM64使用CNTV_CVAL/CTL及DTB虚拟timer PPI，GICv2当前仅支持无Security Extensions的既定QEMU profile；初始化只开放该PPI，Group0与两个控制使能位一致、FIQEn=0，屏蔽源/完成屏障后才EOI，不用轮询替代用户timer IRQ。
+
+GIC distributor和CPU接口各映射首个4KiB页到KIO+0x1000/+0x2000，Device属性、RW/NX、不添加低地址别名；控制器寄存器在Arch模块，公共启动仅传资源。主机页表审计独立从DTB核对这两页及属性。RV64暂不映射PLIC或开放外设IRQ。
+
+ARM64 lower-EL A64 IRQ与同步入口先保存全部GPR，再用独立内部cause标记区分IRQ与ESR；两条路径共用完整SIMD/FP和状态保存。RV64复用完整用户陷阱入口。仅在用户返回现场设置SPIE/清I，安装完整入口后才返回用户；IRQ上半段确认源并扫描最多8个准备，在已保存完整现场的安全出口切CPU栈，不在任意C深处切换。内核C仍屏蔽IRQ；当前不支持内核IRQ嵌套、空闲唤醒、长Op开放IRQ或外设绑定，后续不能仅改mask便声称这些路径已接通。RV halt额外清sie，停机主机审计仍要求IRQ源与全局使能关闭。
+
+
+### 内核IRQ入口与CPU空闲切片（2026-11-16）
+
+hal_trap_init在高半区安装完整内核IRQ入口并启用既定FP单元，随后才允许打开IRQ窗口。RV64使用vectored stvec：同步异常仍跳原紧急入口，timer向量在当前栈预留完整Hctx；ARM64当前EL/SP_EL1 IRQ使用同样的完整帧，同步异常仍选CPU紧急栈。保存全部GPR后才用临时寄存器，整数/FP保存恢复列表归入各架构context.inc，布局仍由context.h宏和C断言确定，构建缓存记录.inc依赖。IRQ处理函数不重新开IRQ，因此不声称多层IRQ嵌套。
+
+kerneltrap只确认源、检查最多8份准备、记调度请求并重设timer；它返回原C续点，不在IRQ中调度。仅自身原生alloc的受控窗口已开放IRQ，参数快照和完成提交在窗口外；当前IRQ不会修改该Local表或分配/回收Mem，取消仅撤资格/放租约。完成后关IRQ并在明确检查点处理请求，短VM暂停窗口仍不开IRQ/不调度，其他长Op仍待按各自不变量接入。
+
+hal_idle只由无锁CPU栈调用，入/出均屏蔽IRQ，中间开放IRQ并WFI。IRQ入口识别被打断PC恰为idle WFI时，将返回PC指向屏蔽IRQ的续点：刚开IRQ就命中待处理源时不会处理后再次睡眠，不修改普通C现场的PC。CPU返回后按有界批次推进Proc/Prep清理。CASE=irq先让timer pending再进入idle，核对全部整数、全部FP/SIMD及控制寄存器（ARM含NZCV），随后无就绪进程地等待真实10秒准备到期，并只靠idle回收到目标/Prep/Life/Acct全部失效；再运行4096次自身64KiB alloc/free，确认实际内核IRQ及检查点切换。
+
+高半区紧急栈地址必须PC相对构造：ARM64高半区初始化/用户陷阱出口用adrp/add，不用仍携带物理地址的ldr =symbol；初始物理入口和显式加delta的切换代码保留其原地址域。寄存器同步异常场景覆盖初始化后的紧急入口，irq场景另检查用户陷阱返回后scratch仍为高半区紧急栈。两者不代替guard/IRQ最坏栈深或真实硬件验收。
+
+
+Image池实现补充（2026-11-16）：实际Image为64字节、512槽共32768字节；Life增加保留镜像计数后120、Proc/Prep增加稳定Imageid后384/184字节，均未提高既定槽上限。运行期固定槽不按整页重复向Acct虚扣。构造失败/池耗尽与双架构实际验证记录见03及status；Rq等其余预算仍待实现。
+
+
+Rq预算实现补充（2026-11-16）：Rq184字节、1024槽共188416字节；Rquota48和Rmail64纳入Proc后为496，未增512上限。普通960/恢复64在同一固定池分区；容量、身份引用及回滚由requests场景验证，不改变最大预算估算。
+
+
+### 主机runner进程组退出竞态（2026-11-16）
+
+本机macOS 27.0.1 / Darwin 27.0.0复现：子进程独占会话/进程组，kqueue NOTE_EXIT确认退出但父暂不waitpid；killpg(group,0)及SIGKILL均EPERM，waitpid后同组为ESRCH。Apple XNU [killpg1实现](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c)的组遍历跳过SZOMB，没有可投递成员且POSIX模式时返回EPERM，符合这次直接观测。原runner发TERM后只等主进程，随后立即KILL；主进程早已退出时，容易撞上后代的退出/收取窗口。诊断记录保留在`build/host/stage16-runner/zombie-probe.json`及同目录原始diagnose日志。
+
+修复仍只管理自身Popen建立的进程组：killpg(0)遇EPERM按“未确认消失”处理；投递遇EPERM后至多等待250ms，只有观测到ESRCH才接受完成，持续拒绝仍抛错。KILL后先收取主进程，再有界确认整个组消失；不能仅以主进程退出判定后代清理完成。清理失败单独保存cleanup_error，保留原命令returncode、写入日志/JSON并使结果失败；不把EPERM统一忽略，也不把清理错误误记为启动错误。
+
+- [x] 14项runner测试覆盖退出过渡、持续权限拒绝、KILL后残留及失败结果持久化，原有超时/孤儿/相邻组/SIGINT/SIGTERM检查未跳过。
+- [x] 1000次真实孤儿组压力测试通过：实际72次SIGKILL EPERM、834次零信号EPERM，均最终确认组消失；返回后全部心跳稳定。`build/host/stage16-runner/stress-final.log`记录结果及原始产物目录。
+- [x] 完整158项host、格式及68个两架构QEMU场景通过，日志`build/host/stage16-runner/test-all-final.log`；先前诊断/失败日志保留，不以单次复测替代此竞态的修复验证。

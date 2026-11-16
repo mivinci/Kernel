@@ -1,17 +1,19 @@
 #include <prep.h>
 #include <diag.h>
+#include <clock.h>
 typedef struct Prep Prep;
 struct Prep
 {
-  u64     generation;
+  u64     generation, deadline;
   Rtable *source, *target;
   u64     sourceepoch, targetepoch;
   Handle  owner, pid;
   u64     sourceimage, image;
   Lifeid  life;
+  Imageid identity;
   Acctid  acct;
   Spaceid space, sourcespace;
-  u32     state, refs, temporary, cursor, leased;
+  u32     state, refs, temporary, cursor, leased, expired;
 };
 STATIC_ASSERT(PREPS > 0 && PREPS <= 192, prep_capacity);
 STATIC_ASSERT(sizeof(Prep) <= 256, prep_budget);
@@ -31,15 +33,35 @@ sourcevalid(const Prep *p)
   return p->source && p->source->state == LOCAL_OPEN && p->source->epoch == p->sourceepoch &&
          p->source->owner == p->owner && p->source->image == p->sourceimage;
 }
+static void
+expire(Prep *p, u64 now)
+{
+  Prepid id;
+  if (p->state != PREP_ACTIVE || now < p->deadline)
+    return;
+  id.generation = p->generation;
+  id.index = (u32) (p - preps);
+  id.reserved = 0;
+  if (imageend(p->identity, IMAGE_TIMEOUT) || prepcancel(id))
+    panic("preparation timeout cancellation");
+  p->expired = 1;
+}
 static int
 active(Prep *p)
 {
-  Life l;
-  Acct a;
-  return p->state == PREP_ACTIVE && sourcevalid(p) && p->target && p->target->state == LOCAL_OPEN &&
-         p->target->epoch == p->targetepoch && p->target->owner == p->pid &&
-         p->target->image == p->image && !lifestat(p->life, &l) && l.state == LIFE_CONSTRUCT &&
-         l.pid == p->pid && !acctstat(p->acct, &a) && a.state == AC_ACTIVE;
+  Life  l;
+  Acct  a;
+  Image image;
+  u64   now;
+  if (clockmono(&now))
+    panic("preparation clock range");
+  expire(p, now);
+  return p->state == PREP_ACTIVE && !imagestat(p->identity, &image) &&
+         image.state == IMAGE_PREPARING && sourcevalid(p) && p->target &&
+         p->target->state == LOCAL_OPEN && p->target->epoch == p->targetepoch &&
+         p->target->owner == p->pid && p->target->image == p->image && !lifestat(p->life, &l) &&
+         l.state == LIFE_CONSTRUCT && l.pid == p->pid && !acctstat(p->acct, &a) &&
+         a.state == AC_ACTIVE;
 }
 static void
 fill(const Prep *p, Prepinfo *out)
@@ -52,18 +74,35 @@ fill(const Prep *p, Prepinfo *out)
   out->state = p->state;
   out->temporary = p->temporary;
   out->refs = p->refs;
+  out->expired = p->expired;
+  out->deadline = p->deadline;
+  out->identity.generation = p->identity.generation;
+  out->identity.index = p->identity.index;
+  out->identity.reserved = 0;
 }
 int
-prepcreate(Rtable *source, Rtable *target, Lifeid life, Prepid *out)
+prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out)
 {
   Life  l;
+  Image image;
   Prep *p;
   u32   i, count = 0, slot = PG_NONE;
+  u64   now;
+  int   error;
   if (!source || !target || !out || source == target || source->state != LOCAL_OPEN ||
       target->state != LOCAL_OPEN || handletype(source->owner) != HANDLE_PROCESS ||
       !source->image || lifestat(life, &l) || l.state != LIFE_CONSTRUCT || l.pid != target->owner ||
       l.parent != source->owner || !target->image)
     return -ERR_INVALID;
+  if (imagestat(identity, &image) || image.life.generation != life.generation ||
+      image.life.index != life.index || image.pid != target->owner ||
+      image.number != target->image || image.state != IMAGE_PREPARING)
+    return -ERR_STATE;
+  error = clockmono(&now);
+  if (error)
+    return error;
+  if (now > ~(u64) 0 - PREP_NS)
+    return -ERR_OVERFLOW;
   for (i = 0; i < PREPS; i++) {
     p = &preps[i];
     if (!p->state && p->generation != ~(u64) 0 && slot == PG_NONE)
@@ -77,12 +116,23 @@ prepcreate(Rtable *source, Rtable *target, Lifeid life, Prepid *out)
     return -ERR_CAPACITY;
   if (spacehold(target->space))
     return -ERR_STALE;
-  if (lifehold(life, LIFE_CLEANUP)) {
+  if (imagehold(identity, IMAGE_CLEANUP)) {
     spacedrop(target->space);
     return -ERR_STALE;
   }
+  error = imageorigin(identity, source->image);
+  if (error) {
+    imagedrop(identity, IMAGE_CLEANUP);
+    spacedrop(target->space);
+    return error;
+  }
   p = &preps[slot];
+  p->identity.generation = identity.generation;
+  p->identity.index = identity.index;
+  p->identity.reserved = 0;
   p->generation++;
+  p->deadline = now + PREP_NS;
+  p->expired = 0;
   p->source = source;
   p->target = target;
   p->sourceepoch = source->epoch;
@@ -146,8 +196,8 @@ prepdrop(Prepid id)
   if (!p->refs) {
     if (p->state == PREP_ACTIVE || p->temporary || p->leased)
       panic("live preparation without owner");
-    if (lifedrop(p->life, LIFE_CLEANUP))
-      panic("preparation life reference");
+    if (imagedrop(p->identity, IMAGE_CLEANUP))
+      panic("preparation image reference");
     p->state = 0;
   }
   return 0;
@@ -156,8 +206,10 @@ int
 preppublishcheck(Prepid id)
 {
   Prep *p = find(id);
-  if (!p || !active(p))
+  if (!p)
     return -ERR_REVOKED;
+  if (!active(p))
+    return p->expired ? -ERR_TIMEDOUT : -ERR_REVOKED;
   return p->temporary ? -ERR_BUSY : 0;
 }
 static void
@@ -172,7 +224,9 @@ void
 prepcomplete(Prepid id)
 {
   Prep *p = find(id);
-  if (!p || p->state != PREP_ACTIVE || p->temporary)
+  Image image;
+  if (!p || p->state != PREP_ACTIVE || p->temporary || imagestat(p->identity, &image) ||
+      image.state != IMAGE_ACTIVE)
     panic("preparation publication");
   p->state = PREP_COMMITTED;
   releaseview(p);
@@ -192,6 +246,8 @@ prepcancel(Prepid id)
     panic("preparation cancel");
   else if (l.state != LIFE_CONSTRUCT && l.state != LIFE_ABORTED)
     return -ERR_STATE;
+  if (imageend(p->identity, IMAGE_ABORT))
+    panic("preparation image abort");
   p->state = PREP_ABORTED;
   releaseview(p);
   return 0;
@@ -303,4 +359,22 @@ prepwork(u32 scans)
     worked++;
   }
   return (int) worked;
+}
+
+int
+prepexpire(u64 now, u32 scans)
+{
+  static u32 cursor;
+  u32        i, expired = 0;
+  if (!scans || scans > 8)
+    return -ERR_INVALID;
+  for (i = 0; i < scans; i++) {
+    Prep *p = &preps[cursor];
+    cursor = (cursor + 1) % PREPS;
+    if (p->state == PREP_ACTIVE && now >= p->deadline) {
+      expire(p, now);
+      expired++;
+    }
+  }
+  return (int) expired;
 }

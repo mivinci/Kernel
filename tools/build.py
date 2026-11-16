@@ -157,7 +157,7 @@ def build(args, directory, run_dir):
                        "real_path": str(Path(executable).resolve()), "version": version}
     if "clang" not in tools["cc"]["version"].lower():
         raise BuildError("this profile requires Clang; GCC/CROSS is not implemented")
-    include_files = list((ROOT / "include").rglob("*.h"))
+    include_files = list((ROOT / "include").rglob("*.h")) + list((ROOT / "include").rglob("*.inc"))
     if args.kind == "kernel" and args.case != "normal":
         include_files += list((ROOT / "tests/kernel").rglob("*.h"))
     include_files.sort()
@@ -171,8 +171,8 @@ def build(args, directory, run_dir):
         # The physical ELF runs again at a high alias without runtime relocations.
         # Compiler switch tables must not embed absolute physical code pointers.
         flags += ["-fno-jump-tables"]
-        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23}[args.case])]
-        sources += [ROOT / "kernel/main.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
+        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24, "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29, "events": 30, "control": 31}[args.case])]
+        sources += [ROOT / "kernel/main.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/image.c", ROOT / "kernel/rq.c", ROOT / "kernel/event.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "irq.c", ROOT / "kernel" / args.arch / "irqentry.S", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
                     ROOT / "kernel" / args.arch / "entry.S"]
         if args.case != "normal":
             flags += ["-I" + str(ROOT / "tests/kernel"), "-I" + str(ROOT / "tests/kernel" / args.arch)]
@@ -181,6 +181,22 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):
             sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
+        if args.case == "control":
+            sources += [ROOT / "tests/kernel/controltest.c", ROOT / "tests/kernel" / args.arch / "controlprobe.S"]
+        if args.case == "events":
+            sources += [ROOT / "tests/kernel/eventtest.c", ROOT / "tests/kernel" / args.arch / "eventprobe.S"]
+        if args.case == "ipcdepth":
+            flags += ["-DWAIT_DEPTH=1"]
+        if args.case in ("ipc", "ipcdepth"):
+            sources += [ROOT / "tests/kernel/ipctest.c", ROOT / "tests/kernel" / args.arch / "ipcprobe.S"]
+        if args.case == "requests":
+            sources.append(ROOT / "tests/kernel/rqtest.c")
+        if args.case == "images":
+            sources.append(ROOT / "tests/kernel/imagetest.c")
+        if args.case == "irq":
+            sources += [ROOT / "tests/kernel/irqtest.c", ROOT / "tests/kernel" / args.arch / "irqprobe.S", ROOT / "tests/kernel" / args.arch / "irqnative.S"]
+        if args.case == "timer":
+            sources += [ROOT / "tests/kernel/timertest.c", ROOT / "tests/kernel" / args.arch / "timerprobe.S"]
         if args.case == "syscalls":
             sources += [ROOT / "tests/kernel/syscalltest.c", ROOT / "tests/kernel" / args.arch / "native.S"]
         if args.case == "prep":
@@ -332,7 +348,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--kind", choices=("hardware", "kernel"), default="hardware")
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls"), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control"), default="normal")
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")

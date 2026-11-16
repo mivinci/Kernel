@@ -1,6 +1,6 @@
 # Kernel
 
-面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询原生调用和协作yield，尚无原生创建准入、时间片调度或用户态服务。
+面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询与消息IPC原生调用，以及协作yield和IPC阻塞/唤醒，已接用户态timer时间片和可信准备期限，尚无原生创建准入、完整阻塞调度或用户态服务。
 
 ![架构图](docs/architecture.jpg)
 
@@ -43,15 +43,25 @@ make scenario ARCH=arm64 CASE=life
 make scenario ARCH=arm64 CASE=procs
 make scenario ARCH=arm64 CASE=prep
 make scenario ARCH=arm64 CASE=syscalls
+make scenario ARCH=arm64 CASE=timer
+make scenario ARCH=arm64 CASE=irq
+make scenario ARCH=arm64 CASE=images
+make scenario ARCH=arm64 CASE=requests
+make scenario ARCH=arm64 CASE=ipc
+make scenario ARCH=arm64 CASE=ipcdepth
+make scenario ARCH=arm64 CASE=events
+make scenario ARCH=arm64 CASE=control
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
+# 单独运行全部QEMU场景（不代替unit/fmt-check）
+make test-qemu OPENSBI="$OPENSBI"
 ```
 
 `CASE=normal|registers|fault|pages` 使用独立对象/ELF；普通镜像初始化物理页和内核地址空间后停止，不自动运行测试。
 主机测试位于 `tests/unit/`，guest测试的C/汇编载荷、入口和私有声明位于 `tests/kernel/`；构建按CASE选择链接，normal不包含测试源码。
 寄存器场景检查两次陷阱之间的整数寄存器保存/恢复；故障场景核对非法指令的异常原因与 PC。
 主机使用本地 QMP socket，核对特权/中断状态与实际 halt 地址，随后退出并回收自身 QEMU；不能只凭输出标记判定成功。
-默认超时10秒；失败保留串口、QEMU 输出、命令、符号及结果。需要异常 trace 时加 `TRACE=1`。
+默认超时10秒；`CASE=timer|irq`使用25秒，验证真实10秒固定准备期限。失败保留串口、QEMU 输出、命令、符号及结果。需要异常 trace 时加 `TRACE=1`。
 `RAM=128|256|512` 改变实际QEMU内存，`VIRTIO=1` 添加virtio-rng设备；目前只发现传输窗口，不进行设备协商或I/O。
 启动解析实际DTB，输出RAM、保留区、可用页和支持设备的窗口/中断；主机独立核对，并保存guest收到的runtime.dtb。
 `CASE=pages` 实测伙伴分配的各阶物理读写、地址/对齐约束、耗尽至保护低水位及全部归还；元数据自身从实际RAM预留，未启动用户映射或进程计费。
@@ -63,13 +73,24 @@ make test-all OPENSBI="$OPENSBI"
 主机从QMP导出全部有效页表到 `tables/`，逐页检查RAM范围、权限、设备属性、固件排除、guard及无额外别名。构建ELF仍使用物理装载地址，高半区运行地址见串口VM记录。
 `CASE=seal` 验证写别名拒绝封存、封存后写路径拒绝、真实新代码执行及完整回收。`CASE=user` 使用64 KiB用户栈和只读Boot头，验证U/EL0整数/FP初始清零和往返，以及Boot/CODE只读、内核隔离、栈guard/NX；它不是ELF加载、csu、init或原生syscall实现。
 `CASE=switch` 验证112字节内核切换现场、独立guard栈上两次挂起/恢复、被调用者保存寄存器及栈回收；完整时间片/阻塞调度仍未接入。
-`test-all` 运行主机测试、格式检查、两架构二十四个基础场景及四个RAM配置，共五十二个QEMU场景；任一步失败即失败。`bench` 尚未实现并明确失败。
+`test-all` 运行主机测试、格式检查、两架构三十二个基础场景及四个RAM配置，共六十八个QEMU场景；任一步失败即失败。`bench` 尚未实现并明确失败。
 `CASE=stacks` 验证默认64个计费内核栈、独占叶表、分步失败回滚、续点持有/切离后回收与观测水位；user场景也已迁到独立计费栈，完成陷阱后切回CPU启动栈再回收。
-`CASE=locals` 验证128槽、授权子窗口/减权、封存及独立引用；`life`验证默认256份保留结果、运行槽复用和清理引用；`procs`验证默认63个普通运行槽（槽0保留给初始init）、构造失败回滚、发布前复查、两个真实U/EL0入口以及退出后CPU分批回收。这些构造场景为可信内核/测试接入，未提供原生create/start/grant/wait。
+`CASE=locals` 验证128槽、授权子窗口/减权、封存及独立引用，并覆盖固定镜像CALL/NOTIFY入口、复制及旧入口失效/释放；`life`验证默认256份保留结果、运行槽复用和清理引用；`procs`验证默认63个普通运行槽（槽0保留给初始init）、构造失败回滚、发布前复查、两个真实U/EL0入口以及退出后CPU分批回收。这些构造场景为可信内核/测试接入，未提供原生create/start/grant/wait。
 `CASE=prep` 验证父通过准备权为孩子Acct分配、临时映射发布屏障、旧加载权失效及取消后的费用滞留；`CASE=syscalls` 则通过三个真实用户程序验证自身内存syscall、协作yield/FP保持、动态代码执行及unmap后硬件故障，不使用测试陷阱回调；也检查真实硬件计数推进及time/getres寄存器结果。
-用户态当前仅同步陷阱、IRQ仍屏蔽、没有时间片/阻塞调度；ARM缓存仍关闭。这套检查不代表完整操作系统、调度、真实硬件缓存、IRQ、性能或CI验收。
+`CASE=timer`让两个无主动syscall的忙循环经真实timer IRQ轮转，验证10秒准备到期、旧临时映射滞留及最终回收。可信CPU入口可启用约5ms用户时间片；内核IRQ全现场、CPU空闲唤醒及自身alloc受控窗口已接，IRQ只请求检查点调度。`CASE=irq`验证内核整数/FP现场、开IRQ/WFI边界、独立空闲到期/回收及真实原生分配检查点；尚无IRQ嵌套、通用长Op或完整阻塞调度；ARM缓存仍关闭。这套检查不代表完整操作系统、调度、真实硬件缓存、完整IRQ、性能或CI验收。
 
 每个内核C单元生成`.su`编译帧报告，镜像目录`stack-usage.json`汇总；仅统计各函数帧，不代表完整调用链/汇编或最坏栈深证明。
 构建记录在 `build/<架构>/manifest.json` 及各镜像目录，最新尝试结果在 `last-run.json`，逐命令日志在 `runs/`。
 QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实际 QEMU 版本/参数及固件 hash。
 `make clean ARCH=...` 清理对应架构及指向它的共享编译数据库。
+
+`CASE=images`验证512槽耗尽、构造准入失败回滚、已取消镜像号不复用及旧Life/镜像保留时的新PID隔离；它是可信生命周期机制测试，不是用户态exec或完整原生创建/观察实现。
+
+`CASE=requests`验证Rq预付/恢复保底、948份真实DRAINING占池、构造回滚、取消/ACK及双方死亡后的邮箱/运行索引复用；这是可信机制，原生IPC、阻塞/事件、资源回复及DMA安全确认尚未接通。
+
+`CASE=ipc`使用真实用户程序验证原生call/send/recv/reply等、阻塞续点、等待环、元数据和FP保持、服务死亡后的原RPC/独立收尾；`ipcdepth`使用WAIT_DEPTH=1验证DEPTH边界。通信入口由可信测试预装，完整管理授权、资源reply、信号和运行库仍待接入；事件接续见下条。
+
+`CASE=events`由真实用户程序从固定CONTROL调用connect生成通信入口，再检查消息/事件交替、筛选与合并、notify授权、重设/取消/混合TIMER代次及CPU空闲中真实未来闹钟；`ipc`同时验证RQ_DONE/RQ_CANCEL和独立收尾提示。仍无外设IRQ投递、CHILD/LIFE或信号运行库。
+
+
+`CASE=control`通过真实用户程序检查固定CONTROL的grant/revoke、源GRANT与目标INSTALL分别校验、精确来源排队撤销、ACCEPTED仍可回复、已存在Mmap保留、旧目标退出/运行槽复用隔离及inherit标记。当前只接固定进程CONTROL，CONSTRUCT/EXEC_VIEW原生准入及完整fork/exec仍待实现。

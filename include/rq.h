@@ -1,0 +1,103 @@
+#ifndef _RQ_H
+#define _RQ_H
+#include <image.h>
+#include <list.h>
+#include <abi/ipc.h>
+#include <abi/event.h>
+#ifndef REQUESTS
+#define REQUESTS 1024
+#endif
+#ifndef RECOVERY_RQS
+#define RECOVERY_RQS 64
+#endif
+#define OUT_REQUESTS        12
+#define RQ_NORMAL           0
+#define RQ_SIGNAL1          1
+#define RQ_SIGNAL2          2
+#define RQ_CONTROL          3
+#define RQ_QUEUED           1
+#define RQ_ACCEPTED         2
+#define RQ_TERMINAL         3
+#define RQ_CONSUMED         1
+#define RQ_FINISHED         2
+#define RQ_RELEASED         4
+#define RQ_CANCEL_REQUESTED 8
+#define RQUOTA_OPEN         1
+#define RQUOTA_CLOSED       2
+#define RMAIL_OPEN          1
+#define RMAIL_CLOSING       2
+#define RMAIL_DRAINED       3
+typedef struct Rqid     Rqid;
+typedef struct Rquota   Rquota;
+typedef struct Rmail    Rmail;
+typedef struct Rqrecv   Rqrecv;
+typedef struct Rqresult Rqresult;
+typedef struct Rqinfo   Rqinfo;
+struct Rqid
+{
+  u64 generation;
+  u32 index, reserved;
+};
+struct Rquota
+{
+  Lifeid owner;
+  u16    slots[OUT_REQUESTS];
+  u32    state;
+};
+struct Rmail
+{
+  Imageid image;
+  List    queue, owned;
+  u32     immediate, deferred, state;
+};
+struct Rqrecv
+{
+  Msg    message;
+  Handle source, request;
+  u64    image;
+  u32    kind, reserved;
+};
+struct Rqresult
+{
+  Msg   message;
+  isize status;
+};
+struct Rqinfo
+{
+  u64    generation;
+  Handle caller, server, authority;
+  u64    callerimage, serverimage;
+  isize  status;
+  u32    state, flags, refs, ordinal;
+};
+STATIC_ASSERT(REQUESTS > RECOVERY_RQS && REQUESTS <= 1024 && RECOVERY_RQS >= 0 &&
+                  PROCS * OUT_REQUESTS + RECOVERY_RQS <= REQUESTS,
+              rq_capacity);
+STATIC_ASSERT(sizeof(Rquota) == 48 && sizeof(Rmail) == 64, rq_proc_budget);
+/* Trusted mechanisms, IRQs masked. These do not resolve native CALL authority,
+   wake threads, validate CONTROL, or prove downstream/DMA safety. */
+int rqreserve(Rquota *quota, Lifeid owner, u32 recovery);
+int rqquotaend(Rquota *quota);
+int rqmailinit(Rmail *mail, Imageid image);
+int rqmailclose(Rmail *mail, u32 batch);
+int rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
+             const Msg *message, u32 options, Rqid *out);
+Handle rqhandle(Rqid id, u32 kind);
+int    rqlookup(Handle rpc, Imageid caller, Rqid *out);
+int    rqrecv(Rmail *mail, Rqrecv *out);
+int    rqdefer(Rmail *mail, Handle request);
+int    rqreply(Rmail *mail, Handle request, const Msg *reply);
+int    rqfinish(Rmail *mail, Handle request);
+int    rqcheck(Rmail *mail, Handle request);
+int    rqresult(Rqid id, Imageid caller, u32 options, Rqresult *out);
+int    rqcancel(Rqid id, Imageid caller);
+int    rqack(Rqid id, Imageid caller, u32 options);
+int    rqabandon(Rqid id, Imageid caller);
+int    rqrevoke(Rquota *quota, Imageid caller, Handle authority);
+int    rqclean(Rqid id, Imageid server);
+int    rqhold(Rqid id);
+int    rqdrop(Rqid id);
+int    rqstat(Rqid id, Rqinfo *out);
+/* Consume hint marks only; persistent results/cancellation remain unchanged. */
+u64 rqsignals(Rquota *quota, Rmail *mail);
+#endif

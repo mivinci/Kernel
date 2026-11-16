@@ -6,10 +6,16 @@
 #include <abi/mem.h>
 #include <abi/proc.h>
 #include <prepid.h>
+#include <image.h>
 #define LOCALS          128
 #define LOCAL_SPACE     2
 #define LOCAL_ALLOC     3
 #define LOCAL_MEM       4
+#define LOCAL_CALL      5
+#define LOCAL_SEND      6
+#define LOCAL_NOTIFY    7
+#define LOCAL_CONTROL   8
+#define LOCAL_USE       1
 #define LOCAL_CONSTRUCT 14
 #define LOCAL_LOAD      4
 #define LOCAL_GRANT     (1UL << 63)
@@ -41,10 +47,17 @@ struct Rtable
 STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 /* Storage is zeroed once; generations survive table close/rebinding. Context is
    borrowed from its owner, which keeps Acct/Space alive until drain completes. */
-/* Current native profile excludes untimed construction/loading authority. */
+/* Current native profile excludes incomplete construction/loading admission. */
 int localnative(Rtable *source, Handle handle);
 int localroom(Rtable *source);
 int localinit(Rtable *table, Local *storage, u32 count, Acctid acct, Spaceid space);
+/* Trusted installation only; native connect must supply CONFIG/CONNECT authority. */
+int localendpoint(Rtable *table, Imageid target, u32 kind, u64 rights, u64 bits, u32 inherit,
+                  Handle *out);
+int localcontrol(Rtable *table, Lifeid life, u64 rights, Handle *out);
+int localcontrolled(Rtable *table, Handle control, u64 rights, Lifeid *life, u64 *available);
+int localconnect(Rtable *table, Handle authority, u64 kind, u64 rights, u64 bits, Handle *out);
+int localchannel(Rtable *table, Handle handle, u32 kind, Imageid *target, u64 *bits);
 int localconstruct(Rtable *source, Prepid prep, u64 rights, Handle *out);
 int localtarget(Rtable *source, Handle target, u64 rights, Prepid *prep, Handle *pid);
 int localprepared(Rtable *source, Prepid prep, Memid memory, u64 rights, Handle *out);
@@ -68,6 +81,7 @@ int localunmap(Rtable *table, Handle space, u64 address);
 /* Trusted kernel source only; not a user-pointer copy interface. */
 int localwrite(Rtable *table, Handle handle, u64 offset, const void *data, u64 bytes);
 int localseal(Rtable *table, Handle handle);
+int localinherit(Rtable *table, Handle handle, u64 flags);
 int localfree(Rtable *table, Handle handle);
 int localrevoke(Rtable *table, Handle handle);
 int localclose(Rtable *table);

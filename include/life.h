@@ -43,7 +43,7 @@ struct Life
 {
   u64       generation;
   Handle    pid, parent;
-  u64       sequence;
+  u64       sequence, imagegen;
   Setid     set;
   Lifefault fault;
   u32       state, run, reason, code, waitref, instance, controls, observers, cleanup;
@@ -52,6 +52,8 @@ STATIC_ASSERT(LIFES > 0 && LIFES <= 256 && PROCS > 0 && PROCS <= 64, life_capaci
 STATIC_ASSERT(sizeof(Life) <= 128, life_budget);
 int lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out);
 int lifepublish(Lifeid id);
+/* Allocate monotonically across discarded preparations, independent of Proc. */
+int lifeimage(Lifeid id, u64 *number);
 int lifecancel(Lifeid id);
 int lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault);
 /* Detach only after the Proc owner has stopped and relinquished its resources. */

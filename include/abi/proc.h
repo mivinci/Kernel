@@ -1,6 +1,17 @@
 #ifndef _ABI_PROC_H
 #define _ABI_PROC_H
 #include <types.h>
+#define CONTROL_QUERY     0x01
+#define CONTROL_TERMINATE 0x02
+#define CONTROL_BUDGET    0x04
+#define CONTROL_IRQ       0x08
+#define CONTROL_REVOKE    0x10
+#define CONTROL_CONNECT   0x20
+#define CONTROL_INSTALL   0x40
+#define CONTROL_RIGHTS    0x7f
+#define CONNECT_CALL      5
+#define CONNECT_SEND      6
+#define CONNECT_NOTIFY    7
 #define CONSTRUCT_MAP     1
 #define CONSTRUCT_CONFIG  2
 #define CONSTRUCT_PUBLISH 4

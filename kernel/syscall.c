@@ -3,6 +3,7 @@
 #include <abi/syscall.h>
 #include <diag.h>
 #include <clock.h>
+#include <hal/irq.h>
 
 typedef union Arguments Arguments;
 union Arguments
@@ -24,7 +25,7 @@ syscall(Hctx *context)
   Htrap     trap;
   Lifefault fault;
   Arguments snapshot;
-  u64       args[HAL_SYSCALL_ARGS], outputs[7], used = 0;
+  u64       args[HAL_SYSCALL_ARGS], outputs[8], used = 0;
   Handle    handle = 0, pid = 0, parent = 0;
   u64       image = 0;
   u32       i;
@@ -40,7 +41,7 @@ syscall(Hctx *context)
     fault.cause = trap.code;
     procexit(LIFE_FAULT, trap.kind == HT_PAGEFAULT ? 11 : 4, &fault);
   }
-  for (i = 0; i < 7; i++)
+  for (i = 0; i < 8; i++)
     outputs[i] = 0;
   for (i = 0; i < HAL_SYSCALL_ARGS; i++)
     args[i] = hal_syscall_arg(context, i);
@@ -49,6 +50,42 @@ syscall(Hctx *context)
     goto done;
   }
   switch (trap.syscall_nr) {
+  case SYS_GRANT:
+    used = 63;
+    break;
+  case SYS_INHERIT:
+  case SYS_REVOKE:
+    used = 3;
+    break;
+  case SYS_CONNECT:
+    used = 15;
+    break;
+  case SYS_CALL:
+  case SYS_REPLY:
+    used = 63;
+    break;
+  case SYS_SEND:
+    used = 31;
+    break;
+  case SYS_RECV:
+    used = 34;
+    break;
+  case SYS_REPLY_RECV:
+    used = 127;
+    break;
+  case SYS_RQPOLL:
+  case SYS_RQWAIT:
+  case SYS_RQACK:
+  case SYS_NOTIFY:
+    used = 3;
+    break;
+  case SYS_DEFER:
+  case SYS_RQCANCEL:
+  case SYS_RQFINISH:
+  case SYS_RQCHECK:
+    used = 1;
+    break;
+  case SYS_ALARMSET:
   case SYS_CLOCK_GETTIME:
   case SYS_CLOCK_GETRES:
   case SYS_EXIT:
@@ -61,6 +98,7 @@ syscall(Hctx *context)
   case SYS_UNMAP:
     used = 3;
     break;
+  case SYS_ALARMCANCEL:
   case SYS_YIELD:
   case SYS_GETID:
     used = 0;
@@ -74,7 +112,32 @@ syscall(Hctx *context)
       status = -ERR_INVALID;
       goto done;
     }
+  if ((trap.syscall_nr >= SYS_CALL && trap.syscall_nr <= SYS_RQCHECK) ||
+      trap.syscall_nr == SYS_NOTIFY || trap.syscall_nr == SYS_ALARMSET ||
+      trap.syscall_nr == SYS_ALARMCANCEL) {
+    status = procipc(trap.syscall_nr, args, outputs);
+    hal_ipc_finish(context, status, outputs);
+    proccheckpoint();
+    hal_user_enter(context);
+  }
   switch (trap.syscall_nr) {
+  case SYS_GRANT:
+    status = procgrant(table, (Handle) args[0], (Handle) args[1], args[2], args[3], args[4],
+                       args[5], &handle);
+    if (!status)
+      outputs[0] = (u64) handle;
+    break;
+  case SYS_INHERIT:
+    status = localinherit(table, (Handle) args[0], args[1]);
+    break;
+  case SYS_REVOKE:
+    status = procrevoke(table, (Handle) args[0], (Handle) args[1]);
+    break;
+  case SYS_CONNECT:
+    status = localconnect(table, (Handle) args[0], args[1], args[2], args[3], &handle);
+    if (!status)
+      outputs[0] = (u64) handle;
+    break;
   case SYS_CLOCK_GETTIME:
   case SYS_CLOCK_GETRES:
     if (trap.syscall_nr == SYS_CLOCK_GETTIME)
@@ -103,7 +166,11 @@ syscall(Hctx *context)
       status = -ERR_FAULT;
       break;
     }
+    /* This native profile admits only own-account allocation. IRQs may mark
+       deadlines/reschedule, but cannot drain tables or switch this C frame. */
+    hal_irq_enable();
     status = localalloc(table, (Handle) args[0], &snapshot.alloc, &handle);
+    (void) hal_irq_save();
     if (!status)
       outputs[0] = (u64) handle;
     break;
@@ -150,5 +217,6 @@ syscall(Hctx *context)
   }
 done:
   hal_syscall_finish(context, status, outputs);
+  proccheckpoint();
   hal_user_enter(context);
 }

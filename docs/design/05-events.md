@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：2026-11-16时钟、内核/用户timer IRQ、准备期限、原生notify/alarm和消息/事件接收已局部实现，见末尾/status；外设IRQ、CHILD/LIFE提示、信号/运行库仍待接，不称完整事件系统、性能或CI验收。
 
 ## IRQ 与事件
 
@@ -242,7 +242,7 @@ nanosleep固定D，进入捕获信号裁决时I<D固定EINTR/rem=D-I；I>=D或�
 - [ ] 无 RTC 时验证确定起点与未校准标志；授权校时前跳/后跳只改变实时时钟，不改变 sleep、RPC 超时和调度进展。
 - [ ] 两架构覆盖频率换算、基准更新/读取交错、秒/纳秒规范化与溢出拒绝；非授权校时失败且无状态改变。
 
-全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+上述完整验收仍待执行，局部交付与边界见后续切片；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 阶段 09：事件与服务阻塞协议
 
@@ -268,4 +268,31 @@ nanosleep固定D，进入捕获信号裁决时I<D固定EINTR/rem=D-I；I>=D或�
 
 0x21/0x22已接原生time/getres，两种clockid和非法编号在真实U/EL0验证；分辨率为ceil(1e9/frequency)。REALTIME当前无校准入口，与MONOTONIC同起点推进，不能据此推断真实日期。clock_settime、校准状态query、用户态time.h/errno适配仍未实现。SYS_CLOCK_*及clockid定义在include/abi中。
 
-host测试以可注入HAL对照Python大整数，覆盖极端/随机频率、回绕、输出不变及纳秒溢出。syscalls场景检查真实计数推进、分辨率与频率一致，用户程序检查秒非负、纳秒规范化、非法编号及其他输出清零。IRQ、硬件timer设置、准备期限和alarm仍未实现，不能把计数查询称为定时中断验收。
+host测试以可注入HAL对照Python大整数，覆盖极端/随机频率、回绕、输出不变及纳秒溢出。syscalls场景检查真实计数推进、分辨率与频率一致，用户程序检查秒非负、纳秒规范化、非法编号及其他输出清零。该查询切片自身不包含定时中断验收；后续用户态timer IRQ及准备期限实现见下节，alarm仍未实现。
+
+
+### Timer IRQ与准备推进（2026-11-15）
+
+已接真实用户态timer IRQ：RV64 SBI TIME、ARM64 GICv2/虚拟timer。上半段屏蔽/确认timer，读取单调时间，以固定游标扫描最多8份Prep，先取消到期发布资格；Local/Mmap/内核栈清理由CPU分批执行，不在IRQ中释放旧映射。10秒deadline不受用户时间片重设影响。CASE=timer在两架构实测无syscall忙循环的轮转、固定期限、旧别名滞留及最后引用释放；host覆盖deadline前一纳秒/等于deadline、提交复查、已提交不受旧期限影响及u64截止加法溢出。
+
+当前内核C段仍关闭IRQ，没有通用事件位/用户alarm、外设IRQ绑定、内核嵌套IRQ或CPU空闲唤醒路径；不会把用户态抢占场景称为完整事件系统或STOP期间清理验收。
+
+
+### 内核timer与空闲推进补充（2026-11-16）
+
+内核IRQ入口现已接通；受控分配窗口和CPU空闲可收真实timer IRQ，处理中不切换任意C现场，统一检查点决定调度。CPU无就绪进程时仍由timer驱动固定期限和后续有界清理，CASE=irq覆盖真正WFI唤醒、pending-before-WFI窗口、10秒独立到期及最后引用回收。当前不开放IRQ嵌套或通用外设，不代表已有用户alarm、信号等待、完整IPC阻塞调度或任意长事务的可中断性。完整入口和资源不变量见01/03末尾。
+
+
+### 原生事件接收、通知与闹钟切片（2026-11-16）
+
+新增32字节Event（pending/deadline/generation及armed/prefermessage），直接纳入Proc。事件常量归include/abi/event.h，位号不移动。用户notify只通过当前Local NOTIFY解析固定目标Image和允许掩码，bits=0拒绝、越权/保留位整体DENIED，不分配Rq或消息；结果不包含来源身份。目标仍在同步call/send/rqwait时只保留pending，不强行退出等待。事件与普通消息均可用时普通recv交替，初始优先事件；EVENTS_ONLY不修改普通接收偏好。立即CALL尚未reply/defer时所有recv仍BUSY，不消费事件。
+
+eventchoose只选择，实际EVENT取走或消息交付成功才更新偏好；死来源队列清理不假装交付消息。EVENT只取掩码匹配位，未匹配保留；输出kind=EVENT，source/request/image=0，words[0]位图、含TIMER时words[1]为固定代次、其余0。失败输出0且不消费。recv登记持久mask/options后原子切出，notify/IRQ与CPU复查仅在匹配条件满足时唤醒原C续点。
+
+原生0x24/0x25为当前进程唯一alarm，绝对u64单调纳秒。新set/cancel都递增代次，首个成功为1，耗尽OVERFLOW且保持旧设置和输出；重设/取消只清旧TIMER，不清其他事件，deadline=0立即置位而非取消。当前可信CPU须先启用timer调度profile，未启用时alarm明确NOTSUP；不在当前用户C续点临时初始化控制器。退出状态不再扫描alarm，新Proc初始化清事件/闹钟；尚无exec提交，未来须随镜像切换结束旧alarm。
+
+硬件共享约5ms周期timer，IRQ扫描固定最多64个运行记录并仅对到期alarm置位/唤醒；准备期限仍独立游标每次最多8份，不受用户alarmcancel影响。比较的是clockmono纳秒，未到期不会唤醒；没有把计数分辨率当作唤醒精度，也未实现按最早deadline重新编程硬件或硬实时保证。CPU无就绪进程时WFI仍可驱动alarm；IRQ里不做用户数据复制、页分配或任意C深处切换。
+
+Rq新增未投递提示标志，不新增记录：终结和后续真实server_finished分别标DONE，首次协作取消/强制终结已接收请求标CANCEL。rqsignals只消费提示标记，不消费结果、取消或三项回收责任；每主体最多扫12份出站和16份owned，按固定Image合并成RQ_DONE/RQ_CANCEL。提交/回复/取消/finish定向唤醒，CPU有界复查补齐可信rqclean等路径；即使旧失败结果已ACK_RESULT，真正收尾完成仍再置RQ_DONE。若记录已被调用者消费/释放且可回收，不为它保留第二份消息/事件记录。服务必须扫描持久请求状态并自行有界处理，提示次数不是请求数。
+
+新增host验证掩码/合并、消息与事件交替、EVENTS_ONLY保持偏好、deadline前一纳秒/正好到期、重设/取消及u64代次耗尽不改状态。CASE=events通过真实U/EL0检查越权notify无部分置位、重复位合并、混合/筛选EVENT与CALL、BUSY不丢事件、过去/未来/取消/重设闹钟、混合TIMER代次；两个进程均阻塞时实际WFI到期，读取时钟确认未提前返回。另验证同步call期间普通notify只保留pending、正常回复后再取提示。ipc/ipcdepth场景改为服务阻塞等RQ_CANCEL，且验证失败结果与真正收尾的两次RQ_DONE。CHILD/LIFE、IRQ独占位投递、信号/nanosleep运行库、STOP/CONT和完整服务事件循环尚未实现。

@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订；内核栈生命周期切片已实现并在两架构QEMU局部验证，见末尾。Local/Life/Proc可信基础切片也已局部实现，见末尾；原生完整管理授权、准备准入与IRQ/时间片调度尚未接通，不称全阶段、性能或CI验收。
+状态：2026-11-15设计规格已逐项修订；内核栈生命周期切片已实现并在两架构QEMU局部验证，见末尾。Local/Life/Proc可信基础切片也已局部实现，见末尾；原生完整管理授权、准备准入与完整IRQ/阻塞调度尚未接通，用户timer时间片见末尾，不称全阶段、性能或CI验收。
 
 职责：普通 fork/spawn 由调用者运行库协调，父直接向内核领取退出结果；init 管系统策略、孤儿与服务监督。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -90,7 +90,7 @@ grant 增加独立资源引用，不建立派生树；释放源 Handle 不自动
 
 ### 目标表安装权限（第2项审查修订）
 
-CONTROL各低位固定为QUERY=0x01、TERMINATE=0x02、BUDGET=0x04、IRQ=0x08、REVOKE=0x10、CONNECT=0x20、INSTALL=0x40。新增INSTALL只允许grant向该CONTROL绑定的单一进程资源表安装引用；不会授予configure初始CPU现场、改运行中寄存器、map他人空间、预算调整或撤销权。已有位号不移动。bit63 GRANT仅允许把该资源本身减权转授，不代替目标INSTALL；即使target CONTROL同时有QUERY、CONNECT、GRANT而没有INSTALL，也不能安装。
+CONTROL各低位固定为QUERY=0x01、TERMINATE=0x02、BUDGET=0x04、IRQ=0x08、REVOKE=0x10、CONNECT=0x20、INSTALL=0x40。新增INSTALL只允许grant向该CONTROL绑定的单一进程资源表安装引用；不会授予configure初始CPU现场、改运行中寄存器、map他人空间、预算调整或撤销权。已有位号不移动。bit63 GRANT允许把该资源本身减权转授；用于CONTROL connect时，还限制产物能否包含GRANT，不代替目标INSTALL；即使target CONTROL同时有QUERY、CONNECT、GRANT而没有INSTALL，也不能安装。
 
 | grant的target | 必需权限/绑定 | 可修改的表 |
 | --- | --- | --- |
@@ -137,7 +137,7 @@ init持有M的READ|WRITE|GRANT及B的固定CONTROL INSTALL，将第4页起的4�
 
 ### 本地资源引用的放弃（已冻结）
 
-为覆盖单资源回复交付，方案复用free(handle)释放调用者自己的本地RESOURCE引用，首轮明确支持MEM/CALL/SEND/NOTIFY引用；对应私有桩仍为__sys_free，不导出与C free(pointer)混用的裸函数。PID、RPC、REQUEST不是该入口可释放的本地资源；其他有专门生命周期的资源须各自定义，不因该入口存在就泛化成任意对象销毁。
+为覆盖单资源回复交付，方案复用free(handle)释放调用者自己的本地RESOURCE引用，首轮明确支持MEM/CALL/SEND/NOTIFY及固定进程CONTROL引用；对应私有桩仍为__sys_free，不导出与C free(pointer)混用的裸函数。PID、RPC、REQUEST不是该入口可释放的本地资源；其他有专门生命周期的资源须各自定义，不因该入口存在就泛化成任意对象销毁。
 
 | 本地资源 | free成功后的效果 | 不包含的效果 |
 | --- | --- | --- |
@@ -757,13 +757,13 @@ RESOURCE 子类型编号固定：1 CREATE、2 SPACE、3 ALLOC、4 MEM、5 CALL�
 | EXEC_VIEW/CONSTRUCT | MAP、CONFIG、PUBLISH、ABORT、ALLOC | 固定source PID/image与一次准备；不可转授/继承，提交或撤销时统一失效 |
 | SYSTEM | QUERY、CLOCK、HALT、REBOOT、POLICY | 仅启动清单指定的init；不继承、不通过运行中reply授予 |
 
-所有可转授RESOURCE统一使用bit63的GRANT；表内低位仅业务使用权，MEM READ/WRITE/EXEC/SEAL/DMA依次bit0..4，CALL/SEND USE为bit0。GRANT只控制普通grant源权限；target须是本次有效CONSTRUCT/EXEC_VIEW CONFIG或固定进程CONTROL INSTALL，不能以QUERY/CONNECT/GRANT替代。grant永不增权/扩窗口；CREATE的再授予还要求源SERVICE或init POLICY，普通CREATE不能任意传播给既有进程。grant的inherit字段仅两位：FORK=1、EXEC=2，默认0；目标子类型禁止的继承位一律拒绝。EXEC=2只适用显式共享MEM、CALL/SEND、必要启动SELF/CREATE重绑定；应用私有MEM不因设置EXEC而保留旧映射。运行中resource reply只允许受限SHARED MEM或后端CALL USE，默认FORK=1、EXEC=0；fd所需exec继承由服务交接重新建立，不把旧调用权盲目改绑对端。
+所有可转授RESOURCE统一使用bit63的GRANT；表内低位仅业务使用权，MEM READ/WRITE/EXEC/SEAL/DMA依次bit0..4，CALL/SEND USE为bit0。GRANT控制普通grant源权限，并与CONTROL CONNECT共同限制connect产物的GRANT；target须是本次有效CONSTRUCT/EXEC_VIEW CONFIG或固定进程CONTROL INSTALL，不能以QUERY/CONNECT/GRANT替代。grant永不增权/扩窗口；CREATE的再授予还要求源SERVICE或init POLICY，普通CREATE不能任意传播给既有进程。grant的inherit字段仅两位：FORK=1、EXEC=2，默认0；目标子类型禁止的继承位一律拒绝。EXEC=2只适用显式共享MEM、CALL/SEND/NOTIFY、必要启动SELF/CREATE重绑定；应用私有MEM不因设置EXEC而保留旧映射。运行中resource reply只允许受限SHARED MEM或后端CALL USE，默认FORK=1、EXEC=0；fd所需exec继承由服务交接重新建立，不把旧调用权盲目改绑对端。
 
-初始启动清单建立16个Set及各自绑定的CREATE/集合CONTROL，不提供运行时任意集合创建/迁移。create使用SERVICE权限时额外向调用者返回a3/x3=该孩子的持续CONTROL（QUERY/TERMINATE/BUDGET/IRQ/REVOKE/CONNECT/INSTALL及GRANT），普通创建该输出0；这不是构造权发布后自动升级，SERVICE只授init且不继承。connect(authority,kind,rights,bits)凭CONTROL CONNECT或本主体仍有效的未发布CONSTRUCT建立固定目标镜像的CALL/SEND/NOTIFY入口，不能凭PID建立；构造期建立的入口可在发布后使用，但不含持续监督权。NOTIFY掩码只用户位，其他kind的bits=0。需要再授予时GRANT也须受init POLICY或原CONNECT授权限制，普通USE入口不能提升。
+初始启动清单建立16个Set及各自绑定的CREATE/集合CONTROL，不提供运行时任意集合创建/迁移。create使用SERVICE权限时额外向调用者返回a3/x3=该孩子的持续CONTROL（QUERY/TERMINATE/BUDGET/IRQ/REVOKE/CONNECT/INSTALL及GRANT），普通创建该输出0；这不是构造权发布后自动升级，SERVICE只授init且不继承。connect(authority,kind,rights,bits)凭CONTROL CONNECT或本主体仍有效的未发布CONSTRUCT建立固定目标镜像的CALL/SEND/NOTIFY入口，不能凭PID建立；构造期建立的入口可在发布后使用，但不含持续监督权。NOTIFY掩码只用户位，其他kind的bits=0。请求带GRANT的产物时，输入CONTROL必须同时含CONNECT和GRANT；仅CONNECT只能生成USE，缺任一位DENIED。CONSTRUCT仅能生成USE，不能生成GRANT；SYSTEM/POLICY或裸PID不替代显式目标authority。普通USE入口不能提升。
 
 inherit(resource,flags)仅修改本主体允许类型的FORK/EXEC保留标记，不增加对象使用权、不能设在构造/CONTROL/设备类型；MEM仅SHARED可EXEC，CALL/SEND/NOTIFY可显式EXEC且仍绑定原对端image。运行中reply默认不设EXEC，fd适配在准备保留连接时按自身授权显式标记；这是同主体继承而非向第三方grant，不要求源GRANT。fork/exec自身份空间/分配/CREATE采用专门重绑定，不复制旧私有映射。
 
-撤销只按精确目标授权来源失效，非派生树。free允许MEM/CALL/SEND/NOTIFY引用放弃；没有引用的SELF/CREATE等固定启动权用revoke/退出处理，不把free扩大为通用销毁。仍在途的Rq、Mmap、观察和清理记录各持独立引用。固定设备域的DMA收尾只由明确CONTROL及设备协议共同许可，rqclean不能伪造真实停机证据。
+撤销只按精确目标授权来源失效，非派生树。free允许MEM/CALL/SEND/NOTIFY/固定进程CONTROL引用放弃；没有引用的SELF/CREATE等固定启动权用revoke/退出处理，不把free扩大为通用销毁。仍在途的Rq、Mmap、观察和清理记录各持独立引用。固定设备域的DMA收尾只由明确CONTROL及设备协议共同许可，rqclean不能伪造真实停机证据。
 
 ### fork/exec 准备的确定选择
 
@@ -810,7 +810,7 @@ wait(pid=0)在原wait接受时固定调用者当时PGID，SA_RESTART沿该选择
 - [ ] CONSTRUCT/EXEC_VIEW仅CONFIG和有效归属/阶段可安装；发布、撤销、超期或source镜像改变后拒绝，CONTROL INSTALL不能调用configure改CPU现场。
 - [ ] 集合/域CONTROL、SYSTEM、PID、CALL、REQUEST不作grant目标；检查后target exec/退出时旧尝试不写新表，容量/范围失败不占槽或泄漏引用。
 
-- [ ] free只放弃本地MEM/CALL/SEND/NOTIFY引用，PID/RPC/REQUEST及陈旧Handle拒绝；Mem仍有Mmap、CALL仍有已提交Rq时底层引用保持，不能误用复用槽。
+- [ ] free只放弃本地MEM/CALL/SEND/NOTIFY/固定进程CONTROL引用，PID/RPC/REQUEST及陈旧Handle拒绝；Mem仍有Mmap、CALL仍有已提交Rq时底层引用保持，不能误用复用槽。
 - [ ] 连接关闭先登记服务关闭/请求收尾，后释放最后本地入口；用户free不冒充服务close、rqcancel或DMA停止，失联不误关同号新连接。
 
 - [ ] source只有使用权而无授予权、越范围/增权限、发布后旧准备授权及拿CALL句柄当目标管理权均拒绝，不改变目标表。
@@ -993,7 +993,7 @@ CPU侧本地测试继续使用启动时已经保留且有guard的16 KiB栈保存
 
 当前构造器`procnew`等只接受可信内核输入；`proctable`只为构造期同步内核代码提供借用视图，禁止跨发布点/调度点保留它当目标授权。完整原生调用仍须独立校验当前调用者、CREATE/CONSTRUCT或固定CONTROL、凭据、准备归属/期限、请求与镜像记录预付。不能将本节返回PID当管理Handle，也不能因有内部入口便绕过尚未完成的准入。
 
-当前configure不支持非零signal配置或资源回复保底预留，明确返回NOTSUP且保留原配置；尚无信号基线继承、Rqs/Images/Preps准入或准备10秒期限。因此它不是完整原生configure/start验收。普通DATA/CODE仍限制同Acct；准备期加载采用用户已确认的02末尾ALLOC例外，具体准备绑定、失效和临时别名检查已实现，原生完整构造入口仍未接通。
+当前configure不支持非零signal配置或资源回复保底预留，明确返回NOTSUP且保留原配置；信号基线继承和Rq/Image完整准入仍未接；可信Prep的10秒期限与IRQ推进已在后续切片补齐。因此它不是完整原生configure/start验收。普通DATA/CODE仍限制同Acct；准备期加载采用用户已确认的02末尾ALLOC例外，具体准备绑定、失效和临时别名检查已实现，原生完整构造入口仍未接通。
 
 `spaceread`只供内核读入用户空间：最多64 KiB，先逐页检查完整范围的USER/READ/NORMAL，再通过内核映射复制到可信目标，失败不先修改目标。它不是跨空间`__sys_copy`或用户写接口，也不绕过COW。`spaceclear`仅在非活动根逐条解除有界Mmap，仍先TLB后回收。
 
@@ -1021,7 +1021,102 @@ Proc目前为368字节，Life仍112、Local仍48、Prep为160、Mmap为64，均�
 
 仅支持至多16页的同步短映射：完整用户现场已保存，Proc/Space引用固定，短事务暂停当前用户根，完成Local校验/页表提交或回滚后恢复根，再返回用户。暂停窗口不得yield，仍为单核、IRQ关闭profile；这不是长Op、可抢占内核或任意长度运行期VM验收。
 
-原生构造/执行准备、CREATE/CONTROL、Rq/Image/期限、信号配置和服务管理尚未接通。为了不绕过这些准入，当前native profile对CONSTRUCT和临时加载MEM明确NOTSUP；已确认的构造操作由可信入口和独立prep场景验证，不能据此宣称完整create/configure/start/grant可用。EXEC_VIEW阶段仍待实现。
+原生构造/执行准备、CREATE/CONTROL、Rq/Image完整准入、信号配置和服务管理尚未接通；可信准备期限见后续切片。为了不绕过这些准入，当前native profile对CONSTRUCT和临时加载MEM明确NOTSUP；已确认的构造操作由可信入口和独立prep场景验证，不能据此宣称完整create/configure/start/grant可用。EXEC_VIEW阶段仍待实现。
 
 
 接续验收：`build/host/stage05-prep/test-all.log`记录115项host及52个QEMU场景全通过，普通源资源表仍保留原隔离规则；最后补充的native profile构造/加载权隔离断言亦在`unit-final.log`通过。normal仍停机、没有init/SDK/CI/真实硬件结论。后续在这些基础上补请求与准备期限准入，不回退到裸PID构造权限。
+
+
+### 准备期限与用户时间片执行切片（2026-11-15）
+
+可信prepcreate接受时取得固定单调deadline=now+10秒，溢出在持引用/占槽前拒绝；Prep现168字节，仍在256上限内。每次加载授权检查及最终发布检查重读时间，到期先取消Life CONSTRUCT、标记expired、关准备资格并放目标Space租约，不拆Mmap或清Local。start在旧槽尚存时返回TIMEDOUT；随后清理导致失效的槽仍按既有Handle错误返回。CPU回收保持旧映射/Acct/Life责任，最后别名撤销后才回收旧页。成功发布先结束准备，旧deadline扫描不会取消已发布孩子；这一实现仅覆盖现有可信构造，不代替未实现的fork/exec准备。
+
+proctimerstart由可信CPU调度入口显式启用；普通初始化仍不构造init，旧的协作机制测试可保持未启用timer的profile。启用后每次选择就绪续点按ceil(freq/200)设置约5ms硬件时间片，IRQ保存完整用户现场，ack后扫描最多8份准备并FIFO切回CPU；恢复时不走syscall finish，不改PC或返回寄存器。尚无阻塞队列、STOP/KILL、IPC直接交接预算、空闲等待和可中断长Op；这是用户安全出口时间片，不是完整调度验收。
+
+CASE=timer使用两个没有主动syscall的忙循环，逐轮写各自计数供CPU核对两者进展；真实10秒后准备被IRQ扫描取消，CPU分批回收未发布孩子。源仍运行且旧临时别名保持一页Acct费用与Life清理引用；随后CPU仅向两程序各自普通DATA写结束条件，程序核对整数、全部FP/SIMD及控制状态（ARM另核对NZCV）后通过真实exit42结束，最后全部归还。主机检查ticks/turns对应和最终页表/特权/停机状态。此场景超时25秒，期限仍固定10秒，不为加速测试缩短生产常量。固定扫描容量和QEMU观测不代表硬实时延迟保证。
+
+
+### 内核检查点与独立空闲推进（2026-11-16）
+
+已新增内核timer请求位和明确proccheckpoint：IRQ返回原C代码，只有操作完成、IRQ屏蔽且未处VM暂停/短提交时才FIFO切CPU。自身native alloc开放受控IRQ窗口，单次仍最多16页，不将它称为通用长Op。用户现场在原生返回寄存器提交后固定，检查点挂起的C续点仍持独立内核栈引用；恢复时回同一续点，不重新执行已提交分配。
+
+procidle只在CPU栈、无当前进程、无就绪项时睡眠，timer持续确认/重设并独立撤销准备资格，返回CPU后每轮推进一份Proc阶段及至多32个Prep源槽。即使父没有运行续点，也能到期和回收；测试只靠idle确认目标、Prep、Life、Acct全部回收，再让父执行自身分配，未以忙轮询或测试主动清理替代这一段。原生创建管理、STOP/KILL、IPC阻塞/直接交接预算、fork/exec等专用长Op仍待实现。
+
+
+### Image身份与构造准入切片（2026-11-16）
+
+新增512槽Image池，每槽64字节；PREPARING=1、ACTIVE=2、ENDED=3及EXIT=1/ABORT=2/EXEC=3/TIMEOUT=4与观察协议同值。记录持完整PID、稳定Life引用、镜像号、sourceimage、固定首个终结原因、Proc绑定及观察/清理计数。每份Image持一份Life CLEANUP引用，最后所有者/观察/清理责任解除才释放；结束时不假装设备、旧请求或映射已完成。
+
+镜像号由Life.imagegen单调分配，不从Proc槽或Image槽推导。Life现120字节、Proc 384、Prep 184，仍在128/512/256上限内。取消准备后即使记录已回收也不重用该实例的旧镜像号；Image池已满先失败，不消耗新镜像号或Life引用；u64耗尽返回OVERFLOW不回绕。不同完整PID可以各从镜像1开始，不能只凭镜像数字判断同一主体。
+
+Proc构造先取得初始Image，再申请Acct/Space/栈等；后续失败逆序释放。发布把同一Image转ACTIVE，退出先固定ENDED，CPU最终清理才放Proc绑定。Prep另持目标Image清理引用，成功发布后结束本次准备，超时先记TIMEOUT，随后ABORT/重复清理不改写该原因。旧临时别名继续持Prep→Image→Life，运行槽/结果独立复用。一个实例只允许一份ACTIVE；内部旧镜像终结/新镜像激活测试不等于已实现exec原子切换。
+
+sourceimage仅为被核验准备绑定时的源镜像快照，不单独构成授权；CHILD/FUTURE仍必须由真实REQUEST及保留Prep的完整源PID/image/目标关联证明，不能从Life.parent、裸PID或sourceimage猜关系。Image.reserve当前为0；实际资源回复保底槽、Rq预付、完整CREATE权限和观察cookie尚未接通，非零reserve_resources仍NOTSUP，不将本切片称为完整原生创建准入。
+
+host覆盖取消后号码不复用、池满不消耗号码、同PID旧EXEC镜像保留且不跟随新镜像、单ACTIVE、观察在运行槽/结果释放后继续持Life、终结原因不改写及失效/重复引用操作。CASE=images耗尽默认512个旧镜像槽，验证Proc构造失败无页/名额泄漏，恢复容量后实际构造/取消/清理，再验证旧Life/镜像被清理引用保留时，同运行索引的新完整PID拥有独立镜像1。现有prep/timer/irq真实用户场景同时复核新的引用链。
+
+
+### Rq预付与Proc清理衔接（2026-11-16）
+
+构造现为Life→Image→12份Rq预付/接收链→Acct/Space/栈/Local，失败逆序回滚。Rq使用固定池，不向Acct虚扣静态槽的整页费用；普通准入不可消耗64份恢复Rq。Rquota48和Rmail64计入Proc后实际496字节，未提高512上限。
+
+当前进程切离前撤销最多12份自身出站；CPU按批关闭入站，未收尾owned迁到稳定退役链后才复用运行槽。旧Rq继续持原双方Image/Life，C续点临时引用须独立安全释放。完整原生授权/阻塞、KILL续点退栈、事件及管理代收尾仍待接入，可信rqclean不能代替CONTROL或设备安全核验。控制预算入口CALL_CONTROL=0x08已由用户确认，只选自身预算，不增加授权，见04末尾。
+
+
+### 固定镜像本地通信授权切片（2026-11-16）
+
+Local新增CALL=5、SEND=6、NOTIFY=7，保持48字节；objectgen/object为稳定Imageid，NOTIFY掩码保存在内部offset，其他通信引用offset/length为0。该内部标记不等于对外MEM窗口：未来RESOURCE查询须按子类型输出既定固定目标与有效窗口，不能把内部掩码冒充MEM范围。每个入口持一份Image CLEANUP引用，Image间接固定Life；普通free/表drain释放此份引用，不影响已提交Rq独立持有的双方Image。
+
+可信localendpoint只接受USE及可选GRANT，建立时允许PREPARING/ACTIVE，ENDED拒绝；localchannel严格匹配本地完整Handle及CALL/SEND/NOTIFY子类型，PREPARING为STATE，ENDED为PEER，ACTIVE返回原Imageid。对端同PID的新镜像不重定向旧入口；失效入口仍可free，最后引用释放才回收旧Image/Life。NOTIFY仅允许非零用户32..63位掩码；CALL/SEND/NOTIFY均可按既定FORK/EXEC位保留，始终固定原目标Image。此处曾错误禁止NOTIFY EXEC，已按正文inherit契约修正。
+
+localcopy对这些子类型仍要求源GRANT、rights及inherit只减不增、非MEM offset/length输入0；复制保留同一目标Image与NOTIFY掩码，不从PID重绑定。安装函数仍为可信机制，不接收用户裸Imageid或任意表作为授权；原生connect的CONTROL CONNECT/CONSTRUCT检查、grant的INSTALL/CONFIG检查仍须由原生管理层接入。该本地引用切片当时原生IPC仍NOTSUP；后续消息IPC接续见下节，不把新增本地引用称为已实现notify或公开connect。
+
+host覆盖准备期STATE、激活后解析、同PID镜像更新后PEER、旧镜像保留/失效free、减权/禁止再授予、错误子类型、NOTIFY掩码/继承及满表无引用泄漏。双架构locals场景在原内存/表耗尽验收之外，实际验证入口复制、发布后生效、旧镜像终结不跟随新镜像和最后引用回收。
+
+
+### 原生IPC阻塞续点与强等待边（2026-11-16）
+
+Procstage以同一48字节联合区承载构造Config或运行等待；发布后Config不再读取，记录等待Rq、原目标Imageid、完整peer PID及等待种类/选项。Proc仍496字节，未另建影子等待表。新增BLOCKED状态；保存完整用户现场后在自己的C栈检查结果、登记等待并撤用户根，IRQ始终屏蔽，切CPU；唤醒只排FIFO，不沿用户指针写现场。恢复时回同一C续点、重查原Rq并只释放这一次临时引用。没有结果检查与登记之间单独睡眠的窗口。
+
+提交/回复/finish按明确目标唤醒；CPU每次选择前另以PROCS上限复查阻塞条件，接住可信CPU清理或管理代收尾产生的完成。该配置最多64份复查，不是无界扫描，也不声称已测得热路径时延。普通recv只等消息队列，此切片不包含事件位；用户EVENT掩码非0明确NOTSUP。退出先固定镜像/本地出站，再关闭至多32份入站，剩余由CPU清理批次推进；未收尾请求仍在稳定退役链，不因接收服务退出而假装共享/DMA安全。
+
+同步call/send及未满足的rqwait建立一条强边，绑定完整目标PID/Image。检查先看结果，再沿当前BLOCKED强边最多WAIT_DEPTH（默认64、范围1..PROCS）；回当前进程返回DEADLOCK，超过上限而未证明环返回DEPTH，不能伪报死锁或跳过检查。recv无强边，已结束服务的安全收尾等待不虚构指向死服务的边。新同步提交在第一次阻塞前失败时仍为未交付队列项，原子取消/消费并退临时引用；异步RPC的rqwait失败只退出本次等待，保留原请求。唤醒摘强边，原结果/临时引用在旧续点恢复前仍保留。
+
+当前原生call/send/recv/reply/reply_recv/defer/rqpoll/rqwait/rqcancel/rqack/rqfinish/rqcheck已接现有本地固定镜像授权；无信号实现时调用上下文为普通槽，显式CALL_CONTROL选自己的控制两槽。没有根据裸PID选表；native connect/CONTROL授权、事件/notify/alarm、信号中断及STOP/KILL退栈、资源reply、时间片捐赠/直接交接仍未接通。可信启动可预装CALL/SEND用于进入真实用户态验证，normal依旧不模拟init。
+
+CASE=ipc由两个独立U/EL0程序通过真实ecall/svc执行同步阻塞、异步控制槽、defer/协作取消、reply_recv先回复再非阻塞接收、两阶段ACK、SEND、错误参数及元数据检查；每次检查未用输出/image清零，跨阻塞核对FP/SIMD哨兵。服务持已接受请求退出时，caller收到PEER与原RPC，确认失败后阻塞等RQ_FINISH；测试仅在CPU栈、原服务已结束并清理后作可信rqclean，再恢复caller释放原跟踪。它不冒充原生管理代收尾权限或DMA核验。CASE=ipcdepth将WAIT_DEPTH设1，双进程等待链返回DEPTH，默认配置识别真实环返回DEADLOCK；自等待始终DEADLOCK。最终两个程序exit42且页/名额/旧Image和Rq责任全部归还。
+
+
+### Proc事件预算与等待筛选（2026-11-16）
+
+Event32加入后Proc达到512上限，未新增影子表。去除重复PID和image字段：PID由本槽代次/索引按既定Handle编码恢复（初始init的保留编码仍独立），当前image用已持有的Rtable.image；Local源绑定所需Rtable.owner仍保留。Hkctx置结构首部，避免16字节对齐空洞。运行等待的peer/mask为按WAIT种类互斥联合字段；强等待遍历遇WAIT_RECV立即结束，不把事件mask误作PID边，Config仍只在构造阶段读取。
+
+WAIT_RECV保存mask/options，wake只看匹配事件或允许的消息；未选择消息的EVENTS_ONLY不会被普通CALL唤醒，call/send/rqwait也不因普通通知/闹钟退出。IRQ只写pending并排READY，恢复从原C续点重查；无就绪进程仍可经CPU空闲处理alarm。其他边界与真实两架构验证见05末尾，原生connect/CONTROL、信号/作业关系、资源reply与完整创建管理仍待接入。
+
+
+### 固定CONTROL与原生connect切片（2026-11-16）
+
+已接48字节Local的固定进程CONTROL，独立持有完整Life引用；减权复制要求源GRANT且不允许继承或内存窗口。free只解除这份管理引用，不终结目标；旧目标结束、运行槽复用后，旧CONTROL仍指向原Life，不选择新PID。QUERY等低7位分别检查，不互相隐含。
+
+原生connect(0x55)当前只接受本地固定CONTROL CONNECT；kind固定CALL=5、SEND=6、NOTIFY=7，与RESOURCE子类型一致。产物绑定目标当时的精确Image，默认inherit=0；NOTIFY必须是非零用户位掩码，其他bits为0。裸PID、错误类型及缺CONNECT拒绝；输入或容量失败不安装引用。当前profile支持USE及CONTROL CONNECT+GRANT批准的可转授入口；缺GRANT的CONNECT请求可转授产物为DENIED。CONSTRUCT仍受完整CREATE准入门禁，不凭可信构造器旁路。
+
+- [x] host枚举CONTROL低7位、减权复制、满表回滚及旧Life/运行槽复用隔离。
+- [x] 两架构events真实用户程序已用预装CONTROL调用connect，生成CALL/NOTIFY后执行消息与事件交互，并放弃原CONTROL。
+- [x] 完整回归151项host、格式和66个QEMU场景通过；events覆盖缺CONNECT（QUERY/INSTALL/GRANT不能补权）、SEND创建/释放，以及非法kind/rights/bits/保留输入拒绝。日志见status。
+- [x] 用户确认：带GRANT产物要求输入CONTROL同时有CONNECT和GRANT；CONSTRUCT仅允许USE。已接前者的原生检查，后者随构造准入保持门禁。
+- [ ] 完整CONTROL管理、CREATE准入及CONSTRUCT连接仍待实现；grant/revoke的固定CONTROL接续见下节。
+
+
+### 原生grant/revoke与inherit接续（2026-11-16）
+
+已接grant(0x46)：调用者本地固定CONTROL INSTALL选择目标Life，源资源另检查GRANT及rights/窗口/inherit子集；返回目标表的新Handle，不覆盖表项。目标Life、完整PID和当前Proc须一致，运行/构造阶段且表仍开放；检查到发布全程不调度/不开IRQ，因此不将借用表带过镜像切换。CONSTRUCT/EXEC_VIEW及临时加载MEM仍受原生准入门禁，私有DATA/CODE仍不能跨Acct复制；未实现SHARED不能借grant伪装。
+
+已接revoke(0x47)：只允许固定CONTROL REVOKE，INSTALL/QUERY/CONNECT/GRANT不替代。使目标表精确Handle失效后扫描其12份预付Rq，只将同一Image、同一授权来源的QUEUED请求终结为REVOKED，并立即核对唤醒；ACCEPTED保留原回复权，其他独立副本不受影响。一次短事务完成，返回时不留待推进的排队清理。已有Mmap及在途独立引用不因撤销释放。
+
+已接inherit(0x56)：只设置本主体CALL/SEND/NOTIFY的FORK/EXEC标记及私有MEM的FORK标记，无需源GRANT、不改变rights/目标/掩码/引用数；CONTROL/SELF等禁止，未知高位拒绝。当前MEM只有私有DATA/CODE，EXEC标记拒绝；完整SHARED/fork/exec仍待接。NOTIFY EXEC限制已与正文对齐，标记不是运行期重绑定。
+
+- [x] 两架构control场景在真实U/EL0检查目标INSTALL与源GRANT独立、REVOKE不可替代、裸PID/普通CALL/保留输入/高位拒绝、两份授权的精确排队撤销与ACCEPTED回复，以及同步CALL原阻塞续点返回REVOKED。
+- [x] 同场景验证私有MEM跨Acct拒绝，先map再revoke后旧Handle不可新map、既有映射仍可读，最终unmap回收；旧目标退出且复用同一运行索引后，旧CONTROL的connect/grant/revoke均STALE，新实例不受操作。
+- [x] inherit主机测试覆盖标记修改不增权、不换目标/掩码/引用，失败不改状态；control场景同步覆盖原生输出及保留参数。此验证不代表已执行fork/exec保留。
+- [x] 完整153项host、格式及68个QEMU场景通过；随后只增强同步撤权载荷，两架构control补验通过。日志及失败历史见status。
+- [ ] 其余CONTROL管理、完整CREATE与CONSTRUCT/EXEC_VIEW授权、SHARED/DMA、资源reply和镜像切换期间的长Op仍待接入。
