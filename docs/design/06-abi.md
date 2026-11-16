@@ -332,3 +332,7 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 用户态装载桩接续（2026-11-16）：libsys私有__sys_create/configure/start/destroy/getcred已复用既定寄存器ABI，返回仍是独立原生状态/输出，不增加内核ELF入口或公开裸创建API。普通用户装载器通过已有CONSTRUCT/CONFIG RESOURCE得到孩子真实SELF Handle，Boot补齐只用于目标自己的表；父临时MEM释放不改变孩子已持有映射。实际实现与失败/清理责任见08末尾，POSIX错误转换与FS稳定来源尚未接。
 
 原生copy接续（2026-11-16）：0x03三输入已接，长度0成功且不检查地址；1..65536对本主体源READ/目标WRITE普通用户映射检查，地址/权限/设备FAULT、物理字节重叠INVALID、VM忙BUSY、超长INVALID。无句柄输出，未用输入必须0，失败输出0；共享上限在abi/mem.h。__sys_copy是私有libsys适配，不是memcpy替代或文件I/O协议，详细同步/别名和验证边界见08末尾。
+
+资源回复前置接续（2026-11-16）：configure的第三参数0..8现已实际预付/替换镜像保底，超过8 INVALID，空间不足CAPACITY/代次耗尽OVERFLOW且原Config/现场不变。CALL_RECV_MEM/CALL_RECV_CALL现能在原调用者表预留一槽，两者同时置位INVALID，普通reply或终结按原槽来源归还，ACCEPTED协作取消不提前归还；来源/计数与验证见04末尾。
+
+开放问题：Resreply字段/56字节布局已经冻结，但资源reply在a1..a4的指针位置正文未写定。已向用户提出REPLY_RESOURCE时a1/x1为descriptor_ptr、a2..a4=0、a5=REPLY_RESOURCE、a6=0，reply_recv仍不支持交付；尚未确认，不先实现。原生资源reply当前继续NOTSUP，不将可接受资源CALL选项误称为资源已安装。

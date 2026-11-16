@@ -29,6 +29,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   Handle space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
   Handle channel, sender, management;
   Packet packet;
+  Config reserve;
   u64    i;
   const char *arg = client ? "client" : "server";
   const char *env = "SAMPLE=yes";
@@ -66,6 +67,12 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.resources[4].tag = 258;
   packet.resources[4].handle = management;
   testload(pid, libsys_image, (u64) (libsys_image_end - libsys_image), &packet, sizeof(packet));
+  reserve.entry = image->entry;
+  reserve.stack = 0x3fffff0000UL;
+  reserve.boot = 0x3fff000000UL;
+  reserve.bootsz = sizeof(packet);
+  reserve.sigmask = reserve.sigdefault = 0;
+  REQUIRE(!procconfigure(pid, &reserve, client ? 2 : 0));
 }
 void
 libsysload(void)
@@ -130,6 +137,8 @@ libsysload(void)
           !acctcheck());
   putstr("LIBSYSCHECK actors=");
   puthex(2);
+  putstr(" receive=");
+  puthex(1);
   putstr(" shared=");
   puthex(1);
   putstr(" payer_exit=");

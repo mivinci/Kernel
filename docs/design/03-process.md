@@ -1316,3 +1316,5 @@ CASE=init扩展了两个真实用户态管理终止场景，使用固定SERVICE�
 完整本地253项host、格式及92个两架构QEMU通过，日志build/host/stage39-group-wait-termination/，前次CAPACITY现场另保留。原三个孤儿结果仍覆盖，扩展后init总共收取7个后代结果，QMP仍按真实保留init费用/内核栈/guard审计。生产init、信号停止继续、多核/性能与CI不在本次验证范围。
 
 SHARED授权接续（2026-11-16）：固定CONTROL/准备CONFIG的grant/revoke路径现可转授显式SHARED MEM的减权页窗口，DATA/CODE跨Acct限制不变。inherit允许SHARED的EXEC标记，不能把私有MEM改成共享；标记并非已实现镜像切换。普通新Proc SELF_ALLOC默认DATA/SHARED/CODE位7，DMA未开放。准备出资的SHARED加载MEM仍限定原Prep/精确目标，发布别名屏障不因种类绕过。出资者退出/结果收取后费用滞留与最后引用验证见02末尾。
+
+资源回复预付接续（2026-11-16）：configure现支持既定reserve_resources=0..8，先校验完整Config，再原子替换镜像内保底空槽；失败不改旧配置、TF或Image.reserve。已覆盖满Local时改PC并增预付失败后仍从原入口运行。预付不是额外Local或真实资源，不能被alloc/grant挤占；详情与CALL取消/退出归还见04末尾。原生资源reply安装仍待描述符参数位置确认，不能据此称整条连接交付完成。

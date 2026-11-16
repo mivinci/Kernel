@@ -31,8 +31,10 @@ find(Rtable *t, Handle h, u32 subtype)
   if (slot >= t->count)
     return NULL;
   l = &t->slots[slot];
-  return l->subtype && l->generation == handlegen(h) && (!subtype || l->subtype == subtype) ? l
-                                                                                            : NULL;
+  return l->subtype && l->subtype < LOCAL_FLOOR && l->generation == handlegen(h) &&
+                 (!subtype || l->subtype == subtype)
+             ? l
+             : NULL;
 }
 int
 localnative(Rtable *t, Handle h)
@@ -78,6 +80,110 @@ localrooms(Rtable *t, u32 count)
     if (!t->slots[i].subtype && t->slots[i].generation < HANDLE_GENERATION_MAX)
       available++;
   return available >= count ? 0 : sloterror(t);
+}
+static int
+ownedimage(Rtable *table, Imageid id, Image *out)
+{
+  if (!table || !out || imagestat(id, out) || out->pid != table->owner ||
+      out->number != table->image)
+    return -ERR_STALE;
+  return 0;
+}
+int
+localreserve(Rtable *table, Imageid id, u32 count)
+{
+  Image image;
+  u32   i, available = 0, floors = 0;
+  int   error;
+  if (!table || table->state != LOCAL_OPEN || count > 8)
+    return -ERR_INVALID;
+  error = ownedimage(table, id, &image);
+  if (error)
+    return error;
+  if (image.state != IMAGE_PREPARING)
+    return -ERR_STATE;
+  for (i = 0; i < table->count; i++) {
+    Local *slot = &table->slots[i];
+    if (slot->subtype == LOCAL_RECEIVE)
+      return -ERR_BUSY;
+    if (slot->subtype == LOCAL_FLOOR)
+      floors++;
+    if ((!slot->subtype || slot->subtype == LOCAL_FLOOR) &&
+        slot->generation < HANDLE_GENERATION_MAX)
+      available++;
+  }
+  if (floors != image.reserve)
+    return -ERR_STATE;
+  if (available < count)
+    return sloterror(table);
+  if (imagereserve(id, count))
+    return -ERR_STATE;
+  for (i = 0; i < table->count; i++)
+    if (table->slots[i].subtype == LOCAL_FLOOR)
+      table->slots[i].subtype = 0;
+  for (i = 0; i < table->count && count; i++) {
+    Local *slot = &table->slots[i];
+    if (!slot->subtype && slot->generation < HANDLE_GENERATION_MAX) {
+      slot->subtype = LOCAL_FLOOR;
+      count--;
+    }
+  }
+  return 0;
+}
+int
+localreceive(Rtable *table, Imageid id, Handle rpc, u16 *out)
+{
+  Image  image;
+  Local *slot = NULL;
+  u32    i, floor = 0;
+  int    error;
+  if (!out || !table || table->state != LOCAL_OPEN || handletype(rpc) != HANDLE_RPC)
+    return -ERR_INVALID;
+  error = ownedimage(table, id, &image);
+  if (error)
+    return error;
+  if (image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  for (i = 0; i < table->count; i++)
+    if (table->slots[i].subtype == LOCAL_FLOOR) {
+      slot = &table->slots[i];
+      floor = 1;
+      break;
+    }
+  if (!slot)
+    slot = empty(table);
+  if (!slot)
+    return sloterror(table);
+  slot->objectgen = handlegen(rpc);
+  slot->object = handleindex(rpc);
+  slot->offset = table->epoch;
+  slot->length = image.number;
+  slot->rights = 0;
+  slot->inherit = 0;
+  slot->source = (u8) floor;
+  slot->subtype = LOCAL_RECEIVE;
+  *out = (u16) (slot - table->slots);
+  return 0;
+}
+int
+localreturn(Rtable *table, Imageid id, Handle rpc, u16 index)
+{
+  Image  image;
+  Local *slot;
+  u32    floor;
+  if (!table || (table->state != LOCAL_OPEN && table->state != LOCAL_CLOSING) ||
+      index >= table->count || handletype(rpc) != HANDLE_RPC || ownedimage(table, id, &image))
+    return -ERR_STATE;
+  slot = &table->slots[index];
+  if (slot->subtype != LOCAL_RECEIVE || slot->objectgen != handlegen(rpc) ||
+      slot->object != handleindex(rpc) || slot->offset != table->epoch ||
+      slot->length != image.number)
+    return -ERR_STATE;
+  floor = slot->source;
+  slot->objectgen = slot->rights = slot->offset = slot->length = 0;
+  slot->object = slot->inherit = slot->source = 0;
+  slot->subtype = floor ? LOCAL_FLOOR : 0;
+  return 0;
 }
 static Memid
 memory(const Local *l)
@@ -828,6 +934,12 @@ removeentry(Local *l)
   Prepid scope;
   scope.generation = 0;
   scope.index = scope.reserved = 0;
+  if (l->subtype == LOCAL_FLOOR) {
+    l->subtype = 0;
+    return 0;
+  }
+  if (l->subtype == LOCAL_RECEIVE)
+    return -ERR_BUSY;
   if (l->subtype == LOCAL_CREATE) {
     Setid set;
     set.generation = l->objectgen;
@@ -1050,12 +1162,12 @@ localquery(Rtable *table, u64 cursor, Queryrec *records, u32 count, u32 *written
     if (!(cursor >> 16) || index >= table->count)
       return -ERR_INVALID;
     l = &table->slots[index];
-    if (!l->subtype || l->generation != cursor >> 16)
+    if (!l->subtype || l->subtype >= LOCAL_FLOOR || l->generation != cursor >> 16)
       return -ERR_STALE;
   }
   for (; index < table->count; index++) {
     l = &table->slots[index];
-    if (!l->subtype)
+    if (!l->subtype || l->subtype >= LOCAL_FLOOR)
       continue;
     if (n == count) {
       *next = (l->generation << 16) | index;

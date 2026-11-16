@@ -717,3 +717,19 @@ Queryrec的pid为所查主体，image为该记录匹配端的真实镜像；stam
 - [x] 完整178项host、格式及72个QEMU回归通过，日志`build/host/stage22-request-query/test-all.log`。query不替代rqclean的CONTROL及设备安全证明，后者原生仍NOTSUP。
 
 创建接收额度接续（2026-11-16）：Rmail现仍64字节，增加构造期limit=1..PENDING_CALLS；只在Image PREPARING且无在途接收责任时设置，ACTIVE后不变。defer至多limit-1，留1个即时槽；pending=1只能即时处理，不能defer。配置不改变caller出站预付、全局池或已排队请求责任。host与createauth两架构已局部验证，完整原生Createarg准入仍待接。
+
+### 接收保底与请求预留的实现接续（2026-11-16）
+
+已接资源回复前置的接收槽账本：configure的reserve_resources=0..8与Config一起验证/提交，容量不足保留原配置/现场及旧预付。Image.reserve记录专用保底总数（含暂时借给请求的槽），预付占本镜像原Local上限，普通alloc/grant/connect不能使用；镜像结束清零该可用策略。它不是启动未完成标志，发布后不会因未接入服务而到期或自动交还普通分配。
+
+Local内部空槽标记区分镜像保底与Rq独占接收位，不新增公开RESOURCE子类型/Handle，也不增加Local48或Proc512大小。标记不通过localnative解析，不出现在RESOURCE查询或PROC.resource_count中；不能猜旧Handle/游标访问。既有普通授权的代次墓碑保留，只有未来真正安装新授权时才推进新Handle代次，不让一次空槽预留复活旧授权。
+
+原生CALL_RECV_MEM/CALL_RECV_CALL现互斥地可与ASYNC/CONTROL组合；入队前先确认Rq名额/Image引用，再优先领取本镜像保底槽，无保底才取普通空槽，失败撤销Image引用且不入队。普通CALL/SEND不借槽。Rq使用原resource索引及一份稳定Rtable借用，实际大小192字节，仍满足预算；表的owner PID/image、epoch、精确Rq槽/代次均核对。调用者终结必须先使全部原请求TERMINAL并归还接收位，再允许Local拆除和Proc表复用，不能把该借用留到独立DRAINING收尾阶段。
+
+QUEUED取消、机制强制终结或普通reply在唯一terminal提交点按原来源归还：保底恢复为保底，普通恢复为普通空槽。ACCEPTED的rqcancel只置协作标志，仍保留接收位直到真实结果/强制终结；服务死亡归还槽不等于下游已finished，Rq仍按原三责任位单独收尾。重复终结不再次归还，表重绑新镜像后迟到reply只完成旧Rq，不修改新表。已有RESOURCE入队标记保留接收同意种类，但资源安装和kind=4结果提交尚未接通。
+
+本地验证：libsys两架构以configure预付2槽，在普通Local被真实alloc填满后取消QUEUED资源CALL，确认归还保底仍不能被alloc使用；两份资源CALL可独占两槽，第三份在入队前CAPACITY。服务DEFER后给调用者SEND握手，调用者ACCEPTED协作取消，再用唯一余下保底提交另一资源CALL并确认第三份仍失败，证明原位未提前释放。最终普通reply提交原业务结果，多次rqpoll不重复操作，ACK后费用/页/Local回基线。此场景只交付普通回复，不把它称为已经收到新资源。
+
+terminate两架构真实载荷另让同步CALL和异步RQWAIT调用者带MEM/CALL接收同意，在被管理强杀时归还普通接收槽；旧Rq仍DRAINING，随后实际服务finish，运行槽/账目回收保持既有断言。procs两架构覆盖0/1/8预付成功、9无效及满表时有效Config替换失败不改变原PC/镜像reserve。6项host覆盖保底优先/原槽归还、旧Handle隐藏、满表与错误主体入队前失败、ACCEPTED取消保留、服务死亡与独立收尾、旧镜像结束后新表重绑及迟到reply。
+
+原生REPLY_RESOURCE仍NOTSUP：06缺少Resreply指针所在寄存器的精确定义，已向用户提出“reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)”的a1/x1方案，待确认后再实现。56字节布局/允许SHARED MEM与CALL范围本身不变；不得用普通reply、grant或直接表操作冒充资源回复原子安装。本地完整261项host、格式及92个两架构QEMU通过；增加服务死亡独立收尾反例后完整262项host、格式及两架构terminate专项再验通过，日志build/host/stage41-receive-slots/。资源reply安装、fork/exec保底交接、信号和DMA安全仍待执行。

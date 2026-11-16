@@ -216,10 +216,10 @@ ipc_begin:
  li a2, 2
  li a3, 3
  li a4, 4
- li a5, 2
+ li a5, 6
  li a7, SYS_CALL
  ecall
- li t1, -18
+ li t1, -1
  bne a0, t1, ipc_bad
  bnez t0, ipc_bad
  bnez a1, ipc_bad

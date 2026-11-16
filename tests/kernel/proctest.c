@@ -80,7 +80,33 @@ load(Handle pid)
   bad.bootsz = c.bootsz;
   bad.sigmask = bad.sigdefault = 0;
   REQUIRE(procconfigure(pid, &bad, 0) == -ERR_INVALID);
-  REQUIRE(procconfigure(pid, &c, 1) == -ERR_NOTSUP);
+  REQUIRE(!procconfigure(pid, &c, 1));
+  REQUIRE(!procconfigure(pid, &c, 0));
+  REQUIRE(procconfigure(pid, &c, 9) == -ERR_INVALID);
+  REQUIRE(!procconfigure(pid, &c, 8));
+  REQUIRE(!procconfigure(pid, &c, 0));
+  {
+    Handle   occupied[LOCALS];
+    Config   changed;
+    Procinfo state;
+    Image    image;
+    u32      used = 0;
+    while (used < LOCALS && !localspace(t, 1, &occupied[used]))
+      used++;
+    REQUIRE(used > 0 && localroom(t) == -ERR_CAPACITY);
+    changed.entry = c.entry + HAL_ENTRY_ALIGN;
+    changed.stack = c.stack;
+    changed.boot = c.boot;
+    changed.bootsz = c.bootsz;
+    changed.sigmask = changed.sigdefault = 0;
+    REQUIRE(procconfigure(pid, &changed, 1) == -ERR_CAPACITY);
+    REQUIRE(!procinfo(pid, &state) && !imagestat(state.identity, &image) && !image.reserve);
+    while (used)
+      REQUIRE(!localrevoke(t, occupied[--used]));
+    /* The eventual user probe also proves the failed replacement did not
+       change the saved PC/configuration to the next instruction. */
+  }
+
   REQUIRE(!localunmap(t, space, 0x10000));
   REQUIRE(procpublish(pid) == -ERR_FAULT);
   REQUIRE(!localmap(t, space, code, 0, 0x10000, PAGE_SIZE, VM_READ | VM_EXEC));

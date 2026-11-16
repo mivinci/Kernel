@@ -159,3 +159,5 @@ libsys场景另验证原生__sys_copy：最多64KiB、物理别名重叠拒绝�
 init场景另覆盖组wait的BLOCKED和结果唤醒READY两种续点被CONTROL terminate：保存的组lease释放，活孩子与未消费退出结果归init，常规wait宏识别强杀信号9。扩展后总收取7个后代，保留init费用/组引用精确回到基线；没有把管理terminate当作已实现sigsend/STOP。
 
 SHARED内存已接原生alloc和受权跨Set grant/map，默认SELF_ALLOC为DATA/SHARED/CODE。libsys两架构场景使用两个Set验证子窗口共享写、撤权后既有映射保留、原出资进程清理/收取后仍保留3页旧Acct费用，以及接收者最后unmap才结清。私有DATA/CODE仍不跨Acct，SHARED不可执行/封存；资源reply、DMA和fork/exec共享继承仍未接。
+
+configure现可为镜像预付0..8个资源回复保底空槽；CALL_RECV_MEM/CALL会在入队前优先借保底、再借普通空槽。libsys真实载荷验证满表、QUEUED取消归还、ACCEPTED取消保留及普通回复归还；terminate另验证调用者强杀回收。资源reply安装仍待Resreply指针参数位置确认，REPLY_RESOURCE仍NOTSUP，不将空槽预留当作资源已交付。

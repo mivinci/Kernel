@@ -1078,7 +1078,7 @@ term_call:
  movz x2, #0
  movz x3, #0
  movz x4, #0
- movz x5, #0
+ movz x5, #2
  movz x6, #0
  movz x7, #0
  mov x0, x21
@@ -1201,7 +1201,7 @@ term_finish:
  movz x7, #0
  mov x0, x21
  movz x1, #500
- movz x5, #1
+ movz x5, #5
  mov x8, #SYS_CALL
  svc #0
  cbnz x0, term_bad

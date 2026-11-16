@@ -256,10 +256,10 @@ ipc_begin:
  movz x2, #2
  movz x3, #3
  movz x4, #4
- movz x5, #2
+ movz x5, #6
  mov x8, #SYS_CALL
  svc #0
- movz x10, #65518
+ movz x10, #65535
  movk x10, #65535, lsl #16
  movk x10, #65535, lsl #32
  movk x10, #65535, lsl #48

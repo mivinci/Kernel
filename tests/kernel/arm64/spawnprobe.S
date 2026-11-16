@@ -2246,10 +2246,10 @@ spawn_copy_0:
  mov x0, x19
  movz x1, #384
  movk x1, #4, lsl #16
- movz x2, #1
+ movz x2, #9
  mov x8, #SYS_CONFIGURE
  svc #0
- movz x10, #65518
+ movz x10, #65535
  movk x10, #65535, lsl #16
  movk x10, #65535, lsl #32
  movk x10, #65535, lsl #48
@@ -3527,10 +3527,10 @@ spawn_copy_1:
  mov x0, x19
  movz x1, #384
  movk x1, #4, lsl #16
- movz x2, #1
+ movz x2, #9
  mov x8, #SYS_CONFIGURE
  svc #0
- movz x10, #65518
+ movz x10, #65535
  movk x10, #65535, lsl #16
  movk x10, #65535, lsl #32
  movk x10, #65535, lsl #48
@@ -4835,10 +4835,10 @@ spawn_copy_2:
  mov x0, x19
  movz x1, #384
  movk x1, #4, lsl #16
- movz x2, #1
+ movz x2, #9
  mov x8, #SYS_CONFIGURE
  svc #0
- movz x10, #65518
+ movz x10, #65535
  movk x10, #65535, lsl #16
  movk x10, #65535, lsl #32
  movk x10, #65535, lsl #48

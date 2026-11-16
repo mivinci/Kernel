@@ -1,4 +1,5 @@
 #include <rq.h>
+#include <local.h>
 #define RF_DONE_PENDING   1024
 #define RF_CANCEL_PENDING 2048
 #define RF_DEFERRED       16
@@ -7,6 +8,8 @@
 #define RF_CLOSED         128
 #define RF_RECOVERY       256
 #define RF_ORPHAN         512
+#define RF_RECV_MEM       4096
+#define RF_RECV_CALL      8192
 typedef struct Rq Rq;
 struct Rq
 {
@@ -21,6 +24,7 @@ struct Rq
   isize   status;
   u32     state, flags, refs;
   u16     ordinal, resource;
+  Rtable *receiving;
 };
 STATIC_ASSERT(sizeof(Rq) <= 192, rq_record_budget);
 static Rq   requests[REQUESTS];
@@ -79,6 +83,8 @@ reap(Rq *r)
     return;
   if (!listempty(&r->queue) || !listempty(&r->owned))
     panic("linked request reclaimed");
+  if (r->receiving)
+    panic("terminal receive slot retained");
   closed = r->flags & RF_CLOSED;
   if (imagedrop(r->callerid, IMAGE_CLEANUP) || imagedrop(r->serverid, IMAGE_CLEANUP))
     panic("request image reference");
@@ -98,6 +104,13 @@ terminal(Rq *r, isize status, const Msg *message)
   }
   if (r->state == RQ_ACCEPTED && status < 0)
     r->flags |= RF_CANCEL_PENDING;
+  if (r->receiving) {
+    if (localreturn(r->receiving, r->callerid,
+                    handlepack(HANDLE_RPC, r->generation, (u32) (r - requests)), r->resource))
+      panic("request receive-slot ownership");
+    r->receiving = NULL;
+    r->resource = 0xffffU;
+  }
   r->flags |= RF_DONE_PENDING;
   r->state = RQ_TERMINAL;
   r->status = status;
@@ -143,6 +156,8 @@ rqreserve(Rquota *quota, Lifeid owner, u32 recovery)
     r->flags = recovery ? RF_RECOVERY : 0;
     r->ordinal = (u16) i;
     r->state = r->refs = 0;
+    r->receiving = NULL;
+    r->resource = 0xffffU;
     listinit(&r->queue);
     listinit(&r->owned);
     quota->slots[i] = slots[i];
@@ -194,8 +209,8 @@ rqmailconfigure(Rmail *mail, u32 pending)
 }
 
 int
-rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
-         const Msg *message, u32 options, Rqid *out)
+rqsubmitto(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
+           const Msg *message, u32 options, Rqid *out, Rtable *receiving)
 {
   Image source, target;
   Rq   *r = NULL;
@@ -207,7 +222,7 @@ rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 con
       (kind == IPC_SEND && options) ||
       (options & (CALL_RECV_MEM | CALL_RECV_CALL)) == (CALL_RECV_MEM | CALL_RECV_CALL))
     return -ERR_INVALID;
-  if (options & (CALL_RECV_MEM | CALL_RECV_CALL))
+  if ((options & (CALL_RECV_MEM | CALL_RECV_CALL)) && !receiving)
     return -ERR_NOTSUP;
   if (imagestat(caller, &source) || source.state != IMAGE_ACTIVE ||
       source.life.generation != quota->owner.generation || source.life.index != quota->owner.index)
@@ -242,6 +257,19 @@ rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 con
     imagedrop(caller, IMAGE_CLEANUP);
     return error;
   }
+  r->receiving = NULL;
+  r->resource = 0xffffU;
+  if (options & (CALL_RECV_MEM | CALL_RECV_CALL)) {
+    error =
+        localreceive(receiving, caller,
+                     handlepack(HANDLE_RPC, r->generation + 1, (u32) (r - requests)), &r->resource);
+    if (error) {
+      imagedrop(caller, IMAGE_CLEANUP);
+      imagedrop(server->image, IMAGE_CLEANUP);
+      return error;
+    }
+    r->receiving = receiving;
+  }
   r->generation++;
   r->callerid.generation = caller.generation;
   r->callerid.index = caller.index;
@@ -257,13 +285,19 @@ rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 con
   copymsg(&r->message, message);
   r->state = RQ_QUEUED;
   r->flags = (r->flags & RF_RECOVERY) | (kind == IPC_SEND ? RF_SEND : 0) |
-             (options & CALL_ASYNC ? RF_ASYNC : 0);
+             (options & CALL_ASYNC ? RF_ASYNC : 0) | (options & CALL_RECV_MEM ? RF_RECV_MEM : 0) |
+             (options & CALL_RECV_CALL ? RF_RECV_CALL : 0);
   r->status = 0;
   r->refs = 0;
-  r->resource = 0xffffU;
   listtail(&server->queue, &r->queue);
   *out = identity(r);
   return 0;
+}
+int
+rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
+         const Msg *message, u32 options, Rqid *out)
+{
+  return rqsubmitto(quota, server, caller, authority, context, kind, message, options, out, NULL);
 }
 Handle
 rqhandle(Rqid id, u32 kind)

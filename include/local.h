@@ -27,6 +27,9 @@
 #define LOCAL_OPEN      1
 #define LOCAL_CLOSING   2
 #define LOCAL_DEAD      3
+/* Internal empty-slot ownership, never public RESOURCE subtypes. */
+#define LOCAL_FLOOR   0xfffeU
+#define LOCAL_RECEIVE 0xffffU
 
 typedef struct Createpolicy Createpolicy;
 typedef struct Local        Local;
@@ -61,6 +64,12 @@ STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 int localnative(Rtable *source, Handle handle);
 int localroom(Rtable *source);
 int localrooms(Rtable *source, u32 count);
+/* Atomic PREPARING-image floor replacement. No visible Handle is installed. */
+int localreserve(Rtable *table, Imageid image, u32 count);
+/* A request holds the exact Image until release; its Proc table cannot rebind
+   before caller death has returned every outstanding receive slot. */
+int localreceive(Rtable *table, Imageid image, Handle rpc, u16 *slot);
+int localreturn(Rtable *table, Imageid image, Handle rpc, u16 slot);
 /* Trusted boot policy installation; no native creation admission here. */
 int localcreate(Rtable *table, const Createpolicy *policy, Handle *out);
 int localcreator(Rtable *table, Handle authority, Createpolicy *out);

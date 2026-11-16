@@ -79,6 +79,17 @@ imageorigin(Imageid id, u64 sourceimage)
   return 0;
 }
 int
+imagereserve(Imageid id, u32 count)
+{
+  Image *image = find(id);
+  if (!image)
+    return -ERR_STALE;
+  if (image->state != IMAGE_PREPARING || count > 8)
+    return -ERR_STATE;
+  image->reserve = (u16) count;
+  return 0;
+}
+int
 imageactivate(Imageid id)
 {
   Image *image = find(id);
@@ -109,6 +120,7 @@ imageend(Imageid id, u32 reason)
     return -ERR_STATE;
   image->state = IMAGE_ENDED;
   image->reason = reason;
+  image->reserve = 0;
   return 0;
 }
 static u16 *

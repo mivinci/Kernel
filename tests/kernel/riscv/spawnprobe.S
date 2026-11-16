@@ -2785,10 +2785,10 @@ spawn_copy_0:
  li a6, 0
  mv a0, s0
  li a1, 262528
- li a2, 1
+ li a2, 9
  li a7, SYS_CONFIGURE
  ecall
- li t1, -18
+ li t1, -1
  beq a0, t1, 99f
  j spawn_bad
 99:
@@ -4550,10 +4550,10 @@ spawn_copy_1:
  li a6, 0
  mv a0, s0
  li a1, 262528
- li a2, 1
+ li a2, 9
  li a7, SYS_CONFIGURE
  ecall
- li t1, -18
+ li t1, -1
  beq a0, t1, 99f
  j spawn_bad
 99:
@@ -6353,10 +6353,10 @@ spawn_copy_2:
  li a6, 0
  mv a0, s0
  li a1, 262528
- li a2, 1
+ li a2, 9
  li a7, SYS_CONFIGURE
  ecall
- li t1, -18
+ li t1, -1
  beq a0, t1, 99f
  j spawn_bad
 99:

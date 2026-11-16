@@ -930,7 +930,7 @@ term_call:
  li a2, 0
  li a3, 0
  li a4, 0
- li a5, 0
+ li a5, 2
  li a6, 0
  mv a0, s2
  li a1, 300
@@ -1039,7 +1039,7 @@ term_finish:
  li a6, 0
  mv a0, s2
  li a1, 500
- li a5, 1
+ li a5, 5
  li a7, SYS_CALL
  ecall
  bnez a0, term_bad

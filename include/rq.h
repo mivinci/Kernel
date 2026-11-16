@@ -25,6 +25,7 @@ STATIC_ASSERT(PENDING_CALLS > 0 && PENDING_CALLS <= 16, pending_capacity);
 #define RMAIL_OPEN    1
 #define RMAIL_CLOSING 2
 #define RMAIL_DRAINED 3
+struct Rtable;
 typedef struct Rqid     Rqid;
 typedef struct Rquota   Rquota;
 typedef struct Rmail    Rmail;
@@ -82,6 +83,8 @@ int rqmailconfigure(Rmail *mail, u32 pending);
 int rqmailclose(Rmail *mail, u32 batch);
 int rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
              const Msg *message, u32 options, Rqid *out);
+int rqsubmitto(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context,
+               u32 kind, const Msg *message, u32 options, Rqid *out, struct Rtable *receiving);
 Handle rqhandle(Rqid id, u32 kind);
 int    rqlookup(Handle rpc, Imageid caller, Rqid *out);
 int    rqrecv(Rmail *mail, Rqrecv *out);

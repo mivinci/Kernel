@@ -212,6 +212,69 @@ sharedfinish(const Bootview *view)
   REQUIRE(!__sys_unmap(space, 0xd00000), 184);
   REQUIRE(accountused(management, &state) == 0 && !state, 185);
 }
+static Handle pressure[128];
+static void
+receiveclient(const Bootview *view, Handle peer)
+{
+  Handle   allocator = bootresource(view, BOOT_SELF_ALLOC), rpc, extra, unused;
+  Allocarg arg;
+  Msg      words;
+  Ipcmsg   result;
+  u32      count = 0;
+  isize    error;
+  arg.bytes = PAGE_SIZE;
+  arg.kind = ALLOC_DATA;
+  arg.align = arg.minaddr = arg.maxaddr = arg.reserved = 0;
+  words.words[0] = 110;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0, 186);
+  rpc = result.request;
+  while (!(error = __sys_alloc(allocator, &arg, &pressure[count]))) {
+    REQUIRE(++count < ARRAY_SIZE(pressure), 187);
+  }
+  REQUIRE(error == -ERR_CAPACITY && count > 1, 188);
+  REQUIRE(!ipc_rqcancel(rpc) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE), 189);
+  REQUIRE(__sys_alloc(allocator, &arg, &unused) == -ERR_CAPACITY && !unused, 190);
+  words.words[0] = 111;
+  REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_CALL, &result) && result.request > 0, 191);
+  rpc = result.request;
+  words.words[0] = 112;
+  REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0, 192);
+  extra = result.request;
+  REQUIRE(ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) == -ERR_CAPACITY &&
+              !result.request,
+          193);
+  REQUIRE(!ipc_rqcancel(extra) && !ipc_rqack(extra, ACK_RESULT | ACK_RELEASE), 194);
+  REQUIRE(!ipc_recv(0, 0, &result) && result.kind == IPC_SEND && result.words[0] == 111, 195);
+  REQUIRE(!ipc_rqcancel(rpc), 196);
+  REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0, 197);
+  extra = result.request;
+  REQUIRE(ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) == -ERR_CAPACITY &&
+              !result.request,
+          198);
+  REQUIRE(!ipc_rqcancel(extra) && !ipc_rqack(extra, ACK_RESULT | ACK_RELEASE), 199);
+  REQUIRE(__sys_alloc(allocator, &arg, &unused) == -ERR_CAPACITY && !unused, 200);
+  while (count)
+    REQUIRE(!__sys_free(pressure[--count]), 201);
+  REQUIRE(!ipc_rqwait(rpc, 0, &result) && result.words[0] == 113 && !result.kind, 202);
+  REQUIRE(!ipc_rqpoll(rpc, 0, &result) && result.words[0] == 113 && !result.kind, 203);
+  REQUIRE(!ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE), 204);
+}
+static void
+receiveserver(const Bootview *view)
+{
+  Ipcmsg received;
+  Msg    words;
+  u64    state;
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 111, 205);
+  REQUIRE(!ipc_defer(received.request), 206);
+  words.words[0] = 111;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_send(bootresource(view, 257), &words), 207);
+  REQUIRE(!ipc_rqcheck(received.request, &state) && state == 3, 208);
+  words.words[0] = 113;
+  REQUIRE(!ipc_reply(received.request, &words), 209);
+}
 NORETURN void
 _start(const Boot *boot)
 {
@@ -252,6 +315,10 @@ _start(const Boot *boot)
     sharedclient(&view, peer);
   else
     sharedserver(&view);
+  if (client)
+    receiveclient(&view, peer);
+  else
+    receiveserver(&view);
   if (client) {
     REQUIRE(!ipc_call(peer, &words, CALL_ASYNC, &result) && result.request > 0, 118);
     checkempty(&result, 1);

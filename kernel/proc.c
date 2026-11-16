@@ -450,8 +450,6 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
     return -ERR_STATE;
   if (!c || reserve > 8)
     return -ERR_INVALID;
-  if (reserve)
-    return -ERR_NOTSUP;
   snapshot.entry = c->entry;
   snapshot.stack = c->stack;
   snapshot.boot = c->boot;
@@ -459,6 +457,9 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   snapshot.sigmask = c->sigmask;
   snapshot.sigdefault = c->sigdefault;
   error = validate(p, &snapshot);
+  if (error)
+    return error;
+  error = localreserve(&p->resources, p->identity, reserve);
   if (error)
     return error;
   initial.entry = snapshot.entry;
@@ -1268,8 +1269,8 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     if (!server || server->identity.generation != target.generation ||
         server->identity.index != target.index || server->state == PROC_EXITING)
       return -ERR_PEER;
-    error = rqsubmit(&current->outgoing, &server->incoming, current->identity, (Handle) args[0],
-                     RQ_NORMAL, kind, &message, (u32) args[5], &id);
+    error = rqsubmitto(&current->outgoing, &server->incoming, current->identity, (Handle) args[0],
+                       RQ_NORMAL, kind, &message, (u32) args[5], &id, &current->resources);
     if (error)
       return error;
     wakeone(server);
@@ -1757,7 +1758,7 @@ querystat(Proc *p, const Life *life, Queryrec *record)
   }
   if (p->resources.state != LOCAL_DEAD)
     for (i = 0; i < p->resources.count; i++)
-      if (p->resources.slots[i].subtype)
+      if (p->resources.slots[i].subtype && p->resources.slots[i].subtype < LOCAL_FLOOR)
         record->data[8]++;
   if (!spacestat(p->space, &space))
     record->data[9] = space.mapcount;
