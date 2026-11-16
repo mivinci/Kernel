@@ -621,8 +621,8 @@ def exercise(args, run_dir, record):
                     record["retained_init"] = dict(retained[0], stacks=stacks)
                     if args.case == "init":
                         checks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITCHECK ")]
-                        if (len(checks) != 1 or {key:checks[0].get(key) for key in ("pid","collected","instances")} !=
-                                {"pid":1,"collected":3,"instances":1} or
+                        if (len(checks) != 1 or {key:checks[0].get(key) for key in ("pid","collected","instances","wait_killed","ready_wait","group_refs")} !=
+                                {"pid":1,"collected":7,"instances":1,"wait_killed":2,"ready_wait":1,"group_refs":1} or
                             checks[0].get("charged") != retained[0]["charged"] or
                             checks[0].get("baseline") != retained[0]["charged"] or
                             checks[0].get("allocated") != transition["tables"] + retained[0]["charged"]):

@@ -25,7 +25,7 @@ readimage(void *context, u64 offset, void *out, u64 bytes)
 }
 isize
 adoptspawn(const u8 *data, u64 bytes, const char *name, u64 limit, u32 resources, Handle channel,
-           u64 rights, Elfwork *work, Handle *pid)
+           u64 rights, Elfwork *work, Handle *pid, Handle *authority)
 {
   Data      backing;
   Elfsource source;
@@ -37,6 +37,8 @@ adoptspawn(const u8 *data, u64 bytes, const char *name, u64 limit, u32 resources
   u32       ids[4];
   isize     error, cleanup;
   *pid = 0;
+  if (authority)
+    *authority = 0;
   if (work->view || work->memory || work->mapped || strlen(name) >= sizeof(packet.name))
     return -ERR_STATE;
   backing.bytes = data;
@@ -62,8 +64,12 @@ adoptspawn(const u8 *data, u64 bytes, const char *name, u64 limit, u32 resources
   error = __sys_create(bootresource(sysboot(), BOOT_CREATE), &create, &work->view, pid, &control);
   if (error)
     return error;
-  if (control)
-    return -ERR_STATE;
+  if (control && !authority) {
+    error = __sys_free(control);
+    if (error)
+      return error;
+    control = 0;
+  }
   work->pid = *pid;
   work->image = 1;
   work->parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
@@ -97,6 +103,8 @@ adoptspawn(const u8 *data, u64 bytes, const char *name, u64 limit, u32 resources
     error = __sys_start(work->view);
   if (!error) {
     work->view = 0;
+    if (authority)
+      *authority = control;
     return 0;
   }
   cleanup = elfclean(work);
@@ -105,5 +113,7 @@ adoptspawn(const u8 *data, u64 bytes, const char *name, u64 limit, u32 resources
   cleanup = __sys_destroy(work->view);
   if (!cleanup)
     work->view = 0;
+  if (!cleanup && control)
+    cleanup = __sys_free(control);
   return cleanup ? cleanup : error;
 }

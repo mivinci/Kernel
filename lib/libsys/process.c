@@ -75,3 +75,11 @@ __sys_grant(Handle target, Handle source, u64 rights, u64 offset, u64 bytes, u64
   *out = (Handle) result.values[0];
   return error;
 }
+
+isize
+__sys_terminate(Handle control)
+{
+  const u64 args[7] = {(u64) control, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_TERMINATE, args, &result);
+}

@@ -1283,7 +1283,7 @@ destroy先提交不可发布状态，再以每批32条Local或1条完整Mmap等�
 
 例：P有已结束C1和活C2，P退出的同一提交后，init可选择C1并收取；无需等P清理、运行槽复用或物理关系改写。旧P再按完整PID尝试收取被拒绝；C2以后退出仍归init。已消费C1不复制第二份结果。组选择使用独立kind/value，wait(0)在PGID1时仍仅选该组，不退化为wait(-1)。
 
-本地完整209项host、格式及82个两架构QEMU通过；最终补充spawn/life两架构复跑通过，日志见build/host/stage30-native-wait/。spawn验证真实用户父的阻塞/WNOHANG、PID/任意孩子/冻结组、PGID1与CHILD事件；life及host验证逻辑接管早于改写/清理及父槽复用。被terminate的组wait续点已实现引用释放，但尚缺专门端到端场景。STOP/CONT、捕获信号中断/重启、真实用户init收取孤儿的端到端场景仍待接入，不能用可信host机制测试宣称这些路径已验证。
+本地完整209项host、格式及82个两架构QEMU通过；最终补充spawn/life两架构复跑通过，日志见build/host/stage30-native-wait/。spawn验证真实用户父的阻塞/WNOHANG、PID/任意孩子/冻结组、PGID1与CHILD事件；life及host验证逻辑接管早于改写/清理及父槽复用。该切片当时尚缺组wait续点被terminate与真实PID1孤儿收取的端到端场景，后续实现/验证见文末；STOP/CONT、捕获信号中断/重启仍待接，不能用可信host机制测试宣称它们已验证。
 
 观察与Proc清理接续（2026-11-16）：Local子类型9的OBSERVE安装/GRANT已接，绑定目标完整Image并预付观察区，不继承。Proc离栈清理phase0先按32槽批次撤除观察，再关闭/拆Local；不新增Proc字段，仍512字节。Image和Life各自的观察责任与父wait独立，实际观察协议、配额及验证见10末尾。正常镜像仍未启动生产init；真实exec提交必须后续接入旧观察者清理，不能用本切片宣称已完成exec。
 
@@ -1300,3 +1300,17 @@ Life中初始init发布后没有父wait责任，退出或未发布取消仍触�
 新增CASE=initfatal：同一个真实PID1 ELF从用户main调用exit，必须唯一打印PANIC init exited并停止于hal_halt，不能从调度器返回或把PID1槽复用。主机同时核对特权/IRQ状态；RV允许此致命现场仍保持该精确init用户根，内核映射及保留栈仍单独审计，不要求致命路径伪造正常资源清理。
 
 以上是PID1可信引导机制及真实用户态收取/致命退出验证；用户程序位于tests/kernel，不是生产sbin/init。normal仍初始化后停止，启动包容器、16 Set清单、SYSTEM/BOOT_RESOURCE授权及服务启动监督尚未接，不能称生产init已上线。本地完整243项host、格式及92个两架构QEMU通过；最后一次性准入错误语义/旧结果握手补强后，两架构init/initfatal另复验，主机页表反例再跑完整243项通过。日志build/host/stage35-pid1/；无CI/真实硬件/性能验收。
+
+### 组wait续点被终止的双窗口验收（2026-11-16）
+
+CASE=init扩展了两个真实用户态管理终止场景，使用固定SERVICE创建返回的CONTROL，不给init身份开权限例外。测试root的可信CREATE安装增加SERVICE，后代仍经普通创建继承CREATE_USE，root未使用的管理输出立即free；生产清单发权依然未接。新增私有__sys_terminate只封装既定0x44，不新增内核行为或公开裸管理API。
+
+第一窗口：P启动活孩子C后执行wait(0)，保存受理时的内部GROUP引用并进入BLOCKED。init从P的真实CALL取得C身份，明确用CONTROL QUERY确认PROC等待种类CHILD、选择器GROUP/公开PGID1及waitpid=0；可信CPU同一测试检查点验证Group.refs=processes+1，证实持有一份独立组等待lease。init用CONTROL TERMINATE强制结束P，P的C栈永不恢复；C的getppid看到1后退出22，init分别收取P的SIGNALLED/9与C的EXITED/22。
+
+第二窗口：P同样阻塞组wait，C先经init控制的CALL握手，再退出11。C退出唤醒P到READY，尚未选择/消费其结果，init排在P之前运行并查询确认PROC READY且仍保存WAIT_CHILD。init此时terminate P，不能让P恢复旧C续点，也不能遗失其待释放GROUP lease；C的未消费退出记录归init，init分别收取P信号9和C退出11。READY窗口内没有任意用户代码或C调用栈推断，状态由内核PROC query直接核验。
+
+两窗口结束后，可信CPU再次检查Group.refs=processes=1及groupcheck，root之外7个后代Life均失效，Set实例/费用/引用/lease精确回到仅存init基线。真实libc wait宏同时验证管理强杀结果WIFSIGNALED/WTERMSIG=9，两个孩子结果WIFEXITED；这不等于sigsend/STOP/捕获信号已实现。组wait处于BLOCKED和READY时的groupdrop路径无需修改内核，新增证据补齐此前明确缺失的端到端检查。
+
+测试保留init的8槽约束；首次扩展执行在第二轮创建报CAPACITY，经原生错误和资源表观测确认是旧CONSTRUCT尚待Prep worker清理，非等待lease泄漏。fixture每次CPU交接推进8/192个Prep槽，用户测试在两轮之间让出24次完成有界整表扫描，再用RESOURCE枚举确认仅5份预期Local且无CONSTRUCT，之后继续创建；没有在内核增加重试或放宽容量。失败现场保留，不能把wait结果交付等同于所有构造授权已拆完。
+
+完整本地253项host、格式及92个两架构QEMU通过，日志build/host/stage39-group-wait-termination/，前次CAPACITY现场另保留。原三个孤儿结果仍覆盖，扩展后init总共收取7个后代结果，QMP仍按真实保留init费用/内核栈/guard审计。生产init、信号停止继续、多核/性能与CI不在本次验证范围。

@@ -34,8 +34,8 @@ inittest(void)
 #endif
   Procinfo root;
 #if BOOT_CASE != 43
-  Procinfo children[3];
-  u32      have[3];
+  Procinfo children[7];
+  u32      have[7];
 #endif
   Handle       pid, again, create, control;
   Rtable      *table;
@@ -47,8 +47,10 @@ inittest(void)
   u32          i;
 #if BOOT_CASE != 43
   Pgstat pages;
-  u64    trace[16];
-  u32    turns = 0, old_result = 0;
+  u64    trace[32];
+  u32    turns = 0, old_result = 0, held = 0;
+  Group  relationship;
+  Handle rootgroup;
 #endif
   REQUIRE(!setcreate(16384, 32768, 16, &set));
   REQUIRE(procnew(set, 0, 512, 1024, LOCALS, &again) == -ERR_INVALID && !again);
@@ -61,7 +63,7 @@ inittest(void)
   policy.exec_limit = 1024;
   policy.resources = LOCALS;
   policy.pending = 16;
-  policy.rights = CREATE_USE;
+  policy.rights = CREATE_USE | CREATE_SERVICE;
   REQUIRE(!localcreate(table, &policy, &create));
   REQUIRE(!localcontrol(table, root.life, CONTROL_QUERY | CONTROL_CONNECT | (1UL << 63), &control));
   for (i = 0; i < sizeof(packet); i++)
@@ -124,7 +126,7 @@ inittest(void)
 
   REQUIRE(!setstat(set, &baseline) && baseline.instances == 1);
 #if BOOT_CASE != 43
-  for (i = 0; i < 3; i++)
+  for (i = 0; i < 7; i++)
     have[i] = 0;
 #endif
   REQUIRE(!kstackstat(root.stack, &stack) && stack.state && stack.refs);
@@ -146,6 +148,9 @@ inittest(void)
     putstr("\n");
   }
   REQUIRE(!procpublish(pid));
+#if BOOT_CASE != 43
+  REQUIRE(!lifegroup(root.life, &rootgroup));
+#endif
 #if BOOT_CASE == 43
   /* PID 1 must never return from its real user exit. */
   REQUIRE(!procrunone());
@@ -159,12 +164,23 @@ inittest(void)
       puthex(trace[0]);
       putstr(" code=");
       puthex(trace[1]);
+      putstr(" detail=");
+      puthex(trace[11]);
       putstr("\n");
       panic("user init assertion");
     }
     for (i = 0; i < 3; i++)
       if (trace[2 + i] && !have[i] && !procinfo((Handle) trace[2 + i], &children[i]))
         have[i] = 1;
+    for (i = 0; i < 4; i++)
+      if (trace[20 + i] && !have[3 + i] && !procinfo((Handle) trace[20 + i], &children[3 + i]))
+        have[3 + i] = 1;
+    for (i = 0; i < 2; i++)
+      if (trace[24 + i] && !(trace[26] & (1U << i))) {
+        REQUIRE(!groupstat(rootgroup, &relationship) &&
+                relationship.refs == relationship.processes + 1);
+        held |= 1U << i;
+      }
     if (trace[0] == 3 && have[0] && have[1] && have[2]) {
       Life oldparent, ended, live;
       REQUIRE(!lifestat(children[0].life, &oldparent) && !lifestat(children[1].life, &ended) &&
@@ -178,10 +194,13 @@ inittest(void)
   } while (trace[0] != 99);
   for (i = 0; i < 256; i++)
     REQUIRE(procwork(32) >= 0 && prepwork(32) >= 0);
-  REQUIRE(old_result);
-  REQUIRE(trace[5] == 3 && trace[6] == 7 && trace[7] == 8 && trace[8] == 1 && trace[9] == 1 &&
+  REQUIRE(old_result && held == 3 && !groupstat(rootgroup, &relationship) &&
+          relationship.refs == relationship.processes && relationship.processes == 1 &&
+          !groupcheck());
+  REQUIRE(trace[5] == 7 && trace[6] == 7 && trace[7] == 8 && trace[8] == 1 && trace[9] == 1 &&
           !trace[10] && trace[13] == 1 && trace[14] == 1 && trace[15] == 1);
-  for (i = 0; i < 3; i++)
+  REQUIRE(trace[26] == 3 && trace[27] == 1 && trace[28] == 4 && trace[29] == 3 && trace[30] == 1);
+  for (i = 0; i < 7; i++)
     REQUIRE(have[i] && lifestat(children[i].life, &life) == -ERR_STALE);
   REQUIRE(!lifestat(root.life, &life) && life.state == LIFE_LIVE && !life.waitref && !life.parent);
   REQUIRE(!setstat(set, &account) && account.instances == 1 &&
@@ -194,6 +213,12 @@ inittest(void)
   puthex(1);
   putstr(" collected=");
   puthex(trace[5]);
+  putstr(" wait_killed=");
+  puthex(2);
+  putstr(" ready_wait=");
+  puthex(trace[27]);
+  putstr(" group_refs=");
+  puthex(relationship.refs);
   putstr(" instances=");
   puthex(account.instances);
   putstr(" charged=");

@@ -191,7 +191,7 @@ def build(args):
     init_image.write_bytes(pack(init_test.read_bytes(),profile['machine'],256))
     inspection=invoke('inspect-init-test',[tools['readelf']['path'],'-h','-l','-s',str(init_test)])
     rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='init_trace']
-    if len(rows)!=1 or int(rows[0][2])!=128:raise BuildError('init trace missing')
+    if len(rows)!=1 or int(rows[0][2])!=256:raise BuildError('init trace missing')
     init_address=int(rows[0][1],16)
     (sdk/'initimage.S').write_text('/* image sha256: '+digest(init_image)+' */\n.section .rodata\n.balign 8\n.global init_image,init_image_end,init_trace_address\ninit_image:\n.incbin "'+str(init_image)+'"\ninit_image_end:\n.balign 8\ninit_trace_address:\n.quad '+str(init_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder

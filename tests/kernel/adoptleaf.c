@@ -18,7 +18,7 @@ main(int argc, char **argv)
   REQUIRE(argc == 1 && !__sys_getid(&pid, &image, &parent) && pid > 1 && image == 1 && parent > 1 &&
               getpid() == pid && getppid() == parent,
           151);
-  if (!strcmp(argv[0], "ended")) {
+  if (!strcmp(argv[0], "ended") || !strcmp(argv[0], "wake")) {
     words.words[0] = ADOPT_LEAF_READY;
     words.words[1] = (u64) parent;
     words.words[2] = (u64) pid;

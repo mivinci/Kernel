@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <errno.h>
 extern const u8 adopt_parent[], adopt_parent_end[];
-volatile u64    init_trace[16];
+volatile u64    init_trace[32];
 static Elfwork  preparation;
 static NORETURN void
 failed(u64 code)
@@ -42,7 +44,7 @@ main(int argc, char **argv)
                          0, &channel),
           174);
   REQUIRE(!adoptspawn(adopt_parent, (u64) (adopt_parent_end - adopt_parent), "parent", 128, 8,
-                      channel, 1 | ADOPT_GRANT, &preparation, &pid),
+                      channel, 1 | ADOPT_GRANT, &preparation, &pid, NULL),
           175);
   init_trace[2] = (u64) pid;
   init_trace[0] = 2;
@@ -92,6 +94,89 @@ main(int argc, char **argv)
     }
     init_trace[5]++;
   }
+  for (i = 0; i < 2; i++) {
+    Handle waiter, child, management, waiting = 0, waking = 0;
+    u32    n, found = 0;
+    int    status;
+    isize  prepared;
+    init_trace[0] = 40 + i * 10;
+    prepared =
+        adoptspawn(adopt_parent, (u64) (adopt_parent_end - adopt_parent), i ? "ready" : "blocked",
+                   128, 8, channel, 1 | ADOPT_GRANT, &preparation, &waiter, &management);
+    init_trace[11] = (u64) -prepared;
+    REQUIRE(!prepared && management, 194);
+    init_trace[20 + i * 2] = (u64) waiter;
+    while (!waiting || (i && !waking)) {
+      REQUIRE(!ipc_recv(0, 0, &message) && message.kind == IPC_CALL && message.image == 1, 195);
+      if (message.words[0] == ADOPT_WAIT_READY) {
+        REQUIRE(message.source == waiter && !waiting, 196);
+        waiting = message.request;
+        init_trace[21 + i * 2] = message.words[1];
+      } else {
+        REQUIRE(i && message.words[0] == ADOPT_LEAF_READY && message.words[1] == (u64) waiter &&
+                    !waking,
+                197);
+        waking = message.request;
+      }
+      REQUIRE(!ipc_defer(message.request), 198);
+    }
+    child = (Handle) init_trace[21 + i * 2];
+    REQUIRE(child > 1 && !ipc_reply(waiting, &words), 199);
+    REQUIRE(!__sys_yield(), 200);
+    REQUIRE(!__sys_query(management, QUERY_PROC, 0, records, 1, &written, &next) && written == 1 &&
+                !next && records[0].data[3] == PROCESS_BLOCKED &&
+                records[0].data[12] == PROCESS_WAIT_CHILD &&
+                records[0].data[13] == WAIT_SELECT_GROUP && records[0].data[14] == 1 &&
+                !records[0].data[4],
+            201);
+    init_trace[24 + i] = 1;
+    /* Give the trusted fixture an exact point to inspect the held lease. */
+    REQUIRE(!__sys_yield(), 202);
+    if (i) {
+      REQUIRE(!ipc_reply(waking, &words) && !__sys_yield(), 203);
+      REQUIRE(!__sys_query(management, QUERY_PROC, 0, records, 1, &written, &next) &&
+                  written == 1 && records[0].data[3] == PROCESS_READY &&
+                  records[0].data[12] == PROCESS_WAIT_CHILD,
+              204);
+      init_trace[27] = 1;
+    }
+    REQUIRE(!__sys_terminate(management), 205);
+    init_trace[26] |= (u64) 1 << i;
+    for (n = 0; n < 2; n++) {
+      pid_t result = wait(&status);
+      if (result == waiter) {
+        REQUIRE(WIFSIGNALED(status) && WTERMSIG(status) == 9 && !(found & 1), 206);
+        init_trace[29] |= (u64) 1 << i;
+        found |= 1;
+      } else {
+        REQUIRE(result == child && WIFEXITED(status) && WEXITSTATUS(status) == (i ? 11U : 22U) &&
+                    !(found & 2),
+                207);
+        found |= 2;
+      }
+      init_trace[5]++;
+      init_trace[28]++;
+    }
+    REQUIRE(found == 3 && !__sys_free(management), 208);
+    REQUIRE(waitpid(waiter, NULL, WNOHANG) == -1 && errno == ECHILD, 209);
+    /* The fixture scans 8/192 Prep slots on each CPU handoff. Complete one
+       bounded sweep before reusing this deliberately eight-slot init table. */
+    for (n = 0; n < 24; n++)
+      REQUIRE(!__sys_yield(), 210);
+    {
+      u64 cursor = 0, total = 0, row;
+      do {
+        REQUIRE(!__sys_query(0, QUERY_RESOURCE, cursor, records, 4, &written, &next), 211);
+        for (row = 0; row < written; row++)
+          REQUIRE(records[row].data[1] != 14, 212);
+        total += written;
+        cursor = next;
+      } while (cursor);
+      REQUIRE(total == 5, 213);
+      init_trace[12] = total;
+    }
+  }
+  init_trace[30] = 1;
   REQUIRE(__sys_wait(-1, WAIT_WNOHANG, &collected, &kind, &code, &sequence) == -ERR_CHILD &&
               !collected,
           189);
