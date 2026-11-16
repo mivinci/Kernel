@@ -4,7 +4,7 @@
 
 ## 当前实现
 
-- PR #5已合入main（`5b5edd3`）；当前分支`codex/process-management`，按用户新授权，每个验收点提交并推送到同一分支。
+- PR #5已合入main（`5b5edd3`）；当前分支`codex/kernel-development`，按用户新授权，每个验收点提交并推送到同一分支。
 - 两架构启动、完整用户/内核IRQ整数与FP现场、DTB、伙伴、高半区、Set/Acct、Space/Mem/Mmap、CODE封存和缓存同步已接。Local 48字节、Life 128（含不可变四u32凭据及8字节不增引用的账目身份）、Proc 512、Prep 184、Mmap 64；计费guard栈与独立续点支持离栈回收，旧结果/账目/运行槽分别复用。
 - 可信准备支持已确认的ALLOC=0x10、目标Acct出资、源身份/表epoch绑定、全部临时别名发布屏障、提交/取消立即撤权，以及固定10秒期限。IRQ最多扫描8份准备；CPU有界清理，旧别名继续保留原页/Acct/Life，最后引用解除才回收。
 - 已接512份64字节Image记录，镜像号由Life单调分配；Proc构造/发布/退出与Prep取消/超时固定同一Image，旧清理引用经Image继续持Life，取消后号码不复用。Rq预付/可信状态机已接，完整管理准入与观察cookie仍未接。
