@@ -24,10 +24,13 @@
 - 独立libsys/Boot校验与两架构C _start静态ELF已接；make sdk导出公共/私有头、库和user.ld，完整库对象审计无外部运行时符号。构建工具将ELF转换为既定装载描述，内核只核验描述；CASE=libsys由可信fixture加载实际ELF并验证IPC/内存/退出。csu/main与基础libc接续见下，普通用户ELF加载器接续见下。
 - csu/main、可写argv/environ、getenv、exit/_exit/32槽atexit、errno/strerror及基础内存/字符串已接；sysstart归libsys绑定Boot，C环境归libc，无malloc/fs启动依赖。SDK另导出crt0.o/libc.a/runtimeuser.elf；fd/Fix适配未接，相关非零启动内容明确拒绝。完整libc/stdio/文件/信号适配仍待接。
 - libsys用户态ELF64校验/逐页装载/临时清理与创建配置桩已接；成功规划先限页数，边界页合并权限且拒绝W+X，真实SELF通过准备RESOURCE查询补齐Boot。父每次只占一个临时MEM槽，孩子只留映射；清理失败保留Elfwork责任。来源当前是只读嵌入ELF，FS稳定来源及完整POSIX spawn/exec尚未接。
+- PID1专用bootimageload已接既定预校验描述，逐页装载/封存并释放临时MEM，8个Local槽可装多页init；两架构init/initfatal改用它并检查最终PTE/guard。新启动包容器字段待用户确认，生产入口未接。
 - 一次性可信procboot已接PID1/父0/槽0并复用完整预付；普通创建不准入槽0，PID1退出仍致命。init测试ELF已在两架构真实U/EL0创建三代并收取孤儿，initfatal验证真实用户exit停机；它们不是生产sbin/init，清单/启动包/SYSTEM仍待接。
 - normal仍初始化后停机，无模拟init。旧spawn场景仍用位置无关测试代码；新elf场景由用户libsys装载实际csu/main ELF，不是完整posix_spawn。源CREATE/SERVICE由可信fixture安装，生产清单的SERVICE仅init发放策略尚未启动；孩子退出结果已由真实用户父原生wait收取；真实用户PID1收取孤儿已在独立init测试ELF验证，生产清单仍待接。
 
 ## 本地验证与边界
+
+- 本次PID1描述加载器通过243项host、格式及两架构init/initfatal四场景，日志build/host/stage36-boot-loader/；完整QEMU基线仍为下列stage35，未将局部复验称为重跑全套。
 
 - 完整make test-all通过243项host、格式及92个QEMU场景，日志`build/host/stage35-pid1/test-all.log`；最终两架构init/initfatal及完整host/格式复验见同目录`*-final.log`。
 - init两架构由真实PID1/csu/main创建三代，先拒绝越权收取，随后分别收取旧父33、已结束孤儿11和原活孩子22；最终保留1个init实例且费用/引用精确回到其启动基线。initfatal确认真实用户PID1 exit唯一致命停机；QMP审计保留的4页RW/NX栈、表及guard，host反例验证审计不放行错误映射。

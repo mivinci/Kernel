@@ -292,3 +292,11 @@ QEMU 从启动镜像创建带参数程序，核对 BSS 清零、代码/数据权
 已接可信一次性procboot：固定PID1/父0/运行槽0，并复用普通进程全部预付与发布检查；原生create不能选择它。两架构CASE=init通过真实用户ELF作为PID1，调用普通用户装载模块创建三代进程，验证孤儿退出结果与活孩子由用户init直接wait；CASE=initfatal验证真实用户exit致命停机。运行与保留费用/页表审计细节见03末尾。
 
 此交付尚未修改normal的引导行为，也没有以tests/kernel/inituser.c替代生产sbin/init。启动包/受信设备枚举、16份Set配置、SYSTEM及清单发权、服务依赖/READY/失败监督和serial/tty/fs/sh仍按本篇待执行，不把一个测试中的PID1称为整个init服务已实现。
+
+### PID 1预校验描述装载器（2026-11-16）
+
+kernel/bootload.c已实现bootimageload，只接受尚未发布的PID1和既有Bootimage格式；它先校验完整描述及启动Boot外头，然后按段逐页分配/复制/零填充、代码seal和最终R/RX/RW映射，另装64KiB栈及独立只读Boot，再由procconfigure复查入口/栈/guard/启动地址。不解析ELF，不接受普通PID或路径。每页完成映射后即释放临时MEM授权，保留映射引用，启动所需Local数量不随镜像页数增长。
+
+调用者必须将PID1身份取得后的任何装载/配置失败视为致命，不能发布部分镜像或重试同一空间；错误返回保留已建立资源，随后由启动调用者停机，不假装能够撤销/取消初始init。参数/描述外头校验在分配前完成。未来生产启动包只需将包内已核验的init描述和授权完备Boot交给这个函数，其他程序继续用用户态ELF加载器。
+
+CASE=init/initfatal已从测试专用逐页加载改用该内核函数，两架构分别通过。真实PID1只配置8个资源槽即可装载多页ELF，测试独立读取所有目标PTE核对段权限/普通内存属性、Boot R与栈下guard；非PID1及坏Boot flags拒绝。真实用户态孤儿接管和PID1 exit致命行为继续通过。本地243项host/格式及两架构init/initfatal四场景通过，日志build/host/stage36-boot-loader/；其他场景本点未复跑，完整基线仍为stage35。normal仍未接生产包/清单；启动包容器字段待用户确认，本节不提前定义它。

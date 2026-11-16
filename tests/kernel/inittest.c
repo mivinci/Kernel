@@ -2,6 +2,7 @@
 #include "load.h"
 #include <abi/boot.h>
 #include <diag.h>
+#include <bootimage.h>
 #include <prep.h>
 #include <rq.h>
 typedef struct Initpacket Initpacket;
@@ -51,7 +52,7 @@ inittest(void)
 #endif
   REQUIRE(!setcreate(16384, 32768, 16, &set));
   REQUIRE(procnew(set, 0, 512, 1024, LOCALS, &again) == -ERR_INVALID && !again);
-  REQUIRE(!procboot(set, 512, 1024, LOCALS, &pid) && pid == 1 && !procinfo(pid, &root));
+  REQUIRE(!procboot(set, 512, 1024, 8, &pid) && pid == 1 && !procinfo(pid, &root));
   REQUIRE(procboot(set, 512, 1024, LOCALS, &again) == -ERR_STATE && !again);
   REQUIRE(!lifestat(root.life, &life) && life.pid == 1 && !life.parent && life.group);
   table = proctable(pid);
@@ -97,7 +98,30 @@ inittest(void)
   packet.resources[2].handle = create;
   packet.resources[3].tag = 257;
   packet.resources[3].handle = control;
-  testload(pid, init_image, (u64) (init_image_end - init_image), &packet, sizeof(packet));
+  REQUIRE(bootimageload(2, init_image, (u64) (init_image_end - init_image), &packet,
+                        sizeof(packet)) == -ERR_INVALID);
+  packet.header.flags = 1;
+  REQUIRE(bootimageload(pid, init_image, (u64) (init_image_end - init_image), &packet,
+                        sizeof(packet)) == -ERR_INVALID);
+  packet.header.flags = 0;
+  REQUIRE(!bootimageload(pid, init_image, (u64) (init_image_end - init_image), &packet,
+                         sizeof(packet)));
+  {
+    const Bootimage *image;
+    const Bootseg   *segments;
+    Hpte             entry;
+    u64              j, offset;
+    REQUIRE(!bootimagecheck(init_image, (u64) (init_image_end - init_image), &image));
+    segments = (const Bootseg *) (init_image + image->segments_off);
+    for (j = 0; j < image->segment_count; j++)
+      for (offset = 0; offset < segments[j].mem_bytes; offset += PAGE_SIZE)
+        REQUIRE(spacelookup(root.space, segments[j].va + offset, &entry) &&
+                entry.prot == (segments[j].prot | VM_USER) && entry.attr == VM_NORMAL);
+    REQUIRE(!spacelookup(root.space, 0x3ffffdf000UL, &entry));
+    REQUIRE(spacelookup(root.space, 0x3fff000000UL, &entry) && entry.prot == (VM_READ | VM_USER));
+    REQUIRE(root.resources == 8);
+  }
+
   REQUIRE(!setstat(set, &baseline) && baseline.instances == 1);
 #if BOOT_CASE != 43
   for (i = 0; i < 3; i++)
