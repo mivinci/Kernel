@@ -2,14 +2,7 @@
 u32
 handletype(Handle handle)
 {
-  u64 word = (u64) handle;
-  u32 kind;
-  if (handle == 1)
-    return HANDLE_PROCESS;
-  if (handle <= 0 || !((word >> 16) & HANDLE_GENERATION_MAX))
-    return 0;
-  kind = (u32) (word >> 59);
-  return kind >= HANDLE_PROCESS && kind <= HANDLE_TERMINAL ? kind : 0;
+  return handlekind(handle);
 }
 Handle
 handlepack(u32 kind, u64 generation, u32 index)

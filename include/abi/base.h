@@ -32,4 +32,17 @@ typedef int64_t Handle;
 #define ERR_OVERFLOW          20
 #define ERR_TIMEDOUT          21
 #define ERR_CHILD             22
+/* Syntax only, not lifetime or authority. PID 1 is the sole encoding exception. */
+static __inline__ uint32_t
+handlekind(Handle handle)
+{
+  uint64_t word = (uint64_t) handle;
+  uint32_t kind;
+  if (handle == 1)
+    return HANDLE_PROCESS;
+  if (handle <= 0 || !((word >> 16) & HANDLE_GENERATION_MAX))
+    return 0;
+  kind = (uint32_t) (word >> 59);
+  return kind >= HANDLE_PROCESS && kind <= HANDLE_TERMINAL ? kind : 0;
+}
 #endif

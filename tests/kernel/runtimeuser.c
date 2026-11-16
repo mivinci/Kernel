@@ -7,7 +7,7 @@
 #include <sys/channel.h>
 #include "private/libc.h"
 #include "private/syscall.h"
-volatile u64        runtime_trace[10];
+volatile u64        runtime_trace[11];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -178,6 +178,44 @@ formatcheck(void)
 #undef FCHECK
   return checks;
 }
+static u32
+groupcheck(void)
+{
+  pid_t       pid = getpid();
+  const pid_t missing = (pid_t) UINT64_C(0x080000000100ffff);
+  u32         checks = 0;
+#define GCHECK(c, n)                                                                               \
+  do {                                                                                             \
+    REQUIRE(c, n);                                                                                 \
+    checks++;                                                                                      \
+  } while (0)
+  errno = EDOM;
+  GCHECK(pid > (pid_t) UINT32_MAX, 220);
+  GCHECK(getpgrp() == 1 && getpgid(0) == 1 && getsid(0) == 1 && errno == EDOM, 221);
+  GCHECK(getpgid(pid) == 1 && getsid(pid) == 1 && errno == EDOM, 222);
+  GCHECK(getpgid(-1) == -1 && errno == EINVAL, 223);
+  GCHECK(getsid(-1) == -1 && errno == EINVAL, 224);
+  GCHECK(getpgid(2) == -1 && errno == ESRCH, 225);
+  GCHECK(getpgid(missing) == -1 && errno == ESRCH, 226);
+  GCHECK(getsid(missing) == -1 && errno == ESRCH, 227);
+  GCHECK(setpgid(-1, 0) == -1 && errno == EINVAL, 228);
+  GCHECK(setpgid(0, -1) == -1 && errno == EINVAL, 229);
+  GCHECK(setpgid(0, 2) == -1 && errno == EPERM && getpgrp() == 1 && errno == EPERM, 230);
+  GCHECK(setpgid(missing, 0) == -1 && errno == ESRCH, 231);
+  GCHECK(setpgid(0, missing) == -1 && errno == EPERM, 232);
+  errno = EDOM;
+  GCHECK(!setpgid(0, 0) && getpgrp() == pid && getsid(0) == 1 && errno == EDOM, 233);
+  GCHECK(setsid() == -1 && errno == EPERM, 234);
+  GCHECK(getpgid(pid) == pid && getsid(pid) == 1 && errno == EPERM, 235);
+  errno = EDOM;
+  GCHECK(!setpgid(0, 1) && getpgrp() == 1 && errno == EDOM, 236);
+  GCHECK(setsid() == pid && getpgrp() == pid && getsid(0) == pid && errno == EDOM, 237);
+  GCHECK(setpgid(0, 0) == -1 && errno == EPERM, 238);
+  GCHECK(setsid() == -1 && errno == EPERM, 239);
+  GCHECK(getpgid(pid) == pid && getsid(pid) == pid && getpgrp() == pid && errno == EPERM, 240);
+#undef GCHECK
+  return checks;
+}
 static void
 preinit(void)
 {
@@ -301,6 +339,7 @@ main(int argc, char **argv)
           176);
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
+  runtime_trace[10] = groupcheck();
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)

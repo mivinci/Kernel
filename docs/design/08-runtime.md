@@ -488,3 +488,15 @@ host新增8项：容量0/1/截断与前后canary、嵌入NUL、符号/前缀/精
 CASE=runtime每架构5个有效main各执行24项格式检查，共120项，包括真实ll/j/z/t与14个混合类型参数的va_list/栈传参、负INT_MIN精度、截断/精度/指针/巨大计数/错误路径；原275组整数转换和5个坏启动拒绝/回调/退出及资源清理继续核对。300项完整host、格式、RV64/ARM64 runtime专项和SDK依赖审计通过，证据build/host/stage48-memory-format/。本轮未改生产内核，最近98场景全量仍为stage46，未重新声称全量重跑或CI/目标真实硬件/性能验收。
 
 printf/fprintf与FILE/流缓冲仍待文件适配，malloc和完整locale/stdio也未完成；内存格式化可用不等于完整stdio或POSIX验收。
+
+### libc组/会话接口接续（2026-11-17）
+
+unistd.h现提供getpgrp/getpgid/getsid/setpgid/setsid，libsys新增__sys_getpg/__sys_setpg/__sys_setsid，复用冻结的0x66..0x68及完整64位pid_t/Handle，不截断、不重编码、不缓存组/会话。getpgrp查询当前运行镜像的必有关系，意外原生失败致命而不伪造POSIX错误；其他查询/修改正常返回保留errno。
+
+负选择器在用户层EINVAL且不进入内核。不存在目标PID/错误PID类别映射ESRCH，跨会话/非法关系/组长或会话首进程限制为EPERM；setpgid将已exec孩子的原生STATE映射EACCES，其他接口意外STATE为EIO。setpgid的显式非进程类别目标组先按统一handlekind拒绝EPERM，避免与不存在目标PID混成ESRCH；0保留原生选择器语义，保留PID1可作为原组号，不把类型识别当成员或授权证明。池/预算容量BUSY/LIMIT/CAPACITY为EAGAIN，NOMEM为ENOMEM，代次OVERFLOW为EOVERFLOW，未支持原生调用ENOSYS，未知错误EIO。完整exec尚未接，EACCES分支目前仅host状态桥验证。
+
+host新增6项覆盖五接口完整64位参数/结果和零/PID1选择器、无缓存查询、负数提前拒绝、目的组与目标PID错误区分、逐操作errno、三个桩的七输入/保留字及失败输出0。共享类别算法由abi/base.h统一，kernel/handle.c不再保留第二份分类实现；现有Local全类别/代次/PID1检查继续覆盖它。
+
+CASE=runtime每架构5个有效main各21项组/会话检查，共105项：读取初始组、完整PID查询、坏PID/负值/不存在组错误、创建自身组后setsid拒绝、重新加入初始组、setsid成功隔离、重复setsid与会话首进程改组拒绝及查询不回旧缓存。可信CPU仅在测试期间保留原组管理引用，使唯一成员移走后仍可重新加入；未给用户绕过会话关系的权力。CPU独立核对退出Life实际PGID/SID等于孩子PID，收取/释放后原组与终止组Handle均失效，页/费用与关系检查通过；坏Boot程序仍无main跟踪。初始fixture的groupstat失效错误期望由STALE更正为其既定BAD_HANDLE，没有放宽实现或资源回收条件。
+
+公开接口不包括kill/raise或完整作业控制；真实信号来源、STOP/CONT、exec后的父修改限制及终端前台协议仍按原计划继续，不能把组/会话封装称为完整POSIX进程管理。本地完整make test-all通过306项host、格式和98个RV64/ARM64 QEMU，最终组桥host6项及格式另复验通过；各架构runtime的105项组/会话检查、275组整数转换与120项格式检查均保持，SDK单向依赖审计通过。证据和关键源码哈希在build/host/stage49-libc-groups/；没有CI、目标真实硬件或性能验收。

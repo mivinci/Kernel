@@ -91,3 +91,36 @@ __sys_revoke(Handle target, Handle resource)
   Sysret    result;
   return __sys_enter(SYS_REVOKE, args, &result);
 }
+
+isize
+__sys_getpg(Handle pid, Handle *pgid, Handle *sid)
+{
+  const u64 args[7] = {(u64) pid, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!pgid || !sid)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_GETPG, args, &result);
+  *pgid = (Handle) result.values[0];
+  *sid = (Handle) result.values[1];
+  return error;
+}
+isize
+__sys_setpg(Handle pid, Handle pgid)
+{
+  const u64 args[7] = {(u64) pid, (u64) pgid, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_SETPG, args, &result);
+}
+isize
+__sys_setsid(Handle *sid)
+{
+  const u64 args[7] = {0, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!sid)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_SETSID, args, &result);
+  *sid = (Handle) result.values[0];
+  return error;
+}

@@ -5,5 +5,10 @@
 extern char **environ;
 pid_t         getpid(void);
 pid_t         getppid(void);
+pid_t         getpgrp(void);
+pid_t         getpgid(pid_t pid);
+pid_t         getsid(pid_t pid);
+int           setpgid(pid_t pid, pid_t pgid);
+pid_t         setsid(void);
 NORETURN void _exit(int status);
 #endif

@@ -174,3 +174,5 @@ sigreserve场景另检查信号Hctx的HAL转换/恢复边界：拒绝特权/IRQ/
 基础libc另已提供C locale的strtol/strtoul，支持2..36进制、自动八/十/十六识别、精确endptr和范围错误；不依赖fs/net。runtime场景每架构5个真实main共核对275组/550次转换，并保持原启动/退出和资源清理检查；当前子集与证据见08/15末尾。
 
 stdio.h现另提供内存snprintf/vsnprintf的整数/指针/字节字符串与字符子集，支持宽度、精度、常用长度修饰及截断长度计数。runtime每架构新增120项实际格式检查；完整格式列表与错误边界见08/15，流printf/FILE仍待文件适配。
+
+unistd.h另提供getpgrp/getpgid/getsid/setpgid/setsid，直接使用完整64位PID及已实现的内核组/会话规则。runtime每架构新增105项实际检查，CPU独立核对会话变更与关系回收；错误及限制见08/15，kill/raise和完整作业控制仍待信号路径。

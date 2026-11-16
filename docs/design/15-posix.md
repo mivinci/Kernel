@@ -123,3 +123,7 @@ WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按�
 整数转换子集接续（2026-11-17）：stdlib.h现提供C locale的strtol/strtoul，错误/范围/endptr及已验证子集见08末尾。292项完整host和两架构runtime专项通过，每架构5个真实main共275组/550次转换；内核、locale、分配器、stdio、fork/exec和文件/网络接口的完成度不由此推定。证据build/host/stage47-integer-conversion/，未执行CI/完整标准合规验收。
 
 内存格式化子集接续（2026-11-17）：stdio.h现声明已实现的snprintf/vsnprintf，支持整数/指针/字节字符串与字符，格式/范围/截断/错误边界及证据见08末尾。300项完整host、格式及双架构runtime通过，每架构5个真实main共120项格式检查；浮点、宽字符、位置参数、%n、流printf/FILE和完整stdio未实现，不能从内存输出推定文件/网络接口可用。
+
+组/会话用户接口接续（2026-11-17）：getpgrp/getpgid/getsid/setpgid/setsid已接，保留完整64位PID及原生自/子同会话限制，逐操作错误和验证见08末尾。getpid/getppid/wait/waitpid仍沿既有路径；kill/raise、真实信号源/作业控制、fork/exec与完整POSIX未由本次补齐。
+
+上述组/会话切片最终完整回归通过306项host、格式及98个两架构QEMU，runtime每架构105项用户检查和CPU独立关系核验通过；证据build/host/stage49-libc-groups/。没有把尚未接通的exec/信号分支称为端到端验收。

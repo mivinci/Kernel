@@ -112,19 +112,22 @@ runtimetest(void)
 {
   Setid      set;
   Set        account;
-  Handle     pid;
+  Handle     pid, realm, ended_group, pgid, sid;
+  Group      relationship;
   Procinfo   info;
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u64        trace[10], bytes;
+  u64        trace[11], bytes;
   u32        mode, i, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0,
-                     formats = 0;
+                     formats = 0, groups = 0;
   int error;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
   for (mode = 0; mode < 10; mode++) {
     REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pid) && !procinfo(pid, &info));
+    REQUIRE(!lifestat(info.life, &life) && !grouphold(life.group));
+    realm = life.group;
     bytes = startup(pid, mode);
     testload(pid, runtime_image, (u64) (runtime_image_end - runtime_image), packet, bytes);
     REQUIRE(!procpublish(pid) && !procrunone());
@@ -147,25 +150,30 @@ runtimetest(void)
       rejected++;
     } else {
       REQUIRE(trace[0] == 1 && trace[1] == 123 && trace[4] == mode && trace[5] == 1 &&
-              trace[6] == 42 && trace[8] == 55 && trace[9] == 24);
+              trace[6] == 42 && trace[8] == 55 && trace[9] == 24 && trace[10] == 21);
       REQUIRE(trace[2] == (mode == 3 ? 0 : 21) && trace[3] == (mode == 3 ? 0 : 12));
       REQUIRE(trace[7] == (mode == 1 ? 30 : 0));
       mains++;
       numbers += (u32) trace[8];
       formats += (u32) trace[9];
+      groups += (u32) trace[10];
+      REQUIRE(!groupnames(life.group, &pgid, &sid) && pgid == pid && sid == pid);
       if (mode != 3) {
         callbacks += 2 + (u32) trace[7];
         finalizers += 2;
       }
     }
+    ended_group = life.group;
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(info.life, 1, &result));
+    REQUIRE(!groupdrop(realm) && groupstat(realm, &relationship) == -ERR_BAD_HANDLE &&
+            groupstat(ended_group, &relationship) == -ERR_BAD_HANDLE);
   }
   REQUIRE(!setstat(set, &account) && !account.charged && !account.instances && !setclose(set));
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
-          !acctcheck());
+          !acctcheck() && !lifecheck() && !groupcheck());
   putstr("RUNTIMECHECK cases=");
   puthex(10);
   putstr(" main=");
@@ -180,6 +188,8 @@ runtimetest(void)
   puthex(numbers);
   putstr(" formats=");
   puthex(formats);
+  putstr(" groups=");
+  puthex(groups);
   putstr(" charged=");
   puthex(account.charged);
   putstr(" allocated=");
