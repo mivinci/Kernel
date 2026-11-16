@@ -44,6 +44,7 @@
 #define PROCESS_WAIT_FINISH  3
 #define PROCESS_WAIT_DESTROY 4
 #define PROCESS_WAIT_CHILD   5
+#define PROCESS_WAIT_SIGNAL  6
 #define QUERY_PROC           1
 #define QUERY_RQ             2
 #define QUERY_ACCT           3

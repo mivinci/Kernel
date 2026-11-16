@@ -404,6 +404,49 @@ sigqueue(Imageid id, const Siginfo *info)
   s->pending |= bit;
   return 0;
 }
+static u32
+nextsignal(const Signal *s)
+{
+  u64 pending = s->pending & ~s->mask;
+  u32 i;
+  for (i = 0; i < SIGNAL_COUNT; i++)
+    if ((pending & ((u64) 1 << i)) && !ignored(i + 1, &s->actions[i]) &&
+        (s->actions[i].kind == SIGNAL_DEFAULT || s->depth < SIGNAL_DEPTH))
+      return i + 1;
+  return 0;
+}
+int
+sigready(Imageid id)
+{
+  Signal *s = find(id);
+  Image   image;
+  if (!s)
+    return -ERR_STALE;
+  if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  return nextsignal(s) != 0;
+}
+int
+sigwaitreturn(Imageid id, u64 mask)
+{
+  Signal *s = find(id);
+  Sigctx *layer;
+  u32     i;
+  int     ready = sigready(id);
+  if (sigmaskvalid(mask))
+    return -ERR_INVALID;
+  if (ready <= 0)
+    return ready < 0 ? ready : -ERR_WOULD_BLOCK;
+  i = nextsignal(s) - 1;
+  if (s->actions[i].kind == SIGNAL_DEFAULT)
+    return 0;
+  layer = &s->contexts[s->depth];
+  if (layer->state || layer->request.generation || layer->wait_kind)
+    return -ERR_STATE;
+  layer->wait_kind = PROCESS_WAIT_SIGNAL;
+  layer->restore_mask = mask & ~SIGNAL_UNMASKABLE;
+  return 0;
+}
 static void
 clearcontext(Sigctx *context)
 {
@@ -421,96 +464,89 @@ sigdeliver(Imageid id, Spaceid space, Hctx *context)
   Sigframe packet;
   Sigact   reset_action;
   u8      *bytes = (u8 *) &packet;
-  u64      ready, bit, sp, frame, cookie, mask;
+  u64      bit, sp, frame, cookie, mask;
   u32      i, signum;
   int      error;
   if (!s || !context)
     return -ERR_STATE;
   if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
     return -ERR_STATE;
-  for (;;) {
-    ready = s->pending & ~s->mask;
-    if (!ready)
-      return 0;
-    for (i = 0; i < SIGNAL_COUNT && !(ready & ((u64) 1 << i)); i++) {
-    }
-    signum = i + 1;
-    bit = (u64) 1 << i;
-    if (ignored(signum, &s->actions[i])) {
-      s->pending &= ~bit;
-      clearinfo(&s->info[i]);
-      continue;
-    }
-    if (s->actions[i].kind == SIGNAL_DEFAULT) {
-      s->pending &= ~bit;
-      clearinfo(&s->info[i]);
-      return (int) signum;
-    }
-    if (s->depth == SIGNAL_DEPTH)
-      return 0;
-    layer = &s->contexts[s->depth];
-    if (layer->state || layer->request.generation)
-      return -ERR_STATE;
-    copyaction(&layer->action, &s->actions[i]);
-    if (entrycheck(space, layer->action.handler) || entrycheck(space, layer->action.trampoline))
-      return -ERR_FAULT;
-    sp = hal_user_sp(context);
-    if (sp < sizeof(packet))
-      return -ERR_FAULT;
-    frame = ALIGN_DOWN(sp - sizeof(packet), 16UL);
-    if (frame < BOOT_USER_LO || frame >= BOOT_USER_HI || sizeof(packet) > BOOT_USER_HI - frame)
-      return -ERR_FAULT;
-    error = sigcookie(id, &cookie);
-    if (error)
-      return error;
-    for (i = 0; i < sizeof(packet); i++)
-      bytes[i] = 0;
-    packet.head.magic = SIGNAL_FRAME_MAGIC;
-    packet.head.bytes = sizeof(packet);
-    packet.head.depth = s->depth + 1;
-    packet.head.previous = s->depth ? s->contexts[s->depth - 1].frame : 0;
-    packet.head.restore_mask = s->mask;
-    packet.head.cookie = cookie;
-    {
-      const u8 *from = (const u8 *) &s->info[signum - 1];
-      u8       *to = (u8 *) &packet.info;
-      for (i = 0; i < sizeof(packet.info); i++)
-        to[i] = from[i];
-    }
-    copycontext(&packet.user, context);
-    copycontext(&layer->user, context);
-    if (spacewrite(space, frame, &packet, sizeof(packet))) {
-      clearcontext(layer);
-      return -ERR_FAULT;
-    }
-    if (hal_signal_enter(context, frame, layer->action.trampoline, layer->action.handler,
-                         layer->action.flags, signum)) {
-      clearcontext(layer);
-      return -ERR_FAULT;
-    }
-    mask = s->mask | layer->action.mask;
-    if (!(layer->action.flags & SIGNAL_NODEFER))
-      mask |= bit;
-    layer->frame = frame;
-    layer->saved_mask = layer->restore_mask = s->mask;
-    layer->active_mask = mask & ~SIGNAL_UNMASKABLE;
-    layer->cookie = cookie;
-    layer->signum = (u8) signum;
-    layer->state = 1;
-    s->depth++;
-    s->mask = layer->active_mask;
-    s->pending &= ~bit;
-    clearinfo(&s->info[signum - 1]);
-    if (layer->action.flags & SIGNAL_RESETHAND) {
-      reset_action.kind = SIGNAL_DEFAULT;
-      reset_action.handler = reset_action.trampoline = reset_action.mask = reset_action.flags =
-          reset_action.reserved = 0;
-      copyaction(&s->actions[signum - 1], &reset_action);
-      if (signum == SIGNAL_CHLD && policy(id, &reset_action))
-        panic("signal reset policy");
-    }
+  signum = nextsignal(s);
+  if (!signum)
     return 0;
+  i = signum - 1;
+  bit = (u64) 1 << i;
+  if (s->actions[i].kind == SIGNAL_DEFAULT) {
+    s->pending &= ~bit;
+    clearinfo(&s->info[i]);
+    return (int) signum;
   }
+  if (s->depth == SIGNAL_DEPTH)
+    return 0;
+  layer = &s->contexts[s->depth];
+  if (layer->state || layer->request.generation)
+    return -ERR_STATE;
+  copyaction(&layer->action, &s->actions[i]);
+  if (entrycheck(space, layer->action.handler) || entrycheck(space, layer->action.trampoline))
+    return -ERR_FAULT;
+  sp = hal_user_sp(context);
+  if (sp < sizeof(packet))
+    return -ERR_FAULT;
+  frame = ALIGN_DOWN(sp - sizeof(packet), 16UL);
+  if (frame < BOOT_USER_LO || frame >= BOOT_USER_HI || sizeof(packet) > BOOT_USER_HI - frame)
+    return -ERR_FAULT;
+  error = sigcookie(id, &cookie);
+  if (error)
+    return error;
+  for (i = 0; i < sizeof(packet); i++)
+    bytes[i] = 0;
+  packet.head.magic = SIGNAL_FRAME_MAGIC;
+  packet.head.bytes = sizeof(packet);
+  packet.head.depth = s->depth + 1;
+  packet.head.previous = s->depth ? s->contexts[s->depth - 1].frame : 0;
+  packet.head.restore_mask =
+      layer->wait_kind == PROCESS_WAIT_SIGNAL ? layer->restore_mask : s->mask;
+  packet.head.cookie = cookie;
+  {
+    const u8 *from = (const u8 *) &s->info[signum - 1];
+    u8       *to = (u8 *) &packet.info;
+    for (i = 0; i < sizeof(packet.info); i++)
+      to[i] = from[i];
+  }
+  copycontext(&packet.user, context);
+  copycontext(&layer->user, context);
+  if (spacewrite(space, frame, &packet, sizeof(packet))) {
+    clearcontext(layer);
+    return -ERR_FAULT;
+  }
+  if (hal_signal_enter(context, frame, layer->action.trampoline, layer->action.handler,
+                       layer->action.flags, signum)) {
+    clearcontext(layer);
+    return -ERR_FAULT;
+  }
+  mask = s->mask | layer->action.mask;
+  if (!(layer->action.flags & SIGNAL_NODEFER))
+    mask |= bit;
+  layer->frame = frame;
+  layer->saved_mask = s->mask;
+  layer->restore_mask = packet.head.restore_mask;
+  layer->active_mask = mask & ~SIGNAL_UNMASKABLE;
+  layer->cookie = cookie;
+  layer->signum = (u8) signum;
+  layer->state = 1;
+  s->depth++;
+  s->mask = layer->active_mask;
+  s->pending &= ~bit;
+  clearinfo(&s->info[signum - 1]);
+  if (layer->action.flags & SIGNAL_RESETHAND) {
+    reset_action.kind = SIGNAL_DEFAULT;
+    reset_action.handler = reset_action.trampoline = reset_action.mask = reset_action.flags =
+        reset_action.reserved = 0;
+    copyaction(&s->actions[signum - 1], &reset_action);
+    if (signum == SIGNAL_CHLD && policy(id, &reset_action))
+      panic("signal reset policy");
+  }
+  return 0;
 }
 int
 sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)

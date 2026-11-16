@@ -39,6 +39,7 @@ class SignalFrameTests(unittest.TestCase):
                 'sigdeliver':[Imageid,space.Spaceid,C.c_void_p],
                 'sigrestore':[Imageid,space.Spaceid,C.c_void_p,C.c_uint64],
                 'sigdiscard':[Imageid],
+                'sigready':[Imageid], 'sigwaitreturn':[Imageid,C.c_uint64],
                 'hal_user_init':[C.c_void_p,C.POINTER(context.Initial)]}
             for name,args in declarations.items():getattr(lib,name).argtypes=args
             lib.meminit();self.mapped=space.AddressSpaceTests.create(self)
@@ -129,4 +130,41 @@ class SignalFrameTests(unittest.TestCase):
             self.assertLess(self.lib.sigdeliver(self.identity,self.mapped,self.user.pointer),0)
             self.assertEqual(self.user.bytes(),saved)
             self.assertEqual((self.snapshot(self.identity).depth,self.snapshot(self.identity).pending),(0,1<<9))
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_suspended_mask_is_distinct_from_handler_mask_and_restored_on_return(self):
+        def body():
+            old=C.c_uint64()
+            self.assertEqual(self.lib.sigsetmask(self.identity,2,1<<9,C.byref(old)),0)
+            self.assertEqual(self.lib.sigqueue(self.identity,C.byref(support.Info(signum=10))),0)
+            self.assertEqual(self.lib.sigready(self.identity),0)
+            self.assertEqual(self.lib.sigwaitreturn(self.identity,1<<9),-11)
+            self.assertEqual(self.lib.sigsetmask(self.identity,2,1<<11,C.byref(old)),0)
+            self.assertEqual(old.value,1<<9)
+            self.assertEqual(self.lib.sigready(self.identity),1)
+            self.assertEqual(self.lib.sigwaitreturn(self.identity,old.value),0)
+            frame=self.push()
+            self.assertEqual(C.c_uint64.from_buffer(self.packet(frame),32).value,1<<9)
+            self.assertEqual(self.snapshot(self.identity).mask,1<<11)
+            self.assertEqual(self.lib.sigsetmask(self.identity,2,1,C.byref(old)),0)
+            inner=self.push()
+            self.assertEqual(self.lib.sigrestore(self.identity,self.mapped,self.user.pointer,inner),0)
+            self.assertEqual(self.snapshot(self.identity).mask,1)
+            self.assertEqual(self.lib.sigrestore(self.identity,self.mapped,self.user.pointer,frame),0)
+            self.assertEqual(self.snapshot(self.identity).mask,1<<9)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_default_termination_bypasses_full_handler_depth_and_lower_pending_handler(self):
+        def body():
+            self.push();self.push()
+            self.assertEqual(self.lib.sigqueue(self.identity,C.byref(support.Info(signum=10))),0)
+            self.assertEqual(self.lib.sigready(self.identity),0)
+            self.assertEqual(self.lib.sigwaitreturn(self.identity,0),-11)
+            self.assertEqual(self.lib.sigqueue(self.identity,C.byref(support.Info(signum=15))),0)
+            self.assertEqual(self.lib.sigready(self.identity),1)
+            self.assertEqual(self.lib.sigwaitreturn(self.identity,0),0)
+            original=self.user.bytes()
+            self.assertEqual(self.lib.sigdeliver(self.identity,self.mapped,self.user.pointer),15)
+            self.assertEqual(self.user.bytes(),original)
+            self.assertEqual((self.snapshot(self.identity).depth,self.snapshot(self.identity).pending),(2,1<<9))
         for lib in self.libs:self.exercise(lib,body)

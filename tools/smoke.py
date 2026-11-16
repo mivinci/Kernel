@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "sigsuspend":
+        if ready != ["READY sigsuspend-restored"] or panics or traps:
+            raise SmokeError("signal suspend test did not finish")
     elif case == "sigframe":
         if ready != ["READY sigframe-restored"] or panics or traps:
             raise SmokeError("signal frame test did not finish")
@@ -518,6 +521,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY sigsuspend-restored\n" if args.case == "sigsuspend" else
                     "READY sigframe-restored\n" if args.case == "sigframe" else
                     "READY sigconfig-restored\n" if args.case == "sigconfig" else
                     "READY init-restored\n" if args.case == "init" else
@@ -619,6 +623,11 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "sigsuspend":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SUSPENDCHECK ")]
+                    if checks != [dict(cases=9, resumed=5, terminated=4, charged=0, allocated=transition["tables"])]:
+                        raise SmokeError("signal suspend outcome/resource mismatch")
+                    record["signal_suspend"]=checks[0]
                 if args.case == "sigframe":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFRAMECHECK ")]
                     if checks != [dict(cases=10, normal=4, invalid=5, terminated=1, charged=0, allocated=transition["tables"])]:
@@ -854,7 +863,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

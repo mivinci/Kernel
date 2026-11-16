@@ -4,7 +4,10 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 45
+#if BOOT_CASE == 46
+  suspendtest();
+  putstr("READY sigsuspend-restored\n");
+#elif BOOT_CASE == 45
   sigframetest();
   putstr("READY sigframe-restored\n");
 

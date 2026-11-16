@@ -71,6 +71,7 @@ NORETURN void procsigreturn(u64 frame);
 NORETURN void procbadsignal(u64 frame);
 NORETURN void procuserreturn(struct Hctx *context);
 int           procsigaction(u64 signum, u64 input, u64 output);
+int           procsigsuspend(u64 mask);
 int           procsigmask(u64 how, u64 mask, u64 *old);
 int           procsigpending(u64 *out);
 /* Typed resource commit; syscall descriptor decoding is a separate ABI step. */

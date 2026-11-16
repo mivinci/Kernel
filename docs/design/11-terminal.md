@@ -450,3 +450,17 @@ CASE=sigframe使用真实csu/main镜像和自定义trampoline验证10种路径�
 #### 开放问题：Siginfo来源编码（待用户确认）
 
 接真实来源前候选原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。当前只冻结64字节布局，尚未实现这些候选数值或真实来源；可信测试code=0不定义生产协议。
+
+### 原生sigsuspend与M/W/H交接接续（2026-11-17）
+
+已接原生0x63和私有__sys_sigsuspend。输入先验证，保存当前M、安装清除KILL/STOP的W、检查pending并登记信号等待在现有单核IRQ屏蔽边界原子完成；没有unmask后才另睡眠的窗口。M先位于线程预付内核栈的原syscall续点，捕获成立时转入下一Sigctx，未新增通用等待对象。唤醒仅入FIFO并回原C续点复查；原调用先固定-INTERRUPTED的完整用户返回现场再退栈，统一出口以W和动作快照构造H，用户前缀restore_mask取M。正常sigreturn恢复M，handler中临时sigmask不覆盖它；显式合法帧mask编辑仍生效。
+
+被屏蔽/忽略信号和普通IPC事件不结束等待。两层满额时捕获信号留pending，最内层sigsuspend继续等待，不能靠第三层/隐式放宽容量解套；默认终止无需新层。修正选择器：满层的低编号捕获pending不再挡住较高编号默认终止，保留捕获位并选择可执行的默认动作。当前没有真实STOP/CONT生产或状态机，这两种路径仍未验证，不以本次等待承诺代替它们。
+
+CASE=sigsuspend两架构各9例：M屏蔽的预存USR1在原子换W时立即捕获；真正BLOCKED后忽略WINCH/屏蔽USR2均不唤醒，预存自NOTIFY事件也不结束等待，随后USR1使其醒来，恢复M后立即递送先前USR2且普通事件仍可领取；handler内嵌套sigsuspend逐层恢复M/W/H；非法mask不变更；默认TERM；阻塞及已醒READY续点固定CONTROL强杀；两层已满时捕获USR1继续pending而TERM仍可结束；显式改返回mask。应用/外层/内层实际FP舍入环境逐层验证，正常5例仅EINTR一次、终止4例不回应用，所有动态页、预算、关系及信号银行结清。
+
+host另测等待恢复M与H分离、handler改mask/嵌套返回，以及满层低编号捕获不挡默认终止。早期ARM测试误在发布后重新借构造表，proctable依设计拒绝，已修正可信fixture的构造时表引用，未放宽生产授权；RV首次命令的固件路径笔误未进入guest，已用正确路径重跑。失败产物保留在原运行目录。
+
+边界：原生HANDLER仍NOTSUP，来源编码仍待确认；可信安装/排队仅额外接受独占信号等待，不提前支持普通IPC/父wait中断。SA_RESTART、Rctx、libc信号前置、STOP/CONT和完整信号生产仍待接，生产normal及包括net的全项目目标未完成。
+
+本地最终验证：完整make test-all通过286项host、格式及98个RV64/ARM64 QEMU，最终源的帧核心5项host及格式也单独通过。9例信号等待各架构5个恢复EINTR、4个终止，charged=0且物理页回到内核表基线；日志、原始运行目录及关键源码哈希在build/host/stage46-signal-suspend/。未运行CI/真实硬件/性能验收，源布局/预算静态断言保持通过。

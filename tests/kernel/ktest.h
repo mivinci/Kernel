@@ -28,6 +28,7 @@ void elftest(void);
 void inittest(void);
 void sigconfigtest(void);
 void sigframetest(void);
+void suspendtest(void);
 void controltest(void);
 void eventtest(void);
 void preptest(void);

@@ -133,7 +133,7 @@ query kind固定PROC=1、RQ=2、ACCT=3、LIFE=4、RESOURCE=5、BOOT_RESOURCE=6�
 
 PROC的state固定CONSTRUCT=1、READY=2、RUNNING=3、BLOCKED=4、EXITING=5、STOPPED=6；STOPPED仅待停止机制接入后产生，不输出内部BUILDING。仅返回仍有运行记录的目标；原运行记录回收后为0条，旧CONTROL不会读到同槽新PID。PROC为整实例单条，cursor只接受0，next=0，image为当前/清理中的镜像，stamp为运行身份代次而非内容版本。
 
-cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端。wait_kind为0无等待、1接收、2请求结果、3独立收尾、4构造撤销续点、5父wait；READY但尚未恢复的续点仍显示其等待种类。父wait的wait_selector_kind为0任意孩子、1完整PID、2冻结组，wait_selector对应0/PID/公开PGID；不暴露内部GROUP Handle。其他等待的selector两字0，其余保留字0。
+cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端。wait_kind为0无等待、1接收、2请求结果、3独立收尾、4构造撤销续点、5父wait、6信号等待；READY但尚未恢复的续点仍显示其等待种类。父wait的wait_selector_kind为0任意孩子、1完整PID、2冻结组，wait_selector对应0/PID/公开PGID；不暴露内部GROUP Handle。其他等待的selector两字0，其余保留字0。
 
 ### query的主体选择（交叉复核修订）
 
@@ -342,3 +342,5 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 信号配置原生接续（2026-11-16）：0x60三输入、0x61两输入、0x62零输入已接，未用输入仍必须0，成功action无额外寄存器输出，sigmask输出旧mask、sigpending输出真实pending；错误输出0。共享支持编号/掩码/方式常量在abi/signal.h。当前只安装DEFAULT/IGNORE和CHLD NOCLDWAIT，HANDLER与尚未实现语义的已知flags返回NOTSUP；KILL/STOP动作修改及未知位INVALID，KILL/STOP不进入有效掩码。旧动作输出FAULT时不安装，重叠new/old先快照输入。configure非零sigmask/sigdefault已支持并从创建基线计算；完整通知/递送与标准适配尚未完成，见11末尾。
 
 原生sigreturn接续（2026-11-17）：0x65仅一个frame输入，其余输入必须0；成功直接恢复完整用户现场，不返回普通状态/不再次推进PC；坏输入或帧验证失败不可恢复SIGSEGV退出。私有libsys提供NORETURN __sys_sigreturn，实际帧/权限/cookie和验证见11末尾。HANDLER原生注册和信号来源/中断重启尚未开放，不将此入口称为完整信号ABI可用。
+
+原生sigsuspend接续（2026-11-17）：0x63一个mask输入，其他输入必须0；未知mask位INVALID且原掩码不变，KILL/STOP位规范清除。保存原M后原子安装临时W、检查可递送pending并登记PROCESS_WAIT_SIGNAL=6；捕获后先固定INTERRUPTED返回现场，沿原C栈退至统一出口建立handler H帧，帧restore_mask取M。正常sigreturn恢复M后原调用返回-INTERRUPTED，不返回成功，不因普通IPC通知/事件假醒；默认终止不返回。两层满额时捕获信号仍pending，默认终止可越过满层的较低编号捕获信号；STOP/CONT真实源尚未接，不能由此声称已验其状态语义。

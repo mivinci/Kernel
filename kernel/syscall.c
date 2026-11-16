@@ -109,6 +109,7 @@ syscall(Hctx *context)
     used = 1;
     break;
   case SYS_SIGRETURN:
+  case SYS_SIGSUSPEND:
   case SYS_OBSREAD:
   case SYS_OBSNEXT:
   case SYS_OBSACK:
@@ -299,6 +300,9 @@ syscall(Hctx *context)
       status = clockres(args[0], &seconds, &outputs[1]);
     if (!status)
       outputs[0] = (u64) seconds;
+    break;
+  case SYS_SIGSUSPEND:
+    status = procsigsuspend(args[0]);
     break;
   case SYS_SIGRETURN:
     procsigreturn(args[0]);

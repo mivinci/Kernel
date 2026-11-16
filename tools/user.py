@@ -214,6 +214,14 @@ def build(args):
     if len(frame_rows)!=1 or int(frame_rows[0][2])!=256:raise BuildError('signal frame trace missing')
     frame_address=int(frame_rows[0][1],16)
     (sdk/'frameimage.S').write_text('/* image sha256: '+digest(frame_image)+' */\n.section .rodata\n.balign 8\n.global frame_image,frame_image_end,frame_trace_address\nframe_image:\n.incbin "'+str(frame_image)+'"\nframe_image_end:\n.balign 8\nframe_trace_address:\n.quad '+str(frame_address)+'\n')
+    suspend_user=link_adoption('suspenduser',[compile_adoption(ROOT/'tests/kernel/suspenduser.c','suspenduser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','suspendfp')])
+    suspend_image=sdk/'suspenduser.img'
+    suspend_image.write_bytes(pack(suspend_user.read_bytes(),profile['machine'],128))
+    suspend_inspect=invoke('inspect-signal-suspend',[tools['readelf']['path'],'-h','-l','-s',str(suspend_user)])
+    suspend_rows=[line.split() for line in suspend_inspect.splitlines() if line.split() and line.split()[-1]=='suspend_trace']
+    if len(suspend_rows)!=1 or int(suspend_rows[0][2])!=256:raise BuildError('signal suspend trace missing')
+    suspend_address=int(suspend_rows[0][1],16)
+    (sdk/'suspendimage.S').write_text('/* image sha256: '+digest(suspend_image)+' */\n.section .rodata\n.balign 8\n.global suspend_image,suspend_image_end,suspend_trace_address\nsuspend_image:\n.incbin "'+str(suspend_image)+'"\nsuspend_image_end:\n.balign 8\nsuspend_trace_address:\n.quad '+str(suspend_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'

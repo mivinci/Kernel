@@ -1320,3 +1320,7 @@ SHARED授权接续（2026-11-16）：固定CONTROL/准备CONFIG的grant/revoke�
 资源回复预付接续（2026-11-16）：configure现支持既定reserve_resources=0..8，先校验完整Config，再原子替换镜像内保底空槽；失败不改旧配置、TF或Image.reserve。已覆盖满Local时改PC并增预付失败后仍从原入口运行。预付不是额外Local或真实资源，不能被alloc/grant挤占；详情与CALL取消/退出归还见04末尾。原生资源reply安装仍待描述符参数位置确认，不能据此称整条连接交付完成。
 
 初始信号与SIGCHLD策略接续（2026-11-16）：create的预付信号bank现从真实父捕获显式IGNORE和mask基线，configure从不可变基线应用sigdefault/显式mask。原生DEFAULT/IGNORE/CHLD NOCLDWAIT配置会更新本父的child_policy，孩子退出提交保存exit_policy并决定保留waitref或自动收取；只影响之后的退出，旧结果不扫描删除，独立Life/Acct/Rq/观察责任不跳过。Life仍128字节。具体profile限制、输入/输出原子性与双架构sigconfig验收见11末尾，HANDLER/信号递送/sigreturn仍未接。
+
+### 信号独占等待接续（2026-11-17）
+
+原生sigsuspend复用Procstage与线程既有计费内核栈，wait_kind扩充SIGNAL=6，无Rq、组或额外等待对象引用。原M保存在该调用的既有C续点，安装W/检查pending/登记/撤用户根全程IRQ屏蔽；切CPU后仅可递送信号使其入READY。唤醒回原C续点复核，捕获时将M交给下一预付Sigctx的restore_mask，原syscall退栈后才进入handler；杀死BLOCKED或已醒READY的续点时，镜像终结清空银行，离栈清理丢弃其C续点，不伪造请求收尾。普通阻塞call/recv/wait的信号中断仍未接，可信排队只额外允许这个独占信号等待。实际场景与验证见11末尾。

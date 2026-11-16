@@ -40,3 +40,11 @@ __sys_sigreturn(void *frame)
   __sys_enter(SYS_SIGRETURN, args, &result);
   __builtin_trap();
 }
+
+isize
+__sys_sigsuspend(u64 mask)
+{
+  const u64 args[7] = {mask, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_SIGSUSPEND, args, &result);
+}

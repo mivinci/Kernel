@@ -38,6 +38,7 @@ union Procstage
 #define WAIT_FINISH  PROCESS_WAIT_FINISH
 #define WAIT_DESTROY PROCESS_WAIT_DESTROY
 #define WAIT_CHILD   PROCESS_WAIT_CHILD
+#define WAIT_SIGNAL  PROCESS_WAIT_SIGNAL
 #ifndef WAIT_DEPTH
 #define WAIT_DEPTH 64
 #endif
@@ -984,7 +985,11 @@ wakeone(Proc *p)
   eventpost(&p->events, rqsignals(&p->outgoing, &p->incoming) | obssignals(p->identity));
   if (p->state != PROC_BLOCKED)
     return;
-  if (p->stage.wait.kind == WAIT_RECV)
+  if (p->stage.wait.kind == WAIT_SIGNAL) {
+    wake = sigready(p->identity);
+    if (wake < 0)
+      panic("signal waiter identity");
+  } else if (p->stage.wait.kind == WAIT_RECV)
     wake = p->incoming.immediate != PG_NONE || (p->events.pending & p->stage.wait.subject.mask) ||
            (!(p->stage.wait.options & RECV_EVENTS_ONLY) && !listempty(&p->incoming.queue));
   else if (p->stage.wait.kind == WAIT_CHILD) {
@@ -1407,13 +1412,18 @@ int
 procsigqueue(Handle pid, const Siginfo *info)
 {
   Proc *p = find(pid);
+  int   error;
   if (!p)
     return -ERR_STALE;
-  /* Native source authorization and blocked-syscall interruption are separate
-     steps. This typed path queues only for a runnable user-return boundary. */
-  if (p->state != PROC_READY && p->state != PROC_RUNNING)
+  /* Ordinary blocked syscall interruption is separate. A signal-only waiter
+     may be awakened without transferring any Rq responsibility. */
+  if (p->state != PROC_READY && p->state != PROC_RUNNING &&
+      !(p->state == PROC_BLOCKED && p->stage.wait.kind == WAIT_SIGNAL))
     return -ERR_BUSY;
-  return sigqueue(p->identity, info);
+  error = sigqueue(p->identity, info);
+  if (!error)
+    wakeone(p);
+  return error;
 }
 NORETURN void
 procbadsignal(u64 frame)
@@ -1448,6 +1458,28 @@ procsigreturn(u64 frame)
   if (sigrestore(current->identity, current->space, current->user, frame))
     procbadsignal(frame);
   procuserreturn(current->user);
+}
+int
+procsigsuspend(u64 mask)
+{
+  u64 original;
+  int error;
+  if (!current || current->state != PROC_RUNNING || vm_paused || current->stage.wait.kind)
+    return -ERR_STATE;
+  error = sigsetmask(current->identity, SIGNAL_SETMASK, mask, &original);
+  if (error)
+    return error;
+  for (;;) {
+    error = sigwaitreturn(current->identity, original);
+    if (!error)
+      return -ERR_INTERRUPTED;
+    if (error != -ERR_WOULD_BLOCK)
+      panic("signal suspend state");
+    current->stage.wait.kind = WAIT_SIGNAL;
+    current->stage.wait.subject.peer = 0;
+    current->stage.wait.options = 0;
+    sleepcurrent();
+  }
 }
 int
 procsigaction(u64 signum, u64 input, u64 output)
