@@ -330,3 +330,5 @@ RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主�
 libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，不增加内核通用调用号。RV a7输入调用号与输出最后业务字均被正确保存，ARM x7输入归0、x9输出镜像；status按C返回、其余8字直接写64字节结果区。sys/channel.h的Ipcmsg以布局断言匹配，错误携带RPC也保留。__sys_enter和__sys_*声明只在SDK private/syscall.h；普通应用使用公开ipc_*或后续Unix API。完整库对象合并审计无外部运行时符号，两架构真实独立C ELF已验证部分原生接口；其余运行库/信号适配不因桩存在而自动完成，范围见08末尾。
 
 用户态装载桩接续（2026-11-16）：libsys私有__sys_create/configure/start/destroy/getcred已复用既定寄存器ABI，返回仍是独立原生状态/输出，不增加内核ELF入口或公开裸创建API。普通用户装载器通过已有CONSTRUCT/CONFIG RESOURCE得到孩子真实SELF Handle，Boot补齐只用于目标自己的表；父临时MEM释放不改变孩子已持有映射。实际实现与失败/清理责任见08末尾，POSIX错误转换与FS稳定来源尚未接。
+
+原生copy接续（2026-11-16）：0x03三输入已接，长度0成功且不检查地址；1..65536对本主体源READ/目标WRITE普通用户映射检查，地址/权限/设备FAULT、物理字节重叠INVALID、VM忙BUSY、超长INVALID。无句柄输出，未用输入必须0，失败输出0；共享上限在abi/mem.h。__sys_copy是私有libsys适配，不是memcpy替代或文件I/O协议，详细同步/别名和验证边界见08末尾。

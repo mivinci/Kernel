@@ -30,6 +30,7 @@ class MemoryTests(unittest.TestCase):
                             'spacemap': [support.Spaceid, Memid, C.c_uint64, C.c_uint64, C.c_uint64, C.c_uint64],
                             'spaceunmap': [support.Spaceid, C.c_uint64],
                             'spaceread': [support.Spaceid, C.c_uint64, C.c_void_p, C.c_uint64],
+                            'spacecopy': [support.Spaceid, C.c_uint64, C.c_uint64, C.c_uint64],
                             'spacewrite': [support.Spaceid, C.c_uint64, C.c_void_p, C.c_uint64],
                             'spaceclear': [support.Spaceid, C.c_uint32]}
             for name, args in declarations.items():
@@ -405,4 +406,92 @@ class MemoryTests(unittest.TestCase):
             for address,size in ((0x20000,16),(0x10ff8,16),(0xffff,16),((1<<38)-8,16),((1<<64)-1,16),(0x10000,0),(0x10000,65537)):
                 self.assertEqual(self.lib.spacewrite(sid,address,payload,size),-1)
                 self.assertEqual(bytes(self.memory[pa:pa+4096]),before)
+        for lib in self.libs:self.exercise(lib,body)
+
+class CheckedCopyTests(unittest.TestCase):
+    setUpClass=classmethod(MemoryTests.setUpClass.__func__)
+    tearDownClass=classmethod(MemoryTests.tearDownClass.__func__)
+    exercise=MemoryTests.exercise
+    create=MemoryTests.create
+    astat=MemoryTests.astat
+    pstat=MemoryTests.pstat
+    memory_create=MemoryTests.memory_create
+    map=MemoryTests.map
+    extra_flags=('-DMEMS=4','-DBREFS=128','-DMMAPS=8')
+
+    def test_copy_crosses_seventeen_pages_without_allocating(self):
+        def body():
+            sid=self.create();source=self.memory_create(65536);target=self.memory_create(65536)
+            for mid,va in ((source,0x10000),(target,0x40000)):
+                self.assertEqual(self.map(sid,mid,address=va,length=65536),0)
+                self.assertEqual(self.map(sid,mid,address=va+65536,length=4096),0)
+            content=bytes((i*37+11)&255 for i in range(65536))
+            buffer=C.create_string_buffer(content)
+            self.assertEqual(self.lib.spacewrite(sid,0x10000,buffer,65536),0)
+            baseline=self.pstat().allocated
+            self.assertEqual(self.lib.spacecopy(sid,0x40001,0x10001,65536),0)
+            output=C.create_string_buffer(65536)
+            self.assertEqual(self.lib.spaceread(sid,0x40001,output,65536),0)
+            self.assertEqual(output.raw,content[1:]+content[:1])
+            self.assertEqual(self.pstat().allocated,baseline)
+            self.assertEqual(self.lib.spacecopy(sid,0,0,0),0)
+            self.assertEqual(self.lib.spacecopy(sid,0x40000,0x10000,65537),-1)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_physical_overlap_checks_actual_byte_ranges_not_only_virtual_addresses(self):
+        def body():
+            sid=self.create();mid=self.memory_create(8192)
+            self.assertEqual(self.map(sid,mid,address=0x10000,length=8192),0)
+            self.assertEqual(self.map(sid,mid,address=0x40000,length=8192),0)
+            for dst,src,n in ((0x40000,0x10000,16),(0x10001,0x10000,16),
+                              (0x40ff0,0x10ff8,16),(0x10000,0x10000,1)):
+                self.assertEqual(self.lib.spacecopy(sid,dst,src,n),-6)
+            self.assertEqual(self.lib.spacecopy(sid,0x40010,0x10000,16),0)
+            self.assertEqual(self.lib.spacecopy(sid,0x40001,0x10000,1),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_device_attributes_are_rejected_even_when_physical_backing_is_ram(self):
+        def body():
+            sid=self.create();source=self.memory_create();target=self.memory_create()
+            self.assertEqual(self.map(sid,source,address=0x10000),0)
+            self.assertEqual(self.map(sid,target,address=0x40000),0)
+            state=support.UserSpace();self.assertEqual(self.lib.spacestat(sid,C.byref(state)),0)
+            class Format(C.Structure):
+                _fields_=[(name,C.c_uint64) for name in ('table','tablemask','address')]+[('shift',C.c_uint32),('reserved',C.c_uint32)]
+            format=Format.in_dll(self.lib,'hal_vm_format')
+            physical=state.root
+            for shift in (30,21):
+                table=(C.c_uint64*512).from_address(C.addressof(self.memory)+physical-0x80000000)
+                physical=(table[(0x10000>>shift)&511]&format.address)<<format.shift
+            table=(C.c_uint64*512).from_address(C.addressof(self.memory)+physical-0x80000000)
+            index=(0x10000>>12)&511;original=table[index]
+            self.lib.hal_vm_leaf.argtypes=[C.c_uint64,C.c_uint64,C.c_uint32]
+            self.lib.hal_vm_leaf.restype=C.c_uint64
+            # Trusted raw leaf injection: normal mapping APIs intentionally
+            # forbid device userspace until the device authority path exists.
+            pa=(original&format.address)<<format.shift
+            table[index]=self.lib.hal_vm_leaf(pa,3|8,1)
+            try:
+                self.assertEqual(self.lib.spacecopy(sid,0x40000,0x10000,16),-1)
+                self.assertEqual(self.lib.spacecopy(sid,0x10000,0x40000,16),-1)
+            finally:table[index]=original
+            self.assertEqual(self.lib.spacecopy(sid,0x40000,0x10000,16),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_invalid_later_page_and_readonly_output_never_partially_write(self):
+        def body():
+            sid=self.create();source=self.memory_create(8192);target=self.memory_create(8192)
+            self.assertEqual(self.map(sid,source,address=0x10000,length=8192),0)
+            self.assertEqual(self.map(sid,target,address=0x40000,length=4096),0)
+            data=C.create_string_buffer(b'A'*8192)
+            self.assertEqual(self.lib.spacewrite(sid,0x10000,data,8192),0)
+            self.assertEqual(self.lib.spacecopy(sid,0x40ff8,0x10000,16),-1)
+            output=C.create_string_buffer(8);self.assertEqual(self.lib.spaceread(sid,0x40ff8,output,8),0)
+            self.assertEqual(output.raw,bytes(8))
+            self.assertEqual(self.map(sid,target,address=0x41000,length=4096,offset=4096,prot=1),0)
+            self.assertEqual(self.lib.spacecopy(sid,0x40ff8,0x10000,16),-1)
+            for source_va in (0,2**64-8,0x20000):self.assertEqual(self.lib.spacecopy(sid,0x40000,source_va,16),-1)
+            self.assertEqual(self.lib.spacecopy(sid,0x40000,0x10000,16),0)
+            self.assertEqual(self.lib.spaceunmap(sid,0x10000),0)
+            self.assertEqual(self.lib.spacecopy(sid,0x40000,0x10000,16),-1)
         for lib in self.libs:self.exercise(lib,body)

@@ -151,3 +151,5 @@ SDK现另输出crt0.o、libc.a和runtimeuser.elf，常规程序按crt0.o/app.o/l
 `CASE=elf`由真实用户C程序通过libsys解析嵌入的完整静态ELF，原生create并为孩子逐页装载、写入真实SELF Boot、configure/start，最终wait孩子main退出42；孩子仅3启动资源槽，父表只留1临时槽也可装载。另验证预算/源读取/VA冲突/坏Boot回滚及完整回收。私有elfcheck/load/clean在SDK中供运行时和init复用，尚非完整posix_spawn/exec，也未接FS稳定文件来源或生产init清单。
 
 `CASE=init`使用可信一次性procboot启动真实用户态PID1，PID1通过libsys创建父和两份孙进程，验证自己不能越权收取未孤儿的孙进程，以及旧父退出后未收取终态/活孩子的接管与三次原生wait。结果保留活init，费用回到其启动基线，QMP逐页审计保留内核栈和guard。`CASE=initfatal`验证真实用户PID1调用exit严格致命停机。载荷仍是独立测试ELF，生产sbin/init/启动包/清单授权未接，normal仍初始化后停止。
+
+libsys场景另验证原生__sys_copy：最多64KiB、物理别名重叠拒绝、只读/封存目标和非法范围FAULT、设备属性拒绝及unmap后失效；无需临时页。当前单核复制全程保持IRQ屏蔽/VM_BUSY，未测最长屏蔽时间，尚未接COW/信号/文件I/O包装，不宣称其性能或完整POSIX缓冲处理。

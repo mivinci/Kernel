@@ -131,7 +131,7 @@ native_common:
  li a7, SYS_COPY
  ecall
  bnez t0, native_bad
- li t0, -18
+ li t0, 0
  bne a0, t0, native_bad
  bnez a1, native_bad
  bnez a2, native_bad

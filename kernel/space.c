@@ -2,14 +2,21 @@
 #include <diag.h>
 #include <vm.h>
 #include <prep.h>
+#include <abi/mem.h>
 
 typedef struct Sourcectx Sourcectx;
+typedef struct Copyspan  Copyspan;
 struct Sourcectx
 {
   Acctid acct;
   int    error;
 };
 
+struct Copyspan
+{
+  u64 pa, bytes;
+};
+#define COPY_SPANS (COPY_BYTES / PAGE_SIZE + 1)
 static Space      spaces[SPACES];
 static Mmap       mappings[MMAPS];
 static u32        mapinitialized, freemap;
@@ -458,6 +465,81 @@ spacewrite(Spaceid id, u64 address, const void *data, u64 bytes)
     bytes -= take;
   }
   return 0;
+}
+static int
+copyspans(Hvs *vs, u64 address, u64 bytes, u64 permission, Copyspan spans[COPY_SPANS], u32 *count)
+{
+  Hpte entry;
+  u64  take;
+  *count = 0;
+  if (address < 0x10000 || address >= (1UL << 38) || bytes > (1UL << 38) - address)
+    return SP_BAD;
+  while (bytes) {
+    if (*count == COPY_SPANS || !hal_vm_lookup(vs, ALIGN_DOWN(address, PAGE_SIZE), &entry) ||
+        (entry.prot & (permission | VM_USER)) != (permission | VM_USER) || entry.attr != VM_NORMAL)
+      return SP_BAD;
+    take = MIN(bytes, PAGE_SIZE - (address & PAGE_MASK));
+    spans[*count].pa = entry.pa + (address & PAGE_MASK);
+    spans[*count].bytes = take;
+    (*count)++;
+    bytes -= take;
+    address += take;
+  }
+  return 0;
+}
+int
+spacecopy(Spaceid id, u64 destination, u64 input, u64 bytes)
+{
+  Space             *s = find(id);
+  Hvs                vs;
+  Sourcectx          context;
+  Copyspan           source[COPY_SPANS], target[COPY_SPANS];
+  u32                sources, targets, i, j;
+  u64                source_offset = 0, target_offset = 0, take, n;
+  const volatile u8 *from;
+  volatile u8       *to;
+  int                error;
+  if (!s || bytes > COPY_BYTES)
+    return SP_BAD;
+  if (s->busy)
+    return SP_BUSY;
+  if (!bytes)
+    return 0;
+  /* Caller serializes acceptance with IRQs masked. No checkpoint or allocation
+     occurs until the snapshot is consumed; VM_BUSY excludes every mutation. */
+  s->busy = 1;
+  view(s, &vs, &context);
+  error = copyspans(&vs, input, bytes, VM_READ, source, &sources);
+  if (!error)
+    error = copyspans(&vs, destination, bytes, VM_WRITE, target, &targets);
+  if (!error)
+    for (i = 0; i < sources; i++)
+      for (j = 0; j < targets; j++)
+        if (source[i].pa < target[j].pa + target[j].bytes &&
+            target[j].pa < source[i].pa + source[i].bytes)
+          error = SP_CONFLICT;
+  if (!error) {
+    i = j = 0;
+    while (i < sources && j < targets) {
+      take = MIN(source[i].bytes - source_offset, target[j].bytes - target_offset);
+      from = (const volatile u8 *) kaddr(source[i].pa) + source_offset;
+      to = (volatile u8 *) kaddr(target[j].pa) + target_offset;
+      for (n = 0; n < take; n++)
+        to[n] = from[n];
+      source_offset += take;
+      target_offset += take;
+      if (source_offset == source[i].bytes) {
+        i++;
+        source_offset = 0;
+      }
+      if (target_offset == target[j].bytes) {
+        j++;
+        target_offset = 0;
+      }
+    }
+  }
+  s->busy = 0;
+  return error;
 }
 int
 spaceclear(Spaceid id, u32 records)

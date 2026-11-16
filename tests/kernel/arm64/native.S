@@ -148,7 +148,7 @@ native_common:
  mov x8, #SYS_COPY
  svc #0
  cbnz x9, native_bad
- mov x9, #-18
+ mov x9, #0
  cmp x0, x9
  b.ne native_bad
  cbnz x1, native_bad

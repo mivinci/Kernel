@@ -11,6 +11,7 @@
 
 - 两架构启动、DTB、伙伴、高半区/guard栈、完整用户与内核IRQ整数/FP现场、Set/Acct、Space/Mem/Mmap、CODE封存与同步已接。仅单核，ARM缓存关闭；Device属性及内核W^X/低别名撤销有QEMU审计。
 - Local48、Life128、Proc512、Prep184、Image64、Obs48、Rq184、Space64、Set56；计费栈与CPU独立续点支持离栈回收。Life结果、运行槽、镜像与账目独立回收/复用，不以旧索引选新身份。
+- 原生copy与私有__sys_copy已接：最大64KiB，先查全范围READ/WRITE/普通用户PTE及物理字节重叠，再复制；当前单核IRQ屏蔽/VM_BUSY全程串行，无临时页。COW、信号及I/O包装接入/IRQ屏蔽时长仍待验。
 - 原生自身内存/时间/exit/yield/getid，消息call/send/recv/reply/reply_recv/defer及请求查询/取消/ACK/finish/check已接；8/1/1/2出站预付、普通960/恢复64请求池、15+1接收和可下调pending已接。资源reply、原生rqclean及SHARED/DMA仍待接。
 - 固定CONTROL的connect/grant/revoke/inherit、BUDGET/TERMINATE、不可变凭据/getcred已接。CALL_CONTROL=0x08只选自身控制槽；可转授入口要求CONTROL CONNECT+GRANT，CONSTRUCT只生成USE。
 - query已接PROC/RQ/ACCT/LIFE/RESOURCE：自身0/固定CONTROL QUERY，以及CONSTRUCT CONFIG仅RESOURCE；最多16条192字节记录，整区预检、代次游标、隐藏内部指针/消息。实际组/费用/映射/请求责任和选中窗口CPU纳秒已接；SYSTEM/BOOT_RESOURCE枚举未接。
@@ -32,7 +33,8 @@
 
 - 本次PID1描述加载器通过243项host、格式及两架构init/initfatal四场景，日志build/host/stage36-boot-loader/；完整QEMU基线仍为下列stage35，未将局部复验称为重跑全套。
 
-- 完整make test-all通过243项host、格式及92个QEMU场景，日志`build/host/stage35-pid1/test-all.log`；最终两架构init/initfatal及完整host/格式复验见同目录`*-final.log`。
+- 完整make test-all通过247项host、格式及92个QEMU场景，日志build/host/stage37-checked-copy/test-all.log；最终两架构libsys与copy主机反例复验见同目录。旧copy NOTSUP断言失败已修正且日志保留；本次没有修改待确认的启动包格式。
+- copy两架构真实用户载荷覆盖64KiB、物理别名、只读/SEALED目标、缺页/溢出/unmap/零长和完整回收；4项host另覆盖17页非对齐、无临时页、字节区间及可信DEVICE PTE注入。复制期不调度，不声称并发unmap/真实设备/COW或IRQ延迟已验收。
 - init两架构由真实PID1/csu/main创建三代，先拒绝越权收取，随后分别收取旧父33、已结束孤儿11和原活孩子22；最终保留1个init实例且费用/引用精确回到其启动基线。initfatal确认真实用户PID1 exit唯一致命停机；QMP审计保留的4页RW/NX栈、表及guard，host反例验证审计不放行错误映射。
 - elf两架构实测用户C装载真实csu/main ELF，2个成功孩子通过wait退出42，4种装载失败均destroy且无wait结果；孩子仅3资源槽、父仅1临时槽可完成装载，VA冲突不误拆原映射，页/Set/引用最终结清。6项host覆盖解析变异对照、边界页内容/BSS、每步失败、清理责任保留与非法工作区拒绝。
 - runtime两架构各10份镜像实测5次main、38次atexit回调、8次fini，正常/直接退出、可写参数/环境及精确16KiB边界；5种畸形/未支持Boot在构造与main前拒绝，全部页/Set/引用结清。8项新增host覆盖环境、退出与基础库；独立libsys入口仍通过。

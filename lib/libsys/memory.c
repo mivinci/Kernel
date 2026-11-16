@@ -48,3 +48,11 @@ __sys_seal(Handle memory)
   status = __sys_enter(SYS_SEAL, args, &result);
   return status;
 }
+
+isize
+__sys_copy(void *destination, const void *source, u64 bytes)
+{
+  const u64 args[7] = {(u64) destination, (u64) source, bytes, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_COPY, args, &result);
+}

@@ -45,6 +45,66 @@ memory(Handle allocator, Handle space)
   handle = 77;
   REQUIRE(__sys_alloc(allocator, &args, &handle) == -ERR_INVALID && !handle, 108);
 }
+static void
+copycheck(Handle allocator, Handle space, const Boot *boot)
+{
+  Allocarg     args;
+  Maparg       map;
+  Handle       source, target, code;
+  volatile u8 *input = (volatile u8 *) 0x900000;
+  volatile u8 *output = (volatile u8 *) 0xb00000;
+  u64          i;
+  args.bytes = COPY_BYTES;
+  args.kind = ALLOC_DATA;
+  args.align = args.minaddr = args.maxaddr = args.reserved = 0;
+  REQUIRE(!__sys_alloc(allocator, &args, &source) && !__sys_alloc(allocator, &args, &target), 134);
+  map.offset = map.reserved = 0;
+  map.length = COPY_BYTES;
+  map.prot = MAP_READ | MAP_WRITE;
+  map.mem = source;
+  map.address = (u64) input;
+  REQUIRE(!__sys_map(space, &map), 135);
+  map.address = 0xa00000;
+  REQUIRE(!__sys_map(space, &map), 136);
+  map.mem = target;
+  map.address = (u64) output;
+  REQUIRE(!__sys_map(space, &map), 137);
+  for (i = 0; i < COPY_BYTES; i++)
+    input[i] = (u8) (i * 37 + 11);
+  REQUIRE(!__sys_copy((void *) output, (const void *) input, COPY_BYTES), 138);
+  for (i = 0; i < COPY_BYTES; i++)
+    REQUIRE(output[i] == input[i], 139);
+  REQUIRE(__sys_copy((void *) 0xa00000, (const void *) input, 32) == -ERR_INVALID, 140);
+  REQUIRE(__sys_copy((void *) (input + 1), (const void *) input, 32) == -ERR_INVALID, 141);
+  REQUIRE(!__sys_copy((void *) 0xa00020, (const void *) input, 32), 142);
+  REQUIRE(__sys_copy((void *) output, (const void *) input, COPY_BYTES + 1) == -ERR_INVALID, 143);
+  REQUIRE(__sys_copy((void *) boot, (const void *) input, 16) == -ERR_FAULT, 144);
+  REQUIRE(__sys_copy((void *) output, (const void *) 0, 16) == -ERR_FAULT, 145);
+  REQUIRE(__sys_copy((void *) output, (const void *) (~(u64) 0 - 7), 16) == -ERR_FAULT, 146);
+  for (i = 0; i < 8; i++)
+    output[COPY_BYTES - 8 + i] = 0x5a;
+  REQUIRE(__sys_copy((void *) (output + COPY_BYTES - 8), (const void *) input, 16) == -ERR_FAULT,
+          147);
+  for (i = 0; i < 8; i++)
+    REQUIRE(output[COPY_BYTES - 8 + i] == 0x5a, 148);
+  args.bytes = PAGE_SIZE;
+  args.kind = ALLOC_CODE;
+  REQUIRE(!__sys_alloc(allocator, &args, &code) && !__sys_seal(code), 149);
+  map.mem = code;
+  map.length = PAGE_SIZE;
+  map.prot = MAP_READ | MAP_EXEC;
+  map.address = 0xc00000;
+  REQUIRE(!__sys_map(space, &map), 150);
+  REQUIRE(__sys_copy((void *) 0xc00000, (const void *) input, 16) == -ERR_FAULT, 151);
+  REQUIRE(!__sys_copy((void *) output, (const void *) 0xc00000, 16), 152);
+  for (i = 0; i < 16; i++)
+    REQUIRE(!output[i], 153);
+  REQUIRE(!__sys_unmap(space, 0xc00000) && !__sys_free(code), 154);
+  REQUIRE(!__sys_unmap(space, 0xa00000) && !__sys_unmap(space, (u64) input), 155);
+  REQUIRE(__sys_copy((void *) output, (const void *) input, 16) == -ERR_FAULT, 156);
+  REQUIRE(!__sys_copy(NULL, NULL, 0), 157);
+  REQUIRE(!__sys_unmap(space, (u64) output) && !__sys_free(source) && !__sys_free(target), 158);
+}
 NORETURN void
 _start(const Boot *boot)
 {
@@ -76,6 +136,7 @@ _start(const Boot *boot)
               records[i].data[7] == 1,
           117);
   memory(bootresource(&view, BOOT_SELF_ALLOC), bootresource(&view, BOOT_SELF_SPACE));
+  copycheck(bootresource(&view, BOOT_SELF_ALLOC), bootresource(&view, BOOT_SELF_SPACE), boot);
   words.words[0] = UINT64_C(0x0123456789abcdef);
   words.words[1] = UINT64_C(0xfedcba9876543210);
   words.words[2] = UINT64_C(0xaaaaaaaa55555555);

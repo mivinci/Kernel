@@ -62,6 +62,7 @@ syscall(Hctx *context)
   case SYS_QUERY:
     used = 31;
     break;
+  case SYS_COPY:
   case SYS_CONFIGURE:
   case SYS_GETCRED:
     used = 7;
@@ -293,6 +294,15 @@ syscall(Hctx *context)
       status = clockres(args[0], &seconds, &outputs[1]);
     if (!status)
       outputs[0] = (u64) seconds;
+    break;
+  case SYS_COPY:
+    if (args[2] > COPY_BYTES) {
+      status = -ERR_INVALID;
+      break;
+    }
+    status = spacecopy(table->space, args[0], args[1], args[2]);
+    if (status)
+      status = status == SP_BUSY ? -ERR_BUSY : status == SP_CONFLICT ? -ERR_INVALID : -ERR_FAULT;
     break;
   case SYS_EXIT:
     procexit(LIFE_EXIT, (u32) (args[0] & 255), NULL);

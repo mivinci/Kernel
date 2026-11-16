@@ -56,6 +56,8 @@ int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 pro
 int spaceread(Spaceid id, u64 address, void *target, u64 bytes);
 /* Trusted source, serialized with VM mutations; precheck the entire output. */
 int spacewrite(Spaceid id, u64 address, const void *data, u64 bytes);
+/* Serialized bounded user-to-user copy; SP_CONFLICT means physical overlap. */
+int spacecopy(Spaceid id, u64 destination, u64 source, u64 bytes);
 /* Inactive root only, bounded records per call; 1 means more, 0 empty. */
 int spaceclear(Spaceid id, u32 records);
 int spaceunmap(Spaceid id, u64 address);

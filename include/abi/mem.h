@@ -2,6 +2,7 @@
 #define _ABI_MEM_H
 #include <types.h>
 #include <abi/base.h>
+#define COPY_BYTES   65536
 #define MAP_READ     1
 #define MAP_WRITE    2
 #define MAP_EXEC     4
