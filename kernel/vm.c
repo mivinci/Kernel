@@ -3,6 +3,7 @@
 #include <diag.h>
 #include <page.h>
 #include <vm.h>
+#include <irq.h>
 #include <hal/boot.h>
 #include <hal/vm.h>
 
@@ -177,15 +178,16 @@ vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *))
     if (!guard(pa))
       map(pa, pa, permissions(pa), VM_NORMAL);
   }
-  for (i = 0; i < info->ndev; i++) {
-    const Dtdev *d = &info->dev[i];
-    if (d->kind == DT_GIC) {
-      if (d->nreg != 2 || (d->reg[0].base & PAGE_MASK) || (d->reg[1].base & PAGE_MASK) ||
-          d->reg[0].size < PAGE_SIZE || d->reg[1].size < PAGE_SIZE)
-        panic("interrupt controller windows");
-      map(KIRQ_DIST, d->reg[0].base, VM_READ | VM_WRITE, VM_DEVICE);
-      map(KIRQ_CPU, d->reg[1].base, VM_READ | VM_WRITE, VM_DEVICE);
-    }
+  {
+    Hirq       controller;
+    Hirqsource sources[HIRQ_SOURCES];
+    u64        windows[HIRQ_WINDOWS];
+    int        count;
+    if (irqdescribe(info, &controller, sources, HIRQ_SOURCES) ||
+        (count = hal_irq_pages(&controller, windows)) < 0)
+      panic("interrupt controller windows");
+    for (i = 0; i < (u32) count; i++)
+      map(KIRQ_DIST + (u64) i * PAGE_SIZE, windows[i], VM_READ | VM_WRITE, VM_DEVICE);
   }
   map(KIO, ALIGN_DOWN(uart, PAGE_SIZE), VM_READ | VM_WRITE, VM_DEVICE);
   map(ALIGN_DOWN(uart, PAGE_SIZE), ALIGN_DOWN(uart, PAGE_SIZE), VM_READ | VM_WRITE, VM_DEVICE);

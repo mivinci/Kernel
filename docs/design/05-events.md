@@ -300,3 +300,9 @@ Rq新增未投递提示标志，不新增记录：终结和后续真实server_fi
 CHILD接续（2026-11-16）：Life退出/关系变化按完整父PID记录可合并提示，调度检查点向真实父Event发布EVENT_CHILD；父死亡同时提示init重新选择逻辑孤儿。普通notify仍不能设置该保留位。提示不保存退出结果也不替代wait，多个孩子合并后须循环wait；仅消费事件不消费结果。实际STOP/CONT和信号递送仍未接。
 
 LIFE观察提示接续（2026-11-16）：已接有界服务观察表与EVENT_LIFE=16；只对固定目标Image的ENDED置位，非PREPARING/ACTIVE转换历史。wake检查点和recv受理前扫描自己的预付128槽，记录每条终态已提示，事件合并后仍由obsnext/obsread完整重查，ack/drop不消费父wait。观察者死亡逐批解除其记录，不把LIFE消费或观察清空当作业务/设备排空。具体执行范围见10末尾。
+
+### 控制器底层接续（2026-11-17）
+
+01末尾已接GICv2/PLIC的HAL初始化、认领、屏蔽、完成和重开，CPU IRQ关闭时的真实UART请求/timer及ARM SGI0专项验证见01。完成前的屏蔽按各控制器语义实现，PLIC保留enable并用priority0阻断投递，GIC用源禁用及原IAR的EOI。该层只持硬件状态，无Proc/Rq、动态分配或设备业务；IRQ_SOURCE/IRQ_BIND、事件独占位/代次/原生0x70..0x72与驱动退出撤销仍未实现。当前原生timer IRQ路径遇意外外设仍受控失败，不能声称已经能向用户驱动递送事件。
+
+该HAL切片最终完整回归为312项host/格式/100个双架构QEMU，通过；证据build/host/stage50-irq-controller/，没有把HAL轮询验证称为原生驱动事件系统验收。

@@ -325,3 +325,19 @@ Rq预算实现补充（2026-11-16）：Rq184字节、1024槽共188416字节；Rq
 信号寄存器边界接续（2026-11-17）：HAL新增纯Hctx入口参数转换与用户恢复校验；架构CSR/PSTATE/FP规则只在对应context.c实现，核心不嵌入架构寄存器分支。恢复失败不写输出，可信用户快照限定特权/IRQ状态；PC/SP映射、frame/cookie/PID/image仍由信号核心负责。两架构sigreserve实测恢复后的真实U/EL0 GPR/FP及ARM条件码，细节/验证边界见11末尾；没有因此开放原生sigreturn或HANDLER。
 
 信号帧核心接续（2026-11-17）：每运行槽的单一动作/上下文银行现另驻留32份64字节pending Siginfo，共2048字节/槽，默认64槽增加131072字节固定BSS；不挤入每份Sigctx≤1024字节预算，也不在递送路径临时分配。实际Sigctx仍RV704/ARM960，用户帧RV688/ARM944。hal_user_sp仅提供公共SP访问，映射/顶层/cookie检查归核心；执行边界与证据见11末尾。
+
+### 外设控制器HAL接续（2026-11-17）
+
+已实现冻结的hal_irq_claim/number/mask/complete/unmask，并将一次性控制器初始化与timer源初始化分开。Hirq为64字节内部硬件描述，Hirqsource为8字节；只借用启动来源数组至init返回，不保留调用者栈指针。核心irqdescribe按实际DTB父关系收集受支持外设线，合并同flags共享线，冲突/容量/错误父拓扑拒绝且不发布部分输出；它不是IRQ授权或驱动绑定。Htimer仅保留四组timer IRQ/flags，不再重复保存GIC窗口。
+
+hal_irq_pages由对应架构校验物理窗口/溢出/拓扑并返回最小映射页；核心只用通用KIRQ窗口建立Device页，不写PLIC/GIC寄存器偏移或CPU位。RV64当前只接受既定单hart的[M或NONE,S]两个上下文，S为第二个上下文；映射priority页、S claim/threshold页和enable页共3页，不映射整个PLIC。GICv2使用distributor与CPU interface各1页，拒绝重叠窗口；现有无Security Extensions profile不变。QMP页表审计现独立核对PLIC三页的真实PA、设备属性及无其他别名，UART仍为独立Device页。
+
+PLIC以priority=0屏蔽并保留S context enable，完成后再由unmask恢复priority=1；不先清enable再complete，因为规范要求未enable的completion可被忽略。读写用IO fence排序，threshold维持0，controller初始化仅启用CPU的SEIE类型、所有外设线保持priority0/enable0；timer初始化只处理STIE而不清除SEIE。全局SIE仍由原临界/调度边界控制。
+
+GIC初始化按DTB源配置edge/level、优先级和目标，源先保持禁用；单处理器GIC的ITARGETSR为RAZ/WI，不将读0当作失效或猜另一个CPU位。IAR完整原值加1成为非零token，1020..1023空认领不EOI；EOIR写回原IAR，包括SGI来源字段，不只写掩码后的INTID。mask先完成设备序/控制器屏蔽，再允许complete；timer ACK沿同一claim/complete路径并先停CNTV源。HAL只允许单CPU一个未完成claim，异常顺序为内核错误；token不是用户IRQ_BIND身份。GIC mask/unmask用于PPI/SPI，设备描述仅开放已配置SPI，SGI不伪装成独立可屏蔽的设备源。
+
+CASE=irqchip在CPU全局IRQ始终屏蔽时，使用真实UART THRE/TX状态作硬件请求，直接轮询控制器认领；两轮各3次请求，mask后核对实际控制寄存器并complete，再清设备/重新产生请求、重开。RV检查priority0且S enable仍在，ARM检查enable已清；停止后清理可能已锁存的一份请求，确认空认领。ARM另实际发送SGI0，验证非空token的number=0和正确EOI；PLIC不存在源0，RV只验证空token不被当成IRQ0。最后两架构各验证一次真实timer pending/ACK及无遗留claim。该场景没有把poll称为CPU外设陷阱入口、驱动事件递送或原生irqbind可用，后者仍待接；原有timer/irq场景继续验证实际IRQ保存/恢复。
+
+新增6项host覆盖真实父关系/共享线去重、描述符失败不改输出、容量、PLIC CPU上下文同父、最小硬件窗口和范围/重叠拒绝。初次测试的GIC UP target=0及PLIC未处理设备便期待重复请求均已通过实际寄存器观测并对照QEMU源码修正，未在错误硬件状态上堆软件补偿；失败原始运行目录保留。测试UART寄存器操作仅在tests/kernel架构载荷，不进入normal镜像或生产设备协议。
+
+机制依据：[PLIC 1.0.0 ratified](https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc)、[Arm GICv2 IAR/EOIR处理规则](https://support.arm.com/documentation/ihi0048/b/Interrupt-Handling-and-Prioritization/General-handling-of-interrupts?lang=en)，QEMU 11.1.3的[PLIC](https://github.com/qemu/qemu/blob/v11.1.3/hw/intc/sifive_plic.c)、[GIC](https://github.com/qemu/qemu/blob/v11.1.3/hw/intc/arm_gic.c)、[16550](https://github.com/qemu/qemu/blob/v11.1.3/hw/char/serial.c)及[PL011](https://github.com/qemu/qemu/blob/v11.1.3/hw/char/pl011.c)用于解释本地观测，不能从模拟器推定未测真实硬件。本地完整make test-all通过312项host、格式和100个两架构QEMU场景，包含原timer/irq的真实陷阱现场回归及两架构新irqchip。最终格式另通过；日志、原始运行目录和关键源码哈希在build/host/stage50-irq-controller/。未执行CI/目标真实硬件/性能验收，原生IRQ绑定及事件生命周期仍待接。

@@ -10,7 +10,7 @@
 
 ## 已实现边界
 
-- RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM缓存仍关闭。
+- RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM缓存仍关闭；现接GICv2/PLIC外设控制器HAL及最小Device映射，原生IRQ绑定/驱动事件递送未接。
 - Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；无COW/DMA。
 - Local48、Life128、Proc512、Prep184、Image64、Obs48、Rq192、Space64、Set56；结果/镜像/账目与运行槽独立回收。两层Sigctx预付RV704/ARM960，cookie跨PID/image复用不重置，不回绕。
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权，SERVICE仅由可信fixture安装，生产清单策略未启动。
@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地完整make test-all通过306项host、格式和98个两架构QEMU，日志`build/host/stage49-libc-groups/`；SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- runtime各架构5个真实main新增105项组/会话检查，CPU独立核对实际PGID/SID与两类组引用回收，并保留275组整数转换/120项格式检查、坏启动与退出清理。共享身份语法归abi/base.h，PID1特例与内核资源全量回归通过；用户库错误/边界见08/15，原生组规则见03。
+- 本地完整make test-all通过312项host、格式和100个两架构QEMU，日志`build/host/stage50-irq-controller/`；未执行CI/目标真实硬件/性能验收。
+- 新irqchip场景在CPU IRQ关闭时各验证6次真实UART请求的HAL认领/屏蔽/完成、设备清理后重开及timer共用；ARM另验SGI0非空token，RV直接核对priority0且enable保留。原timer/irq实际陷阱现场、运行库/进程/IPC/资源回归仍通过；范围与失败观测见01/05末尾，原生IRQ绑定/驱动事件递送未接。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

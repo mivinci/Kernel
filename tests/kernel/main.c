@@ -1,10 +1,14 @@
 #include "ktest.h"
 #include <diag.h>
 void
-testmain(Hvs *space)
+testmain(Hvs *space, const Dtinfo *hardware)
 {
   UNUSED(space);
-#if BOOT_CASE == 46
+  UNUSED(hardware);
+#if BOOT_CASE == 47
+  chiptest(hardware);
+  putstr("READY irqchip-restored\n");
+#elif BOOT_CASE == 46
   suspendtest();
   putstr("READY sigsuspend-restored\n");
 #elif BOOT_CASE == 45

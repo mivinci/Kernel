@@ -2,7 +2,9 @@
 #ifndef _KTEST_H
 #define _KTEST_H
 #include <hal/vm.h>
-void testmain(Hvs *space);
+#include <dtb.h>
+void testmain(Hvs *space, const Dtinfo *hardware);
+void chiptest(const Dtinfo *hardware);
 void pgtest(void);
 void vmtest(Hvs *space);
 void arch_probe(void);

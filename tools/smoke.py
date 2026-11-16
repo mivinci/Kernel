@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "irqchip":
+        if ready != ["READY irqchip-restored"] or panics or traps:
+            raise SmokeError("interrupt controller test did not finish")
     elif case == "sigsuspend":
         if ready != ["READY sigsuspend-restored"] or panics or traps:
             raise SmokeError("signal suspend test did not finish")
@@ -442,6 +445,11 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
             for i, window in enumerate(d["mmio"]):
                 check(0xffffffc100001000 + i * 4096, window["base"], 3, device=True)
                 device_pages += 1
+        elif d["kind"] == 4:
+            base = d["mmio"][0]["base"]
+            for i, offset in enumerate((0,0x201000,0x2000)):
+                check(0xffffffc100001000+i*4096,base+offset,3,device=True)
+                device_pages += 1
     if retained:
         if retained["stack_table"] not in tables:
             raise SmokeError("retained init stack table not reachable")
@@ -521,6 +529,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY irqchip-restored\n" if args.case == "irqchip" else
                     "READY sigsuspend-restored\n" if args.case == "sigsuspend" else
                     "READY sigframe-restored\n" if args.case == "sigframe" else
                     "READY sigconfig-restored\n" if args.case == "sigconfig" else
@@ -623,6 +632,13 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "irqchip":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("IRQCHIPCHECK ")]
+                    uart=next(device for device in record["discovery"]["devices"] if device["kind"] in (1,2))
+                    expected=dict(irq=uart["irq"][0]["number"],claims=6,masked=6,rounds=2,timer=1,zero=int(args.arch=="arm64"),irqoff=1)
+                    if checks != [expected]:
+                        raise SmokeError("controller mask/complete/reopen mismatch")
+                    record["irq_controller"]=checks[0]
                 if args.case == "sigsuspend":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SUSPENDCHECK ")]
                     if checks != [dict(cases=9, resumed=5, terminated=4, charged=0, allocated=transition["tables"])]:
@@ -863,7 +879,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

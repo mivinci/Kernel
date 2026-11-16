@@ -1,6 +1,104 @@
 #include <hal/irq.h>
 #include <hal/clock.h>
 #include <diag.h>
+static u64 priorities, enables, context, active;
+static u32 limit, allowed[32];
+static void
+barrier(void)
+{
+  __asm__ __volatile__("fence iorw, iorw" ::: "memory");
+}
+static u32
+read32(u64 address)
+{
+  return *(volatile u32 *) address;
+}
+static void
+write32(u64 address, u32 value)
+{
+  *(volatile u32 *) address = value;
+}
+int
+hal_irq_init(const Hirq *controller, const u64 mapped[HIRQ_WINDOWS])
+{
+  u64 physical[HIRQ_WINDOWS];
+  u32 i;
+  if (priorities || !mapped || hal_irq_pages(controller, physical) != 3 || !mapped[0] ||
+      !mapped[1] || !mapped[2] || ((mapped[0] | mapped[1] | mapped[2]) & PAGE_MASK))
+    return -1;
+  for (i = 0; i < controller->count; i++)
+    if (!controller->source[i].number || controller->source[i].number > controller->limit ||
+        controller->source[i].flags)
+      return -1;
+  __asm__ __volatile__("csrc sie, %0" ::"r"(512UL) : "memory");
+  for (i = 0; i < (controller->limit + 32) / 32; i++)
+    write32(mapped[2] + 0x80 + 4 * i, 0);
+  for (i = 1; i <= controller->limit; i++)
+    write32(mapped[0] + 4 * i, 0);
+  write32(mapped[1], 0);
+  for (i = 0; i < controller->count; i++)
+    allowed[controller->source[i].number / 32] |= 1U << (controller->source[i].number % 32);
+  barrier();
+  priorities = mapped[0];
+  context = mapped[1];
+  enables = mapped[2] + 0x80;
+  limit = controller->limit;
+  __asm__ __volatile__("csrs sie, %0" ::"r"(512UL) : "memory");
+  return 0;
+}
+u64
+hal_irq_claim(void)
+{
+  u32 number;
+  if (!context || active)
+    panic("IRQ claim order");
+  barrier();
+  number = read32(context + 4);
+  barrier();
+  if (!number)
+    return 0;
+  if (number > limit)
+    panic("IRQ claimed number");
+  active = (u64) number + 1;
+  return active;
+}
+u32
+hal_irq_number(u64 token)
+{
+  return token ? (u32) (token - 1) : 0xffffffffU;
+}
+void
+hal_irq_mask(u32 number)
+{
+  if (!priorities || !number || number > limit)
+    panic("IRQ mask number");
+  /* PLIC completion ignores disabled sources. Priority zero masks delivery
+     while retaining the context enable required for the following complete. */
+  write32(priorities + 4 * number, 0);
+  barrier();
+}
+void
+hal_irq_complete(u64 token)
+{
+  if (!context || !token || token != active)
+    panic("IRQ completion order");
+  barrier();
+  write32(context + 4, hal_irq_number(token));
+  barrier();
+  active = 0;
+}
+void
+hal_irq_unmask(u32 number)
+{
+  u64 address;
+  if (!priorities || !number || number > limit || !(allowed[number / 32] & (1U << (number % 32))))
+    panic("IRQ unmask number");
+  address = enables + 4 * (number / 32);
+  write32(address, read32(address) | (1U << (number % 32)));
+  barrier();
+  write32(priorities + 4 * number, 1);
+  barrier();
+}
 static isize
 sbicall(u64 extension, u64 function, u64 value)
 {
@@ -19,7 +117,7 @@ hal_timer_init(const Htimer *timer)
     return -1;
   if (sbicall(0x54494d45, 0, ~(u64) 0))
     return -1;
-  __asm__ __volatile__("csrw sie, zero" ::: "memory");
+  __asm__ __volatile__("csrc sie, %0" ::"r"(32UL) : "memory");
   return 0;
 }
 void

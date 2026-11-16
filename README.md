@@ -68,6 +68,7 @@ make scenario ARCH=arm64 CASE=initfatal
 make scenario ARCH=arm64 CASE=sigconfig
 make scenario ARCH=arm64 CASE=sigframe
 make scenario ARCH=arm64 CASE=sigsuspend
+make scenario ARCH=arm64 CASE=irqchip
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
@@ -90,7 +91,7 @@ make test-qemu OPENSBI="$OPENSBI"
 主机从QMP导出全部有效页表到 `tables/`，逐页检查RAM范围、权限、设备属性、固件排除、guard及无额外别名。构建ELF仍使用物理装载地址，高半区运行地址见串口VM记录。
 `CASE=seal` 验证写别名拒绝封存、封存后写路径拒绝、真实新代码执行及完整回收。`CASE=user` 使用64 KiB用户栈和只读Boot头，验证U/EL0整数/FP初始清零和往返，以及Boot/CODE只读、内核隔离、栈guard/NX；它不是ELF加载、csu、init或原生syscall实现。
 `CASE=switch` 验证112字节内核切换现场、独立guard栈上两次挂起/恢复、被调用者保存寄存器及栈回收；完整时间片/阻塞调度仍未接入。
-`test-all` 运行主机测试、格式检查、两架构四十七个基础场景及四个RAM配置，共九十八个QEMU场景；任一步失败即失败。`bench` 尚未实现并明确失败。
+`test-all` 运行主机测试、格式检查、两架构四十八个基础场景及四个RAM配置，共一百个QEMU场景；任一步失败即失败。`bench` 尚未实现并明确失败。
 `CASE=stacks` 验证默认64个计费内核栈、独占叶表、分步失败回滚、续点持有/切离后回收与观测水位；user场景也已迁到独立计费栈，完成陷阱后切回CPU启动栈再回收。
 `CASE=locals` 验证128槽、授权子窗口/减权、封存及独立引用，并覆盖固定镜像CALL/NOTIFY入口、复制及旧入口失效/释放；`life`验证默认256份保留结果、运行槽复用和清理引用；`procs`验证默认63个普通运行槽（槽0保留给初始init）、构造失败回滚、发布前复查、两个真实U/EL0入口以及退出后CPU分批回收。这些构造场景为可信内核/测试接入，未提供原生create/start/grant/wait。
 `CASE=prep` 验证父通过准备权为孩子Acct分配、临时映射发布屏障、旧加载权失效及取消后的费用滞留；`CASE=syscalls` 则通过三个真实用户程序验证自身内存syscall、协作yield/FP保持、动态代码执行及unmap后硬件故障，不使用测试陷阱回调；也检查真实硬件计数推进及time/getres寄存器结果。
@@ -176,3 +177,5 @@ sigreserve场景另检查信号Hctx的HAL转换/恢复边界：拒绝特权/IRQ/
 stdio.h现另提供内存snprintf/vsnprintf的整数/指针/字节字符串与字符子集，支持宽度、精度、常用长度修饰及截断长度计数。runtime每架构新增120项实际格式检查；完整格式列表与错误边界见08/15，流printf/FILE仍待文件适配。
 
 unistd.h另提供getpgrp/getpgid/getsid/setpgid/setsid，直接使用完整64位PID及已实现的内核组/会话规则。runtime每架构新增105项实际检查，CPU独立核对会话变更与关系回收；错误及限制见08/15，kill/raise和完整作业控制仍待信号路径。
+
+CASE=irqchip验证GICv2/PLIC实际UART请求的控制器认领、屏蔽、完成、设备清理后重开及timer共用，ARM另验证SGI0；CPU IRQ始终关闭，属于HAL轮询验证。原生IRQ绑定/驱动事件递送尚未接，实际timer IRQ场景仍为timer/irq，详见01/05末尾。

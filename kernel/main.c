@@ -13,6 +13,7 @@
 #include <hal/clock.h>
 #include <clock.h>
 #include <hal/irq.h>
+#include <irq.h>
 #include <hal/context.h>
 
 static volatile u64 zeroed;
@@ -159,18 +160,16 @@ discovery(u64 dtb, u64 available)
 static void
 virtualmain(Hvs *space)
 {
-  Htimer timer;
-  u32    i, j;
-  timer.distributor = timer.cpu = 0;
+  Htimer     timer;
+  Hirq       controller;
+  Hirqsource sources[HIRQ_SOURCES];
+  const u64  windows[HIRQ_WINDOWS] = {KIRQ_DIST, KIRQ_CPU, KIRQ_ENABLE};
+  u32        i, j;
   timer.count = timer.reserved = 0;
   for (j = 0; j < 4; j++)
     timer.irqs[j] = timer.flags[j] = 0;
   for (i = 0; i < hardware.ndev; i++) {
     const Dtdev *d = &hardware.dev[i];
-    if (d->kind == DT_GIC) {
-      timer.distributor = KIRQ_DIST;
-      timer.cpu = KIRQ_CPU;
-    }
     if (d->kind == DT_TIMER) {
       timer.count = d->nirq;
       for (j = 0; j < d->nirq; j++) {
@@ -183,6 +182,10 @@ virtualmain(Hvs *space)
   if (clockinit())
     panic("clock initialization");
   hal_trap_init();
+  if (irqdescribe(&hardware, &controller, sources, HIRQ_SOURCES))
+    panic("interrupt controller description");
+  if (hal_irq_init(&controller, windows))
+    panic("interrupt controller initialization");
   if (hal_timer_init(&timer))
     panic("timer initialization");
   if (kstackinit(space))
@@ -191,7 +194,7 @@ virtualmain(Hvs *space)
   if (spaceinit(space))
     panic("user root initialization");
 #if BOOT_CASE != 0
-  testmain(space);
+  testmain(space, &hardware);
 #else
   UNUSED(space);
   putstr("READY early-boot\n");
