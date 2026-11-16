@@ -11,15 +11,22 @@ static Rtable tables[2];
 void
 localtest(void)
 {
-  Setid    group;
-  Acctid   acct;
-  Spaceid  a, b;
-  Handle   aspace, aalloc, bspace, balloc, data, read, code, execute, out;
-  Allocarg args;
-  Acct     account;
-  Pgstat   before, after;
-  u32      i;
-  const u8 bytes[4] = {1, 2, 3, 4};
+  Setid      group;
+  Acctid     acct;
+  Spaceid    a, b;
+  Handle     aspace, aalloc, bspace, balloc, data, read, code, execute, out;
+  Allocarg   args;
+  Acct       account;
+  Pgstat     before, after;
+  u32        i;
+  Lifeid     life;
+  Imageid    oldimage, newimage, resolved;
+  Image      image;
+  Life       state;
+  Liferesult result;
+  Handle     call, copied, notify;
+  u64        bits;
+  const u8   bytes[4] = {1, 2, 3, 4};
   pgstat(&before);
   REQUIRE(handletype(1) == HANDLE_PROCESS && !handletype(-1) && !handletype(0));
   REQUIRE(!handlepack(HANDLE_RESOURCE, HANDLE_GENERATION_MAX + 1, 0));
@@ -31,6 +38,31 @@ localtest(void)
           !localinit(&tables[1], entries[1], LOCALS, acct, b));
   REQUIRE(!localspace(&tables[0], 3, &aspace) && !localallocator(&tables[0], 5, &aalloc));
   REQUIRE(!localspace(&tables[1], 3, &bspace) && !localallocator(&tables[1], 5, &balloc));
+  REQUIRE(!lifecreate(group, handlepack(HANDLE_PROCESS, 1, 1), 1, &life));
+  REQUIRE(!imagecreate(life, 0, &oldimage));
+  REQUIRE(!localendpoint(&tables[0], oldimage, LOCAL_CALL, LOCAL_USE | LOCAL_GRANT, 0,
+                         LOCAL_FORK | LOCAL_EXEC, &call));
+  REQUIRE(localchannel(&tables[0], call, LOCAL_CALL, &resolved, &bits) == -ERR_STATE);
+  REQUIRE(!localcopy(&tables[0], call, &tables[1], LOCAL_USE, 0, 0, LOCAL_FORK, &copied));
+  REQUIRE(localcopy(&tables[1], copied, &tables[0], LOCAL_USE, 0, 0, 0, &out) == -ERR_DENIED);
+  REQUIRE(!localendpoint(&tables[0], oldimage, LOCAL_NOTIFY, LOCAL_USE, 1UL << 40, LOCAL_FORK,
+                         &notify));
+  REQUIRE(!lifepublish(life) && !imageactivate(oldimage));
+  REQUIRE(!localchannel(&tables[1], copied, LOCAL_CALL, &resolved, &bits) &&
+          resolved.generation == oldimage.generation && resolved.index == oldimage.index && !bits);
+  REQUIRE(localchannel(&tables[1], copied, LOCAL_SEND, &resolved, &bits) == -ERR_BAD_HANDLE);
+  REQUIRE(!localchannel(&tables[0], notify, LOCAL_NOTIFY, &resolved, &bits) && bits == (1UL << 40));
+  REQUIRE(!imageend(oldimage, IMAGE_EXEC) && !imagedetach(oldimage));
+  REQUIRE(!imagecreate(life, 1, &newimage) && !imageactivate(newimage));
+  REQUIRE(localchannel(&tables[1], copied, LOCAL_CALL, &resolved, &bits) == -ERR_PEER);
+  REQUIRE(!imagestat(oldimage, &image) && image.number == 1 && image.cleanup == 3);
+  REQUIRE(!localfree(&tables[0], call) && !localfree(&tables[1], copied) &&
+          !localfree(&tables[0], notify));
+  REQUIRE(imagestat(oldimage, &image) == -ERR_STALE);
+  REQUIRE(!imageend(newimage, IMAGE_EXIT) && !imagedetach(newimage));
+  REQUIRE(!lifeend(life, LIFE_EXIT, 42, NULL) && !lifedetach(life));
+  REQUIRE(!lifecollect(life, 1, &result) && result.code == 42);
+  REQUIRE(lifestat(life, &state) == -ERR_STALE);
   args.bytes = 8192;
   args.kind = ALLOC_DATA;
   args.align = args.minaddr = args.maxaddr = args.reserved = 0;

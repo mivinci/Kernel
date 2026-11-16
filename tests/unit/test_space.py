@@ -20,13 +20,13 @@ class AddressSpaceTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         shim = Path(cls.tmp.name) / 'shim.c'
-        shim.write_text('#include <stdlib.h>\n#include <diag.h>\n#include <hal/vm.h>\nstatic char *memory; static u64 syncs;\nvoid test_memory(void *p){memory=p;syncs=0;}\nvoid *kaddr(u64 pa){return memory + (pa-0x80000000UL);}\nu64 test_syncs(void){return syncs;}\nvoid hal_code_sync(u64 pa,u64 n){UNUSED(pa);UNUSED(n);syncs++;}\nvoid hal_vm_switch(const Hvs *s){UNUSED(s);}\nvoid hal_vm_commit(Hvs *s){UNUSED(s);}\nNORETURN void panic(const char *s){UNUSED(s); abort();}\n')
+        shim.write_text('#include <stdlib.h>\n#include <diag.h>\n#include <hal/vm.h>\n#include <clock.h>\nstatic u64 ticks;\nu64 hal_clock_read(void){return ticks;}\nu64 hal_clock_freq(void){return 1000000000UL;}\nvoid test_now(u64 now){ticks=now;}\nstatic char *memory; static u64 syncs;\nvoid test_memory(void *p){memory=p;syncs=0;ticks=0;clockinit();}\nvoid *kaddr(u64 pa){return memory + (pa-0x80000000UL);}\nu64 test_syncs(void){return syncs;}\nvoid hal_code_sync(u64 pa,u64 n){UNUSED(pa);UNUSED(n);syncs++;}\nvoid hal_vm_switch(const Hvs *s){UNUSED(s);}\nvoid hal_vm_commit(Hvs *s){UNUSED(s);}\nNORETURN void panic(const char *s){UNUSED(s); abort();}\n')
         cls.libs = []
         for arch in ('riscv', 'arm64'):
             path = Path(cls.tmp.name) / (arch + '.so')
             command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
                        '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
-                       *[str(ROOT / 'kernel' / x) for x in ('space.c', 'local.c', 'prep.c', 'life.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'pgt.c', 'mem.c', arch + '/vm.c')],
+                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'image.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'pgt.c', 'mem.c', arch + '/vm.c')],
                        str(shim), '-o', str(path)]
             command += list(getattr(cls, 'extra_flags', ()))
             if sys.platform == 'darwin':

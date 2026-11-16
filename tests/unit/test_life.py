@@ -10,7 +10,7 @@ class Fault(C.Structure):
 class Result(C.Structure):
     _fields_=[('pid',C.c_int64),('sequence',C.c_uint64),('reason',C.c_uint32),('code',C.c_uint32)]
 class Life(C.Structure):
-    _fields_=[('generation',C.c_uint64),('pid',C.c_int64),('parent',C.c_int64),('sequence',C.c_uint64),
+    _fields_=[('generation',C.c_uint64),('pid',C.c_int64),('parent',C.c_int64),('sequence',C.c_uint64),('imagegen',C.c_uint64),
         ('set',Setid),('fault',Fault)]+[(x,C.c_uint32) for x in ('state','run','reason','code','waitref','instance','controls','observers','cleanup')]
 
 class LifeTests(unittest.TestCase):

@@ -12,6 +12,8 @@
 #include <hal/boot.h>
 #include <hal/clock.h>
 #include <clock.h>
+#include <hal/irq.h>
+#include <hal/context.h>
 
 static volatile u64 zeroed;
 static volatile u64 initialized = 0x12345678;
@@ -157,9 +159,32 @@ discovery(u64 dtb, u64 available)
 static void
 virtualmain(Hvs *space)
 {
+  Htimer timer;
+  u32    i, j;
+  timer.distributor = timer.cpu = 0;
+  timer.count = timer.reserved = 0;
+  for (j = 0; j < 4; j++)
+    timer.irqs[j] = timer.flags[j] = 0;
+  for (i = 0; i < hardware.ndev; i++) {
+    const Dtdev *d = &hardware.dev[i];
+    if (d->kind == DT_GIC) {
+      timer.distributor = KIRQ_DIST;
+      timer.cpu = KIRQ_CPU;
+    }
+    if (d->kind == DT_TIMER) {
+      timer.count = d->nirq;
+      for (j = 0; j < d->nirq; j++) {
+        timer.irqs[j] = d->irq[j].number;
+        timer.flags[j] = d->irq[j].flags;
+      }
+    }
+  }
   hal_clock_init(hardware.timebase);
   if (clockinit())
     panic("clock initialization");
+  hal_trap_init();
+  if (hal_timer_init(&timer))
+    panic("timer initialization");
   if (kstackinit(space))
     panic("kernel stack initialization");
   meminit();

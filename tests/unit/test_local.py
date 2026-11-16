@@ -24,7 +24,7 @@ class LocalTests(unittest.TestCase):
 
     def exercise(self,lib,method):
         def body():
-            args = {'localnative': [C.POINTER(Table),C.c_int64], 'meminit': [], 'memstat': [Memid,C.POINTER(Memory)],
+            args = {'localnative': [C.POINTER(Table),C.c_int64], 'localinherit': [C.POINTER(Table),C.c_int64,C.c_uint64], 'meminit': [], 'memstat': [Memid,C.POINTER(Memory)],
                 'localinit': [C.POINTER(Table),C.POINTER(Local),C.c_uint32,Acctid,support.Spaceid],
                 'localmem': [C.POINTER(Table),Memid,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)],
                 'localspace': [C.POINTER(Table),C.c_uint64,C.POINTER(C.c_int64)],
@@ -224,3 +224,19 @@ class LocalTests(unittest.TestCase):
             self.assertEqual(self.lib.acctunbind(aid),0)
         for lib in self.libs:
             self.exercise(lib,body)
+
+    def test_private_memory_and_self_resources_cannot_gain_exec_retention(self):
+        def body():
+            t,storage,_,space,alloc=self.table()
+            cap=self.alloc(t,alloc);index=self.lib.handleindex(cap)
+            for flags in (0,1):
+                self.assertEqual(self.lib.localinherit(C.byref(t),cap,flags),0)
+                self.assertEqual(storage[index].inherit,flags)
+            before=bytes(storage[index])
+            for flags,error in ((2,-5),(3,-5),(4,-1),(1<<32,-1)):
+                self.assertEqual(self.lib.localinherit(C.byref(t),cap,flags),error)
+                self.assertEqual(bytes(storage[index]),before)
+            for cap in (space,alloc):
+                self.assertEqual(self.lib.localinherit(C.byref(t),cap,0),-5)
+            self.assertEqual(self.lib.localinherit(C.byref(t),1,0),-3)
+        for lib in self.libs:self.exercise(lib,body)

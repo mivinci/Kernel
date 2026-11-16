@@ -25,12 +25,13 @@ class Result:
     launch_error: object
     seconds: float
     log: str
+    cleanup_error: object = None
 
     @property
     def ok(self):
         return (self.returncode == 0 and not self.timed_out
                 and not self.interrupted and not self.orphaned_group
-                and self.launch_error is None)
+                and self.launch_error is None and self.cleanup_error is None)
 
     @property
     def exit_code(self):
@@ -40,7 +41,7 @@ class Result:
             return 124
         if self.launch_error is not None:
             return 127
-        if self.orphaned_group:
+        if self.orphaned_group or self.cleanup_error is not None:
             return 1
         if self.returncode < 0:
             return 128 - self.returncode
@@ -53,6 +54,18 @@ def _group_exists(pid):
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # EPERM proves neither emptiness nor successful cleanup.
+        return True
+
+
+def _wait_group_exit(pid):
+    deadline = time.monotonic() + 0.25
+    while _group_exists(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
 
 
 def _signal_group(pid, sig):
@@ -60,6 +73,12 @@ def _signal_group(pid, sig):
         os.killpg(pid, sig)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # Darwin skips zombies when signaling a group and can return EPERM
+        # while the last member is exiting. Only disappearance proves cleanup;
+        # a persistent denied group must still fail rather than be ignored.
+        if not _wait_group_exit(pid):
+            raise
 
 
 def _stop_group(proc):
@@ -71,6 +90,8 @@ def _stop_group(proc):
     # A parent may have exited while a descendant ignored SIGTERM.
     _signal_group(proc.pid, signal.SIGKILL)
     proc.wait(timeout=2)
+    if not _wait_group_exit(proc.pid):
+        raise TimeoutError("process group %d remained after SIGKILL" % proc.pid)
 
 
 class StopRequested(KeyboardInterrupt):
@@ -96,7 +117,7 @@ def run_command(argv, log, timeout, cwd=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
     timed_out = interrupted = orphaned = False
-    error = None
+    error = cleanup_error = None
     returncode = None
     interrupt_signal = 0
     with path.open("wb") as output:
@@ -117,10 +138,14 @@ def run_command(argv, log, timeout, cwd=None):
             interrupt_signal = getattr(exc, "signum", signal.SIGINT)
         finally:
             if proc is not None:
-                _stop_group(proc)
+                try:
+                    _stop_group(proc)
+                except OSError as exc:
+                    cleanup_error = str(exc)
+                    output.write(("process group cleanup failed: " + cleanup_error + "\n").encode("utf-8"))
                 returncode = proc.returncode
     return Result(list(argv), returncode, timed_out, interrupted, interrupt_signal, orphaned,
-                  error, time.monotonic() - start, str(path))
+                  error, time.monotonic() - start, str(path), cleanup_error)
 
 
 def main():

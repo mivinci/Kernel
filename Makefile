@@ -18,7 +18,7 @@ READELF ?= llvm-readelf
 ARCH ?=
 SOURCES := $(shell find include kernel lib bin sbin tests/kernel -type f \( -name '*.h' -o -name '*.c' \))
 
-.PHONY: all help build hardware compdb clean fmt fmt-check unit smoke scenario bench test-all
+.PHONY: all help build hardware compdb clean fmt fmt-check unit smoke scenario bench test-all test-qemu
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
@@ -42,10 +42,13 @@ unit:
 smoke: build
 	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio)
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 	$(MAKE) smoke ARCH="$(ARCH)" CASE="$(CASE)"
 
 test-all: unit fmt-check
+	$(MAKE) test-qemu
+
+test-qemu:
 	$(MAKE) smoke ARCH=riscv CASE=normal
 	$(MAKE) smoke ARCH=arm64 CASE=normal
 	$(MAKE) scenario ARCH=riscv CASE=registers
@@ -78,6 +81,22 @@ test-all: unit fmt-check
 	$(MAKE) scenario ARCH=arm64 CASE=prep
 	$(MAKE) scenario ARCH=riscv CASE=syscalls
 	$(MAKE) scenario ARCH=arm64 CASE=syscalls
+	$(MAKE) scenario ARCH=riscv CASE=timer
+	$(MAKE) scenario ARCH=arm64 CASE=timer
+	$(MAKE) scenario ARCH=riscv CASE=irq
+	$(MAKE) scenario ARCH=arm64 CASE=irq
+	$(MAKE) scenario ARCH=riscv CASE=images
+	$(MAKE) scenario ARCH=arm64 CASE=images
+	$(MAKE) scenario ARCH=riscv CASE=requests
+	$(MAKE) scenario ARCH=arm64 CASE=requests
+	$(MAKE) scenario ARCH=riscv CASE=ipc
+	$(MAKE) scenario ARCH=arm64 CASE=ipc
+	$(MAKE) scenario ARCH=riscv CASE=ipcdepth
+	$(MAKE) scenario ARCH=arm64 CASE=ipcdepth
+	$(MAKE) scenario ARCH=riscv CASE=events
+	$(MAKE) scenario ARCH=arm64 CASE=events
+	$(MAKE) scenario ARCH=riscv CASE=control
+	$(MAKE) scenario ARCH=arm64 CASE=control
 	@for test_case in textwrite rodatawrite dataexec guard null identity alias unmapped; do $(MAKE) scenario ARCH=riscv CASE=$$test_case || exit $$?; $(MAKE) scenario ARCH=arm64 CASE=$$test_case || exit $$?; done
 	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
 	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1

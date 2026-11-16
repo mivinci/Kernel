@@ -116,5 +116,6 @@ nested:
 .global hal_halt
 hal_halt:
  csrci sstatus, 2
+ csrw sie, zero
 1: wfi
  j 1b

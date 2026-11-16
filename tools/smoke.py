@@ -117,6 +117,27 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "control":
+        if ready != ["READY control-restored"] or panics or traps:
+            raise SmokeError("native control test did not finish")
+    elif case == "events":
+        if ready != ["READY events-restored"] or panics or traps:
+            raise SmokeError("native events test did not finish")
+    elif case in ("ipc", "ipcdepth"):
+        if ready != ["READY ipc-restored"] or panics or traps:
+            raise SmokeError("native IPC test did not finish")
+    elif case == "requests":
+        if ready != ["READY requests-restored"] or panics or traps:
+            raise SmokeError("request lifetime test did not finish")
+    elif case == "images":
+        if ready != ["READY images-restored"] or panics or traps:
+            raise SmokeError("image lifetime test did not finish")
+    elif case == "irq":
+        if ready != ["READY irq-restored"] or panics or traps:
+            raise SmokeError("kernel IRQ/idle test did not finish")
+    elif case == "timer":
+        if ready != ["READY timer-restored"] or panics or traps:
+            raise SmokeError("timer preemption test did not finish")
     elif case == "syscalls":
         if ready != ["READY syscalls-restored"] or panics or traps:
             raise SmokeError("native syscall test did not finish")
@@ -370,9 +391,15 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages):
             expected_count += 1
     uart = next(x for x in discovery["devices"] if x["kind"] in (1, 2))["mmio"][0]["base"]
     check(0xffffffc100000000, uart & ~4095, 3, device=True)
+    device_pages = 1
+    for d in discovery["devices"]:
+        if d["kind"] == 5:
+            for i, window in enumerate(d["mmio"]):
+                check(0xffffffc100001000 + i * 4096, window["base"], 3, device=True)
+                device_pages += 1
     if leaves:
         raise SmokeError("unexpected alias, hole or MMIO mapping")
-    return {"table_pages": len(tables), "normal_pages": expected_count, "device_pages": 1,
+    return {"table_pages": len(tables), "normal_pages": expected_count, "device_pages": device_pages,
             "low_mappings": 0, "guards": 2, "all_permissions_checked": True}
 
 
@@ -442,6 +469,13 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY control-restored\n" if args.case == "control" else
+                    "READY events-restored\n" if args.case == "events" else
+                    "READY ipc-restored\n" if args.case in ("ipc", "ipcdepth") else
+                    "READY requests-restored\n" if args.case == "requests" else
+                    "READY images-restored\n" if args.case == "images" else
+                    "READY irq-restored\n" if args.case == "irq" else
+                    "READY timer-restored\n" if args.case == "timer" else
                     "READY syscalls-restored\n" if args.case == "syscalls" else
                     "READY prep-restored\n" if args.case == "prep" else
                     "READY procs-restored\n" if args.case == "procs" else
@@ -517,6 +551,54 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "control":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("CONTROLCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("turns", 0) < 6 or
+                            {k: checks[0].get(k) for k in ("reused", "exits", "charged", "allocated")} !=
+                            {"reused": 1, "exits": 3, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("native control isolation/reclamation mismatch")
+                    record["control"] = checks[0]
+                if args.case == "events":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("EVENTCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("turns", 0) < 4 or checks[0].get("idle", 0) < 1 or
+                            {k: checks[0].get(k) for k in ("exits", "charged", "allocated")} !=
+                            {"exits": 2, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("native events/idle alarm mismatch")
+                    record["events"] = checks[0]
+                if args.case in ("ipc", "ipcdepth"):
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("IPCCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("turns", 0) < 8 or checks[0].get("blocked", 0) < 4 or
+                            {k: checks[0].get(k) for k in ("exits", "charged", "allocated")} !=
+                            {"exits": 2, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("native IPC blocking/reclamation mismatch")
+                    record["ipc"] = checks[0]
+                if args.case == "requests":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RQCHECK ")]
+                    if checks != [{"ordinary": 80, "draining": 948, "recovery": 64, "reused": 2, "charged": 0, "allocated": transition["tables"]}]:
+                        raise SmokeError("request admission/retirement mismatch")
+                    record["requests"] = checks[0]
+                if args.case == "images":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("IMAGECHECK ")]
+                    if checks != [{"capacity": 512, "next": 513, "retained": 1, "charged": 0}]:
+                        raise SmokeError("image pool/identity retention mismatch")
+                    record["images"] = checks[0]
+                if args.case == "irq":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("IRQCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("idle", 0) < 4 or
+                            checks[0].get("kernel_ticks", 0) < 4 or checks[0].get("op_ticks", 0) < 1 or
+                            checks[0].get("turns", 0) < 2 or
+                            {k: checks[0].get(k) for k in ("expired", "exit", "charged", "allocated")} !=
+                            {"expired": 1, "exit": 42, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("kernel IRQ/idle/checkpoint mismatch")
+                    record["irq"] = checks[0]
+                if args.case == "timer":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("TIMERCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("ticks", 0) < 4 or
+                            checks[0].get("turns") != checks[0]["ticks"] + 2 or
+                            {k: checks[0].get(k) for k in ("expired", "retained", "exits", "charged", "allocated")} !=
+                            {"expired": 1, "retained": 1, "exits": 2, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("timer progress/expiry/reclamation mismatch")
+                    record["timer"] = checks[0]
                 if args.case == "syscalls":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SYSCALLCHECK ")]
                     if checks != [{"processes": 3, "turns": 6, "exit": 42, "charged": 0, "allocated": transition["tables"]}]:
@@ -605,14 +687,16 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", *VM_FAULTS), default="normal")
-    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", *VM_FAULTS), default="normal")
+    parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--ram", type=int, choices=(128, 256, 512), default=256)
     parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
+    if args.timeout is None:
+        args.timeout = 25 if args.case in ("timer", "irq") else 10
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     run_dir = ROOT / "build" / args.arch / "smoke" / uuid.uuid4().hex

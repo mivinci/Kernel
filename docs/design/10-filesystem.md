@@ -530,7 +530,7 @@ getcred(subject,pid,image)沿相同SOURCE/CHILD/FUTURE核验真实REQUEST关系�
 
 示例：监督者S持有OBSERVE MONITOR和B的CONTROL QUERY，observe(permit,control_b,MONITOR,0,0)只捕获B当前镜像；没有INSTALL不能向B grant，也没有父wait消费权。传control_b却声称pid=C则INVALID，basis=0仅传B的PID则失败。S随后被撤销CONTROL QUERY时不能再登记新观察；已经登记的B旧镜像cookie仍只等该镜像终结，B执行exec不会把它重绑到B的新镜像。
 
-观察cookie=u64，低16位服务观察槽、上48位代次，0无效，不是可转授Handle。所有读/ack/drop都验证观察者PID/image。obsread返回state PREPARING=1、ACTIVE=2、ENDED=3及reason EXIT=1、ABORT=2、EXEC=3、TIMEOUT=4；未终结的reason=0；未终结的reason=0；成功后返回目标PID/image。只对ENDED置LIFE提示。obsnext(cursor)扫描本观察者固定表，0起始，返回cookie/下一索引/state/reason；到末cookie=0、next=0。最后检查与recv登记原子核对pending，单次提示后必须扫描到末，仍有本地清理游标不睡眠。
+观察cookie=u64，低16位服务观察槽、上48位代次，0无效，不是可转授Handle。所有读/ack/drop都验证观察者PID/image。obsread返回state PREPARING=1、ACTIVE=2、ENDED=3及reason EXIT=1、ABORT=2、EXEC=3、TIMEOUT=4；未终结的reason=0；成功后返回目标PID/image。只对ENDED置LIFE提示。obsnext(cursor)扫描本观察者固定表，0起始，返回cookie/下一索引/state/reason；到末cookie=0、next=0。最后检查与recv登记原子核对pending，单次提示后必须扫描到末，仍有本地清理游标不睡眠。
 
 obsack仅ENDED且业务入口已在服务本地关闭、剩余责任已移入预付清理表后调用，移除观察/目标引用；内核不替服务证明后者业务安全。obsdrop主动解除不要求ENDED，但普通服务只能在已无该业务依赖后使用；服务违规丢业务观察只损害其可信业务，不获得跨主体权限。观察者死/exec时内核逐批删其观察，服务下游按观察者自己的终结清理，不伪造DMA完成。一个服务同一目标image合并一条观察，多fd共享；每个获权服务预付128，系统总1024，grant配额检查总和，普通应用无OBSERVE。
 

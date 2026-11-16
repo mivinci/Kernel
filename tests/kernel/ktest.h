@@ -10,6 +10,13 @@ void arch_vmfault(u64 address);
 void accttest(void);
 void spacetest(Hvs *kernel);
 void syscalltest(void);
+void timertest(void);
+void irqtest(void);
+void imagetest(void);
+void rqtest(void);
+void ipctest(void);
+void controltest(void);
+void eventtest(void);
 void preptest(void);
 #if BOOT_CASE == 21 || BOOT_CASE == 22
 #include <hal/context.h>

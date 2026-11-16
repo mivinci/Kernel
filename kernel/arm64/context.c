@@ -20,6 +20,10 @@ hal_trap_decode(const Hctx *context, Htrap *trap)
   trap->kind = HT_OTHER;
   trap->fromuser = (context->tf.status & 15) == 0;
   trap->syscall_nr = context->tf.x[8];
+  if (code == (1UL << 63)) {
+    trap->kind = HT_IRQ;
+    return;
+  }
   code >>= 26;
   if (code == 0x15)
     trap->kind = HT_SYSCALL;
@@ -53,4 +57,18 @@ hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7])
   for (i = 0; i < 7; i++)
     context->tf.x[1 + i] = status < 0 ? 0 : outputs[i];
   context->tf.x[9] = 0;
+}
+
+void
+hal_user_irq(Hctx *context, u32 enabled)
+{
+  context->tf.status = (context->tf.status & ~128UL) | (enabled ? 0 : 128UL);
+}
+
+void
+hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8])
+{
+  hal_syscall_finish(context, status, outputs);
+  context->tf.x[9] = status < 0 ? 0 : outputs[7];
+  context->tf.x[3] = outputs[2];
 }
