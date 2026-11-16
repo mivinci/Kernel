@@ -1,6 +1,7 @@
 #include "adopt.h"
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -14,7 +15,8 @@ main(int argc, char **argv)
   Msg    words;
   Ipcmsg reply;
   u32    turns = 0;
-  REQUIRE(argc == 1 && !__sys_getid(&pid, &image, &parent) && pid > 1 && image == 1 && parent > 1,
+  REQUIRE(argc == 1 && !__sys_getid(&pid, &image, &parent) && pid > 1 && image == 1 && parent > 1 &&
+              getpid() == pid && getppid() == parent,
           151);
   if (!strcmp(argv[0], "ended")) {
     words.words[0] = ADOPT_LEAF_READY;
@@ -29,7 +31,7 @@ main(int argc, char **argv)
   REQUIRE(!strcmp(argv[0], "live"), 153);
   do {
     REQUIRE(!__sys_yield() && ++turns < 256, 154);
-    REQUIRE(!__sys_getid(&pid, &image, &parent) && image == 1, 155);
+    REQUIRE(!__sys_getid(&pid, &image, &parent) && image == 1 && getppid() == parent, 155);
   } while (parent != 1);
   return 22;
 }

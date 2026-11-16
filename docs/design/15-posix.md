@@ -2,12 +2,12 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：设计规格已逐项修订；基础C运行库、身份/wait包装的局部实现与双架构验证见文末及status。其余范围继续执行，不声称完整POSIX、性能或CI验收。
 
 ## POSIX 接口范围与验收清单（设计目标，尚未实现）
 
 本节是明确列举的 POSIX 源码兼容子集，不是完整接口目录或合规声明。对照基准为 POSIX.1-2024；实现每项前须核对规范原文的原型、选项、错误与边界行为。未列出的接口和选项不自动纳入本阶段。
-当前下表所有项目均未实现/未验证。“本阶段”表示计划交付，“暂不支持”表示当前兼容范围之外，“原生扩展”不属于 POSIX 承诺。
+下表是目标清单，逐项实际交付以文末和status为准，不能将部分实现视作整行完成。“本阶段”表示计划交付，“暂不支持”表示当前兼容范围之外，“原生扩展”不属于 POSIX 承诺。
 软件需使用本系统 SDK 重新编译；不承诺 Linux 二进制兼容。基础静态单线程子集先验收，网络接口随 net 阶段交付，不阻塞串口启动。
 
 | 状态 | 接口/头文件范围 | 语义与边界 | 测试与验收方法 |
@@ -105,3 +105,15 @@ open标志首版采用O_RDONLY=0、O_WRONLY=1、O_RDWR=2、O_CREAT=0x40、O_EXCL
 已接csu→libc→libsys的main、可修改argv/environ、exit/_exit/atexit/getenv；errno访问器、冻结错误常量/别名、strerror及基础内存/字节字符串函数已实现。atexit预付32个用户槽；退出期新增登记失败EBUSY、满表ENOMEM，递归exit走直接退出作为首版防重入行为，不据此承诺可移植递归退出语义。没有stdio/文件后端时退出不伪造刷新/fsync；它们的完整故障收尾仍待实现。
 
 CASE=runtime的双架构真实main、构造/清理次序、参数/环境副本、启动拒绝与资源守恒及host证据见08末尾。这里仅是本表C入口/基础库切片；POSIX I/O、逐接口原生错误转换、fork/exec、信号安全、分配器/stdio及完整合规均未因此完成。
+
+### libc进程身份与wait包装（2026-11-16）
+
+新增sys/types.h的pid_t=s64（保留完整PROCESS_ID及特殊选择器），unistd.h的getpid/getppid和sys/wait.h的wait/waitpid及状态宏。每次身份查询都调用原生getid，不缓存父PID；真实PID1返回getpid=1/getppid=0，其他实例退出后被init接管的活孩子可立即读到父1。原生当前实例身份查询不应失败，包装不创造一个标准未规定的普通错误返回；不可达内核错误以运行时trap结束。
+
+waitpid将0/正完整PID/负组/-1选择器直接交原生wait，先拒绝未知options，返回正PID/0/-1分别保持原语义。ERR_CHILD、无匹配的BAD_HANDLE/STALE映射ECHILD，INTERRUPTED映射EINTR，INVALID映射EINVAL，NOTSUP/NOSYS映射ENOSYS，VM冲突BUSY映射EAGAIN，内部意外状态EIO；不把原生负编号直接写errno。wait等价于waitpid(-1,status,0)。成功不清errno，WNOHANG无结果不读取或写入status，即使status本身无效也不因未执行复制而失败；NULL status正常收取并忽略状态。
+
+原生寄存器结果一旦交付已消费，包装先在局部固定该结果并编码，再用__sys_copy写4字节status，非法/只读输出返回-1/EFAULT。绝不重试wait、恢复旧结果或领取另一个孩子以补偿输出；其他内核/服务旧引用继续独立存活。正常退出采用code低8位放status高8位；信号终止取信号号和CORE位，FAULT不泄漏为标准status额外位；STOPPED/CONTINUED的编码和宏已实现，但当前内核没有真实STOP/CONT事件源，不宣称已支持其端到端行为。
+
+WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按同一状态编码定义，输入表达式各求值一次。这些状态数值属于本SDK，不承诺Linux二进制兼容。POSIX官方wait页面本次访问未成功取得内容；此交付依据已冻结接口和项目状态编码，不声称已完成POSIX原文逐条审计或标准合规。完整信号中断/重启、errno保存恢复和异步安全验收仍待后续真实信号路径。
+
+验证：elf两架构真实用户父以常规waitpid检查WNOHANG的status不变与errno保留，收取真实csu/main孩子的退出42，再以只读Boot作为另一孩子status输出得到EFAULT；下一次waitpid/ECHILD，证实已收取结果不复活。init场景使用常规getpid/getppid核对PID1/父0和活孤儿父1。6项新增host覆盖全部状态编码（含信号/FAULT/CORE及模拟STOP/CONT）、NULL status、输出故障后的消费、错误转换、选择器/选项及重复父查询；模拟结果不冒充内核未实现的信号/STOP事件。本地完整253项host、格式及92个两架构QEMU通过；最后宽度断言后两架构elf和6项host再验通过，日志build/host/stage38-libc-wait/。未执行CI或真实硬件标准验收。

@@ -41,7 +41,7 @@ def build(args):
         raise BuildError('this profile requires Clang')
     exported = [ROOT / 'include/types.h', *sorted((ROOT / 'include/abi').glob('*.h')),
                 *sorted((ROOT / 'lib/libsys/include/sys').glob('*.h')),
-                *sorted((ROOT / 'lib/libc/include').glob('*.h'))]
+                *sorted((ROOT / 'lib/libc/include').rglob('*.h'))]
     for source in exported:
         target = sdk / 'include' / (source.relative_to(ROOT / 'include') if source.is_relative_to(ROOT / 'include')
                                     else source.relative_to(ROOT / 'lib/libsys/include') if source.is_relative_to(ROOT / 'lib/libsys/include')
@@ -90,7 +90,7 @@ def build(args):
     assembly = sdk / 'libsysimage.S'
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n')
     # The normal runtime has a separate entry object and one-way library order.
-    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'environment.c', 'errno.c', 'exit.c', 'start.c')]
+    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'environment.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'wait.c')]
     csu_sources = [ROOT / 'lib/csu/start.c', ROOT / 'lib/csu' / args.arch / 'start.S']
     runtime_source = ROOT / 'tests/kernel/runtimeuser.c'
     extra_units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o'))

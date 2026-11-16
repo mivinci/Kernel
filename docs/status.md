@@ -23,6 +23,7 @@
 - 原生wait已接退出结果、WNOHANG及完整PID/任意孩子/冻结组选择；无匹配孩子返回ERR_CHILD=22。CHILD合并提示与父死亡后的即时逻辑孤儿接管已接，物理关系分批改写；PROC查询显示等待种类/公开选择器。STOP/CONT与捕获信号等待中断仍未接。
 - notify/alarm与RQ_DONE/RQ_CANCEL已接；用户timer约5ms，内核IRQ只记事件/调度请求，在安全检查点切换。CPU空闲可独立到期/回收；无IRQ嵌套或通用长Op。
 - 独立libsys/Boot校验与两架构C _start静态ELF已接；make sdk导出公共/私有头、库和user.ld，完整库对象审计无外部运行时符号。构建工具将ELF转换为既定装载描述，内核只核验描述；CASE=libsys由可信fixture加载实际ELF并验证IPC/内存/退出。csu/main与基础libc接续见下，普通用户ELF加载器接续见下。
+- libc getpid/getppid、wait/waitpid、64位pid_t及状态宏已接；无结果不写status，NULL忽略，收取后受检查输出失败EFAULT且不重取，错误按接口转errno。STOP/CONT编码仅host模拟，信号/异步安全/标准审计仍未完成。
 - csu/main、可写argv/environ、getenv、exit/_exit/32槽atexit、errno/strerror及基础内存/字符串已接；sysstart归libsys绑定Boot，C环境归libc，无malloc/fs启动依赖。SDK另导出crt0.o/libc.a/runtimeuser.elf；fd/Fix适配未接，相关非零启动内容明确拒绝。完整libc/stdio/文件/信号适配仍待接。
 - libsys用户态ELF64校验/逐页装载/临时清理与创建配置桩已接；成功规划先限页数，边界页合并权限且拒绝W+X，真实SELF通过准备RESOURCE查询补齐Boot。父每次只占一个临时MEM槽，孩子只留映射；清理失败保留Elfwork责任。来源当前是只读嵌入ELF，FS稳定来源及完整POSIX spawn/exec尚未接。
 - PID1专用bootimageload已接既定预校验描述，逐页装载/封存并释放临时MEM，8个Local槽可装多页init；两架构init/initfatal改用它并检查最终PTE/guard。新启动包容器字段待用户确认，生产入口未接。
@@ -33,7 +34,8 @@
 
 - 本次PID1描述加载器通过243项host、格式及两架构init/initfatal四场景，日志build/host/stage36-boot-loader/；完整QEMU基线仍为下列stage35，未将局部复验称为重跑全套。
 
-- 完整make test-all通过247项host、格式及92个QEMU场景，日志build/host/stage37-checked-copy/test-all.log；最终两架构libsys与copy主机反例复验见同目录。旧copy NOTSUP断言失败已修正且日志保留；本次没有修改待确认的启动包格式。
+- 完整make test-all通过253项host、格式及92个QEMU场景，日志build/host/stage38-libc-wait/test-all.log；最终宽度断言后两架构elf及6项wait主机测试复验见同目录。启动包格式问题仍待用户确认。
+- libc waitpid两架构真实载荷验证退出42、WNOHANG状态不变、errno保留、已收取后只读status返回EFAULT且下次ECHILD；init实测常规getpid/getppid的PID1/父0与孤儿父1。host覆盖模拟STOP/CONT/信号编码、NULL status、失败消费和选择器/错误转换；不称真实STOP/信号已实现。
 - copy两架构真实用户载荷覆盖64KiB、物理别名、只读/SEALED目标、缺页/溢出/unmap/零长和完整回收；4项host另覆盖17页非对齐、无临时页、字节区间及可信DEVICE PTE注入。复制期不调度，不声称并发unmap/真实设备/COW或IRQ延迟已验收。
 - init两架构由真实PID1/csu/main创建三代，先拒绝越权收取，随后分别收取旧父33、已结束孤儿11和原活孩子22；最终保留1个init实例且费用/引用精确回到其启动基线。initfatal确认真实用户PID1 exit唯一致命停机；QMP审计保留的4页RW/NX栈、表及guard，host反例验证审计不放行错误映射。
 - elf两架构实测用户C装载真实csu/main ELF，2个成功孩子通过wait退出42，4种装载失败均destroy且无wait结果；孩子仅3资源槽、父仅1临时槽可完成装载，VA冲突不误拆原映射，页/Set/引用最终结清。6项host覆盖解析变异对照、边界页内容/BSS、每步失败、清理责任保留与非法工作区拒绝。

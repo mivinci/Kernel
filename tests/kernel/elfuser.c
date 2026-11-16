@@ -1,5 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <errno.h>
 #include <sys/boot.h>
 #include "private/elf.h"
 #include "private/start.h"
@@ -89,7 +92,8 @@ main(int argc, char **argv)
   u64             written, next, kind, code, sequence;
   u32             ids[4], scenario, count = 0;
   isize           error;
-  REQUIRE(argc == 0 && argv && !argv[0], 181);
+  int             status;
+  REQUIRE(argc == 0 && argv && !argv[0] && getpid() > 1 && getppid() == 1, 181);
   create = bootresource(own, BOOT_CREATE);
   space = bootresource(own, BOOT_SELF_SPACE);
   allocator = bootresource(own, BOOT_SELF_ALLOC);
@@ -160,12 +164,20 @@ main(int argc, char **argv)
     if (scenario <= 1) {
       REQUIRE(!error && !work.failure, 194);
       REQUIRE(!__sys_configure(work.view, &config, 0) && !__sys_start(work.view), 195);
-      REQUIRE(!__sys_wait(pid, 0, &collected, &kind, &code, &sequence) && collected == pid &&
-                  kind == WAIT_EXITED && code == 42 && sequence == 2,
-              196);
-      REQUIRE(__sys_wait(pid, WAIT_WNOHANG, &collected, &kind, &code, &sequence) == -ERR_CHILD &&
-                  !collected,
-              197);
+      status = 0x12345678;
+      errno = EDOM;
+      REQUIRE(waitpid(pid, &status, WNOHANG) == 0 && status == 0x12345678 && errno == EDOM, 196);
+      if (scenario == 0) {
+        REQUIRE(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 42 &&
+                    !WIFSIGNALED(status) && !WIFSTOPPED(status) && !WIFCONTINUED(status) &&
+                    errno == EDOM,
+                197);
+      } else {
+        REQUIRE(waitpid(pid, (int *) own->header, 0) == -1 && errno == EFAULT, 207);
+        REQUIRE(own->header->magic == BOOT_MAGIC && status == 0x12345678, 208);
+      }
+      REQUIRE(waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD, 209);
+      REQUIRE(wait(NULL) == -1 && errno == ECHILD, 210);
       elf_trace[1]++;
       elf_trace[7]++;
     } else {

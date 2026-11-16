@@ -458,3 +458,5 @@ spacecopy先快照源READ与目标WRITE的全部普通用户PTE，每侧最多17
 当前完整预检的权限/缺页/重叠失败不会写目标任何字节；接口长期契约仍不承诺错误撤销已写内容，未来分批/COW实现不得据此让库重放已完成业务。源/目标对用户态的生命周期依然由调用者负责，普通memcpy不陷入，read/write包装与参数捕获尚未接入此调用，不因copy存在就称POSIX缓冲错误转换完成。
 
 本地验证：CASE=libsys两架构真实C程序新增64KiB复制、同Mem不同VA物理重叠、同页不相交允许、未映射/溢出地址、Boot只读、sealed代码目标拒绝/可读源、后半页缺失前半目标不变、unmap后FAULT及零长度；最终全部页/授权/费用恢复原基线。host另覆盖跨17页非对齐64KiB、无额外页分配、双别名字节边界、后页只读、raw DEVICE PTE即便RAM backing仍拒绝。复制期间不调度故没有“并发unmap已发生”场景，不把顺序unmap测试描述为并发验证。本次最终主机新增4项复制测试，覆盖两架构页表实现；本地完整247项host、格式及92个两架构QEMU通过，最终整理后两架构libsys及4项copy主机测试另复验；日志build/host/stage37-checked-copy/。旧syscalls载荷的COPY NOTSUP断言失败日志保留，已更新为零长度成功并重新跑全套。编译帧报告spacecopy为RV64 784/ARM64 768字节，仅函数帧，非完整调用链或最长IRQ屏蔽时间证明。信号/多核/COW/真实设备和性能仍待执行。
+
+libc wait/身份接续（2026-11-16）：常规getpid/getppid、wait/waitpid、pid_t及状态宏已接，SDK递归导出sys/types.h和sys/wait.h。wait结果先由原生寄存器原子消费，再用既有__sys_copy写status；复制FAULT返回EFAULT且不重取，NULL忽略状态，WNOHANG=0不触碰输出。实际语义、错误映射、标准审计边界及验证见15末尾；完整POSIX spawn、信号/Rctx安全和FS适配仍未完成。

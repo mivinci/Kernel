@@ -1,6 +1,7 @@
 #include "adopt.h"
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 extern const u8 adopt_parent[], adopt_parent_end[];
 volatile u64    init_trace[16];
 static Elfwork  preparation;
@@ -27,7 +28,9 @@ main(int argc, char **argv)
   Queryrec records[4];
   u64      written, next;
   REQUIRE(argc == 1, 171);
-  REQUIRE(!__sys_getid(&pid, &image, &parent) && pid == 1 && image == 1 && !parent, 172);
+  REQUIRE(!__sys_getid(&pid, &image, &parent) && pid == 1 && image == 1 && !parent &&
+              getpid() == 1 && getppid() == 0,
+          172);
   init_trace[8] = (u64) pid;
   init_trace[9] = image;
   init_trace[10] = (u64) parent;
