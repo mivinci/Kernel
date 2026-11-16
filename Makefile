@@ -16,7 +16,7 @@ endif
 AR ?= llvm-ar
 READELF ?= llvm-readelf
 ARCH ?=
-SOURCES := $(shell find include kernel lib bin sbin tests/kernel -type f \( -name '*.h' -o -name '*.c' \))
+SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
 
 .PHONY: all help build hardware compdb sdk clean fmt fmt-check unit smoke scenario bench test-all test-qemu
 all: $(if $(strip $(ARCH)),build,help)
@@ -45,7 +45,7 @@ unit:
 smoke: build
 	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio)
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 	$(MAKE) smoke ARCH="$(ARCH)" CASE="$(CASE)"
 
 test-all: unit fmt-check
@@ -118,6 +118,8 @@ test-qemu:
 	$(MAKE) scenario ARCH=arm64 CASE=libsys
 	$(MAKE) scenario ARCH=riscv CASE=runtime
 	$(MAKE) scenario ARCH=arm64 CASE=runtime
+	$(MAKE) scenario ARCH=riscv CASE=elf
+	$(MAKE) scenario ARCH=arm64 CASE=elf
 	@for test_case in textwrite rodatawrite dataexec guard null identity alias unmapped; do $(MAKE) scenario ARCH=riscv CASE=$$test_case || exit $$?; $(MAKE) scenario ARCH=arm64 CASE=$$test_case || exit $$?; done
 	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
 	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1

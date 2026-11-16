@@ -24,5 +24,11 @@ isize         __sys_unmap(Handle space, u64 address);
 isize         __sys_seal(Handle memory);
 isize         __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count,
                           u64 *written, u64 *next);
+isize         __sys_create(Handle authority, const Createarg *args, Handle *view, Handle *pid,
+                           Handle *control);
+isize         __sys_configure(Handle view, const Config *config, u64 reserve);
+isize         __sys_start(Handle view);
+isize         __sys_destroy(Handle view);
+isize         __sys_getcred(Handle authority, Handle pid, u64 image, u32 ids[4]);
 isize __sys_wait(Handle selector, u64 options, Handle *pid, u64 *kind, u64 *code, u64 *sequence);
 #endif

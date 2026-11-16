@@ -426,3 +426,23 @@ SDK同时输出libc.a、crt0.o、runtimeuser.elf及预校验镜像，并保留li
 验证：新增CASE=runtime，两架构各实际启动10个常规main镜像。空参数、多参数/环境、精确16KiB参数边界、main返回、exit和_exit均核对实际用户内存轨迹；合法路径5次main、38次atexit回调、8次fini，直接退出不执行清理。畸形字符串、参数超限、资源保留位及尚未支持的fd/Fix内容共5次在构造函数/main前以127退出。另检查32用户回调容量、环境/参数副本不改写原Boot、基础内存/字符串、errno与析构顺序；最后所有Set、页和引用回到基线。可信测试按预校验描述装载并逐页核对权限/普通内存属性，不是普通用户态ELF加载器。
 
 新增8项host覆盖独立参数副本、0/256条目与16KiB边界、初始化失败不公布半份环境、替换environ、正常/直接/递归退出、atexit容量及退出期再登记、完整errno文本/数值与字节内存操作。完整make test-all通过236项host、格式及86个两架构QEMU场景；最后补充条目边界的host重验及独立入口回归见build/host/stage33-runtime/。前次全库审计失败及现场保留，不将其称为通过；生产init/清单、普通ELF装载、fork/exec、fd/stdio/信号等仍待执行，没有CI/硬件/性能验收。
+
+### 普通用户态ELF装载接续（2026-11-16）
+
+libsys已加入私有elfcheck/elfload/elfclean模块，代码在用户态，不把ELF头或文件路径传给内核。Elfsource提供固定字节长度和精确读取回调，单次最多4096字节；来源须是一次不可变/受保护装载快照，回调失败原样返回。当前真实来源是加载器ELF中的只读嵌入子ELF；FS装载会话仍未接，不能把跨文件变更一致性称为已验证。
+
+elfcheck以小型字节缓冲解析ELF64/little-endian/ET_EXEC及本架构机器号/入口对齐，检查最多32个程序头、文件/内存范围、filesz<=memsz、对齐、动态段/解释器/执行栈拒绝、地址与启动保留区、字节段重叠、入口执行性和共享边界页W^X。最多32段按VA排序，先算去重页数并核对调用者页上限，不为巨型BSS先分配或遍历全部页面。规划记录只在entry/pages非0且函数成功时可用；调用者须保留该成功计划及同一不可变来源，不用修改后的计划装载。
+
+elfload接调用者已经创建的全新CONSTRUCT和私有Elfwork，先原生query RESOURCE分页读取完整目标PID/image的真实SELF_SPACE/SELF_ALLOC/CREATE Handle，不能猜槽代次或将父Handle写进孩子Boot。Boot模板中的这三种tag允许handle=0，由本次准备表补齐；非零输入须与真实值相等，SELF_SPACE/SELF_ALLOC必需，CREATE可选。补齐后在父临时窗口中的目标出资副本执行完整bootcheck，不改写调用者模板，不凭其他tag造权。
+
+装载每个目标页时只临时持有一个MEM Local：按边界页所需权限并集选择DATA/CODE，文件区分块读到父临时RW映射，其他字节保留分配器零填充；解除该别名后再seal CODE、映射到孩子的最终R/RX/RW地址，最后释放父临时MEM Handle。孩子只留下自身映射责任，不为每页安装MEM授权；初始3个SELF/ALLOC/CREATE资源槽足以装载多页ELF。Boot单独只读映射，64KiB栈用一次DATA映射，栈下guard由既定configure复查。所有目标页/栈/Boot都由孩子Acct出资，父仅提供临时VA和准备权。
+
+Elfwork记录当前临时MEM、父空间/窗口、alias存在位及首个装载错误；失败先解除自己成功建立的alias，再释放该精确Handle。若清理本身失败，则返回清理错误并保留尚未解除的责任，work.failure保留原始原因；调用者不得清零/复用该work，须继续elfclean或将其保持到退出。失败计划的全部目标映射由调用者destroy未发布准备收尾，不能仅清临时alias就声称整个构造已撤销。窗口映射冲突不取得alias所有权，因此清理不会解除调用者原有映射。精确旧Handle已由准备清理移除时释放可视为结束，不拿复用后的新代次替代。
+
+输入Boot、成功计划、Elfsource及Elfwork必须可访问且不与临时窗口重叠；窗口由调用者地址分配器独占保留，libsys不硬编码占用某个应用VA或新增内核特殊space值。当前测试选用0x2000000并显式注入冲突。无malloc、libc反向依赖或新的内核调用；私有__sys_create/configure/start/destroy/getcred桩复用已冻结编号。普通应用的posix_spawn/exec参数捕获、errno转换和信号Rctx仍待接，不将这些私有模块导出为裸应用create/start。
+
+示例：A校验B的ELF后创建B，仅配3资源槽。A逐页临时映射并写入B出资的CODE/DATA，解除别名、封存、映射后归还每个Local。文件第二页读取失败时，A仍持B构造，elfload保存FAULT并清当前临时alias/Handle；A调用destroy，B从未发布，无父wait结果。若临时窗口原已有A自己的映射，第一次alias尝试STATE，elfclean不解除该原映射；destroy后原页内容仍可读取。成功时configure/start发布，A的wait直接收取B退出42，旧构造加载权不能继续使用。
+
+验证：新增CASE=elf，两架构真实C加载器复用同一libsys，读取/解析只读嵌入的完整runtimeuser.elf，在用户态完成native create、Boot SELF发现、逐页装载、configure/start和原生wait。普通成功与父资源表填满只留1个临时槽两次发布均运行到孩子main并退出42；孩子查询证实只占3个真实SELF/ALLOC/CREATE槽，继续申请MEM因表满明确CAPACITY。四次失败覆盖孩子额度不足、文件内容读取中断、临时VA冲突和坏Boot，全部无wait结果且页/Set/引用结清。畸形ELF在创建前拒绝。
+
+新增6项host覆盖非法/脏工作区不丢责任、页权限并集/文件内容/BSS及真实Boot SELF补齐、每一步native分配/映射/封存/释放失败、清理错误责任保留与显式重试、源读取失败，以及两目标架构下的种子变异输入与独立Python页规划对照。主机shim只验证用户库事务，不替代真实内核权限或QEMU验收。本地完整make test-all通过241项host、格式及88个两架构QEMU；最后工作区拒绝反例/来源回调检查补齐后再验完整242项host、格式和两架构elf，日志build/host/stage34-user-elf/。首次固件路径拼写错误的失败日志另保留；生产init/清单、FS快照、信号中断重启、fork/exec和完整POSIX spawn仍待执行。

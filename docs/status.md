@@ -21,13 +21,15 @@
 - 原生observe/read/next/ack/drop与LIFE提示已接：每观察者镜像预付128、系统1024，SOURCE/CHILD凭真实REQUEST、MONITOR另需固定CONTROL QUERY；旧cookie跨撤权、父收取和槽复用继续绑定原Image，退出逐批回收。FUTURE真实exec准备及生产清单发权仍未接。
 - 原生wait已接退出结果、WNOHANG及完整PID/任意孩子/冻结组选择；无匹配孩子返回ERR_CHILD=22。CHILD合并提示与父死亡后的即时逻辑孤儿接管已接，物理关系分批改写；PROC查询显示等待种类/公开选择器。STOP/CONT与捕获信号等待中断仍未接。
 - notify/alarm与RQ_DONE/RQ_CANCEL已接；用户timer约5ms，内核IRQ只记事件/调度请求，在安全检查点切换。CPU空闲可独立到期/回收；无IRQ嵌套或通用长Op。
-- 独立libsys/Boot校验与两架构C _start静态ELF已接；make sdk导出公共/私有头、库和user.ld，完整库对象审计无外部运行时符号。构建工具将ELF转换为既定装载描述，内核只核验描述；CASE=libsys由可信fixture加载实际ELF并验证IPC/内存/退出。csu/main与基础libc接续见下，普通用户ELF加载器仍未接。
+- 独立libsys/Boot校验与两架构C _start静态ELF已接；make sdk导出公共/私有头、库和user.ld，完整库对象审计无外部运行时符号。构建工具将ELF转换为既定装载描述，内核只核验描述；CASE=libsys由可信fixture加载实际ELF并验证IPC/内存/退出。csu/main与基础libc接续见下，普通用户ELF加载器接续见下。
 - csu/main、可写argv/environ、getenv、exit/_exit/32槽atexit、errno/strerror及基础内存/字符串已接；sysstart归libsys绑定Boot，C环境归libc，无malloc/fs启动依赖。SDK另导出crt0.o/libc.a/runtimeuser.elf；fd/Fix适配未接，相关非零启动内容明确拒绝。完整libc/stdio/文件/信号适配仍待接。
-- normal仍初始化后停机，无模拟init。spawn测试中的用户加载器复制位置无关测试代码并写Boot，不是ELF/libsys/csu/posix_spawn。源CREATE/SERVICE由可信fixture安装，生产清单的SERVICE仅init发放策略尚未启动；孩子退出结果已由真实用户父原生wait收取；真实用户init收取孤儿仍待端到端接入。
+- libsys用户态ELF64校验/逐页装载/临时清理与创建配置桩已接；成功规划先限页数，边界页合并权限且拒绝W+X，真实SELF通过准备RESOURCE查询补齐Boot。父每次只占一个临时MEM槽，孩子只留映射；清理失败保留Elfwork责任。来源当前是只读嵌入ELF，FS稳定来源及完整POSIX spawn/exec尚未接。
+- normal仍初始化后停机，无模拟init。旧spawn场景仍用位置无关测试代码；新elf场景由用户libsys装载实际csu/main ELF，不是完整posix_spawn。源CREATE/SERVICE由可信fixture安装，生产清单的SERVICE仅init发放策略尚未启动；孩子退出结果已由真实用户父原生wait收取；真实用户init收取孤儿仍待端到端接入。
 
 ## 本地验证与边界
 
-- 完整make test-all通过236项host、格式及86个QEMU场景，日志`build/host/stage33-runtime/test-all.log`；最后host条目边界及两架构常规/自定义入口复验见同目录。先前隐式memcpy依赖审计失败现场保留，修复后重新跑全套。
+- 完整make test-all通过241项host、格式及88个QEMU场景，日志`build/host/stage34-user-elf/test-all.log`；最终工作区/回调检查后再验完整242项host、格式及两架构elf，见同目录`*-final.log`。首次固件路径拼写错误的失败日志保留。
+- elf两架构实测用户C装载真实csu/main ELF，2个成功孩子通过wait退出42，4种装载失败均destroy且无wait结果；孩子仅3资源槽、父仅1临时槽可完成装载，VA冲突不误拆原映射，页/Set/引用最终结清。6项host覆盖解析变异对照、边界页内容/BSS、每步失败、清理责任保留与非法工作区拒绝。
 - runtime两架构各10份镜像实测5次main、38次atexit回调、8次fini，正常/直接退出、可写参数/环境及精确16KiB边界；5种畸形/未支持Boot在构造与main前拒绝，全部页/Set/引用结清。8项新增host覆盖环境、退出与基础库；独立libsys入口仍通过。
 - 新增11项host覆盖Boot/ELF/预校验描述范围、对齐、重叠、保留位和预算，以及IPC错误携带RPC；libsys两架构实测独立C ELF、BSS/数据、合法Boot、内存清零/释放、四字同步/异步CALL/SEND、请求确认与完整回收。
 - 新增8项host覆盖128槽耗尽/完整枚举、8份总预付、GRANT失败回滚/撤权、cookie跨预付区复用及耗尽、父结果独立回收和取消exec不冒充当前镜像。creds两架构实测SOURCE/CHILD/MONITOR授权、LIFE合并、DRAINING/证明释放、原生OBSERVE grant和观察者死亡回收。
@@ -37,4 +39,4 @@
 
 ## 接续
 
-接普通用户ELF装载、init清单及真实用户init的孤儿收取验证；继续完成信号/终端、资源reply、SHARED/DMA、fork/exec/COW、外设IRQ及用户态服务。完整边界与验收以01/03/04/06/08/11等主题为准，不以当前局部原生路径称全系统完成。
+接init清单及真实用户init的孤儿收取验证；继续完成信号/终端、资源reply、SHARED/DMA、fork/exec/COW、外设IRQ及用户态服务。完整边界与验收以01/03/04/06/08/11等主题为准，不以当前局部原生路径称全系统完成。

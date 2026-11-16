@@ -51,10 +51,11 @@ def build(args):
     (sdk / 'private').mkdir(exist_ok=True)
     shutil.copyfile(ROOT / 'lib/libsys/private/syscall.h', sdk / 'private/syscall.h')
     shutil.copyfile(ROOT / 'lib/libsys/private/start.h', sdk / 'private/start.h')
+    shutil.copyfile(ROOT / 'lib/libsys/private/elf.h', sdk / 'private/elf.h')
     shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'channel.c', 'boot.c', 'start.c', args.arch + '/syscall.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -134,6 +135,34 @@ def build(args):
     (sdk / 'runtimeimage.S').write_text('/* image sha256: ' + digest(runtime_image) + ' */\n.section .rodata\n.balign 8\n'
         '.global runtime_image,runtime_image_end,runtime_trace_address\nruntime_image:\n.incbin "' + str(runtime_image) +
         '"\nruntime_image_end:\n.balign 8\nruntime_trace_address:\n.quad ' + str(trace_address) + '\n')
+    # Embed a real child ELF in the user loader's immutable read-only source.
+    payload_source = sdk / 'payloadelf.S'
+    payload_source.write_text('/* payload sha256: ' + digest(runtime) + ' */\n.section .rodata\n.balign 8\n'
+        '.global payload_elf,payload_elf_end\npayload_elf:\n.incbin "' + str(runtime) + '"\npayload_elf_end:\n')
+    parent_source = ROOT / 'tests/kernel/elfuser.c'
+    parent_units = [(parent_source,sdk / 'obj/elfuser.o'),(payload_source,sdk / 'obj/payloadelf.o')]
+    for i,(source,obj) in enumerate(parent_units):
+        command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
+        invoke('loader-compile-' + str(i),command)
+        read_elf(obj,profile['machine'],allow_undefined=True)
+        entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
+    parent = sdk / 'elfuser.elf'
+    parent_tmp = sdk / 'elfuser.tmp.elf'
+    invoke('link-loader',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',
+                         '-Map=' + str(sdk / 'elfuser.map'),str(crt),*[str(obj) for _,obj in parent_units],str(libc_archive),str(archive),'-o',str(parent_tmp)])
+    read_elf(parent_tmp,profile['machine'],kind=2)
+    parent_content = pack(parent_tmp.read_bytes(),profile['machine'],128)
+    os.replace(parent_tmp,parent)
+    parent_inspect = invoke('inspect-loader',[tools['readelf']['path'],'-h','-l','-s',str(parent)])
+    parent_rows = [line.split() for line in parent_inspect.splitlines() if line.split() and line.split()[-1] == 'elf_trace']
+    if len(parent_rows) != 1 or int(parent_rows[0][2]) != 128:
+        raise BuildError('loader trace symbol is missing or has wrong size')
+    parent_trace = int(parent_rows[0][1],16)
+    parent_image = sdk / 'elfuser.img'
+    parent_image.write_bytes(parent_content)
+    (sdk / 'elfimage.S').write_text('/* image sha256: ' + digest(parent_image) + ' */\n.section .rodata\n.balign 8\n'
+        '.global elf_image,elf_image_end,elf_trace_address\nelf_image:\n.incbin "' + str(parent_image) +
+        '"\nelf_image_end:\n.balign 8\nelf_trace_address:\n.quad ' + str(parent_trace) + '\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'
@@ -149,8 +178,8 @@ def build(args):
                     runtime_artifact=str(runtime.relative_to(ROOT)), runtime_artifact_sha256=digest(runtime),
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
-                    library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + libc_sources + csu_sources + [runtime_source]},
+                    library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + libc_sources + csu_sources + [runtime_source,parent_source]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),
                     no_undefined_symbols=True, runtime='custom libsys-only entry and csu/libc main', guest_executed=False)

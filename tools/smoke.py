@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "elf":
+        if ready != ["READY elf-restored"] or panics or traps:
+            raise SmokeError("native user ELF loader did not finish")
     elif case == "runtime":
         if ready != ["READY runtime-restored"] or panics or traps:
             raise SmokeError("csu/libc main and exit test did not finish")
@@ -496,6 +499,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY elf-restored\n" if args.case == "elf" else
                     "READY runtime-restored\n" if args.case == "runtime" else
                     "READY libsys-restored\n" if args.case == "libsys" else
                     "READY spawn-restored\n" if args.case == "spawn" else
@@ -587,6 +591,13 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "elf":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("ELFCHECK ")]
+                    if (len(checks) != 1 or not 8 <= checks[0].get("turns",0) < 256 or checks[0].get("pressure",0) <= 1 or
+                            {k:checks[0].get(k) for k in ("children","rollback","invalid","slots","charged","allocated")} !=
+                            {"children":2,"rollback":4,"invalid":1,"slots":3,"charged":0,"allocated":transition["tables"]}):
+                        raise SmokeError("user ELF preparation/rollback/slot conservation mismatch")
+                    record["elf_loader"] = checks[0]
                 if args.case == "runtime":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
@@ -787,7 +798,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

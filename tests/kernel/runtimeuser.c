@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/channel.h>
 #include "private/libc.h"
+#include "private/syscall.h"
 volatile u64        runtime_trace[8];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
@@ -95,6 +96,24 @@ main(int argc, char **argv)
     REQUIRE(argc == 0 && !argv[0] && !environ[0], 169);
   else
     REQUIRE(argc == 1 && !strcmp(argv[0], "runtime"), 170);
+  if (bootresource(&view, BOOT_CREATE)) {
+    Queryrec entries[4];
+    Allocarg request;
+    Handle   memory;
+    u64      count, next;
+    REQUIRE(!__sys_query(0, QUERY_RESOURCE, 0, entries, 4, &count, &next) && count == 3 && !next,
+            177);
+    REQUIRE((Handle) entries[0].data[0] == bootresource(&view, BOOT_SELF_SPACE) &&
+                (Handle) entries[1].data[0] == bootresource(&view, BOOT_SELF_ALLOC) &&
+                (Handle) entries[2].data[0] == bootresource(&view, BOOT_CREATE),
+            178);
+    request.bytes = PAGE_SIZE;
+    request.kind = ALLOC_DATA;
+    request.align = request.minaddr = request.maxaddr = request.reserved = 0;
+    REQUIRE(__sys_alloc(bootresource(&view, BOOT_SELF_ALLOC), &request, &memory) == -ERR_CAPACITY &&
+                !memory,
+            179);
+  }
   runtime_trace[5] = 1;
   REQUIRE(!atexit(callbackone) && !atexit(callbacktwo), 171);
   if (runtime_trace[4] == 1)
