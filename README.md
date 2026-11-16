@@ -129,4 +129,4 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 `CASE=createauth`以可信内核入口验证固定Set的CREATE、三代上限减权、独立授权引用/回滚和pending=1/2的即时接收保底。它不是原生create或完整用户态加载；Createarg身份准入、Sigctx预付与SERVICE返回仍待接。
 
 
-`CASE=sigreserve`验证Proc构造的两层信号现场预付、早/晚失败回滚、实际用户exit后的离栈释放，以及旧镜像仍保留时新PID/运行槽复用隔离。每份Sigctx低于1024字节，尚无处理函数、sigreturn或STOP/CONT；用户帧防重放cookie问题仍待确认。
+`CASE=sigreserve`验证Proc构造的两层信号现场预付、早/晚失败回滚、实际用户exit后的离栈释放，以及旧镜像仍保留时新PID/运行槽复用隔离。每份Sigctx低于1024字节，尚无处理函数、sigreturn或STOP/CONT；另验证单调cookie跨PID/镜像复用不重置；实际用户帧核验与sigreturn仍未接入。

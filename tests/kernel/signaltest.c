@@ -83,6 +83,7 @@ signaltest(void)
   Life       life;
   Liferesult result;
   u32        bytes, i;
+  u64        cookie, prior, fresh;
   pgstat(&before);
   REQUIRE(!setcreate(512, 1024, 8, &set));
   REQUIRE(!procnew(set, 1, 64, 128, 8, &pids[0]) && !procinfo(pids[0], &info[0]));
@@ -108,7 +109,13 @@ signaltest(void)
   REQUIRE(!sigstat(info[1].identity, &signal) && signal.pid == pids[1] && !signal.depth);
   REQUIRE(!imagehold(info[1].identity, IMAGE_OBSERVER));
   load(pids[1]);
+  cookie = 77;
+  REQUIRE(sigcookie(info[1].identity, &cookie) == -ERR_STATE && !cookie);
   REQUIRE(!procpublish(pids[1]));
+  REQUIRE(!sigcookie(info[1].identity, &cookie) && cookie);
+  prior = cookie;
+  REQUIRE(!sigcookie(info[1].identity, &cookie) && cookie > prior);
+  prior = cookie;
   REQUIRE(sigrelease(info[1].identity) == -ERR_STATE && !sigcheck());
   REQUIRE(!procrunone() && !lifestat(info[1].life, &life) && life.reason == LIFE_EXIT &&
           life.code == 42);
@@ -136,7 +143,12 @@ signaltest(void)
   REQUIRE(!imagedrop(info[1].identity, IMAGE_OBSERVER));
   REQUIRE(lifestat(info[1].life, &life) == -ERR_STALE);
   load(pids[2]);
-  REQUIRE(!procpublish(pids[2]) && !procrunone());
+  cookie = 77;
+  REQUIRE(sigcookie(info[1].identity, &cookie) == -ERR_STALE && !cookie);
+  REQUIRE(!procpublish(pids[2]));
+  REQUIRE(!sigcookie(info[2].identity, &fresh) && fresh > prior);
+  REQUIRE(!sigcookie(info[2].identity, &cookie) && cookie > fresh);
+  REQUIRE(!procrunone());
   clean(pids[2]);
   REQUIRE(!lifecollect(info[2].life, 1, &result) && result.code == 42);
   REQUIRE(!procdestroy(pids[0]));
@@ -151,6 +163,8 @@ signaltest(void)
   puthex(2);
   putstr(" bytes=");
   puthex(bytes);
+  putstr(" cookies=");
+  puthex(1);
   putstr(" rollback=");
   puthex(2);
   putstr(" reused=");

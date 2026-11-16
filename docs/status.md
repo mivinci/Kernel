@@ -50,4 +50,6 @@
 
 用户已确认普通孩子CREATE的内存/峰值/资源/pending上限夹到其Createarg，并清除CREDENTIAL/SERVICE/GRANT，仍共享原Set总额。可信授权/继承与Rmail构造期接收上限机制已接，6项CREATE及2项Rq新增host、两架构createauth局部通过；Set56、Local48、Rmail64，完整197项host/格式/78个QEMU回归通过。原生CREATE仍NOTSUP，接续Sigctx必需预付与创建身份/SERVICE/加载事务。
 
-Sigctx必需预付已接Proc构造回滚与CPU离栈回收；独立Image身份引用、每运行槽2份实际HAL现场，RV704/ARM960字节，Proc仍512。5项新增host及两架构sigreserve局部通过，完整202项host/格式/80个QEMU回归通过；不含信号递送/STOP/CONT/sigreturn。11末尾的用户帧cookie提案待回复，不阻塞当前创建准入。
+Sigctx必需预付已接Proc构造回滚与CPU离栈回收；独立Image身份引用、每运行槽2份实际HAL现场，RV704/ARM960字节，Proc仍512。5项新增host及两架构sigreserve局部通过，完整202项host/格式/80个QEMU回归通过；不含信号递送/STOP/CONT/sigreturn。用户已确认11末尾的帧cookie规则，布局与可信单调分配已接；实际sigreturn核验仍待信号递送实现。
+
+帧cookie接续：Sighead前缀64字节、cookie@48，TF/FP偏移不变；跨运行槽唯一、跨PID/image复用不重置，耗尽OVERFLOW。4项新增host、完整206项host/格式及两架构sigreserve通过，日志`build/host/stage28-signal-cookie/`；最近整轮QEMU仍是上述stage27的80场景。只完成布局和分配，未开放用户信号帧或sigreturn。

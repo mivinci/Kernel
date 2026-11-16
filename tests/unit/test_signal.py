@@ -22,7 +22,8 @@ class SignalReservationTests(unittest.TestCase):
     def exercise(self,lib,method):
         def body():
             for name,args in {'sigreserve':[support.Imageid],'sigrelease':[support.Imageid],
-                'sigstat':[support.Imageid,C.POINTER(Sigstat)]}.items():getattr(lib,name).argtypes=args
+                'sigstat':[support.Imageid,C.POINTER(Sigstat)],
+                'sigcookie':[support.Imageid,C.POINTER(C.c_uint64)]}.items():getattr(lib,name).argtypes=args
             try:method()
             finally:
                 for image in self.images:
@@ -107,4 +108,84 @@ class SignalReservationTests(unittest.TestCase):
             self.assertEqual(self.info(image).cleanup,65535)
             self.assertEqual(self.lib.sigrelease(image),0)
             self.assertEqual(self.info(image).cleanup,65534)
+        for lib in self.libs:self.exercise(lib,body)
+
+
+    def test_cookie_increases_across_image_replacement_and_failed_lookup_does_not_consume(self):
+        def body():
+            life=self.create();old=self.image(life);self.assertEqual(self.lib.sigreserve(old),0)
+            value=C.c_uint64(77)
+            self.assertEqual(self.lib.sigcookie(old,C.byref(value)),-6);self.assertEqual(value.value,0)
+            self.assertEqual(self.lib.lifepublish(life),0);self.assertEqual(self.lib.imageactivate(old),0)
+            self.assertEqual(self.lib.sigcookie(old,C.byref(value)),0);first=value.value
+            self.assertGreater(first,0)
+            self.assertEqual(self.lib.sigcookie(old,C.byref(value)),0);self.assertGreater(value.value,first);step=value.value-first
+            self.assertEqual(self.lib.imageend(old,3),0);self.assertEqual(self.lib.sigrelease(old),0)
+            new=self.image(life,source=1);self.assertEqual(self.lib.sigreserve(new),0)
+            self.assertEqual(self.lib.imageactivate(new),0)
+            self.assertEqual(self.lib.sigcookie(old,C.byref(value)),-4);self.assertEqual(value.value,0)
+            self.assertEqual(self.lib.sigcookie(new,C.byref(value)),0);self.assertEqual(value.value,first+2*step)
+            self.assertEqual(self.snapshot(new).image,2)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_cookie_increases_across_complete_pid_reuse_without_reviving_old_image(self):
+        def body():
+            from test_life import Result
+            oldlife=self.create();old=self.image(oldlife)
+            self.assertEqual(self.lib.sigreserve(old),0)
+            self.assertEqual(self.lib.lifepublish(oldlife),0);self.assertEqual(self.lib.imageactivate(old),0)
+            cookie=C.c_uint64();self.assertEqual(self.lib.sigcookie(old,C.byref(cookie)),0);before=cookie.value
+            self.assertEqual(self.lib.imageend(old,1),0);self.assertEqual(self.lib.lifeend(oldlife,1,42,None),0)
+            self.assertEqual(self.lib.sigrelease(old),0);self.assertEqual(self.lib.imagedetach(old),0)
+            self.assertEqual(self.lib.lifedetach(oldlife),0);self.assertEqual(self.lib.lifecollect(oldlife,1,C.byref(Result())),0)
+            freshlife=self.create(generation=2);fresh=self.image(freshlife)
+            self.assertEqual(self.lib.sigreserve(fresh),0)
+            self.assertEqual(self.lib.lifepublish(freshlife),0);self.assertEqual(self.lib.imageactivate(fresh),0)
+            self.assertEqual(self.lib.sigcookie(old,C.byref(cookie)),-4);self.assertEqual(cookie.value,0)
+            self.assertEqual(self.lib.sigcookie(fresh,C.byref(cookie)),0);self.assertGreater(cookie.value,before)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_cookies_are_disjoint_between_different_running_slots(self):
+        def body():
+            values=[]
+            for slot in (1,2):
+                life=self.create(slot=slot);image=self.image(life)
+                self.assertEqual(self.lib.sigreserve(image),0)
+                self.assertEqual(self.lib.lifepublish(life),0);self.assertEqual(self.lib.imageactivate(image),0)
+                cookie=C.c_uint64()
+                for _ in range(2):
+                    self.assertEqual(self.lib.sigcookie(image,C.byref(cookie)),0);values.append(cookie.value)
+            self.assertEqual(len(set(values)),4)
+            self.assertGreater(values[1],values[0]);self.assertGreater(values[3],values[2])
+        for lib in self.libs:self.exercise(lib,body)
+
+class SignalCookieExhaustionTests(unittest.TestCase):
+    extra_flags=('-DPROCS=4','-DREQUESTS=64','-DRECOVERY_RQS=12','-DSIG_COOKIE_MAX=2')
+    extra_sources=('signal.c',)
+    context_layout=True
+    setUpClass=classmethod(support.ImageTests.setUpClass.__func__)
+    tearDownClass=classmethod(support.ImageTests.tearDownClass.__func__)
+    exercise=SignalReservationTests.exercise
+    pstat=SignalReservationTests.pstat
+    pid=SignalReservationTests.pid
+    create=SignalReservationTests.create
+    stat=SignalReservationTests.stat
+    setstat=SignalReservationTests.setstat
+    image=SignalReservationTests.image
+    info=SignalReservationTests.info
+
+    def test_exhaustion_never_wraps_or_resets_after_release(self):
+        def body():
+            life=self.create();old=self.image(life)
+            self.assertEqual(self.lib.sigreserve(old),0)
+            self.assertEqual(self.lib.lifepublish(life),0);self.assertEqual(self.lib.imageactivate(old),0)
+            cookie=C.c_uint64()
+            prior=0
+            for _ in range(2):
+                self.assertEqual(self.lib.sigcookie(old,C.byref(cookie)),0);self.assertGreater(cookie.value,prior);prior=cookie.value
+            self.assertEqual(self.lib.sigcookie(old,C.byref(cookie)),-20);self.assertEqual(cookie.value,0)
+            self.assertEqual(self.lib.imageend(old,3),0);self.assertEqual(self.lib.sigrelease(old),0)
+            new=self.image(life,source=1);self.assertEqual(self.lib.sigreserve(new),0)
+            self.assertEqual(self.lib.imageactivate(new),0)
+            self.assertEqual(self.lib.sigcookie(new,C.byref(cookie)),-20);self.assertEqual(cookie.value,0)
         for lib in self.libs:self.exercise(lib,body)

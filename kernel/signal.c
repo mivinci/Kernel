@@ -11,13 +11,15 @@ struct Sigctx
   Rqid    request;
   Imageid target;
   u64     frame, saved_mask, active_mask, restore_mask, wait_subject;
-  u32     wait_kind, wait_options, restart, signum, state, reserved;
+  u32     wait_kind, wait_options;
+  u64     cookie;
+  u8      restart, signum, state, reserved;
 };
 struct Signal
 {
   Imageid identity;
   Handle  owner;
-  u64     image, mask, pending;
+  u64     image, mask, pending, sequence;
   u32     depth, reserved;
   Sigact  actions[SIGNAL_COUNT];
   Sigctx  contexts[SIGNAL_DEPTH];
@@ -25,7 +27,22 @@ struct Signal
 STATIC_ASSERT(sizeof(Sigctx) <= 1024, sigctx_budget);
 STATIC_ASSERT(__alignof__(Sigctx) == 16, sigctx_align);
 STATIC_ASSERT(PROCS > 0 && PROCS <= 64 && SIGNAL_DEPTH == 2, signal_capacity);
+#define SIG_COOKIE_SHIFT 6
+#ifndef SIG_COOKIE_MAX
+#define SIG_COOKIE_MAX (~(u64) 0 >> SIG_COOKIE_SHIFT)
+#endif
+STATIC_ASSERT(SIG_COOKIE_MAX > 0 && SIG_COOKIE_MAX <= (~(u64) 0 >> SIG_COOKIE_SHIFT),
+              signal_cookie_capacity);
 static Signal signals[PROCS];
+static void
+reset(Signal *s)
+{
+  u64 sequence = s->sequence;
+  u32 i;
+  for (i = 0; i < sizeof(*s); i++)
+    ((u8 *) s)[i] = 0;
+  s->sequence = sequence;
+}
 static Signal *
 find(Imageid id)
 {
@@ -48,7 +65,7 @@ sigreserve(Imageid id)
 {
   Signal *s;
   Image   image;
-  u32     index, i;
+  u32     index;
   int     error;
   if (imagestat(id, &image))
     return -ERR_STALE;
@@ -64,8 +81,7 @@ sigreserve(Imageid id)
   if (error)
     return error;
   /* Typed resident records are acquired together, before the Proc can escape. */
-  for (i = 0; i < sizeof(*s); i++)
-    ((u8 *) s)[i] = 0;
+  reset(s);
   s->identity.generation = id.generation;
   s->identity.index = id.index;
   s->identity.reserved = 0;
@@ -90,10 +106,27 @@ sigrelease(Imageid id)
   for (i = 0; i < SIGNAL_DEPTH; i++)
     if (s->contexts[i].state || s->contexts[i].request.generation)
       return -ERR_BUSY;
-  for (i = 0; i < sizeof(*s); i++)
-    ((u8 *) s)[i] = 0;
+  reset(s);
   if (imagedrop(id, IMAGE_CLEANUP))
     panic("signal reservation image reference");
+  return 0;
+}
+int
+sigcookie(Imageid id, u64 *out)
+{
+  Signal *s = find(id);
+  Image   image;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!s)
+    return -ERR_STALE;
+  if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  if (s->sequence >= SIG_COOKIE_MAX)
+    return -ERR_OVERFLOW;
+  /* Private encoding makes different running slots disjoint as well. */
+  *out = (++s->sequence << SIG_COOKIE_SHIFT) | handleindex(s->owner);
   return 0;
 }
 int
@@ -124,6 +157,8 @@ sigcheck(void)
   u32     i, j;
   for (i = 0; i < PROCS; i++) {
     s = &signals[i];
+    if (s->sequence > SIG_COOKIE_MAX)
+      return -ERR_STATE;
     if (!s->owner)
       continue;
     if (imagestat(s->identity, &image) || s->owner != image.pid || s->image != image.number ||

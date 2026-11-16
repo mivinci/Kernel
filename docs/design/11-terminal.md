@@ -270,7 +270,7 @@ fork 的准备中断、发布后成功结果、STOP/CONT/KILL 与超时排序见
 
 Sigact见06。flags RESTART=1、NODEFER=2、RESETHAND=4、SIGINFO=8、NOCLDSTOP=16、NOCLDWAIT=32；后两位只允许CHLD，未知位拒绝，ONSTACK/sigaltstack首版不支持。DEFAULT/IGNORE的handler/trampoline必须0，HANDLER两入口合法且EXEC映射；注册和递送时都校验。handler可重入的标准接口按08预付上下文执行；普通fork钩子不声明异步安全，_Fork没有钩子。
 
-Sigframe前缀64字节：magic、bytes、depth、previous_user_frame、restore_mask、flags、reserved[2]八u64；magic=0x4b53494730303031、flags=0。Siginfo在64处占64字节：signum(u32)、code(u32)、pid(u64)、uid(u32)、reserved0(u32)、address(u64)、reason(u64)、status(u64)、reserved[2] (u64)。TF在128，FP在416；RV64总688、ARM64总944，均16字节对齐。previous仅用户帧地址，无内核指针；原用户现场仍保存在TF，不以信号入口当前寄存器覆盖它；具体trampoline六参数入口见下文，公共handler仍为一参数或SA_SIGINFO三参数。
+Sigframe前缀64字节：magic、bytes、depth、previous_user_frame、restore_mask、flags、cookie、reserved八u64；magic=0x4b53494730303031、flags=0，cookie在offset48、reserved在56且必须0。cookie由内核单调分配，用户不能用其他值替代；sigreturn须同时匹配当前最上层帧地址、深度、完整PID/image归属与内核保存的cookie。Siginfo在64处占64字节：signum(u32)、code(u32)、pid(u64)、uid(u32)、reserved0(u32)、address(u64)、reason(u64)、status(u64)、reserved[2] (u64)。TF在128，FP在416；RV64总688、ARM64总944，均16字节对齐。previous仅用户帧地址，无内核指针；原用户现场仍保存在TF，不以信号入口当前寄存器覆盖它；具体trampoline六参数入口见下文，公共handler仍为一参数或SA_SIGINFO三参数。
 
 每进程预付2层Sigctx，普通帧位于当前用户栈下方、检查完整可写/普通内存和16字节对齐，不能向guard/MMIO写帧。栈不足/非法帧以BAD_SIGNAL_FRAME→SIGSEGV不可恢复退出；不靠递归SIGSEGV掩盖。用户可修改可合法恢复的PC/SP/GPR/FP及mask，但恢复时重新检查用户范围、执行映射、EL0/U态、允许特权位、FP控制合法值；不能修改内核保存的Rq终态/已经消费结果或重启责任。只能最上层当前帧，重复/旧image/其他PID拒绝并终止，sigreturn不回已退栈C续点。
 
@@ -376,7 +376,7 @@ Termarg位：iflag ICRNL=1；oflag OPOST=1、ONLCR=2；lflag ICANON=1、ECHO=2�
 使用单串口，验证本轮定义的会话/组/信号语义，不以仅杀单个前台 PID 通过验收；不宣称完整 POSIX 兼容。
 
 
-### 信号预付接续与帧身份开放问题（2026-11-16）
+### 信号预付与帧身份接续（2026-11-16）
 
 已接可信sigreserve/sigrelease及每运行槽固定2份有类型Sigctx和动作表；记录含完整HAL用户整数/FP现场、动作快照、Rq/等待身份及三个掩码责任，当前RV64每份704字节、ARM64每份960字节，均16字节对齐且低于1024预算。不是用户Sigframe布局，不能把内核记录直接复制给用户。预付存储随编译容量驻留BSS，不临时在信号/低内存路径申请页面或引入通用对象池。
 
@@ -386,4 +386,15 @@ Termarg位：iflag ICRNL=1；oflag OPOST=1、ONLCR=2；lflag ICANON=1、ECHO=2�
 - [x] 两架构sigreserve在真实Proc构造中注入早期费用不足和晚期资源槽不足，均回滚Sigctx/Image/Rq/Life/页/费用。实际U/EL0 exit42后仅到CPU清理phase2才解除预付，随后仍持观察的旧Image和新PID/同运行槽互不误选。
 - [x] 完整202项host、格式及80个QEMU场景通过，日志`build/host/stage27-signal-reserve/test-all.log`。当前normal仍只初始化停机，不模拟init或处理函数，不称信号递送或sigreturn通过。
 
-开放问题：既定sigreturn只接受frame地址，而固定栈地址可被重复使用；前缀只有depth/previous/mask和保留字，无法区分同地址的旧帧副本。已询问用户是否把offset48的一个reserved改为单调cookie，在内核预付槽跨PID/image复用时不重置，校验最上层地址/depth/cookie；保持64字节前缀和TF/FP偏移。此项待回复，当前没有Sigframe/sigreturn代码，未改变冻结的前缀。cookie仅区分未更新的旧帧副本，不替代对可修改寄存器、特权位和mask的独立校验。
+帧身份问题已由用户于2026-11-16确认：offset48的一个reserved改为单调cookie，保持64字节前缀及TF/FP偏移；内核预付槽跨PID/image复用时不重置，sigreturn核验最上层地址/depth/cookie及完整主体。共享Sighead64布局已落在abi/signal.h。cookie仅区分未更新的旧帧副本，不替代对可修改寄存器、特权位和mask的独立校验；调用者合法改写自己的恢复现场不被误称为跨主体授权。
+
+
+### 单调帧cookie分配（2026-11-16用户确认）
+
+已接可信sigcookie，仅对实际ACTIVE且仍绑定预付槽的完整Imageid生成不为0的cookie；PREPARING/ENDED、旧镜像/陈旧身份均不消耗序列。预付释放和再次绑定只清除现场/动作/归属，保留每槽序列。私有实现以58位序列和6位运行槽号组合，跨槽也不重号，达到上限OVERFLOW且输出0、不回绕；cookie是不透明恢复标签，不是Handle或任何管理授权。
+
+Sigctx把三个有界小状态缩为u8以容纳cookie，预付槽序列利用原有对齐空间；RV64仍704、ARM64仍960字节，无新运行期分配。4项新增host验证镜像替换、完整PID/同槽复用、跨槽唯一及把上限缩到2后的耗尽不重置；两架构sigreserve在实际Proc/用户exit生命周期中验证同槽新PID继续递增、旧Image不能消耗新序列。
+
+这只验证共享前缀布局及内核分配/生命周期机制。实际用户帧写入、最上层校验、合法TF/FP/mask恢复和sigreturn尚未实现，不能将分配器测试当成处理函数/反例递送验收。
+
+本次分配器变更另通过完整206项host/格式和两架构sigreserve，日志`build/host/stage28-signal-cookie/`；最近整轮QEMU为stage27的80场景，不把本轮两场景称作重新执行全套。

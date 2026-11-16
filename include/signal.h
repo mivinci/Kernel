@@ -13,6 +13,8 @@ struct Sigstat
 /* Each reservation owns one Image cleanup ref, no independent Acct/Set quota. */
 int sigreserve(Imageid image);
 int sigrelease(Imageid image);
+/* Active image only; cookies persist across every reuse of the same bank. */
+int sigcookie(Imageid image, u64 *out);
 int sigstat(Imageid image, Sigstat *out);
 int sigcheck(void);
 #endif
