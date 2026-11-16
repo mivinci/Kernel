@@ -11,7 +11,7 @@
 ## 已实现边界
 
 - RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM缓存仍关闭；现接GICv2/PLIC外设控制器HAL及最小Device映射，现接固定镜像IRQ_BIND/ACK/解绑与真实EVENT递送；IRQ_SOURCE授权/原生bind仍待确认。
-- Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；共享页设备组、生产硬件发权及COW/DMA未接。
+- Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；生产硬件发权及COW/DMA未接。
 - Local48、Life128、Proc512、Prep184、Image64、Obs48、Rq192、Space64、Set56；结果/镜像/账目与运行槽独立回收。两层Sigctx预付RV704/ARM960，cookie跨PID/image复用不重置，不回绕。
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权，SERVICE仅由可信fixture安装，生产清单策略未启动。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地完整make test-all通过334项host、格式和102个两架构QEMU，日志`build/host/stage52-mmio/`；SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- irqbind载荷现实际map独占UART页、删除管理Cap后继续使用Device映射，由用户清中断并读回再ACK；普通copy/seal/EXEC被拒绝。同Set忙伙伴map实际DENIED；最后unmap/退出回收租约及库存引用，原IRQ/进程/IPC/运行库全量仍通过。共享页virtio、生产硬件发权和DMA未由此验收；范围与初次SDK/链接失败证据见09。
+- 本地make unit通过341项，格式及make test-qemu的104个两架构场景全部通过；日志`build/host/stage53-mmio-groups/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
+- 新mmiogroup验证完整成员/精确页、ARM一页8个virtio窗口的用户Device magic/version=2读取、同Set跨Acct拒绝与最后unmap后的交接；RV独占页复用原租约。初次实际读version1后已固定force-legacy=false，失败/读回保留。原IRQ/进程/IPC/运行库全量通过；可信发权不等于生产SYSTEM/设备策略，队列/DMA/设备I/O仍待接。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

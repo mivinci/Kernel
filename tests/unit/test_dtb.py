@@ -67,7 +67,7 @@ class Irq(C.Structure):
     _fields_ = [('parent', C.c_uint32), ('number', C.c_uint32), ('flags', C.c_uint32), ('reserved', C.c_uint32)]
 class Device(C.Structure):
     _fields_ = [('kind', C.c_uint32), ('nreg', C.c_uint32), ('nirq', C.c_uint32), ('phandle', C.c_uint32),
-                ('reg', Range * 2), ('irq', Irq * 4), ('limit', C.c_uint32), ('protected', C.c_uint32), ('mappable',C.c_uint32),('reserved',C.c_uint32)]
+                ('reg', Range * 2), ('irq', Irq * 4), ('limit', C.c_uint32), ('protected', C.c_uint32), ('mappable',C.c_uint32),('groupable',C.c_uint32)]
 class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
@@ -302,6 +302,28 @@ class DtbTests(unittest.TestCase):
         rc,info=self.parse(blob(basic([plic(),uart(),other])))
         self.assertEqual(rc,0)
         self.assertEqual(next(d for d in info.dev[:info.ndev] if d.kind==1).mappable,1)
+
+    def test_known_shared_page_is_groupable_but_not_individually_mappable(self):
+        second=uart(0x10000200,0x100);second=('uart2',second[1],second[2])
+        rc,info=self.parse(blob(basic([plic(),uart(),second])))
+        self.assertEqual(rc,0)
+        ports=[d for d in info.dev[:info.ndev] if d.kind==1]
+        self.assertEqual([(d.mappable,d.groupable) for d in ports],[(0,1),(0,1)])
+
+    def test_unknown_disabled_and_protected_neighbors_never_make_a_page_group(self):
+        clint=node('clint',[('compatible',b'riscv,clint0\0'),('reg',cells(0x10000800)+cells(0x800)),('interrupts-extended',words(1,3,1,7))])
+        disabled=uart(0x10000200,0x100,extra=[('status',b'disabled\0')]);disabled=('uart2',disabled[1],disabled[2])
+        for other in (node('unknown',[('reg',cells(0x10000200)+cells(0x100))]),disabled,clint,node('bad',[('reg',b'bad')])):
+            rc,info=self.parse(blob(basic([plic(),uart(),other])))
+            self.assertEqual(rc,0)
+            first=next(d for d in info.dev[:info.ndev] if d.kind==1)
+            self.assertEqual((first.mappable,first.groupable),(0,0))
+
+    def test_grouping_does_not_hide_a_neighbor_extending_beyond_the_page(self):
+        second=uart(0x10000800,0x1000);second=('uart2',second[1],second[2])
+        rc,info=self.parse(blob(basic([plic(),uart(),second])))
+        self.assertEqual(rc,0)
+        self.assertTrue(all(not d.groupable for d in info.dev[:info.ndev] if d.kind==1))
 
     def test_seeded_mutations_never_publish_partial_result(self):
         seed = random.Random(37)

@@ -46,7 +46,7 @@ struct Dtdev
   u32     kind, nreg, nirq, phandle;
   Dtrange reg[DT_REGS];
   Dtirq   irq[DT_IRQS];
-  u32     limit, protected, mappable, reserved;
+  u32     limit, protected, mappable, groupable;
 };
 struct Dtinfo
 {

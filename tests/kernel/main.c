@@ -5,7 +5,10 @@ testmain(Hvs *space, const Dtinfo *hardware)
 {
   UNUSED(space);
   UNUSED(hardware);
-#if BOOT_CASE == 48
+#if BOOT_CASE == 49
+  grouppagetest(hardware);
+  putstr("READY mmiogroup-restored\n");
+#elif BOOT_CASE == 48
   bindtest(hardware);
   putstr("READY irqbind-restored\n");
 #elif BOOT_CASE == 47

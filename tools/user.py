@@ -230,6 +230,14 @@ def build(args):
     if len(irq_rows)!=1 or int(irq_rows[0][2])!=256:raise BuildError('IRQ driver trace missing')
     irq_address=int(irq_rows[0][1],16)
     (sdk/'irqimage.S').write_text('/* image sha256: '+digest(irq_image)+' */\n.section .rodata\n.balign 8\n.global irq_image,irq_image_end,irq_trace_address\nirq_image:\n.incbin "'+str(irq_image)+'"\nirq_image_end:\n.balign 8\nirq_trace_address:\n.quad '+str(irq_address)+'\n')
+    group_user=link_adoption('groupuser',[compile_adoption(ROOT/'tests/kernel/groupuser.c','groupuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'transportprobe.c','transportprobe')])
+    group_image=sdk/'groupuser.img'
+    group_image.write_bytes(pack(group_user.read_bytes(),profile['machine'],128))
+    group_inspect=invoke('inspect-mmio-group',[tools['readelf']['path'],'-h','-l','-s',str(group_user)])
+    group_rows=[line.split() for line in group_inspect.splitlines() if line.split() and line.split()[-1]=='group_trace']
+    if len(group_rows)!=1 or int(group_rows[0][2])!=256:raise BuildError('MMIO group trace missing')
+    group_address=int(group_rows[0][1],16)
+    (sdk/'groupimage.S').write_text('/* image sha256: '+digest(group_image)+' */\n.section .rodata\n.balign 8\n.global group_image,group_image_end,group_trace_address\ngroup_image:\n.incbin "'+str(group_image)+'"\ngroup_image_end:\n.balign 8\ngroup_trace_address:\n.quad '+str(group_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'

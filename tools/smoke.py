@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "mmiogroup":
+        if ready != ["READY mmiogroup-restored"] or panics or traps:
+            raise SmokeError("MMIO page group test did not finish")
     elif case == "irqbind":
         if ready != ["READY irqbind-restored"] or panics or traps:
             raise SmokeError("IRQ binding test did not finish")
@@ -332,7 +335,8 @@ def validate_discovery(text, arch, ram_mb, names, boot):
         if (d.get("index") != i or d.get("regs") != len(d["mmio"]) or d.get("irqs") != len(d["irq"])
                 or d.get("protected") != int(d.get("kind", 0) >= 4)
                 or d.get("mappable",0) & ~((1<<d["regs"])-1)
-                or (d["protected"] and d.get("mappable",0))):
+                or d.get("groupable",0) & ~((1<<d["regs"])-1)
+                or (d["protected"] and (d.get("mappable",0) or d.get("groupable",0)))):
             raise SmokeError("device shape/protection mismatch")
         for r in d["mmio"]:
             if any(overlaps(r, x) for x in ranges["RAM"] + ranges["RESERVED"] + all_mmio):
@@ -505,7 +509,7 @@ def exercise(args, run_dir, record):
         command = [qemu, *machine, "-accel", "tcg", "-smp", "1", "-m", str(args.ram) + "M", "-nodefaults",
                    "-display", "none", "-monitor", "none", "-serial", "file:" + str(serial),
                    "-qmp", "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
-                   "-kernel", str(artifact)]
+                   "-global", "virtio-mmio.force-legacy=false", "-kernel", str(artifact)]
         if args.virtio:
             command += ["-device", "virtio-rng-device"]
         if args.trace:
@@ -534,6 +538,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY mmiogroup-restored\n" if args.case == "mmiogroup" else
                     "READY irqbind-restored\n" if args.case == "irqbind" else
                     "READY irqchip-restored\n" if args.case == "irqchip" else
                     "READY sigsuspend-restored\n" if args.case == "sigsuspend" else
@@ -638,6 +643,15 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "mmiogroup":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MMIOGROUPCHECK ")]
+                    transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
+                    page=transports[0]["mmio"][0]["base"]&~4095
+                    count=sum((device["mmio"][0]["base"]&~4095)==page for device in transports)
+                    expected=dict(members=count,probes=2*count,denied=1,handoff=1,charged=0,allocated=transition["tables"])
+                    if checks != [expected]:
+                        raise SmokeError("MMIO full-page membership/lease handoff mismatch")
+                    record["mmio_group"]=checks[0]
                 if args.case == "irqbind":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("IRQBINDCHECK ")]
                     if checks != [dict(cases=7,received=5,stale=5,early=3,revoked=2,busy=1,charged=0,allocated=transition["tables"])]:
@@ -890,7 +904,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

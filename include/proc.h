@@ -66,6 +66,7 @@ int     procrunone(void);
 Rtable *proccurrent(struct Hctx *frame);
 isize   procipc(u64 number, const u64 args[7], u64 outputs[8]);
 /* Trusted fixture/boot installation; raw IRQ numbers are not native authority. */
+int           procmmioinstallgroup(Handle pid, u64 page, u64 members, u64 rights, Handle *out);
 int           procmmioinstall(Handle pid, u32 device, u32 region, u64 rights, Handle *out);
 int           procirqinstall(Handle pid, u32 number, u32 bit, Handle *out);
 int           procirqack(Handle binding);

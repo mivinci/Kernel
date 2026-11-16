@@ -1424,12 +1424,49 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   }
 }
 
+static int
+mmiobacking(Proc *target, u32 window, u64 rights, Handle *out)
+{
+  Memid memory;
+  Mem   info;
+  int   error;
+  error = memdevice(target->acct, window, &memory);
+  if (error)
+    return convert(error);
+  if (memstat(memory, &info))
+    panic("MMIO installation backing");
+  error = localmem(&target->resources, memory, rights, 0, info.bytes, 0, out);
+  if (memfree(memory))
+    panic("MMIO installation reference");
+  return error;
+}
+int
+procmmioinstallgroup(Handle pid, u64 page, u64 members, u64 rights, Handle *out)
+{
+  Proc *target = find(pid);
+  u32   window;
+  int   error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!target)
+    return -ERR_STALE;
+  if (target->state != PROC_CONSTRUCT && target->state != PROC_READY &&
+      target->state != PROC_RUNNING && target->state != PROC_BLOCKED)
+    return -ERR_STATE;
+  if (!(rights & VM_READ) || rights & ~(VM_READ | VM_WRITE | LOCAL_GRANT))
+    return -ERR_DENIED;
+  error = localroom(&target->resources);
+  if (error)
+    return error;
+  error = devgroup(page, members, &window);
+  return error ? (error == DEV_DENIED ? -ERR_DENIED : -ERR_INVALID)
+               : mmiobacking(target, window, rights, out);
+}
 int
 procmmioinstall(Handle pid, u32 device, u32 region, u64 rights, Handle *out)
 {
   Proc *target = find(pid);
-  Memid memory;
-  Mem   info;
   u32   window;
   int   error;
   if (!out)
@@ -1448,15 +1485,7 @@ procmmioinstall(Handle pid, u32 device, u32 region, u64 rights, Handle *out)
   error = devwindow(device, region, &window);
   if (error)
     return error == DEV_DENIED ? -ERR_DENIED : -ERR_BAD_HANDLE;
-  error = memdevice(target->acct, window, &memory);
-  if (error)
-    return convert(error);
-  if (memstat(memory, &info))
-    panic("MMIO installation backing");
-  error = localmem(&target->resources, memory, rights, 0, info.bytes, 0, out);
-  if (memfree(memory))
-    panic("MMIO installation reference");
-  return error;
+  return mmiobacking(target, window, rights, out);
 }
 int
 procirqinstall(Handle pid, u32 number, u32 bit, Handle *out)

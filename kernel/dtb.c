@@ -687,7 +687,7 @@ mappable(Dtinfo *info)
   const Prop *type;
   Dtdev      *device;
   u64         start, bytes, end;
-  u32         i, j, k, node, count;
+  u32         i, j, k, node, count, other, region, known;
   /* Only exclusive, completely described pages are candidates. */
   for (i = 0; i < info->ndev; i++) {
     device = &info->dev[i];
@@ -707,8 +707,10 @@ mappable(Dtinfo *info)
       for (k = 0; k < info->nreserved; k++)
         if (overlap(start, bytes, info->reserved[k].base, info->reserved[k].size))
           break;
-      if (k == info->nreserved)
+      if (k == info->nreserved) {
         device->mappable |= 1U << j;
+        device->groupable |= 1U << j;
+      }
     }
   }
   /* Disabled and unknown devices still occupy physical address space.
@@ -722,13 +724,13 @@ mappable(Dtinfo *info)
     count = 0;
     if (registers(node, ranges, &count, DT_RAM)) {
       for (i = 0; i < info->ndev; i++)
-        info->dev[i].mappable = 0;
+        info->dev[i].mappable = info->dev[i].groupable = 0;
       return;
     }
     for (i = 0; i < info->ndev; i++) {
       device = &info->dev[i];
       for (j = 0; j < device->nreg; j++) {
-        if (!(device->mappable & (1U << j)))
+        if (!(device->groupable & (1U << j)))
           continue;
         start = ALIGN_DOWN(device->reg[j].base, PAGE_SIZE);
         end = ALIGN_UP(device->reg[j].base + device->reg[j].size, PAGE_SIZE);
@@ -738,7 +740,18 @@ mappable(Dtinfo *info)
             continue;
           if (overlap(start, end - start, ranges[k].base, ranges[k].size)) {
             device->mappable &= ~(1U << j);
-            break;
+            known = 0;
+            if (end - start == PAGE_SIZE && ALIGN_DOWN(ranges[k].base, PAGE_SIZE) == start &&
+                ranges[k].size <= end - ranges[k].base)
+              for (other = 0; other < info->ndev; other++)
+                if (parser.device[other] == node && !info->dev[other].protected &&
+                    info->dev[other].kind >= DT_UART16550 && info->dev[other].kind <= DT_VIRTIO)
+                  for (region = 0; region < info->dev[other].nreg; region++)
+                    if (info->dev[other].reg[region].base == ranges[k].base &&
+                        info->dev[other].reg[region].size == ranges[k].size)
+                      known = 1;
+            if (!known)
+              device->groupable &= ~(1U << j);
           }
         }
       }

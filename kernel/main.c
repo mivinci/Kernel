@@ -142,6 +142,7 @@ discovery(u64 dtb, u64 available)
     field(" kind=", d->kind);
     field(" protected=", d->protected);
     field(" mappable=", d->mappable);
+    field(" groupable=", d->groupable);
     field(" phandle=", d->phandle);
     field(" regs=", d->nreg);
     field(" irqs=", d->nirq);

@@ -148,4 +148,20 @@ host新增5项页发现检查和8项设备Mem检查：共享/未知/disabled/受
 
 首次全库链接暴露64字节库存快照赋值产生隐式memcpy，现明确逐字段复制，未靠libc链接掩盖内核依赖。失败产物保留。最终完整make test-all通过334项host、格式及102个RV64/ARM64 QEMU，最终用户MMIO清理读回场景两架构通过；SDK单向审计通过。证据、原始运行目录和关键源码哈希在build/host/stage52-mmio/。补读回检查时原型遗漏曾使一次SDK构建中断，修正后重跑全量，失败产物保留；未执行CI/目标真实硬件/性能验收。IRQ_SOURCE及原生irqbind的待确认规则不因本次MMIO改变。
 
-- [ ] 补显式整页设备组授权/同域交付及ARM共页virtio验证，保留未知/受保护资源拒绝；不以独占UART验收代替块/网络设备权限。
+- [x] 已补可信整页设备组授权与单Acct租约交付，ARM共页virtio寄存器验证见下节；保留未知/受保护拒绝，不以MMIO探测代替块/网络I/O验收。
+
+### 显式整页MMIO组接续（2026-11-17）
+
+Dtdev原内部reserved字改为groupable位，结构仍128字节。mappable只允许独占窗口；groupable表示页边界/发现完整性允许显式组授权，普通窗口仍可同时是mappable。只有同一个4KiB页内、已识别且启用的普通外设reg可作为已知共页邻居；unknown/disabled/受保护资源、翻译不完整、RAM/保留区、或跨出该页的邻居清除组资格。单独关闭mappable不会授权一个成员去触及其余设备。
+
+库存新增至多64个规范化整页组记录和64个u64成员掩码。组的明确权限范围为整个页，kind=内部DEV_PAGE_GROUP；每个成员仍保留自己的实际字节窗口记录供核验，但其单独窗口不允许创建MMIO Mem。可信procmmioinstallgroup必须同时给出已登记页和精确完整DT设备成员掩码，缺少/增加/未知成员均DENIED，未知页/受保护页不能变组。接口只在内核可信发权路径，不是用户指定PA的原生入口，也不提前定义SYSTEM/BOOT_RESOURCE生产发权格式。
+
+所有该页组Cap/Mem视图都落同一个规范化设备租约记录，不能分别建别名记录以绕过Acct隔离；同Set的另一Acct仍不能并行map。最后一个map解除后才可交接，删除管理Cap不提前撤租约。独占页的显式单成员申请复用原记录，不创建第二个可绕过租约的组对象。全局上限由128个reg窗口且每个组至少两份共页reg推得至多64组；新增固定BSS 4096字节组记录、512字节掩码及4字节计数，不引入分配器或跨Acct隐式信任域。
+
+例：A、B各有本页512字节寄存器窗口，单独申请A仍失败；显式申请完整{A,B}及该页才可给同一个Acct。A驱动持map时，另一Acct即使也获完整组Cap仍map失败；A最后unmap后，接收者才可map。若页还存在未知C，不能靠在成员掩码里漏掉/添加整数C重新开放，groupable已被关闭。
+
+新增3项DT分组检查和4项库存/租约检查。CASE=mmiogroup由真实用户程序通过只读Device映射读取全部成员的virtio magic/version：ARM64一页8个窗口，RV64单成员独占页走规范复用分支。持页者先阻塞保留映射，第二Acct完整组map被DENIED后用受权notify唤醒持有者；最后unmap再由第三个实例成功map，CPU独立核对租约/库存引用/页与费用归零。只读transport探测包括QEMU空槽，不称为特性协商、队列、DMA或设备I/O交付。
+
+实际首次探测读到version=1，暴露此前启动器未固定modern模式的配置缺口；QEMU 11.1.3 force-legacy默认true。现所有启动显式-global virtio-mmio.force-legacy=false，与冻结的现代传输目标一致，保留version==2检查，不降低为“1或2均可”。探测依据及默认行为见[QEMU 11.1.3 virtio-mmio实现](https://github.com/qemu/qemu/blob/v11.1.3/hw/virtio/virtio-mmio.c)，实际失败/版本读回与最终证据归build/host/stage53-mmio-groups/，最终本地make unit通过341项、make fmt-check通过，make test-qemu全部104个两架构场景通过；SDK单向审计通过，最终格式另通过。原始104目录和关键源码哈希见证据目录，未执行CI/目标真实硬件/性能验收。
+
+IRQ_SOURCE/原生bind及生产设备发权的待确认项继续保持关闭；块/网络设备协议与DMA安全恢复尚未由整页权限替代。

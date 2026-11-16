@@ -347,3 +347,7 @@ CASE=irqchip在CPU全局IRQ始终屏蔽时，使用真实UART THRE/TX状态作�
 该外设递送切片的最终完整回归为321项host、格式和102个两架构QEMU，通过；证据build/host/stage51-irq-delivery/，其中cooperative与timer两种真实IRQ路径及无timer伙伴进展均已验，不推定未接的设备/DMA/绑定准入策略完成。
 
 用户Device页接续（2026-11-17）：HAL user-root窗口/NX检查保留，可信Space可按Mem来源选择Device属性，不再对所有用户Device页一刀切。Dtdev变为128字节，独占页资格按完整原始reg扫描计算；MMIO视图/租约及真实用户UART处理见09。这里不新增用户可选缓存属性或任意PA映射权限。
+
+现代virtio启动配置修正（2026-11-17）：读取实际寄存器发现启动器默认legacy，现明确-global virtio-mmio.force-legacy=false；首次严格version检查的失败保留，不把此前只发现MMIO窗口说成已验modern transport。新mmiogroup在两架构实际读magic/version=2，ARM8个共页窗口完整授权与Acct拒绝/交接见09；全量回归另记录最终数据，未启动队列或DMA。
+
+整页组与modern配置最终本地验证：make unit的341项、格式及make test-qemu的104个两架构场景均通过，日志build/host/stage53-mmio-groups/。没有将寄存器探测称为virtqueue/DMA或块网络业务验收。

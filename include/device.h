@@ -3,10 +3,13 @@
 #define _DEVICE_H
 #include <dtb.h>
 #include <acct.h>
-#define DEVWINDOWS (DT_DEVICES * DT_REGS)
-#define DEV_BAD    -1
-#define DEV_LIMIT  -2
-#define DEV_DENIED -7
+#define DEVWINDOWS     (DT_DEVICES * DT_REGS)
+#define DEVGROUPS      DT_DEVICES
+#define DEVRECORDS     (DEVWINDOWS + DEVGROUPS)
+#define DEV_PAGE_GROUP 0x100U
+#define DEV_BAD        -1
+#define DEV_LIMIT      -2
+#define DEV_DENIED     -7
 typedef struct Device Device;
 struct Device
 {
@@ -18,6 +21,8 @@ STATIC_ASSERT(sizeof(Device) == 64, device_window_layout);
 int devinit(const Dtinfo *info);
 int devwindow(u32 device, u32 region, u32 *out);
 int devstat(u32 id, Device *out);
+/* Exact complete device membership for this one physical page. */
+int devgroup(u64 page, u64 members, u32 *out);
 int devhold(u32 id);
 int devdrop(u32 id);
 int devpage(u32 id, u32 page, u64 *out);

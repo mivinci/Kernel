@@ -19,6 +19,7 @@ def inventory():
 def signatures(lib):
     for name,args in {'devinit':[C.POINTER(Info)],'devstat':[C.c_uint32,C.POINTER(Device)],
         'devwindow':[C.c_uint32,C.c_uint32,C.POINTER(C.c_uint32)],
+        'devgroup':[C.c_uint64,C.c_uint64,C.POINTER(C.c_uint32)],
         'memdevice':[Acctid,C.c_uint32,C.POINTER(memory.Memid)],
         'localinit':[C.POINTER(Table),C.POINTER(Local),C.c_uint32,Acctid,space.Spaceid],
         'localmem':[C.POINTER(Table),memory.Memid,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)],
@@ -30,6 +31,8 @@ def signatures(lib):
         'localdrain':[C.POINTER(Table),C.c_uint32]}.items():getattr(lib,name).argtypes=args
 
 class DeviceMemoryTests(unittest.TestCase):
+    inventory_factory=staticmethod(inventory)
+    window_checks=(0,2)
     extra_flags=memory.MemoryTests.extra_flags
     setUpClass=classmethod(memory.MemoryTests.setUpClass.__func__)
     tearDownClass=classmethod(memory.MemoryTests.tearDownClass.__func__)
@@ -44,7 +47,7 @@ class DeviceMemoryTests(unittest.TestCase):
 
     def exercise(self,lib,method):
         def body():
-            signatures(lib);info=inventory();self.assertIn(lib.devinit(C.byref(info)),(0,-1))
+            signatures(lib);info=self.inventory_factory();self.assertIn(lib.devinit(C.byref(info)),(0,-1))
             self.accounts=[];self.tables=[]
             try:method()
             finally:
@@ -60,7 +63,7 @@ class DeviceMemoryTests(unittest.TestCase):
                     if account.bound:self.assertEqual(lib.acctunbind(aid),0)
         memory.MemoryTests.exercise(self,lib,body)
         self.assertEqual(lib.devcheck(),0)
-        for index in (0,2):
+        for index in self.window_checks:
             out=Device();self.assertEqual(lib.devstat(index,C.byref(out)),0)
             self.assertEqual((out.refs,out.mappings,out.owner.generation),(0,0,0))
 
@@ -169,6 +172,16 @@ class DeviceMemoryTests(unittest.TestCase):
             self.assertEqual(self.window().mappings,1)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_singleton_group_reuses_the_existing_window_and_lease(self):
+        def body():
+            out=C.c_uint32(99)
+            self.assertEqual(self.lib.devgroup(0x10000000,1,C.byref(out)),0)
+            self.assertEqual(out.value,0)
+            first=self.create();aid,second=self.other();one=self.io(0);two=self.io(out.value)
+            self.assertEqual(self.map(first,one),0)
+            self.assertEqual(self.map(second,two),-7)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_attributes_nx_and_window_bounds_are_not_caller_selectable(self):
         def body():
             sid=self.create();mid=self.io()
@@ -190,6 +203,8 @@ class DeviceInventoryTests(unittest.TestCase):
                 signatures(lib)
                 mutations=[(lambda x:setattr(x.dev[1],'nreg',3),-1),
                     (lambda x:setattr(x.dev[2],'mappable',1),-1),
+                    (lambda x:setattr(x.dev[2],'groupable',1),-1),
+                    (lambda x:(setattr(x.dev[0],'mappable',0),setattr(x.dev[0],'groupable',1)),-7),
                     (lambda x:setattr(x.dev[1].reg[0],'base',0x10000800),-7),
                     (lambda x:setattr(x.dev[0].reg[0],'size',(1<<64)-1),-1)]
                 for mutate,error in mutations:
@@ -201,3 +216,75 @@ class DeviceInventoryTests(unittest.TestCase):
                 self.assertEqual(lib.devinit(C.byref(info)),-1)
                 after=Device();lib.devstat(0,C.byref(after));self.assertEqual(bytes(after),bytes(before))
             space.AddressSpaceTests.exercise(self,lib,body)
+
+
+def group_inventory():
+    info=inventory()
+    for index,base in ((0,0x10000100),(1,0x10000200)):
+        d=info.dev[index];d.kind=3;d.reg[0]=Range(base,0x100);d.mappable=0;d.groupable=1
+    return info
+
+class DeviceGroupTests(unittest.TestCase):
+    inventory_factory=staticmethod(group_inventory)
+    window_checks=(0,2,128)
+    extra_flags=DeviceMemoryTests.extra_flags
+    setUpClass=classmethod(DeviceMemoryTests.setUpClass.__func__)
+    tearDownClass=classmethod(DeviceMemoryTests.tearDownClass.__func__)
+    pstat=DeviceMemoryTests.pstat
+    astat=DeviceMemoryTests.astat
+    stat=DeviceMemoryTests.stat
+    create=DeviceMemoryTests.create
+    memory_create=DeviceMemoryTests.memory_create
+    map=DeviceMemoryTests.map
+    mstat=DeviceMemoryTests.mstat
+    lookup=DeviceMemoryTests.lookup
+    exercise=DeviceMemoryTests.exercise
+    io=DeviceMemoryTests.io
+    window=DeviceMemoryTests.window
+    other=DeviceMemoryTests.other
+
+    def group(self):
+        out=C.c_uint32(99)
+        self.assertEqual(self.lib.devgroup(0x10000000,3,C.byref(out)),0)
+        return out.value
+
+    def test_exact_complete_membership_is_required_before_any_page_capability(self):
+        def body():
+            for mask in (1,2,7,1<<63):
+                out=C.c_uint32(99)
+                self.assertEqual(self.lib.devgroup(0x10000000,mask,C.byref(out)),-7)
+                self.assertEqual(out.value,0)
+            out=C.c_uint32(99)
+            self.assertEqual(self.lib.devgroup(0x10000001,3,C.byref(out)),-1)
+            self.assertEqual(self.lib.devwindow(0,0,C.byref(out)),-7)
+            self.assertEqual(self.lib.devwindow(1,0,C.byref(out)),-7)
+            self.assertEqual(self.lib.memdevice(self.aid,0,C.byref(memory.Memid())),-7)
+            group=self.group();self.assertEqual(group,128)
+            record=self.window(group)
+            self.assertEqual((record.actual.base,record.actual.size,record.pages.size,record.kind),(0x10000000,4096,4096,0x100))
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_all_views_of_a_group_share_one_lease_and_survive_management_drop(self):
+        def body():
+            group=self.group();self.assertEqual(self.group(),group)
+            first=self.create();aid,second=self.other();one=self.io(group);two=self.io(group)
+            self.assertEqual(self.map(first,one),0)
+            before=bytes(self.window(group))
+            self.assertEqual(self.map(second,two),-7)
+            self.assertEqual(bytes(self.window(group)),before)
+            self.assertEqual(self.lib.memfree(one),0)
+            self.assertEqual(self.lib.spaceunmap(first,0x10000),0)
+            self.assertEqual(self.map(second,two),0)
+            self.assertEqual(self.window(group).owner.index,aid.index)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_unregistered_or_protected_page_never_becomes_a_group(self):
+        def body():
+            # The non-shared protected third record cannot become a group.
+            out=C.c_uint32()
+            self.assertEqual(self.lib.devgroup(0xc000000,1<<2,C.byref(out)),-7)
+            self.assertEqual(self.lib.devgroup(0x10001000,3,C.byref(out)),-7)
+            first=self.create();group=self.group();one=self.io(group)
+            self.assertEqual(self.map(first,one),0)
+            self.assertEqual(self.window(group).mappings,1)
+        for lib in self.libs:self.exercise(lib,body)

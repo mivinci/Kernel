@@ -528,3 +528,5 @@ SHARED只有R/RW/GRANT授权，没有EXEC或SEAL；Mem自身的可映射/封存�
 MMIO存储来源接续（2026-11-17）：Mem现72字节，新增持久kind区分RAM与受信MMIO窗口；RETIRING不丢该来源。MMIO无普通RAM Blockref/分配费用，Device属性由来源固定，映射引用另持设备窗口Acct租约，所有失败回滚和最后unmap分别结清；数据/代码/SHARED规则保持，设备视图不seal/EXEC/copy或普通继承。精确页授权、保守共页拒绝、跨Acct约束和验收见09末尾，尚非DMA/设备恢复完成。
 
 上述MMIO切片最终完整回归为334项host、格式及102个双架构QEMU，通过；证据build/host/stage52-mmio/，没有把独占UART视图称为共页设备授权、DMA或设备恢复完成。
+
+整页设备组接续（2026-11-17）：同页已知外设可经可信路径显式申请精确完整成员页权限，各视图共用一个Acct租约；不能按字节窗口或同Set推断可共享。独占页单成员复用旧记录，不新增重叠租约。Mem仍72字节，MMIO引用/RETIRING规则不变，完整性/保护边界与真实用户探测见09末尾，生产发权/设备I/O/DMA仍另验。
