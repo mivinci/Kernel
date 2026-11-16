@@ -6,4 +6,6 @@
 int           atexit(void (*function)(void));
 NORETURN void exit(int status);
 char         *getenv(const char *name);
+long          strtol(const char *string, char **end, int base);
+unsigned long strtoul(const char *string, char **end, int base);
 #endif

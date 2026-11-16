@@ -117,8 +117,8 @@ runtimetest(void)
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u64        trace[8], bytes;
-  u32        mode, i, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0;
+  u64        trace[9], bytes;
+  u32        mode, i, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0;
   int        error;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
@@ -146,10 +146,11 @@ runtimetest(void)
       rejected++;
     } else {
       REQUIRE(trace[0] == 1 && trace[1] == 123 && trace[4] == mode && trace[5] == 1 &&
-              trace[6] == 42);
+              trace[6] == 42 && trace[8] == 55);
       REQUIRE(trace[2] == (mode == 3 ? 0 : 21) && trace[3] == (mode == 3 ? 0 : 12));
       REQUIRE(trace[7] == (mode == 1 ? 30 : 0));
       mains++;
+      numbers += (u32) trace[8];
       if (mode != 3) {
         callbacks += 2 + (u32) trace[7];
         finalizers += 2;
@@ -173,6 +174,8 @@ runtimetest(void)
   puthex(callbacks);
   putstr(" finalizers=");
   puthex(finalizers);
+  putstr(" numbers=");
+  puthex(numbers);
   putstr(" charged=");
   puthex(account.charged);
   putstr(" allocated=");

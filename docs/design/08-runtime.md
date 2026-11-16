@@ -460,3 +460,15 @@ spacecopy先快照源READ与目标WRITE的全部普通用户PTE，每侧最多17
 本地验证：CASE=libsys两架构真实C程序新增64KiB复制、同Mem不同VA物理重叠、同页不相交允许、未映射/溢出地址、Boot只读、sealed代码目标拒绝/可读源、后半页缺失前半目标不变、unmap后FAULT及零长度；最终全部页/授权/费用恢复原基线。host另覆盖跨17页非对齐64KiB、无额外页分配、双别名字节边界、后页只读、raw DEVICE PTE即便RAM backing仍拒绝。复制期间不调度故没有“并发unmap已发生”场景，不把顺序unmap测试描述为并发验证。本次最终主机新增4项复制测试，覆盖两架构页表实现；本地完整247项host、格式及92个两架构QEMU通过，最终整理后两架构libsys及4项copy主机测试另复验；日志build/host/stage37-checked-copy/。旧syscalls载荷的COPY NOTSUP断言失败日志保留，已更新为零长度成功并重新跑全套。编译帧报告spacecopy为RV64 784/ARM64 768字节，仅函数帧，非完整调用链或最长IRQ屏蔽时间证明。信号/多核/COW/真实设备和性能仍待执行。
 
 libc wait/身份接续（2026-11-16）：常规getpid/getppid、wait/waitpid、pid_t及状态宏已接，SDK递归导出sys/types.h和sys/wait.h。wait结果先由原生寄存器原子消费，再用既有__sys_copy写status；复制FAULT返回EFAULT且不重取，NULL忽略状态，WNOHANG=0不触碰输出。实际语义、错误映射、标准审计边界及验证见15末尾；完整POSIX spawn、信号/Rctx安全和FS适配仍未完成。
+
+### 基础整数转换接续（2026-11-17）
+
+已在libc独立number.c实现stdlib.h的strtol/strtoul，静态按需链接；使用C locale字节规则，前导六类ASCII空白/单个符号、2..36进制和base=0的八/十/十六自动识别。0x仅在0/16进制且后有十六进制数字时作为前缀；0b没有专门二进制扩展。无转换返回0且endptr指原串、errno保持；非法进制EINVAL且endptr指原串，成功保留errno；范围溢出返回对应LONG_MIN/LONG_MAX/ULONG_MAX并ERANGE，但继续扫描全部合法数字后才设置endptr。endptr可空。
+
+实现以unsigned long累计，先用目标上限的商/余数判定下一位，再执行乘加，避免先溢出再判定；负LONG_MIN专门返回而不进行有符号越界取负。strtoul的合法负数按无符号规则取负，原始大小已溢出则保留ULONG_MAX，不将饱和值再取负成1。两目标仍为LP64，解析不分配、不调用服务/内核，errno归既有libc；libsys不反向依赖此模块。
+
+例：strtol("0779",&end,0)得到63，end指向9且errno不变；strtol("0x",&end,0)转换初始0，end指x。-9223372036854775808可准确表示；strtoul("-18446744073709551616",&end,10)在LP64返回ULONG_MAX/ERANGE，end指串尾。完整locale、strtoll/strtoimax及C23扩展不包含在这个子集中，不称全ISO C/POSIX库已经完成。
+
+host新增6项：前缀/空串/符号/高字节和精确endptr，全部35种进制的有/无符号边界，1200个固定种子的数值/混合大小写组合，非法进制/空endptr，万位溢出串及负无符号语义，以及只读短串紧邻PROT_NONE页时的扫描边界。用独立Python整数值作为返回范围依据；guard测试在独立进程中运行，不能让越界读取被后续测试掩盖。
+
+CASE=runtime的原10个启动案例现保留原检查，5个有效main各完成55组双函数转换（20组边界/语法加35进制），共275组/550次调用，CPU核对额外跟踪字段；5个被拒启动的全部跟踪字段仍为0。RV64/ARM64 QEMU各通过，退出42/回调与析构/动态页及预算清理不变。SDK额外number.o及libc/libsys单向依赖审计通过。完整host为292项，格式通过，证据在build/host/stage47-integer-conversion/。本轮仅改变用户库/测试/SDK，未改生产内核；最近98场景完整内核回归仍见stage46，不将它说成本轮重跑。无CI、真实硬件或性能验收。

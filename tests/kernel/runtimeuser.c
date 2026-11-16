@@ -1,17 +1,80 @@
 #include <stdlib.h>
+#include <limits.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/channel.h>
 #include "private/libc.h"
 #include "private/syscall.h"
-volatile u64        runtime_trace[8];
+volatile u64        runtime_trace[9];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
       _exit(n);                                                                                    \
   } while (0)
+typedef struct Numbercase Numbercase;
+struct Numbercase
+{
+  const char   *text;
+  int           base;
+  long          signed_value;
+  unsigned long unsigned_value;
+  u32           end;
+  int           signed_error, unsigned_error;
+};
+static const Numbercase numbers[] = {
+    {"", 0, 0, 0, 0, EDOM, EDOM},
+    {" \t+", 0, 0, 0, 0, EDOM, EDOM},
+    {" -0x2a!", 0, -42, ULONG_MAX - 41, 6, EDOM, EDOM},
+    {"0779", 0, 63, 63, 3, EDOM, EDOM},
+    {"0xg", 16, 0, 0, 1, EDOM, EDOM},
+    {"0b11", 0, 0, 0, 1, EDOM, EDOM},
+    {"zz!", 36, 1295, 1295, 2, EDOM, EDOM},
+    {"9223372036854775807", 10, LONG_MAX, (unsigned long) LONG_MAX, 19, EDOM, EDOM},
+    {"-9223372036854775808", 10, LONG_MIN, (unsigned long) LONG_MAX + 1, 20, EDOM, EDOM},
+    {"9223372036854775808", 10, LONG_MAX, (unsigned long) LONG_MAX + 1, 19, ERANGE, EDOM},
+    {"-9223372036854775809", 10, LONG_MIN, (unsigned long) LONG_MAX, 20, ERANGE, EDOM},
+    {"18446744073709551615", 10, LONG_MAX, ULONG_MAX, 20, ERANGE, EDOM},
+    {"-18446744073709551615", 10, LONG_MIN, 1, 21, ERANGE, EDOM},
+    {"18446744073709551616", 10, LONG_MAX, ULONG_MAX, 20, ERANGE, ERANGE},
+    {"-18446744073709551616", 10, LONG_MIN, ULONG_MAX, 21, ERANGE, ERANGE},
+    {"0xffffffffffffffffQ", 0, LONG_MAX, ULONG_MAX, 18, ERANGE, EDOM},
+    {"123", 1, 0, 0, 0, EINVAL, EINVAL},
+    {"\377"
+     "123",
+     10, 0, 0, 0, EDOM, EDOM},
+    {"12\377"
+     "3",
+     10, 12, 12, 2, EDOM, EDOM},
+    {"-101q", 2, -5, ULONG_MAX - 4, 4, EDOM, EDOM}};
+STATIC_ASSERT(sizeof(long) == 8, runtime_integer_lp64);
+static u32
+numbercheck(void)
+{
+  char       *end;
+  u32         i;
+  int         base;
+  const char *text = "10!";
+  for (i = 0; i < ARRAY_SIZE(numbers); i++) {
+    const Numbercase *test = &numbers[i];
+    errno = EDOM;
+    REQUIRE(strtol(test->text, &end, test->base) == test->signed_value &&
+                end == test->text + test->end && errno == test->signed_error,
+            180);
+    errno = EDOM;
+    REQUIRE(strtoul(test->text, &end, test->base) == test->unsigned_value &&
+                end == test->text + test->end && errno == test->unsigned_error,
+            181);
+  }
+  for (base = 2; base <= 36; base++) {
+    errno = EDOM;
+    REQUIRE(strtol(text, &end, base) == base && end == text + 2 && errno == EDOM, 182);
+    REQUIRE(strtoul(text, &end, base) == (unsigned long) base && end == text + 2 && errno == EDOM,
+            183);
+  }
+  return (u32) ARRAY_SIZE(numbers) + 35;
+}
 static void
 preinit(void)
 {
@@ -133,6 +196,8 @@ main(int argc, char **argv)
   REQUIRE(!memcmp(scratch, "abcdef", 6) && strchr("abc", 'b')[0] == 'b' &&
               strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
           176);
+  runtime_trace[8] = numbercheck();
+  errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)
     exit(0x12a);

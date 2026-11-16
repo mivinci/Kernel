@@ -666,8 +666,8 @@ def exercise(args, run_dir, record):
                 if args.case == "runtime":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
-                            {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "charged", "allocated")} !=
-                            {"cases": 10, "main": 5, "rejected": 5, "callbacks": 38, "finalizers": 8, "charged": 0, "allocated": transition["tables"]}):
+                            {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "charged", "allocated")} !=
+                            {"cases": 10, "main": 5, "rejected": 5, "callbacks": 38, "finalizers": 8, "numbers": 275, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("runtime environment/initialization/exit mismatch")
                     record["runtime"] = checks[0]
                 if args.case == "libsys":

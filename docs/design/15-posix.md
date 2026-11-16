@@ -119,3 +119,5 @@ WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按�
 验证：elf两架构真实用户父以常规waitpid检查WNOHANG的status不变与errno保留，收取真实csu/main孩子的退出42，再以只读Boot作为另一孩子status输出得到EFAULT；下一次waitpid/ECHILD，证实已收取结果不复活。init场景使用常规getpid/getppid核对PID1/父0和活孤儿父1。6项新增host覆盖全部状态编码（含信号/FAULT/CORE及模拟STOP/CONT）、NULL status、输出故障后的消费、错误转换、选择器/选项及重复父查询；模拟结果不冒充内核未实现的信号/STOP事件。本地完整253项host、格式及92个两架构QEMU通过；最后宽度断言后两架构elf和6项host再验通过，日志build/host/stage38-libc-wait/。未执行CI或真实硬件标准验收。
 
 管理强杀状态验证接续（2026-11-16）：init真实用户场景新增两次CONTROL terminate阻塞/已唤醒未恢复的组wait父进程，常规wait取得SIGNALLED结果并核对WIFSIGNALED/WTERMSIG=9；其活孩子/已结束未收取孩子均由init正常wait退出22/11。此前信号状态编码的host证据增加了这条真实管理强杀结果，但sigsend、捕获信号及STOP/CONT仍未实现；详细窗口/引用守恒见03末尾。
+
+整数转换子集接续（2026-11-17）：stdlib.h现提供C locale的strtol/strtoul，错误/范围/endptr及已验证子集见08末尾。292项完整host和两架构runtime专项通过，每架构5个真实main共275组/550次转换；内核、locale、分配器、stdio、fork/exec和文件/网络接口的完成度不由此推定。证据build/host/stage47-integer-conversion/，未执行CI/完整标准合规验收。

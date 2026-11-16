@@ -170,3 +170,5 @@ configure现可为镜像预付0..8个资源回复保底空槽；CALL_RECV_MEM/CA
 `CASE=sigconfig`验证原生DEFAULT/IGNORE、CHLD NOCLDWAIT、掩码与初始配置，6个真实孩子覆盖旧结果保留/后续自动收取和继承/重复configure；结束动态页/配额/信号预付归零。HANDLER/其他已知flags仍NOTSUP，未接信号pending生产、发送、递送、STOP/CONT或sigreturn，不把这个配置profile称为完整信号。目标仍包括net。
 
 sigreserve场景另检查信号Hctx的HAL转换/恢复边界：拒绝特权/IRQ/诊断篡改和非法FP控制、失败不写输出，恢复后的GPR/FP/NZCV实际进入U/EL0验证。它没有接通用户帧映射/cookie/最上层检查或原生sigreturn，HANDLER仍NOTSUP；细节与证据见11末尾。
+
+基础libc另已提供C locale的strtol/strtoul，支持2..36进制、自动八/十/十六识别、精确endptr和范围错误；不依赖fs/net。runtime场景每架构5个真实main共核对275组/550次转换，并保持原启动/退出和资源清理检查；当前子集与证据见08/15末尾。
