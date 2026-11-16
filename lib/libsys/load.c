@@ -190,6 +190,8 @@ elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 boot
       bootbytes < sizeof(Boot) || bootbytes > BOOT_MAX_BYTES ||
       work->scratch_bytes < ALIGN_UP(bootbytes, PAGE_SIZE))
     return -ERR_INVALID;
+  if (work->sigmask & ~SIGNAL_SUPPORTED)
+    return -ERR_INVALID;
   work->failure = 0;
   error = startup(work, boot, bootbytes);
   for (i = 0; !error && i < plan->count; i++) {
@@ -215,5 +217,6 @@ elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 boot
   out->stack = ELF_STACK_TOP;
   out->boot = ELF_BOOT_ADDRESS;
   out->bootsz = bootbytes;
+  out->sigmask = work->sigmask;
   return 0;
 }

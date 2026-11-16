@@ -108,7 +108,7 @@ lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
   l->fault.pc = l->fault.address = l->fault.cause = 0;
   l->state = LIFE_CONSTRUCT;
   l->run = run;
-  l->reason = l->code = l->waitref = 0;
+  l->reason = l->code = l->waitref = l->child_policy = l->exit_policy = 0;
   l->instance = 1;
   l->controls = l->observers = l->cleanup = 0;
   l->cred.ruid = l->cred.euid = l->cred.rgid = l->cred.egid = 0;
@@ -133,6 +133,43 @@ lifecredentials(Lifeid id, const Cred *cred)
   l->cred.rgid = cred->rgid;
   l->cred.egid = cred->egid;
   return 0;
+}
+int
+lifechildpolicy(Lifeid id, u32 policy)
+{
+  Life *l = find(id);
+  if (!l)
+    return -ERR_STALE;
+  if ((policy & ~(LIFE_AUTOCHILD | LIFE_IGNORECHLD)) ||
+      ((policy & LIFE_IGNORECHLD) && !(policy & LIFE_AUTOCHILD)))
+    return -ERR_INVALID;
+  if (l->state != LIFE_CONSTRUCT && l->state != LIFE_LIVE)
+    return -ERR_STATE;
+  l->child_policy = (u8) policy;
+  return 0;
+}
+static void
+collected(Life *l, Handle parent)
+{
+  l->parent = parent;
+  l->waitref = 0;
+  if (l->group) {
+    if (groupdetach(l->group))
+      panic("collected group relationship");
+    l->group = 0;
+  }
+  leave(l);
+  reap(l);
+}
+static Life *
+liveparent(Handle pid)
+{
+  u32   slot = handleindex(pid), entry;
+  Life *l;
+  if (slot >= PROCS || !(entry = runlife[slot]) || entry > LIFES)
+    return NULL;
+  l = &lives[entry - 1];
+  return l->pid == pid && l->state == LIFE_LIVE ? l : NULL;
 }
 int
 lifepublish(Lifeid id)
@@ -171,7 +208,8 @@ lifecancel(Lifeid id)
 int
 lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
 {
-  Life *l = find(id);
+  Life  *l = find(id), *parent;
+  Handle owner;
   if (!l)
     return -ERR_STALE;
   if (l->pid == 1)
@@ -194,7 +232,12 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
   l->sequence++;
   l->state = LIFE_ENDED;
   retire(l);
-  changed(parentof(l));
+  owner = parentof(l);
+  parent = liveparent(owner);
+  l->exit_policy = parent ? parent->child_policy : 0;
+  if (l->waitref && parent && (parent->child_policy & LIFE_AUTOCHILD))
+    collected(l, owner);
+  changed(owner);
   changed(1); /* A blocked init must also reconsider newly adopted children. */
   return 0;
 }
@@ -293,15 +336,7 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   out->sequence = l->sequence;
   out->reason = l->reason;
   out->code = l->code;
-  l->parent = parentof(l);
-  l->waitref = 0;
-  if (l->group) {
-    if (groupdetach(l->group))
-      panic("collected group relationship");
-    l->group = 0;
-  }
-  leave(l);
-  reap(l);
+  collected(l, parentof(l));
   return 0;
 }
 int
@@ -327,6 +362,8 @@ lifestat(Lifeid id, Life *out)
   out->code = l->code;
   out->waitref = l->waitref;
   out->instance = l->instance;
+  out->child_policy = l->child_policy;
+  out->exit_policy = l->exit_policy;
   out->controls = l->controls;
   out->observers = l->observers;
   out->cleanup = l->cleanup;
@@ -576,6 +613,8 @@ lifecheck(void)
     l = &lives[i];
     if (!l->state)
       continue;
+    if ((l->child_policy | l->exit_policy) & ~(LIFE_AUTOCHILD | LIFE_IGNORECHLD))
+      return -ERR_STATE;
     if (l->run != PG_NONE &&
         (l->run >= PROCS || runlife[l->run] != i + 1 || handleindex(l->pid) != l->run))
       return -ERR_STATE;

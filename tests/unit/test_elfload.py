@@ -20,7 +20,7 @@ class Segment(C.Structure):
 class Plan(C.Structure):
     _fields_=[('segments',Segment*32),('entry',C.c_uint64),('pages',C.c_uint64),('count',C.c_uint32),('reserved',C.c_uint32)]
 class Work(C.Structure):
-    _fields_=[(name,C.c_int64) for name in ('view','pid','parent_space','memory')]+[(name,C.c_uint64) for name in ('image','scratch','scratch_bytes')]+[('mapped',C.c_uint32),('reserved',C.c_uint32),('failure',C.c_int64)]
+    _fields_=[(name,C.c_int64) for name in ('view','pid','parent_space','memory')]+[(name,C.c_uint64) for name in ('image','scratch','scratch_bytes')]+[('mapped',C.c_uint32),('reserved',C.c_uint32),('failure',C.c_int64),('sigmask',C.c_uint64)]
 class Config(C.Structure):
     _fields_=[(name,C.c_uint64) for name in ('entry','stack','boot','bootsz','sigmask','sigdefault')]
 

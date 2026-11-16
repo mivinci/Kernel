@@ -36,6 +36,7 @@ struct Elfwork
   u64    image, scratch, scratch_bytes;
   u32    mapped, reserved;
   isize  failure;
+  u64    sigmask;
 };
 /* The architecture adapter selects file machine and entry alignment. */
 u32   elfmachine(void);

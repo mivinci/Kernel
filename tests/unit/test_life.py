@@ -13,7 +13,7 @@ class Cred(C.Structure):
     _fields_=[(x,C.c_uint32) for x in ('ruid','euid','rgid','egid')]
 class Life(C.Structure):
     _fields_=[('generation',C.c_uint64),('pid',C.c_int64),('parent',C.c_int64),('sequence',C.c_uint64),('imagegen',C.c_uint64),('account',C.c_uint64),
-        ('set',C.c_uint64),('group',C.c_int64),('fault',Fault),('cred',Cred)]+[(x,C.c_uint32) for x in ('run','controls','observers','cleanup')]+[(x,C.c_uint8) for x in ('state','reason','code','waitref','instance')]
+        ('set',C.c_uint64),('group',C.c_int64),('fault',Fault),('cred',Cred)]+[(x,C.c_uint32) for x in ('run','controls','observers','cleanup')]+[(x,C.c_uint8) for x in ('state','reason','code','waitref','instance','child_policy','exit_policy')]
 
 class Childsel(C.Structure):
     _fields_=[("value",C.c_int64),("kind",C.c_uint32),("reserved",C.c_uint32)]
@@ -29,6 +29,7 @@ class LifeTests(unittest.TestCase):
             for name,args in {'handlepack':[C.c_uint32,C.c_uint64,C.c_uint32],
                 'lifecreate':[Setid,C.c_int64,C.c_int64,C.POINTER(Lifeid)],
                 'lifebindacct':[Lifeid,support.Acctid],
+                'lifechildpolicy':[Lifeid,C.c_uint32],
                 'lifeacct':[Lifeid,C.POINTER(support.Acctid)], 'lifecredentials':[Lifeid,C.POINTER(Cred)], 'lifepublish':[Lifeid],'lifecancel':[Lifeid],'lifedetach':[Lifeid],
                 'lifeend':[Lifeid,C.c_uint32,C.c_uint32,C.POINTER(Fault)],
                 'lifehold':[Lifeid,C.c_uint32],'lifedrop':[Lifeid,C.c_uint32],
@@ -346,3 +347,58 @@ class LifeTests(unittest.TestCase):
             self.assertEqual((ready.generation,matched.value),(0,0))
             self.assertEqual(self.lib.lifecheck(),0)
         for lib in self.libs: self.exercise(lib,body)
+
+    def child(self,parent,generation,slot):
+        identity=Lifeid()
+        self.assertEqual(self.lib.lifecreate(self.sid,self.pid(generation,slot),self.stat(parent).pid,C.byref(identity)),0)
+        self.lives.append(identity);self.assertEqual(self.lib.lifepublish(identity),0)
+        return identity
+
+    def test_child_policy_is_snapshotted_at_exit_without_retroactive_collection(self):
+        def body():
+            parent=self.create(900,1);self.lib.lifepublish(parent)
+            old=self.child(parent,900,2);self.lib.lifeend(old,1,41,None)
+            self.assertEqual(self.lib.lifechildpolicy(parent,1),0)
+            self.assertEqual(self.stat(old).waitref,1)
+            fresh=self.child(parent,900,3)
+            selected=Lifeid();matched=C.c_uint32();choice=Childsel(self.pid(900,3),1,0)
+            self.assertEqual(self.lib.lifeselect(self.pid(900,1),C.byref(choice),0,C.byref(selected),C.byref(matched)),0)
+            self.assertEqual((matched.value,selected.generation),(1,0))
+            self.assertEqual(self.lib.lifeend(fresh,1,42,None),0)
+            self.assertEqual((self.stat(fresh).waitref,self.stat(fresh).instance,self.stat(fresh).exit_policy),(0,0,1))
+            self.assertEqual(self.lib.lifechildpolicy(parent,0),0)
+            self.assertEqual(self.lib.lifecollect(fresh,self.pid(900,1),C.byref(Result())),-6)
+            result=Result();self.assertEqual(self.lib.lifecollect(old,self.pid(900,1),C.byref(result)),0)
+            self.assertEqual(result.code,41)
+            self.assertEqual(self.stat(old).exit_policy,0)
+            self.assertEqual(self.lib.lifecheck(),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_automatic_collection_keeps_observer_and_cleanup_records_independent(self):
+        def body():
+            parent=self.create(910,1);self.lib.lifepublish(parent);self.lib.lifechildpolicy(parent,1)
+            child=self.child(parent,910,2)
+            self.lib.lifehold(child,2);self.lib.lifehold(child,3)
+            self.assertEqual(self.lib.lifeend(child,1,37,None),0)
+            self.assertEqual(self.lib.lifedetach(child),0)
+            state=self.stat(child)
+            self.assertEqual((state.waitref,state.instance,state.observers,state.cleanup,state.code),(0,0,1,1,37))
+            fresh=self.create(911,2)
+            self.assertNotEqual(self.stat(fresh).pid,state.pid)
+            self.assertEqual(self.lib.lifedrop(child,2),0);self.assertEqual(self.lib.lifedrop(child,3),0)
+            self.assertEqual(self.lib.lifestat(child,C.byref(Life())),-4)
+            self.assertEqual(self.lib.lifecheck(),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_dead_parent_policy_does_not_control_later_orphan_exit(self):
+        def body():
+            parent=self.create(920,1);self.lib.lifepublish(parent);self.lib.lifechildpolicy(parent,1)
+            child=self.child(parent,920,2)
+            self.assertEqual(self.lib.lifeend(parent,1,33,None),0)
+            self.assertEqual(self.stat(child).parent,1)
+            self.assertEqual(self.lib.lifeend(child,1,22,None),0)
+            self.assertEqual(self.stat(child).waitref,1)
+            result=Result();self.assertEqual(self.lib.lifecollect(child,1,C.byref(result)),0)
+            self.assertEqual((result.pid,result.code),(self.pid(920,2),22))
+            self.assertEqual(self.lib.lifechildpolicy(parent,0),-6)
+        for lib in self.libs:self.exercise(lib,body)

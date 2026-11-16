@@ -55,7 +55,7 @@ def build(args):
     shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -197,6 +197,15 @@ def build(args):
     if len(rows)!=1 or int(rows[0][2])!=256:raise BuildError('init trace missing')
     init_address=int(rows[0][1],16)
     (sdk/'initimage.S').write_text('/* image sha256: '+digest(init_image)+' */\n.section .rodata\n.balign 8\n.global init_image,init_image_end,init_trace_address\ninit_image:\n.incbin "'+str(init_image)+'"\ninit_image_end:\n.balign 8\ninit_trace_address:\n.quad '+str(init_address)+'\n')
+    sig_child=link_adoption('sigchild',[compile_adoption(ROOT/'tests/kernel/sigchild.c','sigchild')])
+    sig_parent=link_adoption('siguser',[compile_adoption(ROOT/'tests/kernel/siguser.c','siguser'),embedded_elf(sig_child,'sig_child')])
+    sig_image=sdk/'siguser.img'
+    sig_image.write_bytes(pack(sig_parent.read_bytes(),profile['machine'],128))
+    sig_inspect=invoke('inspect-signal-config',[tools['readelf']['path'],'-h','-l','-s',str(sig_parent)])
+    sig_rows=[line.split() for line in sig_inspect.splitlines() if line.split() and line.split()[-1]=='signal_trace']
+    if len(sig_rows)!=1 or int(sig_rows[0][2])!=192:raise BuildError('signal config trace missing')
+    sig_address=int(sig_rows[0][1],16)
+    (sdk/'sigimage.S').write_text('/* image sha256: '+digest(sig_image)+' */\n.section .rodata\n.balign 8\n.global sig_image,sig_image_end,sig_trace_address\nsig_image:\n.incbin "'+str(sig_image)+'"\nsig_image_end:\n.balign 8\nsig_trace_address:\n.quad '+str(sig_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'

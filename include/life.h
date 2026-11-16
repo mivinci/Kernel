@@ -11,16 +11,18 @@
 #ifndef PROCS
 #define PROCS 64
 #endif
-#define LIFE_CONSTRUCT 1
-#define LIFE_LIVE      2
-#define LIFE_ENDED     3
-#define LIFE_ABORTED   4
-#define LIFE_CONTROL   1
-#define LIFE_OBSERVER  2
-#define LIFE_CLEANUP   3
-#define LIFE_EXIT      1
-#define LIFE_SIGNAL    2
-#define LIFE_FAULT     3
+#define LIFE_CONSTRUCT  1
+#define LIFE_LIVE       2
+#define LIFE_ENDED      3
+#define LIFE_ABORTED    4
+#define LIFE_CONTROL    1
+#define LIFE_OBSERVER   2
+#define LIFE_CLEANUP    3
+#define LIFE_EXIT       1
+#define LIFE_SIGNAL     2
+#define LIFE_FAULT      3
+#define LIFE_AUTOCHILD  1
+#define LIFE_IGNORECHLD 2
 
 typedef struct Childsel   Childsel;
 typedef struct Cred       Cred;
@@ -63,7 +65,7 @@ struct Life
   Lifefault fault;
   Cred      cred;
   u32       run, controls, observers, cleanup;
-  u8        state, reason, code, waitref, instance;
+  u8        state, reason, code, waitref, instance, child_policy, exit_policy;
 };
 STATIC_ASSERT(LIFES > 0 && LIFES <= 256 && PROCS > 0 && PROCS <= 64, life_capacity);
 STATIC_ASSERT(sizeof(Cred) == 16, cred_size);
@@ -71,6 +73,8 @@ STATIC_ASSERT(sizeof(Life) <= 128, life_budget);
 int lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out);
 /* Trusted boot/test constructor only; native CREATE must supply validated IDs. */
 int lifecredentials(Lifeid id, const Cred *cred);
+/* Trusted current-parent policy; affects only subsequent child exit commits. */
+int lifechildpolicy(Lifeid id, u32 policy);
 /* Construction binds one stable accounting identity without extending its life. */
 int lifebindacct(Lifeid id, Acctid acct);
 int lifeacct(Lifeid id, Acctid *out);

@@ -398,3 +398,21 @@ Sigctx把三个有界小状态缩为u8以容纳cookie，预付槽序列利用原
 这只验证共享前缀布局及内核分配/生命周期机制。实际用户帧写入、最上层校验、合法TF/FP/mask恢复和sigreturn尚未实现，不能将分配器测试当成处理函数/反例递送验收。
 
 本次分配器变更另通过完整206项host/格式和两架构sigreserve，日志`build/host/stage28-signal-cookie/`；最近整轮QEMU为stage27的80场景，不把本轮两场景称作重新执行全套。
+
+### 默认/忽略动作、掩码与SIGCHLD收取策略接续（2026-11-17）
+
+已接原生0x60 sigaction、0x61 sigmask、0x62 sigpending与libsys私有桩。当前明确为配置profile：只安装DEFAULT/IGNORE、CHLD上的NOCLDWAIT；HANDLER及RESTART/NODEFER/RESETHAND/SIGINFO/NOCLDSTOP等尚未有完整递送语义的已知标志返回NOTSUP，未知位/编号INVALID，KILL/STOP不可安装。没有假装注册成功或调用半实现处理函数。DEFAULT/IGNORE入口字段必须0，保留字段及动作掩码未知位拒绝。
+
+动作输入一次拷入内核快照；合法旧动作输出在安装/策略提交之前整区预检并写出，输出FAULT则旧动作/子收取策略不变。new/old地址相同时仍使用原输入快照，不能被输出的旧动作覆盖。原生sigmask支持BLOCK=0/UNBLOCK=1/SET=2，保留完整旧掩码寄存器输出；未知位/方式拒绝，KILL/STOP从有效mask与action.mask剔除，BLOCK(mask=0)可作无副作用查询。sigpending读取真实bank.pending，当前未接信号发送/硬件到信号的生产与递送，正常profile为空，不能把返回0称为递送验收。
+
+每次创建在完整Sigctx预付后从真实父Image捕获信号基线：只保留显式IGNORE种类，不复制handler/trampoline地址或动作flags/mask，pending清空，应用mask取当时可信父bank。初始init独立默认。不可变IGNORE位集使用原Signal.reserved的u32，不增加预付银行大小；configure每次从该基线重建默认/忽略表，再应用sigdefault与显式sigmask，不能累计丢失上一次被重置的IGNORE，也不因父后续改策略而改变已接受准备的基线。捕获动作转DEFAULT的通用分支尚待真正允许HANDLER后再作端到端验证。
+
+configure先校验全部地址/Boot/掩码及Signal/Life准备状态，再原子替换资源保底并应用初始动作/掩码；输入或容量失败不先改信号bank。libsys的Elfwork新增私有sigmask快照，由创建调用者在接受创建前取得，elfload只传到Config，不在装载结束再读取可能变化的父mask；现有adopt/elf测试加载器已接。初始掩码不是内核运行库内部的临时阻塞位，当前尚无handler/Rctx临时掩码，未来递送需保持其既定区分。
+
+Life仍128字节：原尾部padding容纳当前父child_policy及本实例exit_policy快照。显式CHLD IGNORE记为AUTOCHILD|IGNORECHLD，DEFAULT+NOCLDWAIT记AUTOCHILD，普通DEFAULT记0；孩子退出在同一提交点按完整合法父快照这份决定。AUTO仅解除父waitref/实例额度及对应退出组保留，Life/Acct/Image/Rq/观察和真实页仍按独立引用保留；同时CHILD提示让阻塞wait复查，若仍有匹配活孩子不能提前ECHILD。CHILD事件是关系提示，不冒充已递送的SIGCHLD。后续动作变更不重评旧exit_policy，父死亡后的活孤儿在自身后来退出时使用新合法父的策略；已经保留的旧结果转交也不重新裁决。
+
+本profile只完成结果保留/自动收取决策，尚未生成真实SIGCHLD pending或调用处理函数。NOCLDWAIT且非IGNORE的通知生成、IGNORE抑制通知、NOCLDSTOP和STOP/CONT的通知路径须后续与递送一起完成，不能以自动收取成功声称通知已齐备。sigreturn/帧TF/FP权限验证、信号发送授权、sigsuspend及库errno/中断重启仍未实现。
+
+新增CASE=sigconfig，两架构真实父程序以raw原生接口检查掩码/KILL-STOP清除、非法方式/编号/标志、只读旧动作输出失败保留策略、new/old别名快照及不支持HANDLER显式拒绝。随后真正装载6个csu/main孩子：2个保留结果退出31，4个按IGNORE/NOCLDWAIT自动收取；旧结果在安装IGNORE后仍能领取，新自动收取孩子尚活时WNOHANG=0，阻塞wait在退出后醒来返回ECHILD。孩子自己查询验证IGNORE/掩码继承、NOCLDWAIT flags不随普通创建复制、sigdefault重置及再次configure恢复原基线，失败配置不产生畸形mask。
+
+host新增3项Life策略测试和3项Signal配置测试，覆盖退出提交后不追溯、自动收取后独立观察/清理引用、旧父AUTO不控制未来孤儿退出、掩码/动作profile与不可变基线。可信CPU还核对每份真实child_policy/exit_policy，结束后所有孩子Life、动态页、Set/Acct/组及信号预付归还。本地完整274项host、格式及94个两架构QEMU通过；退出策略快照最终补强后再跑完整274项host、格式及两架构sigconfig专项，日志build/host/stage43-signal-config/。normal未启动生产init，net及完整系统验收仍在目标范围，未运行CI/真实硬件/性能验证。

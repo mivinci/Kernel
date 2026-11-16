@@ -61,6 +61,9 @@ adoptspawn(const u8 *data, u64 bytes, const char *name, u64 limit, u32 resources
   create.euid = ids[1];
   create.rgid = ids[2];
   create.egid = ids[3];
+  error = __sys_sigmask(SIGNAL_BLOCK, 0, &work->sigmask);
+  if (error)
+    return error;
   error = __sys_create(bootresource(sysboot(), BOOT_CREATE), &create, &work->view, pid, &control);
   if (error)
     return error;

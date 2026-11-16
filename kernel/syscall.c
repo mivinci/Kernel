@@ -62,6 +62,7 @@ syscall(Hctx *context)
   case SYS_QUERY:
     used = 31;
     break;
+  case SYS_SIGACTION:
   case SYS_COPY:
   case SYS_CONFIGURE:
   case SYS_GETCRED:
@@ -70,6 +71,7 @@ syscall(Hctx *context)
   case SYS_GRANT:
     used = 63;
     break;
+  case SYS_SIGMASK:
   case SYS_WAIT:
   case SYS_CREATE:
   case SYS_SETPG:
@@ -127,6 +129,7 @@ syscall(Hctx *context)
   case SYS_UNMAP:
     used = 3;
     break;
+  case SYS_SIGPENDING:
   case SYS_SETSID:
   case SYS_ALARMCANCEL:
   case SYS_YIELD:
@@ -294,6 +297,15 @@ syscall(Hctx *context)
       status = clockres(args[0], &seconds, &outputs[1]);
     if (!status)
       outputs[0] = (u64) seconds;
+    break;
+  case SYS_SIGACTION:
+    status = procsigaction(args[0], args[1], args[2]);
+    break;
+  case SYS_SIGMASK:
+    status = procsigmask(args[0], args[1], &outputs[0]);
+    break;
+  case SYS_SIGPENDING:
+    status = procsigpending(&outputs[0]);
     break;
   case SYS_COPY:
     if (args[2] > COPY_BYTES) {

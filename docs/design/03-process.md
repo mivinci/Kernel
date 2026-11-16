@@ -1318,3 +1318,5 @@ CASE=init扩展了两个真实用户态管理终止场景，使用固定SERVICE�
 SHARED授权接续（2026-11-16）：固定CONTROL/准备CONFIG的grant/revoke路径现可转授显式SHARED MEM的减权页窗口，DATA/CODE跨Acct限制不变。inherit允许SHARED的EXEC标记，不能把私有MEM改成共享；标记并非已实现镜像切换。普通新Proc SELF_ALLOC默认DATA/SHARED/CODE位7，DMA未开放。准备出资的SHARED加载MEM仍限定原Prep/精确目标，发布别名屏障不因种类绕过。出资者退出/结果收取后费用滞留与最后引用验证见02末尾。
 
 资源回复预付接续（2026-11-16）：configure现支持既定reserve_resources=0..8，先校验完整Config，再原子替换镜像内保底空槽；失败不改旧配置、TF或Image.reserve。已覆盖满Local时改PC并增预付失败后仍从原入口运行。预付不是额外Local或真实资源，不能被alloc/grant挤占；详情与CALL取消/退出归还见04末尾。原生资源reply安装仍待描述符参数位置确认，不能据此称整条连接交付完成。
+
+初始信号与SIGCHLD策略接续（2026-11-16）：create的预付信号bank现从真实父捕获显式IGNORE和mask基线，configure从不可变基线应用sigdefault/显式mask。原生DEFAULT/IGNORE/CHLD NOCLDWAIT配置会更新本父的child_policy，孩子退出提交保存exit_policy并决定保留waitref或自动收取；只影响之后的退出，旧结果不扫描删除，独立Life/Acct/Rq/观察责任不跳过。Life仍128字节。具体profile限制、输入/输出原子性与双架构sigconfig验收见11末尾，HANDLER/信号递送/sigreturn仍未接。

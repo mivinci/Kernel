@@ -65,6 +65,9 @@ int     procrunone(void);
 Rtable *proccurrent(struct Hctx *frame);
 isize   procipc(u64 number, const u64 args[7], u64 outputs[8]);
 /* Typed resource commit; syscall descriptor decoding is a separate ABI step. */
+int  procsigaction(u64 signum, u64 input, u64 output);
+int  procsigmask(u64 how, u64 mask, u64 *old);
+int  procsigpending(u64 *out);
 int  procreplyresource(Rtable *source, Handle request, const Resreply *reply);
 int  procidentity(Handle *pid, u64 *image, Handle *parent);
 void procyield(void);

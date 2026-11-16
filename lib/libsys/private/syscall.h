@@ -4,6 +4,7 @@
 #include <abi/base.h>
 #include <abi/mem.h>
 #include <abi/proc.h>
+#include <abi/signal.h>
 typedef struct Sysret Sysret;
 struct Sysret
 {
@@ -36,5 +37,8 @@ isize __sys_revoke(Handle target, Handle resource);
 isize __sys_terminate(Handle control);
 isize __sys_destroy(Handle view);
 isize __sys_getcred(Handle authority, Handle pid, u64 image, u32 ids[4]);
+isize __sys_sigaction(u64 signum, const Sigact *action, Sigact *old);
+isize __sys_sigmask(u64 how, u64 mask, u64 *old);
+isize __sys_sigpending(u64 *out);
 isize __sys_wait(Handle selector, u64 options, Handle *pid, u64 *kind, u64 *code, u64 *sequence);
 #endif

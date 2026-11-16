@@ -121,6 +121,7 @@ main(int argc, char **argv)
     args.rgid = ids[2];
     args.egid = ids[3];
     memset(&work, 0, sizeof(work));
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, 0, &work.sigmask), 214);
     REQUIRE(!__sys_create(create, &args, &work.view, &pid, &control) && pid > 0 && !control, 185);
     work.pid = pid;
     work.image = 1;

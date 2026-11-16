@@ -120,7 +120,7 @@ enter(void)
 static int
 newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 booting, Handle *out)
 {
-  Proc  *p;
+  Proc  *p, *ancestor;
   Hinit  initial;
   Handle handle, pid;
   u64    top;
@@ -161,6 +161,12 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   error = sigreserve(p->identity);
   if (error)
     goto failedimage;
+  ancestor = booting ? NULL : find(parent);
+  if (ancestor && ancestor->state != PROC_EXITING) {
+    error = sigbaseline(p->identity, ancestor->identity);
+    if (error)
+      goto failedsignals;
+  }
   error = rqreserve(&p->outgoing, p->life, 0);
   if (error)
     goto failedsignals;
@@ -416,8 +422,8 @@ validate(Proc *p, const Config *c)
   if (!c || (c->entry & (HAL_ENTRY_ALIGN - 1)) || (c->stack & 15) || c->stack < 0x20000 ||
       c->stack > (1UL << 38) || (c->boot & 7) || c->bootsz < sizeof(Boot) || c->bootsz > 65536)
     return -ERR_INVALID;
-  if (c->sigmask || c->sigdefault)
-    return -ERR_NOTSUP;
+  if (sigmaskvalid(c->sigmask) || sigmaskvalid(c->sigdefault))
+    return -ERR_INVALID;
   error = range(p, c->entry, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC);
   if (error)
     return error;
@@ -459,9 +465,14 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   error = validate(p, &snapshot);
   if (error)
     return error;
+  error = siginitialcheck(p->identity, snapshot.sigmask, snapshot.sigdefault);
+  if (error)
+    return error;
   error = localreserve(&p->resources, p->identity, reserve);
   if (error)
     return error;
+  if (siginitial(p->identity, snapshot.sigmask, snapshot.sigdefault))
+    panic("initial signal commit");
   initial.entry = snapshot.entry;
   initial.sp = snapshot.stack;
   initial.arg = snapshot.boot;
@@ -1374,6 +1385,48 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   }
 }
 
+int
+procsigaction(u64 signum, u64 input, u64 output)
+{
+  Sigact action, old;
+  int    error;
+  if (!current || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  if (signum > SIGNAL_COUNT)
+    return -ERR_INVALID;
+  error = siggetaction(current->identity, (u32) signum, &old);
+  if (error)
+    return error;
+  if (input) {
+    if (spaceread(current->space, input, &action, sizeof(action)))
+      return -ERR_FAULT;
+    error = sigactionvalid((u32) signum, &action);
+    if (error)
+      return error;
+  }
+  /* Output is checked/written before the action/policy commit. Input was
+     already snapshotted, including when both user buffers alias. */
+  if (output && spacewrite(current->space, output, &old, sizeof(old)))
+    return -ERR_FAULT;
+  if (input && sigsetaction(current->identity, (u32) signum, &action))
+    panic("signal action commit");
+  return 0;
+}
+int
+procsigmask(u64 how, u64 mask, u64 *old)
+{
+  if (!current || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  if (how > SIGNAL_SETMASK)
+    return -ERR_INVALID;
+  return sigsetmask(current->identity, (u32) how, mask, old);
+}
+int
+procsigpending(u64 *out)
+{
+  return current && current->state == PROC_RUNNING ? siggetpending(current->identity, out)
+                                                   : -ERR_STATE;
+}
 int
 procreplyresource(Rtable *source, Handle request, const Resreply *reply)
 {
