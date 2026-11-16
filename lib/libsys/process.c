@@ -49,3 +49,29 @@ __sys_getcred(Handle authority, Handle pid, u64 image, u32 ids[4])
     ids[i] = (u32) result.values[i];
   return error;
 }
+
+isize
+__sys_connect(Handle authority, u64 kind, u64 rights, u64 bits, Handle *out)
+{
+  const u64 args[7] = {(u64) authority, kind, rights, bits, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!out)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_CONNECT, args, &result);
+  *out = (Handle) result.values[0];
+  return error;
+}
+isize
+__sys_grant(Handle target, Handle source, u64 rights, u64 offset, u64 bytes, u64 inherit,
+            Handle *out)
+{
+  const u64 args[7] = {(u64) target, (u64) source, rights, offset, bytes, inherit, 0};
+  Sysret    result;
+  isize     error;
+  if (!out)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_GRANT, args, &result);
+  *out = (Handle) result.values[0];
+  return error;
+}

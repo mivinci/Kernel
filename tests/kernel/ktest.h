@@ -25,6 +25,7 @@ void spawntest(void);
 void libsysload(void);
 void runtimetest(void);
 void elftest(void);
+void inittest(void);
 void controltest(void);
 void eventtest(void);
 void preptest(void);

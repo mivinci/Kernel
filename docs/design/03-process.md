@@ -1286,3 +1286,17 @@ destroy先提交不可发布状态，再以每批32条Local或1条完整Mmap等�
 本地完整209项host、格式及82个两架构QEMU通过；最终补充spawn/life两架构复跑通过，日志见build/host/stage30-native-wait/。spawn验证真实用户父的阻塞/WNOHANG、PID/任意孩子/冻结组、PGID1与CHILD事件；life及host验证逻辑接管早于改写/清理及父槽复用。被terminate的组wait续点已实现引用释放，但尚缺专门端到端场景。STOP/CONT、捕获信号中断/重启、真实用户init收取孤儿的端到端场景仍待接入，不能用可信host机制测试宣称这些路径已验证。
 
 观察与Proc清理接续（2026-11-16）：Local子类型9的OBSERVE安装/GRANT已接，绑定目标完整Image并预付观察区，不继承。Proc离栈清理phase0先按32槽批次撤除观察，再关闭/拆Local；不新增Proc字段，仍512字节。Image和Life各自的观察责任与父wait独立，实际观察协议、配额及验证见10末尾。正常镜像仍未启动生产init；真实exec提交必须后续接入旧观察者清理，不能用本切片宣称已完成exec。
+
+### 初始PID 1构造与真实孤儿收取验证（2026-11-16）
+
+可信procboot提供独立的一次性初始实例构造，固定运行槽0、PID=1、父PID=0；普通procnew/native create仍只使用1..63槽并验证真实父关系。两者共用newproc的Life/Image/Sigctx/Rq/Acct/Space/内核栈及SELF预付，避免另建绕过准入的假init路径。PID1只接受一次：参数错误在取得身份前可纠正；一旦槽获得身份，后续构造失败致命且不能重试/复用。重复procboot返回STATE且输出0，procnew(parent=0)仍INVALID。pidof/find保留已有PID1特例，其他PID编码不变。
+
+Life中初始init发布后没有父wait责任，退出或未发布取消仍触发致命错误；本次没有放宽lifeend/lifecancel的PID1保护，也不提供用户选择PID1或新建无父进程的接口。新私有__sys_connect/grant桩仅复用已有原生入口，授权仍由固定CONTROL CONNECT/GRANT或准备CONFIG检查。
+
+新增CASE=init：可信fixture构造真实PID1并按预校验描述装载独立csu/main用户ELF；它通过libsys创建普通父P，P再通过同一ELF装载模块创建C1/C2。C1经真实CALL握手后先退出11，C2保持活着，P等init确认。init先对仍归P的C1 wait得到CHILD，不因自己是PID1而绕过收取关系；可信CPU同时核对P/LIVE、C1/ENDED未收取、C2/LIVE且两者仍归P，确认覆盖旧结果与活孩子同时接管的顺序。P获回复后退出33，C2的用户getid实际读到父1才退出22。init以wait(-1)各收一份固定PID/状态序号，最后无孩子CHILD；事件CHILD可合并，消耗它不改变已收取结果。
+
+本场景完成时保留活着的PID1，不销毁它冒充资源全归零：原Set仅1实例，费用/引用/CREATE lease精确回到装载init后的基线，三个后代Life和所有临时准备/Rq均已释放。主机从QMP导出真实内核页表，允许且只允许该init独占的1张栈叶表及4个RW/NX栈页，逐页核对PA/属性和两侧guard，任何其他额外映射仍拒绝。全局allocated=原内核表页+init实际费用，不能把保留费用说成泄漏或归零。
+
+新增CASE=initfatal：同一个真实PID1 ELF从用户main调用exit，必须唯一打印PANIC init exited并停止于hal_halt，不能从调度器返回或把PID1槽复用。主机同时核对特权/IRQ状态；RV允许此致命现场仍保持该精确init用户根，内核映射及保留栈仍单独审计，不要求致命路径伪造正常资源清理。
+
+以上是PID1可信引导机制及真实用户态收取/致命退出验证；用户程序位于tests/kernel，不是生产sbin/init。normal仍初始化后停止，启动包容器、16 Set清单、SYSTEM/BOOT_RESOURCE授权及服务启动监督尚未接，不能称生产init已上线。本地完整243项host、格式及92个两架构QEMU通过；最后一次性准入错误语义/旧结果握手补强后，两架构init/initfatal另复验，主机页表反例再跑完整243项通过。日志build/host/stage35-pid1/；无CI/真实硬件/性能验收。

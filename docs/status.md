@@ -24,19 +24,21 @@
 - 独立libsys/Boot校验与两架构C _start静态ELF已接；make sdk导出公共/私有头、库和user.ld，完整库对象审计无外部运行时符号。构建工具将ELF转换为既定装载描述，内核只核验描述；CASE=libsys由可信fixture加载实际ELF并验证IPC/内存/退出。csu/main与基础libc接续见下，普通用户ELF加载器接续见下。
 - csu/main、可写argv/environ、getenv、exit/_exit/32槽atexit、errno/strerror及基础内存/字符串已接；sysstart归libsys绑定Boot，C环境归libc，无malloc/fs启动依赖。SDK另导出crt0.o/libc.a/runtimeuser.elf；fd/Fix适配未接，相关非零启动内容明确拒绝。完整libc/stdio/文件/信号适配仍待接。
 - libsys用户态ELF64校验/逐页装载/临时清理与创建配置桩已接；成功规划先限页数，边界页合并权限且拒绝W+X，真实SELF通过准备RESOURCE查询补齐Boot。父每次只占一个临时MEM槽，孩子只留映射；清理失败保留Elfwork责任。来源当前是只读嵌入ELF，FS稳定来源及完整POSIX spawn/exec尚未接。
-- normal仍初始化后停机，无模拟init。旧spawn场景仍用位置无关测试代码；新elf场景由用户libsys装载实际csu/main ELF，不是完整posix_spawn。源CREATE/SERVICE由可信fixture安装，生产清单的SERVICE仅init发放策略尚未启动；孩子退出结果已由真实用户父原生wait收取；真实用户init收取孤儿仍待端到端接入。
+- 一次性可信procboot已接PID1/父0/槽0并复用完整预付；普通创建不准入槽0，PID1退出仍致命。init测试ELF已在两架构真实U/EL0创建三代并收取孤儿，initfatal验证真实用户exit停机；它们不是生产sbin/init，清单/启动包/SYSTEM仍待接。
+- normal仍初始化后停机，无模拟init。旧spawn场景仍用位置无关测试代码；新elf场景由用户libsys装载实际csu/main ELF，不是完整posix_spawn。源CREATE/SERVICE由可信fixture安装，生产清单的SERVICE仅init发放策略尚未启动；孩子退出结果已由真实用户父原生wait收取；真实用户PID1收取孤儿已在独立init测试ELF验证，生产清单仍待接。
 
 ## 本地验证与边界
 
-- 完整make test-all通过241项host、格式及88个QEMU场景，日志`build/host/stage34-user-elf/test-all.log`；最终工作区/回调检查后再验完整242项host、格式及两架构elf，见同目录`*-final.log`。首次固件路径拼写错误的失败日志保留。
+- 完整make test-all通过243项host、格式及92个QEMU场景，日志`build/host/stage35-pid1/test-all.log`；最终两架构init/initfatal及完整host/格式复验见同目录`*-final.log`。
+- init两架构由真实PID1/csu/main创建三代，先拒绝越权收取，随后分别收取旧父33、已结束孤儿11和原活孩子22；最终保留1个init实例且费用/引用精确回到其启动基线。initfatal确认真实用户PID1 exit唯一致命停机；QMP审计保留的4页RW/NX栈、表及guard，host反例验证审计不放行错误映射。
 - elf两架构实测用户C装载真实csu/main ELF，2个成功孩子通过wait退出42，4种装载失败均destroy且无wait结果；孩子仅3资源槽、父仅1临时槽可完成装载，VA冲突不误拆原映射，页/Set/引用最终结清。6项host覆盖解析变异对照、边界页内容/BSS、每步失败、清理责任保留与非法工作区拒绝。
 - runtime两架构各10份镜像实测5次main、38次atexit回调、8次fini，正常/直接退出、可写参数/环境及精确16KiB边界；5种畸形/未支持Boot在构造与main前拒绝，全部页/Set/引用结清。8项新增host覆盖环境、退出与基础库；独立libsys入口仍通过。
 - 新增11项host覆盖Boot/ELF/预校验描述范围、对齐、重叠、保留位和预算，以及IPC错误携带RPC；libsys两架构实测独立C ELF、BSS/数据、合法Boot、内存清零/释放、四字同步/异步CALL/SEND、请求确认与完整回收。
 - 新增8项host覆盖128槽耗尽/完整枚举、8份总预付、GRANT失败回滚/撤权、cookie跨预付区复用及耗尽、父结果独立回收和取消exec不冒充当前镜像。creds两架构实测SOURCE/CHILD/MONITOR授权、LIFE合并、DRAINING/证明释放、原生OBSERVE grant和观察者死亡回收。
-- spawn由真实用户父阻塞wait收取三类孩子，覆盖WNOHANG、完整PID/任意孩子/冻结组、PGID1的wait(0)、重复收取ERR_CHILD、非法选项/INT64_MIN及CHILD提示消费；继续验证既有创建/加载/限额/destroy回收。life的两架构可信机制场景及host覆盖父死亡后在物理改写/清理前收取、活孤儿和父槽复用。真实用户init与被terminate的组wait续点仍缺专门端到端场景。
+- spawn由真实用户父阻塞wait收取三类孩子，覆盖WNOHANG、完整PID/任意孩子/冻结组、PGID1的wait(0)、重复收取ERR_CHILD、非法选项/INT64_MIN及CHILD提示消费；继续验证既有创建/加载/限额/destroy回收。life的两架构可信机制场景及host覆盖父死亡后在物理改写/清理前收取、活孤儿和父槽复用。真实用户PID1的孤儿收取接续见本次init场景；被terminate的组wait续点仍缺专门端到端场景。
 - 既有timer/irq、镜像/请求池耗尽、独立结果/收尾、旧身份复用等证据仍保留在此前stage日志；Darwin runner僵尸组EPERM诊断与压力证据在`build/host/stage16-runner/`。失败现场不覆盖、不删除。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；生成两架构及共享`build/compile_commands.json`、`.su`和`stack-usage.json`。物理ELF高半区别名运行仍保留`-fno-jump-tables`，无通用指针重定位。编译帧不是最坏栈深证明，不宣称真实硬件缓存、性能或CI通过。
 
 ## 接续
 
-接init清单及真实用户init的孤儿收取验证；继续完成信号/终端、资源reply、SHARED/DMA、fork/exec/COW、外设IRQ及用户态服务。完整边界与验收以01/03/04/06/08/11等主题为准，不以当前局部原生路径称全系统完成。
+接生产init/启动包/清单与SYSTEM发权；继续完成信号/终端、资源reply、SHARED/DMA、fork/exec/COW、外设IRQ及用户态服务。完整边界与验收以01/03/04/06/08/11等主题为准，不以当前局部原生路径称全系统完成。

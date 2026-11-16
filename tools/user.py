@@ -163,6 +163,37 @@ def build(args):
     (sdk / 'elfimage.S').write_text('/* image sha256: ' + digest(parent_image) + ' */\n.section .rodata\n.balign 8\n'
         '.global elf_image,elf_image_end,elf_trace_address\nelf_image:\n.incbin "' + str(parent_image) +
         '"\nelf_image_end:\n.balign 8\nelf_trace_address:\n.quad ' + str(parent_trace) + '\n')
+    # Distinct real ELFs let the PID-1 fixture exercise orphan adoption without
+    # weakening init's fatal-exit invariant or adding test syscalls.
+    adoption_sources = []
+    def compile_adoption(source,label):
+        obj=sdk / 'obj' / (label+'.o')
+        command=[tools['cc']['path'],*flags,'-I'+str(ROOT/'tests/kernel'),'-c',str(source),'-o',str(obj)]
+        invoke('compile-'+label,command)
+        read_elf(obj,profile['machine'],allow_undefined=True)
+        entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
+        adoption_sources.append(source)
+        return obj
+    def embedded_elf(artifact,symbol):
+        assembly=sdk/(symbol+'.S')
+        assembly.write_text('/* elf sha256: '+digest(artifact)+' */\n.section .rodata\n.balign 8\n.global '+symbol+','+symbol+'_end\n'+symbol+':\n.incbin "'+str(artifact)+'"\n'+symbol+'_end:\n')
+        return compile_adoption(assembly,symbol)
+    def link_adoption(label,objects):
+        artifact=sdk/(label+'.elf')
+        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],str(libc_archive),str(archive),'-o',str(artifact)])
+        read_elf(artifact,profile['machine'],kind=2)
+        return artifact
+    leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
+    helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
+    parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
+    init_test=link_adoption('inituser',[compile_adoption(ROOT/'tests/kernel/inituser.c','inituser'),helper,embedded_elf(parent_test,'adopt_parent')])
+    init_image=sdk/'inituser.img'
+    init_image.write_bytes(pack(init_test.read_bytes(),profile['machine'],256))
+    inspection=invoke('inspect-init-test',[tools['readelf']['path'],'-h','-l','-s',str(init_test)])
+    rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='init_trace']
+    if len(rows)!=1 or int(rows[0][2])!=128:raise BuildError('init trace missing')
+    init_address=int(rows[0][1],16)
+    (sdk/'initimage.S').write_text('/* image sha256: '+digest(init_image)+' */\n.section .rodata\n.balign 8\n.global init_image,init_image_end,init_trace_address\ninit_image:\n.incbin "'+str(init_image)+'"\ninit_image_end:\n.balign 8\ninit_trace_address:\n.quad '+str(init_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'
@@ -171,7 +202,7 @@ def build(args):
     kernel = json.loads(previous.read_text()) if previous.exists() else []
     kernel = [x for x in kernel if '/sdk/' not in x['output']]
     compilation_database(directory, kernel + entries)
-    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h'))
+    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h']
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
                     libsys_sha256=digest(archive), libc_sha256=digest(libc_archive), crt_sha256=digest(crt),
@@ -179,8 +210,9 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + libc_sources + csu_sources + [runtime_source,parent_source]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + libc_sources + csu_sources + [runtime_source,parent_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
+                    init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),
                     no_undefined_symbols=True, runtime='custom libsys-only entry and csu/libc main', guest_executed=False)
     (sdk / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

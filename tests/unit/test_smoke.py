@@ -146,3 +146,15 @@ class VmFaultOutputTests(unittest.TestCase):
                        text.replace('kind=0000000000000004', 'kind=0000000000000005')):
             with self.assertRaises(SmokeError):
                 validate_output(sample, 'riscv', 'textwrite', names)
+
+class InitOutputTests(unittest.TestCase):
+    def test_live_init_and_fatal_user_exit_require_distinct_exact_outcomes(self):
+        for arch in ('riscv','arm64'):
+            text,names=fixture(arch,'normal')
+            live=text.replace('READY early-boot','READY init-restored')
+            fatal=text.replace('READY early-boot','PANIC init exited')
+            validate_output(live,arch,'init',names)
+            validate_output(fatal,arch,'initfatal',names)
+            for sample in (live, fatal+fatal, fatal.replace('init exited','exception'),fatal+'READY init-restored\n'):
+                with self.assertRaises(SmokeError):validate_output(sample,arch,'initfatal',names)
+            with self.assertRaises(SmokeError):validate_output(fatal,arch,'init',names)

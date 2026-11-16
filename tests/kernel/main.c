@@ -4,7 +4,10 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 41
+#if BOOT_CASE == 42 || BOOT_CASE == 43
+  inittest();
+  putstr("READY init-restored\n");
+#elif BOOT_CASE == 41
   elftest();
   putstr("READY elf-restored\n");
 #elif BOOT_CASE == 40

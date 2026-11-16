@@ -45,7 +45,7 @@ unit:
 smoke: build
 	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio)
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf|init|initfatal) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 	$(MAKE) smoke ARCH="$(ARCH)" CASE="$(CASE)"
 
 test-all: unit fmt-check
@@ -120,6 +120,10 @@ test-qemu:
 	$(MAKE) scenario ARCH=arm64 CASE=runtime
 	$(MAKE) scenario ARCH=riscv CASE=elf
 	$(MAKE) scenario ARCH=arm64 CASE=elf
+	$(MAKE) scenario ARCH=riscv CASE=init
+	$(MAKE) scenario ARCH=arm64 CASE=init
+	$(MAKE) scenario ARCH=riscv CASE=initfatal
+	$(MAKE) scenario ARCH=arm64 CASE=initfatal
 	@for test_case in textwrite rodatawrite dataexec guard null identity alias unmapped; do $(MAKE) scenario ARCH=riscv CASE=$$test_case || exit $$?; $(MAKE) scenario ARCH=arm64 CASE=$$test_case || exit $$?; done
 	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
 	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1

@@ -117,8 +117,8 @@ enter(void)
     panic("process entry state");
   hal_user_enter(current->user);
 }
-int
-procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *out)
+static int
+newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 booting, Handle *out)
 {
   Proc  *p;
   Hinit  initial;
@@ -129,21 +129,26 @@ procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *ou
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (handletype(parent) != HANDLE_PROCESS || !limit || peak < limit || !resources ||
-      resources > LOCALS)
+  if ((booting ? parent != 0 : handletype(parent) != HANDLE_PROCESS) || !limit || peak < limit ||
+      !resources || resources > LOCALS)
     return -ERR_INVALID;
-  /* Slot zero is reserved for the separately bootstrapped initial init. */
-  for (slot = 1; slot < PROCS; slot++)
-    if (!processes[slot].state && processes[slot].generation < HANDLE_GENERATION_MAX)
-      break;
-  if (slot == PROCS)
-    return -ERR_CAPACITY;
+  if (booting) {
+    if (processes[0].state || processes[0].generation)
+      return -ERR_STATE;
+    slot = 0;
+  } else {
+    for (slot = 1; slot < PROCS; slot++)
+      if (!processes[slot].state && processes[slot].generation < HANDLE_GENERATION_MAX)
+        break;
+    if (slot == PROCS)
+      return -ERR_CAPACITY;
+  }
   p = &processes[slot];
   p->state = PROC_BUILDING;
   p->cpu_ns = 0;
   p->wait_cursor = 0;
   p->generation++;
-  pid = handlepack(HANDLE_PROCESS, p->generation, slot);
+  pid = booting ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
   eventinit(&p->events);
   error = lifecreate(set, pid, parent, &p->life);
   if (error) {
@@ -264,6 +269,27 @@ procprepare(Rtable *source, Handle target, u64 rights, Handle *out)
     return error;
   }
   return 0;
+}
+int
+procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *out)
+{
+  return newproc(set, parent, limit, peak, resources, 0, out);
+}
+int
+procboot(Setid set, u64 limit, u64 peak, u32 resources, Handle *out)
+{
+  int error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (processes[0].state || processes[0].generation)
+    return -ERR_STATE;
+  /* Invalid arguments can be corrected before acceptance. Once the run slot
+     has acquired its one identity, boot failure cannot retry or reuse PID 1. */
+  error = newproc(set, 0, limit, peak, resources, 1, out);
+  if (error && processes[0].generation)
+    panic("init construction failed");
+  return error;
 }
 int
 proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *construct, Handle *pid,

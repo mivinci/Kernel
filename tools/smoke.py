@@ -117,6 +117,12 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "init":
+        if ready != ["READY init-restored"] or panics or traps:
+            raise SmokeError("real user init adoption did not finish")
+    elif case == "initfatal":
+        if ready or panics != ["PANIC init exited"] or traps:
+            raise SmokeError("PID 1 user exit was not fatal exactly once")
     elif case == "elf":
         if ready != ["READY elf-restored"] or panics or traps:
             raise SmokeError("native user ELF loader did not finish")
@@ -357,7 +363,7 @@ def validate_pages(text, discovery, case):
     return result
 
 
-def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages):
+def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, retained=None):
     ram = min(x["base"] for x in discovery["ranges"]["RAM"])
     delta = (0xffffffc000000000 - ram) & ((1 << 64) - 1)
     def high(pa):
@@ -394,7 +400,7 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages):
                 va = bits | 0xffffff8000000000
                 leaves[va] = (address, entry)
     walk(transition["root"], 0, 0)
-    if len(tables) != transition["tables"]:
+    if len(tables) != transition["tables"] + (1 if retained else 0):
         raise SmokeError("page table ownership count mismatch")
     special = [{"base": names["__kernel_start"], "size": names["__kernel_end"] - names["__kernel_start"]},
                {"base": boot["boot"]["dtb"], "size": boot["layout"]["dtb_size"]},
@@ -427,6 +433,13 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages):
             for i, window in enumerate(d["mmio"]):
                 check(0xffffffc100001000 + i * 4096, window["base"], 3, device=True)
                 device_pages += 1
+    if retained:
+        if retained["stack_table"] not in tables:
+            raise SmokeError("retained init stack table not reachable")
+        for i, stack in enumerate(retained["stacks"]):
+            check(retained["stack_va"] + i * 4096, stack["pa"], 3)
+        if retained["stack_va"] - 4096 in leaves or retained["stack_va"] + 4 * 4096 in leaves:
+            raise SmokeError("retained init stack guard mapped")
     if leaves:
         raise SmokeError("unexpected alias, hole or MMIO mapping")
     return {"table_pages": len(tables), "normal_pages": expected_count, "device_pages": device_pages,
@@ -494,11 +507,12 @@ def exercise(args, run_dir, record):
                     raise SmokeError("QEMU did not start paused")
                 qmp.command("cont")
                 record["guest_executed"] = True
-                expected = "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
+                expected = "PANIC init exited\n" if args.case == "initfatal" else "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
                     "READY early-boot\n" if args.case == "normal" else
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY init-restored\n" if args.case == "init" else
                     "READY elf-restored\n" if args.case == "elf" else
                     "READY runtime-restored\n" if args.case == "runtime" else
                     "READY libsys-restored\n" if args.case == "libsys" else
@@ -559,7 +573,13 @@ def exercise(args, run_dir, record):
                         if not value or int(value[1], 16) & forbidden:
                             raise SmokeError("QMP observed unexpected " + name)
                     value = re.search(r"\bsatp\s+([0-9a-f]+)", registers)
-                    if not value or int(value[1], 16) != (8 << 60) | (transition["root"] >> 12):
+                    expected_root = transition["root"]
+                    if args.case == "initfatal":
+                        retained = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITRETAIN ")]
+                        if len(retained) != 1:
+                            raise SmokeError("missing retained init root")
+                        expected_root = retained[0]["root"]
+                    if not value or int(value[1], 16) != (8 << 60) | (expected_root >> 12):
                         raise SmokeError("QMP observed incorrect satp")
                 else:
                     value = re.search(r"PSTATE=([0-9a-f]+)", registers)
@@ -591,6 +611,23 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case in ("init", "initfatal"):
+                    retained = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITRETAIN ")]
+                    stacks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITSTACK ")]
+                    if (len(retained) != 1 or retained[0].get("charged",0) <= 20 or len(stacks) != 4 or
+                        [line.get("index") for line in stacks] != list(range(4)) or
+                        retained[0].get("stack_va") != 0xffffffc101001000):
+                        raise SmokeError("invalid retained PID-1 bookkeeping")
+                    record["retained_init"] = dict(retained[0], stacks=stacks)
+                    if args.case == "init":
+                        checks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITCHECK ")]
+                        if (len(checks) != 1 or {key:checks[0].get(key) for key in ("pid","collected","instances")} !=
+                                {"pid":1,"collected":3,"instances":1} or
+                            checks[0].get("charged") != retained[0]["charged"] or
+                            checks[0].get("baseline") != retained[0]["charged"] or
+                            checks[0].get("allocated") != transition["tables"] + retained[0]["charged"]):
+                            raise SmokeError("init orphan result/resource mismatch")
+                        record["init_adoption"] = checks[0]
                 if args.case == "elf":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("ELFCHECK ")]
                     if (len(checks) != 1 or not 8 <= checks[0].get("turns",0) < 256 or checks[0].get("pressure",0) <= 1 or
@@ -778,7 +815,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("memory cleanup/count mismatch")
                     record["memory"] = memory
                 record["vm_audit"] = audit_vm(qmp, run_dir, args.arch, names, record["discovery"],
-                                                 transition, record["observed"], record["pages"])
+                                                 transition, record["observed"], record["pages"], record.get("retained_init"))
                 qmp.command("pmemsave", {"val": record["observed"]["boot"]["dtb"],
                                          "size": record["observed"]["layout"]["dtb_size"],
                                          "filename": str(run_dir / "runtime.dtb")})
@@ -798,7 +835,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

@@ -30,6 +30,8 @@ struct Procinfo
 /* Trusted boot/test constructor. Native create first validates its fixed Set,
    limits and credentials; raw PID construction is not exported to userspace. */
 int procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *out);
+/* Initial init only: one-shot PID 1, parent 0. Failure after acceptance is fatal. */
+int procboot(Setid set, u64 limit, u64 peak, u32 resources, Handle *out);
 int proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *construct,
                Handle *pid, Handle *control);
 int procdestroyview(Rtable *source, Handle construct);

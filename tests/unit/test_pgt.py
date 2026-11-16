@@ -227,10 +227,29 @@ class PageTableTests(unittest.TestCase):
             boot = {'boot': {'dtb': ram + 4096}, 'layout': {'dtb_size': 4096}}
             pages = {'metadata': {'base': ram + 0x4000, 'size': 0x8000}}
             with tempfile.TemporaryDirectory() as directory:
-                def audit():
+                def audit(retained=None):
                     run = Path(directory) / str(len(list(Path(directory).iterdir())))
                     run.mkdir()
-                    return audit_vm(Qmp(a), run, arch, names, discovery, transition, boot, pages)
+                    return audit_vm(Qmp(a), run, arch, names, discovery, transition, boot, pages, retained)
+                self.assertTrue(audit()['all_permissions_checked'])
+                before=set(a.pages)
+                stackva=0xffffffc101001000
+                stackpages=[ram+0x10000+i*4096 for i in range(4)]
+                for i,pa in enumerate(stackpages):self.assertEqual(a.map(stackva+i*4096,pa,3),0)
+                allocated=set(a.pages)-before
+                self.assertEqual(len(allocated),1)
+                retained={'stack_table':next(iter(allocated)),'stack_va':stackva,
+                          'stacks':[{'index':i,'pa':pa} for i,pa in enumerate(stackpages)]}
+                self.assertTrue(audit(retained)['all_permissions_checked'])
+                with self.assertRaises(SmokeError):audit()
+                wrong=dict(retained,stack_table=0)
+                with self.assertRaises(SmokeError):audit(wrong)
+                self.assertEqual(a.map(stackva-4096,ram+0x20000,3),0)
+                with self.assertRaises(SmokeError):audit(retained)
+                self.assertEqual(a.unmap(stackva-4096),0)
+                self.assertEqual(a.unmap(stackva),0);self.assertEqual(a.map(stackva,stackpages[0],5),0)
+                with self.assertRaises(SmokeError):audit(retained)
+                for i in range(4):self.assertEqual(a.unmap(stackva+i*4096),0)
                 self.assertTrue(audit()['all_permissions_checked'])
                 root = a.pages[a.space.root]
                 root[1] = root[256]
