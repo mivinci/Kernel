@@ -165,3 +165,15 @@ Dtdev原内部reserved字改为groupable位，结构仍128字节。mappable只�
 实际首次探测读到version=1，暴露此前启动器未固定modern模式的配置缺口；QEMU 11.1.3 force-legacy默认true。现所有启动显式-global virtio-mmio.force-legacy=false，与冻结的现代传输目标一致，保留version==2检查，不降低为“1或2均可”。探测依据及默认行为见[QEMU 11.1.3 virtio-mmio实现](https://github.com/qemu/qemu/blob/v11.1.3/hw/virtio/virtio-mmio.c)，实际失败/版本读回与最终证据归build/host/stage53-mmio-groups/，最终本地make unit通过341项、make fmt-check通过，make test-qemu全部104个两架构场景通过；SDK单向审计通过，最终格式另通过。原始104目录和关键源码哈希见证据目录，未执行CI/目标真实硬件/性能验收。
 
 IRQ_SOURCE/原生bind及生产设备发权的待确认项继续保持关闭；块/网络设备协议与DMA安全恢复尚未由整页权限替代。
+
+### DMA 缓存反例模型（2026-11-17）
+
+`tests/unit/test_dma_coherence.py`独立表示CPU缓存、脏标志及设备可见内存，枚举部分/完整设备写与旧干净行推测填入。正常BEFORE/AFTER保证接收内容；故意省略BEFORE后设备写被旧脏行逐出覆盖，省略AFTER则读到推测缓存旧值。三方向均验证交出前clean，DEVICE_READ交回不强制invalidate；同缓存行的相邻CPU状态写可破坏设备输出，分行后保持。扩展越权、零长度、非法phase/direction及64位溢出在任何维护前整体拒绝。
+
+这是8项有限主机模型测试，不调用尚未实现的dma_sync/HAL，也不证明真实缓存、屏障、DMA固定或设备I/O正确；对应运行验收仍待执行。本地make unit全部349项及make fmt-check通过，日志build/host/stage54-dma-model/；本次未修改内核运行代码，未重跑QEMU、CI或真实硬件。
+
+### 开放问题：DMA 实例域与固定解除（待用户确认）
+
+现有规格要求设备域、固定引用和真实停止，但未冻结域的授权及结束操作。候选：每设备实例使用独立代次域，可信init安装绑定该域的ALLOC；DMA Mem从分配起持有固定引用，free/退出只撤普通引用。当前驱动或临时恢复实例在确认停止并完成同步后，经专用受权操作结束旧域，解除其固定；结束后旧域不能再分配、查询地址或同步，新实例另取新代次。无法确认停止则保留页及原Acct费用，每设备1024页上限不得跨实例重启绕过。不将sync AFTER视为停止证明，不增加内核逐请求所有权表。
+
+候选方向已提问；具体权限、调用号、结束前CPU访问撤销、恢复同步授权和失败原子性仍须在确认方向后完整冻结，当前不实现候选ABI或DMA分配。
