@@ -83,3 +83,11 @@ __sys_terminate(Handle control)
   Sysret    result;
   return __sys_enter(SYS_TERMINATE, args, &result);
 }
+
+isize
+__sys_revoke(Handle target, Handle resource)
+{
+  const u64 args[7] = {(u64) target, (u64) resource, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_REVOKE, args, &result);
+}

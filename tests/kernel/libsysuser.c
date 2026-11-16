@@ -105,6 +105,113 @@ copycheck(Handle allocator, Handle space, const Boot *boot)
   REQUIRE(!__sys_copy(NULL, NULL, 0), 157);
   REQUIRE(!__sys_unmap(space, (u64) output) && !__sys_free(source) && !__sys_free(target), 158);
 }
+static u64
+accountused(Handle authority, u64 *state)
+{
+  Queryrec record;
+  u64      count, next;
+  REQUIRE(!__sys_query(authority, QUERY_ACCT, 0, &record, 1, &count, &next) && !next, 159);
+  if (!count) {
+    *state = 0;
+    return 0;
+  }
+  REQUIRE(count == 1, 160);
+  *state = record.data[5];
+  return record.data[3];
+}
+static void
+sharedclient(const Bootview *view, Handle peer)
+{
+  Handle allocator = bootresource(view, BOOT_SELF_ALLOC),
+         space = bootresource(view, BOOT_SELF_SPACE);
+  Handle        management = bootresource(view, 258), memory, remote;
+  Allocarg      arg;
+  Maparg        map;
+  Msg           words;
+  Ipcmsg        result;
+  volatile u64 *alias = (volatile u64 *) 0xe00000;
+  u64           state, baseline = accountused(0, &state);
+  arg.bytes = 3 * PAGE_SIZE;
+  arg.kind = ALLOC_SHARED;
+  arg.align = arg.minaddr = arg.maxaddr = arg.reserved = 0;
+  REQUIRE(!__sys_alloc(allocator, &arg, &memory), 161);
+  REQUIRE(__sys_seal(memory) == -ERR_DENIED, 162);
+  REQUIRE(__sys_grant(management, memory, MAP_READ | MAP_WRITE | MAP_EXEC, 0, PAGE_SIZE, 1,
+                      &remote) == -ERR_DENIED &&
+              !remote,
+          163);
+  REQUIRE(!__sys_grant(management, memory, MAP_READ | MAP_WRITE, PAGE_SIZE, PAGE_SIZE, 1, &remote),
+          164);
+  map.mem = memory;
+  map.offset = 0;
+  map.address = (u64) alias;
+  map.length = 3 * PAGE_SIZE;
+  map.prot = MAP_READ | MAP_WRITE;
+  map.reserved = 0;
+  REQUIRE(!__sys_map(space, &map), 165);
+  alias[PAGE_SIZE / 8] = UINT64_C(0x123456789abcdef0);
+  words.words[0] = 100;
+  words.words[1] = (u64) remote;
+  words.words[2] = 0;
+  words.words[3] = 0;
+  REQUIRE(!ipc_call(peer, &words, 0, &result) && result.words[0] == 101, 166);
+  REQUIRE(alias[PAGE_SIZE / 8] == UINT64_C(0xfedcba9876543210), 167);
+  REQUIRE(!__sys_revoke(management, remote), 168);
+  REQUIRE(!__sys_unmap(space, (u64) alias) && !__sys_free(memory), 169);
+  REQUIRE(accountused(0, &state) == baseline + 3 && state == 1, 170);
+  words.words[0] = 101;
+  REQUIRE(!ipc_call(peer, &words, 0, &result) && result.words[0] == 102, 171);
+}
+static void
+sharedserver(const Bootview *view)
+{
+  Handle        space = bootresource(view, BOOT_SELF_SPACE), memory;
+  Maparg        map;
+  Msg           words;
+  Ipcmsg        received;
+  volatile u64 *alias = (volatile u64 *) 0xd00000;
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 100, 172);
+  memory = (Handle) received.words[1];
+  map.mem = memory;
+  map.offset = 0;
+  map.address = (u64) alias;
+  map.length = PAGE_SIZE;
+  map.prot = MAP_READ | MAP_WRITE;
+  map.reserved = 0;
+  REQUIRE(__sys_map(space, &map) == -ERR_DENIED, 173);
+  map.offset = PAGE_SIZE;
+  map.prot = MAP_READ | MAP_EXEC;
+  REQUIRE(__sys_map(space, &map) == -ERR_DENIED, 174);
+  map.prot = MAP_READ | MAP_WRITE;
+  REQUIRE(!__sys_map(space, &map) && alias[0] == UINT64_C(0x123456789abcdef0), 175);
+  alias[0] = UINT64_C(0xfedcba9876543210);
+  words.words[0] = 101;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_reply(received.request, &words), 176);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 101, 177);
+  map.address = 0xf00000;
+  REQUIRE(__sys_map(space, &map) == -ERR_BAD_HANDLE, 178);
+  REQUIRE(alias[0] == UINT64_C(0xfedcba9876543210), 179);
+  words.words[0] = 102;
+  REQUIRE(!ipc_reply(received.request, &words), 180);
+}
+static void
+sharedfinish(const Bootview *view)
+{
+  u64    state, used;
+  u32    turns = 0;
+  Handle management = bootresource(view, 258), space = bootresource(view, BOOT_SELF_SPACE);
+  do {
+    used = accountused(management, &state);
+    REQUIRE(++turns < 64, 181);
+    if (state == 2 && used == 3)
+      break;
+    REQUIRE(!__sys_yield(), 182);
+  } while (1);
+  REQUIRE(*(volatile u64 *) 0xd00000 == UINT64_C(0xfedcba9876543210), 183);
+  REQUIRE(!__sys_unmap(space, 0xd00000), 184);
+  REQUIRE(accountused(management, &state) == 0 && !state, 185);
+}
 NORETURN void
 _start(const Boot *boot)
 {
@@ -141,6 +248,10 @@ _start(const Boot *boot)
   words.words[1] = UINT64_C(0xfedcba9876543210);
   words.words[2] = UINT64_C(0xaaaaaaaa55555555);
   words.words[3] = UINT64_C(0x8000000000000042);
+  if (client)
+    sharedclient(&view, peer);
+  else
+    sharedserver(&view);
   if (client) {
     REQUIRE(!ipc_call(peer, &words, CALL_ASYNC, &result) && result.request > 0, 118);
     checkempty(&result, 1);
@@ -180,6 +291,8 @@ _start(const Boot *boot)
       REQUIRE(!ipc_reply(result.request, &response), 131);
     }
   }
+  if (!client)
+    sharedfinish(&view);
   REQUIRE(bss[256] == 257 && !__sys_yield(), 132);
   __sys_exit(42);
 }

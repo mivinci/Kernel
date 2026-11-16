@@ -242,7 +242,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
       (prot & ~7UL))
     return SP_BAD;
   if (memstat(memory, &mem) || memcanmap(memory, prot) || !mem.managers ||
-      (!prep.generation &&
+      (!prep.generation && mem.state != MEM_SHARED &&
        (mem.acct.index != s->acct.index || mem.acct.generation != s->acct.generation)) ||
       offset > mem.bytes || length > mem.bytes - offset || acctstat(s->acct, &account) ||
       account.state != AC_ACTIVE)

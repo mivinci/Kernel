@@ -1314,3 +1314,5 @@ CASE=init扩展了两个真实用户态管理终止场景，使用固定SERVICE�
 测试保留init的8槽约束；首次扩展执行在第二轮创建报CAPACITY，经原生错误和资源表观测确认是旧CONSTRUCT尚待Prep worker清理，非等待lease泄漏。fixture每次CPU交接推进8/192个Prep槽，用户测试在两轮之间让出24次完成有界整表扫描，再用RESOURCE枚举确认仅5份预期Local且无CONSTRUCT，之后继续创建；没有在内核增加重试或放宽容量。失败现场保留，不能把wait结果交付等同于所有构造授权已拆完。
 
 完整本地253项host、格式及92个两架构QEMU通过，日志build/host/stage39-group-wait-termination/，前次CAPACITY现场另保留。原三个孤儿结果仍覆盖，扩展后init总共收取7个后代结果，QMP仍按真实保留init费用/内核栈/guard审计。生产init、信号停止继续、多核/性能与CI不在本次验证范围。
+
+SHARED授权接续（2026-11-16）：固定CONTROL/准备CONFIG的grant/revoke路径现可转授显式SHARED MEM的减权页窗口，DATA/CODE跨Acct限制不变。inherit允许SHARED的EXEC标记，不能把私有MEM改成共享；标记并非已实现镜像切换。普通新Proc SELF_ALLOC默认DATA/SHARED/CODE位7，DMA未开放。准备出资的SHARED加载MEM仍限定原Prep/精确目标，发布别名屏障不因种类绕过。出资者退出/结果收取后费用滞留与最后引用验证见02末尾。

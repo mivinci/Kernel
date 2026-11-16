@@ -141,6 +141,12 @@ memcode(Acctid acct, u64 bytes, Memid *out)
 }
 
 int
+memshared(Acctid acct, u64 bytes, Memid *out)
+{
+  return create(acct, bytes, out, MEM_SHARED);
+}
+
+int
 memhold(Memid id)
 {
   Mem *m = find(id);

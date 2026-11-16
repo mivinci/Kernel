@@ -361,3 +361,26 @@ class PrepTests(unittest.TestCase):
                 self.assertFalse(selected)
                 if mode=='expire':self.assertEqual(self.info(prep).expired,1)
         for lib in self.libs:self.exercise(lib,body)
+
+    def test_shared_loading_still_has_precise_scope_and_temporary_publication_barrier(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare()
+            memory=self.allocate(cap,kind=2)
+            third,*_=self.table()
+            out=C.c_int64()
+            self.assertEqual(self.lib.localcopy(C.byref(self.source),memory,C.byref(third),3,0,4096,1,C.byref(out)),-5)
+            self.assertEqual(out.value,0)
+            self.assertEqual(self.lib.localcopy(C.byref(self.source),memory,C.byref(target),3,0,4096,3,C.byref(out)),0)
+            received=out.value
+            self.assertEqual(self.map(self.source,cap,memory,va=0x10000),0)
+            self.assertEqual(self.map(self.source,self.spacecap,memory,va=0x20000),0)
+            self.assertEqual(self.lib.preppublishcheck(prep),-7)
+            self.assertEqual(self.lib.localunmap(C.byref(self.source),self.spacecap,0x20000),0)
+            self.assertEqual(self.lib.preppublishcheck(prep),0)
+            self.assertEqual(self.lib.lifepublish(life),0)
+            self.assertEqual(self.lib.imageactivate(self.info(prep).identity),0)
+            self.lib.prepcomplete(prep)
+            self.assertEqual(self.lib.localmap(C.byref(self.source),cap,memory,0,0x30000,4096,3),-15)
+            self.assertEqual(self.lib.localinherit(C.byref(target),received,2),0)
+            self.assertEqual(self.lib.localfree(C.byref(target),received),0)
+        for lib in self.libs:self.exercise(lib,body)

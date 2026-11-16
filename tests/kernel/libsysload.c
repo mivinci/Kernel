@@ -9,7 +9,7 @@ struct Packet
 {
   Boot     header;
   Strref   argv, env;
-  Resentry resources[4];
+  Resentry resources[5];
   char     arg[8], environment[16];
 };
 #define REQUIRE(c)                                                                                 \
@@ -27,7 +27,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   Rtable          *table = proctable(pid);
   const Bootimage *image;
   Handle space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
-  Handle channel, sender;
+  Handle channel, sender, management;
   Packet packet;
   u64    i;
   const char *arg = client ? "client" : "server";
@@ -35,6 +35,8 @@ load(Handle pid, const Procinfo *peer, u32 client)
   REQUIRE(!bootimagecheck(libsys_image, (u64) (libsys_image_end - libsys_image), &image));
   REQUIRE(!localendpoint(table, peer->identity, LOCAL_CALL, LOCAL_USE, 0, 0, &channel));
   REQUIRE(!localendpoint(table, peer->identity, LOCAL_SEND, LOCAL_USE, 0, 0, &sender));
+  REQUIRE(!localcontrol(table, peer->life, CONTROL_INSTALL | CONTROL_REVOKE | CONTROL_QUERY,
+                        &management));
   for (i = 0; i < sizeof(packet); i++)
     ((u8 *) &packet)[i] = 0;
   for (i = 0; i < sizeof(Boot); i++)
@@ -43,7 +45,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.header.argc = packet.header.envc = 1;
   packet.header.argv_off = offsetof(Packet, argv);
   packet.header.env_off = offsetof(Packet, env);
-  packet.header.resource_count = 4;
+  packet.header.resource_count = 5;
   packet.header.resources_off = offsetof(Packet, resources);
   packet.argv.offset = offsetof(Packet, arg);
   packet.argv.length = 7;
@@ -61,24 +63,28 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.resources[2].handle = channel;
   packet.resources[3].tag = 257;
   packet.resources[3].handle = sender;
+  packet.resources[4].tag = 258;
+  packet.resources[4].handle = management;
   testload(pid, libsys_image, (u64) (libsys_image_end - libsys_image), &packet, sizeof(packet));
 }
 void
 libsysload(void)
 {
-  Setid      set;
+  Setid      sets[2];
   Set        group;
+  Acct       payer;
   Handle     pids[2];
   Procinfo   info[2];
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u32        i, ended, turns = 0;
+  u32        i, ended, turns = 0, source_cleaned = 0;
   int        error;
   pgstat(&before);
-  REQUIRE(!setcreate(4096, 8192, 8, &set));
-  for (i = 0; i < 2; i++)
-    REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &info[i]));
+  for (i = 0; i < 2; i++) {
+    REQUIRE(!setcreate(4096, 8192, 8, &sets[i]));
+    REQUIRE(!procnew(sets[i], 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &info[i]));
+  }
   load(pids[0], &info[1], 1);
   load(pids[1], &info[0], 0);
   REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]));
@@ -99,20 +105,35 @@ libsysload(void)
           panic("libsys custom entry result");
         }
         ended++;
+        if (!i && !source_cleaned) {
+          while ((error = procclean(pids[0])) > 0) {
+          }
+          REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
+          REQUIRE(!acctstat(info[0].acct, &payer) && payer.state == AC_CLOSING && payer.used == 3 &&
+                  !payer.bound);
+          REQUIRE(!setstat(sets[0], &group) && !group.instances && group.charged == 3);
+          source_cleaned = 1;
+        }
       }
     }
   } while (ended != 2);
-  for (i = 0; i < 2; i++) {
+  for (i = 1; i < 2; i++) {
     while ((error = procclean(pids[i])) > 0) {
     }
     REQUIRE(!error && !lifecollect(info[i].life, 1, &result) && result.code == 42);
   }
-  REQUIRE(!setstat(set, &group) && !group.charged && !group.instances && !setclose(set));
+  REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
+  for (i = 0; i < 2; i++)
+    REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck());
   putstr("LIBSYSCHECK actors=");
   puthex(2);
+  putstr(" shared=");
+  puthex(1);
+  putstr(" payer_exit=");
+  puthex(source_cleaned);
   putstr(" turns=");
   puthex(turns);
   putstr(" charged=");

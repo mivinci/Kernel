@@ -1,4 +1,4 @@
-/* Kernel-internal DATA/CODE backing and references, not a local resource-table Handle. */
+/* Kernel-internal DATA/CODE/SHARED backing and references, not a local resource-table Handle. */
 #ifndef _MEM_H
 #define _MEM_H
 #include <acct.h>
@@ -13,6 +13,7 @@
 #define MEM_RETIRING 2
 #define MEM_LOADING  3
 #define MEM_SEALED   4
+#define MEM_SHARED   5
 #define MEM_BUSY     -4
 #define MEM_BAD      -1
 #define MEM_LIMIT    -2
@@ -44,6 +45,7 @@ STATIC_ASSERT(sizeof(Blockref) == 16, blockref_budget);
 void meminit(void);
 int  memcreate(Acctid acct, u64 bytes, Memid *out);
 int  memcode(Acctid acct, u64 bytes, Memid *out);
+int  memshared(Acctid acct, u64 bytes, Memid *out);
 /* Trusted kernel source only; user copies require independent range/rights checks. */
 int memwrite(Memid id, u64 offset, const void *source, u64 bytes);
 int memseal(Memid id);

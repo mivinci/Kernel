@@ -169,13 +169,15 @@ localmem(Rtable *t, Memid id, u64 rights, u64 offset, u64 length, u32 inherit, H
   *out = 0;
   if (!t || t->state != LOCAL_OPEN)
     return -ERR_STATE;
-  if (!rights || rights & ~(LOCAL_GRANT | 15UL) || inherit & ~LOCAL_FORK ||
-      (offset | length) & PAGE_MASK || !length || memstat(id, &m) || !m.managers ||
-      offset > m.bytes || length > m.bytes - offset)
+  if (!rights || rights & ~(LOCAL_GRANT | 15UL) || inherit & ~3U || (offset | length) & PAGE_MASK ||
+      !length || memstat(id, &m) || !m.managers || offset > m.bytes || length > m.bytes - offset)
     return -ERR_INVALID;
-  if (m.acct.index != t->acct.index || m.acct.generation != t->acct.generation)
+  if ((m.state != MEM_SHARED &&
+       (m.acct.index != t->acct.index || m.acct.generation != t->acct.generation)) ||
+      (m.state != MEM_SHARED && (inherit & LOCAL_EXEC)))
     return -ERR_DENIED;
-  if (m.state == MEM_RETIRING || (m.state == MEM_DATA && rights & (VM_EXEC | LOCAL_SEAL)) ||
+  if (m.state == MEM_RETIRING ||
+      ((m.state == MEM_DATA || m.state == MEM_SHARED) && rights & (VM_EXEC | LOCAL_SEAL)) ||
       (m.state == MEM_SEALED && rights & VM_WRITE))
     return -ERR_DENIED;
   l = empty(t);
@@ -230,7 +232,7 @@ localprepared(Rtable *t, Prepid prep, Memid id, u64 rights, Handle *out)
   if (!rights || rights & ~(LOCAL_GRANT | 15UL) || memstat(id, &m) || !m.managers ||
       m.acct.index != info.acct.index || m.acct.generation != info.acct.generation)
     return -ERR_INVALID;
-  if ((m.state == MEM_DATA && rights & (VM_EXEC | LOCAL_SEAL)) ||
+  if (((m.state == MEM_DATA || m.state == MEM_SHARED) && rights & (VM_EXEC | LOCAL_SEAL)) ||
       (m.state == MEM_SEALED && rights & VM_WRITE))
     return -ERR_DENIED;
   l = empty(t);
@@ -594,6 +596,7 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
 {
   Local   *l = find(source, h, 0);
   Prepinfo info;
+  Mem      backing;
   int      error;
   if (!out)
     return -ERR_INVALID;
@@ -632,7 +635,9 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
       return error;
     if (target != info.target)
       return -ERR_DENIED;
-    if (inherit & ~LOCAL_FORK)
+    if (memstat(memory(l), &backing))
+      return -ERR_STALE;
+    if (inherit & ~(backing.state == MEM_SHARED ? 3U : LOCAL_FORK))
       return -ERR_INVALID;
   } else if (inherit & ~l->inherit)
     return -ERR_DENIED;
@@ -675,7 +680,7 @@ localalloc(Rtable *t, Handle h, const Allocarg *a, Handle *out)
     return -ERR_INVALID;
   if (l->subtype == LOCAL_ALLOC && !(l->rights & (1UL << (a->kind - 1))))
     return -ERR_DENIED;
-  if (a->kind != ALLOC_DATA && a->kind != ALLOC_CODE)
+  if (a->kind == ALLOC_DMA)
     return -ERR_NOTSUP;
   if (a->bytes > ~(u64) 0 - PAGE_MASK)
     return -ERR_OVERFLOW;
@@ -685,7 +690,12 @@ localalloc(Rtable *t, Handle h, const Allocarg *a, Handle *out)
     return -ERR_NOTSUP;
   if (!empty(t))
     return sloterror(t);
-  error = a->kind == ALLOC_CODE ? memcode(payer, a->bytes, &id) : memcreate(payer, a->bytes, &id);
+  if (a->kind == ALLOC_CODE)
+    error = memcode(payer, a->bytes, &id);
+  else if (a->kind == ALLOC_SHARED)
+    error = memshared(payer, a->bytes, &id);
+  else
+    error = memcreate(payer, a->bytes, &id);
   if (error)
     return convert(error);
   rights = VM_READ | VM_WRITE | LOCAL_GRANT;
@@ -902,9 +912,10 @@ localinherit(Rtable *t, Handle h, u64 flags)
     return error;
   l = find(t, h, 0);
   if (l->subtype == LOCAL_MEM) {
-    /* Current backing is private DATA/CODE only. SHARED EXEC retention belongs
-       to the later sharing profile; flags cannot turn private pages into it. */
-    if (flags & LOCAL_EXEC)
+    Mem backing;
+    if (memstat(memory(l), &backing))
+      return -ERR_STALE;
+    if ((flags & LOCAL_EXEC) && backing.state != MEM_SHARED)
       return -ERR_DENIED;
   } else if (l->subtype != LOCAL_CALL && l->subtype != LOCAL_SEND && l->subtype != LOCAL_NOTIFY)
     return -ERR_DENIED;

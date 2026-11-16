@@ -194,7 +194,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   p->resources.image = 1;
   error = localspace(&p->resources, 3, &handle);
   if (!error)
-    error = localallocator(&p->resources, 5, &handle);
+    error = localallocator(&p->resources, 7, &handle);
   if (error) {
     if (localclose(&p->resources))
       panic("process local rollback");

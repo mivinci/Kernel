@@ -157,3 +157,5 @@ libsys场景另验证原生__sys_copy：最多64KiB、物理别名重叠拒绝�
 基础libc现提供getpid/getppid、wait/waitpid及sys/wait.h状态宏。elf场景验证真实退出42、WNOHANG不写status、只读status在收取后返回EFAULT且结果不重复；init场景验证父查询跟随孤儿接管。STOP/CONT只接编码，实际事件与信号中断/重启仍待实现，不宣称完整POSIX或异步安全验收。
 
 init场景另覆盖组wait的BLOCKED和结果唤醒READY两种续点被CONTROL terminate：保存的组lease释放，活孩子与未消费退出结果归init，常规wait宏识别强杀信号9。扩展后总收取7个后代，保留init费用/组引用精确回到基线；没有把管理terminate当作已实现sigsend/STOP。
+
+SHARED内存已接原生alloc和受权跨Set grant/map，默认SELF_ALLOC为DATA/SHARED/CODE。libsys两架构场景使用两个Set验证子窗口共享写、撤权后既有映射保留、原出资进程清理/收取后仍保留3页旧Acct费用，以及接收者最后unmap才结清。私有DATA/CODE仍不跨Acct，SHARED不可执行/封存；资源reply、DMA和fork/exec共享继承仍未接。

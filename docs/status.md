@@ -12,7 +12,7 @@
 - 两架构启动、DTB、伙伴、高半区/guard栈、完整用户与内核IRQ整数/FP现场、Set/Acct、Space/Mem/Mmap、CODE封存与同步已接。仅单核，ARM缓存关闭；Device属性及内核W^X/低别名撤销有QEMU审计。
 - Local48、Life128、Proc512、Prep184、Image64、Obs48、Rq184、Space64、Set56；计费栈与CPU独立续点支持离栈回收。Life结果、运行槽、镜像与账目独立回收/复用，不以旧索引选新身份。
 - 原生copy与私有__sys_copy已接：最大64KiB，先查全范围READ/WRITE/普通用户PTE及物理字节重叠，再复制；当前单核IRQ屏蔽/VM_BUSY全程串行，无临时页。COW、信号及I/O包装接入/IRQ屏蔽时长仍待验。
-- 原生自身内存/时间/exit/yield/getid，消息call/send/recv/reply/reply_recv/defer及请求查询/取消/ACK/finish/check已接；8/1/1/2出站预付、普通960/恢复64请求池、15+1接收和可下调pending已接。资源reply、原生rqclean及SHARED/DMA仍待接。
+- 原生自身内存/时间/exit/yield/getid，消息call/send/recv/reply/reply_recv/defer及请求查询/取消/ACK/finish/check已接；8/1/1/2出站预付、普通960/恢复64请求池、15+1接收和可下调pending已接。资源reply、原生rqclean及DMA仍待接，SHARED映射接续见下。
 - 固定CONTROL的connect/grant/revoke/inherit、BUDGET/TERMINATE、不可变凭据/getcred已接。CALL_CONTROL=0x08只选自身控制槽；可转授入口要求CONTROL CONNECT+GRANT，CONSTRUCT只生成USE。
 - query已接PROC/RQ/ACCT/LIFE/RESOURCE：自身0/固定CONTROL QUERY，以及CONSTRUCT CONFIG仅RESOURCE；最多16条192字节记录，整区预检、代次游标、隐藏内部指针/消息。实际组/费用/映射/请求责任和选中窗口CPU纳秒已接；SYSTEM/BOOT_RESOURCE枚举未接。
 - SESSION/GROUP共享128份48字节记录，getpg/setpg/setsid按自/未exec直接孩子、同会话及0选择器校验，uid0无豁免。组长退出/运行槽复用不改变旧PGID/SID；停止/终端与孤儿组规则未接。
@@ -25,6 +25,7 @@
 - 独立libsys/Boot校验与两架构C _start静态ELF已接；make sdk导出公共/私有头、库和user.ld，完整库对象审计无外部运行时符号。构建工具将ELF转换为既定装载描述，内核只核验描述；CASE=libsys由可信fixture加载实际ELF并验证IPC/内存/退出。csu/main与基础libc接续见下，普通用户ELF加载器接续见下。
 - libc getpid/getppid、wait/waitpid、64位pid_t及状态宏已接；无结果不写status，NULL忽略，收取后受检查输出失败EFAULT且不重取，错误按接口转errno。STOP/CONT编码仅host模拟，信号/异步安全/标准审计仍未完成。
 - csu/main、可写argv/environ、getenv、exit/_exit/32槽atexit、errno/strerror及基础内存/字符串已接；sysstart归libsys绑定Boot，C环境归libc，无malloc/fs启动依赖。SDK另导出crt0.o/libc.a/runtimeuser.elf；fd/Fix适配未接，相关非零启动内容明确拒绝。完整libc/stdio/文件/信号适配仍待接。
+- SHARED原生分配/跨Acct与跨Set减权grant/map已接，物理页仅原Acct出资，接收方页表另计。不可EXEC/SEAL；撤权不拆既有映射，出资方退出收取后旧费用保留到最后unmap。准备期共享加载权仍限原目标与发布屏障；资源reply、DMA及fork/exec保留未接。
 - libsys用户态ELF64校验/逐页装载/临时清理与创建配置桩已接；成功规划先限页数，边界页合并权限且拒绝W+X，真实SELF通过准备RESOURCE查询补齐Boot。父每次只占一个临时MEM槽，孩子只留映射；清理失败保留Elfwork责任。来源当前是只读嵌入ELF，FS稳定来源及完整POSIX spawn/exec尚未接。
 - PID1专用bootimageload已接既定预校验描述，逐页装载/封存并释放临时MEM，8个Local槽可装多页init；两架构init/initfatal改用它并检查最终PTE/guard。新启动包容器字段待用户确认，生产入口未接。
 - init真实用户测试另覆盖组wait的BLOCKED/已唤醒READY续点被CONTROL terminate，组lease最终释放，活孩子与未收取结果转init，总收取7个后代。常规wait宏实测强杀信号9，sigsend/STOP/信号递送仍待接。
@@ -35,7 +36,8 @@
 
 - 本次PID1描述加载器通过243项host、格式及两架构init/initfatal四场景，日志build/host/stage36-boot-loader/；完整QEMU基线仍为下列stage35，未将局部复验称为重跑全套。
 
-- 完整make test-all通过253项host、格式及92个QEMU场景，日志build/host/stage39-group-wait-termination/test-all.log。八槽测试表在第二轮创建遇旧Prep清理背压的现场保留；显式核对清理整表进度与5份预期Local后重新通过全套。启动包格式问题仍待用户确认。
+- 完整make test-all通过255项host、格式及92个QEMU场景，日志build/host/stage40-shared-memory/test-all.log；补充准备期反例后完整256项host、最后3项专项及两架构libsys复验通过，见同目录。启动包格式仍待用户确认。
+- SHARED两架构实测跨Set页窗口/共享写、越权EXEC/SEAL拒绝、撤权后旧Mmap仍可访问、出资者退出并被收取后仅余3页旧账目费用、最后unmap才结清；两个Set/所有页最终回基线。host覆盖原Acct关闭后合法已有管理引用再map、满表/减权/继承及精确Prep发布屏障。
 - 扩展init两架构确认组wait父在BLOCKED和结果唤醒READY时被terminate：PROC等待类型/组选择器正确，持有组lease到回收后Group.refs=processes=1；总收取7个后代，最终费用/引用回init基线。常规wait实测强杀信号9与孤儿正常结果22/11。
 - libc waitpid两架构真实载荷验证退出42、WNOHANG状态不变、errno保留、已收取后只读status返回EFAULT且下次ECHILD；init实测常规getpid/getppid的PID1/父0与孤儿父1。host覆盖模拟STOP/CONT/信号编码、NULL status、失败消费和选择器/错误转换；不称真实STOP/信号已实现。
 - copy两架构真实用户载荷覆盖64KiB、物理别名、只读/SEALED目标、缺页/溢出/unmap/零长和完整回收；4项host另覆盖17页非对齐、无临时页、字节区间及可信DEVICE PTE注入。复制期不调度，不声称并发unmap/真实设备/COW或IRQ延迟已验收。
@@ -50,4 +52,4 @@
 
 ## 接续
 
-接生产init/启动包/清单与SYSTEM发权；继续完成信号/终端、资源reply、SHARED/DMA、fork/exec/COW、外设IRQ及用户态服务。完整边界与验收以01/03/04/06/08/11等主题为准，不以当前局部原生路径称全系统完成。
+接生产init/启动包/清单与SYSTEM发权；继续完成信号/终端、资源reply、DMA、fork/exec/COW、外设IRQ及用户态服务。完整边界与验收以01/03/04/06/08/11等主题为准，不以当前局部原生路径称全系统完成。

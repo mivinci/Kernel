@@ -506,3 +506,21 @@ PROC统计接续（2026-11-16）：Space现64字节，增加成功提交Mmap的m
 CREATE策略引用接续（2026-11-16）：Set现56字节，新增leases记录CREATE等固定策略持有的强引用；acctcheck严格核对refs=1+Acct数+Life实例数+leases。策略继承不复制Set总额或实例限额，最后策略撤销/表关闭才解除自己的引用；相关可信机制与两架构createauth边界见03末尾。
 
 原生构造加载接续（2026-11-16）：已将有效CONSTRUCT ALLOC/MAP与加载MEM接入普通原生内存调用，孩子Acct出资、scope固定、发布前全部父别名解除等规则保持。alloc的IRQ窗口只允许标记到期/调度，完成前再次核验准备，IRQ不清表或切该C续点。destroy分批解除目标/失效授权后返回，外部父Mmap仍独立持有原Mem/Acct费用；两架构spawn实际验证最后1页别名释放前后费用，详细边界见03末尾。
+
+### SHARED分配、授权与独立出资接续（2026-11-16）
+
+已接既定ALLOC_SHARED=2，复用普通最多16页的清零分配/失败回滚和Acct出资链；Mem内部新增MEM_SHARED状态，不增加字段或记录池。普通Proc的SELF_ALLOC从DATA/CODE位5扩为DATA/SHARED/CODE位7，DMA仍需独立位且尚未实现。显式减权的ALLOC不因功能接入获得SHARED位，缺位仍DENIED；ALIGN/min/max对SHARED仍必须0。共享不是把DATA/CODE打标后绕过原有约束，普通私有页仍禁止跨Acct安装/映射。
+
+SHARED只有R/RW/GRANT授权，没有EXEC或SEAL；Mem自身的可映射/封存校验与Local安装再次核对，不能凭伪造rights让共享页执行或封存。固定CONTROL INSTALL或本次准备CONFIG仍是grant目标准入，源另需GRANT并检查减权和页对齐子窗口，复制失败不增引用。无GRANT的接收者只能使用本地授权，不能继续转授；显式FORK/EXEC继承标记允许用于SHARED，但仅是资源策略，真实fork/exec仍待接。
+
+跨Acct/跨Set共享按创建时Acct付物理页费用一次，各接收者仅为自己成功创建的页表付费。每个Local独立持管理引用，每个Mmap独立持映射引用；撤销或free最后Local不解除已经提交的映射，不把它当DMA停止或全体进程访问已经结束。无管理引用时Mem进入既有RETIRING，不能再装授权/新映射，现有RW映射仍按原权限访问；最后unmap才释放物理块并结清原Acct。映射/授权从不迁移出资，创建者退出/被收取并不使共享页转到接收者账目。
+
+已有合法接收Local且原Acct已CLOSING时，仍可把这份已存在共享对象映射到活接收者；新的接收方页表只计其自身Acct，原CLOSING Acct不新增物理支出。原创建者的运行资源和父结果释放后可仅剩旧共享费用，旧Acct保持无bound的CLOSING直到最后引用消失。资源身份/Acct代次不能随原Proc槽复用改绑。
+
+准备期ALLOC也支持SHARED，但返回父表中的加载MEM仍受精确Prep约束：只准grant到该准备的目标表，不能因为跨Acct共享通常允许就逃逸给第三方；临时父Mmap（含只读）仍登记Prep、阻止发布。目标表已安装的普通SHARED授权在发布后独立持引用，原父加载权失效。正常显式共享可由父自身出资SHARED再grant孩子，父已有普通共享映射不误当孩子加载别名撤销。
+
+例：A从自己的Set申请3页SHARED，只授B其中第二页RW且不授GRANT。B不能map offset0或EXEC，成功映射后写入的数据A立即可见。A撤销B的Handle后，B不能据旧Handle新map，已有Mmap继续访问；A再unmap/free自身管理引用，3页费用仍归A。A退出、CPU拆完地址空间/Local并由父收取，原Set实例归零但仍charged=3、Acct CLOSING/无bound。B最后unmap时释放整份3页Mem，原Acct/Set费用才归零；不把授权窗口的一页误计成只保留一页物理对象。
+
+验证：CASE=libsys改为两个真实用户进程分别在不同Set，native alloc/grant/map完成上述子窗口双向写、撤权后拒绝新map/旧map保留、只读执行/封存拒绝。可信CPU在A运行清理与结果收取后检查原Set实例0/charged3、Acct CLOSING/used3；B真实query读到这个旧账目后仍读取共享内容并unmap，query再确认账目已消失。双方最终exit42，两个Set及所有页/引用归零，既有IPC/checked-copy验收继续执行。
+
+新增host覆盖原出资方关闭后仍持接收Local并新增合法映射、最后Local解除但映射仍保留/最后unmap结清、减权/子窗口/无GRANT/满表失败引用守恒、SHARED显式EXEC继承标记、底层Mem/Local拒绝执行/封存，以及准备范围不逃逸与别名发布屏障。本地完整255项host、格式及92个两架构QEMU通过；补充准备期反例后完整256项host通过，最后3项共享/准备专项与两架构libsys复验通过，日志build/host/stage40-shared-memory/。资源reply、SHARED的fork/exec保留实现、DMA/设备访问证明、真实多核缓存和性能仍待接，不以普通共享映射代表它们完成。
