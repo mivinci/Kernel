@@ -4,6 +4,7 @@
 #include <acct.h>
 #include <handle.h>
 #include <group.h>
+#include <abi/proc.h>
 #ifndef LIFES
 #define LIFES 256
 #endif
@@ -21,11 +22,18 @@
 #define LIFE_SIGNAL    2
 #define LIFE_FAULT     3
 
+typedef struct Childsel   Childsel;
 typedef struct Cred       Cred;
 typedef struct Lifeid     Lifeid;
 typedef struct Life       Life;
 typedef struct Lifefault  Lifefault;
 typedef struct Liferesult Liferesult;
+struct Childsel
+{
+  Handle value;
+  u32    kind, reserved;
+};
+STATIC_ASSERT(sizeof(Childsel) == 16, child_selector_size);
 struct Lifeid
 {
   u64 generation;
@@ -85,5 +93,12 @@ int lifedrop(Lifeid id, u32 kind);
 int lifereparent(Lifeid id, Handle oldparent, Handle newparent);
 /* Trusted nonblocking result selection, not the native wait syscall. */
 int lifecollect(Lifeid id, Handle parent, Liferesult *out);
+/* Group selectors carry a borrowed/held internal GROUP identity, never a PID. */
+int lifeselect(Handle parent, const Childsel *choice, u32 start, Lifeid *ready, u32 *matched);
+/* Consume only the coalesced parent notification, never a result. */
+int lifehint(Handle parent);
+/* Rewrite at most scans physical parent fields; logical adoption is immediate. */
+int lifework(u32 scans);
+int lifecheck(void);
 int lifestat(Lifeid id, Life *out);
 #endif

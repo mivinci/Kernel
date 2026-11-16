@@ -626,7 +626,9 @@ stats_begin:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #128]
- cbnz x11, stats_bad
+ movz x10, #1
+ cmp x11, x10
+ b.ne stats_bad
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #136]
@@ -766,7 +768,9 @@ stats_busy:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #128]
- cbnz x11, stats_bad
+ movz x10, #1
+ cmp x11, x10
+ b.ne stats_bad
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #136]
@@ -956,7 +960,9 @@ stats_busy:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #128]
- cbnz x11, stats_bad
+ movz x10, #1
+ cmp x11, x10
+ b.ne stats_bad
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #136]

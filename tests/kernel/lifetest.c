@@ -12,7 +12,10 @@ lifetest(void)
 {
   Setid      group;
   Set        set;
-  Lifeid     fresh;
+  Lifeid     fresh, parent, child, live, selected;
+  Childsel   choice;
+  Handle     ppid, cpid;
+  u32        matched;
   Life       old;
   Liferesult result;
   Pgstat     before, after;
@@ -40,6 +43,30 @@ lifetest(void)
     REQUIRE(!lifestat(retained[i], &old) && old.pid == handlepack(HANDLE_PROCESS, i + 1, 1));
     REQUIRE(!lifecollect(retained[i], 1, &result) && result.code == (i & 255));
   }
+  ppid = handlepack(HANDLE_PROCESS, LIFES + 2, 1);
+  cpid = handlepack(HANDLE_PROCESS, 1, 2);
+  REQUIRE(!lifecreate(group, ppid, 1, &parent) && !lifepublish(parent));
+  REQUIRE(!lifecreate(group, cpid, ppid, &child) && !lifepublish(child));
+  REQUIRE(!lifecreate(group, handlepack(HANDLE_PROCESS, 1, 3), ppid, &live) && !lifepublish(live));
+  REQUIRE(!lifeend(child, LIFE_EXIT, 42, NULL));
+  REQUIRE(!lifeend(parent, LIFE_EXIT, 0, NULL));
+  /* Logical collection precedes both physical parent rewriting and run cleanup. */
+  REQUIRE(!lifestat(child, &old) && old.parent == 1);
+  REQUIRE(!lifestat(live, &old) && old.parent == 1);
+  choice.value = cpid;
+  choice.kind = WAIT_SELECT_PID;
+  choice.reserved = 0;
+  REQUIRE(!lifeselect(1, &choice, 0, &selected, &matched) && matched);
+  REQUIRE(selected.generation == child.generation && selected.index == child.index);
+  REQUIRE(lifecollect(child, ppid, &result) == -ERR_DENIED);
+  REQUIRE(!lifecollect(child, 1, &result) && result.code == 42);
+  REQUIRE(!lifedetach(child));
+  REQUIRE(!lifedetach(parent) && !lifecollect(parent, 1, &result));
+  REQUIRE(!lifecreate(group, handlepack(HANDLE_PROCESS, LIFES + 3, 1), 1, &fresh));
+  REQUIRE(!lifestat(live, &old) && old.parent == 1);
+  REQUIRE(!lifecancel(fresh) && !lifedetach(fresh));
+  REQUIRE(!lifeend(live, LIFE_EXIT, 7, NULL) && !lifecollect(live, 1, &result));
+  REQUIRE(!lifedetach(live) && !lifecheck());
   REQUIRE(!setstat(group, &set) && !set.instances && !setclose(group));
   pgstat(&after);
   REQUIRE(before.free == after.free && before.allocated == after.allocated);

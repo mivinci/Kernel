@@ -129,11 +129,11 @@ CALL_ASYNC=1、CALL_RECV_MEM=2、CALL_RECV_CALL=4、CALL_CONTROL=8，RECV_MEM与
 
 rqpoll/rqwait非消费；rqack只操作本主体RPC。rqcheck仅服务当前持有REQUEST，返回1（正常ACCEPTED）、3（ACCEPTED且cancel_requested）或4（强制终结/DRAINING）；不能读取他人请求。rqclean要求CONTROL覆盖已死亡服务且完成安全隔离责任已由可信恢复路径接管；不能将活服务或未知DMA直接标finished。即使调用者死代消费/释放，server_finished仍必须真实成立。
 
-query kind固定PROC=1、RQ=2、ACCT=3、LIFE=4、RESOURCE=5、BOOT_RESOURCE=6，最多16条，每条Queryrec；cursor为索引+代次快照，0为首次输入及遍历结束输出；调用者依据next_cursor=0结束本轮，不将其再次当继续位置，不承诺跨条全局原子。主体无QUERY只可查自身非敏感统计；管理查询从CONTROL/SYSTEM授权范围枚举。kind选择仅查询记录，不是对象任意操作码。data字含义：PROC=[parent,pgid,sid,state,waitpid,cpu_ns,used,reserved,resource_count,map_count,rq_count,tty,...]；RQ=[caller,callerimage,server,serverimage,phase,result,flags,...]；ACCT=[set,limit,exec_limit,used,reserved,state,...]；LIFE=[parent,reason,code,wait_pending,observe_refs,cleanup_refs,...]；RESOURCE=[local,subtype,rights,offset,length,inherit,target_pid,target_image,...]；BOOT_RESOURCE仅init可读受信设备/启动镜像记录，其data=[resource,kind,start,length,irq,flags,...]。都不含内核指针/完整他人寄存器。
+query kind固定PROC=1、RQ=2、ACCT=3、LIFE=4、RESOURCE=5、BOOT_RESOURCE=6，最多16条，每条Queryrec；cursor为索引+代次快照，0为首次输入及遍历结束输出；调用者依据next_cursor=0结束本轮，不将其再次当继续位置，不承诺跨条全局原子。主体无QUERY只可查自身非敏感统计；管理查询从CONTROL/SYSTEM授权范围枚举。kind选择仅查询记录，不是对象任意操作码。data字含义：PROC=[parent,pgid,sid,state,waitpid,cpu_ns,used,reserved,resource_count,map_count,rq_count,tty,wait_kind,wait_selector_kind,wait_selector,...]；RQ=[caller,callerimage,server,serverimage,phase,result,flags,...]；ACCT=[set,limit,exec_limit,used,reserved,state,...]；LIFE=[parent,reason,code,wait_pending,observe_refs,cleanup_refs,...]；RESOURCE=[local,subtype,rights,offset,length,inherit,target_pid,target_image,...]；BOOT_RESOURCE仅init可读受信设备/启动镜像记录，其data=[resource,kind,start,length,irq,flags,...]。都不含内核指针/完整他人寄存器。
 
 PROC的state固定CONSTRUCT=1、READY=2、RUNNING=3、BLOCKED=4、EXITING=5、STOPPED=6；STOPPED仅待停止机制接入后产生，不输出内部BUILDING。仅返回仍有运行记录的目标；原运行记录回收后为0条，旧CONTROL不会读到同槽新PID。PROC为整实例单条，cursor只接受0，next=0，image为当前/清理中的镜像，stamp为运行身份代次而非内容版本。
 
-cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端，其余保留字0。
+cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端。wait_kind为0无等待、1接收、2请求结果、3独立收尾、4构造撤销续点、5父wait；READY但尚未恢复的续点仍显示其等待种类。父wait的wait_selector_kind为0任意孩子、1完整PID、2冻结组，wait_selector对应0/PID/公开PGID；不暴露内部GROUP Handle。其他等待的selector两字0，其余保留字0。
 
 ### query的主体选择（交叉复核修订）
 
@@ -206,6 +206,7 @@ permit和MONITOR的CONTROL basis在调用者本地资源表解析；其他模式
 | 19 | NOSYS | 未知调用号 |
 | 20 | OVERFLOW | 地址/长度/计数/代次耗尽，不允许回绕 |
 | 21 | TIMEDOUT | 内核准备固定期限已过；普通call没有内置超时 |
+| 22 | CHILD | wait没有匹配且可由调用者收取的孩子；libc映射ECHILD |
 
 服务回复w0采用s64业务状态：0成功、负的SDK errno为业务失败，w1..w3是该操作结果；资源reply保留w0给Handle，业务成功类型由kind确认，其余业务字按proto解释。libsys保留机制/业务/执行阶段三类信息，libc才写errno。标准errno数值由首版SDK固定为常见Linux编号集合以便移植，但不承诺Linux二进制ABI；EWOULDBLOCK=EAGAIN=11、EINTR=4、EIO=5、EBADF=9、ENOMEM=12、EACCES=13、EFAULT=14、EBUSY=16、EEXIST=17、ENFILE=23、EMFILE=24、EINVAL=22、EPIPE=32、ENOSYS=38、EOVERFLOW=75、ETIMEDOUT=110、EINPROGRESS=115；其余已纳入errno见15的固定全集，不能把原生负编号直接当errno。
 
@@ -321,3 +322,5 @@ RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主�
 
 
 原生创建接续（2026-11-16）：0x40..0x43已接，create只用a0/a1，configure只用a0..a2，start/destroy只用a0，其他输入必须0；失败全部输出清零。Createarg/Config完整区间一次复制，create先核验本地CREATE类型再读属性，凭据与额度核验见03末尾。SERVICE能力决定额外a3 CONTROL，非SERVICE为0；PID不是目标操作权。CONSTRUCT/加载MEM的已冻结操作不再因旧profile一律NOTSUP，而按精确scope/rights/阶段检查；creds中仅CONFIG的ALLOC现在为DENIED。固定CREATE不属于free允许类型，返回BAD_HANDLE；尚未实现的CREATE通用grant在具体复制操作返回NOTSUP，不以泛化检查封锁已实现的create。EXEC_VIEW、非零reserve_resources及信号配置等未完成部分仍明确拒绝，不从调用号存在推断可用。
+
+原生wait接续（2026-11-16）：用户确认新增ERR_CHILD=22。没有匹配且可收取的孩子返回-CHILD；存在匹配活孩子但尚无结果时，WNOHANG成功且全部输出0，否则阻塞。selector=0在受理时冻结当前组，不能编码为-PGID而与PGID1/任意孩子混淆；INT64_MIN返回INVALID。当前仅实现EXITED结果，WUNTRACED/WCONTINUED接受但尚无STOP/CONT结果源。接入及验证边界见03末尾。

@@ -31,4 +31,5 @@ typedef int64_t Handle;
 #define ERR_NOSYS             19
 #define ERR_OVERFLOW          20
 #define ERR_TIMEDOUT          21
+#define ERR_CHILD             22
 #endif

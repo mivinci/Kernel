@@ -481,7 +481,8 @@ stats_begin:
  bnez t2, stats_bad
  li t0, 263168
  ld t2, 128(t0)
- bnez t2, stats_bad
+ li t1, 1
+ bne t2, t1, stats_bad
  li t0, 263168
  ld t2, 136(t0)
  bnez t2, stats_bad
@@ -585,7 +586,8 @@ stats_busy:
  bnez t2, stats_bad
  li t0, 263168
  ld t2, 128(t0)
- bnez t2, stats_bad
+ li t1, 1
+ bne t2, t1, stats_bad
  li t0, 263168
  ld t2, 136(t0)
  bnez t2, stats_bad
@@ -733,7 +735,8 @@ stats_busy:
  bnez t2, stats_bad
  li t0, 263168
  ld t2, 128(t0)
- bnez t2, stats_bad
+ li t1, 1
+ bne t2, t1, stats_bad
  li t0, 263168
  ld t2, 136(t0)
  bnez t2, stats_bad

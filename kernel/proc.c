@@ -21,8 +21,9 @@ union Procstage
     Rqid request;
     union
     {
-      Imageid image;
-      Prepid  prep;
+      Imageid  image;
+      Prepid   prep;
+      Childsel children;
     } target;
     union
     {
@@ -32,10 +33,11 @@ union Procstage
     u32 kind, options;
   } wait;
 };
-#define WAIT_RECV    1
-#define WAIT_RESULT  2
-#define WAIT_FINISH  3
-#define WAIT_DESTROY 4
+#define WAIT_RECV    PROCESS_WAIT_RECV
+#define WAIT_RESULT  PROCESS_WAIT_RESULT
+#define WAIT_FINISH  PROCESS_WAIT_FINISH
+#define WAIT_DESTROY PROCESS_WAIT_DESTROY
+#define WAIT_CHILD   PROCESS_WAIT_CHILD
 #ifndef WAIT_DEPTH
 #define WAIT_DEPTH 64
 #endif
@@ -57,7 +59,7 @@ struct Proc
   Procstage stage;
   u64       cpu_ns;
   u32       next;
-  u8        state, configured, phase, reserved;
+  u8        state, configured, phase, wait_cursor;
   Rquota    outgoing;
   Rmail     incoming;
   Event     events;
@@ -139,7 +141,7 @@ procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *ou
   p = &processes[slot];
   p->state = PROC_BUILDING;
   p->cpu_ns = 0;
-  p->reserved = 0;
+  p->wait_cursor = 0;
   p->generation++;
   pid = handlepack(HANDLE_PROCESS, p->generation, slot);
   eventinit(&p->events);
@@ -538,6 +540,7 @@ procrunone(void)
   Proc *p;
   if (current || vm_paused)
     return -ERR_STATE;
+  lifework(8);
   wakechecks();
   if (readyhead == PG_NONE)
     return -ERR_WOULD_BLOCK;
@@ -744,6 +747,7 @@ procwork(u32 scans)
   u32        i, worked = 0;
   if (!scans || scans > 32)
     return -ERR_INVALID;
+  lifework(scans < 8 ? scans : 8);
   for (i = 0; i < scans; i++) {
     p = &processes[cursor];
     cursor = (cursor + 1) % PROCS;
@@ -928,16 +932,27 @@ static void
 wakeone(Proc *p)
 {
   Rqresult result;
-  int      wake;
+  Lifeid   child;
+  u32      matched;
+  int      wake, changed;
   if (!p || (p->state != PROC_READY && p->state != PROC_RUNNING && p->state != PROC_BLOCKED))
     return;
+  changed = lifehint(pidof(p));
+  if (changed > 0)
+    eventpost(&p->events, EVENT_CHILD);
   eventpost(&p->events, rqsignals(&p->outgoing, &p->incoming));
   if (p->state != PROC_BLOCKED)
     return;
   if (p->stage.wait.kind == WAIT_RECV)
     wake = p->incoming.immediate != PG_NONE || (p->events.pending & p->stage.wait.subject.mask) ||
            (!(p->stage.wait.options & RECV_EVENTS_ONLY) && !listempty(&p->incoming.queue));
-  else
+  else if (p->stage.wait.kind == WAIT_CHILD) {
+    if (changed <= 0)
+      return;
+    if (lifeselect(pidof(p), &p->stage.wait.target.children, p->wait_cursor, &child, &matched))
+      panic("child wait selection");
+    wake = child.generation || !matched;
+  } else
     wake = rqresult(p->stage.wait.request, p->identity, p->stage.wait.options, &result) !=
            -ERR_WOULD_BLOCK;
   if (wake) {
@@ -986,7 +1001,9 @@ waitedge(Imageid target, Handle *peer)
       *peer = image.pid;
     if (p == current)
       return -ERR_DEADLOCK;
-    if (p->state != PROC_BLOCKED || p->stage.wait.kind == WAIT_RECV || !p->stage.wait.subject.peer)
+    if (p->state != PROC_BLOCKED ||
+        (p->stage.wait.kind != WAIT_RESULT && p->stage.wait.kind != WAIT_FINISH) ||
+        !p->stage.wait.subject.peer)
       return 0;
     target.generation = p->stage.wait.target.image.generation;
     target.index = p->stage.wait.target.image.index;
@@ -1008,6 +1025,69 @@ sleepcurrent(void)
     panic("IPC blocking continuation");
   p->stage.wait.kind = 0;
   p->stage.wait.subject.peer = 0;
+}
+int
+procwait(Handle selector, u32 options, Liferesult *out)
+{
+  Childsel choice;
+  Lifeid   child;
+  u32      matched;
+  int      error;
+  if (!current || !out || (options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED)))
+    return -ERR_INVALID;
+  out->pid = 0;
+  out->sequence = 0;
+  out->reason = out->code = 0;
+  choice.value = 0;
+  choice.kind = WAIT_SELECT_ANY;
+  choice.reserved = 0;
+  if (selector == 0) {
+    choice.kind = WAIT_SELECT_GROUP;
+    error = lifegroup(current->life, &choice.value);
+    if (error)
+      return error;
+  } else if (selector > 0) {
+    if (handletype(selector) != HANDLE_PROCESS)
+      return -ERR_BAD_HANDLE;
+    choice.kind = WAIT_SELECT_PID;
+    choice.value = selector;
+  } else if (selector < -1) {
+    if ((u64) selector == ((u64) 1 << 63))
+      return -ERR_INVALID;
+    if (handletype(-selector) != HANDLE_PROCESS)
+      return -ERR_BAD_HANDLE;
+    choice.kind = WAIT_SELECT_GROUP;
+    error = groupmatch(-selector, &choice.value);
+    if (error)
+      return error == -ERR_STALE ? -ERR_CHILD : error;
+  }
+  if (choice.kind == WAIT_SELECT_GROUP && grouphold(choice.value))
+    return -ERR_STATE;
+  for (;;) {
+    error = lifeselect(pidof(current), &choice, current->wait_cursor, &child, &matched);
+    if (error)
+      break;
+    if (child.generation) {
+      error = lifecollect(child, pidof(current), out);
+      if (!error)
+        current->wait_cursor = (u8) ((child.index + 1) % LIFES);
+      break;
+    }
+    if (!matched) {
+      error = -ERR_CHILD;
+      break;
+    }
+    if (options & WAIT_WNOHANG)
+      break;
+    current->stage.wait.target.children = choice;
+    current->stage.wait.subject.peer = 0;
+    current->stage.wait.kind = WAIT_CHILD;
+    current->stage.wait.options = options;
+    sleepcurrent();
+  }
+  if (choice.kind == WAIT_SELECT_GROUP && groupdrop(choice.value))
+    panic("child wait group reference");
+  return error;
 }
 static int
 waitresult(Rqid id, u32 options, u32 block, Rqresult *out)
@@ -1455,6 +1535,9 @@ procterminate(Rtable *source, Handle authority)
     panic("terminated wait reference");
   if (p->stage.wait.kind == WAIT_DESTROY && prepdrop(p->stage.wait.target.prep))
     panic("terminated destroy reference");
+  if (p->stage.wait.kind == WAIT_CHILD && p->stage.wait.target.children.kind == WAIT_SELECT_GROUP &&
+      groupdrop(p->stage.wait.target.children.value))
+    panic("terminated child wait reference");
   p->stage.wait.kind = 0;
   p->stage.wait.subject.peer = 0;
   return 0;
@@ -1580,6 +1663,18 @@ querystat(Proc *p, const Life *life, Queryrec *record)
   if (error)
     return error;
   record->data[10] = requests;
+  if (p->state == PROC_READY || p->state == PROC_RUNNING || p->state == PROC_BLOCKED) {
+    record->data[12] = p->stage.wait.kind;
+    if (p->stage.wait.kind == WAIT_CHILD) {
+      record->data[13] = p->stage.wait.target.children.kind;
+      if (p->stage.wait.target.children.kind == WAIT_SELECT_GROUP) {
+        if (groupnames(p->stage.wait.target.children.value, &pgid, &sid))
+          return -ERR_STATE;
+        record->data[14] = (u64) pgid;
+      } else
+        record->data[14] = (u64) p->stage.wait.target.children.value;
+    }
+  }
   return 0;
 }
 int

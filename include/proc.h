@@ -42,6 +42,7 @@ int proccred(Rtable *source, Handle subject, Handle pid, u64 image, Cred *out);
 int procgetpg(Handle pid, Handle *pgid, Handle *sid);
 int procsetpg(Handle pid, Handle pgid);
 int procsetsid(Handle *sid);
+int procwait(Handle selector, u32 options, Liferesult *out);
 int procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u64 count,
               u64 *written, u64 *next);
 int procprepare(Rtable *source, Handle target, u64 rights, Handle *out);

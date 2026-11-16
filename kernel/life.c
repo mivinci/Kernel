@@ -1,6 +1,48 @@
 #include <life.h>
 #include <diag.h>
 static Life lives[LIFES];
+/* Cached run owner and monotonic death watermark make logical adoption O(1).
+   Actual Proc constructors never reuse a full PID generation. */
+static u16    runlife[PROCS];
+static u64    retired[PROCS];
+static Handle childhint[PROCS];
+static void
+changed(Handle parent)
+{
+  u32 slot;
+  if (handletype(parent) != HANDLE_PROCESS)
+    return;
+  slot = handleindex(parent);
+  if (slot < PROCS)
+    childhint[slot] = parent;
+}
+static Handle
+parentof(const Life *l)
+{
+  Life *parent;
+  u32   slot, entry;
+  if (l->parent == 1 || l->pid == 1 ||
+      (l->state != LIFE_LIVE && !(l->state == LIFE_ENDED && l->waitref)))
+    return l->parent;
+  slot = handleindex(l->parent);
+  if (slot >= PROCS)
+    return l->parent; /* Only trusted synthetic constructors may lack a parent. */
+  entry = runlife[slot];
+  if (entry && entry <= LIFES) {
+    parent = &lives[entry - 1];
+    if (parent->pid == l->parent && (parent->state == LIFE_LIVE || parent->state == LIFE_CONSTRUCT))
+      return l->parent;
+  }
+  return handlegen(l->parent) <= retired[slot] ? 1 : l->parent;
+}
+static void
+retire(const Life *l)
+{
+  u32 slot = handleindex(l->pid);
+  u64 generation = handlegen(l->pid);
+  if (slot < PROCS && generation > retired[slot])
+    retired[slot] = generation;
+}
 static Life *
 find(Lifeid id)
 {
@@ -70,6 +112,7 @@ lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
   l->instance = 1;
   l->controls = l->observers = l->cleanup = 0;
   l->cred.ruid = l->cred.euid = l->cred.rgid = l->cred.egid = 0;
+  runlife[run] = (u16) (slot + 1);
   out->generation = l->generation;
   out->index = slot;
   out->reserved = 0;
@@ -122,6 +165,7 @@ lifecancel(Lifeid id)
     l->group = 0;
   }
   l->state = LIFE_ABORTED;
+  retire(l);
   return 0;
 }
 int
@@ -149,6 +193,9 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
   }
   l->sequence++;
   l->state = LIFE_ENDED;
+  retire(l);
+  changed(parentof(l));
+  changed(1); /* A blocked init must also reconsider newly adopted children. */
   return 0;
 }
 int
@@ -159,6 +206,9 @@ lifedetach(Lifeid id)
     return -ERR_STALE;
   if ((l->state != LIFE_ENDED && l->state != LIFE_ABORTED) || l->run == PG_NONE)
     return -ERR_STATE;
+  if (runlife[l->run] != id.index + 1)
+    panic("life run owner cache");
+  runlife[l->run] = 0;
   l->run = PG_NONE;
   if (l->state == LIFE_ABORTED)
     leave(l);
@@ -217,7 +267,9 @@ lifereparent(Lifeid id, Handle oldparent, Handle newparent)
     return -ERR_STATE;
   if (l->parent != oldparent)
     return -ERR_DENIED;
+  changed(parentof(l));
   l->parent = newparent;
+  changed(parentof(l));
   return 0;
 }
 int
@@ -231,7 +283,7 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   out->reason = out->code = 0;
   if (!l)
     return -ERR_STALE;
-  if (handletype(parent) != HANDLE_PROCESS || l->parent != parent)
+  if (handletype(parent) != HANDLE_PROCESS || parentof(l) != parent)
     return -ERR_DENIED;
   if (l->state == LIFE_LIVE)
     return -ERR_WOULD_BLOCK;
@@ -241,6 +293,7 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   out->sequence = l->sequence;
   out->reason = l->reason;
   out->code = l->code;
+  l->parent = parentof(l);
   l->waitref = 0;
   if (l->group) {
     if (groupdetach(l->group))
@@ -259,7 +312,7 @@ lifestat(Lifeid id, Life *out)
     return -ERR_STALE;
   out->generation = l->generation;
   out->pid = l->pid;
-  out->parent = l->parent;
+  out->parent = parentof(l);
   out->sequence = l->sequence;
   out->imagegen = l->imagegen;
   out->account = l->account;
@@ -392,6 +445,8 @@ lifesetgroup(Lifeid id, Handle group)
   if (groupdetach(l->group))
     panic("group move old reservation");
   l->group = group;
+  if (l->state == LIFE_LIVE && l->waitref)
+    changed(parentof(l));
   return 0;
 }
 int
@@ -444,4 +499,95 @@ lifefindpid(Handle pid, Lifeid *out)
     }
   }
   return -ERR_STALE;
+}
+
+int
+lifeselect(Handle parent, const Childsel *choice, u32 start, Lifeid *ready, u32 *matched)
+{
+  Life *l;
+  Group group;
+  u32   n, index;
+  if (!ready || !matched)
+    return -ERR_INVALID;
+  ready->generation = 0;
+  ready->index = ready->reserved = *matched = 0;
+  if (!choice || choice->reserved || start >= LIFES || handletype(parent) != HANDLE_PROCESS ||
+      choice->kind > WAIT_SELECT_GROUP || (choice->kind == WAIT_SELECT_ANY && choice->value))
+    return -ERR_INVALID;
+  if (choice->kind == WAIT_SELECT_PID && handletype(choice->value) != HANDLE_PROCESS)
+    return -ERR_BAD_HANDLE;
+  if (choice->kind == WAIT_SELECT_GROUP &&
+      (handletype(choice->value) != HANDLE_GROUP || groupstat(choice->value, &group)))
+    return -ERR_BAD_HANDLE;
+  for (n = 0; n < LIFES; n++) {
+    index = (start + n) % LIFES;
+    l = &lives[index];
+    if (!l->waitref || (l->state != LIFE_LIVE && l->state != LIFE_ENDED) || parentof(l) != parent ||
+        (choice->kind == WAIT_SELECT_PID && l->pid != choice->value) ||
+        (choice->kind == WAIT_SELECT_GROUP && l->group != choice->value))
+      continue;
+    *matched = 1;
+    if (l->state == LIFE_ENDED) {
+      ready->generation = l->generation;
+      ready->index = index;
+      return 0;
+    }
+  }
+  return 0;
+}
+int
+lifehint(Handle parent)
+{
+  u32 slot;
+  if (handletype(parent) != HANDLE_PROCESS)
+    return 0;
+  slot = handleindex(parent);
+  if (slot >= PROCS || childhint[slot] != parent)
+    return 0;
+  childhint[slot] = 0;
+  return 1;
+}
+int
+lifework(u32 scans)
+{
+  static u32 cursor;
+  Life      *l;
+  u32        i, changedcount = 0;
+  if (!scans || scans > 32)
+    return -ERR_INVALID;
+  for (i = 0; i < scans; i++) {
+    l = &lives[cursor];
+    cursor = (cursor + 1) % LIFES;
+    if ((l->state == LIFE_LIVE || (l->state == LIFE_ENDED && l->waitref)) && l->parent != 1 &&
+        parentof(l) == 1) {
+      l->parent = 1;
+      changed(1);
+      changedcount++;
+    }
+  }
+  return (int) changedcount;
+}
+int
+lifecheck(void)
+{
+  Life *l;
+  u32   i, entry;
+  for (i = 0; i < LIFES; i++) {
+    l = &lives[i];
+    if (!l->state)
+      continue;
+    if (l->run != PG_NONE &&
+        (l->run >= PROCS || runlife[l->run] != i + 1 || handleindex(l->pid) != l->run))
+      return -ERR_STATE;
+  }
+  for (i = 0; i < PROCS; i++) {
+    entry = runlife[i];
+    if (entry && (entry > LIFES || !lives[entry - 1].state || lives[entry - 1].run != i))
+      return -ERR_STATE;
+    if (retired[i] > HANDLE_GENERATION_MAX ||
+        (childhint[i] &&
+         (handletype(childhint[i]) != HANDLE_PROCESS || handleindex(childhint[i]) != i)))
+      return -ERR_STATE;
+  }
+  return 0;
 }

@@ -296,3 +296,5 @@ eventchoose只选择，实际EVENT取走或消息交付成功才更新偏好；�
 Rq新增未投递提示标志，不新增记录：终结和后续真实server_finished分别标DONE，首次协作取消/强制终结已接收请求标CANCEL。rqsignals只消费提示标记，不消费结果、取消或三项回收责任；每主体最多扫12份出站和16份owned，按固定Image合并成RQ_DONE/RQ_CANCEL。提交/回复/取消/finish定向唤醒，CPU有界复查补齐可信rqclean等路径；即使旧失败结果已ACK_RESULT，真正收尾完成仍再置RQ_DONE。若记录已被调用者消费/释放且可回收，不为它保留第二份消息/事件记录。服务必须扫描持久请求状态并自行有界处理，提示次数不是请求数。
 
 新增host验证掩码/合并、消息与事件交替、EVENTS_ONLY保持偏好、deadline前一纳秒/正好到期、重设/取消及u64代次耗尽不改状态。CASE=events通过真实U/EL0检查越权notify无部分置位、重复位合并、混合/筛选EVENT与CALL、BUSY不丢事件、过去/未来/取消/重设闹钟、混合TIMER代次；两个进程均阻塞时实际WFI到期，读取时钟确认未提前返回。另验证同步call期间普通notify只保留pending、正常回复后再取提示。ipc/ipcdepth场景改为服务阻塞等RQ_CANCEL，且验证失败结果与真正收尾的两次RQ_DONE。CHILD/LIFE、IRQ独占位投递、信号/nanosleep运行库、STOP/CONT和完整服务事件循环尚未实现。
+
+CHILD接续（2026-11-16）：Life退出/关系变化按完整父PID记录可合并提示，调度检查点向真实父Event发布EVENT_CHILD；父死亡同时提示init重新选择逻辑孤儿。普通notify仍不能设置该保留位。提示不保存退出结果也不替代wait，多个孩子合并后须循环wait；仅消费事件不消费结果。实际STOP/CONT和信号递送仍未接。

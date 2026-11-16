@@ -26,6 +26,7 @@
 #define SYS_UNMAP         0x33
 #define SYS_SEAL          0x34
 #define SYS_CREATE        0x40
+#define SYS_WAIT          0x45
 #define SYS_CONFIGURE     0x41
 #define SYS_START         0x42
 #define SYS_DESTROY       0x43

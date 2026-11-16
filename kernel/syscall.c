@@ -26,15 +26,16 @@ known(u64 nr)
 NORETURN void
 syscall(Hctx *context)
 {
-  Rtable   *table = proccurrent(context);
-  Htrap     trap;
-  Lifefault fault;
-  Arguments snapshot;
-  u64       args[HAL_SYSCALL_ARGS], outputs[8], used = 0;
-  Handle    handle = 0, pid = 0, parent = 0;
-  u64       image = 0;
-  u32       i;
-  isize     status = 0, seconds = 0;
+  Rtable    *table = proccurrent(context);
+  Htrap      trap;
+  Lifefault  fault;
+  Liferesult child;
+  Arguments  snapshot;
+  u64        args[HAL_SYSCALL_ARGS], outputs[8], used = 0;
+  Handle     handle = 0, pid = 0, parent = 0;
+  u64        image = 0;
+  u32        i;
+  isize      status = 0, seconds = 0;
   if (!table)
     panic("user trap without current process");
   hal_trap_decode(context, &trap);
@@ -65,6 +66,7 @@ syscall(Hctx *context)
   case SYS_GRANT:
     used = 63;
     break;
+  case SYS_WAIT:
   case SYS_CREATE:
   case SYS_SETPG:
   case SYS_INHERIT:
@@ -169,6 +171,23 @@ syscall(Hctx *context)
     break;
   case SYS_DESTROY:
     status = procdestroyview(table, (Handle) args[0]);
+    break;
+  case SYS_WAIT:
+    if (args[1] > 7) {
+      status = -ERR_INVALID;
+      break;
+    }
+    status = procwait((Handle) args[0], (u32) args[1], &child);
+    if (!status && child.pid) {
+      outputs[0] = (u64) child.pid;
+      outputs[1] = WAIT_EXITED;
+      outputs[2] = child.code;
+      if (child.reason != LIFE_EXIT)
+        outputs[2] |= WAIT_SIGNALLED;
+      if (child.reason == LIFE_FAULT)
+        outputs[2] |= WAIT_FAULT;
+      outputs[3] = child.sequence;
+    }
     break;
   case SYS_GETPG:
     status = procgetpg((Handle) args[0], &handle, &pid);

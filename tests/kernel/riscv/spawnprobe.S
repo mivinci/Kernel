@@ -2981,6 +2981,83 @@ spawn_copy_0:
  li a4, 0
  li a5, 0
  li a6, 0
+ mv a0, s1
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 60
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 61
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
  mv a0, s0
  li a7, SYS_DESTROY
  ecall
@@ -3012,7 +3089,7 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 60
+ li s9, 62
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3054,7 +3131,7 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 61
+ li s9, 63
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3097,7 +3174,7 @@ spawn_copy_0:
  beq t0, t1, 99f
  j spawn_bad
 99:
- li s9, 62
+ li s9, 64
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3105,9 +3182,94 @@ spawn_copy_0:
  li a4, 0
  li a5, 0
  li a6, 0
- li a7, SYS_YIELD
+ li a7, SYS_WAIT
  ecall
  beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ mv t1, s1
+ beq a1, t1, 99f
+ j spawn_bad
+99:
+ li t1, 1
+ beq a2, t1, 99f
+ j spawn_bad
+99:
+ li t1, 42
+ beq a3, t1, 99f
+ j spawn_bad
+99:
+ li t1, 2
+ beq a4, t1, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 65
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 8
+ li a5, 3
+ li a7, SYS_RECV
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ li t1, 3
+ beq a1, t1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ li t1, 8
+ beq a4, t1, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 66
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 8
+ li a5, 3
+ li a7, SYS_RECV
+ ecall
+ li t1, -11
+ beq a0, t1, 99f
  j spawn_bad
 99:
  beqz t0, 99f
@@ -3134,7 +3296,7 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 63
+ li s9, 67
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3173,7 +3335,7 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 64
+ li s9, 68
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3212,7 +3374,127 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 65
+ li s9, 69
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s1
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -22
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 70
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a0, -9223372036854775808
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -1
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 71
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a0, -1
+ li a1, 8
+ li a7, SYS_WAIT
+ ecall
+ li t1, -1
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 72
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3267,7 +3549,7 @@ spawn_copy_0:
  sd t1, 40(t0)
  li t0, 262144
  ld t2, 8(t0)
- li s9, 66
+ li s9, 73
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3305,7 +3587,7 @@ spawn_copy_0:
  mv s2, a3
  li t0, 262296
  sd s1, 0(t0)
- li s9, 67
+ li s9, 74
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3344,7 +3626,7 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 68
+ li s9, 75
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3385,7 +3667,7 @@ spawn_copy_0:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 69
+ li s9, 76
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3423,7 +3705,7 @@ spawn_copy_0:
  j spawn_bad
 99:
  mv s4, a1
- li s9, 70
+ li s9, 77
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3476,7 +3758,7 @@ spawn_copy_0:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 71
+ li s9, 78
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3528,7 +3810,7 @@ spawn_copy_0:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 72
+ li s9, 79
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3598,7 +3880,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 240
  sd t1, 40(t0)
- li s9, 73
+ li s9, 80
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3639,7 +3921,7 @@ spawn_copy_1:
 99:
  li t0, 262144
  ld t2, 32(t0)
- li s9, 74
+ li s9, 81
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3678,7 +3960,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 75
+ li s9, 82
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3729,7 +4011,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 76
+ li s9, 83
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3768,7 +4050,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 77
+ li s9, 84
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3820,7 +4102,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 78
+ li s9, 85
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3870,7 +4152,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 79
+ li s9, 86
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3922,7 +4204,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 80
+ li s9, 87
  li a0, 0
  li a1, 0
  li a2, 0
@@ -3974,7 +4256,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 81
+ li s9, 88
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4013,7 +4295,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 82
+ li s9, 89
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4206,7 +4488,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 83
+ li s9, 90
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4258,7 +4540,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 84
+ li s9, 91
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4299,7 +4581,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 85
+ li s9, 92
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4338,7 +4620,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 86
+ li s9, 93
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4379,7 +4661,7 @@ spawn_copy_1:
 99:
  li t0, 262144
  ld t2, 32(t0)
- li s9, 87
+ li s9, 94
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4418,7 +4700,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 88
+ li s9, 95
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4456,7 +4738,124 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 89
+ li s9, 96
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s1
+ li a7, SYS_SETPG
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ neg s7, s1
+ li s9, 97
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s1
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 98
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -22
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 99
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4495,7 +4894,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 90
+ li s9, 100
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4537,7 +4936,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 91
+ li s9, 101
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4580,7 +4979,7 @@ spawn_copy_1:
  beq t0, t1, 99f
  j spawn_bad
 99:
- li s9, 92
+ li s9, 102
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4588,9 +4987,95 @@ spawn_copy_1:
  li a4, 0
  li a5, 0
  li a6, 0
- li a7, SYS_YIELD
+ mv a0, s7
+ li a7, SYS_WAIT
  ecall
  beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ mv t1, s1
+ beq a1, t1, 99f
+ j spawn_bad
+99:
+ li t1, 1
+ beq a2, t1, 99f
+ j spawn_bad
+99:
+ li t1, 42
+ beq a3, t1, 99f
+ j spawn_bad
+99:
+ li t1, 2
+ beq a4, t1, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 103
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 8
+ li a5, 3
+ li a7, SYS_RECV
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ li t1, 3
+ beq a1, t1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ li t1, 8
+ beq a4, t1, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 104
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 8
+ li a5, 3
+ li a7, SYS_RECV
+ ecall
+ li t1, -11
+ beq a0, t1, 99f
  j spawn_bad
 99:
  beqz t0, 99f
@@ -4617,7 +5102,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 93
+ li s9, 105
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4656,7 +5141,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 94
+ li s9, 106
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4695,7 +5180,127 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 95
+ li s9, 107
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s1
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -22
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 108
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a0, -9223372036854775808
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -1
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 109
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a0, -1
+ li a1, 8
+ li a7, SYS_WAIT
+ ecall
+ li t1, -1
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 110
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4750,7 +5355,7 @@ spawn_copy_1:
  sd t1, 40(t0)
  li t0, 262144
  ld t2, 16(t0)
- li s9, 96
+ li s9, 111
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4785,7 +5390,7 @@ spawn_copy_1:
  mv s2, a3
  li t0, 262304
  sd s1, 0(t0)
- li s9, 97
+ li s9, 112
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4824,7 +5429,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 98
+ li s9, 113
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4865,7 +5470,7 @@ spawn_copy_1:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 99
+ li s9, 114
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4903,7 +5508,7 @@ spawn_copy_1:
  j spawn_bad
 99:
  mv s4, a1
- li s9, 100
+ li s9, 115
  li a0, 0
  li a1, 0
  li a2, 0
@@ -4956,7 +5561,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 101
+ li s9, 116
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5008,7 +5613,7 @@ spawn_copy_1:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 102
+ li s9, 117
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5078,7 +5683,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 140
  sd t1, 40(t0)
- li s9, 103
+ li s9, 118
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5119,7 +5724,7 @@ spawn_copy_2:
 99:
  li t0, 262144
  ld t2, 32(t0)
- li s9, 104
+ li s9, 119
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5158,7 +5763,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 105
+ li s9, 120
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5209,7 +5814,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 106
+ li s9, 121
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5248,7 +5853,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 107
+ li s9, 122
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5300,7 +5905,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 108
+ li s9, 123
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5350,7 +5955,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 109
+ li s9, 124
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5402,7 +6007,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 110
+ li s9, 125
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5454,7 +6059,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 111
+ li s9, 126
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5493,7 +6098,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 112
+ li s9, 127
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5686,7 +6291,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 113
+ li s9, 128
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5738,7 +6343,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 114
+ li s9, 129
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5779,7 +6384,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 115
+ li s9, 130
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5818,7 +6423,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 116
+ li s9, 131
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5859,7 +6464,7 @@ spawn_copy_2:
 99:
  li t0, 262144
  ld t2, 32(t0)
- li s9, 117
+ li s9, 132
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5898,7 +6503,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 118
+ li s9, 133
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5936,7 +6541,84 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 119
+ li s9, 134
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s1
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 135
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 136
  li a0, 0
  li a1, 0
  li a2, 0
@@ -5975,7 +6657,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 120
+ li s9, 137
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6017,7 +6699,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 121
+ li s9, 138
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6060,7 +6742,7 @@ spawn_copy_2:
  beq t0, t1, 99f
  j spawn_bad
 99:
- li s9, 122
+ li s9, 139
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6068,9 +6750,95 @@ spawn_copy_2:
  li a4, 0
  li a5, 0
  li a6, 0
- li a7, SYS_YIELD
+ li a0, -1
+ li a7, SYS_WAIT
  ecall
  beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ mv t1, s1
+ beq a1, t1, 99f
+ j spawn_bad
+99:
+ li t1, 1
+ beq a2, t1, 99f
+ j spawn_bad
+99:
+ li t1, 42
+ beq a3, t1, 99f
+ j spawn_bad
+99:
+ li t1, 2
+ beq a4, t1, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 140
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 8
+ li a5, 3
+ li a7, SYS_RECV
+ ecall
+ beqz a0, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ li t1, 3
+ beq a1, t1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ li t1, 8
+ beq a4, t1, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 141
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 8
+ li a5, 3
+ li a7, SYS_RECV
+ ecall
+ li t1, -11
+ beq a0, t1, 99f
  j spawn_bad
 99:
  beqz t0, 99f
@@ -6097,7 +6865,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 123
+ li s9, 142
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6136,7 +6904,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 124
+ li s9, 143
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6175,7 +6943,127 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 125
+ li s9, 144
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s1
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -22
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 145
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a0, -9223372036854775808
+ li a1, 1
+ li a7, SYS_WAIT
+ ecall
+ li t1, -1
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 146
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a0, -1
+ li a1, 8
+ li a7, SYS_WAIT
+ ecall
+ li t1, -1
+ beq a0, t1, 99f
+ j spawn_bad
+99:
+ beqz t0, 99f
+ j spawn_bad
+99:
+ beqz a1, 99f
+ j spawn_bad
+99:
+ beqz a2, 99f
+ j spawn_bad
+99:
+ beqz a3, 99f
+ j spawn_bad
+99:
+ beqz a4, 99f
+ j spawn_bad
+99:
+ beqz a5, 99f
+ j spawn_bad
+99:
+ beqz a6, 99f
+ j spawn_bad
+99:
+ beqz a7, 99f
+ j spawn_bad
+99:
+ li s9, 147
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6215,7 +7103,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 126
+ li s9, 148
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6272,7 +7160,7 @@ spawn_copy_2:
  sd t1, 40(t0)
  li t0, 262144
  ld t2, 16(t0)
- li s9, 127
+ li s9, 149
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6320,7 +7208,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 128
+ li s9, 150
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6372,7 +7260,7 @@ spawn_copy_2:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 129
+ li s9, 151
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6411,7 +7299,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 130
+ li s9, 152
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6449,7 +7337,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 131
+ li s9, 153
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6505,7 +7393,7 @@ spawn_copy_2:
 99:
  li t0, 262144
  ld t2, 32(t0)
- li s9, 132
+ li s9, 154
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6544,7 +7432,7 @@ spawn_copy_2:
  beqz a7, 99f
  j spawn_bad
 99:
- li s9, 133
+ li s9, 155
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6606,7 +7494,7 @@ spawn_victim:
  sd t1, 40(t0)
  li t0, 262144
  ld t2, 0(t0)
- li s9, 134
+ li s9, 156
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6647,7 +7535,7 @@ spawn_victim:
  li t0, 262272
  li t1, 99
  sd t1, 0(t0)
- li s9, 135
+ li s9, 157
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6690,7 +7578,7 @@ spawn_victim:
 spawn_killer:
  li t0, 262144
  ld t2, 56(t0)
- li s9, 136
+ li s9, 158
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6761,7 +7649,7 @@ spawn_child_begin:
  li t0, 200
  add t0, s2, t0
  ld s3, 0(t0)
- li s9, 137
+ li s9, 159
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6801,7 +7689,7 @@ spawn_child_begin:
  beqz a7, 99f
  j spawn_child_bad
 99:
- li s9, 138
+ li s9, 160
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6861,7 +7749,7 @@ spawn_child_begin:
  slli t2, s7, 32
  or t2, t2, s6
  sd t2, 32(t0)
- li s9, 139
+ li s9, 161
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6914,7 +7802,7 @@ spawn_child_begin:
  sd t1, 32(t0)
  li t1, 0
  sd t1, 40(t0)
- li s9, 140
+ li s9, 162
  li a0, 0
  li a1, 0
  li a2, 0
@@ -6954,7 +7842,7 @@ spawn_child_begin:
  beqz a7, 99f
  j spawn_child_bad
 99:
- li s9, 141
+ li s9, 163
  li a0, 0
  li a1, 0
  li a2, 0
@@ -7001,7 +7889,7 @@ spawn_child_begin:
  beq t2, t1, 99f
  j spawn_child_bad
 99:
- li s9, 142
+ li s9, 164
  li a0, 0
  li a1, 0
  li a2, 0
@@ -7041,7 +7929,7 @@ spawn_child_begin:
  j spawn_child_bad
 99:
  mv s8, a3
- li s9, 143
+ li s9, 165
  li a0, 0
  li a1, 0
  li a2, 0
@@ -7080,7 +7968,7 @@ spawn_child_begin:
  beqz a7, 99f
  j spawn_child_bad
 99:
- li s9, 144
+ li s9, 166
  li a0, 0
  li a1, 0
  li a2, 0

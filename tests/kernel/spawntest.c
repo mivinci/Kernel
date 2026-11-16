@@ -193,8 +193,9 @@ spawntest(void)
       if (life.state == LIFE_ENDED) {
         checkexit(target[i].life, LIFE_EXIT, 42);
         clean(children[i]);
-        REQUIRE(!lifecollect(target[i].life, parent, &result) && result.code == 42);
-        collected[i] = 1;
+        REQUIRE(!lifestat(target[i].life, &life));
+        if (!life.waitref)
+          collected[i] = 1;
       }
     }
     REQUIRE(!lifestat(source.life, &life));

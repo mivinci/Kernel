@@ -111,6 +111,22 @@ groupfind(Handle pgid, Handle session, Handle *out)
   return -ERR_STALE;
 }
 int
+groupmatch(Handle pgid, Handle *out)
+{
+  u32 i;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (handletype(pgid) != HANDLE_PROCESS)
+    return -ERR_BAD_HANDLE;
+  for (i = 0; i < GROUPS; i++)
+    if (groups[i].kind == HANDLE_GROUP && groups[i].id == pgid && groups[i].processes) {
+      *out = identity(&groups[i]);
+      return 0;
+    }
+  return -ERR_STALE;
+}
+int
 groupcreate(Handle pgid, Handle session, Handle *out)
 {
   Group *s = find(session, HANDLE_SESSION), *g;
