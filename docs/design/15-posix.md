@@ -121,3 +121,5 @@ WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按�
 管理强杀状态验证接续（2026-11-16）：init真实用户场景新增两次CONTROL terminate阻塞/已唤醒未恢复的组wait父进程，常规wait取得SIGNALLED结果并核对WIFSIGNALED/WTERMSIG=9；其活孩子/已结束未收取孩子均由init正常wait退出22/11。此前信号状态编码的host证据增加了这条真实管理强杀结果，但sigsend、捕获信号及STOP/CONT仍未实现；详细窗口/引用守恒见03末尾。
 
 整数转换子集接续（2026-11-17）：stdlib.h现提供C locale的strtol/strtoul，错误/范围/endptr及已验证子集见08末尾。292项完整host和两架构runtime专项通过，每架构5个真实main共275组/550次转换；内核、locale、分配器、stdio、fork/exec和文件/网络接口的完成度不由此推定。证据build/host/stage47-integer-conversion/，未执行CI/完整标准合规验收。
+
+内存格式化子集接续（2026-11-17）：stdio.h现声明已实现的snprintf/vsnprintf，支持整数/指针/字节字符串与字符，格式/范围/截断/错误边界及证据见08末尾。300项完整host、格式及双架构runtime通过，每架构5个真实main共120项格式检查；浮点、宽字符、位置参数、%n、流printf/FILE和完整stdio未实现，不能从内存输出推定文件/网络接口可用。

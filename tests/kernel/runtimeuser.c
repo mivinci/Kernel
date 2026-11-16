@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <limits.h>
 #include <unistd.h>
 #include <errno.h>
@@ -6,14 +7,16 @@
 #include <sys/channel.h>
 #include "private/libc.h"
 #include "private/syscall.h"
-volatile u64        runtime_trace[9];
+volatile u64        runtime_trace[10];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
       _exit(n);                                                                                    \
   } while (0)
-typedef struct Numbercase Numbercase;
+__extension__ typedef long long          Testll;
+__extension__ typedef unsigned long long Testull;
+typedef struct Numbercase                Numbercase;
 struct Numbercase
 {
   const char   *text;
@@ -74,6 +77,106 @@ numbercheck(void)
             183);
   }
   return (u32) ARRAY_SIZE(numbers) + 35;
+}
+static int
+formatv(char *buffer, size_t size, const char *format, ...)
+{
+  va_list arguments, copy;
+  int     result, needed;
+  va_start(arguments, format);
+  __builtin_va_copy(copy, arguments);
+  result = vsnprintf(buffer, size, format, arguments);
+  needed = vsnprintf(NULL, 0, format, copy);
+  va_end(copy);
+  va_end(arguments);
+  return result == needed ? result : -999;
+}
+static u32
+formatcheck(void)
+{
+  char        buffer[160], guarded[10], raw[3];
+  const char *expected;
+  int         result, marker = 77;
+  u32         checks = 0;
+#define FCHECK(c, n)                                                                               \
+  do {                                                                                             \
+    REQUIRE(c, n);                                                                                 \
+    checks++;                                                                                      \
+  } while (0)
+  errno = EDOM;
+  FCHECK(snprintf(buffer, sizeof(buffer), "%+08d:%#x:%#o", -12, 42U, 9U) == 17 &&
+             !strcmp(buffer, "-0000012:0x2a:011") && errno == EDOM,
+         190);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%+08.4d:%-6s", -12, "hi") == 15 &&
+             !strcmp(buffer, "   -0012:hi    "),
+         191);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%.0d:%#.0o:%#.0x", 0, 0U, 0U) == 3 &&
+             !strcmp(buffer, ":0:"),
+         192);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%hhd:%hhu:%hd:%hu", (int) (signed char) -128,
+                  (unsigned int) (unsigned char) 255, (int) (short) -32768,
+                  (unsigned int) (unsigned short) 65535) == 21 &&
+             !strcmp(buffer, "-128:255:-32768:65535"),
+         193);
+  expected = "-9223372036854775808:18446744073709551615";
+  FCHECK(snprintf(buffer, sizeof(buffer), "%ld:%lu", LONG_MIN, ULONG_MAX) ==
+                 (int) strlen(expected) &&
+             !strcmp(buffer, expected),
+         194);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%lld:%llu", (Testll) LONG_MIN, (Testull) ULONG_MAX) ==
+                 (int) strlen(expected) &&
+             !strcmp(buffer, expected),
+         195);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%jd:%ju", (intmax_t) LONG_MIN, (uintmax_t) ULONG_MAX) ==
+                 (int) strlen(expected) &&
+             !strcmp(buffer, expected),
+         196);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%zd:%zu:%td:%tu", (ptrdiff_t) -13, (size_t) 14,
+                  (ptrdiff_t) -15, (size_t) 16) == 13 &&
+             !strcmp(buffer, "-13:14:-15:16"),
+         197);
+  expected = "-7:8:-9:10:-9223372036854775808:18446744073709551615:-11:12:-13:14:-15:16:end:!";
+  FCHECK(formatv(buffer, sizeof(buffer), "%d:%u:%ld:%lu:%lld:%llu:%jd:%ju:%zd:%zu:%td:%tu:%s:%c",
+                 -7, 8U, -9L, 10UL, (Testll) LONG_MIN, (Testull) ULONG_MAX, (intmax_t) -11,
+                 (uintmax_t) 12, (ptrdiff_t) -13, (size_t) 14, (ptrdiff_t) -15, (size_t) 16, "end",
+                 '!') == (int) strlen(expected) &&
+             !strcmp(buffer, expected),
+         198);
+  FCHECK(formatv(buffer, sizeof(buffer), "[%*.*s]:[%*.*d]", -8, 4, "abcdef", 8, -1, -123) == 21 &&
+             !strcmp(buffer, "[abcd    ]:[    -123]"),
+         199);
+  FCHECK(formatv(buffer, sizeof(buffer), "%.*d", INT_MIN, -123) == 4 && !strcmp(buffer, "-123"),
+         200);
+  memset(guarded, 0xa5, sizeof(guarded));
+  FCHECK(snprintf(guarded + 1, 5, "abcdef") == 6 && !memcmp(guarded + 1, "abcd", 5) &&
+             (u8) guarded[0] == 0xa5 && (u8) guarded[6] == 0xa5 && (u8) guarded[9] == 0xa5,
+         201);
+  FCHECK(snprintf(guarded + 1, 1, "xyz") == 3 && !guarded[1] && (u8) guarded[0] == 0xa5, 202);
+  FCHECK(snprintf(NULL, 0, "%s:%+06d", "abc", -42) == 10 && errno == EDOM, 203);
+  FCHECK(snprintf(buffer, sizeof(buffer), "A%cB%%", 0) == 4 && !memcmp(buffer, "A\0B%", 5), 204);
+  raw[0] = 'a';
+  raw[1] = 'b';
+  raw[2] = 'c';
+  FCHECK(snprintf(buffer, sizeof(buffer), "[%.3s]", raw) == 5 && !strcmp(buffer, "[abc]"), 205);
+  FCHECK(formatv(buffer, sizeof(buffer), "[%.0s]", (const char *) 1) == 2 && !strcmp(buffer, "[]"),
+         206);
+  FCHECK(snprintf(buffer, sizeof(buffer), "%p:%p", (void *) 0, (void *) 0x1234) == 10 &&
+             !strcmp(buffer, "0x0:0x1234"),
+         207);
+  FCHECK(formatv(NULL, 0, "%*s", INT_MAX, "") == INT_MAX && errno == EDOM, 208);
+  result = formatv(buffer, 8, "%*s!", INT_MAX, "");
+  FCHECK(result == -1 && errno == EOVERFLOW && !buffer[7], 209);
+  result = formatv(buffer, sizeof(buffer), "prefix%n", &marker);
+  FCHECK(result == -1 && errno == EINVAL && marker == 77 && !strcmp(buffer, "prefix"), 210);
+  FCHECK(formatv(buffer, sizeof(buffer), "%ls", (const void *) 1) == -1 && errno == EINVAL &&
+             !buffer[0],
+         211);
+  FCHECK(formatv(buffer, sizeof(buffer), "%f") == -1 && errno == EINVAL && !buffer[0], 212);
+  FCHECK(formatv(buffer, sizeof(buffer), "%2147483648.*d") == -1 && errno == EOVERFLOW &&
+             !buffer[0],
+         213);
+#undef FCHECK
+  return checks;
 }
 static void
 preinit(void)
@@ -197,6 +300,7 @@ main(int argc, char **argv)
               strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
           176);
   runtime_trace[8] = numbercheck();
+  runtime_trace[9] = formatcheck();
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)
