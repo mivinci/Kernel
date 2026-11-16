@@ -2,6 +2,7 @@ import ctypes as C
 from types import SimpleNamespace
 import unittest
 import test_life as support
+from test_local import Queryrec
 from test_image import Imageid, Image, signatures as image_signatures
 
 class List(C.Structure): pass
@@ -45,10 +46,13 @@ class RequestTests(unittest.TestCase):
                 'rqhandle':[Rqid,C.c_uint32], 'rqlookup':[C.c_int64,Imageid,C.POINTER(Rqid)],
                 'rqrecv':[C.POINTER(Mail),C.POINTER(Recv)], 'rqdefer':[C.POINTER(Mail),C.c_int64],
                 'rqreply':[C.POINTER(Mail),C.c_int64,C.POINTER(Msg)], 'rqfinish':[C.POINTER(Mail),C.c_int64],
+                'rqsource':[C.POINTER(Mail),C.c_int64,C.POINTER(Imageid)],
                 'rqcheck':[C.POINTER(Mail),C.c_int64], 'rqresult':[Rqid,Imageid,C.c_uint32,C.POINTER(Result)],
                 'rqcancel':[Rqid,Imageid], 'rqack':[Rqid,Imageid,C.c_uint32], 'rqabandon':[Rqid,Imageid],
                 'rqrevoke':[C.POINTER(Quota),Imageid,C.c_int64], 'rqclean':[Rqid,Imageid],
                 'rqhold':[Rqid], 'rqdrop':[Rqid], 'rqstat':[Rqid,C.POINTER(Info)],
+                'rqcount':[C.c_int64,C.c_uint64,C.POINTER(C.c_uint32)],
+                'rqquery':[C.c_int64,C.c_uint64,C.c_uint64,C.POINTER(Queryrec),C.c_uint32,C.POINTER(C.c_uint32),C.POINTER(C.c_uint64)],
                 'rqsignals':[C.POINTER(Quota),C.POINTER(Mail)]}.items():getattr(lib,name).argtypes=args
             lib.rqhandle.restype=C.c_int64
             lib.rqsignals.restype=C.c_uint64
@@ -358,4 +362,129 @@ class RequestTests(unittest.TestCase):
             self.assertEqual(self.lib.rqsignals(C.byref(a.quota),C.byref(a.mail)),0)
             self.assertEqual(self.poll(req,a,1)[0],0)
             self.assertEqual(self.lib.rqack(req,a.image,2),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_source_requires_actual_receiver_ownership_and_survives_draining(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2);other=self.endpoint(3)
+            req=self.submit(a,b);handle=self.lib.rqhandle(req,3);out=Imageid(77,77,77)
+            self.assertEqual(self.lib.rqsource(C.byref(b.mail),handle,C.byref(out)),-3)
+            received=self.receive(b)
+            self.assertEqual(self.lib.rqsource(C.byref(other.mail),received.request,C.byref(out)),-3)
+            self.assertEqual(self.lib.rqsource(C.byref(b.mail),received.request,C.byref(out)),0)
+            self.assertEqual((out.generation,out.index),(a.image.generation,a.image.index))
+            self.assertEqual(self.lib.rqdefer(C.byref(b.mail),received.request),0)
+            self.end(a)
+            self.assertEqual(self.lib.rqsource(C.byref(b.mail),received.request,C.byref(out)),0)
+            self.assertEqual((out.generation,out.index),(a.image.generation,a.image.index))
+            self.assertEqual(self.lib.rqfinish(C.byref(b.mail),received.request),0)
+            self.assertEqual(self.lib.rqsource(C.byref(b.mail),received.request,C.byref(out)),-3)
+            self.assertEqual(out.generation,0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def query(self,e,cursor=0,count=16,image=1):
+        rows=(Queryrec*16)();written=C.c_uint32(77);following=C.c_uint64(77)
+        error=self.lib.rqquery(e.pid,image,cursor,rows,count,C.byref(written),C.byref(following))
+        return error,list(rows)[:written.value],following.value
+
+    def test_query_limits_roles_hides_private_flags_and_never_consumes(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2);other=self.endpoint(3)
+            self.assertEqual(self.query(a)[1],[])
+            req=self.submit(a,b,123);before=bytes(self.info(req))
+            for e in (a,b):
+                error,rows,following=self.query(e)
+                self.assertEqual((error,len(rows),following),(0,1,0))
+                row=rows[0]
+                self.assertEqual((row.type,row.pid,row.image,row.stamp),(2,e.pid,1,(req.generation<<16)|req.index))
+                self.assertEqual(list(row.data[:7]),[a.pid,1,b.pid,1,1,0,0])
+                self.assertEqual(list(row.data[7:]),[0]*13)
+            self.assertEqual(self.query(other)[1],[])
+            self.assertEqual(bytes(self.info(req)),before)
+            received=self.receive(b)
+            self.assertEqual(self.lib.rqdefer(C.byref(b.mail),received.request),0)
+            self.assertEqual(self.query(b)[1][0].data[6],0)
+            self.assertEqual(self.lib.rqreply(C.byref(b.mail),received.request,C.byref(message(99))),0)
+            self.assertEqual(self.query(b)[1],[])
+            self.assertEqual(list(self.query(a)[1][0].data[4:7]),[3,0,2])
+            self.assertEqual(self.lib.rqack(req,a.image,1),0)
+            self.assertEqual(self.query(a)[1][0].data[6],3)
+            self.assertEqual(self.lib.rqack(req,a.image,2),0)
+            self.assertEqual(self.query(a)[1],[])
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_query_retired_server_and_dead_caller_stay_with_original_life(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2)
+            req=self.submit(a,b);received=self.receive(b)
+            self.end(b)
+            fresh=self.endpoint(2,generation=2,mail=b.mail)
+            self.assertEqual(self.query(fresh)[1],[])
+            self.assertEqual(self.query(b)[1],[])
+            error,rows,_=self.query(b,image=0)
+            self.assertEqual((error,len(rows)),(0,1))
+            self.assertEqual(list(rows[0].data[:7]),[a.pid,1,b.pid,1,3,(1<<64)-14,0])
+            self.assertEqual(self.query(b,image=2)[1],[])
+            self.end(a)
+            self.assertEqual(self.query(a)[1],[])
+            self.assertEqual(self.query(a,image=0)[1][0].data[6],5)
+            self.assertEqual(self.lib.rqclean(req,b.image),0)
+            self.assertEqual(self.query(b,image=0)[1],[])
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_query_cursor_scope_and_slot_generation_cannot_be_reinterpreted(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2);other=self.endpoint(3)
+            first=self.submit(a,b);second=self.submit(a,b);self.submit(other,b)
+            error,rows,cursor=self.query(a,count=1)
+            self.assertEqual((error,len(rows)),(0,1))
+            self.assertEqual(cursor,(second.generation<<16)|second.index)
+            self.assertEqual(self.query(other,cursor=cursor),(-4,[],0))
+            self.assertEqual(self.lib.rqcancel(second,a.image),0)
+            self.assertEqual(self.lib.rqack(second,a.image,3),0)
+            fresh=self.submit(a,b)
+            self.assertEqual(fresh.index,second.index);self.assertNotEqual(fresh.generation,second.generation)
+            self.assertEqual(self.query(a,cursor=cursor),(-4,[],0))
+            self.assertEqual(len(self.query(a)[1]),2)
+            self.assertEqual(len(self.query(b)[1]),3)
+            for cursor,count in ((1,1),(1<<63,1),(1<<16|64,1),(0,0),(0,17)):
+                self.assertEqual(self.query(a,cursor=cursor,count=count),(-1,[],0))
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_query_sixteen_rows_then_continuation_preserves_all_requests(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2);c=self.endpoint(3)
+            requests=[self.submit(a,b,value=i) for i in range(8)]
+            requests+=[self.submit(c,b,value=i+100) for i in range(8)]
+            requests.append(self.submit(b,a,value=200))
+            before=[bytes(self.info(x)) for x in requests]
+            error,first,cursor=self.query(b,count=16)
+            self.assertEqual((error,len(first)),(0,16));self.assertNotEqual(cursor,0)
+            error,last,following=self.query(b,cursor=cursor,count=16)
+            self.assertEqual((error,len(last),following),(0,1,0))
+            expected={(x.generation<<16)|x.index for x in requests}
+            self.assertEqual({x.stamp for x in first+last},expected)
+            self.assertEqual([bytes(self.info(x)) for x in requests],before)
+            self.assertEqual(self.receive(b).message.words[0],0)
+        for lib in self.libs:self.exercise(lib,body)
+
+
+    def test_count_uses_live_responsibilities_once_without_counting_prepaid_slots(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2)
+            def count(e,expected,image=1):
+                out=C.c_uint32(77)
+                self.assertEqual(self.lib.rqcount(e.pid,image,C.byref(out)),0)
+                self.assertEqual(out.value,expected)
+            count(a,0);count(b,0)
+            own=self.submit(a,a);other=self.submit(a,b)
+            count(a,2);count(b,1);count(a,0,image=2)
+            self.assertEqual(self.lib.rqcancel(own,a.image),0);count(a,2)
+            self.assertEqual(self.lib.rqack(own,a.image,3),0);count(a,1)
+            received=self.receive(b)
+            self.assertEqual(self.lib.rqreply(C.byref(b.mail),received.request,C.byref(message(1))),0)
+            count(a,1);count(b,0)
+            self.assertEqual(self.lib.rqack(other,a.image,3),0);count(a,0)
+            out=C.c_uint32(77)
+            self.assertEqual(self.lib.rqcount(-1,1,C.byref(out)),-1);self.assertEqual(out.value,0)
         for lib in self.libs:self.exercise(lib,body)

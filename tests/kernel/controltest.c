@@ -28,11 +28,12 @@ load(Handle pid, const Procinfo *self, const Procinfo *peer, u32 role)
   Handle   allocator = resource(t, LOCAL_ALLOC), space = resource(t, LOCAL_SPACE);
   Handle   code, stack, boot, data;
   Allocarg args;
+  Acct     account;
   Config   c;
   Boot     header;
-  u64      resources[8], config[13], entry = 0x10000;
+  u64      resources[8], config[17], entry = 0x10000;
   u32      i;
-  args.bytes = 4 * PAGE_SIZE;
+  args.bytes = 8 * PAGE_SIZE;
   args.kind = ALLOC_CODE;
   args.align = args.minaddr = args.maxaddr = args.reserved = 0;
   REQUIRE(!localalloc(t, allocator, &args, &code));
@@ -62,7 +63,7 @@ load(Handle pid, const Procinfo *self, const Procinfo *peer, u32 role)
   resources[5] = (u64) allocator;
   REQUIRE(!localwrite(t, boot, 0, &header, sizeof(header)) &&
           !localwrite(t, boot, sizeof(header), resources, sizeof(resources)));
-  REQUIRE(!localmap(t, space, code, 0, entry, 4 * PAGE_SIZE, VM_READ | VM_EXEC));
+  REQUIRE(!localmap(t, space, code, 0, entry, 8 * PAGE_SIZE, VM_READ | VM_EXEC));
   REQUIRE(!localmap(t, space, stack, 0, 0x3ffffe0000UL, 65536, VM_READ | VM_WRITE));
   REQUIRE(!localmap(t, space, boot, 0, 0x3fff000000UL, PAGE_SIZE, VM_READ));
   REQUIRE(!localmap(t, space, data, 0, 0x40000, PAGE_SIZE, VM_READ | VM_WRITE));
@@ -83,6 +84,11 @@ load(Handle pid, const Procinfo *self, const Procinfo *peer, u32 role)
   REQUIRE(!localendpoint(t, peer->identity, LOCAL_CALL, LOCAL_USE, 0, 0, (Handle *) &config[11]));
   REQUIRE(!localendpoint(t, peer->identity, LOCAL_NOTIFY, LOCAL_USE, 7UL << 32, 0,
                          (Handle *) &config[12]));
+  REQUIRE(!localcontrol(t, self->life, CONTROL_BUDGET, (Handle *) &config[13]));
+  REQUIRE(!localcontrol(t, peer->life, CONTROL_BUDGET, (Handle *) &config[14]));
+  REQUIRE(!acctstat(self->acct, &account));
+  config[15] = account.used + account.reserved;
+  config[16] = (u64) allocator;
   REQUIRE(!localwrite(t, data, 0, config, sizeof(config)));
   c.entry = entry + (role == 2 ? (u64) (control_replacement - control_begin)
                      : role    ? (u64) (control_peer - control_begin)

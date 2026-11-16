@@ -8,8 +8,10 @@
 typedef union Arguments Arguments;
 union Arguments
 {
-  Allocarg alloc;
-  Maparg   map;
+  Allocarg  alloc;
+  Maparg    map;
+  Budgetarg budget;
+  Cred      cred;
 };
 static int
 known(u64 nr)
@@ -50,10 +52,18 @@ syscall(Hctx *context)
     goto done;
   }
   switch (trap.syscall_nr) {
+  case SYS_QUERY:
+    used = 31;
+    break;
+  case SYS_GETCRED:
+    used = 7;
+    break;
   case SYS_GRANT:
     used = 63;
     break;
+  case SYS_SETPG:
   case SYS_INHERIT:
+  case SYS_BUDGET:
   case SYS_REVOKE:
     used = 3;
     break;
@@ -85,6 +95,8 @@ syscall(Hctx *context)
   case SYS_RQCHECK:
     used = 1;
     break;
+  case SYS_GETPG:
+  case SYS_TERMINATE:
   case SYS_ALARMSET:
   case SYS_CLOCK_GETTIME:
   case SYS_CLOCK_GETRES:
@@ -98,6 +110,7 @@ syscall(Hctx *context)
   case SYS_UNMAP:
     used = 3;
     break;
+  case SYS_SETSID:
   case SYS_ALARMCANCEL:
   case SYS_YIELD:
   case SYS_GETID:
@@ -121,6 +134,47 @@ syscall(Hctx *context)
     hal_user_enter(context);
   }
   switch (trap.syscall_nr) {
+  case SYS_GETPG:
+    status = procgetpg((Handle) args[0], &handle, &pid);
+    if (!status) {
+      outputs[0] = (u64) handle;
+      outputs[1] = (u64) pid;
+    }
+    break;
+  case SYS_SETPG:
+    status = procsetpg((Handle) args[0], (Handle) args[1]);
+    break;
+  case SYS_SETSID:
+    status = procsetsid(&handle);
+    if (!status)
+      outputs[0] = (u64) handle;
+    break;
+  case SYS_QUERY:
+    status = procquery(table, (Handle) args[0], args[1], args[2], args[3], args[4], &outputs[0],
+                       &outputs[1]);
+    break;
+  case SYS_GETCRED:
+    status = proccred(table, (Handle) args[0], (Handle) args[1], args[2], &snapshot.cred);
+    if (!status) {
+      outputs[0] = snapshot.cred.ruid;
+      outputs[1] = snapshot.cred.euid;
+      outputs[2] = snapshot.cred.rgid;
+      outputs[3] = snapshot.cred.egid;
+    }
+    break;
+  case SYS_TERMINATE:
+    status = procterminate(table, (Handle) args[0]);
+    break;
+  case SYS_BUDGET:
+    status = localnative(table, (Handle) args[0]);
+    if (status)
+      break;
+    if (spaceread(table->space, args[1], &snapshot.budget, sizeof(snapshot.budget))) {
+      status = -ERR_FAULT;
+      break;
+    }
+    status = procbudget(table, (Handle) args[0], &snapshot.budget);
+    break;
   case SYS_GRANT:
     status = procgrant(table, (Handle) args[0], (Handle) args[1], args[2], args[3], args[4],
                        args[5], &handle);

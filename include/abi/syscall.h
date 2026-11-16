@@ -28,6 +28,13 @@
 #define SYS_CONFIGURE     0x41
 #define SYS_START         0x42
 #define SYS_DESTROY       0x43
+#define SYS_GETPG         0x66
+#define SYS_SETPG         0x67
+#define SYS_SETSID        0x68
+#define SYS_QUERY         0x73
+#define SYS_GETCRED       0x6d
+#define SYS_TERMINATE     0x44
+#define SYS_BUDGET        0x48
 #define SYS_GRANT         0x46
 #define SYS_REVOKE        0x47
 #define SYS_INHERIT       0x56

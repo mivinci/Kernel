@@ -132,6 +132,7 @@ spacecreate(Acctid acct, Spaceid *out)
   s->pages = vs.pages;
   s->acct = acct;
   s->maps = PG_NONE;
+  s->mapcount = 0;
   s->busy = 0;
   s->state = 1;
   s->refs = 1;
@@ -192,6 +193,7 @@ spacestat(Spaceid id, Space *out)
   out->acct = s->acct;
   out->pages = s->pages;
   out->maps = s->maps;
+  out->mapcount = s->mapcount;
   out->busy = s->busy;
   out->state = s->state;
   out->refs = s->refs;
@@ -300,6 +302,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   mappings[node].next = s->maps;
   s->pages = vs.pages;
   s->maps = node;
+  s->mapcount++;
   s->busy = 0;
   return 0;
 }
@@ -344,6 +347,9 @@ spaceunmap(Spaceid id, u64 address)
     s->maps = m->next;
   else
     mappings[previous].next = m->next;
+  if (!s->mapcount)
+    panic("mapping count underflow");
+  s->mapcount--;
   memory = m->mem;
   prep = m->prep;
   m->length = 0;
@@ -413,6 +419,41 @@ spaceread(Spaceid id, u64 address, void *target, u64 bytes)
     for (i = 0; i < take; i++)
       output[i] = input[i];
     output += take;
+    address += take;
+    bytes -= take;
+  }
+  return 0;
+}
+int
+spacewrite(Spaceid id, u64 address, const void *data, u64 bytes)
+{
+  Space       *s = find(id);
+  Hpte         entry;
+  Hvs          vs;
+  Sourcectx    source;
+  u64          page, end, take, i;
+  const u8    *input = data;
+  volatile u8 *output;
+  if (!s || !data || !bytes || bytes > 65536 || address < 0x10000 || address >= (1UL << 38) ||
+      bytes > (1UL << 38) - address)
+    return SP_BAD;
+  if (s->busy)
+    return SP_BUSY;
+  view(s, &vs, &source);
+  end = address + bytes;
+  for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE)
+    if (!hal_vm_lookup(&vs, page, &entry) ||
+        (entry.prot & (VM_WRITE | VM_USER)) != (VM_WRITE | VM_USER) || entry.attr != VM_NORMAL)
+      return SP_BAD;
+  /* Do not write through a non-W PTE via kaddr: future COW must first obtain
+     private writable backing through its checked write-preparation path. */
+  while (bytes) {
+    hal_vm_lookup(&vs, ALIGN_DOWN(address, PAGE_SIZE), &entry);
+    take = MIN(bytes, PAGE_SIZE - (address & PAGE_MASK));
+    output = (volatile u8 *) kaddr(entry.pa) + (address & PAGE_MASK);
+    for (i = 0; i < take; i++)
+      output[i] = input[i];
+    input += take;
     address += take;
     bytes -= take;
   }

@@ -53,6 +53,8 @@ int setclose(Setid id);
 int setenter(Setid id);
 int setleave(Setid id);
 int setstat(Setid id, Set *out);
+u64 settag(Setid id);
+int setlookup(u64 tag, Setid *out);
 int acctcreate(Setid set, u64 limit, u64 peak, Acctid *out);
 int accthold(Acctid id);
 int acctdrop(Acctid id);
@@ -60,6 +62,11 @@ int acctclose(Acctid id);
 /* Unbind releases the original process/construction reference, only after close. */
 int acctunbind(Acctid id);
 int acctstat(Acctid id, Acct *out);
+/* Stable identity only: no authority and no retained accounting reference. */
+u64 accttag(Acctid id);
+int acctlookup(u64 tag, Acctid *out);
+/* Existing charge/reservations must fit; this does not change Set limits. */
+int acctbudget(Acctid id, u64 limit, u64 peak);
 /* Ordinary admission only. Peak/COW capacity is not implemented by these helpers. */
 int acctreserve(Acctid id, u64 pages);
 int acctconvert(Acctid id, u64 pages);

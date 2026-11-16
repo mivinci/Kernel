@@ -184,3 +184,24 @@ imagestat(Imageid id, Image *out)
   out->reserve = image->reserve;
   return 0;
 }
+
+int
+imagelookup(Lifeid life, u64 number, Imageid *out)
+{
+  u32    i;
+  Image *image;
+  if (!out || life.reserved || !number)
+    return -ERR_INVALID;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  for (i = 0; i < IMAGES; i++) {
+    image = &images[i];
+    if (image->state && image->life.generation == life.generation &&
+        image->life.index == life.index && image->number == number) {
+      out->generation = image->generation;
+      out->index = i;
+      return 0;
+    }
+  }
+  return -ERR_STALE;
+}

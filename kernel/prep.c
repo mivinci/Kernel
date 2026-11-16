@@ -378,3 +378,39 @@ prepexpire(u64 now, u32 scans)
   }
   return (int) expired;
 }
+
+int
+preprelated(Handle owner, u64 sourceimage, Handle target, u64 number, Imageid *out)
+{
+  Prep *p;
+  Image image;
+  Life  life;
+  u32   i;
+  int   usable;
+  if (!out || handletype(owner) != HANDLE_PROCESS || !sourceimage ||
+      handletype(target) != HANDLE_PROCESS || (target == owner && !number))
+    return -ERR_INVALID;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  for (i = 0; i < PREPS; i++) {
+    p = &preps[i];
+    if (!p->state || p->owner != owner || p->sourceimage != sourceimage || p->pid != target ||
+        (number && p->image != number))
+      continue;
+    usable = p->state == PREP_ACTIVE ? active(p) : 0;
+    if (p->state == PREP_COMMITTED || (p->state == PREP_ACTIVE && !usable))
+      return -ERR_STATE;
+    if (imagestat(p->identity, &image) || lifestat(image.life, &life) || image.pid != target ||
+        image.sourceimage != sourceimage || (target != owner && life.parent != owner))
+      return -ERR_STALE;
+    if ((p->state == PREP_ACTIVE && image.state != IMAGE_PREPARING) ||
+        (p->state == PREP_ABORTED && image.state != IMAGE_ENDED))
+      return -ERR_STATE;
+    /* A canceled retained scope keeps the original owner identity even after
+       its source table closes/rebinds. It cannot mint fresh business rights. */
+    out->generation = p->identity.generation;
+    out->index = p->identity.index;
+    return 0;
+  }
+  return -ERR_STALE;
+}

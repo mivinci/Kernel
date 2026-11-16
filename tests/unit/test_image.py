@@ -15,6 +15,7 @@ def signatures(lib):
         'imageorigin':[Imageid,C.c_uint64], 'imageactivate':[Imageid],
         'imageend':[Imageid,C.c_uint32], 'imagehold':[Imageid,C.c_uint32],
         'imagedrop':[Imageid,C.c_uint32], 'imagedetach':[Imageid],
+        'imagelookup':[support.Lifeid,C.c_uint64,C.POINTER(Imageid)],
         'imagestat':[Imageid,C.POINTER(Image)]}.items(): getattr(lib,name).argtypes=args
 
 class ImageTests(unittest.TestCase):
@@ -107,4 +108,22 @@ class ImageTests(unittest.TestCase):
             self.assertEqual((self.info(image).sourceimage,self.info(image).reason),(7,4))
             self.assertEqual(self.lib.imagedrop(image,2),-1)
             self.assertEqual(self.lib.imagehold(Imageid(image.generation,image.index,1),2),-4)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_lookup_only_finds_retained_images_of_the_exact_life(self):
+        def body():
+            life=self.create();old=self.image(life)
+            self.assertEqual(self.lib.imagehold(old,1),0)
+            self.assertEqual(self.lib.imageend(old,2),0)
+            self.assertEqual(self.lib.imagedetach(old),0)
+            fresh=self.image(life);other=self.create(slot=2);out=Imageid()
+            self.assertEqual(self.lib.imagelookup(life,1,C.byref(out)),0)
+            self.assertEqual((out.generation,out.index),(old.generation,old.index))
+            self.assertEqual(self.lib.imagelookup(other,1,C.byref(out)),-4)
+            self.assertEqual(self.lib.imagelookup(life,0,C.byref(out)),-1)
+            self.assertEqual(self.lib.imagedrop(old,1),0)
+            self.assertEqual(self.lib.imagelookup(life,1,C.byref(out)),-4)
+            self.assertEqual(out.generation,0)
+            self.assertEqual(self.lib.imagelookup(life,2,C.byref(out)),0)
+            self.assertEqual((out.generation,out.index),(fresh.generation,fresh.index))
         for lib in self.libs:self.exercise(lib,body)

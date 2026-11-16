@@ -43,6 +43,18 @@ POSIX 进程组号/会话号沿用组长/会话首进程的进程身份；内部
 身份类别识别和有效性检查使用统一辅助入口，先识别保留值 1，禁止各处直接移位推断其类别；认可身份不等于授予管理权限。
 PGID 等于创建组的组长 PID，SID 等于创建会话的首进程 PID；内部关系记录独立存活并保存完整对外身份。组长退出且退出记录收取后可复用其进程槽，新代次不与旧组号冲突；组/会话按成员及管理引用清零条件回收。
 
+### 会话与进程组操作（2026-11-16用户确认）
+
+getpg(0) 查询自身，其他正PID只允许查询同会话的构造中、存活或尚未收取退出结果的进程，返回实际PGID/SID。认识PID或持有CONTROL不绕过该接口的会话边界。
+
+setpg(pid,pgid) 中pid=0表示自身，pgid=0表示目标PID；只允许修改自身或尚未成功exec的直接孩子，调用者与目标必须同会话。会话首进程不能改变组，即使请求原组也拒绝。新组的PGID只能为目标PID；否则必须加入已有的同会话组。负选择器及非进程类别拒绝，uid 0不绕过关系检查。检查/分配失败保留原关系。
+
+setsid仅作用于自身；若任一仍保留的组以调用者完整PID为PGID，拒绝建立新会话。成功时SID=PGID=调用者PID，原组其他成员保持原关系。系统服务在启动流程显式setsid隔离，不能靠uid或名称获得隔离。
+
+构造阶段预占组的进程引用，发布时转为活跃成员；取消解除预占。退出解除活跃成员，未收取结果继续保留原组，收取后解除该引用；单独持有旧CONTROL不继续保留成员关系。组/会话管理引用与进程引用分别计数，组保留所属会话。初始init使用SID=PGID=1，但关系记录不是模拟init进程。
+
+例：sh在会话S内创建尚未exec的A、B，setpg(A,0)建立组A，再setpg(B,A)加入。A先退出并被收取，B仍持原完整PGID A；A的运行槽复用后，新PID不能重定向这个组。B退出并被收取且管理引用清零才回收组。若B先setsid成功，sh随后setpg(B,A)因跨会话失败；若分配新会话或新组时容量不足，B仍在原组，不留下半建关系。
+
 - [ ] 两架构检查 Handle 为 8 字节有符号类型，所有有效编码为正，43 位代次耗尽拒绝回绕。
 - [ ] POSIX 正/零/负选择器、INT64_MIN、非进程类别、陈旧 PID 和组长退出均覆盖；原生接口拒绝负句柄。
 
@@ -87,6 +99,8 @@ CALL/SEND及notify授权绑定完整目标实例/镜像，不随目标exec自动
 成功状态为 0，结果字段返回目标资源表中的新 Handle；该结果不属于调用者自己的资源表。管理者可写入目标 Boot 或按控制协议交付，不可直接在自身上下文用作资源授权。
 grant 增加独立资源引用，不建立派生树；释放源 Handle 不自动撤销目标，撤销一项不级联撤销其他独立授权。失败完整回滚引用和目标表项。
 安装与目标进入退出状态原子排序：先退出则安装失败，先安装则纳入该实例退出清理；固定完整目标身份，不能安装到复用后的新进程。
+
+有效CONSTRUCT/EXEC_VIEW的CONFIG另允许只读query RESOURCE枚举其精确准备表，用于发现目标SELF Handle；其他query种类拒绝，准备发布/取消/超期立即失效。该观察不将目标Handle变成调用者本地授权，也不授予持续CONTROL QUERY。
 
 ### 目标表安装权限（第2项审查修订）
 
@@ -1120,3 +1134,98 @@ WAIT_RECV保存mask/options，wake只看匹配事件或允许的消息；未选�
 - [x] inherit主机测试覆盖标记修改不增权、不换目标/掩码/引用，失败不改状态；control场景同步覆盖原生输出及保留参数。此验证不代表已执行fork/exec保留。
 - [x] 完整153项host、格式及68个QEMU场景通过；随后只增强同步撤权载荷，两架构control补验通过。日志及失败历史见status。
 - [ ] 其余CONTROL管理、完整CREATE与CONSTRUCT/EXEC_VIEW授权、SHARED/DMA、资源reply和镜像切换期间的长Op仍待接入。
+
+
+### 原生预算与强制终止接续（2026-11-16）
+
+budget(0x48)已按02接固定CONTROL BUDGET，不接受PID或其他业务位补权。terminate(0x44)已接固定CONTROL TERMINATE，READY/当前RUNNING/BLOCKED在短临界区原子结束Life/镜像、关闭出站与至多32份入站、关闭Acct新增支出并进入EXITING；非当前READY先从有界FIFO摘除，当前自身直接切CPU续点，不返回用户。非当前等待续点不再恢复：WAIT_RESULT/WAIT_FINISH保存的唯一Rq临时引用在出站死亡标记后解除，WAIT_RECV没有这份引用；已有结果、DRAINING与外部引用按独立责任继续收尾，CPU离栈分批清理。
+
+当前所有C切换只发生在无临时VM/分配责任的检查点或显式sleepcurrent，因此被丢弃的等待续点只需解除已保存的Rq引用。将来增加长Op、信号上下文或其他跨切换责任时，须把这些责任纳入同一退栈协议，不能沿用本切片假设随意丢C栈。Proc保持512字节，未增加泛化任务/对象记录。
+
+已发布实例强制终止保存LIFE_SIGNAL/KILL=9；正常exit/fault先提交时重复terminate保持原原因及序号。同一合法固定CONTROL指向的已ENDED Life重复返回0，即使其旧运行槽已复用也只确认旧Life；已free/revoke的旧Handle拒绝。CONSTRUCT/ABORTED不能用terminate代替destroy。STOP/完整信号路径仍待接，本切片不声称覆盖尚未实现的停止态。
+
+- [x] 新terminate场景已在两架构进入真实用户态：检查缺TERMINATE、PID/CALL、保留输入及未发布目标拒绝；就绪、阻塞recv、强结果/finish等待、回复后READY续点和自身终止均不再运行用户尾部。
+- [x] 请求在终止前持refs=1，终止后两份ACCEPTED保留DRAINING且refs=0、一份已回复请求可回收；服务真正rqfinish后旧记录消失。Acct在清理前已CLOSING，仍有页计费但不能新增支出。
+- [x] 同场景核对正常exit(23)先提交的原因/序号不被terminate改写；复用同运行索引的新实例经真实timer运行，旧CONTROL重复terminate不触及它，最后由新实例自己的CONTROL终止。
+- [x] 完整161项host、格式及70个QEMU回归通过，日志见status。完整CREATE、STOP/信号、父子事件、外设IRQ及用户态装载仍待接。
+
+
+### 不可变凭据与原生getcred接续（2026-11-16）
+
+Life已保存四u32的ruid/euid/rgid/egid，发布后不可修改，故障快照与凭据独立保留；结束、结果收取、运行槽复用不改绑旧凭据。run/引用计数保持u32，state/reason/code/两个布尔改用经范围校验的u8，该凭据切片当时Life120字节、Proc512，没有新增凭据池或用户可见对象；后续稳定账目身份接续见下。当前可信boot/test构造器默认0，并可在CONSTRUCT阶段显式安装凭据；这不是已完成原生CREATE的普通继承或SERVICE准入，后者必须先验证再暴露构造结果。
+
+getcred(0x6d)三输入：0/0/0只查自身；固定CONTROL QUERY按绑定Life核验，pid仅作一致性断言，非零image只接受仍存在的该Life镜像；实际持有REQUEST按完整接收者及原caller Image核验SOURCE。非零pid进一步查同一source PID/image拥有的未发布CHILD/准备记录；FUTURE要求非零image且已有确切准备，当前EXEC_VIEW/execprep尚未实现，不按猜测创建记录或凭据。读取不消费请求、不登记观察、不增加授权，短事务不跨调度点借用表。
+
+rqsource仅接受当前服务真实拥有的REQUEST，DEFER/DRAINING期间仍固定原caller Image，reply/finish后失效。preprelated最多扫描192份准备；ACTIVE须仍满足归属/阶段，已取消且证据保留时只读原ENDED记录，即使源表已关闭也按原owner/image核验；已发布为STATE、证明记录释放为STALE。CONTROL读已结束Life的不可变凭据不要求运行槽仍存在；指定旧镜像已不保留仍STALE，image=0不凭PID选新实例。
+
+- [x] host覆盖凭据发布后不可改、与故障同时保留、旧Life/同运行索引新实例隔离；Image仅查既有记录；REQUEST所有权及DRAINING保留；准备归属不随源表重绑，发布/释放后不能继续作为孩子依据。
+- [x] 两架构creds使用不同非零uid/gid真实用户程序，覆盖自身/CONTROL/REQUEST SOURCE/CHILD、伪造REQUEST类别与错误接收者、缺QUERY、错误PID/image/保留输入。父退出并清理/复用运行槽后旧DRAINING及取消准备仍读原凭据；清除准备证明后CHILD为STALE，finish后REQUEST失效。
+- [x] 同场景确认解除CALL及NOTIFY镜像引用后旧Image消失，但合法CONTROL仍能读取原Life凭据；不把“放弃一个入口”当所有镜像引用已清理。
+- [x] 完整166项host、格式及72个QEMU场景通过，日志见status；完整CREATE、FUTURE/EXEC_VIEW创建、观察cookie及用户态FS尚未接，不以本节查询冒充它们已实现。
+
+
+### 原生RESOURCE只读查询接续（2026-11-16）
+
+已接query(0x73)的RESOURCE=5：authority=0只枚举当前自身表，固定CONTROL QUERY只枚举其绑定完整Life的当前/剩余表，已结束且资源表回收则返回0条；不通过旧运行索引选择新实例。仍存在的CLOSING表可作只读清理快照。普通PID/CALL/RPC/缺QUERY不构成管理查询授权；本RESOURCE切片当时未扩展准备表读取；用户后续确认及接入见文末。
+
+Queryrec保持192字节，type/pid/image/stamp/data[20]按06；RESOURCE stamp为本条Local代次，data[0..7]为完整本地Handle/子类型/静态rights/Mem偏移与长度/inherit/通信目标PID/image，其他字0。只有MEM输出窗口，加载MEM还原为Mem本体0..bytes，不能泄漏Prep内部代次/索引；CALL/SEND/NOTIFY固定目标不随新镜像改绑，非MEM offset/length为0。快照列出的静态授权位不替代操作时对封存、准备阶段等动态条件的重查。
+
+一次最多16条，先完整验证请求的count×192输出区间，再在关IRQ且不调度的短事务里保存快照、复制实际返回条数；故障/陈旧游标失败不部分写，未返回的数组尾部不改。游标为下一实际表项的低16位索引及其上43位Local代次，其他位0；它不是授权，不选择主体。条目删除/复用后的旧游标STALE；0首次及结束，不承诺跨批全表原子。源范围仍由每次authority重新核验。
+
+- [x] host覆盖逐条分页、满表释放/同槽新代次、非法游标/count、固定通信目标/隐藏内部字段，以及取消前后加载MEM窗口。
+- [x] 两架构control验证自身/CONTROL、192字节全布局及保留字、缺权/裸PID/CALL、最大16条与跨页输出、只读/缺页无部分写、CODE引用撤销后的旧游标及旧Life/运行槽复用隔离。
+- [x] 完整171项host、格式及72个QEMU场景回归通过，日志见status。
+- [ ] 该RESOURCE切片当时其他种类NOTSUP；后续ACCT/LIFE见下，该切片当时PROC未接，后续见文末；RQ见04末尾。BOOT_RESOURCE在SYSTEM启动查询接入前DENIED；完整统计/观察仍未实现，准备表查询接续见文末。
+
+
+### LIFE/ACCT查询接续（2026-11-16）
+
+query的LIFE=4、ACCT=3已接既定自身0/固定CONTROL QUERY范围，完整Life授权与身份解析保持不变。LIFE是整实例单条，pid为绑定完整身份、image=0、stamp为Life状态序号；data[0..5]=parent/reason/code/waitref/observers/cleanup，其余0。waitref表示尚保留父收取责任，不保证当前已有可收取终态；查询不消费结果。ACCT见02，按Life保存的稳定账目身份查找，不能借运行槽选账目。两类均只有首批cursor=0，next=0；stamp标识记录身份/生命周期序号，不是全部数据字段的内容版本。
+
+- [x] 两架构control覆盖单条布局、保留字段、自身/显式QUERY、非法权限/类别、预算即时反馈、正常退出首因与已收取状态，以及旧账目消失后的空结果。
+- [x] Life绑定账目身份后sizeof=128，Proc仍512；新建失败回滚不保留账目引用，Acct与Life独立结清/复用。
+- [x] 完整174项host/格式/72个QEMU回归通过，日志见status；该切片当时PROC/SYSTEM及父wait/观察/信号仍待接；PROC后续见文末，RQ见04末尾。
+
+
+RQ query接续（2026-11-16）：原生查询已增加RQ=2，沿既定自身当前PID/image或固定CONTROL QUERY的Life范围读取实际保留请求。无效/释放的游标不会扩大主体范围，旧镜像退役记录只能以合法Life管理范围查看；数据/游标与非消费验证见04末尾。准备权只读查询后续见文末；PROC后续见文末；SYSTEM统计仍待接。
+
+
+### 会话/组机制与原生接口接续（2026-11-16）
+
+已接getpg(0x66)、setpg(0x67)、setsid(0x68)，严格按正文的自/子同会话规则检查。getpg从独立Life查完整PID，不要求旧Proc仍在；构造中目标必须有已完成的Proc构造。父修改孩子还要求当前镜像为首次成功发布前/后的image=1；完整exec尚未接，成功exec后的禁止分支仍待真实执行验收。
+
+SESSION与GROUP共用128份48字节记录，外部PGID/SID保存完整PROCESS身份，内部代次独立。组记录持会话引用；构造/未收取结果保留processes，已发布存活成员另计members，管理lease另计refs。Life将其仍持实例引用的Set身份压为56位代次+8位索引，腾出组引用而保持128字节；Proc仍512，不增加重复成员列表或通用对象池。原生操作均为关IRQ短事务，不在借用关系记录时调度。
+
+- [x] 4项host以4槽关系池检查共享容量、初始二记录创建中途失败回滚、独立管理/进程/成员计数、错误类别及陈旧内部身份；同外部组名在不同会话的保留记录不会重定向已有引用。
+- [x] 3项Life host检查继承、取消、发布/退出/收取与独立CONTROL引用、组长收取后运行身份复用，以及reparent不改组。
+- [x] 两架构groups进入真实U/EL0，验证0选择器、保留输入、非法类别/负值、uid 0仍不能改无关目标、父改未exec构造孩子、同会话加入、保留自身组号阻止setsid、成功隔离及会话首进程限制。
+- [x] 同场景从真实setsid后的父构造/发布孩子，父退出并收取、运行槽同索引新PID后，孩子仍读原完整PGID/SID；旧父PID查STALE，其他会话目标DENIED。管理引用保留旧组允许重新加入，最后逐项释放，检查页/费用/关系清零。
+- [ ] 完整孤儿自动接管、CHILD/LIFE提示、终端/前台绑定、STOP/CONT与孤儿组信号尚未接。本场景由可信测试入口显式lifereparent转交收取关系，不把它称作自动接管或完整作业控制。
+
+
+### 准备期只读RESOURCE查询接续（2026-11-16用户确认）
+
+原生query RESOURCE已允许有效CONSTRUCT CONFIG选择它绑定的精确准备表；复用localtarget的准备核验，不放开其他构造/加载操作的原生门禁。先按源表内完整Handle检查CONFIG，再核验准备ACTIVE、源/目标PID/image/表epoch及实际Life/Acct/Space；目标表只在关IRQ、不调度的快照窗口借用。CONFIG本身不隐含ALLOC/MAP/PUBLISH或CONTROL QUERY，其他query kind为DENIED。失效准备为BAD_HANDLE，不返回缓存目标或猜测同运行槽新表。EXEC_VIEW的相同规则已确定，但尚无真实exec准备实例，本切片不声称其运行验收。
+
+- [x] 3项host验证仅CONFIG可枚举目标真实SPACE/ALLOC、本地目标Handle不被换算成父授权、缺CONFIG/错误源拒绝；源及目标各自PID/image/epoch改变即失效，输出表指针清零。
+- [x] host验证取消、发布和精确期限到达即失效，复用准备状态核验，查询不会在到期后延长加载授权。
+- [x] 两架构creds真实U/EL0程序以只有CONFIG的准备权读取孩子两条真实SELF记录并核对Handle/PID/image；PROC/RQ/ACCT/LIFE/BOOT_RESOURCE均拒绝，输出只读页为FAULT；普通ALLOC仍NOTSUP，未借只读查询绕过原生创建准入。
+- [ ] 完整CREATE、EXEC_VIEW/exec、用户态ELF装载/Boot生成仍待接入；host到期/发布核验不代替这些真实路径验收。
+
+本轮会话/组及准备期查询完整回归：188项host、格式、74个QEMU场景全部通过，日志`build/host/stage24-prep-query/test-all.log`；编译数据库包含新group单元。此前stage23的185/74及失败现场保留。不代表CI、硬件、完整创建/exec或作业控制通过。
+
+
+### PROC实际统计与调度计费接续（2026-11-16）
+
+已接query PROC=1，沿既有自身0/固定CONTROL QUERY范围查询精确Life的运行记录；CONSTRUCT CONFIG仍仅允许RESOURCE。整实例最多一条，旧Proc回收后0条而不选择复用槽的新PID；退出结果/故障及独立账目仍走LIFE/ACCT，不为已收取实例拼造历史运行统计。公共状态与字段规则见06，BUILDING内部阶段不输出。
+
+每次进入线程前记录单调时间，回CPU续点时累计该次选中窗口；查询当前线程另含尚未结算的窗口，读取不重复入账。阻塞/就绪等待与CPU空闲不计入该线程，溢出/倒退明确报错，不回绕。state/configured/phase三个有界字段缩为u8，加入8字节CPU累计后Proc仍512；Hkctx及其对齐保持原位，未增加每镜像或退出结果副本。
+
+Space增加独立mapcount并保持64字节预算，成功映射提交才增加，准确解除后减少；原maps仍是内部链表头，不能当数量。实际used/reserved取绑定Acct，资源数来自仍占用的Local，Rq数复用RQ查询责任过滤，不把12份预付当12个活跃请求。查询不消费消息/事件/结果，不产生新授权。
+
+- [x] 新Rq host验证空闲预付为0、自请求只计一次、取消结果未收取仍保留、回复解除receiver责任及ACK后消失；既有历史/槽复用测试覆盖其共用过滤。
+- [x] host映射/跨页失败回滚与准确解除覆盖mapcount；读取Space的host结构同步64字节布局。
+- [x] 两架构stats真实U/EL0覆盖CONSTRUCT/READY/RUNNING/BLOCKED/EXITING，实际费用、6/8条资源与4条映射、空闲Rq为0；不同主体执行忙循环时阻塞目标CPU计费不变，恢复后继续增加。
+- [x] 同场景清理/收取目标并复用其运行槽，旧CONTROL PROC为0条而LIFE仍原exit42，新CONTROL只读新实例且CPU为0；最终页/费用/组关系结清。
+- [x] 两架构IPC/ipcdepth核对阻塞调用者的真实强等待对端与1份实际Rq责任；查询不消费请求。
+- [x] 完整189项host、格式及76个QEMU场景通过，日志`build/host/stage25-proc-stats/test-all.log`。STOPPED/终端关联、SYSTEM枚举、实际exec与完整信号尚未接，不称完整作业控制或CI通过。

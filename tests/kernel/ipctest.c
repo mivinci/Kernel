@@ -32,7 +32,8 @@ load(Handle pid, u64 entry, u32 server, Handle other, Imageid selfimage, Handle 
   Allocarg args;
   Config   c;
   Boot     header;
-  u64      resources[8], config[5];
+  Procinfo peer;
+  u64      resources[8], config[7];
   u32      i;
   args.bytes = 4 * PAGE_SIZE;
   args.kind = ALLOC_CODE;
@@ -72,6 +73,9 @@ load(Handle pid, u64 entry, u32 server, Handle other, Imageid selfimage, Handle 
   config[3] = (u64) otherpid;
   config[4] = (u64) pid;
   config[2] = (u64) send;
+  config[5] = 0;
+  REQUIRE(!procinfo(otherpid, &peer) &&
+          !localcontrol(t, peer.life, CONTROL_QUERY, (Handle *) &config[6]));
   REQUIRE(!localwrite(t, data, 0, config, sizeof(config)));
   c.entry = entry + (server ? (u64) (ipc_server - ipc_begin) : 0);
   c.stack = 0x3fffff0000UL;

@@ -237,12 +237,11 @@ localprepared(Rtable *t, Prepid prep, Memid id, u64 rights, Handle *out)
           LOCAL_LOAD, out);
   return 0;
 }
-int
-localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
+static int
+prepared(Rtable *t, Handle h, u64 rights, Prepid *id, Prepinfo *info)
 {
-  Local   *l = find(t, h, LOCAL_CONSTRUCT);
-  Prepinfo info;
-  int      error;
+  Local *l = find(t, h, LOCAL_CONSTRUCT);
+  int    error;
   if (!l)
     return -ERR_BAD_HANDLE;
   if ((l->rights & rights) != rights)
@@ -250,13 +249,38 @@ localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
   id->generation = l->objectgen;
   id->index = l->object;
   id->reserved = 0;
-  error = prepcheck(*id, t, &info);
+  error = prepcheck(*id, t, info);
   if (error) {
     if (rights == PREP_PUBLISH && error == -ERR_REVOKED && preppublishcheck(*id) == -ERR_TIMEDOUT)
       return -ERR_TIMEDOUT;
     return -ERR_BAD_HANDLE;
   }
+  return 0;
+}
+int
+localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
+{
+  Prepinfo info;
+  int      error = prepared(t, h, rights, id, &info);
+  if (error)
+    return error;
   *pid = info.pid;
+  return 0;
+}
+int
+localqueryprep(Rtable *t, Handle h, Rtable **out)
+{
+  Prepid   id;
+  Prepinfo info;
+  int      error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = NULL;
+  error = prepared(t, h, PREP_CONFIG, &id, &info);
+  if (error)
+    return error;
+  /* Borrow only for the caller's masked-IRQ, non-scheduling snapshot. */
+  *out = info.target;
   return 0;
 }
 int
@@ -779,4 +803,81 @@ localclearscope(Rtable *t, Prepid id, u32 first, u32 count)
     if (scope.generation == id.generation && scope.index == id.index && removeentry(l))
       panic("local scope cleanup");
   }
+}
+
+static int
+queryrecord(const Rtable *table, u32 index, Queryrec *out)
+{
+  const Local *l = &table->slots[index];
+  Mem          m;
+  Image        image;
+  u32          i;
+  for (i = 0; i < sizeof(*out); i++)
+    ((u8 *) out)[i] = 0;
+  out->type = QUERY_RESOURCE;
+  out->pid = table->owner;
+  out->image = table->image;
+  out->stamp = l->generation;
+  out->data[0] = (u64) handlepack(HANDLE_RESOURCE, l->generation, index);
+  out->data[1] = l->subtype;
+  out->data[2] = l->rights;
+  out->data[5] = l->inherit;
+  if (l->subtype == LOCAL_MEM) {
+    if (l->source == LOCAL_LOAD) {
+      if (memstat(memory(l), &m))
+        return -ERR_STALE;
+      out->data[4] = m.bytes;
+    } else {
+      out->data[3] = l->offset;
+      out->data[4] = l->length;
+    }
+  } else if (l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND || l->subtype == LOCAL_NOTIFY) {
+    if (imagestat(endpoint(l), &image))
+      return -ERR_STALE;
+    out->data[6] = (u64) image.pid;
+    out->data[7] = image.number;
+  } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
+             l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT)
+    return -ERR_NOTSUP;
+  return 0;
+}
+int
+localquery(Rtable *table, u64 cursor, Queryrec *records, u32 count, u32 *written, u64 *next)
+{
+  u32    index = 0, n = 0;
+  Local *l;
+  int    error;
+  if (!written || !next)
+    return -ERR_INVALID;
+  *written = 0;
+  *next = 0;
+  if (!table || !records || !count || count > QUERY_RECORDS || cursor >> 59)
+    return -ERR_INVALID;
+  if (table->state != LOCAL_OPEN && table->state != LOCAL_CLOSING)
+    return -ERR_STATE;
+  if (cursor) {
+    index = (u32) (cursor & 65535);
+    if (!(cursor >> 16) || index >= table->count)
+      return -ERR_INVALID;
+    l = &table->slots[index];
+    if (!l->subtype || l->generation != cursor >> 16)
+      return -ERR_STALE;
+  }
+  for (; index < table->count; index++) {
+    l = &table->slots[index];
+    if (!l->subtype)
+      continue;
+    if (n == count) {
+      *next = (l->generation << 16) | index;
+      break;
+    }
+    error = queryrecord(table, index, &records[n]);
+    if (error) {
+      *next = 0;
+      return error;
+    }
+    n++;
+  }
+  *written = n;
+  return 0;
 }

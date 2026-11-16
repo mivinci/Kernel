@@ -13,7 +13,7 @@ class Spaceid(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('index', C.c_uint32), ('reserved', C.c_uint32)]
 class UserSpace(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('root', C.c_uint64), ('acct', Acctid),
-                ('pages', C.c_uint64), ('state', C.c_uint32), ('refs', C.c_uint32), ('maps', C.c_uint32), ('busy', C.c_uint32)]
+                ('pages', C.c_uint64), ('state', C.c_uint32), ('refs', C.c_uint32), ('maps', C.c_uint32), ('busy', C.c_uint32), ('mapcount',C.c_uint32)]
 
 class AddressSpaceTests(unittest.TestCase):
     @classmethod
@@ -26,7 +26,7 @@ class AddressSpaceTests(unittest.TestCase):
             path = Path(cls.tmp.name) / (arch + '.so')
             command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
                        '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
-                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'image.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'pgt.c', 'mem.c', arch + '/vm.c')],
+                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'group.c', 'image.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'pgt.c', 'mem.c', arch + '/vm.c')],
                        str(shim), '-o', str(path)]
             command += list(getattr(cls, 'extra_flags', ()))
             if sys.platform == 'darwin':

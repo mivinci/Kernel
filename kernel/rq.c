@@ -393,6 +393,20 @@ rqfinish(Rmail *mail, Handle request)
   return 0;
 }
 int
+rqsource(Rmail *mail, Handle request, Imageid *out)
+{
+  Rq *r = received(mail, request);
+  if (!out)
+    return -ERR_INVALID;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  if (!r)
+    return -ERR_BAD_HANDLE;
+  out->generation = r->callerid.generation;
+  out->index = r->callerid.index;
+  return 0;
+}
+int
 rqcheck(Rmail *mail, Handle request)
 {
   Rq *r = received(mail, request);
@@ -667,4 +681,85 @@ rqsignals(Rquota *quota, Rmail *mail)
     }
   }
   return bits;
+}
+
+static u32
+queryroles(const Rq *r, Handle pid, u64 image)
+{
+  u32 roles = 0;
+  if (!r->state)
+    return 0;
+  if (r->caller == pid && (!image || r->callerimage == image) &&
+      (!image || !(r->flags & RQ_RELEASED)))
+    roles |= 1;
+  if (r->server == pid && (!image || r->serverimage == image) && !(r->flags & RQ_FINISHED) &&
+      (!image || !(r->flags & RF_ORPHAN)))
+    roles |= 2;
+  return roles;
+}
+int
+rqcount(Handle pid, u64 image, u32 *out)
+{
+  u32 i;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (handletype(pid) != HANDLE_PROCESS)
+    return -ERR_INVALID;
+  for (i = 0; i < REQUESTS; i++)
+    if (queryroles(&requests[i], pid, image))
+      (*out)++;
+  return 0;
+}
+static void
+queryrecord(const Rq *r, u32 index, Handle pid, u32 roles, Queryrec *record)
+{
+  u32 i;
+  for (i = 0; i < sizeof(*record); i++)
+    ((u8 *) record)[i] = 0;
+  record->type = QUERY_RQ;
+  record->pid = pid;
+  record->image = roles & 1 ? r->callerimage : r->serverimage;
+  record->stamp = (r->generation << 16) | index;
+  record->data[0] = (u64) r->caller;
+  record->data[1] = r->callerimage;
+  record->data[2] = (u64) r->server;
+  record->data[3] = r->serverimage;
+  record->data[4] = r->state;
+  record->data[5] = (u64) r->status;
+  record->data[6] = r->flags & (RQ_CONSUMED | RQ_FINISHED | RQ_RELEASED | RQ_CANCEL_REQUESTED);
+}
+int
+rqquery(Handle pid, u64 image, u64 cursor, Queryrec *records, u32 count, u32 *written, u64 *next)
+{
+  u32 index = 0, n = 0, roles;
+  Rq *r;
+  if (!written || !next)
+    return -ERR_INVALID;
+  *written = 0;
+  *next = 0;
+  if (handletype(pid) != HANDLE_PROCESS || !records || !count || count > QUERY_RECORDS ||
+      cursor >> 59)
+    return -ERR_INVALID;
+  if (cursor) {
+    index = (u32) (cursor & 65535);
+    if (!(cursor >> 16) || index >= REQUESTS)
+      return -ERR_INVALID;
+    r = &requests[index];
+    if (r->generation != cursor >> 16 || !queryroles(r, pid, image))
+      return -ERR_STALE;
+  }
+  for (; index < REQUESTS; index++) {
+    r = &requests[index];
+    roles = queryroles(r, pid, image);
+    if (!roles)
+      continue;
+    if (n == count) {
+      *next = (r->generation << 16) | index;
+      break;
+    }
+    queryrecord(r, index, pid, roles, &records[n++]);
+  }
+  *written = n;
+  return 0;
 }

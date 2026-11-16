@@ -30,6 +30,7 @@ class MemoryTests(unittest.TestCase):
                             'spacemap': [support.Spaceid, Memid, C.c_uint64, C.c_uint64, C.c_uint64, C.c_uint64],
                             'spaceunmap': [support.Spaceid, C.c_uint64],
                             'spaceread': [support.Spaceid, C.c_uint64, C.c_void_p, C.c_uint64],
+                            'spacewrite': [support.Spaceid, C.c_uint64, C.c_void_p, C.c_uint64],
                             'spaceclear': [support.Spaceid, C.c_uint32]}
             for name, args in declarations.items():
                 getattr(lib, name).argtypes = args
@@ -120,6 +121,7 @@ class MemoryTests(unittest.TestCase):
             sid = self.create()
             mid = self.memory_create(4 * 4096)
             self.assertEqual(self.map(sid, mid, 0x1ff000, 4 * 4096), 0)
+            self.assertEqual(self.stat(sid).mapcount,1)
             for i in range(4):
                 self.assertEqual(self.lookup(sid, 0x1ff000 + i * 4096), (self.page(mid, i), 11, 1))
             before = bytes(self.astat()), bytes(self.stat(sid)), bytes(self.mstat(mid))
@@ -129,6 +131,7 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(self.lib.spacedestroy(sid), -4)
             self.assertEqual(self.lib.spaceunmap(sid, 0x1ff000), 0)
             self.assertEqual(self.stat(sid).pages, 1)
+            self.assertEqual(self.stat(sid).mapcount,0)
             for i in range(4):
                 self.assertEqual(self.lookup(sid, 0x1ff000 + i * 4096), (0, 0, 0))
         for lib in self.libs:
@@ -374,3 +377,32 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual((self.stat(sid).pages,self.mstat(mid).refs),(1,1))
         for lib in self.libs:
             self.exercise(lib,body)
+
+    def test_user_output_prechecks_every_page_before_writing_any_byte(self):
+        def body():
+            sid=self.create();mid=self.memory_create(8192)
+            self.assertEqual(self.map(sid,mid),0)
+            self.assertEqual(self.map(sid,mid,address=0x11000,offset=4096,prot=1),0)
+            payload=C.create_string_buffer(bytes(range(16)))
+            first=self.page(mid)-0x80000000;second=self.page(mid,1)-0x80000000
+            before=bytes(self.memory[first+4088:first+4096]),bytes(self.memory[second:second+8])
+            self.assertEqual(self.lib.spacewrite(sid,0x10ff8,payload,16),-1)
+            self.assertEqual((bytes(self.memory[first+4088:first+4096]),bytes(self.memory[second:second+8])),before)
+            self.assertEqual(self.lib.spaceunmap(sid,0x11000),0)
+            self.assertEqual(self.map(sid,mid,address=0x11000,offset=4096),0)
+            self.assertEqual(self.lib.spacewrite(sid,0x10ff8,payload,16),0)
+            self.assertEqual(bytes(self.memory[first+4088:first+4096]),bytes(range(8)))
+            self.assertEqual(bytes(self.memory[second:second+8]),bytes(range(8,16)))
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_user_output_rejects_unmapped_overflow_and_readonly_aliases(self):
+        def body():
+            sid=self.create();mid=self.memory_create()
+            self.assertEqual(self.map(sid,mid),0)
+            self.assertEqual(self.map(sid,mid,address=0x20000,prot=1),0)
+            payload=C.create_string_buffer(b'x'*16);pa=self.page(mid)-0x80000000
+            before=bytes(self.memory[pa:pa+4096])
+            for address,size in ((0x20000,16),(0x10ff8,16),(0xffff,16),((1<<38)-8,16),((1<<64)-1,16),(0x10000,0),(0x10000,65537)):
+                self.assertEqual(self.lib.spacewrite(sid,address,payload,size),-1)
+                self.assertEqual(bytes(self.memory[pa:pa+4096]),before)
+        for lib in self.libs:self.exercise(lib,body)

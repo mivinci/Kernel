@@ -49,7 +49,9 @@ struct Proc
   Rtable    resources;
   Hctx     *user;
   Procstage stage;
-  u32       state, configured, phase, next;
+  u64       cpu_ns;
+  u32       next;
+  u8        state, configured, phase, reserved;
   Rquota    outgoing;
   Rmail     incoming;
   Event     events;
@@ -61,6 +63,7 @@ static Proc *current;
 static Hkctx cpu;
 static u32   vm_paused, timer_enabled;
 static u64   timer_interval, timer_ticks, kernel_ticks;
+static u64   dispatched;
 static u32   timer_requested;
 static u32   readyhead = PG_NONE, readytail = PG_NONE;
 
@@ -129,6 +132,8 @@ procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *ou
     return -ERR_CAPACITY;
   p = &processes[slot];
   p->state = PROC_BUILDING;
+  p->cpu_ns = 0;
+  p->reserved = 0;
   p->generation++;
   pid = handlepack(HANDLE_PROCESS, p->generation, slot);
   eventinit(&p->events);
@@ -150,6 +155,12 @@ procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *ou
     error = convert(error);
     goto failedmail;
   }
+  error = lifebindacct(p->life, p->acct);
+  if (error)
+    goto failedacct;
+  error = lifebootgroup(p->life);
+  if (error)
+    goto failedacct;
   error = spacecreate(p->acct, &p->space);
   if (error) {
     error = convert(error);
@@ -411,6 +422,27 @@ procdestroy(Handle pid)
   return 0;
 }
 static void wakechecks(void);
+/* Selected-thread elapsed time includes its kernel work, excludes CPU idle and
+   other threads. Single CPU, IRQs masked at dispatch and snapshot boundaries. */
+static int
+cputime(const Proc *p, u64 *out)
+{
+  u64 now, elapsed;
+  int error;
+  *out = p->cpu_ns;
+  if (p != current)
+    return 0;
+  error = clockmono(&now);
+  if (error)
+    return error;
+  if (now < dispatched)
+    return -ERR_OVERFLOW;
+  elapsed = now - dispatched;
+  if (elapsed > ~(u64) 0 - *out)
+    return -ERR_OVERFLOW;
+  *out += elapsed;
+  return 0;
+}
 int
 procrunone(void)
 {
@@ -439,18 +471,19 @@ procrunone(void)
     hal_timer_set(ticks + timer_interval);
     hal_user_irq(p->user, 1);
   }
+  if (clockmono(&dispatched))
+    panic("dispatch clock range");
   hal_ctx_switch(&cpu, &p->kernel);
+  if (cputime(p, &p->cpu_ns))
+    panic("CPU accounting range");
   current = NULL;
   if (p->state != PROC_EXITING && p->state != PROC_READY && p->state != PROC_BLOCKED)
     panic("process CPU return state");
   return 0;
 }
-NORETURN void
-procexit(u32 reason, u32 code, const Lifefault *fault)
+static void
+end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
 {
-  Proc *p = current;
-  if (!p || p->state != PROC_RUNNING)
-    panic("process exit source");
   if (lifeend(p->life, reason, code, fault))
     panic("process exit result");
   p->state = PROC_EXITING;
@@ -458,6 +491,16 @@ procexit(u32 reason, u32 code, const Lifefault *fault)
     panic("process image/request exit");
   if (rqmailclose(&p->incoming, 32) < 0)
     panic("process incoming exit");
+  if (acctclose(p->acct))
+    panic("process account exit");
+}
+NORETURN void
+procexit(u32 reason, u32 code, const Lifefault *fault)
+{
+  Proc *p = current;
+  if (!p || p->state != PROC_RUNNING)
+    panic("process exit source");
+  end(p, reason, code, fault);
   if (spacedeactivate())
     panic("process exit root");
   hal_ctx_switch(&p->kernel, &cpu);
@@ -468,6 +511,7 @@ procclean(Handle pid)
 {
   Proc *p = find(pid);
   u32   i;
+  Acct  account;
   int   error;
   if (!p)
     return -ERR_STALE;
@@ -479,6 +523,8 @@ procclean(Handle pid)
   if (p == current || p->state != PROC_EXITING)
     return -ERR_STATE;
   if (p->phase == 0) {
+    if (acctstat(p->acct, &account) || (account.state == AC_ACTIVE && acctclose(p->acct)))
+      panic("process account closing");
     if (imageend(p->identity, IMAGE_ABORT))
       panic("process closing image");
     error = rqmailclose(&p->incoming, 32);
@@ -512,7 +558,7 @@ procclean(Handle pid)
       panic("process root cleanup");
     p->phase++;
   } else if (p->phase == 4) {
-    if (acctclose(p->acct) || acctunbind(p->acct))
+    if (acctunbind(p->acct))
       panic("process account cleanup");
     p->phase++;
   } else {
@@ -1169,4 +1215,442 @@ procrevoke(Rtable *source, Handle authority, Handle resource)
     panic("process revoke quota");
   wakeone(p);
   return 0;
+}
+
+int
+procbudget(Rtable *source, Handle authority, const Budgetarg *args)
+{
+  Proc *p;
+  int   error;
+  if (!args || args->max_instances || args->reserved || args->exec_limit < args->memlimit)
+    return -ERR_INVALID;
+  error = controlproc(source, authority, CONTROL_BUDGET, &p, NULL);
+  if (error)
+    return error;
+  return convert(acctbudget(p->acct, args->memlimit, args->exec_limit));
+}
+
+static void
+unready(Proc *p)
+{
+  u32 slot = readyhead, previous = PG_NONE, count;
+  for (count = 0; count < PROCS && slot != PG_NONE; count++) {
+    if (slot >= PROCS)
+      panic("termination ready index");
+    if (&processes[slot] == p) {
+      if (previous == PG_NONE)
+        readyhead = p->next;
+      else
+        processes[previous].next = p->next;
+      if (readytail == slot)
+        readytail = previous;
+      p->next = PG_NONE;
+      return;
+    }
+    previous = slot;
+    slot = processes[slot].next;
+  }
+  panic("termination ready membership");
+}
+/* A READY waiter can still own its saved C frame's Rq reference. All current
+   switching paths are commit checkpoints or sleepcurrent; no other transient
+   VM/allocation reference may cross them. Termination discards that frame. */
+int
+procterminate(Rtable *source, Handle authority)
+{
+  Lifeid identity;
+  Life   life;
+  Proc  *p;
+  u64    available;
+  int    error;
+  error = localnative(source, authority);
+  if (error)
+    return error;
+  error = localcontrolled(source, authority, CONTROL_TERMINATE, &identity, &available);
+  if (error)
+    return error;
+  if (lifestat(identity, &life))
+    return -ERR_STALE;
+  if (life.state == LIFE_ENDED)
+    return 0;
+  if (life.state != LIFE_LIVE)
+    return -ERR_STATE;
+  p = find(life.pid);
+  if (!p || p->life.generation != identity.generation || p->life.index != identity.index)
+    return -ERR_STALE;
+  if (p == current)
+    procexit(LIFE_SIGNAL, 9, NULL);
+  if (p->state == PROC_READY)
+    unready(p);
+  else if (p->state != PROC_BLOCKED)
+    return -ERR_STATE;
+  end(p, LIFE_SIGNAL, 9, NULL);
+  /* Outgoing death records are terminal before releasing the abandoned waiter.
+     This can reclaim a QUEUED/replied Rq, but never fabricates server finish. */
+  if ((p->stage.wait.kind == WAIT_RESULT || p->stage.wait.kind == WAIT_FINISH) &&
+      rqdrop(p->stage.wait.request))
+    panic("terminated wait reference");
+  p->stage.wait.kind = 0;
+  p->stage.wait.subject.peer = 0;
+  return 0;
+}
+
+int
+proccred(Rtable *source, Handle subject, Handle pid, u64 number, Cred *out)
+{
+  Lifeid  identity;
+  Life    life;
+  Imageid id, related;
+  Image   image;
+  u64     rights;
+  int     error;
+  if (!out || !current || source != &current->resources || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  if (!subject) {
+    if (pid || number)
+      return -ERR_INVALID;
+    identity = current->life;
+  } else if (handletype(subject) == HANDLE_REQUEST) {
+    error = rqsource(&current->incoming, subject, &id);
+    if (error)
+      return error;
+    if (imagestat(id, &image))
+      return -ERR_STALE;
+    if (pid || number) {
+      if (!pid)
+        return -ERR_INVALID;
+      error = preprelated(image.pid, image.number, pid, number, &related);
+      if (error)
+        return error;
+      if (imagestat(related, &image))
+        return -ERR_STALE;
+    }
+    identity = image.life;
+  } else {
+    error = localcontrolled(source, subject, CONTROL_QUERY, &identity, &rights);
+    if (error)
+      return error;
+    if (lifestat(identity, &life))
+      return -ERR_STALE;
+    if (pid && pid != life.pid)
+      return -ERR_INVALID;
+    if (number) {
+      error = imagelookup(identity, number, &id);
+      if (error)
+        return error;
+    }
+  }
+  if (lifestat(identity, &life))
+    return -ERR_STALE;
+  out->ruid = life.cred.ruid;
+  out->euid = life.cred.euid;
+  out->rgid = life.cred.rgid;
+  out->egid = life.cred.egid;
+  return 0;
+}
+
+static void
+querybase(Queryrec *record, u64 kind, Handle pid, u64 stamp)
+{
+  u32 i;
+  for (i = 0; i < sizeof(*record); i++)
+    ((u8 *) record)[i] = 0;
+  record->type = kind;
+  record->pid = pid;
+  record->stamp = stamp;
+}
+static int
+procstate(const Proc *p)
+{
+  switch (p->state) {
+  case PROC_CONSTRUCT:
+    return PROCESS_CONSTRUCT;
+  case PROC_READY:
+    return PROCESS_READY;
+  case PROC_RUNNING:
+    return PROCESS_RUNNING;
+  case PROC_BLOCKED:
+    return PROCESS_BLOCKED;
+  case PROC_EXITING:
+    return PROCESS_EXITING;
+  default:
+    return 0;
+  }
+}
+static int
+querystat(Proc *p, const Life *life, Queryrec *record)
+{
+  Space  space;
+  Acct   account;
+  Handle pgid = 0, sid = 0;
+  u64    usage;
+  u32    i, requests;
+  int    error;
+  error = cputime(p, &usage);
+  if (error)
+    return error;
+  if (life->group && groupnames(life->group, &pgid, &sid))
+    return -ERR_STATE;
+  querybase(record, QUERY_PROC, life->pid, p->generation);
+  record->image = p->resources.image;
+  record->data[0] = (u64) life->parent;
+  record->data[1] = (u64) pgid;
+  record->data[2] = (u64) sid;
+  record->data[3] = (u64) procstate(p);
+  if (p->state == PROC_BLOCKED &&
+      (p->stage.wait.kind == WAIT_RESULT || p->stage.wait.kind == WAIT_FINISH))
+    record->data[4] = (u64) p->stage.wait.subject.peer;
+  record->data[5] = usage;
+  if (!acctstat(p->acct, &account)) {
+    record->data[6] = account.used;
+    record->data[7] = account.reserved;
+  }
+  if (p->resources.state != LOCAL_DEAD)
+    for (i = 0; i < p->resources.count; i++)
+      if (p->resources.slots[i].subtype)
+        record->data[8]++;
+  if (!spacestat(p->space, &space))
+    record->data[9] = space.mapcount;
+  error = rqcount(life->pid, p->resources.image, &requests);
+  if (error)
+    return error;
+  record->data[10] = requests;
+  return 0;
+}
+int
+procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u64 count,
+          u64 *written, u64 *next)
+{
+  Queryrec records[QUERY_RECORDS];
+  Rtable  *target = source;
+  Proc    *p;
+  Lifeid   identity;
+  Life     life;
+  Acctid   accountid;
+  Acct     account;
+  u64      rights, following = 0;
+  u32      n = 0;
+  int      error;
+  if (!written || !next)
+    return -ERR_INVALID;
+  *written = *next = 0;
+  if (!current || source != &current->resources || current->state != PROC_RUNNING || vm_paused)
+    return -ERR_STATE;
+  if (!count || count > QUERY_RECORDS || kind < QUERY_PROC || kind > QUERY_BOOT_RESOURCE ||
+      cursor >> 59 || (cursor && !(cursor >> 16)))
+    return -ERR_INVALID;
+  if (kind == QUERY_BOOT_RESOURCE)
+    return -ERR_DENIED; /* SYSTEM/boot enumeration is not in this profile. */
+  identity = current->life;
+  if (authority) {
+    error = localnative(source, authority);
+    if (error == -ERR_NOTSUP) {
+      error = localqueryprep(source, authority, &target);
+      if (error)
+        return error;
+      if (kind != QUERY_RESOURCE)
+        return -ERR_DENIED;
+    } else {
+      if (error)
+        return error;
+      error = localcontrolled(source, authority, CONTROL_QUERY, &identity, &rights);
+      if (error)
+        return error;
+      if (lifestat(identity, &life))
+        return -ERR_STALE;
+      p = find(life.pid);
+      if (p && p->life.generation == identity.generation && p->life.index == identity.index)
+        target = p->resources.state == LOCAL_DEAD ? NULL : &p->resources;
+      else if (life.state == LIFE_ENDED || life.state == LIFE_ABORTED)
+        target = NULL;
+      else
+        return -ERR_STALE;
+    }
+  }
+
+  /* Validate the entire requested output range, even when fewer rows exist.
+     IRQs stay masked and no VM/table borrow crosses a checkpoint. */
+  error = range(current, address, count * sizeof(Queryrec), VM_READ | VM_WRITE);
+  if (error)
+    return error;
+  if (kind == QUERY_RQ) {
+    if (lifestat(identity, &life))
+      return -ERR_STALE;
+    error = rqquery(life.pid, authority ? 0 : source->image, cursor, records, (u32) count, &n,
+                    &following);
+    if (error)
+      return error;
+  } else if (kind == QUERY_RESOURCE) {
+    if (target) {
+      error = localquery(target, cursor, records, (u32) count, &n, &following);
+      if (error)
+        return error;
+    } else if (cursor)
+      return -ERR_STALE;
+  } else {
+    if (cursor)
+      return -ERR_STALE;
+    if (lifestat(identity, &life))
+      return -ERR_STALE;
+    if (kind == QUERY_PROC) {
+      p = find(life.pid);
+      if (p && p->life.generation == identity.generation && p->life.index == identity.index &&
+          procstate(p)) {
+        error = querystat(p, &life, &records[0]);
+        if (error)
+          return error;
+        n = 1;
+      }
+    } else if (kind == QUERY_LIFE) {
+      querybase(&records[0], kind, life.pid, life.sequence);
+      records[0].data[0] = (u64) life.parent;
+      records[0].data[1] = life.reason;
+      records[0].data[2] = life.code;
+      records[0].data[3] = life.waitref;
+      records[0].data[4] = life.observers;
+      records[0].data[5] = life.cleanup;
+      n = 1;
+    } else if (!lifeacct(identity, &accountid)) {
+      if (acctstat(accountid, &account))
+        return -ERR_STALE;
+      querybase(&records[0], kind, life.pid, account.generation);
+      records[0].data[0] = account.set;
+      records[0].data[1] = account.limit;
+      records[0].data[2] = account.exec_limit;
+      records[0].data[3] = account.used;
+      records[0].data[4] = account.reserved;
+      records[0].data[5] = account.state;
+      n = 1;
+    }
+  }
+  if (n) {
+    error = spacewrite(source->space, address, records, (u64) n * sizeof(Queryrec));
+    if (error)
+      return error == SP_BUSY ? -ERR_BUSY : -ERR_FAULT;
+  }
+  *written = n;
+  *next = following;
+  return 0;
+}
+
+static int
+jobrecord(Handle pid, Lifeid *identity, Life *life, Group *group)
+{
+  Proc *p;
+  int   error = lifefindpid(pid, identity);
+  if (error)
+    return error;
+  if (lifestat(*identity, life))
+    return -ERR_STALE;
+  if (life->state == LIFE_CONSTRUCT) {
+    p = find(pid);
+    if (!p || p->state != PROC_CONSTRUCT)
+      return -ERR_STALE;
+  }
+  return groupstat(life->group, group);
+}
+int
+procgetpg(Handle pid, Handle *pgid, Handle *sid)
+{
+  Lifeid identity;
+  Life   life, source;
+  Group  group, own;
+  int    error;
+  if (!pgid || !sid)
+    return -ERR_INVALID;
+  *pgid = *sid = 0;
+  if (!current || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  if (pid < 0)
+    return -ERR_INVALID;
+  if (!pid)
+    pid = pidof(current);
+  error = jobrecord(pid, &identity, &life, &group);
+  if (error)
+    return error;
+  if (lifestat(current->life, &source) || groupstat(source.group, &own))
+    return -ERR_STATE;
+  if (own.session != group.session)
+    return -ERR_DENIED;
+  return groupnames(life.group, pgid, sid);
+}
+int
+procsetpg(Handle pid, Handle pgid)
+{
+  Lifeid identity;
+  Life   life, source;
+  Group  old, own;
+  Handle candidate = 0, targetpg, targetsid;
+  Proc  *p;
+  int    error;
+  if (!current || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  if (pid < 0 || pgid < 0)
+    return -ERR_INVALID;
+  if (!pid)
+    pid = pidof(current);
+  if (!pgid)
+    pgid = pid;
+  if (handletype(pgid) != HANDLE_PROCESS)
+    return -ERR_BAD_HANDLE;
+  error = jobrecord(pid, &identity, &life, &old);
+  if (error)
+    return error;
+  if (life.state != LIFE_CONSTRUCT && life.state != LIFE_LIVE)
+    return -ERR_STALE;
+  if (pid != pidof(current)) {
+    if (life.parent != pidof(current))
+      return -ERR_DENIED;
+    p = find(pid);
+    if (!p || p->state == PROC_BUILDING || p->state == PROC_EXITING)
+      return -ERR_STALE;
+    if (p->resources.image != 1)
+      return -ERR_STATE;
+  }
+  if (lifestat(current->life, &source) || groupstat(source.group, &own) ||
+      groupnames(life.group, &targetpg, &targetsid))
+    return -ERR_STATE;
+  if (old.session != own.session || targetsid == pid)
+    return -ERR_DENIED;
+  error = groupfind(pgid, own.session, &candidate);
+  if (!error)
+    error = grouphold(candidate);
+  else if (error == -ERR_STALE && pgid == pid)
+    error = groupcreate(pgid, own.session, &candidate);
+  else if (error == -ERR_STALE)
+    return -ERR_DENIED;
+  if (error)
+    return error;
+  error = lifesetgroup(identity, candidate);
+  if (groupdrop(candidate))
+    panic("setpg candidate lease");
+  return error;
+}
+int
+procsetsid(Handle *sid)
+{
+  Handle pid, session = 0, group = 0;
+  int    error;
+  if (!sid)
+    return -ERR_INVALID;
+  *sid = 0;
+  if (!current || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  pid = pidof(current);
+  if (groupidused(pid))
+    return -ERR_DENIED;
+  error = sessioncreate(pid, &session);
+  if (error)
+    return error == -ERR_STATE ? -ERR_DENIED : error;
+  error = groupcreate(pid, session, &group);
+  if (!error) {
+    error = lifesetgroup(current->life, group);
+    if (groupdrop(group))
+      panic("setsid group lease");
+  }
+  if (groupdrop(session))
+    panic("setsid session lease");
+  if (!error)
+    *sid = pid;
+  return error;
 }

@@ -1,5 +1,6 @@
 #include <abi/syscall.h>
 #include <abi/ipc.h>
+#include <abi/proc.h>
 .option norvc
 .section .rodata
 .balign 8
@@ -146,8 +147,1656 @@ control_begin:
  li t0, 4660
  fmv.d.x f31, t0
  li t0, 262144
- ld t2, 32(t0)
+ ld s8, 64(t0)
+ li t0, 262144
+ ld s6, 40(t0)
  li s9, 7
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a4, 16
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 16
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ mv s5, a2
+ li s9, 8
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ mv a2, s5
+ li a3, 263168
+ li a4, 16
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 32(t0)
+ mv t1, s2
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ li t1, 9223372036854775809
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 80(t0)
+ mv t1, s8
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 88(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li s9, 9
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 274877837304
+ li a4, 16
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 16
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 274877837304
+ ld t2, 0(t0)
+ li t1, 5
+ bne t2, t1, control_bad
+ li t0, 274877837304
+ ld t2, 8(t0)
+ mv t1, s8
+ bne t2, t1, control_bad
+ li s9, 10
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ mv s7, a2
+ li t0, 263168
+ ld t2, 0(t0)
+ li t1, 5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s8
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 16(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 24(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 32(t0)
+ mv t1, s6
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 2
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ li t1, 3
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 56(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 64(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 72(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 80(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 88(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 96(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 104(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 112(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 120(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 128(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 136(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 144(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 152(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 160(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 168(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 176(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 184(t0)
+ bnez t2, control_bad
+ li s9, 11
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ mv a2, s7
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 3
+ bne t2, t1, control_bad
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 12
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263152
+ sd a2, 0(t0)
+ li t0, 262144
+ ld s7, 56(t0)
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s7
+ bne t2, t1, control_bad
+ li t0, 262144
+ ld t2, 64(t0)
+ li s9, 13
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s2
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -3
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 14
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -3
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 15
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -5
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 1
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 18
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a4, 17
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 4294967297
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a4, 4294967296
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 2
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 2
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 7
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 3
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 6
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -5
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 4
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 1
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 5
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a2, 9223372036854775808
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 6
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a5, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 266224
+ li t1, 77
+ sd t1, 0(t0)
+ sd t1, 8(t0)
+ li s9, 7
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 266224
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -2
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 266224
+ ld t2, 0(t0)
+ li t1, 77
+ bne t2, t1, control_bad
+ ld t2, 8(t0)
+ li t1, 77
+ bne t2, t1, control_bad
+ li s9, 8
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 274861129728
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -2
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 9
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ li a3, 263168
+ li a4, 2
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 2
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ mv s5, a2
+ li s9, 10
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ mv a2, s5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 4
+ bne t2, t1, control_bad
+ li t0, 263200
+ ld s6, 0(t0)
+ li s9, 11
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s0
+ mv a1, s6
+ li a7, SYS_REVOKE
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 12
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 5
+ mv a2, s5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -4
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 32(t0)
+ mv t1, s6
+ bne t2, t1, control_bad
+ li t0, 262144
+ ld s8, 64(t0)
+ li s9, 13
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 4
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 0(t0)
+ li t1, 4
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s8
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 16(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 24(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 32(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 56(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 64(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 80(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 88(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 96(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 104(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 112(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 120(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 128(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 136(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 144(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 152(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 160(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 168(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 176(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 184(t0)
+ bnez t2, control_bad
+ li s9, 14
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 4
+ li a2, 65536
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -4
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 15
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 3
+ li a3, 263168
+ li a4, 16
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld s5, 120(t0)
+ li t0, 263168
+ ld t2, 0(t0)
+ li t1, 3
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s8
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 16(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 256
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ li t1, 512
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 56(t0)
+ mv t1, s5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 64(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 72(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 80(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 88(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 96(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 104(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 112(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 120(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 128(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 136(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 144(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 152(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 160(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 168(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 176(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 184(t0)
+ bnez t2, control_bad
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 16
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 3
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld s5, 56(t0)
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 256
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ li t1, 512
+ bne t2, t1, control_bad
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 17
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 4
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 24(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 18
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 3
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -5
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 19
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s2
+ li a1, 4
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -3
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262464
+ li t1, 256
+ sd t1, 0(t0)
+ li t1, 512
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 64(t0)
+ li s9, 20
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -3
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 21
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -3
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 22
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s0
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -5
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 23
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -5
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 24
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -2
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 25
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 266224
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -2
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 26
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a2, 1
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262464
+ li t1, 256
+ sd t1, 0(t0)
+ li t1, 512
+ sd t1, 8(t0)
+ li t1, 1
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 27
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262464
+ li t1, 256
+ sd t1, 0(t0)
+ li t1, 512
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 1
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 28
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262464
+ li t1, 2
+ sd t1, 0(t0)
+ li t1, 1
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 29
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -1
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262464
+ li t1, 0
+ sd t1, 0(t0)
+ li t1, 0
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 30
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -7
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld s5, 120(t0)
+ li t0, 262464
+ mv t1, s5
+ sd t1, 0(t0)
+ mv t1, s5
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 31
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 32
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ li a1, 3
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ mv t1, s5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ mv t1, s5
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 56(t0)
+ mv t1, s5
+ bne t2, t1, control_bad
+ li t0, 262528
+ li t1, 4096
+ sd t1, 0(t0)
+ li t1, 1
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t1, 0
+ sd t1, 32(t0)
+ li t1, 0
+ sd t1, 40(t0)
+ li t0, 262144
+ ld t2, 128(t0)
+ li s9, 33
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262528
+ li a7, SYS_ALLOC
+ ecall
+ li t1, -8
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ addi s5, s5, 1
+ li t0, 262464
+ mv t1, s5
+ sd t1, 0(t0)
+ mv t1, s5
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 34
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 128(t0)
+ li s9, 35
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262528
+ li a7, SYS_ALLOC
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ mv s6, a1
+ li t0, 262144
+ ld s5, 120(t0)
+ li t0, 262464
+ mv t1, s5
+ sd t1, 0(t0)
+ mv t1, s5
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 36
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -7
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 37
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, s6
+ li a7, SYS_FREE
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 38
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262464
+ li t1, 256
+ sd t1, 0(t0)
+ li t1, 512
+ sd t1, 8(t0)
+ li t1, 0
+ sd t1, 16(t0)
+ li t1, 0
+ sd t1, 24(t0)
+ li t0, 262144
+ ld t2, 104(t0)
+ li s9, 39
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 112(t0)
+ li s9, 40
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 32(t0)
+ li s9, 41
  li a0, 0
  li a1, 0
  li a2, 0
@@ -168,7 +1817,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 8
+ li s9, 42
  li a0, 0
  li a1, 0
  li a2, 0
@@ -189,7 +1838,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 9
+ li s9, 43
  li a0, 0
  li a1, 0
  li a2, 0
@@ -210,7 +1859,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 10
+ li s9, 44
  li a0, 0
  li a1, 0
  li a2, 0
@@ -232,7 +1881,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 11
+ li s9, 45
  li a0, 0
  li a1, 0
  li a2, 0
@@ -254,7 +1903,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 12
+ li s9, 46
  li a0, 0
  li a1, 0
  li a2, 0
@@ -277,7 +1926,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 13
+ li s9, 47
  li a0, 0
  li a1, 0
  li a2, 0
@@ -301,7 +1950,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 40(t0)
- li s9, 14
+ li s9, 48
  li a0, 0
  li a1, 0
  li a2, 0
@@ -325,7 +1974,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 48(t0)
- li s9, 15
+ li s9, 49
  li a0, 0
  li a1, 0
  li a2, 0
@@ -347,7 +1996,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 48(t0)
- li s9, 16
+ li s9, 50
  li a0, 0
  li a1, 0
  li a2, 0
@@ -370,7 +2019,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 48(t0)
- li s9, 17
+ li s9, 51
  li a0, 0
  li a1, 0
  li a2, 0
@@ -392,7 +2041,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 18
+ li s9, 52
  li a0, 0
  li a1, 0
  li a2, 0
@@ -415,7 +2064,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 19
+ li s9, 53
  li a0, 0
  li a1, 0
  li a2, 0
@@ -438,7 +2087,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 20
+ li s9, 54
  li a0, 0
  li a1, 0
  li a2, 0
@@ -464,7 +2113,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 80(t0)
- li s9, 21
+ li s9, 55
  li a0, 0
  li a1, 0
  li a2, 0
@@ -489,7 +2138,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 56(t0)
- li s9, 22
+ li s9, 56
  li a0, 0
  li a1, 0
  li a2, 0
@@ -512,7 +2161,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 23
+ li s9, 57
  li a0, 0
  li a1, 0
  li a2, 0
@@ -537,7 +2186,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 16(t0)
- li s9, 24
+ li s9, 58
  li a0, 0
  li a1, 0
  li a2, 0
@@ -562,7 +2211,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 80(t0)
- li s9, 25
+ li s9, 59
  li a0, 0
  li a1, 0
  li a2, 0
@@ -587,7 +2236,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 32(t0)
- li s9, 26
+ li s9, 60
  li a0, 0
  li a1, 0
  li a2, 0
@@ -610,7 +2259,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 27
+ li s9, 61
  li a0, 0
  li a1, 0
  li a2, 0
@@ -633,7 +2282,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 28
+ li s9, 62
  li a0, 0
  li a1, 0
  li a2, 0
@@ -657,7 +2306,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 29
+ li s9, 63
  li a0, 0
  li a1, 0
  li a2, 0
@@ -681,7 +2330,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 30
+ li s9, 64
  li a0, 0
  li a1, 0
  li a2, 0
@@ -705,7 +2354,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 31
+ li s9, 65
  li a0, 0
  li a1, 0
  li a2, 0
@@ -731,7 +2380,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 48(t0)
- li s9, 32
+ li s9, 66
  li a0, 0
  li a1, 0
  li a2, 0
@@ -757,7 +2406,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 48(t0)
- li s9, 33
+ li s9, 67
  li a0, 0
  li a1, 0
  li a2, 0
@@ -795,7 +2444,7 @@ control_begin:
  sd t1, 40(t0)
  li t0, 262144
  ld t2, 40(t0)
- li s9, 34
+ li s9, 68
  li a0, 0
  li a1, 0
  li a2, 0
@@ -816,7 +2465,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 35
+ li s9, 69
  li a0, 0
  li a1, 0
  li a2, 0
@@ -839,7 +2488,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 40(t0)
- li s9, 36
+ li s9, 70
  li a0, 0
  li a1, 0
  li a2, 0
@@ -867,7 +2516,7 @@ control_begin:
  bne t2, t1, control_bad
  li t0, 262144
  ld t2, 40(t0)
- li s9, 37
+ li s9, 71
  li a0, 0
  li a1, 0
  li a2, 0
@@ -888,7 +2537,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 38
+ li s9, 72
  li a0, 0
  li a1, 0
  li a2, 0
@@ -912,7 +2561,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 72(t0)
- li s9, 39
+ li s9, 73
  li a0, 0
  li a1, 0
  li a2, 0
@@ -934,7 +2583,7 @@ control_begin:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s5, a1
- li s9, 40
+ li s9, 74
  li a0, 0
  li a1, 0
  li a2, 0
@@ -956,7 +2605,7 @@ control_begin:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s6, a1
- li s9, 41
+ li s9, 75
  li a0, 0
  li a1, 0
  li a2, 0
@@ -980,7 +2629,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 42
+ li s9, 76
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1005,7 +2654,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 16(t0)
- li s9, 43
+ li s9, 77
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1029,7 +2678,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 72(t0)
- li s9, 44
+ li s9, 78
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1053,7 +2702,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 56(t0)
- li s9, 45
+ li s9, 79
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1075,7 +2724,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 46
+ li s9, 80
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1098,7 +2747,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 47
+ li s9, 81
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1119,7 +2768,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 48
+ li s9, 82
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1141,7 +2790,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 49
+ li s9, 83
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1164,7 +2813,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 56(t0)
- li s9, 50
+ li s9, 84
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1189,7 +2838,7 @@ control_begin:
  mv s7, a3
  li t0, 262144
  ld t2, 80(t0)
- li s9, 51
+ li s9, 85
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1210,7 +2859,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 52
+ li s9, 86
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1233,7 +2882,7 @@ control_begin:
  bnez a7, control_bad
  li t0, 262144
  ld t2, 56(t0)
- li s9, 53
+ li s9, 87
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1256,7 +2905,7 @@ control_begin:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s7, a3
- li s9, 54
+ li s9, 88
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1278,7 +2927,7 @@ control_begin:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s5, a1
- li s9, 55
+ li s9, 89
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1300,7 +2949,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 56
+ li s9, 90
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1323,7 +2972,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 57
+ li s9, 91
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1344,7 +2993,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 58
+ li s9, 92
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1367,7 +3016,144 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 59
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 93
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 3
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 94
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 4
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ li t1, 1
+ bne a1, t1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 262144
+ ld s7, 56(t0)
+ li t0, 263168
+ ld t2, 0(t0)
+ li t1, 4
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 8(t0)
+ mv t1, s7
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 16(t0)
+ bnez t2, control_bad
+ li t0, 263168
+ ld t2, 24(t0)
+ li t1, 2
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 32(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 40(t0)
+ li t1, 1
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 48(t0)
+ li t1, 42
+ bne t2, t1, control_bad
+ li t0, 263168
+ ld t2, 56(t0)
+ bnez t2, control_bad
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 95
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 5
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ bnez a0, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li t0, 263152
+ ld s7, 0(t0)
+ li t0, 262144
+ ld t2, 16(t0)
+ li s9, 96
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 5
+ mv a2, s7
+ li a3, 263168
+ li a4, 1
+ li a7, SYS_QUERY
+ ecall
+ li t1, -4
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 97
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1390,7 +3176,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 60
+ li s9, 98
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1413,7 +3199,7 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 61
+ li s9, 99
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1435,7 +3221,31 @@ control_begin:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 62
+ li t0, 262144
+ ld t2, 112(t0)
+ li s9, 100
+ li a0, 0
+ li a1, 0
+ li a2, 0
+ li a3, 0
+ li a4, 0
+ li a5, 0
+ li a6, 0
+ mv a0, t2
+ li a1, 262464
+ li a7, SYS_BUDGET
+ ecall
+ li t1, -4
+ bne a0, t1, control_bad
+ bnez t0, control_bad
+ bnez a1, control_bad
+ bnez a2, control_bad
+ bnez a3, control_bad
+ bnez a4, control_bad
+ bnez a5, control_bad
+ bnez a6, control_bad
+ bnez a7, control_bad
+ li s9, 101
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1468,7 +3278,7 @@ control_peer:
  li t0, 262144
  ld s4, 96(t0)
  mv s8, s2
- li s9, 63
+ li s9, 102
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1490,7 +3300,7 @@ control_peer:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s2, a1
- li s9, 64
+ li s9, 103
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1512,7 +3322,7 @@ control_peer:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s7, a1
- li s9, 65
+ li s9, 104
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1532,7 +3342,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 66
+ li s9, 105
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1555,7 +3365,7 @@ control_peer:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s7, a1
- li s9, 67
+ li s9, 106
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1575,7 +3385,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 68
+ li s9, 107
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1599,7 +3409,7 @@ control_peer:
  fmv.d.x f31, t0
  li t0, 262144
  ld t2, 56(t0)
- li s9, 69
+ li s9, 108
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1622,7 +3432,7 @@ control_peer:
  mv s5, a5
  mv s6, a6
  mv s8, a3
- li s9, 70
+ li s9, 109
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1643,7 +3453,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 71
+ li s9, 110
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1665,7 +3475,7 @@ control_peer:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s7, a3
- li s9, 72
+ li s9, 111
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1687,7 +3497,7 @@ control_peer:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s8, a3
- li s9, 73
+ li s9, 112
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1708,7 +3518,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 74
+ li s9, 113
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1731,7 +3541,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 75
+ li s9, 114
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1752,7 +3562,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 76
+ li s9, 115
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1773,7 +3583,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 77
+ li s9, 116
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1794,7 +3604,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 78
+ li s9, 117
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1817,7 +3627,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 79
+ li s9, 118
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1838,7 +3648,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 80
+ li s9, 119
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1859,7 +3669,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 81
+ li s9, 120
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1882,7 +3692,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 82
+ li s9, 121
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1904,7 +3714,7 @@ control_peer:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s5, a5
- li s9, 83
+ li s9, 122
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1925,7 +3735,7 @@ control_peer:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 84
+ li s9, 123
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1960,7 +3770,7 @@ control_replacement:
  li t0, 262144
  ld s4, 96(t0)
  mv s8, s2
- li s9, 85
+ li s9, 124
  li a0, 0
  li a1, 0
  li a2, 0
@@ -1982,7 +3792,7 @@ control_replacement:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s2, a1
- li s9, 86
+ li s9, 125
  li a0, 0
  li a1, 0
  li a2, 0
@@ -2004,7 +3814,7 @@ control_replacement:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s7, a1
- li s9, 87
+ li s9, 126
  li a0, 0
  li a1, 0
  li a2, 0
@@ -2024,7 +3834,7 @@ control_replacement:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 88
+ li s9, 127
  li a0, 0
  li a1, 0
  li a2, 0
@@ -2047,7 +3857,7 @@ control_replacement:
  bnez a6, control_bad
  bnez a7, control_bad
  mv s7, a1
- li s9, 89
+ li s9, 128
  li a0, 0
  li a1, 0
  li a2, 0
@@ -2067,7 +3877,7 @@ control_replacement:
  bnez a5, control_bad
  bnez a6, control_bad
  bnez a7, control_bad
- li s9, 90
+ li s9, 129
  li a0, 0
  li a1, 0
  li a2, 0
@@ -2089,7 +3899,7 @@ control_replacement:
  bnez a7, control_bad
  li t0, 4660
  fmv.d.x f31, t0
- li s9, 91
+ li s9, 130
  li a0, 0
  li a1, 0
  li a2, 0

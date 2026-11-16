@@ -4,29 +4,23 @@
 #include <list.h>
 #include <abi/ipc.h>
 #include <abi/event.h>
+#include <abi/proc.h>
 #ifndef REQUESTS
 #define REQUESTS 1024
 #endif
 #ifndef RECOVERY_RQS
 #define RECOVERY_RQS 64
 #endif
-#define OUT_REQUESTS        12
-#define RQ_NORMAL           0
-#define RQ_SIGNAL1          1
-#define RQ_SIGNAL2          2
-#define RQ_CONTROL          3
-#define RQ_QUEUED           1
-#define RQ_ACCEPTED         2
-#define RQ_TERMINAL         3
-#define RQ_CONSUMED         1
-#define RQ_FINISHED         2
-#define RQ_RELEASED         4
-#define RQ_CANCEL_REQUESTED 8
-#define RQUOTA_OPEN         1
-#define RQUOTA_CLOSED       2
-#define RMAIL_OPEN          1
-#define RMAIL_CLOSING       2
-#define RMAIL_DRAINED       3
+#define OUT_REQUESTS  12
+#define RQ_NORMAL     0
+#define RQ_SIGNAL1    1
+#define RQ_SIGNAL2    2
+#define RQ_CONTROL    3
+#define RQUOTA_OPEN   1
+#define RQUOTA_CLOSED 2
+#define RMAIL_OPEN    1
+#define RMAIL_CLOSING 2
+#define RMAIL_DRAINED 3
 typedef struct Rqid     Rqid;
 typedef struct Rquota   Rquota;
 typedef struct Rmail    Rmail;
@@ -89,6 +83,7 @@ int    rqdefer(Rmail *mail, Handle request);
 int    rqreply(Rmail *mail, Handle request, const Msg *reply);
 int    rqfinish(Rmail *mail, Handle request);
 int    rqcheck(Rmail *mail, Handle request);
+int    rqsource(Rmail *mail, Handle request, Imageid *out);
 int    rqresult(Rqid id, Imageid caller, u32 options, Rqresult *out);
 int    rqcancel(Rqid id, Imageid caller);
 int    rqack(Rqid id, Imageid caller, u32 options);
@@ -98,6 +93,11 @@ int    rqclean(Rqid id, Imageid server);
 int    rqhold(Rqid id);
 int    rqdrop(Rqid id);
 int    rqstat(Rqid id, Rqinfo *out);
+/* Caller validates query authority. image=0 selects the bound Life history. */
+int rqquery(Handle pid, u64 image, u64 cursor, Queryrec *records, u32 count, u32 *written,
+            u64 *next);
+/* Same visible records as rqquery, counted once even for a self request. */
+int rqcount(Handle pid, u64 image, u32 *out);
 /* Consume hint marks only; persistent results/cancellation remain unchanged. */
 u64 rqsignals(Rquota *quota, Rmail *mail);
 #endif

@@ -171,8 +171,8 @@ def build(args, directory, run_dir):
         # The physical ELF runs again at a high alias without runtime relocations.
         # Compiler switch tables must not embed absolute physical code pointers.
         flags += ["-fno-jump-tables"]
-        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24, "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29, "events": 30, "control": 31}[args.case])]
-        sources += [ROOT / "kernel/main.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/image.c", ROOT / "kernel/rq.c", ROOT / "kernel/event.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "irq.c", ROOT / "kernel" / args.arch / "irqentry.S", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
+        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24, "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29, "events": 30, "control": 31, "terminate": 32, "creds": 33, "groups": 34, "stats": 35}[args.case])]
+        sources += [ROOT / "kernel/main.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/group.c", ROOT / "kernel/image.c", ROOT / "kernel/rq.c", ROOT / "kernel/event.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "irq.c", ROOT / "kernel" / args.arch / "irqentry.S", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
                     ROOT / "kernel" / args.arch / "entry.S"]
         if args.case != "normal":
             flags += ["-I" + str(ROOT / "tests/kernel"), "-I" + str(ROOT / "tests/kernel" / args.arch)]
@@ -181,6 +181,14 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):
             sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
+        if args.case == "stats":
+            sources += [ROOT / "tests/kernel/statstest.c", ROOT / "tests/kernel" / args.arch / "statsprobe.S"]
+        if args.case == "groups":
+            sources += [ROOT / "tests/kernel/grouptest.c", ROOT / "tests/kernel" / args.arch / "groupprobe.S"]
+        if args.case == "creds":
+            sources += [ROOT / "tests/kernel/credtest.c", ROOT / "tests/kernel" / args.arch / "credprobe.S"]
+        if args.case == "terminate":
+            sources += [ROOT / "tests/kernel/terminatetest.c", ROOT / "tests/kernel" / args.arch / "terminateprobe.S"]
         if args.case == "control":
             sources += [ROOT / "tests/kernel/controltest.c", ROOT / "tests/kernel" / args.arch / "controlprobe.S"]
         if args.case == "events":
@@ -348,7 +356,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--kind", choices=("hardware", "kernel"), default="hardware")
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control"), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats"), default="normal")
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")

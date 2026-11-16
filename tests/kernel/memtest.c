@@ -21,7 +21,7 @@ memtest(Hvs *kernel)
   Set           set;
   Hpte          pte;
   Pgstat        before, baseline, after;
-  u64           pa, reused, quota;
+  u64           pa, reused, quota, output[2], observed[2];
   u32           i;
   volatile u64 *data;
   UNUSED(kernel);
@@ -74,6 +74,18 @@ memtest(Hvs *kernel)
                 pte.prot == (VM_READ | VM_USER),
             "read alias permissions");
   }
+  output[0] = 0x1122334455667788UL;
+  output[1] = 0xaabbccddeeff0011UL;
+  REQUIRE(!spacewrite(space, 0x1ffff8, output, sizeof(output)) &&
+              !spaceread(space, 0x400ff8, observed, sizeof(observed)) && observed[0] == output[0] &&
+              observed[1] == output[1],
+          "kernel output aliases");
+  REQUIRE(spacewrite(space, 0x400ff8, output, sizeof(output)) == SP_BAD &&
+              spacewrite(space, 0x202ff8, output, sizeof(output)) == SP_BAD &&
+              !mempage(memory, 3, &pa),
+          "kernel output permissions");
+  data = kaddr(pa);
+  REQUIRE(!data[PAGE_SIZE / sizeof(u64) - 1], "partial kernel output survived");
   REQUIRE(!memfree(memory) && !memstat(memory, &backing) && backing.managers == 0 &&
               backing.refs == 2,
           "mapping backing retention");

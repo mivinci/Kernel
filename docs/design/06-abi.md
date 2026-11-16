@@ -102,6 +102,8 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 | 0x74 | shutdown | system,mode | 固件成功不返回 |
 | 0x75 | reboot | system,mode | 固件成功不返回 |
 
+getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.md#会话与进程组操作2026-11-16用户确认)为准。getpg仅使用a0，setpg仅使用a0/a1，setsid无参数；未使用输入必须为0。成功getpg只返回a1/a2，setsid只返回a1，setpg无额外输出；失败输出清零。负选择器为INVALID，非进程类别为BAD_HANDLE，消失/已收取目标为STALE，关系越权或会话首进程操作为DENIED，孩子已成功exec为STATE，关系池满为CAPACITY；失败不改变成员关系。
+
 ### 固定参数结构（已冻结）
 
 所有下面未注明字段均u64/8字节对齐，输入一次复制后执行，不反复读用户参数。configure的第三寄存器reserve_resources=0..8，与Config整体验证后同时提交，镜像内资源回复保底槽不足时保留上一完整配置；不让内核解析fd表。保底槽按08用于发布后的按需接入，未用部分留至镜像结束，不是待execready清除的启动标志。
@@ -127,11 +129,17 @@ rqpoll/rqwait非消费；rqack只操作本主体RPC。rqcheck仅服务当前持�
 
 query kind固定PROC=1、RQ=2、ACCT=3、LIFE=4、RESOURCE=5、BOOT_RESOURCE=6，最多16条，每条Queryrec；cursor为索引+代次快照，0为首次输入及遍历结束输出；调用者依据next_cursor=0结束本轮，不将其再次当继续位置，不承诺跨条全局原子。主体无QUERY只可查自身非敏感统计；管理查询从CONTROL/SYSTEM授权范围枚举。kind选择仅查询记录，不是对象任意操作码。data字含义：PROC=[parent,pgid,sid,state,waitpid,cpu_ns,used,reserved,resource_count,map_count,rq_count,tty,...]；RQ=[caller,callerimage,server,serverimage,phase,result,flags,...]；ACCT=[set,limit,exec_limit,used,reserved,state,...]；LIFE=[parent,reason,code,wait_pending,observe_refs,cleanup_refs,...]；RESOURCE=[local,subtype,rights,offset,length,inherit,target_pid,target_image,...]；BOOT_RESOURCE仅init可读受信设备/启动镜像记录，其data=[resource,kind,start,length,irq,flags,...]。都不含内核指针/完整他人寄存器。
 
+PROC的state固定CONSTRUCT=1、READY=2、RUNNING=3、BLOCKED=4、EXITING=5、STOPPED=6；STOPPED仅待停止机制接入后产生，不输出内部BUILDING。仅返回仍有运行记录的目标；原运行记录回收后为0条，旧CONTROL不会读到同槽新PID。PROC为整实例单条，cursor只接受0，next=0，image为当前/清理中的镜像，stamp为运行身份代次而非内容版本。
+
+cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端，其余保留字0。
+
 ### query的主体选择（交叉复核修订）
 
 query(0,kind,cursor,outptr,count)为明确的本主体查询：PROC/ACCT/LIFE只返回当前调用者自己的记录，RESOURCE只枚举当前镜像本地授权，RQ只枚举本主体作为caller或receiver实际持有的请求；不按cursor中的索引扩大到其他主体。BOOT_RESOURCE不接受authority=0。管理查询仍要求显式CONTROL QUERY或SYSTEM既定权限，只枚举其授权范围；普通CALL、PID、REQUEST等整数不能作为管理authority来补权。
 
 cursor是相应kind/授权范围内的有界遍历位置，0开始，返回next_cursor=0表示本轮结束；不是目标PID或资源权限。count必须1..16（0或更大值INVALID），先整体验证count/输出范围，逐项保存稳定身份快照；不承诺跨项原子。库查新授CALL时用本主体RESOURCE路径，按完整local Handle匹配记录，再取target_pid/image；未找到或代次不符明确失败，不拿同槽新授权替代。此规则只补齐既有query的authority=0输入，不新增调用或放宽观察/安装权限。
+
+有效CONSTRUCT/EXEC_VIEW CONFIG是仅限RESOURCE的准备表查询入口：只枚举本次精确目标表，不接受裸PID选择，不接受其他kind；提交/取消/超期即失效，源与目标PID/image/表epoch每次重新核验。枚举结果属于目标本地表，不是调用者的新授权。
 
 Sigact仍48字节，handler@8、trampoline@16分别为用户处理函数和前置/返回入口；HANDLER时都须用户可执行。信号原生入口先到trampoline，六参数及动作快照规则见11，TF/FP及Sigframe布局不变。
 
@@ -288,3 +296,21 @@ Rq可信核心补充（2026-11-16）：Msg和既定IPC常量已落头文件，�
 
 
 原生管理接续（2026-11-16）：0x46 grant六输入、0x47 revoke两输入及0x56 inherit两输入已接，均严格检查其余输入寄存器及未知高位；grant成功a1/x1为目标本地Handle，其他输出0，失败清零。当前仅固定进程CONTROL INSTALL/REVOKE选表，源另有GRANT；CONSTRUCT/EXEC_VIEW仍NOTSUP。inherit仅修改允许类型的本地保留标记，不新增GRANT或重绑定目标；NOTIFY可显式EXEC，私有MEM不行。当前实现与双架构反例详见03末尾，不能以这三个调用代表完整管理/构造准入或fork/exec已实现。
+
+
+预算/终止接续（2026-11-16）：0x48 budget两个输入，32字节Budgetarg一次快照，max_instances/reserved为0，单位为页；固定CONTROL BUDGET只调整目标Acct，低于实占+预留BUSY。0x44 terminate一个输入，固定CONTROL TERMINATE提交强制退出；成功非自身时状态0且其他输出0，自身不再返回用户。同一合法已ENDED目标幂等0，失效句柄及未发布目标拒绝，既有首个终结原因保持。未用输入寄存器非0拒绝。当前无STOP/完整信号或集合POLICY分支，详见02/03末尾。
+
+
+getcred接续（2026-11-16）：0x6d已接subject/pid/image，成功a1..a4/x1..x4分别为四个零扩展u32凭据，其他输出和t0/x9为0；失败输出清零。0/0/0自身、固定CONTROL QUERY及真正持有REQUEST的SOURCE/CHILD按03/10关系核验；FUTURE无实际exec准备时不成功，不从自报uid/PID补权。查询不消费REQUEST，DRAINING可读取，finish后旧句柄拒绝。可信测试构造凭据不代表原生CREATE身份策略已开放，细节见03末尾。
+
+
+准备表查询（2026-11-16用户确认）：有效CONSTRUCT/EXEC_VIEW CONFIG允许query RESOURCE只读枚举它绑定的精确准备表，供父加载器将孩子实际SELF_SPACE/SELF_ALLOC Handle写入Boot。其他query kind拒绝，提交/取消/超期失效；仍核验源完整PID/image/表epoch及目标完整PID/image/表epoch，不增加调用号、不允许凭PID选表。返回的目标本地Handle只供其所属主体使用，父不能拿到自身表中操作；枚举不授予ALLOC/MAP/PUBLISH或CONTROL QUERY。代码接入与验收状态见03末尾。
+
+
+RESOURCE query接续（2026-11-16）：0x73五输入已接RESOURCE=5，Queryrec公共定义/偏移断言及QUERY_*常量在abi/proc.h，汇编可包含常量。成功a1/x1为实际条数，a2/x2为下一游标，其他输出及t0/x9为0；失败清零。该切片当时仅自身0或固定CONTROL QUERY；后续CONSTRUCT CONFIG只读RESOURCE接续见03末尾。游标按下一Local索引16位+代次43位编码，stamp为该条Local代次；不含目标权限、不能从cursor中的索引选其他主体。输出区间按请求容量整体预检，最多16条，快照未用字段0。其他已冻结种类的接续及当前NOTSUP/DENIED边界见03末尾。
+
+
+LIFE/ACCT query接续（2026-11-16）：已接kind=4/3的自身或固定CONTROL QUERY单条快照，image=0、next_cursor=0；LIFE stamp为状态序号，ACCT stamp为账目代次，二者均不作为目标授权或全内容版本。data前6字按已有表，未用字0；LIFE的wait_pending对应尚有父收取责任，不表示必有终态可收取。ACCT的set字为启动清单集合索引诊断标签，不能拿来管理/创建集合。旧账目已结清返回0条；读旧Life不会按复用Proc槽找到新账目。详细生命周期及验证见02/03末尾；已确认准备期CONFIG只允许RESOURCE，不允许ACCT/LIFE。
+
+
+RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主体的匹配端，stamp为本条Rq索引/代次，next为下一可见条目；不授予RPC/REQUEST或跨主体权。data前7字仍按已有表，status以s64位模式存入data[5]，未终结不据0声称已成功；flags仅低4个既有责任/取消位，其余字0。RQ阶段/标志的唯一公共常量源为abi/ipc.h，所有内部通知/恢复/队列标志及消息内容均不输出。自身限定当前镜像且排除已完成的接收责任，固定CONTROL QUERY可看其Life保留历史，具体范围及验证见04末尾。

@@ -385,3 +385,8 @@ exec保留File采用目标独立引用，切换后后端依旧ENDED/目标ACTIVE
 测试方法：两架构运行自定义入口和常规 main 程序，检查链接符号、参数/环境、退出码；按正文注入畸形 Boot、分配失败、信号和后端退出。
 
 验收：独立运行时不链接自研 libc 也可 IPC/退出；文件适配可复用；初始化失败无半成品发布，页、fd 和在途缓冲按真实生命周期归还。
+
+
+### 准备阶段Boot资源发现（2026-11-16用户确认）
+
+装载器不能猜测孩子SELF的代次/槽值，也不能照抄父Handle。父持本次有效CONSTRUCT/EXEC_VIEW CONFIG，通过query RESOURCE枚举精确准备表，依据SPACE/ALLOC类型取得孩子实际SELF_SPACE/SELF_ALLOC值并写入Boot；不要求额外CONTROL，也不扩展create返回字段。目标PID/image随每条Queryrec核对，准备提交/取消/超期后不得继续查询。查询只是观察，目标本地Handle不因返回给父而变成父本地授权；其他种类及自身读写权限照旧检查。当前实现边界和验证见03末尾，不能用可信测试直接访问proctable冒充原生装载器已获权。

@@ -4,7 +4,19 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 31
+#if BOOT_CASE == 35
+  statstest();
+  putstr("READY stats-restored\n");
+#elif BOOT_CASE == 34
+  grouptest();
+  putstr("READY groups-restored\n");
+#elif BOOT_CASE == 33
+  credtest();
+  putstr("READY creds-restored\n");
+#elif BOOT_CASE == 32
+  terminatetest();
+  putstr("READY terminate-restored\n");
+#elif BOOT_CASE == 31
   controltest();
   putstr("READY control-restored\n");
 #elif BOOT_CASE == 30

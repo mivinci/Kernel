@@ -471,3 +471,34 @@ abort/创建者结束先撤发布及加载资格，目标进入撤销；既有�
 反例与验收：父方RW代码别名使seal失败；解除后seal可成功，但剩余R别名仍使publish失败。发布后旧加载WRITE/SEAL及旧构造destroy不能操作已发布目标。取消时保留一个临时页，目标运行槽可回收，新实例使用新PID/Acct，旧页仍计旧Acct；最后unmap才释放旧页、旧账目及Life清理引用。创建者结束自动取消尚未发布目标，并由CPU独立推进其清理。
 
 本地host覆盖三准备上限、缺ALLOC权、跨准备/第三方转授拒绝、源镜像/表代次复查、每步临时页表分配失败回滚与源结束；两架构prep场景实际验证上述发布/取消顺序并运行孩子至退出42。当前原生构造入口仍等请求/期限准入，不能把可信加载器场景称为完整用户态加载或Native create验收。
+
+
+### 原生实例预算调整接续（2026-11-16）
+
+已接acctbudget及原生budget(0x48)：Budgetarg固定32字节，memlimit/exec_limit/max_instances/reserved为四u64；当前只接受固定进程CONTROL BUDGET，max_instances和reserved须0。一次快照后在关IRQ短事务内解析完整Life/当前Proc并修改该Acct两项上限，不增加页、预留、Set额度或资源槽。降低到used+reserved以下BUSY，非法峰值/坏指针/无权/旧目标失败不修改费用；已CLOSING拒绝。内部空账目可设0/0，仍有常驻费用的活进程请求0返回BUSY。
+
+- [x] 13项account host（新增3项）覆盖实际页加预留、升/降限额、CLOSING/错代次、u64边界，确认单实例上限提高不能越过Set总额。
+- [x] 两架构control真实用户程序核对权限/32字节快照/保留字段/跨页FAULT/旧Life隔离，并实测精确费用限额下分配LIMIT、加一页后成功、持有新页时降低BUSY、释放后可降低。
+- [x] 本轮完整161项host、格式及70个QEMU回归通过，日志见status；集合POLICY调整、exec峰值/COW兑现及完整CREATE准入仍待接，不把存储exec_limit称为已实现exec峰值分配。
+
+
+### 内核复制到用户缓冲的基础（2026-11-16）
+
+为query等有界输出新增spacewrite，可信内核源、用户目标最大65536字节；与VM修改串行，先核对整个区间的有效用户VA、可写PTE和Normal属性，再逐页复制。溢出/零长/只读/缺页均在写入前拒绝，busy返回冲突。不能因kaddr可写就绕过非W PTE；将来COW输出须先走合法私有写准备，当前尚未实现COW。
+
+- [x] 两项新增host覆盖非连续后备页跨页写、第二页只读/未映射时首段不改，以及地址/长度边界；原内存测试保持通过。
+- [x] RV64 memory真实页表场景核对RW写经R别名可读，R别名及跨缺页写拒绝且最后有效页不改。
+- [x] ARM64 memory及完整168项host、格式和72个QEMU场景通过，日志`build/host/stage19-user-output/test-all.log`；本节仅提供可信复制基础，不代表query已开放或扩大准备权。
+
+
+### 旧账目的稳定身份与只读查询（2026-11-16）
+
+新增accttag/acctlookup，复用已有56位Acct代次+8位索引的内部编码；它只描述身份，不是授权，也不增加Acct引用。Life在构造期一次绑定本集合的Acct，记录8字节身份；禁止改绑、跨集合及同一账目绑定不同Life。Life现128字节，仍在128上限内，Acct保持56字节。绑定不延长已结清账目；运行槽回收后仍有外部页/映射时可按旧身份查到CLOSING，最后真实释放后查不到，复用同Acct槽的新代次不会被旧Life选中。
+
+原生query的ACCT=3已接自身/固定CONTROL QUERY，整实例单条，image=0、stamp为Acct代次，data[0..5]依次为启动集合索引、limit/exec_limit/used/reserved/state；索引只是启动清单的诊断标签，不是集合管理权。账目已释放返回0条、next=0；输入非零游标不选择另一个主体。其他字段0，完整输出范围验证与RESOURCE一致，按实际返回条数写入。
+
+- [x] host覆盖无额外Acct引用、只绑定一次/同集合、旧Acct结清及同槽新代次后的拒绝；旧Life不阻止旧Acct池槽回收。
+- [x] 两架构control实测自身/CONTROL的费用、预算变化、旧Life账目已释放返回空而不读同槽新Acct；prep实测运行槽已回收且费用仍滞留一页时身份保持，最终解除别名后回收。
+- [x] 完整174项host、格式与72个QEMU回归通过，日志`build/host/stage21-account-query/test-all.log`。集合级SYSTEM查询/预算、峰值/COW仍未接。
+
+PROC统计接续（2026-11-16）：Space现64字节，增加成功提交Mmap的mapcount；maps保持内部链表头语义。映射失败回滚不增加，解除成功才减少；仅提供诊断数量，不赋予任何映射/管理权。运行验证与边界见03末尾。

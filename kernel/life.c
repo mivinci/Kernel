@@ -13,9 +13,10 @@ find(Lifeid id)
 static void
 leave(Life *l)
 {
+  Setid set;
   if (!l->instance)
     return;
-  if (setleave(l->set))
+  if (setlookup(l->set, &set) || setleave(set))
     panic("life instance accounting");
   l->instance = 0;
 }
@@ -26,8 +27,8 @@ reap(Life *l)
     return;
   if (l->state != LIFE_ENDED && l->state != LIFE_ABORTED)
     panic("live instance without run slot");
-  if (l->instance)
-    panic("life instance retained");
+  if (l->instance || l->group)
+    panic("life relationship retained");
   l->state = 0;
 }
 int
@@ -59,17 +60,35 @@ lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
   l->generation++;
   l->pid = pid;
   l->parent = parent;
-  l->sequence = l->imagegen = 0;
-  l->set = set;
+  l->sequence = l->imagegen = l->account = 0;
+  l->set = settag(set);
+  l->group = 0;
   l->fault.pc = l->fault.address = l->fault.cause = 0;
   l->state = LIFE_CONSTRUCT;
   l->run = run;
   l->reason = l->code = l->waitref = 0;
   l->instance = 1;
   l->controls = l->observers = l->cleanup = 0;
+  l->cred.ruid = l->cred.euid = l->cred.rgid = l->cred.egid = 0;
   out->generation = l->generation;
   out->index = slot;
   out->reserved = 0;
+  return 0;
+}
+int
+lifecredentials(Lifeid id, const Cred *cred)
+{
+  Life *l = find(id);
+  if (!l)
+    return -ERR_STALE;
+  if (!cred)
+    return -ERR_INVALID;
+  if (l->state != LIFE_CONSTRUCT)
+    return -ERR_STATE;
+  l->cred.ruid = cred->ruid;
+  l->cred.euid = cred->euid;
+  l->cred.rgid = cred->rgid;
+  l->cred.egid = cred->egid;
   return 0;
 }
 int
@@ -79,6 +98,8 @@ lifepublish(Lifeid id)
   if (!l)
     return -ERR_STALE;
   if (l->state != LIFE_CONSTRUCT)
+    return -ERR_STATE;
+  if (l->group && groupactivate(l->group))
     return -ERR_STATE;
   l->state = LIFE_LIVE;
   l->waitref = l->pid != 1;
@@ -95,6 +116,11 @@ lifecancel(Lifeid id)
     panic("init construction cancelled");
   if (l->state != LIFE_CONSTRUCT)
     return -ERR_STATE;
+  if (l->group) {
+    if (groupdetach(l->group))
+      panic("canceled group reservation");
+    l->group = 0;
+  }
   l->state = LIFE_ABORTED;
   return 0;
 }
@@ -112,6 +138,8 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
       (reason != LIFE_EXIT && (!code || code > 31)) ||
       (reason == LIFE_FAULT ? !fault : fault != NULL))
     return -ERR_INVALID;
+  if (l->group && groupdeactivate(l->group))
+    panic("ended group membership");
   l->reason = reason;
   l->code = code;
   if (fault) {
@@ -214,6 +242,11 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   out->reason = l->reason;
   out->code = l->code;
   l->waitref = 0;
+  if (l->group) {
+    if (groupdetach(l->group))
+      panic("collected group relationship");
+    l->group = 0;
+  }
   leave(l);
   reap(l);
   return 0;
@@ -229,7 +262,9 @@ lifestat(Lifeid id, Life *out)
   out->parent = l->parent;
   out->sequence = l->sequence;
   out->imagegen = l->imagegen;
+  out->account = l->account;
   out->set = l->set;
+  out->group = l->group;
   out->fault.pc = l->fault.pc;
   out->fault.address = l->fault.address;
   out->fault.cause = l->fault.cause;
@@ -242,6 +277,10 @@ lifestat(Lifeid id, Life *out)
   out->controls = l->controls;
   out->observers = l->observers;
   out->cleanup = l->cleanup;
+  out->cred.ruid = l->cred.ruid;
+  out->cred.euid = l->cred.euid;
+  out->cred.rgid = l->cred.rgid;
+  out->cred.egid = l->cred.egid;
   return 0;
 }
 
@@ -259,4 +298,150 @@ lifeimage(Lifeid id, u64 *number)
     return -ERR_OVERFLOW;
   *number = ++life->imagegen;
   return 0;
+}
+
+int
+lifebindacct(Lifeid id, Acctid acct)
+{
+  Life *l = find(id);
+  Acct  account;
+  Setid set;
+  u64   tag;
+  u32   i;
+  if (!l)
+    return -ERR_STALE;
+  if (l->state != LIFE_CONSTRUCT || l->account)
+    return -ERR_STATE;
+  if (acctstat(acct, &account) || account.state != AC_ACTIVE || !account.bound)
+    return -ERR_INVALID;
+  if (setlookup(l->set, &set) || account.set != set.index)
+    return -ERR_DENIED;
+  tag = accttag(acct);
+  if (!tag)
+    return -ERR_STALE;
+  for (i = 0; i < LIFES; i++)
+    if (lives[i].state && lives[i].account == tag)
+      return -ERR_STATE;
+  l->account = tag;
+  return 0;
+}
+int
+lifeacct(Lifeid id, Acctid *out)
+{
+  Life *l = find(id);
+  if (!out)
+    return -ERR_INVALID;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  if (!l || acctlookup(l->account, out))
+    return -ERR_STALE;
+  return 0;
+}
+
+int
+lifebindgroup(Lifeid id, Handle group)
+{
+  Life *l = find(id);
+  int   error;
+  if (!l)
+    return -ERR_STALE;
+  if (l->state != LIFE_CONSTRUCT || l->group)
+    return -ERR_STATE;
+  error = groupattach(group);
+  if (error)
+    return error;
+  l->group = group;
+  return 0;
+}
+int
+lifegroup(Lifeid id, Handle *out)
+{
+  Life *l = find(id);
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!l || !l->group)
+    return -ERR_STALE;
+  *out = l->group;
+  return 0;
+}
+int
+lifesetgroup(Lifeid id, Handle group)
+{
+  Life *l = find(id);
+  int   error;
+  if (!l)
+    return -ERR_STALE;
+  if (!l->group || (l->state != LIFE_CONSTRUCT && l->state != LIFE_LIVE))
+    return -ERR_STATE;
+  if (l->group == group)
+    return 0;
+  error = groupattach(group);
+  if (error)
+    return error;
+  if (l->state == LIFE_LIVE) {
+    error = groupactivate(group);
+    if (error) {
+      if (groupdetach(group))
+        panic("group move rollback");
+      return error;
+    }
+    if (groupdeactivate(l->group))
+      panic("group move old membership");
+  }
+  if (groupdetach(l->group))
+    panic("group move old reservation");
+  l->group = group;
+  return 0;
+}
+int
+lifebootgroup(Lifeid id)
+{
+  Life  *l = find(id), *parent;
+  Handle group;
+  u32    i;
+  int    error;
+  if (!l)
+    return -ERR_STALE;
+  if (l->state != LIFE_CONSTRUCT || l->group)
+    return -ERR_STATE;
+  for (i = 0; i < LIFES; i++) {
+    parent = &lives[i];
+    if (parent->pid == l->parent && parent->group &&
+        (parent->state == LIFE_CONSTRUCT || parent->state == LIFE_LIVE))
+      return lifebindgroup(id, parent->group);
+  }
+  /* Only the trusted boot/test factory may use the reserved initial realm.
+     Native CREATE must first establish a real current-parent relationship. */
+  error = groupinitial(&group);
+  if (error)
+    return error;
+  error = lifebindgroup(id, group);
+  if (groupdrop(group))
+    panic("boot group lease");
+  return error;
+}
+
+int
+lifefindpid(Handle pid, Lifeid *out)
+{
+  u32   i;
+  Life *l;
+  if (!out)
+    return -ERR_INVALID;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  if (handletype(pid) != HANDLE_PROCESS)
+    return -ERR_BAD_HANDLE;
+  for (i = 0; i < LIFES; i++) {
+    l = &lives[i];
+    if (l->pid == pid && l->group &&
+        (l->state == LIFE_CONSTRUCT || l->state == LIFE_LIVE ||
+         (l->state == LIFE_ENDED && l->waitref))) {
+      out->generation = l->generation;
+      out->index = i;
+      return 0;
+    }
+  }
+  return -ERR_STALE;
 }

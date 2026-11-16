@@ -33,6 +33,14 @@ int procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle
 int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,
               u64 inherit, Handle *out);
 int procrevoke(Rtable *source, Handle target, Handle resource);
+int procbudget(Rtable *source, Handle target, const Budgetarg *args);
+int procterminate(Rtable *source, Handle target);
+int proccred(Rtable *source, Handle subject, Handle pid, u64 image, Cred *out);
+int procgetpg(Handle pid, Handle *pgid, Handle *sid);
+int procsetpg(Handle pid, Handle pgid);
+int procsetsid(Handle *sid);
+int procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u64 count,
+              u64 *written, u64 *next);
 int procprepare(Rtable *source, Handle target, u64 rights, Handle *out);
 int procwork(u32 scans);
 int procinfo(Handle pid, Procinfo *out);

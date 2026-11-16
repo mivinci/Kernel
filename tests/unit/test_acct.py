@@ -34,12 +34,15 @@ class AccountingTests(unittest.TestCase):
             command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]
         subprocess.run(command, capture_output=True, check=True)
         cls.lib = C.CDLL(str(path))
+        cls.lib.accttag.restype = C.c_uint64
         declarations = {
             'setcreate': [C.c_uint64, C.c_uint64, C.c_uint32, C.POINTER(Setid)],
             'setclose': [Setid], 'setenter': [Setid], 'setleave': [Setid],
             'setstat': [Setid, C.POINTER(Set)],
             'acctcreate': [Setid, C.c_uint64, C.c_uint64, C.POINTER(Acctid)],
             'accthold': [Acctid], 'acctdrop': [Acctid], 'acctclose': [Acctid], 'acctunbind': [Acctid],
+            'acctbudget': [Acctid, C.c_uint64, C.c_uint64],
+            'accttag': [Acctid], 'acctlookup': [C.c_uint64,C.POINTER(Acctid)],
             'acctstat': [Acctid, C.POINTER(Account)], 'acctreserve': [Acctid, C.c_uint64],
             'acctconvert': [Acctid, C.c_uint64], 'acctrelease': [Acctid, C.c_uint64, C.c_uint64],
             'acctalloc': [Acctid, C.c_uint32, C.POINTER(Limits), C.POINTER(Owned)],
@@ -282,3 +285,68 @@ class AccountingTests(unittest.TestCase):
                 self.assertEqual(self.stat(aid).used, model[aid.index])
             self.assertEqual(self.lib.acctcheck(), 0)
             self.assertEqual(self.lib.pgcheck(), 0)
+
+    def test_budget_changes_admission_without_spending_or_raising_the_set_limit(self):
+        sid=self.set(8,16);a=self.acct(sid,2,4);b=self.acct(sid,8,16)
+        self.assertEqual(self.lib.acctreserve(a,2),0)
+        self.assertEqual(self.lib.acctreserve(a,1),-2)
+        group=bytes(self.setstat(sid))
+        self.assertEqual(self.lib.acctbudget(a,6,12),0)
+        self.assertEqual(bytes(self.setstat(sid)),group)
+        self.assertEqual(self.lib.acctreserve(a,4),0)
+        self.assertEqual(self.lib.acctreserve(b,2),0)
+        self.assertEqual(self.lib.acctbudget(a,(1<<64)-1,(1<<64)-1),0)
+        self.assertEqual(self.lib.acctreserve(a,1),-2)
+        self.assertEqual(self.setstat(sid).charged,8)
+
+    def test_budget_lowering_counts_both_actual_pages_and_pending_reservations(self):
+        sid=self.set();a=self.acct(sid,16,32)
+        self.assertEqual(self.alloc(a,1)[0],0)
+        self.assertEqual(self.lib.acctreserve(a,4),0)
+        before=bytes(self.stat(a)),bytes(self.setstat(sid))
+        for limit,peak,error in ((5,32,-4),(0,0,-4),(8,7,-1)):
+            self.assertEqual(self.lib.acctbudget(a,limit,peak),error)
+            self.assertEqual((bytes(self.stat(a)),bytes(self.setstat(sid))),before)
+        self.assertEqual(self.lib.acctbudget(a,6,6),0)
+        self.assertEqual(self.lib.acctreserve(a,1),-2)
+        self.assertEqual(self.lib.acctrelease(a,0,4),0)
+        self.assertEqual(self.lib.acctbudget(a,2,2),0)
+        self.assertEqual(self.stat(a).used,2)
+
+    def test_budget_closing_stale_and_u64_boundary_leave_accounting_consistent(self):
+        maximum=(1<<64)-1
+        sid=self.set(maximum,maximum);a=self.acct(sid,maximum,maximum)
+        self.assertEqual(self.lib.acctreserve(a,maximum),0)
+        before=bytes(self.stat(a)),bytes(self.setstat(sid))
+        self.assertEqual(self.lib.acctbudget(a,maximum-1,maximum),-4)
+        self.assertEqual((bytes(self.stat(a)),bytes(self.setstat(sid))),before)
+        self.assertEqual(self.lib.acctbudget(a,maximum,maximum),0)
+        self.assertEqual(self.lib.acctreserve(a,1),-2)
+        self.assertEqual(self.lib.acctrelease(a,0,maximum),0)
+        self.assertEqual(self.lib.acctbudget(a,0,0),0)
+        self.assertEqual(self.lib.acctreserve(a,1),-2)
+        wrong=Acctid(a.generation+1,a.index,0)
+        self.assertEqual(self.lib.acctbudget(wrong,1,1),-1)
+        self.assertEqual(self.lib.acctclose(a),0)
+        before=bytes(self.stat(a))
+        self.assertEqual(self.lib.acctbudget(a,1,1),-1)
+        self.assertEqual(bytes(self.stat(a)),before)
+
+    def test_account_tag_survives_closing_and_never_selects_a_reused_record(self):
+        sid=self.set();old=self.acct(sid);error,block=self.alloc(old)
+        self.assertEqual(error,0);tag=self.lib.accttag(old);out=Acctid()
+        self.assertNotEqual(tag,0)
+        self.assertEqual(self.lib.acctclose(old),0)
+        self.assertEqual(self.lib.acctunbind(old),0)
+        self.assertEqual(self.lib.acctlookup(tag,C.byref(out)),0)
+        self.assertEqual((out.index,out.generation),(old.index,old.generation))
+        self.assertEqual(self.lib.acctfree(block),0)
+        del self.blocks[(old.index,old.generation,block.block.pa)]
+        fresh=self.acct(sid)
+        self.assertEqual(fresh.index,old.index)
+        self.assertNotEqual(fresh.generation,old.generation)
+        self.assertEqual(self.lib.acctlookup(tag,C.byref(out)),-1)
+        self.assertEqual(out.generation,0)
+        self.assertEqual(self.lib.accttag(old),0)
+        self.assertEqual(self.lib.acctlookup(self.lib.accttag(fresh),C.byref(out)),0)
+        self.assertEqual(self.lib.acctlookup(0,C.byref(out)),-1)

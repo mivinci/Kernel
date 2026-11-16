@@ -88,6 +88,7 @@ preptest(void)
   Life       life;
   Liferesult result;
   Acct       account, payer;
+  Acctid     located;
   Handle parentpid, pid, construct, sourcecap, code, stack, boot, permanent, oldcap, other, ignored;
   Allocarg args;
   Config   config;
@@ -176,9 +177,14 @@ preptest(void)
   sweep(id);
   REQUIRE(!acctstat(aborted.acct, &account) && account.state == AC_CLOSING && account.used == 1);
   REQUIRE(!lifestat(aborted.life, &life) && life.cleanup == 1 && life.run == PG_NONE);
+  REQUIRE(!lifeacct(aborted.life, &located) && located.generation == aborted.acct.generation &&
+          located.index == aborted.acct.index);
   REQUIRE(!procnew(set, parentpid, 256, 512, LOCALS, &other) && !procinfo(other, &fresh));
   REQUIRE(handleindex(other) == handleindex(pid) && other != pid &&
           fresh.acct.index != aborted.acct.index);
+  REQUIRE(!lifeacct(aborted.life, &located) && located.generation == aborted.acct.generation &&
+          located.index == aborted.acct.index && !lifeacct(fresh.life, &located) &&
+          located.generation == fresh.acct.generation && located.index == fresh.acct.index);
   REQUIRE(localdestroy(source, oldcap) == -ERR_BAD_HANDLE);
   REQUIRE(spacelookup(parent.space, 0x100000, &alias) && alias.pa == oldpa);
   REQUIRE(!localunmap(source, sourcecap, 0x100000));

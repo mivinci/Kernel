@@ -27,7 +27,9 @@ class PrepTests(unittest.TestCase):
             for name,args in {
                 'prepcreate':[C.POINTER(support.Table),C.POINTER(support.Table),Lifeid,Imageid,C.POINTER(Prepid)],
                 'prepcheck':[Prepid,C.POINTER(support.Table),C.POINTER(Prepinfo)],
+                'preprelated':[C.c_int64,C.c_uint64,C.c_int64,C.c_uint64,C.POINTER(Imageid)],
                 'prepstat':[Prepid,C.POINTER(Prepinfo)], 'preppublishcheck':[Prepid],
+                'localqueryprep':[C.POINTER(support.Table),C.c_int64,C.POINTER(C.POINTER(support.Table))],
                 'localtarget':[C.POINTER(support.Table),C.c_int64,C.c_uint64,C.POINTER(Prepid),C.POINTER(C.c_int64)],
                 'prepcomplete':[Prepid], 'prepcancel':[Prepid], 'prepdrop':[Prepid],
                 'prepclean':[Prepid,C.c_uint32], 'prepexpire':[C.c_uint64,C.c_uint32], 'test_now':[C.c_uint64],
@@ -260,3 +262,102 @@ class PrepTests(unittest.TestCase):
             l=Life(); self.assertEqual(self.lib.lifestat(life,C.byref(l)),0)
             self.assertEqual(l.state,1)
         for lib in self.libs: self.exercise(lib,body)
+
+    def test_related_child_uses_retained_owner_identity_not_rebound_source_table(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare();out=Imageid()
+            owner,image=self.source.owner,self.source.image
+            for number in (0,1):
+                self.assertEqual(self.lib.preprelated(owner,image,target.owner,number,C.byref(out)),0)
+                self.assertEqual((out.generation,out.index),(self.info(prep).identity.generation,self.info(prep).identity.index))
+            for who,number in ((self.lib.handlepack(1,2,1),image),(owner,image+1)):
+                self.assertEqual(self.lib.preprelated(who,number,target.owner,0,C.byref(out)),-4)
+            self.assertEqual(self.lib.preprelated(owner,image,owner,0,C.byref(out)),-1)
+            self.source.epoch+=1
+            self.assertEqual(self.lib.preprelated(owner,image,target.owner,0,C.byref(out)),-6)
+            self.source.epoch-=1
+            self.assertEqual(self.lib.prepcancel(prep),0)
+            self.source.owner=self.lib.handlepack(1,2,1);self.source.epoch+=1
+            self.assertEqual(self.lib.preprelated(owner,image,target.owner,0,C.byref(out)),0)
+            self.assertEqual(self.lib.preprelated(self.source.owner,image,target.owner,0,C.byref(out)),-4)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_published_or_released_preparation_cannot_authorize_child_lookup(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare();out=Imageid()
+            self.assertEqual(self.lib.lifepublish(life),0)
+            self.assertEqual(self.lib.imageactivate(self.info(prep).identity),0)
+            self.lib.prepcomplete(prep)
+            self.assertEqual(self.lib.preprelated(self.source.owner,self.source.image,target.owner,0,C.byref(out)),-6)
+            self.assertEqual(self.lib.localrevoke(C.byref(self.source),cap),0)
+            self.assertEqual(self.lib.prepdrop(prep),0);held[0]=False
+            self.assertEqual(self.lib.preprelated(self.source.owner,self.source.image,target.owner,0,C.byref(out)),-4)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_query_reports_memory_window_not_private_loading_scope_numbers(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare()
+            memory=self.allocate(cap,8192);records=(support.Queryrec*16)();count=C.c_uint32();following=C.c_uint64()
+            for canceled in (False,True):
+                if canceled:self.assertEqual(self.lib.prepcancel(prep),0)
+                self.assertEqual(self.lib.localquery(C.byref(self.source),0,records,16,C.byref(count),C.byref(following)),0)
+                rows=[records[i] for i in range(count.value)]
+                row=next(x for x in rows if x.data[0]==memory)
+                self.assertEqual(list(row.data[3:5]),[0,8192])
+                self.assertEqual(list(row.data[6:]),[0]*14)
+                scope=next(x for x in rows if x.data[0]==cap)
+                self.assertEqual(list(scope.data[3:5]),[0,0])
+        for lib in self.libs:self.exercise(lib,body)
+
+
+    def test_config_preparation_query_returns_only_exact_target_table(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare(rights=2)
+            handles=[]
+            for fn,rights in (('localspace',3),('localallocator',5)):
+                out=C.c_int64();self.assertEqual(getattr(self.lib,fn)(C.byref(target),rights,C.byref(out)),0);handles.append(out.value)
+            selected=C.POINTER(support.Table)()
+            self.assertEqual(self.lib.localqueryprep(C.byref(self.source),cap,C.byref(selected)),0)
+            self.assertEqual(C.addressof(selected.contents),C.addressof(target))
+            records=(support.Queryrec*16)();count=C.c_uint32();following=C.c_uint64()
+            self.assertEqual(self.lib.localquery(selected,0,records,16,C.byref(count),C.byref(following)),0)
+            self.assertEqual((count.value,following.value),(2,0))
+            self.assertEqual([records[i].data[0] for i in range(2)],handles)
+            self.assertEqual([records[i].pid for i in range(2)],[target.owner]*2)
+            self.assertEqual([records[i].image for i in range(2)],[1,1])
+            self.assertEqual(self.lib.localtarget(C.byref(self.source),cap,16,C.byref(Prepid()),C.byref(C.c_int64())),-5)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_preparation_query_rejects_missing_config_wrong_source_and_rebinding(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare(rights=1)
+            selected=C.POINTER(support.Table)()
+            self.assertEqual(self.lib.localqueryprep(C.byref(self.source),cap,C.byref(selected)),-5)
+            self.assertFalse(selected)
+            self.assertEqual(self.lib.localqueryprep(C.byref(self.source),self.alloccap,C.byref(selected)),-3)
+            prep,cap,target,space,acct,life,held=self.prepare(rights=2)
+            for table,field in ((self.source,'epoch'),(self.source,'owner'),(self.source,'image'),(target,'epoch'),(target,'owner'),(target,'image')):
+                old=getattr(table,field);setattr(table,field,old+1)
+                try:
+                    self.assertEqual(self.lib.localqueryprep(C.byref(self.source),cap,C.byref(selected)),-3)
+                    self.assertFalse(selected)
+                finally:setattr(table,field,old)
+            self.assertEqual(self.lib.localqueryprep(C.byref(target),cap,C.byref(selected)),-3)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_preparation_query_stops_at_cancel_publish_or_deadline(self):
+        def body():
+            for mode in ('cancel','publish','expire'):
+                prep,cap,target,space,acct,life,held=self.prepare(rights=2)
+                selected=C.POINTER(support.Table)()
+                self.assertEqual(self.lib.localqueryprep(C.byref(self.source),cap,C.byref(selected)),0)
+                if mode=='cancel':self.assertEqual(self.lib.prepcancel(prep),0)
+                elif mode=='publish':
+                    self.assertEqual(self.lib.lifepublish(life),0)
+                    self.assertEqual(self.lib.imageactivate(self.info(prep).identity),0)
+                    self.lib.prepcomplete(prep)
+                else:self.lib.test_now(self.info(prep).deadline)
+                self.assertEqual(self.lib.localqueryprep(C.byref(self.source),cap,C.byref(selected)),-3)
+                self.assertFalse(selected)
+                if mode=='expire':self.assertEqual(self.info(prep).expired,1)
+        for lib in self.libs:self.exercise(lib,body)

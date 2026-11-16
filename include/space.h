@@ -27,7 +27,7 @@ struct Space
   u64    generation, root;
   Acctid acct;
   u64    pages;
-  u32    state, refs, maps, busy;
+  u32    state, refs, maps, busy, mapcount;
 };
 struct Mmap
 {
@@ -54,6 +54,8 @@ int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64
 int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
 /* Trusted kernel destination; precheck every source page before copying. */
 int spaceread(Spaceid id, u64 address, void *target, u64 bytes);
+/* Trusted source, serialized with VM mutations; precheck the entire output. */
+int spacewrite(Spaceid id, u64 address, const void *data, u64 bytes);
 /* Inactive root only, bounded records per call; 1 means more, 0 empty. */
 int spaceclear(Spaceid id, u32 records);
 int spaceunmap(Spaceid id, u64 address);

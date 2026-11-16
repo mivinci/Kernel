@@ -3,6 +3,7 @@
 #define _LIFE_H
 #include <acct.h>
 #include <handle.h>
+#include <group.h>
 #ifndef LIFES
 #define LIFES 256
 #endif
@@ -20,6 +21,7 @@
 #define LIFE_SIGNAL    2
 #define LIFE_FAULT     3
 
+typedef struct Cred       Cred;
 typedef struct Lifeid     Lifeid;
 typedef struct Life       Life;
 typedef struct Lifefault  Lifefault;
@@ -39,18 +41,38 @@ struct Liferesult
   u64    sequence;
   u32    reason, code;
 };
+struct Cred
+{
+  u32 ruid, euid, rgid, egid;
+};
 struct Life
 {
   u64       generation;
   Handle    pid, parent;
-  u64       sequence, imagegen;
-  Setid     set;
+  u64       sequence, imagegen, account;
+  u64       set;
+  Handle    group;
   Lifefault fault;
-  u32       state, run, reason, code, waitref, instance, controls, observers, cleanup;
+  Cred      cred;
+  u32       run, controls, observers, cleanup;
+  u8        state, reason, code, waitref, instance;
 };
 STATIC_ASSERT(LIFES > 0 && LIFES <= 256 && PROCS > 0 && PROCS <= 64, life_capacity);
+STATIC_ASSERT(sizeof(Cred) == 16, cred_size);
 STATIC_ASSERT(sizeof(Life) <= 128, life_budget);
 int lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out);
+/* Trusted boot/test constructor only; native CREATE must supply validated IDs. */
+int lifecredentials(Lifeid id, const Cred *cred);
+/* Construction binds one stable accounting identity without extending its life. */
+int lifebindacct(Lifeid id, Acctid acct);
+int lifeacct(Lifeid id, Acctid *out);
+/* Trusted relationship mechanisms, not native setpg/setsid authorization. */
+int lifebindgroup(Lifeid id, Handle group);
+int lifesetgroup(Lifeid id, Handle group);
+int lifegroup(Lifeid id, Handle *out);
+int lifebootgroup(Lifeid id);
+/* Existing published/result identity or a completed constructor, not authority. */
+int lifefindpid(Handle pid, Lifeid *out);
 int lifepublish(Lifeid id);
 /* Allocate monotonically across discarded preparations, independent of Proc. */
 int lifeimage(Lifeid id, u64 *number);

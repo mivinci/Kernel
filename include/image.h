@@ -41,4 +41,6 @@ int imagedrop(Imageid id, u32 kind);
 /* Drop the Proc/preparation owner only after ENDED. */
 int imagedetach(Imageid id);
 int imagestat(Imageid id, Image *out);
+/* Cold path, bounded by IMAGES; only returns an existing retained identity. */
+int imagelookup(Lifeid life, u64 number, Imageid *out);
 #endif

@@ -50,6 +50,10 @@ STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 /* Current native profile excludes incomplete construction/loading admission. */
 int localnative(Rtable *source, Handle handle);
 int localroom(Rtable *source);
+/* Trusted bounded snapshots; caller resolves the table authority. */
+int localquery(Rtable *table, u64 cursor, Queryrec *records, u32 count, u32 *written, u64 *next);
+/* CONFIG preparation table borrow; only native RESOURCE query may use it. */
+int localqueryprep(Rtable *source, Handle authority, Rtable **target);
 int localinit(Rtable *table, Local *storage, u32 count, Acctid acct, Spaceid space);
 /* Trusted installation only; native connect must supply CONFIG/CONNECT authority. */
 int localendpoint(Rtable *table, Imageid target, u32 kind, u64 rights, u64 bits, u32 inherit,

@@ -33,6 +33,8 @@ struct Prepinfo
 int prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out);
 int prepcheck(Prepid id, Rtable *source, Prepinfo *out);
 int prepstat(Prepid id, Prepinfo *out);
+/* A held REQUEST supplies owner/sourceimage. No local table borrow escapes. */
+int preprelated(Handle owner, u64 sourceimage, Handle target, u64 image, Imageid *out);
 int prephold(Prepid id);
 int prepdrop(Prepid id);
 /* Publish check is reversible; finish follows the Life publication commit. */

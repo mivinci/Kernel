@@ -4,20 +4,24 @@
 
 ## 当前实现
 
-- PR #4已合入main（`aa7c069`）；本轮开发分支`codex/timer-preemption`，按用户要求提交PR，合并后再继续。
-- 两架构启动、完整用户/内核IRQ整数与FP现场、DTB、伙伴、高半区、Set/Acct、Space/Mem/Mmap、CODE封存和缓存同步已接。Local 48字节、Life 120、Proc 512、Prep 184、Mmap 64；计费guard栈与独立续点支持离栈回收，旧结果/账目/运行槽分别复用。
+- PR #5已合入main（`5b5edd3`）；当前分支`codex/process-management`，按用户新授权，每个验收点提交并推送到同一分支。
+- 两架构启动、完整用户/内核IRQ整数与FP现场、DTB、伙伴、高半区、Set/Acct、Space/Mem/Mmap、CODE封存和缓存同步已接。Local 48字节、Life 128（含不可变四u32凭据及8字节不增引用的账目身份）、Proc 512、Prep 184、Mmap 64；计费guard栈与独立续点支持离栈回收，旧结果/账目/运行槽分别复用。
 - 可信准备支持已确认的ALLOC=0x10、目标Acct出资、源身份/表epoch绑定、全部临时别名发布屏障、提交/取消立即撤权，以及固定10秒期限。IRQ最多扫描8份准备；CPU有界清理，旧别名继续保留原页/Acct/Life，最后引用解除才回收。
 - 已接512份64字节Image记录，镜像号由Life单调分配；Proc构造/发布/退出与Prep取消/超时固定同一Image，旧清理引用经Image继续持Life，取消后号码不复用。Rq预付/可信状态机已接，完整管理准入与观察cookie仍未接。
 - 已接1024份184字节Rq、每进程8/1/1/2预付及普通960/恢复64分区；FIFO/独立owned、15+1接收名额、取消/回复、三责任和临时引用回收已接。旧请求持双方Image，迁入退役链后可复用Proc邮箱；已接本地CALL/SEND/NOTIFY固定Image引用、减权复制及失效释放，原生IPC消息/阻塞已接，固定CONTROL/connect、grant/revoke、inherit已接局部profile，CHILD/LIFE/外设IRQ仍待接。
-- 原生exit/yield/getid、自身alloc/free/map/unmap/seal、clock_gettime/getres已接。FIFO用户timer约5ms；内核IRQ只记调度请求，受控自身alloc窗口完成后在检查点切换。短VM暂停窗口仍关IRQ。CPU空闲WFI处理开IRQ边界，独立推进到期和回收，不依赖父续点。
+- 原生exit/yield/getid、自身alloc/free/map/unmap/seal、clock_gettime/getres已接；本轮增加固定CONTROL BUDGET及TERMINATE。FIFO用户timer约5ms；内核IRQ只记调度请求，受控自身alloc窗口完成后在检查点切换。短VM暂停窗口仍关IRQ。CPU空闲WFI处理开IRQ边界，独立推进到期和回收，不依赖父续点。
 - 已接原生call/send/recv/reply/reply_recv/defer及请求查询/取消/ACK/finish/check，Config/运行等待复用48字节，Proc现512。独立C续点持Rq临时引用阻塞/唤醒，强等待边检查DEADLOCK/DEPTH；服务死亡失败携原RPC，真正收尾仍独立。recv已支持事件mask/筛选及交替；资源reply和原生rqclean仍NOTSUP。
 - 已接notify/alarmset/alarmcancel，Event32纳入Proc上限（PID去重、当前image复用Rtable）；通知仅用户授权位，单调绝对闹钟有64位代次与重设/取消隔离。RQ_DONE/RQ_CANCEL由记录持久提示合并，结果与真正收尾分别提示；普通通知不退出强等待，CPU空闲可到期唤醒。
+- 已接getcred(0x6d)：自身、固定CONTROL QUERY及真正REQUEST的SOURCE/CHILD准备关系核验；凭据在Life中不可变、故障与退出后继续保留。可信构造器可在发布前安装身份，完整原生CREATE/CREDENTIAL/SERVICE准入及FUTURE exec准备仍未接。查询不消费请求或扩大管理权限。
+- 可信spacewrite整段预检用户可写Normal页，跨页只读/缺页失败不部分写，不绕过未来COW写准备；已供RESOURCE query输出使用。
+- 原生query(0x73)已接PROC、RESOURCE、RQ及ACCT/LIFE，自身0/固定CONTROL QUERY，以及新增有效CONSTRUCT CONFIG仅RESOURCE范围；192字节记录、最多16条及完整输出预检；RESOURCE/RQ按各自槽索引/代次分页，PROC/ACCT/LIFE是整实例单条。窗口按类型还原，隐藏内部Prep索引；旧目标表回收只返回原范围为空，不选同槽新实例。SYSTEM及EXEC_VIEW创建仍待接。
+- 已接128份48字节SESSION/GROUP共享关系池与原生getpg/setpg/setsid：自/子同会话、0选择器、保留组号检查及uid 0无豁免；Life仍128、Proc512。组长退出/收取及运行槽复用不改绑孩子PGID/SID；自动孤儿接管、成功exec后的改组限制与终端作业控制仍待实际接入。
 - RV64使用SBI TIME；ARM64使用GICv2/虚拟timer，控制器页为Device属性，高半区紧急栈按PC相对地址构造。REALTIME未校准，与单调起点一起推进。仅单核、ARM缓存关闭，无IRQ嵌套或通用长Op。
 - normal仍只初始化后停机，不构造模拟init；guest载荷仅在`tests/kernel/`。生成编译数据库、`.su`和`stack-usage.json`；共用现场列表在架构`context.inc`，其依赖纳入缓存；内核仍禁用绝对代码地址跳转表。
 
 ## 本地验证与边界
 
-- `make test-all`通过158项host、格式及68个QEMU场景（两架构各32个基础场景，加4个RAM/virtio配置），日志`build/host/stage16-runner/test-all-final.log`；包含最新同步撤权载荷及runner修复，diff检查通过。
+- `make test-all`通过189项host、格式及76个QEMU场景（两架构各36个基础场景，加4个RAM/virtio配置），日志`build/host/stage25-proc-stats/test-all.log`；diff检查通过。
 - timer场景验证两个无主动syscall忙循环、完整用户整数/FP及ARM标志保持、10秒到期与旧临时映射滞留。irq场景验证内核全部整数/FP现场、WFI边界、仅靠CPU空闲完成目标/Prep/Life/Acct回收，再运行4096次64KiB原生分配/释放，实际收到内核IRQ并经检查点切换。主机独立审计全部内核页表、最终根/特权/停机PC。
 - images场景耗尽512槽并验证Proc构造失败回滚、恢复容量后构造/取消、旧Image/Life继续保留时同运行索引新PID的隔离；host另覆盖单ACTIVE、取消不复用号码、池满不烧号码、固定终结原因及旧观察不跟随新镜像。
 - requests场景以948份已接收未收尾请求加接收者12份预付占满普通池，旧调用者运行索引已释放仍拒绝普通构造，恢复64槽保留；确认旧收尾后构造恢复。host另覆盖预算隔离、原子ACK、15+1、精确revoke、临时引用及死亡来源不交付。
@@ -30,8 +34,16 @@
 
 ## 接续
 
-继续剩余CONTROL/创建管理（预算、终止和完整准入）、CHILD/LIFE与外设IRQ，再补信号/作业关系和加载；按01/03/04/06执行。固定CONTROL的短事务在关IRQ且不调度期间解析完整Life/PID并提交；CONSTRUCT/EXEC_VIEW与临时加载MEM仍受原生准入门禁，私有MEM不能跨Acct授予，SHARED/DMA与资源reply仍未接。
+继续完整创建准入与剩余管理、CHILD/LIFE与外设IRQ，以及信号/终端作业控制和加载；按01/03/04/06执行。当前固定CONTROL短事务不跨调度借表，CONSTRUCT/EXEC_VIEW与临时加载MEM操作仍受原生准入门禁，只读RESOURCE例外已接；SHARED/DMA、资源reply和完整创建装载未接。
 
-用户已确认CALL_CONTROL=0x08只选本主体控制清理两槽，不增加权限；connect产物含GRANT时，输入CONTROL必须同时有CONNECT和GRANT，缺任一位DENIED，CONSTRUCT仅允许USE。两项规则均已写回设计，后者构造分支仍随完整准入保持门禁。无待确认的设计问题。
+本轮预算与终止见02/03末尾，creds验证旧来源退出/槽复用、DRAINING/取消准备只读、证明释放后的STALE，以及CALL/NOTIFY解除后Image消失而Life凭据继续保留；memory另验证输出复制的完整区间预检。RQ、组关系及准备期只读查询已通过188项host/格式/74个QEMU回归。旧日志与失败现场均保留。
 
-用户本轮明确要求提交/推送并创建PR，等合并后继续；后续遇实质设计冲突再询问，不自动提交或推送。
+用户已确认CALL_CONTROL=0x08只选自身控制槽；connect可转授产物须输入CONTROL CONNECT+GRANT，CONSTRUCT只允许USE（其原生创建门禁仍保留）。
+
+用户已确认准备期只读RESOURCE查询：有效CONSTRUCT/EXEC_VIEW CONFIG只枚举精确准备表，其他kind拒绝，发布/取消/超期失效；父用真实SELF_SPACE/SELF_ALLOC值写Boot，不获得目标本地操作权。已同步03/06/08，代码、两架构creds及188项host/格式/74个QEMU完整回归通过。EXEC_VIEW创建仍未实现。
+
+用户已授权按设计持续推进，遇实质冲突可停下询问；每个完成且验收通过的点提交并推送到当前同一分支。
+
+会话/组规则已由用户确认并写入03/06/11：自身或未exec直接孩子、同会话、0选择器、setsid保留组号检查，uid 0无豁免。关系池、Life挂接及原生getpg/setpg/setsid已通过185项host/格式/74个QEMU完整回归；孤儿自动接管与成功exec后的改组禁止仍未运行验收。
+
+本轮PROC实际统计已接并通过两架构stats局部验证：Proc仍512、Space64；真实组/账目/资源/映射/Rq计数与选中窗口CPU纳秒，阻塞不计费，旧CONTROL不跟随运行槽复用。完整189项host/格式/76个QEMU回归通过，日志见上；IPC/ipcdepth实测阻塞调用者强等待边和实际请求责任数。

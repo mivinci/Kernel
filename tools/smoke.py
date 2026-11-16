@@ -117,6 +117,18 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "stats":
+        if ready != ["READY stats-restored"] or panics or traps:
+            raise SmokeError("native process statistics did not finish")
+    elif case == "groups":
+        if ready != ["READY groups-restored"] or panics or traps:
+            raise SmokeError("native group test did not finish")
+    elif case == "creds":
+        if ready != ["READY creds-restored"] or panics or traps:
+            raise SmokeError("native credential test did not finish")
+    elif case == "terminate":
+        if ready != ["READY terminate-restored"] or panics or traps:
+            raise SmokeError("native termination test did not finish")
     elif case == "control":
         if ready != ["READY control-restored"] or panics or traps:
             raise SmokeError("native control test did not finish")
@@ -469,6 +481,10 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY stats-restored\n" if args.case == "stats" else
+                    "READY groups-restored\n" if args.case == "groups" else
+                    "READY creds-restored\n" if args.case == "creds" else
+                    "READY terminate-restored\n" if args.case == "terminate" else
                     "READY control-restored\n" if args.case == "control" else
                     "READY events-restored\n" if args.case == "events" else
                     "READY ipc-restored\n" if args.case in ("ipc", "ipcdepth") else
@@ -551,6 +567,34 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "stats":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("STATSCHECK ")]
+                    if (len(checks) != 1 or
+                            {k: checks[0].get(k) for k in ("turns", "reused", "charged", "allocated")} !=
+                            {"turns": 7, "reused": 1, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("process statistics/CPU accounting mismatch")
+                    record["process_statistics"] = checks[0]
+                if args.case == "groups":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("GROUPCHECK ")]
+                    if (len(checks) != 1 or
+                            {k: checks[0].get(k) for k in ("turns", "reused", "charged", "allocated")} !=
+                            {"turns": 3, "reused": 1, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("native group relation/reuse mismatch")
+                    record["groups"] = checks[0]
+                if args.case == "creds":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("CREDCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("turns", 0) < 6 or
+                            {k: checks[0].get(k) for k in ("reused", "proofgone", "charged", "allocated")} !=
+                            {"reused": 1, "proofgone": 1, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("native credential authority/reuse mismatch")
+                    record["credentials"] = checks[0]
+                if args.case == "terminate":
+                    checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("TERMCHECK ")]
+                    if (len(checks) != 1 or checks[0].get("turns", 0) < 10 or
+                            {k: checks[0].get(k) for k in ("killed", "draining", "reused", "refs", "charged", "allocated")} !=
+                            {"killed": 6, "draining": 2, "reused": 1, "refs": 0, "charged": 0, "allocated": transition["tables"]}):
+                        raise SmokeError("native termination/wait reference mismatch")
+                    record["termination"] = checks[0]
                 if args.case == "control":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("CONTROLCHECK ")]
                     if (len(checks) != 1 or checks[0].get("turns", 0) < 6 or
@@ -687,7 +731,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

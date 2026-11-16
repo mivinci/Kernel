@@ -115,6 +115,28 @@ setstat(Setid id, Set *out)
   return 0;
 }
 
+u64
+settag(Setid id)
+{
+  return setfind(id) ? (id.generation << 8) | id.index : 0;
+}
+int
+setlookup(u64 tag, Setid *out)
+{
+  Setid id;
+  if (!out)
+    return AC_BAD;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  id.generation = tag >> 8;
+  id.index = (u32) (tag & 255);
+  id.reserved = 0;
+  if (!id.generation || !setfind(id))
+    return AC_BAD;
+  out->generation = id.generation;
+  out->index = id.index;
+  return 0;
+}
 int
 acctcreate(Setid id, u64 limit, u64 peak, Acctid *out)
 {
@@ -205,6 +227,41 @@ acctstat(Acctid id, Acct *out)
   out->state = a->state;
   out->refs = a->refs;
   out->bound = a->bound;
+  return 0;
+}
+
+u64
+accttag(Acctid id)
+{
+  return find(id) ? (id.generation << 8) | id.index : 0;
+}
+int
+acctlookup(u64 tag, Acctid *out)
+{
+  Acctid id;
+  if (!out)
+    return AC_BAD;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  id.generation = tag >> 8;
+  id.index = (u32) (tag & 255);
+  id.reserved = 0;
+  if (!id.generation || !find(id))
+    return AC_BAD;
+  out->generation = id.generation;
+  out->index = id.index;
+  return 0;
+}
+int
+acctbudget(Acctid id, u64 limit, u64 peak)
+{
+  Acct *a = find(id);
+  if (!a || a->state != AC_ACTIVE || peak < limit)
+    return AC_BAD;
+  if (a->used > limit || a->reserved > limit - a->used)
+    return AC_BUSY;
+  a->limit = limit;
+  a->exec_limit = peak;
   return 0;
 }
 

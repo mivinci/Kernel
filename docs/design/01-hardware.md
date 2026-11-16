@@ -91,7 +91,7 @@ Life/Acct/Rq 等存在退出后独立保留期，池容量独立配置，不简�
 | IMAGES / PREPS / OBSERVATIONS | 512 / 192 / 1024 | 每进程准备至多3，观察权服务各上限128、总预付不得超过池 |
 | MEMS / MMAPS / BLOCKREFS | 8192 / 8192 / 65536 | 满则准入失败，不假定进程数够就都能取得最大页数 |
 | COW_GROUPS / COW_BRANCHES | 65536 / 131072 | 实际页单出资，分支预留另计；满则fork准备失败 |
-| SETS / GROUPS / TERMINALS / IRQS | 16 / 128 / 16 / 64 | 组/终端独立生命周期；每进程最多16条IRQ |
+| SETS / GROUPS / TERMINALS / IRQS | 16 / 128 / 16 / 64 | SESSION/GROUP共用128份关系记录，组/终端独立生命周期；每进程最多16条IRQ |
 | KSTACK_PAGES / SCHED_PAGES / EMERGENCY_PAGES | 4 / 4 / 1 | 每线程16 KiB、CPU调度16 KiB、紧急诊断4 KiB；每类下界有guard |
 | USER_STACK_PAGES / ARG_BYTES / BOOT_BYTES | 16 / 16384 / 65536 | 用户栈64 KiB，参数环境总16 KiB，Boot总64 KiB |
 | FDS / FILES / CLOSE_RECORDS | 128 / 512 / 256 | fd为每进程，File为FS，关闭责任为每进程预付上限 |

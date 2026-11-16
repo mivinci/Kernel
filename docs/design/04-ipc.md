@@ -701,3 +701,17 @@ HAL增加专用IPC返回封装，正常CALL/SEND接收在t0/x9返回真实source
 
 
 原生事件接续（2026-11-16）：recv/reply_recv已接受事件mask及EVENTS_ONLY，普通接收按05交替消息/事件；RQ_DONE/RQ_CANCEL通过请求中的未投递标记合并，不消费真实结果或完成责任。先前消息切片对事件mask的NOTSUP边界已由本节替代。资源reply、原生管理授权及信号仍未接通，详见05/03末尾。
+
+
+终止等待续点接续（2026-11-16）：固定CONTROL terminate已接当前消息profile的非当前WAIT_RESULT/WAIT_FINISH引用解除，含回复后已排READY却尚未恢复的C续点；目标不再回原栈读取Rq。QUEUED/已回复在三责任完成及临时引用解除后回收，ACCEPTED保持真实DRAINING直到服务finish，不因调用者死亡伪造server_finished。两架构terminate场景直接核对refs由1归0及后续回收，详见03末尾；STOP、普通捕获信号及长Op退栈仍待实现。
+
+
+### 原生RQ只读查询接续（2026-11-16）
+
+query(kind=RQ=2)已接实际请求快照；扫描上限1024槽，每次最多16条。自身0只看当前完整PID/image：调用方须尚未release，接收方须仍有排队/owned责任且未finished；已转退役链的旧接收责任不冒充当前邮箱。固定CONTROL QUERY可按其绑定Life的完整PID查询保留历史，含关闭的出站记录及未finished的退役入站，不通过运行槽或当前邮箱重定向。同一条自调用同时符合两端时只返回一次。
+
+Queryrec的pid为所查主体，image为该记录匹配端的真实镜像；stamp为当前Rq的43位代次+16位索引，cursor为下一条可见记录的同格式快照。它们都是诊断身份，不授予RPC/REQUEST权限；游标所指记录删除、复用或不再属于本范围均STALE，不能拿游标选择其他主体。data[0..6]=caller/callerimage/server/serverimage/state/status/flags，后13字为0，不暴露Msg、授权来源整数、链指针、临时引用或内部队列/恢复/通知标志。flags只含既有CONSUMED=1、FINISHED=2、RELEASED=4、CANCEL_REQUESTED=8；阶段仍QUEUED=1、ACCEPTED=2、TERMINAL=3，DRAINING由TERMINAL且未FINISHED派生。公开常量统一移入abi/ipc.h，记录仍184字节。
+
+- [x] 四项新增host验证角色/镜像/旧Life隔离、私有标志与消息不泄漏、同槽新代次及跨主体游标拒绝、17条请求按16+1分页，查询前后Rq全部状态不变且FIFO接收不受影响。
+- [x] 两架构ipc/ipcdepth验证自身双端去重、排队/取消/接收/defer/reply/ACK的快照，服务死亡后旧CONTROL读退役DRAINING，真实收尾后接收者不再列出，查询不消费结果/事件，深度边界不受查询影响。
+- [x] 完整178项host、格式及72个QEMU回归通过，日志`build/host/stage22-request-query/test-all.log`。query不替代rqclean的CONTROL及设备安全证明，后者原生仍NOTSUP。

@@ -15,6 +15,9 @@ class Table(C.Structure):
 class Allocarg(C.Structure):
     _fields_ = [(x,C.c_uint64) for x in ('bytes','kind','align','minaddr','maxaddr','reserved')]
 
+class Queryrec(C.Structure):
+    _fields_=[('type',C.c_uint64),('pid',C.c_int64),('image',C.c_uint64),('stamp',C.c_uint64),('data',C.c_uint64*20)]
+
 class LocalTests(unittest.TestCase):
     setUpClass = classmethod(support.AddressSpaceTests.setUpClass.__func__)
     tearDownClass = classmethod(support.AddressSpaceTests.tearDownClass.__func__)
@@ -24,7 +27,7 @@ class LocalTests(unittest.TestCase):
 
     def exercise(self,lib,method):
         def body():
-            args = {'localnative': [C.POINTER(Table),C.c_int64], 'localinherit': [C.POINTER(Table),C.c_int64,C.c_uint64], 'meminit': [], 'memstat': [Memid,C.POINTER(Memory)],
+            args = {'localquery': [C.POINTER(Table),C.c_uint64,C.POINTER(Queryrec),C.c_uint32,C.POINTER(C.c_uint32),C.POINTER(C.c_uint64)], 'localnative': [C.POINTER(Table),C.c_int64], 'localinherit': [C.POINTER(Table),C.c_int64,C.c_uint64], 'meminit': [], 'memstat': [Memid,C.POINTER(Memory)],
                 'localinit': [C.POINTER(Table),C.POINTER(Local),C.c_uint32,Acctid,support.Spaceid],
                 'localmem': [C.POINTER(Table),Memid,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)],
                 'localspace': [C.POINTER(Table),C.c_uint64,C.POINTER(C.c_int64)],
