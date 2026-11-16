@@ -48,6 +48,7 @@
 #define SYS_OBSDROP       0x54
 #define SYS_SIGACTION     0x60
 #define SYS_SIGMASK       0x61
+#define SYS_SIGRETURN     0x65
 #define SYS_SIGPENDING    0x62
 #define SYS_GETID         0x4f
 #endif

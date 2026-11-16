@@ -108,6 +108,7 @@ syscall(Hctx *context)
   case SYS_RQCHECK:
     used = 1;
     break;
+  case SYS_SIGRETURN:
   case SYS_OBSREAD:
   case SYS_OBSNEXT:
   case SYS_OBSACK:
@@ -142,6 +143,8 @@ syscall(Hctx *context)
   }
   for (i = 0; i < HAL_SYSCALL_ARGS; i++)
     if (!(used & (1UL << i)) && args[i]) {
+      if (trap.syscall_nr == SYS_SIGRETURN)
+        procbadsignal(args[0]);
       status = -ERR_INVALID;
       goto done;
     }
@@ -150,8 +153,7 @@ syscall(Hctx *context)
       trap.syscall_nr == SYS_ALARMCANCEL) {
     status = procipc(trap.syscall_nr, args, outputs);
     hal_ipc_finish(context, status, outputs);
-    proccheckpoint();
-    hal_user_enter(context);
+    procuserreturn(context);
   }
   switch (trap.syscall_nr) {
   case SYS_OBSERVE:
@@ -298,6 +300,8 @@ syscall(Hctx *context)
     if (!status)
       outputs[0] = (u64) seconds;
     break;
+  case SYS_SIGRETURN:
+    procsigreturn(args[0]);
   case SYS_SIGACTION:
     status = procsigaction(args[0], args[1], args[2]);
     break;
@@ -386,6 +390,5 @@ syscall(Hctx *context)
   }
 done:
   hal_syscall_finish(context, status, outputs);
-  proccheckpoint();
-  hal_user_enter(context);
+  procuserreturn(context);
 }

@@ -115,7 +115,7 @@ enter(void)
 {
   if (!current || current->state != PROC_RUNNING)
     panic("process entry state");
-  hal_user_enter(current->user);
+  procuserreturn(current->user);
 }
 static int
 newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 booting, Handle *out)
@@ -617,7 +617,7 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
   if (lifeend(p->life, reason, code, fault))
     panic("process exit result");
   p->state = PROC_EXITING;
-  if (imageend(p->identity, IMAGE_EXIT) || rqquotaend(&p->outgoing))
+  if (imageend(p->identity, IMAGE_EXIT) || rqquotaend(&p->outgoing) || sigdiscard(p->identity))
     panic("process image/request exit");
   if (rqmailclose(&p->incoming, 32) < 0)
     panic("process incoming exit");
@@ -917,7 +917,7 @@ proctimertrap(Hctx *context)
     panic("timer trap source");
   if (timerfire())
     procyield();
-  hal_user_enter(context);
+  procuserreturn(context);
 }
 void
 prockernelirq(void)
@@ -1224,7 +1224,8 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   Rqresult result;
   Msg      message;
   u64      bits;
-  u32      i, kind;
+  u32      i, kind, context;
+  Sigstat  signal;
   int      error;
   if (!current || current->state != PROC_RUNNING || vm_paused)
     panic("native IPC source");
@@ -1280,8 +1281,11 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     if (!server || server->identity.generation != target.generation ||
         server->identity.index != target.index || server->state == PROC_EXITING)
       return -ERR_PEER;
+    if (sigstat(current->identity, &signal))
+      panic("IPC signal budget");
+    context = signal.depth == 0 ? RQ_NORMAL : signal.depth == 1 ? RQ_SIGNAL1 : RQ_SIGNAL2;
     error = rqsubmitto(&current->outgoing, &server->incoming, current->identity, (Handle) args[0],
-                       RQ_NORMAL, kind, &message, (u32) args[5], &id, &current->resources);
+                       context, kind, &message, (u32) args[5], &id, &current->resources);
     if (error)
       return error;
     wakeone(server);
@@ -1385,6 +1389,66 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   }
 }
 
+int
+procsiginstall(Handle pid, u32 signum, const Sigact *action)
+{
+  Proc *p = find(pid);
+  if (!p || !action)
+    return -ERR_BAD_HANDLE;
+  if (p->state != PROC_READY && p->state != PROC_RUNNING)
+    return -ERR_BUSY;
+  if (action->kind == SIGNAL_HANDLER &&
+      (range(p, action->handler, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC) ||
+       range(p, action->trampoline, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC)))
+    return -ERR_FAULT;
+  return siginstall(p->identity, signum, action);
+}
+int
+procsigqueue(Handle pid, const Siginfo *info)
+{
+  Proc *p = find(pid);
+  if (!p)
+    return -ERR_STALE;
+  /* Native source authorization and blocked-syscall interruption are separate
+     steps. This typed path queues only for a runnable user-return boundary. */
+  if (p->state != PROC_READY && p->state != PROC_RUNNING)
+    return -ERR_BUSY;
+  return sigqueue(p->identity, info);
+}
+NORETURN void
+procbadsignal(u64 frame)
+{
+  Lifefault fault;
+  if (!current || current->state != PROC_RUNNING)
+    panic("bad signal source");
+  fault.pc = current->user->tf.pc;
+  fault.address = frame;
+  fault.cause = SIGNAL_BAD_FRAME_CAUSE;
+  procexit(LIFE_FAULT, SIGNAL_SEGV, &fault);
+}
+NORETURN void
+procuserreturn(Hctx *context)
+{
+  int signal;
+  if (!proccurrent(context) || vm_paused || current->stage.wait.kind)
+    panic("user return boundary");
+  proccheckpoint();
+  signal = sigdeliver(current->identity, current->space, context);
+  if (signal < 0)
+    procbadsignal(hal_user_sp(context));
+  if (signal > 0)
+    procexit(LIFE_SIGNAL, (u32) signal, NULL);
+  hal_user_enter(context);
+}
+NORETURN void
+procsigreturn(u64 frame)
+{
+  if (!current || current->state != PROC_RUNNING)
+    panic("signal return source");
+  if (sigrestore(current->identity, current->space, current->user, frame))
+    procbadsignal(frame);
+  procuserreturn(current->user);
+}
 int
 procsigaction(u64 signum, u64 input, u64 output)
 {

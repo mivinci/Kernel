@@ -4,7 +4,11 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 44
+#if BOOT_CASE == 45
+  sigframetest();
+  putstr("READY sigframe-restored\n");
+
+#elif BOOT_CASE == 44
   sigconfigtest();
   putstr("READY sigconfig-restored\n");
 #elif BOOT_CASE == 42 || BOOT_CASE == 43

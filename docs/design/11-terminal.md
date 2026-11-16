@@ -430,3 +430,23 @@ FP数据寄存器按合法用户编辑恢复。RV64允许fflags和0..4的舍入�
 5项新host测试覆盖六参数映射、非法地址/帧入口拒绝无半更新、可编辑GPR/FP/条件码、精确缓冲别名、特权/IRQ/诊断字段篡改、保留FP控制和新保留值拒绝。CASE=sigreserve两架构另执行两次真实用户入口：可信CPU用HAL恢复后的现场进入U/EL0，用户汇编实际检查GPR、FP寄存器、非默认控制及ARM NZCV；RV另外检查原样保留frm7的FCSR值，不把它称为新增合法舍入模式。每次还拒绝8种架构非法恢复且输出全字节保持0xa5，另检查坏frame入口不改原状态；原cookie/预付/回滚/离栈回收断言继续执行。
 
 首次试验中C/汇编同主名输出对象冲突已通过拆分测试文件名修正；后续用户载荷未清零exit未用参数导致首个退出被INVALID拒绝，已按既有ABI清零额外比对寄存器，未放宽内核参数/恢复验证。失败日志保留。本地完整279项host、格式及94个两架构QEMU通过，最终架构实现/用户载荷源码哈希与已验镜像匹配，日志build/host/stage44-signal-context/；原生HANDLER仍NOTSUP，实际用户帧写入、映射/最上层/cookie校验、sigreturn、信号生产/递送/中断重启及libc适配仍待执行，无真实硬件/性能/CI验收。
+
+### 用户信号帧与原生sigreturn接续（2026-11-17）
+
+已接单一动作表上的可信类型化安装/排队、完整用户Sigframe及原生0x65 sigreturn。排队只更新pending与首份Siginfo，实际递送在首次用户入口、timer返回或syscall完成寄存器输出后的统一出口执行；不在yield挂起的C续点上提前改写入口参数。当前可信入口只接受READY/RUNNING目标，拒绝KILL/STOP/CONT及作业控制停止信号，不提供未定义的原生来源code。
+
+每种pending信号保留首份64字节Siginfo，同编号后续信号合并；IGNORE清除对应pending/元数据。递送取得动作快照，重新核对handler/trampoline普通RX映射，将前缀、Siginfo及完整原Hctx写入当前SP下方16字节对齐的可写普通用户栈，再提交预付层、cookie及有效掩码。达到两层时继续保留可捕获pending。NODEFER只取消自动追加当前信号，显式action.mask仍生效；RESETHAND在进入用户前将主动作复位，活动层继续使用原快照。处理函数内IPC按实际depth选择信号一/二预算，CALL_CONTROL仍单独选择控制预算。
+
+sigreturn只接受最上层精确地址、深度、previous和cookie，绑定原PID/image银行；检查整个帧及reserved/mask、恢复PC普通RX/SP普通RW映射，再由HAL对照内核原Hctx校验GPR/FP/权限。成功直接恢复完整现场并复查pending，不经过普通syscall结果覆盖/PC推进。失败以私有BAD_SIGNAL_FRAME诊断不可恢复退出SIGSEGV；退出先结束镜像并清空活动层及pending，CPU离栈后再释放预付银行，cookie序列不重置。当前帧不持Rq临时责任，遇到非空责任拒绝清理，未实现的中断/重启不能借此丢弃Rq。
+
+CASE=sigframe使用真实csu/main镜像和自定义trampoline验证10种路径：单层恢复及返回mask中的KILL/STOP清除；嵌套USR2；篡改特权；内层归还外层；旧帧副本重放；未映射PC；无活动帧返回；handler内exit；RESETHAND后第二信号默认终止；NODEFER同信号嵌套。实际FP舍入模式在应用/外层/内层各不相同，返回逐层恢复；核对六参数、Siginfo、动作快照、掩码及跨槽复用cookie。结果应为4个正常退出42、5个坏帧SIGSEGV、1个默认USR1终止，每例结清动态页/Set/Acct/关系/信号层。host补测pending合并、IGNORE清除/保留mask及非法/特殊来源/终态拒绝。
+
+首次运行发现信号核心把函数/栈字节地址直接交给要求页对齐的页表查询，导致入口重验误拒绝；现按页对齐查询，未放宽映射权限。失败记录和最终验证保存在build/host/stage45-signal-frame/。
+
+边界：原生HANDLER安装仍NOTSUP；原生sigsend、真实CHLD及同步异常信号生产、STOP/CONT、阻塞syscall中断、Rctx/重启、sigsuspend、libc信号/errno前置尚未接。可信fixture不等于用户态已能注册和发送信号，normal仍未启动生产init，完整目标包括net。
+
+本地最终验证：完整make test-all的281项host、格式及96个RV64/ARM64 QEMU全部通过；补充3项帧核心host后，完整host重跑284项通过，格式再次通过。日志、96个原始产物目录及关键源码哈希在build/host/stage45-signal-frame/。无CI、真实硬件或性能验收。
+
+#### 开放问题：Siginfo来源编码（待用户确认）
+
+接真实来源前候选原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。当前只冻结64字节布局，尚未实现这些候选数值或真实来源；可信测试code=0不定义生产协议。

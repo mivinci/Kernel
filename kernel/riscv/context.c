@@ -75,6 +75,11 @@ hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8])
   context->tf.x[13] = outputs[2];
 }
 
+u64
+hal_user_sp(const Hctx *context)
+{
+  return context->tf.x[2];
+}
 static int
 signaladdress(u64 pc, u64 sp)
 {

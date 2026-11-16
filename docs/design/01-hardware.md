@@ -323,3 +323,5 @@ Rq预算实现补充（2026-11-16）：Rq184字节、1024槽共188416字节；Rq
 - [x] 完整158项host、格式及68个两架构QEMU场景通过，日志`build/host/stage16-runner/test-all-final.log`；先前诊断/失败日志保留，不以单次复测替代此竞态的修复验证。
 
 信号寄存器边界接续（2026-11-17）：HAL新增纯Hctx入口参数转换与用户恢复校验；架构CSR/PSTATE/FP规则只在对应context.c实现，核心不嵌入架构寄存器分支。恢复失败不写输出，可信用户快照限定特权/IRQ状态；PC/SP映射、frame/cookie/PID/image仍由信号核心负责。两架构sigreserve实测恢复后的真实U/EL0 GPR/FP及ARM条件码，细节/验证边界见11末尾；没有因此开放原生sigreturn或HANDLER。
+
+信号帧核心接续（2026-11-17）：每运行槽的单一动作/上下文银行现另驻留32份64字节pending Siginfo，共2048字节/槽，默认64槽增加131072字节固定BSS；不挤入每份Sigctx≤1024字节预算，也不在递送路径临时分配。实际Sigctx仍RV704/ARM960，用户帧RV688/ARM944。hal_user_sp仅提供公共SP访问，映射/顶层/cookie检查归核心；执行边界与证据见11末尾。

@@ -6,6 +6,7 @@
 #include <local.h>
 #include <kstack.h>
 #include <abi/proc.h>
+#include <abi/signal.h>
 #include <observe.h>
 struct Hctx;
 #define PROC_BLOCKED   6
@@ -61,13 +62,18 @@ int     procconfigure(Handle pid, const Config *config, u32 reserve);
 int     procpublish(Handle pid);
 int     procdestroy(Handle pid);
 /* CPU dispatcher selects one runnable continuation with IRQs masked. */
-int     procrunone(void);
-Rtable *proccurrent(struct Hctx *frame);
-isize   procipc(u64 number, const u64 args[7], u64 outputs[8]);
+int           procrunone(void);
+Rtable       *proccurrent(struct Hctx *frame);
+isize         procipc(u64 number, const u64 args[7], u64 outputs[8]);
+int           procsiginstall(Handle pid, u32 signum, const Sigact *action);
+int           procsigqueue(Handle pid, const Siginfo *info);
+NORETURN void procsigreturn(u64 frame);
+NORETURN void procbadsignal(u64 frame);
+NORETURN void procuserreturn(struct Hctx *context);
+int           procsigaction(u64 signum, u64 input, u64 output);
+int           procsigmask(u64 how, u64 mask, u64 *old);
+int           procsigpending(u64 *out);
 /* Typed resource commit; syscall descriptor decoding is a separate ABI step. */
-int  procsigaction(u64 signum, u64 input, u64 output);
-int  procsigmask(u64 how, u64 mask, u64 *old);
-int  procsigpending(u64 *out);
 int  procreplyresource(Rtable *source, Handle request, const Resreply *reply);
 int  procidentity(Handle *pid, u64 *image, Handle *parent);
 void procyield(void);

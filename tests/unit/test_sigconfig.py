@@ -7,6 +7,10 @@ from test_life import Lifeid
 class Action(C.Structure):
     _fields_=[(name,C.c_uint64) for name in ('kind','handler','trampoline','mask','flags','reserved')]
 
+class Info(C.Structure):
+    _fields_=[('signum',C.c_uint32),('code',C.c_uint32),('pid',C.c_uint64),
+        ('uid',C.c_uint32),('reserved0',C.c_uint32)]+[(name,C.c_uint64) for name in ('address','reason','status')]+[('reserved',C.c_uint64*2)]
+
 class SignalConfigTests(unittest.TestCase):
     extra_flags=support.SignalReservationTests.extra_flags
     extra_sources=support.SignalReservationTests.extra_sources
@@ -102,4 +106,37 @@ class SignalConfigTests(unittest.TestCase):
             self.assertEqual(self.lib.siginitial(future,0,0),0);self.assertEqual(self.stat(later).child_policy,3)
             self.assertEqual(self.lib.sigbaseline(future,future),-1)
             self.assertEqual(self.lib.sigcheck(),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_typed_pending_coalesces_and_ignore_purges_without_unmasking(self):
+        def body():
+            lib=self.lib
+            lib.sigqueue.argtypes=[Imageid,C.POINTER(Info)]
+            life,image=self.active(1100)
+            old=C.c_uint64()
+            self.assertEqual(lib.sigsetmask(image,2,1<<9,C.byref(old)),0)
+            first=Info(signum=10,status=42)
+            self.assertEqual(lib.sigqueue(image,C.byref(first)),0)
+            self.assertEqual(lib.sigqueue(image,C.byref(Info(signum=10,status=99))),0)
+            self.assertEqual(self.snapshot(image).pending,1<<9)
+            self.assertEqual(lib.sigsetaction(image,10,C.byref(Action(1))),0)
+            self.assertEqual((self.snapshot(image).pending,self.snapshot(image).mask),(0,1<<9))
+            self.assertEqual(lib.sigqueue(image,C.byref(first)),0)
+            self.assertEqual(self.snapshot(image).pending,0)
+            self.assertEqual(lib.sigcheck(),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_typed_source_rejects_reserved_special_and_ended_without_mutation(self):
+        def body():
+            lib=self.lib
+            lib.sigqueue.argtypes=[Imageid,C.POINTER(Info)]
+            life,image=self.active(1110)
+            for info,error in [(Info(signum=0),-1),(Info(signum=5),-1),
+                    (Info(signum=10,reserved0=1),-1)]+[(Info(signum=n),-18) for n in (9,18,19,20,21,22)]:
+                before=bytes(self.snapshot(image))
+                self.assertEqual(lib.sigqueue(image,C.byref(info)),error)
+                self.assertEqual(bytes(self.snapshot(image)),before)
+            self.assertEqual(lib.imageend(image,1),0)
+            self.assertEqual(lib.sigqueue(image,C.byref(Info(signum=10))),-6)
+            self.assertEqual(lib.sigcheck(),0)
         for lib in self.libs:self.exercise(lib,body)

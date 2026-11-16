@@ -7,7 +7,7 @@ class Sigstat(C.Structure):
 
 class SignalReservationTests(unittest.TestCase):
     extra_flags=('-DPROCS=4','-DREQUESTS=64','-DRECOVERY_RQS=12')
-    extra_sources=('signal.c',)
+    extra_sources=('signal.c','{arch}/context.c')
     context_layout=True
     setUpClass=classmethod(support.ImageTests.setUpClass.__func__)
     tearDownClass=classmethod(support.ImageTests.tearDownClass.__func__)
@@ -161,7 +161,7 @@ class SignalReservationTests(unittest.TestCase):
 
 class SignalCookieExhaustionTests(unittest.TestCase):
     extra_flags=('-DPROCS=4','-DREQUESTS=64','-DRECOVERY_RQS=12','-DSIG_COOKIE_MAX=2')
-    extra_sources=('signal.c',)
+    extra_sources=('signal.c','{arch}/context.c')
     context_layout=True
     setUpClass=classmethod(support.ImageTests.setUpClass.__func__)
     tearDownClass=classmethod(support.ImageTests.tearDownClass.__func__)

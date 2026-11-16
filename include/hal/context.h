@@ -35,6 +35,7 @@ void hal_trap_init(void);
 void kerneltrap(Hctx *context);
 void hal_user_init(Hctx *context, const Hinit *initial);
 void hal_user_irq(Hctx *context, u32 enabled);
+u64  hal_user_sp(const Hctx *context);
 /* Register-only signal transition. Caller separately owns/validates the full
    writable frame, executable mappings, top-frame cookie and PID/image. */
 int hal_signal_enter(Hctx *context, u64 frame, u64 trampoline, u64 handler, u64 flags, u32 signum);

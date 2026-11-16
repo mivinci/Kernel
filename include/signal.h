@@ -1,8 +1,11 @@
-/* Prepaid signal bank and DEFAULT/IGNORE configuration; delivery/sigreturn pending. */
+/* Prepaid signal bank, typed delivery and checked user-frame restoration. */
 #ifndef _SIGNAL_H
 #define _SIGNAL_H
 #include <image.h>
+#include <space.h>
+#include <hal/context.h>
 #include <abi/signal.h>
+#define SIGNAL_BAD_FRAME_CAUSE UINT64_C(0x8000000000000065)
 typedef struct Sigstat Sigstat;
 struct Sigstat
 {
@@ -19,6 +22,14 @@ int sigmaskvalid(u64 mask);
 int sigactionvalid(u32 signum, const Sigact *action);
 int siggetaction(Imageid image, u32 signum, Sigact *out);
 int sigsetaction(Imageid image, u32 signum, const Sigact *action);
+/* Trusted typed producer/profile. Public HANDLER registration remains gated
+   until native sources and runtime interruption semantics are integrated. */
+int siginstall(Imageid image, u32 signum, const Sigact *action);
+int sigqueue(Imageid image, const Siginfo *info);
+/* Completed-user-return boundary only; positive result requests default exit. */
+int sigdeliver(Imageid image, Spaceid space, Hctx *context);
+int sigrestore(Imageid image, Spaceid space, Hctx *context, u64 frame);
+int sigdiscard(Imageid image);
 int sigsetmask(Imageid image, u32 how, u64 mask, u64 *old);
 int siggetpending(Imageid image, u64 *out);
 int sigbaseline(Imageid target, Imageid source);

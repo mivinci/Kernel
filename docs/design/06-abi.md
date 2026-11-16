@@ -340,3 +340,5 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 类型化资源核心接续（2026-11-16）：Resreply的既定56字节字段/偏移已有共享结构与布局断言；内核内部提交可生成RESOURCE_REPLY kind=4，words[0]为已安装本地Handle、其余三业务字不解释，source/request/image均0。同步CALL和异步结果查询已能转出这个kind；RQ_FINISH不返回安装结果。用户服务仍不能通过原生reply发起资源交付，因为描述符指针寄存器位置未获确认，REPLY_RESOURCE仍NOTSUP。04末尾的可信桥只验证同一提交核心/真实接收者，不能当成已冻结候选输入位置。
 
 信号配置原生接续（2026-11-16）：0x60三输入、0x61两输入、0x62零输入已接，未用输入仍必须0，成功action无额外寄存器输出，sigmask输出旧mask、sigpending输出真实pending；错误输出0。共享支持编号/掩码/方式常量在abi/signal.h。当前只安装DEFAULT/IGNORE和CHLD NOCLDWAIT，HANDLER与尚未实现语义的已知flags返回NOTSUP；KILL/STOP动作修改及未知位INVALID，KILL/STOP不进入有效掩码。旧动作输出FAULT时不安装，重叠new/old先快照输入。configure非零sigmask/sigdefault已支持并从创建基线计算；完整通知/递送与标准适配尚未完成，见11末尾。
+
+原生sigreturn接续（2026-11-17）：0x65仅一个frame输入，其余输入必须0；成功直接恢复完整用户现场，不返回普通状态/不再次推进PC；坏输入或帧验证失败不可恢复SIGSEGV退出。私有libsys提供NORETURN __sys_sigreturn，实际帧/权限/cookie和验证见11末尾。HANDLER原生注册和信号来源/中断重启尚未开放，不将此入口称为完整信号ABI可用。

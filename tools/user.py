@@ -206,6 +206,14 @@ def build(args):
     if len(sig_rows)!=1 or int(sig_rows[0][2])!=192:raise BuildError('signal config trace missing')
     sig_address=int(sig_rows[0][1],16)
     (sdk/'sigimage.S').write_text('/* image sha256: '+digest(sig_image)+' */\n.section .rodata\n.balign 8\n.global sig_image,sig_image_end,sig_trace_address\nsig_image:\n.incbin "'+str(sig_image)+'"\nsig_image_end:\n.balign 8\nsig_trace_address:\n.quad '+str(sig_address)+'\n')
+    frame_user=link_adoption('frameuser',[compile_adoption(ROOT/'tests/kernel/frameuser.c','frameuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','framefp')])
+    frame_image=sdk/'frameuser.img'
+    frame_image.write_bytes(pack(frame_user.read_bytes(),profile['machine'],128))
+    frame_inspect=invoke('inspect-signal-frame',[tools['readelf']['path'],'-h','-l','-s',str(frame_user)])
+    frame_rows=[line.split() for line in frame_inspect.splitlines() if line.split() and line.split()[-1]=='frame_trace']
+    if len(frame_rows)!=1 or int(frame_rows[0][2])!=256:raise BuildError('signal frame trace missing')
+    frame_address=int(frame_rows[0][1],16)
+    (sdk/'frameimage.S').write_text('/* image sha256: '+digest(frame_image)+' */\n.section .rodata\n.balign 8\n.global frame_image,frame_image_end,frame_trace_address\nframe_image:\n.incbin "'+str(frame_image)+'"\nframe_image_end:\n.balign 8\nframe_trace_address:\n.quad '+str(frame_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'

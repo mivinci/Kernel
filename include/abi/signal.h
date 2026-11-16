@@ -44,8 +44,10 @@
 #define SIGNAL_SETMASK         2
 #ifndef __ASSEMBLER__
 #include <types.h>
+#include <abi/base.h>
 typedef struct Sigact  Sigact;
 typedef struct Sighead Sighead;
+typedef struct Siginfo Siginfo;
 struct Sigact
 {
   u64 kind, handler, trampoline, mask, flags, reserved;
@@ -54,6 +56,17 @@ struct Sighead
 {
   u64 magic, bytes, depth, previous, restore_mask, flags, cookie, reserved;
 };
+struct Siginfo
+{
+  u32 signum, code;
+  u64 pid;
+  u32 uid, reserved0;
+  u64 address, reason, status, reserved[2];
+};
+STATIC_ASSERT(sizeof(Siginfo) == 64, signal_info_size);
+STATIC_ASSERT(offsetof(Siginfo, pid) == 8, signal_info_pid);
+STATIC_ASSERT(offsetof(Siginfo, address) == 24, signal_info_address);
+STATIC_ASSERT(offsetof(Siginfo, status) == 40, signal_info_status);
 STATIC_ASSERT(sizeof(Sighead) == 64, sighead_size);
 STATIC_ASSERT(offsetof(Sighead, magic) == 0, sighead_magic);
 STATIC_ASSERT(offsetof(Sighead, bytes) == 8, sighead_bytes);

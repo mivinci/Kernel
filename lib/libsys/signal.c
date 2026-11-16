@@ -31,3 +31,12 @@ __sys_sigpending(u64 *out)
   *out = result.values[0];
   return error;
 }
+
+NORETURN void
+__sys_sigreturn(void *frame)
+{
+  const u64 args[7] = {(u64) frame, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  __sys_enter(SYS_SIGRETURN, args, &result);
+  __builtin_trap();
+}
