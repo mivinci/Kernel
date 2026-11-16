@@ -1,4 +1,4 @@
-/* Trusted construction/dispatch slice, not native create/start authorization. */
+/* Process construction, native authority checks, dispatch and bounded cleanup. */
 #ifndef _PROC_H
 #define _PROC_H
 #include <life.h>
@@ -26,10 +26,13 @@ struct Procinfo
   u64      image;
   u32      state, configured, phase, resources;
 };
-/* Parent/set/policy supplied by trusted boot/test code. No raw PID authority is
-   exported to userspace. Full native CREATE policy/admission remains pending. */
+/* Trusted boot/test constructor. Native create first validates its fixed Set,
+   limits and credentials; raw PID construction is not exported to userspace. */
 int procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *out);
-/* Native fixed-Life CONTROL operations; construction admission stays gated. */
+int proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *construct,
+               Handle *pid, Handle *control);
+int procdestroyview(Rtable *source, Handle construct);
+/* Native fixed-Life CONTROL operations. */
 int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,
               u64 inherit, Handle *out);
 int procrevoke(Rtable *source, Handle target, Handle resource);

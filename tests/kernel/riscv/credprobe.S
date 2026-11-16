@@ -270,7 +270,7 @@ cred_begin:
  li a1, 262144
  li a7, SYS_ALLOC
  ecall
- li t1, -18
+ li t1, -5
  bne a0, t1, cred_bad
  bnez t0, cred_bad
  bnez a1, cred_bad

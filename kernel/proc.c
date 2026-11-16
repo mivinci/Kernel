@@ -18,8 +18,12 @@ union Procstage
   Config config;
   struct
   {
-    Rqid    request;
-    Imageid target;
+    Rqid request;
+    union
+    {
+      Imageid image;
+      Prepid  prep;
+    } target;
     union
     {
       Handle peer;
@@ -28,9 +32,10 @@ union Procstage
     u32 kind, options;
   } wait;
 };
-#define WAIT_RECV   1
-#define WAIT_RESULT 2
-#define WAIT_FINISH 3
+#define WAIT_RECV    1
+#define WAIT_RESULT  2
+#define WAIT_FINISH  3
+#define WAIT_DESTROY 4
 #ifndef WAIT_DEPTH
 #define WAIT_DEPTH 64
 #endif
@@ -249,9 +254,86 @@ procprepare(Rtable *source, Handle target, u64 rights, Handle *out)
   if (error)
     return error;
   p->prep = id;
-  if (localconstruct(source, id, rights, out))
-    panic("preparation installation reservation");
+  error = localconstruct(source, id, rights, out);
+  if (error) {
+    p->prep.generation = 0;
+    if (prepcancel(id) || prepdrop(id))
+      panic("preparation installation rollback");
+    return error;
+  }
   return 0;
+}
+int
+proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *construct, Handle *pid,
+           Handle *control)
+{
+  Createpolicy policy;
+  Life         caller;
+  Cred         cred;
+  Acct         account;
+  Proc        *child;
+  Handle       target = 0, view = 0, manager = 0, inherited;
+  int          error, more;
+  if (!construct || !pid || !control)
+    return -ERR_INVALID;
+  *construct = *pid = *control = 0;
+  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+    return -ERR_STATE;
+  error = localcreatecheck(source, authority, args, &policy);
+  if (error)
+    return error;
+  if (lifestat(current->life, &caller) || acctstat(source->acct, &account))
+    return -ERR_STATE;
+  if (!(policy.rights & CREATE_CREDENTIAL) &&
+      (args->ruid != caller.cred.ruid || args->euid != caller.cred.euid ||
+       args->rgid != caller.cred.rgid || args->egid != caller.cred.egid))
+    return -ERR_DENIED;
+  if (!(policy.rights & CREATE_SERVICE) && policy.set.index != account.set)
+    return -ERR_DENIED;
+  error = localrooms(source, policy.rights & CREATE_SERVICE ? 2 : 1);
+  if (error)
+    return error;
+  procpausevm();
+  error =
+      procnew(policy.set, caller.pid, args->memlimit, args->exec_limit, args->resources, &target);
+  procresumevm();
+  if (error)
+    return error;
+  child = find(target);
+  if (!child)
+    panic("new process identity");
+  cred.ruid = args->ruid;
+  cred.euid = args->euid;
+  cred.rgid = args->rgid;
+  cred.egid = args->egid;
+  error = lifecredentials(child->life, &cred);
+  if (!error)
+    error = rqmailconfigure(&child->incoming, args->pending);
+  if (!error)
+    error = localchildcreate(source, authority, &child->resources, args, &inherited);
+  if (!error)
+    error = procprepare(source, target, 31, &view);
+  if (!error && policy.rights & CREATE_SERVICE)
+    error = localcontrol(source, child->life, CONTROL_RIGHTS | LOCAL_GRANT, &manager);
+  if (!error) {
+    *construct = view;
+    *pid = target;
+    *control = manager;
+    return 0;
+  }
+  if ((manager && localrevoke(source, manager)) || (view && localrevoke(source, view)))
+    panic("create local rollback");
+  if (procdestroy(target))
+    panic("create instance rollback");
+  /* No user-visible identity escaped and no target mappings exist yet. The
+     rollback is a fixed empty-root/three-bootstrap-entry transaction. */
+  procpausevm();
+  while ((more = procclean(target)) > 0) {
+  }
+  procresumevm();
+  if (more)
+    panic("create cleanup rollback");
+  return error;
 }
 int
 procinfo(Handle pid, Procinfo *out)
@@ -612,6 +694,48 @@ localdestroy(Rtable *source, Handle h)
   return error ? error : procdestroy(pid);
 }
 int
+procdestroyview(Rtable *source, Handle view)
+{
+  Prepid prep;
+  Handle pid;
+  int    error;
+  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+    return -ERR_STATE;
+  error = localtarget(source, view, PREP_ABORT, &prep, &pid);
+  if (error)
+    return error;
+  error = prephold(prep);
+  if (error)
+    return error;
+  current->stage.wait.target.prep = prep;
+  current->stage.wait.subject.peer = pid;
+  current->stage.wait.kind = WAIT_DESTROY;
+  error = procdestroy(pid);
+  if (!error) {
+    do {
+      procpausevm();
+      error = procclean(pid);
+      procresumevm();
+      if (error > 0)
+        procyield();
+    } while (error > 0);
+    if (error == -ERR_STALE)
+      error = 0; /* CPU cleanup already completed this exact old PID. */
+    if (!error) {
+      do {
+        error = prepclean(prep, 32);
+        if (error > 0)
+          procyield();
+      } while (error > 0);
+    }
+  }
+  current->stage.wait.kind = 0;
+  current->stage.wait.subject.peer = 0;
+  if (prepdrop(prep))
+    panic("destroy operation reference");
+  return error;
+}
+int
 procwork(u32 scans)
 {
   static u32 cursor;
@@ -864,8 +988,8 @@ waitedge(Imageid target, Handle *peer)
       return -ERR_DEADLOCK;
     if (p->state != PROC_BLOCKED || p->stage.wait.kind == WAIT_RECV || !p->stage.wait.subject.peer)
       return 0;
-    target.generation = p->stage.wait.target.generation;
-    target.index = p->stage.wait.target.index;
+    target.generation = p->stage.wait.target.image.generation;
+    target.index = p->stage.wait.target.image.index;
     target.reserved = 0;
   }
   return -ERR_DEPTH;
@@ -914,7 +1038,7 @@ waitresult(Rqid id, u32 options, u32 block, Rqresult *out)
     if (error)
       return error;
     current->stage.wait.request = id;
-    current->stage.wait.target = target;
+    current->stage.wait.target.image = target;
     current->stage.wait.subject.peer = peer;
     current->stage.wait.kind = options == RQ_FINISH ? WAIT_FINISH : WAIT_RESULT;
     current->stage.wait.options = options;
@@ -1164,6 +1288,28 @@ controlproc(Rtable *source, Handle authority, u64 rights, Proc **out, u64 *grant
     *granted = available;
   return 0;
 }
+static int
+prepareproc(Rtable *source, Handle authority, u64 rights, Proc **out)
+{
+  Prepid prep;
+  Handle pid;
+  Proc  *p;
+  int    error = localtarget(source, authority, rights, &prep, &pid);
+  if (error)
+    return error;
+  p = find(pid);
+  if (!p || p->state != PROC_CONSTRUCT || p->prep.generation != prep.generation ||
+      p->prep.index != prep.index || p->resources.state != LOCAL_OPEN)
+    return -ERR_STALE;
+  *out = p;
+  return 0;
+}
+static int
+targetproc(Rtable *source, Handle authority, u64 rights, Proc **out)
+{
+  int error = prepareproc(source, authority, PREP_CONFIG, out);
+  return error == -ERR_BAD_HANDLE ? controlproc(source, authority, rights, out, NULL) : error;
+}
 int
 localconnect(Rtable *source, Handle authority, u64 kind, u64 rights, u64 bits, Handle *out)
 {
@@ -1178,6 +1324,14 @@ localconnect(Rtable *source, Handle authority, u64 kind, u64 rights, u64 bits, H
   if (!(rights & LOCAL_USE) || rights & ~(LOCAL_USE | LOCAL_GRANT) ||
       (kind == CONNECT_NOTIFY ? (!bits || bits & ~EVENT_USER) : bits != 0))
     return -ERR_INVALID;
+  error = prepareproc(source, authority, 0, &p);
+  if (!error) {
+    if (rights & LOCAL_GRANT)
+      return -ERR_DENIED;
+    return localendpoint(source, p->identity, (u32) kind, rights, bits, 0, out);
+  }
+  if (error != -ERR_BAD_HANDLE)
+    return error;
   error = controlproc(source, authority, CONTROL_CONNECT, &p, &available);
   if (error)
     return error;
@@ -1196,7 +1350,7 @@ procgrant(Rtable *source, Handle authority, Handle resource, u64 rights, u64 off
   *out = 0;
   if (inherit & ~3UL)
     return -ERR_INVALID;
-  error = controlproc(source, authority, CONTROL_INSTALL, &p, NULL);
+  error = targetproc(source, authority, CONTROL_INSTALL, &p);
   if (error)
     return error;
   error = localnative(source, resource);
@@ -1209,7 +1363,7 @@ procrevoke(Rtable *source, Handle authority, Handle resource)
 {
   Proc *p;
   int   error;
-  error = controlproc(source, authority, CONTROL_REVOKE, &p, NULL);
+  error = targetproc(source, authority, CONTROL_REVOKE, &p);
   if (error)
     return error;
   error = localnative(&p->resources, resource);
@@ -1299,6 +1453,8 @@ procterminate(Rtable *source, Handle authority)
   if ((p->stage.wait.kind == WAIT_RESULT || p->stage.wait.kind == WAIT_FINISH) &&
       rqdrop(p->stage.wait.request))
     panic("terminated wait reference");
+  if (p->stage.wait.kind == WAIT_DESTROY && prepdrop(p->stage.wait.target.prep))
+    panic("terminated destroy reference");
   p->stage.wait.kind = 0;
   p->stage.wait.subject.peer = 0;
   return 0;
@@ -1452,15 +1608,12 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
     return -ERR_DENIED; /* SYSTEM/boot enumeration is not in this profile. */
   identity = current->life;
   if (authority) {
-    error = localnative(source, authority);
-    if (error == -ERR_NOTSUP) {
-      error = localqueryprep(source, authority, &target);
-      if (error)
-        return error;
+    error = localqueryprep(source, authority, &target);
+    if (!error) {
       if (kind != QUERY_RESOURCE)
         return -ERR_DENIED;
     } else {
-      if (error)
+      if (error != -ERR_BAD_HANDLE)
         return error;
       error = localcontrolled(source, authority, CONTROL_QUERY, &identity, &rights);
       if (error)

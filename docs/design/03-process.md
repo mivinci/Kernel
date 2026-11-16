@@ -1256,3 +1256,21 @@ procnew在取得Image后、Rq/账目/栈之前预付该运行槽的2份Sigctx，
 
 - [x] 两架构实际构造失败和用户exit路径验证Sigctx责任；旧合法Image仍在但预付已解除时返回STALE，不改绑新PID/image。
 - [ ] 原生Createarg身份核验、SERVICE输出、construct加载及完整创建准入仍待接；预付不代表信号投递/STOP/CONT/sigreturn已完成。
+
+
+### 原生create与构造加载接续（2026-11-16）
+
+已接create(0x40)/configure(0x41)/start(0x42)/destroy(0x43)。Createarg一次完整复制，父身份固定当前调用者；普通CREATE要求原Set及四项可信凭据完全一致，CREDENTIAL只允许显式身份选择，SERVICE允许绑定Set创建并额外返回固定孩子CONTROL_RIGHTS|GRANT，普通/CREDENTIAL创建a3=0。子表安装夹到Createarg的CREATE_USE，清除CREDENTIAL/SERVICE/GRANT。源表先同时核对1个/2个可用返回槽，目标预付完整Life/Image/Sigctx/Rq/Acct/Space/栈/组关系后才安装CONSTRUCT并交付；未交付的失败按空根/3启动条目完整回滚，不留下半份Handle或结果。
+
+已开放有效CONSTRUCT/加载MEM的原生alloc/map/unmap/seal/configure/start/destroy与CONFIG grant/revoke。加载页由孩子Acct出资；父临时映射与所有临时授权仍固定原Prep，发布前须解除全部父别名。connect凭有效CONSTRUCT本身可生成本次孩子Image的USE入口，不增加GRANT或持续CONTROL；安装/撤销则明确要求CONFIG。query准备表仍仅CONFIG RESOURCE。发布立即撤权，旧视图不跟随同槽新PID。CREATE的通用转授仍NOTSUP，EXEC_VIEW尚无实例，SHARED/DMA、资源reply及非零reserve_resources和初始信号配置仍未接。
+
+创建/局部回滚保持IRQ屏蔽且不跨调度借用目标表；构造栈/页表的变更先切CPU根再恢复当前空间。准备安装的时限/状态失败现在正常退还Prep引用，不把固定期限变化当不可发生的panic。
+
+destroy先提交不可发布状态，再以每批32条Local或1条完整Mmap等固定步骤清理，批次间让出CPU。Procstage标记WAIT_DESTROY并持独立Prep引用，只保存完整旧PID/Prepid，不带目标表指针跨切换；CPU工作已清完原PID则视为本次已完成，不能误拆同槽新实例。源准备表的失效加载授权也在返回前逐批清除。调用者在READY续点被terminate时解除登记的Prep引用，后续由CPU独立收尾，不依赖被丢弃C栈；既有父别名/在途独立责任仍按原Mem/Acct计费。后续信号退栈须识别该责任，不能只处理Rq等待。
+
+- [x] 两架构spawn由真实U/EL0父调用create，检查缺权/坏地址/保留字段/凭据/跨Set/四上限拒绝、费用不足及三准备耗尽的回滚；源满表仅1槽时SERVICE原子失败、普通创建成功，满表destroy也能推进。
+- [x] 同用户加载器申请孩子出资CODE/栈/Boot，写临时别名后seal，按真实RESOURCE记录填SELF_SPACE/SELF_ALLOC/CREATE，CONFIG grant安装CODE；别名未清start BUSY，清后发布成功，旧CONSTRUCT立即拒绝操作。
+- [x] 普通继承、显式CREDENTIAL及SERVICE跨Set三份孩子真实执行，核对PID/父/可信凭据、FP初始值、CREATE特权清除与限额夹取；通过构造期USE入口完成发布后CALL/recv/reply及ACK，pending=1拒绝defer，孩子各exit42。
+- [x] destroy后父仍持1页临时映射，孩子Acct CLOSING且保留实际费用；最后父unmap才归零。另一个真实用户进程在destroy让出CPU时terminate调用者，放弃续点的Prep引用正常解除，原孩子Life最终消失。
+- [x] 完整207项host、格式及82个QEMU场景通过，日志`build/host/stage29-native-create/test-all.log`。最终CREATE类型检查调整后另复跑完整207项host/格式及两架构spawn/createauth。测试安装源CREATE/SERVICE权由可信fixture显式完成，正常镜像仍未启动init或执行真实清单发权；测试的孩子结果由可信CPU按真实父关系收取，不冒充已实现原生wait。
+- [ ] 用户ELF/libsys/csu/init、生产SERVICE仅init发放、初始信号配置、资源回复保底、CREATE再转授、fork/exec/COW、观察/CHILD及外设IRQ仍待接。

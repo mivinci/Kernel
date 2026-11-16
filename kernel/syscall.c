@@ -8,10 +8,13 @@
 typedef union Arguments Arguments;
 union Arguments
 {
-  Allocarg  alloc;
-  Maparg    map;
-  Budgetarg budget;
-  Cred      cred;
+  Createpolicy policy;
+  Createarg    create;
+  Config       config;
+  Allocarg     alloc;
+  Maparg       map;
+  Budgetarg    budget;
+  Cred         cred;
 };
 static int
 known(u64 nr)
@@ -55,12 +58,14 @@ syscall(Hctx *context)
   case SYS_QUERY:
     used = 31;
     break;
+  case SYS_CONFIGURE:
   case SYS_GETCRED:
     used = 7;
     break;
   case SYS_GRANT:
     used = 63;
     break;
+  case SYS_CREATE:
   case SYS_SETPG:
   case SYS_INHERIT:
   case SYS_BUDGET:
@@ -95,6 +100,8 @@ syscall(Hctx *context)
   case SYS_RQCHECK:
     used = 1;
     break;
+  case SYS_START:
+  case SYS_DESTROY:
   case SYS_GETPG:
   case SYS_TERMINATE:
   case SYS_ALARMSET:
@@ -134,6 +141,35 @@ syscall(Hctx *context)
     hal_user_enter(context);
   }
   switch (trap.syscall_nr) {
+  case SYS_CREATE:
+    status = localcreator(table, (Handle) args[0], &snapshot.policy);
+    if (status)
+      break;
+    if (spaceread(table->space, args[1], &snapshot.create, sizeof(snapshot.create))) {
+      status = -ERR_FAULT;
+      break;
+    }
+    status = proccreate(table, (Handle) args[0], &snapshot.create, &handle, &pid, &parent);
+    if (!status) {
+      outputs[0] = (u64) handle;
+      outputs[1] = (u64) pid;
+      outputs[2] = (u64) parent;
+    }
+    break;
+  case SYS_CONFIGURE:
+    if (spaceread(table->space, args[1], &snapshot.config, sizeof(snapshot.config))) {
+      status = -ERR_FAULT;
+      break;
+    }
+    status = args[2] > 8 ? -ERR_INVALID
+                         : localconfigure(table, (Handle) args[0], &snapshot.config, (u32) args[2]);
+    break;
+  case SYS_START:
+    status = localstart(table, (Handle) args[0]);
+    break;
+  case SYS_DESTROY:
+    status = procdestroyview(table, (Handle) args[0]);
+    break;
   case SYS_GETPG:
     status = procgetpg((Handle) args[0], &handle, &pid);
     if (!status) {
@@ -220,8 +256,8 @@ syscall(Hctx *context)
       status = -ERR_FAULT;
       break;
     }
-    /* This native profile admits only own-account allocation. IRQs may mark
-       deadlines/reschedule, but cannot drain tables or switch this C frame. */
+    /* IRQs may mark deadlines/reschedule, but cannot drain tables or switch
+       this C frame. Prepared allocations recheck the scope before publishing. */
     hal_irq_enable();
     status = localalloc(table, (Handle) args[0], &snapshot.alloc, &handle);
     (void) hal_irq_save();

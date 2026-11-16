@@ -347,7 +347,7 @@ cred_begin:
  movk x1, #4, lsl #16
  mov x8, #SYS_ALLOC
  svc #0
- movz x10, #65518
+ movz x10, #65531
  movk x10, #65535, lsl #16
  movk x10, #65535, lsl #32
  movk x10, #65535, lsl #48

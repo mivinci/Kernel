@@ -36,13 +36,7 @@ find(Rtable *t, Handle h, u32 subtype)
 int
 localnative(Rtable *t, Handle h)
 {
-  Local *l = find(t, h, 0);
-  if (!l)
-    return -ERR_BAD_HANDLE;
-  return l->subtype == LOCAL_CREATE || l->subtype == LOCAL_CONSTRUCT ||
-                 (l->subtype == LOCAL_MEM && l->source == LOCAL_LOAD)
-             ? -ERR_NOTSUP
-             : 0;
+  return find(t, h, 0) ? 0 : -ERR_BAD_HANDLE;
 }
 static Local *
 empty(Rtable *t)
@@ -70,6 +64,19 @@ localroom(Rtable *t)
   if (!t || t->state != LOCAL_OPEN)
     return -ERR_STATE;
   return empty(t) ? 0 : sloterror(t);
+}
+int
+localrooms(Rtable *t, u32 count)
+{
+  u32 i, available = 0;
+  if (!t || t->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  if (!count || count > LOCALS)
+    return -ERR_INVALID;
+  for (i = 0; i < t->count; i++)
+    if (!t->slots[i].subtype && t->slots[i].generation < HANDLE_GENERATION_MAX)
+      available++;
+  return available >= count ? 0 : sloterror(t);
 }
 static Memid
 memory(const Local *l)
@@ -552,6 +559,8 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
     return -ERR_BAD_HANDLE;
   if (!(l->rights & LOCAL_GRANT) || rights & ~l->rights)
     return -ERR_DENIED;
+  if (l->subtype == LOCAL_CREATE)
+    return -ERR_NOTSUP; /* Delegated CREATE policy still needs SERVICE/POLICY admission. */
   if (l->subtype == LOCAL_CONTROL) {
     if (offset || length || inherit)
       return -ERR_INVALID;

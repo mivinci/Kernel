@@ -56,9 +56,10 @@ struct Rtable
 STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 /* Storage is zeroed once; generations survive table close/rebinding. Context is
    borrowed from its owner, which keeps Acct/Space alive until drain completes. */
-/* Current native profile excludes incomplete construction/loading admission. */
+/* CREATE transfer remains gated; each operation checks its own prepare scope. */
 int localnative(Rtable *source, Handle handle);
 int localroom(Rtable *source);
+int localrooms(Rtable *source, u32 count);
 /* Trusted boot policy installation; no native creation admission here. */
 int localcreate(Rtable *table, const Createpolicy *policy, Handle *out);
 int localcreator(Rtable *table, Handle authority, Createpolicy *out);

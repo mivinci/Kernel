@@ -108,11 +108,11 @@ class PrepTests(unittest.TestCase):
     def test_target_pays_and_readonly_temporary_alias_also_blocks_publication(self):
         def body():
             prep,cap,target,space,acct,life,held=self.prepare()
-            self.assertEqual(self.lib.localnative(C.byref(self.source),cap),-18)
+            self.assertEqual(self.lib.localnative(C.byref(self.source),cap),0)
             self.assertEqual(self.lib.localnative(C.byref(self.source),self.alloccap),0)
             source_before=self.astat().used
             memory=self.allocate(cap)
-            self.assertEqual(self.lib.localnative(C.byref(self.source),memory),-18)
+            self.assertEqual(self.lib.localnative(C.byref(self.source),memory),0)
             a=Account(); self.lib.acctstat(acct,C.byref(a))
             self.assertEqual((self.astat().used,a.used),(source_before,2))
             self.assertEqual(self.map(self.source,cap,memory,prot=3),0)

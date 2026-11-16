@@ -318,3 +318,6 @@ LIFE/ACCT query接续（2026-11-16）：已接kind=4/3的自身或固定CONTROL 
 RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主体的匹配端，stamp为本条Rq索引/代次，next为下一可见条目；不授予RPC/REQUEST或跨主体权。data前7字仍按已有表，status以s64位模式存入data[5]，未终结不据0声称已成功；flags仅低4个既有责任/取消位，其余字0。RQ阶段/标志的唯一公共常量源为abi/ipc.h，所有内部通知/恢复/队列标志及消息内容均不输出。自身限定当前镜像且排除已完成的接收责任，固定CONTROL QUERY可看其Life保留历史，具体范围及验证见04末尾。
 
 信号预付接续（2026-11-16）：共享Sigact48布局和已冻结kind/flags已落在abi/signal.h，不代表sigaction可用。Sigframe前缀offset48已由用户确认改为单调cookie，Sighead64布局已落地，见11末尾；实际用户帧核验及sigreturn仍未实现。
+
+
+原生创建接续（2026-11-16）：0x40..0x43已接，create只用a0/a1，configure只用a0..a2，start/destroy只用a0，其他输入必须0；失败全部输出清零。Createarg/Config完整区间一次复制，create先核验本地CREATE类型再读属性，凭据与额度核验见03末尾。SERVICE能力决定额外a3 CONTROL，非SERVICE为0；PID不是目标操作权。CONSTRUCT/加载MEM的已冻结操作不再因旧profile一律NOTSUP，而按精确scope/rights/阶段检查；creds中仅CONFIG的ALLOC现在为DENIED。固定CREATE不属于free允许类型，返回BAD_HANDLE；尚未实现的CREATE通用grant在具体复制操作返回NOTSUP，不以泛化检查封锁已实现的create。EXEC_VIEW、非零reserve_resources及信号配置等未完成部分仍明确拒绝，不从调用号存在推断可用。

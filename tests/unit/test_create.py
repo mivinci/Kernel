@@ -18,6 +18,7 @@ class CreateAuthorityTests(unittest.TestCase):
     def exercise(self,lib,method):
         def body():
             for name,args in {
+                'localrooms':[C.POINTER(support.Table),C.c_uint32],
                 'localcreate':[C.POINTER(support.Table),C.POINTER(Createpolicy),C.POINTER(C.c_int64)],
                 'localcreator':[C.POINTER(support.Table),C.c_int64,C.POINTER(Createpolicy)],
                 'localcreatecheck':[C.POINTER(support.Table),C.c_int64,C.POINTER(Createarg),C.POINTER(Createpolicy)],
@@ -102,11 +103,30 @@ class CreateAuthorityTests(unittest.TestCase):
             finally:self.assertEqual(self.lib.localrevoke(C.byref(source),cap),0);self.assertEqual(self.lib.setclose(sid),0)
         for lib in self.libs:self.exercise(lib,body)
 
-    def test_query_hides_private_policy_encoding_and_native_creation_stays_gated(self):
+    def test_query_hides_private_policy_encoding_and_generic_create_transfer_stays_gated(self):
         def body():
             t,*_=self.table();cap=self.install(t);records=(support.Queryrec*16)();count=C.c_uint32();following=C.c_uint64()
             self.assertEqual(self.lib.localquery(C.byref(t),0,records,16,C.byref(count),C.byref(following)),0)
             row=next(x for x in list(records)[:count.value] if x.data[0]==cap)
             self.assertEqual((row.data[1],row.data[2]),(1,7|support.GRANT));self.assertEqual(list(row.data[3:]),[0]*17)
-            self.assertEqual(self.lib.localnative(C.byref(t),cap),-18)
+            self.assertEqual(self.lib.localnative(C.byref(t),cap),0)
+            out=C.c_int64()
+            self.assertEqual(self.lib.localcopy(C.byref(t),cap,C.byref(t),1,0,0,0,C.byref(out)),-18)
+            self.assertEqual(self.lib.localfree(C.byref(t),cap),-3)
+        for lib in self.libs:self.exercise(lib,body)
+
+
+    def test_multiple_output_slots_are_checked_together_without_reserving_or_mutating(self):
+        def body():
+            table,storage,*_=self.table(3)
+            before=bytes(table),bytes(storage),bytes(self.setstate())
+            self.assertEqual(self.lib.localrooms(C.byref(table),1),0)
+            self.assertEqual(self.lib.localrooms(C.byref(table),2),-9)
+            self.assertEqual(self.lib.localrooms(C.byref(table),0),-1)
+            self.assertEqual(self.lib.localrooms(C.byref(table),129),-1)
+            self.assertEqual((bytes(table),bytes(storage),bytes(self.setstate())),before)
+            storage[2].generation=(1<<43)-1
+            self.assertEqual(self.lib.localrooms(C.byref(table),1),-20)
+            self.assertEqual(self.lib.localclose(C.byref(table)),0)
+            self.assertEqual(self.lib.localrooms(C.byref(table),1),-6)
         for lib in self.libs:self.exercise(lib,body)

@@ -390,3 +390,5 @@ exec保留File采用目标独立引用，切换后后端依旧ENDED/目标ACTIVE
 ### 准备阶段Boot资源发现（2026-11-16用户确认）
 
 装载器不能猜测孩子SELF的代次/槽值，也不能照抄父Handle。父持本次有效CONSTRUCT/EXEC_VIEW CONFIG，通过query RESOURCE枚举精确准备表，依据SPACE/ALLOC类型取得孩子实际SELF_SPACE/SELF_ALLOC值并写入Boot；不要求额外CONTROL，也不扩展create返回字段。目标PID/image随每条Queryrec核对，准备提交/取消/超期后不得继续查询。查询只是观察，目标本地Handle不因返回给父而变成父本地授权；其他种类及自身读写权限照旧检查。当前实现边界和验证见03末尾，不能用可信测试直接访问proctable冒充原生装载器已获权。
+
+原生装载入口接续（2026-11-16）：两架构spawn的用户程序已通过create/准备期alloc、临时map/write/unmap/seal、CONFIG grant、只读RESOURCE发现、configure/start完成真实孩子运行。载荷是测试中的位置无关二进制代码片段，非通用ELF解析器，也不是csu/libsys/posix_spawn实现；真实文件/参数/fd/服务装载继续按本篇执行。

@@ -21,6 +21,7 @@ void grouptest(void);
 void statstest(void);
 void createtest(void);
 void signaltest(void);
+void spawntest(void);
 void controltest(void);
 void eventtest(void);
 void preptest(void);

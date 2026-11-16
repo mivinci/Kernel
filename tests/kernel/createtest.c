@@ -137,7 +137,7 @@ createtest(void)
   REQUIRE(records[2].data[0] == (u64) cap && records[2].data[1] == LOCAL_CREATE);
   for (i = 3; i < 20; i++)
     REQUIRE(!records[2].data[i]);
-  REQUIRE(localnative(parent, cap) == -ERR_NOTSUP && localfree(parent, cap) == -ERR_BAD_HANDLE);
+  REQUIRE(localnative(parent, cap) == 0 && localfree(parent, cap) == -ERR_BAD_HANDLE);
   args.pending = 2;
   REQUIRE(localcreatecheck(child, childcap, &args, &inherited) == -ERR_DENIED);
   args.pending = 1;
