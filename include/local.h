@@ -16,6 +16,7 @@
 #define LOCAL_SEND      6
 #define LOCAL_NOTIFY    7
 #define LOCAL_CONTROL   8
+#define LOCAL_OBSERVE   9
 #define LOCAL_USE       1
 #define LOCAL_CONSTRUCT 14
 #define LOCAL_LOAD      4
@@ -76,6 +77,8 @@ int localinit(Rtable *table, Local *storage, u32 count, Acctid acct, Spaceid spa
 int localendpoint(Rtable *table, Imageid target, u32 kind, u64 rights, u64 bits, u32 inherit,
                   Handle *out);
 int localcontrol(Rtable *table, Lifeid life, u64 rights, Handle *out);
+int localobserve(Rtable *table, u64 rights, Handle *out);
+int localobserver(Rtable *table, Handle permit, u32 relation);
 int localcontrolled(Rtable *table, Handle control, u64 rights, Lifeid *life, u64 *available);
 int localconnect(Rtable *table, Handle authority, u64 kind, u64 rights, u64 bits, Handle *out);
 int localchannel(Rtable *table, Handle handle, u32 kind, Imageid *target, u64 *bits);

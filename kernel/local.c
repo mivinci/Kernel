@@ -2,6 +2,7 @@
 #include <diag.h>
 #include <prep.h>
 #include <rq.h>
+#include <observe.h>
 STATIC_ASSERT(AC_SETS <= 256 && LOCALS <= 255 && PENDING_CALLS <= 255, create_policy_encoding);
 
 static int
@@ -546,6 +547,48 @@ localcontrolled(Rtable *t, Handle h, u64 rights, Lifeid *life, u64 *available)
   return 0;
 }
 int
+localobserve(Rtable *table, u64 rights, Handle *out)
+{
+  Local  *slot;
+  Imageid owner;
+  int     error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!(rights & OBSERVE_RIGHTS) || rights & ~((u64) OBSERVE_RIGHTS | LOCAL_GRANT))
+    return -ERR_INVALID;
+  slot = empty(table);
+  if (!slot)
+    return table && table->state == LOCAL_OPEN ? sloterror(table) : -ERR_STATE;
+  error = imagefind(table->owner, table->image, &owner);
+  if (error)
+    return error;
+  error = obsreserve(owner);
+  if (error)
+    return error;
+  publish(table, slot, LOCAL_OBSERVE, owner.generation, owner.index, rights, 0, 0, 0, 0, out);
+  return 0;
+}
+int
+localobserver(Rtable *table, Handle permit, u32 relation)
+{
+  Local  *slot = find(table, permit, LOCAL_OBSERVE);
+  Imageid owner;
+  Image   image;
+  if (!slot)
+    return -ERR_BAD_HANDLE;
+  if (relation > OBS_MONITOR)
+    return -ERR_INVALID;
+  if (!(slot->rights & ((u64) 1 << relation)))
+    return -ERR_DENIED;
+  owner.generation = slot->objectgen;
+  owner.index = slot->object;
+  owner.reserved = 0;
+  if (imagestat(owner, &image) || image.pid != table->owner || image.number != table->image)
+    return -ERR_STALE;
+  return 0;
+}
+int
 localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 length, u32 inherit,
           Handle *out)
 {
@@ -559,6 +602,11 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
     return -ERR_BAD_HANDLE;
   if (!(l->rights & LOCAL_GRANT) || rights & ~l->rights)
     return -ERR_DENIED;
+  if (l->subtype == LOCAL_OBSERVE) {
+    if (offset || length || inherit)
+      return -ERR_INVALID;
+    return localobserve(target, rights, out);
+  }
   if (l->subtype == LOCAL_CREATE)
     return -ERR_NOTSUP; /* Delegated CREATE policy still needs SERVICE/POLICY admission. */
   if (l->subtype == LOCAL_CONTROL) {
@@ -791,6 +839,17 @@ removeentry(Local *l)
       panic("construction local release");
     return 0;
   }
+  if (l->subtype == LOCAL_OBSERVE) {
+    Imageid owner;
+    owner.generation = l->objectgen;
+    owner.index = l->object;
+    owner.reserved = 0;
+    if (obsrelease(owner))
+      panic("local observer reservation");
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_CONTROL) {
     if (lifedrop(controlled(l), LIFE_CONTROL))
       panic("local control reference");
@@ -957,7 +1016,7 @@ queryrecord(const Rtable *table, u32 index, Queryrec *out)
     out->data[7] = image.number;
   } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
              l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT &&
-             l->subtype != LOCAL_CREATE)
+             l->subtype != LOCAL_CREATE && l->subtype != LOCAL_OBSERVE)
     return -ERR_NOTSUP;
   return 0;
 }

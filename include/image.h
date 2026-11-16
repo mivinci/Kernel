@@ -43,4 +43,6 @@ int imagedetach(Imageid id);
 int imagestat(Imageid id, Image *out);
 /* Cold path, bounded by IMAGES; only returns an existing retained identity. */
 int imagelookup(Lifeid life, u64 number, Imageid *out);
+int imagefind(Handle pid, u64 number, Imageid *out);
+int imagecurrent(Lifeid life, Imageid *out);
 #endif

@@ -6,6 +6,7 @@
 #include <local.h>
 #include <kstack.h>
 #include <abi/proc.h>
+#include <observe.h>
 struct Hctx;
 #define PROC_BLOCKED   6
 #define PROC_BUILDING  5
@@ -43,6 +44,11 @@ int procgetpg(Handle pid, Handle *pgid, Handle *sid);
 int procsetpg(Handle pid, Handle pgid);
 int procsetsid(Handle *sid);
 int procwait(Handle selector, u32 options, Liferesult *out);
+int procobserve(Rtable *source, Handle permit, Handle basis, u64 relation, Handle pid, u64 number,
+                Obsresult *out);
+int procobsread(u64 cookie, Obsresult *out);
+int procobsnext(u64 cursor, Obsresult *out, u64 *next);
+int procobsdrop(u64 cookie, u32 ended);
 int procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u64 count,
               u64 *written, u64 *next);
 int procprepare(Rtable *source, Handle target, u64 rights, Handle *out);

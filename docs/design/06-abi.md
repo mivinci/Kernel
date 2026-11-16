@@ -324,3 +324,5 @@ RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主�
 原生创建接续（2026-11-16）：0x40..0x43已接，create只用a0/a1，configure只用a0..a2，start/destroy只用a0，其他输入必须0；失败全部输出清零。Createarg/Config完整区间一次复制，create先核验本地CREATE类型再读属性，凭据与额度核验见03末尾。SERVICE能力决定额外a3 CONTROL，非SERVICE为0；PID不是目标操作权。CONSTRUCT/加载MEM的已冻结操作不再因旧profile一律NOTSUP，而按精确scope/rights/阶段检查；creds中仅CONFIG的ALLOC现在为DENIED。固定CREATE不属于free允许类型，返回BAD_HANDLE；尚未实现的CREATE通用grant在具体复制操作返回NOTSUP，不以泛化检查封锁已实现的create。EXEC_VIEW、非零reserve_resources及信号配置等未完成部分仍明确拒绝，不从调用号存在推断可用。
 
 原生wait接续（2026-11-16）：用户确认新增ERR_CHILD=22。没有匹配且可收取的孩子返回-CHILD；存在匹配活孩子但尚无结果时，WNOHANG成功且全部输出0，否则阻塞。selector=0在受理时冻结当前组，不能编码为-PGID而与PGID1/任意孩子混淆；INT64_MIN返回INVALID。当前仅实现EXITED结果，WUNTRACED/WCONTINUED接受但尚无STOP/CONT结果源。接入及验证边界见03末尾。
+
+观察原生入口接续（2026-11-16）：0x50..0x54已按既定五/一输入接通，未用寄存器仍必须0，失败输出全0。共享常量为abi/observe.h；cookie为u64，不能按Handle类别或有符号PID解释。obsread/ack/drop可操作本镜像既有cookie而不再要求旧permit/basis仍有效，登记仍先检查两者。RESOURCE查询已识别OBSERVE子类型9，只输出类型/业务权与本地Handle，不暴露内部预付区或Image索引。精确配额/退出清理及本地验证边界见10末尾。

@@ -205,3 +205,52 @@ imagelookup(Lifeid life, u64 number, Imageid *out)
   }
   return -ERR_STALE;
 }
+
+int
+imagefind(Handle pid, u64 number, Imageid *out)
+{
+  u32 i;
+  if (!out || handletype(pid) != HANDLE_PROCESS || !number)
+    return -ERR_INVALID;
+  for (i = 0; i < IMAGES; i++)
+    if (images[i].state && images[i].pid == pid && images[i].number == number) {
+      out->generation = images[i].generation;
+      out->index = i;
+      out->reserved = 0;
+      return 0;
+    }
+  return -ERR_STALE;
+}
+int
+imagecurrent(Lifeid life, Imageid *out)
+{
+  Life   l;
+  Image *image;
+  u32    i, selected = IMAGES;
+  if (!out)
+    return -ERR_INVALID;
+  if (lifestat(life, &l))
+    return -ERR_STALE;
+  if (l.state == LIFE_CONSTRUCT || l.state == LIFE_ABORTED)
+    return imagelookup(life, 1, out);
+  for (i = 0; i < IMAGES; i++) {
+    image = &images[i];
+    if (!image->state || image->life.generation != life.generation ||
+        image->life.index != life.index)
+      continue;
+    if (image->state == IMAGE_ACTIVE) {
+      selected = i;
+      break;
+    }
+    /* A failed later exec preparation is not the last running image. */
+    if (l.state == LIFE_ENDED && image->state == IMAGE_ENDED && image->reason == IMAGE_EXIT &&
+        (selected == IMAGES || image->number > images[selected].number))
+      selected = i;
+  }
+  if (selected == IMAGES)
+    return -ERR_STALE;
+  out->generation = images[selected].generation;
+  out->index = selected;
+  out->reserved = 0;
+  return 0;
+}

@@ -30,6 +30,8 @@ syscall(Hctx *context)
   Htrap      trap;
   Lifefault  fault;
   Liferesult child;
+  Obsresult  observation;
+  u64        next = 0;
   Arguments  snapshot;
   u64        args[HAL_SYSCALL_ARGS], outputs[8], used = 0;
   Handle     handle = 0, pid = 0, parent = 0;
@@ -56,6 +58,7 @@ syscall(Hctx *context)
     goto done;
   }
   switch (trap.syscall_nr) {
+  case SYS_OBSERVE:
   case SYS_QUERY:
     used = 31;
     break;
@@ -102,6 +105,10 @@ syscall(Hctx *context)
   case SYS_RQCHECK:
     used = 1;
     break;
+  case SYS_OBSREAD:
+  case SYS_OBSNEXT:
+  case SYS_OBSACK:
+  case SYS_OBSDROP:
   case SYS_START:
   case SYS_DESTROY:
   case SYS_GETPG:
@@ -143,6 +150,37 @@ syscall(Hctx *context)
     hal_user_enter(context);
   }
   switch (trap.syscall_nr) {
+  case SYS_OBSERVE:
+    status = procobserve(table, (Handle) args[0], (Handle) args[1], args[2], (Handle) args[3],
+                         args[4], &observation);
+    if (!status) {
+      outputs[0] = observation.cookie;
+      outputs[1] = observation.state;
+      outputs[2] = observation.reason;
+    }
+    break;
+  case SYS_OBSREAD:
+    status = procobsread(args[0], &observation);
+    if (!status) {
+      outputs[0] = observation.state;
+      outputs[1] = observation.reason;
+      outputs[2] = (u64) observation.pid;
+      outputs[3] = observation.image;
+    }
+    break;
+  case SYS_OBSNEXT:
+    status = procobsnext(args[0], &observation, &next);
+    if (!status) {
+      outputs[0] = observation.cookie;
+      outputs[1] = next;
+      outputs[2] = observation.state;
+      outputs[3] = observation.reason;
+    }
+    break;
+  case SYS_OBSACK:
+  case SYS_OBSDROP:
+    status = procobsdrop(args[0], trap.syscall_nr == SYS_OBSACK);
+    break;
   case SYS_CREATE:
     status = localcreator(table, (Handle) args[0], &snapshot.policy);
     if (status)

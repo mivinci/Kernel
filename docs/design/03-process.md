@@ -1284,3 +1284,5 @@ destroy先提交不可发布状态，再以每批32条Local或1条完整Mmap等�
 例：P有已结束C1和活C2，P退出的同一提交后，init可选择C1并收取；无需等P清理、运行槽复用或物理关系改写。旧P再按完整PID尝试收取被拒绝；C2以后退出仍归init。已消费C1不复制第二份结果。组选择使用独立kind/value，wait(0)在PGID1时仍仅选该组，不退化为wait(-1)。
 
 本地完整209项host、格式及82个两架构QEMU通过；最终补充spawn/life两架构复跑通过，日志见build/host/stage30-native-wait/。spawn验证真实用户父的阻塞/WNOHANG、PID/任意孩子/冻结组、PGID1与CHILD事件；life及host验证逻辑接管早于改写/清理及父槽复用。被terminate的组wait续点已实现引用释放，但尚缺专门端到端场景。STOP/CONT、捕获信号中断/重启、真实用户init收取孤儿的端到端场景仍待接入，不能用可信host机制测试宣称这些路径已验证。
+
+观察与Proc清理接续（2026-11-16）：Local子类型9的OBSERVE安装/GRANT已接，绑定目标完整Image并预付观察区，不继承。Proc离栈清理phase0先按32槽批次撤除观察，再关闭/拆Local；不新增Proc字段，仍512字节。Image和Life各自的观察责任与父wait独立，实际观察协议、配额及验证见10末尾。正常镜像仍未启动生产init；真实exec提交必须后续接入旧观察者清理，不能用本切片宣称已完成exec。

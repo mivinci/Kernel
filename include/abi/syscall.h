@@ -41,5 +41,10 @@
 #define SYS_REVOKE        0x47
 #define SYS_INHERIT       0x56
 #define SYS_CONNECT       0x55
+#define SYS_OBSERVE       0x50
+#define SYS_OBSREAD       0x51
+#define SYS_OBSNEXT       0x52
+#define SYS_OBSACK        0x53
+#define SYS_OBSDROP       0x54
 #define SYS_GETID         0x4f
 #endif

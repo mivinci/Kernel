@@ -26,13 +26,13 @@ load(Handle pid, const Procinfo *peer, Handle child, u32 role)
 {
   Rtable  *t = proctable(pid);
   Handle   allocator = resource(t, LOCAL_ALLOC), space = resource(t, LOCAL_SPACE);
-  Handle   code, stack, boot, data;
+  Handle   code, stack, boot, data, permit;
   Allocarg args;
   Config   c;
   Boot     header;
   u64      resources[8], config[10], entry = 0x10000;
   u32      i;
-  args.bytes = 4 * PAGE_SIZE;
+  args.bytes = 8 * PAGE_SIZE;
   args.kind = ALLOC_CODE;
   args.align = args.minaddr = args.maxaddr = args.reserved = 0;
   REQUIRE(!localalloc(t, allocator, &args, &code));
@@ -62,7 +62,7 @@ load(Handle pid, const Procinfo *peer, Handle child, u32 role)
   resources[5] = (u64) allocator;
   REQUIRE(!localwrite(t, boot, 0, &header, sizeof(header)) &&
           !localwrite(t, boot, sizeof(header), resources, sizeof(resources)));
-  REQUIRE(!localmap(t, space, code, 0, entry, 4 * PAGE_SIZE, VM_READ | VM_EXEC));
+  REQUIRE(!localmap(t, space, code, 0, entry, 8 * PAGE_SIZE, VM_READ | VM_EXEC));
   REQUIRE(!localmap(t, space, stack, 0, 0x3ffffe0000UL, 65536, VM_READ | VM_WRITE));
   REQUIRE(!localmap(t, space, boot, 0, 0x3fff000000UL, PAGE_SIZE, VM_READ));
   REQUIRE(!localmap(t, space, data, 0, 0x40000, PAGE_SIZE, VM_READ | VM_WRITE));
@@ -78,6 +78,10 @@ load(Handle pid, const Procinfo *peer, Handle child, u32 role)
                          (Handle *) &config[6]));
   config[9] = 1;
   REQUIRE(!localwrite(t, data, 0, config, sizeof(config)));
+  if (role != 2) {
+    REQUIRE(!localobserve(t, OBSERVE_RIGHTS | (role ? 0 : LOCAL_GRANT), &permit));
+    REQUIRE(!localwrite(t, data, 0x68, &permit, sizeof(permit)));
+  }
   c.entry = entry + (role == 2 ? (u64) (cred_replacement - cred_begin)
                      : role    ? (u64) (cred_server - cred_begin)
                                : 0);
@@ -188,7 +192,7 @@ credtest(void)
   REQUIRE(!setstat(set, &group) && !group.charged && !group.instances && !setclose(set));
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
-          !acctcheck());
+          !acctcheck() && !obscheck());
   putstr("CREDCHECK turns=");
   puthex(turns);
   putstr(" reused=");

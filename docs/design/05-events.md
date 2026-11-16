@@ -298,3 +298,5 @@ Rq新增未投递提示标志，不新增记录：终结和后续真实server_fi
 新增host验证掩码/合并、消息与事件交替、EVENTS_ONLY保持偏好、deadline前一纳秒/正好到期、重设/取消及u64代次耗尽不改状态。CASE=events通过真实U/EL0检查越权notify无部分置位、重复位合并、混合/筛选EVENT与CALL、BUSY不丢事件、过去/未来/取消/重设闹钟、混合TIMER代次；两个进程均阻塞时实际WFI到期，读取时钟确认未提前返回。另验证同步call期间普通notify只保留pending、正常回复后再取提示。ipc/ipcdepth场景改为服务阻塞等RQ_CANCEL，且验证失败结果与真正收尾的两次RQ_DONE。CHILD/LIFE、IRQ独占位投递、信号/nanosleep运行库、STOP/CONT和完整服务事件循环尚未实现。
 
 CHILD接续（2026-11-16）：Life退出/关系变化按完整父PID记录可合并提示，调度检查点向真实父Event发布EVENT_CHILD；父死亡同时提示init重新选择逻辑孤儿。普通notify仍不能设置该保留位。提示不保存退出结果也不替代wait，多个孩子合并后须循环wait；仅消费事件不消费结果。实际STOP/CONT和信号递送仍未接。
+
+LIFE观察提示接续（2026-11-16）：已接有界服务观察表与EVENT_LIFE=16；只对固定目标Image的ENDED置位，非PREPARING/ACTIVE转换历史。wake检查点和recv受理前扫描自己的预付128槽，记录每条终态已提示，事件合并后仍由obsnext/obsread完整重查，ack/drop不消费父wait。观察者死亡逐批解除其记录，不把LIFE消费或观察清空当作业务/设备排空。具体执行范围见10末尾。

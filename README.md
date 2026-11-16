@@ -1,6 +1,6 @@
 # Kernel
 
-面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询与消息IPC原生调用，以及协作yield和IPC阻塞/唤醒，已接用户态timer时间片和可信准备期限，已接原生create及构造加载/发布、父wait退出结果与CHILD提示；完整信号/阻塞调度、用户ELF运行库及系统服务仍待接。
+面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询与消息IPC原生调用，以及协作yield和IPC阻塞/唤醒，已接用户态timer时间片和可信准备期限，已接原生create及构造加载/发布、父wait退出结果、可靠固定镜像观察及CHILD/LIFE提示；完整信号/阻塞调度、用户ELF运行库及系统服务仍待接。
 
 ![架构图](docs/architecture.jpg)
 
@@ -97,7 +97,7 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 
 `CASE=ipc`使用真实用户程序验证原生call/send/recv/reply等、阻塞续点、等待环、元数据和FP保持、服务死亡后的原RPC/独立收尾；`ipcdepth`使用WAIT_DEPTH=1验证DEPTH边界。通信入口由可信测试预装，完整管理授权、资源reply、信号和运行库仍待接入；事件接续见下条。
 
-`CASE=events`由真实用户程序从固定CONTROL调用connect生成通信入口，再检查消息/事件交替、筛选与合并、notify授权、重设/取消/混合TIMER代次及CPU空闲中真实未来闹钟；`ipc`同时验证RQ_DONE/RQ_CANCEL和独立收尾提示。CHILD提示接续见spawn；仍无外设IRQ投递、LIFE可靠观察或信号运行库。
+`CASE=events`由真实用户程序从固定CONTROL调用connect生成通信入口，再检查消息/事件交替、筛选与合并、notify授权、重设/取消/混合TIMER代次及CPU空闲中真实未来闹钟；`ipc`同时验证RQ_DONE/RQ_CANCEL和独立收尾提示。CHILD提示接续见spawn；LIFE可靠观察接续见creds；仍无外设IRQ投递或信号运行库。
 
 
 `CASE=control`通过真实用户程序检查固定CONTROL的grant/revoke、源GRANT与目标INSTALL分别校验、精确来源排队撤销、ACCEPTED仍可回复、已存在Mmap保留、旧目标退出/运行槽复用隔离及inherit标记。本control场景只测固定进程CONTROL，CONSTRUCT原生路径见spawn；EXEC_VIEW及完整fork/exec仍待实现。
@@ -134,3 +134,5 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 
 
 `CASE=spawn`使用真实用户程序调用create、为孩子分配/装载CODE/栈/Boot、CONFIG grant、configure/start并完成IPC和exit；验证凭据/限额、三准备与满表失败回滚、SERVICE两输出槽、别名发布屏障及destroy续点被另一用户terminate后的回收。CREATE权由可信fixture安装，孩子结果由真实用户父通过原生wait收取，覆盖阻塞/WNOHANG、PID/任意孩子/冻结组选择、重复收取CHILD错误及CHILD事件；不是ELF/csu/POSIX spawn或生产init清单发权验收。
+
+`creds`另验证原生observe/obsread/obsnext/obsack/obsdrop：SOURCE/CHILD的真实REQUEST关联、MONITOR显式CONTROL QUERY、合并LIFE、DRAINING与证明释放、旧cookie不跟随槽复用及观察者死亡回收；含OBSERVE原生grant的准备期配额安装。host覆盖每服务128/系统1024预付、表满终态枚举、撤权后既有记录和cookie代次耗尽。测试permit由可信fixture安装；生产清单、真实exec/FUTURE和FS业务清理仍待接。

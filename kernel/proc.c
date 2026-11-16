@@ -624,6 +624,9 @@ procclean(Handle pid)
       return error;
     if (p->outgoing.state == RQUOTA_OPEN && rqquotaend(&p->outgoing))
       panic("process outgoing cleanup");
+    error = obsclose(p->identity, 32);
+    if (error)
+      return error;
     error = localclose(&p->resources);
     if (error)
       return error;
@@ -940,7 +943,7 @@ wakeone(Proc *p)
   changed = lifehint(pidof(p));
   if (changed > 0)
     eventpost(&p->events, EVENT_CHILD);
-  eventpost(&p->events, rqsignals(&p->outgoing, &p->incoming));
+  eventpost(&p->events, rqsignals(&p->outgoing, &p->incoming) | obssignals(p->identity));
   if (p->state != PROC_BLOCKED)
     return;
   if (p->stage.wait.kind == WAIT_RECV)
@@ -1137,6 +1140,7 @@ receive(u64 options, u64 mask, u64 outputs[8])
     u32 choice;
     if (current->incoming.immediate != PG_NONE)
       return -ERR_BUSY;
+    eventpost(&current->events, obssignals(current->identity));
     choice = eventchoose(&current->events, mask, !listempty(&current->incoming.queue),
                          (u32) (options & RECV_EVENTS_ONLY));
     if (choice == 1) {
@@ -1595,6 +1599,78 @@ proccred(Rtable *source, Handle subject, Handle pid, u64 number, Cred *out)
   out->rgid = life.cred.rgid;
   out->egid = life.cred.egid;
   return 0;
+}
+
+int
+procobserve(Rtable *source, Handle permit, Handle basis, u64 relation, Handle pid, u64 number,
+            Obsresult *out)
+{
+  Imageid target, caller;
+  Image   image;
+  Lifeid  life;
+  Life    record;
+  u64     rights;
+  int     error;
+  if (!out || !current || source != &current->resources || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  if (relation > OBS_MONITOR)
+    return -ERR_INVALID;
+  error = localobserver(source, permit, (u32) relation);
+  if (error)
+    return error;
+  if (relation == OBS_MONITOR) {
+    error = localcontrolled(source, basis, CONTROL_QUERY, &life, &rights);
+    if (error)
+      return error;
+    if (lifestat(life, &record))
+      return -ERR_STALE;
+    if (pid && pid != record.pid)
+      return -ERR_INVALID;
+    error = number ? imagelookup(life, number, &target) : imagecurrent(life, &target);
+  } else {
+    if (handletype(basis) != HANDLE_REQUEST)
+      return -ERR_BAD_HANDLE;
+    error = rqsource(&current->incoming, basis, &caller);
+    if (error)
+      return error;
+    if (imagestat(caller, &image))
+      return -ERR_STALE;
+    if (relation == OBS_SOURCE) {
+      if (pid || number)
+        return -ERR_INVALID;
+      target = caller;
+      error = 0;
+    } else {
+      if (!pid || (relation == OBS_CHILD && pid == image.pid) ||
+          (relation == OBS_FUTURE && (pid != image.pid || !number)))
+        return -ERR_INVALID;
+      error = preprelated(image.pid, image.number, pid, number, &target);
+    }
+  }
+  if (error)
+    return error;
+  return obsregister(current->identity, target, out);
+}
+int
+procobsread(u64 cookie, Obsresult *out)
+{
+  if (!current)
+    return -ERR_STATE;
+  return obsread(current->identity, cookie, out);
+}
+int
+procobsnext(u64 cursor, Obsresult *out, u64 *next)
+{
+  if (!current)
+    return -ERR_STATE;
+  return obsnext(current->identity, cursor, out, next);
+}
+int
+procobsdrop(u64 cookie, u32 ended)
+{
+  if (!current)
+    return -ERR_STATE;
+  return obsdrop(current->identity, cookie, ended);
 }
 
 static void

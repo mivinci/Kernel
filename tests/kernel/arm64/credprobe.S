@@ -579,7 +579,310 @@ cred_begin:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
  movz x28, #18
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x20
+ movz x2, #3
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #2
+ cmp x2, x10
+ b.ne cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ mov x27, x1
+ movz x28, #19
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSREAD
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #2
+ cmp x1, x10
+ b.ne cred_bad
+ cbnz x2, cred_bad
+ mov x10, x23
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #1
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #20
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSACK
+ svc #0
+ movz x10, #65530
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #21
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x20
+ movz x2, #3
+ mov x3, x24
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65535
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #22
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ movz x2, #3
+ mov x3, x23
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65533
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #23
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x20
+ mov x1, x20
+ movz x2, #3
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65533
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #24
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSDROP
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #25
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSREAD
+ svc #0
+ movz x10, #65532
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #26
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x20
+ movz x2, #3
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #2
+ cmp x2, x10
+ b.ne cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x27, [x9, #80]
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #27
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x1, x11
+ movz x2, #1
+ movz x5, #1
+ mov x8, #SYS_GRANT
+ svc #0
+ movz x10, #65535
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #28
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x1, x11
+ movz x2, #1
+ mov x8, #SYS_GRANT
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #29
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -606,7 +909,7 @@ cred_begin:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #19
+ movz x28, #30
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -631,7 +934,7 @@ cred_begin:
  cbnz x6, cred_bad
  cbnz x7, cred_bad
  mov x26, x3
- movz x28, #20
+ movz x28, #31
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -660,7 +963,7 @@ cred_begin:
  movz x11, #0
  movk x11, #2048, lsl #48
  sub x27, x26, x11
- movz x28, #21
+ movz x28, #32
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -688,7 +991,7 @@ cred_begin:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #22
+ movz x28, #33
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -699,6 +1002,36 @@ cred_begin:
  movz x7, #0
  mov x0, x27
  mov x8, #SYS_GETCRED
+ svc #0
+ movz x10, #65533
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #34
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x27
+ mov x8, #SYS_OBSERVE
  svc #0
  movz x10, #65533
  movk x10, #65535, lsl #16
@@ -744,7 +1077,7 @@ cred_server:
  ldr x25, [x9, #48]
  movz x9, #4660
  dup v31.2d, x9
- movz x28, #23
+ movz x28, #35
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -772,7 +1105,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #24
+ movz x28, #36
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -804,336 +1137,6 @@ cred_server:
  b.ne cred_bad
  cbnz x7, cred_bad
  mov x26, x3
- movz x28, #25
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x8, #SYS_GETCRED
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- movz x10, #10
- cmp x1, x10
- b.ne cred_bad
- movz x10, #20
- cmp x2, x10
- b.ne cred_bad
- movz x10, #30
- cmp x3, x10
- b.ne cred_bad
- movz x10, #40
- cmp x4, x10
- b.ne cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #26
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x1, x22
- mov x8, #SYS_GETCRED
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- movz x10, #110
- cmp x1, x10
- b.ne cred_bad
- movz x10, #120
- cmp x2, x10
- b.ne cred_bad
- movz x10, #130
- cmp x3, x10
- b.ne cred_bad
- movz x10, #140
- cmp x4, x10
- b.ne cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #27
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x1, x22
- movz x2, #1
- mov x8, #SYS_GETCRED
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- movz x10, #110
- cmp x1, x10
- b.ne cred_bad
- movz x10, #120
- cmp x2, x10
- b.ne cred_bad
- movz x10, #130
- cmp x3, x10
- b.ne cred_bad
- movz x10, #140
- cmp x4, x10
- b.ne cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #28
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- movz x2, #1
- mov x8, #SYS_GETCRED
- svc #0
- movz x10, #65535
- movk x10, #65535, lsl #16
- movk x10, #65535, lsl #32
- movk x10, #65535, lsl #48
- cmp x0, x10
- b.ne cred_bad
- cbnz x9, cred_bad
- cbnz x1, cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- cbnz x4, cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #29
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x1, x23
- mov x8, #SYS_GETCRED
- svc #0
- movz x10, #65535
- movk x10, #65535, lsl #16
- movk x10, #65535, lsl #32
- movk x10, #65535, lsl #48
- cmp x0, x10
- b.ne cred_bad
- cbnz x9, cred_bad
- cbnz x1, cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- cbnz x4, cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #30
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x1, x23
- movz x2, #1
- mov x8, #SYS_GETCRED
- svc #0
- movz x10, #65532
- movk x10, #65535, lsl #16
- movk x10, #65535, lsl #32
- movk x10, #65535, lsl #48
- cmp x0, x10
- b.ne cred_bad
- cbnz x9, cred_bad
- cbnz x1, cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- cbnz x4, cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #31
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x1, x24
- mov x8, #SYS_GETCRED
- svc #0
- movz x10, #65532
- movk x10, #65535, lsl #16
- movk x10, #65535, lsl #32
- movk x10, #65535, lsl #48
- cmp x0, x10
- b.ne cred_bad
- cbnz x9, cred_bad
- cbnz x1, cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- cbnz x4, cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #32
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x8, #SYS_DEFER
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- cbnz x1, cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- cbnz x4, cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #33
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x25
- movz x1, #0
- movk x1, #1, lsl #32
- mov x8, #SYS_NOTIFY
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- cbnz x1, cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- cbnz x4, cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #34
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- movz x1, #0
- movk x1, #2, lsl #32
- movz x5, #2
- mov x8, #SYS_RECV
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- movz x10, #3
- cmp x1, x10
- b.ne cred_bad
- cbnz x2, cred_bad
- cbnz x3, cred_bad
- movz x10, #0
- movk x10, #2, lsl #32
- cmp x4, x10
- b.ne cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #35
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x8, #SYS_GETCRED
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- movz x10, #10
- cmp x1, x10
- b.ne cred_bad
- movz x10, #20
- cmp x2, x10
- b.ne cred_bad
- movz x10, #30
- cmp x3, x10
- b.ne cred_bad
- movz x10, #40
- cmp x4, x10
- b.ne cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
- movz x28, #36
- movz x0, #0
- movz x1, #0
- movz x2, #0
- movz x3, #0
- movz x4, #0
- movz x5, #0
- movz x6, #0
- movz x7, #0
- mov x0, x26
- mov x1, x22
- mov x8, #SYS_GETCRED
- svc #0
- cbnz x0, cred_bad
- cbnz x9, cred_bad
- movz x10, #110
- cmp x1, x10
- b.ne cred_bad
- movz x10, #120
- cmp x2, x10
- b.ne cred_bad
- movz x10, #130
- cmp x3, x10
- b.ne cred_bad
- movz x10, #140
- cmp x4, x10
- b.ne cred_bad
- cbnz x5, cred_bad
- cbnz x6, cred_bad
- cbnz x7, cred_bad
  movz x28, #37
  movz x0, #0
  movz x1, #0
@@ -1143,7 +1146,7 @@ cred_server:
  movz x5, #0
  movz x6, #0
  movz x7, #0
- mov x0, x20
+ mov x0, x26
  mov x8, #SYS_GETCRED
  svc #0
  cbnz x0, cred_bad
@@ -1172,6 +1175,579 @@ cred_server:
  movz x5, #0
  movz x6, #0
  movz x7, #0
+ mov x0, x26
+ mov x1, x22
+ mov x8, #SYS_GETCRED
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #110
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #120
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #130
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #140
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #39
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x1, x22
+ movz x2, #1
+ mov x8, #SYS_GETCRED
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #110
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #120
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #130
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #140
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #40
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #2
+ cmp x2, x10
+ b.ne cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ mov x27, x1
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #41
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ mov x10, x27
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #2
+ cmp x2, x10
+ b.ne cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #42
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ movz x2, #1
+ mov x3, x22
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #1
+ cmp x2, x10
+ b.ne cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #128
+ movk x9, #4, lsl #16
+ str x1, [x9]
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #43
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ mov x3, x23
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65535
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #44
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x20
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65533
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #45
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ movz x2, #3
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65533
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #46
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ movz x2, #2
+ mov x3, x23
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65535
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #47
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ movz x2, #1
+ mov x3, x24
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65532
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #48
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ movz x2, #1
+ mov x8, #SYS_GETCRED
+ svc #0
+ movz x10, #65535
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #49
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x1, x23
+ mov x8, #SYS_GETCRED
+ svc #0
+ movz x10, #65535
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #50
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x1, x23
+ movz x2, #1
+ mov x8, #SYS_GETCRED
+ svc #0
+ movz x10, #65532
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #51
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x1, x24
+ mov x8, #SYS_GETCRED
+ svc #0
+ movz x10, #65532
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #52
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x8, #SYS_DEFER
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #53
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x25
+ movz x1, #0
+ movk x1, #1, lsl #32
+ mov x8, #SYS_NOTIFY
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #54
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ movz x1, #0
+ movk x1, #2, lsl #32
+ movz x5, #2
+ mov x8, #SYS_RECV
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #3
+ cmp x1, x10
+ b.ne cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ movz x10, #0
+ movk x10, #2, lsl #32
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #55
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x8, #SYS_GETCRED
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #10
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #20
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #30
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #40
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #56
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x26
+ mov x1, x22
+ mov x8, #SYS_GETCRED
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #110
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #120
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #130
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #140
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #57
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x20
+ mov x8, #SYS_GETCRED
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #10
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #20
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #30
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #40
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #58
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
  mov x0, x20
  mov x1, x23
  movz x2, #1
@@ -1194,11 +1770,150 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
+ movz x28, #59
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ movz x1, #16
+ movz x5, #3
+ mov x8, #SYS_RECV
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #3
+ cmp x1, x10
+ b.ne cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ movz x10, #16
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #60
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSREAD
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #3
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #1
+ cmp x2, x10
+ b.ne cred_bad
+ mov x10, x23
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #1
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #61
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ movz x10, #3
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #1
+ cmp x3, x10
+ b.ne cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #62
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ movz x2, #1
+ mov x3, x22
+ mov x8, #SYS_OBSERVE
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ movz x10, #3
+ cmp x2, x10
+ b.ne cred_bad
+ movz x10, #2
+ cmp x3, x10
+ b.ne cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x9, #128
+ movk x9, #4, lsl #16
+ ldr x11, [x9]
+ movz x28, #63
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x8, #SYS_OBSACK
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
  movz x9, #64
  movk x9, #4, lsl #16
  movz x10, #1
  str x10, [x9]
- movz x28, #39
+ movz x28, #64
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1218,7 +1933,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #40
+ movz x28, #65
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1245,7 +1960,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #41
+ movz x28, #66
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1274,7 +1989,39 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #42
+ movz x9, #0
+ movk x9, #4, lsl #16
+ ldr x11, [x9, #104]
+ movz x28, #67
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x11
+ mov x1, x26
+ movz x2, #1
+ mov x3, x22
+ mov x8, #SYS_OBSERVE
+ svc #0
+ movz x10, #65532
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #68
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1295,7 +2042,103 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #43
+ movz x28, #69
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSREAD
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ movz x10, #3
+ cmp x1, x10
+ b.ne cred_bad
+ movz x10, #1
+ cmp x2, x10
+ b.ne cred_bad
+ mov x10, x23
+ cmp x3, x10
+ b.ne cred_bad
+ movz x10, #1
+ cmp x4, x10
+ b.ne cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #70
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSACK
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #71
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x0, x27
+ mov x8, #SYS_OBSREAD
+ svc #0
+ movz x10, #65532
+ movk x10, #65535, lsl #16
+ movk x10, #65535, lsl #32
+ movk x10, #65535, lsl #48
+ cmp x0, x10
+ b.ne cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #72
+ movz x0, #0
+ movz x1, #0
+ movz x2, #0
+ movz x3, #0
+ movz x4, #0
+ movz x5, #0
+ movz x6, #0
+ movz x7, #0
+ mov x8, #SYS_OBSNEXT
+ svc #0
+ cbnz x0, cred_bad
+ cbnz x9, cred_bad
+ cbnz x1, cred_bad
+ cbnz x2, cred_bad
+ cbnz x3, cred_bad
+ cbnz x4, cred_bad
+ cbnz x5, cred_bad
+ cbnz x6, cred_bad
+ cbnz x7, cred_bad
+ movz x28, #73
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1321,7 +2164,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #44
+ movz x28, #74
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1342,7 +2185,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #45
+ movz x28, #75
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1363,7 +2206,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #46
+ movz x28, #76
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1392,7 +2235,7 @@ cred_server:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #47
+ movz x28, #77
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1449,7 +2292,7 @@ cred_replacement:
  ldr x25, [x9, #48]
  movz x9, #4660
  dup v31.2d, x9
- movz x28, #48
+ movz x28, #78
  movz x0, #0
  movz x1, #0
  movz x2, #0
@@ -1477,7 +2320,7 @@ cred_replacement:
  cbnz x5, cred_bad
  cbnz x6, cred_bad
  cbnz x7, cred_bad
- movz x28, #49
+ movz x28, #79
  movz x0, #0
  movz x1, #0
  movz x2, #0

@@ -839,3 +839,17 @@ QEMU 在请求排队、已执行未回复等阶段终止 fs，确认取消、旧
 
 
 凭据机制接续（2026-11-16）：原生getcred已按上述真实REQUEST/固定CONTROL QUERY关系接入，旧来源退出与Proc槽复用后仍读原Life不可变凭据；SOURCE/CHILD及证据释放反例见03末尾。尚未实现FS、OBSERVE permit/cookie或FUTURE exec准备，不把可信测试预装关系当作文件权限/完整装载协议已交付。
+
+### 观察机制实现接续（2026-11-16）
+
+已接0x50..0x54的observe/obsread/obsnext/obsack/obsdrop。OBSERVE本地子类型9的业务位与relation共用abi/observe.h；SOURCE/CHILD/FUTURE只校验当前接收者持有的真实REQUEST，MONITOR独立核验显式固定CONTROL QUERY及可选PID断言。FUTURE的关系检查已保留，但execprep/EXEC_VIEW尚未接，不存在可成功创建的真实exec准备；不能称FUTURE端到端完成。
+
+每目标镜像一条48字节Obs（上限64），默认1024槽划为8份128槽预付区。安装/复制OBSERVE先为目标完整观察者Image预付128槽；同一Image多个permit共用预付，GRANT不能扩大业务位，不允许继承。配额不足或目标Local满时安装失败，不留下半份permit或Image引用。已有cookie独立持有目标Image OBSERVER和Life OBSERVER；父收取不解除观察，撤销全部permit只阻止新登记，已有记录仍可读/枚举/确认。没有permit且没有记录时归还预付区。观察者退出在原Proc清理phase0按每次32槽清除，再释放本地permit；未来exec提交也必须接同一旧Image清理边界。
+
+cookie仍为低16位服务槽/上48位代次；实现使用系统单调分配代次，跨预付区释放/重新取得也不重复，耗尽OVERFLOW且不回绕。已ENDED的合法目标直接返回cookie=0和终态，无新占用。obsack只接受ENDED，obsdrop允许主动放弃；内核不据此证明文件/下游/DMA清理完成。
+
+LIFE仅对新观察到的ENDED置提示，检查点和recv受理前各自核对有界本表；一个提示可合并多个终态。obsnext从0开始，返回下一服务槽索引，cookie=0/next=0为末尾；有cookie而next=0表示该条就是最后槽。枚举不消费，ack/drop后不改写同槽新cookie；读和确认只接受原观察者PID/image。MONITOR image=0优先当前ACTIVE；已结束实例只选实际EXIT镜像，不能以较新已取消的exec准备替代它。
+
+实际场景：服务S接到A的请求，同时观察A的SOURCE和未发布B的CHILD。A退出、B取消后，S收一个合并LIFE提示，分别读到EXIT/ABORT；S确认B后，可信CPU可释放B的准备证据。A的Rq仍在DRAINING时SOURCE可以核验既有ENDED；rqfinish后REQUEST失效，S原cookie仍可读，最后obsack解除观察。S保存业务清理责任的动作仍由未来服务实现，测试不把观察确认当作DMA安全证明。
+
+验证：新增host覆盖128槽满后全部终态枚举、8服务总预付上限、Local grant减权/失败回滚、撤销后既有cookie、防跨观察者/跨预付区重放、代次耗尽、固定旧EXEC镜像及父结果独立回收。creds两架构U/EL0载荷已验证SOURCE/CHILD/MONITOR授权与拒绝、合并LIFE、DRAINING及证明释放、原生grant配额安装和观察者死亡自动清理。完整217项host、格式及82个两架构QEMU通过，日志build/host/stage31-observations/test-all.log；最终creds两架构复跑见同目录*-final.log。生产启动清单发权、真实exec观察者更替及FS业务/DMA仍未接，不宣称文件服务已实现。
