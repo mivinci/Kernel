@@ -222,7 +222,7 @@ def build(args):
     if len(suspend_rows)!=1 or int(suspend_rows[0][2])!=256:raise BuildError('signal suspend trace missing')
     suspend_address=int(suspend_rows[0][1],16)
     (sdk/'suspendimage.S').write_text('/* image sha256: '+digest(suspend_image)+' */\n.section .rodata\n.balign 8\n.global suspend_image,suspend_image_end,suspend_trace_address\nsuspend_image:\n.incbin "'+str(suspend_image)+'"\nsuspend_image_end:\n.balign 8\nsuspend_trace_address:\n.quad '+str(suspend_address)+'\n')
-    irq_user=link_adoption('irqdriver',[compile_adoption(ROOT/'tests/kernel/irqdriver.c','irqdriver'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','irqfp')])
+    irq_user=link_adoption('irqdriver',[compile_adoption(ROOT/'tests/kernel/irqdriver.c','irqdriver'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','irqfp'),compile_adoption(ROOT/'tests/kernel'/args.arch/'mmioport.c','mmioport')])
     irq_image=sdk/'irqdriver.img'
     irq_image.write_bytes(pack(irq_user.read_bytes(),profile['machine'],128))
     irq_inspect=invoke('inspect-irq-driver',[tools['readelf']['path'],'-h','-l','-s',str(irq_user)])

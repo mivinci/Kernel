@@ -14,6 +14,7 @@
 #include <clock.h>
 #include <hal/irq.h>
 #include <irq.h>
+#include <device.h>
 #include <hal/context.h>
 
 static volatile u64 zeroed;
@@ -140,6 +141,7 @@ discovery(u64 dtb, u64 available)
     field("DEVICE index=", i);
     field(" kind=", d->kind);
     field(" protected=", d->protected);
+    field(" mappable=", d->mappable);
     field(" phandle=", d->phandle);
     field(" regs=", d->nreg);
     field(" irqs=", d->nirq);
@@ -190,6 +192,8 @@ virtualmain(Hvs *space)
     panic("timer initialization");
   if (kstackinit(space))
     panic("kernel stack initialization");
+  if (devinit(&hardware))
+    panic("device window inventory");
   meminit();
   if (spaceinit(space))
     panic("user root initialization");

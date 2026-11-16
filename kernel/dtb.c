@@ -23,6 +23,7 @@ struct Parser
   u32       strings, nodes, props;
   Node      node[NODES];
   Prop      prop[PROPS];
+  u32       device[DT_DEVICES];
 };
 static Parser parser;
 
@@ -616,6 +617,7 @@ discover(Dtinfo *info)
       return DT_UNSUPPORTED;
     if (info->ndev == DT_DEVICES)
       return DT_FULL;
+    parser.device[info->ndev] = i;
     dev = &info->dev[info->ndev++];
     dev->kind = n->kind;
     dev->phandle = n->phandle;
@@ -678,6 +680,71 @@ discover(Dtinfo *info)
   return 0;
 }
 
+static void
+mappable(Dtinfo *info)
+{
+  Dtrange     ranges[DT_RAM];
+  const Prop *type;
+  Dtdev      *device;
+  u64         start, bytes, end;
+  u32         i, j, k, node, count;
+  /* Only exclusive, completely described pages are candidates. */
+  for (i = 0; i < info->ndev; i++) {
+    device = &info->dev[i];
+    if (device->protected)
+      continue;
+    for (j = 0; j < device->nreg; j++) {
+      end = device->reg[j].base + device->reg[j].size;
+      if (end > ~(u64) 0 - PAGE_MASK)
+        continue;
+      start = ALIGN_DOWN(device->reg[j].base, PAGE_SIZE);
+      bytes = ALIGN_UP(end, PAGE_SIZE) - start;
+      for (k = 0; k < info->nram; k++)
+        if (overlap(start, bytes, info->ram[k].base, info->ram[k].size))
+          break;
+      if (k < info->nram)
+        continue;
+      for (k = 0; k < info->nreserved; k++)
+        if (overlap(start, bytes, info->reserved[k].base, info->reserved[k].size))
+          break;
+      if (k == info->nreserved)
+        device->mappable |= 1U << j;
+    }
+  }
+  /* Disabled and unknown devices still occupy physical address space.
+     CPU reg properties name harts, rather than MMIO addresses. */
+  for (node = 0; node < parser.nodes; node++) {
+    if (!property(node, "reg"))
+      continue;
+    type = property(node, "device_type");
+    if (type && equal(value(type), "cpu"))
+      continue;
+    count = 0;
+    if (registers(node, ranges, &count, DT_RAM)) {
+      for (i = 0; i < info->ndev; i++)
+        info->dev[i].mappable = 0;
+      return;
+    }
+    for (i = 0; i < info->ndev; i++) {
+      device = &info->dev[i];
+      for (j = 0; j < device->nreg; j++) {
+        if (!(device->mappable & (1U << j)))
+          continue;
+        start = ALIGN_DOWN(device->reg[j].base, PAGE_SIZE);
+        end = ALIGN_UP(device->reg[j].base + device->reg[j].size, PAGE_SIZE);
+        for (k = 0; k < count; k++) {
+          if (node == parser.device[i] && ranges[k].base == device->reg[j].base &&
+              ranges[k].size == device->reg[j].size)
+            continue;
+          if (overlap(start, end - start, ranges[k].base, ranges[k].size)) {
+            device->mappable &= ~(1U << j);
+            break;
+          }
+        }
+      }
+    }
+  }
+}
 int
 dtread(const void *blob, usize available, Dtinfo *info)
 {
@@ -689,6 +756,8 @@ dtread(const void *blob, usize available, Dtinfo *info)
     error = metadata();
   if (!error)
     error = discover(info);
+  if (!error)
+    mappable(info);
   if (error)
     clear(info, sizeof(*info));
   return error;

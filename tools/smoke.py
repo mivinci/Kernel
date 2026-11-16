@@ -330,7 +330,9 @@ def validate_discovery(text, arch, ram_mb, names, boot):
     all_mmio = []
     for i, d in enumerate(devices):
         if (d.get("index") != i or d.get("regs") != len(d["mmio"]) or d.get("irqs") != len(d["irq"])
-                or d.get("protected") != int(d.get("kind", 0) >= 4)):
+                or d.get("protected") != int(d.get("kind", 0) >= 4)
+                or d.get("mappable",0) & ~((1<<d["regs"])-1)
+                or (d["protected"] and d.get("mappable",0))):
             raise SmokeError("device shape/protection mismatch")
         for r in d["mmio"]:
             if any(overlaps(r, x) for x in ranges["RAM"] + ranges["RESERVED"] + all_mmio):

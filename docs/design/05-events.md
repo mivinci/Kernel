@@ -328,3 +328,7 @@ GIC timer ACK遇外设时保留完整IAR token并返回待取状态，通用入�
 host新增9项覆盖发布/ACK/消费、失败不影响旧源与引用、跨Image/运行槽复用、构造取消、REVOKED池责任、Local不转授/继承与释放、重复/未绑定认领，以及低代次注入耗尽后OVERFLOW不回绕。默认代次为完整u64；测试只用编译上限2模拟不可实际穷举的耗尽。HAL shim只验证状态与引用，不代替硬件证明。
 
 CASE=irqbind两架构各7个驱动案例另含1个忙伙伴：U/EL0外设IRQ、EL1/CPU idle递送、无timer/timer共存、错误授权/保留输入、消费前ACK、旧Handle、新唤醒后解绑重等、正常free/unbind/退出、强杀与未发布取消。5次真实用户EVENT消费/FP舍入恢复、5次陈旧Handle拒绝、3次消费前ACK拒绝，CPU独立核对生命周期及每例池槽/页/Set/Acct回收。测试设备处理仍由tests/kernel的UART刺激/清理桥完成，不称用户MMIO权限或生产serial驱动已交付。最终源码完整make test-all通过321项host、格式及102个RV64/ARM64 QEMU，包含上述忙伙伴和最终池槽失效断言；专项9项host及格式另通过，SDK单向审计通过。日志、102个原始目录和关键源码哈希在build/host/stage51-irq-delivery/。未执行CI/目标真实硬件/性能验收，原生bind与IRQ_SOURCE仍待确认，不将可信安装当用户绑定准入已交付。
+
+UART用户设备访问接续（2026-11-17）：09的可信独占页MMIO已接，irqbind载荷通过实际U/EL0 Device映射清UART寄存器并读回后ACK，管理Cap先丢而映射继续；CPU桥只作刺激/强杀场景停设备/轮次间清理，不再代替正常设备下半段。Source授权和原生0x70仍按上面的开放问题等待确认。
+
+MMIO升级后的最终完整回归为334项host、格式和102个两架构QEMU，通过；普通驱动案例由用户清UART使能并读回，忙伙伴的窗口map被DENIED，证据build/host/stage52-mmio/。源权限/原生bind仍未采用未确认规则。

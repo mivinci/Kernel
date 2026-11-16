@@ -1,4 +1,4 @@
-/* Kernel-internal DATA/CODE/SHARED backing and references, not a local resource-table Handle. */
+/* Kernel-internal RAM backing and trusted MMIO views, not Local Handles. */
 #ifndef _MEM_H
 #define _MEM_H
 #include <acct.h>
@@ -14,6 +14,9 @@
 #define MEM_LOADING  3
 #define MEM_SEALED   4
 #define MEM_SHARED   5
+#define MEM_RAM      0
+#define MEM_MMIO     1
+#define MEM_DENIED   -7
 #define MEM_BUSY     -4
 #define MEM_BAD      -1
 #define MEM_LIMIT    -2
@@ -31,7 +34,7 @@ struct Mem
 {
   u64    generation, bytes;
   Acctid acct;
-  u32    head, pages, refs, managers, state, writes, execs, busy;
+  u32    head, pages, refs, managers, state, writes, execs, busy, kind;
 };
 struct Blockref
 {
@@ -46,12 +49,14 @@ void meminit(void);
 int  memcreate(Acctid acct, u64 bytes, Memid *out);
 int  memcode(Acctid acct, u64 bytes, Memid *out);
 int  memshared(Acctid acct, u64 bytes, Memid *out);
+/* Trusted whole-page grant from the validated boot device inventory. */
+int memdevice(Acctid acct, u32 device, Memid *out);
 /* Trusted kernel source only; user copies require independent range/rights checks. */
 int memwrite(Memid id, u64 offset, const void *source, u64 bytes);
 int memseal(Memid id);
 int memcanmap(Memid id, u64 prot);
-int memmapref(Memid id, u64 prot);
-int memunmapref(Memid id, u64 prot);
+int memmapref(Memid id, u64 prot, Acctid target);
+int memunmapref(Memid id, u64 prot, Acctid target);
 int memhold(Memid id);
 int memfree(Memid id);
 /* Mapping/Op references do not restore a released management reference. */

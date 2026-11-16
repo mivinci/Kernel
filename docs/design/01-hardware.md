@@ -345,3 +345,5 @@ CASE=irqchip在CPU全局IRQ始终屏蔽时，使用真实UART THRE/TX状态作�
 真实外设入口接续（2026-11-17）：GIC非timer认领可暂存并交给紧接的通用hal_irq_claim，保持IAR原值与完成顺序；RV64向量9现接已存在的完整kernelirqentry，不再停机。用户IRQ启用与time-slice开关分离；05的新场景实际覆盖U/EL0与EL1/idle路径、无timer的忙伙伴让出及IRQ C续点强杀。硬件Source/Bind及预算层见05，不增加HAL对Proc/Rq的依赖。
 
 该外设递送切片的最终完整回归为321项host、格式和102个两架构QEMU，通过；证据build/host/stage51-irq-delivery/，其中cooperative与timer两种真实IRQ路径及无timer伙伴进展均已验，不推定未接的设备/DMA/绑定准入策略完成。
+
+用户Device页接续（2026-11-17）：HAL user-root窗口/NX检查保留，可信Space可按Mem来源选择Device属性，不再对所有用户Device页一刀切。Dtdev变为128字节，独占页资格按完整原始reg扫描计算；MMIO视图/租约及真实用户UART处理见09。这里不新增用户可选缓存属性或任意PA映射权限。

@@ -11,6 +11,7 @@
 #include <event.h>
 #include <signal.h>
 #include <irq.h>
+#include <device.h>
 
 typedef struct Proc     Proc;
 typedef union Procstage Procstage;
@@ -1423,6 +1424,40 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   }
 }
 
+int
+procmmioinstall(Handle pid, u32 device, u32 region, u64 rights, Handle *out)
+{
+  Proc *target = find(pid);
+  Memid memory;
+  Mem   info;
+  u32   window;
+  int   error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!target)
+    return -ERR_STALE;
+  if (target->state != PROC_CONSTRUCT && target->state != PROC_READY &&
+      target->state != PROC_RUNNING && target->state != PROC_BLOCKED)
+    return -ERR_STATE;
+  if (!(rights & VM_READ) || rights & ~(VM_READ | VM_WRITE | LOCAL_GRANT))
+    return -ERR_DENIED;
+  error = localroom(&target->resources);
+  if (error)
+    return error;
+  error = devwindow(device, region, &window);
+  if (error)
+    return error == DEV_DENIED ? -ERR_DENIED : -ERR_BAD_HANDLE;
+  error = memdevice(target->acct, window, &memory);
+  if (error)
+    return convert(error);
+  if (memstat(memory, &info))
+    panic("MMIO installation backing");
+  error = localmem(&target->resources, memory, rights, 0, info.bytes, 0, out);
+  if (memfree(memory))
+    panic("MMIO installation reference");
+  return error;
+}
 int
 procirqinstall(Handle pid, u32 number, u32 bit, Handle *out)
 {

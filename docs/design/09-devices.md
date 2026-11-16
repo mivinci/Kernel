@@ -127,3 +127,25 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 验收：读写内容一致，flush 成功有真实设备路径，缺少必需特性明确失败；fs 等普通服务无设备访问权限。
 驱动故障按设备恢复协议验证排空/复位及新实例重建；无法确认 DMA 停止则隔离并安全离线，不宣称恢复成功。CPU 隔离不冒充 DMA 隔离。
+
+### 独占页MMIO与用户UART处理接续（2026-11-17）
+
+已接可信设备窗口库存（128份、每份64字节固定BSS），同时保存实际reg字节范围和向外取整的页范围。DTB内部Dtdev现128字节，新增每个reg的mappable位，原始树中的unknown/disabled reg也参加页冲突扫描；CPU reg仍按hart ID处理。不能完成地址翻译、未知reg形状/容量或地址取整溢出时不发布MMIO候选。RAM/保留区、受保护资源、其他reg落入取整页时关闭该位，不凭“未识别设备”忽略其占用。设备库存还复查已知几何/范围，错误输入不部分发布。
+
+第一步只允许独占页，跨设备/窗口共页直接拒绝；不把Set预算当设备信任域。实际ARM64 UART页可授予，多个virtio-mmio窗口共享页时保持拒绝。后续要支持ARM virtio，必须补显式整页资源组/同域权限，不能靠强置mappable或字节封装假装隔离。本轮没有完成该组授权，也没有缩减blk/net目标。
+
+Mem新增持久storage kind（RAM/MMIO），每份72字节、仍在96预算内；MMIO的head指库存窗口而非buddy Blockref。MMIO不分配/清零/回收设备物理页，不收RAM出资费，只占固定Mem/Local/Mmap和正常页表费用。最后管理句柄删除后仍保留kind，故RETIRING映射可正确查PA、检查Device PTE及最后unmap，绝不把IO地址交给普通页分配器回收。memwrite/CPU受检查copy、seal、EXEC及普通FORK/EXEC继承均拒绝MMIO。
+
+窗口引用与映射租约分开：每份Mem持1个库存引用；每个实际Mmap取得租约。第一次用户映射固定目标完整Acct，保留1个Acct引用；同Acct可有兼容Device别名，其他Acct即使在同Set也DENIED。显式减权grant可传窗口Cap，持Cap不等于已取得映射域；没有把原出资Acct当接受者域。最后unmap清租约并放Acct引用，之后别的获授Acct才可映射。失败页表分配/冲突回滚同一次租约和Mem映射引用，不遗留所有权。
+
+原生map/unmap参数不增加attr选项，Space从Mem kind决定VM_DEVICE；HAL用户根可映射受信层给出的Device页，仍执行用户窗口/NX/W^X检查。RAM种类只会得到Normal，MMIO只会得到Device；所有可生成MMIO视图的窗口都经库存检查，不提供用户指定PA或“把MMIO当Normal”的入口。当前发权仍经可信procmmioinstall，生产SYSTEM/BOOT_RESOURCE设备发现与安装未接，不把测试构造当普通用户可创建硬件权限。
+
+生命周期例：Root/驱动有MMIO管理Cap→map获取Acct租约→删除Cap后管理引用0、Mem RETIRING而Device映射继续→IRQ处理中用户读写映射并清UART条件→ACK重新开放→最后unmap或CPU清Space才放租约/库存/Mem及其Acct引用。撤销Cap不会撤掉已提交映射，另一Acct不能在其仍存在时取得页；真正设备交接/恢复仍须09的停止与复位协议，unmap或IRQ解绑不证明DMA停止。
+
+host新增5项页发现检查和8项设备Mem检查：共享/未知/disabled/受保护邻居、翻译不完整、取整碰RAM；精确实际/页几何、无RAM物理费用、Device属性、RETIRING保留、同Set跨Acct隔离、每次页表失败的回滚、关闭发权Acct后接收者映射、显式grant/不可继承及最终引用归零。原Pgt“用户根一律禁Device”测试已改为可信HAL Device/NX与不可改高半区检查；受检查普通copy仍拒绝IO。
+
+两架构irqbind真实载荷现先map UART，验证Device RW/RO别名、EXEC/seal/copy拒绝，再删MMIO管理句柄而保留映射。正常IRQ处理由U/EL0自己写UART使能/清理寄存器并读回，随后ACK且有界领取可能锁存的旧提示；不再由CPU桥代替正常设备处理。忙伙伴另获同窗口Cap，实际map返回DENIED并释放，确认同Set不是隐式同域。驱动主动unmap和带映射退出/强杀均核对最终租约/库存引用0；CPU仍负责刺激硬件、被强杀驱动的测试停设备，以及case间控制器清理，不称生产serial已交付。
+
+首次全库链接暴露64字节库存快照赋值产生隐式memcpy，现明确逐字段复制，未靠libc链接掩盖内核依赖。失败产物保留。最终完整make test-all通过334项host、格式及102个RV64/ARM64 QEMU，最终用户MMIO清理读回场景两架构通过；SDK单向审计通过。证据、原始运行目录和关键源码哈希在build/host/stage52-mmio/。补读回检查时原型遗漏曾使一次SDK构建中断，修正后重跑全量，失败产物保留；未执行CI/目标真实硬件/性能验收。IRQ_SOURCE及原生irqbind的待确认规则不因本次MMIO改变。
+
+- [ ] 补显式整页设备组授权/同域交付及ARM共页virtio验证，保留未知/受保护资源拒绝；不以独占UART验收代替块/网络设备权限。

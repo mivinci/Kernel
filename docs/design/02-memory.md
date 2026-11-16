@@ -524,3 +524,7 @@ SHARED只有R/RW/GRANT授权，没有EXEC或SEAL；Mem自身的可映射/封存�
 验证：CASE=libsys改为两个真实用户进程分别在不同Set，native alloc/grant/map完成上述子窗口双向写、撤权后拒绝新map/旧map保留、只读执行/封存拒绝。可信CPU在A运行清理与结果收取后检查原Set实例0/charged3、Acct CLOSING/used3；B真实query读到这个旧账目后仍读取共享内容并unmap，query再确认账目已消失。双方最终exit42，两个Set及所有页/引用归零，既有IPC/checked-copy验收继续执行。
 
 新增host覆盖原出资方关闭后仍持接收Local并新增合法映射、最后Local解除但映射仍保留/最后unmap结清、减权/子窗口/无GRANT/满表失败引用守恒、SHARED显式EXEC继承标记、底层Mem/Local拒绝执行/封存，以及准备范围不逃逸与别名发布屏障。本地完整255项host、格式及92个两架构QEMU通过；补充准备期反例后完整256项host通过，最后3项共享/准备专项与两架构libsys复验通过，日志build/host/stage40-shared-memory/。资源reply、SHARED的fork/exec保留实现、DMA/设备访问证明、真实多核缓存和性能仍待接，不以普通共享映射代表它们完成。
+
+MMIO存储来源接续（2026-11-17）：Mem现72字节，新增持久kind区分RAM与受信MMIO窗口；RETIRING不丢该来源。MMIO无普通RAM Blockref/分配费用，Device属性由来源固定，映射引用另持设备窗口Acct租约，所有失败回滚和最后unmap分别结清；数据/代码/SHARED规则保持，设备视图不seal/EXEC/copy或普通继承。精确页授权、保守共页拒绝、跨Acct约束和验收见09末尾，尚非DMA/设备恢复完成。
+
+上述MMIO切片最终完整回归为334项host、格式及102个双架构QEMU，通过；证据build/host/stage52-mmio/，没有把独占UART视图称为共页设备授权、DMA或设备恢复完成。

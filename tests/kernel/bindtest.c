@@ -2,6 +2,7 @@
 #include "load.h"
 #include "chip.h"
 #include <irq.h>
+#include <device.h>
 #include <abi/boot.h>
 #include <proc.h>
 #include <prep.h>
@@ -11,7 +12,7 @@ struct Irqpacket
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[6];
+  Resentry resources[7];
   char     name[8];
 };
 extern const u8  irq_image[], irq_image_end[];
@@ -47,11 +48,13 @@ quiet(u32 number)
   REQUIRE(i < 4);
 }
 static void
-busyload(Handle pid)
+busyload(Handle pid, u32 device)
 {
   Irqpacket packet;
   Rtable   *table = proctable(pid);
   u32       i;
+  Handle    io;
+  REQUIRE(!procmmioinstall(pid, device, 0, 3, &io));
   for (i = 0; i < sizeof(packet); i++)
     ((u8 *) &packet)[i] = 0;
   packet.header.magic = BOOT_MAGIC;
@@ -59,7 +62,7 @@ busyload(Handle pid)
   packet.header.bytes = sizeof(packet);
   packet.header.argc = 1;
   packet.header.argv_off = offsetof(Irqpacket, arg);
-  packet.header.resource_count = 2;
+  packet.header.resource_count = 3;
   packet.header.resources_off = offsetof(Irqpacket, resources);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
@@ -70,6 +73,8 @@ busyload(Handle pid)
   packet.resources[0].handle = testresource(table, LOCAL_SPACE);
   packet.resources[1].tag = BOOT_SELF_ALLOC;
   packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
+  packet.resources[2].tag = 261;
+  packet.resources[2].handle = io;
   testload(pid, irq_image, (u64) (irq_image_end - irq_image), &packet, sizeof(packet));
 }
 void
@@ -77,22 +82,29 @@ bindtest(const Dtinfo *hardware)
 {
   Setid      set;
   Set        account;
-  Handle     pid, binding, control, weak, kill, stale = 0, busy, busy_kill;
+  Handle     pid, binding, control, weak, kill, stale = 0, busy, busy_kill, io;
   Rtable    *table, *busy_table;
   Procinfo   process, current, busy_info;
   Irqpacket  packet;
   Irqid      identity;
+  Memid      io_identity;
+  Mem        io_memory;
+  Device     window;
+  Hpte       entry;
   Irqstat    state;
   Life       life;
   Liferesult result;
   Pgstat     before, after;
   u64        trace[32];
-  u32        number = 0, mode, i, turns, received = 0, stale_checks = 0, early = 0, busy_proofs = 0;
-  int        error;
+  u32        number = 0, device = 0, mode, i, turns, received = 0, stale_checks = 0, early = 0,
+      busy_proofs = 0;
+  int error;
   for (i = 0; i < hardware->ndev; i++)
-    if (hardware->dev[i].kind == DT_UART16550 || hardware->dev[i].kind == DT_PL011)
+    if (hardware->dev[i].kind == DT_UART16550 || hardware->dev[i].kind == DT_PL011) {
       number = hardware->dev[i].irq[0].number;
-  REQUIRE(number);
+      device = i;
+    }
+  REQUIRE(number && !devstat(device * DT_REGS, &window) && window.allowed);
   chipbegin();
   quiet(number);
   pgstat(&before);
@@ -103,6 +115,10 @@ bindtest(const Dtinfo *hardware)
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     table = proctable(pid);
     REQUIRE(!procirqinstall(pid, number, 16, &binding));
+    REQUIRE(!procmmioinstall(pid, device, 0, 3, &io));
+    io_identity.generation = table->slots[handleindex(io)].objectgen;
+    io_identity.index = table->slots[handleindex(io)].object;
+    io_identity.reserved = 0;
     identity.generation = table->slots[handleindex(binding)].objectgen;
     identity.index = table->slots[handleindex(binding)].object;
     identity.reserved = 0;
@@ -118,7 +134,7 @@ bindtest(const Dtinfo *hardware)
     packet.header.bytes = sizeof(packet);
     packet.header.argc = 1;
     packet.header.argv_off = offsetof(Irqpacket, arg);
-    packet.header.resource_count = stale ? 6 : 5;
+    packet.header.resource_count = stale ? 7 : 6;
     packet.header.resources_off = offsetof(Irqpacket, resources);
     packet.header.user_lo = BOOT_USER_LO;
     packet.header.user_hi = BOOT_USER_HI;
@@ -135,8 +151,10 @@ bindtest(const Dtinfo *hardware)
     packet.resources[3].handle = control;
     packet.resources[4].tag = 259;
     packet.resources[4].handle = weak;
-    packet.resources[5].tag = 260;
-    packet.resources[5].handle = stale;
+    packet.resources[5].tag = 261;
+    packet.resources[5].handle = io;
+    packet.resources[6].tag = 260;
+    packet.resources[6].handle = stale;
     testload(pid, irq_image, (u64) (irq_image_end - irq_image), &packet, sizeof(packet));
     if (mode == 6) {
       REQUIRE(!imageend(process.identity, IMAGE_ABORT) && !lifecancel(process.life));
@@ -147,17 +165,26 @@ bindtest(const Dtinfo *hardware)
     REQUIRE(!spaceread(process.space, irq_trace_address, trace, sizeof(trace)) && trace[0] == 1 &&
             !trace[31]);
     REQUIRE(!irqstat(identity, &state) && state.state == IRQ_ARMED);
+    REQUIRE(!memstat(io_identity, &io_memory) && io_memory.kind == MEM_MMIO &&
+            io_memory.state == MEM_RETIRING && !io_memory.managers && io_memory.refs == 1);
+    REQUIRE(spacelookup(process.space, 0x2000000, &entry) && entry.pa == window.pages.base &&
+            entry.prot == (VM_READ | VM_WRITE | VM_USER) && entry.attr == VM_DEVICE);
     if (mode == 3) {
       REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &busy) && !procinfo(busy, &busy_info));
       busy_table = proctable(busy);
       REQUIRE(!localcontrol(busy_table, busy_info.life, CONTROL_TERMINATE, &busy_kill));
-      busyload(busy);
+      busyload(busy, device);
       REQUIRE(!procpublish(busy));
     }
     if (mode >= 3) {
       REQUIRE(!procrunone() && !procinfo(pid, &current) && current.state == PROC_BLOCKED);
       REQUIRE(!spaceread(process.space, irq_trace_address, trace, sizeof(trace)) && trace[0] == 4 &&
               !trace[31]);
+    }
+    if (mode == 3) {
+      REQUIRE(!procrunone() &&
+              !spaceread(busy_info.space, irq_trace_address, trace, sizeof(trace)) &&
+              trace[0] == 7 && trace[9] && !trace[31]);
     }
     chipbegin();
     if (mode == 1 || mode == 2) {
@@ -203,7 +230,6 @@ bindtest(const Dtinfo *hardware)
       }
       REQUIRE(!trace[31] && trace[0] == 2 && trace[2] == 1);
       REQUIRE(!irqstat(identity, &state) && state.state == IRQ_DELIVERED);
-      quiet(number);
       REQUIRE(!procrunone());
       REQUIRE(!spaceread(process.space, irq_trace_address, trace, sizeof(trace)) &&
               trace[0] == 99 && trace[7] && !trace[31]);
@@ -228,7 +254,8 @@ bindtest(const Dtinfo *hardware)
     for (i = 0; i < 128; i++)
       REQUIRE(procwork(32) >= 0 && prepwork(32) >= 0);
     REQUIRE(!setstat(set, &account) && !account.charged && !account.instances && !irqcheck() &&
-            irqstat(identity, &state) == -ERR_STALE);
+            !devcheck() && irqstat(identity, &state) == -ERR_STALE);
+    REQUIRE(!devstat(device * DT_REGS, &window) && !window.refs && !window.mappings);
     quiet(number);
   }
   REQUIRE(!setclose(set));

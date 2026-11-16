@@ -6,6 +6,8 @@
 #include "private/start.h"
 volatile u64 irq_trace[32];
 extern u64   frame_fp(u64 mode);
+extern u32   mmioready(u64 base);
+extern u32   mmioclear(u64 base);
 #define BIT ((u64) 1 << 16)
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -17,8 +19,10 @@ extern u64   frame_fp(u64 mode);
 int
 main(int argc, char **argv)
 {
-  Handle binding, control, weak, stale, space;
+  Handle binding, control, weak, stale, space, io;
   u64    mode, args[7];
+  Maparg mapping;
+  u8     byte = 0xa5;
   Sysret result;
   Ipcmsg message;
   u32    i;
@@ -26,7 +30,19 @@ main(int argc, char **argv)
   mode = (u64) (argv[0][0] - '0');
   irq_trace[1] = mode;
   if (mode == 7) {
+    io = bootresource(sysboot(), 261);
+    space = bootresource(sysboot(), BOOT_SELF_SPACE);
+    mapping.mem = io;
+    mapping.offset = 0;
+    mapping.address = 0x2000000;
+    mapping.length = 4096;
+    mapping.prot = 3;
+    mapping.reserved = 0;
+    REQUIRE(io > 0 && __sys_map(space, &mapping) == -ERR_DENIED, 174);
+    REQUIRE(!__sys_free(io), 175);
+    irq_trace[9] = 1;
     irq_trace[0] = 7;
+    REQUIRE(!__sys_yield(), 176);
     while (!irq_trace[30]) {
     }
     return 173;
@@ -36,6 +52,27 @@ main(int argc, char **argv)
   weak = bootresource(sysboot(), 259);
   stale = bootresource(sysboot(), 260);
   space = bootresource(sysboot(), BOOT_SELF_SPACE);
+  io = bootresource(sysboot(), 261);
+  mapping.mem = io;
+  mapping.offset = 0;
+  mapping.address = 0x2000000;
+  mapping.length = 4096;
+  mapping.prot = 5;
+  mapping.reserved = 0;
+  REQUIRE(io > 0 && __sys_map(space, &mapping) == -ERR_DENIED && __sys_seal(io) == -ERR_DENIED,
+          177);
+  mapping.prot = 3;
+  REQUIRE(!__sys_map(space, &mapping) && mmioready(mapping.address), 178);
+  REQUIRE(__sys_copy(&byte, (const void *) mapping.address, 1) == -ERR_FAULT && byte == 0xa5 &&
+              __sys_copy((void *) mapping.address, &byte, 1) == -ERR_FAULT,
+          179);
+  mapping.address = 0x2100000;
+  mapping.prot = 1;
+  REQUIRE(!__sys_map(space, &mapping) && !__sys_unmap(space, mapping.address), 180);
+  mapping.address = 0x2000000;
+  mapping.prot = 3;
+  REQUIRE(!__sys_free(io) && mmioready(mapping.address), 181);
+  irq_trace[10] = 1;
   REQUIRE(binding > 0 && control > 0 && weak > 0 && !frame_fp(2), 152);
   REQUIRE(__sys_irqack(0) == -ERR_BAD_HANDLE && __sys_irqack(space) == -ERR_BAD_HANDLE, 153);
   REQUIRE(__sys_irqunbind(weak, binding) == -ERR_DENIED &&
@@ -77,6 +114,7 @@ main(int argc, char **argv)
               !message.image,
           166);
   irq_trace[2]++;
+  REQUIRE(mmioclear(mapping.address), 186);
   irq_trace[0] = 2;
   REQUIRE(!__sys_yield(), 167);
   REQUIRE(frame_fp(2) == 2, 168);
@@ -84,10 +122,22 @@ main(int argc, char **argv)
   if (mode == 1) {
     REQUIRE(!__sys_irqunbind(control, binding) && __sys_irqack(binding) == -ERR_BAD_HANDLE, 169);
   } else if (mode != 2) {
-    REQUIRE(!__sys_irqack(binding) && __sys_irqack(binding) == -ERR_STATE, 170);
+    REQUIRE(!__sys_irqack(binding), 170);
+    for (i = 0; i < 4; i++) {
+      isize error = ipc_recv(BIT, RECV_NONBLOCK | RECV_EVENTS_ONLY, &message);
+      if (error == -ERR_WOULD_BLOCK)
+        break;
+      REQUIRE(!error && message.kind == IPC_EVENT && message.words[0] == BIT, 182);
+      REQUIRE(mmioclear(mapping.address), 186);
+      REQUIRE(!__sys_irqack(binding), 183);
+      irq_trace[8]++;
+    }
+    REQUIRE(i < 4 && __sys_irqack(binding) == -ERR_STATE, 184);
     REQUIRE(!__sys_free(binding) && __sys_irqack(binding) == -ERR_BAD_HANDLE, 171);
   }
   REQUIRE(mode < 5, 172);
+  if (mode != 2)
+    REQUIRE(!__sys_unmap(space, mapping.address), 185);
   irq_trace[0] = 99;
   return 42;
 }

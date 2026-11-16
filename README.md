@@ -182,3 +182,5 @@ unistd.h另提供getpgrp/getpgid/getsid/setpgid/setsid，直接使用完整64位
 CASE=irqchip验证GICv2/PLIC实际UART请求的控制器认领、屏蔽、完成、设备清理后重开及timer共用，ARM另验证SGI0；CPU IRQ始终关闭，属于HAL轮询验证。原生IRQ绑定/驱动事件递送尚未接，实际timer IRQ场景仍为timer/irq，详见01/05末尾。
 
 CASE=irqbind另验证可信安装后的真实外设IRQ到用户EVENT、原生ACK/CONTROL解绑、旧Handle/消费边界、无timer忙伙伴进展及镜像结束回收。IRQ_SOURCE授权和原生irqbind仍待05的撤销语义确认，0x70继续NOTSUP；测试硬件清理由可信UART桥提供，用户MMIO/生产serial仍未交付。
+
+irqbind载荷另经可信库存取得独占UART页，实际用户态Device映射读写/清状态后ACK；普通copy/seal/EXEC被拒绝，删除Cap后映射到最后unmap仍有效。同Set不同Acct不能同时映射同窗口；共页virtio及生产MMIO发权仍待接，详见09末尾。

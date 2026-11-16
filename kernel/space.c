@@ -242,7 +242,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
       (prot & ~7UL))
     return SP_BAD;
   if (memstat(memory, &mem) || memcanmap(memory, prot) || !mem.managers ||
-      (!prep.generation && mem.state != MEM_SHARED &&
+      (!prep.generation && mem.state != MEM_SHARED && mem.kind != MEM_MMIO &&
        (mem.acct.index != s->acct.index || mem.acct.generation != s->acct.generation)) ||
       offset > mem.bytes || length > mem.bytes - offset || acctstat(s->acct, &account) ||
       account.state != AC_ACTIVE)
@@ -257,11 +257,11 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   node = freemap;
   if (node == PG_NONE)
     return SP_FULL;
-  error = memmapref(memory, prot);
+  error = memmapref(memory, prot, s->acct);
   if (error)
     return error;
   if (prep.generation && preptemphold(prep)) {
-    memunmapref(memory, prot);
+    memunmapref(memory, prot, s->acct);
     return SP_BUSY;
   }
   freemap = mappings[node].next;
@@ -275,7 +275,8 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
       error = SP_BAD;
       break;
     }
-    error = (int) hal_vm_map(&vs, address + (u64) i * PAGE_SIZE, pa, prot, VM_NORMAL);
+    error = (int) hal_vm_map(&vs, address + (u64) i * PAGE_SIZE, pa, prot,
+                             mem.kind == MEM_MMIO ? VM_DEVICE : VM_NORMAL);
     if (error) {
       error = context.error ? context.error : (error == VM_EXISTS ? SP_CONFLICT : SP_BAD);
       break;
@@ -295,7 +296,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
     freemap = node;
     if (prep.generation && preptempdrop(prep))
       panic("loading map rollback scope");
-    if (memunmapref(memory, prot))
+    if (memunmapref(memory, prot, s->acct))
       panic("map reference rollback");
     return error;
   }
@@ -323,6 +324,7 @@ spaceunmap(Spaceid id, u64 address)
   Hpte      entry;
   Sourcectx context;
   Memid     memory;
+  Mem       backing;
   Prepid    prep;
   u32       node, previous = PG_NONE, i, pages;
   u64       pa;
@@ -336,13 +338,16 @@ spaceunmap(Spaceid id, u64 address)
   if (node == PG_NONE)
     return SP_BAD;
   m = &mappings[node];
+  if (memstat(m->mem, &backing))
+    return SP_BAD;
   pages = (u32) (m->length / PAGE_SIZE);
   view(s, &vs, &context);
   /* Check the entire record before the irreversible first removal. */
   for (i = 0; i < pages; i++) {
     if (mempage(m->mem, (u32) (m->offset / PAGE_SIZE) + i, &pa) ||
         !hal_vm_lookup(&vs, address + (u64) i * PAGE_SIZE, &entry) || entry.pa != pa ||
-        entry.prot != (m->prot | VM_USER) || entry.attr != VM_NORMAL)
+        entry.prot != (m->prot | VM_USER) ||
+        entry.attr != (backing.kind == MEM_MMIO ? VM_DEVICE : VM_NORMAL))
       return SP_BAD;
   }
   s->busy = 1;
@@ -362,7 +367,7 @@ spaceunmap(Spaceid id, u64 address)
   m->length = 0;
   m->next = freemap;
   freemap = node;
-  if (memunmapref(memory, m->prot))
+  if (memunmapref(memory, m->prot, s->acct))
     panic("unmap backing reference");
   if (prep.generation && preptempdrop(prep))
     panic("loading unmap scope");

@@ -67,7 +67,7 @@ class Irq(C.Structure):
     _fields_ = [('parent', C.c_uint32), ('number', C.c_uint32), ('flags', C.c_uint32), ('reserved', C.c_uint32)]
 class Device(C.Structure):
     _fields_ = [('kind', C.c_uint32), ('nreg', C.c_uint32), ('nirq', C.c_uint32), ('phandle', C.c_uint32),
-                ('reg', Range * 2), ('irq', Irq * 4), ('limit', C.c_uint32), ('protected', C.c_uint32)]
+                ('reg', Range * 2), ('irq', Irq * 4), ('limit', C.c_uint32), ('protected', C.c_uint32), ('mappable',C.c_uint32),('reserved',C.c_uint32)]
 class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
@@ -264,6 +264,44 @@ class DtbTests(unittest.TestCase):
                             [node('region', props)])
             self.reject(blob(basic([reserved])))
         self.reject(blob(basic(ac=1, sc=1, ram_base=0xfffff000, ram_size=0x2000)))
+
+    def test_mmio_pages_are_exclusive_and_controller_neighbors_are_denied(self):
+        clint=node('clint',[('compatible',b'riscv,clint0\0'),('reg',cells(0x10000800)+cells(0x800)),('interrupts-extended',words(1,3,1,7))])
+        second=uart(0x10000200,0x100);second=('uart2',second[1],second[2])
+        for neighbors,expected in (([],1),([second],0),([clint],0)):
+            rc,info=self.parse(blob(basic([plic(),uart(),*neighbors])))
+            self.assertEqual(rc,0)
+            self.assertEqual(next(d for d in info.dev[:info.ndev] if d.kind==1).mappable,expected)
+            for d in info.dev[:info.ndev]:
+                if d.protected:self.assertEqual(d.mappable,0)
+
+    def test_unknown_and_disabled_regs_still_block_shared_pages(self):
+        for disabled in (False,True):
+            props=[('compatible',b'vendor,unknown\0'),('reg',cells(0x10000200)+cells(0x100))]
+            if disabled:props.append(('status',b'disabled\0'))
+            rc,info=self.parse(blob(basic([plic(),uart(),node('other',props)])))
+            self.assertEqual(rc,0)
+            self.assertEqual(next(d for d in info.dev[:info.ndev] if d.kind==1).mappable,0)
+
+    def test_incomplete_unknown_translation_closes_mmio_without_failing_discovery(self):
+        unknown=node('other',[('reg',b'garbage')])
+        child=node('child',[('reg',cells(0x12340000)+cells(0x100))])
+        bus=node('unsupported',[('#address-cells',words(2)),('#size-cells',words(2))],[child])
+        for other in (unknown,bus):
+            rc,info=self.parse(blob(basic([plic(),uart(),other])))
+            self.assertEqual(rc,0)
+            self.assertTrue(all(not d.mappable for d in info.dev[:info.ndev]))
+
+    def test_rounding_into_ram_never_expands_authority(self):
+        rc,info=self.parse(blob(basic([plic(),uart(0x80000080,0x80)],ram_base=0x80000180)))
+        self.assertEqual(rc,0)
+        self.assertEqual(next(d for d in info.dev[:info.ndev] if d.kind==1).mappable,0)
+
+    def test_known_absence_is_distinct_from_unknown_nonoverlapping_resources(self):
+        other=node('other',[('compatible',b'vendor,unknown\0'),('reg',cells(0x10002000)+cells(0x100))])
+        rc,info=self.parse(blob(basic([plic(),uart(),other])))
+        self.assertEqual(rc,0)
+        self.assertEqual(next(d for d in info.dev[:info.ndev] if d.kind==1).mappable,1)
 
     def test_seeded_mutations_never_publish_partial_result(self):
         seed = random.Random(37)

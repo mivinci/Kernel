@@ -1,4 +1,5 @@
 #include <mem.h>
+#include <device.h>
 #include <diag.h>
 #include <vm.h>
 
@@ -60,7 +61,11 @@ reap(Mem *m)
     return;
   if (m->managers || m->writes || m->execs || m->busy)
     panic("data manager references");
-  releaseblocks(m->acct, m->head);
+  if (m->kind == MEM_MMIO) {
+    if (devdrop(m->head))
+      panic("device backing reference");
+  } else
+    releaseblocks(m->acct, m->head);
   if (acctdrop(m->acct))
     panic("data account reference");
   m->state = 0;
@@ -121,6 +126,7 @@ create(Acctid acct, u64 bytes, Memid *out, u32 state)
   m->pages = pages;
   m->refs = m->managers = 1;
   m->state = state;
+  m->kind = MEM_RAM;
   m->writes = m->execs = m->busy = 0;
   out->generation = m->generation;
   out->index = slot;
@@ -146,6 +152,47 @@ memshared(Acctid acct, u64 bytes, Memid *out)
   return create(acct, bytes, out, MEM_SHARED);
 }
 
+int
+memdevice(Acctid acct, u32 device, Memid *out)
+{
+  Device window;
+  Acct   account;
+  Mem   *m;
+  u32    slot;
+  int    error;
+  if (!initialized || !out || acctstat(acct, &account) || account.state != AC_ACTIVE)
+    return MEM_BAD;
+  if (devstat(device, &window) || !window.allowed)
+    return MEM_DENIED;
+  if (window.pages.size > (u64) MEM_PAGES * PAGE_SIZE)
+    return MEM_LIMIT;
+  slot = freemem;
+  if (slot == PG_NONE)
+    return MEM_FULL;
+  error = accthold(acct);
+  if (error)
+    return error;
+  error = devhold(device);
+  if (error) {
+    acctdrop(acct);
+    return error;
+  }
+  m = &memories[slot];
+  freemem = m->head;
+  m->generation++;
+  m->bytes = window.pages.size;
+  m->acct = acct;
+  m->head = device;
+  m->pages = (u32) (window.pages.size / PAGE_SIZE);
+  m->refs = m->managers = 1;
+  m->state = MEM_DATA;
+  m->kind = MEM_MMIO;
+  m->writes = m->execs = m->busy = 0;
+  out->generation = m->generation;
+  out->index = slot;
+  out->reserved = 0;
+  return 0;
+}
 int
 memhold(Memid id)
 {
@@ -209,6 +256,7 @@ memstat(Memid id, Mem *out)
   out->writes = m->writes;
   out->execs = m->execs;
   out->busy = m->busy;
+  out->kind = m->kind;
   return 0;
 }
 
@@ -219,6 +267,8 @@ mempage(Memid id, u32 page, u64 *pa)
   u32  node;
   if (!m || !pa || page >= m->pages)
     return MEM_BAD;
+  if (m->kind == MEM_MMIO)
+    return devpage(m->head, page, pa);
   for (node = m->head; page; page--)
     node = blocks[node].next;
   *pa = blocks[node].pa;
@@ -240,7 +290,7 @@ memcanmap(Memid id, u64 prot)
 }
 
 int
-memmapref(Memid id, u64 prot)
+memmapref(Memid id, u64 prot, Acctid target)
 {
   Mem *m;
   int  error = memcanmap(id, prot);
@@ -249,6 +299,11 @@ memmapref(Memid id, u64 prot)
   m = find(id);
   if (m->refs == 0xffffffffU)
     return MEM_LIMIT;
+  if (m->kind == MEM_MMIO) {
+    error = devmap(m->head, target);
+    if (error)
+      return error;
+  }
   m->refs++;
   if (prot & VM_WRITE)
     m->writes++;
@@ -258,11 +313,13 @@ memmapref(Memid id, u64 prot)
 }
 
 int
-memunmapref(Memid id, u64 prot)
+memunmapref(Memid id, u64 prot, Acctid target)
 {
   Mem *m = find(id);
   if (!m || m->refs <= m->managers || ((prot & VM_WRITE) && !m->writes) ||
       ((prot & VM_EXEC) && !m->execs))
+    return MEM_BAD;
+  if (m->kind == MEM_MMIO && devunmap(m->head, target))
     return MEM_BAD;
   if (prot & VM_WRITE)
     m->writes--;
@@ -280,8 +337,8 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
   const u8    *input = source;
   volatile u8 *output;
   u64          pa, take, i;
-  if (!m || !m->managers || m->state == MEM_RETIRING || m->state == MEM_SEALED || !source ||
-      !bytes || offset > m->bytes || bytes > m->bytes - offset)
+  if (!m || !m->managers || m->kind == MEM_MMIO || m->state == MEM_RETIRING ||
+      m->state == MEM_SEALED || !source || !bytes || offset > m->bytes || bytes > m->bytes - offset)
     return MEM_BAD;
   if (m->busy)
     return MEM_BUSY;
@@ -305,7 +362,8 @@ memseal(Memid id)
 {
   Mem *m = find(id);
   u32  node;
-  if (!m || !m->managers || (m->state != MEM_LOADING && m->state != MEM_SEALED))
+  if (!m || !m->managers || m->kind == MEM_MMIO ||
+      (m->state != MEM_LOADING && m->state != MEM_SEALED))
     return MEM_BAD;
   if (m->state == MEM_SEALED)
     return 0;

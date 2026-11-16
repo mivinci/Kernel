@@ -118,7 +118,7 @@ hal_vm_map(Hvs *vs, u64 va, u64 pa, u64 prot, u32 attr)
   u64 *slot, *created[2], owned[2], table = vs->root, entry, child;
   u32  level, count = 0, index;
   int  error = VM_BAD;
-  if (vs->user && (va < 0x10000 || va >= (1UL << 38) || attr != VM_NORMAL))
+  if (vs->user && (va < 0x10000 || va >= (1UL << 38)))
     return VM_BAD;
   if (!canonical(va) || (va | pa) & PAGE_MASK || pa >= (1UL << 40) || !(prot & VM_READ) ||
       prot & ~7UL || (prot & VM_WRITE && prot & VM_EXEC) || attr > VM_DEVICE ||

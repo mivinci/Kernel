@@ -299,8 +299,12 @@ class PageTableTests(unittest.TestCase):
             self.assertEqual(user.unmap(0xffffffc000200000), -1)
             self.assertEqual(user.map(0), -1)
             self.assertEqual(user.map(0x4000000000), -1)
-            self.assertEqual(user.map(0x20000, attr=1), -1)
             self.assertEqual(user.snapshot(), before)
+            # Trusted higher layers choose the fixed Device attribute.
+            self.assertEqual(user.map(0x20000,0x10000000,3,1),0)
+            self.assertEqual(user.lookup(0x20000),(0x10000000,11,1,1))
+            self.assertEqual(user.map(0x21000,0x10000000,5,1),-1)
+            self.assertEqual(user.unmap(0x20000),0)
             user.destroy()
             self.assertEqual(kernel.snapshot(), kernel_before)
             kernel.destroy()
