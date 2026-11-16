@@ -1,6 +1,6 @@
 # Kernel
 
-面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询与消息IPC原生调用，以及协作yield和IPC阻塞/唤醒，已接用户态timer时间片和可信准备期限，已接原生create及构造加载/发布、父wait退出结果、可靠固定镜像观察及CHILD/LIFE提示；完整信号/阻塞调度、用户ELF运行库及系统服务仍待接。
+面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询与消息IPC原生调用，以及协作yield和IPC阻塞/唤醒，已接用户态timer时间片和可信准备期限，已接原生create及构造加载/发布、父wait退出结果、可靠固定镜像观察及CHILD/LIFE提示，已有独立libsys与静态C用户ELF验证；完整信号/阻塞调度、csu/libc、普通ELF装载及系统服务仍待接。
 
 ![架构图](docs/architecture.jpg)
 
@@ -13,6 +13,8 @@ make ARCH=riscv
 make ARCH=arm64
 make unit
 make fmt-check
+make sdk ARCH=riscv
+make sdk ARCH=arm64
 ```
 
 产物在 `build/<架构>/normal/kernel.elf`；`make hardware ARCH=...` 仍可单独构建保留硬件归档。
@@ -58,6 +60,7 @@ make scenario ARCH=arm64 CASE=stats
 make scenario ARCH=arm64 CASE=createauth
 make scenario ARCH=arm64 CASE=sigreserve
 make scenario ARCH=arm64 CASE=spawn
+make scenario ARCH=arm64 CASE=libsys
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
@@ -80,7 +83,7 @@ make test-qemu OPENSBI="$OPENSBI"
 主机从QMP导出全部有效页表到 `tables/`，逐页检查RAM范围、权限、设备属性、固件排除、guard及无额外别名。构建ELF仍使用物理装载地址，高半区运行地址见串口VM记录。
 `CASE=seal` 验证写别名拒绝封存、封存后写路径拒绝、真实新代码执行及完整回收。`CASE=user` 使用64 KiB用户栈和只读Boot头，验证U/EL0整数/FP初始清零和往返，以及Boot/CODE只读、内核隔离、栈guard/NX；它不是ELF加载、csu、init或原生syscall实现。
 `CASE=switch` 验证112字节内核切换现场、独立guard栈上两次挂起/恢复、被调用者保存寄存器及栈回收；完整时间片/阻塞调度仍未接入。
-`test-all` 运行主机测试、格式检查、两架构三十九个基础场景及四个RAM配置，共八十二个QEMU场景；任一步失败即失败。`bench` 尚未实现并明确失败。
+`test-all` 运行主机测试、格式检查、两架构四十个基础场景及四个RAM配置，共八十四个QEMU场景；任一步失败即失败。`bench` 尚未实现并明确失败。
 `CASE=stacks` 验证默认64个计费内核栈、独占叶表、分步失败回滚、续点持有/切离后回收与观测水位；user场景也已迁到独立计费栈，完成陷阱后切回CPU启动栈再回收。
 `CASE=locals` 验证128槽、授权子窗口/减权、封存及独立引用，并覆盖固定镜像CALL/NOTIFY入口、复制及旧入口失效/释放；`life`验证默认256份保留结果、运行槽复用和清理引用；`procs`验证默认63个普通运行槽（槽0保留给初始init）、构造失败回滚、发布前复查、两个真实U/EL0入口以及退出后CPU分批回收。这些构造场景为可信内核/测试接入，未提供原生create/start/grant/wait。
 `CASE=prep` 验证父通过准备权为孩子Acct分配、临时映射发布屏障、旧加载权失效及取消后的费用滞留；`CASE=syscalls` 则通过三个真实用户程序验证自身内存syscall、协作yield/FP保持、动态代码执行及unmap后硬件故障，不使用测试陷阱回调；也检查真实硬件计数推进及time/getres寄存器结果。
@@ -136,3 +139,5 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 `CASE=spawn`使用真实用户程序调用create、为孩子分配/装载CODE/栈/Boot、CONFIG grant、configure/start并完成IPC和exit；验证凭据/限额、三准备与满表失败回滚、SERVICE两输出槽、别名发布屏障及destroy续点被另一用户terminate后的回收。CREATE权由可信fixture安装，孩子结果由真实用户父通过原生wait收取，覆盖阻塞/WNOHANG、PID/任意孩子/冻结组选择、重复收取CHILD错误及CHILD事件；不是ELF/csu/POSIX spawn或生产init清单发权验收。
 
 `creds`另验证原生observe/obsread/obsnext/obsack/obsdrop：SOURCE/CHILD的真实REQUEST关联、MONITOR显式CONTROL QUERY、合并LIFE、DRAINING与证明释放、旧cookie不跟随槽复用及观察者死亡回收；含OBSERVE原生grant的准备期配额安装。host覆盖每服务128/系统1024预付、表满终态枚举、撤权后既有记录和cookie代次耗尽。测试permit由可信fixture安装；生产清单、真实exec/FUTURE和FS业务清理仍待接。
+
+`make sdk ARCH=...`输出build/<架构>/sdk/中的公共头、私有运行时桩头、libsys.a、user.ld及独立自定义入口的libsysuser.elf；不链接libc/fs/net，并审计全部库对象的未解析符号。SDK单元合入compile_commands.json。`CASE=libsys`按预校验装载描述将该实际ELF映射到两个可信fixture构造的用户进程，验证Boot、BSS/数据、内存和IPC/退出及完整回收。尚无csu/main、可写argv/environ、普通用户ELF加载器或生产init清单，normal仍初始化后停止。

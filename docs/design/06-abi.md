@@ -326,3 +326,5 @@ RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主�
 原生wait接续（2026-11-16）：用户确认新增ERR_CHILD=22。没有匹配且可收取的孩子返回-CHILD；存在匹配活孩子但尚无结果时，WNOHANG成功且全部输出0，否则阻塞。selector=0在受理时冻结当前组，不能编码为-PGID而与PGID1/任意孩子混淆；INT64_MIN返回INVALID。当前仅实现EXITED结果，WUNTRACED/WCONTINUED接受但尚无STOP/CONT结果源。接入及验证边界见03末尾。
 
 观察原生入口接续（2026-11-16）：0x50..0x54已按既定五/一输入接通，未用寄存器仍必须0，失败输出全0。共享常量为abi/observe.h；cookie为u64，不能按Handle类别或有符号PID解释。obsread/ack/drop可操作本镜像既有cookie而不再要求旧permit/basis仍有效，登记仍先检查两者。RESOURCE查询已识别OBSERVE子类型9，只输出类型/业务权与本地Handle，不暴露内部预付区或Image索引。精确配额/退出清理及本地验证边界见10末尾。
+
+libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，不增加内核通用调用号。RV a7输入调用号与输出最后业务字均被正确保存，ARM x7输入归0、x9输出镜像；status按C返回、其余8字直接写64字节结果区。sys/channel.h的Ipcmsg以布局断言匹配，错误携带RPC也保留。__sys_enter和__sys_*声明只在SDK private/syscall.h；普通应用使用公开ipc_*或后续Unix API。完整库对象合并审计无外部运行时符号，两架构真实独立C ELF已验证部分原生接口；其余运行库/信号适配不因桩存在而自动完成，范围见08末尾。

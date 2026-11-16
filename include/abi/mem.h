@@ -2,6 +2,9 @@
 #define _ABI_MEM_H
 #include <types.h>
 #include <abi/base.h>
+#define MAP_READ     1
+#define MAP_WRITE    2
+#define MAP_EXEC     4
 #define ALLOC_DATA   1
 #define ALLOC_SHARED 2
 #define ALLOC_CODE   3

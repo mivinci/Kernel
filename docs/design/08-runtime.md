@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：设计规格已逐项修订；独立libsys、Boot校验及静态C用户ELF的局部实现/双架构验证见文末与status。csu/libc、普通装载/exec及文件适配尚未完成，不宣称全运行库、性能或CI验收。
 
 职责修订：普通 spawn/fork/exec 由调用者 libsys、内核及 FS 等服务协调；ELF 加载逻辑为可复用用户态模块，init 仅复用它启动受管服务。exec 不可撤销点后的完成由新 csu/libsys 接续，不能依赖旧镜像。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -392,3 +392,21 @@ exec保留File采用目标独立引用，切换后后端依旧ENDED/目标ACTIVE
 装载器不能猜测孩子SELF的代次/槽值，也不能照抄父Handle。父持本次有效CONSTRUCT/EXEC_VIEW CONFIG，通过query RESOURCE枚举精确准备表，依据SPACE/ALLOC类型取得孩子实际SELF_SPACE/SELF_ALLOC值并写入Boot；不要求额外CONTROL，也不扩展create返回字段。目标PID/image随每条Queryrec核对，准备提交/取消/超期后不得继续查询。查询只是观察，目标本地Handle不因返回给父而变成父本地授权；其他种类及自身读写权限照旧检查。当前实现边界和验证见03末尾，不能用可信测试直接访问proctable冒充原生装载器已获权。
 
 原生装载入口接续（2026-11-16）：两架构spawn的用户程序已通过create/准备期alloc、临时map/write/unmap/seal、CONFIG grant、只读RESOURCE发现、configure/start完成真实孩子运行。载荷是测试中的位置无关二进制代码片段，非通用ELF解析器，也不是csu/libsys/posix_spawn实现；真实文件/参数/fd/服务装载继续按本篇执行。
+
+### libsys、Boot与静态用户ELF接续（2026-11-16）
+
+已建立独立libsys静态库和两架构私有__sys_enter汇编桩。桩一次接收七个输入、补ARM x7=0，保留C ABI被调用者寄存器，status直接按C返回，七个结果字和t0/x9镜像元数据直接写64字节结果区；IPC不经过第二份消息复制。Ipcmsg的kind/source/request/words[4]/image与寄存器对应，错误的原RPC仍保存，不因status<0而丢弃。公开头为sys/channel.h、sys/boot.h，私有syscall.h只供运行时适配，不作为应用兼容API。
+
+当前私有桩已接exit/yield/getid、alloc/free/map/unmap/seal、query/wait；公开IPC接call/send/recv/reply/reply_recv/defer、rqpoll/rqwait/cancel/ack/finish/check及notify。NULL短消息表示四字0；返回消息参数必须有效且非NULL。它们返回原生状态，不写errno，不提供POSIX用户缓冲EFAULT转换或已实现文件适配的承诺。参数、结果及Boot输入内存由调用者保证可访问；受检查copy、信号返回窗口的Rctx接管继续按原设计执行。
+
+Boot/Strref/Resentry/Bootfd共享布局已写入abi/boot.h；资源表上限128，与本地授权槽上限一致。bootcheck检查格式、总长、计数/参数字节开销、范围/对齐、头与各表/修复区互斥、字符串末NUL、资源类别/保留位/重复基础tag、fd范围/重复/保留位。字符串间可以共享，只读字符串不能占元数据区域。有效view只借用保持只读的原Boot；bootarg返回const字符串，bootresource只读取已有Handle，不生成授权。模块自己检查所需资源是否存在；空参数/环境/资源Boot在结构上有效。尚未生成可修改argv/environ，不以这个view代替未来libc环境构造。
+
+新增make sdk ARCH=riscv|arm64，输出build/<架构>/sdk/libsys.a、include（公共sys头/共享abi及types）、private/syscall.h、user.ld与独立测试ELF/预校验镜像。tools/user.py逐目标构建，先把库的全部对象合并审计未解析符号，再链接自定义_start的C用户程序；不只依靠GC后的测试ELF掩盖未用函数中的libc依赖。SDK有版本/命令日志、源码/头/链接脚本/产物哈希及last-run状态；失败不默认为成功。两架构SDK编译记录并入各自及共享compile_commands.json，clangd仍选择最近构建架构。
+
+tools/elf.py为构建期ELF64校验/预校验镜像生成器；检查目标、ET_EXEC/版本/头范围、32程序头上限、动态段/解释器/可执行栈拒绝、文件/内存/溢出/对齐、字节段重叠、执行入口及页权限并集。只读与RX共享边界页合并，产生W+X则拒绝；先按调用者页预算计算合并页数，再物化内容，BSS不覆盖别段有效数据。首版ET_EXEC装载范围为[0x10000,0x3fff000000)，顶部16MiB留给Boot/栈等启动布局。它不是已接FS快照的普通用户态装载器。
+
+预校验镜像沿既定64字节外头/48字节段表，magic固定0x4b494d4730303031、format=1；段表最多64条，覆盖32个原始LOAD的页边界权限分拆。file_off相对整个镜像，bytes为完整镜像长度，段VA/mem_bytes页对齐，尾部零填充由目标Mem保证。kernel/bootimage.c只核验该描述与Boot头的安全边界、范围、保留位和W^X；架构入口对齐仍由Proc configure检查，内核不读取普通ELF头。测试装载器在可信fixture创建的Proc中按描述逐页分配/复制/封存/映射，并补上该主体真实Boot资源；正常镜像尚未启动init。嵌入汇编记录镜像哈希，避免.incbin内容改变后误命中旧对象缓存。
+
+执行与验收：新增CASE=libsys，两架构真实U/EL0程序只链接libsys，以独立C _start读取合法Boot；核对初始BSS/数据/只读常量、实际资源查询、内存申请/清零/解除/释放、异步/同步CALL、SEND及CALL/SEND类型隔离、四个不同64位业务字（含最高位）、source/image、请求检查/defer/确认及旧RPC失效，最后双方exit42并结清页/Set/引用。host覆盖畸形Boot/表与字符串重叠/资源/fd/16KiB边界、ELF对齐/边界共享/巨型BSS预算/描述畸形；模拟中断返回另核对错误携带原RPC且未用输入为0。
+
+本地完整test-all通过227项host、格式及84个QEMU场景；最终返回区布局和错误RPC反例补齐后再跑完整228项host、格式及两架构libsys。日志归档在build/host/stage32-libsys/。自定义入口验证的是可替换运行时基础；csu/main、可写argv/environ、libc/errno/exit回调、普通用户ELF加载、生产init/启动包和服务清单仍未接，不能称运行库/装载/操作系统已全部完成。
