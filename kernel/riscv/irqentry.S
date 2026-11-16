@@ -21,7 +21,11 @@ kernelvectors:
  j hal_halt
  .endr
  j kernelirqentry
- .rept 10
+ .rept 3
+ j hal_halt
+ .endr
+ j kernelirqentry
+ .rept 6
  j hal_halt
  .endr
 kernelirqentry:

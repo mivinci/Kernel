@@ -10,6 +10,7 @@
 #include <abi/syscall.h>
 #include <event.h>
 #include <signal.h>
+#include <irq.h>
 
 typedef struct Proc     Proc;
 typedef union Procstage Procstage;
@@ -33,12 +34,14 @@ union Procstage
     u32 kind, options;
   } wait;
 };
-#define WAIT_RECV    PROCESS_WAIT_RECV
-#define WAIT_RESULT  PROCESS_WAIT_RESULT
-#define WAIT_FINISH  PROCESS_WAIT_FINISH
-#define WAIT_DESTROY PROCESS_WAIT_DESTROY
-#define WAIT_CHILD   PROCESS_WAIT_CHILD
-#define WAIT_SIGNAL  PROCESS_WAIT_SIGNAL
+#define WAIT_RECV       PROCESS_WAIT_RECV
+#define WAIT_RESULT     PROCESS_WAIT_RESULT
+#define WAIT_FINISH     PROCESS_WAIT_FINISH
+#define WAIT_DESTROY    PROCESS_WAIT_DESTROY
+#define WAIT_CHILD      PROCESS_WAIT_CHILD
+#define WAIT_SIGNAL     PROCESS_WAIT_SIGNAL
+#define INTERRUPT_TIMER 1
+#define INTERRUPT_READY 2
 #ifndef WAIT_DEPTH
 #define WAIT_DEPTH 64
 #endif
@@ -73,7 +76,7 @@ static Hkctx cpu;
 static u32   vm_paused, timer_enabled;
 static u64   timer_interval, timer_ticks, kernel_ticks;
 static u64   dispatched;
-static u32   timer_requested;
+static u32   reschedule_requested;
 static u32   readyhead = PG_NONE, readytail = PG_NONE;
 
 static Handle
@@ -83,6 +86,7 @@ pidof(const Proc *p)
   return slot == 0 && p->generation == 1 ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
 }
 static void wakeone(Proc *p);
+static void ready(Proc *p);
 static Proc *
 find(Handle pid)
 {
@@ -592,7 +596,7 @@ procrunone(void)
     panic("process ready queue");
   current = p;
   p->state = PROC_RUNNING;
-  timer_requested = 0;
+  reschedule_requested = 0;
   if (spaceactivate(p->space))
     panic("process root activation");
   if (timer_enabled) {
@@ -600,8 +604,8 @@ procrunone(void)
     if (ticks > ~(u64) 0 - timer_interval)
       panic("timer counter range");
     hal_timer_set(ticks + timer_interval);
-    hal_user_irq(p->user, 1);
   }
+  hal_user_irq(p->user, 1);
   if (clockmono(&dispatched))
     panic("dispatch clock range");
   hal_ctx_switch(&cpu, &p->kernel);
@@ -873,7 +877,7 @@ proctimerstart(void)
     return -ERR_OVERFLOW;
   timer_interval = interval;
   timer_ticks = kernel_ticks = 0;
-  timer_requested = 0;
+  reschedule_requested = 0;
   timer_enabled = 1;
   hal_timer_set(ticks + timer_interval);
   return 0;
@@ -884,17 +888,13 @@ procticks(void)
   return timer_ticks;
 }
 static int
-timerfire(void)
+interruptfire(void)
 {
   u64 now, ticks;
   u32 i;
   int ack;
-  if (!timer_enabled)
-    panic("timer not enabled");
-  ack = hal_timer_ack();
-  if (ack < 0)
-    panic("unexpected IRQ");
-  if (ack) {
+  ack = timer_enabled ? hal_timer_ack() : 0;
+  if (ack > 0) {
     timer_ticks++;
     if (clockmono(&now) || prepexpire(now, 8) < 0)
       panic("timer preparation expiry");
@@ -909,25 +909,52 @@ timerfire(void)
       panic("timer counter range");
     hal_timer_set(ticks + timer_interval);
   }
-  return ack;
+  if (ack > 0)
+    return INTERRUPT_TIMER;
+  {
+    u64     token = hal_irq_claim();
+    Imageid target;
+    Image   image;
+    Proc   *owner;
+    int     delivered;
+    if (token) {
+      delivered = irqfire(token, &target);
+      if (delivered < 0)
+        panic("unregistered IRQ");
+      if (delivered) {
+        if (imagestat(target, &image) || !(owner = find(image.pid)) ||
+            owner->identity.generation != target.generation ||
+            owner->identity.index != target.index)
+          panic("IRQ owner identity");
+        if (owner->state == PROC_BLOCKED && owner->stage.wait.kind == WAIT_RECV &&
+            (owner->events.pending & owner->stage.wait.subject.mask)) {
+          owner->stage.wait.subject.peer = 0;
+          ready(owner);
+        }
+        if (current && owner != current && owner->state == PROC_READY)
+          return INTERRUPT_READY;
+      }
+    }
+  }
+  return 0;
 }
 NORETURN void
-proctimertrap(Hctx *context)
+procinterrupttrap(Hctx *context)
 {
-  if (!timer_enabled || !proccurrent(context) || vm_paused)
-    panic("timer trap source");
-  if (timerfire())
+  if (!proccurrent(context) || vm_paused)
+    panic("interrupt trap source");
+  if (interruptfire())
     procyield();
   procuserreturn(context);
 }
 void
 prockernelirq(void)
 {
-  if (timerfire()) {
+  int fired = interruptfire();
+  if (fired & INTERRUPT_TIMER)
     kernel_ticks++;
-    if (current)
-      timer_requested = 1;
-  }
+  if (fired && current)
+    reschedule_requested = 1;
 }
 u64
 prockernelticks(void)
@@ -940,18 +967,20 @@ proccheckpoint(void)
   /* Caller has masked IRQs and released transient VM/commit state. */
   if (!current || current->state != PROC_RUNNING || vm_paused)
     panic("process checkpoint source");
-  if (timer_requested) {
-    timer_requested = 0;
+  if (reschedule_requested) {
+    reschedule_requested = 0;
     procyield();
   }
 }
 int
 procidle(void)
 {
-  if (current || vm_paused || !timer_enabled)
+  if (current || vm_paused)
     return -ERR_STATE;
   if (readyhead != PG_NONE)
     return 0;
+  if (!timer_enabled && !irqwaiting())
+    return -ERR_STATE;
   hal_idle();
   if (procwork(1) < 0 || prepwork(1) < 0)
     panic("idle cleanup");
@@ -1395,6 +1424,32 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
 }
 
 int
+procirqinstall(Handle pid, u32 number, u32 bit, Handle *out)
+{
+  Proc *target = find(pid);
+  u32   source;
+  int   error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!target)
+    return -ERR_STALE;
+  if (target->state != PROC_CONSTRUCT && target->state != PROC_READY &&
+      target->state != PROC_RUNNING && target->state != PROC_BLOCKED)
+    return -ERR_STATE;
+  error = irqsource(number, &source);
+  return error ? error
+               : localirqbind(&target->resources, target->identity, &target->events, source, bit,
+                              out);
+}
+int
+procirqack(Handle binding)
+{
+  if (!current || current->state != PROC_RUNNING)
+    return -ERR_STATE;
+  return localirqack(&current->resources, binding, current->identity);
+}
+int
 procsiginstall(Handle pid, u32 signum, const Sigact *action)
 {
   Proc *p = find(pid);
@@ -1570,6 +1625,13 @@ controlproc(Rtable *source, Handle authority, u64 rights, Proc **out, u64 *grant
   if (granted)
     *granted = available;
   return 0;
+}
+int
+procirqunbind(Rtable *source, Handle authority, Handle binding)
+{
+  Proc *target;
+  int   error = controlproc(source, authority, CONTROL_IRQ, &target, NULL);
+  return error ? error : localirqunbind(&target->resources, binding, target->identity);
 }
 static int
 prepareproc(Rtable *source, Handle authority, u64 rights, Proc **out)

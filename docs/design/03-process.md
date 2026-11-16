@@ -1324,3 +1324,5 @@ SHARED授权接续（2026-11-16）：固定CONTROL/准备CONFIG的grant/revoke�
 ### 信号独占等待接续（2026-11-17）
 
 原生sigsuspend复用Procstage与线程既有计费内核栈，wait_kind扩充SIGNAL=6，无Rq、组或额外等待对象引用。原M保存在该调用的既有C续点，安装W/检查pending/登记/撤用户根全程IRQ屏蔽；切CPU后仅可递送信号使其入READY。唤醒回原C续点复核，捕获时将M交给下一预付Sigctx的restore_mask，原syscall退栈后才进入handler；杀死BLOCKED或已醒READY的续点时，镜像终结清空银行，离栈清理丢弃其C续点，不伪造请求收尾。普通阻塞call/recv/wait的信号中断仍未接，可信排队只额外允许这个独占信号等待。实际场景与验证见11末尾。
+
+IRQ递送/调度接续（2026-11-17）：用户现场默认开启IRQ，是否启用时间片仍独立；无timer且存在ARMED绑定时CPU可idle等待设备。外设只向固定Image的持久Event位提交，不改用户寄存器或泛化打断同步请求；唤醒另一READY驱动在用户安全出口按FIFO让出，内核只设置reschedule_requested并在已有安全检查点响应，不把外设记为timer tick。imageend立即撤下绑定，CPU稍后释放Local池记录；细节与真实IRQ/伙伴进展验收见05末尾。

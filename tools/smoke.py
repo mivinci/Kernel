@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "irqbind":
+        if ready != ["READY irqbind-restored"] or panics or traps:
+            raise SmokeError("IRQ binding test did not finish")
     elif case == "irqchip":
         if ready != ["READY irqchip-restored"] or panics or traps:
             raise SmokeError("interrupt controller test did not finish")
@@ -529,6 +532,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY irqbind-restored\n" if args.case == "irqbind" else
                     "READY irqchip-restored\n" if args.case == "irqchip" else
                     "READY sigsuspend-restored\n" if args.case == "sigsuspend" else
                     "READY sigframe-restored\n" if args.case == "sigframe" else
@@ -632,6 +636,11 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "irqbind":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("IRQBINDCHECK ")]
+                    if checks != [dict(cases=7,received=5,stale=5,early=3,revoked=2,busy=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("IRQ delivery/lifetime/local handle mismatch")
+                    record["irq_bindings"]=checks[0]
                 if args.case == "irqchip":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("IRQCHIPCHECK ")]
                     uart=next(device for device in record["discovery"]["devices"] if device["kind"] in (1,2))
@@ -879,7 +888,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

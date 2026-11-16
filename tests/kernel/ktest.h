@@ -5,6 +5,7 @@
 #include <dtb.h>
 void testmain(Hvs *space, const Dtinfo *hardware);
 void chiptest(const Dtinfo *hardware);
+void bindtest(const Dtinfo *hardware);
 void pgtest(void);
 void vmtest(Hvs *space);
 void arch_probe(void);

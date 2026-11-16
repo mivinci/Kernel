@@ -71,6 +71,7 @@ syscall(Hctx *context)
   case SYS_GRANT:
     used = 63;
     break;
+  case SYS_IRQUNBIND:
   case SYS_SIGMASK:
   case SYS_WAIT:
   case SYS_CREATE:
@@ -108,6 +109,7 @@ syscall(Hctx *context)
   case SYS_RQCHECK:
     used = 1;
     break;
+  case SYS_IRQACK:
   case SYS_SIGRETURN:
   case SYS_SIGSUSPEND:
   case SYS_OBSREAD:
@@ -233,6 +235,12 @@ syscall(Hctx *context)
         outputs[2] |= WAIT_FAULT;
       outputs[3] = child.sequence;
     }
+    break;
+  case SYS_IRQACK:
+    status = procirqack((Handle) args[0]);
+    break;
+  case SYS_IRQUNBIND:
+    status = procirqunbind(table, (Handle) args[0], (Handle) args[1]);
     break;
   case SYS_GETPG:
     status = procgetpg((Handle) args[0], &handle, &pid);

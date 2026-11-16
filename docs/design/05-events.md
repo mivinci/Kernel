@@ -306,3 +306,25 @@ LIFE观察提示接续（2026-11-16）：已接有界服务观察表与EVENT_LIF
 01末尾已接GICv2/PLIC的HAL初始化、认领、屏蔽、完成和重开，CPU IRQ关闭时的真实UART请求/timer及ARM SGI0专项验证见01。完成前的屏蔽按各控制器语义实现，PLIC保留enable并用priority0阻断投递，GIC用源禁用及原IAR的EOI。该层只持硬件状态，无Proc/Rq、动态分配或设备业务；IRQ_SOURCE/IRQ_BIND、事件独占位/代次/原生0x70..0x72与驱动退出撤销仍未实现。当前原生timer IRQ路径遇意外外设仍受控失败，不能声称已经能向用户驱动递送事件。
 
 该HAL切片最终完整回归为312项host/格式/100个双架构QEMU，通过；证据build/host/stage50-irq-controller/，没有把HAL轮询验证称为原生驱动事件系统验收。
+
+### 开放问题：IRQ_SOURCE撤销与既有绑定（待用户确认）
+
+原文只规定“授权撤销时屏蔽并解除投递”，未区分创建绑定的IRQ_SOURCE与驱动持有的IRQ_BIND。候选：删除/撤销某份IRQ_SOURCE只拒绝该份授权的后续bind；独立IRQ_BIND继续由目标镜像持有，IRQ_BIND撤销、irqunbind或镜像结束才屏蔽并清事件。这样不把管理者某个源副本的删除当作撤销所有派生绑定；与现有独立授权行为一致。该候选尚未确认，不依赖此选择的绑定状态、ACK、事件递送和目标终结清理已接，见下节；IRQ_SOURCE授权/原生bind仍未实现，不提前采用候选源撤销行为。
+
+### IRQ绑定状态与真实递送接续（2026-11-17）
+
+已接固定64份Binding（每份56字节）及不可变启动IRQ库存，来源只取已验证DTB/HAL描述，不把任意整数变成用户授权。绑定精确持有Imageid、完整PID、独占bit16..31及目标Event；每份活绑定持1个Image cleanup引用和目标本地IRQ_BIND ACK槽（子类型11、仅ACK、不转授/继承）。按PID槽组织最多16份的所有者链，结束镜像不用扫描其他驱动；全局库存/记录/头部在默认配置共4360字节固定BSS，无中断期分配。
+
+当前创建仅经可信内核procirqinstall，生产IRQ_SOURCE授权及原生0x70 irqbind继续NOTSUP，等待前节源撤销取舍；可信fixture不是用户绑定管理入口。已接原生0x71 irqack和0x72 irqunbind及私有libsys桩，未用输入必须0，错误输出0。ACK只解析当前本地IRQ_BIND与当前Image；unbind要求目标CONTROL IRQ，再在目标表解析确认Handle，不要求泛化INSTALL，不把QUERY或认识PID当权力。
+
+状态例：可信安装到PREPARING镜像→DISABLED，源屏蔽、位/Local/Image引用同时取得；发布前不能ACK。镜像ACTIVE后首次ACK→ARMED；真实认领→HAL屏蔽/完成→DELIVERED并置持久IRQ位。事件未取走时ACK为STATE；recv取走位后ACK→ARMED，ARMED重复ACK仍STATE。位/源已占、表/池满、错误Image或输入失败不先屏蔽旧所有者，也不取半份引用。IRQ事件仍为提示，words[1]不增加绑定代次，words[2..3]/source/request/image为0；设备队列/中断条件处理由驱动负责，内核不假装验证它们。
+
+Image结束在imageend提交点立即逐项屏蔽、清该绑定pending、解除源/位并放Image引用，状态REVOKED且不再保留Event指针；这覆盖正常退出、故障、强杀、准备取消/超期及类型化旧Image替换。REVOKED记录只占池槽，等Local CPU离栈清理最终释放，代次不回绕；旧Local/内部ID不能重新开放，迟到释放也不能mask新所有者。驱动free确认槽、CONTROL REVOKE和显式irqunbind同样先拆绑定再删槽。解绑只停止软件投递，不证明DMA停止，也不保证物理控制器没有旧锁存提示；新驱动初始化/设备恢复另守09规则。
+
+GIC timer ACK遇外设时保留完整IAR token并返回待取状态，通用入口立即从hal_irq_claim取这同一个token再处理，不重新读IAR丢弃旧认领。RV64内核向量9现与timer向量5同走全现场入口；保留原idle-WFI重开窗口跳过机制。用户现场入口默认允许IRQ，时间片仍由proctimerstart单独启用；无timer时可因已ARMED IRQ进入CPU idle并醒来。事件仅唤醒掩码包含该bit的RECV，不扫观察表/其他请求，不打断call/rqwait。唤醒其他READY驱动时用户IRQ出口按FIFO让出，内核IRQ只请求安全检查点；外设不虚增timer_ticks/kernel_ticks。
+
+反例：驱动BLOCKED在recv，IRQ使其READY但尚未回C续点；管理者unbind清位后，旧recv恢复重新检查并回BLOCKED，不能交付一次假事件。旧镜像结束且源给新Image后，旧确认/迟到Local清理不得屏蔽新绑定。无timer的忙用户也不能在IRQ已唤醒另一驱动后永占CPU：新验收用不主动yield的伙伴，确认真实IRQ导致FIFO切离且两类timer计数仍0，再强杀其已保存IRQ C续点而驱动绑定仍有效。
+
+host新增9项覆盖发布/ACK/消费、失败不影响旧源与引用、跨Image/运行槽复用、构造取消、REVOKED池责任、Local不转授/继承与释放、重复/未绑定认领，以及低代次注入耗尽后OVERFLOW不回绕。默认代次为完整u64；测试只用编译上限2模拟不可实际穷举的耗尽。HAL shim只验证状态与引用，不代替硬件证明。
+
+CASE=irqbind两架构各7个驱动案例另含1个忙伙伴：U/EL0外设IRQ、EL1/CPU idle递送、无timer/timer共存、错误授权/保留输入、消费前ACK、旧Handle、新唤醒后解绑重等、正常free/unbind/退出、强杀与未发布取消。5次真实用户EVENT消费/FP舍入恢复、5次陈旧Handle拒绝、3次消费前ACK拒绝，CPU独立核对生命周期及每例池槽/页/Set/Acct回收。测试设备处理仍由tests/kernel的UART刺激/清理桥完成，不称用户MMIO权限或生产serial驱动已交付。最终源码完整make test-all通过321项host、格式及102个RV64/ARM64 QEMU，包含上述忙伙伴和最终池槽失效断言；专项9项host及格式另通过，SDK单向审计通过。日志、102个原始目录和关键源码哈希在build/host/stage51-irq-delivery/。未执行CI/目标真实硬件/性能验收，原生bind与IRQ_SOURCE仍待确认，不将可信安装当用户绑定准入已交付。

@@ -344,3 +344,7 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 原生sigreturn接续（2026-11-17）：0x65仅一个frame输入，其余输入必须0；成功直接恢复完整用户现场，不返回普通状态/不再次推进PC；坏输入或帧验证失败不可恢复SIGSEGV退出。私有libsys提供NORETURN __sys_sigreturn，实际帧/权限/cookie和验证见11末尾。HANDLER原生注册和信号来源/中断重启尚未开放，不将此入口称为完整信号ABI可用。
 
 原生sigsuspend接续（2026-11-17）：0x63一个mask输入，其他输入必须0；未知mask位INVALID且原掩码不变，KILL/STOP位规范清除。保存原M后原子安装临时W、检查可递送pending并登记PROCESS_WAIT_SIGNAL=6；捕获后先固定INTERRUPTED返回现场，沿原C栈退至统一出口建立handler H帧，帧restore_mask取M。正常sigreturn恢复M后原调用返回-INTERRUPTED，不返回成功，不因普通IPC通知/事件假醒；默认终止不返回。两层满额时捕获信号仍pending，默认终止可越过满层的较低编号捕获信号；STOP/CONT真实源尚未接，不能由此声称已验其状态语义。
+
+IRQ原生接续（2026-11-17）：已接0x71单输入IRQ_BIND ACK及0x72双输入CONTROL IRQ/目标本地binding，未用输入INVALID、失败输出0、成功无额外结果。确认槽为RESOURCE子类型11，仅ACK=1、inherit=0，不转授；Local free/revoke即拆绑定。资源查询仍按冻结字段，不暴露Event指针或内部ID。0x70/source权限仍待05的IRQ_SOURCE撤销决策，继续NOTSUP，不将可信安装当原生bind权限验证。
+
+上述ACK/解绑及生命周期的最终完整回归通过321项host和102个双架构QEMU；未用输入、外表Handle、旧代、消费边界和真实硬件EVENT由05的新场景核验。0x70保留NOTSUP，Source撤销决策未采用候选默认。

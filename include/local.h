@@ -8,6 +8,7 @@
 #include <abi/ipc.h>
 #include <prepid.h>
 #include <image.h>
+#include <irq.h>
 #define LOCALS          128
 #define LOCAL_CREATE    1
 #define LOCAL_SPACE     2
@@ -18,6 +19,7 @@
 #define LOCAL_NOTIFY    7
 #define LOCAL_CONTROL   8
 #define LOCAL_OBSERVE   9
+#define LOCAL_IRQ_BIND  11
 #define LOCAL_USE       1
 #define LOCAL_CONSTRUCT 14
 #define LOCAL_LOAD      4
@@ -92,6 +94,10 @@ int localendpoint(Rtable *table, Imageid target, u32 kind, u64 rights, u64 bits,
                   Handle *out);
 int localcontrol(Rtable *table, Lifeid life, u64 rights, Handle *out);
 int localobserve(Rtable *table, u64 rights, Handle *out);
+/* Trusted target installation; no raw-number native bind admission here. */
+int localirqbind(Rtable *table, Imageid image, Event *event, u32 source, u32 bit, Handle *out);
+int localirqack(Rtable *table, Handle binding, Imageid image);
+int localirqunbind(Rtable *table, Handle binding, Imageid image);
 int localobserver(Rtable *table, Handle permit, u32 relation);
 int localcontrolled(Rtable *table, Handle control, u64 rights, Lifeid *life, u64 *available);
 int localconnect(Rtable *table, Handle authority, u64 kind, u64 rights, u64 bits, Handle *out);

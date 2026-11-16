@@ -62,9 +62,13 @@ int     procconfigure(Handle pid, const Config *config, u32 reserve);
 int     procpublish(Handle pid);
 int     procdestroy(Handle pid);
 /* CPU dispatcher selects one runnable continuation with IRQs masked. */
-int           procrunone(void);
-Rtable       *proccurrent(struct Hctx *frame);
-isize         procipc(u64 number, const u64 args[7], u64 outputs[8]);
+int     procrunone(void);
+Rtable *proccurrent(struct Hctx *frame);
+isize   procipc(u64 number, const u64 args[7], u64 outputs[8]);
+/* Trusted fixture/boot installation; raw IRQ numbers are not native authority. */
+int           procirqinstall(Handle pid, u32 number, u32 bit, Handle *out);
+int           procirqack(Handle binding);
+int           procirqunbind(Rtable *source, Handle authority, Handle binding);
 int           procsiginstall(Handle pid, u32 signum, const Sigact *action);
 int           procsigqueue(Handle pid, const Siginfo *info);
 NORETURN void procsigreturn(u64 frame);
@@ -91,5 +95,5 @@ u64           prockernelticks(void);
 void          prockernelirq(void);
 void          proccheckpoint(void);
 int           procidle(void);
-NORETURN void proctimertrap(struct Hctx *context);
+NORETURN void procinterrupttrap(struct Hctx *context);
 #endif

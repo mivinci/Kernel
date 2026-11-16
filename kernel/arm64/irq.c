@@ -5,6 +5,7 @@ static u64 distributor, cpu;
 static u32 timerirq, lines;
 static u32 allowed[32];
 static u64 active;
+static u32 deferred;
 static void
 write32(u64 base, u32 offset, u32 value)
 {
@@ -105,6 +106,10 @@ u64
 hal_irq_claim(void)
 {
   u32 raw;
+  if (deferred) {
+    deferred = 0;
+    return active;
+  }
   if (!cpu || active)
     panic("IRQ claim order");
   raw = read32(cpu, 0xc);
@@ -129,7 +134,7 @@ hal_irq_mask(u32 number)
 void
 hal_irq_complete(u64 token)
 {
-  if (!cpu || !token || token != active)
+  if (!cpu || !token || token != active || deferred)
     panic("IRQ completion order");
   __asm__ __volatile__("dsb sy" ::: "memory");
   write32(cpu, 0x10, (u32) (token - 1));
@@ -161,10 +166,12 @@ hal_timer_ack(void)
   number = hal_irq_number(token);
   if (number == timerirq)
     __asm__ __volatile__("msr cntv_ctl_el0, xzr; isb" ::: "memory");
-  else
-    hal_irq_mask(number);
+  else {
+    deferred = 1;
+    return -1;
+  }
   hal_irq_complete(token);
-  return number == timerirq ? 1 : -1;
+  return 1;
 }
 u64
 hal_irq_save(void)

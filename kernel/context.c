@@ -11,7 +11,7 @@ usertrap(Hctx *context)
   Htrap trap;
   hal_trap_decode(context, &trap);
   if (trap.fromuser && (trap.kind == HT_TIMER || trap.kind == HT_IRQ))
-    proctimertrap(context);
+    procinterrupttrap(context);
 #if BOOT_CASE == 16
   usertesttrap(context);
 #elif BOOT_CASE == 21

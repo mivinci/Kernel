@@ -341,3 +341,7 @@ CASE=irqchip在CPU全局IRQ始终屏蔽时，使用真实UART THRE/TX状态作�
 新增6项host覆盖真实父关系/共享线去重、描述符失败不改输出、容量、PLIC CPU上下文同父、最小硬件窗口和范围/重叠拒绝。初次测试的GIC UP target=0及PLIC未处理设备便期待重复请求均已通过实际寄存器观测并对照QEMU源码修正，未在错误硬件状态上堆软件补偿；失败原始运行目录保留。测试UART寄存器操作仅在tests/kernel架构载荷，不进入normal镜像或生产设备协议。
 
 机制依据：[PLIC 1.0.0 ratified](https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc)、[Arm GICv2 IAR/EOIR处理规则](https://support.arm.com/documentation/ihi0048/b/Interrupt-Handling-and-Prioritization/General-handling-of-interrupts?lang=en)，QEMU 11.1.3的[PLIC](https://github.com/qemu/qemu/blob/v11.1.3/hw/intc/sifive_plic.c)、[GIC](https://github.com/qemu/qemu/blob/v11.1.3/hw/intc/arm_gic.c)、[16550](https://github.com/qemu/qemu/blob/v11.1.3/hw/char/serial.c)及[PL011](https://github.com/qemu/qemu/blob/v11.1.3/hw/char/pl011.c)用于解释本地观测，不能从模拟器推定未测真实硬件。本地完整make test-all通过312项host、格式和100个两架构QEMU场景，包含原timer/irq的真实陷阱现场回归及两架构新irqchip。最终格式另通过；日志、原始运行目录和关键源码哈希在build/host/stage50-irq-controller/。未执行CI/目标真实硬件/性能验收，原生IRQ绑定及事件生命周期仍待接。
+
+真实外设入口接续（2026-11-17）：GIC非timer认领可暂存并交给紧接的通用hal_irq_claim，保持IAR原值与完成顺序；RV64向量9现接已存在的完整kernelirqentry，不再停机。用户IRQ启用与time-slice开关分离；05的新场景实际覆盖U/EL0与EL1/idle路径、无timer的忙伙伴让出及IRQ C续点强杀。硬件Source/Bind及预算层见05，不增加HAL对Proc/Rq的依赖。
+
+该外设递送切片的最终完整回归为321项host、格式和102个两架构QEMU，通过；证据build/host/stage51-irq-delivery/，其中cooperative与timer两种真实IRQ路径及无timer伙伴进展均已验，不推定未接的设备/DMA/绑定准入策略完成。

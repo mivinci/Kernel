@@ -35,7 +35,8 @@ void hal_irq_mask(u32 number);
 void hal_irq_complete(u64 token);
 void hal_irq_unmask(u32 number);
 int  hal_timer_init(const Htimer *timer);
-/* Mask/ack the timer source before returning; negative means an unexpected IRQ. */
+/* Ack a timer if present. A negative result defers a non-timer claim, which
+   the caller must immediately take via hal_irq_claim and complete. */
 int  hal_timer_ack(void);
 void hal_irq_enable(void);
 /* CPU stack, no lock, IRQs masked on entry and return. */

@@ -1,4 +1,5 @@
 #include <image.h>
+#include <irq.h>
 #include <diag.h>
 static Image images[IMAGES];
 static Image *
@@ -132,6 +133,7 @@ imageend(Imageid id, u32 reason)
   image->state = IMAGE_ENDED;
   image->reason = reason;
   image->reserve = 0;
+  irqend(id);
   return 0;
 }
 static u16 *

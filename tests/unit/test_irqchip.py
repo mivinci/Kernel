@@ -19,7 +19,7 @@ class IrqChipTests(unittest.TestCase):
         for arch in ('riscv','arm64'):
             path=Path(cls.temp.name)/(arch+'.so')
             command=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
-                '-I'+str(ROOT/'include'),str(ROOT/'kernel/irq.c'),str(ROOT/'kernel'/arch/'irqmap.c'),'-o',str(path)]
+                '-I'+str(ROOT/'include'),str(ROOT/'kernel/irqdesc.c'),str(ROOT/'kernel'/arch/'irqmap.c'),'-o',str(path)]
             if sys.platform=='darwin':
                 sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
                 command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]

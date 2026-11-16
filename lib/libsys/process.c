@@ -124,3 +124,18 @@ __sys_setsid(Handle *sid)
   *sid = (Handle) result.values[0];
   return error;
 }
+
+isize
+__sys_irqack(Handle binding)
+{
+  const u64 args[7] = {(u64) binding, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_IRQACK, args, &result);
+}
+isize
+__sys_irqunbind(Handle target, Handle binding)
+{
+  const u64 args[7] = {(u64) target, (u64) binding, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_IRQUNBIND, args, &result);
+}

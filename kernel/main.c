@@ -184,7 +184,7 @@ virtualmain(Hvs *space)
   hal_trap_init();
   if (irqdescribe(&hardware, &controller, sources, HIRQ_SOURCES))
     panic("interrupt controller description");
-  if (hal_irq_init(&controller, windows))
+  if (hal_irq_init(&controller, windows) || irqinit(&controller))
     panic("interrupt controller initialization");
   if (hal_timer_init(&timer))
     panic("timer initialization");

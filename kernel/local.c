@@ -677,6 +677,70 @@ localobserve(Rtable *table, u64 rights, Handle *out)
   publish(table, slot, LOCAL_OBSERVE, owner.generation, owner.index, rights, 0, 0, 0, 0, out);
   return 0;
 }
+static Irqid
+bindingid(const Local *local)
+{
+  Irqid id;
+  id.generation = local->objectgen;
+  id.index = local->object;
+  id.reserved = 0;
+  return id;
+}
+int
+localirqbind(Rtable *table, Imageid image, Event *event, u32 source, u32 bit, Handle *out)
+{
+  Local *slot;
+  Image  target;
+  Irqid  id;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!table || table->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  if (ownedimage(table, image, &target))
+    return -ERR_STALE;
+  slot = empty(table);
+  if (!slot)
+    return sloterror(table);
+  error = irqnew(source, image, event, bit, &id);
+  if (error)
+    return error;
+  publish(table, slot, LOCAL_IRQ_BIND, id.generation, id.index, IRQ_BIND_ACK, 0, 0, 0, 0, out);
+  return 0;
+}
+int
+localirqack(Rtable *table, Handle handle, Imageid image)
+{
+  Local *slot = find(table, handle, LOCAL_IRQ_BIND);
+  Image  target;
+  if (!slot)
+    return -ERR_BAD_HANDLE;
+  if (!(slot->rights & IRQ_BIND_ACK))
+    return -ERR_DENIED;
+  if (ownedimage(table, image, &target))
+    return -ERR_DENIED;
+  return irqack(bindingid(slot), image);
+}
+int
+localirqunbind(Rtable *table, Handle handle, Imageid image)
+{
+  Local *slot = find(table, handle, LOCAL_IRQ_BIND);
+  Image  target;
+  int    error;
+  if (!slot)
+    return -ERR_BAD_HANDLE;
+  if (ownedimage(table, image, &target))
+    return -ERR_DENIED;
+  error = irqcancel(bindingid(slot), image);
+  if (error)
+    return error;
+  if (irqdrop(bindingid(slot)))
+    panic("IRQ local release");
+  slot->subtype = 0;
+  slot->rights = 0;
+  return 0;
+}
 int
 localobserver(Rtable *table, Handle permit, u32 relation)
 {
@@ -1019,6 +1083,13 @@ removeentry(Local *l)
   }
   if (l->subtype == LOCAL_RECEIVE)
     return -ERR_BUSY;
+  if (l->subtype == LOCAL_IRQ_BIND) {
+    if (irqdrop(bindingid(l)))
+      panic("IRQ local reference");
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_CREATE) {
     Setid set;
     set.generation = l->objectgen;
@@ -1118,7 +1189,8 @@ localfree(Rtable *t, Handle h)
 {
   Local *l = find(t, h, 0);
   return l && (l->subtype == LOCAL_MEM || l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND ||
-               l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL)
+               l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL ||
+               l->subtype == LOCAL_IRQ_BIND)
              ? removeentry(l)
              : -ERR_BAD_HANDLE;
 }

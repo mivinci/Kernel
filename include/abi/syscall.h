@@ -33,6 +33,9 @@
 #define SYS_GETPG         0x66
 #define SYS_SETPG         0x67
 #define SYS_SETSID        0x68
+#define SYS_IRQBIND       0x70
+#define SYS_IRQACK        0x71
+#define SYS_IRQUNBIND     0x72
 #define SYS_QUERY         0x73
 #define SYS_GETCRED       0x6d
 #define SYS_TERMINATE     0x44
