@@ -19,12 +19,13 @@ struct Htrap
   u32 kind, fromuser;
   u64 code, address, syscall_nr;
 };
-#define HT_SYSCALL   1
-#define HT_IRQ       2
-#define HT_TIMER     3
-#define HT_PAGEFAULT 4
-#define HT_ILLEGAL   5
-#define HT_OTHER     6
+#define HT_SYSCALL      1
+#define HT_IRQ          2
+#define HT_TIMER        3
+#define HT_PAGEFAULT    4
+#define HT_ILLEGAL      5
+#define HT_OTHER        6
+#define HAL_CONTEXT_BAD -1
 STATIC_ASSERT(sizeof(Hinit) == 24, hinit_size);
 STATIC_ASSERT(sizeof(Htrap) == 32, htrap_size);
 /* IRQs disabled; caller owns independent resident stacks and their lifetimes. */
@@ -34,6 +35,13 @@ void hal_trap_init(void);
 void kerneltrap(Hctx *context);
 void hal_user_init(Hctx *context, const Hinit *initial);
 void hal_user_irq(Hctx *context, u32 enabled);
+/* Register-only signal transition. Caller separately owns/validates the full
+   writable frame, executable mappings, top-frame cookie and PID/image. */
+int hal_signal_enter(Hctx *context, u64 frame, u64 trampoline, u64 handler, u64 flags, u32 signum);
+/* No writes on rejection. GPR/FP and user condition flags can be edited;
+   privilege/IRQ/diagnostic fields are tied to the trusted layer snapshot.
+   out may alias either complete input, but arbitrary partial overlap is not supported. */
+int  hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate);
 u64  hal_syscall_arg(const Hctx *context, u32 slot);
 void hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8]);
 void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);

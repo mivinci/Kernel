@@ -321,3 +321,5 @@ Rq预算实现补充（2026-11-16）：Rq184字节、1024槽共188416字节；Rq
 - [x] 14项runner测试覆盖退出过渡、持续权限拒绝、KILL后残留及失败结果持久化，原有超时/孤儿/相邻组/SIGINT/SIGTERM检查未跳过。
 - [x] 1000次真实孤儿组压力测试通过：实际72次SIGKILL EPERM、834次零信号EPERM，均最终确认组消失；返回后全部心跳稳定。`build/host/stage16-runner/stress-final.log`记录结果及原始产物目录。
 - [x] 完整158项host、格式及68个两架构QEMU场景通过，日志`build/host/stage16-runner/test-all-final.log`；先前诊断/失败日志保留，不以单次复测替代此竞态的修复验证。
+
+信号寄存器边界接续（2026-11-17）：HAL新增纯Hctx入口参数转换与用户恢复校验；架构CSR/PSTATE/FP规则只在对应context.c实现，核心不嵌入架构寄存器分支。恢复失败不写输出，可信用户快照限定特权/IRQ状态；PC/SP映射、frame/cookie/PID/image仍由信号核心负责。两架构sigreserve实测恢复后的真实U/EL0 GPR/FP及ARM条件码，细节/验证边界见11末尾；没有因此开放原生sigreturn或HANDLER。

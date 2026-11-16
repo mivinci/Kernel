@@ -300,3 +300,7 @@ kernel/bootload.c已实现bootimageload，只接受尚未发布的PID1和既有B
 调用者必须将PID1身份取得后的任何装载/配置失败视为致命，不能发布部分镜像或重试同一空间；错误返回保留已建立资源，随后由启动调用者停机，不假装能够撤销/取消初始init。参数/描述外头校验在分配前完成。未来生产启动包只需将包内已核验的init描述和授权完备Boot交给这个函数，其他程序继续用用户态ELF加载器。
 
 CASE=init/initfatal已从测试专用逐页加载改用该内核函数，两架构分别通过。真实PID1只配置8个资源槽即可装载多页ELF，测试独立读取所有目标PTE核对段权限/普通内存属性、Boot R与栈下guard；非PID1及坏Boot flags拒绝。真实用户态孤儿接管和PID1 exit致命行为继续通过。本地243项host/格式及两架构init/initfatal四场景通过，日志build/host/stage36-boot-loader/；其他场景本点未复跑，完整基线仍为stage35。normal仍未接生产包/清单；启动包容器字段待用户确认，本节不提前定义它。
+
+### 开放问题：启动包容器候选（待用户确认）
+
+已提出但尚未冻结/实现：64字节头[magic,format,bytes,machine,count,entries_off,init_index,checksum]；每项64字节[name_off,name_bytes,elf_off,elf_bytes,load_off,load_bytes,flags,reserved]；最多32项、唯一名称、全部引用为包内偏移；仅init带预生成装载描述，其他程序保留原ELF；checksum为FNV-1a 64，仅检测损坏。预算/依赖/授权仍放独立构建清单，不把它们混成文件目录字段。现有bootimageload只消费此前冻结的单镜像描述，不以本候选当作已经可解析的启动包。

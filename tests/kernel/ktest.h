@@ -30,6 +30,10 @@ void sigconfigtest(void);
 void controltest(void);
 void eventtest(void);
 void preptest(void);
+#if BOOT_CASE == 37
+#include <hal/context.h>
+void arch_sigcontext(Hctx *context, u32 mode);
+#endif
 #if BOOT_CASE == 21 || BOOT_CASE == 22
 #include <hal/context.h>
 NORETURN void proctesttrap(Hctx *context);

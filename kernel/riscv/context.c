@@ -1,4 +1,8 @@
 #include <hal/context.h>
+#include <abi/boot.h>
+#include <abi/signal.h>
+STATIC_ASSERT(SIGNAL_FRAME_TF + sizeof(Hctx) == SIGNAL_FRAME_RV_BYTES, signal_context_frame_size);
+STATIC_ASSERT(SIGNAL_FRAME_TF + offsetof(Hctx, fp) == SIGNAL_FRAME_FP, signal_context_fp_offset);
 void
 hal_user_init(Hctx *context, const Hinit *initial)
 {
@@ -69,4 +73,60 @@ hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8])
   hal_syscall_finish(context, status, outputs);
   context->tf.x[5] = status < 0 ? 0 : outputs[7];
   context->tf.x[13] = outputs[2];
+}
+
+static int
+signaladdress(u64 pc, u64 sp)
+{
+  return pc >= BOOT_USER_LO && pc < BOOT_USER_HI && !(pc & (HAL_ENTRY_ALIGN - 1)) &&
+         sp >= BOOT_USER_LO && sp <= BOOT_USER_HI && !(sp & 15);
+}
+int
+hal_signal_enter(Hctx *context, u64 frame, u64 trampoline, u64 handler, u64 flags, u32 signum)
+{
+  if (!context || (context->tf.status & 0x102) || !signaladdress(trampoline, frame) ||
+      !signaladdress(handler, frame) || frame > BOOT_USER_HI - SIGNAL_FRAME_TF - sizeof(Hctx))
+    return HAL_CONTEXT_BAD;
+  context->tf.pc = trampoline;
+  context->tf.x[2] = frame;
+  context->tf.x[1] = 0;
+  context->tf.x[10] = signum;
+  context->tf.x[11] = frame + sizeof(Sighead);
+  context->tf.x[12] = frame + SIGNAL_FRAME_TF;
+  context->tf.x[13] = handler;
+  context->tf.x[14] = frame;
+  context->tf.x[15] = flags;
+  return 0;
+}
+int
+hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate)
+{
+  u64       status, cause, address, fcsr, rounding;
+  u32       i;
+  u8       *destination;
+  const u8 *source;
+  if (!out || !trusted || !candidate || (trusted->tf.status & 0x102) || trusted->tf.x[0] ||
+      candidate->tf.x[0] || candidate->tf.status != trusted->tf.status ||
+      candidate->tf.cause != trusted->tf.cause || candidate->tf.address != trusted->tf.address ||
+      !signaladdress(candidate->tf.pc, candidate->tf.x[2]) || candidate->fp.reserved ||
+      trusted->fp.reserved || ((candidate->fp.fcsr ^ trusted->fp.fcsr) & ~0xffUL))
+    return HAL_CONTEXT_BAD;
+  fcsr = candidate->fp.fcsr;
+  rounding = (fcsr >> 5) & 7;
+  if (rounding > 4 && rounding != ((trusted->fp.fcsr >> 5) & 7))
+    return HAL_CONTEXT_BAD;
+  status = trusted->tf.status & ~0x102UL;
+  cause = trusted->tf.cause;
+  address = trusted->tf.address;
+  destination = (u8 *) out;
+  source = (const u8 *) candidate;
+  for (i = 0; i < sizeof(*out); i++)
+    destination[i] = source[i];
+  out->tf.x[0] = 0;
+  out->tf.status = status;
+  out->tf.cause = cause;
+  out->tf.address = address;
+  out->fp.fcsr = fcsr;
+  out->fp.reserved = 0;
+  return 0;
 }

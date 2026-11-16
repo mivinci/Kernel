@@ -416,3 +416,17 @@ Life仍128字节：原尾部padding容纳当前父child_policy及本实例exit_p
 新增CASE=sigconfig，两架构真实父程序以raw原生接口检查掩码/KILL-STOP清除、非法方式/编号/标志、只读旧动作输出失败保留策略、new/old别名快照及不支持HANDLER显式拒绝。随后真正装载6个csu/main孩子：2个保留结果退出31，4个按IGNORE/NOCLDWAIT自动收取；旧结果在安装IGNORE后仍能领取，新自动收取孩子尚活时WNOHANG=0，阻塞wait在退出后醒来返回ECHILD。孩子自己查询验证IGNORE/掩码继承、NOCLDWAIT flags不随普通创建复制、sigdefault重置及再次configure恢复原基线，失败配置不产生畸形mask。
 
 host新增3项Life策略测试和3项Signal配置测试，覆盖退出提交后不追溯、自动收取后独立观察/清理引用、旧父AUTO不控制未来孤儿退出、掩码/动作profile与不可变基线。可信CPU还核对每份真实child_policy/exit_policy，结束后所有孩子Life、动态页、Set/Acct/组及信号预付归还。本地完整274项host、格式及94个两架构QEMU通过；退出策略快照最终补强后再跑完整274项host、格式及两架构sigconfig专项，日志build/host/stage43-signal-config/。normal未启动生产init，net及完整系统验收仍在目标范围，未运行CI/真实硬件/性能验证。
+
+### 信号上下文HAL转换/恢复契约（2026-11-17）
+
+已加入hal_signal_enter和hal_signal_restore，将目标架构寄存器规则留在kernel/riscv/context.c与kernel/arm64/context.c。它们只转换内核持有的Hctx数据，不直接读用户指针、不操作请求或信号栈层级，不写硬件CSR；真正返回用户仍沿现有完整现场恢复/eret或sret。调用者另须验证完整帧普通可写映射、PC执行/SP写权限、最上层地址/深度/cookie及完整PID/image归属，不能将HAL校验当作sigreturn已经安全完成。
+
+入口转换核对用户地址窗口、PC指令对齐、frame16字节对齐和整个固定前缀/Hctx范围不溢出，再设置PC=trampoline、SP=frame、ra/x30=0及六个冻结参数[signum,frame+64,frame+128,handler,frame,flags]；其余GPR/FP/诊断字段保持原值。参数flags的语义由上层动作快照验证，HAL不擅自决定重启/挂起或处理函数动作。
+
+恢复在任何写输出之前校验全部架构状态。两架构只接受候选PC/SP在既定用户窗口且指令/栈对齐；cause/address是该层诊断快照，不允许用户改写。RV64要求x0=0，sstatus保持可信快照且原快照为U态/内核SIE关闭，再由内核清除SPP/SIE重建用户返回；用户不能通过帧屏蔽时间片或返回S态。ARM64只允许PSTATE.NZCV变化，EL/执行态/DAIF等必须与可信EL0t快照一致，再重建EL0返回。
+
+FP数据寄存器按合法用户编辑恢复。RV64允许fflags和0..4的舍入模式；其他原始frm值仅在等于该层可信原值时保留，不能切换到另一保留模式，其他FCSR位不许变化。ARM64允许FPCR舍入/FZ/DN变化，其他原有合法位须保持；FPSR只允许累计状态字段变化，其他原始字段保持该层可信值，不能因为当前库接口较小而清除合法原环境。两者FP.reserved必须0。拒绝不改目的Hctx；可接受完整out与任一输入精确重合，不支持任意部分重叠。Hctx与Sigframe总长/FP偏移已有编译断言绑定（RV688、ARM944）。
+
+5项新host测试覆盖六参数映射、非法地址/帧入口拒绝无半更新、可编辑GPR/FP/条件码、精确缓冲别名、特权/IRQ/诊断字段篡改、保留FP控制和新保留值拒绝。CASE=sigreserve两架构另执行两次真实用户入口：可信CPU用HAL恢复后的现场进入U/EL0，用户汇编实际检查GPR、FP寄存器、非默认控制及ARM NZCV；RV另外检查原样保留frm7的FCSR值，不把它称为新增合法舍入模式。每次还拒绝8种架构非法恢复且输出全字节保持0xa5，另检查坏frame入口不改原状态；原cookie/预付/回滚/离栈回收断言继续执行。
+
+首次试验中C/汇编同主名输出对象冲突已通过拆分测试文件名修正；后续用户载荷未清零exit未用参数导致首个退出被INVALID拒绝，已按既有ABI清零额外比对寄存器，未放宽内核参数/恢复验证。失败日志保留。本地完整279项host、格式及94个两架构QEMU通过，最终架构实现/用户载荷源码哈希与已验镜像匹配，日志build/host/stage44-signal-context/；原生HANDLER仍NOTSUP，实际用户帧写入、映射/最上层/cookie校验、sigreturn、信号生产/递送/中断重启及libc适配仍待执行，无真实硬件/性能/CI验收。

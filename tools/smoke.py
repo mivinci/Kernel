@@ -670,8 +670,8 @@ def exercise(args, run_dir, record):
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SIGNALCHECK ")]
                     if (len(checks) != 1 or not 0 < checks[0].get("bytes", 0) <= 1024 or
                             checks[0]["bytes"] % 16 or
-                            {k: checks[0].get(k) for k in ("contexts", "cookies", "rollback", "reused", "charged", "allocated")} !=
-                            {"contexts": 2, "cookies": 1, "rollback": 2, "reused": 1, "charged": 0, "allocated": transition["tables"]}):
+                            {k: checks[0].get(k) for k in ("contexts", "restore", "rejected", "cookies", "rollback", "reused", "charged", "allocated")} !=
+                            {"contexts": 2, "restore": 2, "rejected": 16, "cookies": 1, "rollback": 2, "reused": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("signal reservation/reference/reuse mismatch")
                     record["signal_reservations"] = checks[0]
                 if args.case == "createauth":

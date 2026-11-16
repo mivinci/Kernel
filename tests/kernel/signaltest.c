@@ -83,7 +83,7 @@ signaltest(void)
   Life       life;
   Liferesult result;
   u32        bytes, i;
-  u64        cookie, prior, fresh;
+  u64        cookie, prior, fresh, top;
   pgstat(&before);
   REQUIRE(!setcreate(512, 1024, 8, &set));
   REQUIRE(!procnew(set, 1, 64, 128, 8, &pids[0]) && !procinfo(pids[0], &info[0]));
@@ -109,6 +109,8 @@ signaltest(void)
   REQUIRE(!sigstat(info[1].identity, &signal) && signal.pid == pids[1] && !signal.depth);
   REQUIRE(!imagehold(info[1].identity, IMAGE_OBSERVER));
   load(pids[1]);
+  REQUIRE(!kstacktop(info[1].stack, &top));
+  arch_sigcontext((Hctx *) (top - sizeof(Hctx)), 0);
   cookie = 77;
   REQUIRE(sigcookie(info[1].identity, &cookie) == -ERR_STATE && !cookie);
   REQUIRE(!procpublish(pids[1]));
@@ -117,8 +119,17 @@ signaltest(void)
   REQUIRE(!sigcookie(info[1].identity, &cookie) && cookie > prior);
   prior = cookie;
   REQUIRE(sigrelease(info[1].identity) == -ERR_STATE && !sigcheck());
-  REQUIRE(!procrunone() && !lifestat(info[1].life, &life) && life.reason == LIFE_EXIT &&
-          life.code == 42);
+  REQUIRE(!procrunone() && !lifestat(info[1].life, &life));
+  if (life.reason != LIFE_EXIT || life.code != 42) {
+    putstr("SIGCTXRESULT reason=");
+    puthex(life.reason);
+    putstr(" code=");
+    puthex(life.code);
+    putstr(" pc=");
+    puthex(life.fault.pc);
+    putstr("\n");
+  }
+  REQUIRE(life.reason == LIFE_EXIT && life.code == 42);
   REQUIRE(!sigstat(info[1].identity, &signal));
   for (;;) {
     REQUIRE(!procinfo(pids[1], &step));
@@ -143,6 +154,8 @@ signaltest(void)
   REQUIRE(!imagedrop(info[1].identity, IMAGE_OBSERVER));
   REQUIRE(lifestat(info[1].life, &life) == -ERR_STALE);
   load(pids[2]);
+  REQUIRE(!kstacktop(info[2].stack, &top));
+  arch_sigcontext((Hctx *) (top - sizeof(Hctx)), 1);
   cookie = 77;
   REQUIRE(sigcookie(info[1].identity, &cookie) == -ERR_STALE && !cookie);
   REQUIRE(!procpublish(pids[2]));
@@ -163,6 +176,10 @@ signaltest(void)
   puthex(2);
   putstr(" bytes=");
   puthex(bytes);
+  putstr(" restore=");
+  puthex(2);
+  putstr(" rejected=");
+  puthex(16);
   putstr(" cookies=");
   puthex(1);
   putstr(" rollback=");

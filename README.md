@@ -166,3 +166,5 @@ configure现可为镜像预付0..8个资源回复保底空槽；CALL_RECV_MEM/CA
 类型化资源提交核心现可将SHARED MEM/CALL USE安装到原请求预留槽，ACK不回收资源、重复查询不重装。libsys两架构以可信CPU桥提交冻结描述符，验证真实调用者的异步MEM/同步CALL kind=4与可用授权；桥不是原生reply解码，REPLY_RESOURCE仍因参数位置待确认而NOTSUP。
 
 `CASE=sigconfig`验证原生DEFAULT/IGNORE、CHLD NOCLDWAIT、掩码与初始配置，6个真实孩子覆盖旧结果保留/后续自动收取和继承/重复configure；结束动态页/配额/信号预付归零。HANDLER/其他已知flags仍NOTSUP，未接信号pending生产、发送、递送、STOP/CONT或sigreturn，不把这个配置profile称为完整信号。目标仍包括net。
+
+sigreserve场景另检查信号Hctx的HAL转换/恢复边界：拒绝特权/IRQ/诊断篡改和非法FP控制、失败不写输出，恢复后的GPR/FP/NZCV实际进入U/EL0验证。它没有接通用户帧映射/cookie/最上层检查或原生sigreturn，HANDLER仍NOTSUP；细节与证据见11末尾。
