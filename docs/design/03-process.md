@@ -318,6 +318,12 @@ resources/pending用于下调可用量，不改变编译时表布局或运行期
 
 集合上限256页，A与其他成员当前已占200页；A有权创建memlimit=128页的B。create仅为B预付实际需要的栈/记录等费用，不直接再承诺128页，也不使集合变成384页。B后续分配仍逐次受剩余集合额度约束；若create自身必要开销已超过剩余额度，则此次创建失败。
 
+### 普通孩子CREATE上限（2026-11-16用户确认）
+
+创建权低位CREATE_USE=1、CREDENTIAL=2、SERVICE=4。普通孩子获得一份绑定同一Set的CREATE_USE，清除CREDENTIAL/SERVICE/GRANT；单实例内存、exec峰值、资源槽及pending上限全部夹到本次孩子Createarg，而非保留创建者的更高上限。该动作是创建事务内的专门继承，不是运行中grant，不要求父CREATE带GRANT，也不增加Set总预算或实例额度。授权持Set的独立策略引用，源授权撤销不级联撤销已合法安装的孩子授权。
+
+例：A的创建权为128页/256页峰值、16资源槽、pending=2，创建B时指定64/128、8槽、pending=1。B的创建权只能再创建不超过64/128、8槽、pending=1的后代，申请65页或pending=2为DENIED；B不能恢复身份配置、SERVICE或再授予位。A撤销自己的CREATE不撤销B这份授权，B退出/资源表撤销时解除自己的Set引用。三代实际分配及未收取Life仍共同受原Set限额约束，不把继承授权当新总预算。
+
 ### configure 调用契约（已确定）
 
 configure(target, config, reserve_resources) 校验目标管理授权，仅配置从未 start 的实例的初始用户执行环境：入口 `_start`、对齐的用户栈顶、只读 Boot 地址和按启动规则确定的初始信号配置。预算/凭据/授权/作业关系不通过此接口顺便变更。
@@ -758,7 +764,7 @@ RESOURCE 子类型编号固定：1 CREATE、2 SPACE、3 ALLOC、4 MEM、5 CALL�
 
 | 子类型 | 子类型内权限位，从bit0起 | 绑定范围与默认继承 |
 | --- | --- | --- |
-| CREATE | CREATE、CREDENTIAL、SERVICE | 固定集合、单实例/峰值上限、实例额度；普通孩子仅继承减权的CREATE，CREDENTIAL/SERVICE清零 |
+| CREATE | CREATE、CREDENTIAL、SERVICE | 固定集合、单实例/峰值上限、实例额度；普通孩子继承CREATE_USE=1，CREDENTIAL/SERVICE/GRANT清零；各上限夹到孩子Createarg |
 | SPACE | MAP、UNMAP | SELF仅当前空间，构造空间仅本次准备；fork将SELF重绑定孩子，exec重绑定新空间；跨主体管理SPACE不默认继承 |
 | ALLOC | DATA、SHARED、CODE、DMA | 固定Acct/设备域；普通fork/exec重绑定自身DATA/SHARED/CODE额度，DMA不默认继承 |
 | MEM | READ、WRITE、EXEC、SEAL、DMA | 固定Mem及字节窗口；普通DATA/SHARED与SEALED按显式继承标记，DMA永不普通继承；SEALED禁止有效WRITE/DMA |
@@ -777,7 +783,7 @@ RESOURCE 子类型编号固定：1 CREATE、2 SPACE、3 ALLOC、4 MEM、5 CALL�
 
 inherit(resource,flags)仅修改本主体允许类型的FORK/EXEC保留标记，不增加对象使用权、不能设在构造/CONTROL/设备类型；MEM仅SHARED可EXEC，CALL/SEND/NOTIFY可显式EXEC且仍绑定原对端image。运行中reply默认不设EXEC，fd适配在准备保留连接时按自身授权显式标记；这是同主体继承而非向第三方grant，不要求源GRANT。fork/exec自身份空间/分配/CREATE采用专门重绑定，不复制旧私有映射。
 
-撤销只按精确目标授权来源失效，非派生树。free允许MEM/CALL/SEND/NOTIFY/固定进程CONTROL引用放弃；没有引用的SELF/CREATE等固定启动权用revoke/退出处理，不把free扩大为通用销毁。仍在途的Rq、Mmap、观察和清理记录各持独立引用。固定设备域的DMA收尾只由明确CONTROL及设备协议共同许可，rqclean不能伪造真实停机证据。
+撤销只按精确目标授权来源失效，非派生树。free允许MEM/CALL/SEND/NOTIFY/固定进程CONTROL引用放弃；SELF/CREATE等固定启动权仍用revoke/退出处理，不把free扩大为通用销毁。仍在途的Rq、Mmap、观察和清理记录各持独立引用。固定设备域的DMA收尾只由明确CONTROL及设备协议共同许可，rqclean不能伪造真实停机证据。
 
 ### fork/exec 准备的确定选择
 
@@ -1229,3 +1235,16 @@ Space增加独立mapcount并保持64字节预算，成功映射提交才增加�
 - [x] 同场景清理/收取目标并复用其运行槽，旧CONTROL PROC为0条而LIFE仍原exit42，新CONTROL只读新实例且CPU为0；最终页/费用/组关系结清。
 - [x] 两架构IPC/ipcdepth核对阻塞调用者的真实强等待对端与1份实际Rq责任；查询不消费请求。
 - [x] 完整189项host、格式及76个QEMU场景通过，日志`build/host/stage25-proc-stats/test-all.log`。STOPPED/终端关联、SYSTEM枚举、实际exec与完整信号尚未接，不称完整作业控制或CI通过。
+
+
+### CREATE授权与可下调接收上限接续（2026-11-16）
+
+已加入48字节Createarg的共享字段/布局断言，以及可信localcreate/localcreator/localcreatecheck/localchildcreate机制。每份CREATE直接在48字节Local保存固定Set身份、内存/峰值/资源/pending上限和业务位，无新通用对象池；Set增加独立策略lease计数后56字节，acctcheck继续严格核对owner+Acct+Life+策略引用守恒，不放松为“至少这些引用”。CREATE只允许revoke/表关闭释放，普通free拒绝。query RESOURCE只输出已规定的类型/rights，本地窗口为0，不泄漏策略内部Set编码。当前Local原生准入仍将CREATE标记NOTSUP；身份、SERVICE管理输出及完整创建事务尚未接，不能仅凭数值检查称创建获权。
+
+Rmail利用原有尾部空间增加limit，仍64字节；rqmailconfigure仅允许Image PREPARING且无排队/owned请求时设定1..PENDING_CALLS（默认16），发布后拒绝修改。最多limit-1份defer，保留1个即时接收槽；队列中的caller请求不算已接收名额。每进程出站8/1/1/2预付保持独立，不能用pending降低信号/控制保底。
+
+- [x] 6项CREATE host覆盖四上限夹取、特权清除、父源撤销不级联、Set强引用、不同Set拒绝、满表不泄漏、旧Local槽复用、固定授权free拒绝及query隐藏内部编码。
+- [x] 2项Rq host覆盖pending=1/2的FIFO及即时保底、发布后修改拒绝、无效值不改状态；原16槽默认兼容。
+- [x] 两架构createauth在真实内核环境构造三代不可运行Proc，验证同Set/额度不复制、授权释放独立、满表回滚和旧Handle隔离；并用真实Life/Image/Rq走pending=1/2的接收/defer/回复/ACK与完整回收。
+- [ ] 本场景是可信内核机制验收，不是U/EL0原生create。Sigctx必需预付、原生Createarg身份准入、SERVICE CONTROL输出和加载路径仍待接；正常镜像未启动模拟init。
+- [x] 完整197项host、格式及78个QEMU场景通过，日志`build/host/stage26-create-authority/test-all.log`。新Set/Local/Rmail机制不称完整原生create或用户装载通过。

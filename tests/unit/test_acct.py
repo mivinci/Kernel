@@ -14,7 +14,7 @@ class Acctid(C.Structure):
     _fields_ = Setid._fields_
 class Set(C.Structure):
     _fields_ = [(x, C.c_uint64) for x in ('generation', 'limit', 'exec_limit', 'charged')] + [
-        (x, C.c_uint32) for x in ('instances', 'max_instances', 'refs', 'state')]
+        (x, C.c_uint32) for x in ('instances', 'max_instances', 'refs', 'state', 'leases')]
 class Account(C.Structure):
     _fields_ = [(x, C.c_uint64) for x in ('generation', 'limit', 'exec_limit', 'used', 'reserved')] + [
         (x, C.c_uint32) for x in ('set', 'state', 'refs', 'bound')]

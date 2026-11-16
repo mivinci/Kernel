@@ -1,5 +1,9 @@
 #ifndef _ABI_PROC_H
 #define _ABI_PROC_H
+#define CREATE_USE          1
+#define CREATE_CREDENTIAL   2
+#define CREATE_SERVICE      4
+#define CREATE_RIGHTS       7
 #define CONTROL_QUERY       0x01
 #define CONTROL_TERMINATE   0x02
 #define CONTROL_BUDGET      0x04
@@ -32,9 +36,26 @@
 #ifndef __ASSEMBLER__
 #include <types.h>
 #include <abi/base.h>
+typedef struct Createarg Createarg;
 typedef struct Config    Config;
 typedef struct Budgetarg Budgetarg;
 typedef struct Queryrec  Queryrec;
+struct Createarg
+{
+  u64 memlimit, exec_limit;
+  u32 resources, pending, ruid, euid, rgid, egid;
+  u64 reserved;
+};
+STATIC_ASSERT(sizeof(Createarg) == 48, createarg_size);
+STATIC_ASSERT(offsetof(Createarg, memlimit) == 0, createarg_limit);
+STATIC_ASSERT(offsetof(Createarg, exec_limit) == 8, createarg_peak);
+STATIC_ASSERT(offsetof(Createarg, resources) == 16, createarg_resources);
+STATIC_ASSERT(offsetof(Createarg, pending) == 20, createarg_pending);
+STATIC_ASSERT(offsetof(Createarg, ruid) == 24, createarg_ruid);
+STATIC_ASSERT(offsetof(Createarg, euid) == 28, createarg_euid);
+STATIC_ASSERT(offsetof(Createarg, rgid) == 32, createarg_rgid);
+STATIC_ASSERT(offsetof(Createarg, egid) == 36, createarg_egid);
+STATIC_ASSERT(offsetof(Createarg, reserved) == 40, createarg_reserved);
 struct Config
 {
   u64 entry, stack, boot, bootsz, sigmask, sigdefault;

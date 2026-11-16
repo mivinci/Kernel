@@ -52,6 +52,7 @@ setcreate(u64 limit, u64 peak, u32 max_instances, Setid *out)
     s->instances = 0;
     s->max_instances = max_instances;
     s->refs = 1;
+    s->leases = 0;
     s->state = AC_ACTIVE;
     out->generation = s->generation;
     out->index = i;
@@ -111,10 +112,33 @@ setstat(Setid id, Set *out)
   out->instances = s->instances;
   out->max_instances = s->max_instances;
   out->refs = s->refs;
+  out->leases = s->leases;
   out->state = s->state;
   return 0;
 }
 
+int
+sethold(Setid id)
+{
+  Set *s = setfind(id);
+  if (!s)
+    return AC_BAD;
+  if (s->refs == ~(u32) 0 || s->leases == ~(u32) 0)
+    return AC_LIMIT;
+  s->refs++;
+  s->leases++;
+  return 0;
+}
+int
+setdrop(Setid id)
+{
+  Set *s = setfind(id);
+  if (!s || !s->leases)
+    return AC_BAD;
+  s->refs--;
+  s->leases--;
+  return 0;
+}
 u64
 settag(Setid id)
 {
@@ -398,7 +422,7 @@ acctcheck(void)
         return AC_BAD;
     } else if (s->state != AC_ACTIVE || s->charged != charged[i] || s->charged > s->limit ||
                s->exec_limit < s->limit || s->instances > s->max_instances ||
-               s->refs != 1 + refs[i] + s->instances)
+               (u64) s->refs != 1UL + refs[i] + s->instances + s->leases)
       return AC_BAD;
   }
   return 0;

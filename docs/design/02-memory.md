@@ -502,3 +502,5 @@ abort/创建者结束先撤发布及加载资格，目标进入撤销；既有�
 - [x] 完整174项host、格式与72个QEMU回归通过，日志`build/host/stage21-account-query/test-all.log`。集合级SYSTEM查询/预算、峰值/COW仍未接。
 
 PROC统计接续（2026-11-16）：Space现64字节，增加成功提交Mmap的mapcount；maps保持内部链表头语义。映射失败回滚不增加，解除成功才减少；仅提供诊断数量，不赋予任何映射/管理权。运行验证与边界见03末尾。
+
+CREATE策略引用接续（2026-11-16）：Set现56字节，新增leases记录CREATE等固定策略持有的强引用；acctcheck严格核对refs=1+Acct数+Life实例数+leases。策略继承不复制Set总额或实例限额，最后策略撤销/表关闭才解除自己的引用；相关可信机制与两架构createauth边界见03末尾。

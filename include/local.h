@@ -8,6 +8,7 @@
 #include <prepid.h>
 #include <image.h>
 #define LOCALS          128
+#define LOCAL_CREATE    1
 #define LOCAL_SPACE     2
 #define LOCAL_ALLOC     3
 #define LOCAL_MEM       4
@@ -26,8 +27,16 @@
 #define LOCAL_CLOSING   2
 #define LOCAL_DEAD      3
 
-typedef struct Local  Local;
-typedef struct Rtable Rtable;
+typedef struct Createpolicy Createpolicy;
+typedef struct Local        Local;
+typedef struct Rtable       Rtable;
+struct Createpolicy
+{
+  Setid set;
+  u64   memlimit, exec_limit, rights;
+  u32   resources, pending;
+};
+STATIC_ASSERT(sizeof(Createpolicy) == 48, createpolicy_size);
 struct Local
 {
   u64 generation, objectgen, rights, offset, length;
@@ -50,6 +59,13 @@ STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 /* Current native profile excludes incomplete construction/loading admission. */
 int localnative(Rtable *source, Handle handle);
 int localroom(Rtable *source);
+/* Trusted boot policy installation; no native creation admission here. */
+int localcreate(Rtable *table, const Createpolicy *policy, Handle *out);
+int localcreator(Rtable *table, Handle authority, Createpolicy *out);
+/* Numeric bounds only; native Proc must separately validate credentials/parent. */
+int localcreatecheck(Rtable *table, Handle authority, const Createarg *args, Createpolicy *out);
+int localchildcreate(Rtable *source, Handle authority, Rtable *target, const Createarg *args,
+                     Handle *out);
 /* Trusted bounded snapshots; caller resolves the table authority. */
 int localquery(Rtable *table, u64 cursor, Queryrec *records, u32 count, u32 *written, u64 *next);
 /* CONFIG preparation table borrow; only native RESOURCE query may use it. */

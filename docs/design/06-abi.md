@@ -123,6 +123,8 @@ Budget CONTROL只改绑定目标Acct的limit/exec_limit，SYSTEM POLICY通过绑
 
 ### 标志、状态与原子性（已冻结）
 
+CREATE_USE=1、CREATE_CREDENTIAL=2、CREATE_SERVICE=4；普通孩子清除后两位及GRANT，四上限夹到其Createarg（03）。资源槽至少3以容纳SELF_SPACE/SELF_ALLOC/CREATE，pending为1..编译接收上限，无0默认。
+
 CALL_ASYNC=1、CALL_RECV_MEM=2、CALL_RECV_CALL=4、CALL_CONTROL=8，RECV_MEM与RECV_CALL互斥；REPLY_RESOURCE=1且仅reply支持。RECV_NONBLOCK=1、RECV_EVENTS_ONLY=2；reply_recv只解释这两位接收选项，不支持资源混合交付。RQ_FINISH=1；ACK_RESULT=1、ACK_RELEASE=2，组合先整体检查，失败不部分修改。inherit FORK=1、EXEC=2；资源GRANT为bit63，其他低位按03子类型解释。sigmask how BLOCK=0、UNBLOCK=1、SET=2。READ=1、WRITE=2、EXEC=4。wait WNOHANG=1、WUNTRACED=2、WCONTINUED=4；结果EXITED=1、STOPPED=2、CONTINUED=3，code低8位为正常退出码或信号号，bit8=SIGNALLED、bit9=CORE（首版恒0）、bit10=FAULT；STOPPED为停止信号号，CONTINUED=0。完整故障原因在query保存；libc按kind/位编码标准wait status。
 
 rqpoll/rqwait非消费；rqack只操作本主体RPC。rqcheck仅服务当前持有REQUEST，返回1（正常ACCEPTED）、3（ACCEPTED且cancel_requested）或4（强制终结/DRAINING）；不能读取他人请求。rqclean要求CONTROL覆盖已死亡服务且完成安全隔离责任已由可信恢复路径接管；不能将活服务或未知DMA直接标finished。即使调用者死代消费/释放，server_finished仍必须真实成立。

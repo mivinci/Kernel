@@ -168,6 +168,7 @@ rqmailinit(Rmail *mail, Imageid image)
   listinit(&mail->owned);
   mail->immediate = PG_NONE;
   mail->deferred = 0;
+  mail->limit = PENDING_CALLS;
   mail->state = RMAIL_OPEN;
   return 0;
 }
@@ -178,6 +179,20 @@ mailactive(Rmail *mail)
   return mail && mail->state == RMAIL_OPEN && !imagestat(mail->image, &image) &&
          image.state == IMAGE_ACTIVE;
 }
+int
+rqmailconfigure(Rmail *mail, u32 pending)
+{
+  Image image;
+  if (!mail || !pending || pending > PENDING_CALLS)
+    return -ERR_INVALID;
+  if (mail->state != RMAIL_OPEN || imagestat(mail->image, &image) ||
+      image.state != IMAGE_PREPARING || !listempty(&mail->queue) || !listempty(&mail->owned) ||
+      mail->immediate != PG_NONE || mail->deferred)
+    return -ERR_STATE;
+  mail->limit = pending;
+  return 0;
+}
+
 int
 rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
          const Msg *message, u32 options, Rqid *out)
@@ -341,7 +356,7 @@ rqdefer(Rmail *mail, Handle request)
     return -ERR_BAD_HANDLE;
   if (r->state != RQ_ACCEPTED || r->flags & RF_DEFERRED)
     return -ERR_STATE;
-  if (mail->deferred >= 15)
+  if (mail->deferred >= mail->limit - 1)
     return -ERR_BUSY;
   if (mail->immediate != (u32) (r - requests))
     panic("request immediate ownership");
@@ -673,7 +688,7 @@ rqsignals(Rquota *quota, Rmail *mail)
   listforeach(node, &mail->owned)
   {
     Rq *r = (Rq *) ((u8 *) node - offsetof(Rq, owned));
-    if (++i > 16 || !same(r->serverid, mail->image))
+    if (++i > PENDING_CALLS || !same(r->serverid, mail->image))
       panic("request signal ownership");
     if (r->flags & RF_CANCEL_PENDING) {
       r->flags &= ~RF_CANCEL_PENDING;

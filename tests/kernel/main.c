@@ -4,7 +4,10 @@ void
 testmain(Hvs *space)
 {
   UNUSED(space);
-#if BOOT_CASE == 35
+#if BOOT_CASE == 36
+  createtest();
+  putstr("READY createauth-restored\n");
+#elif BOOT_CASE == 35
   statstest();
   putstr("READY stats-restored\n");
 #elif BOOT_CASE == 34

@@ -31,7 +31,7 @@ struct Acctid
 struct Set
 {
   u64 generation, limit, exec_limit, charged;
-  u32 instances, max_instances, refs, state;
+  u32 instances, max_instances, refs, state, leases;
 };
 struct Acct
 {
@@ -53,6 +53,9 @@ int setclose(Setid id);
 int setenter(Setid id);
 int setleave(Setid id);
 int setstat(Setid id, Set *out);
+/* Strong policy leases; boot keeps the original Set owner reference. */
+int sethold(Setid id);
+int setdrop(Setid id);
 u64 settag(Setid id);
 int setlookup(u64 tag, Setid *out);
 int acctcreate(Setid set, u64 limit, u64 peak, Acctid *out);

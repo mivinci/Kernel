@@ -1,6 +1,8 @@
 #include <local.h>
 #include <diag.h>
 #include <prep.h>
+#include <rq.h>
+STATIC_ASSERT(AC_SETS <= 256 && LOCALS <= 255 && PENDING_CALLS <= 255, create_policy_encoding);
 
 static int
 convert(int error)
@@ -37,7 +39,8 @@ localnative(Rtable *t, Handle h)
   Local *l = find(t, h, 0);
   if (!l)
     return -ERR_BAD_HANDLE;
-  return l->subtype == LOCAL_CONSTRUCT || (l->subtype == LOCAL_MEM && l->source == LOCAL_LOAD)
+  return l->subtype == LOCAL_CREATE || l->subtype == LOCAL_CONSTRUCT ||
+                 (l->subtype == LOCAL_MEM && l->source == LOCAL_LOAD)
              ? -ERR_NOTSUP
              : 0;
 }
@@ -256,6 +259,101 @@ prepared(Rtable *t, Handle h, u64 rights, Prepid *id, Prepinfo *info)
     return -ERR_BAD_HANDLE;
   }
   return 0;
+}
+int
+localcreate(Rtable *t, const Createpolicy *policy, Handle *out)
+{
+  Set    set;
+  Local *l;
+  u32    object;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!t || t->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  if (!policy || !(policy->rights & CREATE_USE) ||
+      policy->rights & ~(CREATE_RIGHTS | LOCAL_GRANT) || !policy->memlimit ||
+      policy->exec_limit < policy->memlimit || policy->resources < 3 ||
+      policy->resources > LOCALS || !policy->pending || policy->pending > PENDING_CALLS)
+    return -ERR_INVALID;
+  if (setstat(policy->set, &set))
+    return -ERR_STALE;
+  l = empty(t);
+  if (!l)
+    return sloterror(t);
+  error = sethold(policy->set);
+  if (error)
+    return convert(error);
+  /* Internal packing only; the public Handle remains the Local identity. */
+  object = policy->set.index | (policy->resources << 8) | (policy->pending << 16);
+  publish(t, l, LOCAL_CREATE, policy->set.generation, object, policy->rights, policy->memlimit,
+          policy->exec_limit, 0, 0, out);
+  return 0;
+}
+int
+localcreator(Rtable *t, Handle h, Createpolicy *out)
+{
+  Local *l = find(t, h, LOCAL_CREATE);
+  Set    set;
+  u32    i;
+  if (!out)
+    return -ERR_INVALID;
+  for (i = 0; i < sizeof(*out); i++)
+    ((u8 *) out)[i] = 0;
+  if (!l)
+    return -ERR_BAD_HANDLE;
+  if (!(l->rights & CREATE_USE))
+    return -ERR_DENIED;
+  out->set.generation = l->objectgen;
+  out->set.index = l->object & 255;
+  if (setstat(out->set, &set))
+    return -ERR_STALE;
+  out->memlimit = l->offset;
+  out->exec_limit = l->length;
+  out->resources = (l->object >> 8) & 255;
+  out->pending = (l->object >> 16) & 255;
+  out->rights = l->rights;
+  return 0;
+}
+int
+localcreatecheck(Rtable *t, Handle h, const Createarg *args, Createpolicy *out)
+{
+  int error;
+  if (!args || args->reserved || !args->memlimit || args->exec_limit < args->memlimit ||
+      args->resources < 3 || args->resources > LOCALS || !args->pending ||
+      args->pending > PENDING_CALLS)
+    return -ERR_INVALID;
+  error = localcreator(t, h, out);
+  if (error)
+    return error;
+  if (args->memlimit > out->memlimit || args->exec_limit > out->exec_limit ||
+      args->resources > out->resources || args->pending > out->pending)
+    return -ERR_DENIED;
+  return 0;
+}
+int
+localchildcreate(Rtable *source, Handle h, Rtable *target, const Createarg *args, Handle *out)
+{
+  Createpolicy policy;
+  Acct         account;
+  int          error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  error = localcreatecheck(source, h, args, &policy);
+  if (error)
+    return error;
+  if (!target || target->state != LOCAL_OPEN || acctstat(target->acct, &account))
+    return -ERR_BAD_HANDLE;
+  if (account.set != policy.set.index)
+    return -ERR_DENIED;
+  policy.rights = CREATE_USE;
+  policy.memlimit = args->memlimit;
+  policy.exec_limit = args->exec_limit;
+  policy.resources = args->resources;
+  policy.pending = args->pending;
+  return localcreate(target, &policy, out);
 }
 int
 localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
@@ -663,6 +761,18 @@ removeentry(Local *l)
   Prepid scope;
   scope.generation = 0;
   scope.index = scope.reserved = 0;
+  if (l->subtype == LOCAL_CREATE) {
+    Setid set;
+    set.generation = l->objectgen;
+    set.index = l->object & 255;
+    set.reserved = 0;
+    error = setdrop(set);
+    if (error)
+      return convert(error);
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_CONSTRUCT) {
     scope.generation = l->objectgen;
     scope.index = l->object;
@@ -837,7 +947,8 @@ queryrecord(const Rtable *table, u32 index, Queryrec *out)
     out->data[6] = (u64) image.pid;
     out->data[7] = image.number;
   } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
-             l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT)
+             l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT &&
+             l->subtype != LOCAL_CREATE)
     return -ERR_NOTSUP;
   return 0;
 }

@@ -11,6 +11,10 @@
 #ifndef RECOVERY_RQS
 #define RECOVERY_RQS 64
 #endif
+#ifndef PENDING_CALLS
+#define PENDING_CALLS 16
+#endif
+STATIC_ASSERT(PENDING_CALLS > 0 && PENDING_CALLS <= 16, pending_capacity);
 #define OUT_REQUESTS  12
 #define RQ_NORMAL     0
 #define RQ_SIGNAL1    1
@@ -42,7 +46,7 @@ struct Rmail
 {
   Imageid image;
   List    queue, owned;
-  u32     immediate, deferred, state;
+  u32     immediate, deferred, state, limit;
 };
 struct Rqrecv
 {
@@ -73,6 +77,8 @@ STATIC_ASSERT(sizeof(Rquota) == 48 && sizeof(Rmail) == 64, rq_proc_budget);
 int rqreserve(Rquota *quota, Lifeid owner, u32 recovery);
 int rqquotaend(Rquota *quota);
 int rqmailinit(Rmail *mail, Imageid image);
+/* Before publication only, preserves one immediate dispatch slot. */
+int rqmailconfigure(Rmail *mail, u32 pending);
 int rqmailclose(Rmail *mail, u32 batch);
 int rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
              const Msg *message, u32 options, Rqid *out);

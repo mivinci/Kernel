@@ -12,7 +12,7 @@ class Rqid(C.Structure):
 class Quota(C.Structure):
     _fields_=[('owner',support.Lifeid),('slots',C.c_uint16*12),('state',C.c_uint32)]
 class Mail(C.Structure):
-    _fields_=[('image',Imageid),('queue',List),('owned',List),('immediate',C.c_uint32),('deferred',C.c_uint32),('state',C.c_uint32)]
+    _fields_=[('image',Imageid),('queue',List),('owned',List),('immediate',C.c_uint32),('deferred',C.c_uint32),('state',C.c_uint32),('limit',C.c_uint32)]
 class Msg(C.Structure):
     _fields_=[('words',C.c_uint64*4)]
 class Recv(C.Structure):
@@ -41,6 +41,7 @@ class RequestTests(unittest.TestCase):
             image_signatures(lib)
             for name,args in {
                 'rqreserve':[C.POINTER(Quota),support.Lifeid,C.c_uint32], 'rqquotaend':[C.POINTER(Quota)],
+                'rqmailconfigure':[C.POINTER(Mail),C.c_uint32],
                 'rqmailinit':[C.POINTER(Mail),Imageid], 'rqmailclose':[C.POINTER(Mail),C.c_uint32],
                 'rqsubmit':[C.POINTER(Quota),C.POINTER(Mail),Imageid,C.c_int64,C.c_uint32,C.c_uint32,C.POINTER(Msg),C.c_uint32,C.POINTER(Rqid)],
                 'rqhandle':[Rqid,C.c_uint32], 'rqlookup':[C.c_int64,Imageid,C.POINTER(Rqid)],
@@ -84,12 +85,13 @@ class RequestTests(unittest.TestCase):
                         self.assertEqual(lib.imagedetach(e.image),0)
         support.LifeTests.exercise(self,lib,body)
 
-    def endpoint(self,slot,generation=1,mail=None,recovery=0):
+    def endpoint(self,slot,generation=1,mail=None,recovery=0,pending=None):
         life=self.create(generation,slot); image=Imageid()
         self.assertEqual(self.lib.imagecreate(life,0,C.byref(image)),0)
         e=SimpleNamespace(life=life,image=image,quota=Quota(),mail=Mail() if mail is None else mail,pid=self.pid(generation,slot))
         self.assertEqual(self.lib.rqreserve(C.byref(e.quota),life,recovery),0)
         self.assertEqual(self.lib.rqmailinit(C.byref(e.mail),image),0)
+        if pending is not None:self.assertEqual(self.lib.rqmailconfigure(C.byref(e.mail),pending),0)
         self.assertEqual(self.lib.lifepublish(life),0)
         self.assertEqual(self.lib.imageactivate(image),0)
         self.endpoints.append(e)
@@ -487,4 +489,32 @@ class RequestTests(unittest.TestCase):
             self.assertEqual(self.lib.rqack(other,a.image,3),0);count(a,0)
             out=C.c_uint32(77)
             self.assertEqual(self.lib.rqcount(-1,1,C.byref(out)),-1);self.assertEqual(out.value,0)
+        for lib in self.libs:self.exercise(lib,body)
+
+
+    def test_small_receive_limit_keeps_one_immediate_slot_and_is_immutable_after_publish(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2,pending=2)
+            for value in (1,2,3):self.submit(a,b,value=value)
+            first=self.receive(b);self.assertEqual(self.lib.rqdefer(C.byref(b.mail),first.request),0)
+            second=self.receive(b);self.assertEqual(self.lib.rqdefer(C.byref(b.mail),second.request),-7)
+            self.assertEqual((b.mail.deferred,b.mail.limit),(1,2))
+            self.assertEqual(self.lib.rqrecv(C.byref(b.mail),C.byref(Recv())),-7)
+            before=bytes(b.mail)
+            self.assertEqual(self.lib.rqmailconfigure(C.byref(b.mail),16),-6)
+            self.assertEqual(bytes(b.mail),before)
+            self.assertEqual(self.lib.rqreply(C.byref(b.mail),second.request,C.byref(message(22))),0)
+            self.assertEqual(self.receive(b).message.words[0],3)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_receive_limit_one_disallows_defer_but_preserves_fifo_progress(self):
+        def body():
+            a=self.endpoint(1);b=self.endpoint(2,pending=1)
+            self.submit(a,b,value=1);self.submit(a,b,value=2)
+            first=self.receive(b);self.assertEqual(self.lib.rqdefer(C.byref(b.mail),first.request),-7)
+            self.assertEqual(self.lib.rqreply(C.byref(b.mail),first.request,C.byref(message(1))),0)
+            self.assertEqual(self.receive(b).message.words[0],2)
+            before=bytes(b.mail)
+            for value in (0,17):self.assertEqual(self.lib.rqmailconfigure(C.byref(b.mail),value),-1)
+            self.assertEqual(bytes(b.mail),before)
         for lib in self.libs:self.exercise(lib,body)

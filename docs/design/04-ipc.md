@@ -715,3 +715,5 @@ Queryrec的pid为所查主体，image为该记录匹配端的真实镜像；stam
 - [x] 四项新增host验证角色/镜像/旧Life隔离、私有标志与消息不泄漏、同槽新代次及跨主体游标拒绝、17条请求按16+1分页，查询前后Rq全部状态不变且FIFO接收不受影响。
 - [x] 两架构ipc/ipcdepth验证自身双端去重、排队/取消/接收/defer/reply/ACK的快照，服务死亡后旧CONTROL读退役DRAINING，真实收尾后接收者不再列出，查询不消费结果/事件，深度边界不受查询影响。
 - [x] 完整178项host、格式及72个QEMU回归通过，日志`build/host/stage22-request-query/test-all.log`。query不替代rqclean的CONTROL及设备安全证明，后者原生仍NOTSUP。
+
+创建接收额度接续（2026-11-16）：Rmail现仍64字节，增加构造期limit=1..PENDING_CALLS；只在Image PREPARING且无在途接收责任时设置，ACTIVE后不变。defer至多limit-1，留1个即时槽；pending=1只能即时处理，不能defer。配置不改变caller出站预付、全局池或已排队请求责任。host与createauth两架构已局部验证，完整原生Createarg准入仍待接。

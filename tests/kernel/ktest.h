@@ -19,6 +19,7 @@ void credtest(void);
 void terminatetest(void);
 void grouptest(void);
 void statstest(void);
+void createtest(void);
 void controltest(void);
 void eventtest(void);
 void preptest(void);
