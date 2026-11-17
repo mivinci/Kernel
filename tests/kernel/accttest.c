@@ -20,9 +20,9 @@ cowtest(void)
   Set           group;
   Pgstat        before, after;
   volatile u64 *original, *copy;
-  u32           mode;
+  u32           mode, i;
   pgstat(&before);
-  for (mode = 0; mode < 3; mode++) {
+  for (mode = 0; mode < 4; mode++) {
     credit.acct.generation = credit.acct.index = credit.acct.reserved = 0;
     credit.physical.pages = 0;
     REQUIRE(!setcreate(2, 2, 2, &set) && !acctcreate(set, 1, 1, &parent) &&
@@ -54,10 +54,35 @@ cowtest(void)
                   old.acct.index == child.index && acctstat(parent, &account) == AC_BAD &&
                   acctfree(stale) == AC_BAD && *original == 0x31415926 && !pgreserved(),
               "COW stable old page and consumed payer reference");
-    } else {
+    } else if (mode == 2) {
       REQUIRE(!acctclose(child) && !acctunbind(child) && !acctcowcancel(&credit, 1) &&
                   acctstat(child, &account) == AC_BAD && !pgreserved(),
               "COW closing reservation cancellation");
+    }
+    if (mode == 3) {
+      for (i = 0; i < PAGE_SIZE / sizeof(u64); i++)
+        original[i] = 0x31415926 ^ i;
+      stale = old;
+      REQUIRE(acctalloc(parent, 0, NULL, &fresh) == AC_LIMIT &&
+                  !acctcowreplace(&old, &credit, &fresh),
+              "COW payer replacement without spare quota");
+      REQUIRE(old.block.pa == stale.block.pa && fresh.block.pa != old.block.pa &&
+                  old.acct.index == child.index && fresh.acct.index == parent.index &&
+                  acctfree(stale) == AC_BAD && !credit.physical.pages && !pgreserved(),
+              "COW payer replacement ownership");
+      copy = kaddr(fresh.block.pa);
+      for (i = 0; i < PAGE_SIZE / sizeof(u64); i++)
+        copy[i] = original[i];
+      for (i = 0; i < PAGE_SIZE / sizeof(u64); i++) {
+        REQUIRE(copy[i] == (0x31415926 ^ i), "COW payer copied bytes");
+        copy[i] ^= 0xfeedbeef;
+        REQUIRE(original[i] == (0x31415926 ^ i), "COW payer write isolation");
+      }
+      REQUIRE(!acctstat(parent, &account) && account.used == 1 && !account.reserved &&
+                  !acctstat(child, &account) && account.used == 1 && !account.cow &&
+                  !account.reserved && !setstat(set, &group) && group.charged == 2,
+              "COW payer replacement charge conservation");
+      REQUIRE(!acctfree(fresh), "COW payer fresh cleanup");
     }
     REQUIRE(!acctfree(old), "COW final backing release");
     if (mode != 1)
@@ -71,12 +96,14 @@ cowtest(void)
   REQUIRE(before.free == after.free && before.allocated == after.allocated && !pgreserved(),
           "COW physical conservation");
   putstr("COWACCTCHECK cases=");
-  puthex(3);
+  puthex(4);
   putstr(" redeemed=");
   puthex(1);
   putstr(" transferred=");
   puthex(1);
   putstr(" cancelled=");
+  puthex(1);
+  putstr(" replaced=");
   puthex(1);
   putstr(" charged=");
   puthex(0);

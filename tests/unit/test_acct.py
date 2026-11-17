@@ -55,7 +55,8 @@ class AccountingTests(unittest.TestCase):
             'acctcowreserve': [Acctid,C.c_uint64,C.POINTER(Cow)],
             'acctcowcancel': [C.POINTER(Cow),C.c_uint64],
             'acctcowalloc': [C.POINTER(Cow),C.POINTER(Owned)],
-            'acctcowmove': [C.POINTER(Owned),C.POINTER(Cow)]}
+            'acctcowmove': [C.POINTER(Owned),C.POINTER(Cow)],
+            'acctcowreplace': [C.POINTER(Owned),C.POINTER(Cow),C.POINTER(Owned)]}
         for name, args in declarations.items():
             getattr(cls.lib, name).argtypes = args
 
@@ -215,6 +216,77 @@ class AccountingTests(unittest.TestCase):
         before=bytes(self.stat(account)),bytes(credit)
         self.assertEqual(self.lib.acctcowcancel(C.byref(credit),4),-1)
         self.assertEqual((bytes(self.stat(account)),bytes(credit)),before)
+
+    def test_payer_replace_uses_peer_credit_without_temporary_extra_quota(self):
+        group=self.set(limit=2,peak=2);parent=self.acct(group,limit=1,peak=1);child=self.acct(group,limit=1,peak=1)
+        old=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(old)),0);self.blocks[old.block.pa]=old
+        credit=self.cow(child)
+        before_parent=bytes(self.stat(parent));before_charged=self.setstat(group).charged
+        denied=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(denied)),-2)
+        stale=Owned();C.memmove(C.byref(stale),C.byref(old),C.sizeof(old))
+        fresh=Owned()
+        self.assertEqual(self.lib.acctcowreplace(C.byref(old),C.byref(credit),C.byref(fresh)),0)
+        self.blocks[fresh.block.pa]=fresh
+        self.assertEqual(bytes(self.stat(parent)),before_parent)
+        self.assertEqual(self.setstat(group).charged,before_charged)
+        self.assertEqual((old.block.pa,old.acct.index,old.acct.generation),(stale.block.pa,child.index,child.generation))
+        self.assertNotEqual(fresh.block.pa,old.block.pa)
+        self.assertEqual((fresh.acct.index,fresh.acct.generation),(parent.index,parent.generation))
+        self.assertEqual((self.stat(child).used,self.stat(child).reserved,self.stat(child).cow),(1,0,0))
+        self.assertEqual((credit.physical.pages,credit.acct.generation),(0,0))
+        self.assertEqual(self.lib.acctfree(stale),-1)
+        self.assertEqual(self.lib.acctcheck(),0)
+
+    def test_payer_replace_succeeds_after_all_uncommitted_physical_pages_are_consumed(self):
+        group=self.set(limit=2,peak=2);parent=self.acct(group,limit=1,peak=1);child=self.acct(group,limit=1,peak=1)
+        old=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(old)),0);self.blocks[old.block.pa]=old
+        credit=self.cow(child);raw=[]
+        self.lib.pgalloc.argtypes=[C.c_uint32,C.POINTER(Limits),C.POINTER(Block)]
+        self.lib.pgreserved.restype=C.c_uint64
+        try:
+            while True:
+                block=Block();error=self.lib.pgalloc(0,None,C.byref(block))
+                if error: self.assertEqual(error,-2);break
+                raw.append(block)
+            self.assertEqual((self.pgstat().free,self.lib.pgreserved()),(1,1))
+            fresh=Owned()
+            self.assertEqual(self.lib.acctcowreplace(C.byref(old),C.byref(credit),C.byref(fresh)),0)
+            self.blocks[fresh.block.pa]=fresh
+            self.assertEqual((self.pgstat().free,self.lib.pgreserved()),(0,0))
+            self.assertEqual(self.lib.pgcheck(),0)
+        finally:
+            for block in raw:self.assertEqual(self.lib.pgfree(block),0)
+
+    def test_invalid_payer_replace_preserves_records_quota_capacity_and_physical_owners(self):
+        group=self.set();parent=self.acct(group);child=self.acct(group);foreign=self.acct(self.set())
+        old=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(old)),0);self.blocks[old.block.pa]=old
+        for recipient,kind in ((parent,'same'),(foreign,'foreign'),(child,'address'),(child,'order'),(child,'alias')):
+            credit=self.cow(recipient)
+            wrong=Owned();C.memmove(C.byref(wrong),C.byref(old),C.sizeof(old))
+            if kind=='address':wrong.block.pa+=4096
+            if kind=='order':wrong.block.order=1
+            output=Owned();C.memset(C.byref(output),0x7b,C.sizeof(output))
+            before=bytes(self.stat(parent)),bytes(self.stat(recipient)),bytes(self.pgstat()),bytes(credit),bytes(wrong),bytes(output)
+            target=C.byref(wrong) if kind=='alias' else C.byref(output)
+            self.assertEqual(self.lib.acctcowreplace(C.byref(wrong),C.byref(credit),target),-1)
+            self.assertEqual((bytes(self.stat(parent)),bytes(self.stat(recipient)),bytes(self.pgstat()),bytes(credit),bytes(wrong),bytes(output)),before)
+            self.assertEqual(self.lib.acctcowcancel(C.byref(credit),1),0)
+
+    def test_repeated_payer_replacements_consume_each_peer_once_and_preserve_payer_reference(self):
+        group=self.set(limit=4,peak=4);parent=self.acct(group,limit=1,peak=1)
+        peers=[self.acct(group,limit=1,peak=1) for _ in range(3)]
+        old=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(old)),0);self.blocks[old.block.pa]=old
+        credits=[self.cow(peer) for peer in peers];current=old;baseline=bytes(self.stat(parent))
+        for peer,credit in zip(peers,credits):
+            fresh=Owned()
+            self.assertEqual(self.lib.acctcowreplace(C.byref(current),C.byref(credit),C.byref(fresh)),0)
+            self.blocks[fresh.block.pa]=fresh
+            self.assertEqual(current.acct.index,peer.index)
+            self.assertEqual(bytes(self.stat(parent)),baseline)
+            self.assertEqual(self.setstat(group).charged,4)
+            current=fresh
+        self.assertEqual(self.pgstat().allocated,4)
+        self.assertEqual(self.lib.acctcheck(),0)
 
     def test_account_allocation_cannot_spend_global_cow_credit_and_rolls_back(self):
         self.lib.pgreserve.argtypes=[C.POINTER(Credit),C.c_uint64]

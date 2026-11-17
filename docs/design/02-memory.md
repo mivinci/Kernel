@@ -578,3 +578,17 @@ acctcowmove是实际出资分支退出的结算基础：仅接受一份准确的
 host新增7项直接测试额度恰好一页、全物理承诺下额度回滚、活记录覆盖/不足限额、关闭后兑现与取消、父退出转交/旧记录拒绝、跨Set/同Acct/错误块失败保持，以及普通预留与COW子集隔离。CASE=budget新增三组真实CPU物理读写/计费检查：子兑现的新页与父页独立；父关闭并unbind后原页稳定转交孩子且旧Acct槽回收；孩子关闭后的承诺取消。两架构主机核对COWACCTCHECK的redeemed/transferred/cancelled及最终页/费用归零。仍未接生产fork、COW分支池/PTE位、父先写复制、故障/内核代用户写分离和取消原子提交。
 
 本地make unit全部421项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage62-cow-account/，含每项原始结果中的当前acct/page源码哈希及两架构三组账目结算读回。未执行CI、真实硬件、性能、生产fork或完整COW故障验收。
+
+### 原出资者替换页的结算基础（2026-11-17）
+
+新增内部acctcowreplace(old, peer_credit, fresh)，用于父先写时的准确额度结算，不要求原出资者临时多出一页预算。输入为准确零阶Acctblk、同Set另一分支已持有的Acctcow及独立输出存储；先用只读pgowned核验原物理块完整owner，所有接口仍要求上层串行持有并保证记录唯一，不接受用户裸身份。
+
+该操作先为旧页的新出资者取得稳定Acct引用，兑现对方已有物理credit并将新页claim给原出资者，再将旧页owner转给预留者；只有这两项成功才提交对方reserved/cow→used和两份输出记录。原出资者used及引用数不变（旧块原引用转由fresh持有），Set charged不变；旧块记录改为预留者并持新引用，fresh为原出资者的新零阶块。最后一份credit消费后drop其引用。任何可返回错误路径不发布fresh、不改旧记录或额度，已临时兑现的块先按真实归属释放、重建同一物理承诺并退回临时引用。无堆、无新Set预算、无跨Set出资或隐式预留扩张。
+
+例：A used=1/limit=1，B reserved=cow=1/limit=1，Set charged=2。普通acctalloc(A)因没有余量失败；replace可消费B承诺得到新块P2归A，旧块P1改归B。A仍used=1，B变used=1，charged仍2；即使普通页耗尽，已承诺的零阶P2仍可兑现。stale的旧A/P1记录不能释放归B的P1。再次分离可使用其他仍共享旧页且已有预留的分支，不重复使用已消费credit。
+
+返回的fresh仍为未复制/未映射的可信页，本层不读应用数据、不切PTE、不宣称已经响应一次用户写故障。后续共享组层须先预付全部分支/别名元数据，在VM_BUSY的提交责任内完成内容复制和所有别名/PTE失效；成功后不能因随后可预见的映射失败留下半个逻辑分支。不能把这项物理/费用结算与尚未实现的页表故障路径混同。
+
+host新增4项直接验证额度恰好一页的父替换、所有非承诺物理容量耗尽后仍成功、错误块/阶/跨Set/同Acct/输入输出同址的失败原子性，以及连续三个预留分支替换后原出资者费用与引用保持。CASE=budget新增第四组：真实CPU以唯一原页填满4096字节模式，父额度不足的普通分配拒绝后replace成功，逐字复制到新页再修改全部新页、独立检查旧页原模式及双Acct/Set费用，最后原/新两页全部安全回收。该复制在可信fixture执行，不冒充已接COW fault或用户fork。
+
+本地make unit全部425项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage63-cow-payer/，含每项当前acct/page源码哈希及两架构replaced=1/四组结算读回。未执行CI、真实硬件、性能、生产fork或COW PTE/故障验收。

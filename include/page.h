@@ -61,6 +61,7 @@ int pgclaim(Pgblk blk, u64 owner);
 int pgrelease(Pgblk blk, u64 owner);
 /* Trusted COW charge transfer; exact allocated head and old owner required. */
 int  pgtransfer(Pgblk blk, u64 oldowner, u64 newowner);
+int  pgowned(Pgblk blk, u64 owner);
 void pgstat(Pgstat *out);
 /* Boot/host diagnostic: inspect all metadata/free lists; no mutation. */
 int pgcheck(void);

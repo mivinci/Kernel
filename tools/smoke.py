@@ -644,7 +644,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("accounting/physical cleanup mismatch")
                     record["accounting"] = account
                     cow=[fields(line) for line in serial.read_text().splitlines() if line.startswith("COWACCTCHECK ")]
-                    if cow != [dict(cases=3,redeemed=1,transferred=1,cancelled=1,charged=0,allocated=transition["tables"])]:
+                    if cow != [dict(cases=4,redeemed=1,transferred=1,cancelled=1,replaced=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("COW account reservation/transfer mismatch")
                     record["cow_accounting"]=cow[0]
                 if args.case == "spaces":

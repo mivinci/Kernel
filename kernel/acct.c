@@ -537,6 +537,63 @@ acctcowmove(Acctblk *block, Acctcow *credit)
 }
 
 int
+acctcowreplace(Acctblk *old, Acctcow *credit, Acctblk *out)
+{
+  Acct  *to = cowaccount(credit), *from;
+  Acctid source, target;
+  Pgblk  fresh;
+  u64    owner;
+  int    error;
+  if (!to || !old || !out || old == out || old->block.order || old->block.reserved)
+    return AC_BAD;
+  from = find(old->acct);
+  if (!from || from == to || from->set != to->set || !from->used || from->refs <= from->bound)
+    return AC_BAD;
+  source = old->acct;
+  target = credit->acct;
+  owner = (source.generation << 8) | source.index;
+  if (pgowned(old->block, owner))
+    return AC_BAD;
+  /* The original block's payer reference is retained for fresh; this added
+     peer reference will belong to old. No new payer charge or hold is needed. */
+  error = accthold(target);
+  if (error)
+    return error;
+  error = pgredeem(&credit->physical, &fresh);
+  if (error) {
+    acctdrop(target);
+    return error == PG_NOMEM ? AC_NOMEM : AC_BAD;
+  }
+  if (pgclaim(fresh, owner)) {
+    pgfree(fresh);
+    pgreserve(&credit->physical, 1);
+    acctdrop(target);
+    return AC_BAD;
+  }
+  if (pgtransfer(old->block, owner, (target.generation << 8) | target.index)) {
+    pgrelease(fresh, owner);
+    pgreserve(&credit->physical, 1);
+    acctdrop(target);
+    return AC_BAD;
+  }
+  /* Both physical ownership changes succeeded; the rest cannot fail under
+     the caller's serialization. The payer remains at its original used sum. */
+  to->cow--;
+  to->reserved--;
+  to->used++;
+  out->block.pa = fresh.pa;
+  out->block.order = out->block.reserved = 0;
+  out->acct.generation = source.generation;
+  out->acct.index = source.index;
+  out->acct.reserved = 0;
+  old->acct.generation = target.generation;
+  old->acct.index = target.index;
+  old->acct.reserved = 0;
+  cowfinish(credit);
+  return 0;
+}
+
+int
 acctcheck(void)
 {
   volatile u64 charged[AC_SETS];

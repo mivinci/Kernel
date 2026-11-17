@@ -61,6 +61,11 @@ int acctcowalloc(Acctcow *credit, Acctblk *out);
    with a prior reservation. Consumes one credit and updates the owned record.
    Does not copy data or permit arbitrary cross-Set gifts. */
 int acctcowmove(Acctblk *block, Acctcow *credit);
+/* Original payer writes: redeem a peer credit for its replacement page and
+   move the old page charge to that peer. Both owned records change together.
+   No temporary extra payer quota; raw new bytes must be copied before publish.
+   old/out/credit storage must be disjoint, caller serializes all mutations. */
+int acctcowreplace(Acctblk *old, Acctcow *credit, Acctblk *out);
 STATIC_ASSERT(sizeof(Acctcow) == 24, acct_cow_record);
 STATIC_ASSERT(sizeof(Set) <= 64, set_budget);
 STATIC_ASSERT(sizeof(Acct) <= 64, acct_budget);
