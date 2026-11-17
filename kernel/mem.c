@@ -285,6 +285,40 @@ sharedbranch(u32 node)
   return status.branches > 1;
 }
 int
+memcowshared(Memid id, u32 page)
+{
+  Mem *m = find(id);
+  u32  node;
+  if (!m || m->kind != MEM_RAM || m->state != MEM_DATA || page >= m->pages)
+    return MEM_BAD;
+  if (m->busy)
+    return MEM_BUSY;
+  for (node = m->head; page; page--)
+    node = blocks[node].next;
+  return sharedbranch(node);
+}
+int
+memcowbreak(Memid id, u32 page, u64 *pa)
+{
+  Mem *m = find(id);
+  u32  node;
+  int  error;
+  if (!m || !pa || m->kind != MEM_RAM || m->state != MEM_DATA || page >= m->pages)
+    return MEM_BAD;
+  if (m->busy)
+    return MEM_BUSY;
+  for (node = m->head; page; page--)
+    node = blocks[node].next;
+  if (!(blocks[node].order & BLOCK_COW)) {
+    *pa = blocks[node].pa;
+    return 0;
+  }
+  m->busy = 1;
+  error = cowwrite(branchof(node), pa);
+  m->busy = 0;
+  return error;
+}
+int
 memdevice(Acctid acct, u32 device, Memid *out)
 {
   Device window;
@@ -458,6 +492,20 @@ memmapref(Memid id, u64 prot, Acctid target)
   return 0;
 }
 
+int
+memcowmapref(Memid id, Acctid target)
+{
+  Mem *m = find(id);
+  int  error;
+  if (!m || m->kind != MEM_RAM || m->state != MEM_DATA)
+    return MEM_BAD;
+  error = memmapref(id, VM_READ, target);
+  if (error)
+    return error;
+  m->writes++;
+  m->cowmaps++;
+  return 0;
+}
 int
 memunmapref(Memid id, u64 prot, Acctid target)
 {

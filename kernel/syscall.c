@@ -44,6 +44,8 @@ syscall(Hctx *context)
   if (!trap.fromuser)
     panic("native trap source");
   if (trap.kind != HT_SYSCALL) {
+    if (trap.kind == HT_PAGEFAULT && hal_user_writefault(context) && !proccowfault(context))
+      procuserreturn(context);
     fault.pc = context->tf.pc;
     fault.address = trap.address;
     fault.cause = trap.code;

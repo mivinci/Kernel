@@ -54,6 +54,12 @@ int  memshared(Acctid acct, u64 bytes, Memid *out);
    Target gets independent logical pages; existing read-only source maps stay.
    Output unchanged on failure; no user fork authority or PTE protection here. */
 int memclone(Memid source, Acctid target, Memid *out);
+/* Space transaction only: all aliases/references must be frozen and validated.
+   These accept a mapped/retiring private view but grant no new authority. */
+int memcowshared(Memid id, u32 page);
+int memcowbreak(Memid id, u32 page, u64 *pa);
+/* Trusted logically-RW map installed entirely R/COW by Space. */
+int memcowmapref(Memid id, Acctid target);
 /* Trusted whole-page grant from the validated boot device inventory. */
 int memdevice(Acctid acct, u32 device, Memid *out);
 /* Trusted kernel source only; user copies require independent range/rights checks. */

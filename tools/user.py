@@ -283,6 +283,16 @@ def build(args):
     if len(heap_rows)!=1 or int(heap_rows[0][2])!=256:raise BuildError('heap trace missing')
     heap_address=int(heap_rows[0][1],16)
     (sdk/'heapimage.S').write_text('/* image sha256: '+digest(heap_image)+' */\n.section .rodata\n.balign 8\n.global heap_image,heap_image_end,heap_trace_address\nheap_image:\n.incbin "'+str(heap_image)+'"\nheap_image_end:\n.balign 8\nheap_trace_address:\n.quad '+str(heap_address)+'\n')
+    cow_user=link_adoption('cowuser',[compile_adoption(ROOT/'tests/kernel/cowuser.c','cowuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'cowaccess.S','cowaccess'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','cowfp')])
+    cow_user_image=sdk/'cowuser.img'
+    cow_user_image.write_bytes(pack(cow_user.read_bytes(),profile['machine'],128))
+    cow_inspect=invoke('inspect-cow-user',[tools['readelf']['path'],'-h','-l','-s',str(cow_user)])
+    cow_rows=[line.split() for line in cow_inspect.splitlines() if line.split() and line.split()[-1]=='cow_trace']
+    fault_rows=[line.split() for line in cow_inspect.splitlines() if line.split() and line.split()[-1]=='cow_store_fault']
+    if len(cow_rows)!=1 or int(cow_rows[0][2])!=256 or len(fault_rows)!=1:raise BuildError('COW user trace/fault symbol missing')
+    cow_trace_address=int(cow_rows[0][1],16)
+    cow_fault_address=int(fault_rows[0][1],16)
+    (sdk/'cowimage.S').write_text('/* image sha256: '+digest(cow_user_image)+' */\n.section .rodata\n.balign 8\n.global cow_user_image,cow_user_image_end,cow_user_trace_address,cow_user_fault_address\ncow_user_image:\n.incbin "'+str(cow_user_image)+'"\ncow_user_image_end:\n.balign 8\ncow_user_trace_address:\n.quad '+str(cow_trace_address)+'\ncow_user_fault_address:\n.quad '+str(cow_fault_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'
@@ -294,6 +304,7 @@ def build(args):
     headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
+                    cow_user_fault_pc=cow_fault_address, cow_user_image_sha256=digest(cow_user_image),
                     libvirtio_archive=str(virtio_archive.relative_to(ROOT)), libvirtio_sha256=digest(virtio_archive), libvirtio_audit_sha256=digest(virtio_audit),
                     libsys_sha256=digest(archive), libc_sha256=digest(libc_archive), crt_sha256=digest(crt),
                     runtime_artifact=str(runtime.relative_to(ROOT)), runtime_artifact_sha256=digest(runtime),

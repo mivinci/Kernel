@@ -43,6 +43,7 @@ class SignalContextTests(unittest.TestCase):
             lib=C.CDLL(str(path));lib.hal_user_init.argtypes=[C.c_void_p,C.POINTER(Initial)]
             lib.hal_signal_enter.argtypes=[C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32]
             lib.hal_signal_restore.argtypes=[C.c_void_p,C.c_void_p,C.c_void_p]
+            lib.hal_user_writefault.argtypes=[C.c_void_p]
             cls.targets.append((arch,kind,lib))
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
@@ -51,6 +52,24 @@ class SignalContextTests(unittest.TestCase):
         context=Context(kind);lib.hal_user_init(context.pointer,C.byref(Initial(0x10000,0x3fffff0000,0x3fff000000)))
         context.value.tf.cause=0x123;context.value.tf.address=0x12345678
         return context
+
+    def test_cow_fault_classifier_only_accepts_ordinary_user_write_faults_without_mutation(self):
+        for arch,kind,lib in self.targets:
+            context=self.initial(kind,lib)
+            if arch=='riscv':
+                valid=15
+                invalid=(0,2,6,8,12,13,(1<<63)|15)
+            else:
+                valid=(0x24<<26)|64|15
+                invalid=((0x24<<26)|15,(0x24<<26)|64|7,(0x20<<26)|15,
+                         (0x25<<26)|64|15,valid|0x80,valid|0x100,valid|0x400)
+            for cause in (valid,)+invalid:
+                context.value.tf.cause=cause;before=context.bytes()
+                self.assertEqual(lib.hal_user_writefault(context.pointer),int(cause==valid),(arch,cause))
+                self.assertEqual(context.bytes(),before)
+            context.value.tf.cause=valid
+            context.value.tf.status |= 0x100 if arch=='riscv' else 5
+            self.assertEqual(lib.hal_user_writefault(context.pointer),0)
 
     def test_signal_entry_maps_exact_six_arguments_and_preserves_other_user_state(self):
         for arch,kind,lib in self.targets:

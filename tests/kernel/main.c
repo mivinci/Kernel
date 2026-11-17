@@ -7,6 +7,7 @@ testmain(Hvs *space, const Dtinfo *hardware)
   UNUSED(hardware);
 #if BOOT_CASE == 52
   cowpagetest();
+  nativecowtest();
   putstr("READY cow-restored\n");
 #elif BOOT_CASE == 51
   heaptest();

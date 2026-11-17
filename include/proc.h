@@ -86,6 +86,9 @@ int  procidentity(Handle *pid, u64 *image, Handle *parent);
 void procyield(void);
 void procpausevm(void);
 void procresumevm(void);
+/* Completed-user-trap COW write resolution; success retries original PC. */
+int proccowfault(struct Hctx *context);
+u64 proccowfaults(void);
 /* Called on the running thread after complete user state has been saved. */
 NORETURN void procexit(u32 reason, u32 code, const Lifefault *fault);
 /* One cleanup phase or bounded Local/Mmap batch; off the target stack. */

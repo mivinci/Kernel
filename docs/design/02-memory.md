@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-17已接普通内存/共享/封存及局部原生授权，现接COW承诺、费用结算和可信逻辑页分支组的双架构验证；Mem/PTE COW、写故障、fork/exec及DMA仍未接。实际边界见status与文末，未完成全系统、性能或CI验收。
+状态：2026-11-17已接普通内存/共享/封存、COW承诺/费用/逻辑页分支、Mem与Space别名提交及真实用户DATA写故障恢复。内核代用户COW写、fork/exec事务及DMA仍未完成；边界见status与文末，未完成全系统、性能或CI验收。
 
 ## 内存与预算
 
@@ -670,3 +670,31 @@ spaceunmap按记录逻辑权限与COW硬件权限分别核验：保护叶须仍�
 当前只接克隆准备的保护和回滚。用户写fault分离/恢复、一次逻辑页的全部别名重指向、内核代用户写的COW准备、孩子逻辑RW映射及原生fork发布仍未开放；spacewrite/__sys_copy遇硬件只读COW仍拒绝，native spacemap继续拒绝共享私有页的新RW。不能把这组可信准备机制交给正在运行的用户进程当完整fork，也不以只读保护成功冒充写故障可恢复。
 
 本地make unit全部454项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage67-space-protect/，含所有Space/Mem/Pgt/架构编码源码及HAL头哈希，记录两架构SPACECOWCHECK和原始目录。未执行CI、真实硬件、性能、用户写fault或fork发布验收。
+
+### 单页全部别名提交与真实用户 COW 写故障（2026-11-17）
+
+Space新增Mem→Mmap反向索引：每个Mmap的Maplink为12字节（Space槽、前/后链接），每Mem另有u32链头；默认MMAPS/MEMS均8192，两个固定数组共131072字节BSS，显式纳入内核保留。Mem72/Mmap64/Space64不变。Mmap发布时挂链，解除PTE后、释放最后Mem引用前先摘链，故Mem/Space槽可复用前旧链已经为空；真实Memid代次仍保存在Mmap，不以裸索引授予权限。失败map不挂链，失败回滚及连续槽复用均有host检查。分离只遍历该Mem实际别名，不扫描其他Mem/全部Space池。
+
+内部spaceresolve(space, address)只接受逻辑W映射上的普通用户R|COW叶，真正R/SEALED/Device或非COW地址不升级。先校验全部反向链接/拥有Space、真实页PA/属性/原始编码、逻辑权限及writes/cowmaps；所有Space必须不活动且不忙，所有非管理引用须为已跟踪Mmap，未登记Op借用拒绝。共享页不能另有硬件W别名。完整预检后冻结这些Space，调用Mem的受控单页分离入口，使用已有预付分支/额度复制；然后只更新覆盖该逻辑页的每个别名PA，可写别名恢复W并清COW，普通R别名只改PA而保持R。整个提交不分配页表页，不提前回收仍被其他分支持有的旧物理页；预检后的描述符矛盾属提交不变量破坏，不能静默返回半更新。
+
+Mem受控分离允许仍有映射/管理引用归零的私有逻辑视图，不复活管理权；实际页切换后源Acct/分支责任按既有父先写/子先写/最后分支规则结算。cowmaps只记录一份Mmap的所有逻辑W页均已保护；恢复其中一页W后清该记录的全保护标记并退计数，其他页仍可为COW。匹配/解除映射现在接受这种RWCOW混合状态，R别名永不添W。
+
+再次克隆混合记录时，必须区分原本已COW的页和本次才降权的页。每份Mmap最多16页，临时新增保护页掩码使用prot内部bit8..23，并以静态断言锁定容量；失败只恢复该掩码中的RW页，保留原有COW页。成功清除临时掩码、整份记录成为全保护。该位图不进入用户Maparg或公开ABI，不另建Op堆。
+
+例：父Mem两页，孩子尚共享两页；父第一页写后，父的所有W别名第一页指新PA/W，所有R别名指同新PA/R，第二页仍共享/COW。此时新孩子只有1页额度，第二页准备失败：第一页恢复准备前的W，第二页保持原COW，不把旧孩子尚共享的第二页错误开放W。孩子先写时父仍指旧页；最后一个分支写只恢复权限、不复制。host逐页核对这些PA、内容、费用与引用。
+
+用户故障入口现接通：完整整数/FP现场保存后，仅HAL识别的普通用户写页/权限故障尝试COW。RV为U态store/AMO page fault cause15；ARM为EL0 Data Abort、WnR=1、页级权限DFSC=15且无无效FAR/表遍历/缓存维护标志。事实核对[RV Privileged 20240411](https://docs.riscv.org/reference/isa/v20240411/_attachments/riscv-privileged.pdf)及[Linux v6.12 arm64 ESR定义](https://github.com/torvalds/linux/blob/v6.12/arch/arm64/include/asm/esr.h)，未复制实现。Core再核验COW叶/逻辑Mmap，使用既有procpausevm切回kernel root后分离并提交全部别名，procresumevm恢复当前root，保持原PC和寄存器重试原指令；不走syscall返回编码或PC+4。非COW/只读/缺页/异常类型错误沿原LIFE_FAULT路径结束，不能把任意SEGV当作可分离写。新增8字节成功解析计数为内部诊断，不是身份/权限或用户ABI。
+
+普通原生RW map现在可透明接纳已共享私有DATA视图：Local原权限/窗口/Acct检查保持，Space将其映射为逻辑RW、硬件R/COW，用户实际store再按上述路径兑现；不能通过purpose或VM_COW参数自授权限。明确可信spacecowmap辅助可在准备期建立同样映射。管理句柄free后已提交映射及故障分离仍持独立引用，原生map失败完整回滚逻辑写/保护计数、页表及反向索引。
+
+10项分离host专项覆盖父/子单页分离、同/跨Space的RW/R全部别名、触及页以外保持、最后分支不复制、混合页再次克隆回滚、损坏R别名在分离前拒绝、退役映射视图、active/未跟踪Op拒绝、失败cow map以及连续16轮Mem/Mmap槽复用；HAL另验证故障分类不改现场、拒绝读/执行/特权/坏FAR等。
+
+CASE=cow新增真实用户载荷cowuser及每架构store汇编助手，使用内核可信构造的两份独立Proc/Mem视图（不是原生fork）。四组分别为子先写、父先写、父未写即退出、父写真正R别名故障后孩子继续；共8个真实进程，7个退出42、1个只读故障结束。第一组孩子通过Boot受权Mem执行真实原生RW/R map并free句柄，实际store触发分离；每份视图有两个W别名和一个R别名，助手核对store确实执行及整数临时寄存器/FP值/舍入模式，ARM另检查NZCV；CPU核对另一视图原内容和最终页/Acct/预付归零。
+
+两架构异常trace各有13次来自实际store PC的硬件写页故障：12次COW成功解析，另1次真正R别名故障；地址分布为0x2000000六次、0x2101000六次、0x2200000一次。ARM另独立核对12次exception return回原store PC；RV用真实store读回及完整现场助手核对未跳过指令。计数与trace不作为多核、原子跨页store或性能保证；测试实例仍由可信fixture构造，未宣称fork进程/句柄继承已实现。
+
+内核spacewrite/__sys_copy的逻辑COW写准备尚未连接，COW输出仍按当前硬件只读检查拒绝；COW栈上的信号帧/原生输出、fork准备发布/回滚/Local继承及exec仍需后续接通。不能把本轮用户DATA store可恢复等同完整fork、完整信号或全系统完成。
+
+最终另强化父先写组：完成用户页表/栈/分支预付后耗尽全部普通物理页，free仅为256页低水位+2页COW承诺；父的两个真实用户fault全部兑现后free恰为低水位，其他进程仍执行到退出并完成回收。两个架构均保留最终硬件trace。
+
+本地make unit全部465项、make fmt-check通过，make test-qemu全部110个两架构场景通过；之后仅增强耗尽fixture/对应校验字段，生产代码未变，双架构cow TRACE专项重新通过。最终110目录对cow使用这两份强化结果，其余108沿用完整回归；精确目录、源码哈希、最终13故障trace分析及固定元数据尺寸归build/host/stage68-alias-resolve/。无CI、真实硬件、性能或完整fork/内核代写验收。

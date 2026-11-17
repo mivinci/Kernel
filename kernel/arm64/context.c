@@ -37,6 +37,14 @@ hal_trap_decode(const Hctx *context, Htrap *trap)
     trap->kind = HT_ILLEGAL;
 }
 
+u32
+hal_user_writefault(const Hctx *context)
+{
+  u64 code = context->tf.cause;
+  return !(context->tf.status & 15) && ((code >> 26) & 63) == 0x24 && (code & 63) == 15 &&
+         (code & 64) && !(code & 0x580);
+}
+
 void
 hal_ctx_init(Hkctx *context, u64 top, void (*entry)(void))
 {

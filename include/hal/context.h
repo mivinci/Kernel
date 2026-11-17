@@ -47,6 +47,9 @@ u64  hal_syscall_arg(const Hctx *context, u32 slot);
 void hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8]);
 void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);
 void hal_trap_decode(const Hctx *context, Htrap *trap);
+/* Ordinary lower-privilege store permission/page fault eligible for COW.
+   Core still verifies logical mapping, marker and ownership. No mutation. */
+u32 hal_user_writefault(const Hctx *context);
 /* Context is the reserved frame on the current guarded kernel stack.
    Entry discards the current C continuation; repeated returns reuse this frame. */
 NORETURN void hal_user_enter(Hctx *context);

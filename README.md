@@ -197,10 +197,8 @@ CASE=heap验证构造函数及外部VA冲突、128个小块与跨Mem大块、表
 
 sigframe现由11个用户进程自行原生注册handler/trampoline，新增注册后解除代码映射的受控失败；sigsuspend的9个进程同样自行注册并使用libc等待。signal.h支持集合助手及mask/pending/suspend，来源仍是可信code=0测试注入；公开POSIX sigaction trampoline、真实来源编码与Rctx/普通等待中断仍待接。
 
-CASE=cow使用8分支小容量配置，验证生产逻辑页组的父/子先写复制、父退出出资转交及元数据池/普通物理页耗尽后全部已接分支仍能分离。它尚未连接Mem/PTE或用户fork，不代表用户写故障COW已完成。
+spaces场景在活动root上完成64次叶换页/权限更新且不申请页表页；rodatawrite预热RW翻译再降R，核对真实写权限故障。
 
-CASE=cow另验证私有DATA Mem多代克隆及真实R别名、失败准备回滚、孩子分离后RW映射和最后引用回收。当前Mem层强制拒绝共享页的新RW映射及带可写别名的克隆；用户PTE COW/写故障/fork尚待接通。
+CASE=cow使用8分支配置验证预付、Mem克隆/回滚、跨Space全部别名提交及真实用户COW写故障。四组覆盖父/子先写、父退出与真正只读拒绝，含原生RW map/free、整数/FP/条件码现场；普通RAM耗尽后仍兑现承诺并保留低水位。两架构trace各核对13次实际store故障（12次解析、1次只读结束）。
 
-spaces场景另在实际活动root上完成64次受检查的叶换页/权限更新，期间不申请页表页；rodatawrite先预热RW翻译再降为R，要求真实store产生权限故障。HAL叶替换尚未构成完整Space别名/COW fault/fork实现，见02末尾。
-
-CASE=cow现另验证Space准备时跨空间逻辑RW别名统一降为只读COW、R别名保持，以及失败只撤回本次新增保护。Mem/Mmap/Space大小未增加；用户写故障、全部别名分离提交和fork发布仍未接通。
+测试进程由可信fixture独立构造，尚非原生fork；内核代用户COW写、信号COW栈及fork发布/继承仍待接通，详见02末尾。

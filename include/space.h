@@ -54,8 +54,14 @@ int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64
 int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
 /* Trusted inactive-space preparation: protect all existing logical RW aliases
    of this private Mem across spaces, clone, and undo new protections on error.
-   No user fork admission, writable child map or fault-resume path yet. */
+   Process admission and Local/resource inheritance are separate. */
 int spaceclone(Memid source, Acctid target, Memid *out);
+/* Trusted child/private mapping: logical RW, initially hardware R/COW. */
+int spacecowmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length);
+/* Inactive spaces only. Resolve exactly a COW-marked logical-W address and
+   commit that logical page to every alias (R aliases remain R). The caller
+   separately owns the complete saved user context and resumes it on success. */
+int spaceresolve(Spaceid id, u64 address);
 /* Trusted kernel destination; precheck every source page before copying. */
 int spaceread(Spaceid id, u64 address, void *target, u64 bytes);
 /* Trusted source, serialized with VM mutations; precheck the entire output. */

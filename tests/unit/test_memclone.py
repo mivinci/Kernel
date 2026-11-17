@@ -145,7 +145,7 @@ class MemCloneTests(unittest.TestCase):
             self.assertEqual(self.read(child, 0, 1), b'c')
         for lib in self.libs:self.exercise(lib, body)
 
-    def test_writable_alias_rejects_clone_and_clone_prevents_new_writable_alias(self):
+    def test_unprotected_writer_rejects_clone_and_new_shared_rw_map_is_cow_protected(self):
         def body():
             sid = self.create(); source = self.memory_create(); target = self.target()
             self.assertEqual(self.map(sid, source), 0)
@@ -155,10 +155,14 @@ class MemCloneTests(unittest.TestCase):
             self.assertEqual(self.lib.spaceunmap(sid, 0x10000), 0); self.maps.remove((sid, 0x10000))
             child = self.clone(source, target)
             self.assertEqual(self.lib.memcanmap(source, 3), -4)
-            self.assertEqual(self.map(sid, source), -1)
+            self.assertEqual(self.map(sid, source), 0)
+            self.assertEqual(self.lookup(sid, 0x10000)[1], 25)
+            self.assertEqual(self.mstat(source).cowmaps, 1)
             self.assertEqual(self.lib.memfree(child), 0)
             self.assertEqual(self.lib.memcanmap(source, 3), 0)
+            self.assertEqual(self.lib.spaceunmap(sid, 0x10000), 0); self.maps.remove((sid, 0x10000))
             self.assertEqual(self.map(sid, source), 0)
+            self.assertEqual(self.lookup(sid, 0x10000)[1], 11)
         for lib in self.libs:self.exercise(lib, body)
 
     def test_midway_quota_failure_restores_raw_source_and_all_reservations(self):

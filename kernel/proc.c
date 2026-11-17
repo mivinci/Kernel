@@ -75,6 +75,7 @@ static Local entries[PROCS][LOCALS];
 static Proc *current;
 static Hkctx cpu;
 static u32   vm_paused, timer_enabled;
+static u64   cow_faults;
 static u64   timer_interval, timer_ticks, kernel_ticks;
 static u64   dispatched;
 static u32   reschedule_requested;
@@ -841,6 +842,28 @@ procresumevm(void)
   if (!current || current->state != PROC_RUNNING || !vm_paused || spaceactivate(current->space))
     panic("VM resume source");
   vm_paused = 0;
+}
+int
+proccowfault(Hctx *context)
+{
+  Hpte entry;
+  int  error;
+  if (!proccurrent(context) || vm_paused || !hal_user_writefault(context))
+    return -ERR_STATE;
+  if (!spacelookup(current->space, ALIGN_DOWN(context->tf.address, PAGE_SIZE), &entry) ||
+      entry.prot != (VM_READ | VM_USER | VM_COW) || entry.attr != VM_NORMAL)
+    return -ERR_FAULT;
+  procpausevm();
+  error = spaceresolve(current->space, context->tf.address);
+  procresumevm();
+  if (!error)
+    cow_faults++;
+  return error;
+}
+u64
+proccowfaults(void)
+{
+  return cow_faults;
 }
 void
 procyield(void)

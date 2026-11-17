@@ -184,7 +184,7 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):
             sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
-        if args.case in ("libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "heap"):
+        if args.case in ("libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "heap", "cow"):
             invoke("build-sdk", [sys.executable, str(ROOT / "tools/user.py"), "--arch", args.arch,
                                   "--cc", tools["cc"]["path"], "--ld", tools["ld"]["path"],
                                   "--ar", tools["ar"]["path"], "--readelf", tools["readelf"]["path"]])
@@ -195,6 +195,8 @@ def build(args, directory, run_dir):
                 sources += [ROOT / "tests/kernel/runtimetest.c", directory / "sdk/runtimeimage.S"]
             elif args.case == "elf":
                 sources += [ROOT / "tests/kernel/elftest.c", directory / "sdk/elfimage.S"]
+            elif args.case == "cow":
+                sources += [ROOT / "tests/kernel/nativecowtest.c", directory / "sdk/cowimage.S"]
             elif args.case == "heap":
                 sources += [ROOT / "tests/kernel/heaptest.c", directory / "sdk/heapimage.S"]
             elif args.case == "virtiodev":
