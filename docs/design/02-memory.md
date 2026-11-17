@@ -634,3 +634,19 @@ memwrite对涉及的逻辑页先全范围检查，再处理COW分离，全部分
 CASE=cow两架构另接实际Mem/Space子场景：两页父Mem持两个真实R映射，创建孩子与后代视图，源管理引用可提前归零；额度不足的新孩子失败不改旧组，孩子/后代逐页分离后真实RW映射及spacewrite与父R别名隔离。最后unmap/free、Space/Acct清理全部回原页/费用基线，主机独立核对MEMCOWCHECK。仍是可信内核机制验收，没有用户fork、用户写故障或自动PTE COW演示；正常镜像不运行fixture。
 
 本地make unit全部443项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage65-mem-clone/，含所有原始结果中的当前Mem/Cow/main哈希及两架构MEMCOWCHECK。正常镜像不含测试，compile_commands继续由构建更新；无CI/真实硬件/性能或用户COW fault/fork验收。
+
+### 已有页表叶的原位替换（2026-11-17）
+
+HAL新增hal_vm_replace(vs, va, expected_hpte, new_pa, new_prot)，只替换一份已存在的4KiB叶，不创建/销毁中间表或分配物理页。调用者持有已初始化且存续的root、底层页及全部相关别名责任，并串行禁止目标VA在break期间使用；目标不能覆盖正在执行的代码、栈或walker/页表访问路径。它是可信机制，不是新的用户mprotect或COW权限入口。
+
+先完整检查canonical/对齐/40位PA边界、READ及W^X、root用户/内核范围、expected present/权限/属性。expected来自lookup并须重编码后逐位等于当前原始叶，防止旧快照或未识别软件/保留位被覆盖；失败不写表/不失效。新叶继承原普通/Device属性和root规定的USER位，调用者不能在new_prot指定USER、改变内存类型或令Device可执行。同叶no-op不失效。全部编码在break之前计算，避免目标恰含编码器会读取的只读常量时在失效期间访问它。
+
+成功顺序为旧叶清0→现有hal_vm_commit→写新叶→hal_vm_commit，两个阶段之间没有可失败的分配或回调式外部业务；表页数/费用不变。ARM继续使用dsb ishst/tlbi vmalle1/dsb ish/isb，RV继续使用sfence.vma zero,zero；当前UP/无ASID、ARM缓存关闭配置下保守全局失效。参照[TF-A v2.12.0 xlat工具的BBM说明](https://github.com/ARM-software/arm-trusted-firmware/blob/v2.12.0/lib/xlat_tables_v2/xlat_tables_utils.c)及[RISC-V Privileged 20240411](https://docs.riscv.org/reference/isa/v20240411/_attachments/riscv-privileged.pdf)核对清旧描述符/失效/新描述符的顺序，未复制其实现。没有新增面向多核、非一致表缓存或目标真机的保证，代码同步仍由已有seal/调用者负责。
+
+host新增三组真实ARM/RV编码检查，提交钩子读取实际槽，确认第一次commit见0、第二次见新叶；核对失败/旧快照/未知位/no-op的无修改与无维护、零alloc/free，以及用户高半区/特权/Device属性限制。元数据/编码mock不替代真实TLB验证。
+
+spaces两架构场景在活动内核root上添加独立普通VA，先触发实际RW翻译，再64次交替指向两份真实物理页并变更R/RW，逐次读新pa内容、写新页及检查旧页未变，物理及页表用量全程不增加，最后unmap/free回基线。rodatawrite另先把已存在rodata页改RW、真实读写相同值以预热可写翻译，再replace回R；最终汇编store必须在原vm_fault PC因权限故障失败，不能因缺页或仅靠lookup而通过。主机同时核对PTEREPLACECHECK/PTEPERMCHECK及最终导出的完整页表。
+
+本切片没有新增PTE COW标记、逻辑写权限/全部别名提交、用户写fault、内核代用户写分离或fork；现有Mem共享页RW/映射重定位仍保持拒绝，不能直接调用此HAL入口绕过Mem/Space语义。
+
+本地make unit全部446项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage66-pte-replace/，含当前pgt.c源码哈希与原始spaces/rodatawrite读回及完整页表审计。未执行CI、真实硬件、性能、用户COW标记/fault或fork验收。

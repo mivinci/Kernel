@@ -157,6 +157,40 @@ hal_vm_map(Hvs *vs, u64 va, u64 pa, u64 prot, u32 attr)
   return error;
 }
 
+isize
+hal_vm_replace(Hvs *vs, u64 va, const Hpte *expected, u64 pa, u64 prot)
+{
+  u64 *slot, previous, replacement;
+  u64  user;
+  if (!vs || !expected || expected->present != 1 ||
+      (vs->user && (va < 0x10000 || va >= (1UL << 38))) || !canonical(va) ||
+      ((va | pa | expected->pa) & PAGE_MASK) || pa >= (1UL << 40) || expected->pa >= (1UL << 40) ||
+      !(prot & VM_READ) || prot & ~7UL || ((prot & VM_WRITE) && (prot & VM_EXEC)) ||
+      expected->attr > VM_DEVICE || (expected->attr == VM_DEVICE && (prot & VM_EXEC)))
+    return VM_BAD;
+  user = vs->user ? VM_USER : 0;
+  if (!(expected->prot & VM_READ) || expected->prot & ~(7UL | VM_USER) ||
+      (expected->prot & VM_USER) != user ||
+      ((expected->prot & VM_WRITE) && (expected->prot & VM_EXEC)) ||
+      (expected->attr == VM_DEVICE && (expected->prot & VM_EXEC)))
+    return VM_BAD;
+  if (walk(vs, va, &slot, NULL, NULL) || !*slot)
+    return VM_BAD;
+  previous = hal_vm_leaf(expected->pa, expected->prot, (u32) expected->attr);
+  if (*slot != previous)
+    return VM_EXISTS;
+  /* Compute all descriptors before the break; the replaced VA may itself
+     contain constants used by the architecture encoder. */
+  replacement = hal_vm_leaf(pa, prot | user, (u32) expected->attr);
+  if (replacement == previous)
+    return 0;
+  *slot = 0;
+  hal_vm_commit(vs);
+  *slot = replacement;
+  hal_vm_commit(vs);
+  return 0;
+}
+
 u32
 hal_vm_lookup(const Hvs *vs, u64 va, Hpte *out)
 {

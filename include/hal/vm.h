@@ -45,6 +45,12 @@ isize hal_vm_create(Hvs *vs, Pgsource *source);
 /* Fresh inactive root borrows the permanent kernel high half. */
 isize hal_vm_user(Hvs *vs, const Hvs *kernel);
 isize hal_vm_map(Hvs *vs, u64 va, u64 pa, u64 prot, u32 attr);
+/* Replace exactly one known 4 KiB leaf, preserving its memory attribute/root
+   privilege. Expected is a lookup snapshot. Caller serializes, prevents use
+   of this VA during break-before-make, and owns backing/alias policy.
+   Mismatch/failure changes nothing; success completes both invalidations.
+   No allocation, table removal, new cache attributes or user authority. */
+isize hal_vm_replace(Hvs *vs, u64 va, const Hpte *expected, u64 pa, u64 prot);
 isize hal_vm_unmap(Hvs *vs, u64 va);
 u32   hal_vm_lookup(const Hvs *vs, u64 va, Hpte *out);
 void  hal_vm_switch(const Hvs *vs);

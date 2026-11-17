@@ -73,7 +73,7 @@ class PageTableTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         shim = Path(cls.tmp.name) / 'shim.c'
-        shim.write_text('#include <hal/vm.h>\nstatic u64 count;\nvoid hal_vm_commit(Hvs *s){UNUSED(s); count++;}\nu64 test_commits(void){return count;}\n')
+        shim.write_text('#include <hal/vm.h>\nstatic u64 count, *watched, observed[4]; static u32 seen;\nvoid hal_vm_commit(Hvs *s){UNUSED(s);count++;if(watched && seen<4)observed[seen++]=*watched;}\nu64 test_commits(void){return count;}\nvoid test_watch(void *p){watched=p;seen=0;}\nu64 test_observed(u32 i){return i<seen?observed[i]:~(u64)0;}\nu32 test_seen(void){return seen;}\n')
         cls.libs = []
         for arch in ('riscv', 'arm64'):
             path = Path(cls.tmp.name) / (arch + '.so')
@@ -91,6 +91,11 @@ class PageTableTests(unittest.TestCase):
             lib.hal_vm_user.restype = C.c_int64
             lib.hal_vm_map.argtypes = [C.POINTER(Space), C.c_uint64, C.c_uint64, C.c_uint64, C.c_uint32]
             lib.hal_vm_map.restype = C.c_int64
+            lib.hal_vm_replace.argtypes = [C.POINTER(Space), C.c_uint64, C.POINTER(Entry), C.c_uint64, C.c_uint64]
+            lib.hal_vm_replace.restype = C.c_int64
+            lib.test_watch.argtypes = [C.c_void_p]
+            lib.test_observed.argtypes = [C.c_uint32]
+            lib.test_observed.restype = C.c_uint64
             lib.hal_vm_unmap.argtypes = [C.POINTER(Space), C.c_uint64]
             lib.hal_vm_unmap.restype = C.c_int64
             lib.hal_vm_lookup.argtypes = [C.POINTER(Space), C.c_uint64, C.POINTER(Entry)]
@@ -102,6 +107,87 @@ class PageTableTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+
+    def leaf(self, arena, va):
+        table = arena.space.root
+        for shift in (30, 21):
+            raw = arena.pages[table][(va >> shift) & 511]
+            # The two real encoders distinguish table descriptors by low bits.
+            table = ((raw & 0x003ffffffffffc00) << 2) if raw & 3 == 1 else raw & 0x0000fffffffff000
+        return arena.pages[table], (va >> 12) & 511
+
+    def expected(self, arena, va):
+        output = Entry(); arena.lib.hal_vm_lookup(C.byref(arena.space), va, C.byref(output)); return output
+
+    def test_leaf_replace_breaks_before_making_and_never_allocates_tables(self):
+        for lib in self.libs:
+            arena = Arena(lib); self.assertEqual(arena.create(), 0)
+            va = 0xffffffc100200000
+            self.assertEqual(arena.map(va), 0)
+            table, index = self.leaf(arena, va)
+            pointer = C.addressof(table) + index * 8
+            calls, pages = arena.calls, arena.space.pages
+            try:
+                for pa, prot in ((0x80000000, 1), (0x80001000, 3), (0x80002000, 5)):
+                    old = self.expected(arena, va); lib.test_watch(pointer)
+                    commits = lib.test_commits()
+                    self.assertEqual(lib.hal_vm_replace(C.byref(arena.space), va, C.byref(old), pa, prot), 0)
+                    self.assertEqual(lib.test_commits() - commits, 2)
+                    self.assertEqual((lib.test_seen(), lib.test_observed(0), lib.test_observed(1)), (2, 0, table[index]))
+                    self.assertEqual(arena.lookup(va), (pa, prot, 0, 1))
+                    self.assertEqual((arena.calls, arena.space.pages, arena.events), (calls, pages, []))
+                old = self.expected(arena, va); commits = lib.test_commits(); lib.test_watch(pointer)
+                self.assertEqual(lib.hal_vm_replace(C.byref(arena.space), va, C.byref(old), old.pa, old.prot), 0)
+                self.assertEqual((lib.test_commits(), lib.test_seen()), (commits, 0))
+            finally:
+                lib.test_watch(None); arena.destroy()
+
+    def test_leaf_replace_stale_snapshot_and_invalid_ranges_are_readonly_failures(self):
+        for lib in self.libs:
+            arena = Arena(lib); self.assertEqual(arena.create(), 0)
+            va = 0x200000; self.assertEqual(arena.map(va), 0)
+            original = self.expected(arena, va)
+            try:
+                for field, value in (('pa', 0x80001000), ('prot', 1), ('attr', 1), ('present', 0)):
+                    old = Entry.from_buffer_copy(original); setattr(old, field, value)
+                    before = arena.snapshot(), lib.test_commits(), arena.calls
+                    self.assertIn(lib.hal_vm_replace(C.byref(arena.space), va, C.byref(old), 0x80002000, 3), (-1, -3))
+                    self.assertEqual((arena.snapshot(), lib.test_commits(), arena.calls), before)
+                for address, pa, prot in ((va+1, 0x80000000, 3), (va, 1, 3), (va, 1<<40, 3),
+                                           (va, 0x80000000, 7), (va, 0x80000000, 0),
+                                           (va, 0x80000000, 11), (1<<39, 0x80000000, 3),
+                                           (va+4096, 0x80000000, 3)):
+                    before = arena.snapshot(), lib.test_commits(), arena.calls
+                    self.assertEqual(lib.hal_vm_replace(C.byref(arena.space), address, C.byref(original), pa, prot), -1)
+                    self.assertEqual((arena.snapshot(), lib.test_commits(), arena.calls), before)
+                table, index = self.leaf(arena, va); table[index] |= 1 << 63
+                before = arena.snapshot(), lib.test_commits()
+                self.assertEqual(lib.hal_vm_replace(C.byref(arena.space), va, C.byref(original), 0x80001000, 3), -3)
+                self.assertEqual((arena.snapshot(), lib.test_commits()), before)
+                table[index] &= ~(1<<63)
+            finally:arena.destroy()
+
+    def test_user_replace_cannot_change_privilege_high_half_or_device_attributes(self):
+        for lib in self.libs:
+            kernel = Arena(lib); self.assertEqual(kernel.create(), 0)
+            self.assertEqual(kernel.map(0xffffffc000000000, 0x80000000, 5), 0)
+            user = Space(); self.assertEqual(lib.hal_vm_create(C.byref(user), C.byref(kernel.source)), 0)
+            self.assertEqual(lib.hal_vm_user(C.byref(user), C.byref(kernel.space)), 0)
+            try:
+                self.assertEqual(lib.hal_vm_map(C.byref(user), 0x10000, 0x9000000, 3, 1), 0)
+                old = Entry(); lib.hal_vm_lookup(C.byref(user), 0x10000, C.byref(old))
+                self.assertEqual(lib.hal_vm_replace(C.byref(user), 0x10000, C.byref(old), 0x9001000, 1), 0)
+                new = Entry(); lib.hal_vm_lookup(C.byref(user), 0x10000, C.byref(new))
+                self.assertEqual((new.pa, new.prot, new.attr), (0x9001000, 9, 1))
+                before = kernel.snapshot(), bytes(user), lib.test_commits()
+                self.assertEqual(lib.hal_vm_replace(C.byref(user), 0x10000, C.byref(new), new.pa, 5), -1)
+                high = Entry(); lib.hal_vm_lookup(C.byref(user), 0xffffffc000000000, C.byref(high))
+                self.assertEqual(lib.hal_vm_replace(C.byref(user), 0xffffffc000000000, C.byref(high), high.pa, 1), -1)
+                new.prot &= ~8
+                self.assertEqual(lib.hal_vm_replace(C.byref(user), 0x10000, C.byref(new), new.pa, 1), -1)
+                self.assertEqual((kernel.snapshot(), bytes(user), lib.test_commits()), before)
+            finally:
+                lib.hal_vm_destroy(C.byref(user)); kernel.destroy()
 
     def test_creation_failure_does_not_publish_a_root(self):
         for lib in self.libs:

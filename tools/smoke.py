@@ -248,6 +248,10 @@ def validate_output(text, arch, case, names, ram_mb=256):
             probes = [fields(x) for x in lines if x.startswith("VMTEST ")]
             if len(probes) != 1 or probes[0].get("kind") != VM_FAULTS[case]:
                 raise SmokeError("VM fault test marker mismatch")
+            if case == "rodatawrite":
+                permission=[fields(line) for line in lines if line.startswith("PTEPERMCHECK ")]
+                if permission != [dict(warmed=1,downgraded=1)]:
+                    raise SmokeError("PTE write permission was not warmed then revoked")
             target = probes[0]["target"]
             expected_pc = target if case == "dataexec" else high(names["vm_fault"])
             if frame.get("pc") != expected_pc or frame.get("address") != target:
@@ -661,6 +665,10 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                    replaced=[fields(line) for line in serial.read_text().splitlines() if line.startswith("PTEREPLACECHECK ")]
+                    if replaced != [dict(replaced=64,allocated=transition["tables"])]:
+                        raise SmokeError("PTE replacement/physical cleanup mismatch")
+                    record["pte_replace"]=replaced[0]
                 if args.case == "cow":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("COWCHECK ")]
                     if checks != [dict(cases=4,split=9,exclusive=2,full=1,charged=0,allocated=transition["tables"])]:

@@ -11,6 +11,66 @@
   } while (0)
 static Spaceid roots[SPACES];
 
+static void
+replacetest(Hvs *kernel)
+{
+  Pgblk         frames[2];
+  Pgstat        before, mapped, current, after;
+  Hpte          expected, wrong;
+  volatile u64 *alias, *direct[2];
+  u64           target = KIO + (1UL << 21), tables = kernel->pages, oldvalue;
+  u32           i, next, previous = 0;
+  pgstat(&before);
+  REQUIRE(!pgalloc(0, NULL, &frames[0]) && !pgalloc(0, NULL, &frames[1]),
+          "PTE replacement backing");
+  direct[0] = kaddr(frames[0].pa);
+  direct[1] = kaddr(frames[1].pa);
+  direct[0][0] = 0x11111111;
+  direct[1][0] = 0x22222222;
+  REQUIRE(!hal_vm_map(kernel, target, frames[0].pa, VM_READ | VM_WRITE, VM_NORMAL),
+          "PTE replacement map");
+  hal_vm_commit(kernel);
+  alias = (volatile u64 *) target;
+  REQUIRE(*alias == direct[0][0], "PTE initial translation");
+  *alias = 0x33333333;
+  pgstat(&mapped);
+  for (i = 0; i < 64; i++) {
+    next = 1 - previous;
+    REQUIRE(hal_vm_lookup(kernel, target, &expected), "PTE old lookup");
+    wrong = expected;
+    wrong.pa = frames[next].pa;
+    REQUIRE(hal_vm_replace(kernel, target, &wrong, frames[next].pa, VM_READ) == VM_EXISTS,
+            "PTE stale snapshot rejection");
+    oldvalue = direct[previous][0];
+    REQUIRE(!hal_vm_replace(kernel, target, &expected, frames[next].pa,
+                            i & 1 ? VM_READ | VM_WRITE : VM_READ),
+            "PTE checked replace");
+    REQUIRE(*alias == direct[next][0], "PTE stale physical translation");
+    if (i & 1) {
+      *alias = 0x44440000 + i;
+      REQUIRE(direct[next][0] == 0x44440000 + i, "PTE new physical write");
+    }
+    REQUIRE(direct[previous][0] == oldvalue, "PTE old backing modified");
+    pgstat(&current);
+    REQUIRE(current.free == mapped.free && current.allocated == mapped.allocated,
+            "PTE replace allocated tables");
+    previous = next;
+  }
+  REQUIRE(hal_vm_lookup(kernel, target, &expected) &&
+              !hal_vm_replace(kernel, target, &expected, expected.pa, expected.prot),
+          "PTE no-op");
+  REQUIRE(!hal_vm_unmap(kernel, target) && !pgfree(frames[0]) && !pgfree(frames[1]) &&
+              kernel->pages == tables && !pgcheck(),
+          "PTE replacement cleanup");
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated,
+          "PTE physical conservation");
+  putstr("PTEREPLACECHECK replaced=");
+  puthex(64);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}
 void
 spacetest(Hvs *kernel)
 {
@@ -26,6 +86,7 @@ spacetest(Hvs *kernel)
   u32           i;
   volatile u64 *memory;
   const u64    *parent = kaddr(kernel->root);
+  replacetest(kernel);
   pgstat(&before);
   REQUIRE(!setcreate(512, 1024, 8, &group) && !acctcreate(group, 512, 1024, &acct), "root account");
   REQUIRE(!acctalloc(acct, 0, NULL, &dirty), "dirty root preparation");

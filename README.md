@@ -200,3 +200,5 @@ sigframe现由11个用户进程自行原生注册handler/trampoline，新增注�
 CASE=cow使用8分支小容量配置，验证生产逻辑页组的父/子先写复制、父退出出资转交及元数据池/普通物理页耗尽后全部已接分支仍能分离。它尚未连接Mem/PTE或用户fork，不代表用户写故障COW已完成。
 
 CASE=cow另验证私有DATA Mem多代克隆及真实R别名、失败准备回滚、孩子分离后RW映射和最后引用回收。当前Mem层强制拒绝共享页的新RW映射及带可写别名的克隆；用户PTE COW/写故障/fork尚待接通。
+
+spaces场景另在实际活动root上完成64次受检查的叶换页/权限更新，期间不申请页表页；rodatawrite先预热RW翻译再降为R，要求真实store产生权限故障。HAL叶替换尚未构成完整Space别名/COW fault/fork实现，见02末尾。

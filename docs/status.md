@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过443项，格式及make test-qemu的110个两架构场景全部通过；日志`build/host/stage65-mem-clone/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- cow场景两架构另验两页私有Mem及两份后代克隆、两个真实R别名、只读源管理引用归零后克隆、孩子RW独立写和最后映射回收。host覆盖分页分离及额度/分支/节点/Mem槽回滚。110场景全量通过；现阶段拒绝源RW别名克隆、共享页新RW映射和已映射页重定位，用户PTE/fault/fork仍待接。
+- 本地make unit通过446项，格式及make test-qemu的110个两架构场景全部通过；日志`build/host/stage66-pte-replace/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
+- spaces两架构各64次实际叶换页/权限替换，表页/物理费用不增；rodatawrite预热RW翻译后降R，实际store产生权限故障。host核对BBM两次提交、失配/未知位/非法权限不修改及用户/Device限制。110场景回归通过；仍未接用户PTE COW标记、别名事务、写fault或fork。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

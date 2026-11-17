@@ -50,6 +50,25 @@ vmtest(Hvs *space)
   target = (u64) __text_start;
 #elif BOOT_CASE == 5
   target = (u64) __rodata_start;
+  {
+    Hpte          expected;
+    volatile u64 *mapped = (volatile u64 *) target;
+    u64           value;
+    if (!hal_vm_lookup(space, target, &expected) || expected.prot != VM_READ ||
+        hal_vm_replace(space, target, &expected, expected.pa, VM_READ | VM_WRITE))
+      panic("PTE permission warmup");
+    value = *mapped;
+    *mapped = value; /* Prime an actual writable translation before revoking. */
+    if (!hal_vm_lookup(space, target, &expected) ||
+        hal_vm_replace(space, target, &expected, expected.pa, VM_READ) ||
+        !hal_vm_lookup(space, target, &expected) || expected.prot != VM_READ)
+      panic("PTE permission downgrade");
+    putstr("PTEPERMCHECK warmed=");
+    puthex(1);
+    putstr(" downgraded=");
+    puthex(1);
+    putstr("\n");
+  }
 #elif BOOT_CASE == 6
   target = (u64) &instruction;
 #elif BOOT_CASE == 7
