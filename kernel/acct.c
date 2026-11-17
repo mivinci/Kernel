@@ -178,7 +178,7 @@ acctcreate(Setid id, u64 limit, u64 peak, Acctid *out)
     a->generation++;
     a->limit = limit;
     a->exec_limit = peak;
-    a->used = a->reserved = 0;
+    a->used = a->reserved = a->cow = 0;
     a->set = id.index;
     a->state = AC_ACTIVE;
     a->refs = a->bound = 1;
@@ -247,6 +247,7 @@ acctstat(Acctid id, Acct *out)
   out->exec_limit = a->exec_limit;
   out->used = a->used;
   out->reserved = a->reserved;
+  out->cow = a->cow;
   out->set = a->set;
   out->state = a->state;
   out->refs = a->refs;
@@ -311,7 +312,7 @@ int
 acctconvert(Acctid id, u64 pages)
 {
   Acct *a = find(id);
-  if (!a || !pages || pages > a->reserved)
+  if (!a || !pages || pages > a->reserved - a->cow)
     return AC_BAD;
   a->reserved -= pages;
   a->used += pages;
@@ -322,7 +323,7 @@ int
 acctrelease(Acctid id, u64 used, u64 reserved)
 {
   Acct *a = find(id);
-  if (!a || (!used && !reserved) || used > a->used || reserved > a->reserved)
+  if (!a || (!used && !reserved) || used > a->used || reserved > a->reserved - a->cow)
     return AC_BAD;
   a->used -= used;
   a->reserved -= reserved;
@@ -389,6 +390,152 @@ acctfree(Acctblk block)
   return 0;
 }
 
+static Acct *
+cowaccount(const Acctcow *credit)
+{
+  Acct *a;
+  if (!credit || !credit->physical.pages)
+    return NULL;
+  a = find(credit->acct);
+  return a && credit->physical.pages <= a->cow && a->cow <= a->reserved &&
+                 credit->physical.pages <= pgreserved() && a->refs > a->bound
+             ? a
+             : NULL;
+}
+static void
+cowfinish(Acctcow *credit)
+{
+  if (!credit->physical.pages) {
+    acctdrop(credit->acct);
+    credit->acct.generation = 0;
+    credit->acct.index = credit->acct.reserved = 0;
+  }
+}
+int
+acctcowreserve(Acctid id, u64 pages, Acctcow *out)
+{
+  Acct    *a = find(id);
+  Pgcredit physical;
+  int      error;
+  if (!a || !out || !pages || out->physical.pages || out->acct.generation || out->acct.index ||
+      out->acct.reserved)
+    return AC_BAD;
+  error = accthold(id);
+  if (error)
+    return error;
+  error = acctreserve(id, pages);
+  if (error) {
+    acctdrop(id);
+    return error;
+  }
+  physical.pages = 0;
+  error = pgreserve(&physical, pages);
+  if (error) {
+    acctrelease(id, 0, pages);
+    acctdrop(id);
+    return error == PG_NOMEM ? AC_NOMEM : AC_BAD;
+  }
+  a->cow += pages;
+  out->acct.generation = id.generation;
+  out->acct.index = id.index;
+  out->acct.reserved = 0;
+  out->physical.pages = physical.pages;
+  return 0;
+}
+int
+acctcowcancel(Acctcow *credit, u64 pages)
+{
+  Acct *a = cowaccount(credit);
+  if (!a || !pages || pages > credit->physical.pages)
+    return AC_BAD;
+  if (pgcancel(&credit->physical, pages))
+    return AC_BAD;
+  a->cow -= pages;
+  a->reserved -= pages;
+  sets[a->set].charged -= pages;
+  cowfinish(credit);
+  return 0;
+}
+int
+acctcowalloc(Acctcow *credit, Acctblk *out)
+{
+  Acct  *a = cowaccount(credit);
+  Pgblk  block;
+  Acctid id;
+  int    error;
+  if (!a || !out)
+    return AC_BAD;
+  id = credit->acct;
+  error = accthold(id);
+  if (error)
+    return error;
+  error = pgredeem(&credit->physical, &block);
+  if (error) {
+    acctdrop(id);
+    return error == PG_NOMEM ? AC_NOMEM : AC_BAD;
+  }
+  if (pgclaim(block, (id.generation << 8) | id.index)) {
+    /* Serialized rollback returns the just-redeemed capacity before exposing
+       a page or changing the account. This cannot compete with admission. */
+    pgfree(block);
+    pgreserve(&credit->physical, 1);
+    acctdrop(id);
+    return AC_BAD;
+  }
+  a->cow--;
+  a->reserved--;
+  a->used++;
+  out->block.pa = block.pa;
+  out->block.order = out->block.reserved = 0;
+  out->acct.generation = id.generation;
+  out->acct.index = id.index;
+  out->acct.reserved = 0;
+  cowfinish(credit);
+  return 0;
+}
+int
+acctcowmove(Acctblk *block, Acctcow *credit)
+{
+  Acct  *to = cowaccount(credit), *from;
+  Acctid target, source;
+  int    error;
+  if (!to || !block || block->block.order || block->block.reserved)
+    return AC_BAD;
+  from = find(block->acct);
+  if (!from || from == to || from->set != to->set || !from->used || from->refs <= from->bound)
+    return AC_BAD;
+  source = block->acct;
+  target = credit->acct;
+  error = accthold(target);
+  if (error)
+    return error;
+  /* Validate and change physical ownership before the infallible quota
+     commit. Invalid/stale block descriptions never consume a reservation. */
+  error = pgtransfer(block->block, (source.generation << 8) | source.index,
+                     (target.generation << 8) | target.index);
+  if (error) {
+    acctdrop(target);
+    return AC_BAD;
+  }
+  if (pgcancel(&credit->physical, 1)) {
+    pgtransfer(block->block, (target.generation << 8) | target.index,
+               (source.generation << 8) | source.index);
+    acctdrop(target);
+    return AC_BAD;
+  }
+  from->used--;
+  to->cow--;
+  to->reserved--;
+  to->used++;
+  sets[from->set].charged--;
+  block->acct.generation = target.generation;
+  block->acct.index = target.index;
+  block->acct.reserved = 0;
+  acctdrop(source);
+  cowfinish(credit);
+  return 0;
+}
+
 int
 acctcheck(void)
 {
@@ -407,8 +554,8 @@ acctcheck(void)
       continue;
     if (a->state > AC_CLOSING || a->set >= AC_SETS || !a->generation ||
         a->generation > GENERATION_MAX || a->bound > 1 || a->refs < a->bound ||
-        a->used > ~(u64) 0 - a->reserved || a->used + a->reserved > a->limit ||
-        a->exec_limit < a->limit)
+        a->cow > a->reserved || a->used > ~(u64) 0 - a->reserved ||
+        a->used + a->reserved > a->limit || a->exec_limit < a->limit)
       return AC_BAD;
     if (charged[a->set] > ~(u64) 0 - a->used - a->reserved)
       return AC_BAD;

@@ -57,8 +57,10 @@ int pgcancel(Pgcredit *credit, u64 pages);
 int pgredeem(Pgcredit *credit, Pgblk *out);
 u64 pgreserved(void);
 /* Nonzero owners protect accounted blocks from raw pgfree or a wrong account. */
-int  pgclaim(Pgblk blk, u64 owner);
-int  pgrelease(Pgblk blk, u64 owner);
+int pgclaim(Pgblk blk, u64 owner);
+int pgrelease(Pgblk blk, u64 owner);
+/* Trusted COW charge transfer; exact allocated head and old owner required. */
+int  pgtransfer(Pgblk blk, u64 oldowner, u64 newowner);
 void pgstat(Pgstat *out);
 /* Boot/host diagnostic: inspect all metadata/free lists; no mutation. */
 int pgcheck(void);

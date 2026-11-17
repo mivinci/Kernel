@@ -327,6 +327,21 @@ pgclaim(Pgblk blk, u64 owner)
 }
 
 int
+pgtransfer(Pgblk blk, u64 oldowner, u64 newowner)
+{
+  u32   index;
+  Page *p;
+  if (!oldowner || !newowner || !allocator.ready || blk.reserved || blk.order > PG_ORDER ||
+      blk.pa & (((u64) PAGE_SIZE << blk.order) - 1) || !indexof(blk.pa, &index))
+    return PG_BAD;
+  p = &allocator.page[index];
+  if (p->state != ALLOCATED || p->order != blk.order || p->head != index || p->owner != oldowner)
+    return PG_BAD;
+  p->owner = newowner;
+  return 0;
+}
+
+int
 pgfree(Pgblk blk)
 {
   return pgrelease(blk, 0);

@@ -11,7 +11,7 @@
 ## 已实现边界
 
 - RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM缓存仍关闭；现接GICv2/PLIC外设控制器HAL及最小Device映射，现接固定镜像IRQ_BIND/ACK/解绑与真实EVENT递送；IRQ_SOURCE授权/原生bind仍待确认。
-- Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。Mem内容状态保留到最终回收，managers=0表示退役，供后续COW分类。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；现接全局零阶物理容量承诺基础；生产硬件发权及COW故障/分支/DMA未接。
+- Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。Mem内容状态保留到最终回收，managers=0表示退役，供后续COW分类。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；现接全局零阶容量及COW额度双重承诺、兑现/取消/旧页同Set转交基础（Acct64字节）；生产硬件发权及COW故障/分支/DMA未接。
 - Local48、Life128、Proc512、Prep184、Image64、Obs48、Rq192、Space64、Set56；结果/镜像/账目与运行槽独立回收。两层Sigctx预付RV704/ARM960，cookie跨PID/image复用不重置，不回绕。
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权，SERVICE仅由可信fixture安装，生产清单策略未启动。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过414项，格式及make test-qemu的108个两架构场景全部通过；日志`build/host/stage61-page-commit/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- pages两架构先保留8页承诺、耗尽普通页后逐页兑现，256页恢复低水位保持；撤销9页并全部归还。host含2500步物理承诺守恒、碎片化兑现、约束分配隔离及Acct失败回滚；原系统108场景全量通过。仍未接COW账目/分支、写故障、fork事务或生产DMA。
+- 本地make unit通过421项，格式及make test-qemu的108个两架构场景全部通过；日志`build/host/stage62-cow-account/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
+- budget两架构新增三组COW结算：额度各一页的子兑现、父关闭后的旧物理页转交/旧记录拒绝、关闭孩子的承诺撤销；全部费用/物理页归零。普通预留不可消费cow子集，host覆盖失败回滚与稳定引用。108场景回归通过；共享组/PTE、父先写复制事务与fork尚未接。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

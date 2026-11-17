@@ -643,6 +643,10 @@ def exercise(args, run_dir, record):
                                    "free": managed - transition["tables"], "allocated": transition["tables"]}:
                         raise SmokeError("accounting/physical cleanup mismatch")
                     record["accounting"] = account
+                    cow=[fields(line) for line in serial.read_text().splitlines() if line.startswith("COWACCTCHECK ")]
+                    if cow != [dict(cases=3,redeemed=1,transferred=1,cancelled=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("COW account reservation/transfer mismatch")
+                    record["cow_accounting"]=cow[0]
                 if args.case == "spaces":
                     root_lines = [x for x in serial.read_text().splitlines() if x.startswith("SPACECHECK ")]
                     if len(root_lines) != 1:

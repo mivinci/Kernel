@@ -16,10 +16,13 @@ class Set(C.Structure):
     _fields_ = [(x, C.c_uint64) for x in ('generation', 'limit', 'exec_limit', 'charged')] + [
         (x, C.c_uint32) for x in ('instances', 'max_instances', 'refs', 'state', 'leases')]
 class Account(C.Structure):
-    _fields_ = [(x, C.c_uint64) for x in ('generation', 'limit', 'exec_limit', 'used', 'reserved')] + [
+    _fields_ = [(x, C.c_uint64) for x in ('generation', 'limit', 'exec_limit', 'used', 'reserved', 'cow')] + [
         (x, C.c_uint32) for x in ('set', 'state', 'refs', 'bound')]
 class Owned(C.Structure):
     _fields_ = [('block', Block), ('acct', Acctid)]
+
+class Cow(C.Structure):
+    _fields_ = [("acct", Acctid), ("physical", Credit)]
 
 class AccountingTests(unittest.TestCase):
     @classmethod
@@ -48,7 +51,11 @@ class AccountingTests(unittest.TestCase):
             'acctalloc': [Acctid, C.c_uint32, C.POINTER(Limits), C.POINTER(Owned)],
             'acctfree': [Owned], 'pgfree': [Block],
             'pginit': [C.POINTER(Info), C.POINTER(Page), C.c_uint32, C.c_uint64],
-            'pgstat': [C.POINTER(Stats)]}
+            'pgstat': [C.POINTER(Stats)],
+            'acctcowreserve': [Acctid,C.c_uint64,C.POINTER(Cow)],
+            'acctcowcancel': [C.POINTER(Cow),C.c_uint64],
+            'acctcowalloc': [C.POINTER(Cow),C.POINTER(Owned)],
+            'acctcowmove': [C.POINTER(Owned),C.POINTER(Cow)]}
         for name, args in declarations.items():
             getattr(cls.lib, name).argtypes = args
 
@@ -58,6 +65,7 @@ class AccountingTests(unittest.TestCase):
 
     def setUp(self):
         self.sets, self.accounts, self.blocks = [], [], {}
+        self.cows=[]
         self.pages = (Page * 256)()
         info = Info()
         info.nram = info.nusable = 1
@@ -65,6 +73,9 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(self.lib.pginit(C.byref(info), self.pages, 256, 0), 0)
 
     def tearDown(self):
+        for credit in self.cows:
+            if credit.physical.pages:
+                self.assertEqual(self.lib.acctcowcancel(C.byref(credit),credit.physical.pages),0)
         for owned in self.blocks.values():
             self.lib.acctfree(owned)
         for aid in self.accounts:
@@ -96,6 +107,114 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(self.lib.acctcheck(), 0)
         self.assertEqual(self.lib.pgcheck(), 0)
         self.assertEqual(self.pgstat().allocated, 0)
+
+    def cow(self, account, pages=1):
+        credit=Cow();self.cows.append(credit)
+        self.assertEqual(self.lib.acctcowreserve(account,pages,C.byref(credit)),0)
+        return credit
+
+    def cowalloc(self, credit):
+        block=Owned()
+        self.assertEqual(self.lib.acctcowalloc(C.byref(credit),C.byref(block)),0)
+        self.blocks[block.block.pa]=block
+        return block
+
+    def test_cow_reserve_commits_quota_capacity_and_stable_reference(self):
+        group=self.set(limit=2,peak=2);parent=self.acct(group,limit=1,peak=1);child=self.acct(group,limit=1,peak=1)
+        old=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(old)),0);self.blocks[old.block.pa]=old
+        credit=self.cow(child)
+        self.assertEqual((self.stat(parent).used,self.stat(child).used,self.stat(child).reserved,self.stat(child).cow),(1,0,1,1))
+        self.assertEqual(self.setstat(group).charged,2)
+        before=bytes(self.stat(child)),bytes(self.pgstat())
+        self.assertEqual(self.lib.acctconvert(child,1),-1)
+        self.assertEqual(self.lib.acctrelease(child,0,1),-1)
+        self.assertEqual((bytes(self.stat(child)),bytes(self.pgstat())),before)
+        fresh=self.cowalloc(credit)
+        self.assertEqual((self.stat(child).used,self.stat(child).reserved,self.stat(child).cow),(1,0,0))
+        self.assertEqual((credit.physical.pages,credit.acct.generation),(0,0))
+        self.assertNotEqual(fresh.block.pa,old.block.pa)
+        self.assertEqual(self.setstat(group).charged,2)
+        self.assertEqual(self.lib.acctcowalloc(C.byref(credit),C.byref(Owned())),-1)
+
+    def test_cow_physical_failure_rolls_back_account_set_and_output(self):
+        group=self.set();account=self.acct(group);credit=Cow();global_credit=Credit()
+        self.lib.pgreserve.argtypes=[C.POINTER(Credit),C.c_uint64]
+        self.lib.pgcancel.argtypes=[C.POINTER(Credit),C.c_uint64]
+        self.assertEqual(self.lib.pgreserve(C.byref(global_credit),256),0)
+        try:
+            before=bytes(self.stat(account)),bytes(self.setstat(group)),bytes(self.pgstat()),bytes(credit)
+            self.assertEqual(self.lib.acctcowreserve(account,1,C.byref(credit)),-5)
+            self.assertEqual((bytes(self.stat(account)),bytes(self.setstat(group)),bytes(self.pgstat()),bytes(credit)),before)
+        finally:self.assertEqual(self.lib.pgcancel(C.byref(global_credit),256),0)
+
+    def test_cow_quota_failure_and_live_record_reuse_do_not_leak(self):
+        group=self.set();account=self.acct(group,limit=1,peak=1);credit=Cow()
+        before=bytes(self.stat(account)),bytes(self.setstat(group)),bytes(self.pgstat()),bytes(credit)
+        self.assertEqual(self.lib.acctcowreserve(account,2,C.byref(credit)),-2)
+        self.assertEqual((bytes(self.stat(account)),bytes(self.setstat(group)),bytes(self.pgstat()),bytes(credit)),before)
+        credit=self.cow(account)
+        before=bytes(self.stat(account)),bytes(credit)
+        self.assertEqual(self.lib.acctcowreserve(account,1,C.byref(credit)),-1)
+        self.assertEqual((bytes(self.stat(account)),bytes(credit)),before)
+
+    def test_cow_closing_account_can_fulfil_or_cancel_existing_commitment(self):
+        group=self.set();account=self.acct(group)
+        first=self.cow(account,2);second=self.cow(account,3)
+        self.assertEqual(self.lib.acctclose(account),0);self.assertEqual(self.lib.acctunbind(account),0)
+        self.assertEqual(self.lib.acctcowreserve(account,1,C.byref(Cow())),-1)
+        block=self.cowalloc(first)
+        self.assertEqual((self.stat(account).used,self.stat(account).reserved,self.stat(account).cow),(1,4,4))
+        self.assertEqual(self.lib.acctcowcancel(C.byref(first),1),0)
+        self.assertEqual(self.lib.acctcowcancel(C.byref(second),3),0)
+        self.assertEqual(self.stat(account).refs,1)
+        self.assertEqual(self.lib.acctfree(block),0);del self.blocks[block.block.pa]
+        self.assertEqual(self.lib.acctstat(account,C.byref(Account())),-1)
+        self.assertEqual(self.setstat(group).charged,0)
+
+    def test_departing_payer_moves_actual_charge_to_reserved_branch_without_new_page(self):
+        group=self.set(limit=2,peak=2);parent=self.acct(group,limit=1,peak=1);child=self.acct(group,limit=1,peak=1)
+        block=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(block)),0)
+        self.blocks[block.block.pa]=block
+        original=Owned();C.memmove(C.byref(original),C.byref(block),C.sizeof(block))
+        credit=self.cow(child);physical=bytes(self.pgstat())
+        self.assertEqual(self.lib.acctclose(parent),0);self.assertEqual(self.lib.acctunbind(parent),0)
+        self.assertEqual(self.lib.acctcowmove(C.byref(block),C.byref(credit)),0)
+        self.assertEqual(bytes(self.pgstat()),physical)
+        self.assertEqual(block.block.pa,original.block.pa)
+        self.assertEqual((block.acct.index,block.acct.generation),(child.index,child.generation))
+        self.assertEqual(self.lib.acctstat(parent,C.byref(Account())),-1)
+        self.assertEqual((self.stat(child).used,self.stat(child).reserved,self.stat(child).cow),(1,0,0))
+        self.assertEqual(self.setstat(group).charged,1)
+        self.assertEqual(self.lib.acctfree(original),-1)
+        self.assertEqual(self.lib.acctfree(block),0);del self.blocks[block.block.pa]
+
+    def test_cow_move_rejects_wrong_block_cross_set_and_same_account_atomically(self):
+        group=self.set();parent=self.acct(group);child=self.acct(group)
+        foreign=self.acct(self.set())
+        block=Owned();self.assertEqual(self.lib.acctalloc(parent,0,None,C.byref(block)),0);self.blocks[block.block.pa]=block
+        for recipient in (parent,foreign,child):
+            credit=self.cow(recipient)
+            wrong=Owned();C.memmove(C.byref(wrong),C.byref(block),C.sizeof(block))
+            if recipient is child:wrong.block.pa+=4096
+            before=bytes(self.stat(parent)),bytes(self.stat(recipient)),bytes(credit),bytes(self.pgstat()),bytes(wrong)
+            self.assertEqual(self.lib.acctcowmove(C.byref(wrong),C.byref(credit)),-1)
+            self.assertEqual((bytes(self.stat(parent)),bytes(self.stat(recipient)),bytes(credit),bytes(self.pgstat()),bytes(wrong)),before)
+            self.assertEqual(self.lib.acctcowcancel(C.byref(credit),1),0)
+
+    def test_ordinary_reservations_remain_independent_of_cow_subset(self):
+        group=self.set();account=self.acct(group)
+        self.assertEqual(self.lib.acctreserve(account,3),0)
+        credit=self.cow(account,5)
+        self.assertEqual(self.lib.acctconvert(account,4),-1)
+        self.assertEqual(self.lib.acctrelease(account,0,4),-1)
+        self.assertEqual(self.lib.acctconvert(account,2),0)
+        self.assertEqual(self.lib.acctrelease(account,2,1),0)
+        self.assertEqual((self.stat(account).used,self.stat(account).reserved,self.stat(account).cow),(0,5,5))
+        self.assertEqual(self.lib.acctcowcancel(C.byref(credit),2),0)
+        self.assertEqual((self.stat(account).reserved,self.stat(account).cow),(3,3))
+        before=bytes(self.stat(account)),bytes(credit)
+        self.assertEqual(self.lib.acctcowcancel(C.byref(credit),4),-1)
+        self.assertEqual((bytes(self.stat(account)),bytes(credit)),before)
 
     def test_account_allocation_cannot_spend_global_cow_credit_and_rolls_back(self):
         self.lib.pgreserve.argtypes=[C.POINTER(Credit),C.c_uint64]

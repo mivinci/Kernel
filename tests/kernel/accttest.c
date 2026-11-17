@@ -9,6 +9,81 @@
       panic(reason);                                                                               \
   } while (0)
 
+static void
+cowtest(void)
+{
+  Setid         set;
+  Acctid        parent, child;
+  Acctcow       credit;
+  Acctblk       old, stale, fresh;
+  Acct          account;
+  Set           group;
+  Pgstat        before, after;
+  volatile u64 *original, *copy;
+  u32           mode;
+  pgstat(&before);
+  for (mode = 0; mode < 3; mode++) {
+    credit.acct.generation = credit.acct.index = credit.acct.reserved = 0;
+    credit.physical.pages = 0;
+    REQUIRE(!setcreate(2, 2, 2, &set) && !acctcreate(set, 1, 1, &parent) &&
+                !acctcreate(set, 1, 1, &child),
+            "COW account exact quota");
+    REQUIRE(!acctalloc(parent, 0, NULL, &old), "COW original allocation");
+    original = kaddr(old.block.pa);
+    *original = 0x31415926;
+    REQUIRE(!acctcowreserve(child, 1, &credit) && pgreserved() == 1 && !acctstat(child, &account) &&
+                account.cow == 1 && account.reserved == 1 && !account.used,
+            "COW quota and physical reservation");
+    REQUIRE(acctconvert(child, 1) == AC_BAD && acctrelease(child, 0, 1) == AC_BAD,
+            "ordinary operation consumed COW quota");
+    if (mode == 0) {
+      REQUIRE(!acctcowalloc(&credit, &fresh) && fresh.block.pa != old.block.pa &&
+                  !credit.physical.pages && !credit.acct.generation && !pgreserved(),
+              "COW child redemption");
+      copy = kaddr(fresh.block.pa);
+      *copy = 0x27182818;
+      REQUIRE(*original == 0x31415926 && *copy == 0x27182818 && !acctstat(child, &account) &&
+                  account.used == 1 && !account.reserved && !account.cow,
+              "COW redeemed accounting and independent physical page");
+      REQUIRE(!acctfree(fresh), "COW child page release");
+    } else if (mode == 1) {
+      stale = old;
+      REQUIRE(!acctclose(parent) && !acctunbind(parent) && !acctcowmove(&old, &credit),
+              "COW departing payer transfer");
+      REQUIRE(old.block.pa == stale.block.pa && old.acct.generation == child.generation &&
+                  old.acct.index == child.index && acctstat(parent, &account) == AC_BAD &&
+                  acctfree(stale) == AC_BAD && *original == 0x31415926 && !pgreserved(),
+              "COW stable old page and consumed payer reference");
+    } else {
+      REQUIRE(!acctclose(child) && !acctunbind(child) && !acctcowcancel(&credit, 1) &&
+                  acctstat(child, &account) == AC_BAD && !pgreserved(),
+              "COW closing reservation cancellation");
+    }
+    REQUIRE(!acctfree(old), "COW final backing release");
+    if (mode != 1)
+      REQUIRE(!acctclose(parent) && !acctunbind(parent), "COW parent cleanup");
+    if (mode != 2)
+      REQUIRE(!acctclose(child) && !acctunbind(child), "COW child cleanup");
+    REQUIRE(!setstat(set, &group) && !group.charged && !setclose(set) && !acctcheck() && !pgcheck(),
+            "COW account conservation");
+  }
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated && !pgreserved(),
+          "COW physical conservation");
+  putstr("COWACCTCHECK cases=");
+  puthex(3);
+  putstr(" redeemed=");
+  puthex(1);
+  putstr(" transferred=");
+  puthex(1);
+  putstr(" cancelled=");
+  puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}
 void
 accttest(void)
 {
@@ -19,6 +94,7 @@ accttest(void)
   Acct          account;
   Pgstat        before, after;
   volatile u64 *memory;
+  cowtest();
   pgstat(&before);
   REQUIRE(!acctcheck(), "account initial");
   REQUIRE(!setcreate(64, 128, 2, &set) && !setenter(set), "set admission");

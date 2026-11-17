@@ -560,3 +560,21 @@ host新增6项直接测试：普通耗尽后两份独立credit全部兑现、失
 这是物理容量层基础，尚未接Acct COW专用额度、父先写出资转移、共享组/分支、PTE COW位及故障分离或fork发布，不能用普通acctreserve冒充完整严格COW保证。真实fork和内核代用户写的COW分离仍需后续实现/验收。
 
 本地最终make unit全部414项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage61-page-commit/，含每个原始结果的page.c源码哈希与承诺/兑现/撤销读回。最初主机输出样例缺新字段导致校验测试失败，已更新并补缺失/错误字段拒绝检查，原失败unit-before-output-fixture.log保留；未执行CI、真实硬件、性能或完整COW/fork验收。
+
+### COW 额度与稳定账目结算基础（2026-11-17）
+
+Acct新增cow字段作为reserved的受保护子集，记录从56增至64字节，满足原64字节预算；Set仍56字节，现有query ACCT的reserved仍返回总预留，不改变Queryrec或用户ABI。普通acctconvert/acctrelease只操作reserved-cow，不能消耗COW承诺；acctcheck增加cow<=reserved不变量。页表、普通Mem和其他既有预留仍走普通通道，不因acctreserve成功自动获得物理承诺。
+
+新增内部Acctcow记录为24字节（稳定Acctid+Pgcredit），每份非空记录持一份Acct引用。acctcowreserve同时取得普通limit内额度、Set总费用及全局零阶物理容量，任一失败完整退回费用/引用/承诺，输出不变；只接受全零空记录、不能覆盖活记录或对CLOSING新增承诺。它不是Local资源或可防伪的用户句柄，不允许复制活记录，未来分支/事务须唯一拥有并在复用前结清。原Acct的reserved/cow计数和Pgcredit只是内部守恒，不能替代共享组/分支关系校验。
+
+acctcowalloc只兑现该记录的一页：从全局credit取得无约束零阶页并以稳定Acct标签claim，reserved/cow各减一而used加一，Set charged不变。新Acctblk独立拥有Acct引用，最后一页兑现后消费原credit引用并清零其Acctid。页面仍是未清零、未映射的可信物理块，调用者须复制/清零内容并执行别名与PTE提交，不能立即暴露给用户。关闭账目仍可兑现已接承诺；普通分配继续拒绝CLOSING。
+
+acctcowcancel撤销本记录的全部或部分剩余额度与物理承诺，并等量减少Set charged；最后一次清零记录且drop稳定引用，允许CLOSING/未绑定账目最终回收，不新增分配。普通release不能代替它，未知/过量撤销或已消费记录无副作用。
+
+acctcowmove是实际出资分支退出的结算基础：仅接受一份准确的零阶Acctblk、同Set的另一个已预留Acctcow。先核验物理块首/阶数/原完整owner，再通过受信pgtransfer改物理归属；提交时消耗接收分支一页预留及全局承诺，将原used减一、接收reserved/cow转used、Set charged减一，原块记录改为新Acct并换稳定引用。物理地址/内容/实际allocated不变；原复制的过期块记录不能再释放新owner的页。拒绝同Acct、跨Set、非零阶/伪造/旧代块或无预留；不提供跨Set赠页，更不用于SHARED/DMA的出资转移。未来COW组必须在持有最后分支/旧页引用的短提交点调用，当前仍是可信内部机制。
+
+例：A limit=1 used=1，B limit=1 reserved=cow=1，Set charged=2。B先写的基础动作可兑现为B的新物理页，双方used=1且charged=2；内容复制/PTE提交尚待上层。若A未写即退出，则move把同一旧物理页转给B，B used=1 reserved=cow=0，A可回收，charged=1且实际物理页数不变。父先写必须把旧页转给预留者并为父形成新页，且复制和别名切换失败不留下半结算；该组合事务本轮尚未实现，不把两次独立调用冒充原子fork/COW写路径。
+
+host新增7项直接测试额度恰好一页、全物理承诺下额度回滚、活记录覆盖/不足限额、关闭后兑现与取消、父退出转交/旧记录拒绝、跨Set/同Acct/错误块失败保持，以及普通预留与COW子集隔离。CASE=budget新增三组真实CPU物理读写/计费检查：子兑现的新页与父页独立；父关闭并unbind后原页稳定转交孩子且旧Acct槽回收；孩子关闭后的承诺取消。两架构主机核对COWACCTCHECK的redeemed/transferred/cancelled及最终页/费用归零。仍未接生产fork、COW分支池/PTE位、父先写复制、故障/内核代用户写分离和取消原子提交。
+
+本地make unit全部421项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage62-cow-account/，含每项原始结果中的当前acct/page源码哈希及两架构三组账目结算读回。未执行CI、真实硬件、性能、生产fork或完整COW故障验收。

@@ -18,6 +18,7 @@ typedef struct Acctid  Acctid;
 typedef struct Set     Set;
 typedef struct Acct    Acct;
 typedef struct Acctblk Acctblk;
+typedef struct Acctcow Acctcow;
 struct Setid
 {
   u64 generation;
@@ -35,7 +36,7 @@ struct Set
 };
 struct Acct
 {
-  u64 generation, limit, exec_limit, used, reserved;
+  u64 generation, limit, exec_limit, used, reserved, cow;
   u32 set, state, refs, bound;
 };
 struct Acctblk
@@ -43,6 +44,24 @@ struct Acctblk
   Pgblk  block;
   Acctid acct;
 };
+/* Owns one stable Acct reference plus physical capacity; zero initialize,
+   never copy a live record, release before the owning COW branch is reused. */
+struct Acctcow
+{
+  Acctid   acct;
+  Pgcredit physical;
+};
+/* A reserve commits both quota and physical zero-order capacity or neither.
+   It accepts active accounts only; existing commitments can finish closing.
+   No user authority, mappings, content copy or COW branch validation here. */
+int acctcowreserve(Acctid id, u64 pages, Acctcow *out);
+int acctcowcancel(Acctcow *credit, u64 pages);
+int acctcowalloc(Acctcow *credit, Acctblk *out);
+/* Departing payer: transfer one actual zero-order block to a same-Set branch
+   with a prior reservation. Consumes one credit and updates the owned record.
+   Does not copy data or permit arbitrary cross-Set gifts. */
+int acctcowmove(Acctblk *block, Acctcow *credit);
+STATIC_ASSERT(sizeof(Acctcow) == 24, acct_cow_record);
 STATIC_ASSERT(sizeof(Set) <= 64, set_budget);
 STATIC_ASSERT(sizeof(Acct) <= 64, acct_budget);
 
