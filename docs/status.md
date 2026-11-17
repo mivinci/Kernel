@@ -24,7 +24,7 @@
 ## 最新本地验证
 
 - 本地make unit通过572项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture/wrapper、静态帧及固定池证据归`build/host/stage84-fork-private-journal/`。未执行CI/目标真实硬件/性能验收。
-- 保护日志现为事务私有Mmap链，容量检查用实时freecount，跨批不保存无关全局映射链/空闲链节点；Spacetxn64/Mmap64/Prep256及固定池不增，仅全局计数4字节。小池host验独立节点复用及准入后容量耗尽，两架构真实续点peer各完成15次独立Mem alloc/map/write/unmap/free，恢复/终止回滚后页/费用归零。指定PID仍是sigframe专用C注入，normal无wrapper。源Mem别名准入/引用稳定、未映射/Local/Signal长循环、自动IRQ检查点与STOP/CONT仍待接；原生fork未开放。本切片收尾后按新增真机问题编号/优先级推进，T1启动包按最新冻结方案实施。
+- 保护日志现为事务私有Mmap链，容量检查用实时freecount，跨批不保存无关全局映射链/空闲链节点；Spacetxn64/Mmap64/Prep256及固定池不增，仅全局计数4字节。小池host验独立节点复用及准入后容量耗尽，两架构真实续点peer各完成15次独立Mem alloc/map/write/unmap/free，恢复/终止回滚后页/费用归零。指定PID仍是sigframe专用C注入，normal无wrapper。源Mem别名准入/引用稳定、未映射/Local/Signal长循环、自动IRQ检查点与STOP/CONT仍待接；原生fork未开放。按用户要求复查07后，下一步先T1.1确定性打包，再按依赖推进T1.2/T1.3及相关真机P0缺口；完整fork仍须在T4前交付。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
