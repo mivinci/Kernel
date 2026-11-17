@@ -17,7 +17,7 @@ make sdk ARCH=riscv
 make sdk ARCH=arm64
 ```
 
-`make sdk`另生成用户态`libvirtio.a`，目前仅含CPU私有描述符所有权核心；尚无DMA传输或实际设备队列I/O。
+`make sdk`另生成用户态`libvirtio.a`，现含CPU私有描述符管理及依赖显式同步/屏障/通知回调的split ring访问层；尚无生产DMA后端或实际设备队列I/O。
 
 产物在 `build/<架构>/normal/kernel.elf`；`make hardware ARCH=...` 仍可单独构建保留硬件归档。
 可通过 `CC`、`LD`、`AR`、`READELF` 覆盖 LLVM 工具路径；当前不支持 GNU `CROSS` profile。
