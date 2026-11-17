@@ -838,3 +838,5 @@ Proc退出先按原规则撤销资格/取消未发布孩子，procclean在Local/
 Space64/Mmap64/Spacetxn64/Prep256/Mem96/Local48/Proc512及固定池均不增长。procclean静态帧两架构240，prepclean均64，build仍ARM512/RV560，结束step ARM240/RV272，forksnapshot仍ARM1280/RV1024；最终验证与哈希证据归build/host/stage81-fork-alias-freeze/和status。未完成CPU清理接管、内核root续点/STOP/KILL转交、未映射及Local/Signal长循环与原生fork，仍IRQ屏蔽、不得跨调度或丢弃整个构造栈。
 
 本轮最终565项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、normal无fixture、两个FORKFREEZECHECK及实际固定池大小。统一标记前被停止的回归另存test-qemu-split-markers.log，不计入最终110场景。未执行CI、真实硬件、性能、CPU回滚接管或原生fork验收。
+
+CPU接管接续：03末尾现接可信显式prepforkabandon，将取消后的目标表和准确Space事务交给prepwork，先分批drain Local再逐批Space abort；独立worker引用保证Space释放其引用后Prep仍存活。已开始commit不允许反向撤销。Space事务及固定记录大小不变；真实KILL/调度续点尚未接，不改变本篇IRQ屏蔽/无其他VM工作约束。

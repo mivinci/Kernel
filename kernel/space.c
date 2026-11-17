@@ -1154,7 +1154,7 @@ spacesnapshotbuild(Spaceid sourceid, Spaceid targetid)
   if (source->busy || target->busy || source == active || target == active)
     return SP_BUSY;
   if (tree->owner.generation &&
-      (prepstat(tree->owner, &prep) || prep.state != PREP_ACTIVE || !prep.cloning))
+      (prepstat(tree->owner, &prep) || prep.state != PREP_ACTIVE || prep.cloning != PREP_CLONING))
     return snapshotfail(tree, SP_BUSY);
   none.generation = none.index = none.reserved = 0;
   while (work < 32) {
@@ -1458,6 +1458,19 @@ snapshotrelease(Spacetxn *tree)
 }
 
 int
+spacesnapshotabortcheck(Spaceid sourceid, Spaceid targetid)
+{
+  if (!snapshot || !find(sourceid) || !find(targetid) || find(sourceid) != find(snapshot->source) ||
+      find(targetid) != find(snapshot->target))
+    return SP_BAD;
+  if (snapshot->phase >= SNAP_OWNERS && snapshot->phase <= SNAP_JOURNAL && snapshot->commit)
+    return SP_BUSY;
+  if (snapshot->phase == SNAP_THAW && snapshot->commit)
+    return SP_BUSY;
+  return 0;
+}
+
+int
 spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
 {
   Space    *source = find(sourceid), *target = find(targetid);
@@ -1467,12 +1480,17 @@ spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
   Hvs       vs;
   Hpte      entry;
   Sourcectx context;
+  Prepinfo  owner;
   u32       work = 0, pages;
   u64       address;
   if (!tree || !source || !target || source != find(tree->source) || target != find(tree->target) ||
       commit > 1)
     return SP_BAD;
   if (source->busy || target->busy || source == active || target == active)
+    return SP_BUSY;
+  if (commit && tree->phase == SNAP_READY && tree->owner.generation &&
+      (prepstat(tree->owner, &owner) || owner.state != PREP_ACTIVE ||
+       owner.cloning != PREP_CLONING))
     return SP_BUSY;
   /* Initial admission may retain alias roots, but made no PTE/backing changes.
      A foreign journal rejected by CHECK_LOGS must never be undone here. */
@@ -1606,11 +1624,15 @@ spacesnapshotend(Spaceid sourceid, Spaceid targetid, u32 commit)
 int
 spacesnapshotclone(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out)
 {
-  Space *source = find(sourceid), *target = find(targetid);
+  Space   *source = find(sourceid), *target = find(targetid);
+  Prepinfo owner;
   if (!snapshot || snapshot->phase != SNAP_READY || !source || !target ||
       source != find(snapshot->source) || target != find(snapshot->target) ||
       contains(source, original))
     return SP_BAD;
+  if (snapshot->owner.generation && (prepstat(snapshot->owner, &owner) ||
+                                     owner.state != PREP_ACTIVE || owner.cloning != PREP_CLONING))
+    return SP_BUSY;
   return clone(original, target->acct, out, 1);
 }
 

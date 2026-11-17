@@ -1418,3 +1418,21 @@ Local48、Mem96、Prep192、Proc512及固定池大小不变。forksnapshot去掉
 2026-11-18接续：02末尾已将映射源预检、别名预检/保护、视图去重及完整映射安装接入同一64字节构建游标。同步包装和原生NOTSUP边界不变；取消/失败先转回滚，未READY不能提交。Prep256及固定池不增长。其他Space别名冻结、未映射路径及Local/Signal组合的长循环、CPU接管和STOP/KILL续点仍待执行，尚不能跨调度或丢弃整个fork构建栈。
 
 冻结接续：02末尾现为私有DATA的其他别名root取得独立租约，统一frozen门禁；Proc资格撤销后，procclean在拆Local/Acct/栈之前等待解冻，普通Prep清理也不拆冻结源表。真实Proc组合已在两架构验证，记录大小不变。等待不推进回滚，必须继续接CPU接管/内核root续点，不能据此开放原生fork或调度检查点。此工作仍属于用户新增M3主线所需原生fork/exec前置，不以可信同步构造替代完整sh关键路径。
+
+### fork取消后的显式CPU回滚接管（2026-11-18）
+
+可信prepforkabandon只接受准确FORK、仍由构建者持有且存在可撤销Space事务的准备。调用者须先归还新建叶引用及临时借用，并承诺永不恢复构建续点；此函数不是用户ABI或自动KILL钩子。它先检查事务未进入commit，再取独立worker引用，取消发布资格/结束目标Image及普通准备root租约，最后将cloning从CLONING=1变为DRAIN=2。重复移交、额外临时加载映射、错误目标epoch/主体/表状态、无事务及已开始commit均拒绝，失败不取得worker责任。已取消/超期但仍由原构建者保管的事务可在满足条件后同样移交，不重置deadline。
+
+取消后的目标表指针只在Prep私有字段保留，由克隆阶段/冻结root阻止Proc资源回收，prepstat不再向外借出该指针。prepforktree和prepforkfinish仅允许原CLONING阶段；移交后build、新未映射clone及开始commit拒绝。prepsnapshotcheck仍核验原归属，移交不生成新的准备权或授权。
+
+prepwork沿原固定192槽轮询，对接管记录每次只推进一个阶段：DRAIN关闭目标表并localdrain最多32槽；完成后转ROLLBACK=3，下一轮再spacesnapshotstep(...,abort)最多32单位。顺序必须先放全部孩子Local/未映射Mem引用，再撤映射拥有引用/PTE日志/额外root租约。所有阶段只读目标epoch/主体和准确Spaceid，不再遍历父表或引用已退栈局部。最终Space事务归还自身Prep/root引用后，worker清cloning和私有目标指针，归还独立worker引用；目标Proc随后走原正常清理，残余构造权由普通Prep源表清理处理。父表先关闭不影响worker。单次Mem最终释放仍含自身最多16页及既定别名/账目工作，32槽/页不是32条指令或实测IRQ延迟。
+
+例：孩子表64槽，已有DRAFT私有视图或已完成继承并预付两个保底槽，父取消并显式移交后退栈。第一次CPU回访只释放前32槽，第二次释放后32槽，再逐批回滚映射树；期间目标不可发布，Proc清理继续等待，不在Local尚持视图时撤父接管。父表可提前关闭；只有worker完成后，实际Proc栈/Acct/root才由原清理链回收。另一例：已开始commit释放拥有引用，prepforkabandon返回BUSY且保持原状态/引用，不能反向当成abort。
+
+新增5项host验初始准入、DRAFT、完整表/保底、源表先关闭的CPU接管以及部分commit拒绝，另保留原统一fork组合。sigframe两架构各四组可信移交覆盖准入、部分保护、映射/未映射DRAFT、完整继承/保底及父表先关闭；由独立函数移交后返回，后续只靠prepwork推进，实际未发布Proc在途中等待、结束后正常回收；全部物理页/费用回基线。不执行孩子fork返回、原生调用或真实KILL丢栈。
+
+本轮复用Prep的cloning阶段及目标表/epoch字段，无新增记录或固定池增长，Prep256/Spacetxn64/Space64/Proc512/Local48/Mem96不变。证据与最终本地验证归build/host/stage82-fork-cleanup-handoff/和status。后续仍需把原生fork的安全检查点、内核root续点、真实STOP/KILL出口接到此移交入口，并分批接完未映射/Local/Signal组合长循环；不能仅因可信worker可回滚便声称整个构建已能跨调度或任意丢栈。
+
+静态帧：prepforkabandon为ARM 64/RV 48字节，prepwork为ARM 96/RV 112；Space结束入口新增准确Prep阶段检查后为ARM352/RV384，forksnapshot仍ARM1280/RV1024。单个编译帧不是完整最大栈深或IRQ延迟证明。
+
+本轮最终本地570项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对所有结果与当前源码/头哈希、normal无fixture、两个FORKCLEANCHECK（各四组共74次CPU工作）及实际固定池大小/静态帧。未执行CI、真实硬件、性能、原生fork或真实KILL移交验收。

@@ -23,8 +23,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过565项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture、静态帧及固定池证据归`build/host/stage81-fork-alias-freeze/`。未执行CI/目标真实硬件/性能验收。
-- 私有DATA额外别名root现各持一份冻结租约，只读别名也参与，源/目标统一标记；普通映射/执行/清理门禁一致，结束分批THAW归还额外引用。Proc/Prep资格撤销后资源清理等待，真实未发布Proc两架构各验四次等待、CPU轮询、回滚后继续清理及旧Acct最后结清。记录/固定池不增，build静态帧ARM512/RV560，forksnapshot仍ARM1280/RV1024。CPU回滚接管、内核root续点/STOP/KILL转交及未映射/Local/Signal长循环仍待接；当前IRQ屏蔽，不跨调度或丢弃整个构建栈，原生fork未开放。
+- 本地make unit通过570项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture、静态帧及固定池证据归`build/host/stage82-fork-cleanup-handoff/`。未执行CI/目标真实硬件/性能验收。
+- 可信显式prepforkabandon现取消资格并持独立worker引用，prepwork先按32槽drain孩子表，再逐批Space abort，最后解除cloning；源表先关闭不影响回滚，已开始commit拒绝反向移交。两架构各四组64槽真实未发布Proc组合覆盖准入/部分保护/DRAFT/完整表保底，CPU回滚后正常清理且全部页/费用归基线；记录与固定池不增。真实STOP/KILL出口、内核root续点、原生检查点和未映射/Local/Signal长循环仍待接；当前IRQ屏蔽，不跨调度或任意丢弃整个构建栈，原生fork未开放。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

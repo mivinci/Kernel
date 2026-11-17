@@ -96,6 +96,8 @@ int spacesnapshotprep(Spaceid source, Spaceid target, Prepid prep);
    mapped DATA alias checks/protection and complete <=16-page map installation. */
 int spacesnapshotopen(Spaceid source, Spaceid target, Prepid prep);
 int spacesnapshotbuild(Spaceid source, Spaceid target);
+/* Read-only handoff gate: exact live transaction, no commit already started. */
+int spacesnapshotabortcheck(Spaceid source, Spaceid target);
 int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
 /* End only: at most 32 mapping scans/page edits per call, 1 means more.
    First call fixes commit/abort. Same IRQ-masked/no-checkpoint scope; abort

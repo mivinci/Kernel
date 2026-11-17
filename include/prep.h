@@ -19,6 +19,9 @@
 #define PREP_ALLOC     CONSTRUCT_ALLOC
 #define PREP_CREATE    0
 #define PREP_FORK      1
+#define PREP_CLONING   1
+#define PREP_DRAIN     2
+#define PREP_ROLLBACK  3
 
 typedef struct Prepinfo Prepinfo;
 struct Prepinfo
@@ -42,6 +45,11 @@ int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
 int prepforktree(Prepid id, Spacetxn **out);
 /* Always releases the clone phase, even when already cancelled/expired. */
 int prepforkfinish(Prepid id);
+/* Trusted ownership transfer, not a syscall. Caller has returned every fresh
+   leaf/borrow and will never resume the builder. Cancels publication, retains
+   one worker reference, then prepwork drains the child table and aborts the
+   exact live Space transaction. IRQs masked, roots inactive; no partial commit. */
+int prepforkabandon(Prepid id);
 int prepcheck(Prepid id, Rtable *source, Prepinfo *out);
 int prepstat(Prepid id, Prepinfo *out);
 /* A held REQUEST supplies owner/sourceimage. No local table borrow escapes. */

@@ -67,7 +67,7 @@ active(Prep *p)
 static void
 fill(const Prep *p, Prepinfo *out)
 {
-  out->target = p->target;
+  out->target = p->state == PREP_ACTIVE ? p->target : NULL;
   out->pid = p->pid;
   out->acct = p->acct;
   out->space = p->space;
@@ -137,7 +137,7 @@ create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin
   p->deadline = now + PREP_NS;
   p->expired = 0;
   p->origin = origin;
-  p->cloning = origin == PREP_FORK;
+  p->cloning = origin == PREP_FORK ? PREP_CLONING : 0;
   p->source = source;
   p->target = target;
   p->sourceepoch = source->epoch;
@@ -180,13 +180,13 @@ prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target)
     return p->expired ? -ERR_TIMEDOUT : -ERR_REVOKED;
   if (p->target != target)
     return -ERR_BAD_HANDLE;
-  return p->origin == PREP_FORK && p->cloning ? 0 : -ERR_STATE;
+  return p->origin == PREP_FORK && p->cloning == PREP_CLONING ? 0 : -ERR_STATE;
 }
 int
 prepforktree(Prepid id, Spacetxn **out)
 {
   Prep *p = find(id);
-  if (!p || !out || p->origin != PREP_FORK || !p->cloning)
+  if (!p || !out || p->origin != PREP_FORK || p->cloning != PREP_CLONING)
     return -ERR_STATE;
   *out = &p->tree;
   return 0;
@@ -195,11 +195,36 @@ int
 prepforkfinish(Prepid id)
 {
   Prep *p = find(id);
-  if (!p || p->origin != PREP_FORK || !p->cloning || p->tree.phase)
+  if (!p || p->origin != PREP_FORK || p->cloning != PREP_CLONING || p->tree.phase)
     return -ERR_STATE;
   p->cloning = 0;
+  if (p->state != PREP_ACTIVE)
+    p->target = NULL;
   if (!active(p))
     return p->expired ? -ERR_TIMEDOUT : -ERR_REVOKED;
+  return 0;
+}
+int
+prepforkabandon(Prepid id)
+{
+  Prep *p = find(id);
+  int   error;
+  if (!p || p->origin != PREP_FORK || p->cloning != PREP_CLONING || !p->tree.phase || !p->target ||
+      p->target->epoch != p->targetepoch || p->target->owner != p->pid ||
+      p->target->image != p->image || p->target->state != LOCAL_OPEN || p->temporary)
+    return -ERR_STATE;
+  error = spacesnapshotabortcheck(p->sourcespace, p->space);
+  if (error)
+    return error == SP_BUSY ? -ERR_BUSY : -ERR_STATE;
+  error = prephold(id);
+  if (error)
+    return error;
+  error = prepcancel(id);
+  if (error) {
+    prepdrop(id);
+    return error;
+  }
+  p->cloning = PREP_DRAIN;
   return 0;
 }
 int
@@ -268,7 +293,8 @@ releaseview(Prep *p)
   if (p->leased && spacedrop(p->space))
     panic("preparation space lease");
   p->leased = 0;
-  p->target = NULL;
+  if (!p->cloning)
+    p->target = NULL;
 }
 void
 prepcomplete(Prepid id)
@@ -408,6 +434,33 @@ prepwork(u32 scans)
     id.index = cursor;
     id.reserved = 0;
     cursor = (cursor + 1) % PREPS;
+    if (p->state && (p->cloning == PREP_DRAIN || p->cloning == PREP_ROLLBACK)) {
+      int more;
+      if (p->state != PREP_ABORTED || !p->target || p->target->epoch != p->targetepoch ||
+          p->target->owner != p->pid || p->target->image != p->image)
+        panic("fork cleanup owner identity");
+      if (p->cloning == PREP_DRAIN) {
+        if (localclose(p->target))
+          panic("fork cleanup table close");
+        more = localdrain(p->target, 32);
+        if (more < 0)
+          panic("fork cleanup table drain");
+        if (!more)
+          p->cloning = PREP_ROLLBACK;
+      } else {
+        more = spacesnapshotstep(p->sourcespace, p->space, 0);
+        if (more < 0)
+          panic("fork cleanup tree rollback");
+        if (!more) {
+          p->cloning = 0;
+          p->target = NULL;
+          if (prepdrop(id))
+            panic("fork cleanup worker reference");
+        }
+      }
+      worked++;
+      continue;
+    }
     if (!p->state || p->state == PREP_ACTIVE || p->cloning || !p->source ||
         p->cursor >= p->source->count)
       continue;

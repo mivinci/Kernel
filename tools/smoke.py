@@ -773,6 +773,12 @@ def exercise(args, run_dir, record):
                     if frozen != [dict(cases=1,alias_lease=1,deferred=4,retired=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("fork private alias root lease/Proc cleanup deferral mismatch")
                     record["fork_alias_freeze"]=frozen[0]
+                    cleanup=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKCLEANCHECK ")]
+                    if (len(cleanup)!=1 or {key:cleanup[0].get(key) for key in ("cases","drafts","loaded","source_closed","charged","allocated")} !=
+                            dict(cases=4,drafts=2,loaded=1,source_closed=1,charged=0,allocated=transition["tables"]) or
+                            not 12 < cleanup[0].get("work",0) < 200):
+                        raise SmokeError("fork CPU cleanup ownership/drain-before-tree/source-independent rollback mismatch")
+                    record["fork_cleanup_handoff"]=cleanup[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

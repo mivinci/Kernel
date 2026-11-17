@@ -33,6 +33,7 @@ class ForkSnapshotTests(unittest.TestCase):
                 'prepforkcreate':[C.POINTER(local.Table),C.POINTER(local.Table),signal.Lifeid,signal.Imageid,C.POINTER(Prepid)],
                 'prepcreate':[C.POINTER(local.Table),C.POINTER(local.Table),signal.Lifeid,signal.Imageid,C.POINTER(Prepid)],
                 'prepforkfinish':[Prepid],'prepcancel':[Prepid],'prepdrop':[Prepid],
+                'prepforkabandon':[Prepid],'prepwork':[C.c_uint32],
                 'prepstat':[Prepid,C.POINTER(Prepinfo)],'preppublishcheck':[Prepid],
                 'forksnapshot':[C.POINTER(local.Table),C.POINTER(local.Table),C.POINTER(Limits),C.c_uint32,C.c_void_p,C.c_void_p,Prepid]}
             for name,args in declarations.items():getattr(lib,name).argtypes=args
@@ -273,6 +274,80 @@ class ForkSnapshotTests(unittest.TestCase):
             self.assertEqual(self.tree(self.target.space).refs,1)
             self.assertEqual(lib.prepstat(prep,C.byref(state)),0);self.assertEqual(state.refs,1)
             self.assertEqual(lib.prepforkfinish(prep),-15)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def transfer(self,mode):
+        prep=self.owner();lib=self.lib
+        lib.spacesnapshotopen.argtypes=[local.support.Spaceid,local.support.Spaceid,Prepid]
+        lib.spacesnapshotbuild.argtypes=[local.support.Spaceid,local.support.Spaceid]
+        lib.spacesnapshotview.argtypes=[local.support.Spaceid,local.support.Spaceid,Memid,C.POINTER(Memid)]
+        lib.localforkbind.argtypes=[C.POINTER(local.Table),C.POINTER(local.Table),C.c_uint32,Memid]
+        lib.localforkload.argtypes=[C.POINTER(local.Table),C.POINTER(local.Table),C.POINTER(Limits)]
+        lib.localforkreserve.argtypes=[C.POINTER(local.Table),C.POINTER(local.Table),signal.Imageid,C.c_uint32]
+        before=self.pstat().allocated
+        self.assertEqual(lib.spacesnapshotopen(self.parent.space,self.target.space,prep),0)
+        if mode:
+            for _ in range(1000):
+                result=lib.spacesnapshotbuild(self.parent.space,self.target.space)
+                self.assertIn(result,(0,1))
+                if not result:break
+            else:self.fail('build did not finish')
+            for i,slot in enumerate(self.tables[0][1]):
+                if slot.subtype!=4 or not slot.inherit&1:continue
+                original=Memid(slot.objectgen,slot.object,0);view=Memid()
+                self.assertEqual(lib.spacesnapshotview(self.parent.space,self.target.space,original,C.byref(view)),0)
+                self.assertEqual(lib.localforkbind(C.byref(self.parent),C.byref(self.target),i,view),0)
+            if mode>=2:
+                self.assertEqual(lib.localforkload(C.byref(self.parent),C.byref(self.target),C.byref(self.limits)),0)
+                self.assertEqual(lib.localforkreserve(C.byref(self.parent),C.byref(self.target),self.branch[1],2),0)
+        self.assertEqual(lib.prepforkabandon(prep),0)
+        state=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+        self.assertEqual((state.state,state.cloning,state.refs),(3,2,3))
+        self.assertFalse(state.target)
+        self.assertEqual(lib.prepforkabandon(prep),-6)
+        self.assertEqual(lib.prepforkfinish(prep),-6)
+        lib.spacesnapshotstep.argtypes=[local.support.Spaceid,local.support.Spaceid,C.c_uint32]
+        self.assertLess(lib.spacesnapshotstep(self.parent.space,self.target.space,1),0)
+        if mode==3:
+            self.assertEqual(lib.localclose(C.byref(self.parent)),0)
+            while lib.localdrain(C.byref(self.parent),32)>0:pass
+        worked=0
+        for _ in range(1000):
+            count=lib.prepwork(32);self.assertGreaterEqual(count,0);worked+=count
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            if not state.cloning:break
+        else:self.fail('CPU rollback did not finish')
+        self.assertGreater(worked,1)
+        self.assertEqual((state.state,state.refs),(3,1))
+        self.assertEqual((self.target.state,self.tree(self.target.space).mapcount),(3,0))
+        self.assertEqual((self.tree(self.parent.space).frozen,self.tree(self.target.space).frozen),(0,0))
+        if mode!=3:self.assertEqual(self.pstat().allocated,before)
+
+    def test_cpu_handoff_owns_initial_admission_and_duplicate_transfer_is_rejected(self):
+        for lib in self.libs:self.exercise(lib,lambda:self.transfer(0))
+
+    def test_cpu_handoff_drains_draft_views_before_backing_and_pte_rollback(self):
+        for lib in self.libs:self.exercise(lib,lambda:self.transfer(1))
+
+    def test_cpu_handoff_drains_loaded_table_and_floors_without_builder_stack(self):
+        for lib in self.libs:self.exercise(lib,lambda:self.transfer(2))
+
+    def test_cpu_handoff_does_not_read_source_table_after_source_closes(self):
+        for lib in self.libs:self.exercise(lib,lambda:self.transfer(3))
+
+    def test_partial_commit_cannot_be_converted_into_cpu_abort(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            lib.spacesnapshotprep.argtypes=[local.support.Spaceid,local.support.Spaceid,Prepid]
+            lib.spacesnapshotstep.argtypes=[local.support.Spaceid,local.support.Spaceid,C.c_uint32]
+            lib.spacesnapshotend.argtypes=[local.support.Spaceid,local.support.Spaceid,C.c_uint32]
+            self.assertEqual(lib.spacesnapshotprep(self.parent.space,self.target.space,prep),0)
+            self.assertEqual(lib.spacesnapshotstep(self.parent.space,self.target.space,1),1)
+            self.assertEqual(lib.prepforkabandon(prep),-7)
+            state=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            self.assertEqual((state.state,state.cloning,state.refs),(1,1,2))
+            self.assertEqual(lib.spacesnapshotend(self.parent.space,self.target.space,1),0)
+            self.assertEqual(lib.prepforkfinish(prep),0)
         for lib in self.libs:self.exercise(lib,body)
 
     def test_owned_prep_late_failure_restores_parent_and_keeps_only_root_owners(self):
