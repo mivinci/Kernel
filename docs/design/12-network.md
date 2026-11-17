@@ -19,7 +19,7 @@ connect/accept/I/O 使用异步和延迟回复，不能阻塞整个 net；监听
 
 ## 网络协议栈选型（已确定）
 
-net 复用固定版本 lwIP，采用 NO_SYS=1 回调式 raw API，不自行重写 TCP，不使用依赖线程模型的 lwIP BSD socket/netconn API。
+net 复用固定版本的 lwIP（2.x 大版本已冻结，首版取 2.2.0），采用 NO_SYS=1 回调式 raw API，不自行重写 TCP，不使用依赖线程模型的 lwIP BSD socket/netconn API。
 用户态 socket/fd 协议由运行库和 net 会话层提供，内部适配 raw 回调；lwIP 指针不作为外部句柄。
 收包、请求、协议定时任务都由单一 net 事件循环推进，回调不得阻塞；协议任务接入已有逻辑定时器，不引入线程/邮箱。
 连接、包和协议记录使用有上限的用户态池并计入预算；DMA 缓冲与协议包显式复制或引用交接，不提前复用，不承诺初版零拷贝。
@@ -74,11 +74,11 @@ net 只返回既有 `ERR_*`，由 libsys 映射 errno（`ECONNREFUSED`/`ECONNRES
 - 缓存与 DMA：槽位属获授权 DMA Mem，交接期由“解析完”延长到“pbuf 释放”；同一维护单元内不得再有其它 CPU 写者。ARM 缓存启用后，CPU 解析前 invalidate、归还设备前 clean，统一在 `rx_slot_release` 内执行，遵循 [09](09-devices.md) 的同步与停止契约。
 - 发送路径仍全复制：从会话环复制进驱动 tx 缓冲，`send` 返回即可复用该段环内缓冲，但按 12:12 仅表示本地栈已接受，不表示对端收到。
 
-## lwIP 集成参数（2026-11-18，候选值须实测调整）
+## lwIP 集成参数（2026-11-18；版本已冻结，其余候选值须实测调整）
 
 | 项 | 首版值 | 说明 |
 | --- | --- | --- |
-| 版本 | 候选 lwIP 2.2.0 上游 tag，待冻结 | 第三方源码保留上游风格与版本号，适配层按本项目命名 |
+| 版本 | **冻结 lwIP 2.x 大版本**，首版取 2.2.0 上游 tag | 第三方源码保留上游风格与版本号，适配层按本项目命名；仅接受同一大版本内的修复级升级，跨大版本须重新评审 |
 | 模型 | `NO_SYS=1` raw API | 不使用 `netconn`/BSD socket，不引入线程与邮箱 |
 | TCP | `TCP_MSS=1460`、`TCP_WND=4*MSS`、`TCP_SND_BUF=4*MSS`、`TCP_SND_QUEUELEN=16` | 窗口与发送队列有界，满时按背压节处理 |
 | PCB | `MEMP_NUM_TCP_PCB=16`、`MEMP_NUM_UDP_PCB=16`、`MEMP_NUM_TCP_SEG=64` | 与会话上限一致 |
