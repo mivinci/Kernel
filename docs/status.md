@@ -23,13 +23,13 @@
 
 ## 最新本地验证
 
-- 本地make unit通过570项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture/wrapper、静态帧及固定池证据归`build/host/stage83-fork-kernel-continuation/`。未执行CI/目标真实硬件/性能验收。
-- 可信准确FORK可登记内核root续点并切出/恢复，固定CONTROL terminate挂起者或暂停者自行退出会先移交CPU回滚，原栈不再恢复。两架构各三组真实Proc/Hkctx组合核对另一个Proc得到CPU、恢复/终止状态、父结果及最终页/费用归零；sigframe专用--wrap用户边界注入C测试，指定PID不执行用户指令，normal无wrapper，记录/固定池不增。自动IRQ窗口/每32页调度请求、STOP/CONT、无关VM变更隔离及未映射/Local/Signal长循环仍待接；原生fork未开放，不把可信续点测试称为完整用户fork。
+- 本地make unit通过572项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture/wrapper、静态帧及固定池证据归`build/host/stage84-fork-private-journal/`。未执行CI/目标真实硬件/性能验收。
+- 保护日志现为事务私有Mmap链，容量检查用实时freecount，跨批不保存无关全局映射链/空闲链节点；Spacetxn64/Mmap64/Prep256及固定池不增，仅全局计数4字节。小池host验独立节点复用及准入后容量耗尽，两架构真实续点peer各完成15次独立Mem alloc/map/write/unmap/free，恢复/终止回滚后页/费用归零。指定PID仍是sigframe专用C注入，normal无wrapper。源Mem别名准入/引用稳定、未映射/Local/Signal长循环、自动IRQ检查点与STOP/CONT仍待接；原生fork未开放。本切片收尾后按新增真机问题编号/优先级推进，T1启动包按最新冻结方案实施。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
 
-- 启动包容器：64字节头/64字节目录项、最多32项、包内偏移及FNV-1a64候选待用户确认，详见[07开放问题](design/07-boot.md#开放问题启动包容器候选待用户确认)。已有bootimageload不依赖这个新容器。
+- 启动包容器已于2026-11-18冻结：DTB chosen initrd范围、FNV-1a64排除checksum字段、无4KiB包内对齐要求及64字节区分大小写名称；格式和T1.1..T1.5验收见[07](design/07-boot.md)。尚未实现容器；PID1取得其他包项的接口仍须在T1.3前定稿。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。
 - IRQ_SOURCE撤销是否影响既有独立IRQ_BIND仍待用户确认，候选和实现边界见05末尾。

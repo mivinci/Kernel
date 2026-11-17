@@ -299,6 +299,66 @@ class SpaceSnapshotTests(unittest.TestCase):
             finally:self.assertEqual(self.lib.spacedeactivate(),0)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_independent_mapping_nodes_can_be_reused_between_build_and_abort_batches(self):
+        def body():
+            self.building();parent=self.create();data=self.memory_create(16*4096)
+            addresses=[0x10000,0x30000,0x50000]
+            for va in addresses:self.assertEqual(self.map(parent,data,address=va,length=16*4096),0)
+            peer=self.create();other=self.memory_create();_,child=self.destination()
+            original=bytes(self.mstat(data));before=self.pstat().allocated
+            self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+            churn=0
+            def mutate():
+                nonlocal churn
+                self.assertEqual(self.map(peer,other,address=0x90000),0)
+                self.assertEqual(self.lib.spacewrite(peer,0x90000,C.create_string_buffer(b'x'),1),0)
+                self.assertEqual(self.lib.spaceunmap(peer,0x90000),0);self.maps.pop()
+                self.assertEqual(self.lib.spaceclear(peer,32),0)
+                churn+=1
+            for _ in range(1000):
+                mutate();result=self.lib.spacesnapshotbuild(parent,child)
+                self.assertIn(result,(0,1))
+                if not result:break
+            else:self.fail('build stalled during unrelated mapping churn')
+            self.assertEqual(self.account(self.stat(child).acct).cow,16)
+            for _ in range(1000):
+                mutate();result=self.lib.spacesnapshotstep(parent,child,0)
+                self.assertIn(result,(0,1))
+                if not result:break
+            else:self.fail('abort stalled during unrelated mapping churn')
+            self.assertGreater(churn,4)
+            self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),(original,before))
+            for va in addresses:self.assertEqual(self.lookup(parent,va)[1],11)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_free_mapping_capacity_can_shrink_after_admission_without_a_stale_free_list_cursor(self):
+        def body():
+            self.building();parent=self.create();data=self.memory_create(16*4096)
+            for va in (0x10000,0x30000,0x50000):self.assertEqual(self.map(parent,data,address=va,length=16*4096),0)
+            peer=self.create();other=self.memory_create();_,child=self.destination()
+            original=bytes(self.mstat(data))
+            self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+            for _ in range(1000):
+                self.assertEqual(self.lib.spacesnapshotbuild(parent,child),1)
+                if any(self.lookup(parent,va)[1]!=11 for va in (0x10000,0x30000,0x50000)):break
+            else:self.fail('source protection did not begin')
+            self.assertEqual(self.stat(child).mapcount,0)
+            installed=0
+            for i in range(16):
+                result=self.map(peer,other,address=0x100000+i*4096)
+                if result==-3:break
+                self.assertEqual(result,0);installed+=1
+            self.assertGreater(installed,0)
+            for _ in range(1000):
+                result=self.lib.spacesnapshotbuild(parent,child)
+                if result!=1:break
+            self.assertEqual(result,-3)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual(bytes(self.mstat(data)),original)
+            self.assertEqual(self.stat(peer).mapcount,installed)
+            self.assertEqual(self.lib.spacewrite(peer,0x100000,C.create_string_buffer(b'p'),1),0)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_shared_and_sealed_peer_roots_are_not_private_alias_freezes(self):
         def body():
             self.building();parent=self.create();peer=self.create();shared=Memid();code=Memid()
@@ -383,7 +443,6 @@ class SpaceSnapshotTests(unittest.TestCase):
             self.building();parent=self.create();data=self.memory_create();self.assertEqual(self.map(parent,data),0)
             _,child=self.destination();before=bytes(self.mstat(data)),self.pstat().allocated
             self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
-            self.assertEqual(self.lib.spacesnapshotbuild(parent,child),1)
             self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
             self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
             self.assertEqual((self.stat(parent).refs,self.stat(child).refs),(1,1))

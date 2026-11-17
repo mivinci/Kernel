@@ -842,3 +842,21 @@ Space64/Mmap64/Spacetxn64/Prep256/Mem96/Local48/Proc512及固定池均不增长�
 CPU接管接续：03末尾现接可信显式prepforkabandon，将取消后的目标表和准确Space事务交给prepwork，先分批drain Local再逐批Space abort；独立worker引用保证Space释放其引用后Prep仍存活。已开始commit不允许反向撤销。Space事务及固定记录大小不变；真实KILL/调度续点尚未接，不改变本篇IRQ屏蔽/无其他VM工作约束。
 
 调度接续：03末尾现接可信登记的内核root C续点，及真实CONTROL terminate/当前退出对该登记的CPU回滚移交。两架构已实际切换/恢复C栈或永不恢复被终止栈；不激活冻结用户root。Space构建/日志的全局映射链仍未隔离无关VM变更，不能据此开放任意用户工作或原生fork检查点；本轮无IRQ窗口或STOP/CONT支持。
+
+### 事务私有保护日志与空闲映射计数（2026-11-18）
+
+本节替代前述CHECK_LOGS全局映射链预扫、CHECK_ROOM空闲链游标和结束时的全局JOURNAL链游标。单个Space事务仍由排他指针串行化；独立spaceclone不与其并行创建第二份保护日志，所以不再需要把所有无关root的映射链位置留到下一批。
+
+每条本次新增保护的Mmap在改PTE前加入事务私有链，额外MAP_JOURNALED位表示已经登记，Spacetxn保存链头。Mmap原16字节加载归属区域改为显式Mapowner联合体：普通加载持Prepid；保护日志在零generation下持下一Mmap索引，两种职责互斥，不取得或误释放加载准备引用。记录受冻结root租约保护，结束只沿本事务链逐页恢复或清标记，最后清联合体并出链；全部日志结束后才THAW。若某个未映射clone已同步撤回自身PTE，登记位仍保留到总事务收尾，避免遗漏已登记行或同一行重复入链成环；结束跳过已撤回的保护，仍清登记字段。
+
+Spacetxn仍64字节：node/page改为受检查的u16索引/页游标，0xffff为专用结束值，合法Mmap索引<8192；省出的4字节放journal头。完整Spaceid/Prepid不变。Mapowner16/Mmap64/Prep256及固定池不增；另有4字节全局freecount，在map取槽、安装失败回滚和unmap归还时更新。源预检完成后只读取当前容量，不保存可被另一映射操作复用的freemap节点；它不是预留，其他进程随后耗尽容量时仍正常返回FULL并回滚本事务。
+
+例：A分批构建到部分保护后切出，B对另一独立Mem反复分配/映射/写入/解除并复用Mmap物理槽。A恢复后遍历的都是被冻结源/目标前缀或自己已登记的保护行，不再追进B的新映射。若B把剩余Mmap容量耗完，A后段map失败，撤销自己已取视图与保护，不触碰B已提交映射。若B在A撤销期间继续增删自己的映射，JOURNAL只弹出A事务链，B的内容和映射仍保留。源私有Mem的别名链准入尚未全面隔离，不把“独立Mem”扩大成可任意改变同一源Mem的别名或管理引用。
+
+新增2项host以小Mmap池检查每次build/abort之间独立映射节点复用、以及准入后空闲容量被耗尽的后段失败/回滚；核对源Mem全字段、父PTE、其他映射和最终费用。sigframe原三组真实Proc/Hkctx续点场景中，peer每组增加5次独立Mem alloc/map/write/unmap/free，共15次；恢复、固定CONTROL终止和暂停者自行退出均保留正确回滚与结果，两架构全部页/费用归基线。指定测试PID仍通过sigframe专用用户边界wrapper执行可信C，并非原生fork用户载荷。
+
+两架构映射构建三组合计由43次build降为18，结束三组合计57→33，CPU回滚四组工作次数74→49；只是同一场景的工作次数，不是实测时间/性能验收。静态帧build ARM512/RV576、结束step ARM352/RV400，forksnapshot仍ARM1280/RV1024；单个帧不证明完整栈深。最终本地验证、哈希及实际池大小归build/host/stage84-fork-private-journal/和status。
+
+仍须处理尚未冻结完成的源Mem别名链及引用变化、未映射/Local/Signal组合长循环、自动IRQ/调度检查点与STOP/CONT；不因本次独立Mem反例通过就开放原生fork或允许任意用户VM工作。用户新增真机可移植性问题登记已读取，本切片收尾后按其优先级推进；启动包已由用户后续commit冻结，T1按07的五步交付，不再以旧008为阻塞。
+
+本轮最终本地572项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、独立Mem变更计数、normal无fixture/wrapper及实际未增长的固定池/静态帧。未执行CI、真实硬件、性能、同一源Mem任意别名变更或原生fork检查点验收。

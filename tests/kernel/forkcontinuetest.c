@@ -10,7 +10,7 @@ static Handle   parentpid, peerpid, killer;
 static Rtable  *parenttable, *peertable, *childtable;
 static Procinfo parentinfo, childinfo;
 static Prepid   preparation;
-static u32      armed, mode, reached, peerprogress, resumed;
+static u32      armed, mode, reached, peerprogress, resumed, churn;
 NORETURN void   __real_hal_user_enter(Hctx *context);
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
@@ -106,7 +106,30 @@ __wrap_hal_user_enter(Hctx *context)
     if (table->owner == parentpid)
       builder();
     if (table->owner == peerpid) {
+      Allocarg args;
+      Handle   allocator = 0, space = 0, memory;
+      u32      i;
+      u64      value = 0x5151;
       REQUIRE(reached == 1 && !resumed && spacefrozen(parentinfo.space) == 1);
+      for (i = 0; i < table->count; i++) {
+        if (table->slots[i].subtype == LOCAL_ALLOC)
+          allocator = handlepack(HANDLE_RESOURCE, table->slots[i].generation, i);
+        if (table->slots[i].subtype == LOCAL_SPACE)
+          space = handlepack(HANDLE_RESOURCE, table->slots[i].generation, i);
+      }
+      REQUIRE(allocator && space);
+      args.bytes = PAGE_SIZE;
+      args.kind = ALLOC_DATA;
+      args.align = args.minaddr = args.maxaddr = args.reserved = 0;
+      procpausevm();
+      for (i = 0; i < 5; i++) {
+        REQUIRE(!localalloc(table, allocator, &args, &memory) &&
+                !localmap(table, space, memory, 0, 0x100000, PAGE_SIZE, VM_READ | VM_WRITE) &&
+                !localwrite(table, memory, 0, &value, sizeof(value)) &&
+                !localunmap(table, space, 0x100000) && !localfree(table, memory));
+        churn++;
+      }
+      procresumevm();
       peerprogress++;
       if (mode == 1)
         REQUIRE(!procterminate(peertable, killer));
@@ -130,6 +153,7 @@ forkcontinuetest(void)
   u32        i, j, work, continued = 0, killed = 0, selfkilled = 0;
   int        error;
   pgstat(&before);
+  churn = 0;
   for (mode = 0; mode < 3; mode++) {
     reached = peerprogress = resumed = 0;
     preparation.generation = 0;
@@ -207,6 +231,8 @@ forkcontinuetest(void)
   puthex(selfkilled);
   putstr(" peer_progress=");
   puthex(3);
+  putstr(" vm_churn=");
+  puthex(churn);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

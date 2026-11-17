@@ -18,6 +18,7 @@ typedef struct Spaceid  Spaceid;
 typedef struct Space    Space;
 typedef struct Mmap     Mmap;
 typedef struct Spacetxn Spacetxn;
+typedef union Mapowner  Mapowner;
 struct Spaceid
 {
   u64 generation;
@@ -30,8 +31,8 @@ struct Spacetxn
 {
   Spaceid source, target;
   Prepid  owner;
-  u32     node, page;
-  u16     phase, slot, commit, aux;
+  u32     journal;
+  u16     node, page, phase, slot, commit, aux;
 };
 STATIC_ASSERT(sizeof(Spacetxn) == 64, space_transaction_budget);
 struct Space
@@ -41,12 +42,24 @@ struct Space
   u64    pages;
   u32    state, refs, maps, busy, mapcount, frozen;
 };
+/* Loading and transient snapshot journal ownership are disjoint. Journal
+   rows retain zero generation so they never acquire a loading Prep reference. */
+union Mapowner
+{
+  Prepid load;
+  struct
+  {
+    u64 zero;
+    u32 next, reserved;
+  } journal;
+};
+STATIC_ASSERT(sizeof(Mapowner) == 16, map_owner_budget);
 struct Mmap
 {
-  u64    address, length, offset;
-  Memid  mem;
-  u32    next, prot;
-  Prepid prep;
+  u64      address, length, offset;
+  Memid    mem;
+  u32      next, prot;
+  Mapowner owner;
 };
 STATIC_ASSERT(MMAPS > 0 && MMAPS <= 8192, mmap_capacity);
 STATIC_ASSERT(sizeof(Mmap) <= 64, mmap_budget);

@@ -1454,3 +1454,5 @@ Proc512/Prep256/Spacetxn64及固定池不增长；记录只复用现有联合体
 静态帧：procforkenter/yield均ARM160/RV144字节，leave均0，procrunone均64，procexit均32，procterminate ARM192/RV176；这些是单个编译帧，不是完整异常/系统调用栈深或实测调度延迟。
 
 本轮最终本地570项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、两个FORKCONTCHECK、normal无测试源码且ELF无wrapper符号、实际固定池及静态帧。未执行CI、真实硬件、性能、STOP/CONT或原生fork验收。
+
+游标隔离接续：02末尾改为事务私有Mmap保护日志及实时freecount，不再跨批保存无关全局映射链/空闲链位置。原续点peer在三组场景中各完成5次独立Mem映射分配/写入/复用，恢复或终止回滚后页/费用归基线。记录/固定池不增长；同一源Mem的未完成别名准入仍受限，尚未开放原生fork检查点。
