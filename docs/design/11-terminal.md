@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：2026-11-17已接组/会话、wait策略、原生信号配置/两层帧/sigreturn/sigsuspend及libc mask子集，局部双架构证据见文末与status。终端/作业控制、真实来源、普通等待中断/重启及POSIX trampoline仍未完成，未完成CI/真实硬件/性能验收。
 
 职责修订：普通会话/进程组与前台操作由 sh、tty 直接请求内核并接受关系/权限校验；init 仅配置初始终端权限。wait/自动收取依内核退出记录，不再以 init 复制和 exack 为前置。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -464,3 +464,21 @@ host另测等待恢复M与H分离、handler改mask/嵌套返回，以及满层�
 边界：原生HANDLER仍NOTSUP，来源编码仍待确认；可信安装/排队仅额外接受独占信号等待，不提前支持普通IPC/父wait中断。SA_RESTART、Rctx、libc信号前置、STOP/CONT和完整信号生产仍待接，生产normal及包括net的全项目目标未完成。
 
 本地最终验证：完整make test-all通过286项host、格式及98个RV64/ARM64 QEMU，最终源的帧核心5项host及格式也单独通过。9例信号等待各架构5个恢复EINTR、4个终止，charged=0且物理页回到内核表基线；日志、原始运行目录及关键源码哈希在build/host/stage46-signal-suspend/。未运行CI/真实硬件/性能验收，源布局/预算静态断言保持通过。
+
+### 原生 HANDLER 与 libc 掩码接口（2026-11-17）
+
+原生sigaction现允许HANDLER，复用既有两层用户帧/restore核心。注册时在输入快照之后、旧动作输出及提交之前，检查handler和trampoline均为当前空间合法对齐的普通用户RX映射；任一失败返回INVALID或FAULT并保留旧动作。输入/输出同址仍用输入快照安装新动作、向原对象返回旧动作。递送再次检查两入口，注册不固定代码页；解除映射后收到信号按BAD_SIGNAL_FRAME受控结束，不跳入空洞或触发内核异常。只操作当前Image，不新增调用号、权限或结构字段。
+
+原生与可信安装共用同一动作校验/存储，去掉两套HANDLER门禁；NODEFER/RESETHAND/SIGINFO及CHLD NOCLDWAIT复用已实现语义，已知未完成的RESTART/NOCLDSTOP继续NOTSUP。DEFAULT/IGNORE的入口仍须0，KILL/STOP仍禁止修改，未知标志/掩码拒绝。创建基线只继承显式IGNORE及当时mask，不复制HANDLER地址或附加标志；host另明确验证Native设置的HANDLER在孩子基线中为全零DEFAULT。
+
+libc signal.h现提供64位sigset_t、支持的SIG_*及SIG_BLOCK/UNBLOCK/SETMASK常量，和sigemptyset/sigfillset/sigaddset/sigdelset/sigismember/sigprocmask/sigpending/sigsuspend。集合助手操作有效C对象，未知/未支持编号EINVAL且不改对象；fillset包含所有本系统支持位，包括不能真正屏蔽的KILL/STOP。mask/等待接口用__sys_copy快照/交付8字节普通内存，不需要malloc、stdio、fd、RPC槽或惰性连接。
+
+sigprocmask(set=NULL)忽略how，以原生BLOCK零掩码查询；非空set才验证how并提交变更。old输出坏指针发生在原生mask已提交之后，返回EFAULT，不回滚并覆盖可能由handler更新的状态。输入复制失败或未知mask/方式不提交；输入/输出同址返回旧mask且内核使用已快照的新值。sigpending非消费；sigsuspend使用原生M/W/H等待，捕获处理后返回-1/EINTR，无正常成功返回。参考[Linux man-pages sigprocmask说明](https://man7.org/linux/man-pages/man2/sigprocmask.2.html)核对空set查询规则，公开mask宽度/编号继续使用本项目冻结值，不导入Linux结构布局。Open Group在线正文仍未取得，不声称完整标准合规。
+
+sigframe的11个真实用户进程现在自行调用原生sigaction注册两入口，CPU只负责可信排队。新增未映射/只读/高地址/未对齐入口、保留位/未知标志、只读old输出和同址快照检查；单独创建可执行Code页，成功注册后解除映射，再排USR1验证受控失败。原完整GPR/FP、两层嵌套、NODEFER、RESETHAND、cookie重放/非顶层/坏帧验证继续运行。定制测试trampoline自行保存/恢复每层errno，不把它当作已交付的POSIX trampoline。
+
+sigsuspend的9个进程也改为用户原生注册，实际等待改走libc；覆盖已pending、先检查后阻塞、IGNORE/被屏蔽信号、嵌套/深度满、M/W/H恢复与强杀，仍由可信生产者注入code=0。8项libc host检查本地集合、无堆依赖、how忽略、同址/坏指针、输出失败已提交、pending非消费及errno映射；Native配置host检查HANDLER快照/失败保持及孩子DEFAULT基线。
+
+本轮不实现候选Siginfo来源code，也不接USER/CHLD/FAULT或sigsend生产；普通IPC/父wait阻塞中断、STOP/CONT、SA_RESTART、Rctx/Fix及公开POSIX sigaction trampoline仍待接。signal.h只声明已交付的集合/mask/pending/suspend子集，没有注册一个绕过前置责任的公开sigaction。原生自定义trampoline仍由调用者承担运行库适配责任，normal仍未启动生产init，包括net的完整目标未完成。
+
+本地make unit全部406项、补充配置6项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage59-native-signal/，核对所有原始结果中的当前proc/signal源码哈希及两架构SDK，普通镜像不含测试。尚无CI、真实硬件、性能或完整POSIX信号验收。

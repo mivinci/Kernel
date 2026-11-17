@@ -693,7 +693,7 @@ def exercise(args, run_dir, record):
                     record["signal_suspend"]=checks[0]
                 if args.case == "sigframe":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFRAMECHECK ")]
-                    if checks != [dict(cases=10, normal=4, invalid=5, terminated=1, charged=0, allocated=transition["tables"])]:
+                    if checks != [dict(cases=11, normal=4, invalid=6, terminated=1, charged=0, allocated=transition["tables"])]:
                         raise SmokeError("signal frame outcome/resource mismatch")
                     record["signal_frames"]=checks[0]
                 if args.case == "sigconfig":

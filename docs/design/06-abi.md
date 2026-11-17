@@ -348,3 +348,5 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 IRQ原生接续（2026-11-17）：已接0x71单输入IRQ_BIND ACK及0x72双输入CONTROL IRQ/目标本地binding，未用输入INVALID、失败输出0、成功无额外结果。确认槽为RESOURCE子类型11，仅ACK=1、inherit=0，不转授；Local free/revoke即拆绑定。资源查询仍按冻结字段，不暴露Event指针或内部ID。0x70/source权限仍待05的IRQ_SOURCE撤销决策，继续NOTSUP，不将可信安装当原生bind权限验证。
 
 上述ACK/解绑及生命周期的最终完整回归通过321项host和102个双架构QEMU；未用输入、外表Handle、旧代、消费边界和真实硬件EVENT由05的新场景核验。0x70保留NOTSUP，Source撤销决策未采用候选默认。
+
+原生HANDLER接续（2026-11-17）：sigaction的48字节/三个参数保持，现接两入口用户RX/普通映射检查后才交付old并提交；输入输出别名使用快照，原生旧输出失败不换动作。NODEFER/RESETHAND/SIGINFO已可用于原生自定义trampoline，RESTART/NOCLDSTOP仍NOTSUP；递送重查及证据见11末尾。libc mask接口依旧使用原生寄存器old值，故公开sigprocmask的old复制失败发生在已提交mask之后，不回滚；没有新增old指针原生参数或魔法查询how。

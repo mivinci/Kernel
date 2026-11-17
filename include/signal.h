@@ -22,8 +22,8 @@ int sigmaskvalid(u64 mask);
 int sigactionvalid(u32 signum, const Sigact *action);
 int siggetaction(Imageid image, u32 signum, Sigact *out);
 int sigsetaction(Imageid image, u32 signum, const Sigact *action);
-/* Trusted typed producer/profile. Public HANDLER registration remains gated
-   until native sources and runtime interruption semantics are integrated. */
+/* Typed fixture producer; native USER/CHILD/FAULT production and ordinary
+   blocked-syscall interruption remain separate from action registration. */
 int siginstall(Imageid image, u32 signum, const Sigact *action);
 int sigqueue(Imageid image, const Siginfo *info);
 /* Completed-user-return boundary only; positive result requests default exit. */

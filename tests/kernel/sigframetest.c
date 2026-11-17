@@ -31,7 +31,6 @@ sigframetest(void)
   Handle      pid;
   Procinfo    process;
   Framepacket packet;
-  Sigact      action;
   Siginfo     info;
   Sigstat     signal;
   Life        life;
@@ -42,7 +41,7 @@ sigframetest(void)
   int         error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 10; mode++) {
+  for (mode = 0; mode < 11; mode++) {
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     for (i = 0; i < sizeof(packet); i++)
       ((u8 *) &packet)[i] = 0;
@@ -83,18 +82,6 @@ sigframetest(void)
         ((u8 *) &info)[i] = 0;
       info.status = 0x12345678;
       if (trace[0] == 1 && !first) {
-        for (i = 0; i < sizeof(action); i++)
-          ((u8 *) &action)[i] = 0;
-        action.kind = SIGNAL_HANDLER;
-        action.handler = trace[2];
-        action.trampoline = trace[3];
-        action.mask = (u64) 1 << (SIGNAL_TERM - 1);
-        action.flags =
-            SIGNAL_SIGINFO | (mode == 8 ? SIGNAL_RESETHAND : 0) | (mode == 9 ? SIGNAL_NODEFER : 0);
-        REQUIRE(!procsiginstall(pid, SIGNAL_USR1, &action));
-        action.mask = (u64) 1 << (SIGNAL_PIPE - 1);
-        action.flags = SIGNAL_SIGINFO;
-        REQUIRE(!procsiginstall(pid, SIGNAL_USR2, &action));
         info.signum = SIGNAL_USR1;
         REQUIRE(!procsigqueue(pid, &info));
         first = 1;
@@ -148,11 +135,11 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(10);
+  puthex(11);
   putstr(" normal=");
   puthex(4);
   putstr(" invalid=");
-  puthex(5);
+  puthex(6);
   putstr(" terminated=");
   puthex(1);
   putstr(" charged=");

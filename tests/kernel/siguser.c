@@ -148,7 +148,7 @@ main(int argc, char **argv)
   REQUIRE(__sys_sigaction(SIGNAL_TERM, &action, NULL) == -ERR_NOTSUP, 188);
   action.flags = 0;
   action.kind = SIGNAL_HANDLER;
-  REQUIRE(__sys_sigaction(SIGNAL_TERM, &action, NULL) == -ERR_NOTSUP, 189);
+  REQUIRE(__sys_sigaction(SIGNAL_TERM, &action, NULL) == -ERR_INVALID, 189);
   REQUIRE(__sys_sigaction(SIGNAL_TERM, (const Sigact *) 1, NULL) == -ERR_FAULT, 190);
   memset(&action, 0, sizeof(action));
   action.flags = SIGNAL_NOCLDWAIT;

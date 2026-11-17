@@ -16,14 +16,14 @@
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权，SERVICE仅由可信fixture安装，生产清单策略未启动。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
-- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生sigsuspend的独占等待/M-W-H恢复，原生HANDLER仍NOTSUP。真实信号来源、STOP/CONT、普通阻塞中断/重启及libc前置未接。
+- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
 - 独立libsys SDK、virtio描述符/共享环与现代MMIO协商复位（无生产DMA后端）、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait及批量堆分配、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
 - 一次性PID1及专用预校验描述装载器已接；真实用户测试覆盖三代孤儿收取、组wait BLOCKED/READY强杀与PID1退出致命。载荷仍在tests/kernel，生产sbin/init、启动包/SYSTEM/设备发权未接；normal仍初始化后停止。
 
 ## 最新本地验证
 
-- 本地make unit通过397项，格式及make test-qemu的108个两架构场景全部通过；日志`build/host/stage58-heap/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- 新heap场景验证构造函数malloc、外部VA冲突、128个小块/跨Mem大块及一空槽；realloc失败保留旧数据，进程仍活着时全部free即回到账目基线且堆页消失。16项分配器host含1800步载荷/不重叠检查。原运行库/进程/IPC/信号/IRQ/MMIO回归通过；fork/信号前置、生产DMA与块/网络I/O仍待接。
+- 本地make unit通过406项，格式及make test-qemu的108个两架构场景全部通过；日志`build/host/stage59-native-signal/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
+- sigframe每架构11进程、sigsuspend每架构9进程均改为用户原生注册，CPU只可信排code=0；新增入口/别名/只读输出、注册后解除代码映射及libc等待EINTR检查，完整寄存器/两层/cookie继续验。公开POSIX sigaction trampoline与真实来源仍待接；堆及原进程/IPC/IRQ/MMIO回归通过。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

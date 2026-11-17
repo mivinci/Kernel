@@ -144,7 +144,7 @@ copyaction(Sigact *to, const Sigact *from)
   to->reserved = from->reserved;
 }
 static int
-actionvalid(u32 signum, const Sigact *action, u32 handlers)
+actionvalid(u32 signum, const Sigact *action)
 {
   if (!action || !validnumber(signum) || signum == SIGNAL_KILL || signum == SIGNAL_STOP ||
       action->kind > SIGNAL_HANDLER || action->reserved || sigmaskvalid(action->mask) ||
@@ -153,10 +153,7 @@ actionvalid(u32 signum, const Sigact *action, u32 handlers)
     return -ERR_INVALID;
   if (action->kind != SIGNAL_HANDLER && (action->handler || action->trampoline))
     return -ERR_INVALID;
-  if ((!handlers && action->kind == SIGNAL_HANDLER) ||
-      (action->flags & (SIGNAL_RESTART | SIGNAL_NOCLDSTOP)))
-    return -ERR_NOTSUP;
-  if (!handlers && (action->flags & ~((u64) SIGNAL_NOCLDWAIT)))
+  if (action->flags & (SIGNAL_RESTART | SIGNAL_NOCLDSTOP))
     return -ERR_NOTSUP;
   if (action->kind == SIGNAL_HANDLER &&
       (!action->handler || !action->trampoline ||
@@ -167,7 +164,7 @@ actionvalid(u32 signum, const Sigact *action, u32 handlers)
 int
 sigactionvalid(u32 signum, const Sigact *action)
 {
-  return actionvalid(signum, action, 0);
+  return actionvalid(signum, action);
 }
 static void
 clearinfo(Siginfo *info)
@@ -209,11 +206,11 @@ siggetaction(Imageid id, u32 signum, Sigact *out)
   return 0;
 }
 static int
-setaction(Imageid id, u32 signum, const Sigact *action, u32 handlers)
+setaction(Imageid id, u32 signum, const Sigact *action)
 {
   Signal *s = find(id);
   Image   image;
-  int     error = actionvalid(signum, action, handlers);
+  int     error = actionvalid(signum, action);
   if (error)
     return error;
   if (!s)
@@ -233,12 +230,12 @@ setaction(Imageid id, u32 signum, const Sigact *action, u32 handlers)
 int
 sigsetaction(Imageid id, u32 signum, const Sigact *action)
 {
-  return setaction(id, signum, action, 0);
+  return setaction(id, signum, action);
 }
 int
 siginstall(Imageid id, u32 signum, const Sigact *action)
 {
-  return setaction(id, signum, action, 1);
+  return setaction(id, signum, action);
 }
 int
 sigsetmask(Imageid id, u32 how, u64 mask, u64 *old)
@@ -643,7 +640,7 @@ sigcheck(void)
     for (j = 0; j < SIGNAL_COUNT; j++) {
       Sigact *action = &s->actions[j];
       if (validnumber(j + 1) && j + 1 != SIGNAL_KILL && j + 1 != SIGNAL_STOP) {
-        if (actionvalid(j + 1, action, 1))
+        if (actionvalid(j + 1, action))
           return -ERR_STATE;
       } else if (action->kind || action->handler || action->trampoline || action->mask ||
                  action->flags || action->reserved)

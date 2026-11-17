@@ -33,14 +33,13 @@ suspendtest(void)
   Handle        pid, notify, control;
   Procinfo      process, current;
   Suspendpacket packet;
-  Sigact        action;
   Siginfo       info;
   Sigstat       signal;
   Life          life;
   Liferesult    result;
   Pgstat        before, after;
   u64           trace[32];
-  u32           mode, i, turns, installed, first, nested, full;
+  u32           mode, i, turns, prepared, first, nested, full;
   int           error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
@@ -73,7 +72,7 @@ suspendtest(void)
     testload(pid, suspend_image, (u64) (suspend_image_end - suspend_image), &packet,
              sizeof(packet));
     REQUIRE(!procpublish(pid));
-    installed = first = nested = full = turns = 0;
+    prepared = first = nested = full = turns = 0;
     for (;;) {
       REQUIRE(!procrunone() && ++turns < 64);
       REQUIRE(!spaceread(process.space, suspend_trace_address, trace, sizeof(trace)) &&
@@ -91,23 +90,13 @@ suspendtest(void)
       REQUIRE(!procinfo(pid, &current));
       for (i = 0; i < sizeof(info); i++)
         ((u8 *) &info)[i] = 0;
-      if (trace[0] == 1 && !installed) {
-        for (i = 0; i < sizeof(action); i++)
-          ((u8 *) &action)[i] = 0;
-        action.kind = SIGNAL_HANDLER;
-        action.handler = trace[2];
-        action.trampoline = trace[3];
-        action.mask = BIT(SIGNAL_TERM);
-        action.flags = SIGNAL_SIGINFO;
-        REQUIRE(!procsiginstall(pid, SIGNAL_USR1, &action));
-        action.mask = BIT(SIGNAL_PIPE);
-        REQUIRE(!procsiginstall(pid, SIGNAL_USR2, &action));
+      if (trace[0] == 1 && !prepared) {
         if (!mode) {
           info.signum = SIGNAL_USR1;
           REQUIRE(!procsigqueue(pid, &info) && !sigstat(process.identity, &signal) &&
                   !signal.depth && signal.pending == BIT(SIGNAL_USR1));
         }
-        installed = 1;
+        prepared = 1;
       }
       if (trace[0] == 2 && !first) {
         REQUIRE(mode && current.state == PROC_BLOCKED && procrunone() == -ERR_WOULD_BLOCK);

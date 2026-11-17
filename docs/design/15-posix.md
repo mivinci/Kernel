@@ -131,3 +131,7 @@ WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按�
 ### 基础分配器子集（2026-11-17）
 
 stdlib.h现声明并实现malloc/calloc/realloc/free，16字节对齐、溢出/后端失败为NULL及ENOMEM，realloc失败保留旧块；成功分配/free保留errno。零长采用最小分配，realloc(p,0)也不隐式释放，调用者仍须free返回指针；不提供零长字节访问承诺。构造函数可用，不要求文件/网络服务在线；不是异步信号安全接口。批量/多Mem映射、失败隔离、主机与真实双架构验收边界见08末尾；未接fork/_Fork Fix，不把此子集称为完整ISO C/POSIX、第三方分配器兼容或mmap支持。
+
+### 信号集合与等待前端（2026-11-17）
+
+新增signal.h及64位sigset_t，实际提供sigemptyset/sigfillset/sigaddset/sigdelset/sigismember、sigprocmask/sigpending/sigsuspend。set=NULL查询忽略how、KILL/STOP不可屏蔽、集合编号错误EINVAL、原生/指针错误转errno，实际捕获等待返回EINTR；对象助手要求有效C存储，调用路径不依赖分配器或stdio。mask旧输出FAULT保留已提交变更，不逆向覆盖handler后续状态。原生HANDLER已接，公开POSIX sigaction/trampoline、来源code转换、sigsend/kill/raise及普通等待重启仍未完成；Native/可信生产者验证边界与证据见11末尾，不将这些子集叫完整POSIX信号。

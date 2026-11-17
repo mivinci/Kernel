@@ -1618,6 +1618,10 @@ procsigaction(u64 signum, u64 input, u64 output)
     error = sigactionvalid((u32) signum, &action);
     if (error)
       return error;
+    if (action.kind == SIGNAL_HANDLER &&
+        (range(current, action.handler, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC) ||
+         range(current, action.trampoline, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC)))
+      return -ERR_FAULT;
   }
   /* Output is checked/written before the action/policy commit. Input was
      already snapshotted, including when both user buffers alias. */

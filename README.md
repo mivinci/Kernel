@@ -147,7 +147,7 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 `CASE=createauth`以可信内核入口验证固定Set的CREATE、三代上限减权、独立授权引用/回滚和pending=1/2的即时接收保底。该早期场景不是原生create，后续身份/SERVICE准入见spawn、Sigctx见sigreserve；普通用户ELF装载接续见elf；完整文件装载/exec仍待接。
 
 
-`CASE=sigreserve`验证Proc构造的两层信号现场预付、早/晚失败回滚、实际用户exit后的离栈释放，以及旧镜像仍保留时新PID/运行槽复用隔离。每份Sigctx低于1024字节，尚无处理函数、sigreturn或STOP/CONT；另验证单调cookie跨PID/镜像复用不重置；实际用户帧核验与sigreturn仍未接入。
+`CASE=sigreserve`验证Proc构造的两层信号现场预付、早/晚失败回滚、实际用户exit后的离栈释放，以及旧镜像仍保留时新PID/运行槽复用隔离。每份Sigctx低于1024字节，另验证单调cookie跨PID/镜像复用不重置；该场景聚焦预付，实际原生注册/用户帧/sigreturn见sigframe，STOP/CONT仍待实现。
 
 
 `CASE=spawn`使用真实用户程序调用create、为孩子分配/装载CODE/栈/Boot、CONFIG grant、configure/start并完成IPC和exit；验证凭据/限额、三准备与满表失败回滚、SERVICE两输出槽、别名发布屏障及destroy续点被另一用户terminate后的回收。CREATE权由可信fixture安装，孩子结果由真实用户父通过原生wait收取，覆盖阻塞/WNOHANG、PID/任意孩子/冻结组选择、重复收取CHILD错误及CHILD事件；不是ELF/csu/POSIX spawn或生产init清单发权验收。
@@ -174,9 +174,9 @@ configure现可为镜像预付0..8个资源回复保底空槽；CALL_RECV_MEM/CA
 
 类型化资源提交核心现可将SHARED MEM/CALL USE安装到原请求预留槽，ACK不回收资源、重复查询不重装。libsys两架构以可信CPU桥提交冻结描述符，验证真实调用者的异步MEM/同步CALL kind=4与可用授权；桥不是原生reply解码，REPLY_RESOURCE仍因参数位置待确认而NOTSUP。
 
-`CASE=sigconfig`验证原生DEFAULT/IGNORE、CHLD NOCLDWAIT、掩码与初始配置，6个真实孩子覆盖旧结果保留/后续自动收取和继承/重复configure；结束动态页/配额/信号预付归零。HANDLER/其他已知flags仍NOTSUP，未接信号pending生产、发送、递送、STOP/CONT或sigreturn，不把这个配置profile称为完整信号。目标仍包括net。
+`CASE=sigconfig`验证原生DEFAULT/IGNORE、CHLD NOCLDWAIT、掩码与初始配置，6个真实孩子覆盖旧结果保留/后续自动收取和继承/重复configure；结束动态页/配额/信号预付归零。原生HANDLER由sigframe/sigsuspend验证，RESTART/NOCLDSTOP仍NOTSUP；真实信号来源、发送、STOP/CONT和普通等待中断/重启仍待接。目标仍包括net。
 
-sigreserve场景另检查信号Hctx的HAL转换/恢复边界：拒绝特权/IRQ/诊断篡改和非法FP控制、失败不写输出，恢复后的GPR/FP/NZCV实际进入U/EL0验证。它没有接通用户帧映射/cookie/最上层检查或原生sigreturn，HANDLER仍NOTSUP；细节与证据见11末尾。
+sigreserve场景另检查信号Hctx的HAL转换/恢复边界：拒绝特权/IRQ/诊断篡改和非法FP控制、失败不写输出，恢复后的GPR/FP/NZCV实际进入U/EL0验证。该场景只核对HAL转换；原生HANDLER、用户帧/cookie/最上层检查和sigreturn由sigframe验证，细节与证据见11末尾。
 
 基础libc另已提供C locale的strtol/strtoul，支持2..36进制、自动八/十/十六识别、精确endptr和范围错误；不依赖fs/net。runtime场景每架构5个真实main共核对275组/550次转换，并保持原启动/退出和资源清理检查；当前子集与证据见08/15末尾。
 
@@ -193,3 +193,5 @@ irqbind载荷另经可信库存取得独占UART页，实际用户态Device映射
 CASE=mmiogroup验证显式完整成员整页权限、ARM8个共页virtio窗口的实际用户Device读取、跨Acct拒绝及最后unmap后的交接；RV独占页复用同一租约。启动显式force-legacy=false并严格读version=2，尚无队列/DMA或块/网络业务I/O，详见09末尾。
 
 CASE=heap验证构造函数及外部VA冲突、128个小块与跨Mem大块、表满realloc失败保留旧块，以及进程仍活着时全部堆页/费用回到基线。分配器按需链接，无FS依赖；SDK链接脚本提供隐藏__image_end供默认堆选址，自定义脚本须保留该契约。零长分配与realloc(p,0)采用最小分配，仍须free返回指针；fork/信号前置集成见08/15，尚未完成。
+
+sigframe现由11个用户进程自行原生注册handler/trampoline，新增注册后解除代码映射的受控失败；sigsuspend的9个进程同样自行注册并使用libc等待。signal.h支持集合助手及mask/pending/suspend，来源仍是可信code=0测试注入；公开POSIX sigaction trampoline、真实来源编码与Rctx/普通等待中断仍待接。
