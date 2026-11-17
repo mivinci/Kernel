@@ -516,3 +516,5 @@ sigframe两架构在原11个真实用户处理场景之外，新增两组可信�
 新增银行组合检查在内核中调用生产sigdeliver/sigfork/sigrestore/HAL转换，不把仿真的子返回Hctx交给CPU执行，也不声称已有handler中真实_Fork返回0的端到端路径；实际信号入口/handler/sigreturn继续由原11个用户场景验证。统一Space/Local/Signal事务、forkprep/commit/abort、用户返回续点、运行库Fix及真实信号来源仍需后续接通。失败后的未暴露孩子须由上层取消；只读cookie写或银行复制并不替代整个fork回滚。
 
 本地make unit全部516项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage73-signal-fork/，含所有Signal/Space源码/契约头哈希、两架构SIGFORKCHECK、新旧银行对象尺寸及静态帧。freestanding结构赋值链接失败保留arm64-before-copy-fix.log及原link-kernel.log，改为8字节cookie写后全量链接/运行通过。无CI、真实硬件、性能或handler中原生_Fork返回0/完整Fix验收。
+
+fork快照接续（2026-11-17）：sigfork现由可信forksnapshot在Space/Local/保底已准备后作为最后可失败阶段调用；失败清空孩子视图并恢复父页日志，不回绕已消耗cookie。两层帧/孩子cookie的双架构组合证据归03末尾和stage75，尚无原生fork/Prep发布及运行库Fix联动。

@@ -31,6 +31,7 @@ testmain(Hvs *space, const Dtinfo *hardware)
 #elif BOOT_CASE == 45
   sigframetest();
   sigforktest();
+  forksnapshottest();
   putstr("READY sigframe-restored\n");
 
 #elif BOOT_CASE == 44

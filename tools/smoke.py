@@ -739,6 +739,10 @@ def exercise(args, run_dir, record):
                     if inherited != [dict(cases=2,layers=2,rejected=1,cow_sp=1,pending=0,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("fork signal actions/layers/cookies mismatch")
                     record["signal_fork"]=inherited[0]
+                    snapshots=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKSNAPCHECK ")]
+                    if snapshots != [dict(cases=4,committed=2,rejected=2,layers=2,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("unified fork snapshot/late rollback mismatch")
+                    record["fork_snapshot"]=snapshots[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

@@ -229,3 +229,34 @@ class SpaceSnapshotTests(unittest.TestCase):
             self.assertEqual((self.stat(child).pages,self.stat(child).mapcount),(1,0))
             for address in (0x10000,0x200000):self.assertEqual(self.lookup(parent,address)[1],11)
         for lib in self.libs:self.exercise(lib,body)
+
+    def journal(self):
+        self.lib.spacesnapshotbegin.argtypes=[Spaceid,Spaceid]
+        self.lib.spacesnapshotend.argtypes=[Spaceid,Spaceid,C.c_uint32]
+        self.lib.spaceclone.argtypes=[Memid,Acctid,C.POINTER(Memid)]
+
+    def test_deferred_abort_restores_raw_source_and_refuses_unrelated_clone_and_wrong_end(self):
+        def body():
+            self.journal();parent=self.create();data=self.memory_create();self.assertEqual(self.map(parent,data),0)
+            account,child=self.destination();_,other=self.destination()
+            before=(self.lookup(parent,0x10000),bytes(self.mstat(data)),self.pstat().allocated)
+            self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
+            self.assertEqual(self.lib.spacesnapshotbegin(parent,other),-4)
+            self.assertEqual(self.lib.spaceclone(data,account,C.byref(Memid())),-4)
+            self.assertEqual(self.lib.spacesnapshotend(parent,other,0),-1)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,2),-1)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual((self.lookup(parent,0x10000),bytes(self.mstat(data)),self.pstat().allocated),before)
+            self.assertEqual(self.stat(child).mapcount,0)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),-1)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_empty_snapshot_still_excludes_nested_journals_and_commit_ends_exact_scope(self):
+        def body():
+            self.journal();parent=self.create();_,child=self.destination();_,other=self.destination()
+            self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
+            self.assertEqual(self.lib.spacesnapshotbegin(parent,other),-4)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,1),0)
+            self.assertEqual(self.lib.spacesnapshotbegin(parent,other),0)
+            self.assertEqual(self.lib.spacesnapshotend(parent,other,0),0)
+        for lib in self.libs:self.exercise(lib,body)

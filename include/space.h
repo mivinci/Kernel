@@ -64,6 +64,16 @@ int spaceclone(Memid source, Acctid target, Memid *out);
    Failure empties target and restores new source protections. No Proc/Local
    inheritance, user authority or native fork publication is provided. */
 int spacesnapshot(Spaceid source, Spaceid target);
+/* Same synchronous contract, retaining source adoption/protection journals for
+   Local/Signal preparation. Exactly one end is required after successful begin;
+   on abort caller first drops every child Local/unmapped-view reference.
+   No source mutation, unrelated clone, checkpoint, IRQ or user execution may
+   occur between begin/end. Child kernel writes are allowed. */
+int spacesnapshotbegin(Spaceid source, Spaceid target);
+int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
+/* Unmapped-in-source DATA only; caller holds its child view and adoption mask
+   until commit, or frees it and calls memcloneundo before aborting the tree. */
+int spacesnapshotclone(Spaceid source, Spaceid target, Memid original, Memid *view, u32 *adopted);
 /* Borrow the corresponding prepared target view for an already mapped source
    Mem, checking every source alias correspondence. No reference or grant. */
 int spacesnapshotview(Spaceid source, Spaceid target, Memid original, Memid *view);

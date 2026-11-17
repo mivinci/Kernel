@@ -66,4 +66,5 @@ void stacktest(Hvs *kernel);
 void switchtest(Hvs *kernel);
 void sealtest(Hvs *kernel);
 void memtest(Hvs *kernel);
+void forksnapshottest(void);
 #endif

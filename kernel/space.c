@@ -37,6 +37,8 @@ static u32        memmaps[MEMS];
 static u32        mapinitialized, freemap;
 static const Hvs *kernelspace;
 static Space     *active;
+/* One synchronous snapshot journal; never survives a checkpoint/IRQ handoff. */
+static Space *snapshot_source, *snapshot_target;
 
 static Space *
 find(Spaceid id)
@@ -510,6 +512,8 @@ clone(Memid memory, Acctid target, Memid *out, u32 journal, u32 *adopted)
 int
 spaceclone(Memid memory, Acctid target, Memid *out)
 {
+  if (snapshot_source)
+    return SP_BUSY;
   return clone(memory, target, out, 0, NULL);
 }
 
@@ -1047,7 +1051,7 @@ snapshotrefs(Memid memory, const Mem *backing)
   return count == backing->refs - backing->managers ? 0 : SP_BUSY;
 }
 int
-spacesnapshot(Spaceid sourceid, Spaceid targetid)
+spacesnapshotbegin(Spaceid sourceid, Spaceid targetid)
 {
   Space    *source = find(sourceid), *target = find(targetid);
   Acct      a, b;
@@ -1068,7 +1072,7 @@ spacesnapshot(Spaceid sourceid, Spaceid targetid)
       (source->acct.index == target->acct.index &&
        source->acct.generation == target->acct.generation))
     return SP_BAD;
-  if (source->busy || target->busy || source == active || target == active)
+  if (snapshot_source || source->busy || target->busy || source == active || target == active)
     return SP_BUSY;
   /* No unrelated preparation journal may be live in this serialized tree. */
   for (i = 0; i < MMAPS; i++)
@@ -1140,8 +1144,8 @@ spacesnapshot(Spaceid sourceid, Spaceid targetid)
       mappings[target->maps].prot |= MAP_SNAPSHOT_OWNER;
   }
   snapshotowners(target);
-  snapshotadoptions(source, 0);
-  snapshotjournal(0);
+  snapshot_source = source;
+  snapshot_target = target;
   return 0;
 failed:
   snapshotowners(target);
@@ -1150,6 +1154,43 @@ failed:
       panic("snapshot child map rollback");
   snapshotadoptions(source, 1);
   snapshotjournal(1);
+  return error;
+}
+
+int
+spacesnapshotend(Spaceid sourceid, Spaceid targetid, u32 commit)
+{
+  Space *source = find(sourceid), *target = find(targetid);
+  if (!source || !target || source != snapshot_source || target != snapshot_target || commit > 1)
+    return SP_BAD;
+  if (source->busy || target->busy || source == active || target == active)
+    return SP_BUSY;
+  if (!commit)
+    while (target->maps != PG_NONE)
+      if (spaceunmap(targetid, mappings[target->maps].address))
+        panic("snapshot transaction map rollback");
+  snapshotadoptions(source, !commit);
+  snapshotjournal(!commit);
+  snapshot_source = snapshot_target = NULL;
+  return 0;
+}
+
+int
+spacesnapshotclone(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out, u32 *adopted)
+{
+  Space *source = find(sourceid), *target = find(targetid);
+  if (!source || !target || source != snapshot_source || target != snapshot_target || !adopted ||
+      contains(source, original))
+    return SP_BAD;
+  return clone(original, target->acct, out, 1, adopted);
+}
+
+int
+spacesnapshot(Spaceid sourceid, Spaceid targetid)
+{
+  int error = spacesnapshotbegin(sourceid, targetid);
+  if (!error && spacesnapshotend(sourceid, targetid, 1))
+    panic("snapshot immediate commit");
   return error;
 }
 

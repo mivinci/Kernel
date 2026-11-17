@@ -1362,3 +1362,19 @@ locals两架构新增可信组合场景：先用完整Space快照得到映射视
 Space/Local/Signal/现场仍为独立机制；统一Prep事务、真实forkprep/commit/abort、Fix和服务引用修复尚待接通。本轮没有新增持久元数据，普通镜像不含fixture。验证证据归build/host/stage74-fork-context/；本地测试结果见status，不代表CI、真实硬件或性能验收。
 
 本地make unit全部519项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json逐项核对结果及当前源码/头文件哈希，含两架构FORKCTXCHECK与普通镜像无fixture检查。未执行CI、真实硬件或性能验收。
+
+### fork 的统一内部快照与后段回滚（2026-11-17）
+
+新增kernel/fork.c的可信forksnapshot，把Space、Local、接收保底、Signal和HAL子返回现场纳入一个同步提交/回滚范围。源必须是冻结的ACTIVE父镜像，目标是其PREPARING孩子，已有独立Acct/空Space/空Local表/信号预付银行；Createarg由拥有目标Proc/mail规格的上层提供，不是用户可选择的越权参数。该内部入口不创建Proc/Prep、不安装Fix、不发布，不替代原生CREATE准入。目标和父用户现场分离，失败不改父/输出Hctx。
+
+先在局部Hctx中核验和派生forkprep子返回，再保留Space原页接管/新保护日志。逐槽枚举标FORK的Mem并按原Mem去重：有映射者借用精确孩子视图；未映射DATA用带接管日志的clone，SEALED创建immutable视图，SHARED只暂持原对象。Local建立原槽/代次独立引用，再预付0..8资源回复保底；sigfork作为最后一个可失败阶段，继承动作/掩码并为活动帧写孩子cookie。其后只释放临时拥有引用、提交原页/PTE日志、复制已验证Hctx，不再分配或外部等待。
+
+例如父A有栈DATA、两份指向同一未映射DATA的Handle及SEALED代码，B尚不可运行。Space成功后A的新RW保护和原页接管日志仍保留；两份Handle在B绑定同一个视图。若后续sigfork发现父handler在目标无RX映射，则先归还B的保底和Local引用，恢复B进入前的空槽generation，再释放未映射临时视图并撤回其原页接管，清空B映射，最后撤回映射内接管及A所有新PTE保护。旧COW分支/保护保持原样。A的用户现场/数据不变；B仍属原准备者，必须取消，不能把失败当成可重新发布的完整快照。cookie可能已消耗，不因失败回绕或重置。
+
+该事务仍要求双root不活动、IRQ屏蔽、无checkpoint；Space只多用两个指针标记当前同步日志，空快照也禁止嵌套，普通spaceclone在日志期间拒绝。子cookie写可进行COW分离。没有让这份全局临时日志跨调度存活，也没有把它当成长fork的生产调度方案。原生fork所要求的每32页检查点、跨切出/STOP/KILL的准备归属、统一Proc/Prep取消/超期、最终Fix验证/专用发布仍须接通，原生三个调用继续NOTSUP。单纯调用本内部入口不构成完整fork。
+
+10项新host组合测试覆盖完整快照、活动帧、未映射DATA/SEALED/SHARED及重复Handle、错误现场/规格、后段信号FAULT和保底耗尽、已有COW分支、其他Space别名保护、真实Image.cleanup=65535溢出后的全层回滚；另2项Space日志测试覆盖延迟abort、空快照互斥、错误end和普通clone拒绝。sigframe两架构各新增四组可信真实页表/银行组合，两成功（无层/两层）、两失败（信号入口/保底代次耗尽），核对父Hctx、PTE、原页、原Handle/去重、cookie及最终物理页/账目。该组合不运行子用户续点；续点执行仍由stage74独立场景覆盖，不将两份证据合称真实原生fork。
+
+默认LOCALS=128时forksnapshot静态帧ARM7040/RV6768字节，sigfork另为ARM2608/RV2112；调用链仍需结合实际栈、后续Proc入口和checkpoint验收，单个.su不是完整最大栈深或IRQ延迟证明。日志与当前源码/契约哈希证据归build/host/stage75-fork-snapshot/，本地回归最终结果见status；未运行CI、真实硬件和性能验收。
+
+本轮最终本地make unit全部531项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json逐项核对结果与当前源码/头哈希，包含两个FORKSNAPCHECK和普通镜像无fixture。未执行CI、真实硬件、性能、原生fork生命周期或分批检查点验收。

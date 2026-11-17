@@ -760,3 +760,5 @@ CASE=cow两架构新增五映射快照（两个私有Mem、其中一份有两个
 最终本地make unit全部496项、make fmt-check通过。make test-qemu全部110个两架构场景通过，加入未知Op引用预检前的13个早期结果按源码哈希识别并逐项补跑，最终110项均核对当前Space/Mem源码及契约头哈希；其余97项复用完整回归中相同最终代码的结果。证据build/host/stage71-space-snapshot/保留全量日志、13项补跑、最终目录/哈希及接管回滚反例。无CI、真实硬件、性能或完整原生fork发布/继承验收。
 
 Local继承接续（2026-11-17）：已增加spacesnapshotview借用准确的父Mem→孩子去重视图，并以可信memforkhold为已保留孩子视图安装新的Local管理引用；SHARED仍同一对象，私有/SEALED只能指孩子Acct的克隆/immutable视图，不重开父DATA或设备权。未映射但继承的Mem需准备者另行预付绑定。具体原Handle/墓碑、失败引用回滚及双架构组合证据见03末尾；统一Space+Local准备/取消和原生fork续点仍未完成。
+
+Space快照日志接续（2026-11-17）：spacesnapshotbegin/end允许将原页接管/PTE新保护日志保留到Local/Signal准备完成，原spacesnapshot仍为立即提交包装。同步期间仅一个源/目标对，无调度或IRQ切出；未映射DATA的spacesnapshotclone把接管mask交给同一上层事务，必须在对应孩子视图全部释放后memcloneundo。后段失败先释放Local/临时Mem，再移除孩子映射、撤回接管及新保护，已有COW不撤回；其他Space的同Mem别名也恢复。本轮统一内部组合入口、例子及验证边界见03末尾；它尚不是支持分批检查点的原生fork准备。

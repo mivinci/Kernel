@@ -205,10 +205,12 @@ CASE=cow使用8分支配置验证预付、Mem克隆/回滚、跨Space全部别�
 
 seal现另验两代封存代码视图共用规范backing、中间Acct即时回收、原出资者退出后代码仍真实执行返回42，以及最后映射结清。immutable视图不增加代码物理页/COW承诺；完整父Space快照和fork发布/继承事务仍待接通。
 
-CASE=cow现另验证整个Space映射快照：私有DATA按Mem去重、代码SEALED共享和显式SHARED可见性，后段失败恢复父保护/接管记录并清空孩子。快照只覆盖已提交映射；原生fork执行现场、Local原Handle/墓碑和运行库Fix尚待接通。
+CASE=cow现另验证整个Space映射快照：私有DATA按Mem去重、代码SEALED共享和显式SHARED可见性，后段失败恢复父保护/接管记录并清空孩子。快照只覆盖已提交映射；Local原Handle/墓碑和HAL子现场已有独立验证，统一Proc/Prep生命周期与运行库Fix尚待接通。
 
-locals现另验可信fork资源表继承：原Handle值、SELF/私有Mem重绑定、SHARED/代码动态权限、CREATE减权和未继承墓碑，包含未映射Mem视图；两架构实际写及最终回收独立核对。Space与Local尚为独立准备层，原生fork统一提交、执行续点和Fix仍待接。
+locals现另验可信fork资源表继承：原Handle值、SELF/私有Mem重绑定、SHARED/代码动态权限、CREATE减权和未继承墓碑，包含未映射Mem视图；两架构实际写及最终回收独立核对。Space/Local/Signal/现场现有统一内部快照；原生fork的Proc/Prep生命周期、专用提交和Fix仍待接。
 
-sigframe现另验fork信号银行快照：保留动作/mask而清pending、两层孩子cookie与父帧隔离、父cookie拒绝及COW SP的逻辑可写恢复。新增组合检查在内核中恢复生产Hctx，不执行真实子fork返回；原11个用户信号场景继续验证实际handler/sigreturn。统一fork事务/续点/Fix仍待接。
+sigframe现另验fork信号银行快照：保留动作/mask而清pending、两层孩子cookie与父帧隔离、父cookie拒绝及COW SP的逻辑可写恢复。新增组合检查在内核中恢复生产Hctx，不执行真实子fork返回；原11个用户信号场景继续验证实际handler/sigreturn。原生fork的Proc/Prep事务与运行库Fix仍待接。
 
 sigreserve现另验HAL派生的fork子返回现场：两架构各运行零Fix和只读标记两个用户续点，核对系统调用后首条指令、整数/FP状态及getid。原始陷阱现场由可信fixture合成；标记不是运行库Fix，原生forkprep/commit/abort及统一准备事务仍未接通。
+
+sigframe现另验统一内部forksnapshot：Space、原Handle资源表、未映射Mem、保底、信号和HAL现场纳入同一次提交/后段回滚。两架构各四组可信组合覆盖两层cookie及后段信号/容量失败；不执行真实原生fork，Proc/Prep生命周期、分批检查点、Fix和专用发布仍待接。
