@@ -115,7 +115,11 @@ forksnapshottest(void)
         slots[0][i].generation = HANDLE_GENERATION_MAX;
     REQUIRE(spacelookup(spaces[0], 0x7c000, &original));
     pgstat(&staged);
-    error = forksnapshot(&tables[0], &tables[1], &limits, 1, &user, &child);
+    {
+      Prepid none;
+      none.generation = none.index = none.reserved = 0;
+      error = forksnapshot(&tables[0], &tables[1], &limits, 1, &user, &child, none);
+    }
     REQUIRE(checksum(&user) == hash);
     if (mode >= 2) {
       REQUIRE(error == (mode == 2 ? -ERR_FAULT : -ERR_OVERFLOW) &&

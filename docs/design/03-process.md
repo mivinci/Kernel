@@ -1378,3 +1378,21 @@ Space/Local/Signal/现场仍为独立机制；统一Prep事务、真实forkprep/
 默认LOCALS=128时forksnapshot静态帧ARM7040/RV6768字节，sigfork另为ARM2608/RV2112；调用链仍需结合实际栈、后续Proc入口和checkpoint验收，单个.su不是完整最大栈深或IRQ延迟证明。日志与当前源码/契约哈希证据归build/host/stage75-fork-snapshot/，本地回归最终结果见status；未运行CI、真实硬件和性能验收。
 
 本轮最终本地make unit全部531项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json逐项核对结果与当前源码/头哈希，包含两个FORKSNAPCHECK和普通镜像无fixture。未执行CI、真实硬件、性能、原生fork生命周期或分批检查点验收。
+
+### fork 的 Proc/Prep 归属与取消（2026-11-17）
+
+新增可信内部procforkbuild：在两个root不活动、IRQ屏蔽的同步范围中，从固定同Set策略、已验证ACTIVE源表/镜像/Life/Acct和完整用户现场建立一个不可运行孩子。孩子规格从父实际Acct限额及表容量取得，凭据固定复制可信Life；pending由上层提供其实际mail.limit。该入口不接受任意用户Createarg，不代替尚未接入的原生CREATE准入和当前调用者检查。它分配独立Proc/内核栈/出站槽/信号银行，先登记Prep，再替换临时SELF槽为父槽谱系、执行统一快照，成功后才向父安装CONSTRUCT并返回PID。没有复制父内核C栈。
+
+Prep增加origin（CREATE/FORK）和cloning两项内部字段，184→192字节，默认192份记录总增1536字节，仍受256字节上限约束。状态仍是ACTIVE/COMMITTED/ABORTED，不新增用户态通用Op或ABI字段。FORK准备在快照前固定10秒deadline、持有Image及Space租约；cloning期间prepcheck/构造操作、发布检查和准备关联查询拒绝。prepforkfinish在成功、取消或超期后都结束克隆阶段；它不重置期限，重读时钟到期则返回TIMEDOUT。取消先终结发布资格并释放目标借用，CPU清理不拆仍处于cloning阶段的目标，构造者结束阶段后才可回收。
+
+为保留独立根所有权，带准备的快照先核验精确源/目标表及FORK/CLONING归属，再仅接受Proc+该Prep两份root引用；普通独立快照仍要求单一root拥有者，额外无关hold不能替代Prep租约。完成后孩子SELF另持root引用，Prep发布/撤销时独立释放自身租约。Proc不重绑表/epoch，不重置旧槽generation；已完成快照写入孩子预付栈顶Hctx。
+
+Proc用既有配置字节区分普通镜像与FORK来源，不增加Proc512预算；普通configure、procpublish/start均拒绝FORK来源，不能用Boot初始化路径覆盖克隆现场或绕过专用Fix提交。现在只返回受正常准备权限限制的未发布孩子，专用forkcommit尚未实现。显式destroy、源表关闭、期限取消及构造失败都回收同一个孩子；取消不生成可wait结果。构造失败未向用户公布PID/Handle，先关闭发布资格，再按既有Local、Space、银行、栈、Acct/Image/Life清理，归还所有出站预付。已提交完整快照之后的取消与普通子退出相同，父的合法COW保护可以保留，预留和孩子引用仍须结清。
+
+本轮还将父退出的prepownerclose提前到end的退出提交点，在延迟Local/VM清理之前立即取消该源的所有未发布准备。例子：A已有准备B，A被CONTROL强杀，A的源表此时仍OPEN，但B的Life已ABORTED、Prep已撤销、目标表借用已释放；不能等到A的资源表逐槽清理后才关闭发布资格。A可先回收栈/表/root，B仍持有的immutable/COW页按原规则维持旧出资者账目，B最终清理才结清最后费用；B从未进入ready队列、没有wait结果。
+
+新增4项Prep host检查克隆期门禁、固定deadline、过期后仍须结束阶段、源关闭、CREATE来源/错误表拒绝；3项快照host组合检查精确Prep租约、后段失败和无关root引用。sigframe两架构各新增六组可信组合，共7个成功准备后取消和2次未公布失败：显式取消、人工时钟边界触发同一过期核心、源表关闭、后段信号FAULT、每源3份准备耗尽及真实READY父Proc强杀。核对父凭据/组继承、独立栈顶返回现场、原Handle/CREATE减权、普通start/configure拒绝、无wait结果及最终页/账目/预付归零。时钟边界注入不冒充本轮新增真实10秒等待，既有timer/irq场景继续覆盖实际硬件期限路径；本轮不运行原生fork，也不执行这些未发布孩子。
+
+procforkbuild静态帧ARM512/RV528字节；其下forksnapshot为ARM7024/RV6768、sigfork为ARM2608/RV2112字节。单个.su不等于完整用户陷阱调用链的最大栈深。源仍必须在整个同步快照中停止用户执行，无checkpoint/IRQ切出；下一步须将每32页检查点、STOP/KILL下安全退栈/转交与这些所有权记录完整接通，再开放原生forkprep。原生forkprep/commit/abort仍NOTSUP；实际调用捕获、Fix安全范围/归属与专用原子发布、运行库修复和服务会话仍未交付。证据归build/host/stage76-fork-lifetime/，不声称CI、真实硬件或性能通过。
+
+本轮最终本地make unit全部538项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json核对所有结果与当前源码/头哈希，含两个FORKLIFECHECK、Prep192/Proc512实际符号池尺寸、静态帧和normal无fixture。未执行CI、真实硬件、性能、原生fork或检查点/Fix/专用发布验收。

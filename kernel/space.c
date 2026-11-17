@@ -1050,8 +1050,8 @@ snapshotrefs(Memid memory, const Mem *backing)
   }
   return count == backing->refs - backing->managers ? 0 : SP_BUSY;
 }
-int
-spacesnapshotbegin(Spaceid sourceid, Spaceid targetid)
+static int
+snapshotbegin(Spaceid sourceid, Spaceid targetid, u32 leases)
 {
   Space    *source = find(sourceid), *target = find(targetid);
   Acct      a, b;
@@ -1066,7 +1066,7 @@ spacesnapshotbegin(Spaceid sourceid, Spaceid targetid)
   u64       pa;
   int       error;
   if (!source || !target || source == target || target->maps != PG_NONE || target->mapcount ||
-      target->pages != 1 || target->refs != 1 || acctstat(source->acct, &a) ||
+      target->pages != 1 || target->refs != leases || acctstat(source->acct, &a) ||
       acctstat(target->acct, &b) || a.state != AC_ACTIVE || b.state != AC_ACTIVE ||
       a.set != b.set ||
       (source->acct.index == target->acct.index &&
@@ -1155,6 +1155,24 @@ failed:
   snapshotadoptions(source, 1);
   snapshotjournal(1);
   return error;
+}
+
+int
+spacesnapshotbegin(Spaceid sourceid, Spaceid targetid)
+{
+  return snapshotbegin(sourceid, targetid, 1);
+}
+int
+spacesnapshotprep(Spaceid sourceid, Spaceid targetid, Prepid id)
+{
+  Prepinfo prep;
+  if (prepstat(id, &prep) || prep.state != PREP_ACTIVE || prep.origin != PREP_FORK ||
+      !prep.cloning || !prep.target || prep.space.index != targetid.index ||
+      prep.space.generation != targetid.generation || targetid.reserved)
+    return SP_BAD;
+  /* The Proc and this exact active Prep each own one root lease. Fork's caller
+     already checked the source/target tables and fixed deadline. */
+  return snapshotbegin(sourceid, targetid, 2);
 }
 
 int

@@ -12,6 +12,9 @@
 #include <signal.h>
 #include <irq.h>
 #include <device.h>
+#include <fork.h>
+#define CONFIG_IMAGE 1
+#define CONFIG_FORK  2
 
 typedef struct Proc     Proc;
 typedef union Procstage Procstage;
@@ -377,6 +380,95 @@ proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *cons
   return error;
 }
 int
+procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 reserve,
+              Handle *construct, Handle *pid)
+{
+  Imageid   sourceimage;
+  Image     image;
+  Life      caller;
+  Acct      account;
+  Acctid    bound;
+  Set       group;
+  Createarg limits;
+  Proc     *child;
+  Prepid    prep;
+  Local    *slot;
+  Handle    target = 0, view = 0;
+  u32       i;
+  int       error, finish, more;
+  if (!construct || !pid || construct == pid)
+    return -ERR_INVALID;
+  *construct = *pid = 0;
+  if (!source || source->state != LOCAL_OPEN || !parent || !pending || pending > PENDING_CALLS ||
+      reserve > 8 || acctstat(source->acct, &account) || account.state != AC_ACTIVE ||
+      setstat(set, &group) || set.index != account.set || source->count < 3 ||
+      source->count > LOCALS)
+    return -ERR_INVALID;
+  if (imagefind(source->owner, source->image, &sourceimage) || imagestat(sourceimage, &image) ||
+      image.state != IMAGE_ACTIVE || lifestat(image.life, &caller) || caller.state != LIFE_LIVE ||
+      lifeacct(image.life, &bound) || bound.index != source->acct.index ||
+      bound.generation != source->acct.generation)
+    return -ERR_STATE;
+  error = localroom(source);
+  if (error)
+    return error;
+  limits.memlimit = account.limit;
+  limits.exec_limit = account.exec_limit;
+  limits.resources = source->count;
+  limits.pending = pending;
+  limits.ruid = caller.cred.ruid;
+  limits.euid = caller.cred.euid;
+  limits.rgid = caller.cred.rgid;
+  limits.egid = caller.cred.egid;
+  limits.reserved = 0;
+  error = procnew(set, caller.pid, limits.memlimit, limits.exec_limit, limits.resources, &target);
+  if (error)
+    return error;
+  child = find(target);
+  if (!child)
+    panic("fork constructed identity");
+  error = lifecredentials(child->life, &caller.cred);
+  if (!error)
+    error = rqmailconfigure(&child->incoming, pending);
+  if (!error)
+    error = prepforkcreate(source, &child->resources, child->life, child->identity, &prep);
+  if (!error) {
+    child->prep = prep;
+    child->configured = CONFIG_FORK;
+    /* Replace bootstrap SELF entries with the parent lineage, never rebind the
+       table or reset its epoch. Proc and Prep keep their independent root holds. */
+    for (i = 0; i < child->resources.count; i++) {
+      slot = &child->resources.slots[i];
+      if (!slot->subtype)
+        continue;
+      if ((slot->subtype != LOCAL_SPACE && slot->subtype != LOCAL_ALLOC) ||
+          localrevoke(&child->resources, handlepack(HANDLE_RESOURCE, slot->generation, i)))
+        panic("fork bootstrap replacement");
+    }
+    error = forksnapshot(source, &child->resources, &limits, reserve, parent, child->user, prep);
+    finish = prepforkfinish(prep);
+    if (!error)
+      error = finish;
+  }
+  if (!error)
+    error = localconstruct(source, prep, 31, &view);
+  if (!error) {
+    *construct = view;
+    *pid = target;
+    return 0;
+  }
+  if (procdestroy(target))
+    panic("fork construction cancellation");
+  /* This trusted synchronous builder cannot checkpoint yet. No identity escaped;
+     later native integration must use the bounded CPU cleanup/clone checkpoints. */
+  while ((more = procclean(target)) > 0) {
+  }
+  if (more)
+    panic("fork construction rollback");
+  return error;
+}
+
+int
 procinfo(Handle pid, Procinfo *out)
 {
   Proc *p = find(pid);
@@ -392,7 +484,7 @@ procinfo(Handle pid, Procinfo *out)
   out->stack = p->stack;
   out->image = p->resources.image;
   out->state = p->state;
-  out->configured = p->configured;
+  out->configured = p->configured != 0;
   out->phase = p->phase;
   out->resources = p->resources.count;
   return 0;
@@ -459,7 +551,8 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   int    error;
   if (!p)
     return -ERR_STALE;
-  if (p->state != PROC_CONSTRUCT || lifestat(p->life, &life) || life.state != LIFE_CONSTRUCT)
+  if (p->state != PROC_CONSTRUCT || p->configured == CONFIG_FORK || lifestat(p->life, &life) ||
+      life.state != LIFE_CONSTRUCT)
     return -ERR_STATE;
   if (!c || reserve > 8)
     return -ERR_INVALID;
@@ -490,7 +583,7 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   p->stage.config.bootsz = snapshot.bootsz;
   p->stage.config.sigmask = snapshot.sigmask;
   p->stage.config.sigdefault = snapshot.sigdefault;
-  p->configured = 1;
+  p->configured = CONFIG_IMAGE;
   return 0;
 }
 int
@@ -501,7 +594,7 @@ procpublish(Handle pid)
   int   error;
   if (!p)
     return -ERR_STALE;
-  if (p->state != PROC_CONSTRUCT || !p->configured)
+  if (p->state != PROC_CONSTRUCT || p->configured != CONFIG_IMAGE)
     return -ERR_STATE;
   error = validate(p, &p->stage.config);
   if (error)
@@ -626,6 +719,8 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
   p->state = PROC_EXITING;
   if (imageend(p->identity, IMAGE_EXIT) || rqquotaend(&p->outgoing) || sigdiscard(p->identity))
     panic("process image/request exit");
+  /* Withdraw every unpublished child before deferred Local/VM teardown. */
+  prepownerclose(&p->resources);
   if (rqmailclose(&p->incoming, 32) < 0)
     panic("process incoming exit");
   if (acctclose(p->acct))
@@ -652,6 +747,13 @@ procclean(Handle pid)
   int   error;
   if (!p)
     return -ERR_STALE;
+  if (p->prep.generation) {
+    Prepinfo prep;
+    if (prepstat(p->prep, &prep))
+      panic("process preparation lifetime");
+    if (prep.cloning)
+      return -ERR_BUSY;
+  }
   if (p->state == PROC_CONSTRUCT) {
     Life l;
     if (!lifestat(p->life, &l) && l.state == LIFE_ABORTED)
@@ -801,6 +903,13 @@ procwork(u32 scans)
     cursor = (cursor + 1) % PROCS;
     if (p == current)
       continue;
+    if (p->prep.generation) {
+      Prepinfo prep;
+      if (prepstat(p->prep, &prep))
+        panic("process preparation work lifetime");
+      if (prep.cloning)
+        continue;
+    }
     if (p->state == PROC_CONSTRUCT && !lifestat(p->life, &l) && l.state == LIFE_ABORTED)
       p->state = PROC_EXITING;
     if (p->state == PROC_EXITING) {

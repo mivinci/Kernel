@@ -17,6 +17,8 @@
 #define PREP_PUBLISH   CONSTRUCT_PUBLISH
 #define PREP_ABORT     CONSTRUCT_ABORT
 #define PREP_ALLOC     CONSTRUCT_ALLOC
+#define PREP_CREATE    0
+#define PREP_FORK      1
 
 typedef struct Prepinfo Prepinfo;
 struct Prepinfo
@@ -26,11 +28,17 @@ struct Prepinfo
   Acctid  acct;
   Spaceid space;
   u64     image;
-  u32     state, temporary, refs, expired;
+  u32     state, temporary, refs, expired, origin, cloning;
   u64     deadline;
   Imageid identity;
 };
 int prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out);
+/* Fork holds its ordinary Space lease from acceptance, but no construction
+   operations/publication are permitted until the synchronous clone finishes. */
+int prepforkcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out);
+int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
+/* Always releases the clone phase, even when already cancelled/expired. */
+int prepforkfinish(Prepid id);
 int prepcheck(Prepid id, Rtable *source, Prepinfo *out);
 int prepstat(Prepid id, Prepinfo *out);
 /* A held REQUEST supplies owner/sourceimage. No local table borrow escapes. */

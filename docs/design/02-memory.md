@@ -762,3 +762,5 @@ CASE=cow两架构新增五映射快照（两个私有Mem、其中一份有两个
 Local继承接续（2026-11-17）：已增加spacesnapshotview借用准确的父Mem→孩子去重视图，并以可信memforkhold为已保留孩子视图安装新的Local管理引用；SHARED仍同一对象，私有/SEALED只能指孩子Acct的克隆/immutable视图，不重开父DATA或设备权。未映射但继承的Mem需准备者另行预付绑定。具体原Handle/墓碑、失败引用回滚及双架构组合证据见03末尾；统一Space+Local准备/取消和原生fork续点仍未完成。
 
 Space快照日志接续（2026-11-17）：spacesnapshotbegin/end允许将原页接管/PTE新保护日志保留到Local/Signal准备完成，原spacesnapshot仍为立即提交包装。同步期间仅一个源/目标对，无调度或IRQ切出；未映射DATA的spacesnapshotclone把接管mask交给同一上层事务，必须在对应孩子视图全部释放后memcloneundo。后段失败先释放Local/临时Mem，再移除孩子映射、撤回接管及新保护，已有COW不撤回；其他Space的同Mem别名也恢复。本轮统一内部组合入口、例子及验证边界见03末尾；它尚不是支持分批检查点的原生fork准备。
+
+fork准备租约接续（2026-11-17）：可信Proc构造先登记FORK/CLONING Prep及独立Space持有，再以精确准备归属进入快照。spacesnapshotprep只允许Proc+该Prep两份根持有，额外无关hold拒绝；standalone快照仍要求一份持有。取消释放Prep租约，Proc/SELF和实际映射按各自责任回收；READY父死亡、父先回收但孩子仍保留immutable/COW视图的账目验证见03末尾。同步实现尚无每32页检查点，不将租约接入称为原生fork/COW完整交付。

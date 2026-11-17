@@ -70,6 +70,9 @@ int spacesnapshot(Spaceid source, Spaceid target);
    No source mutation, unrelated clone, checkpoint, IRQ or user execution may
    occur between begin/end. Child kernel writes are allowed. */
 int spacesnapshotbegin(Spaceid source, Spaceid target);
+/* Exact active FORK Prep owns the second root lease; caller first checks its
+   source/target table relation with prepsnapshotcheck. Same no-checkpoint scope. */
+int spacesnapshotprep(Spaceid source, Spaceid target, Prepid prep);
 int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
 /* Unmapped-in-source DATA only; caller holds its child view and adoption mask
    until commit, or frees it and calls memcloneundo before aborting the tree. */

@@ -10,7 +10,10 @@ struct Hctx;
    parent keeps its user state and data. On failure maps/references/new parent
    protections/adoptions roll back and output Hctx stays unchanged. Target must
    be cancelled after failure: cookies may be burned, no bank reuse promised.
-   This does not create a Proc, grant authority, install Fix, or publish/run it. */
+   With nonzero prep, the exact active FORK/CLONING record owns a second
+   root lease. A zero Prepid selects the standalone trusted mechanism. Caller
+   ends that clone phase after success/failure. This does not create a Proc,
+   grant authority, install Fix, or publish/run it. */
 int forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
-                 const struct Hctx *parent, struct Hctx *child);
+                 const struct Hctx *parent, struct Hctx *child, Prepid prep);
 #endif

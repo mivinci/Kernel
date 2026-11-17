@@ -11,7 +11,7 @@ class Prepid(C.Structure):
     _fields_=[('generation',C.c_uint64),('index',C.c_uint32),('reserved',C.c_uint32)]
 class Prepinfo(C.Structure):
     _fields_=[('target',C.POINTER(support.Table)),('pid',C.c_int64),('acct',Acctid),('space',Spaceid),
-              ('image',C.c_uint64),('state',C.c_uint32),('temporary',C.c_uint32),('refs',C.c_uint32),('expired',C.c_uint32),('deadline',C.c_uint64),('identity',Imageid)]
+              ('image',C.c_uint64),('state',C.c_uint32),('temporary',C.c_uint32),('refs',C.c_uint32),('expired',C.c_uint32),('origin',C.c_uint32),('cloning',C.c_uint32),('deadline',C.c_uint64),('identity',Imageid)]
 
 class PrepTests(unittest.TestCase):
     setUpClass=classmethod(support.LocalTests.setUpClass.__func__)
@@ -27,6 +27,9 @@ class PrepTests(unittest.TestCase):
             for name,args in {
                 'prepcreate':[C.POINTER(support.Table),C.POINTER(support.Table),Lifeid,Imageid,C.POINTER(Prepid)],
                 'prepcheck':[Prepid,C.POINTER(support.Table),C.POINTER(Prepinfo)],
+                'prepforkcreate':[C.POINTER(support.Table),C.POINTER(support.Table),Lifeid,Imageid,C.POINTER(Prepid)],
+                'prepsnapshotcheck':[Prepid,C.POINTER(support.Table),C.POINTER(support.Table)],
+                'prepforkfinish':[Prepid], 'prepwork':[C.c_uint32],
                 'preprelated':[C.c_int64,C.c_uint64,C.c_int64,C.c_uint64,C.POINTER(Imageid)],
                 'prepstat':[Prepid,C.POINTER(Prepinfo)], 'preppublishcheck':[Prepid],
                 'localqueryprep':[C.POINTER(support.Table),C.c_int64,C.POINTER(C.POINTER(support.Table))],
@@ -51,6 +54,8 @@ class PrepTests(unittest.TestCase):
                 for scope,held in self.scopes:
                     if not lib.prepstat(scope,C.byref(Prepinfo())):
                         self.assertEqual(lib.prepcancel(scope),0)
+                        state=Prepinfo();self.assertEqual(lib.prepstat(scope,C.byref(state)),0)
+                        if state.cloning:self.assertIn(lib.prepforkfinish(scope),(-15,-21))
                         if held[0]:
                             self.assertEqual(lib.prepdrop(scope),0); held[0]=False
                 for table,storage,space,acct,life in self.targets:
@@ -383,4 +388,65 @@ class PrepTests(unittest.TestCase):
             self.assertEqual(self.lib.localmap(C.byref(self.source),cap,memory,0,0x30000,4096,3),-15)
             self.assertEqual(self.lib.localinherit(C.byref(target),received,2),0)
             self.assertEqual(self.lib.localfree(C.byref(target),received),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def forkprepare(self):
+        table,space,acct,life=self.target();prep=Prepid()
+        self.assertEqual(self.lib.prepforkcreate(C.byref(self.source),C.byref(table),life,self.targetimages[(life.generation,life.index)],C.byref(prep)),0)
+        self.scopes.append((prep,[True]))
+        return prep,table,space,acct,life
+
+    def test_fork_clone_phase_owns_lease_deadline_and_denies_all_construction_until_finished(self):
+        def body():
+            prep,target,space,acct,life=self.forkprepare();state=self.info(prep)
+            self.assertEqual((state.origin,state.cloning,state.refs),(1,1,1))
+            self.assertEqual(state.deadline,10000000000)
+            self.assertEqual(self.lib.prepcheck(prep,C.byref(self.source),None),-7)
+            self.assertEqual(self.lib.preppublishcheck(prep),-7)
+            cap=C.c_int64(77);self.assertEqual(self.lib.localconstruct(C.byref(self.source),prep,31,C.byref(cap)),-7)
+            self.assertEqual(cap.value,0)
+            self.assertEqual(self.lib.prepsnapshotcheck(prep,C.byref(self.source),C.byref(target)),0)
+            self.assertEqual(self.lib.prepforkfinish(prep),0)
+            self.assertEqual((self.info(prep).origin,self.info(prep).cloning,self.info(prep).deadline),(1,0,state.deadline))
+            self.assertEqual(self.lib.preppublishcheck(prep),0)
+            self.assertEqual(self.lib.prepforkfinish(prep),-6)
+            self.assertEqual(self.lib.prepsnapshotcheck(prep,C.byref(self.source),C.byref(target)),-6)
+            self.assertEqual(self.lib.localconstruct(C.byref(self.source),prep,31,C.byref(cap)),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_expiry_during_clone_revokes_first_but_retains_phase_until_builder_finishes(self):
+        def body():
+            prep,target,space,acct,life=self.forkprepare()
+            self.lib.test_now(self.info(prep).deadline)
+            self.assertEqual(self.lib.preppublishcheck(prep),-21)
+            self.assertEqual((self.info(prep).state,self.info(prep).cloning,self.info(prep).expired),(3,1,1))
+            self.assertEqual(self.lib.prepclean(prep,32),-6)
+            self.assertEqual(self.lib.prepsnapshotcheck(prep,C.byref(self.source),C.byref(target)),-21)
+            for _ in range(6):self.assertEqual(self.lib.prepwork(32),0)
+            self.assertEqual(self.lib.prepforkfinish(prep),-21)
+            self.assertEqual(self.info(prep).cloning,0)
+            self.assertEqual(self.lib.prepclean(prep,32),0)
+            self.assertEqual(self.lib.preppublishcheck(prep),-21)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_owner_close_and_cancel_do_not_turn_fork_into_a_configurable_create(self):
+        def body():
+            prep,target,space,acct,life=self.forkprepare()
+            self.assertEqual(self.lib.localclose(C.byref(self.source)),0)
+            self.assertEqual(self.info(prep).state,3)
+            self.assertEqual(self.lib.prepforkfinish(prep),-15)
+            self.assertEqual((self.info(prep).origin,self.info(prep).cloning),(1,0))
+            self.assertEqual(self.lib.preppublishcheck(prep),-15)
+            self.assertEqual(self.lib.prepclean(prep,32),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_create_origin_and_wrong_source_target_cannot_enter_fork_clone_phase(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare()
+            self.assertEqual((self.info(prep).origin,self.info(prep).cloning),(0,0))
+            self.assertEqual(self.lib.prepsnapshotcheck(prep,C.byref(self.source),C.byref(target)),-6)
+            self.assertEqual(self.lib.prepforkfinish(prep),-6)
+            fork,child,*_=self.forkprepare()
+            self.assertEqual(self.lib.prepsnapshotcheck(fork,C.byref(target),C.byref(child)),-3)
+            self.assertEqual(self.lib.prepsnapshotcheck(fork,C.byref(self.source),C.byref(target)),-3)
         for lib in self.libs:self.exercise(lib,body)

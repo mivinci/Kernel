@@ -743,6 +743,10 @@ def exercise(args, run_dir, record):
                     if snapshots != [dict(cases=4,committed=2,rejected=2,layers=2,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("unified fork snapshot/late rollback mismatch")
                     record["fork_snapshot"]=snapshots[0]
+                    lifetimes=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKLIFECHECK ")]
+                    if lifetimes != [dict(cases=6,prepared=7,cancelled=7,failed=2,expired=1,owner_close=1,parent_kill=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork Proc/Prep lifetime/cleanup mismatch")
+                    record["fork_lifetimes"]=lifetimes[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

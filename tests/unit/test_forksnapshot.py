@@ -5,6 +5,7 @@ import test_local as local
 import test_signal_context as context
 import test_sigconfig as action
 from test_localfork import Limits
+from test_prep import Prepid,Prepinfo
 from test_space import UserSpace
 from test_mem import Memid, Memory
 from test_pgt import Entry
@@ -29,9 +30,13 @@ class ForkSnapshotTests(unittest.TestCase):
                 'localmem':[C.POINTER(local.Table),Memid,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)],
                 'localclose':[C.POINTER(local.Table)],'localdrain':[C.POINTER(local.Table),C.c_uint32],
                 'localnative':[C.POINTER(local.Table),C.c_int64],
-                'forksnapshot':[C.POINTER(local.Table),C.POINTER(local.Table),C.POINTER(Limits),C.c_uint32,C.c_void_p,C.c_void_p]}
+                'prepforkcreate':[C.POINTER(local.Table),C.POINTER(local.Table),signal.Lifeid,signal.Imageid,C.POINTER(Prepid)],
+                'prepcreate':[C.POINTER(local.Table),C.POINTER(local.Table),signal.Lifeid,signal.Imageid,C.POINTER(Prepid)],
+                'prepforkfinish':[Prepid],'prepcancel':[Prepid],'prepdrop':[Prepid],
+                'prepstat':[Prepid,C.POINTER(Prepinfo)],'preppublishcheck':[Prepid],
+                'forksnapshot':[C.POINTER(local.Table),C.POINTER(local.Table),C.POINTER(Limits),C.c_uint32,C.c_void_p,C.c_void_p,Prepid]}
             for name,args in declarations.items():getattr(lib,name).argtypes=args
-            self.tables=[];self.handles=[]
+            self.tables=[];self.handles=[];self.scopes=[];self.preparation=Prepid()
             try:
                 self.parent=self.table(self.aid,self.mapped,self.pid(1200,1))
                 for name in ('localspace','localallocator'):
@@ -45,6 +50,11 @@ class ForkSnapshotTests(unittest.TestCase):
                 self.trap()
                 method()
             finally:
+                for prep in self.scopes:
+                    self.assertEqual(lib.prepcancel(prep),0)
+                    state=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+                    if state.cloning:self.assertEqual(lib.prepforkfinish(prep),-15)
+                    self.assertEqual(lib.prepdrop(prep),0)
                 for table,storage in reversed(self.tables):
                     self.assertEqual(lib.localclose(C.byref(table)),0)
                     while lib.localdrain(C.byref(table),32)>0:pass
@@ -64,7 +74,7 @@ class ForkSnapshotTests(unittest.TestCase):
             self.user.value.tf.pc+=4
 
     def fork(self,reserve=1,expected=0):
-        self.assertEqual(self.lib.forksnapshot(C.byref(self.parent),C.byref(self.target),C.byref(self.limits),reserve,self.user.pointer,self.output.pointer),expected)
+        self.assertEqual(self.lib.forksnapshot(C.byref(self.parent),C.byref(self.target),C.byref(self.limits),reserve,self.user.pointer,self.output.pointer,self.preparation),expected)
 
     def tree(self,space):
         state=UserSpace();self.assertEqual(self.lib.spacestat(space,C.byref(state)),0);return state
@@ -217,3 +227,45 @@ class ForkSnapshotTests(unittest.TestCase):
             finally:
                 for _ in range(retained):self.assertEqual(self.lib.imagedrop(self.identity,2),0)
         for lib in self.libs:self.exercise(lib,body)
+
+    def owner(self,origin=1):
+        prep=Prepid()
+        create=self.lib.prepforkcreate if origin else self.lib.prepcreate
+        self.assertEqual(create(C.byref(self.parent),C.byref(self.target),self.branch[0],self.branch[1],C.byref(prep)),0)
+        self.scopes.append(prep);self.preparation=prep
+        return prep
+
+    def test_exact_fork_prep_lease_supports_complete_snapshot_before_phase_finish(self):
+        def body():
+            prep=self.owner();self.assertEqual(self.tree(self.target.space).refs,2)
+            self.fork()
+            self.assertEqual(self.lib.preppublishcheck(prep),-7)
+            self.assertEqual(self.lib.prepforkfinish(prep),0)
+            self.assertEqual(self.lib.preppublishcheck(prep),0)
+            self.assertEqual(self.tree(self.target.space).refs,3)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_owned_prep_late_failure_restores_parent_and_keeps_only_root_owners(self):
+        def body():
+            prep=self.owner();before=(self.leaf(self.mapped,0x20000),self.pstat().allocated)
+            self.action.handler=0x40000;self.assertEqual(self.lib.siginstall(self.identity,10,C.byref(self.action)),0)
+            self.fork(expected=-2)
+            self.assertEqual((self.leaf(self.mapped,0x20000),self.pstat().allocated),before)
+            self.assertEqual(self.tree(self.target.space).refs,2)
+            self.assertEqual(self.lib.prepcancel(prep),0)
+            self.assertEqual(self.tree(self.target.space).refs,1)
+            self.assertEqual(self.lib.prepforkfinish(prep),-15)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_create_prep_and_unrelated_extra_root_hold_cannot_authorize_owned_snapshot(self):
+        def body():
+            prep=self.owner(0);before=self.pstat().allocated
+            self.fork(expected=-6)
+            self.assertEqual(self.pstat().allocated,before)
+            self.assertEqual(self.tree(self.target.space).mapcount,0)
+        for lib in self.libs:self.exercise(lib,body)
+        def extra():
+            self.owner();self.assertEqual(self.lib.spacehold(self.target.space),0)
+            try:self.fork(expected=-1)
+            finally:self.assertEqual(self.lib.spacedrop(self.target.space),0)
+        for lib in self.libs:self.exercise(lib,extra)

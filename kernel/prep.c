@@ -13,7 +13,7 @@ struct Prep
   Imageid identity;
   Acctid  acct;
   Spaceid space, sourcespace;
-  u32     state, refs, temporary, cursor, leased, expired;
+  u32     state, refs, temporary, cursor, leased, expired, origin, cloning;
 };
 STATIC_ASSERT(PREPS > 0 && PREPS <= 192, prep_capacity);
 STATIC_ASSERT(sizeof(Prep) <= 256, prep_budget);
@@ -75,13 +75,15 @@ fill(const Prep *p, Prepinfo *out)
   out->temporary = p->temporary;
   out->refs = p->refs;
   out->expired = p->expired;
+  out->origin = p->origin;
+  out->cloning = p->cloning;
   out->deadline = p->deadline;
   out->identity.generation = p->identity.generation;
   out->identity.index = p->identity.index;
   out->identity.reserved = 0;
 }
-int
-prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out)
+static int
+create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin, Prepid *out)
 {
   Life  l;
   Image image;
@@ -133,6 +135,8 @@ prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid
   p->generation++;
   p->deadline = now + PREP_NS;
   p->expired = 0;
+  p->origin = origin;
+  p->cloning = origin == PREP_FORK;
   p->source = source;
   p->target = target;
   p->sourceepoch = source->epoch;
@@ -155,6 +159,39 @@ prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid
   return 0;
 }
 int
+prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out)
+{
+  return create(source, target, life, identity, PREP_CREATE, out);
+}
+int
+prepforkcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out)
+{
+  return create(source, target, life, identity, PREP_FORK, out);
+}
+int
+prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target)
+{
+  Prep *p = find(id);
+  if (!p || p->source != source)
+    return -ERR_BAD_HANDLE;
+  if (!active(p))
+    return p->expired ? -ERR_TIMEDOUT : -ERR_REVOKED;
+  if (p->target != target)
+    return -ERR_BAD_HANDLE;
+  return p->origin == PREP_FORK && p->cloning ? 0 : -ERR_STATE;
+}
+int
+prepforkfinish(Prepid id)
+{
+  Prep *p = find(id);
+  if (!p || p->origin != PREP_FORK || !p->cloning)
+    return -ERR_STATE;
+  p->cloning = 0;
+  if (!active(p))
+    return p->expired ? -ERR_TIMEDOUT : -ERR_REVOKED;
+  return 0;
+}
+int
 prepcheck(Prepid id, Rtable *source, Prepinfo *out)
 {
   Prep *p = find(id);
@@ -162,6 +199,8 @@ prepcheck(Prepid id, Rtable *source, Prepinfo *out)
     return -ERR_BAD_HANDLE;
   if (!active(p))
     return -ERR_REVOKED;
+  if (p->cloning)
+    return -ERR_BUSY;
   if (out)
     fill(p, out);
   return 0;
@@ -194,7 +233,7 @@ prepdrop(Prepid id)
     return -ERR_STALE;
   p->refs--;
   if (!p->refs) {
-    if (p->state == PREP_ACTIVE || p->temporary || p->leased)
+    if (p->state == PREP_ACTIVE || p->temporary || p->leased || p->cloning)
       panic("live preparation without owner");
     if (imagedrop(p->identity, IMAGE_CLEANUP))
       panic("preparation image reference");
@@ -210,7 +249,7 @@ preppublishcheck(Prepid id)
     return -ERR_REVOKED;
   if (!active(p))
     return p->expired ? -ERR_TIMEDOUT : -ERR_REVOKED;
-  return p->temporary ? -ERR_BUSY : 0;
+  return p->temporary || p->cloning ? -ERR_BUSY : 0;
 }
 static void
 releaseview(Prep *p)
@@ -225,8 +264,8 @@ prepcomplete(Prepid id)
 {
   Prep *p = find(id);
   Image image;
-  if (!p || p->state != PREP_ACTIVE || p->temporary || imagestat(p->identity, &image) ||
-      image.state != IMAGE_ACTIVE)
+  if (!p || p->state != PREP_ACTIVE || p->temporary || p->cloning ||
+      imagestat(p->identity, &image) || image.state != IMAGE_ACTIVE)
     panic("preparation publication");
   p->state = PREP_COMMITTED;
   releaseview(p);
@@ -259,6 +298,8 @@ preptempcheck(Prepid id, Spaceid source, Memid mem)
   Mem   m;
   if (!p || !active(p))
     return -ERR_REVOKED;
+  if (p->cloning)
+    return -ERR_BUSY;
   if (p->sourcespace.index != source.index || p->sourcespace.generation != source.generation ||
       memstat(mem, &m) || m.acct.index != p->acct.index || m.acct.generation != p->acct.generation)
     return -ERR_DENIED;
@@ -271,6 +312,8 @@ preptemphold(Prepid id)
   int   error;
   if (!p || !active(p))
     return -ERR_REVOKED;
+  if (p->cloning)
+    return -ERR_BUSY;
   if (p->temporary == 0xffffffffU)
     return -ERR_OVERFLOW;
   error = prephold(id);
@@ -295,7 +338,7 @@ prepclean(Prepid id, u32 slots)
   u32   end, more;
   if (!p)
     return -ERR_STALE;
-  if (!slots || slots > 32 || p->state == PREP_ACTIVE)
+  if (!slots || slots > 32 || p->state == PREP_ACTIVE || p->cloning)
     return -ERR_STATE;
   if (prephold(id))
     return -ERR_OVERFLOW;
@@ -352,7 +395,8 @@ prepwork(u32 scans)
     id.index = cursor;
     id.reserved = 0;
     cursor = (cursor + 1) % PREPS;
-    if (!p->state || p->state == PREP_ACTIVE || !p->source || p->cursor >= p->source->count)
+    if (!p->state || p->state == PREP_ACTIVE || p->cloning || !p->source ||
+        p->cursor >= p->source->count)
       continue;
     if (prepclean(id, 32) < 0)
       panic("preparation CPU cleanup");
@@ -397,6 +441,8 @@ preprelated(Handle owner, u64 sourceimage, Handle target, u64 number, Imageid *o
     if (!p->state || p->owner != owner || p->sourceimage != sourceimage || p->pid != target ||
         (number && p->image != number))
       continue;
+    if (p->cloning)
+      return -ERR_BUSY;
     usable = p->state == PREP_ACTIVE ? active(p) : 0;
     if (p->state == PREP_COMMITTED || (p->state == PREP_ACTIVE && !usable))
       return -ERR_STATE;

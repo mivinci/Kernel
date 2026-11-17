@@ -1,4 +1,5 @@
 #include <fork.h>
+#include <prep.h>
 #include <signal.h>
 #include <hal/context.h>
 #include <diag.h>
@@ -37,7 +38,7 @@ memory(const Local *slot)
 
 int
 forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
-             const Hctx *parent, Hctx *child)
+             const Hctx *parent, Hctx *child, Prepid prep)
 {
   Forkbinding bindings[LOCALS];
   u64         generations[LOCALS];
@@ -55,7 +56,7 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
   if (!source || !target || source == target || !source->slots || !target->slots ||
       source->state != LOCAL_OPEN || target->state != LOCAL_OPEN || !source->count ||
       source->count > LOCALS || source->count != target->count || !limits || reserve > 8 ||
-      !parent || !child ||
+      prep.reserved || (!prep.generation && prep.index) || !parent || !child ||
       ((u64) parent < (u64) child + sizeof(Hctx) && (u64) child < (u64) parent + sizeof(Hctx)))
     return -ERR_INVALID;
   if (imagefind(source->owner, source->image, &sourceimage) || imagestat(sourceimage, &image) ||
@@ -70,7 +71,13 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
   }
   if (hal_user_fork(&candidate, parent, (u64) target->owner, 0))
     return -ERR_INVALID;
-  error = convert(spacesnapshotbegin(source->space, target->space));
+  if (prep.generation) {
+    error = prepsnapshotcheck(prep, source, target);
+    if (error)
+      return error;
+  }
+  error = convert(prep.generation ? spacesnapshotprep(source->space, target->space, prep)
+                                  : spacesnapshotbegin(source->space, target->space));
   if (error)
     return error;
   for (i = 0; i < source->count; i++) {

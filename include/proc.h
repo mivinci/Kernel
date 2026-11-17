@@ -35,6 +35,14 @@ int procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle
 int procboot(Setid set, u64 limit, u64 peak, u32 resources, Handle *out);
 int proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *construct,
                Handle *pid, Handle *control);
+/* Trusted synchronous fork builder. Caller supplies the parent's actual mail
+   limit and fixed same-Set policy, freezes its source/context and masks IRQs
+   with both roots inactive. No native CREATE admission, checkpoints or publish.
+   Returns one owned FORK preparation; ordinary configure/start reject it.
+   Failure cancels/cleans the entire unseen Proc; successful preparations use
+   normal owner-death/timeout/abort cleanup. No C stack is copied. */
+int procforkbuild(Setid set, Rtable *source, const struct Hctx *parent, u32 pending, u32 reserve,
+                  Handle *construct, Handle *pid);
 int procdestroyview(Rtable *source, Handle construct);
 /* Native fixed-Life CONTROL operations. */
 int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,
