@@ -245,6 +245,36 @@ class ForkSnapshotTests(unittest.TestCase):
             self.assertEqual(self.tree(self.target.space).refs,3)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_preparation_owns_ending_cursor_and_root_leases_after_cancel(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            lib.spacesnapshotprep.argtypes=[local.support.Spaceid,local.support.Spaceid,Prepid]
+            lib.spacesnapshotstep.argtypes=[local.support.Spaceid,local.support.Spaceid,C.c_uint32]
+            lib.prepforktree.argtypes=[Prepid,C.POINTER(C.c_void_p)]
+            storage=C.c_void_p();self.assertEqual(lib.prepforktree(prep,C.byref(storage)),0)
+            self.assertTrue(storage.value)
+            refs=self.tree(self.parent.space).refs
+            self.assertEqual(lib.spacesnapshotprep(self.parent.space,self.target.space,prep),0)
+            self.assertEqual(self.tree(self.parent.space).refs,refs+1)
+            self.assertEqual(self.tree(self.target.space).refs,3)
+            state=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(state)),0);self.assertEqual(state.refs,2)
+            self.assertEqual(lib.prepcancel(prep),0)
+            self.assertEqual(self.tree(self.target.space).refs,2)
+            self.assertEqual(lib.prepforkfinish(prep),-6)
+            again=C.c_void_p();self.assertEqual(lib.prepforktree(prep,C.byref(again)),0)
+            self.assertEqual(again.value,storage.value)
+            steps=0
+            while True:
+                status=lib.spacesnapshotstep(self.parent.space,self.target.space,0)
+                self.assertIn(status,(0,1));steps+=1
+                if not status:break
+                self.assertLess(steps,300)
+            self.assertEqual(self.tree(self.parent.space).refs,refs)
+            self.assertEqual(self.tree(self.target.space).refs,1)
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0);self.assertEqual(state.refs,1)
+            self.assertEqual(lib.prepforkfinish(prep),-15)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_owned_prep_late_failure_restores_parent_and_keeps_only_root_owners(self):
         def body():
             prep=self.owner();before=(self.leaf(self.mapped,0x20000),self.pstat().allocated)

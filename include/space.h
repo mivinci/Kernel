@@ -14,14 +14,24 @@
 #define MMAPS 8192
 #endif
 
-typedef struct Spaceid Spaceid;
-typedef struct Space   Space;
-typedef struct Mmap    Mmap;
+typedef struct Spaceid  Spaceid;
+typedef struct Space    Space;
+typedef struct Mmap     Mmap;
+typedef struct Spacetxn Spacetxn;
 struct Spaceid
 {
   u64 generation;
   u32 index, reserved;
 };
+/* Prep-owned end cursor; no borrowed C frame or user pointer survives a step. */
+struct Spacetxn
+{
+  Spaceid source, target;
+  Prepid  owner;
+  u32     phase, node, page;
+  u16     slot, commit;
+};
+STATIC_ASSERT(sizeof(Spacetxn) == 64, space_transaction_budget);
 struct Space
 {
   u64    generation, root;
@@ -75,6 +85,10 @@ int spacesnapshotbegin(Spaceid source, Spaceid target);
    source/target table relation with prepsnapshotcheck. Same no-checkpoint scope. */
 int spacesnapshotprep(Spaceid source, Spaceid target, Prepid prep);
 int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
+/* End only: at most 32 mapping scans/page edits per call, 1 means more.
+   First call fixes commit/abort. Same IRQ-masked/no-checkpoint scope; abort
+   requires child Local/unmapped references already dropped. */
+int spacesnapshotstep(Spaceid source, Spaceid target, u32 commit);
 /* Unmapped-in-source DATA only; child owns its durable original/adoption
    journal. Commit it with memforkcommit, or release every child reference before
    aborting the PTE journal. No stack-resident undo mask escapes this call. */

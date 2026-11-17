@@ -755,6 +755,12 @@ def exercise(args, run_dir, record):
                     if staged != [dict(cases=4,hidden=6,finished=1,dropped=1,overflow=1,abandoned=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("fork target-table staging/ownership/lineage mismatch")
                     record["fork_staging"]=staged[0]
+                    trees=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKTREECHECK ")]
+                    if (len(trees)!=1 or {key:trees[0].get(key) for key in ("cases","aborted","committed","cancelled","edits","bounded","charged","allocated")} !=
+                            dict(cases=3,aborted=2,committed=1,cancelled=1,edits=192,bounded=1,charged=0,allocated=transition["tables"]) or
+                            not 24 <= trees[0].get("steps",0) < 60):
+                        raise SmokeError("fork tree ending cursor/root ownership/bounded leaf changes mismatch")
+                    record["fork_tree_ending"]=trees[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

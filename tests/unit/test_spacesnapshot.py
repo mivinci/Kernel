@@ -3,6 +3,7 @@ import unittest
 import test_kernelcow as support
 from test_mem import Memid,Memory
 from test_space import Spaceid
+from test_pgt import Entry
 from test_acct import Acctid,Setid,Account
 
 
@@ -233,7 +234,39 @@ class SpaceSnapshotTests(unittest.TestCase):
     def journal(self):
         self.lib.spacesnapshotbegin.argtypes=[Spaceid,Spaceid]
         self.lib.spacesnapshotend.argtypes=[Spaceid,Spaceid,C.c_uint32]
+        self.lib.spacesnapshotstep.argtypes=[Spaceid,Spaceid,C.c_uint32]
         self.lib.spaceclone.argtypes=[Memid,Acctid,C.POINTER(Memid)]
+
+    def test_abort_cursor_bounds_leaf_changes_and_keeps_roots_frozen_until_final_release(self):
+        def body():
+            self.journal();parent=self.create();data=self.memory_create(16*4096)
+            addresses=[0x10000,0x30000,0x50000]
+            for va in addresses:self.assertEqual(self.map(parent,data,address=va,length=16*4096),0)
+            _,child=self.destination();before=bytes(self.mstat(data)),self.pstat().allocated
+            refs=(self.stat(parent).refs,self.stat(child).refs)
+            self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
+            self.assertEqual((self.stat(parent).refs,self.stat(child).refs),(refs[0]+1,refs[1]+1))
+            def leaves():
+                present=sum(self.lib.spacelookup(child,va+i*4096,C.byref(Entry())) for va in addresses for i in range(16))
+                restored=sum(bool(self.lookup(parent,va+i*4096)[1]&2) for va in addresses for i in range(16))
+                return present,restored
+            steps=0;previous=leaves()
+            while True:
+                result=self.lib.spacesnapshotstep(parent,child,0);self.assertIn(result,(0,1))
+                current=leaves()
+                self.assertLessEqual(previous[0]-current[0]+current[1]-previous[1],32)
+                steps+=1
+                if not result:break
+                self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
+                for sid in (parent,child):self.assertEqual(self.lib.spaceactivate(sid),-4)
+                previous=current
+                self.assertLess(steps,20)
+            self.assertGreater(steps,1)
+            self.assertEqual(current,(0,48))
+            self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),before)
+            self.assertEqual((self.stat(parent).refs,self.stat(child).refs),refs)
+            self.assertEqual(self.lib.spacesnapshotstep(parent,child,0),-1)
+        for lib in self.libs:self.exercise(lib,body)
 
     def test_deferred_abort_restores_raw_source_and_refuses_unrelated_clone_and_wrong_end(self):
         def body():

@@ -37,6 +37,9 @@ int prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Pr
    operations/publication are permitted until the synchronous clone finishes. */
 int prepforkcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out);
 int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
+/* Space borrows stable embedded storage, then retains Prep/root references.
+   Cancelled records remain accessible until that ownership is released. */
+int prepforktree(Prepid id, Spacetxn **out);
 /* Always releases the clone phase, even when already cancelled/expired. */
 int prepforkfinish(Prepid id);
 int prepcheck(Prepid id, Rtable *source, Prepinfo *out);

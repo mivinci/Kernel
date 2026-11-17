@@ -784,3 +784,19 @@ Space和forksnapshot的映射内/未映射DATA均改用这份账本；删除对�
 后续接续：Local/未映射临时视图的管理引用现已移入目标表DRAFT/STAGED行，旧目标代次延迟到成功才覆盖，源表关闭后仍可独立清理，详见03末尾。本轮不改变Mem/PTE提交规则和布局；映射树游标与全局Space事务仍不可跨调度，不能据此宣称克隆C栈已可安全丢弃。
 
 本轮最终本地make unit全部547项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json核对所有结果与当前源码/头哈希，含两个FORKJOURNALCHECK、实际Mem96/Prep192/Proc512池尺寸、静态帧和normal无fixture。最初guest断言把退役源的MEM_BAD误当MEM_BUSY，失败串口与修正原因保留在证据中，未改变退役权限规则。未执行CI、真实硬件、性能、原生fork或分批检查点验收。
+
+### Prep持有映射事务结束游标（2026-11-17）
+
+本节接续03的目标表持有机制，替代Space结束时整表嵌套扫描/整条孩子映射一次清空的同步局部责任。Spacetxn为64字节，内嵌在准确FORK Prep中，保存完整source/target Spaceid、Prep身份、结束阶段、映射/页游标和固定commit选择；构建前取得两个独立root引用和一个Prep引用。取消可以立即终结发布资格、释放普通准备租约，但不得释放这三个事务引用。prepforkfinish在结束游标未清零时拒绝，最后一步先归还root、清游标及串行排他指针，再归还Prep引用。没有公开通用工作对象或用户指针。
+
+spacesnapshotstep只推进结束部分，首次调用固定commit/abort，中途换方向或给错Space身份拒绝。OWNERS逐行提交/释放Mmap的管理拥有引用；abort随后以原有完整unmap事务拆孩子映射，每条不超过16页，余量不足则留到下批；JOURNAL保存Space槽/映射链/页三层游标，只扫描现有映射，不遍历8192个Mmap空槽。commit仅清本次日志位，abort恢复原来可写的PTE；已有COW叶不恢复成RW，每条恢复完才撤销该条新增保护计数。每次最多32个扫描/拥有动作或页工作单位，孩子叶移除与父叶恢复的合计不超过32；unmap预检、页表释放、Mem最后引用结算仍含各自有限内部工作，不能把该数当作32条指令或已测IRQ延迟。
+
+例：源Mem有三条16页RW别名，孩子共48叶。abort先归还管理拥有引用，再分批拆48个孩子叶及恢复48个父叶；任一中间返回1时，root引用和游标仍由Prep持有，普通map/unmap/clear/destroy/activate继续拒绝，结束中的内核写/分离也拒绝。若第一批后父取消，普通目标root租约可减少，但事务租约保留，按同一abort游标继续，结束后才允许完成克隆阶段。commit保留孩子48叶和父COW保护，之后两边写仍分离。不同Prep仍串行互斥，固定standalone记录保留可信独立Space入口；全局指针只作当前排他定位，不替代Prep的持有引用。
+
+两项新增host验每批实际PTE变化上界、最后才解冻、方向固定及取消后的Prep/root引用与游标地址。sigframe两架构各三组可信事务（撤销、提交、第一批后取消）逐步检查实际页表，每架构共33次调用、两次abort合计192次叶变化，全部页/费用回基线；组合不运行孩子或真实fork调用。最初逐Mmap池扫描需777次，已改用Space映射链；这只是同一场景工作次数，不是时延/性能验收。测试首次因对已经ABORTED的Life重复lifecancel而失败，已修正fixture清理顺序，生产Life规则不变。
+
+Prep192→256，192槽增加12288字节，达到既定256字节上限；Space64/Mmap64/Mem96/Local48/Proc512不变。standalone64字节及排他指针8字节取代两个旧root指针16字节。spacesnapshotstep静态帧ARM240/RV288，end均64，snapshotbegin均528，forksnapshot仍ARM1280/RV1024。证据归build/host/stage79-fork-tree-ending/，本地完整验证状态见status；单个静态帧不是完整调用链栈深证明。
+
+本轮最终本地556项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、normal无fixture、两个FORKTREECHECK和上述实际池/静态帧。被停止的旧Mmap池扫描回归保留为test-qemu-pool-scan.log，不计入最终110场景；未执行CI、真实硬件、性能或原生fork验收。
+
+这里只持久化结束/回滚责任：构建和保护的循环尚未迁移游标，调用者仍IRQ屏蔽、同步重复step到0；全局日志/其他Space别名尚未具备跨调度冻结与独立清理归属，不能在中间返回后任意开放IRQ、运行另一个root或丢弃整个克隆C栈。Prep CPU清理链、STOP/KILL转交、内核root续点、真正每32页调度检查点、原生fork准入与发布仍待接通。

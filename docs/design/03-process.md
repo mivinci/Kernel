@@ -1412,3 +1412,5 @@ localforkload先完整检查源表及绑定，再取得SELF/CREATE/入口/其他
 7项新增host检查隐藏行、晚provider/窗口、装载前后回滚、源关闭后的普通有界drain、未来代次保底、ENDED保底和空槽复用。sigframe两架构各四组可信检查覆盖显式撤销、完成继承、真实引用溢出及源先关闭后的逐项清理，主机独立核对FORKSTAGECHECK及全部费用/页回基线；不执行孩子或原生fork。本地554项unit、fmt-check及110个两架构QEMU场景全部通过，源码/头哈希、normal无fixture、静态帧和固定池证据归build/host/stage78-fork-local-staging/；未执行CI、真实硬件或性能验收。
 
 Local48、Mem96、Prep192、Proc512及固定池大小不变。forksnapshot去掉绑定、旧代次和拥有数组；静态帧以本轮stack-usage证据为准，不是最大栈深或IRQ延迟证明。下一步仍须把映射树游标、PTE回滚和克隆工作归属移入准备状态，再接每32页检查点及STOP/KILL安全转交；当前全程同步且IRQ屏蔽，不能跨调度保留全局Space事务。
+
+后续接续：映射事务的结束/回滚游标现由Prep内嵌64字节Spacetxn持有，并独立持源/目标root及Prep引用。取消释放普通租约后，该游标继续存在；prepforkfinish必须等结束工作全部完成。Prep现256字节、默认池增12KiB，详细阶段、批次上界和失败例子见02末尾。构建游标、调度/STOP/KILL转交与原生fork仍未接，不能把可分次结束等同于可中断的整个fork。

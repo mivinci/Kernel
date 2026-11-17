@@ -4,16 +4,17 @@
 typedef struct Prep Prep;
 struct Prep
 {
-  u64     generation, deadline;
-  Rtable *source, *target;
-  u64     sourceepoch, targetepoch;
-  Handle  owner, pid;
-  u64     sourceimage, image;
-  Lifeid  life;
-  Imageid identity;
-  Acctid  acct;
-  Spaceid space, sourcespace;
-  u32     state, refs, temporary, cursor, leased, expired, origin, cloning;
+  u64      generation, deadline;
+  Rtable  *source, *target;
+  u64      sourceepoch, targetepoch;
+  Handle   owner, pid;
+  u64      sourceimage, image;
+  Lifeid   life;
+  Imageid  identity;
+  Acctid   acct;
+  Spaceid  space, sourcespace;
+  u32      state, refs, temporary, cursor, leased, expired, origin, cloning;
+  Spacetxn tree;
 };
 STATIC_ASSERT(PREPS > 0 && PREPS <= 192, prep_capacity);
 STATIC_ASSERT(sizeof(Prep) <= 256, prep_budget);
@@ -153,6 +154,7 @@ create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin
   p->refs = 1;
   p->temporary = p->cursor = 0;
   p->leased = 1;
+  p->tree.phase = 0;
   out->generation = p->generation;
   out->index = slot;
   out->reserved = 0;
@@ -181,10 +183,19 @@ prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target)
   return p->origin == PREP_FORK && p->cloning ? 0 : -ERR_STATE;
 }
 int
+prepforktree(Prepid id, Spacetxn **out)
+{
+  Prep *p = find(id);
+  if (!p || !out || p->origin != PREP_FORK || !p->cloning)
+    return -ERR_STATE;
+  *out = &p->tree;
+  return 0;
+}
+int
 prepforkfinish(Prepid id)
 {
   Prep *p = find(id);
-  if (!p || p->origin != PREP_FORK || !p->cloning)
+  if (!p || p->origin != PREP_FORK || !p->cloning || p->tree.phase)
     return -ERR_STATE;
   p->cloning = 0;
   if (!active(p))
@@ -233,7 +244,7 @@ prepdrop(Prepid id)
     return -ERR_STALE;
   p->refs--;
   if (!p->refs) {
-    if (p->state == PREP_ACTIVE || p->temporary || p->leased || p->cloning)
+    if (p->state == PREP_ACTIVE || p->temporary || p->leased || p->cloning || p->tree.phase)
       panic("live preparation without owner");
     if (imagedrop(p->identity, IMAGE_CLEANUP))
       panic("preparation image reference");
