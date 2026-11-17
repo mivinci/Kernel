@@ -242,6 +242,94 @@ class SpaceSnapshotTests(unittest.TestCase):
         self.journal()
         self.lib.spacesnapshotopen.argtypes=[Spaceid,Spaceid,Prepid]
         self.lib.spacesnapshotbuild.argtypes=[Spaceid,Spaceid]
+        self.lib.spacefrozen.argtypes=[Spaceid]
+
+    def test_private_alias_roots_hold_one_lease_and_freeze_until_commit_or_abort_thaw(self):
+        def body():
+            self.building()
+            for commit in (0,1):
+                parent=self.create();peer=self.create();readonly=self.create()
+                first=self.memory_create();second=self.memory_create()
+                for mid,va in ((first,0x10000),(second,0x20000)):
+                    self.assertEqual(self.map(parent,mid,address=va),0)
+                    self.assertEqual(self.map(peer,mid,address=va),0)
+                self.assertEqual(self.map(readonly,first,prot=1),0)
+                _,child=self.destination()
+                self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+                frozen=False
+                for _ in range(1000):
+                    status=self.lib.spacesnapshotbuild(parent,child);self.assertIn(status,(0,1))
+                    if self.stat(peer).frozen and self.stat(readonly).frozen:
+                        frozen=True
+                        for sid in (peer,readonly):
+                            self.assertEqual((self.stat(sid).refs,self.lib.spacefrozen(sid)),(2,1))
+                            self.assertEqual(self.lib.spaceactivate(sid),-4)
+                            self.assertEqual(self.lib.spaceunmap(sid,0x10000),-4)
+                            self.assertEqual(self.lib.spaceclear(sid,1),-4)
+                            self.assertEqual(self.lib.spacedestroy(sid),-4)
+                            self.assertEqual(self.lib.spacewrite(sid,0x10000,C.create_string_buffer(b'x'),1),-4)
+                    if not status:break
+                else:self.fail('snapshot build did not reach READY')
+                self.assertTrue(frozen)
+                self.assertEqual(self.lib.spacesnapshotend(parent,child,commit),0)
+                for sid in (parent,peer,readonly,child):
+                    self.assertEqual((self.stat(sid).frozen,self.lib.spacefrozen(sid),self.stat(sid).refs),(0,0,1))
+                self.assertEqual(self.lib.spaceclear(child,32),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_late_active_alias_rejection_thaws_already_retained_roots_without_pte_changes(self):
+        def body():
+            self.building();parent=self.create();blocked=self.create();held=self.create()
+            first=self.memory_create();second=self.memory_create()
+            self.assertEqual(self.map(parent,first),0);self.assertEqual(self.map(blocked,first),0)
+            self.assertEqual(self.map(parent,second,address=0x20000),0);self.assertEqual(self.map(held,second),0)
+            _,child=self.destination();before=(self.lookup(parent,0x10000),self.lookup(parent,0x20000))
+            self.assertEqual(self.lib.spaceactivate(blocked),0)
+            try:
+                self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+                for _ in range(1000):
+                    status=self.lib.spacesnapshotbuild(parent,child)
+                    if status!=1:break
+                else:self.fail('active alias not rejected')
+                self.assertEqual(status,-4)
+                self.assertEqual((self.stat(held).frozen,self.stat(held).refs),(1,2))
+                self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+                self.assertEqual((self.stat(held).frozen,self.stat(held).refs),(0,1))
+                self.assertEqual((self.lookup(parent,0x10000),self.lookup(parent,0x20000)),before)
+            finally:self.assertEqual(self.lib.spacedeactivate(),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_shared_and_sealed_peer_roots_are_not_private_alias_freezes(self):
+        def body():
+            self.building();parent=self.create();peer=self.create();shared=Memid();code=Memid()
+            self.assertEqual(self.lib.memshared(self.aid,4096,C.byref(shared)),0);self.mems.append(shared)
+            self.assertEqual(self.lib.memcode(self.aid,4096,C.byref(code)),0);self.mems.append(code)
+            self.assertEqual(self.lib.memseal(code),0)
+            for sid in (parent,peer):
+                self.assertEqual(self.map(sid,shared),0);self.assertEqual(self.map(sid,code,address=0x20000,prot=5),0)
+            _,child=self.destination();self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
+            self.assertEqual((self.stat(peer).frozen,self.stat(peer).refs,self.lib.spacefrozen(peer)),(0,1,0))
+            self.assertEqual(self.lib.spaceactivate(peer),0)
+            self.assertEqual(self.lib.spacewrite(peer,0x10000,C.create_string_buffer(b's'),1),0)
+            self.assertEqual(self.lib.spacedeactivate(),0)
+            self.assertEqual(self.mapped(child,0x10000,1),b's')
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_unmapped_fork_clone_retains_its_other_root_until_journal_end(self):
+        def body():
+            self.building();parent=self.create();peer=self.create();data=self.memory_create()
+            self.assertEqual(self.map(peer,data),0)
+            _,child=self.destination();self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
+            self.lib.spacesnapshotclone.argtypes=[Spaceid,Spaceid,Memid,C.POINTER(Memid)]
+            view=Memid();self.assertEqual(self.lib.spacesnapshotclone(parent,child,data,C.byref(view)),0)
+            self.assertEqual((self.stat(peer).frozen,self.stat(peer).refs),(1,2))
+            self.assertEqual(self.lib.spaceactivate(peer),-4)
+            self.assertEqual(self.lib.memfree(view),0)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual((self.stat(peer).frozen,self.stat(peer).refs),(0,1))
+            self.assertEqual(self.lookup(peer,0x10000)[1],11)
+        for lib in self.libs:self.exercise(lib,body)
 
     def test_build_cursor_bounds_protection_and_installation_and_deduplicates_aliases(self):
         def body():
@@ -297,7 +385,7 @@ class SpaceSnapshotTests(unittest.TestCase):
             self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
             self.assertEqual(self.lib.spacesnapshotbuild(parent,child),1)
             self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
-            self.assertEqual(self.lib.spacesnapshotstep(parent,child,0),0)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
             self.assertEqual((self.stat(parent).refs,self.stat(child).refs),(1,1))
             self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),before)
             self.snapshot(parent,child)
@@ -349,7 +437,7 @@ class SpaceSnapshotTests(unittest.TestCase):
                 self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
                 for sid in (parent,child):self.assertEqual(self.lib.spaceactivate(sid),-4)
                 previous=current
-                self.assertLess(steps,20)
+                self.assertLess(steps,30)
             self.assertGreater(steps,1)
             self.assertEqual(current,(0,48))
             self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),before)

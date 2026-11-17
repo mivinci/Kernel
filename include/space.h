@@ -39,7 +39,7 @@ struct Space
   u64    generation, root;
   Acctid acct;
   u64    pages;
-  u32    state, refs, maps, busy, mapcount;
+  u32    state, refs, maps, busy, mapcount, frozen;
 };
 struct Mmap
 {
@@ -62,6 +62,9 @@ int spacehold(Spaceid id);
 int spacedrop(Spaceid id);
 int spacedestroy(Spaceid id);
 int spacestat(Spaceid id, Space *out);
+/* 1 means this serialized snapshot retains the root/map layout, 0 free;
+   negative is stale/invalid. Cleanup must defer before draining its Locals. */
+int spacefrozen(Spaceid id);
 u32 spacelookup(Spaceid id, u64 va, Hpte *out);
 int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep);
 int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);

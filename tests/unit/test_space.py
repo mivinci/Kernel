@@ -13,7 +13,7 @@ class Spaceid(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('index', C.c_uint32), ('reserved', C.c_uint32)]
 class UserSpace(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('root', C.c_uint64), ('acct', Acctid),
-                ('pages', C.c_uint64), ('state', C.c_uint32), ('refs', C.c_uint32), ('maps', C.c_uint32), ('busy', C.c_uint32), ('mapcount',C.c_uint32)]
+                ('pages', C.c_uint64), ('state', C.c_uint32), ('refs', C.c_uint32), ('maps', C.c_uint32), ('busy', C.c_uint32), ('mapcount',C.c_uint32), ('frozen',C.c_uint32)]
 
 class AddressSpaceTests(unittest.TestCase):
     @classmethod

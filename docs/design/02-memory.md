@@ -820,3 +820,21 @@ spacesnapshotbuild静态帧ARM512/RV560、open均336、结束step ARM240/RV272�
 本轮最终本地560项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果与当前源码/头哈希、normal无fixture、两个FORKBUILDCHECK、静态帧及实际未增长的固定池。未执行CI、真实硬件、性能、原生fork或调度检查点验收。
 
 本轮仍全程IRQ屏蔽、不得在build之间运行其他VM工作。其他Space别名尚未取得跨调度冻结/稳定清理责任；独立spaceclone、未映射Mem的spacesnapshotclone、Local/Signal/现场组合仍有同步循环。下一步须接这些责任的准备归属、CPU清理接管和内核root续点，才能开放每32页调度/STOP/KILL检查点及原生fork；不能因映射build有游标便宣称整个fork已可丢栈。
+
+### 私有别名root冻结与清理等待（2026-11-18）
+
+源/目标root在open取得事务租约时统一标记frozen。源DATA预检另沿Mem别名链逐项冻结其他root，每个额外root只增加一个引用，不按映射数或Mem数重复计数；只读私有别名同样参与，以稳定遍历链与页表。遇活动root、VM_BUSY或引用溢出拒绝，已经取得的额外租约留给本次abort归还，不在失败栈上保留列表。SEALED与显式SHARED的其他root不因本机制冻结；SHARED仍允许另一进程主动写入共享内容。
+
+Space的原有64字节记录尾部余量承载frozen字段，不扩池。spacefrozen查询完整Spaceid对应状态，普通map/unmap/clear/destroy/activate均使用同一标记门禁。build/结束阶段拒绝冻结root的内核写与COW分离；仅READY的源/目标事务root保留原同步受控内核写入口，供信号cookie准备，其他别名始终拒绝写。未映射Mem的可信spacesnapshotclone也在改保护前取得其他别名root的租约，仍是同步路径，不冒充已经分批。
+
+结束在所有孩子映射/PTE日志处理完后进入THAW，逐批扫描最多32个Space槽归还额外别名租约；源/目标直到最终snapshotrelease才清标记并归还原独立租约。初始准入撤销即使没有PTE日志也先走THAW，不能漏掉先前已冻结的root。当前仍串行且不调度；THAW不是可随意运行其他VM工作的授权。
+
+Proc退出先按原规则撤销资格/取消未发布孩子，procclean在Local/Acct/栈/root任何清理前检查spacefrozen，冻结时返回1表示尚有工作；procwork因而可继续轮询而不在SP_BUSY上panic。Prep的普通源表清理也在同一完整源epoch仍被冻结时返回1，不拆供其他克隆遍历的表项。它们只是等待，不替代事务回滚推进者；父C续点丢弃后的CPU接管仍须后续接入，不能让cloning永久停住。
+
+失败例：A的DATA同时映射于A及额外root B，fork已建立保护。A被终结，资格立即撤销，但实际清理停在phase0，保留Local、Acct与内核栈。事务abort拆目标映射/恢复父保护后归还B租约和A事务租约，随后A正常清理；B仍映射的退役DATA继续向旧Acct计费，最后B解除映射/销毁root才结清旧费用。相反，准入先冻结B后发现另一个活动root C，拒绝构建且不改PTE，abort只解冻/归还本次已持引用。
+
+新增5项host验重复别名只持一份租约、只读私有别名冻结、后段活动root拒绝后的解冻、SHARED/代码不误冻结、未映射路径和Prep源表清理等待。sigframe两架构各一组真实未发布Proc组合核对四次procclean等待、CPU轮询仍不拆表、abort后完成回收、额外别名维持旧账目及最后结清；最终全部物理页/费用归基线。不运行子fork或跨调度构建。
+
+Space64/Mmap64/Spacetxn64/Prep256/Mem96/Local48/Proc512及固定池均不增长。procclean静态帧两架构240，prepclean均64，build仍ARM512/RV560，结束step ARM240/RV272，forksnapshot仍ARM1280/RV1024；最终验证与哈希证据归build/host/stage81-fork-alias-freeze/和status。未完成CPU清理接管、内核root续点/STOP/KILL转交、未映射及Local/Signal长循环与原生fork，仍IRQ屏蔽、不得跨调度或丢弃整个构造栈。
+
+本轮最终565项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、normal无fixture、两个FORKFREEZECHECK及实际固定池大小。统一标记前被停止的回归另存test-qemu-split-markers.log，不计入最终110场景。未执行CI、真实硬件、性能、CPU回滚接管或原生fork验收。

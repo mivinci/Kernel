@@ -129,6 +129,24 @@ class PrepTests(unittest.TestCase):
             self.assertEqual(self.lib.preppublishcheck(prep),0)
         for lib in self.libs: self.exercise(lib,body)
 
+    def test_scope_cleanup_defers_source_local_mutation_while_snapshot_retains_its_root(self):
+        def body():
+            prep,cap,target,space,acct,life,held=self.prepare()
+            memory=self.allocate(cap)
+            self.assertEqual(self.lib.prepcancel(prep),0)
+            self.lib.spacesnapshotopen.argtypes=[Spaceid,Spaceid,Prepid]
+            self.lib.spacesnapshotend.argtypes=[Spaceid,Spaceid,C.c_uint32]
+            self.assertEqual(self.lib.spacesnapshotopen(self.source_space,space,Prepid()),0)
+            references=self.info(prep).refs
+            self.assertEqual(self.lib.prepclean(prep,32),1)
+            self.assertEqual(self.lib.localnative(C.byref(self.source),memory),0)
+            self.assertEqual(self.info(prep).refs,references)
+            self.assertEqual(self.lib.spacesnapshotend(self.source_space,space,0),0)
+            self.assertEqual(self.lib.prepclean(prep,32),0)
+            self.assertEqual(self.lib.localnative(C.byref(self.source),memory),-3)
+            self.assertEqual(self.info(prep).refs,1)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_commit_revokes_loader_rights_and_preserves_child_owned_reference(self):
         def body():
             prep,cap,target,space,acct,life,held=self.prepare()

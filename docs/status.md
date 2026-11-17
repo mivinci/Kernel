@@ -6,6 +6,7 @@
 
 - PR #5已合入main（`5b5edd3`）；长期分支`codex/kernel-development`。用户授权持续推进，每个完成且验收通过的点提交并推送到同一分支，实质取舍再问。
 - 完整目标包括net，不能以串口MVP、局部内核或单个服务验收代替全项目完成。旧ABI不兼容，保留用户改动。
+- 用户新增设计commit `ddaed1d`：优先M3可用sh，T1启动包/init→T2 fd/Fix及serial/tty→T3 blk/fs→T4完整sh；fork/exec、pipe/dup2与作业控制是关键前置。2026-11-18明确GUI仍属最终目标：net/图形GPU机制等排M3后，系统可通过sh正常使用且其他能力及图形/GPU机制就绪后，最后推进GUI。13候选协议仍未冻结，不提前实现。
 - 设计/执行项/历史证据在对应主题末尾，本页只维护当前交接；不另建待办文档。
 
 ## 已实现边界
@@ -22,8 +23,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过560项、fmt-check及make test-qemu的110个两架构场景全部通过；日志、当前源码/头哈希、normal无fixture、静态帧及固定池证据归`build/host/stage80-fork-tree-building/`。未执行CI/目标真实硬件/性能验收。
-- 映射构建的源/PTE预检、私有别名检查/逐页保护、去重和孩子安装现按Prep游标分批，每次最多32个扫描/页工作单位；失败必须abort，初始准入撤销只归还本次租约，部分保护精确恢复原RW位。4项新host及两架构各三组可信事务验完整构建/部分取消/真实额度失败，每架构42次build、160个叶变化，每次≤32，最终页/费用归基线。Spacetxn64/Prep256及固定池不增；build静态帧ARM512/RV560，forksnapshot仍ARM1280/RV1024。其他Space别名跨调度冻结、未映射/Local/Signal组合循环、Prep CPU接管、内核root续点和STOP/KILL检查点仍待接；当前仍IRQ屏蔽，不跨调度或丢弃整个克隆C栈，原生fork未开放。
+- 本地make unit通过565项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture、静态帧及固定池证据归`build/host/stage81-fork-alias-freeze/`。未执行CI/目标真实硬件/性能验收。
+- 私有DATA额外别名root现各持一份冻结租约，只读别名也参与，源/目标统一标记；普通映射/执行/清理门禁一致，结束分批THAW归还额外引用。Proc/Prep资格撤销后资源清理等待，真实未发布Proc两架构各验四次等待、CPU轮询、回滚后继续清理及旧Acct最后结清。记录/固定池不增，build静态帧ARM512/RV560，forksnapshot仍ARM1280/RV1024。CPU回滚接管、内核root续点/STOP/KILL转交及未映射/Local/Signal长循环仍待接；当前IRQ屏蔽，不跨调度或丢弃整个构建栈，原生fork未开放。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

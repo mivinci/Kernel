@@ -351,6 +351,8 @@ prepclean(Prepid id, u32 slots)
     return -ERR_STALE;
   if (!slots || slots > 32 || p->state == PREP_ACTIVE || p->cloning)
     return -ERR_STATE;
+  if (p->source && p->source->epoch == p->sourceepoch && spacefrozen(p->sourcespace) > 0)
+    return 1;
   if (prephold(id))
     return -ERR_OVERFLOW;
   if (p->source && p->source->epoch == p->sourceepoch) {

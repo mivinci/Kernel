@@ -3,6 +3,7 @@
 #include <cow.h>
 #include <diag.h>
 #include <vm.h>
+#include <proc.h>
 static Local  entries[2][16];
 static Rtable tables[2];
 #define REQUIRE(c)                                                                                 \
@@ -280,6 +281,105 @@ forkbuildtest(void)
   putstr(" changes=");
   puthex(changes);
   putstr(" bounded=");
+  puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}
+
+void
+forkfreezetest(void)
+{
+  Setid    set;
+  Set      group;
+  Acctid   targetacct;
+  Acct     account;
+  Procinfo process, state;
+  Rtable  *table;
+  Spaceid  target, alias;
+  Space    root;
+  Memid    memory;
+  Mem      backing;
+  Handle   pid, allocator = 0, handle;
+  Allocarg request;
+  Prepid   none;
+  Pgstat   before, after;
+  Cowpool  pool;
+  u64      value = 0x4141, observed;
+  u32      i, steps = 0, deferred = 0;
+  int      error;
+  pgstat(&before);
+  REQUIRE(!setcreate(512, 512, 4, &set) && !procnew(set, 1, 128, 128, 16, &pid) &&
+          !procinfo(pid, &process));
+  table = proctable(pid);
+  REQUIRE(table != NULL);
+  for (i = 0; i < table->count; i++)
+    if (table->slots[i].subtype == LOCAL_ALLOC)
+      allocator = handlepack(HANDLE_RESOURCE, table->slots[i].generation, i);
+  REQUIRE(allocator != 0);
+  request.bytes = 2 * PAGE_SIZE;
+  request.kind = ALLOC_DATA;
+  request.align = request.minaddr = request.maxaddr = request.reserved = 0;
+  REQUIRE(!localalloc(table, allocator, &request, &handle));
+  memory.generation = table->slots[handleindex(handle)].objectgen;
+  memory.index = table->slots[handleindex(handle)].object;
+  memory.reserved = 0;
+  REQUIRE(!localwrite(table, handle, 0, &value, sizeof(value)) &&
+          !spacemap(process.space, memory, 0, 0x10000, 2 * PAGE_SIZE, VM_READ | VM_WRITE) &&
+          !spacecreate(process.acct, &alias) &&
+          !spacemap(alias, memory, 0, 0x10000, 2 * PAGE_SIZE, VM_READ | VM_WRITE) &&
+          !acctcreate(set, 128, 128, &targetacct) && !spacecreate(targetacct, &target));
+  none.generation = none.index = none.reserved = 0;
+  REQUIRE(!spacesnapshotopen(process.space, target, none));
+  do {
+    error = spacesnapshotbuild(process.space, target);
+    REQUIRE(error == 0 || error == 1);
+    steps++;
+    REQUIRE(steps < 100);
+  } while (error);
+  REQUIRE(!spacestat(alias, &root) && root.refs == 2 && root.frozen == 1 &&
+          spacefrozen(alias) == 1 && spaceactivate(alias) == SP_BUSY &&
+          spacewrite(alias, 0x10000, &value, sizeof(value)) == SP_BUSY &&
+          spaceunmap(alias, 0x10000) == SP_BUSY);
+  /* This is a real unpublished Proc teardown, not a synthetic Life-only end.
+     Revocation is immediate; its table/account/stack cleanup waits for undo. */
+  REQUIRE(!procdestroy(pid));
+  for (i = 0; i < 4; i++) {
+    REQUIRE(procclean(pid) == 1 && !procinfo(pid, &state) && state.state == PROC_EXITING &&
+            !state.phase && table->state == LOCAL_OPEN && !localnative(table, handle) &&
+            !acctstat(process.acct, &account) && account.state == AC_ACTIVE);
+    deferred++;
+  }
+  REQUIRE(procwork(32) >= 0 && procwork(32) >= 0 && !procinfo(pid, &state) && !state.phase &&
+          !spacesnapshotend(process.space, target, 0) && !spacestat(alias, &root) &&
+          root.refs == 1 && !root.frozen && !spacefrozen(alias));
+  for (i = 0; i < 64; i++) {
+    error = procclean(pid);
+    REQUIRE(error >= 0);
+    if (!error)
+      break;
+  }
+  REQUIRE(i < 64 && procinfo(pid, &state) == -ERR_STALE && !acctstat(process.acct, &account) &&
+          account.state == AC_CLOSING && account.used && !memstat(memory, &backing) &&
+          !backing.managers && !spaceread(alias, 0x10000, &observed, sizeof(observed)) &&
+          observed == value && !spaceunmap(alias, 0x10000) && !spacedestroy(alias) &&
+          acctstat(process.acct, &account) == AC_BAD && !spacedestroy(target) &&
+          !acctclose(targetacct) && !acctunbind(targetacct));
+  cowpool(&pool);
+  REQUIRE(!pool.groups && !pool.branches && !pool.prepaid && !pgreserved() && !cowcheck() &&
+          !acctcheck() && !pgcheck() && !lifecheck() && !groupcheck() && !setstat(set, &group) &&
+          !group.charged && !group.instances && !setclose(set));
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated);
+  putstr("FORKFREEZECHECK cases=");
+  puthex(1);
+  putstr(" alias_lease=");
+  puthex(1);
+  putstr(" deferred=");
+  puthex(deferred);
+  putstr(" retired=");
   puthex(1);
   putstr(" charged=");
   puthex(0);

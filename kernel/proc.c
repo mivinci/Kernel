@@ -761,6 +761,15 @@ procclean(Handle pid)
   }
   if (p == current || p->state != PROC_EXITING)
     return -ERR_STATE;
+  /* Exit revoked publication already. A fork transaction still borrowing this
+     layout must finish/hand off before Local references or root pages drain. */
+  if (p->phase <= 3) {
+    error = spacefrozen(p->space);
+    if (error < 0)
+      panic("process cleanup root identity");
+    if (error)
+      return 1;
+  }
   if (p->phase == 0) {
     if (acctstat(p->acct, &account) || (account.state == AC_ACTIVE && acctclose(p->acct)))
       panic("process account closing");

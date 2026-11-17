@@ -758,7 +758,7 @@ def exercise(args, run_dir, record):
                     trees=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKTREECHECK ")]
                     if (len(trees)!=1 or {key:trees[0].get(key) for key in ("cases","aborted","committed","cancelled","edits","bounded","charged","allocated")} !=
                             dict(cases=3,aborted=2,committed=1,cancelled=1,edits=192,bounded=1,charged=0,allocated=transition["tables"]) or
-                            not 24 <= trees[0].get("steps",0) < 60):
+                            not 24 <= trees[0].get("steps",0) < 90):
                         raise SmokeError("fork tree ending cursor/root ownership/bounded leaf changes mismatch")
                     record["fork_tree_ending"]=trees[0]
                     builds=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKBUILDCHECK ")]
@@ -769,6 +769,10 @@ def exercise(args, run_dir, record):
                             not 3 < builds[0].get("steps",0) < 900):
                         raise SmokeError("fork mapped build cursor/partial protection/cancellation mismatch")
                     record["fork_tree_building"]=builds[0]
+                    frozen=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKFREEZECHECK ")]
+                    if frozen != [dict(cases=1,alias_lease=1,deferred=4,retired=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork private alias root lease/Proc cleanup deferral mismatch")
+                    record["fork_alias_freeze"]=frozen[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=
