@@ -492,3 +492,27 @@ sigframe的mode0在Proc已经发布但尚未调度时，可信fixture把其64KiB
 结束时源下方页实际为RW，影子栈全部16页仍为零（无应用栈内容/寄存器/信号帧泄漏），源进程清理及影子释放后物理/Acct/预留归零；两架构目标场景均验证。新增helper保存本来的callee-saved寄存器和SP再恢复，固定临时地址只在明确Boot栈布局的测试载荷中，不是运行库地址分配契约。该场景证明信号帧的kernel COW写准备，完整fork/_Fork活动层复制、Rctx、来源生产/编码及STOP/CONT仍待接。
 
 COW栈输出最终本地验收：473项host/格式及110个两架构QEMU通过，精确运行和trace见build/host/stage69-kernel-cow/；信号帧下方新私有页没有用户store故障，影子16页全零并正常sigreturn。没有将可信栈冻结当原生fork/_Fork，也未执行CI/真实硬件/性能或完整信号Rctx验收。
+
+### fork 信号动作与活动帧继承（2026-11-17）
+
+新增可信内部sigfork(source_image, source_space, target_image, target_space)。源须为LIVE父实例的ACTIVE镜像，目标须为该父的CONSTRUCT孩子/PREPARING镜像及已预付的全新信号银行；Life的稳定Acct身份与传入Space归属准确对应，两个活Acct同Set且不同，目标无pending/活动层/附着等待。它不创建Proc、复制当前fork调用的返回现场或发布孩子；Space映射快照必须先在相同VA完成，并由上层在整个冷事务内关IRQ/禁止handler与checkpoint。
+
+fork专门复制当前动作表（含合法handler/trampoline、IGNORE、mask和已实现flags）及有效当前mask，清空孩子pending和全部来源信息，不按父pending补发。所有继承处理入口在目标空间须为普通用户RX；CHLD的IGNORE/NOCLDWAIT策略按复制的动作同步目标Life，不能复用普通create将HANDLER重置DEFAULT的基线。source的原始pending、动作和策略不变。该层读取当前可信mask，不自行识别未来libc临时屏蔽的语义快照，原生fork/Rctx集成仍须提供正确调用时机。
+
+活动层最多两份：完整核验父/孩子用户Sigframe的magic/bytes/depth/previous/当前顶层cookie/保留位和合法返回mask，保持相同frame地址及previous链。重新验证孩子候选TF/FP的用户权限/诊断字段、PC执行映射、SP逻辑写权限，并预检全部帧写范围及COW别名；任一后续帧不合法时不先写前一帧。允许用户已合法编辑的寄存器和restore_mask保留在孩子快照，不用内核旧TF覆盖这些可见编辑。
+
+每层从孩子预付运行槽的持久sequence取得新cookie（低6位仍编码银行槽）；只向孩子用户帧的cookie字段写8字节，COW保证父帧不变。父cookie不能在孩子恢复，即使frame VA、TF/FP及depth均相同。银行sequence在取消/释放/换PID或镜像时仍不重置，预检本次所需cookie数量，耗尽OVERFLOW而不回绕；晚期失败消耗过的序列也不倒退。初次结构赋值曾生成外部memcpy导致freestanding内核链接失败，现只写必要cookie，没有为信号层引入libc依赖，失败日志保留。
+
+孩子的内核Sigctx只复制原受信用户现场、动作快照、帧地址、已保存的mask/活动mask/返回mask和signum，并使用孩子cookie；父Rq/目标Image/等待边/重启责任不复制。当前已递送sigsuspend的结果与返回mask在原用户帧内，孩子恢复它时不接管父等待。尚半附着而未形成活动帧的wait_kind、未完成Rq及未支持重启状态明确NOTSUP；不将这项配置复制冒充已完成POSIX Rctx/_Fork所有外层操作修复。
+
+Signal银行新增forked标记，成功复制后普通siginitial/sigbaseline及重复sigfork拒绝覆盖这份快照；银行正常sigdiscard/release仍按目标Image结束及cookie持久规则收尾。Sigctx单份大小及用户帧布局不变，Signal因对齐每槽增加16字节，默认64槽总BSS增加1024字节：ARM数组356352→357376，RV323584→324608。编译器sigfork静态帧ARM2608/RV2112字节，布局/.su证据见本轮；这不是完整最坏栈深、IRQ延迟或性能保证。
+
+sigrestore的SP检查现使用spacewritable逻辑预检，允许原合法用户SP落在仍共享的R/COW页上，不为了返回就预先复制整页。真正R/代码/设备仍不可当可写栈；该预检只验证逻辑W和全部别名，不消耗承诺/改PTE。TF/FP的HAL受信边界及先验证后写上下文规则保持。未来实际用户向该栈页store时仍走已验证的COW故障路径。
+
+10项两种页表编码host专项覆盖动作/mask/CHLD策略继承且pending不复制、两层cookie重绑定、父帧不变、父cookie重放拒绝且孩子层保持、合法TF/返回mask编辑、COW SP不复制恢复、坏后续父帧/目标代码/父子关系/缺失映射拒绝、RESETHAND当前DEFAULT与活动handler快照分离、半附着等待拒绝，以及将cookie上限缩至2后运行槽跨PID复用仍耗尽。最初host构造器在Life已经LIVE后才bind Acct，已按真实构造顺序改为发布前绑定，未放宽生产生命周期检查。
+
+sigframe两架构在原11个真实用户处理场景之外，新增两组可信银行/真实Space组合检查：无活动层继承及两层活动帧继承。空间先按完整snapshot得到COW栈/immutable代码，孩子prefix换cookie后父prefix仍原值；父cookie重放返回INVALID，换回孩子cookie后两次sigrestore回到原PC/SP/参数及mask，原SP所在页仍R/COW。父两层/pending保持，可独立恢复，全部银行、页、费用和预留最终回基线，主机独立核对SIGFORKCHECK。
+
+新增银行组合检查在内核中调用生产sigdeliver/sigfork/sigrestore/HAL转换，不把仿真的子返回Hctx交给CPU执行，也不声称已有handler中真实_Fork返回0的端到端路径；实际信号入口/handler/sigreturn继续由原11个用户场景验证。统一Space/Local/Signal事务、forkprep/commit/abort、用户返回续点、运行库Fix及真实信号来源仍需后续接通。失败后的未暴露孩子须由上层取消；只读cookie写或银行复制并不替代整个fork回滚。
+
+本地make unit全部516项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage73-signal-fork/，含所有Signal/Space源码/契约头哈希、两架构SIGFORKCHECK、新旧银行对象尺寸及静态帧。freestanding结构赋值链接失败保留arm64-before-copy-fix.log及原link-kernel.log，改为8字节cookie写后全量链接/运行通过。无CI、真实硬件、性能或handler中原生_Fork返回0/完整Fix验收。

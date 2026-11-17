@@ -792,6 +792,23 @@ preparewrite(Space *s, Hvs *vs, u64 address, u64 bytes)
   return 0;
 }
 int
+spacewritable(Spaceid id, u64 address, u64 bytes)
+{
+  Space    *s = find(id);
+  Hvs       vs;
+  Sourcectx source;
+  int       error;
+  if (!s || !bytes || bytes > COPY_BYTES)
+    return SP_BAD;
+  if (s->busy)
+    return SP_BUSY;
+  s->busy = 1;
+  view(s, &vs, &source);
+  error = writecheck(s, &vs, address, bytes);
+  s->busy = 0;
+  return error;
+}
+int
 spacewrite(Spaceid id, u64 address, const void *data, u64 bytes)
 {
   Space       *s = find(id);

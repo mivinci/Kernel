@@ -1350,3 +1350,5 @@ locals两架构新增可信组合场景：先用完整Space快照得到映射视
 当前Local与Space仍是两项独立可信准备机制。localfork失败本身不回滚一个已单独完成的spacesnapshot，未映射绑定的暂持拥有记录也仍由上层负责；不能把先后两次调用称为完整原子fork。后续fork准备对象必须统一本次Space/Local/信号/现场及服务事务的提交/取消责任，建立原用户返回0/PID的续点，再接原生forkprep/forkcommit/forkabort和libsys Fix。该fixture未运行子fork返回现场，不把资源表继承验收称为已完成用户fork。
 
 本地make unit全部506项、make fmt-check及make test-qemu全部110个两架构场景通过；精确目录/Local、Mem、Space源码和契约头哈希、两个LOCALFORKCHECK及1536字节静态帧证据归build/host/stage72-local-fork/。普通镜像不含fixture，编译数据库由构建同步。没有CI、目标真实硬件、性能或完整原生fork执行/发布验收。
+
+信号继承接续（2026-11-17）：现接独立sigfork银行快照，保留动作/mask、清pending，已支持活动用户层的孩子cookie重绑定和逻辑COW返回SP校验；父Rq/未完成等待/运行库重启责任不复制，半附着等待明确拒绝。规则、固定成本、host及双架构可信银行组合验证边界见11末尾。Space/Local/Signal仍需纳入统一准备对象，并复制真实fork调用返回现场和Fix后再原生发布，不能将这三层独立机制串联称为完整fork。

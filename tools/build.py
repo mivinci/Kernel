@@ -208,7 +208,7 @@ def build(args, directory, run_dir):
             elif args.case == "sigsuspend":
                 sources += [ROOT / "tests/kernel/suspendtest.c", directory / "sdk/suspendimage.S"]
             elif args.case == "sigframe":
-                sources += [ROOT / "tests/kernel/sigframetest.c", directory / "sdk/frameimage.S"]
+                sources += [ROOT / "tests/kernel/sigframetest.c", ROOT / "tests/kernel/sigforktest.c", directory / "sdk/frameimage.S"]
             elif args.case == "sigconfig":
                 sources += [ROOT / "tests/kernel/sigconfigtest.c", directory / "sdk/sigimage.S"]
             else:

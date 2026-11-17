@@ -37,6 +37,13 @@ int sigwaitreturn(Imageid image, u64 mask);
 int sigsetmask(Imageid image, u32 how, u64 mask, u64 *old);
 int siggetpending(Imageid image, u64 *out);
 int sigbaseline(Imageid target, Imageid source);
+/* Trusted fork snapshot into a fresh PREPARING child's already reserved bank.
+   Space mappings must already be snapshotted at identical VAs. Copies actions,
+   masks and supported active layers, clears pending and rewrites only child
+   frame cookies. Parent/image/stack ownership stays separate. No Proc return
+   continuation, Rctx/Fix or native fork publication is provided. On failure
+   the caller must cancel the unexposed child; cookie sequence never rolls back. */
+int sigfork(Imageid source, Spaceid source_space, Imageid target, Spaceid target_space);
 int siginitialcheck(Imageid image, u64 mask, u64 defaults);
 int siginitial(Imageid image, u64 mask, u64 defaults);
 int sigstat(Imageid image, Sigstat *out);

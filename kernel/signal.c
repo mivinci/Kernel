@@ -22,7 +22,7 @@ struct Signal
   Imageid identity;
   Handle  owner;
   u64     image, mask, pending, sequence;
-  u32     depth, initial_ignore;
+  u32     depth, initial_ignore, forked;
   Sigact  actions[SIGNAL_COUNT];
   Siginfo info[SIGNAL_COUNT];
   Sigctx  contexts[SIGNAL_DEPTH];
@@ -296,7 +296,7 @@ sigbaseline(Imageid target, Imageid source)
     return -ERR_INVALID;
   if (!s || !from)
     return -ERR_STALE;
-  if (imagestat(target, &image) || image.state != IMAGE_PREPARING || s->depth ||
+  if (imagestat(target, &image) || image.state != IMAGE_PREPARING || s->depth || s->forked ||
       imagestat(source, &parent) || parent.state == IMAGE_ENDED)
     return -ERR_STATE;
   s->initial_ignore = 0;
@@ -316,7 +316,7 @@ siginitialcheck(Imageid id, u64 mask, u64 defaults)
     return -ERR_INVALID;
   if (!s)
     return -ERR_STALE;
-  if (imagestat(id, &image) || image.state != IMAGE_PREPARING || s->depth ||
+  if (imagestat(id, &image) || image.state != IMAGE_PREPARING || s->depth || s->forked ||
       lifestat(image.life, &life) || life.state != LIFE_CONSTRUCT)
     return -ERR_STATE;
   return 0;
@@ -332,6 +332,14 @@ siginitial(Imageid id, u64 mask, u64 defaults)
   initialactions(s, mask, defaults);
   return policy(id, &s->actions[SIGNAL_CHLD - 1]);
 }
+static int
+nextcookie(Signal *s, u64 *out)
+{
+  if (s->sequence >= SIG_COOKIE_MAX)
+    return -ERR_OVERFLOW;
+  *out = (++s->sequence << SIG_COOKIE_SHIFT) | handleindex(s->owner);
+  return 0;
+}
 int
 sigcookie(Imageid id, u64 *out)
 {
@@ -344,12 +352,9 @@ sigcookie(Imageid id, u64 *out)
     return -ERR_STALE;
   if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
     return -ERR_STATE;
-  if (s->sequence >= SIG_COOKIE_MAX)
-    return -ERR_OVERFLOW;
-  /* Private encoding makes different running slots disjoint as well. */
-  *out = (++s->sequence << SIG_COOKIE_SHIFT) | handleindex(s->owner);
-  return 0;
+  return nextcookie(s, out);
 }
+
 static void
 copycontext(Hctx *to, const Hctx *from)
 {
@@ -452,6 +457,154 @@ clearcontext(Sigctx *context)
   for (i = 0; i < sizeof(*context); i++)
     bytes[i] = 0;
 }
+static int
+framehead(const Signal *s, u32 index, const Sighead *head)
+{
+  const Sigctx *layer = &s->contexts[index];
+  return head->magic == SIGNAL_FRAME_MAGIC && head->bytes == sizeof(Sigframe) &&
+                 head->depth == index + 1 && head->cookie == layer->cookie && layer->cookie &&
+                 head->previous == (index ? s->contexts[index - 1].frame : 0) && !head->flags &&
+                 !head->reserved && !sigmaskvalid(head->restore_mask)
+             ? 0
+             : -ERR_INVALID;
+}
+static int
+restorable(Spaceid space, const Sigctx *layer, const Hctx *candidate, Hctx *out)
+{
+  u64 sp = hal_user_sp(candidate);
+  if (entrycheck(space, candidate->tf.pc) || sp <= BOOT_USER_LO || sp > BOOT_USER_HI ||
+      spacewritable(space, sp - 1, 1))
+    return -ERR_FAULT;
+  return hal_signal_restore(out, &layer->user, candidate) ? -ERR_INVALID : 0;
+}
+int
+sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space)
+{
+  Signal  *source = find(sourceid), *target = find(targetid);
+  Image    parentimage, childimage;
+  Life     parentlife, childlife;
+  Space    a, b;
+  Acct     aa, ab;
+  Acctid   sourceacct, targetacct;
+  Sigframe packet;
+  u64      masks[SIGNAL_DEPTH];
+  Hctx     candidate;
+  Sigctx  *from, *to;
+  u64      cookies[SIGNAL_DEPTH];
+  u32      i, j, ignore = 0;
+  int      error;
+  if (!source || !target || source == target)
+    return -ERR_BAD_HANDLE;
+  if (imagestat(sourceid, &parentimage) || imagestat(targetid, &childimage) ||
+      parentimage.state != IMAGE_ACTIVE || childimage.state != IMAGE_PREPARING ||
+      lifestat(parentimage.life, &parentlife) || lifestat(childimage.life, &childlife) ||
+      parentlife.state != LIFE_LIVE || childlife.state != LIFE_CONSTRUCT ||
+      childlife.parent != parentlife.pid || parentlife.pid == childlife.pid || target->forked ||
+      target->depth || target->pending || spacestat(source_space, &a) ||
+      spacestat(target_space, &b) ||
+      (a.generation == b.generation && source_space.index == target_space.index) ||
+      lifeacct(parentimage.life, &sourceacct) || lifeacct(childimage.life, &targetacct) ||
+      sourceacct.index != a.acct.index || sourceacct.generation != a.acct.generation ||
+      targetacct.index != b.acct.index || targetacct.generation != b.acct.generation ||
+      acctstat(a.acct, &aa) || acctstat(b.acct, &ab) || aa.state != AC_ACTIVE ||
+      ab.state != AC_ACTIVE || aa.set != ab.set ||
+      (a.acct.generation == b.acct.generation && a.acct.index == b.acct.index))
+    return -ERR_STATE;
+  if (a.busy || b.busy)
+    return -ERR_BUSY;
+  if (source->depth > SIGNAL_DEPTH || target->sequence > SIG_COOKIE_MAX ||
+      source->depth > SIG_COOKIE_MAX - target->sequence)
+    return -ERR_OVERFLOW;
+  for (i = 0; i < SIGNAL_DEPTH; i++)
+    if (target->contexts[i].state || target->contexts[i].request.generation ||
+        target->contexts[i].wait_kind)
+      return -ERR_STATE;
+  for (i = source->depth; i < SIGNAL_DEPTH; i++)
+    if (source->contexts[i].state || source->contexts[i].request.generation ||
+        source->contexts[i].target.generation || source->contexts[i].wait_kind)
+      return -ERR_NOTSUP;
+  for (i = 0; i < SIGNAL_COUNT; i++) {
+    const Sigact *action = &source->actions[i];
+    if (validnumber(i + 1) && i + 1 != SIGNAL_KILL && i + 1 != SIGNAL_STOP) {
+      error = actionvalid(i + 1, action);
+      if (error)
+        return error;
+    }
+    if (action->kind == SIGNAL_HANDLER &&
+        (entrycheck(target_space, action->handler) || entrycheck(target_space, action->trampoline)))
+      return -ERR_FAULT;
+    if (action->kind == SIGNAL_IGNORE)
+      ignore |= 1U << i;
+  }
+  for (i = 0; i < source->depth; i++) {
+    from = &source->contexts[i];
+    if (!from->state || !from->cookie || (from->frame & 15) || !from->signum ||
+        from->request.generation || from->target.generation || from->wait_subject ||
+        from->wait_options || from->restart ||
+        (from->wait_kind && from->wait_kind != PROCESS_WAIT_SIGNAL))
+      return -ERR_NOTSUP;
+    if (spaceread(source_space, from->frame, &packet, sizeof(packet)))
+      return -ERR_FAULT;
+    error = framehead(source, i, &packet.head);
+    if (error)
+      return error;
+    masks[i] = packet.head.restore_mask;
+    if (spaceread(target_space, from->frame, &packet, sizeof(packet)))
+      return -ERR_FAULT;
+    error = framehead(source, i, &packet.head);
+    if (error)
+      return error;
+    if (packet.head.restore_mask != masks[i] || entrycheck(target_space, from->action.handler) ||
+        entrycheck(target_space, from->action.trampoline))
+      return -ERR_FAULT;
+    error = restorable(target_space, from, &packet.user, &candidate);
+    if (error)
+      return error;
+    if (spacewritable(target_space, from->frame, sizeof(packet)))
+      return -ERR_FAULT;
+    for (j = 0; j < i; j++)
+      if (from->frame < source->contexts[j].frame + sizeof(packet) &&
+          source->contexts[j].frame < from->frame + sizeof(packet))
+        return -ERR_INVALID;
+  }
+  /* No caller checkpoints or user handlers until the complete snapshot (or
+     child cancellation). Burning a cookie on a late failure is intentional. */
+  for (i = 0; i < source->depth; i++) {
+    if (nextcookie(target, &cookies[i]))
+      panic("fork cookie preflight");
+    if (spacewrite(target_space, source->contexts[i].frame + offsetof(Sighead, cookie), &cookies[i],
+                   sizeof(cookies[i])))
+      return -ERR_FAULT;
+  }
+  if (policy(targetid, &source->actions[SIGNAL_CHLD - 1]))
+    panic("fork child signal policy");
+  for (i = 0; i < SIGNAL_COUNT; i++) {
+    copyaction(&target->actions[i], &source->actions[i]);
+    clearinfo(&target->info[i]);
+  }
+  for (i = 0; i < source->depth; i++) {
+    from = &source->contexts[i];
+    to = &target->contexts[i];
+    clearcontext(to);
+    copycontext(&to->user, &from->user);
+    copyaction(&to->action, &from->action);
+    to->frame = from->frame;
+    to->saved_mask = from->saved_mask;
+    to->active_mask = from->active_mask;
+    to->restore_mask = from->restore_mask;
+    to->cookie = cookies[i];
+    to->signum = from->signum;
+    to->state = 1;
+    /* The original sigsuspend result/mask is in the copied user frame. A
+       parent wait edge or Rq never becomes a child responsibility. */
+  }
+  target->initial_ignore = ignore;
+  target->mask = source->mask;
+  target->pending = 0;
+  target->depth = source->depth;
+  target->forked = 1;
+  return 0;
+}
 int
 sigdeliver(Imageid id, Spaceid space, Hctx *context)
 {
@@ -552,8 +705,6 @@ sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)
   Image    image;
   Sigctx  *layer;
   Sigframe packet;
-  Hpte     stack;
-  u64      sp;
   if (!s || !context || !s->depth || (frame & 15))
     return -ERR_STATE;
   if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
@@ -562,18 +713,14 @@ sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)
   if (!layer->state || layer->request.generation || frame != layer->frame ||
       spaceread(space, frame, &packet, sizeof(packet)))
     return -ERR_FAULT;
-  if (packet.head.magic != SIGNAL_FRAME_MAGIC || packet.head.bytes != sizeof(packet) ||
-      packet.head.depth != s->depth || packet.head.cookie != layer->cookie || !layer->cookie ||
-      packet.head.previous != (s->depth > 1 ? s->contexts[s->depth - 2].frame : 0) ||
-      packet.head.flags || packet.head.reserved || sigmaskvalid(packet.head.restore_mask))
-    return -ERR_INVALID;
-  sp = hal_user_sp(&packet.user);
-  if (entrycheck(space, packet.user.tf.pc) || sp <= BOOT_USER_LO || sp > BOOT_USER_HI ||
-      !spacelookup(space, ALIGN_DOWN(sp - 1, PAGE_SIZE), &stack) ||
-      stack.prot != (VM_READ | VM_WRITE | VM_USER) || stack.attr != VM_NORMAL)
-    return -ERR_FAULT;
-  if (hal_signal_restore(context, &layer->user, &packet.user))
-    return -ERR_INVALID;
+  {
+    int error = framehead(s, s->depth - 1, &packet.head);
+    if (error)
+      return error;
+    error = restorable(space, layer, &packet.user, context);
+    if (error)
+      return error;
+  }
   s->mask = packet.head.restore_mask & ~SIGNAL_UNMASKABLE;
   s->depth--;
   clearcontext(layer);
@@ -633,7 +780,7 @@ sigcheck(void)
     if (!s->owner)
       continue;
     if (imagestat(s->identity, &image) || s->owner != image.pid || s->image != image.number ||
-        handleindex(s->owner) != i || !image.cleanup || s->depth > SIGNAL_DEPTH ||
+        handleindex(s->owner) != i || !image.cleanup || s->depth > SIGNAL_DEPTH || s->forked > 1 ||
         sigmaskvalid(s->mask) || (s->mask & SIGNAL_UNMASKABLE) || sigmaskvalid(s->pending) ||
         (s->initial_ignore & (~SIGNAL_SUPPORTED | SIGNAL_UNMASKABLE)))
       return -ERR_STATE;

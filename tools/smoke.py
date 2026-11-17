@@ -735,6 +735,10 @@ def exercise(args, run_dir, record):
                     if checks != [dict(cases=11, normal=4, invalid=6, terminated=1, cow_stack=1, charged=0, allocated=transition["tables"])]:
                         raise SmokeError("signal frame outcome/resource mismatch")
                     record["signal_frames"]=checks[0]
+                    inherited=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFORKCHECK ")]
+                    if inherited != [dict(cases=2,layers=2,rejected=1,cow_sp=1,pending=0,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork signal actions/layers/cookies mismatch")
+                    record["signal_fork"]=inherited[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=
