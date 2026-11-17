@@ -98,6 +98,16 @@ class DeviceMemoryTests(unittest.TestCase):
             self.assertEqual(self.lib.memdevice(self.aid,4,C.byref(memory.Memid())),-7)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_whole_space_snapshot_refuses_device_maps_without_expanding_authority(self):
+        def body():
+            self.lib.spacesnapshot.argtypes=[space.Spaceid,space.Spaceid]
+            source=self.create();mid=self.io();self.assertEqual(self.map(source,mid),0)
+            account,target=self.other()
+            before=bytes(self.mstat(mid)),bytes(self.window()),bytes(self.stat(target)),bytes(self.pstat())
+            self.assertEqual(self.lib.spacesnapshot(source,target),-1)
+            self.assertEqual((bytes(self.mstat(mid)),bytes(self.window()),bytes(self.stat(target)),bytes(self.pstat())),before)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_last_management_drop_keeps_device_type_and_lease_until_unmap(self):
         def body():
             sid=self.create();mid=self.io();self.assertEqual(self.map(sid,mid),0)

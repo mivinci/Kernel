@@ -188,6 +188,20 @@ memshared(Acctid acct, u64 bytes, Memid *out)
 }
 
 int
+memsharedhold(Memid source)
+{
+  Mem *m = find(source);
+  if (!m || !m->refs || m->kind != MEM_RAM || m->state != MEM_SHARED)
+    return MEM_BAD;
+  if (m->busy)
+    return MEM_BUSY;
+  if (m->refs == 0xffffffffU || m->managers == 0xffffffffU)
+    return MEM_LIMIT;
+  m->refs++;
+  m->managers++;
+  return 0;
+}
+int
 memimmutable(Memid source, Acctid target, Memid *out)
 {
   Mem  *m = find(source), *origin, *copy;
@@ -237,8 +251,8 @@ memimmutable(Memid source, Acctid target, Memid *out)
   return 0;
 }
 
-int
-memclone(Memid source, Acctid target, Memid *out)
+static int
+cloneprivate(Memid source, Acctid target, Memid *out, u32 *adopted)
 {
   Mem    *m = find(source), *copy;
   Acct    account;
@@ -315,6 +329,12 @@ memclone(Memid source, Acctid target, Memid *out)
   clearbacking(copy);
   copy->writes = copy->execs = copy->busy = copy->cowmaps = 0;
   m->busy = 0;
+  if (adopted) {
+    *adopted = 0;
+    for (i = 0; i < made; i++)
+      if (converted[i])
+        *adopted |= 1U << i;
+  }
   out->generation = copy->generation;
   out->index = slot;
   out->reserved = 0;
@@ -333,6 +353,42 @@ failed:
   m->busy = 0;
   acctdrop(target);
   return error;
+}
+
+int
+memclone(Memid source, Acctid target, Memid *out)
+{
+  return cloneprivate(source, target, out, NULL);
+}
+int
+memclonerecord(Memid source, Acctid target, Memid *out, u32 *adopted)
+{
+  if (!adopted)
+    return MEM_BAD;
+  return cloneprivate(source, target, out, adopted);
+}
+int
+memcloneundo(Memid source, u32 adopted)
+{
+  Mem    *m = find(source);
+  Cowstat status;
+  Acctblk owned;
+  u32     page, node;
+  if (!m || m->kind != MEM_RAM || m->state != MEM_DATA || m->busy || (adopted >> m->pages))
+    return MEM_BAD;
+  for (node = m->head, page = 0; node != PG_NONE; node = blocks[node].next, page++)
+    if (adopted & (1U << page))
+      if (!(blocks[node].order & BLOCK_COW) || cowstat(branchof(node), &status) ||
+          status.branches != 1 || !status.payer)
+        return MEM_BAD;
+  for (node = m->head, page = 0; node != PG_NONE; node = blocks[node].next, page++)
+    if (adopted & (1U << page)) {
+      if (cowunwrap(branchof(node), &owned))
+        panic("snapshot adoption rollback");
+      blocks[node].pa = owned.block.pa;
+      blocks[node].order = owned.block.order;
+    }
+  return 0;
 }
 
 static int

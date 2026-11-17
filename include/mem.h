@@ -57,10 +57,17 @@ int  memshared(Acctid acct, u64 bytes, Memid *out);
    Target gets independent logical pages; existing read-only source maps stay.
    Output unchanged on failure; no user fork authority or PTE protection here. */
 int memclone(Memid source, Acctid target, Memid *out);
+/* Whole-Space transaction journal: report which original raw pages were
+   adopted on success; undo them only after every staged child is gone. */
+int memclonerecord(Memid source, Acctid target, Memid *out, u32 *adopted);
+int memcloneundo(Memid source, u32 adopted);
 /* Trusted same-Set immutable fork view. Keeps the original physical payer,
    flattens view ancestry, allocates no RAM pages/COW credits. Source must be
    a retained SEALED view; output is unchanged on failure. */
 int memimmutable(Memid source, Acctid target, Memid *out);
+/* Trusted snapshot holds a retained explicit SHARED Mem for map construction,
+   even if its last manager was dropped. Never applies to private/MMIO pages. */
+int memsharedhold(Memid source);
 /* Space transaction only: all aliases/references must be frozen and validated.
    These accept a mapped/retiring private view but grant no new authority. */
 int memcowshared(Memid id, u32 page);

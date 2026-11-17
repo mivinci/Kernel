@@ -3,10 +3,12 @@
 #include <vm.h>
 #include <prep.h>
 #include <abi/mem.h>
-#define MAP_PROTECTED      0x80000000U
-#define MAP_NEW_PROTECTION 0x40000000U
-#define MAP_NEW_SHIFT      8
-#define MAP_NEW_MASK       0x00ffff00U
+#define MAP_PROTECTED       0x80000000U
+#define MAP_NEW_PROTECTION  0x40000000U
+#define MAP_NEW_SHIFT       8
+#define MAP_NEW_MASK        0x00ffff00U
+#define MAP_SNAPSHOT_OWNER  0x20000000U
+#define MAP_SNAPSHOT_SOURCE 0x10000000U
 STATIC_ASSERT(MEM_PAGES <= 16, protection_mask_capacity);
 
 typedef struct Sourcectx Sourcectx;
@@ -438,8 +440,8 @@ protect(Memid memory, u32 rollback)
     }
   }
 }
-int
-spaceclone(Memid memory, Acctid target, Memid *out)
+static int
+clone(Memid memory, Acctid target, Memid *out, u32 journal, u32 *adopted)
 {
   Space    *s;
   Mmap     *m;
@@ -489,19 +491,26 @@ spaceclone(Memid memory, Acctid target, Memid *out)
     if (spaces[slot].state && contains(&spaces[slot], memory))
       spaces[slot].busy = 1;
   protect(memory, 0);
-  error = memclone(memory, target, out);
+  error = journal ? memclonerecord(memory, target, out, adopted) : memclone(memory, target, out);
   if (error)
     protect(memory, 1);
   for (slot = 0; slot < SPACES; slot++) {
     s = &spaces[slot];
     if (!s->state || !contains(s, memory))
       continue;
-    for (node = s->maps; node != PG_NONE; node = mappings[node].next)
-      if (samemem(mappings[node].mem, memory))
-        mappings[node].prot &= ~(MAP_NEW_PROTECTION | MAP_NEW_MASK);
+    if (!journal || error)
+      for (node = s->maps; node != PG_NONE; node = mappings[node].next)
+        if (samemem(mappings[node].mem, memory))
+          mappings[node].prot &= ~(MAP_NEW_PROTECTION | MAP_NEW_MASK);
     s->busy = 0;
   }
   return error;
+}
+
+int
+spaceclone(Memid memory, Acctid target, Memid *out)
+{
+  return clone(memory, target, out, 0, NULL);
 }
 
 static u64
@@ -940,4 +949,189 @@ spacecowmap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length)
   Prepid none;
   none.generation = none.index = none.reserved = 0;
   return map(id, memory, offset, address, length, VM_READ | VM_WRITE, none, 1);
+}
+
+/* Recover the target view already created for an alias of this source Mem.
+   This cold-path search avoids a second Mem-sized per-fork work table. */
+static int
+snapshotview(Space *source, Space *target, u32 current, Memid *out)
+{
+  u32 child, parent;
+  for (parent = source->maps; parent != current; parent = mappings[parent].next)
+    if (samemem(mappings[parent].mem, mappings[current].mem))
+      break;
+  if (parent == current)
+    return 0;
+  for (child = target->maps; child != PG_NONE; child = mappings[child].next)
+    if (mappings[child].address == mappings[parent].address) {
+      *out = mappings[child].mem;
+      return 1;
+    }
+  panic("snapshot mapping correspondence");
+}
+
+static void
+snapshotowners(Space *target)
+{
+  u32 node;
+  for (node = target->maps; node != PG_NONE; node = mappings[node].next)
+    if (mappings[node].prot & MAP_SNAPSHOT_OWNER) {
+      mappings[node].prot &= ~MAP_SNAPSHOT_OWNER;
+      if (memfree(mappings[node].mem))
+        panic("snapshot temporary Mem ownership");
+    }
+}
+static void
+snapshotadoptions(Space *source, u32 rollback)
+{
+  u32   node;
+  Mmap *m;
+  for (node = source->maps; node != PG_NONE; node = mappings[node].next) {
+    m = &mappings[node];
+    if (!(m->prot & MAP_SNAPSHOT_SOURCE))
+      continue;
+    if (rollback && memcloneundo(m->mem, m->prep.reserved))
+      panic("snapshot source backing rollback");
+    m->prep.reserved = 0;
+    m->prot &= ~MAP_SNAPSHOT_SOURCE;
+  }
+}
+static void
+snapshotjournal(u32 rollback)
+{
+  Space *s;
+  u32    slot, node;
+  for (slot = 0; slot < SPACES; slot++) {
+    s = &spaces[slot];
+    if (!s->state)
+      continue;
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      if (!(mappings[node].prot & MAP_NEW_PROTECTION))
+        continue;
+      if (rollback)
+        protect(mappings[node].mem, 1);
+      else
+        mappings[node].prot &= ~(MAP_NEW_PROTECTION | MAP_NEW_MASK);
+    }
+  }
+}
+static int
+snapshotrefs(Memid memory, const Mem *backing)
+{
+  u32 node, count = 0, previous = PG_NONE;
+  if (backing->refs < backing->managers)
+    return SP_BAD;
+  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
+    if (node >= MMAPS || ++count > MMAPS || maplinks[node].previous != previous ||
+        !mappings[node].length || !samemem(mappings[node].mem, memory))
+      return SP_BAD;
+    previous = node;
+  }
+  return count == backing->refs - backing->managers ? 0 : SP_BUSY;
+}
+int
+spacesnapshot(Spaceid sourceid, Spaceid targetid)
+{
+  Space    *source = find(sourceid), *target = find(targetid);
+  Acct      a, b;
+  Mmap     *m;
+  Mem       backing;
+  Memid     memory;
+  Hvs       vs;
+  Hpte      entry;
+  Sourcectx context;
+  Prepid    none;
+  u32       node, i, count = 0, fresh, room = 0, adopted;
+  u64       pa;
+  int       error;
+  if (!source || !target || source == target || target->maps != PG_NONE || target->mapcount ||
+      target->pages != 1 || target->refs != 1 || acctstat(source->acct, &a) ||
+      acctstat(target->acct, &b) || a.state != AC_ACTIVE || b.state != AC_ACTIVE ||
+      a.set != b.set ||
+      (source->acct.index == target->acct.index &&
+       source->acct.generation == target->acct.generation))
+    return SP_BAD;
+  if (source->busy || target->busy || source == active || target == active)
+    return SP_BUSY;
+  /* No unrelated preparation journal may be live in this serialized tree. */
+  for (i = 0; i < MMAPS; i++)
+    if (mappings[i].length && (mappings[i].prot & (MAP_NEW_PROTECTION | MAP_SNAPSHOT_OWNER |
+                                                   MAP_SNAPSHOT_SOURCE | MAP_NEW_MASK)))
+      return SP_BUSY;
+  view(source, &vs, &context);
+  for (node = source->maps; node != PG_NONE; node = mappings[node].next) {
+    if (node >= MMAPS || ++count > MMAPS)
+      return SP_BAD;
+    m = &mappings[node];
+    if (!m->length || m->prep.generation || m->prep.index || m->prep.reserved ||
+        m->prot & ~(7U | MAP_PROTECTED) || memstat(m->mem, &backing) || backing.kind == MEM_MMIO ||
+        (backing.state != MEM_DATA && backing.state != MEM_SEALED && backing.state != MEM_SHARED))
+      return SP_BAD;
+    if (backing.busy)
+      return SP_BUSY;
+    if (backing.state == MEM_DATA) {
+      error = snapshotrefs(m->mem, &backing);
+      if (error)
+        return error;
+    }
+    for (i = 0; i < m->length / PAGE_SIZE; i++)
+      if (mempage(m->mem, (u32) (m->offset / PAGE_SIZE) + i, &pa) ||
+          !hal_vm_lookup(&vs, m->address + (u64) i * PAGE_SIZE, &entry) || entry.pa != pa ||
+          entry.attr != VM_NORMAL || !matchesprot(m, &entry) ||
+          hal_vm_replace(&vs, m->address + (u64) i * PAGE_SIZE, &entry, entry.pa,
+                         entry.prot & ~VM_USER))
+        return SP_BAD;
+  }
+  if (count != source->mapcount)
+    return SP_BAD;
+  for (node = freemap; node != PG_NONE && room < count; node = mappings[node].next)
+    room++;
+  if (room < count)
+    return SP_FULL;
+  none.generation = none.index = none.reserved = 0;
+  for (node = source->maps; node != PG_NONE; node = mappings[node].next) {
+    m = &mappings[node];
+    if (memstat(m->mem, &backing))
+      panic("snapshot source lifetime");
+    fresh = !snapshotview(source, target, node, &memory);
+    if (fresh) {
+      if (backing.state == MEM_DATA) {
+        error = clone(m->mem, target->acct, &memory, 1, &adopted);
+        if (!error) {
+          /* No Prep exists on snapshot maps. Its reserved word is borrowed
+             only until this serialized transaction clears the source flag. */
+          m->prep.reserved = adopted;
+          m->prot |= MAP_SNAPSHOT_SOURCE;
+        }
+      } else if (backing.state == MEM_SEALED)
+        error = memimmutable(m->mem, target->acct, &memory);
+      else {
+        memory = m->mem;
+        error = memsharedhold(memory);
+      }
+      if (error)
+        goto failed;
+    }
+    error = map(targetid, memory, m->offset, m->address, m->length, logicalprot(m), none,
+                backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE));
+    if (error) {
+      if (fresh && memfree(memory))
+        panic("snapshot unmapped Mem rollback");
+      goto failed;
+    }
+    if (fresh)
+      mappings[target->maps].prot |= MAP_SNAPSHOT_OWNER;
+  }
+  snapshotowners(target);
+  snapshotadoptions(source, 0);
+  snapshotjournal(0);
+  return 0;
+failed:
+  snapshotowners(target);
+  while (target->maps != PG_NONE)
+    if (spaceunmap(targetid, mappings[target->maps].address))
+      panic("snapshot child map rollback");
+  snapshotadoptions(source, 1);
+  snapshotjournal(1);
+  return error;
 }

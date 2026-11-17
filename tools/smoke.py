@@ -686,6 +686,10 @@ def exercise(args, run_dir, record):
                     if native != [dict(cases=5,faults=14,exited=9,readonly=1,native_map=1,exhausted=2,kernel_copy=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("user COW write-fault/resume/isolation mismatch")
                     record["native_cow"]=native[0]
+                    snapshot=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SNAPSHOTCHECK ")]
+                    if snapshot != [dict(maps=5,private=2,aliases=2,rollback=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("whole Space mapping snapshot/rollback mismatch")
+                    record["space_snapshot"]=snapshot[0]
                 if args.case == "heap":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("HEAPCHECK ")]
                     if checks != [dict(cases=2,small=128,large=2,full=2,reclaimed=2,charged=0,allocated=transition["tables"])]:

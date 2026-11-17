@@ -57,6 +57,13 @@ int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 pro
    of this private Mem across spaces, clone, and undo new protections on error.
    Process admission and Local/resource inheritance are separate. */
 int spaceclone(Memid source, Acctid target, Memid *out);
+/* Trusted whole mapping snapshot into an empty inactive same-Set Space.
+   Unique DATA views use strict COW, SEALED uses immutable views, SHARED is
+   inherited explicitly; MMIO/loading/preparation maps reject. Caller masks
+   IRQs and serializes this bounded cold transaction without checkpoints.
+   Failure empties target and restores new source protections. No Proc/Local
+   inheritance, user authority or native fork publication is provided. */
+int spacesnapshot(Spaceid source, Spaceid target);
 /* Trusted child/private mapping: logical RW, initially hardware R/COW. */
 int spacecowmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length);
 /* Inactive spaces only. Resolve exactly a COW-marked logical-W address and

@@ -10,6 +10,7 @@ void grouppagetest(const Dtinfo *hardware);
 void vdevtest(const Dtinfo *hardware);
 void heaptest(void);
 void cowpagetest(void);
+void snapshotest(void);
 void nativecowtest(void);
 void pgtest(void);
 void vmtest(Hvs *space);

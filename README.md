@@ -204,3 +204,5 @@ CASE=cow使用8分支配置验证预付、Mem克隆/回滚、跨Space全部别�
 测试进程由可信fixture独立构造，尚非原生fork。现另接内核spacewrite/copy的完整COW预检与PA刷新，并在普通RAM耗尽后验证原生copy兑现；sigframe另验内核帧跨入共享COW栈页且影子栈保持全零。fork发布/继承及完整信号前置仍待接通，详见02/11末尾。
 
 seal现另验两代封存代码视图共用规范backing、中间Acct即时回收、原出资者退出后代码仍真实执行返回42，以及最后映射结清。immutable视图不增加代码物理页/COW承诺；完整父Space快照和fork发布/继承事务仍待接通。
+
+CASE=cow现另验证整个Space映射快照：私有DATA按Mem去重、代码SEALED共享和显式SHARED可见性，后段失败恢复父保护/接管记录并清空孩子。快照只覆盖已提交映射；原生fork执行现场、Local原Handle/墓碑和运行库Fix尚待接通。

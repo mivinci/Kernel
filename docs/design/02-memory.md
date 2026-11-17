@@ -736,3 +736,25 @@ seal两架构实际创建两代代码视图，核对视图创建不增加物理a
 本切片是完整fork内存分类的代码侧基础，尚未遍历整个父Space快照、去重私有Mem别名、安装孩子Local原Handle/墓碑或接forkprepare/commit/abort。未实现的fork/exec、活动信号层和运行库Fix仍须后续事务，不以这个可信代码共享fixture冒充用户fork。
 
 本地最终make unit全部483项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage70-immutable/，含每项当前Mem源码/头哈希、两架构规范视图执行/费用结果及memories数组720896字节读回。早期host清理顺序错误退出保留immutable-before-cleanup.log，修正清理器后10项专项及最终全量通过。未执行CI、真实硬件、性能或原生fork发布/继承验收。
+
+### 整个 Space 的映射快照事务（2026-11-17）
+
+新增可信内部spacesnapshot(source_space, target_space)：目标必须为同Set、不同活Acct的空且独占/非活动Space（仅一份root、无映射），源及目标均不活动/不忙。调用者关IRQ、串行拥有整个冷事务且不checkpoint。先完整枚举/核验源Mmap、原始PTE/PA/逻辑权限/属性、mapcount和足够的目标映射槽；拒绝设备、LOADING及有Prep scope的映射。私有DATA的非管理引用还须全部对应反向索引中的已跟踪Mmap，未知Op引用BUSY，不在不明外部写者上猜测可fork。
+
+按源Mem身份去重（完整索引/代次），同一Mem多个窗口/别名在目标只生成一个逻辑视图。DATA走前述Space统一保护及严格COW；SEALED走规范immutable视图；SHARED继续指同一显式共享Mem，保持原物理出资者及双方可见性。目标逐条重建原address/offset/length/逻辑权限，私有逻辑RW为R/COW，真正R/代码RX不获得W。内部Memsharedhold只在快照已有有效SHARED引用时临时持管理责任，最后一份原管理Handle已free的SHARED映射仍可继承；不把该方法用于DATA/MMIO，不扩大原生授权或迁移费用。
+
+每个新目标Mem暂由第一份已安装的目标Mmap上的MAP_SNAPSHOT_OWNER标记拥有一份管理责任，全部窗口安装后才统一drop；这让后续相同Mem别名可复用视图，不因第一条map后manager=0而无法继续。不另分配与映射数同宽的fork工作表，目标不发布/不执行，标记只存在于关IRQ冷事务。去重先找到较早源别名再按其地址找目标别名，每次有编译映射上界；当前搜索总成本可为二次，不是常数延迟/性能结论，后续原生fork分步Op需自行保持事务所有权。
+
+父保护临时journal在整个快照期间保留，成功后统一清临时位；失败先释放目标暂持manager、解除全部目标映射/页表并返目标Acct费用，再回退本次原始页接管和新增父保护。后段失败不能留下已建目标的映射或把父已有COW页恢复W；混合RW/COW映射仍按逐页新增掩码恢复。
+
+失败注入曾发现早期实现只清了孩子额度/映射，却给前面已成功克隆的父Mem留下单分支Cowgroup。现memclonerecord在成功时返回“本次由原始块接管”的逐页掩码，memcloneundo只在对应页都已恢复单分支/原payer时退回原Acctblk，原PA/账目不变。源第一份别名借无Prep时的Prepid.reserved保存这个最多16页掩码，MAP_SNAPSHOT_SOURCE显式标识它的临时归属；有Prep的映射已在准入拒绝，成功/失败退出都清零该字及标志，不把临时值传入Prep查询、发布或用户ABI。Mem88/Mmap64/Space64及固定池大小保持，不为短暂journal永久增加所有Mem的字段。
+
+例：先克隆父两页堆并安装两个孩子别名，再共享代码/SHARED，最后另一私有Mem额度不足。abort先结束所有孩子责任，使原堆逻辑页只余父，再撤掉本次新建组、恢复父原RW页；既有父/旧孩子共享组保持其credit。目标Space恢复空root且Acct费用/引用与进入前相同。若成功，孩子写堆更新其全部别名但父仍原内容；孩子写SHARED双方可见；代码只能R/RX；父映射/管理责任退出不提前释放孩子使用的backing。
+
+12项两种页表编码host专项验证DATA/代码/SHARED同次完整快照、别名/offset去重、管理引用归零的源、后段跨Mem额度失败、旧保护保持、多代写隔离、LOADING/设备/跨Set/非空/active拒绝、映射池不足、后续别名页表分配失败及未知Op引用阻塞。另加Device库存host直接验证MMIO快照拒绝不改变租约/费用。失败日志snapshot-before-rollback.log保留真实反例，后续修复后断言Cowpool、父PTE、目标Acct及物理页全回原基线。
+
+CASE=cow两架构新增五映射快照（两个私有Mem、其中一份有两个窗口、代码和SHARED），目标只有五页额度时后段失败/原保护与全部预留回滚，再用足额目标成功。CPU核对孩子R别名跟随其私有分离、父保留旧内容、共享写仍双方可见、代码RX/拒绝写；父清理后孩子数据/代码继续有效，最后原出资者滞留费用归零。主机独立核对SNAPSHOTCHECK；这是内核映射快照机制，仍未创建真正的fork执行续点。
+
+本接口仅快照已提交Mmap，不代表捕获未映射Local Mem、保留资源Handle值/墓碑、RPC/IRQ继承策略、信号活动层或libsys Fix。forkprepare/commit/abort必须把上述映射结果纳入准备对象、建立目标Local和用户现场并做完整失败收尾；此时仍无原生fork/_Fork发布或完整exec。没有把设备拒绝规则当作最终驱动fork策略，也未减少net/服务目标。
+
+最终本地make unit全部496项、make fmt-check通过。make test-qemu全部110个两架构场景通过，加入未知Op引用预检前的13个早期结果按源码哈希识别并逐项补跑，最终110项均核对当前Space/Mem源码及契约头哈希；其余97项复用完整回归中相同最终代码的结果。证据build/host/stage71-space-snapshot/保留全量日志、13项补跑、最终目录/哈希及接管回滚反例。无CI、真实硬件、性能或完整原生fork发布/继承验收。
