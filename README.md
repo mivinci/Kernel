@@ -24,6 +24,17 @@ make sdk ARCH=arm64
 构建生成 `build/compile_commands.json` 及各架构副本，供 clangd 使用；共享数据库选择最近构建的架构。
 用 `make compdb ARCH=riscv` 或 `ARCH=arm64` 切换，必要时重启 clangd。共享头文件按其推断的翻译单元使用目标参数。
 
+启动包主机工具按包内名称打包原生ELF，额外为指定init生成装载描述：
+
+```sh
+python3 tools/bootpkg.py pack --arch arm64 --init sbin/init \
+  --entry sbin/init=/path/to/init.elf --entry sbin/serial=/path/to/serial.elf \
+  --output build/arm64/boot.pkg
+python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
+```
+
+`--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序，也尚未让内核从initrd启动。容器格式、预算与T1后续边界见07末尾。
+
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
 

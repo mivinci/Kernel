@@ -372,3 +372,19 @@ CASE=init/initfatal已从测试专用逐页加载改用该内核函数，两架�
 装载前整体校验，任一项失败即拒启且不留部分状态：属性缺失、范围越出 DTB memory 节点、与内核/Boot 结构重叠、checksum 不符、索引或名称越界、重复名称。
 
 现有 `bootimageload` 仍只消费此前冻结的单镜像描述，是单镜像装载器；按本节实现启动包解析属于 T1 的未实现部分，本节的冻结不等于已经可以解析该容器。
+
+### T1.1 容器线格式与主机工具（2026-11-18）
+
+共享定义放include/abi/bootpkg.h：Bootpkg/Bootitem均64字节、8个little endian u64；magic=0x4b504b4730303031、format=1、machine沿用ELF的ARM64=183/RV64=243，checksum字段位于56..63字节。count为1..32，init_index指向唯一带装载视图的项，其他项load_off/load_bytes必须均为0；flags/reserved首版必须为0。名称为1..64个非NUL原始字节，区分大小写，按精确字节比较；斜杠不触发路径解析或授权。
+
+目录偏移与init装载视图偏移为8的倍数，不要求4KiB；名称/ELF内容没有页对齐要求。物理容器基址不由这些相对偏移推导对齐，T1.2/T1.3须按字节解码或适当转存，不能直接把未对齐指针强转为C结构。所有offset/bytes均先用减法界限检查，包头、目录、各名称、ELF和装载视图的非空区间两两不重叠；不允许用复用目录/名称/ELF范围绕过校验。bytes须精确等于输入容器长度，padding同样参与除checksum字段以外的FNV-1a64。
+
+tools/bootpkg.py提供pack/check两个入口。pack复用tools/elf.py的静态ELF规划器检查每个成员，按原始名称字节排序输出，不保留宿主路径/时间戳/输入顺序；init名可选，排序后固定其索引。init额外携带现有elf.pack生成的自包含Bootimage视图，load_bytes涵盖其段表、Boot和段内容，内部偏移相对该视图；原始ELF仍独立保留。首版因此保留init的原ELF及一份紧凑装载内容副本，计入包大小/未来保留预算，不把这份冗余隐藏成零拷贝。该布局直接复用既有装载器，不为T1.1引入新的跨视图文件偏移协议。
+
+check先完整校验再返回目录，检查头/目标/大小、checksum、范围/重叠、名称/索引/保留位、每项基本ELF身份及init的Bootimage边界/VA/权限/入口/Boot外头。容器检查不通用解析所有ELF段表：pack额外做完整ELF规划，其他程序真正加载时仍由用户态elfcheck验证；T1.2应复现相同容器检查，而非在内核引入通用ELF装载器。CLI成功才原子替换输出，失败保留原文件，并拒绝把输出写回任一输入ELF。
+
+工具没有把包限制为单个64KiB Mem；仅每个镜像的主机规划页上限可通过--max-pages指定（默认256，沿用现有工具默认），不是新的内核运行预算或服务清单。stdout报告容器大小、目标、init索引、名称、FNV值及SHA256，便于复现；FNV仍只作损坏检测。
+
+本点验收以主机工具/共享布局和现有C Bootimage检查器交叉核对为准，最终日志归build/host/stage85-boot-package-tool/及status。没有新增内核运行入口、chosen/initrd保留、生产PID1或服务READY；这些仍属T1.2..T1.5，不把生成测试包称为normal已从包启动。
+
+T1.1本地完成：新增16项测试，完整make unit通过588项，fmt-check通过；共享头在ARM64/RV64目标编译、两个架构描述通过现有C bootimagecheck。实际SDK测试ELF生成ARM526248/RV166704字节包，CLI pack/check报告一致，正反输入顺序产物逐字节相同；原ELF内容及源/输入/包哈希归evidence.json。本点未执行新的QEMU/板端/CI/性能或生产启动验收，上一内核完整两架构110场景仍为stage84基线。
