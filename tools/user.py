@@ -52,6 +52,7 @@ def build(args):
     shutil.copyfile(ROOT / 'lib/libsys/private/syscall.h', sdk / 'private/syscall.h')
     shutil.copyfile(ROOT / 'lib/libsys/private/start.h', sdk / 'private/start.h')
     shutil.copyfile(ROOT / 'lib/libsys/private/elf.h', sdk / 'private/elf.h')
+    shutil.copyfile(ROOT / 'lib/libsys/private/vm.h', sdk / 'private/vm.h')
     shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
     (sdk / 'private/virtio').mkdir(exist_ok=True)
     for name in ('queue.h', 'ring.h', 'device.h'):
@@ -59,7 +60,7 @@ def build(args):
     (sdk / 'private/virtqueue.h').unlink(missing_ok=True)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -115,7 +116,7 @@ def build(args):
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.
-    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'number.c', 'format.c', 'environment.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'group.c', 'wait.c')]
+    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'allocate.c', 'number.c', 'format.c', 'environment.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'group.c', 'wait.c')]
     csu_sources = [ROOT / 'lib/csu/start.c', ROOT / 'lib/csu' / args.arch / 'start.S']
     runtime_source = ROOT / 'tests/kernel/runtimeuser.c'
     extra_units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o'))
@@ -133,7 +134,7 @@ def build(args):
     invoke('archive-libc', [tools['ar']['path'], 'rcs', str(temporary_libc), *libc_objects])
     os.replace(temporary_libc, libc_archive)
     libc_audit = sdk / 'libc.audit.o'
-    bounds = ['--defsym=' + name + '=0' for name in ('__preinit_array_start','__preinit_array_end',
+    bounds = ['--defsym=' + name + '=0' for name in ('__image_end','__preinit_array_start','__preinit_array_end',
                '__init_array_start','__init_array_end','__fini_array_start','__fini_array_end')]
     invoke('audit-libc', [tools['ld']['path'], '-r', '-m', profile['emulation'], *bounds,
                          *libc_objects, str(audit), '-o', str(libc_audit)])
@@ -274,6 +275,14 @@ def build(args):
     if len(vdev_rows)!=1 or int(vdev_rows[0][2])!=256:raise BuildError('virtio device trace missing')
     vdev_address=int(vdev_rows[0][1],16)
     (sdk/'vdevimage.S').write_text('/* image sha256: '+digest(vdev_image)+' */\n.section .rodata\n.balign 8\n.global vdev_image,vdev_image_end,vdev_trace_address\nvdev_image:\n.incbin "'+str(vdev_image)+'"\nvdev_image_end:\n.balign 8\nvdev_trace_address:\n.quad '+str(vdev_address)+'\n')
+    heap_user=link_adoption('heapuser',[compile_adoption(ROOT/'tests/kernel/heapuser.c','heapuser')])
+    heap_image=sdk/'heapuser.img'
+    heap_image.write_bytes(pack(heap_user.read_bytes(),profile['machine'],128))
+    heap_inspect=invoke('inspect-heap',[tools['readelf']['path'],'-h','-l','-s',str(heap_user)])
+    heap_rows=[line.split() for line in heap_inspect.splitlines() if line.split() and line.split()[-1]=='heap_trace']
+    if len(heap_rows)!=1 or int(heap_rows[0][2])!=256:raise BuildError('heap trace missing')
+    heap_address=int(heap_rows[0][1],16)
+    (sdk/'heapimage.S').write_text('/* image sha256: '+digest(heap_image)+' */\n.section .rodata\n.balign 8\n.global heap_image,heap_image_end,heap_trace_address\nheap_image:\n.incbin "'+str(heap_image)+'"\nheap_image_end:\n.balign 8\nheap_trace_address:\n.quad '+str(heap_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'

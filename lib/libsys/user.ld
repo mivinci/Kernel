@@ -32,5 +32,6 @@ SECTIONS
   . = ALIGN(4096);
   .data : { *(.data .data.*) *(.sdata .sdata.*) } :data
   .bss (NOLOAD) : { *(.bss .bss.*) *(.sbss .sbss.*) *(COMMON) } :data
+  PROVIDE_HIDDEN(__image_end = ALIGN(4096));
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

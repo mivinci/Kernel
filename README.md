@@ -74,6 +74,7 @@ make scenario ARCH=arm64 CASE=irqchip
 make scenario ARCH=arm64 CASE=irqbind
 make scenario ARCH=arm64 CASE=mmiogroup
 make scenario ARCH=arm64 CASE=virtiodev
+make scenario ARCH=arm64 CASE=heap
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
@@ -155,7 +156,7 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 
 `make sdk ARCH=...`输出build/<架构>/sdk/中的公共头、私有运行时桩头、libsys.a、user.ld及独立自定义入口的libsysuser.elf；不链接libc/fs/net，并审计全部库对象的未解析符号。SDK单元合入compile_commands.json。`CASE=libsys`按预校验装载描述将该实际ELF映射到两个可信fixture构造的用户进程，验证Boot、BSS/数据、内存和IPC/退出及完整回收。csu/main及可写argv/environ接续见runtime；普通用户ELF加载器接续见elf；生产init清单仍待接，normal仍初始化后停止。
 
-SDK现另输出crt0.o、libc.a和runtimeuser.elf，常规程序按crt0.o/app.o/libc.a/libsys.a链接；自定义入口仍可仅用libsys。`CASE=runtime`两架构各验证10份真实main镜像，包括可写参数/环境、构造与清理顺序、32个atexit用户槽、exit/_exit、畸形或未支持Boot拒绝及完整回收。基础libc仅声明已实现接口，尚无malloc/stdio/文件适配或线程TLS；fd/Fix启动内容暂以127退出，normal尚未启动生产init。
+SDK现另输出crt0.o、libc.a和runtimeuser.elf，常规程序按crt0.o/app.o/libc.a/libsys.a链接；自定义入口仍可仅用libsys。`CASE=runtime`两架构各验证10份真实main镜像，包括可写参数/环境、构造与清理顺序、32个atexit用户槽、exit/_exit、畸形或未支持Boot拒绝及完整回收。基础libc仅声明已实现接口，已接基础malloc/calloc/realloc/free，stdio流/文件适配及线程TLS仍未接；fd/Fix启动内容暂以127退出，normal尚未启动生产init。
 
 `CASE=elf`由真实用户C程序通过libsys解析嵌入的完整静态ELF，原生create并为孩子逐页装载、写入真实SELF Boot、configure/start，最终wait孩子main退出42；孩子仅3启动资源槽，父表只留1临时槽也可装载。另验证预算/源读取/VA冲突/坏Boot回滚及完整回收。私有elfcheck/load/clean在SDK中供运行时和init复用，尚非完整posix_spawn/exec，也未接FS稳定文件来源或生产init清单。
 
@@ -190,3 +191,5 @@ CASE=irqbind另验证可信安装后的真实外设IRQ到用户EVENT、原生ACK
 irqbind载荷另经可信库存取得独占UART页，实际用户态Device映射读写/清状态后ACK；普通copy/seal/EXEC被拒绝，删除Cap后映射到最后unmap仍有效。同Set不同Acct不能同时映射同窗口；共页virtio及生产MMIO发权仍待接，详见09末尾。
 
 CASE=mmiogroup验证显式完整成员整页权限、ARM8个共页virtio窗口的实际用户Device读取、跨Acct拒绝及最后unmap后的交接；RV独占页复用同一租约。启动显式force-legacy=false并严格读version=2，尚无队列/DMA或块/网络业务I/O，详见09末尾。
+
+CASE=heap验证构造函数及外部VA冲突、128个小块与跨Mem大块、表满realloc失败保留旧块，以及进程仍活着时全部堆页/费用回到基线。分配器按需链接，无FS依赖；SDK链接脚本提供隐藏__image_end供默认堆选址，自定义脚本须保留该契约。零长分配与realloc(p,0)采用最小分配，仍须free返回指针；fork/信号前置集成见08/15，尚未完成。

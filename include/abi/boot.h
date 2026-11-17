@@ -19,8 +19,10 @@
 #define BOOT_IMAGE          8
 #define BOOT_USER_LO        UINT64_C(0x10000)
 #define BOOT_USER_HI        (UINT64_C(1) << 38)
-#define BOOT_LOAD_SEGMENTS  64
-#define BOOT_LOAD_MAGIC     UINT64_C(0x4b494d4730303031)
+/* Existing loader profile: top 16 MiB belongs to startup mappings. */
+#define BOOT_IMAGE_HI      (BOOT_USER_HI - UINT64_C(0x1000000))
+#define BOOT_LOAD_SEGMENTS 64
+#define BOOT_LOAD_MAGIC    UINT64_C(0x4b494d4730303031)
 typedef struct Bootimage Bootimage;
 typedef struct Bootseg   Bootseg;
 typedef struct Boot      Boot;

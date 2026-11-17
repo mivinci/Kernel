@@ -127,3 +127,7 @@ WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按�
 组/会话用户接口接续（2026-11-17）：getpgrp/getpgid/getsid/setpgid/setsid已接，保留完整64位PID及原生自/子同会话限制，逐操作错误和验证见08末尾。getpid/getppid/wait/waitpid仍沿既有路径；kill/raise、真实信号源/作业控制、fork/exec与完整POSIX未由本次补齐。
 
 上述组/会话切片最终完整回归通过306项host、格式及98个两架构QEMU，runtime每架构105项用户检查和CPU独立关系核验通过；证据build/host/stage49-libc-groups/。没有把尚未接通的exec/信号分支称为端到端验收。
+
+### 基础分配器子集（2026-11-17）
+
+stdlib.h现声明并实现malloc/calloc/realloc/free，16字节对齐、溢出/后端失败为NULL及ENOMEM，realloc失败保留旧块；成功分配/free保留errno。零长采用最小分配，realloc(p,0)也不隐式释放，调用者仍须free返回指针；不提供零长字节访问承诺。构造函数可用，不要求文件/网络服务在线；不是异步信号安全接口。批量/多Mem映射、失败隔离、主机与真实双架构验收边界见08末尾；未接fork/_Fork Fix，不把此子集称为完整ISO C/POSIX、第三方分配器兼容或mmap支持。

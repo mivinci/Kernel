@@ -500,3 +500,23 @@ host新增6项覆盖五接口完整64位参数/结果和零/PID1选择器、无�
 CASE=runtime每架构5个有效main各21项组/会话检查，共105项：读取初始组、完整PID查询、坏PID/负值/不存在组错误、创建自身组后setsid拒绝、重新加入初始组、setsid成功隔离、重复setsid与会话首进程改组拒绝及查询不回旧缓存。可信CPU仅在测试期间保留原组管理引用，使唯一成员移走后仍可重新加入；未给用户绕过会话关系的权力。CPU独立核对退出Life实际PGID/SID等于孩子PID，收取/释放后原组与终止组Handle均失效，页/费用与关系检查通过；坏Boot程序仍无main跟踪。初始fixture的groupstat失效错误期望由STALE更正为其既定BAD_HANDLE，没有放宽实现或资源回收条件。
 
 公开接口不包括kill/raise或完整作业控制；真实信号来源、STOP/CONT、exec后的父修改限制及终端前台协议仍按原计划继续，不能把组/会话封装称为完整POSIX进程管理。本地完整make test-all通过306项host、格式和98个RV64/ARM64 QEMU，最终组桥host6项及格式另复验通过；各架构runtime的105项组/会话检查、275组整数转换与120项格式检查均保持，SDK单向依赖审计通过。证据和关键源码哈希在build/host/stage49-libc-groups/；没有CI、目标真实硬件或性能验收。
+
+### 基础堆与用户 DATA 地址管理（2026-11-17）
+
+`lib/libc/allocate.c`现提供malloc/calloc/realloc/free。默认64KiB arena、小块first-fit、16字节对齐，16字节Arena头、48字节Chunk头及终止哨兵；邻接空块立即合并，空arena立即交回地址管理器，不按每个小对象调用内核。不承诺常数时间搜索或异步信号安全。大对象可跨多个原生Mem取得超过64KiB的连续VA。
+
+malloc(0)/calloc的零乘积采用最小分配，成功返回可独立free的非空对齐指针；realloc(p,0)采用同一最小分配策略，成功返回非空指针并仍需显式free。零长对象不提供可访问字节承诺。realloc(NULL,n)等同malloc；收缩和右邻空闲足够时原地调整，否则先分配并复制min(旧请求长度,新长度)，新分配失败保留旧对象和内容。calloc先检查乘法溢出并清零实际请求字节；大小/页取整溢出及后端分配失败返回NULL/ENOMEM。成功分配和free保留errno；free(NULL)无操作。非法指针、重复free和用户破坏头部仍属无效C调用，不增加内核指针授权接口。以上是已实现子集及本实现明确的零长策略，完整ISO C/POSIX验收仍见15。
+
+libsys新增私有vm模块，128个32字节Vregion共4096字节BSS，元数据在arena之外。运行时提供页对齐边界；本libc首次需要arena时，以链接器__image_end为下界、既有装载上界BOOT_IMAGE_HI为上界初始化，避开顶部16MiB启动区。BOOT_IMAGE_HI只为现有几何命名，不改变Boot线布局；ELF加载器复用这一C常量。SDK user.ld给出隐藏__image_end，自定义链接脚本须提供相同私有契约。显式初始化过的私有VM范围由调用运行时负责保持有效，不把任一应用VA硬编码为普遍空闲。普通不引用分配器的程序不因启动代码强制链接堆状态。
+
+sysvmget按16页/64KiB拆成连续VA上的DATA/RW/NX映射，每块map后立即free Mem管理引用，只有一份临时资源槽也能装配大块；每次从当前已校验Boot取得真实SELF_SPACE/SELF_ALLOC，不用裸PID或猜句柄。已知区域先避让，未知native map冲突不替换旧映射，最多64个候选后明确NOMEM；这不是空间空洞穷尽证明。区域表满为CAPACITY，原生费用始终归本进程Acct。当前是匿名DATA后端，不暴露POSIX mmap/munmap，也未接生产装载临时窗口的统一预留或fork/Fix重绑。
+
+区域状态为BUILDING→ACTIVE→CLEANUP→空槽。整个组成功前不返回指针；任一alloc/map/管理引用释放失败，先释放本次管理引用、再逆序解除已提交前缀，只解除本组成功建立的精确Mmap。若收尾失败，CLEANUP记录保留原VA占位和剩余责任，下次get重试，不把部分解除的区域重复分配。普通free的有效对象此时已结束，释放失败不写errno；保留页仍计原账目，最终镜像清理仍由内核逐映射收取。清理不新增页。跨信号/fork原生提交窗口的Rctx/Fix衔接仍待接，不把单线程局部验证当作这些路径已完成。
+
+例：128KiB对象加头/填充需要33页，依次取得64KiB、64KiB、4KiB三个Mem，每次map即drop管理权；第二次map失败则撤掉第一份Mmap并释放未映射的第二份Mem，旧realloc对象不变。若第二份发生未知VA冲突，不解除那个外部映射；回滚本组前缀后换候选。最后一个C块free后逆序unmap三份记录，数据、Mem引用、页表与Acct费用按真实最后引用结清。小块arena尚有其他活对象时，free只合并本地块，不释放其页。
+
+16项host直接调用生产libc分配器及libsys VM模块，通过独立原生后端验证批量、1MiB/17映射、对齐、重用清零、原地/移动realloc、溢出、部分失败/外部冲突、管理引用释放失败、异常unmap隔离重试、128区域上限、64候选上限及cursor回绕；1800步固定种子检查所有有效载荷和对象互不重叠。后端只模拟系统调用，不替代真实内核费用和页表验收。
+
+新增CASE=heap，两架构各两个真实C进程，分别覆盖先有外部映射与构造函数中首次malloc。可信测试装载完成后drop装载管理引用，以无新增物理页的固定ALLOC占位保留一个真实空槽。每个进程完成64个小块、跨三份Mem的128KiB大块、原地/移动realloc、零长和calloc溢出，并填满最后槽验证realloc失败仍保留旧内容。两次yield让CPU分别核对活载荷、RW/User/NX普通页及新增费用，以及全部free后Acct精确回到镜像基线、堆映射消失、无新Local残留；之后退出和进程回收归零。早期fixture的装载槽不足、填表计数和构造表借用期问题已逐项定位并修正，原失败运行保留，非分配器PASS证据。
+
+本地make unit全部397项、make fmt-check以及make test-qemu全部108个两架构场景通过；日志build/host/stage58-heap/，保存原始QEMU目录、源码哈希及早期fixture失败。libsys独立与libc合并审计通过，__image_end仅作为明确链接器边界列入libc审计定义；最终独立用户ELF仍检查无未解析符号。未执行CI、真实硬件、性能或fork/信号集成验收。

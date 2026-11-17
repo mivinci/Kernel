@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "heap":
+        if ready != ["READY heap-restored"] or panics or traps:
+            raise SmokeError("libc heap scenario did not finish")
     elif case == "virtiodev":
         if ready != ["READY virtiodev-restored"] or panics or traps:
             raise SmokeError("virtio MMIO negotiation did not finish")
@@ -541,6 +544,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY heap-restored\n" if args.case == "heap" else
                     "READY virtiodev-restored\n" if args.case == "virtiodev" else
                     "READY mmiogroup-restored\n" if args.case == "mmiogroup" else
                     "READY irqbind-restored\n" if args.case == "irqbind" else
@@ -647,6 +651,11 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "heap":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("HEAPCHECK ")]
+                    if checks != [dict(cases=2,small=128,large=2,full=2,reclaimed=2,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("libc heap payload/rollback/reclamation mismatch")
+                    record["heap"]=checks[0]
                 if args.case == "virtiodev":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("VIRTIOCHECK ")]
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
@@ -917,7 +926,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))

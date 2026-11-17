@@ -4,7 +4,7 @@
 #include "syscall.h"
 #define ELF_PHNUM        32
 #define ELF_LOAD_LO      BOOT_USER_LO
-#define ELF_LOAD_HI      UINT64_C(0x3fff000000)
+#define ELF_LOAD_HI      BOOT_IMAGE_HI
 #define ELF_STACK_TOP    UINT64_C(0x3fffff0000)
 #define ELF_STACK_BYTES  65536
 #define ELF_BOOT_ADDRESS UINT64_C(0x3fff000000)
