@@ -21,11 +21,6 @@ convert(int error)
     return -ERR_DENIED;
   return -ERR_INVALID;
 }
-static int
-same(Memid a, Memid b)
-{
-  return a.generation == b.generation && a.index == b.index;
-}
 static Memid
 memory(const Local *slot)
 {
@@ -40,18 +35,15 @@ int
 forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
              const Hctx *parent, Hctx *child, Prepid prep)
 {
-  Forkbinding bindings[LOCALS];
-  u64         generations[LOCALS];
-  u8          owned[LOCALS];
-  Hctx        candidate;
-  Imageid     sourceimage, targetimage;
-  Image       image;
-  Life        life;
-  Mem         backing;
-  Memid       original;
-  Local      *slot;
-  u32         i, j, count = 0, inherited = 0;
-  int         error;
+  Hctx    candidate;
+  Imageid sourceimage, targetimage;
+  Image   image;
+  Life    life;
+  Mem     backing;
+  Memid   original, view;
+  Local  *slot;
+  u32     i, owned;
+  int     error;
   if (!source || !target || source == target || !source->slots || !target->slots ||
       source->state != LOCAL_OPEN || target->state != LOCAL_OPEN || !source->count ||
       source->count > LOCALS || source->count != target->count || !limits || reserve > 8 ||
@@ -66,7 +58,6 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
   for (i = 0; i < target->count; i++) {
     if (target->slots[i].subtype)
       return -ERR_STATE;
-    generations[i] = target->slots[i].generation;
   }
   if (hal_user_fork(&candidate, parent, (u64) target->owner, 0))
     return -ERR_INVALID;
@@ -84,41 +75,43 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
     if (slot->subtype != LOCAL_MEM || !(slot->inherit & LOCAL_FORK))
       continue;
     original = memory(slot);
-    for (j = 0; j < count; j++)
-      if (same(original, bindings[j].source))
-        break;
-    if (j != count)
+    if (!localforkview(target, original, &view))
       continue;
     if (memstat(original, &backing) || backing.kind == MEM_MMIO || slot->source == LOCAL_LOAD) {
       error = -ERR_DENIED;
       goto failed;
     }
-    bindings[count].source = original;
-    owned[count] = 0;
-    error = spacesnapshotview(source->space, target->space, original, &bindings[count].target);
+    owned = 0;
+    error = spacesnapshotview(source->space, target->space, original, &view);
     if (error) {
-      if (backing.state == MEM_DATA)
-        error = spacesnapshotclone(source->space, target->space, original, &bindings[count].target);
-      else if (backing.state == MEM_SEALED)
-        error = memimmutable(original, target->acct, &bindings[count].target);
-      else if (backing.state == MEM_SHARED) {
-        bindings[count].target = original;
-        error = memsharedhold(original);
+      if (backing.state == MEM_DATA) {
+        error = spacesnapshotclone(source->space, target->space, original, &view);
+        owned = !error;
+      } else if (backing.state == MEM_SEALED) {
+        error = memimmutable(original, target->acct, &view);
+        owned = !error;
+      } else if (backing.state == MEM_SHARED) {
+        view = original;
+        error = 0;
       } else
         error = MEM_BAD;
       if (error) {
         error = convert(error);
         goto failed;
       }
-      owned[count] = 1;
     }
-    count++;
+    /* A fresh leaf reference crosses no checkpoint: bind acquires the durable
+       target-table manager, then this local creation reference is returned. */
+    error = localforkbind(source, target, i, view);
+    if (owned && memfree(view))
+      panic("fork leaf owner transfer");
+    if (error)
+      goto failed;
   }
-  error = localfork(source, target, bindings, count, limits);
+  error = localforkload(source, target, limits);
   if (error)
     goto failed;
-  inherited = 1;
-  error = localreserve(target, targetimage, reserve);
+  error = localforkreserve(source, target, targetimage, reserve);
   if (error)
     goto failed;
   /* Last fallible stage: it may write child COW cookies but never parent data.
@@ -126,28 +119,21 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
   error = sigfork(sourceimage, source->space, targetimage, target->space);
   if (error)
     goto failed;
-  for (i = 0; i < count; i++)
-    if (owned[i] && (memforkcommit(bindings[i].target) || memfree(bindings[i].target)))
-      panic("fork temporary view commit");
+  for (i = 0; i < target->count; i++) {
+    slot = &target->slots[i];
+    if (slot->subtype == LOCAL_MEM && slot->source & LOCAL_STAGED && memforkcommit(memory(slot)))
+      panic("fork view journal commit");
+  }
+  if (localforkfinish(source, target))
+    panic("fork local lineage commit");
   if (spacesnapshotend(source->space, target->space, 1))
     panic("fork mapping commit");
   for (i = 0; i < sizeof(Hctx); i++)
     ((u8 *) child)[i] = ((const u8 *) &candidate)[i];
   return 0;
 failed:
-  if (inherited) {
-    if (localreserve(target, targetimage, 0))
-      panic("fork floor rollback");
-    for (i = 0; i < target->count; i++) {
-      slot = &target->slots[i];
-      if (slot->subtype && localrevoke(target, handlepack(HANDLE_RESOURCE, slot->generation, i)))
-        panic("fork Local rollback");
-      slot->generation = generations[i];
-    }
-  }
-  for (i = 0; i < count; i++)
-    if (owned[i] && memfree(bindings[i].target))
-      panic("fork temporary view rollback");
+  if (localforkdrop(target))
+    panic("fork staged ownership rollback");
   if (spacesnapshotend(source->space, target->space, 0))
     panic("fork mapping rollback");
   return error;

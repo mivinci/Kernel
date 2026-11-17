@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过547项，格式及make test-qemu的110个两架构场景全部通过；日志`build/host/stage77-fork-backing-journal/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- sigframe两架构各新增四组持久接管账本检查：abort/commit、退役源且root与Acct先退出、最后借用引用自动回滚、部分预付失败，全部页/费用回基线。9项新host另验旧COW不误撤销、其他分支写入后独立进展、源冻结和同步根/拥有引用门禁。110场景及当前源码/头哈希、normal无fixture均核对。Mem池增64KiB（96字节上限），Prep192/Proc512不变；forksnapshot静态帧ARM6512/RV6256，各减512。树游标、Local/临时视图持有列表、每32页检查点和STOP/KILL安全转交仍待迁移；原生准入/真实调用捕获/Fix/专用发布未接，不能因账本独立即称可丢弃整个克隆C栈。
+- 本地make unit通过554项，格式及make test-qemu的110个两架构场景全部通过；日志及源码/头哈希、normal无fixture、静态帧/固定池核对证据归`build/host/stage78-fork-local-staging/`。未执行CI/目标真实硬件/性能验收。
+- 临时Mem管理引用与Local回滚现由目标表DRAFT/STAGED行持有，普通Handle/查询不可见，成功才覆盖旧目标代次；保底按父未来谱系判断。7项新host及两架构各四组可信检查覆盖隐藏/别名、完成/撤销、真实引用溢出及源表先关闭后的有界清理，全部页/费用回基线。Local48/Mem96/Prep192/Proc512与固定池不增长；forksnapshot静态帧ARM1280/RV1024，各减5232，localfork为ARM80/RV112。映射树游标/PTE回滚工作归属、每32页检查点和STOP/KILL安全转交仍待迁移；当前同步IRQ屏蔽且全局Space事务不可跨调度，原生准入/真实调用捕获/Fix/专用发布未接。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

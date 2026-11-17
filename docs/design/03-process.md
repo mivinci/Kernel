@@ -1341,7 +1341,7 @@ Mem继承使用显式Forkbinding（32字节source Memid/target Memid）清单，
 
 新增spacesnapshotview只借用前一阶段已经生成的目标视图：逐个匹配父Mem所有已映射别名的相同VA/offset/length/逻辑权限，并核对目标Mem身份、种类/Acct和一致的去重结果；不通过猜索引返回句柄、不取得管理引用。映射未持管理引用的孩子逻辑视图由可信memforkhold在目标准确Acct下取得新的Local管理责任；它只适用于已保留的合法fork视图，不恢复父私有管理权、不用于MMIO。未映射但标FORK的Mem仍需准备者单独预付clone/immutable视图并纳入同一绑定清单，本轮host和QEMU分别覆盖该路径。
 
-完整源/绑定/目标预检后才取新引用。中途引用溢出等失败会逐项解除本次已经安装的SPACE/ALLOC/Set/Mem/Image引用，目标所有generation恢复进入前值、不留下活表项；原本无效槽的对象残留字段可清零，没有用户可观察授权。源表完全不修改。为回滚保存LOCALS个旧目标u64 generation，默认128项共1024字节临时栈；LLVM两架构localfork静态帧均1536字节，精确.su证据归本轮，不冒充最大调用深度、IRQ屏蔽时间或性能证明。Local48/Rtable/Proc及固定池没有因继承复制而新增字段。
+完整源/绑定/目标预检后才取新引用。中途引用溢出等失败会逐项解除本次已经安装的SPACE/ALLOC/Set/Mem/Image引用，不留下活表项；原本无效槽的对象残留字段可清零，没有用户可观察授权。源表完全不修改。本阶段曾用LOCALS个旧目标u64 generation（默认1024字节）保存回滚信息，localfork静态帧1536字节；该实现现已由文末目标表分阶段持有机制替代，历史测试记录保留。Local48/Rtable/Proc及固定池没有因继承复制而新增字段。
 
 10项两种真实页表编码host专项验证原Handle/SELF/Mem别名重绑定、未继承/已free/耗尽槽的墓碑和后续复用、CREATE精确减权、mapped与unmapped私有视图、SHARED/代码规则、旧对端Image绑定、错误绑定/规格/活动目标拒绝，并把Image.cleanup实际填到65535测试后段OVERFLOW：已取的SELF引用及全部目标generation精确回滚。这个真实计数上限测试不是用未实现的成功占位替代失败路径。
 
@@ -1400,3 +1400,15 @@ procforkbuild静态帧ARM512/RV528字节；其下forksnapshot为ARM7024/RV6768�
 本轮最终本地make unit全部538项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json核对所有结果与当前源码/头哈希，含两个FORKLIFECHECK、Prep192/Proc512实际符号池尺寸、静态帧和normal无fixture。未执行CI、真实硬件、性能、原生fork或检查点/Fix/专用发布验收。
 
 fork检查点前置接续（2026-11-17）：原页接管账本现随临时DATA视图持有原Mem及页掩码，最后引用自动撤回本次接管；映射内/未映射路径共用，不再依赖forksnapshot栈数组或源Mmap的reserved字段。Mem96字节、池增64KiB，forksnapshot静态帧每架构减512字节；生命周期/失败例子及验证见02末尾。Prep192与Proc512不变。树游标、Local/临时视图拥有列表及每32页调度/STOP/KILL检查点仍须完整接入，不能仅因内存账本独立便声称可丢弃整个克隆C续点；原生fork仍NOTSUP。
+
+### fork目标表持有临时资源与延迟代次提交（2026-11-17）
+
+本节替代上述同步栈中的Local代次备份和临时Mem拥有列表。准备者用localforkbind在目标原MEM槽安装内部DRAFT：取得一个Mem管理引用，借用现有字段保存源Mem身份及目标视图，generation保留旧目标值。映射视图另有Mmap拥有引用；未映射DATA/代码的新建引用在bind成功或失败后立即归还，创建、绑定和归还之间没有检查点。SHARED直接取得原对象管理引用。多个窗口按源Mem去重，provider可晚于其他别名。
+
+localforkload先完整检查源表及绑定，再取得SELF/CREATE/入口/其他MEM别名引用；全部成功后才将DRAFT管理引用转为正常MEM行，不重复取得引用。已装行仍带内部STAGED标记，普通Handle解析和RESOURCE查询均不可见。目标旧generation始终不变；保底槽资格必须按将继承的父generation判断，不能受旧运行槽耗尽影响。最后的localforkfinish才统一复制父代次、清除标记并保留未继承墓碑；它只完成表谱系，不提交Mem/PTE或发布进程。
+
+失败例：先装孩子DATA视图及SELF，再遇Image.cleanup=65535导致入口引用溢出；localforkdrop只按目标标记解除已取得引用及保底，不读取源表，旧目标代次不变。父表/root/Acct先关闭、孩子Image已ENDED时，普通localclose/localdrain同样可分次释放DRAFT或已装STAGED行；最后Mem引用触发02所述接管回滚。清理同时清除空行标记，物理槽再次成为源表时不误拒绝。该责任归属不意味着Space映射事务已经能够独立放弃。
+
+7项新增host检查隐藏行、晚provider/窗口、装载前后回滚、源关闭后的普通有界drain、未来代次保底、ENDED保底和空槽复用。sigframe两架构各四组可信检查覆盖显式撤销、完成继承、真实引用溢出及源先关闭后的逐项清理，主机独立核对FORKSTAGECHECK及全部费用/页回基线；不执行孩子或原生fork。本地554项unit、fmt-check及110个两架构QEMU场景全部通过，源码/头哈希、normal无fixture、静态帧和固定池证据归build/host/stage78-fork-local-staging/；未执行CI、真实硬件或性能验收。
+
+Local48、Mem96、Prep192、Proc512及固定池大小不变。forksnapshot去掉绑定、旧代次和拥有数组；静态帧以本轮stack-usage证据为准，不是最大栈深或IRQ延迟证明。下一步仍须把映射树游标、PTE回滚和克隆工作归属移入准备状态，再接每32页检查点及STOP/KILL安全转交；当前全程同步且IRQ屏蔽，不能跨调度保留全局Space事务。

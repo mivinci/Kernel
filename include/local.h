@@ -31,6 +31,8 @@
 #define LOCAL_CLOSING   2
 #define LOCAL_DEAD      3
 /* Internal empty-slot ownership, never public RESOURCE subtypes. */
+#define LOCAL_DRAFT   0xfffdU
+#define LOCAL_STAGED  0x80U
 #define LOCAL_FLOOR   0xfffeU
 #define LOCAL_RECEIVE 0xffffU
 
@@ -73,6 +75,19 @@ STATIC_ASSERT(sizeof(Forkbinding) == 32, fork_binding_size);
    actual child Acct/table/pending specification for CREATE attenuation. */
 int localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count,
               const Createarg *limits);
+/* Unpublished fork staging. Draft providers own one Mem manager; all acquired
+   references stay in the target table, hidden from Handle/query operations.
+   Old target generations remain untouched until finish, so drop/normal drain
+   need no source table or caller-stack generation/ownership list. The caller
+   freezes source/target and separately owns Space/Signal/Prep transactions. */
+int localforkview(Rtable *target, Memid original, Memid *out);
+int localforkbind(Rtable *source, Rtable *target, u32 index, Memid view);
+int localforkload(Rtable *source, Rtable *target, const Createarg *limits);
+/* Floor eligibility follows the future parent lineage, not the old run slot. */
+int localforkreserve(Rtable *source, Rtable *target, Imageid image, u32 count);
+/* Only publishes Handle lineage; backing/PTE commit belongs to the caller. */
+int localforkfinish(Rtable *source, Rtable *target);
+int localforkdrop(Rtable *target);
 STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 /* Storage is zeroed once; generations survive table close/rebinding. Context is
    borrowed from its owner, which keeps Acct/Space alive until drain completes. */

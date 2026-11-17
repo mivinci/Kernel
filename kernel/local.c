@@ -33,8 +33,8 @@ find(Rtable *t, Handle h, u32 subtype)
   if (slot >= t->count)
     return NULL;
   l = &t->slots[slot];
-  return l->subtype && l->subtype < LOCAL_FLOOR && l->generation == handlegen(h) &&
-                 (!subtype || l->subtype == subtype)
+  return l->subtype && l->subtype < LOCAL_DRAFT && !(l->source & LOCAL_STAGED) &&
+                 l->generation == handlegen(h) && (!subtype || l->subtype == subtype)
              ? l
              : NULL;
 }
@@ -91,13 +91,15 @@ ownedimage(Rtable *table, Imageid id, Image *out)
     return -ERR_STALE;
   return 0;
 }
-int
-localreserve(Rtable *table, Imageid id, u32 count)
+static int
+reserve(Rtable *table, Imageid id, u32 count, Rtable *lineage)
 {
   Image image;
   u32   i, available = 0, floors = 0;
   int   error;
-  if (!table || table->state != LOCAL_OPEN || count > 8)
+  if (!table || table->state != LOCAL_OPEN || count > 8 ||
+      (lineage &&
+       (lineage == table || lineage->count != table->count || lineage->state != LOCAL_OPEN)))
     return -ERR_INVALID;
   error = ownedimage(table, id, &image);
   if (error)
@@ -111,13 +113,21 @@ localreserve(Rtable *table, Imageid id, u32 count)
     if (slot->subtype == LOCAL_FLOOR)
       floors++;
     if ((!slot->subtype || slot->subtype == LOCAL_FLOOR) &&
-        slot->generation < HANDLE_GENERATION_MAX)
+        (lineage ? lineage->slots[i].generation : slot->generation) < HANDLE_GENERATION_MAX)
       available++;
   }
   if (floors != image.reserve)
     return -ERR_STATE;
-  if (available < count)
+  if (available < count) {
+    if (lineage) {
+      for (i = 0; i < table->count; i++)
+        if ((!table->slots[i].subtype || table->slots[i].subtype == LOCAL_FLOOR) &&
+            lineage->slots[i].generation == HANDLE_GENERATION_MAX)
+          return -ERR_OVERFLOW;
+      return -ERR_CAPACITY;
+    }
     return sloterror(table);
+  }
   if (imagereserve(id, count))
     return -ERR_STATE;
   for (i = 0; i < table->count; i++)
@@ -125,12 +135,26 @@ localreserve(Rtable *table, Imageid id, u32 count)
       table->slots[i].subtype = 0;
   for (i = 0; i < table->count && count; i++) {
     Local *slot = &table->slots[i];
-    if (!slot->subtype && slot->generation < HANDLE_GENERATION_MAX) {
+    if (!slot->subtype &&
+        (lineage ? lineage->slots[i].generation : slot->generation) < HANDLE_GENERATION_MAX) {
       slot->subtype = LOCAL_FLOOR;
+      slot->source = lineage ? LOCAL_STAGED : 0;
       count--;
     }
   }
   return 0;
+}
+int
+localreserve(Rtable *table, Imageid id, u32 count)
+{
+  return reserve(table, id, count, NULL);
+}
+int
+localforkreserve(Rtable *source, Rtable *target, Imageid image, u32 count)
+{
+  if (!source || !source->slots || source->count > LOCALS)
+    return -ERR_INVALID;
+  return reserve(target, image, count, source);
 }
 int
 localreceive(Rtable *table, Imageid id, Handle rpc, u16 *out)
@@ -1143,8 +1167,8 @@ removeentry(Local *l)
     l->rights = 0;
     return 0;
   }
-  if (l->subtype == LOCAL_MEM) {
-    if (l->source == LOCAL_LOAD)
+  if (l->subtype == LOCAL_MEM || l->subtype == LOCAL_DRAFT) {
+    if (l->subtype == LOCAL_MEM && l->source == LOCAL_LOAD)
       scope = loadscope(l);
     error = memfree(memory(l));
   } else if (l->subtype == LOCAL_SPACE) {
@@ -1234,6 +1258,7 @@ localdrain(Rtable *t, u32 count)
       if (error)
         return error;
     }
+    t->slots[t->cursor].source &= ~LOCAL_STAGED;
     t->cursor++;
   }
   if (t->cursor == t->count) {
@@ -1322,12 +1347,13 @@ localquery(Rtable *table, u64 cursor, Queryrec *records, u32 count, u32 *written
     if (!(cursor >> 16) || index >= table->count)
       return -ERR_INVALID;
     l = &table->slots[index];
-    if (!l->subtype || l->subtype >= LOCAL_FLOOR || l->generation != cursor >> 16)
+    if (!l->subtype || l->subtype >= LOCAL_DRAFT || l->source & LOCAL_STAGED ||
+        l->generation != cursor >> 16)
       return -ERR_STALE;
   }
   for (; index < table->count; index++) {
     l = &table->slots[index];
-    if (!l->subtype || l->subtype >= LOCAL_FLOOR)
+    if (!l->subtype || l->subtype >= LOCAL_DRAFT || l->source & LOCAL_STAGED)
       continue;
     if (n == count) {
       *next = (l->generation << 16) | index;
@@ -1400,33 +1426,27 @@ forkmem(Rtable *source, Rtable *target, const Local *slot, const Forkbinding *bi
     return -ERR_DENIED;
   return 0;
 }
-int
-localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count,
-          const Createarg *limits)
+static int
+forktables(Rtable *source, Rtable *target, const Createarg *limits, u32 staged)
 {
-  u64                generations[LOCALS];
-  Acct               parent, child;
-  Space              parentspace, childspace;
-  Createpolicy       policy;
-  Local             *slot, *dest;
-  const Forkbinding *binding;
-  Image              image;
-  Imageid            childimage;
-  u32                i, j;
-  int                error;
+  Acct    parent, child;
+  Space   parentspace, childspace;
+  Image   image;
+  Imageid childimage;
+  u32     i;
   if (!source || !target || source == target || !source->slots || !target->slots ||
       source->state != LOCAL_OPEN || target->state != LOCAL_OPEN || !source->count ||
       source->count > LOCALS || target->count != source->count || source->slots == target->slots ||
-      count > LOCALS || (count && !bindings) || !limits || limits->reserved ||
-      limits->resources != target->count || !limits->pending || limits->pending > PENDING_CALLS ||
-      limits->resources < 3 || handletype(source->owner) != HANDLE_PROCESS ||
-      handletype(target->owner) != HANDLE_PROCESS || source->owner == target->owner ||
-      !source->image || !target->image || acctstat(source->acct, &parent) ||
-      acctstat(target->acct, &child) || parent.state != AC_ACTIVE || child.state != AC_ACTIVE ||
-      parent.set != child.set ||
+      source->count < 3 ||
+      (limits && (limits->reserved || limits->resources != target->count || !limits->pending ||
+                  limits->pending > PENDING_CALLS)) ||
+      handletype(source->owner) != HANDLE_PROCESS || handletype(target->owner) != HANDLE_PROCESS ||
+      source->owner == target->owner || !source->image || !target->image ||
+      acctstat(source->acct, &parent) || acctstat(target->acct, &child) ||
+      parent.state != AC_ACTIVE || child.state != AC_ACTIVE || parent.set != child.set ||
       (source->acct.index == target->acct.index &&
        source->acct.generation == target->acct.generation) ||
-      child.limit != limits->memlimit || child.exec_limit != limits->exec_limit ||
+      (limits && (child.limit != limits->memlimit || child.exec_limit != limits->exec_limit)) ||
       spacestat(source->space, &parentspace) || spacestat(target->space, &childspace) ||
       parentspace.acct.index != source->acct.index ||
       parentspace.acct.generation != source->acct.generation ||
@@ -1440,21 +1460,131 @@ localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count
   if ((u64) source->slots < (u64) target->slots + target->count * sizeof(Local) &&
       (u64) target->slots < (u64) source->slots + source->count * sizeof(Local))
     return -ERR_INVALID;
+
   for (i = 0; i < target->count; i++)
-    if (target->slots[i].subtype || target->slots[i].generation > HANDLE_GENERATION_MAX)
+    if (target->slots[i].generation > HANDLE_GENERATION_MAX ||
+        (target->slots[i].subtype && (!staged || target->slots[i].subtype != LOCAL_DRAFT ||
+                                      target->slots[i].source != LOCAL_STAGED)))
       return -ERR_STATE;
-  for (i = 0; i < count; i++) {
-    if (bindings[i].source.reserved || bindings[i].target.reserved)
-      return -ERR_INVALID;
-    for (j = 0; j < i; j++)
-      if (sameid(bindings[i].source, bindings[j].source) ||
-          sameid(bindings[i].target, bindings[j].target))
-        return -ERR_INVALID;
+  return 0;
+}
+int
+localforkview(Rtable *target, Memid original, Memid *out)
+{
+  Local *slot;
+  u32    i;
+  if (!target || !out || target->state != LOCAL_OPEN || !target->slots || target->count > LOCALS ||
+      original.reserved)
+    return -ERR_INVALID;
+  for (i = 0; i < target->count; i++) {
+    slot = &target->slots[i];
+    if (slot->subtype == LOCAL_DRAFT && slot->source == LOCAL_STAGED &&
+        slot->rights == original.generation && slot->offset == original.index) {
+      *out = memory(slot);
+      return 0;
+    }
   }
+  return -ERR_STALE;
+}
+int
+localforkbind(Rtable *source, Rtable *target, u32 index, Memid view)
+{
+  Forkbinding binding;
+  Local      *slot, *draft;
+  Memid       existing;
+  u32         i;
+  int         error = forktables(source, target, NULL, 1);
+  if (error)
+    return error;
+  if (index >= source->count)
+    return -ERR_INVALID;
+  slot = &source->slots[index];
+  draft = &target->slots[index];
+  if (slot->subtype != LOCAL_MEM || !(slot->inherit & LOCAL_FORK) || slot->source & LOCAL_STAGED ||
+      draft->subtype)
+    return -ERR_STATE;
+  binding.source = memory(slot);
+  binding.target = view;
+  error = forkmem(source, target, slot, &binding);
+  if (error)
+    return error;
+  if (!localforkview(target, binding.source, &existing))
+    return -ERR_STATE;
+  for (i = 0; i < target->count; i++)
+    if (target->slots[i].subtype == LOCAL_DRAFT && sameid(memory(&target->slots[i]), view))
+      return -ERR_INVALID;
+  error = convert(memforkhold(view, target->acct));
+  if (error)
+    return error;
+  clearforkslot(draft);
+  draft->objectgen = view.generation;
+  draft->object = view.index;
+  draft->rights = binding.source.generation;
+  draft->offset = binding.source.index;
+  draft->subtype = LOCAL_DRAFT;
+  draft->source = LOCAL_STAGED;
+  return 0;
+}
+int
+localforkdrop(Rtable *target)
+{
+  Imageid image;
+  Image   state;
+  Local  *slot;
+  u32     i, floors = 0;
+  if (!target || !target->slots || target->count > LOCALS ||
+      (target->state != LOCAL_OPEN && target->state != LOCAL_CLOSING))
+    return -ERR_INVALID;
+  for (i = 0; i < target->count; i++) {
+    slot = &target->slots[i];
+    if (!(slot->source & LOCAL_STAGED) && slot->subtype != LOCAL_DRAFT)
+      continue;
+    if (slot->subtype == LOCAL_FLOOR)
+      floors++;
+    if (slot->subtype && removeentry(slot))
+      panic("fork staged reference release");
+    clearforkslot(slot);
+  }
+  if (floors && !imagefind(target->owner, target->image, &image) && !imagestat(image, &state)) {
+    if (state.state == IMAGE_PREPARING) {
+      if (imagereserve(image, 0))
+        panic("fork staged floor release");
+    } else if (state.state != IMAGE_ENDED)
+      panic("fork staged floor publication");
+  }
+  return 0;
+}
+int
+localforkload(Rtable *source, Rtable *target, const Createarg *limits)
+{
+  Forkbinding  binding;
+  Createpolicy policy;
+  Acct         parent;
+  Image        image;
+  Local       *slot, *dest;
+  Memid        view;
+  u64          generation;
+  u32          i;
+  int          error;
+  if (!limits)
+    return -ERR_INVALID;
+  error = forktables(source, target, limits, 1);
+  if (error)
+    return error;
+  if (acctstat(source->acct, &parent))
+    return -ERR_STATE;
+  for (i = 0; i < target->count; i++)
+    if (target->slots[i].subtype == LOCAL_DRAFT &&
+        (source->slots[i].subtype != LOCAL_MEM || !(source->slots[i].inherit & LOCAL_FORK) ||
+         target->slots[i].rights != source->slots[i].objectgen ||
+         target->slots[i].offset != source->slots[i].object))
+      return -ERR_INVALID;
   /* Entire source admission before taking new references. Manager handles
      remain scoped to their child's already prepared logical view. */
   for (i = 0; i < source->count; i++) {
     slot = &source->slots[i];
+    if (slot->subtype && (slot->source & LOCAL_STAGED || slot->subtype == LOCAL_DRAFT))
+      return -ERR_STATE;
     if (slot->generation > HANDLE_GENERATION_MAX ||
         (slot->subtype && slot->subtype < LOCAL_FLOOR && !slot->generation))
       return -ERR_INVALID;
@@ -1482,7 +1612,10 @@ localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count
     case LOCAL_MEM:
       if (!(slot->inherit & LOCAL_FORK))
         break;
-      error = forkmem(source, target, slot, forkbinding(bindings, count, memory(slot)));
+      binding.source = memory(slot);
+      error = localforkview(target, binding.source, &binding.target);
+      if (!error)
+        error = forkmem(source, target, slot, &binding);
       if (error)
         return error;
       break;
@@ -1509,15 +1642,10 @@ localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count
       return -ERR_NOTSUP;
     }
   }
-  for (i = 0; i < target->count; i++) {
-    generations[i] = target->slots[i].generation;
-    clearforkslot(&target->slots[i]);
-    target->slots[i].generation = source->slots[i].generation;
-  }
   for (i = 0; i < source->count; i++) {
     slot = &source->slots[i];
     dest = &target->slots[i];
-    if (!slot->subtype || slot->subtype >= LOCAL_FLOOR)
+    if (!slot->subtype || slot->subtype >= LOCAL_FLOOR || dest->subtype == LOCAL_DRAFT)
       continue;
     error = 0;
     if (slot->subtype == LOCAL_SPACE)
@@ -1529,8 +1657,10 @@ localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count
       if (!error)
         error = convert(sethold(policy.set));
     } else if (slot->subtype == LOCAL_MEM && (slot->inherit & LOCAL_FORK)) {
-      binding = forkbinding(bindings, count, memory(slot));
-      error = convert(memforkhold(binding->target, target->acct));
+      binding.source = memory(slot);
+      error = localforkview(target, binding.source, &binding.target);
+      if (!error)
+        error = convert(memforkhold(binding.target, target->acct));
     } else if ((slot->subtype == LOCAL_CALL || slot->subtype == LOCAL_SEND ||
                 slot->subtype == LOCAL_NOTIFY) &&
                (slot->inherit & LOCAL_FORK)) {
@@ -1539,7 +1669,10 @@ localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count
       continue;
     if (error)
       goto failed;
+    generation = dest->generation;
     copyforkslot(dest, slot);
+    dest->generation = generation;
+    dest->source |= LOCAL_STAGED;
     if (slot->subtype == LOCAL_SPACE) {
       dest->objectgen = target->space.generation;
       dest->object = target->space.index;
@@ -1552,20 +1685,103 @@ localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count
       dest->length = limits->exec_limit;
       dest->object = policy.set.index | (limits->resources << 8) | (limits->pending << 16);
     } else if (slot->subtype == LOCAL_MEM) {
-      binding = forkbinding(bindings, count, memory(slot));
-      dest->objectgen = binding->target.generation;
-      dest->object = binding->target.index;
-      dest->source = 3;
+      dest->objectgen = binding.target.generation;
+      dest->object = binding.target.index;
+      dest->source = 3 | LOCAL_STAGED;
     }
+  }
+
+  /* Providers retain their original-ID lookup fields until all other aliases
+     have acquired references. Then their existing manager becomes the MEM row. */
+  for (i = 0; i < target->count; i++) {
+    dest = &target->slots[i];
+    if (dest->subtype != LOCAL_DRAFT)
+      continue;
+    view = memory(dest);
+    generation = dest->generation;
+    copyforkslot(dest, &source->slots[i]);
+    dest->generation = generation;
+    dest->objectgen = view.generation;
+    dest->object = view.index;
+    dest->source = 3 | LOCAL_STAGED;
   }
   return 0;
 failed:
-  for (j = 0; j < target->count; j++) {
-    dest = &target->slots[j];
-    if (dest->subtype && removeentry(dest))
-      panic("fork table rollback reference");
-    clearforkslot(dest);
-    dest->generation = generations[j];
+  if (localforkdrop(target))
+    panic("fork staged table rollback");
+  return error;
+}
+int
+localforkfinish(Rtable *source, Rtable *target)
+{
+  Imageid identity;
+  Image   image;
+  Local  *slot;
+  u32     i;
+  if (!source || !target || source == target || source->state != LOCAL_OPEN ||
+      target->state != LOCAL_OPEN || !source->slots || !target->slots ||
+      source->count != target->count || source->count > LOCALS ||
+      imagefind(source->owner, source->image, &identity) || imagestat(identity, &image) ||
+      image.state != IMAGE_ACTIVE || imagefind(target->owner, target->image, &identity) ||
+      imagestat(identity, &image) || image.state != IMAGE_PREPARING)
+    return -ERR_STATE;
+  for (i = 0; i < target->count; i++) {
+    slot = &target->slots[i];
+    if (source->slots[i].generation > HANDLE_GENERATION_MAX || slot->subtype == LOCAL_DRAFT ||
+        (slot->subtype && !(slot->source & LOCAL_STAGED)) ||
+        (slot->subtype == LOCAL_FLOOR && source->slots[i].generation == HANDLE_GENERATION_MAX))
+      return -ERR_STATE;
   }
+  for (i = 0; i < target->count; i++) {
+    slot = &target->slots[i];
+    if (!slot->subtype)
+      clearforkslot(slot);
+    slot->generation = source->slots[i].generation;
+    slot->source &= ~LOCAL_STAGED;
+  }
+  return 0;
+}
+int
+localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count,
+          const Createarg *limits)
+{
+  const Forkbinding *binding;
+  Local             *slot;
+  Memid              original, view;
+  u32                i, j;
+  int                error;
+  if (!limits || count > LOCALS || (count && !bindings))
+    return -ERR_INVALID;
+  error = forktables(source, target, limits, 0);
+  if (error)
+    return error;
+  for (i = 0; i < count; i++) {
+    if (bindings[i].source.reserved || bindings[i].target.reserved)
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (sameid(bindings[i].source, bindings[j].source) ||
+          sameid(bindings[i].target, bindings[j].target))
+        return -ERR_INVALID;
+  }
+  for (i = 0; i < source->count; i++) {
+    slot = &source->slots[i];
+    if (slot->subtype != LOCAL_MEM || !(slot->inherit & LOCAL_FORK))
+      continue;
+    original = memory(slot);
+    if (!localforkview(target, original, &view))
+      continue;
+    binding = forkbinding(bindings, count, original);
+    error = binding ? localforkbind(source, target, i, binding->target) : -ERR_INVALID;
+    if (error)
+      goto failed;
+  }
+  error = localforkload(source, target, limits);
+  if (!error)
+    error = localforkfinish(source, target);
+  if (!error)
+    return 0;
+failed:
+  if (localforkdrop(target))
+    panic("fork table staged rollback");
   return error;
 }

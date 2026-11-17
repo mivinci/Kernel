@@ -751,6 +751,10 @@ def exercise(args, run_dir, record):
                     if journals != [dict(cases=4,aborted=1,committed=1,retired=1,failed=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("durable fork backing journal/last-release mismatch")
                     record["fork_journals"]=journals[0]
+                    staged=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKSTAGECHECK ")]
+                    if staged != [dict(cases=4,hidden=6,finished=1,dropped=1,overflow=1,abandoned=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork target-table staging/ownership/lineage mismatch")
+                    record["fork_staging"]=staged[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

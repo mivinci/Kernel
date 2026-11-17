@@ -208,7 +208,7 @@ def build(args, directory, run_dir):
             elif args.case == "sigsuspend":
                 sources += [ROOT / "tests/kernel/suspendtest.c", directory / "sdk/suspendimage.S"]
             elif args.case == "sigframe":
-                sources += [ROOT / "tests/kernel/sigframetest.c", ROOT / "tests/kernel/sigforktest.c", ROOT / "tests/kernel/forksnapshottest.c", ROOT / "tests/kernel/forklifetest.c", ROOT / "tests/kernel/forkjournaltest.c", ROOT / "tests/kernel" / args.arch / "forktrap.c", directory / "sdk/frameimage.S"]
+                sources += [ROOT / "tests/kernel/sigframetest.c", ROOT / "tests/kernel/sigforktest.c", ROOT / "tests/kernel/forksnapshottest.c", ROOT / "tests/kernel/forklifetest.c", ROOT / "tests/kernel/forkjournaltest.c", ROOT / "tests/kernel/forkstagetest.c", ROOT / "tests/kernel" / args.arch / "forktrap.c", directory / "sdk/frameimage.S"]
             elif args.case == "sigconfig":
                 sources += [ROOT / "tests/kernel/sigconfigtest.c", directory / "sdk/sigimage.S"]
             else:

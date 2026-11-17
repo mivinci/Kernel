@@ -781,4 +781,6 @@ Space和forksnapshot的映射内/未映射DATA均改用这份账本；删除对�
 
 本次只是分批克隆的回滚账本前置。树游标仍未进入Prep，Local/临时视图持有列表仍在同步C路径中，尚无每32页检查点或C栈被强杀后的完整移交；不能让这些账本以外的未托管责任跨调度存活。原生fork三调用仍NOTSUP。forksnapshot静态帧ARM6512/RV6256，各减512字节；新reap为ARM176/RV192，需纳入以后完整调用链栈深核验，单个.su不是证明。日志与源码/契约哈希归build/host/stage77-fork-backing-journal/；未执行CI、真实硬件或性能验收。
 
+后续接续：Local/未映射临时视图的管理引用现已移入目标表DRAFT/STAGED行，旧目标代次延迟到成功才覆盖，源表关闭后仍可独立清理，详见03末尾。本轮不改变Mem/PTE提交规则和布局；映射树游标与全局Space事务仍不可跨调度，不能据此宣称克隆C栈已可安全丢弃。
+
 本轮最终本地make unit全部547项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json核对所有结果与当前源码/头哈希，含两个FORKJOURNALCHECK、实际Mem96/Prep192/Proc512池尺寸、静态帧和normal无fixture。最初guest断言把退役源的MEM_BAD误当MEM_BUSY，失败串口与修正原因保留在证据中，未改变退役权限规则。未执行CI、真实硬件、性能、原生fork或分批检查点验收。
