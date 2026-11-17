@@ -86,6 +86,23 @@ open标志首版采用O_RDONLY=0、O_WRONLY=1、O_RDWR=2、O_CREAT=0x40、O_EXCL
 
 扩展阶段边界：net仍选lwIP NO_SYS raw模型、input/win/dis/PTY仍按12/13分工，串口MVP不需要冻结它们的每个socket选项/窗口消息。首版ABI中已为这些服务保留普通用户态协议演进空间，不提前添加内核网络/窗口对象；其实现前按同一设计验收流程冻结扩展协议，不以占位接口冒充本轮交付。
 
+## sh 对齐范围与缺口（2026-11-17）
+
+T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与转义、参数/变量展开（含默认值与长度）、算术展开、命令替换、here-doc、函数、`case`/`if`/`while`/`for`、管道、输入输出与 fd 重定向、命令分组与子 shell、背景任务、通配展开、内建命令（`cd`/`echo`/`export`/`set`/`unset`/`read`/`eval`/`exec`/`trap`/`umask`/`type`/`wait`）、`$?`/`$!`/`$$`/`$#`/`$@`/`$*`，以及作业控制（`jobs`/`fg`/`bg`、作业号与进程组）。
+
+当前全部未实现，所需宿主能力缺口如下：
+
+| 能力 | 归属 | 状态 |
+| --- | --- | --- |
+| 原生 fork / exec | 03 | fork 三调用 NOTSUP；exec 未实现 |
+| pipe / dup2 / 完整 fd 表 | 10 | 仅设计 |
+| 文件与目录（含通配所需目录枚举） | 10 | 未实现 |
+| 作业控制 STOP/CONT、前台组、控制终端 | 11 | 部分设计，STOP/CONT 未接 |
+| 真实信号来源（SIGINT/SIGQUIT/SIGTSTP/SIGCHLD） | 11 | 来源编码待确认，生产未接 |
+| 环境与 argv 传递 | 08 | 已实现 |
+
+不以本里程碑声明 POSIX shell 或完整 POSIX 已达标。
+
 ## 执行与验收
 
 全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。

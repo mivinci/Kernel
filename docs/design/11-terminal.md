@@ -314,6 +314,14 @@ Termarg位：iflag ICRNL=1；oflag OPOST=1、ONLCR=2；lflag ICANON=1、ECHO=2�
 
 异步安全允许表：read/write/close/dup/dup2、受检查信号配置/掩码/投递、waitpid、_exit、execve和_Fork按预付上下文支持；普通fork只在未使用不安全钩子时可用，malloc/free/stdio/目录流/posix_spawn不承诺handler重入。容量不足返回各接口明确错误，不借外层槽。handler中_Fork后，子不接管父未完成服务操作；外层尚未知且仅父能查询的业务在子固定EINTR、不自动SA_RESTART查询父身份；已完成快照仍可在子交付。这一首版边界明确列为兼容限制，不能重复父读写来补全未知结果。
 
+### tty 后端与作业控制（2026-11-17）
+
+tty 的行规程、回显、模式、前台组与 `WINCH` 必须与"终端从哪来"解耦：serial 与 pty 是同一服务的两种后端，首版即按可插拔后端实现，避免接入 PTY 时重写。
+
+PTY 从端经 `/dev/pts` 打开，故由 T3 提供路径能力后交付；主端只授予创建者或明确继承者。图形窗口与串口终端不得共用同一终端实例。
+
+T4 的 sh 要求作业控制可用，故 STOP/CONT、前台组切换与控制终端语义属于 sh 的前置，不是可延后项；它们与 07 的 ready/gate 前台切换方案共用同一套组与终端代次规则。
+
 ## 执行与验收
 
 - [ ] 两架构信号PC先进入trampoline，六个入口参数与原TF分开，a3/x3的handler地址不会被误读为原RPC；普通返回地址0不得跳回任意旧代码。
