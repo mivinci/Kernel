@@ -17,13 +17,13 @@
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生sigsuspend的独占等待/M-W-H恢复，原生HANDLER仍NOTSUP。真实信号来源、STOP/CONT、普通阻塞中断/重启及libc前置未接。
-- 独立libsys SDK、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
+- 独立libsys SDK、CPU私有virtio描述符管理核心、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
 - 一次性PID1及专用预校验描述装载器已接；真实用户测试覆盖三代孤儿收取、组wait BLOCKED/READY强杀与PID1退出致命。载荷仍在tests/kernel，生产sbin/init、启动包/SYSTEM/设备发权未接；normal仍初始化后停止。
 
 ## 最新本地验证
 
-- 本地make unit通过341项，格式及make test-qemu的104个两架构场景全部通过；日志`build/host/stage53-mmio-groups/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- 新mmiogroup验证完整成员/精确页、ARM一页8个virtio窗口的用户Device magic/version=2读取、同Set跨Acct拒绝与最后unmap后的交接；RV独占页复用原租约。初次实际读version1后已固定force-legacy=false，失败/读回保留。原IRQ/进程/IPC/运行库全量通过；可信发权不等于生产SYSTEM/设备策略，队列/DMA/设备I/O仍待接。
+- 本地make unit通过356项，格式及make test-qemu的104个两架构场景全部通过；日志`build/host/stage55-virtqueue/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
+- 新mmiogroup验证完整成员/精确页、ARM一页8个virtio窗口的用户Device magic/version=2读取、同Set跨Acct拒绝与最后unmap后的交接；RV独占页复用原租约。初次实际读version1后已固定force-legacy=false，失败/读回保留。新增描述符128槽预留/发布/批量完成校验，host含4000步守恒，runtime每架构queues=15；原IRQ/进程/IPC/运行库全量通过。可信发权不等于生产SYSTEM/设备策略，共享环/DMA/设备I/O仍待接。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

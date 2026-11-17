@@ -53,6 +53,7 @@ def build(args):
     shutil.copyfile(ROOT / 'lib/libsys/private/start.h', sdk / 'private/start.h')
     shutil.copyfile(ROOT / 'lib/libsys/private/elf.h', sdk / 'private/elf.h')
     shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
+    shutil.copyfile(ROOT / 'lib/libvirtio/private/queue.h', sdk / 'private/virtqueue.h')
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
     sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
@@ -75,6 +76,18 @@ def build(args):
     if temporary.exists():temporary.unlink()
     invoke('archive', [tools['ar']['path'], 'rcs', str(temporary), *[str(obj) for _, obj in units[:-1]]])
     os.replace(temporary, archive)
+    virtio_source = ROOT / 'lib/libvirtio/queue.c'
+    virtio_object = sdk / 'obj/libvirtio/queue.o'
+    virtio_object.parent.mkdir(parents=True, exist_ok=True)
+    command = [tools['cc']['path'], *flags, '-c', str(virtio_source), '-o', str(virtio_object)]
+    invoke('compile-virtqueue', command)
+    read_elf(virtio_object, profile['machine'])
+    entries.append(dict(directory=str(ROOT), file=str(virtio_source), output=str(virtio_object), arguments=command))
+    virtio_archive = sdk / 'libvirtio.a'
+    virtio_temporary = sdk / 'libvirtio.tmp.a'
+    if virtio_temporary.exists():virtio_temporary.unlink()
+    invoke('archive-virtio', [tools['ar']['path'], 'rcs', str(virtio_temporary), str(virtio_object)])
+    os.replace(virtio_temporary, virtio_archive)
     artifact = sdk / 'libsysuser.elf'
     linker = sdk / 'user.ld'
     shutil.copyfile(ROOT / 'lib/libsys/user.ld', linker)
@@ -124,13 +137,13 @@ def build(args):
     temporary_runtime = sdk / 'runtimeuser.tmp.elf'
     invoke('link-runtime', [tools['ld']['path'], '-m', profile['emulation'], '-T', str(linker), '--gc-sections',
                             '--build-id=none', '-Map=' + str(sdk / 'runtimeuser.map'), str(crt),
-                            str(extra_units[-1][1]), str(libc_archive), str(archive), '-o', str(temporary_runtime)])
+                            str(extra_units[-1][1]), str(virtio_archive), str(libc_archive), str(archive), '-o', str(temporary_runtime)])
     read_elf(temporary_runtime, profile['machine'], kind=2)
     runtime_content = pack(temporary_runtime.read_bytes(), profile['machine'], 128)
     os.replace(temporary_runtime, runtime)
     runtime_inspect = invoke('inspect-runtime', [tools['readelf']['path'], '-h','-l','-s',str(runtime)])
     trace_rows = [line.split() for line in runtime_inspect.splitlines() if line.split() and line.split()[-1] == 'runtime_trace']
-    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 88:
+    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 96:
         raise BuildError('runtime trace symbol is missing or has wrong size')
     trace_address = int(trace_rows[0][1],16)
     runtime_image = sdk / 'runtimeuser.img'
@@ -246,15 +259,16 @@ def build(args):
     kernel = json.loads(previous.read_text()) if previous.exists() else []
     kernel = [x for x in kernel if '/sdk/' not in x['output']]
     compilation_database(directory, kernel + entries)
-    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h']
+    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h']
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
+                    libvirtio_archive=str(virtio_archive.relative_to(ROOT)), libvirtio_sha256=digest(virtio_archive),
                     libsys_sha256=digest(archive), libc_sha256=digest(libc_archive), crt_sha256=digest(crt),
                     runtime_artifact=str(runtime.relative_to(ROOT)), runtime_artifact_sha256=digest(runtime),
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + libc_sources + csu_sources + [runtime_source,parent_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user, virtio_source] + libc_sources + csu_sources + [runtime_source,parent_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

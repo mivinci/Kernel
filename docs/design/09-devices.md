@@ -177,3 +177,15 @@ IRQ_SOURCE/原生bind及生产设备发权的待确认项继续保持关闭；�
 现有规格要求设备域、固定引用和真实停止，但未冻结域的授权及结束操作。候选：每设备实例使用独立代次域，可信init安装绑定该域的ALLOC；DMA Mem从分配起持有固定引用，free/退出只撤普通引用。当前驱动或临时恢复实例在确认停止并完成同步后，经专用受权操作结束旧域，解除其固定；结束后旧域不能再分配、查询地址或同步，新实例另取新代次。无法确认停止则保留页及原Acct费用，每设备1024页上限不得跨实例重启绕过。不将sync AFTER视为停止证明，不增加内核逐请求所有权表。
 
 候选方向已提问；具体权限、调用号、结束前CPU访问撤销、恢复同步授权和失败原子性仍须在确认方向后完整冻结，当前不实现候选ABI或DMA分配。
+
+### virtio 描述符所有权核心（2026-11-17）
+
+`lib/libvirtio/queue.c`现提供CPU私有Vq与128个Vslot（每槽16字节、整表2072字节），无动态分配、libc或内核HAL依赖；两架构SDK分别生成libvirtio.a及clangd条目。内部接口为vqinit/vqreserve/vqpublish/vqcancel/vqcomplete，不是新syscall或冻结的公开设备协议。引用[OASIS virtio 1.3 CSD01](https://docs.oasis-open.org/virtio/virtio/v1.3/csd01/virtio-v1.3-csd01.html)的2.7.5/2.7.8：used.id为链首，used.len只计设备可写部分；本实现不协商IN_ORDER/INDIRECT等改变这些假设的特性。
+
+状态为FREE→RESERVED→PUBLISHED→FREE，链成员单列MEMBER；预留整链不足时无副作用，只允许取消RESERVED。传输适配器校验设备域/地址/长度、填写DMA描述符并同步后，先标记PUBLISHED再公开avail.idx；一旦可能公开，不可因门铃尚未写或错误返回而取消。完成入口接收已获取并复制到CPU私有区的至多32项used快照，先整批验证链首/在途/长度/批内重复，再返还cookie与链；任一损坏将队列标broken，保留全部链且不修改输出，不凭错误完成回收缓冲。整个队列由单线程串行访问，输入、输出与Vq互不重叠。
+
+例：A预留3槽但同步失败，未公开时可取消并退回3槽；发布A和B后，快照含合法A及越界B编号，整批失败并保留两链，而不是先释放A再发现B有错。有效乱序B/A可一次归还两链；完成仅归还描述符编号，后续数据AFTER失败仍须停提交，不交付/复用其数据缓冲，也不解除DMA固定。队列世代参数只拒绝旧软件会话；硬件used没有世代字段，不能识别复用编号上的任意伪造完成，更不能替代真实停止/复位后的实例隔离。vqinit只初始化新私有存储，不是设备复位。
+
+7项host直接调用生产C实现，含4000步固定种子随机整链分区/守恒、128槽耗尽、32项乱序、取消边界、旧会话及损坏整批保留。runtime用户载荷在每架构5个main分别运行全链/乱序/损坏3组检查，CPU与主机核对queues=15及页/Acct回到基线。此切片尚无共享环idx访问、DMA同步/门铃、特性协商或真实设备I/O；仍须按本篇后续验收连接传输、DMA和blk/net，不能称virtio驱动已交付。
+
+本地make unit全部356项、make fmt-check、make test-qemu全部104个两架构场景通过，证据build/host/stage55-virtqueue/，含原始运行目录及源码哈希。最初非提权QEMU因QMP socket沙箱限制未启动，保留原失败200d46d3c1f74249aaae4f382425482d；随后正常提权运行通过。没有CI、真实硬件、性能或真实virtio DMA I/O结论。

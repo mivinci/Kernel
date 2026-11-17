@@ -118,9 +118,9 @@ runtimetest(void)
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u64        trace[11], bytes;
+  u64        trace[12], bytes;
   u32        mode, i, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0,
-                     formats = 0, groups = 0;
+                     formats = 0, groups = 0, queues = 0;
   int error;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
@@ -150,13 +150,15 @@ runtimetest(void)
       rejected++;
     } else {
       REQUIRE(trace[0] == 1 && trace[1] == 123 && trace[4] == mode && trace[5] == 1 &&
-              trace[6] == 42 && trace[8] == 55 && trace[9] == 24 && trace[10] == 21);
+              trace[6] == 42 && trace[8] == 55 && trace[9] == 24 && trace[10] == 21 &&
+              trace[11] == 3);
       REQUIRE(trace[2] == (mode == 3 ? 0 : 21) && trace[3] == (mode == 3 ? 0 : 12));
       REQUIRE(trace[7] == (mode == 1 ? 30 : 0));
       mains++;
       numbers += (u32) trace[8];
       formats += (u32) trace[9];
       groups += (u32) trace[10];
+      queues += (u32) trace[11];
       REQUIRE(!groupnames(life.group, &pgid, &sid) && pgid == pid && sid == pid);
       if (mode != 3) {
         callbacks += 2 + (u32) trace[7];
@@ -190,6 +192,8 @@ runtimetest(void)
   puthex(formats);
   putstr(" groups=");
   puthex(groups);
+  putstr(" queues=");
+  puthex(queues);
   putstr(" charged=");
   puthex(account.charged);
   putstr(" allocated=");

@@ -7,7 +7,8 @@
 #include <sys/channel.h>
 #include "private/libc.h"
 #include "private/syscall.h"
-volatile u64        runtime_trace[11];
+#include "private/virtqueue.h"
+volatile u64        runtime_trace[12];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -266,6 +267,41 @@ finishfirst(void)
   REQUIRE(runtime_trace[3] == 1, 158);
   runtime_trace[3] = 12;
 }
+static u32
+queuecheck(void)
+{
+  Vq    q;
+  Vused used[VQ_BATCH];
+  Vdone done[VQ_BATCH];
+  u32   head, i;
+  REQUIRE(!vqinit(&q, 7), 220);
+  REQUIRE(!vqreserve(&q, VQ_SIZE, 512, 0x1234, &head) && !q.free, 221);
+  REQUIRE(!vqpublish(&q, head) && vqcancel(&q, head) == -ERR_STATE, 222);
+  used[0].id = head;
+  used[0].length = 512;
+  REQUIRE(!vqcomplete(&q, 7, used, 1, done) && q.free == VQ_SIZE && done[0].cookie == 0x1234 &&
+              done[0].length == 512,
+          223);
+  for (i = 0; i < VQ_BATCH; i++) {
+    REQUIRE(!vqreserve(&q, 1, i, i + 100, &head) && !vqpublish(&q, head), 224);
+    used[VQ_BATCH - i - 1].id = head;
+    used[VQ_BATCH - i - 1].length = i;
+  }
+  REQUIRE(!vqcomplete(&q, 7, used, VQ_BATCH, done) && q.free == VQ_SIZE, 225);
+  for (i = 0; i < VQ_BATCH; i++)
+    REQUIRE(done[i].cookie == VQ_BATCH - i - 1 + 100 && done[i].length == VQ_BATCH - i - 1 &&
+                !done[i].reserved,
+            226);
+  REQUIRE(!vqreserve(&q, 2, 8, 9, &head) && !vqpublish(&q, head), 227);
+  used[0].id = used[1].id = head;
+  used[0].length = used[1].length = 8;
+  done[0].cookie = done[1].cookie = 0xdead;
+  REQUIRE(vqcomplete(&q, 7, used, 2, done) == -ERR_PEER && q.broken && q.free == VQ_SIZE - 2 &&
+              q.slots[head].state == VQ_PUBLISHED && done[0].cookie == 0xdead &&
+              done[1].cookie == 0xdead,
+          228);
+  return 3;
+}
 int
 main(int argc, char **argv)
 {
@@ -340,6 +376,7 @@ main(int argc, char **argv)
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
   runtime_trace[10] = groupcheck();
+  runtime_trace[11] = queuecheck();
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)
