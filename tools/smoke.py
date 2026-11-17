@@ -798,6 +798,10 @@ def exercise(args, run_dir, record):
                             {"contexts": 2, "restore": 2, "rejected": 16, "cookies": 1, "rollback": 2, "reused": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("signal reservation/reference/reuse mismatch")
                     record["signal_reservations"] = checks[0]
+                    fork_contexts=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKCTXCHECK ")]
+                    if fork_contexts != [dict(cases=2,resumed=2,fix=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork child return-frame execution mismatch")
+                    record["fork_contexts"]=fork_contexts[0]
                 if args.case == "createauth":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("CREATECHECK ")]
                     if (len(checks) != 1 or

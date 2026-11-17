@@ -1,6 +1,7 @@
 #include <hal/context.h>
 #include <abi/boot.h>
 #include <abi/signal.h>
+#include <abi/syscall.h>
 STATIC_ASSERT(SIGNAL_FRAME_TF + sizeof(Hctx) == SIGNAL_FRAME_ARM_BYTES, signal_context_frame_size);
 STATIC_ASSERT(SIGNAL_FRAME_TF + offsetof(Hctx, fp) == SIGNAL_FRAME_FP, signal_context_fp_offset);
 void
@@ -147,5 +148,25 @@ hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate)
   out->fp.fpcr = fpcr;
   out->fp.fpsr = fpsr;
   out->fp.reserved = 0;
+  return 0;
+}
+
+int
+hal_user_fork(Hctx *out, const Hctx *parent, u64 pid, u64 fixva)
+{
+  u32 i;
+  if (!out || !parent || out == parent || pid <= 1 || handlekind((Handle) pid) != HANDLE_PROCESS ||
+      (fixva && (fixva < BOOT_USER_LO || fixva >= BOOT_USER_HI || (fixva & 7))) ||
+      ((parent->tf.cause >> 26) & 63) != 0x15 || parent->tf.x[8] != SYS_FORKPREP ||
+      parent->tf.pc < BOOT_USER_LO + 4)
+    return HAL_CONTEXT_BAD;
+  if (hal_signal_restore(out, parent, parent))
+    return HAL_CONTEXT_BAD;
+  out->tf.x[0] = out->tf.x[1] = 0;
+  out->tf.x[2] = pid;
+  out->tf.x[3] = fixva;
+  for (i = 4; i <= 7; i++)
+    out->tf.x[i] = 0;
+  out->tf.x[9] = 0;
   return 0;
 }

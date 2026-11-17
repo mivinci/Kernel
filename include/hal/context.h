@@ -46,6 +46,13 @@ int  hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate);
 u64  hal_syscall_arg(const Hctx *context, u32 slot);
 void hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8]);
 void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);
+/* Derive a disjoint child user frame from a fully saved raw forkprep trap.
+   Child returns status=0, first result=0, PID in second, Fix in third; other
+   outputs/image metadata are zero. RV advances PC once; ARM retains ELR.
+   Validates only register/encoding boundaries, never PID/Fix authority or
+   mapped permissions. fixva=0 is allowed for an unpublished preparation.
+   Parent and output stay unchanged on error; buffers must be disjoint. */
+int  hal_user_fork(Hctx *out, const Hctx *parent, u64 pid, u64 fixva);
 void hal_trap_decode(const Hctx *context, Htrap *trap);
 /* Ordinary lower-privilege store permission/page fault eligible for COW.
    Core still verifies logical mapping, marker and ownership. No mutation. */

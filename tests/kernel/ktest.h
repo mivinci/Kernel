@@ -30,6 +30,7 @@ void grouptest(void);
 void statstest(void);
 void createtest(void);
 void signaltest(void);
+void forkcontexttest(void);
 void spawntest(void);
 void libsysload(void);
 void runtimetest(void);

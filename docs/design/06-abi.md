@@ -350,3 +350,5 @@ IRQ原生接续（2026-11-17）：已接0x71单输入IRQ_BIND ACK及0x72双输�
 上述ACK/解绑及生命周期的最终完整回归通过321项host和102个双架构QEMU；未用输入、外表Handle、旧代、消费边界和真实硬件EVENT由05的新场景核验。0x70保留NOTSUP，Source撤销决策未采用候选默认。
 
 原生HANDLER接续（2026-11-17）：sigaction的48字节/三个参数保持，现接两入口用户RX/普通映射检查后才交付old并提交；输入输出别名使用快照，原生旧输出失败不换动作。NODEFER/RESETHAND/SIGINFO已可用于原生自定义trampoline，RESTART/NOCLDSTOP仍NOTSUP；递送重查及证据见11末尾。libc mask接口依旧使用原生寄存器old值，故公开sigprocmask的old复制失败发生在已提交mask之后，不回滚；没有新增old指针原生参数或魔法查询how。
+
+fork现场接续（2026-11-17）：共享syscall头补入已冻结的SYS_FORKPREP=0x49、SYS_FORKCOMMIT=0x4a、SYS_FORKABORT=0x4b，原生分派仍返回NOTSUP。HAL子现场派生遵循03的返回布局，非IPC的t0/x9=0；实际Image身份通过getid取得，不塞入返回元数据。本轮双架构用户执行验证仅覆盖可信合成现场的恢复，不表示原生fork已实现，详见03末尾。

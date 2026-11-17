@@ -210,3 +210,5 @@ CASE=cow现另验证整个Space映射快照：私有DATA按Mem去重、代码SEA
 locals现另验可信fork资源表继承：原Handle值、SELF/私有Mem重绑定、SHARED/代码动态权限、CREATE减权和未继承墓碑，包含未映射Mem视图；两架构实际写及最终回收独立核对。Space与Local尚为独立准备层，原生fork统一提交、执行续点和Fix仍待接。
 
 sigframe现另验fork信号银行快照：保留动作/mask而清pending、两层孩子cookie与父帧隔离、父cookie拒绝及COW SP的逻辑可写恢复。新增组合检查在内核中恢复生产Hctx，不执行真实子fork返回；原11个用户信号场景继续验证实际handler/sigreturn。统一fork事务/续点/Fix仍待接。
+
+sigreserve现另验HAL派生的fork子返回现场：两架构各运行零Fix和只读标记两个用户续点，核对系统调用后首条指令、整数/FP状态及getid。原始陷阱现场由可信fixture合成；标记不是运行库Fix，原生forkprep/commit/abort及统一准备事务仍未接通。

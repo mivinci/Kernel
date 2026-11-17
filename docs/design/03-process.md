@@ -1352,3 +1352,13 @@ locals两架构新增可信组合场景：先用完整Space快照得到映射视
 本地make unit全部506项、make fmt-check及make test-qemu全部110个两架构场景通过；精确目录/Local、Mem、Space源码和契约头哈希、两个LOCALFORKCHECK及1536字节静态帧证据归build/host/stage72-local-fork/。普通镜像不含fixture，编译数据库由构建同步。没有CI、目标真实硬件、性能或完整原生fork执行/发布验收。
 
 信号继承接续（2026-11-17）：现接独立sigfork银行快照，保留动作/mask、清pending，已支持活动用户层的孩子cookie重绑定和逻辑COW返回SP校验；父Rq/未完成等待/运行库重启责任不复制，半附着等待明确拒绝。规则、固定成本、host及双架构可信银行组合验证边界见11末尾。Space/Local/Signal仍需纳入统一准备对象，并复制真实fork调用返回现场和Fix后再原生发布，不能将这三层独立机制串联称为完整fork。
+
+### fork 子返回现场派生（2026-11-17）
+
+新增HAL内部hal_user_fork，从已保存的原始forkprep陷阱现场派生未发布孩子Hctx；验证完整用户权限/PC/SP/FP及PID编码，失败不修改输入输出。RV64从ECALL PC前进4，ARM64的ELR已在SVC之后，不再前进。子status=0、a1/x1=0、a2/x2=自身PID、a3/x3=fixva，其余结果寄存器清零；非IPC元数据t0/x9清零，其余整数/FP/条件状态保留，父现场不变。准备期允许fixva=0；非零仅检查用户范围和8字节对齐，最终Fix内容、只读映射与发布资格必须由尚未接入的上层验证。
+
+3项host测试按两架构真实结构逐字节检查保留和失败原子性。sigreserve各新增两个真实用户执行场景：可信构造的原始陷阱现场派生后，执行系统调用后的第一条指令，核对返回寄存器、保留整数/FP/条件状态，再实际getid核对自身身份并退出42；零Fix及只读测试标记地址各一组，最后账目和物理页归基线。测试标记不是运行库Fix格式，原始现场由fixture合成，不是一次成功的原生forkprep捕获。
+
+Space/Local/Signal/现场仍为独立机制；统一Prep事务、真实forkprep/commit/abort、Fix和服务引用修复尚待接通。本轮没有新增持久元数据，普通镜像不含fixture。验证证据归build/host/stage74-fork-context/；本地测试结果见status，不代表CI、真实硬件或性能验收。
+
+本地make unit全部519项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json逐项核对结果及当前源码/头文件哈希，含两架构FORKCTXCHECK与普通镜像无fixture检查。未执行CI、真实硬件或性能验收。

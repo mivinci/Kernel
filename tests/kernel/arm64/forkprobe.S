@@ -1,0 +1,115 @@
+#include <abi/syscall.h>
+.arch armv8-a+fp+simd
+.section .rodata
+.balign 4
+.global fork_code_begin,fork_code_end
+fork_code_begin:
+ svc #0
+ add x20,x20,#1
+ mrs x17,nzcv
+ movz x18,#0xa000,lsl #16
+ cmp x17,x18
+ b.ne 1f
+ cbnz x0,1f
+ cbnz x1,1f
+ cmp x2,x19
+ b.ne 1f
+ cmp x3,x21
+ b.ne 1f
+ cbnz x4,1f
+ cbnz x5,1f
+ cbnz x6,1f
+ cbnz x7,1f
+ cbnz x9,1f
+ mov x17,#0x1015
+ cmp x20,x17
+ b.ne 1f
+ mov x17,#0x100a
+ cmp x10,x17
+ b.ne 1f
+ mov x17,#0x100b
+ cmp x11,x17
+ b.ne 1f
+ mov x17,#0x100c
+ cmp x12,x17
+ b.ne 1f
+ mov x17,#0x100d
+ cmp x13,x17
+ b.ne 1f
+ mov x17,#0x100e
+ cmp x14,x17
+ b.ne 1f
+ mov x17,#0x100f
+ cmp x15,x17
+ b.ne 1f
+ mov x17,#0x1010
+ cmp x16,x17
+ b.ne 1f
+ mov x17,#0x1016
+ cmp x22,x17
+ b.ne 1f
+ mov x17,#0x101c
+ cmp x28,x17
+ b.ne 1f
+ mov x17,#0x101d
+ cmp x29,x17
+ b.ne 1f
+ mov x17,#0x101e
+ cmp x30,x17
+ b.ne 1f
+ umov x17,v31.d[0]
+ mov x18,#0x5678
+ cmp x17,x18
+ b.ne 1f
+ umov x17,v31.d[1]
+ cmp x17,x18
+ b.ne 1f
+ mrs x17,fpcr
+ mov x18,#0x01800000
+ cmp x17,x18
+ b.ne 1f
+ mrs x17,fpsr
+ movz x18,#0x009f
+ movk x18,#0x0800,lsl #16
+ cmp x17,x18
+ b.ne 1f
+ cbz x21,2f
+ ldr x17,[x21]
+ mov x18,#0x4711
+ cmp x17,x18
+ b.ne 1f
+2:
+ mov x0,xzr
+ mov x1,xzr
+ mov x2,xzr
+ mov x3,xzr
+ mov x4,xzr
+ mov x5,xzr
+ mov x6,xzr
+ mov x7,xzr
+ mov x8,#SYS_GETID
+ svc #0
+ cbnz x0,1f
+ cmp x1,x19
+ b.ne 1f
+ cmp x2,#1
+ b.ne 1f
+ cmp x3,#1
+ b.ne 1f
+ mov x0,#42
+ b 3f
+1:
+ mov x0,#210
+3:
+ mov x1,xzr
+ mov x2,xzr
+ mov x3,xzr
+ mov x4,xzr
+ mov x5,xzr
+ mov x6,xzr
+ mov x7,xzr
+ mov x8,#SYS_EXIT
+ svc #0
+ .word 0
+fork_code_end:
+.section .note.GNU-stack,"",%progbits

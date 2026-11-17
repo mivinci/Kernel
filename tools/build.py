@@ -218,7 +218,7 @@ def build(args, directory, run_dir):
         if args.case == "irqchip":
             sources += [ROOT / "tests/kernel/chiptest.c", ROOT / "tests/kernel" / args.arch / "chipprobe.c"]
         if args.case == "sigreserve":
-            sources += [ROOT / "tests/kernel/signaltest.c", ROOT / "tests/kernel" / args.arch / "sigcontext.c", ROOT / "tests/kernel" / args.arch / "sigcontextprobe.S"]
+            sources += [ROOT / "tests/kernel/signaltest.c", ROOT / "tests/kernel/forkcontexttest.c", ROOT / "tests/kernel" / args.arch / "forkcontext.c", ROOT / "tests/kernel" / args.arch / "forkprobe.S", ROOT / "tests/kernel" / args.arch / "sigcontext.c", ROOT / "tests/kernel" / args.arch / "sigcontextprobe.S"]
         if args.case == "createauth":
             sources += [ROOT / "tests/kernel/createtest.c"]
         if args.case == "stats":

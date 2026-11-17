@@ -53,6 +53,7 @@ testmain(Hvs *space, const Dtinfo *hardware)
   putstr("READY spawn-restored\n");
 #elif BOOT_CASE == 37
   signaltest();
+  forkcontexttest();
   putstr("READY sigreserve-restored\n");
 #elif BOOT_CASE == 36
   createtest();
