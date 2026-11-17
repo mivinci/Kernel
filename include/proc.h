@@ -94,6 +94,15 @@ int  procidentity(Handle *pid, u64 *image, Handle *parent);
 void procyield(void);
 void procpausevm(void);
 void procresumevm(void);
+/* Trusted fork continuation only. enter requires an owned abortable Space
+   transaction and paused current user root. yield keeps the kernel root on
+   dispatch; no transient leaf/borrow may cross it. leave returns ownership to
+   the synchronous caller before commit or after abort, still VM-paused.
+   Termination of a suspended scope transfers its Prep to CPU rollback first.
+   No native admission, IRQ window, STOP policy or arbitrary VM work is enabled. */
+int  procforkenter(Prepid prep);
+void procforkyield(void);
+int  procforkleave(void);
 /* Completed-user-trap COW write resolution; success retries original PC. */
 int proccowfault(struct Hctx *context);
 u64 proccowfaults(void);

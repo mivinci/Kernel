@@ -840,3 +840,5 @@ Space64/Mmap64/Spacetxn64/Prep256/Mem96/Local48/Proc512及固定池均不增长�
 本轮最终565项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、normal无fixture、两个FORKFREEZECHECK及实际固定池大小。统一标记前被停止的回归另存test-qemu-split-markers.log，不计入最终110场景。未执行CI、真实硬件、性能、CPU回滚接管或原生fork验收。
 
 CPU接管接续：03末尾现接可信显式prepforkabandon，将取消后的目标表和准确Space事务交给prepwork，先分批drain Local再逐批Space abort；独立worker引用保证Space释放其引用后Prep仍存活。已开始commit不允许反向撤销。Space事务及固定记录大小不变；真实KILL/调度续点尚未接，不改变本篇IRQ屏蔽/无其他VM工作约束。
+
+调度接续：03末尾现接可信登记的内核root C续点，及真实CONTROL terminate/当前退出对该登记的CPU回滚移交。两架构已实际切换/恢复C栈或永不恢复被终止栈；不激活冻结用户root。Space构建/日志的全局映射链仍未隔离无关VM变更，不能据此开放任意用户工作或原生fork检查点；本轮无IRQ窗口或STOP/CONT支持。

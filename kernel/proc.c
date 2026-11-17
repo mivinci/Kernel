@@ -13,14 +13,19 @@
 #include <irq.h>
 #include <device.h>
 #include <fork.h>
-#define CONFIG_IMAGE 1
-#define CONFIG_FORK  2
+#define CONFIG_IMAGE  1
+#define CONFIG_FORK   2
+#define CONFIG_KERNEL 0x80
 
 typedef struct Proc     Proc;
 typedef union Procstage Procstage;
 union Procstage
 {
   Config config;
+  struct
+  {
+    Prepid prep;
+  } fork;
   struct
   {
     Rqid request;
@@ -692,7 +697,9 @@ procrunone(void)
   current = p;
   p->state = PROC_RUNNING;
   reschedule_requested = 0;
-  if (spaceactivate(p->space))
+  if (p->configured & CONFIG_KERNEL)
+    vm_paused = 1;
+  else if (spaceactivate(p->space))
     panic("process root activation");
   if (timer_enabled) {
     u64 ticks = hal_clock_read();
@@ -704,6 +711,8 @@ procrunone(void)
   if (clockmono(&dispatched))
     panic("dispatch clock range");
   hal_ctx_switch(&cpu, &p->kernel);
+  if (vm_paused)
+    panic("process left paused VM on CPU");
   if (cputime(p, &p->cpu_ns))
     panic("CPU accounting range");
   current = NULL;
@@ -721,6 +730,15 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
     panic("process image/request exit");
   /* Withdraw every unpublished child before deferred Local/VM teardown. */
   prepownerclose(&p->resources);
+  if (p->configured & CONFIG_KERNEL) {
+    Prepid prep = p->stage.fork.prep;
+    if (prepforkabandon(prep))
+      panic("terminated fork continuation handoff");
+    p->configured &= ~CONFIG_KERNEL;
+    p->stage.wait.kind = 0;
+    if (prepdrop(prep))
+      panic("terminated fork continuation reference");
+  }
   if (rqmailclose(&p->incoming, 32) < 0)
     panic("process incoming exit");
   if (acctclose(p->acct))
@@ -732,8 +750,12 @@ procexit(u32 reason, u32 code, const Lifefault *fault)
   Proc *p = current;
   if (!p || p->state != PROC_RUNNING)
     panic("process exit source");
+  if (vm_paused && !(p->configured & CONFIG_KERNEL))
+    panic("unowned paused VM exit");
   end(p, reason, code, fault);
-  if (spacedeactivate())
+  if (vm_paused)
+    vm_paused = 0; /* The terminating continuation already uses the kernel root. */
+  else if (spacedeactivate())
     panic("process exit root");
   hal_ctx_switch(&p->kernel, &cpu);
   panic("ended process resumed");
@@ -957,9 +979,65 @@ procpausevm(void)
 void
 procresumevm(void)
 {
-  if (!current || current->state != PROC_RUNNING || !vm_paused || spaceactivate(current->space))
+  if (!current || current->state != PROC_RUNNING || !vm_paused ||
+      current->configured & CONFIG_KERNEL || spaceactivate(current->space))
     panic("VM resume source");
   vm_paused = 0;
+}
+
+int
+procforkenter(Prepid prep)
+{
+  Prepinfo info;
+  u32      i;
+  int      error;
+  if (!current || current->state != PROC_RUNNING || !vm_paused ||
+      current->configured & CONFIG_KERNEL || current->stage.wait.kind)
+    return -ERR_STATE;
+  if (prepstat(prep, &info) || !info.target)
+    return -ERR_REVOKED;
+  error = prepsnapshotcheck(prep, &current->resources, info.target);
+  if (error)
+    return error;
+  if (spacesnapshotabortcheck(current->space, info.space))
+    return -ERR_STATE;
+  error = prephold(prep);
+  if (error)
+    return error;
+  for (i = 0; i < sizeof(current->stage); i++)
+    ((u8 *) &current->stage)[i] = 0;
+  current->stage.fork.prep = prep;
+  current->configured |= CONFIG_KERNEL;
+  return 0;
+}
+
+void
+procforkyield(void)
+{
+  Proc    *p = current;
+  Prepinfo info;
+  if (!p || p->state != PROC_RUNNING || !vm_paused || !(p->configured & CONFIG_KERNEL) ||
+      prepstat(p->stage.fork.prep, &info) || spacesnapshotabortcheck(p->space, info.space))
+    panic("fork kernel continuation boundary");
+  p->state = PROC_READY;
+  ready(p);
+  vm_paused = 0;
+  hal_ctx_switch(&p->kernel, &cpu);
+  if (current != p || p->state != PROC_RUNNING || !vm_paused || !(p->configured & CONFIG_KERNEL))
+    panic("fork kernel continuation resume");
+}
+
+int
+procforkleave(void)
+{
+  Prepid prep;
+  if (!current || current->state != PROC_RUNNING || !vm_paused ||
+      !(current->configured & CONFIG_KERNEL))
+    return -ERR_STATE;
+  prep = current->stage.fork.prep;
+  current->configured &= ~CONFIG_KERNEL;
+  current->stage.fork.prep.generation = 0;
+  return prepdrop(prep);
 }
 int
 proccowfault(Hctx *context)

@@ -779,6 +779,10 @@ def exercise(args, run_dir, record):
                             not 12 < cleanup[0].get("work",0) < 200):
                         raise SmokeError("fork CPU cleanup ownership/drain-before-tree/source-independent rollback mismatch")
                     record["fork_cleanup_handoff"]=cleanup[0]
+                    continuations=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKCONTCHECK ")]
+                    if continuations != [dict(cases=3,resumed=1,killed=1,self_killed=1,peer_progress=3,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork kernel-root continuation/resume/termination transfer mismatch")
+                    record["fork_kernel_continuation"]=continuations[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

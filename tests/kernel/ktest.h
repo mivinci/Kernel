@@ -74,4 +74,5 @@ void forktreetest(void);
 void forkbuildtest(void);
 void forkfreezetest(void);
 void forkcleantest(void);
+void forkcontinuetest(void);
 #endif

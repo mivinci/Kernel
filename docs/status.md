@@ -23,8 +23,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过570项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture、静态帧及固定池证据归`build/host/stage82-fork-cleanup-handoff/`。未执行CI/目标真实硬件/性能验收。
-- 可信显式prepforkabandon现取消资格并持独立worker引用，prepwork先按32槽drain孩子表，再逐批Space abort，最后解除cloning；源表先关闭不影响回滚，已开始commit拒绝反向移交。两架构各四组64槽真实未发布Proc组合覆盖准入/部分保护/DRAFT/完整表保底，CPU回滚后正常清理且全部页/费用归基线；记录与固定池不增。真实STOP/KILL出口、内核root续点、原生检查点和未映射/Local/Signal长循环仍待接；当前IRQ屏蔽，不跨调度或任意丢弃整个构建栈，原生fork未开放。
+- 本地make unit通过570项、fmt-check及make test-qemu的110个两架构场景全部通过；日志与当前源码/头哈希、normal无fixture/wrapper、静态帧及固定池证据归`build/host/stage83-fork-kernel-continuation/`。未执行CI/目标真实硬件/性能验收。
+- 可信准确FORK可登记内核root续点并切出/恢复，固定CONTROL terminate挂起者或暂停者自行退出会先移交CPU回滚，原栈不再恢复。两架构各三组真实Proc/Hkctx组合核对另一个Proc得到CPU、恢复/终止状态、父结果及最终页/费用归零；sigframe专用--wrap用户边界注入C测试，指定PID不执行用户指令，normal无wrapper，记录/固定池不增。自动IRQ窗口/每32页调度请求、STOP/CONT、无关VM变更隔离及未映射/Local/Signal长循环仍待接；原生fork未开放，不把可信续点测试称为完整用户fork。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

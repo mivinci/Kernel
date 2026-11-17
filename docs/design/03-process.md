@@ -1436,3 +1436,21 @@ prepwork沿原固定192槽轮询，对接管记录每次只推进一个阶段：
 静态帧：prepforkabandon为ARM 64/RV 48字节，prepwork为ARM 96/RV 112；Space结束入口新增准确Prep阶段检查后为ARM352/RV384，forksnapshot仍ARM1280/RV1024。单个编译帧不是完整最大栈深或IRQ延迟证明。
 
 本轮最终本地570项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对所有结果与当前源码/头哈希、normal无fixture、两个FORKCLEANCHECK（各四组共74次CPU工作）及实际固定池大小/静态帧。未执行CI、真实硬件、性能、原生fork或真实KILL移交验收。
+
+### 内核root续点与真实终止路径移交（2026-11-18）
+
+可信procforkenter登记当前运行者的一份准确FORK准备：必须已暂停用户root、无普通等待、准备归属/阶段合法且准确Space事务仍可撤销。登记另持一个Prep引用，把身份存入既有Procstage联合体，并用内部配置位标记内核root续点；不增加Proc字段、用户ABI或公开等待种类。procforkyield只在无临时叶拥有/借用、仍可撤销的边界调用，保留原独立内核栈，入FIFO后将CPU侧vm_paused复位并切到调度栈；调度器看到此标记时不激活冻结用户root，恢复全局暂停状态后切回原C续点。每次切回CPU必须没有残留vm_paused，普通yield/等待路径仍拒绝暂停VM。
+
+procforkleave清标记并归还登记引用，把继续提交或同步撤销的责任还给当前C调用者，VM仍暂停。调用者必须在短提交前撤下可丢弃登记，或同步abort完成后再leave/resumevm；仍有登记时procresumevm明确拒绝。此标记只可用于可撤销准备，已开始commit不能yield，也不能在任意持锁/借用位置使用。
+
+真实procterminate对READY挂起构建者沿原CONTROL/Life授权及unready顺序进入end；end先撤销孩子资格，再用登记Prep调用上一节的prepforkabandon，清续点标记并归还登记引用。此后该C栈永不恢复，CPU worker先完成Local/Space回滚，冻结解除后原Proc清理才回收栈/页表。当前运行的登记构建者调用procexit同样先移交，再保持已安装内核root、复位CPU暂停状态并切回调度栈；其他未登记的暂停VM退出仍panic，不能隐式丢弃未知临时责任。
+
+例：A在部分保护批次登记后切出，B得到CPU并执行固定CONTROL terminate(A)，A立即成为EXITING且其未发布孩子资格撤销；A原C续点不再进入ready队列。B正常退出后CPU逐批回滚，A/孩子清理完成，父wait只得到一次SIGNAL9。恢复例：B只完成自己的有界工作并退出，调度器再次选择A，在内核root恢复A原C栈；A同步取消/撤销、leave、resumevm后才从正常用户root路径退出。第三例是A在暂停时自行退出，走相同移交而不重复spacedeactivate。
+
+sigframe两架构各三组真实Proc/Hkctx切换覆盖上述恢复、固定CONTROL终止和暂停者自行退出；每组另一Proc均得到CPU，核对原续点是否恢复、冻结root不能激活、实际父结果/孩子无wait、独立worker及全部页/费用归基线。fixture只通过sigframe链接的--wrap=hal_user_enter在指定PID用户返回边界转入可信测试C代码，其他进程调用真实入口，normal不含wrapper或测试源码。测试使用真实调度器/终止/清理与架构栈切换，但指定测试PID没有执行用户指令，不称真实fork syscall或原用户续点返回已经验收。
+
+Proc512/Prep256/Spacetxn64及固定池不增长；记录只复用现有联合体和内部配置标记。证据与最终本地回归归build/host/stage83-fork-kernel-continuation/和status。仍没有自动IRQ窗口、按时间请求的fork检查点、STOP/CONT策略或原生fork准入；未映射/Local/Signal组合长循环及跨调度无关VM变更仍待收口。尤其Space预检/日志仍遍历全局映射链，测试切出的其他Proc不改映射，不能由本轮推出任意用户服务/VM工作已经能在半张快照旁安全进展。
+
+静态帧：procforkenter/yield均ARM160/RV144字节，leave均0，procrunone均64，procexit均32，procterminate ARM192/RV176；这些是单个编译帧，不是完整异常/系统调用栈深或实测调度延迟。
+
+本轮最终本地570项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、两个FORKCONTCHECK、normal无测试源码且ELF无wrapper符号、实际固定池及静态帧。未执行CI、真实硬件、性能、STOP/CONT或原生fork验收。

@@ -208,7 +208,7 @@ def build(args, directory, run_dir):
             elif args.case == "sigsuspend":
                 sources += [ROOT / "tests/kernel/suspendtest.c", directory / "sdk/suspendimage.S"]
             elif args.case == "sigframe":
-                sources += [ROOT / "tests/kernel/sigframetest.c", ROOT / "tests/kernel/sigforktest.c", ROOT / "tests/kernel/forksnapshottest.c", ROOT / "tests/kernel/forklifetest.c", ROOT / "tests/kernel/forkjournaltest.c", ROOT / "tests/kernel/forkstagetest.c", ROOT / "tests/kernel/forktreetest.c", ROOT / "tests/kernel/forkcleantest.c", ROOT / "tests/kernel" / args.arch / "forktrap.c", directory / "sdk/frameimage.S"]
+                sources += [ROOT / "tests/kernel/sigframetest.c", ROOT / "tests/kernel/sigforktest.c", ROOT / "tests/kernel/forksnapshottest.c", ROOT / "tests/kernel/forklifetest.c", ROOT / "tests/kernel/forkjournaltest.c", ROOT / "tests/kernel/forkstagetest.c", ROOT / "tests/kernel/forktreetest.c", ROOT / "tests/kernel/forkcleantest.c", ROOT / "tests/kernel/forkcontinuetest.c", ROOT / "tests/kernel" / args.arch / "forktrap.c", directory / "sdk/frameimage.S"]
             elif args.case == "sigconfig":
                 sources += [ROOT / "tests/kernel/sigconfigtest.c", directory / "sdk/sigimage.S"]
             else:
@@ -340,6 +340,7 @@ def build(args, directory, run_dir):
         temporary = work / "kernel.tmp.elf"
         invoke("link-kernel", [tools["ld"]["path"], "-m", profile["emulation"],
                               "-T", str(linker), "--build-id=none", "-Map=" + str(work / "kernel.map"),
+                              *(["--wrap=hal_user_enter"] if args.case == "sigframe" else []),
                               *actual_objects, "-o", str(temporary)])
         elf = read_kernel(temporary, profile["machine"],
                           0x80200000 if args.arch == "riscv" else 0x40200000)
