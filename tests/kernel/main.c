@@ -5,7 +5,10 @@ testmain(Hvs *space, const Dtinfo *hardware)
 {
   UNUSED(space);
   UNUSED(hardware);
-#if BOOT_CASE == 49
+#if BOOT_CASE == 50
+  vdevtest(hardware);
+  putstr("READY virtiodev-restored\n");
+#elif BOOT_CASE == 49
   grouppagetest(hardware);
   putstr("READY mmiogroup-restored\n");
 #elif BOOT_CASE == 48

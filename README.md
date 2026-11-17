@@ -17,7 +17,7 @@ make sdk ARCH=riscv
 make sdk ARCH=arm64
 ```
 
-`make sdk`另生成用户态`libvirtio.a`，现含CPU私有描述符管理及依赖显式同步/屏障/通知回调的split ring访问层；尚无生产DMA后端或实际设备队列I/O。
+`make sdk`另生成用户态`libvirtio.a`，现含描述符管理、split ring访问层及现代MMIO探测/协商/复位；尚无生产DMA后端或实际设备队列I/O。
 
 产物在 `build/<架构>/normal/kernel.elf`；`make hardware ARCH=...` 仍可单独构建保留硬件归档。
 可通过 `CC`、`LD`、`AR`、`READELF` 覆盖 LLVM 工具路径；当前不支持 GNU `CROSS` profile。
@@ -73,6 +73,7 @@ make scenario ARCH=arm64 CASE=sigsuspend
 make scenario ARCH=arm64 CASE=irqchip
 make scenario ARCH=arm64 CASE=irqbind
 make scenario ARCH=arm64 CASE=mmiogroup
+make scenario ARCH=arm64 CASE=virtiodev
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
@@ -84,7 +85,7 @@ make test-qemu OPENSBI="$OPENSBI"
 寄存器场景检查两次陷阱之间的整数寄存器保存/恢复；故障场景核对非法指令的异常原因与 PC。
 主机使用本地 QMP socket，核对特权/中断状态与实际 halt 地址，随后退出并回收自身 QEMU；不能只凭输出标记判定成功。
 默认超时10秒；`CASE=timer|irq`使用25秒，验证真实10秒固定准备期限。失败保留串口、QEMU 输出、命令、符号及结果。需要异常 trace 时加 `TRACE=1`。
-`RAM=128|256|512` 改变实际QEMU内存，`VIRTIO=1` 添加virtio-rng设备；目前只发现传输窗口，不进行设备协商或I/O。
+`RAM=128|256|512` 改变实际QEMU内存，`VIRTIO=1` 添加virtio-rng设备；normal只发现传输窗口；virtiodev另固定附加RNG并验证用户态协商/复位，尚不进行队列或业务I/O。
 启动解析实际DTB，输出RAM、保留区、可用页和支持设备的窗口/中断；主机独立核对，并保存guest收到的runtime.dtb。
 `CASE=pages` 实测伙伴分配的各阶物理读写、地址/对齐约束、耗尽至保护低水位及全部归还；元数据自身从实际RAM预留，未启动用户映射或进程计费。
 `CASE=budget` 验证稳定账目、普通额度、真实块归属、失败回滚和关闭后滞留/代次复用。账目代码已可供内核接入，尚无运行进程、exec峰值或COW承诺；normal不创建模拟进程来冒充这些功能。

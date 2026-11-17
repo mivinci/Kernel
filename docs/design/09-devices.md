@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-15设计规格已逐项修订，尚未实现；交叉复核和实际执行结果见status，未通过运行、QEMU、性能或CI验收。
+状态：2026-11-17已接可信MMIO、用户态virtio描述符/共享环及现代MMIO协商/复位，并在两架构QEMU局部验证；原生DMA、生产发权、真实块/网络I/O和恢复仍未接。实际边界与证据见文末及status，未完成CI、真实硬件或性能验收。
 
 ## 用户态 virtio 公共层（已确定）
 
@@ -205,3 +205,21 @@ IRQ_SOURCE/原生bind及生产设备发权的待确认项继续保持关闭；�
 runtime另由tests/kernel/ringuser.c在用户态执行共享环完成、16位回绕和损坏保留三组检查，每架构5个main共rings=15；该fixture用普通用户RAM模拟设备并执行真实CPU屏障，不接硬件DMA，不宣称非一致缓存或virtio设备I/O验收。正常内核不链接该fixture；原生DMA入口、MMIO门铃/协商、真实blk/net和恢复继续待接。
 
 本地make unit全部367项、make fmt-check及make test-qemu全部104个两架构场景通过，日志与原始结果目录/源码哈希归build/host/stage56-virtio-ring/。初次SDK构建因新增trace字段而旧长度检查未同步失败，已统一为104字节后完成重建及回归，原失败日志保留。未执行CI、真实硬件、性能或真实DMA I/O验收。
+
+### 现代 MMIO 探测、特性协商与复位（2026-11-17）
+
+`lib/libvirtio/device.c`现实现内部Vdev/vprobe/vresetbegin/vresetpoll/vfeatures，不提供新内核调用；真实MMIO授权、32位设备访问顺序由调用者及其read/write回调负责。按照[OASIS virtio 1.3 CSD01](https://docs.oasis-open.org/virtio/virtio/v1.3/csd01/virtio-v1.3-csd01.html)的2.1/2.4/3.1/4.2：先检查magic及version=2，再读DeviceID；ID=0成功返回EMPTY，立即停止访问，包括不读VendorID。legacy及未知版本不初始化。
+
+状态为FOUND→RESETTING→RESET→FEATURES；错误为FAILED。resetbegin检查纳秒时钟及加法边界，写status=0后立即poll一次；每次poll只读一次状态，读到真实0才进入RESET。尚未归零返回WOULD_BLOCK，时钟倒退拒绝，3秒期限到达返回TIMEDOUT。连续三个失败尝试后拒绝继续；成功清除本轮重试计数，正常退出的复位不被旧成功次数禁止。库不阻塞等待，不以写0成功、超时或缓存status=0报告已停止。跨进程恢复次数/退避/设备域上限、原生DMA固定解除和停止后的维护仍由待接的init/恢复路径执行，不能用重新构造Vdev绕过系统预算。
+
+vfeatures仅接受已读回复位的RESET，每步读实际status核对当前状态后才追加ACKNOWLEDGE、DRIVER或FEATURES_OK；不只按缓存值覆盖可能新出现的设备错误位。依次写ACKNOWLEDGE、DRIVER，分别选择并读取两个32位设备特性字；只选择调用者已理解的低24位设备特性及强制VERSION_1，不协商indirect/event_idx/packed/in_order等公共扩展。必需位不足则写FAILED并停止；写两个驱动特性字后置FEATURES_OK并重新读回，真正接受后才公布features。NEEDS_RESET/FAILED保留并停止，意外DRIVER_OK或保留位不回写，防止沿错误会话意外启用设备。失败后只能重新复位，不继续协商；当前不配置队列、不设DRIVER_OK、不发送缓冲通知。
+
+失败例：write(status=0)已在设备侧发生但返回I/O错误，或后续read失败，即使设备实际已为0，库仍为FAILED，不返回停止成功；恢复者须重新取得有效读回。另一例：设备拒绝FEATURES_OK，features保持0并标FAILED，不能因为写过驱动特性就公布协商成功。单步库允许生产驱动通过事件循环/闹钟继续poll；本轮专用硬件fixture同步轮询，仍受真实CLOCK_MONOTONIC的3秒期限约束，不将其作为生产服务事件循环。
+
+14项host直接执行生产C，覆盖空槽停止访问、magic/legacy拒绝、异步读回、期限/时钟/溢出、三次失败、两字选择、必需/可选特性、拒绝/异常status、每个协商I/O步骤失败，以及写0有副作用但失败/读回失败。初次反例实测缓存status会清除协商前或协商中新置的NEEDS_RESET并错误返回成功；已改逐步读回，失败/修复证据保留于status-race-before.log与device-final.log。回调正数状态不被当成功；主机模拟不代替真实MMIO。
+
+新增CASE=virtiodev，固定附加一个真实QEMU virtio-rng-device并保持modern模式。可信fixture按DT完整页组逐页向独立用户进程授RW Device映射；真实用户库扫描所有窗口，对唯一RNG协商VERSION_1、读回status=11后再复位读0，两次复位均需实际确认。ARM64为4页32窗口，RV64为8页8窗口；空槽31/7个，不向空槽初始化。MMIO访问在tests/kernel两架构封装中执行dsb sy或fence iorw，架构指令不进入公共库或内核核心。CPU及主机独立核对发现/协商/复位计数和最终页、Acct、租约清零，普通内核不包含该fixture。
+
+这是实际硬件传输寄存器的探测/协商/复位验证，没有队列或DMA在途，不能据此声称带在途请求的复位/隔离恢复、IRQ_SOURCE授权、生产发权、块/网络业务或目标真实硬件已完成。DMA实例域开放问题继续保持待确认。
+
+本地最终make unit通过381项、make fmt-check通过，make test-qemu全部106个两架构场景通过；日志build/host/stage57-virtio-device/，包括反例失败、修复后专项、最终全量、原始QEMU结果目录与源码哈希。SDK两架构libvirtio合并依赖审计通过，普通镜像不链接测试。新场景实际证明无在途请求时的真实协商/复位；无CI/目标真实硬件/性能或在途DMA恢复结论。

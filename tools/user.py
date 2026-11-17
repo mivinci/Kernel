@@ -54,7 +54,7 @@ def build(args):
     shutil.copyfile(ROOT / 'lib/libsys/private/elf.h', sdk / 'private/elf.h')
     shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
     (sdk / 'private/virtio').mkdir(exist_ok=True)
-    for name in ('queue.h', 'ring.h'):
+    for name in ('queue.h', 'ring.h', 'device.h'):
         shutil.copyfile(ROOT / 'lib/libvirtio/private' / name, sdk / 'private/virtio' / name)
     (sdk / 'private/virtqueue.h').unlink(missing_ok=True)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
@@ -79,7 +79,7 @@ def build(args):
     if temporary.exists():temporary.unlink()
     invoke('archive', [tools['ar']['path'], 'rcs', str(temporary), *[str(obj) for _, obj in units[:-1]]])
     os.replace(temporary, archive)
-    virtio_sources = [ROOT / 'lib/libvirtio' / name for name in ('queue.c', 'ring.c')]
+    virtio_sources = [ROOT / 'lib/libvirtio' / name for name in ('queue.c', 'ring.c', 'device.c')]
     virtio_objects = []
     for source in virtio_sources:
         obj = sdk / 'obj/libvirtio' / source.with_suffix('.o').name
@@ -209,9 +209,9 @@ def build(args):
         assembly=sdk/(symbol+'.S')
         assembly.write_text('/* elf sha256: '+digest(artifact)+' */\n.section .rodata\n.balign 8\n.global '+symbol+','+symbol+'_end\n'+symbol+':\n.incbin "'+str(artifact)+'"\n'+symbol+'_end:\n')
         return compile_adoption(assembly,symbol)
-    def link_adoption(label,objects):
+    def link_adoption(label,objects,libraries=()):
         artifact=sdk/(label+'.elf')
-        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],str(libc_archive),str(archive),'-o',str(artifact)])
+        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
@@ -266,6 +266,14 @@ def build(args):
     if len(group_rows)!=1 or int(group_rows[0][2])!=256:raise BuildError('MMIO group trace missing')
     group_address=int(group_rows[0][1],16)
     (sdk/'groupimage.S').write_text('/* image sha256: '+digest(group_image)+' */\n.section .rodata\n.balign 8\n.global group_image,group_image_end,group_trace_address\ngroup_image:\n.incbin "'+str(group_image)+'"\ngroup_image_end:\n.balign 8\ngroup_trace_address:\n.quad '+str(group_address)+'\n')
+    vdev_user=link_adoption('vdevuser',[compile_adoption(ROOT/'tests/kernel/vdevuser.c','vdevuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'virtiommio.c','virtiommio')],(virtio_archive,))
+    vdev_image=sdk/'vdevuser.img'
+    vdev_image.write_bytes(pack(vdev_user.read_bytes(),profile['machine'],128))
+    vdev_inspect=invoke('inspect-virtio-device',[tools['readelf']['path'],'-h','-l','-s',str(vdev_user)])
+    vdev_rows=[line.split() for line in vdev_inspect.splitlines() if line.split() and line.split()[-1]=='vdev_trace']
+    if len(vdev_rows)!=1 or int(vdev_rows[0][2])!=256:raise BuildError('virtio device trace missing')
+    vdev_address=int(vdev_rows[0][1],16)
+    (sdk/'vdevimage.S').write_text('/* image sha256: '+digest(vdev_image)+' */\n.section .rodata\n.balign 8\n.global vdev_image,vdev_image_end,vdev_trace_address\nvdev_image:\n.incbin "'+str(vdev_image)+'"\nvdev_image_end:\n.balign 8\nvdev_trace_address:\n.quad '+str(vdev_address)+'\n')
     # Keep kernel entries when selecting this SDK in clangd; the kernel builder
     # also merges this file when it becomes the last selected target.
     contents = json.dumps(entries, indent=2) + '\n'
@@ -274,7 +282,7 @@ def build(args):
     kernel = json.loads(previous.read_text()) if previous.exists() else []
     kernel = [x for x in kernel if '/sdk/' not in x['output']]
     compilation_database(directory, kernel + entries)
-    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h']
+    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
                     libvirtio_archive=str(virtio_archive.relative_to(ROOT)), libvirtio_sha256=digest(virtio_archive), libvirtio_audit_sha256=digest(virtio_audit),

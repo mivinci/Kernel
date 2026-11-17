@@ -117,6 +117,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "virtiodev":
+        if ready != ["READY virtiodev-restored"] or panics or traps:
+            raise SmokeError("virtio MMIO negotiation did not finish")
     elif case == "mmiogroup":
         if ready != ["READY mmiogroup-restored"] or panics or traps:
             raise SmokeError("MMIO page group test did not finish")
@@ -538,6 +541,7 @@ def exercise(args, run_dir, record):
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
+                    "READY virtiodev-restored\n" if args.case == "virtiodev" else
                     "READY mmiogroup-restored\n" if args.case == "mmiogroup" else
                     "READY irqbind-restored\n" if args.case == "irqbind" else
                     "READY irqchip-restored\n" if args.case == "irqchip" else
@@ -643,6 +647,15 @@ def exercise(args, run_dir, record):
                                  "allocated": transition["tables"]}:
                         raise SmokeError("user root cleanup/count mismatch")
                     record["user_roots"] = roots
+                if args.case == "virtiodev":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("VIRTIOCHECK ")]
+                    transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
+                    pages={device["mmio"][0]["base"]&~4095 for device in transports}
+                    expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-1,found=1,
+                                  negotiated=1,resets=2,charged=0,allocated=transition["tables"])
+                    if checks != [expected]:
+                        raise SmokeError("virtio MMIO discovery/negotiation/reset mismatch")
+                    record["virtio_device"]=checks[0]
                 if args.case == "mmiogroup":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MMIOGROUPCHECK ")]
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
@@ -904,7 +917,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", *VM_FAULTS), default="normal")
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
@@ -912,6 +925,8 @@ def main():
     parser.add_argument("--ram", type=int, choices=(128, 256, 512), default=256)
     parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
+    if args.case == "virtiodev":
+        args.virtio = True
     if args.timeout is None:
         args.timeout = 25 if args.case in ("timer", "irq") else 10
     if not math.isfinite(args.timeout) or args.timeout <= 0:
