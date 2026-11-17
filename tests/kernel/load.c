@@ -18,22 +18,22 @@ testresource(Rtable *table, u32 kind)
 void
 testload(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
 {
-  Rtable          *table = proctable(pid);
-  const Bootimage *image;
-  const Bootseg   *segments;
-  Handle   space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
-  Handle   memory, stack, startup;
-  Allocarg args;
-  Config   config;
-  Hpte     pte;
-  u64      i, page, copied;
+  Rtable   *table = proctable(pid);
+  Bootimage image;
+  Bootseg   decoded;
+  Handle    space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
+  Handle    memory, stack, startup;
+  Allocarg  args;
+  Config    config;
+  Hpte      pte;
+  u64       i, page, copied;
   REQUIRE(!bootimagecheck(data, bytes, &image));
   REQUIRE(bootbytes >= sizeof(Boot) && bootbytes <= BOOT_MAX_BYTES);
-  segments = (const Bootseg *) (data + image->segments_off);
   args.bytes = PAGE_SIZE;
   args.align = args.minaddr = args.maxaddr = args.reserved = 0;
-  for (i = 0; i < image->segment_count; i++) {
-    const Bootseg *segment = &segments[i];
+  for (i = 0; i < image.segment_count; i++) {
+    const Bootseg *segment = &decoded;
+    bootimagesegment(data, &image, i, &decoded);
     for (page = 0; page < segment->mem_bytes; page += PAGE_SIZE) {
       args.kind = segment->prot & VM_EXEC ? ALLOC_CODE : ALLOC_DATA;
       REQUIRE(!localalloc(table, allocator, &args, &memory));
@@ -56,7 +56,7 @@ testload(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
   REQUIRE(!localalloc(table, allocator, &args, &startup));
   REQUIRE(!localwrite(table, startup, 0, boot, bootbytes));
   REQUIRE(!localmap(table, space, startup, 0, 0x3fff000000UL, args.bytes, VM_READ));
-  config.entry = image->entry;
+  config.entry = image.entry;
   config.stack = 0x3fffff0000UL;
   config.boot = 0x3fff000000UL;
   config.bootsz = bootbytes;

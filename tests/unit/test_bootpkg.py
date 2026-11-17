@@ -187,9 +187,9 @@ class PackageDescriptorTests(unittest.TestCase):
             data = pkg.pack([('sbin/init', executable(machine)), ('sbin/serial', executable(machine))], machine)
             info = pkg.check(data, machine);row = info['items'][info['init_index']]
             content = data[row['load_off']:row['load_off'] + row['load_bytes']]
-            storage = C.create_string_buffer(content);out = C.c_void_p()
+            storage = C.create_string_buffer(content);out = userboot.Image()
             self.assertEqual(self.lib.bootimagecheck(storage, len(content), C.byref(out)), 0)
-            self.assertTrue(out.value)
+            self.assertEqual(out.bytes, len(content))
 
     def test_shared_wire_header_compiles_for_both_target_layouts(self):
         source = ('#include <abi/bootpkg.h>\n'
@@ -213,7 +213,7 @@ class KernelPackageTests(unittest.TestCase):
         path = Path(cls.temp.name) / 'package.so'
         command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra',
                    '-Werror', '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
-                   str(ROOT / 'kernel/bootpkg.c'), '-o', str(path)]
+                   str(ROOT / 'kernel/bootpkg.c'), str(ROOT / 'kernel/bootimage.c'), '-o', str(path)]
         if sys.platform == 'darwin':
             sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
             command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]

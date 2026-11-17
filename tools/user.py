@@ -225,7 +225,7 @@ def build(args):
     rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='init_trace']
     if len(rows)!=1 or int(rows[0][2])!=256:raise BuildError('init trace missing')
     init_address=int(rows[0][1],16)
-    (sdk/'initimage.S').write_text('/* image sha256: '+digest(init_image)+' */\n.section .rodata\n.balign 8\n.global init_image,init_image_end,init_trace_address\ninit_image:\n.incbin "'+str(init_image)+'"\ninit_image_end:\n.balign 8\ninit_trace_address:\n.quad '+str(init_address)+'\n')
+    (sdk/'initimage.S').write_text('/* image sha256: '+digest(init_image)+'; deliberately unaligned loader fixture */\n.section .rodata\n.balign 8\n.byte 0\n.global init_image,init_image_end,init_trace_address\ninit_image:\n.incbin "'+str(init_image)+'"\ninit_image_end:\n.balign 8\ninit_trace_address:\n.quad '+str(init_address)+'\n')
     sig_child=link_adoption('sigchild',[compile_adoption(ROOT/'tests/kernel/sigchild.c','sigchild')])
     sig_parent=link_adoption('siguser',[compile_adoption(ROOT/'tests/kernel/siguser.c','siguser'),embedded_elf(sig_child,'sig_child')])
     sig_image=sdk/'siguser.img'

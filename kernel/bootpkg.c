@@ -1,5 +1,5 @@
 #include <bootpkg.h>
-#include <abi/boot.h>
+#include <bootimage.h>
 
 static u64
 read64(const u8 *p)
@@ -37,59 +37,12 @@ itemread(const u8 *p, Bootitem *item)
   item->reserved = read64(p + 56);
 }
 
-static void
-segread(const u8 *p, Bootseg *seg)
-{
-  seg->file_off = read64(p);
-  seg->file_bytes = read64(p + 8);
-  seg->va = read64(p + 16);
-  seg->mem_bytes = read64(p + 24);
-  seg->prot = read64(p + 32);
-  seg->reserved = read64(p + 40);
-}
-
 static int
 loadcheck(const u8 *data, u64 bytes, u64 machine)
 {
-  u64     entry, count, table, boot, bootbytes, i, j;
-  int     executable = 0;
-  Bootseg seg, previous;
-  if (bytes < sizeof(Bootimage))
-    return 0;
-  entry = read64(data + 24);
-  count = read64(data + 32);
-  table = read64(data + 40);
-  boot = read64(data + 48);
-  bootbytes = read64(data + 56);
-  if (read64(data) != BOOT_LOAD_MAGIC || read64(data + 8) != 1 || read64(data + 16) != bytes ||
-      !count || count > BOOT_LOAD_SEGMENTS || table < sizeof(Bootimage) || (table & 7) ||
-      boot < sizeof(Bootimage) || (boot & 7) || bootbytes < sizeof(Boot) ||
-      bootbytes > BOOT_MAX_BYTES || !within(table, count * sizeof(Bootseg), bytes) ||
-      !within(boot, bootbytes, bytes) || overlap(table, count * sizeof(Bootseg), boot, bootbytes))
-    return 0;
-  for (i = 0; i < count; i++) {
-    segread(data + table + i * sizeof(Bootseg), &seg);
-    if (!seg.mem_bytes || ((seg.va | seg.mem_bytes) & PAGE_MASK) || seg.va < BOOT_USER_LO ||
-        seg.va >= BOOT_IMAGE_HI || seg.mem_bytes > BOOT_IMAGE_HI - seg.va ||
-        seg.file_bytes > seg.mem_bytes || seg.reserved || !(seg.prot & 1) || (seg.prot & ~7UL) ||
-        (seg.prot & 6) == 6 || !within(seg.file_off, seg.file_bytes, bytes) ||
-        overlap(seg.file_off, seg.file_bytes, 0, sizeof(Bootimage)) ||
-        overlap(seg.file_off, seg.file_bytes, table, count * sizeof(Bootseg)) ||
-        overlap(seg.file_off, seg.file_bytes, boot, bootbytes))
-      return 0;
-    for (j = 0; j < i; j++) {
-      segread(data + table + j * sizeof(Bootseg), &previous);
-      if (overlap(seg.va, seg.mem_bytes, previous.va, previous.mem_bytes) ||
-          overlap(seg.file_off, seg.file_bytes, previous.file_off, previous.file_bytes))
-        return 0;
-    }
-    if ((seg.prot & 4) && entry >= seg.va && entry - seg.va < seg.mem_bytes)
-      executable = 1;
-  }
-  return executable && !(entry & (machine == BOOTPKG_ARM64 ? 3 : 1)) &&
-         read64(data + boot) == BOOT_MAGIC && read64(data + boot + 8) == BOOT_FORMAT &&
-         read64(data + boot + 16) == bootbytes && !read64(data + boot + 24) &&
-         read64(data + boot + 112) == BOOT_USER_LO && read64(data + boot + 120) == BOOT_USER_HI;
+  Bootimage image;
+  return !bootimagecheck(data, bytes, &image) &&
+         !(image.entry & (machine == BOOTPKG_ARM64 ? 3 : 1));
 }
 
 static int

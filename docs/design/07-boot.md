@@ -293,7 +293,7 @@ T1 分五步，每步可独立提交与验收；前一步不通过不进入下�
 
 - T1.1只完成确定性打包和共享格式/校验，不顺带实现服务监督或完整sh。容器magic/format数值、字节序、flags及空字段语义须在共享定义中明确，工具和内核不得各自猜测。
 - T1.2必须先取得可信initrd范围并从可用页排除，再允许分配元数据/页；与内核、DTB及保留区的关系和溢出须完整检查。真机清单中早期诊断、DTB容量/设备识别等P0问题按相关依赖收口，不用QEMU成功代替板端验收。
-- T1.3复用现有bootimageload，而当前bootimagecheck要求输入地址、段表和Boot的8字节对齐，且文件偏移相对其Bootimage视图。容器不要求4KiB对齐并不自动解决这些约束；打包/解析须明确描述视图范围和对齐处理，不能直接强转任意偏移地址，也不能把ELF偏移误作容器偏移。
+- T1.3复用现有bootimageload；原bootimagecheck要求物理输入8字节对齐，现已改为逐字节解码到自有Bootimage/Bootseg值。段表/Boot相对偏移仍须8对齐，文件偏移仍相对其Bootimage视图，不能把ELF偏移误作容器偏移。为PID1构造的startup仍为内核自有对齐Boot，不能借此把任意包偏移强转为Boot指针。
 - PID1取得其他包项的只读接口仍在T1.3前定稿：当前单Mem上限64KiB，不能把任意大小整包当作一个普通MEM Handle；须明确只读访问布局、包页保留/费用及退出回收责任，不借用户传入物理地址开放映射。
 - T1.4的首个服务须有真实可验收的装载、授权与READY实现；serial还依赖设备/IRQ授权，完整sh依赖T2/T3和fork/exec。不能用测试hello或空进程READY代替它们，也不能把完整sh反向变成T1前置。
 
@@ -404,3 +404,13 @@ CASE=bootpkg无内嵌payload，tests/bootpkg.py用实际SDK runtimeuser ELF生�
 ARM64真实-initrd验收暴露原ELF直启路径未加载initrd、且入口硬编码DTB地址；已连同本点改为标准Image头及x0传入地址，具体协议与剩余限制见01末尾。T1.2不装载包内PID1、不新增SYSTEM/设备授权或服务READY。验证证据归build/host/stage86-kernel-boot-package/，本地结果与未执行项见status。
 
 本点最终本地make test-all通过602项host、格式及128次两架构QEMU（原110次加18次真实包正反启动），另有两架构normal/pages各一次带包验收，实际allocator耗尽/回收后仍保留原包。证据逐一审计132份result.json并核对源码哈希，normal构建均无tests源码。未执行CI/板端/性能，未完成生产启动或全部T1。
+
+### T1.3 前置：未对齐描述装载（2026-11-18）
+
+bootimagecheck内部接口现返回调用者自有的64字节Bootimage值，失败清零；bootimagesegment在成功校验的同一不可变输入上按索引解码48字节Bootseg，不返回wire内的结构指针。bootimageload及guest测试装载器均逐段消费解码值，不复制整份装载视图，不申请临时包大小内存，也不因物理基址未对齐而拒绝。输入/输出须不重叠，段读取仅允许成功检查后的有效索引。
+
+容器init描述检查改为复用同一个bootimagecheck，再补目标架构入口对齐；移除重复描述检查器。原描述检查器现也拒绝不同段文件内容重叠，与T1.1容器规则一致；零长度内容不产生范围冲突，保留既有BSS语义。startup Boot仍由内核准备为8对齐，不改变Boot/Bootimage线格式或提前采用尚未确认的PID1包访问接口。
+
+tests/kernel的init描述故意放到8对齐标签后1字节，真实bootimageload进入PID1并由主机按PTE/Boot/栈继续核验；非PID1/坏startup拒绝、孤儿收取及PID1退出致命检查保留。host另检查两目标所有8种基址偏移、段解码逐字节一致、截断/null及文件别名失败清零。验证结果归build/host/stage87-unaligned-boot-loader/与status；此项不是包内生产PID1启动，T1.3主体及其访问接口仍未交付。
+
+本地605项完整host、格式及34次针对性两架构QEMU通过：各架构init/initfatal、libsys/runtime/elf、sigframe、cow、normal各一次，加各九次容器正反启动；终稿另重跑39项启动host。所有34份最终结果均核对当前源码哈希，四份PID1结果的ELF符号init_image确为1 mod 8，normal均无tests源码。本点未重跑128次完整QEMU，上一全量基线仍为stage86；无CI/真机/性能验收。

@@ -13,16 +13,16 @@ resource(Rtable *table, u32 kind)
 int
 bootimageload(Handle pid, const void *data, u64 bytes, const void *startup, u64 startupbytes)
 {
-  const Bootimage *image;
-  const Bootseg   *segments;
-  const Boot      *boot = startup;
-  const u8        *source = data;
-  Rtable          *table;
-  Handle           allocator, space, memory;
-  Allocarg         args;
-  Config           config;
-  u64              i, offset, copied;
-  int              error;
+  Bootimage   image;
+  Bootseg     segment;
+  const Boot *boot = startup;
+  const u8   *source = data;
+  Rtable     *table;
+  Handle      allocator, space, memory;
+  Allocarg    args;
+  Config      config;
+  u64         i, offset, copied;
+  int         error;
   if (pid != 1 || !startup || ((u64) startup & 7) || startupbytes < sizeof(Boot) ||
       startupbytes > BOOT_MAX_BYTES)
     return -ERR_INVALID;
@@ -39,28 +39,27 @@ bootimageload(Handle pid, const void *data, u64 bytes, const void *startup, u64 
   space = resource(table, LOCAL_SPACE);
   if (!allocator || !space)
     return -ERR_STATE;
-  segments = (const Bootseg *) (source + image->segments_off);
   args.bytes = PAGE_SIZE;
   args.align = args.minaddr = args.maxaddr = args.reserved = 0;
-  for (i = 0; i < image->segment_count; i++) {
-    const Bootseg *segment = &segments[i];
-    for (offset = 0; offset < segment->mem_bytes; offset += PAGE_SIZE) {
-      args.kind = segment->prot & VM_EXEC ? ALLOC_CODE : ALLOC_DATA;
+  for (i = 0; i < image.segment_count; i++) {
+    bootimagesegment(source, &image, i, &segment);
+    for (offset = 0; offset < segment.mem_bytes; offset += PAGE_SIZE) {
+      args.kind = segment.prot & VM_EXEC ? ALLOC_CODE : ALLOC_DATA;
       error = localalloc(table, allocator, &args, &memory);
       if (error)
         return error;
-      if (offset < segment->file_bytes) {
-        copied = MIN(PAGE_SIZE, segment->file_bytes - offset);
-        error = localwrite(table, memory, 0, source + segment->file_off + offset, copied);
+      if (offset < segment.file_bytes) {
+        copied = MIN(PAGE_SIZE, segment.file_bytes - offset);
+        error = localwrite(table, memory, 0, source + segment.file_off + offset, copied);
         if (error)
           return error;
       }
-      if (segment->prot & VM_EXEC) {
+      if (segment.prot & VM_EXEC) {
         error = localseal(table, memory);
         if (error)
           return error;
       }
-      error = localmap(table, space, memory, 0, segment->va + offset, PAGE_SIZE, segment->prot);
+      error = localmap(table, space, memory, 0, segment.va + offset, PAGE_SIZE, segment.prot);
       if (error)
         return error;
       error = localfree(table, memory);
@@ -87,7 +86,7 @@ bootimageload(Handle pid, const void *data, u64 bytes, const void *startup, u64 
     error = localfree(table, memory);
   if (error)
     return error;
-  config.entry = image->entry;
+  config.entry = image.entry;
   config.stack = 0x3fffff0000UL;
   config.boot = 0x3fff000000UL;
   config.bootsz = startupbytes;

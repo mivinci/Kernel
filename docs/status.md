@@ -19,11 +19,11 @@
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
 - 独立libsys SDK、virtio描述符/共享环与现代MMIO协商复位（无生产DMA后端）、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait及批量堆分配、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
-- 一次性PID1及专用预校验描述装载器已接；真实用户测试覆盖三代孤儿收取、组wait BLOCKED/READY强杀与PID1退出致命。T1.1主机启动包pack/check及T1.2内核chosen发现/校验/保留已接；包页R/NX且排除分配，坏包分配前停机、目录全零。ARM64启动改用Image/x0实际DTB。载荷仍在tests/kernel，包内PID1装载、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止。
+- 一次性PID1及专用预校验描述装载器已接，现按字节解码未对齐描述，容器/实际装载共用Bootimage检查；真实用户测试覆盖三代孤儿收取、组wait BLOCKED/READY强杀与PID1退出致命。T1.1主机启动包pack/check及T1.2内核chosen发现/校验/保留已接；包页R/NX且排除分配，坏包分配前停机、目录全零。ARM64启动改用Image/x0实际DTB。载荷仍在tests/kernel，包内PID1装载、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止。
 
 ## 最新本地验证
 
-- 本地make test-all通过：602项host（新增14项内核包/DTB归属/Image检查）、fmt-check及128次两架构QEMU；另有4次带包normal/pages耗尽回收检查。源哈希、normal测试隔离及逐个结果审计归`build/host/stage86-kernel-boot-package/evidence.json`，完整日志同目录。未执行CI/目标真实硬件/性能验收。
+- 最新本地605项host、fmt-check及两架构34次针对性QEMU通过，覆盖未对齐init/initfatal、libsys/runtime/elf、sigframe/COW、容器正反启动及normal；另复跑39项启动host。终稿源哈希及四个PID1描述地址1 mod 8的证据归`build/host/stage87-unaligned-boot-loader/evidence.json`。本点未重跑全量128次；上一完整make test-all及4次带包normal/pages证据归`build/host/stage86-kernel-boot-package/`。未执行CI/目标真实硬件/性能验收。
 - T1.2两架构各九次真实initrd启动已验好包和八类拒启；另验normal及pages耗尽/回收后包内容不变、目录一致、全部包页R/NX及保留排除，normal无测试源码。不是包内生产PID1启动。下一步T1.3前先定PID1只读访问布局与保留页费用/生命周期，单Mem64KiB限制不绕过；相关真机P0按依赖处理。fork已验证成果保留，源别名/引用稳定、组合长循环、IRQ检查点与STOP/CONT仍未完成，T4前须补齐。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 

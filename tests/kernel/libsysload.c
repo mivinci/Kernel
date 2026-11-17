@@ -25,13 +25,13 @@ struct Packet
 static void
 load(Handle pid, const Procinfo *peer, u32 client)
 {
-  Rtable          *table = proctable(pid);
-  const Bootimage *image;
-  Handle space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
-  Handle channel, sender, management, backend;
-  Packet packet;
-  Config reserve;
-  u64    i;
+  Rtable   *table = proctable(pid);
+  Bootimage image;
+  Handle    space = testresource(table, LOCAL_SPACE), allocator = testresource(table, LOCAL_ALLOC);
+  Handle    channel, sender, management, backend;
+  Packet    packet;
+  Config    reserve;
+  u64       i;
   const char *arg = client ? "client" : "server";
   const char *env = "SAMPLE=yes";
   REQUIRE(!bootimagecheck(libsys_image, (u64) (libsys_image_end - libsys_image), &image));
@@ -48,7 +48,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   for (i = 0; i < sizeof(packet); i++)
     ((u8 *) &packet)[i] = 0;
   for (i = 0; i < sizeof(Boot); i++)
-    ((u8 *) &packet.header)[i] = libsys_image[image->boot_off + i];
+    ((u8 *) &packet.header)[i] = libsys_image[image.boot_off + i];
   packet.header.bytes = sizeof(packet);
   packet.header.argc = packet.header.envc = 1;
   packet.header.argv_off = offsetof(Packet, argv);
@@ -76,7 +76,7 @@ load(Handle pid, const Procinfo *peer, u32 client)
   packet.resources[5].tag = 259;
   packet.resources[5].handle = backend;
   testload(pid, libsys_image, (u64) (libsys_image_end - libsys_image), &packet, sizeof(packet));
-  reserve.entry = image->entry;
+  reserve.entry = image.entry;
   reserve.stack = 0x3fffff0000UL;
   reserve.boot = 0x3fff000000UL;
   reserve.bootsz = sizeof(packet);

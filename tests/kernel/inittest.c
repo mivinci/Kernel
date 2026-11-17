@@ -100,6 +100,7 @@ inittest(void)
   packet.resources[2].handle = create;
   packet.resources[3].tag = 257;
   packet.resources[3].handle = control;
+  REQUIRE(((u64) init_image & 7) == 1);
   REQUIRE(bootimageload(2, init_image, (u64) (init_image_end - init_image), &packet,
                         sizeof(packet)) == -ERR_INVALID);
   packet.header.flags = 1;
@@ -109,16 +110,17 @@ inittest(void)
   REQUIRE(!bootimageload(pid, init_image, (u64) (init_image_end - init_image), &packet,
                          sizeof(packet)));
   {
-    const Bootimage *image;
-    const Bootseg   *segments;
-    Hpte             entry;
-    u64              j, offset;
+    Bootimage image;
+    Bootseg   segment;
+    Hpte      entry;
+    u64       j, offset;
     REQUIRE(!bootimagecheck(init_image, (u64) (init_image_end - init_image), &image));
-    segments = (const Bootseg *) (init_image + image->segments_off);
-    for (j = 0; j < image->segment_count; j++)
-      for (offset = 0; offset < segments[j].mem_bytes; offset += PAGE_SIZE)
-        REQUIRE(spacelookup(root.space, segments[j].va + offset, &entry) &&
-                entry.prot == (segments[j].prot | VM_USER) && entry.attr == VM_NORMAL);
+    for (j = 0; j < image.segment_count; j++) {
+      bootimagesegment(init_image, &image, j, &segment);
+      for (offset = 0; offset < segment.mem_bytes; offset += PAGE_SIZE)
+        REQUIRE(spacelookup(root.space, segment.va + offset, &entry) &&
+                entry.prot == (segment.prot | VM_USER) && entry.attr == VM_NORMAL);
+    }
     REQUIRE(!spacelookup(root.space, 0x3ffffdf000UL, &entry));
     REQUIRE(spacelookup(root.space, 0x3fff000000UL, &entry) && entry.prot == (VM_READ | VM_USER));
     REQUIRE(root.resources == 8);

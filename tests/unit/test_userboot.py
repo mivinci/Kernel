@@ -68,6 +68,12 @@ class StaticUserElfTests(unittest.TestCase):
 class View(C.Structure):
     _fields_=[(x,C.c_void_p) for x in ('header','argv','env','resources','fds')]
 
+class Image(C.Structure):
+    _fields_=[(x,C.c_uint64) for x in ('magic','format','bytes','entry','segment_count','segments_off','boot_off','boot_bytes')]
+
+class Segment(C.Structure):
+    _fields_=[(x,C.c_uint64) for x in ('file_off','file_bytes','va','mem_bytes','prot','reserved')]
+
 class UserBootTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -83,7 +89,8 @@ class UserBootTests(unittest.TestCase):
         cls.lib=C.CDLL(str(path))
         cls.lib.bootcheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(View)]
         cls.lib.bootcheck.restype=C.c_int64
-        cls.lib.bootimagecheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(C.c_void_p)]
+        cls.lib.bootimagecheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(Image)]
+        cls.lib.bootimagesegment.argtypes=[C.c_void_p,C.POINTER(Image),C.c_uint64,C.POINTER(Segment)]
         cls.lib.bootresource.argtypes=[C.POINTER(View),C.c_uint64];cls.lib.bootresource.restype=C.c_int64
         cls.lib.bootarg.argtypes=[C.POINTER(View),C.c_uint64,C.c_uint32];cls.lib.bootarg.restype=C.c_void_p
     @classmethod
@@ -151,15 +158,57 @@ class UserBootTests(unittest.TestCase):
     def test_boot_descriptor_ranges_permissions_and_initialization(self):
         image=pack(executable(),183)
         def check(data,status):
-            buf=C.create_string_buffer(bytes(data));out=C.c_void_p(77)
+            buf=C.create_string_buffer(bytes(data));out=Image()
+            C.memset(C.byref(out),0xa5,C.sizeof(out))
             self.assertEqual(self.lib.bootimagecheck(buf,len(data),C.byref(out)),status)
-            self.assertEqual(bool(out.value),not status)
+            self.assertEqual(bool(out.magic),not status)
+            if status:self.assertEqual(bytes(out),bytes(C.sizeof(out)))
         check(image,0)
         for offset,value in ((0,0),(8,2),(16,len(image)-1),(24,USER_LO+1),(32,65),(40,0),
                              (48,64),(56,65537),(64,0),(72,2**64-1),(80,0x3fff000000),
                              (88,PAGE+1),(96,7),(104,1)):
             bad=bytearray(image);struct.pack_into('<Q',bad,offset,value)
             with self.subTest(offset=offset):check(bad,-1)
+
+    def test_descriptor_and_segments_decode_from_every_byte_alignment(self):
+        for machine in (183,243):
+            data=pack(executable(machine,loads=[(5,PAGE,USER_LO,b'code',PAGE),
+                                               (4,2*PAGE,USER_LO+2*PAGE,b'read',PAGE)]),machine)
+            for alignment in range(8):
+                storage=C.create_string_buffer(bytes(alignment)+data)
+                pointer=C.addressof(storage)+alignment;image=Image()
+                self.assertEqual(self.lib.bootimagecheck(pointer,len(data),C.byref(image)),0)
+                self.assertEqual(bytes(image),data[:64])
+                for i in range(image.segment_count):
+                    segment=Segment()
+                    self.lib.bootimagesegment(pointer,C.byref(image),i,C.byref(segment))
+                    at=image.segments_off+i*48
+                    self.assertEqual(bytes(segment),data[at:at+48])
+
+    def test_descriptor_file_aliases_reject_without_publishing_header(self):
+        data=bytearray(pack(executable(loads=[(5,PAGE,USER_LO,b'code',PAGE),
+                                             (4,2*PAGE,USER_LO+2*PAGE,b'read',PAGE)]),183))
+        header=struct.unpack_from('<8Q',data)
+        self.assertEqual(header[4],2)
+        first=struct.unpack_from('<6Q',data,header[5])
+        struct.pack_into('<Q',data,header[5]+48,first[0])
+        for alignment in range(8):
+            storage=C.create_string_buffer(bytes(alignment)+data);out=Image()
+            C.memset(C.byref(out),0xa5,C.sizeof(out))
+            self.assertEqual(self.lib.bootimagecheck(C.addressof(storage)+alignment,len(data),C.byref(out)),-1)
+            self.assertEqual(bytes(out),bytes(C.sizeof(out)))
+
+    def test_descriptor_null_and_truncated_input_clear_owned_header(self):
+        data=pack(executable(),183)
+        storage=C.create_string_buffer(data)
+        for size in (0,1,63,64,len(data)-1):
+            out=Image();C.memset(C.byref(out),0xa5,C.sizeof(out))
+            self.assertEqual(self.lib.bootimagecheck(storage,size,C.byref(out)),-1)
+            self.assertEqual(bytes(out),bytes(C.sizeof(out)))
+        out=Image();C.memset(C.byref(out),0xa5,C.sizeof(out))
+        self.assertEqual(self.lib.bootimagecheck(None,64,C.byref(out)),-1)
+        self.assertEqual(bytes(out),bytes(C.sizeof(out)))
+        self.assertEqual(self.lib.bootimagecheck(storage,len(data),None),-1)
 
 class Message(C.Structure):
     _fields_=[('words',C.c_uint64*4)]
