@@ -108,11 +108,11 @@ nativecowtest(void)
   u64           pattern, faults = proccowfaults(), pair_before, parent_role, trace[32];
   u32           mode, i, turns;
   pgstat(&before);
-  for (mode = 0; mode < 4; mode++) {
+  for (mode = 0; mode < 5; mode++) {
     REQUIRE(!setcreate(4096, 8192, 8, &set) && !procnew(set, 1, 256, 512, LOCALS, &parent) &&
             !procnew(set, 1, 256, 512, LOCALS, &child) && !procinfo(parent, &a) &&
             !procinfo(child, &b));
-    parent_role = mode == 2 ? 2 : mode == 3 ? 3 : 0;
+    parent_role = mode == 2 ? 2 : mode == 3 ? 3 : mode == 4 ? 4 : 0;
     load(parent, parent_role, 0);
     REQUIRE(!memcreate(a.acct, 8192, &original));
     pattern = 0x41;
@@ -136,7 +136,7 @@ nativecowtest(void)
     REQUIRE(!memfree(original) && !memfree(copy));
     REQUIRE(spacelookup(a.space, 0x2000000, &entry) && entry.prot == (VM_READ | VM_USER | VM_COW));
     chain = 0;
-    if (mode == 1) {
+    if (mode == 1 || mode == 4) {
       while (!(error = pgalloc(0, NULL, &raw))) {
         memory = kaddr(raw.pa);
         memory[0] = chain;
@@ -146,7 +146,7 @@ nativecowtest(void)
       REQUIRE(error == PG_NOMEM && pgreserved() == 2 && pressure.free == pressure.protected + 2);
     }
     pair_before = proccowfaults();
-    if (mode >= 2) {
+    if (mode == 2 || mode == 3) {
       REQUIRE(!procpublish(parent) && !procrunone());
       verify(&a, parent_role, 0);
       collect(parent, &a, mode == 3);
@@ -162,13 +162,13 @@ nativecowtest(void)
       p = mode ? &a : &b;
       q = mode ? &b : &a;
       REQUIRE(!procpublish(first) && !procrunone());
-      verify(p, mode ? 0 : 1, 1);
+      verify(p, mode ? parent_role : 1, 1);
       if (!mode)
         REQUIRE(!spaceread(b.space, cow_user_trace_address, trace, sizeof(trace)) && trace[7] == 1);
       REQUIRE(!spaceread(q->space, 0x2000000, &pattern, 8) && pattern == 0x41 &&
               !spaceread(q->space, 0x2101000, &pattern, 8) && pattern == 0x42);
-      REQUIRE(proccowfaults() - pair_before == 2);
-      if (mode == 1) {
+      REQUIRE(proccowfaults() - pair_before == (mode == 4 ? 0 : 2));
+      if (mode == 1 || mode == 4) {
         pgstat(&pressure);
         REQUIRE(pressure.free == pressure.protected && !pgreserved());
       }
@@ -183,12 +183,14 @@ nativecowtest(void)
           REQUIRE(!procrunone() && ++turns < 16);
         }
       }
-      verify(&a, 0, 1);
+      verify(&a, parent_role, 1);
       verify(&b, 1, 1);
       REQUIRE(!spaceread(a.space, cow_user_trace_address, trace, sizeof(trace)) && trace[0] == 99);
+      if (mode == 4)
+        REQUIRE(trace[8] == 2);
       collect(parent, &a, 0);
       collect(child, &b, 0);
-      REQUIRE(proccowfaults() - pair_before == 4);
+      REQUIRE(proccowfaults() - pair_before == (mode == 4 ? 2 : 4));
     }
     while (chain) {
       memory = kaddr(chain);
@@ -206,18 +208,20 @@ nativecowtest(void)
   }
   pgstat(&after);
   REQUIRE(before.free == after.free && before.allocated == after.allocated &&
-          proccowfaults() - faults == 12);
+          proccowfaults() - faults == 14);
   putstr("COWNATIVECHECK cases=");
-  puthex(4);
+  puthex(5);
   putstr(" faults=");
   puthex(proccowfaults() - faults);
   putstr(" exited=");
-  puthex(7);
+  puthex(9);
   putstr(" readonly=");
   puthex(1);
   putstr(" native_map=");
   puthex(1);
   putstr(" exhausted=");
+  puthex(2);
+  putstr(" kernel_copy=");
   puthex(1);
   putstr(" charged=");
   puthex(0);

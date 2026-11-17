@@ -39,8 +39,9 @@ struct Mmap
 STATIC_ASSERT(MMAPS > 0 && MMAPS <= 8192, mmap_capacity);
 STATIC_ASSERT(sizeof(Mmap) <= 64, mmap_budget);
 STATIC_ASSERT(sizeof(Space) <= 64, space_budget);
-/* Kernel root must stay alive; all mutations serialized, active roots cannot be mutated by this
- * bootstrap mechanism. */
+/* Kernel root stays alive; mutations are serialized. Mapping/clone/unmap
+   require inactive roots. Owned kernel-write preparation can update only
+   user DATA leaves of the installed writer root without leaving the kernel. */
 int spaceinit(const Hvs *kernel);
 int spaceactivate(Spaceid id);
 int spacedeactivate(void);
@@ -64,9 +65,12 @@ int spacecowmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length);
 int spaceresolve(Spaceid id, u64 address);
 /* Trusted kernel destination; precheck every source page before copying. */
 int spaceread(Spaceid id, u64 address, void *target, u64 bytes);
-/* Trusted source, serialized with VM mutations; precheck the entire output. */
+/* Trusted immutable kernel source. Precheck all output/aliases, prepare COW,
+   then copy bytes. IRQs masked/no checkpoint; writer VM_BUSY owns the current
+   user root and no target user VA is accessed during leaf replacement. */
 int spacewrite(Spaceid id, u64 address, const void *data, u64 bytes);
-/* Serialized bounded user-to-user copy; SP_CONFLICT means physical overlap. */
+/* Full input/output/physical-overlap preflight before COW. Reacquire both
+   PA snapshots after separation; SP_CONFLICT means physical overlap. */
 int spacecopy(Spaceid id, u64 destination, u64 source, u64 bytes);
 /* Inactive root only, bounded records per call; 1 means more, 0 empty. */
 int spaceclear(Spaceid id, u32 records);

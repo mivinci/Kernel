@@ -50,6 +50,14 @@ main(int argc, char **argv)
     cow_store(readonly, 0xdead);
     REQUIRE(0, 152);
   }
+  if (role == 4) {
+    u64 input = 0x9090;
+    REQUIRE(!__sys_copy((void *) a, &input, 8), 165);
+    input = 0xa0a0;
+    REQUIRE(!__sys_copy((void *) (a + 512), &input, 8), 166);
+    REQUIRE(b[0] == 0x9090 && readonly[512] == 0xa0a0, 167);
+    cow_trace[8] = 2;
+  }
   REQUIRE(frame_fp(1) == 0, 153);
   REQUIRE(cow_store(a, first) == 1 && frame_fp(1) == 1, 154);
   REQUIRE(a[0] == first && b[0] == first && readonly[0] == first, 155);

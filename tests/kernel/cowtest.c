@@ -174,7 +174,10 @@ spacecowtest(void)
             entry.prot == (VM_READ | VM_USER | VM_COW));
   }
   REQUIRE(spacelookup(a, 0x20000, &entry) && entry.prot == (VM_READ | VM_USER));
-  REQUIRE(spacewrite(a, 0x10000, data, sizeof(data)) == SP_BAD);
+  data[0] = 0x61;
+  REQUIRE(!spacewrite(a, 0x10000, data, sizeof(data)) && !mempage(copy, 0, &pa) &&
+          *(volatile u8 *) kaddr(pa) == 0x5a);
+  REQUIRE(!spaceread(a, 0x20000, observed, sizeof(observed)) && observed[0] == 0x61);
   for (i = 0; i < sizeof(data); i++)
     data[i] = 0x66;
   REQUIRE(!memwrite(copy, 0, data, sizeof(data)) && !memwrite(copy, 4096, data, sizeof(data)) &&
@@ -182,7 +185,7 @@ spacecowtest(void)
   REQUIRE(!spacewrite(destination, 0x10000, data, sizeof(data)) &&
           !spaceread(a, 0x10000, observed, sizeof(observed)));
   for (i = 0; i < sizeof(observed); i++)
-    REQUIRE(observed[i] == 0x5a);
+    REQUIRE(observed[i] == (i ? 0x5a : 0x61));
   REQUIRE(!spaceread(b, 0x11000, observed, sizeof(observed)));
   for (i = 0; i < sizeof(observed); i++)
     REQUIRE(observed[i] == 0x5a);

@@ -12,3 +12,28 @@ frame_fp:
  ret
 .size frame_fp,.-frame_fp
 .section .note.GNU-stack,"",%progbits
+#include <abi/syscall.h>
+.section .text
+.balign 4
+.global frame_wait
+.type frame_wait,%function
+frame_wait:
+ stp x19,x30,[sp,#-16]!
+ mov x19,sp
+ movz x9,#0xf040
+ movk x9,#0xfffe,lsl #16
+ movk x9,#0x3f,lsl #32
+ mov sp,x9
+ mov x0,xzr
+ mov x1,xzr
+ mov x2,xzr
+ mov x3,xzr
+ mov x4,xzr
+ mov x5,xzr
+ mov x6,xzr
+ mov x8,#SYS_YIELD
+ svc #0
+ mov sp,x19
+ ldp x19,x30,[sp],#16
+ ret
+.size frame_wait,.-frame_wait

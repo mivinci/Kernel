@@ -2,6 +2,8 @@
 #include "load.h"
 #include <abi/boot.h>
 #include <signal.h>
+#include <cow.h>
+#include <vm.h>
 #include <prep.h>
 #include <diag.h>
 typedef struct Framepacket Framepacket;
@@ -26,19 +28,26 @@ extern const u64 frame_trace_address;
 void
 sigframetest(void)
 {
-  Setid       set;
-  Set         account;
-  Handle      pid;
-  Procinfo    process;
-  Framepacket packet;
-  Siginfo     info;
-  Sigstat     signal;
-  Life        life;
-  Liferesult  result;
-  Pgstat      before, after;
-  u64         trace[32], previous = 0;
-  u32         mode, i, turns, first, nested, second;
-  int         error;
+  Setid               set;
+  Set                 account;
+  Handle              pid;
+  Procinfo            process;
+  Framepacket         packet;
+  Siginfo             info;
+  Sigstat             signal;
+  Life                life;
+  Liferesult          result;
+  Pgstat              before, after;
+  Acctid              shadow;
+  Memid               stack, shadowmem;
+  Mem                 stackstate;
+  Rtable             *table;
+  Hpte                cowentry;
+  u64                 pa;
+  const volatile u64 *peerpage;
+  u64                 trace[32], previous = 0;
+  u32                 mode, i, j, turns, first, nested, second;
+  int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
   for (mode = 0; mode < 11; mode++) {
@@ -62,7 +71,27 @@ sigframetest(void)
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(proctable(pid), LOCAL_ALLOC);
     testload(pid, frame_image, (u64) (frame_image_end - frame_image), &packet, sizeof(packet));
+    shadow.generation = 0;
+    stack.generation = 0;
+    if (!mode) {
+      table = proctable(pid);
+      for (i = 0; i < table->count; i++) {
+        if (table->slots[i].subtype != LOCAL_MEM || table->slots[i].length != 65536)
+          continue;
+        stack.generation = table->slots[i].objectgen;
+        stack.index = table->slots[i].object;
+        stack.reserved = 0;
+        REQUIRE(!memstat(stack, &stackstate) && stackstate.state == MEM_DATA);
+        break;
+      }
+      REQUIRE(stack.generation);
+    }
     REQUIRE(!procpublish(pid));
+    if (!mode) {
+      /* Freeze a published but not yet dispatched process. This does not relax
+         native configure/publish validation or claim a fork-stack ABI. */
+      REQUIRE(!acctcreate(set, 16, 16, &shadow) && !spaceclone(stack, shadow, &shadowmem));
+    }
     first = nested = second = turns = 0;
     for (;;) {
       REQUIRE(!procrunone() && ++turns < 256);
@@ -82,6 +111,9 @@ sigframetest(void)
         ((u8 *) &info)[i] = 0;
       info.status = 0x12345678;
       if (trace[0] == 1 && !first) {
+        if (!mode)
+          REQUIRE(spacelookup(process.space, 0x3ffffee000UL, &cowentry) &&
+                  cowentry.prot == (VM_READ | VM_USER | VM_COW));
         info.signum = SIGNAL_USR1;
         REQUIRE(!procsigqueue(pid, &info));
         first = 1;
@@ -122,10 +154,22 @@ sigframetest(void)
       REQUIRE(trace[7] > trace[6]);
     if (mode == 4)
       REQUIRE(second && trace[10] == trace[6]);
+    if (!mode) {
+      REQUIRE(spacelookup(process.space, 0x3ffffee000UL, &cowentry) &&
+              cowentry.prot == (VM_READ | VM_WRITE | VM_USER));
+      for (i = 0; i < 16; i++) {
+        REQUIRE(!mempage(shadowmem, i, &pa));
+        peerpage = kaddr(pa);
+        for (j = 0; j < PAGE_SIZE / sizeof(u64); j++)
+          REQUIRE(!peerpage[j]);
+      }
+    }
     REQUIRE(!sigstat(process.identity, &signal) && !signal.depth && !sigcheck());
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
+    if (shadow.generation)
+      REQUIRE(!memfree(shadowmem) && !acctclose(shadow) && !acctunbind(shadow));
     for (i = 0; i < 128; i++)
       REQUIRE(procwork(32) >= 0 && prepwork(32) >= 0);
     REQUIRE(!setstat(set, &account) && !account.charged && !account.instances);
@@ -141,6 +185,8 @@ sigframetest(void)
   putstr(" invalid=");
   puthex(6);
   putstr(" terminated=");
+  puthex(1);
+  putstr(" cow_stack=");
   puthex(1);
   putstr(" charged=");
   puthex(0);

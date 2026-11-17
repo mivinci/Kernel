@@ -8,6 +8,7 @@
 volatile u64 frame_trace[32];
 static u8    saved[1024];
 extern u64   frame_fp(u64 mode);
+extern u64   frame_wait(void);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -205,6 +206,8 @@ main(int argc, char **argv)
   if (mode == 6)
     __sys_sigreturn((void *) 0x3ffffef000UL);
   frame_trace[0] = 1;
+  if (!mode)
+    REQUIRE(!frame_wait(), 197);
   while (!frame_trace[12])
     REQUIRE(!__sys_yield(), 167);
   if (mode == 4 || mode == 8) {

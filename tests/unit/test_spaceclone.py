@@ -48,7 +48,7 @@ class SpaceCloneTests(unittest.TestCase):
             self.assertEqual(self.lib.memcanmap(source, 3), -4)
             self.write(child, 0, b'b' * 8192)
             self.assertEqual(self.read(source, 0, 8192), b'a' * 8192)
-            self.assertEqual(self.lib.spacewrite(first, 0x10000, C.create_string_buffer(b'c'), 1), -1)
+            self.assertEqual(self.lib.spacewrite(first, 0x10000, C.create_string_buffer(b'c'), 1), 0)
             self.assertEqual(self.lib.memfree(source), 0)
             for sid, va in list(self.maps):
                 self.assertEqual(self.lib.spaceunmap(sid, va), 0); self.maps.remove((sid, va))

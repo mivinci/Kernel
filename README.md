@@ -199,6 +199,6 @@ sigframe现由11个用户进程自行原生注册handler/trampoline，新增注�
 
 spaces场景在活动root上完成64次叶换页/权限更新且不申请页表页；rodatawrite预热RW翻译再降R，核对真实写权限故障。
 
-CASE=cow使用8分支配置验证预付、Mem克隆/回滚、跨Space全部别名提交及真实用户COW写故障。四组覆盖父/子先写、父退出与真正只读拒绝，含原生RW map/free、整数/FP/条件码现场；普通RAM耗尽后仍兑现承诺并保留低水位。两架构trace各核对13次实际store故障（12次解析、1次只读结束）。
+CASE=cow使用8分支配置验证预付、Mem克隆/回滚、跨Space全部别名提交及真实用户COW写故障。四组覆盖父/子先写、父退出与真正只读拒绝，含原生RW map/free、整数/FP/条件码现场；普通RAM耗尽后仍兑现承诺并保留低水位。用户COW计数为14，内核copy分离单独验证。
 
-测试进程由可信fixture独立构造，尚非原生fork；内核代用户COW写、信号COW栈及fork发布/继承仍待接通，详见02末尾。
+测试进程由可信fixture独立构造，尚非原生fork。现另接内核spacewrite/copy的完整COW预检与PA刷新，并在普通RAM耗尽后验证原生copy兑现；sigframe另验内核帧跨入共享COW栈页且影子栈保持全零。fork发布/继承及完整信号前置仍待接通，详见02/11末尾。

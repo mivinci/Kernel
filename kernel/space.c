@@ -514,10 +514,10 @@ covers(const Mmap *m, u64 offset)
 {
   return offset >= m->offset && offset - m->offset < m->length;
 }
-int
-spaceresolve(Spaceid id, u64 address)
+static int
+resolve(Space *faultspace, u64 address, Space *writer, u32 dryrun)
 {
-  Space    *faultspace = find(id), *s;
+  Space    *s;
   Mmap     *fault = NULL, *m;
   Mem       backing;
   Memid     memory;
@@ -529,7 +529,8 @@ spaceresolve(Spaceid id, u64 address)
   int       shared, error;
   if (!faultspace || address < 0x10000 || address >= (1UL << 38))
     return SP_BAD;
-  if (faultspace->busy || faultspace == active)
+  if ((writer && writer != faultspace) ||
+      ((faultspace->busy || faultspace == active) && faultspace != writer))
     return SP_BUSY;
   address = ALIGN_DOWN(address, PAGE_SIZE);
   for (node = faultspace->maps; node != PG_NONE; node = mappings[node].next)
@@ -566,7 +567,7 @@ spaceresolve(Spaceid id, u64 address)
         m->prot & ~(7U | MAP_PROTECTED) ||
         (logicalprot(m) != VM_READ && logicalprot(m) != (VM_READ | VM_WRITE)))
       return SP_BAD;
-    if (s->busy || s == active)
+    if ((s->busy || s == active) && s != writer)
       return SP_BUSY;
     writes += (logicalprot(m) & VM_WRITE) != 0;
     protected += (m->prot & MAP_PROTECTED) != 0;
@@ -582,6 +583,8 @@ spaceresolve(Spaceid id, u64 address)
   if (count != backing.refs - backing.managers || writes != backing.writes ||
       protected != backing.cowmaps)
     return SP_BAD;
+  if (dryrun)
+    return 0;
   for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next)
     spaces[maplinks[node].space].busy = 1;
   error = memcowbreak(memory, (u32) (offset / PAGE_SIZE), &newpa);
@@ -605,8 +608,15 @@ spaceresolve(Spaceid id, u64 address)
     }
   }
   for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next)
-    spaces[maplinks[node].space].busy = 0;
+    if (&spaces[maplinks[node].space] != writer)
+      spaces[maplinks[node].space].busy = 0;
   return error;
+}
+
+int
+spaceresolve(Spaceid id, u64 address)
+{
+  return resolve(find(id), address, NULL, 0);
 }
 
 int
@@ -732,6 +742,46 @@ spaceread(Spaceid id, u64 address, void *target, u64 bytes)
   }
   return 0;
 }
+/* Called under the writer's VM_BUSY/serialized kernel continuation. A COW
+   leaf must also have logical W and a fully valid/frozen alias set. */
+static int
+writecheck(Space *s, Hvs *vs, u64 address, u64 bytes)
+{
+  Hpte entry;
+  u64  page, end;
+  int  error;
+  if (!bytes || address < 0x10000 || address >= (1UL << 38) || bytes > (1UL << 38) - address)
+    return SP_BAD;
+  end = address + bytes;
+  for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE) {
+    if (!hal_vm_lookup(vs, page, &entry) || entry.attr != VM_NORMAL || !(entry.prot & VM_USER))
+      return SP_BAD;
+    if (entry.prot & VM_COW) {
+      error = resolve(s, page, s, 1);
+      if (error)
+        return error;
+    } else if (!(entry.prot & VM_WRITE))
+      return SP_BAD;
+  }
+  return 0;
+}
+static int
+preparewrite(Space *s, Hvs *vs, u64 address, u64 bytes)
+{
+  Hpte entry;
+  u64  page, end = address + bytes;
+  int  error;
+  for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE) {
+    if (!hal_vm_lookup(vs, page, &entry))
+      panic("write preparation snapshot");
+    if (!(entry.prot & VM_COW))
+      continue;
+    error = resolve(s, page, s, 0);
+    if (error)
+      return error;
+  }
+  return 0;
+}
 int
 spacewrite(Spaceid id, u64 address, const void *data, u64 bytes)
 {
@@ -739,34 +789,35 @@ spacewrite(Spaceid id, u64 address, const void *data, u64 bytes)
   Hpte         entry;
   Hvs          vs;
   Sourcectx    source;
-  u64          page, end, take, i;
+  u64          take, i;
   const u8    *input = data;
   volatile u8 *output;
-  if (!s || !data || !bytes || bytes > 65536 || address < 0x10000 || address >= (1UL << 38) ||
-      bytes > (1UL << 38) - address)
+  int          error;
+  if (!s || !data || !bytes || bytes > COPY_BYTES)
     return SP_BAD;
   if (s->busy)
     return SP_BUSY;
+  s->busy = 1;
   view(s, &vs, &source);
-  end = address + bytes;
-  for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE)
-    if (!hal_vm_lookup(&vs, page, &entry) ||
-        (entry.prot & (VM_WRITE | VM_USER)) != (VM_WRITE | VM_USER) || entry.attr != VM_NORMAL)
-      return SP_BAD;
-  /* Do not write through a non-W PTE via kaddr: future COW must first obtain
-     private writable backing through its checked write-preparation path. */
-  while (bytes) {
-    hal_vm_lookup(&vs, ALIGN_DOWN(address, PAGE_SIZE), &entry);
-    take = MIN(bytes, PAGE_SIZE - (address & PAGE_MASK));
-    output = (volatile u8 *) kaddr(entry.pa) + (address & PAGE_MASK);
-    for (i = 0; i < take; i++)
-      output[i] = input[i];
-    input += take;
-    address += take;
-    bytes -= take;
+  error = writecheck(s, &vs, address, bytes);
+  if (!error)
+    error = preparewrite(s, &vs, address, bytes);
+  if (!error) {
+    while (bytes) {
+      hal_vm_lookup(&vs, ALIGN_DOWN(address, PAGE_SIZE), &entry);
+      take = MIN(bytes, PAGE_SIZE - (address & PAGE_MASK));
+      output = (volatile u8 *) kaddr(entry.pa) + (address & PAGE_MASK);
+      for (i = 0; i < take; i++)
+        output[i] = input[i];
+      input += take;
+      address += take;
+      bytes -= take;
+    }
   }
-  return 0;
+  s->busy = 0;
+  return error;
 }
+
 static int
 copyspans(Hvs *vs, u64 address, u64 bytes, u64 permission, Copyspan spans[COPY_SPANS], u32 *count)
 {
@@ -806,20 +857,27 @@ spacecopy(Spaceid id, u64 destination, u64 input, u64 bytes)
     return SP_BUSY;
   if (!bytes)
     return 0;
-  /* Caller serializes acceptance with IRQs masked. No checkpoint or allocation
-     occurs until the snapshot is consumed; VM_BUSY excludes every mutation. */
+  /* IRQs remain masked, no checkpoint: preflight all ranges and overlap
+     before COW, then reacquire both PA snapshots after alias retargeting. */
   s->busy = 1;
   view(s, &vs, &context);
   error = copyspans(&vs, input, bytes, VM_READ, source, &sources);
   if (!error)
-    error = copyspans(&vs, destination, bytes, VM_WRITE, target, &targets);
+    error = writecheck(s, &vs, destination, bytes);
+  if (!error)
+    error = copyspans(&vs, destination, bytes, VM_READ, target, &targets);
   if (!error)
     for (i = 0; i < sources; i++)
       for (j = 0; j < targets; j++)
         if (source[i].pa < target[j].pa + target[j].bytes &&
             target[j].pa < source[i].pa + source[i].bytes)
           error = SP_CONFLICT;
+  if (!error)
+    error = preparewrite(s, &vs, destination, bytes);
   if (!error) {
+    if (copyspans(&vs, input, bytes, VM_READ, source, &sources) ||
+        copyspans(&vs, destination, bytes, VM_WRITE, target, &targets))
+      panic("copy post-COW snapshot");
     i = j = 0;
     while (i < sources && j < targets) {
       take = MIN(source[i].bytes - source_offset, target[j].bytes - target_offset);

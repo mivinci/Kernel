@@ -482,3 +482,13 @@ sigsuspend的9个进程也改为用户原生注册，实际等待改走libc；�
 本轮不实现候选Siginfo来源code，也不接USER/CHLD/FAULT或sigsend生产；普通IPC/父wait阻塞中断、STOP/CONT、SA_RESTART、Rctx/Fix及公开POSIX sigaction trampoline仍待接。signal.h只声明已交付的集合/mask/pending/suspend子集，没有注册一个绕过前置责任的公开sigaction。原生自定义trampoline仍由调用者承担运行库适配责任，normal仍未启动生产init，包括net的完整目标未完成。
 
 本地make unit全部406项、补充配置6项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage59-native-signal/，核对所有原始结果中的当前proc/signal源码哈希及两架构SDK，普通镜像不含测试。尚无CI、真实硬件、性能或完整POSIX信号验收。
+
+### COW 栈上的内核信号帧输出（2026-11-17）
+
+sigdeliver继续通过统一spacewrite写完整Sighead/info/TF/FP，现会先准备逻辑可写COW栈页并更新全部别名，再写用户帧；不通过直接物理写绕过分离。动作、cookie、mask及TF/FP布局不变，坏/真正只读栈输出仍受控结束。该变化不新增Siginfo来源编码或POSIX trampoline/Rctx接口。
+
+sigframe的mode0在Proc已经发布但尚未调度时，可信fixture把其64KiB栈克隆到独立裸Acct影子视图（额度恰好16页）；不放宽普通configure/publish的硬件RW校验，也不把这个构造步骤称为原生fork。用户frame_wait汇编临时把SP置于已独占顶页底部64字节处yield；CPU确认下方页仍R/COW，再注入已注册USR1。内核写688/944字节信号帧必须跨入该未分离页，随后真正handler和sigreturn恢复完整整数/FP/mask及原调用栈。
+
+结束时源下方页实际为RW，影子栈全部16页仍为零（无应用栈内容/寄存器/信号帧泄漏），源进程清理及影子释放后物理/Acct/预留归零；两架构目标场景均验证。新增helper保存本来的callee-saved寄存器和SP再恢复，固定临时地址只在明确Boot栈布局的测试载荷中，不是运行库地址分配契约。该场景证明信号帧的kernel COW写准备，完整fork/_Fork活动层复制、Rctx、来源生产/编码及STOP/CONT仍待接。
+
+COW栈输出最终本地验收：473项host/格式及110个两架构QEMU通过，精确运行和trace见build/host/stage69-kernel-cow/；信号帧下方新私有页没有用户store故障，影子16页全零并正常sigreturn。没有将可信栈冻结当原生fork/_Fork，也未执行CI/真实硬件/性能或完整信号Rctx验收。

@@ -683,7 +683,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("Space COW alias protection/rollback mismatch")
                     record["space_cow"]=protection[0]
                     native=[fields(line) for line in serial.read_text().splitlines() if line.startswith("COWNATIVECHECK ")]
-                    if native != [dict(cases=4,faults=12,exited=7,readonly=1,native_map=1,exhausted=1,charged=0,allocated=transition["tables"])]:
+                    if native != [dict(cases=5,faults=14,exited=9,readonly=1,native_map=1,exhausted=2,kernel_copy=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("user COW write-fault/resume/isolation mismatch")
                     record["native_cow"]=native[0]
                 if args.case == "heap":
@@ -728,7 +728,7 @@ def exercise(args, run_dir, record):
                     record["signal_suspend"]=checks[0]
                 if args.case == "sigframe":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFRAMECHECK ")]
-                    if checks != [dict(cases=11, normal=4, invalid=6, terminated=1, charged=0, allocated=transition["tables"])]:
+                    if checks != [dict(cases=11, normal=4, invalid=6, terminated=1, cow_stack=1, charged=0, allocated=transition["tables"])]:
                         raise SmokeError("signal frame outcome/resource mismatch")
                     record["signal_frames"]=checks[0]
                 if args.case == "sigconfig":
