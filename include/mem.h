@@ -8,19 +8,21 @@
 #ifndef BREFS
 #define BREFS 65536
 #endif
-#define MEM_PAGES     16
-#define MEM_DATA      1
-#define MEM_LOADING   3
-#define MEM_SEALED    4
-#define MEM_SHARED    5
-#define MEM_RAM       0
-#define MEM_MMIO      1
-#define MEM_IMMUTABLE 2
-#define MEM_DENIED    -7
-#define MEM_BUSY      -4
-#define MEM_BAD       -1
-#define MEM_LIMIT     -2
-#define MEM_FULL      -3
+#define MEM_PAGES       16
+#define MEM_DATA        1
+#define MEM_LOADING     3
+#define MEM_SEALED      4
+#define MEM_SHARED      5
+#define MEM_RAM         0
+#define MEM_MMIO        1
+#define MEM_IMMUTABLE   2
+#define MEM_FORK_SOURCE 1
+#define MEM_FORK_VIEW   2
+#define MEM_DENIED      -7
+#define MEM_BUSY        -4
+#define MEM_BAD         -1
+#define MEM_LIMIT       -2
+#define MEM_FULL        -3
 
 typedef struct Memid    Memid;
 typedef struct Mem      Mem;
@@ -37,8 +39,10 @@ struct Mem
   /* state is content/seal provenance until final reap; managers==0 means
      retiring and prohibits acquiring any new manager/map/Op reference. */
   u32 head, pages, refs, managers, state, writes, execs, busy, kind, cowmaps;
-  /* Only IMMUTABLE views retain this canonical sealed RAM Mem. */
+  /* IMMUTABLE retains canonical code; a staged DATA fork view instead retains
+     its original logical Mem until commit/last release. */
   Memid backing;
+  u32   fork, adopted;
 };
 struct Blockref
 {
@@ -57,10 +61,15 @@ int  memshared(Acctid acct, u64 bytes, Memid *out);
    Target gets independent logical pages; existing read-only source maps stay.
    Output unchanged on failure; no user fork authority or PTE protection here. */
 int memclone(Memid source, Acctid target, Memid *out);
-/* Whole-Space transaction journal: report which original raw pages were
-   adopted on success; undo them only after every staged child is gone. */
-int memclonerecord(Memid source, Acctid target, Memid *out, u32 *adopted);
-int memcloneundo(Memid source, u32 adopted);
+/* Durable DATA preparation. One staged view locks its source against writes
+   and further cloning, retaining the original even after its owners retire.
+   Last child release drops its branches, undoes newly adopted raw pages, then
+   releases the source. No caller-stack adoption mask or implicit parent grant.
+   Space separately owns PTE protection/rollback. Output unchanged on failure. */
+int memforkclone(Memid source, Acctid target, Memid *out);
+/* Detach the journal without undoing COW. Ordinary nonstaged views are a no-op;
+   a source lock is never a child view. No allocation or permission is granted. */
+int memforkcommit(Memid view);
 /* Trusted same-Set immutable fork view. Keeps the original physical payer,
    flattens view ancestry, allocates no RAM pages/COW credits. Source must be
    a retained SEALED view; output is unchanged on failure. */

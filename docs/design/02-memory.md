@@ -747,7 +747,7 @@ seal两架构实际创建两代代码视图，核对视图创建不增加物理a
 
 父保护临时journal在整个快照期间保留，成功后统一清临时位；失败先释放目标暂持manager、解除全部目标映射/页表并返目标Acct费用，再回退本次原始页接管和新增父保护。后段失败不能留下已建目标的映射或把父已有COW页恢复W；混合RW/COW映射仍按逐页新增掩码恢复。
 
-失败注入曾发现早期实现只清了孩子额度/映射，却给前面已成功克隆的父Mem留下单分支Cowgroup。现memclonerecord在成功时返回“本次由原始块接管”的逐页掩码，memcloneundo只在对应页都已恢复单分支/原payer时退回原Acctblk，原PA/账目不变。源第一份别名借无Prep时的Prepid.reserved保存这个最多16页掩码，MAP_SNAPSHOT_SOURCE显式标识它的临时归属；有Prep的映射已在准入拒绝，成功/失败退出都清零该字及标志，不把临时值传入Prep查询、发布或用户ABI。Mem88/Mmap64/Space64及固定池大小保持，不为短暂journal永久增加所有Mem的字段。
+该阶段失败注入曾发现只清孩子额度/映射，却给前面成功克隆的父Mem留下单分支Cowgroup；当时以显式接管掩码和源Mmap临时字段完成精确撤回，证据归本阶段日志。这个同步保存方式现已由下文“fork原页接管的独立账本”替换：掩码与原Mem租约归临时DATA视图，最后引用自动撤回，不再使用Mmap.reserved或对外undo接口；当前尺寸和成本以该节为准。
 
 例：先克隆父两页堆并安装两个孩子别名，再共享代码/SHARED，最后另一私有Mem额度不足。abort先结束所有孩子责任，使原堆逻辑页只余父，再撤掉本次新建组、恢复父原RW页；既有父/旧孩子共享组保持其credit。目标Space恢复空root且Acct费用/引用与进入前相同。若成功，孩子写堆更新其全部别名但父仍原内容；孩子写SHARED双方可见；代码只能R/RX；父映射/管理责任退出不提前释放孩子使用的backing。
 
@@ -761,6 +761,24 @@ CASE=cow两架构新增五映射快照（两个私有Mem、其中一份有两个
 
 Local继承接续（2026-11-17）：已增加spacesnapshotview借用准确的父Mem→孩子去重视图，并以可信memforkhold为已保留孩子视图安装新的Local管理引用；SHARED仍同一对象，私有/SEALED只能指孩子Acct的克隆/immutable视图，不重开父DATA或设备权。未映射但继承的Mem需准备者另行预付绑定。具体原Handle/墓碑、失败引用回滚及双架构组合证据见03末尾；统一Space+Local准备/取消和原生fork续点仍未完成。
 
-Space快照日志接续（2026-11-17）：spacesnapshotbegin/end允许将原页接管/PTE新保护日志保留到Local/Signal准备完成，原spacesnapshot仍为立即提交包装。同步期间仅一个源/目标对，无调度或IRQ切出；未映射DATA的spacesnapshotclone把接管mask交给同一上层事务，必须在对应孩子视图全部释放后memcloneundo。后段失败先释放Local/临时Mem，再移除孩子映射、撤回接管及新保护，已有COW不撤回；其他Space的同Mem别名也恢复。本轮统一内部组合入口、例子及验证边界见03末尾；它尚不是支持分批检查点的原生fork准备。
+Space快照日志接续（2026-11-17）：spacesnapshotbegin/end允许将原页接管/PTE新保护日志保留到Local/Signal准备完成，原spacesnapshot仍为立即提交包装。同步期间仅一个源/目标对，无调度或IRQ切出；该阶段的接管mask曾由上层持有，现已按下节独立账本改为随临时DATA视图持有及自动撤回。后段失败先释放Local/临时Mem，再移除孩子映射、撤回接管及新保护，已有COW不撤回；其他Space的同Mem别名也恢复。本轮统一内部组合入口、例子及验证边界见03末尾；它尚不是支持分批检查点的原生fork准备。
 
 fork准备租约接续（2026-11-17）：可信Proc构造先登记FORK/CLONING Prep及独立Space持有，再以精确准备归属进入快照。spacesnapshotprep只允许Proc+该Prep两份根持有，额外无关hold拒绝；standalone快照仍要求一份持有。取消释放Prep租约，Proc/SELF和实际映射按各自责任回收；READY父死亡、父先回收但孩子仍保留immutable/COW视图的账目验证见03末尾。同步实现尚无每32页检查点，不将租约接入称为原生fork/COW完整交付。
+
+### fork 原页接管的独立账本（2026-11-17）
+
+新增Mem内部fork角色与adopted页位图，88→96字节，达到既定96字节上限；默认8192槽固定池总增65536字节。普通RAM与SHARED的角色为0；临时DATA孩子为FORK_VIEW，以backing持有原始逻辑Mem的精确引用和本次新接管的原页掩码，原Mem为FORK_SOURCE。该引用不增加原Mem管理者，不恢复退役授权；原管理者、Space和Acct绑定可以先退出，原Mem与未结费用由账本引用保留。IMMUTABLE的backing继续是规范SEALED代码引用，两类用途由kind/角色区分，提交后DATA清空这份临时来源，不形成永久祖先链。
+
+memforkclone在最多16页的不可切出叶操作内完成预付/克隆后才公布孩子和账本，失败释放源租约并保留输出。原DATA处于FORK_SOURCE时拒绝实际写、写分离、新映射及再次克隆；临时孩子可按正常COW规则写，用于子信号cookie。显式memforkcommit仅移除临时来源/角色并释放原Mem引用，保留合法COW关系；未提交孩子的最后一个引用归还时，先释放其分支/新页，再自动撤回本次原页接管，最后释放源引用。最后引用可以是映射或借用引用，不要求仍有管理者，也不要求原C栈返回补做undo。既有COW页的adopted位为0，不把旧组或旧保护当作本次新接管撤销。
+
+Space和forksnapshot的映射内/未映射DATA均改用这份账本；删除对外的memclonerecord/memcloneundo接口，原页掩码不再放在forksnapshot的LOCALS栈数组，也不再借用源Mmap.prep.reserved或MAP_SNAPSHOT_SOURCE标志。内存释放只处理Backing/引用/原页表示，不反向调用Space或改PTE；PTE日志仍由Space单独提交/撤销，避免内存模块依赖上层地址空间清理。源私有写入口临时锁定并非通用管理权限，普通释放/退役仍可完成。
+
+快照树为每个首次映射的Mem保留一份MAP_SNAPSHOT_OWNER临时管理引用直到end。成功先提交对应DATA账本，再归还这个临时拥有引用；失败先归还临时拥有引用，解除孩子最后映射时由Mem自动撤回接管，Space随后恢复自己的新PTE保护。为避免丢失这份图内拥有引用，开放的同步日志期间两棵root拒绝map/unmap/clear/destroy/activate，仍允许目标的受检查kernel write/COW cookie；end只有在归还/提交全部拥有引用后才解除目标树的拆除门禁。无关root及普通内存操作维持自身约束。
+
+可信内存机制例子（不是一次原生fork）：A的两页DATA被B临时克隆，B先写其中一页。原管理者A归还管理引用、解除只读映射、销毁root、关闭/解绑Acct；原Mem仍由B账本保留，未变成新管理授权。B再归还管理引用，但仍有最后一份借用引用，此时账本仍有效；最后一次memrelease先归还B的写分离页/分支，按位图撤回A原页接管，再释放A原Mem及关闭账目。全过程没有返回给调用者的undo掩码，也不依赖A的栈/表还存在。若B先提交，则只断开临时来源，普通COW生命周期继续，不做原页表示回滚。
+
+8项新增host覆盖写后自动回滚、提交解锁/保留COW、旧COW不误撤销、最后借用引用、退役源/root销毁/Acct关闭、部分额度失败、无效种类及其他已有COW分支写入后独立存活/出资者转移；另1项Space检查同步根冻结及图内拥有引用。sigframe两架构各新增四组真实页/账目组合：自动abort、显式commit、退役源且最后借用引用收尾、部分预付失败；末尾全量回到物理页/账目/COW池基线。普通Mem/Space与原fork组合验证继续回归。
+
+本次只是分批克隆的回滚账本前置。树游标仍未进入Prep，Local/临时视图持有列表仍在同步C路径中，尚无每32页检查点或C栈被强杀后的完整移交；不能让这些账本以外的未托管责任跨调度存活。原生fork三调用仍NOTSUP。forksnapshot静态帧ARM6512/RV6256，各减512字节；新reap为ARM176/RV192，需纳入以后完整调用链栈深核验，单个.su不是证明。日志与源码/契约哈希归build/host/stage77-fork-backing-journal/；未执行CI、真实硬件或性能验收。
+
+本轮最终本地make unit全部547项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json核对所有结果与当前源码/头哈希，含两个FORKJOURNALCHECK、实际Mem96/Prep192/Proc512池尺寸、静态帧和normal无fixture。最初guest断言把退役源的MEM_BAD误当MEM_BUSY，失败串口与修正原因保留在证据中，未改变退役权限规则。未执行CI、真实硬件、性能、原生fork或分批检查点验收。

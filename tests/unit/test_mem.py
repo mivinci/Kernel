@@ -8,7 +8,7 @@ class Memid(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('index', C.c_uint32), ('reserved', C.c_uint32)]
 class Memory(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('bytes', C.c_uint64), ('acct', Acctid)] + [
-        (x, C.c_uint32) for x in ('head', 'pages', 'refs', 'managers', 'state', 'writes', 'execs', 'busy', 'kind', 'cowmaps')] + [('backing', Memid)]
+        (x, C.c_uint32) for x in ('head', 'pages', 'refs', 'managers', 'state', 'writes', 'execs', 'busy', 'kind', 'cowmaps')] + [('backing', Memid),('fork',C.c_uint32),('adopted',C.c_uint32)]
 
 class MemoryTests(unittest.TestCase):
     extra_flags = ('-DMEMS=4', '-DBREFS=16', '-DMMAPS=4')

@@ -11,7 +11,7 @@
 ## 已实现边界
 
 - RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM缓存仍关闭；现接GICv2/PLIC外设控制器HAL及最小Device映射，现接固定镜像IRQ_BIND/ACK/解绑与真实EVENT递送；IRQ_SOURCE授权/原生bind仍待确认。
-- Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。Mem内容状态保留到最终回收，managers=0表示退役；现接SEALED规范backing多代视图，Mem88字节。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；现接全局零阶容量及COW额度双重承诺、兑现/取消/旧页转交及原出资者替换基础（Acct64字节）；现接可信逻辑页组/预付分支、DATA Mem克隆及未映射写分离，现接PTE COW位、全部别名分离提交及真实用户DATA写fault原PC重试；现接内核代写/copy及COW栈信号帧；现接可信整个Space映射快照/去重及跨Mem失败回滚；现接独立Local继承/原Handle与墓碑/私有视图重绑定；现接独立fork信号动作/活动帧cookie继承及HAL子返回现场派生，现由可信forksnapshot统一Space/Local/未映射Mem/保底/Signal/现场的同步提交与后段回滚；现接可信Proc/Prep构造、取消/期限及父退出即时撤销；原生fork准入/分批检查点/专用发布与生产发权/DMA仍未接。
+- Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。Mem内容状态保留到最终回收，managers=0表示退役；现接SEALED规范backing多代视图，Mem96字节，现有临时DATA视图自持的原页接管账本。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；现接全局零阶容量及COW额度双重承诺、兑现/取消/旧页转交及原出资者替换基础（Acct64字节）；现接可信逻辑页组/预付分支、DATA Mem克隆及未映射写分离，现接PTE COW位、全部别名分离提交及真实用户DATA写fault原PC重试；现接内核代写/copy及COW栈信号帧；现接可信整个Space映射快照/去重及跨Mem失败回滚；现接独立Local继承/原Handle与墓碑/私有视图重绑定；现接独立fork信号动作/活动帧cookie继承及HAL子返回现场派生，现由可信forksnapshot统一Space/Local/未映射Mem/保底/Signal/现场的同步提交与后段回滚；现接可信Proc/Prep构造、取消/期限及父退出即时撤销；原生fork准入/分批检查点/专用发布与生产发权/DMA仍未接。
 - Local48、Life128、Proc512、Prep192、Image64、Obs48、Rq192、Space64、Set56；结果/镜像/账目与运行槽独立回收。两层Sigctx预付RV704/ARM960，cookie跨PID/image复用不重置，不回绕。
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权，SERVICE仅由可信fixture安装，生产清单策略未启动。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过538项，格式及make test-qemu的110个两架构场景全部通过；日志`build/host/stage76-fork-lifetime/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
-- sigframe两架构各新增六组可信Proc/Prep生命周期组合：7份准备后取消、2次未公布失败，覆盖显式取消、注入期限边界、源表关闭、后段FAULT、每源3份上限及真实READY父强杀；核对独立栈顶现场、凭据/组、原Handle/CREATE减权、普通start/configure拒绝、无wait结果及最终回收。7项新host覆盖克隆期门禁/固定期限/精确根租约。110场景结果及当前源码/头哈希、normal无fixture均核对；Prep总增1536字节，Proc保持512；builder静态帧ARM512/RV528。每32页检查点、STOP/KILL安全退栈/转交、原生准入/真实调用捕获/Fix/专用发布仍待接；尚未运行这些未发布孩子。
+- 本地make unit通过547项，格式及make test-qemu的110个两架构场景全部通过；日志`build/host/stage77-fork-backing-journal/`，SDK依赖审计通过，未执行CI/目标真实硬件/性能验收。
+- sigframe两架构各新增四组持久接管账本检查：abort/commit、退役源且root与Acct先退出、最后借用引用自动回滚、部分预付失败，全部页/费用回基线。9项新host另验旧COW不误撤销、其他分支写入后独立进展、源冻结和同步根/拥有引用门禁。110场景及当前源码/头哈希、normal无fixture均核对。Mem池增64KiB（96字节上限），Prep192/Proc512不变；forksnapshot静态帧ARM6512/RV6256，各减512。树游标、Local/临时视图持有列表、每32页检查点和STOP/KILL安全转交仍待迁移；原生准入/真实调用捕获/Fix/专用发布未接，不能因账本独立即称可丢弃整个克隆C栈。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

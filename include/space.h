@@ -67,16 +67,18 @@ int spacesnapshot(Spaceid source, Spaceid target);
 /* Same synchronous contract, retaining source adoption/protection journals for
    Local/Signal preparation. Exactly one end is required after successful begin;
    on abort caller first drops every child Local/unmapped-view reference.
-   No source mutation, unrelated clone, checkpoint, IRQ or user execution may
-   occur between begin/end. Child kernel writes are allowed. */
+   No root map/unmap/clear/destroy/activate, unrelated clone, checkpoint, IRQ
+   or user execution may occur between begin/end. Child kernel writes are
+   allowed; the tree retains one journal-owner manager per unique Mem. */
 int spacesnapshotbegin(Spaceid source, Spaceid target);
 /* Exact active FORK Prep owns the second root lease; caller first checks its
    source/target table relation with prepsnapshotcheck. Same no-checkpoint scope. */
 int spacesnapshotprep(Spaceid source, Spaceid target, Prepid prep);
 int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
-/* Unmapped-in-source DATA only; caller holds its child view and adoption mask
-   until commit, or frees it and calls memcloneundo before aborting the tree. */
-int spacesnapshotclone(Spaceid source, Spaceid target, Memid original, Memid *view, u32 *adopted);
+/* Unmapped-in-source DATA only; child owns its durable original/adoption
+   journal. Commit it with memforkcommit, or release every child reference before
+   aborting the PTE journal. No stack-resident undo mask escapes this call. */
+int spacesnapshotclone(Spaceid source, Spaceid target, Memid original, Memid *view);
 /* Borrow the corresponding prepared target view for an already mapped source
    Mem, checking every source alias correspondence. No reference or grant. */
 int spacesnapshotview(Spaceid source, Spaceid target, Memid original, Memid *view);

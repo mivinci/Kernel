@@ -216,3 +216,5 @@ sigreserve现另验HAL派生的fork子返回现场：两架构各运行零Fix和
 sigframe现另验统一内部forksnapshot：Space、原Handle资源表、未映射Mem、保底、信号和HAL现场纳入同一次提交/后段回滚。两架构各四组可信组合覆盖两层cookie及后段信号/容量失败；不执行真实原生fork，可信Proc/Prep准备及取消现已接入；原生准入、分批检查点、Fix和专用发布仍待接。
 
 sigframe现另验带独立内核栈的可信Proc/Prep fork准备：普通start/configure拒绝，显式取消、期限边界、源关闭、准备容量和READY父被强杀均核对清理。父退出在延迟清理前立即撤销未发布孩子的资格，父先回收时旧账目仍保留到孩子最后视图结束。原生fork三个调用仍NOTSUP，尚无完整分批检查点、Fix与专用发布。
+
+fork接管账本现随临时DATA视图保留：最后引用自动撤回新原页接管，原管理者/root/Acct可先退出；映射与未映射路径共用，不再把undo掩码留给原C栈。Mem为96字节，池增64KiB，forksnapshot栈帧每架构减512字节。sigframe另验四组提交/回滚/退役/失败组合；Prep游标、临时拥有列表与真实分批检查点仍待接，原生fork尚未开放。

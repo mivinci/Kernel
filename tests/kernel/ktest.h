@@ -68,4 +68,5 @@ void sealtest(Hvs *kernel);
 void memtest(Hvs *kernel);
 void forksnapshottest(void);
 void forklifetest(void);
+void forkjournaltest(void);
 #endif

@@ -747,6 +747,10 @@ def exercise(args, run_dir, record):
                     if lifetimes != [dict(cases=6,prepared=7,cancelled=7,failed=2,expired=1,owner_close=1,parent_kill=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("fork Proc/Prep lifetime/cleanup mismatch")
                     record["fork_lifetimes"]=lifetimes[0]
+                    journals=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKJOURNALCHECK ")]
+                    if journals != [dict(cases=4,aborted=1,committed=1,retired=1,failed=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("durable fork backing journal/last-release mismatch")
+                    record["fork_journals"]=journals[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=

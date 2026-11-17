@@ -260,3 +260,23 @@ class SpaceSnapshotTests(unittest.TestCase):
             self.assertEqual(self.lib.spacesnapshotbegin(parent,other),0)
             self.assertEqual(self.lib.spacesnapshotend(parent,other,0),0)
         for lib in self.libs:self.exercise(lib,body)
+
+    def test_live_journal_freezes_roots_and_keeps_mapping_owner_until_end(self):
+        def body():
+            self.journal();parent=self.create();data=self.memory_create();self.assertEqual(self.map(parent,data),0)
+            account,child=self.destination();self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
+            view=Memid();self.lib.spacesnapshotview.argtypes=[Spaceid,Spaceid,Memid,C.POINTER(Memid)]
+            self.assertEqual(self.lib.spacesnapshotview(parent,child,data,C.byref(view)),0)
+            self.assertEqual((self.mstat(data).fork,self.mstat(view).fork,self.mstat(view).managers),(1,2,1))
+            self.lib.spaceunmap.argtypes=[Spaceid,C.c_uint64]
+            try:
+                for sid in (parent,child):
+                    self.assertEqual(self.lib.spaceactivate(sid),-4)
+                    self.assertEqual(self.lib.spaceunmap(sid,0x10000),-4)
+                    self.assertEqual(self.lib.spaceclear(sid,32),-4)
+                    self.assertEqual(self.lib.spacedestroy(sid),-4)
+                self.assertEqual(self.map(child,view,address=0x20000),-4)
+            finally:self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual(self.stat(child).mapcount,0)
+            self.assertEqual(self.mstat(data).fork,0)
+        for lib in self.libs:self.exercise(lib,body)

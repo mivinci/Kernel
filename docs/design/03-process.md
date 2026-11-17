@@ -1365,6 +1365,8 @@ Space/Local/Signal/现场仍为独立机制；统一Prep事务、真实forkprep/
 
 ### fork 的统一内部快照与后段回滚（2026-11-17）
 
+下述为该阶段的组合与验证记录；原页接管账本保存/撤回方式现已按02末尾的独立账本替换，不再从调用栈或源Mmap取undo掩码。
+
 新增kernel/fork.c的可信forksnapshot，把Space、Local、接收保底、Signal和HAL子返回现场纳入一个同步提交/回滚范围。源必须是冻结的ACTIVE父镜像，目标是其PREPARING孩子，已有独立Acct/空Space/空Local表/信号预付银行；Createarg由拥有目标Proc/mail规格的上层提供，不是用户可选择的越权参数。该内部入口不创建Proc/Prep、不安装Fix、不发布，不替代原生CREATE准入。目标和父用户现场分离，失败不改父/输出Hctx。
 
 先在局部Hctx中核验和派生forkprep子返回，再保留Space原页接管/新保护日志。逐槽枚举标FORK的Mem并按原Mem去重：有映射者借用精确孩子视图；未映射DATA用带接管日志的clone，SEALED创建immutable视图，SHARED只暂持原对象。Local建立原槽/代次独立引用，再预付0..8资源回复保底；sigfork作为最后一个可失败阶段，继承动作/掩码并为活动帧写孩子cookie。其后只释放临时拥有引用、提交原页/PTE日志、复制已验证Hctx，不再分配或外部等待。
@@ -1396,3 +1398,5 @@ Proc用既有配置字节区分普通镜像与FORK来源，不增加Proc512预�
 procforkbuild静态帧ARM512/RV528字节；其下forksnapshot为ARM7024/RV6768、sigfork为ARM2608/RV2112字节。单个.su不等于完整用户陷阱调用链的最大栈深。源仍必须在整个同步快照中停止用户执行，无checkpoint/IRQ切出；下一步须将每32页检查点、STOP/KILL下安全退栈/转交与这些所有权记录完整接通，再开放原生forkprep。原生forkprep/commit/abort仍NOTSUP；实际调用捕获、Fix安全范围/归属与专用原子发布、运行库修复和服务会话仍未交付。证据归build/host/stage76-fork-lifetime/，不声称CI、真实硬件或性能通过。
 
 本轮最终本地make unit全部538项、make fmt-check及make test-qemu全部110个两架构场景通过；evidence.json核对所有结果与当前源码/头哈希，含两个FORKLIFECHECK、Prep192/Proc512实际符号池尺寸、静态帧和normal无fixture。未执行CI、真实硬件、性能、原生fork或检查点/Fix/专用发布验收。
+
+fork检查点前置接续（2026-11-17）：原页接管账本现随临时DATA视图持有原Mem及页掩码，最后引用自动撤回本次接管；映射内/未映射路径共用，不再依赖forksnapshot栈数组或源Mmap的reserved字段。Mem96字节、池增64KiB，forksnapshot静态帧每架构减512字节；生命周期/失败例子及验证见02末尾。Prep192与Proc512不变。树游标、Local/临时视图拥有列表及每32页调度/STOP/KILL检查点仍须完整接入，不能仅因内存账本独立便声称可丢弃整个克隆C续点；原生fork仍NOTSUP。

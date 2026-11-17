@@ -8,6 +8,7 @@
 static Mem      memories[MEMS];
 static Blockref blocks[BREFS];
 static u32      initialized, freehead, freemem;
+static int      undoclone(Memid source, u32 adopted);
 
 void
 meminit(void)
@@ -57,6 +58,7 @@ clearbacking(Mem *m)
 {
   m->backing.generation = 0;
   m->backing.index = m->backing.reserved = 0;
+  m->fork = m->adopted = 0;
 }
 static void
 releaseblocks(Acctid acct, u32 head)
@@ -88,9 +90,13 @@ releaseblocks(Acctid acct, u32 head)
 static void
 reap(Mem *m)
 {
+  Memid original;
+  Mem  *source;
+  u32   staged = m->fork == MEM_FORK_VIEW, adopted = m->adopted;
+  original = m->backing;
   if (m->refs)
     return;
-  if (m->managers || m->writes || m->execs || m->busy || m->cowmaps)
+  if (m->managers || m->writes || m->execs || m->busy || m->cowmaps || m->fork == MEM_FORK_SOURCE)
     panic("data manager references");
   if (m->kind == MEM_IMMUTABLE) {
     if (memrelease(m->backing))
@@ -100,6 +106,18 @@ reap(Mem *m)
       panic("device backing reference");
   } else
     releaseblocks(m->acct, m->head);
+  if (staged) {
+    source = find(original);
+    if (!source || source->fork != MEM_FORK_SOURCE || source->kind != MEM_RAM ||
+        source->state != MEM_DATA)
+      panic("fork original journal ownership");
+    source->fork = 0;
+    if (undoclone(original, adopted))
+      panic("fork original adoption rollback");
+    clearbacking(m);
+    if (memrelease(original))
+      panic("fork original journal reference");
+  }
   if (acctdrop(m->acct))
     panic("data account reference");
   m->state = 0;
@@ -266,6 +284,7 @@ memimmutable(Memid source, Acctid target, Memid *out)
   copy->kind = MEM_IMMUTABLE;
   copy->cowmaps = copy->writes = copy->execs = copy->busy = 0;
   copy->backing = canonical;
+  copy->fork = copy->adopted = 0;
   out->generation = copy->generation;
   out->index = slot;
   out->reserved = 0;
@@ -286,7 +305,7 @@ cloneprivate(Memid source, Acctid target, Memid *out, u32 *adopted)
       account.state != AC_ACTIVE ||
       (m->acct.index == target.index && m->acct.generation == target.generation))
     return MEM_BAD;
-  if (m->busy || m->writes != m->cowmaps)
+  if (m->busy || m->fork || m->writes != m->cowmaps)
     return MEM_BUSY;
   slot = freemem;
   if (slot == PG_NONE)
@@ -382,14 +401,57 @@ memclone(Memid source, Acctid target, Memid *out)
   return cloneprivate(source, target, out, NULL);
 }
 int
-memclonerecord(Memid source, Acctid target, Memid *out, u32 *adopted)
+memforkclone(Memid original, Acctid target, Memid *out)
 {
-  if (!adopted)
+  Mem  *source = find(original), *view;
+  Memid child;
+  u32   adopted;
+  int   error;
+  if (!source || !out || !source->refs)
     return MEM_BAD;
-  return cloneprivate(source, target, out, adopted);
+  if (source->refs == 0xffffffffU)
+    return MEM_LIMIT;
+  /* Trusted source lease also permits a mapped, manager-retired source. It
+     cannot add a manager or make that original writable again. */
+  source->refs++;
+  error = cloneprivate(original, target, &child, &adopted);
+  if (error) {
+    if (memrelease(original))
+      panic("fork failed journal lease");
+    return error;
+  }
+  view = find(child);
+  if (!view)
+    panic("fork child journal creation");
+  source->fork = MEM_FORK_SOURCE;
+  view->fork = MEM_FORK_VIEW;
+  view->adopted = adopted;
+  view->backing = original;
+  *out = child;
+  return 0;
 }
 int
-memcloneundo(Memid source, u32 adopted)
+memforkcommit(Memid child)
+{
+  Mem  *view = find(child), *source;
+  Memid original;
+  if (!view || !view->refs || view->busy || view->fork == MEM_FORK_SOURCE)
+    return MEM_BAD;
+  if (!view->fork)
+    return 0;
+  if (view->fork != MEM_FORK_VIEW || view->kind != MEM_RAM || view->state != MEM_DATA)
+    return MEM_BAD;
+  original = view->backing;
+  source = find(original);
+  if (!source || source->fork != MEM_FORK_SOURCE || source->kind != MEM_RAM ||
+      source->state != MEM_DATA || source->busy)
+    return MEM_BAD;
+  source->fork = 0;
+  clearbacking(view);
+  return memrelease(original);
+}
+static int
+undoclone(Memid source, u32 adopted)
 {
   Mem    *m = find(source);
   Cowstat status;
@@ -443,7 +505,7 @@ memcowbreak(Memid id, u32 page, u64 *pa)
   int  error;
   if (!m || !pa || m->kind != MEM_RAM || m->state != MEM_DATA || page >= m->pages)
     return MEM_BAD;
-  if (m->busy)
+  if (m->busy || m->fork == MEM_FORK_SOURCE)
     return MEM_BUSY;
   for (node = m->head; page; page--)
     node = blocks[node].next;
@@ -562,6 +624,8 @@ memstat(Memid id, Mem *out)
   out->kind = m->kind;
   out->cowmaps = m->cowmaps;
   out->backing = m->backing;
+  out->fork = m->fork;
+  out->adopted = m->adopted;
   return 0;
 }
 
@@ -596,7 +660,7 @@ memcanmap(Memid id, u64 prot)
   if (!m || !m->managers || !(prot & VM_READ) || prot & ~7UL ||
       ((prot & VM_WRITE) && (prot & VM_EXEC)))
     return MEM_BAD;
-  if (m->busy)
+  if (m->busy || m->fork == MEM_FORK_SOURCE)
     return MEM_BUSY;
   /* No public COW PTE path yet: a shared private backing can only acquire
      read-only mappings. Writable CPU aliases must not bypass separation. */
@@ -692,7 +756,7 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
   if (!m || !m->managers || m->kind == MEM_MMIO || m->state == MEM_SEALED || !source || !bytes ||
       offset > m->bytes || bytes > m->bytes - offset)
     return MEM_BAD;
-  if (m->busy)
+  if (m->busy || m->fork == MEM_FORK_SOURCE)
     return MEM_BUSY;
   first = (u32) (offset / PAGE_SIZE);
   last = (u32) ((offset + bytes - 1) / PAGE_SIZE);

@@ -42,7 +42,6 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
 {
   Forkbinding bindings[LOCALS];
   u64         generations[LOCALS];
-  u32         adopted[LOCALS];
   u8          owned[LOCALS];
   Hctx        candidate;
   Imageid     sourceimage, targetimage;
@@ -96,12 +95,10 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
     }
     bindings[count].source = original;
     owned[count] = 0;
-    adopted[count] = 0;
     error = spacesnapshotview(source->space, target->space, original, &bindings[count].target);
     if (error) {
       if (backing.state == MEM_DATA)
-        error = spacesnapshotclone(source->space, target->space, original, &bindings[count].target,
-                                   &adopted[count]);
+        error = spacesnapshotclone(source->space, target->space, original, &bindings[count].target);
       else if (backing.state == MEM_SEALED)
         error = memimmutable(original, target->acct, &bindings[count].target);
       else if (backing.state == MEM_SHARED) {
@@ -130,7 +127,7 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
   if (error)
     goto failed;
   for (i = 0; i < count; i++)
-    if (owned[i] && memfree(bindings[i].target))
+    if (owned[i] && (memforkcommit(bindings[i].target) || memfree(bindings[i].target)))
       panic("fork temporary view commit");
   if (spacesnapshotend(source->space, target->space, 1))
     panic("fork mapping commit");
@@ -151,9 +148,6 @@ failed:
   for (i = 0; i < count; i++)
     if (owned[i] && memfree(bindings[i].target))
       panic("fork temporary view rollback");
-  for (i = 0; i < count; i++)
-    if (adopted[i] && memcloneundo(bindings[i].source, adopted[i]))
-      panic("fork unmapped adoption rollback");
   if (spacesnapshotend(source->space, target->space, 0))
     panic("fork mapping rollback");
   return error;
