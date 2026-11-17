@@ -166,7 +166,7 @@ bindtest(const Dtinfo *hardware)
             !trace[31]);
     REQUIRE(!irqstat(identity, &state) && state.state == IRQ_ARMED);
     REQUIRE(!memstat(io_identity, &io_memory) && io_memory.kind == MEM_MMIO &&
-            io_memory.state == MEM_RETIRING && !io_memory.managers && io_memory.refs == 1);
+            io_memory.state == MEM_DATA && !io_memory.managers && io_memory.refs == 1);
     REQUIRE(spacelookup(process.space, 0x2000000, &entry) && entry.pa == window.pages.base &&
             entry.prot == (VM_READ | VM_WRITE | VM_USER) && entry.attr == VM_DEVICE);
     if (mode == 3) {

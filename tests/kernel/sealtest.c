@@ -41,7 +41,10 @@ sealtest(Hvs *kernel)
   result = ((u64(*)(void)) target)();
   REQUIRE(result == 42);
   REQUIRE(!hal_vm_unmap(kernel, target));
-  REQUIRE(!memfree(memory));
+  REQUIRE(!memfree(memory) && !memstat(memory, &state) && !state.managers &&
+          state.state == MEM_SEALED && state.refs == 1 && state.execs == 1);
+  REQUIRE(memhold(memory) == MEM_BAD && memretain(memory) == MEM_BAD &&
+          memcanmap(memory, VM_READ | VM_EXEC) == MEM_BAD);
   REQUIRE(!spaceunmap(space, 0x10000));
   REQUIRE(!spacedestroy(space));
   REQUIRE(!acctclose(acct) && !acctunbind(acct) && !setclose(group));

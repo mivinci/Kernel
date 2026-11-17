@@ -155,6 +155,37 @@ class MemoryTests(unittest.TestCase):
         for lib in self.libs:
             self.exercise(lib, body)
 
+    def test_content_and_seal_state_survive_last_manager_without_resurrection(self):
+        def body():
+            self.lib.memshared.argtypes=[Acctid,C.c_uint64,C.POINTER(Memid)]
+            self.lib.memcanmap.argtypes=[Memid,C.c_uint64]
+            for creator,state,prot in (('memcreate',1,3),('memshared',5,3),('memcode',3,1),('memcode',4,5)):
+                sid=self.create();mid=Memid()
+                self.assertEqual(getattr(self.lib,creator)(self.aid,4096,C.byref(mid)),0)
+                self.mems.append(mid)
+                if state==4:self.assertEqual(self.lib.memseal(mid),0)
+                self.assertEqual(self.map(sid,mid,prot=prot),0)
+                physical=self.page(mid)
+                self.assertEqual(self.lib.memfree(mid),0)
+                value=self.mstat(mid)
+                self.assertEqual((value.state,value.kind,value.managers,value.refs),(state,0,0,1))
+                self.assertEqual(self.page(mid),physical)
+                before=bytes(value),bytes(self.astat()),bytes(self.pstat())
+                self.assertEqual(self.lib.memhold(mid),-1)
+                self.assertEqual(self.lib.memretain(mid),-1)
+                self.assertEqual(self.lib.memcanmap(mid,prot),-1)
+                byte=C.c_ubyte(1)
+                self.assertEqual(self.lib.memwrite(mid,0,C.byref(byte),1),-1)
+                self.assertEqual(self.lib.memseal(mid),-1)
+                self.assertEqual(self.map(sid,mid,address=0x20000,prot=prot),-1)
+                self.assertEqual((bytes(self.mstat(mid)),bytes(self.astat()),bytes(self.pstat())),before)
+                self.assertEqual(self.lib.spaceunmap(sid,0x10000),0)
+                self.maps.remove((sid,0x10000))
+                self.assertEqual(self.lib.memstat(mid,C.byref(Memory())),-1)
+                self.assertEqual(self.lib.spacedestroy(sid),0)
+                self.ids.remove(sid)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_released_manager_and_closed_account_keep_existing_mapping(self):
         def body():
             sid = self.create()
@@ -162,7 +193,7 @@ class MemoryTests(unittest.TestCase):
             pa = self.page(mid)
             self.assertEqual(self.map(sid, mid, length=8192), 0)
             self.assertEqual(self.lib.memfree(mid), 0)
-            self.assertEqual((self.mstat(mid).managers, self.mstat(mid).refs, self.mstat(mid).state), (0, 1, 2))
+            self.assertEqual((self.mstat(mid).managers, self.mstat(mid).refs, self.mstat(mid).state), (0, 1, 1))
             self.assertEqual(self.lib.memfree(mid), -1)
             self.assertEqual(self.map(sid, mid, address=0x40000), -1)
             self.lib.acctclose(self.aid)

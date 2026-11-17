@@ -197,7 +197,7 @@ int
 memhold(Memid id)
 {
   Mem *m = find(id);
-  if (!m || m->state == MEM_RETIRING || m->busy || !m->managers || m->refs == 0xffffffffU)
+  if (!m || m->busy || !m->managers || m->refs == 0xffffffffU)
     return MEM_BAD;
   m->refs++;
   m->managers++;
@@ -212,8 +212,6 @@ memfree(Memid id)
     return MEM_BAD;
   m->managers--;
   m->refs--;
-  if (!m->managers)
-    m->state = MEM_RETIRING;
   reap(m);
   return 0;
 }
@@ -222,7 +220,7 @@ int
 memretain(Memid id)
 {
   Mem *m = find(id);
-  if (!m || m->state == MEM_RETIRING || m->busy || !m->managers || m->refs == 0xffffffffU)
+  if (!m || m->busy || !m->managers || m->refs == 0xffffffffU)
     return MEM_BAD;
   m->refs++;
   return 0;
@@ -279,7 +277,7 @@ int
 memcanmap(Memid id, u64 prot)
 {
   Mem *m = find(id);
-  if (!m || !m->managers || m->state == MEM_RETIRING || !(prot & VM_READ) || prot & ~7UL ||
+  if (!m || !m->managers || !(prot & VM_READ) || prot & ~7UL ||
       ((prot & VM_WRITE) && (prot & VM_EXEC)))
     return MEM_BAD;
   if (m->busy)
@@ -337,8 +335,8 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
   const u8    *input = source;
   volatile u8 *output;
   u64          pa, take, i;
-  if (!m || !m->managers || m->kind == MEM_MMIO || m->state == MEM_RETIRING ||
-      m->state == MEM_SEALED || !source || !bytes || offset > m->bytes || bytes > m->bytes - offset)
+  if (!m || !m->managers || m->kind == MEM_MMIO || m->state == MEM_SEALED || !source || !bytes ||
+      offset > m->bytes || bytes > m->bytes - offset)
     return MEM_BAD;
   if (m->busy)
     return MEM_BUSY;

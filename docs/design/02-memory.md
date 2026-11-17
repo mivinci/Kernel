@@ -149,7 +149,7 @@ Boot/ABI报告01规定的两架构共同用户地址窗口；底层页表编码�
 
 ### 物理别名、代码封存与 DMA 属性
 
-- Mem 状态 LOADING/DATA/SEALED/RETIRING 分开；LOADING 可由授权加载者写，不能执行；SEALED 可按授权 RX，不可用户写且不能重新转为可写。
+- Mem内容状态LOADING/DATA/SHARED/SEALED保留至最终回收，managers=0独立表示退役并禁止新管理/映射引用；LOADING可由授权加载者写但不能执行，SEALED可按授权RX，不可用户写且不能重新转为可写。
 - seal 是明确管理 syscall，使用 Op 检查所有用户写别名与在途写引用，存在则拒绝，不自动拆除映射；完成 HAL 缓存同步后原子封存。存在外部不可撤销写者则失败。
 - Mem 元数据记录写映射/执行映射状态，跨进程也检查；SEALED 不授予 DMA 固定，不允许通过普通写入辅助接口修改。
 - 内核受信实现可能有特权直接映射，但不得通过用户 syscall 暴露写入 SEALED 的路径；不宣称防御恶意内核或无 IOMMU 的恶意设备驱动。
@@ -532,3 +532,15 @@ MMIO存储来源接续（2026-11-17）：Mem现72字节，新增持久kind区分
 整页设备组接续（2026-11-17）：同页已知外设可经可信路径显式申请精确完整成员页权限，各视图共用一个Acct租约；不能按字节窗口或同Set推断可共享。独占页单成员复用旧记录，不新增重叠租约。Mem仍72字节，MMIO引用/RETIRING规则不变，完整性/保护边界与真实用户探测见09末尾，生产发权/设备I/O/DMA仍另验。
 
 用户态堆后端接续（2026-11-17）：libsys私有地址管理按64KiB以下的普通DATA块组合连续VA，libc再切小块；malloc/free的指针不是Mem Handle。map即放弃管理引用，arena最后C对象free才整条unmap各Mmap并返原Acct费用；每步失败回滚已提交前缀，异常清理保留范围/费用待重试。无新原生调用、普通内存不获DMA/执行权，Boot几何只新增既有装载上界的共享常量名。真实一空槽、运行中回收及限制见08末尾；尚非COW/fork、DMA或POSIX mmap实现。
+
+### 映射存续期间保留内存内容类别（2026-11-17）
+
+为接续fork/COW的私有/共享/封存分类，Mem的state现保留DATA/LOADING/SEALED/SHARED直至最后引用回收；managers=0独立表示退役，不再把state覆盖为MEM_RETIRING。kind仍区分RAM/MMIO，Mem仍72字节，无新增元数据费用。此前附录中“进入RETIRING”表示的生命周期现在由manager计数表达，旧常量不再存在；不是新增用户ABI或恢复已释放授权。
+
+最后manager释放后，原Mmap/Op引用、state、kind及物理页继续保留；memhold/memretain/memcanmap/memwrite/memseal及Local安装仍先检查managers，不能因state仍为SHARED/SEALED而重新获得管理/映射操作。已有读写/执行映射按原权限继续访问，最后unmap释放物理块并结清原Acct；MMIO继续持原Device租约及属性，最后unmap不构成DMA停止证明。
+
+例：父仅留下SHARED映射并drop最后MEM时，state仍SHARED、managers=0；未来fork分类可识别它应维持共享，但本次没有实现fork继承或允许绕过管理检查的新映射。SEALED的R/RX映射同样保留封存来源；无管理引用不代表可写或可重新seal。普通DATA及未封存LOADING不因只读映射自动变成不可变共享代码。
+
+host新增四类内容状态的最后manager释放检查，核对旧页/费用保留、禁止全部新操作、最后映射回收及槽复用；SHARED跨Acct最后授权释放后仍保留SHARED与两个映射，MMIO类型/租约检查保持。两架构memory/seal/irqbind场景分别明确检查DATA、SEALED及Device来源；这只是COW前置分类，不代表物理承诺、页级共享分支、故障分离、费用转移或fork已实现。
+
+本地make unit全部407项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage60-mem-provenance/，含当前mem/local源码哈希和全部原始运行目录。未执行CI、真实硬件、性能或COW/fork运行验收。

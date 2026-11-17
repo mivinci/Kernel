@@ -87,7 +87,7 @@ memtest(Hvs *kernel)
   data = kaddr(pa);
   REQUIRE(!data[PAGE_SIZE / sizeof(u64) - 1], "partial kernel output survived");
   REQUIRE(!memfree(memory) && !memstat(memory, &backing) && backing.managers == 0 &&
-              backing.refs == 2,
+              backing.refs == 2 && backing.state == MEM_DATA,
           "mapping backing retention");
   REQUIRE(!acctclose(acct) && !acctunbind(acct), "mapped account close");
   REQUIRE(spaceunmap(space, 0x200000) == SP_BAD && spacedestroy(space) == SP_BUSY,

@@ -8,19 +8,18 @@
 #ifndef BREFS
 #define BREFS 65536
 #endif
-#define MEM_PAGES    16
-#define MEM_DATA     1
-#define MEM_RETIRING 2
-#define MEM_LOADING  3
-#define MEM_SEALED   4
-#define MEM_SHARED   5
-#define MEM_RAM      0
-#define MEM_MMIO     1
-#define MEM_DENIED   -7
-#define MEM_BUSY     -4
-#define MEM_BAD      -1
-#define MEM_LIMIT    -2
-#define MEM_FULL     -3
+#define MEM_PAGES   16
+#define MEM_DATA    1
+#define MEM_LOADING 3
+#define MEM_SEALED  4
+#define MEM_SHARED  5
+#define MEM_RAM     0
+#define MEM_MMIO    1
+#define MEM_DENIED  -7
+#define MEM_BUSY    -4
+#define MEM_BAD     -1
+#define MEM_LIMIT   -2
+#define MEM_FULL    -3
 
 typedef struct Memid    Memid;
 typedef struct Mem      Mem;
@@ -34,7 +33,9 @@ struct Mem
 {
   u64    generation, bytes;
   Acctid acct;
-  u32    head, pages, refs, managers, state, writes, execs, busy, kind;
+  /* state is content/seal provenance until final reap; managers==0 means
+     retiring and prohibits acquiring any new manager/map/Op reference. */
+  u32 head, pages, refs, managers, state, writes, execs, busy, kind;
 };
 struct Blockref
 {

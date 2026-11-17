@@ -286,8 +286,7 @@ localmem(Rtable *t, Memid id, u64 rights, u64 offset, u64 length, u32 inherit, H
     return -ERR_DENIED;
   if (m.kind == MEM_MMIO && (inherit || (rights & (VM_EXEC | LOCAL_SEAL))))
     return -ERR_DENIED;
-  if (m.state == MEM_RETIRING ||
-      ((m.state == MEM_DATA || m.state == MEM_SHARED) && rights & (VM_EXEC | LOCAL_SEAL)) ||
+  if (((m.state == MEM_DATA || m.state == MEM_SHARED) && rights & (VM_EXEC | LOCAL_SEAL)) ||
       (m.state == MEM_SEALED && rights & VM_WRITE))
     return -ERR_DENIED;
   l = empty(t);

@@ -223,3 +223,5 @@ vfeatures仅接受已读回复位的RESET，每步读实际status核对当前状
 这是实际硬件传输寄存器的探测/协商/复位验证，没有队列或DMA在途，不能据此声称带在途请求的复位/隔离恢复、IRQ_SOURCE授权、生产发权、块/网络业务或目标真实硬件已完成。DMA实例域开放问题继续保持待确认。
 
 本地最终make unit通过381项、make fmt-check通过，make test-qemu全部106个两架构场景通过；日志build/host/stage57-virtio-device/，包括反例失败、修复后专项、最终全量、原始QEMU结果目录与源码哈希。SDK两架构libvirtio合并依赖审计通过，普通镜像不链接测试。新场景实际证明无在途请求时的真实协商/复位；无CI/目标真实硬件/性能或在途DMA恢复结论。
+
+MMIO生命周期表示接续（2026-11-17）：Mem不再将最后manager释放后的state改为MEM_RETIRING，改由managers=0表示退役、保留state=DATA及kind=MMIO到最后unmap。Device租约/属性/引用条件不变；不会重新允许映射或增持管理权，详细共用规则与验收见02末尾。旧“RETIRING”文字不再表示一个会覆盖内容类型的状态值。

@@ -76,6 +76,8 @@ class SharedMemoryTests(unittest.TestCase):
             self.assertEqual((remaining.state,remaining.used,remaining.bound),(2,3,0))
             self.assertEqual(self.map(target,tmap,receiver,offset=4096,va=0x20000,prot=1),0)
             self.assertEqual(self.lib.localfree(C.byref(target),receiver),0)
+            retired=Memory();self.assertEqual(self.lib.memstat(identity,C.byref(retired)),0)
+            self.assertEqual((retired.state,retired.managers,retired.refs),(5,0,2))
             self.assertEqual(self.map(target,tmap,receiver,offset=4096,va=0x30000),-3)
             self.assertEqual(self.lib.spaceread(tid,0x20000,answer,8),0);self.assertEqual(answer.raw,b'shared!!')
             self.assertEqual(self.lib.spaceunmap(tid,0x10000),0)
