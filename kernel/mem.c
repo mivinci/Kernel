@@ -1,4 +1,6 @@
 #include <mem.h>
+#include <cow.h>
+#define BLOCK_COW 0x80000000U
 #include <device.h>
 #include <diag.h>
 #include <vm.h>
@@ -11,6 +13,7 @@ void
 meminit(void)
 {
   u32 i;
+  cowinit();
   if (initialized)
     return;
   for (i = 0; i < BREFS; i++) {
@@ -34,6 +37,21 @@ find(Memid id)
   return m->state && m->generation == id.generation ? m : NULL;
 }
 
+static Cowid
+branchof(u32 node)
+{
+  Cowid id;
+  id.generation = blocks[node].pa;
+  id.index = blocks[node].order & ~BLOCK_COW;
+  id.reserved = 0;
+  return id;
+}
+static void
+setbranch(u32 node, Cowid id)
+{
+  blocks[node].pa = id.generation;
+  blocks[node].order = BLOCK_COW | id.index;
+}
 static void
 releaseblocks(Acctid acct, u32 head)
 {
@@ -42,11 +60,18 @@ releaseblocks(Acctid acct, u32 head)
   block.acct = acct;
   while (head != PG_NONE) {
     next = blocks[head].next;
-    block.block.pa = blocks[head].pa;
-    block.block.order = blocks[head].order;
-    block.block.reserved = 0;
-    if (acctfree(block))
-      panic("data backing ownership");
+    if (blocks[head].order != PG_NONE) {
+      if (blocks[head].order & BLOCK_COW) {
+        if (cowdrop(branchof(head)))
+          panic("private branch ownership");
+      } else {
+        block.block.pa = blocks[head].pa;
+        block.block.order = blocks[head].order;
+        block.block.reserved = 0;
+        if (acctfree(block))
+          panic("data backing ownership");
+      }
+    }
     blocks[head].order = PG_NONE;
     blocks[head].next = freehead;
     freehead = head;
@@ -152,6 +177,113 @@ memshared(Acctid acct, u64 bytes, Memid *out)
   return create(acct, bytes, out, MEM_SHARED);
 }
 
+int
+memclone(Memid source, Acctid target, Memid *out)
+{
+  Mem    *m = find(source), *copy;
+  Acct    account;
+  Acctblk owned;
+  Cowid   branch, child;
+  u32     originals[MEM_PAGES], converted[MEM_PAGES];
+  u32     slot, node, head = PG_NONE, tail = PG_NONE, next, i, made = 0;
+  int     error;
+  if (!m || !out || m->kind != MEM_RAM || m->state != MEM_DATA || acctstat(target, &account) ||
+      account.state != AC_ACTIVE ||
+      (m->acct.index == target.index && m->acct.generation == target.generation))
+    return MEM_BAD;
+  if (m->busy || m->writes)
+    return MEM_BUSY;
+  slot = freemem;
+  if (slot == PG_NONE)
+    return MEM_FULL;
+  error = accthold(target);
+  if (error)
+    return error;
+  m->busy = 1;
+  /* Prepay child Blockrefs before altering any source page representation. */
+  for (i = 0; i < m->pages; i++) {
+    if (freehead == PG_NONE) {
+      error = MEM_FULL;
+      goto failed;
+    }
+    node = freehead;
+    freehead = blocks[node].next;
+    blocks[node].order = PG_NONE;
+    blocks[node].next = PG_NONE;
+    if (tail == PG_NONE)
+      head = node;
+    else
+      blocks[tail].next = node;
+    tail = node;
+  }
+  node = m->head;
+  next = head;
+  for (i = 0; i < m->pages; i++) {
+    originals[i] = node;
+    converted[i] = 0;
+    made++;
+    if (!(blocks[node].order & BLOCK_COW)) {
+      owned.block.pa = blocks[node].pa;
+      owned.block.order = blocks[node].order;
+      owned.block.reserved = 0;
+      owned.acct = m->acct;
+      error = cowcreate(&owned, &branch);
+      if (error)
+        goto failed;
+      setbranch(node, branch);
+      converted[i] = 1;
+    } else {
+      branch = branchof(node);
+    }
+    error = cowshare(branch, target, &child);
+    if (error)
+      goto failed;
+    setbranch(next, child);
+    node = blocks[node].next;
+    next = blocks[next].next;
+  }
+  copy = &memories[slot];
+  freemem = copy->head;
+  copy->generation++;
+  copy->bytes = m->bytes;
+  copy->acct = target;
+  copy->head = head;
+  copy->pages = m->pages;
+  copy->refs = copy->managers = 1;
+  copy->state = MEM_DATA;
+  copy->kind = MEM_RAM;
+  copy->writes = copy->execs = copy->busy = 0;
+  m->busy = 0;
+  out->generation = copy->generation;
+  out->index = slot;
+  out->reserved = 0;
+  return 0;
+failed:
+  releaseblocks(target, head);
+  for (i = 0; i < made; i++) {
+    if (!converted[i])
+      continue;
+    node = originals[i];
+    if (cowunwrap(branchof(node), &owned))
+      panic("private clone rollback");
+    blocks[node].pa = owned.block.pa;
+    blocks[node].order = owned.block.order;
+  }
+  m->busy = 0;
+  acctdrop(target);
+  return error;
+}
+
+static int
+sharedbranch(u32 node)
+{
+  Cowstat status;
+  if (!(blocks[node].order & BLOCK_COW))
+    return 0;
+  if (cowstat(branchof(node), &status))
+    return -1;
+  return status.branches > 1;
+}
 int
 memdevice(Acctid acct, u32 device, Memid *out)
 {
@@ -269,7 +401,13 @@ mempage(Memid id, u32 page, u64 *pa)
     return devpage(m->head, page, pa);
   for (node = m->head; page; page--)
     node = blocks[node].next;
-  *pa = blocks[node].pa;
+  if (blocks[node].order & BLOCK_COW) {
+    Cowstat status;
+    if (cowstat(branchof(node), &status))
+      return MEM_BAD;
+    *pa = status.pa;
+  } else
+    *pa = blocks[node].pa;
   return 0;
 }
 
@@ -277,11 +415,20 @@ int
 memcanmap(Memid id, u64 prot)
 {
   Mem *m = find(id);
+  u32  node;
   if (!m || !m->managers || !(prot & VM_READ) || prot & ~7UL ||
       ((prot & VM_WRITE) && (prot & VM_EXEC)))
     return MEM_BAD;
   if (m->busy)
     return MEM_BUSY;
+  /* No public COW PTE path yet: a shared private backing can only acquire
+     read-only mappings. Writable CPU aliases must not bypass separation. */
+  if (m->kind == MEM_RAM && (prot & VM_WRITE))
+    for (node = m->head; node != PG_NONE; node = blocks[node].next) {
+      int shared = sharedbranch(node);
+      if (shared)
+        return shared < 0 ? MEM_BAD : MEM_BUSY;
+    }
   if (m->state == MEM_SEALED)
     return (prot & VM_WRITE) ? MEM_BAD : 0;
   return (prot & VM_EXEC) ? MEM_BAD : 0;
@@ -335,12 +482,36 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
   const u8    *input = source;
   volatile u8 *output;
   u64          pa, take, i;
+  u32          node, page, first, last;
+  int          shared, error;
   if (!m || !m->managers || m->kind == MEM_MMIO || m->state == MEM_SEALED || !source || !bytes ||
       offset > m->bytes || bytes > m->bytes - offset)
     return MEM_BAD;
   if (m->busy)
     return MEM_BUSY;
+  first = (u32) (offset / PAGE_SIZE);
+  last = (u32) ((offset + bytes - 1) / PAGE_SIZE);
+  node = m->head;
+  for (page = 0; page <= last; page++, node = blocks[node].next) {
+    if (page < first)
+      continue;
+    shared = sharedbranch(node);
+    if (shared < 0)
+      return MEM_BAD;
+    if (shared && m->refs != m->managers)
+      return MEM_BUSY;
+  }
   m->busy = 1;
+  node = m->head;
+  for (page = 0; page <= last; page++, node = blocks[node].next) {
+    if (page < first || !(blocks[node].order & BLOCK_COW))
+      continue;
+    error = cowwrite(branchof(node), &pa);
+    if (error) {
+      m->busy = 0;
+      return error;
+    }
+  }
   while (bytes) {
     mempage(id, (u32) (offset / PAGE_SIZE), &pa);
     take = MIN(bytes, PAGE_SIZE - (offset & PAGE_MASK));

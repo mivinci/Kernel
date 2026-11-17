@@ -282,6 +282,21 @@ cowdrop(Cowid id)
   return 0;
 }
 int
+cowunwrap(Cowid id, Acctblk *out)
+{
+  Cowref   *r = find(id);
+  Cowgroup *g;
+  if (!r || !out)
+    return AC_BAD;
+  g = &groups[r->group];
+  if (g->count != 1)
+    return AC_BUSY;
+  copyblock(out, &g->backing);
+  freehome(r->home);
+  freereference(id.index);
+  return 0;
+}
+int
 cowstat(Cowid id, Cowstat *out)
 {
   Cowref   *r = find(id);

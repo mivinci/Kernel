@@ -1,5 +1,7 @@
 #include "ktest.h"
 #include <cow.h>
+#include <mem.h>
+#include <space.h>
 #include <diag.h>
 #include <vm.h>
 #define REQUIRE(c)                                                                                 \
@@ -43,6 +45,88 @@ modify(Cowid id, u32 *split, u32 *exclusive)
     REQUIRE(memory[i] == (0x31415926 ^ i));
   memory[0] ^= 0xfeedbeef;
   REQUIRE(!cowcheck() && !acctcheck() && !pgcheck());
+}
+static void
+memcowtest(void)
+{
+  Setid   set;
+  Set     group;
+  Acctid  parent, child, third, small;
+  Acct    account;
+  Spaceid source_space, child_space;
+  Memid   source, copy, later, denied;
+  Mem     status;
+  Cowpool pool;
+  Pgstat  before, after;
+  Hpte    entry;
+  u64     original[2], pa;
+  u8      data[64], observed[64];
+  u32     i;
+  pgstat(&before);
+  REQUIRE(!setcreate(128, 128, 8, &set) && !acctcreate(set, 32, 32, &parent) &&
+          !acctcreate(set, 32, 32, &child) && !acctcreate(set, 32, 32, &third) &&
+          !acctcreate(set, 1, 1, &small));
+  REQUIRE(!spacecreate(parent, &source_space) && !spacecreate(child, &child_space));
+  REQUIRE(!memcreate(parent, 8192, &source));
+  for (i = 0; i < sizeof(data); i++)
+    data[i] = 0x5a;
+  REQUIRE(!memwrite(source, 0, data, sizeof(data)) && !memwrite(source, 4096, data, sizeof(data)));
+  REQUIRE(!mempage(source, 0, &original[0]) && !mempage(source, 1, &original[1]));
+  REQUIRE(!spacemap(source_space, source, 0, 0x10000, 8192, VM_READ) &&
+          !spacemap(source_space, source, 0, 0x20000, 8192, VM_READ));
+  REQUIRE(!memclone(source, child, &copy));
+  REQUIRE(memcanmap(copy, VM_READ | VM_WRITE) == MEM_BUSY &&
+          memwrite(source, 0, data, sizeof(data)) == MEM_BUSY);
+  REQUIRE(!memfree(source) && !memstat(source, &status) && !status.managers);
+  REQUIRE(!memclone(source, third, &later));
+  denied.generation = 9;
+  denied.index = denied.reserved = 9;
+  REQUIRE(memclone(source, small, &denied) == AC_LIMIT && denied.generation == 9 &&
+          !acctstat(small, &account) && !account.used && !account.reserved && !account.cow &&
+          !acctclose(small) && !acctunbind(small));
+  REQUIRE(!cowcheck() && !mempage(source, 0, &pa) && pa == original[0]);
+  for (i = 0; i < sizeof(data); i++)
+    data[i] = 0x63;
+  REQUIRE(!memwrite(copy, 0, data, sizeof(data)) && !memwrite(copy, 4096, data, sizeof(data)));
+  REQUIRE(!mempage(copy, 0, &pa) && pa != original[0] &&
+          !spacemap(child_space, copy, 0, 0x10000, 8192, VM_READ | VM_WRITE));
+  REQUIRE(spacelookup(child_space, 0x10000, &entry) && entry.pa == pa &&
+          entry.prot == (VM_READ | VM_WRITE | VM_USER) && entry.attr == VM_NORMAL);
+  data[0] = 0x77;
+  REQUIRE(!spacewrite(child_space, 0x10000, data, sizeof(data)));
+  for (i = 0; i < sizeof(data); i++)
+    data[i] = 0x6c;
+  REQUIRE(!memwrite(later, 0, data, sizeof(data)) && !memwrite(later, 4096, data, sizeof(data)));
+  REQUIRE(!spaceread(source_space, 0x10000, observed, sizeof(observed)));
+  for (i = 0; i < sizeof(observed); i++)
+    REQUIRE(observed[i] == 0x5a);
+  REQUIRE(!spaceread(source_space, 0x21000, observed, sizeof(observed)));
+  for (i = 0; i < sizeof(observed); i++)
+    REQUIRE(observed[i] == 0x5a);
+  REQUIRE(!spaceunmap(source_space, 0x10000) && !spaceunmap(source_space, 0x20000) &&
+          memstat(source, &status) == MEM_BAD && !spacedestroy(source_space) &&
+          !acctclose(parent) && !acctunbind(parent) && acctstat(parent, &account) == AC_BAD);
+  REQUIRE(!spaceread(child_space, 0x10000, observed, sizeof(observed)) && observed[0] == 0x77);
+  REQUIRE(!memfree(copy) && !spaceunmap(child_space, 0x10000) && !spacedestroy(child_space) &&
+          !memfree(later));
+  REQUIRE(!acctclose(child) && !acctunbind(child) && !acctclose(third) && !acctunbind(third));
+  cowpool(&pool);
+  REQUIRE(!pool.branches && !pool.groups && !pool.prepaid && !pgreserved() &&
+          !setstat(set, &group) && !group.charged && !setclose(set) && !cowcheck() &&
+          !acctcheck() && !pgcheck());
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated);
+  putstr("MEMCOWCHECK clones=");
+  puthex(2);
+  putstr(" rejected=");
+  puthex(1);
+  putstr(" aliases=");
+  puthex(2);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
 }
 void
 cowpagetest(void)
@@ -134,6 +218,7 @@ cowpagetest(void)
     REQUIRE(!setstat(set, &group) && !group.charged && !setclose(set) && !acctcheck() &&
             !pgcheck());
   }
+  memcowtest();
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && split == 9 &&
           exclusive == 2);

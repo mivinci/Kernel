@@ -198,3 +198,5 @@ CASE=heap验证构造函数及外部VA冲突、128个小块与跨Mem大块、表
 sigframe现由11个用户进程自行原生注册handler/trampoline，新增注册后解除代码映射的受控失败；sigsuspend的9个进程同样自行注册并使用libc等待。signal.h支持集合助手及mask/pending/suspend，来源仍是可信code=0测试注入；公开POSIX sigaction trampoline、真实来源编码与Rctx/普通等待中断仍待接。
 
 CASE=cow使用8分支小容量配置，验证生产逻辑页组的父/子先写复制、父退出出资转交及元数据池/普通物理页耗尽后全部已接分支仍能分离。它尚未连接Mem/PTE或用户fork，不代表用户写故障COW已完成。
+
+CASE=cow另验证私有DATA Mem多代克隆及真实R别名、失败准备回滚、孩子分离后RW映射和最后引用回收。当前Mem层强制拒绝共享页的新RW映射及带可写别名的克隆；用户PTE COW/写故障/fork尚待接通。

@@ -614,3 +614,23 @@ cowdrop非出资分支撤销其credit、摘链并归还预付组槽；出资者�
 当前没有把组接入Mem/Blockref、用户PTE COW权限、用户写故障/__sys_copy、别名统一切换或fork准备/发布。cowwrite的上层稳定与串行前置不能靠普通用户自觉满足，后续必须由Space/Mem事务强制；不能把可信物理组测试称为已经可用的用户COW或fork。
 
 本地make unit全部432项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage64-cow-branches/，保存当前cow.c哈希、全部原始目录及两架构cow.o布局。初次新场景误入SDK列表而额外链接init fixture，已去掉并重跑独立场景/全量；原运行a83f2775cf1545a582077054e69cc862保留，不计最终110项。未执行CI、真实硬件、性能或用户页表/fork验收。
+
+### 私有 DATA Mem 克隆接入（2026-11-17）
+
+新增可信内部memclone(source, target_acct, out)，将整份普通私有DATA Mem按逻辑页克隆为目标Acct的独立Mem视图，未增加syscall或用户发权入口。原始页首次进入共享组时接管原Acctblk；再次克隆已共享视图则沿原Cowid增加分支。目标必须活Acct/同Set，源不能有可写映射或忙操作；只允许DATA/RAM，LOADING/SEALED/SHARED/MMIO与同Acct目标拒绝。已有只读Mmap可保留源引用，managers=0的退役源也能由可信持引用者参与准备，不复活源管理权。
+
+Mem仍72字节、Blockref仍16字节：Blockref内部order高位标记COW分支，pa字段在该模式保存代次、order低位保存分支索引，next仍为该Mem的逻辑页链。原始RAM块记录不变；所有取物理地址统一经mempage解析当前逻辑分支，所有释放按记录模式分别走acctfree或cowdrop。MMIO仍按持久kind走Device，不可能把分支代次当PA或把设备地址交给buddy。标记仅内核内部表示，用户Mem Handle/Maparg无变化。
+
+准备顺序：先检查源/目标与Mem槽，持目标Acct引用，再预付全部孩子Blockref，之后逐页接管/共享。只有全部成功才发布目标Memid及管理引用。任一步额度/物理承诺/组/节点不足时，释放本次已挂的孩子分支/预留及所有孩子节点；对本次刚从原始块接管的源页，用新增cowunwrap将已恢复单分支的组退回原Owned块，保留原PA/费用/源页链。原本已共享的源组只删除本次孩子，不拆其他分支或消耗既有孩子的credit。cowunwrap只接受单分支，不释放物理页或新增引用；多分支时BUSY且输出不变。内部代次不倒退。
+
+memwrite对涉及的逻辑页先全范围检查，再处理COW分离，全部分离完成后才复制输入字节；未映射分支可使用已预付承诺复制成独占页。当前Space尚无PTE COW权限及全部别名替换，因此若某涉及页仍共享且Mem存在Mmap/Op引用，memwrite在任何修改前返回BUSY，防止页地址改变后旧只读PTE滞留。仅剩单分支时pa不变，已有只读别名仍可观察受权内核写。真正只读/SEALED继续拒绝写入，原生__sys_copy尚未接逻辑COW fault，不能绕过该分阶段边界。
+
+映射准入同时收口：共享中的私有逻辑页不能新增RW映射；源已有RW映射时clone拒绝。只读映射正常建立，全部相关页独占后才可RW。该检查是当前内核阶段的强制限制，不是最终fork语义；后续Space事务必须保护原RW父PTE、维护逻辑写权限/COW标记并提交全部别名，届时才能允许已保护的逻辑可写映射参加fork。不能以先克隆再依赖用户不写的方式跳过保护。
+
+例：父Mem两页P0/P1，两个R别名存活。clone到孩子后，孩子预留2页。孩子无映射地write P0后仅该页分离、P1继续共享；写P1后两页独占，可以为孩子建立RW映射，孩子修改不影响父两个R别名。父管理句柄可提前free，最后两个别名unmap才销毁父Mem/逻辑分支；若父是实际出资者则按组规则转交费用，而不是错误地free孩子仍用的物理页。若另一个两页孩子只获1页额度，第二页准备失败时第一份分支及预留回滚，旧父及已有孩子数据/账目不变。
+
+10项两种真实页表编码的host专项直接运行Mem/Space/Cow/Acct实现，验证父/子写、只分离触及页、管理引用归零后的克隆、多R别名/禁止页地址滞留、RW准入、部分额度/分支池/Blockref/Mem槽失败回滚、既有组多代失败保持，以及种类/同Acct拒绝。另补cowunwrap单/多分支及原拥有记录/费用不变的host检查。
+
+CASE=cow两架构另接实际Mem/Space子场景：两页父Mem持两个真实R映射，创建孩子与后代视图，源管理引用可提前归零；额度不足的新孩子失败不改旧组，孩子/后代逐页分离后真实RW映射及spacewrite与父R别名隔离。最后unmap/free、Space/Acct清理全部回原页/费用基线，主机独立核对MEMCOWCHECK。仍是可信内核机制验收，没有用户fork、用户写故障或自动PTE COW演示；正常镜像不运行fixture。
+
+本地make unit全部443项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage65-mem-clone/，含所有原始结果中的当前Mem/Cow/main哈希及两架构MEMCOWCHECK。正常镜像不含测试，compile_commands继续由构建更新；无CI/真实硬件/性能或用户COW fault/fork验收。

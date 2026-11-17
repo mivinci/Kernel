@@ -49,7 +49,7 @@ class CowTests(unittest.TestCase):
             'acctalloc': [Acctid, C.c_uint32, C.POINTER(Limits), C.POINTER(Owned)], 'acctfree': [Owned],
             'cowcreate': [C.POINTER(Owned), C.POINTER(Id)], 'cowshare': [Id, Acctid, C.POINTER(Id)],
             'cowwrite': [Id, C.POINTER(C.c_uint64)], 'cowdrop': [Id], 'cowstat': [Id, C.POINTER(Stat)],
-            'cowpool': [C.POINTER(Pool)], 'test_memory': [C.c_void_p]}.items():
+            'cowunwrap': [Id, C.POINTER(Owned)], 'cowpool': [C.POINTER(Pool)], 'test_memory': [C.c_void_p]}.items():
             getattr(cls.lib, name).argtypes = args
         cls.lib.pgreserved.restype = C.c_uint64
         cls.lib.cowinit()
@@ -223,6 +223,23 @@ class CowTests(unittest.TestCase):
         self.assertEqual(replacement.index, child.index)
         self.assertGreater(replacement.generation, child.generation)
         self.assertEqual(self.lib.cowstat(child, C.byref(Stat())), -1)
+
+    def test_unwrap_only_sole_branch_restores_owned_page_without_free_or_recharge(self):
+        account = self.account(1); root = self.create(account); self.write(root, 0x73)
+        child = self.share(root, self.account(1)); output = Owned()
+        C.memset(C.byref(output), 0x7b, C.sizeof(output)); before = bytes(output), bytes(self.pool())
+        self.assertEqual(self.lib.cowunwrap(root, C.byref(output)), -4)
+        self.assertEqual((bytes(output), bytes(self.pool())), before)
+        self.drop(child); pa = self.stat(root).pa; account_before = bytes(self.astat(account))
+        self.assertEqual(self.lib.cowunwrap(root, C.byref(output)), 0)
+        self.live.pop(self.key(root))
+        try:
+            self.assertEqual((output.block.pa, output.acct.index), (pa, account.index))
+            self.assertEqual(bytes(self.astat(account)), account_before)
+            self.assertEqual(self.lib.cowstat(root, C.byref(Stat())), -1)
+            self.assertEqual(self.pool().branches, 0)
+            self.assertEqual(C.string_at(C.addressof(self.memory) + pa - 0x80000000, 4096), b's' * 4096)
+        finally:self.assertEqual(self.lib.acctfree(output), 0)
 
     def test_seeded_fork_write_exit_model_preserves_payload_and_charge(self):
         randomizer = random.Random(0xc04f64)

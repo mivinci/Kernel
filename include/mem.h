@@ -50,6 +50,10 @@ void meminit(void);
 int  memcreate(Acctid acct, u64 bytes, Memid *out);
 int  memcode(Acctid acct, u64 bytes, Memid *out);
 int  memshared(Acctid acct, u64 bytes, Memid *out);
+/* Trusted preparation: private DATA only, source must have no writable maps.
+   Target gets independent logical pages; existing read-only source maps stay.
+   Output unchanged on failure; no user fork authority or PTE protection here. */
+int memclone(Memid source, Acctid target, Memid *out);
 /* Trusted whole-page grant from the validated boot device inventory. */
 int memdevice(Acctid acct, u32 device, Memid *out);
 /* Trusted kernel source only; user copies require independent range/rights checks. */

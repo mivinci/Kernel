@@ -35,8 +35,11 @@ int cowshare(Cowid source, Acctid target, Cowid *out);
 /* Requires shared backing immutable across all CPU aliases, no concurrent
    mapping/branch mutation. Copies the entire page before publishing new pa.
    Does not update any PTE; callers must commit all logical aliases together. */
-int  cowwrite(Cowid branch, u64 *pa);
-int  cowdrop(Cowid branch);
+int cowwrite(Cowid branch, u64 *pa);
+int cowdrop(Cowid branch);
+/* Roll back a sole branch to its original owned block; consumes the Cowid
+   without freeing physical backing or changing its charge. */
+int  cowunwrap(Cowid branch, Acctblk *out);
 int  cowstat(Cowid branch, Cowstat *out);
 void cowpool(Cowpool *out);
 int  cowcheck(void);

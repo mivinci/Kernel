@@ -1,4 +1,3 @@
-#include <cow.h>
 /* Bootstrap initialization; explicit test images select their guest payloads. */
 #include <boot.h>
 #include <diag.h>
@@ -197,7 +196,6 @@ virtualmain(Hvs *space)
   if (devinit(&hardware))
     panic("device window inventory");
   meminit();
-  cowinit();
   if (spaceinit(space))
     panic("user root initialization");
 #if BOOT_CASE != 0
