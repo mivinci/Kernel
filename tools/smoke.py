@@ -382,7 +382,9 @@ def validate_pages(text, discovery, case):
     result = {"metadata": meta, "initial": pages}
     if case == "pages":
         checks = one("PAGECHECK")
-        if checks.get("exhausted") != managed - 256 - discovery.get("table_pages", 0) or not 1 <= checks.get("orders", 0) <= 17:
+        if (checks.get("exhausted") != managed - 256 - discovery.get("table_pages", 0) or not 1 <= checks.get("orders", 0) <= 17 or
+                {key: checks.get(key) for key in ("committed", "redeemed", "cancelled")} !=
+                dict(committed=8,redeemed=8,cancelled=9)):
             raise SmokeError("physical allocation test count mismatch")
         result["checks"] = checks
     elif "PAGECHECK " in text:

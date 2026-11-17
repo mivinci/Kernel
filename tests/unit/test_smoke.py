@@ -108,9 +108,12 @@ class PageOutputTests(unittest.TestCase):
         text = fields('META', base=0x40400000, size=0x200000, records=65536)
         text += fields('PAGES', total=65536, managed=1000, free=1000, allocated=0, protected=256)
         validate_pages(text, discovery, 'normal')
-        checks = fields('PAGECHECK', orders=16, exhausted=744, checksum=0)
+        checks = fields('PAGECHECK', orders=16, exhausted=744, committed=8, redeemed=8, cancelled=9, checksum=0)
         validate_pages(text + checks, discovery, 'pages')
         for sample in (text, text + checks + checks,
+                       text + fields('PAGECHECK', orders=16, exhausted=744, checksum=0),
+                       (text + checks).replace('redeemed=0000000000000008', 'redeemed=0000000000000007'),
+                       (text + checks).replace('cancelled=0000000000000009', 'cancelled=000000000000000a'),
                        (text + checks).replace('exhausted=00000000000002e8', 'exhausted=00000000000002e9'),
                        (text + checks).replace('allocated=0000000000000000', 'allocated=0000000000000001')):
             with self.assertRaises(SmokeError):

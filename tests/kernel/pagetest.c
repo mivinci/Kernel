@@ -23,6 +23,7 @@ void
 pgtest(void)
 {
   Pgstat        initial, current;
+  Pgcredit      credit;
   Pgblk         block, invalid, out;
   Pglim         lim;
   u32           order, success = 0;
@@ -76,6 +77,9 @@ pgtest(void)
   if (pgfree(block))
     panic("page constrained free");
   same(&initial);
+  credit.pages = 0;
+  if (pgreserve(&credit, 8) || credit.pages != 8 || pgreserved() != 8)
+    panic("page COW commitment");
   while ((error = pgalloc(0, NULL, &block)) == 0) {
     if (++count > initial.managed)
       panic("page allocation loop");
@@ -86,6 +90,21 @@ pgtest(void)
   }
   if (error != PG_NOMEM)
     panic("page exhaustion result");
+  pgstat(&current);
+  if (current.free != initial.protected + 8 || count + initial.protected + 8 != initial.free ||
+      current.allocated != count + initial.allocated || pgcheck())
+    panic("ordinary allocation consumed COW commitment");
+  for (i = 0; i < 8; i++) {
+    if (pgredeem(&credit, &block) || block.order || credit.pages != 7 - i || pgreserved() != 7 - i)
+      panic("page COW redemption");
+    memory = (volatile u64 *) kaddr(block.pa);
+    memory[0] = chain;
+    memory[1] = block.pa ^ 0xabcdef;
+    chain = block.pa;
+    count++;
+    if (pgalloc(0, NULL, &out) != PG_NOMEM || pgcheck())
+      panic("ordinary page used another commitment");
+  }
   pgstat(&current);
   if (current.free != initial.protected || count + initial.protected != initial.free ||
       current.allocated != count + initial.allocated || pgcheck())
@@ -110,10 +129,20 @@ pgtest(void)
     chain = next;
   }
   same(&initial);
+  if (pgreserve(&credit, 9) || pgcancel(&credit, 4) || credit.pages != 5 ||
+      pgcancel(&credit, 6) != PG_BAD || pgcancel(&credit, 5) || pgreserved() || pgcheck())
+    panic("page COW cancellation");
+  same(&initial);
   putstr("PAGECHECK orders=");
   puthex(success);
   putstr(" exhausted=");
   puthex(count);
+  putstr(" committed=");
+  puthex(8);
+  putstr(" redeemed=");
+  puthex(8);
+  putstr(" cancelled=");
+  puthex(9);
   putstr(" checksum=");
   puthex(checksum);
   putstr("\n");

@@ -15,6 +15,9 @@ class Block(C.Structure):
     _fields_ = [('pa', C.c_uint64), ('order', C.c_uint32), ('reserved', C.c_uint32)]
 class Limits(C.Structure):
     _fields_ = [(x, C.c_uint64) for x in ('minpa', 'maxpa_exclusive', 'align')]
+class Credit(C.Structure):
+    _fields_ = [("pages", C.c_uint64)]
+
 class Stats(C.Structure):
     _fields_ = [(x, C.c_uint64) for x in ('total', 'managed', 'free', 'allocated', 'protected')] + [('blocks', C.c_uint64 * 17)]
 
@@ -34,6 +37,10 @@ class PageTests(unittest.TestCase):
         cls.lib.pgalloc.argtypes = [C.c_uint32, C.POINTER(Limits), C.POINTER(Block)]
         cls.lib.pgfree.argtypes = [Block]
         cls.lib.pgstat.argtypes = [C.POINTER(Stats)]
+        cls.lib.pgreserve.argtypes = [C.POINTER(Credit), C.c_uint64]
+        cls.lib.pgcancel.argtypes = [C.POINTER(Credit), C.c_uint64]
+        cls.lib.pgredeem.argtypes = [C.POINTER(Credit), C.POINTER(Block)]
+        cls.lib.pgreserved.restype = C.c_uint64
 
     @classmethod
     def tearDownClass(cls):
@@ -41,9 +48,14 @@ class PageTests(unittest.TestCase):
 
     def setUp(self):
         self.live = {}
+        self.credits = []
         self.init([(0x80000000, 256)], [(0x80000000, 256)])
 
     def tearDown(self):
+        for credit in self.credits:
+            if credit.pages:
+                self.assertEqual(self.lib.pgcancel(C.byref(credit), credit.pages), 0)
+        self.assertEqual(self.lib.pgreserved(), 0)
         for block in list(self.live.values()):
             self.assertEqual(self.lib.pgfree(block), 0)
         self.live.clear()
@@ -63,6 +75,113 @@ class PageTests(unittest.TestCase):
         self.assertEqual(self.lib.pgcheck(), 0)
         self.usable = usable
         self.valid_pages = {base + i * PAGE for base, count in usable for i in range(count)}
+
+    def reserve(self, pages):
+        credit = Credit()
+        self.credits.append(credit)
+        self.assertEqual(self.lib.pgreserve(C.byref(credit), pages), 0)
+        return credit
+
+    def redeem(self, credit):
+        output = Block(123, 99, 17)
+        before = bytes(output), credit.pages, self.lib.pgreserved(), bytes(self.stats())
+        error = self.lib.pgredeem(C.byref(credit), C.byref(output))
+        if not error:
+            self.assertEqual(output.order, 0)
+            self.assertEqual(output.reserved, 0)
+            self.assertNotIn(output.pa, self.live)
+            self.live[output.pa] = output
+        else:
+            self.assertEqual((bytes(output), credit.pages, self.lib.pgreserved(), bytes(self.stats())), before)
+        return error, output
+
+    def test_cow_capacity_survives_ordinary_exhaustion_and_redeems_at_lowwater(self):
+        self.init([(0x80000000, 256)], [(0x80000000, 256)], lowwater=7)
+        first, second = self.reserve(11), self.reserve(13)
+        self.assertEqual(self.lib.pgreserved(), 24)
+        while self.alloc()[0] == 0:
+            pass
+        self.assertEqual((self.stats().free, self.stats().allocated), (31, 225))
+        for credit in (second, first):
+            while credit.pages:
+                self.assertEqual(self.redeem(credit)[0], 0)
+                self.assertEqual(self.lib.pgcheck(), 0)
+                self.assertEqual(self.alloc()[0], -2)
+        self.assertEqual((self.stats().free, self.lib.pgreserved()), (7, 0))
+        self.assertEqual(self.redeem(first)[0], -1)
+
+    def test_failed_reservation_and_cancel_keep_pool_and_credit_unchanged(self):
+        credit = self.reserve(17)
+        before = credit.pages, self.lib.pgreserved(), bytes(self.stats())
+        for pages in (0, 256, (1 << 64) - 1):
+            self.assertIn(self.lib.pgreserve(C.byref(credit), pages), (-1, -2))
+            self.assertEqual((credit.pages, self.lib.pgreserved(), bytes(self.stats())), before)
+        for pages in (0, 18, (1 << 64) - 1):
+            self.assertEqual(self.lib.pgcancel(C.byref(credit), pages), -1)
+            self.assertEqual((credit.pages, self.lib.pgreserved(), bytes(self.stats())), before)
+        self.assertEqual(self.lib.pgredeem(C.byref(credit), None), -1)
+        self.assertEqual((credit.pages, self.lib.pgreserved(), bytes(self.stats())), before)
+        self.assertEqual(self.lib.pgreserve(C.byref(credit), 9), 0)
+        self.assertEqual((credit.pages, self.lib.pgreserved()), (26, 26))
+        self.assertEqual(self.lib.pgcancel(C.byref(credit), 6), 0)
+        self.assertEqual((credit.pages, self.lib.pgreserved()), (20, 20))
+
+    def test_reservation_without_allocations_blocks_pool_reinitialization(self):
+        credit = self.reserve(7)
+        before = bytes(self.stats()), bytes(self.metadata)
+        self.assertEqual(self.lib.pginit(C.byref(self.info), self.metadata, 256, 0), -3)
+        self.assertEqual((bytes(self.stats()), bytes(self.metadata)), before)
+        self.assertEqual((credit.pages, self.lib.pgreserved()), (7, 7))
+
+    def test_constrained_and_large_blocks_cannot_consume_committed_capacity(self):
+        credit = self.reserve(129)
+        limit = Limits(0x80000000, 0x80100000, PAGE)
+        self.assertEqual(self.alloc(7, limit)[0], -2)
+        self.assertEqual(self.alloc(6, limit)[0], 0)
+        self.assertEqual(self.alloc(6)[0], -2)
+        self.assertEqual((credit.pages, self.lib.pgreserved()), (129, 129))
+        self.assertEqual(self.lib.pgcancel(C.byref(credit), 1), 0)
+        self.assertEqual(self.alloc(6)[0], 0)
+
+    def test_fragmented_capacity_can_redeem_without_contiguous_block_promise(self):
+        while self.alloc()[0] == 0:
+            pass
+        for index, block in enumerate(list(self.live.values())):
+            if index % 2 == 0:
+                self.free(block)
+        credit = self.reserve(128)
+        self.assertEqual(self.alloc(1)[0], -2)
+        while credit.pages:
+            self.assertEqual(self.redeem(credit)[0], 0)
+        self.assertEqual(self.stats().free, 0)
+        self.assertEqual(self.lib.pgcheck(), 0)
+
+    def test_randomized_reservations_redemption_and_allocations_conserve_capacity(self):
+        randomizer = random.Random(0xc0a600)
+        credits = [self.reserve(1) for _ in range(4)]
+        for _ in range(2500):
+            credit = randomizer.choice(credits)
+            action = randomizer.randrange(5)
+            if action == 0:
+                amount = randomizer.randrange(1, 17)
+                before = credit.pages, self.lib.pgreserved()
+                error = self.lib.pgreserve(C.byref(credit), amount)
+                self.assertIn(error, (0, -2))
+                if error:self.assertEqual((credit.pages, self.lib.pgreserved()), before)
+            elif action == 1 and credit.pages:
+                amount = randomizer.randint(1, credit.pages)
+                self.assertEqual(self.lib.pgcancel(C.byref(credit), amount), 0)
+            elif action == 2 and credit.pages:
+                self.assertEqual(self.redeem(credit)[0], 0)
+            elif action == 3 and self.live:
+                self.free(randomizer.choice(list(self.live.values())))
+            else:
+                self.alloc(randomizer.randrange(4))
+            stat = self.stats()
+            self.assertEqual(self.lib.pgreserved(), sum(value.pages for value in credits))
+            self.assertLessEqual(self.lib.pgreserved() + stat.protected, stat.free)
+            self.assertEqual(stat.allocated, sum(1 << block.order for block in self.live.values()))
+            self.assertEqual(self.lib.pgcheck(), 0)
 
     def stats(self):
         out = Stats()

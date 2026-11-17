@@ -544,3 +544,19 @@ MMIO存储来源接续（2026-11-17）：Mem现72字节，新增持久kind区分
 host新增四类内容状态的最后manager释放检查，核对旧页/费用保留、禁止全部新操作、最后映射回收及槽复用；SHARED跨Acct最后授权释放后仍保留SHARED与两个映射，MMIO类型/租约检查保持。两架构memory/seal/irqbind场景分别明确检查DATA、SEALED及Device来源；这只是COW前置分类，不代表物理承诺、页级共享分支、故障分离、费用转移或fork已实现。
 
 本地make unit全部407项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage60-mem-provenance/，含当前mem/local源码哈希和全部原始运行目录。未执行CI、真实硬件、性能或COW/fork运行验收。
+
+### 全局 COW 物理容量承诺基础（2026-11-17）
+
+伙伴分配器新增内部Pgcredit及pgreserve/pgcancel/pgredeem，预留数量与恢复低水位独立；pgreserved查询当前总承诺，不改变既有Pgstat字段或用户ABI。每份Pgcredit为8字节，归未来COW分支/事务唯一拥有，必须零初始化、不复制活记录，在所属分支/准备槽复用前兑现或撤销。它是受信内核内部拥有记录，与Acctblk相同地依赖调用者生命周期，不是防伪用户Handle；持有任意正整数不构成用户分配权。当前没有生产fork创建这些记录。
+
+pgreserve接受非零页数，并在free-lowwater-committed范围原子增量预留；失败不改记录/全局状态。所有普通pgalloc（包括有地址约束/高阶块及经Acct取得的内存、页表/栈）扣除全部committed后才准入。预留只承诺无地址约束的零阶页，不保证物理连续性、对齐设备范围或DMA可寻址。pgredeem仅按自己的非空记录兑现一个无约束零阶块，成功才同时减少该记录和全局承诺，失败不改输出/承诺。兑现不得使用系统恢复低水位；撤销只释放自己的剩余承诺，不释放实际页。物理块仍需后续Acct归属/分支结算，不能凭此绕过pgclaim/pgrelease。
+
+有活承诺时即使没有实际分配也禁止pginit重建池；pgcheck同时验证committed<=free-lowwater及原空闲/分配守恒。预留/兑现/撤销无堆、无扫描；兑现复用buddy已有零阶分配，不在预留阶段提前占物理地址。当前所有操作仍要求调用者串行提交，不能把credit指针跨不受控调度共享；未来COW Op须在短提交点绑定分支引用与Acct额度。
+
+例：free=100、lowwater=10，两份分支分别预留11和13页。普通分配至free=34后停止，24页承诺仍在；任一分支可逐页兑现，另一份不被借用，最终free=10且committed=0。若取消13页而不兑现，普通分配可使用释放的13页；不把同一页容量同时给普通分配及COW。再次fork必须同时取得子Acct额度及新全局承诺，只有其一成功时撤销该方；本切片尚未实现这组COW事务。
+
+host新增6项直接测试：普通耗尽后两份独立credit全部兑现、失败/溢出/重复撤销保持、零实际页时重建拒绝、约束/大块不能侵占、碎片化零阶兑现及2500步固定种子守恒；另有Acct分配在全承诺时NOMEM并精确退回账目/Set/引用，取消一页后恢复。CASE=pages两架构实际先承诺8页，再耗尽全部普通页并读写保留的每个零阶页，逐次兑现且普通分配仍拒绝，最终保持256页低水位；全部释放、撤销9页及pgcheck回到原基线，主机核对committed/redeemed/cancelled字段。
+
+这是物理容量层基础，尚未接Acct COW专用额度、父先写出资转移、共享组/分支、PTE COW位及故障分离或fork发布，不能用普通acctreserve冒充完整严格COW保证。真实fork和内核代用户写的COW分离仍需后续实现/验收。
+
+本地最终make unit全部414项、make fmt-check及make test-qemu全部108个两架构场景通过；证据build/host/stage61-page-commit/，含每个原始结果的page.c源码哈希与承诺/兑现/撤销读回。最初主机输出样例缺新字段导致校验测试失败，已更新并补缺失/错误字段拒绝检查，原失败unit-before-output-fixture.log保留；未执行CI、真实硬件、性能或完整COW/fork验收。

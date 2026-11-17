@@ -5,10 +5,11 @@
 #define PG_ORDER 16
 #define PG_NONE  0xffffffffU
 
-typedef struct Page   Page;
-typedef struct Pgblk  Pgblk;
-typedef struct Pglim  Pglim;
-typedef struct Pgstat Pgstat;
+typedef struct Page     Page;
+typedef struct Pgblk    Pgblk;
+typedef struct Pglim    Pglim;
+typedef struct Pgstat   Pgstat;
+typedef struct Pgcredit Pgcredit;
 
 struct Page
 {
@@ -19,6 +20,12 @@ struct Pgblk
 {
   u64 pa;
   u32 order, reserved;
+};
+/* Owned internal reservation, zero-initialize once; never copy a live credit.
+   The caller serializes mutations and releases it before its owner is reused. */
+struct Pgcredit
+{
+  u64 pages;
 };
 struct Pglim
 {
@@ -43,6 +50,12 @@ STATIC_ASSERT(sizeof(Page) == 32, page_size);
 int pginit(const Dtinfo *info, Page *pages, u32 capacity, u64 lowwater);
 int pgalloc(u32 order, const Pglim *lim, Pgblk *out);
 int pgfree(Pgblk blk);
+/* Capacity for unrestricted zero-order COW faults, separate from lowwater.
+   No physical block/address is promised. Reservation changes are atomic. */
+int pgreserve(Pgcredit *credit, u64 pages);
+int pgcancel(Pgcredit *credit, u64 pages);
+int pgredeem(Pgcredit *credit, Pgblk *out);
+u64 pgreserved(void);
 /* Nonzero owners protect accounted blocks from raw pgfree or a wrong account. */
 int  pgclaim(Pgblk blk, u64 owner);
 int  pgrelease(Pgblk blk, u64 owner);

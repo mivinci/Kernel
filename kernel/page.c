@@ -18,7 +18,7 @@ static struct
   u32      regions, count, ready;
   u32      first[PG_ORDER + 1];
   u64      blocks[PG_ORDER + 1];
-  u64      managed, free, allocated, lowwater;
+  u64      managed, free, allocated, lowwater, committed;
 } allocator;
 
 static int
@@ -118,7 +118,7 @@ pginit(const Dtinfo *info, Page *pages, u32 capacity, u64 lowwater)
 {
   u32 i, j, k, count = 0, index, order, region = 0;
   u64 total = 0, managed = 0, pa, end, bytes;
-  if (allocator.ready && allocator.allocated)
+  if (allocator.ready && (allocator.allocated || allocator.committed))
     return PG_BUSY;
   if (!pages || !info || !info->nram || info->nram > DT_RAM || !info->nusable ||
       info->nusable > DT_USABLE || info->nreserved > DT_RESERVED ||
@@ -165,7 +165,7 @@ pginit(const Dtinfo *info, Page *pages, u32 capacity, u64 lowwater)
   allocator.regions = info->nram;
   allocator.count = (u32) total;
   allocator.managed = allocator.free = managed;
-  allocator.allocated = 0;
+  allocator.allocated = allocator.committed = 0;
   allocator.lowwater = lowwater;
   for (i = 0; i <= PG_ORDER; i++) {
     allocator.first[i] = PG_NONE;
@@ -207,8 +207,8 @@ pginit(const Dtinfo *info, Page *pages, u32 capacity, u64 lowwater)
   return pgcheck();
 }
 
-int
-pgalloc(u32 order, const Pglim *lim, Pgblk *out)
+static int
+allocate(u32 order, const Pglim *lim, Pgblk *out, u64 credit)
 {
   u32   found, index, candidate, split, right;
   u64   minpa = 0, maxpa = ~(u64) 0, align = PAGE_SIZE, bytes, base, size, chosen, end;
@@ -224,7 +224,8 @@ pgalloc(u32 order, const Pglim *lim, Pgblk *out)
     return PG_BAD;
   bytes = (u64) PAGE_SIZE << order;
   align = MAX(align, bytes);
-  if ((1UL << order) > allocator.free - allocator.lowwater)
+  if (credit > allocator.committed ||
+      (1UL << order) > allocator.free - allocator.lowwater - (allocator.committed - credit))
     return PG_NOMEM;
   for (found = order; found <= PG_ORDER; found++) {
     for (index = allocator.first[found]; index != PG_NONE; index = allocator.page[index].next) {
@@ -263,6 +264,51 @@ pgalloc(u32 order, const Pglim *lim, Pgblk *out)
     }
   }
   return PG_NOMEM;
+}
+
+int
+pgalloc(u32 order, const Pglim *lim, Pgblk *out)
+{
+  return allocate(order, lim, out, 0);
+}
+int
+pgreserve(Pgcredit *credit, u64 pages)
+{
+  if (!allocator.ready || !credit || !pages || credit->pages > allocator.committed)
+    return PG_BAD;
+  if (pages > allocator.free - allocator.lowwater - allocator.committed)
+    return PG_NOMEM;
+  credit->pages += pages;
+  allocator.committed += pages;
+  return 0;
+}
+int
+pgcancel(Pgcredit *credit, u64 pages)
+{
+  if (!allocator.ready || !credit || !pages || pages > credit->pages ||
+      credit->pages > allocator.committed)
+    return PG_BAD;
+  credit->pages -= pages;
+  allocator.committed -= pages;
+  return 0;
+}
+int
+pgredeem(Pgcredit *credit, Pgblk *out)
+{
+  int error;
+  if (!allocator.ready || !credit || !credit->pages || credit->pages > allocator.committed)
+    return PG_BAD;
+  error = allocate(0, NULL, out, 1);
+  if (!error) {
+    credit->pages--;
+    allocator.committed--;
+  }
+  return error;
+}
+u64
+pgreserved(void)
+{
+  return allocator.committed;
 }
 
 int
@@ -323,7 +369,8 @@ pgcheck(void)
   u64             free = 0, allocated = 0, scanned = 0, pa;
   Page           *p;
   const Pgregion *r;
-  if (!allocator.ready)
+  if (!allocator.ready || allocator.lowwater > allocator.free ||
+      allocator.committed > allocator.free - allocator.lowwater)
     return PG_BAD;
   for (order = 0; order <= PG_ORDER; order++) {
     previous = PG_NONE;

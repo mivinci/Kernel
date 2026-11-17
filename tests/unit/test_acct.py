@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 from test_dtb import Info, Range, ROOT
-from test_page import Page, Block, Limits, Stats
+from test_page import Page, Block, Limits, Stats, Credit
 
 class Setid(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('index', C.c_uint32), ('reserved', C.c_uint32)]
@@ -96,6 +96,26 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(self.lib.acctcheck(), 0)
         self.assertEqual(self.lib.pgcheck(), 0)
         self.assertEqual(self.pgstat().allocated, 0)
+
+    def test_account_allocation_cannot_spend_global_cow_credit_and_rolls_back(self):
+        self.lib.pgreserve.argtypes=[C.POINTER(Credit),C.c_uint64]
+        self.lib.pgcancel.argtypes=[C.POINTER(Credit),C.c_uint64]
+        self.lib.pgreserved.restype=C.c_uint64
+        credit=Credit()
+        group=self.set();account=self.acct(group)
+        self.assertEqual(self.lib.pgreserve(C.byref(credit),256),0)
+        try:
+            before=bytes(self.stat(account)),bytes(self.setstat(group)),bytes(self.pgstat())
+            output=Owned();C.memset(C.byref(output),0x7b,C.sizeof(output));snapshot=bytes(output)
+            self.assertEqual(self.lib.acctalloc(account,0,None,C.byref(output)),-5)
+            self.assertEqual(bytes(output),snapshot)
+            self.assertEqual((bytes(self.stat(account)),bytes(self.setstat(group)),bytes(self.pgstat())),before)
+            self.assertEqual((credit.pages,self.lib.pgreserved()),(256,256))
+            self.assertEqual(self.lib.pgcancel(C.byref(credit),1),0)
+            self.assertEqual(self.lib.acctalloc(account,0,None,C.byref(output)),0)
+            self.assertEqual(self.lib.acctfree(output),0)
+        finally:
+            self.assertEqual(self.lib.pgcancel(C.byref(credit),credit.pages),0)
 
     def set(self, limit=256, peak=512, instances=8):
         out = Setid()
