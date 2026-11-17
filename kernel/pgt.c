@@ -121,8 +121,10 @@ hal_vm_map(Hvs *vs, u64 va, u64 pa, u64 prot, u32 attr)
   if (vs->user && (va < 0x10000 || va >= (1UL << 38)))
     return VM_BAD;
   if (!canonical(va) || (va | pa) & PAGE_MASK || pa >= (1UL << 40) || !(prot & VM_READ) ||
-      prot & ~7UL || (prot & VM_WRITE && prot & VM_EXEC) || attr > VM_DEVICE ||
+      prot & ~(7UL | VM_COW) || (prot & VM_WRITE && prot & VM_EXEC) || attr > VM_DEVICE ||
       (attr == VM_DEVICE && prot & VM_EXEC))
+    return VM_BAD;
+  if ((prot & VM_COW) && (!vs->user || prot != (VM_READ | VM_COW) || attr != VM_NORMAL))
     return VM_BAD;
   for (level = 0; level < 3; level++) {
     index = (u32) ((va >> (30 - level * 9)) & 511);
@@ -165,14 +167,19 @@ hal_vm_replace(Hvs *vs, u64 va, const Hpte *expected, u64 pa, u64 prot)
   if (!vs || !expected || expected->present != 1 ||
       (vs->user && (va < 0x10000 || va >= (1UL << 38))) || !canonical(va) ||
       ((va | pa | expected->pa) & PAGE_MASK) || pa >= (1UL << 40) || expected->pa >= (1UL << 40) ||
-      !(prot & VM_READ) || prot & ~7UL || ((prot & VM_WRITE) && (prot & VM_EXEC)) ||
+      !(prot & VM_READ) || prot & ~(7UL | VM_COW) || ((prot & VM_WRITE) && (prot & VM_EXEC)) ||
       expected->attr > VM_DEVICE || (expected->attr == VM_DEVICE && (prot & VM_EXEC)))
     return VM_BAD;
   user = vs->user ? VM_USER : 0;
-  if (!(expected->prot & VM_READ) || expected->prot & ~(7UL | VM_USER) ||
+  if (!(expected->prot & VM_READ) || expected->prot & ~(7UL | VM_USER | VM_COW) ||
       (expected->prot & VM_USER) != user ||
       ((expected->prot & VM_WRITE) && (expected->prot & VM_EXEC)) ||
       (expected->attr == VM_DEVICE && (expected->prot & VM_EXEC)))
+    return VM_BAD;
+  if (((prot & VM_COW) &&
+       (!vs->user || prot != (VM_READ | VM_COW) || expected->attr != VM_NORMAL)) ||
+      ((expected->prot & VM_COW) && (!vs->user || expected->prot != (VM_READ | VM_USER | VM_COW) ||
+                                     expected->attr != VM_NORMAL)))
     return VM_BAD;
   if (walk(vs, va, &slot, NULL, NULL) || !*slot)
     return VM_BAD;

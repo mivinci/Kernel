@@ -128,6 +128,88 @@ memcowtest(void)
   puthex(after.allocated);
   putstr("\n");
 }
+static void
+spacecowtest(void)
+{
+  Setid   set;
+  Set     group;
+  Acctid  parent, child, bad;
+  Acct    account;
+  Spaceid a, b, destination;
+  Memid   source, copy, denied;
+  Mem     backing;
+  Pgstat  before, after;
+  Hpte    entry;
+  u64     pa;
+  u8      data[64], observed[64];
+  u32     i;
+  pgstat(&before);
+  REQUIRE(!setcreate(128, 128, 8, &set) && !acctcreate(set, 32, 32, &parent) &&
+          !acctcreate(set, 32, 32, &child) && !acctcreate(set, 1, 1, &bad));
+  REQUIRE(!spacecreate(parent, &a) && !spacecreate(parent, &b) &&
+          !spacecreate(child, &destination) && !memcreate(parent, 8192, &source));
+  for (i = 0; i < sizeof(data); i++)
+    data[i] = 0x5a;
+  REQUIRE(!memwrite(source, 0, data, sizeof(data)) && !memwrite(source, 4096, data, sizeof(data)));
+  REQUIRE(!spacemap(a, source, 0, 0x10000, 8192, VM_READ | VM_WRITE) &&
+          !spacemap(b, source, 0, 0x10000, 8192, VM_READ | VM_WRITE) &&
+          !spacemap(a, source, 0, 0x20000, 8192, VM_READ));
+  denied.generation = denied.index = denied.reserved = 9;
+  REQUIRE(spaceclone(source, bad, &denied) == AC_LIMIT && denied.generation == 9 &&
+          !memstat(source, &backing) && backing.writes == 2 && !backing.cowmaps);
+  for (i = 0; i < 2; i++) {
+    REQUIRE(spacelookup(a, 0x10000 + (u64) i * PAGE_SIZE, &entry) &&
+            entry.prot == (VM_READ | VM_WRITE | VM_USER));
+    REQUIRE(spacelookup(b, 0x10000 + (u64) i * PAGE_SIZE, &entry) &&
+            entry.prot == (VM_READ | VM_WRITE | VM_USER));
+  }
+  REQUIRE(!spaceclone(source, child, &copy) && !memstat(source, &backing) && backing.writes == 2 &&
+          backing.cowmaps == 2);
+  REQUIRE(spaceclone(source, bad, &denied) == AC_LIMIT && !memstat(source, &backing) &&
+          backing.cowmaps == 2 && denied.generation == 9);
+  for (i = 0; i < 2; i++) {
+    REQUIRE(!mempage(source, i, &pa) && spacelookup(a, 0x10000 + (u64) i * PAGE_SIZE, &entry) &&
+            entry.pa == pa && entry.prot == (VM_READ | VM_USER | VM_COW));
+    REQUIRE(spacelookup(b, 0x10000 + (u64) i * PAGE_SIZE, &entry) && entry.pa == pa &&
+            entry.prot == (VM_READ | VM_USER | VM_COW));
+  }
+  REQUIRE(spacelookup(a, 0x20000, &entry) && entry.prot == (VM_READ | VM_USER));
+  REQUIRE(spacewrite(a, 0x10000, data, sizeof(data)) == SP_BAD);
+  for (i = 0; i < sizeof(data); i++)
+    data[i] = 0x66;
+  REQUIRE(!memwrite(copy, 0, data, sizeof(data)) && !memwrite(copy, 4096, data, sizeof(data)) &&
+          !spacemap(destination, copy, 0, 0x10000, 8192, VM_READ | VM_WRITE));
+  REQUIRE(!spacewrite(destination, 0x10000, data, sizeof(data)) &&
+          !spaceread(a, 0x10000, observed, sizeof(observed)));
+  for (i = 0; i < sizeof(observed); i++)
+    REQUIRE(observed[i] == 0x5a);
+  REQUIRE(!spaceread(b, 0x11000, observed, sizeof(observed)));
+  for (i = 0; i < sizeof(observed); i++)
+    REQUIRE(observed[i] == 0x5a);
+  REQUIRE(!memfree(source) && !spaceunmap(a, 0x10000) && !spaceunmap(a, 0x20000) &&
+          !spaceunmap(b, 0x10000) && memstat(source, &backing) == MEM_BAD && !spacedestroy(a) &&
+          !spacedestroy(b));
+  REQUIRE(!memfree(copy) && !spaceunmap(destination, 0x10000) && !spacedestroy(destination));
+  REQUIRE(!acctstat(bad, &account) && !account.used && !account.reserved && !acctclose(bad) &&
+          !acctunbind(bad) && !acctclose(parent) && !acctunbind(parent) && !acctclose(child) &&
+          !acctunbind(child) && !setstat(set, &group) && !group.charged && !setclose(set) &&
+          !cowcheck() && !pgcheck() && !acctcheck() && !pgreserved());
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated);
+  putstr("SPACECOWCHECK clones=");
+  puthex(1);
+  putstr(" aliases=");
+  puthex(3);
+  putstr(" protected=");
+  puthex(4);
+  putstr(" rollback=");
+  puthex(2);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}
 void
 cowpagetest(void)
 {
@@ -219,6 +301,7 @@ cowpagetest(void)
             !pgcheck());
   }
   memcowtest();
+  spacecowtest();
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && split == 9 &&
           exclusive == 2);

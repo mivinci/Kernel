@@ -35,7 +35,7 @@ struct Mem
   Acctid acct;
   /* state is content/seal provenance until final reap; managers==0 means
      retiring and prohibits acquiring any new manager/map/Op reference. */
-  u32 head, pages, refs, managers, state, writes, execs, busy, kind;
+  u32 head, pages, refs, managers, state, writes, execs, busy, kind, cowmaps;
 };
 struct Blockref
 {
@@ -50,7 +50,7 @@ void meminit(void);
 int  memcreate(Acctid acct, u64 bytes, Memid *out);
 int  memcode(Acctid acct, u64 bytes, Memid *out);
 int  memshared(Acctid acct, u64 bytes, Memid *out);
-/* Trusted preparation: private DATA only, source must have no writable maps.
+/* Trusted preparation: private DATA only, all writable source maps must be Space-protected.
    Target gets independent logical pages; existing read-only source maps stay.
    Output unchanged on failure; no user fork authority or PTE protection here. */
 int memclone(Memid source, Acctid target, Memid *out);
@@ -62,6 +62,9 @@ int memseal(Memid id);
 int memcanmap(Memid id, u64 prot);
 int memmapref(Memid id, u64 prot, Acctid target);
 int memunmapref(Memid id, u64 prot, Acctid target);
+/* Space-owned count of logically writable maps whose complete PTE range is
+   read-only/COW protected; no permissions or mapping references are granted. */
+int memprotectref(Memid id, u32 enabled);
 int memhold(Memid id);
 int memfree(Memid id);
 /* Mapping/Op references do not restore a released management reference. */

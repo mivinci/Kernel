@@ -3,6 +3,8 @@
 #include <vm.h>
 #include <prep.h>
 #include <abi/mem.h>
+#define MAP_PROTECTED      0x80000000U
+#define MAP_NEW_PROTECTION 0x40000000U
 
 typedef struct Sourcectx Sourcectx;
 typedef struct Copyspan  Copyspan;
@@ -33,6 +35,22 @@ find(Spaceid id)
   return s->state && s->generation == id.generation ? s : NULL;
 }
 
+static int
+samemem(Memid a, Memid b)
+{
+  return a.generation == b.generation && a.index == b.index;
+}
+static u64
+logicalprot(const Mmap *m)
+{
+  return m->prot & 7U;
+}
+static u64
+hardwareprot(const Mmap *m)
+{
+  u64 prot = logicalprot(m);
+  return m->prot & MAP_PROTECTED ? (prot & ~VM_WRITE) | VM_COW : prot;
+}
 static int
 allocate(void *context, u64 *pa)
 {
@@ -315,6 +333,117 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   return 0;
 }
 
+static int
+contains(Space *s, Memid memory)
+{
+  u32 node;
+  for (node = s->maps; node != PG_NONE; node = mappings[node].next)
+    if (samemem(mappings[node].mem, memory))
+      return 1;
+  return 0;
+}
+static void
+protect(Memid memory, u32 rollback)
+{
+  u32       slot, node, page;
+  Space    *s;
+  Mmap     *m;
+  Hvs       vs;
+  Hpte      entry;
+  Sourcectx context;
+  u64       address, prot;
+  for (slot = 0; slot < SPACES; slot++) {
+    s = &spaces[slot];
+    if (!s->state || !contains(s, memory))
+      continue;
+    view(s, &vs, &context);
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      m = &mappings[node];
+      if (!samemem(m->mem, memory) || !(logicalprot(m) & VM_WRITE) ||
+          (rollback ? !(m->prot & MAP_NEW_PROTECTION) : (m->prot & MAP_PROTECTED)))
+        continue;
+      prot = rollback ? logicalprot(m) : (logicalprot(m) & ~VM_WRITE) | VM_COW;
+      for (page = 0; page < m->length / PAGE_SIZE; page++) {
+        address = m->address + (u64) page * PAGE_SIZE;
+        if (!hal_vm_lookup(&vs, address, &entry) ||
+            hal_vm_replace(&vs, address, &entry, entry.pa, prot))
+          panic("private map protection commit");
+      }
+      if (memprotectref(memory, rollback ? 0 : 1))
+        panic("private map protection count");
+      if (rollback)
+        m->prot &= ~(MAP_PROTECTED | MAP_NEW_PROTECTION);
+      else
+        m->prot |= MAP_PROTECTED | MAP_NEW_PROTECTION;
+    }
+  }
+}
+int
+spaceclone(Memid memory, Acctid target, Memid *out)
+{
+  Space    *s;
+  Mmap     *m;
+  Mem       backing;
+  Hvs       vs;
+  Hpte      entry;
+  Sourcectx context;
+  u32       slot, node, page, writes = 0, protected = 0;
+  u64       address, pa;
+  int       error;
+  if (!out || memstat(memory, &backing) || backing.kind != MEM_RAM || backing.state != MEM_DATA)
+    return SP_BAD;
+  if (backing.busy)
+    return SP_BUSY;
+  /* Complete preflight across all spaces, including read-only aliases. A
+     loading scope or untracked writer cannot be frozen by this mechanism. */
+  for (slot = 0; slot < SPACES; slot++) {
+    s = &spaces[slot];
+    if (!s->state || !contains(s, memory))
+      continue;
+    if (s->busy || s == active)
+      return SP_BUSY;
+    view(s, &vs, &context);
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      m = &mappings[node];
+      if (!samemem(m->mem, memory))
+        continue;
+      if (m->prep.generation || m->prot & ~(7U | MAP_PROTECTED) ||
+          (logicalprot(m) != VM_READ && logicalprot(m) != (VM_READ | VM_WRITE)) ||
+          ((m->prot & MAP_PROTECTED) && !(logicalprot(m) & VM_WRITE)))
+        return SP_BAD;
+      writes += (logicalprot(m) & VM_WRITE) != 0;
+      protected += (m->prot & MAP_PROTECTED) != 0;
+      for (page = 0; page < m->length / PAGE_SIZE; page++) {
+        address = m->address + (u64) page * PAGE_SIZE;
+        if (mempage(memory, (u32) (m->offset / PAGE_SIZE) + page, &pa) ||
+            !hal_vm_lookup(&vs, address, &entry) || entry.pa != pa ||
+            entry.prot != (hardwareprot(m) | VM_USER) || entry.attr != VM_NORMAL ||
+            hal_vm_replace(&vs, address, &entry, entry.pa, hardwareprot(m)))
+          return SP_BAD;
+      }
+    }
+  }
+  if (writes != backing.writes || protected != backing.cowmaps)
+    return SP_BAD;
+  for (slot = 0; slot < SPACES; slot++)
+    if (spaces[slot].state && contains(&spaces[slot], memory))
+      spaces[slot].busy = 1;
+  protect(memory, 0);
+  error = memclone(memory, target, out);
+  if (error)
+    protect(memory, 1);
+  for (slot = 0; slot < SPACES; slot++) {
+    s = &spaces[slot];
+    if (!s->state || !contains(s, memory))
+      continue;
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next)
+      if (samemem(mappings[node].mem, memory))
+        mappings[node].prot &= ~MAP_NEW_PROTECTION;
+    s->busy = 0;
+  }
+  return error;
+}
+
 int
 spaceunmap(Spaceid id, u64 address)
 {
@@ -346,7 +475,7 @@ spaceunmap(Spaceid id, u64 address)
   for (i = 0; i < pages; i++) {
     if (mempage(m->mem, (u32) (m->offset / PAGE_SIZE) + i, &pa) ||
         !hal_vm_lookup(&vs, address + (u64) i * PAGE_SIZE, &entry) || entry.pa != pa ||
-        entry.prot != (m->prot | VM_USER) ||
+        entry.prot != (hardwareprot(m) | VM_USER) ||
         entry.attr != (backing.kind == MEM_MMIO ? VM_DEVICE : VM_NORMAL))
       return SP_BAD;
   }
@@ -367,7 +496,9 @@ spaceunmap(Spaceid id, u64 address)
   m->length = 0;
   m->next = freemap;
   freemap = node;
-  if (memunmapref(memory, m->prot, s->acct))
+  if ((m->prot & MAP_PROTECTED) && memprotectref(memory, 0))
+    panic("unmap protected backing reference");
+  if (memunmapref(memory, logicalprot(m), s->acct))
     panic("unmap backing reference");
   if (prep.generation && preptempdrop(prep))
     panic("loading unmap scope");

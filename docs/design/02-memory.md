@@ -650,3 +650,23 @@ spaces两架构场景在活动内核root上添加独立普通VA，先触发实�
 本切片没有新增PTE COW标记、逻辑写权限/全部别名提交、用户写fault、内核代用户写分离或fork；现有Mem共享页RW/映射重定位仍保持拒绝，不能直接调用此HAL入口绕过Mem/Space语义。
 
 本地make unit全部446项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage66-pte-replace/，含当前pgt.c源码哈希与原始spaces/rodatawrite读回及完整页表审计。未执行CI、真实硬件、性能、用户COW标记/fault或fork验收。
+
+### Space 克隆准备中的全部别名保护（2026-11-17）
+
+HAL内部新增VM_COW=16：只允许普通内存、用户root、R且无W/X的4KiB叶；RV使用RSW bit9（bit8仍表示Device），ARM使用软件bit55，decode会在Hpte.prot报告标记。位选择核对[RISC-V Privileged 20240411](https://docs.riscv.org/reference/isa/v20240411/_attachments/riscv-privileged.pdf)与[Linux v6.12 arm64软件PTE位定义](https://github.com/torvalds/linux/blob/v6.12/arch/arm64/include/asm/pgtable-prot.h)，只参考可用软件位事实，未复制实现。HAL map/replace均拒绝kernel/Device/可写/可执行COW组合，替换仍遵循前节BBM。用户Maparg/Local权限仍只接受原1/2/4，不把软件标记当成应用可选权限。
+
+Mmap.prot低3位继续保存逻辑权限，高位内部MAP_PROTECTED表示该记录的全部逻辑W叶已硬件只读/COW保护；另有只在准备事务内存在的MAP_NEW_PROTECTION，用于失败时只撤回本次降权。Mem新增cowmaps计数，为writes的子集（writes仍按逻辑W映射计）；利用原对齐空隙，Mem仍72字节、Mmap仍64、Space仍64，不增加固定映射池或全局表。memclone只在所有逻辑W映射均已保护时接纳共享，而不是把只读PTE误当作失去逻辑写权限。
+
+可信内部spaceclone(source_mem, target_acct, out)首先遍历全部Space/Mmap，检查匹配源Mem的每个别名（包括R别名）。若任一Space仍active或busy、存在准备期加载scope、出现未跟踪写引用/计数不一致、PA/权限/属性与元数据不符或原始叶有未知位，整个准备在修改前拒绝。每叶借HAL replace的同值no-op核验完整编码，不只检查解码结果。准备期遍历有SPACES/MMAPS/MEM_PAGES编译上限，当前为可信串行冷路径，不在写故障路径扫描全局池，也未做延迟/性能验收。
+
+全部预检通过后，对涉及的Space标busy，将所有尚未保护的逻辑RW别名逐叶降为R|COW并完成失效；普通R别名不添COW或W权限。每个完整降权的Mmap增加cowmaps并记录本次新保护，随后调用已实现memclone取得孩子分支/承诺。成功只清除临时NEW标志、保留保护；失败先由Mem撤销本次页分支，再把NEW映射恢复原RW及计数，已有COW映射保持原状，最后解除Space busy。提交阶段不分配页表页；预检后的描述符/计数矛盾属违反串行不变量，不能静默留下半保护。
+
+spaceunmap按记录逻辑权限与COW硬件权限分别核验：保护叶须仍指向该Mem当前页且为R|USER|COW，逻辑W责任只在完整PTE解除后解除，并先减少对应cowmaps。由此free最后管理句柄后，受保护映射仍持物理/分支/账目，最后unmap才结束真实引用；不能因硬件只读就漏计逻辑写者，或因解除保护计数而恢复已共享页的W权限。
+
+例：同一DATA Mem在空间A/B分别有RW别名，A另有R别名。准备时A/B的RW叶均为COW只读、writes=2/cowmaps=2，R别名保持R；孩子取得一份独立Mem逻辑视图。若孩子额度只够第一页，失败后四个新保护叶恢复RW、cowmaps=0；若A/B本来已COW保护，再次失败不会恢复其W。若其后出现独占页上的新增普通RW别名，下次失败也只撤回该新增别名的保护，原两个COW别名继续保持。
+
+7项Space host专项使用两种真实页表编码，验证跨空间全部别名、R别名保持、额度失败完整恢复、旧/新混合保护的差别回滚、损坏后续叶在任何降权前拒绝、active Space拒绝及退出解绑的计数/页守恒。另补HAL COW位原始编码/去标记及非法组合测试。CASE=cow两架构增加三个别名/四个保护叶、两次失败准备和独立孩子写的可信页表场景，主机核对SPACECOWCHECK；该场景没有让用户线程执行受保护的逻辑W页。
+
+当前只接克隆准备的保护和回滚。用户写fault分离/恢复、一次逻辑页的全部别名重指向、内核代用户写的COW准备、孩子逻辑RW映射及原生fork发布仍未开放；spacewrite/__sys_copy遇硬件只读COW仍拒绝，native spacemap继续拒绝共享私有页的新RW。不能把这组可信准备机制交给正在运行的用户进程当完整fork，也不以只读保护成功冒充写故障可恢复。
+
+本地make unit全部454项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage67-space-protect/，含所有Space/Mem/Pgt/架构编码源码及HAL头哈希，记录两架构SPACECOWCHECK和原始目录。未执行CI、真实硬件、性能、用户写fault或fork发布验收。

@@ -678,6 +678,10 @@ def exercise(args, run_dir, record):
                     if memory != [dict(clones=2,rejected=1,aliases=2,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("Mem private clone/alias/rollback mismatch")
                     record["mem_cow"]=memory[0]
+                    protection=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SPACECOWCHECK ")]
+                    if protection != [dict(clones=1,aliases=3,protected=4,rollback=2,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("Space COW alias protection/rollback mismatch")
+                    record["space_cow"]=protection[0]
                 if args.case == "heap":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("HEAPCHECK ")]
                     if checks != [dict(cases=2,small=128,large=2,full=2,reclaimed=2,charged=0,allocated=transition["tables"])]:

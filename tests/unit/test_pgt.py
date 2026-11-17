@@ -189,6 +189,31 @@ class PageTableTests(unittest.TestCase):
             finally:
                 lib.hal_vm_destroy(C.byref(user)); kernel.destroy()
 
+    def test_cow_software_marker_only_encodes_readonly_normal_user_leaves(self):
+        for arch, lib in zip(('riscv', 'arm64'), self.libs):
+            arena = Arena(lib); self.assertEqual(arena.create(), 0)
+            user = Space(); self.assertEqual(lib.hal_vm_create(C.byref(user), C.byref(arena.source)), 0)
+            self.assertEqual(lib.hal_vm_user(C.byref(user), C.byref(arena.space)), 0)
+            try:
+                for root, prot, attr in ((arena.space,17,0),(user,19,0),(user,21,0),(user,17,1)):
+                    before = arena.snapshot(), bytes(user), arena.calls
+                    self.assertEqual(lib.hal_vm_map(C.byref(root),0x10000,0x80000000,prot,attr),-1)
+                    self.assertEqual((arena.snapshot(),bytes(user),arena.calls),before)
+                self.assertEqual(lib.hal_vm_map(C.byref(user),0x10000,0x80000000,17,0),0)
+                expected = Entry(); lib.hal_vm_lookup(C.byref(user),0x10000,C.byref(expected))
+                self.assertEqual((expected.pa,expected.prot,expected.attr,expected.present),(0x80000000,25,0,1))
+                borrowed = Arena(lib); borrowed.space = user; borrowed.pages = arena.pages
+                table,index=self.leaf(borrowed,0x10000)
+                self.assertTrue(table[index] & (1 << (9 if arch=='riscv' else 55)))
+                if arch=='riscv':self.assertFalse(table[index]&4)
+                else:self.assertTrue(table[index]&128)
+                self.assertEqual(lib.hal_vm_replace(C.byref(user),0x10000,C.byref(expected),expected.pa,3),0)
+                lib.hal_vm_lookup(C.byref(user),0x10000,C.byref(expected))
+                self.assertEqual(expected.prot,11)
+                self.assertFalse(table[index] & (1 << (9 if arch=='riscv' else 55)))
+            finally:
+                lib.hal_vm_destroy(C.byref(user)); arena.destroy()
+
     def test_creation_failure_does_not_publish_a_root(self):
         for lib in self.libs:
             a = Arena(lib)

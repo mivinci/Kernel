@@ -7,7 +7,8 @@
 #define VM_READ   1
 #define VM_WRITE  2
 #define VM_EXEC   4
-#define VM_USER   8 /* lookup-only: map derives user access from the root */
+#define VM_USER   8  /* lookup-only: map derives user access from the root */
+#define VM_COW    16 /* internal user DATA leaf: software marker, hardware read-only */
 #define VM_NORMAL 0
 #define VM_DEVICE 1
 #define VM_BAD    -1

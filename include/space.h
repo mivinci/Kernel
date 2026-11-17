@@ -52,6 +52,10 @@ int spacestat(Spaceid id, Space *out);
 u32 spacelookup(Spaceid id, u64 va, Hpte *out);
 int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep);
 int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
+/* Trusted inactive-space preparation: protect all existing logical RW aliases
+   of this private Mem across spaces, clone, and undo new protections on error.
+   No user fork admission, writable child map or fault-resume path yet. */
+int spaceclone(Memid source, Acctid target, Memid *out);
 /* Trusted kernel destination; precheck every source page before copying. */
 int spaceread(Spaceid id, u64 address, void *target, u64 bytes);
 /* Trusted source, serialized with VM mutations; precheck the entire output. */

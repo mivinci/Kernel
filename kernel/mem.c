@@ -84,7 +84,7 @@ reap(Mem *m)
 {
   if (m->refs)
     return;
-  if (m->managers || m->writes || m->execs || m->busy)
+  if (m->managers || m->writes || m->execs || m->busy || m->cowmaps)
     panic("data manager references");
   if (m->kind == MEM_MMIO) {
     if (devdrop(m->head))
@@ -152,7 +152,7 @@ create(Acctid acct, u64 bytes, Memid *out, u32 state)
   m->refs = m->managers = 1;
   m->state = state;
   m->kind = MEM_RAM;
-  m->writes = m->execs = m->busy = 0;
+  m->writes = m->execs = m->busy = m->cowmaps = 0;
   out->generation = m->generation;
   out->index = slot;
   out->reserved = 0;
@@ -191,7 +191,7 @@ memclone(Memid source, Acctid target, Memid *out)
       account.state != AC_ACTIVE ||
       (m->acct.index == target.index && m->acct.generation == target.generation))
     return MEM_BAD;
-  if (m->busy || m->writes)
+  if (m->busy || m->writes != m->cowmaps)
     return MEM_BUSY;
   slot = freemem;
   if (slot == PG_NONE)
@@ -252,7 +252,7 @@ memclone(Memid source, Acctid target, Memid *out)
   copy->refs = copy->managers = 1;
   copy->state = MEM_DATA;
   copy->kind = MEM_RAM;
-  copy->writes = copy->execs = copy->busy = 0;
+  copy->writes = copy->execs = copy->busy = copy->cowmaps = 0;
   m->busy = 0;
   out->generation = copy->generation;
   out->index = slot;
@@ -319,7 +319,7 @@ memdevice(Acctid acct, u32 device, Memid *out)
   m->refs = m->managers = 1;
   m->state = MEM_DATA;
   m->kind = MEM_MMIO;
-  m->writes = m->execs = m->busy = 0;
+  m->writes = m->execs = m->busy = m->cowmaps = 0;
   out->generation = m->generation;
   out->index = slot;
   out->reserved = 0;
@@ -387,6 +387,7 @@ memstat(Memid id, Mem *out)
   out->execs = m->execs;
   out->busy = m->busy;
   out->kind = m->kind;
+  out->cowmaps = m->cowmaps;
   return 0;
 }
 
@@ -461,7 +462,7 @@ int
 memunmapref(Memid id, u64 prot, Acctid target)
 {
   Mem *m = find(id);
-  if (!m || m->refs <= m->managers || ((prot & VM_WRITE) && !m->writes) ||
+  if (!m || m->refs <= m->managers || ((prot & VM_WRITE) && m->writes <= m->cowmaps) ||
       ((prot & VM_EXEC) && !m->execs))
     return MEM_BAD;
   if (m->kind == MEM_MMIO && devunmap(m->head, target))
@@ -472,6 +473,20 @@ memunmapref(Memid id, u64 prot, Acctid target)
     m->execs--;
   m->refs--;
   reap(m);
+  return 0;
+}
+
+int
+memprotectref(Memid id, u32 enabled)
+{
+  Mem *m = find(id);
+  if (!m || m->kind != MEM_RAM || m->state != MEM_DATA || m->busy || enabled > 1 ||
+      (enabled ? m->cowmaps >= m->writes : !m->cowmaps))
+    return MEM_BAD;
+  if (enabled)
+    m->cowmaps++;
+  else
+    m->cowmaps--;
   return 0;
 }
 
