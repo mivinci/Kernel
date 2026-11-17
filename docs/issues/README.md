@@ -17,4 +17,3 @@
 | [005](005-dtb-capacity.md) | DTB 解析容量与 compatible 匹配 | P0 | 待处理 |
 | [006](006-secondary-cores.md) | 次核停放未约定 | P1 | 待处理 |
 | [007](007-cache-dma.md) | 缓存开启与 DMA 一致性未验证 | P0 | 待处理 |
-| [008](008-boot-package.md) | 启动包四项待用户确认（阻塞 T1） | P0 | 阻塞 |
