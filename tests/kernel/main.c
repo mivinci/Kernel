@@ -5,7 +5,10 @@ testmain(Hvs *space, const Dtinfo *hardware)
 {
   UNUSED(space);
   UNUSED(hardware);
-#if BOOT_CASE == 51
+#if BOOT_CASE == 52
+  cowpagetest();
+  putstr("READY cow-restored\n");
+#elif BOOT_CASE == 51
   heaptest();
   putstr("READY heap-restored\n");
 #elif BOOT_CASE == 50

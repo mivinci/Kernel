@@ -9,6 +9,7 @@ void bindtest(const Dtinfo *hardware);
 void grouppagetest(const Dtinfo *hardware);
 void vdevtest(const Dtinfo *hardware);
 void heaptest(void);
+void cowpagetest(void);
 void pgtest(void);
 void vmtest(Hvs *space);
 void arch_probe(void);

@@ -75,6 +75,7 @@ make scenario ARCH=arm64 CASE=irqbind
 make scenario ARCH=arm64 CASE=mmiogroup
 make scenario ARCH=arm64 CASE=virtiodev
 make scenario ARCH=arm64 CASE=heap
+make scenario ARCH=arm64 CASE=cow
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
@@ -195,3 +196,5 @@ CASE=mmiogroup验证显式完整成员整页权限、ARM8个共页virtio窗口�
 CASE=heap验证构造函数及外部VA冲突、128个小块与跨Mem大块、表满realloc失败保留旧块，以及进程仍活着时全部堆页/费用回到基线。分配器按需链接，无FS依赖；SDK链接脚本提供隐藏__image_end供默认堆选址，自定义脚本须保留该契约。零长分配与realloc(p,0)采用最小分配，仍须free返回指针；fork/信号前置集成见08/15，尚未完成。
 
 sigframe现由11个用户进程自行原生注册handler/trampoline，新增注册后解除代码映射的受控失败；sigsuspend的9个进程同样自行注册并使用libc等待。signal.h支持集合助手及mask/pending/suspend，来源仍是可信code=0测试注入；公开POSIX sigaction trampoline、真实来源编码与Rctx/普通等待中断仍待接。
+
+CASE=cow使用8分支小容量配置，验证生产逻辑页组的父/子先写复制、父退出出资转交及元数据池/普通物理页耗尽后全部已接分支仍能分离。它尚未连接Mem/PTE或用户fork，不代表用户写故障COW已完成。
