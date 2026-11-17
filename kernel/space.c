@@ -36,10 +36,23 @@ static u32        memmaps[MEMS];
 static u32        mapinitialized, freemap;
 static const Hvs *kernelspace;
 static Space     *active;
-#define SNAP_READY   1
-#define SNAP_OWNERS  2
-#define SNAP_UNMAP   3
-#define SNAP_JOURNAL 4
+#define SNAP_READY        1
+#define SNAP_OWNERS       2
+#define SNAP_UNMAP        3
+#define SNAP_JOURNAL      4
+#define SNAP_REJECTED     5
+#define SNAP_FAILED       6
+#define SNAP_CHECK_LOGS   10
+#define SNAP_CHECK_SOURCE 11
+#define SNAP_CHECK_PAGES  12
+#define SNAP_CHECK_ROOM   13
+#define SNAP_FIND_SOURCE  20
+#define SNAP_FIND_TARGET  21
+#define SNAP_DATA_CHECK   22
+#define SNAP_DATA_ALIASES 23
+#define SNAP_DATA_PROTECT 24
+#define SNAP_MAP_FRESH    25
+#define SNAP_MAP_REUSE    26
 /* Serialized exclusion only. Ownership/cursors live in Prep (or the trusted
    standalone record), not in the constructing C frame. Still no checkpoint. */
 static Spacetxn  standalone;
@@ -297,7 +310,8 @@ spacelookup(Spaceid id, u64 va, Hpte *out)
 }
 
 static int
-map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Prepid prep, u32 cow)
+map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Prepid prep, u32 cow,
+    u32 building)
 {
   Space    *s = find(id);
   Mem       mem;
@@ -309,7 +323,10 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   int       error;
   if (!s)
     return SP_BAD;
-  if (s->busy || s == active || insnapshot(s))
+  if (s->busy || s == active ||
+      (insnapshot(s) &&
+       !(building && s == find(snapshot->target) &&
+         (snapshot->phase == SNAP_MAP_FRESH || snapshot->phase == SNAP_MAP_REUSE))))
     return SP_BUSY;
   if (!length || length > (u64) MEM_PAGES * PAGE_SIZE || (address | offset | length) & PAGE_MASK ||
       address < 0x10000 || address >= (1UL << 38) || length > (1UL << 38) - address ||
@@ -334,7 +351,10 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
     return SP_BAD;
   if (prep.generation && preptempcheck(prep, id, memory))
     return SP_BAD;
-  for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+  /* Snapshot installs the next exact source record into its frozen prefix.
+     Source mappings were admitted before construction; their nonoverlap is
+     already enforced by ordinary map. No repeated target-prefix scan. */
+  for (node = building ? PG_NONE : s->maps; node != PG_NONE; node = mappings[node].next) {
     Mmap *m = &mappings[node];
     if (address < m->address + m->length && m->address < address + length)
       return SP_CONFLICT;
@@ -977,14 +997,14 @@ spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot)
   Prepid none;
   none.generation = 0;
   none.index = none.reserved = 0;
-  return map(id, mem, offset, address, length, prot, none, 0);
+  return map(id, mem, offset, address, length, prot, none, 0, 0);
 }
 int
 spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep)
 {
   if (!prep.generation)
     return SP_BAD;
-  return map(id, mem, offset, address, length, prot, prep, 0);
+  return map(id, mem, offset, address, length, prot, prep, 0, 0);
 }
 
 int
@@ -992,57 +1012,24 @@ spacecowmap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length)
 {
   Prepid none;
   none.generation = none.index = none.reserved = 0;
-  return map(id, memory, offset, address, length, VM_READ | VM_WRITE, none, 1);
+  return map(id, memory, offset, address, length, VM_READ | VM_WRITE, none, 1, 0);
 }
 
-/* Recover the target view already created for an alias of this source Mem.
-   This cold-path search avoids a second Mem-sized per-fork work table. */
-static int
-snapshotview(Space *source, Space *target, u32 current, Memid *out)
-{
-  u32 child, parent;
-  for (parent = source->maps; parent != current; parent = mappings[parent].next)
-    if (samemem(mappings[parent].mem, mappings[current].mem))
-      break;
-  if (parent == current)
-    return 0;
-  for (child = target->maps; child != PG_NONE; child = mappings[child].next)
-    if (mappings[child].address == mappings[parent].address) {
-      *out = mappings[child].mem;
-      return 1;
-    }
-  panic("snapshot mapping correspondence");
-}
-
-static int
-snapshotrefs(Memid memory, const Mem *backing)
-{
-  u32 node, count = 0, previous = PG_NONE;
-  if (backing->refs < backing->managers)
-    return SP_BAD;
-  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
-    if (node >= MMAPS || ++count > MMAPS || maplinks[node].previous != previous ||
-        !mappings[node].length || !samemem(mappings[node].mem, memory))
-      return SP_BAD;
-    previous = node;
-  }
-  return count == backing->refs - backing->managers ? 0 : SP_BUSY;
-}
-static int
-snapshotbegin(Spaceid sourceid, Spaceid targetid, u32 leases, Spacetxn *tree, Prepid owner)
+int
+spacesnapshotopen(Spaceid sourceid, Spaceid targetid, Prepid owner)
 {
   Space    *source = find(sourceid), *target = find(targetid);
+  Spacetxn *tree = &standalone;
+  Prepinfo  prep;
   Acct      a, b;
-  Mmap     *m;
-  Mem       backing;
-  Memid     memory;
-  Hvs       vs;
-  Hpte      entry;
-  Sourcectx context;
-  Prepid    none;
-  u32       node, i, count = 0, fresh, room = 0;
-  u64       pa;
-  int       error;
+  u32       leases = owner.generation ? 2 : 1;
+  if (owner.reserved || (!owner.generation && owner.index))
+    return SP_BAD;
+  if (owner.generation &&
+      (prepstat(owner, &prep) || prep.state != PREP_ACTIVE || prep.origin != PREP_FORK ||
+       !prep.cloning || !prep.target || prep.space.index != targetid.index ||
+       prep.space.generation != targetid.generation || prepforktree(owner, &tree)))
+    return SP_BAD;
   if (!source || !target || source == target || target->maps != PG_NONE || target->mapcount ||
       target->pages != 1 || target->refs != leases || acctstat(source->acct, &a) ||
       acctstat(target->acct, &b) || a.state != AC_ACTIVE || b.state != AC_ACTIVE ||
@@ -1053,41 +1040,6 @@ snapshotbegin(Spaceid sourceid, Spaceid targetid, u32 leases, Spacetxn *tree, Pr
   if (snapshot || tree->phase || source->busy || target->busy || source == active ||
       target == active)
     return SP_BUSY;
-  /* No unrelated preparation journal may be live in this serialized tree. */
-  for (i = 0; i < MMAPS; i++)
-    if (mappings[i].length &&
-        (mappings[i].prot & (MAP_NEW_PROTECTION | MAP_SNAPSHOT_OWNER | MAP_NEW_MASK)))
-      return SP_BUSY;
-  view(source, &vs, &context);
-  for (node = source->maps; node != PG_NONE; node = mappings[node].next) {
-    if (node >= MMAPS || ++count > MMAPS)
-      return SP_BAD;
-    m = &mappings[node];
-    if (!m->length || m->prep.generation || m->prep.index || m->prep.reserved ||
-        m->prot & ~(7U | MAP_PROTECTED) || memstat(m->mem, &backing) || backing.kind == MEM_MMIO ||
-        (backing.state != MEM_DATA && backing.state != MEM_SEALED && backing.state != MEM_SHARED))
-      return SP_BAD;
-    if (backing.busy)
-      return SP_BUSY;
-    if (backing.state == MEM_DATA) {
-      error = snapshotrefs(m->mem, &backing);
-      if (error)
-        return error;
-    }
-    for (i = 0; i < m->length / PAGE_SIZE; i++)
-      if (mempage(m->mem, (u32) (m->offset / PAGE_SIZE) + i, &pa) ||
-          !hal_vm_lookup(&vs, m->address + (u64) i * PAGE_SIZE, &entry) || entry.pa != pa ||
-          entry.attr != VM_NORMAL || !matchesprot(m, &entry) ||
-          hal_vm_replace(&vs, m->address + (u64) i * PAGE_SIZE, &entry, entry.pa,
-                         entry.prot & ~VM_USER))
-        return SP_BAD;
-  }
-  if (count != source->mapcount)
-    return SP_BAD;
-  for (node = freemap; node != PG_NONE && room < count; node = mappings[node].next)
-    room++;
-  if (room < count)
-    return SP_FULL;
   /* The record owns both roots independently of Proc/ordinary Prep leases.
      Cancellation can release those ordinary leases without losing this tree. */
   if (spacehold(sourceid))
@@ -1104,64 +1056,341 @@ snapshotbegin(Spaceid sourceid, Spaceid targetid, u32 leases, Spacetxn *tree, Pr
   tree->source = sourceid;
   tree->target = targetid;
   tree->owner = owner;
-  tree->phase = SNAP_READY;
-  tree->node = tree->page = tree->slot = tree->commit = 0;
-  none.generation = none.index = none.reserved = 0;
-  for (node = source->maps; node != PG_NONE; node = mappings[node].next) {
-    m = &mappings[node];
-    if (memstat(m->mem, &backing))
-      panic("snapshot source lifetime");
-    fresh = !snapshotview(source, target, node, &memory);
-    if (fresh) {
-      if (backing.state == MEM_DATA) {
-        error = clone(m->mem, target->acct, &memory, 1);
-      } else if (backing.state == MEM_SEALED)
-        error = memimmutable(m->mem, target->acct, &memory);
-      else {
-        memory = m->mem;
-        error = memsharedhold(memory);
-      }
-      if (error)
-        goto failed;
-    }
-    error = map(targetid, memory, m->offset, m->address, m->length, logicalprot(m), none,
-                backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE));
-    if (error) {
-      if (fresh && memfree(memory))
-        panic("snapshot unmapped Mem rollback");
-      goto failed;
-    }
-    if (fresh)
-      mappings[target->maps].prot |= MAP_SNAPSHOT_OWNER;
-  }
+  tree->phase = SNAP_CHECK_LOGS;
+  tree->slot = tree->page = tree->commit = tree->aux = 0;
+  tree->node = spaces[0].state ? spaces[0].maps : PG_NONE;
   snapshot = tree;
   return 0;
-failed:
-  snapshot = tree;
-  if (spacesnapshotend(sourceid, targetid, 0))
-    panic("snapshot failed build rollback");
+}
+
+static int
+snapshotfail(Spacetxn *tree, int error)
+{
+  tree->phase = tree->phase >= SNAP_CHECK_LOGS && tree->phase <= SNAP_CHECK_ROOM ? SNAP_REJECTED
+                                                                                 : SNAP_FAILED;
   return error;
 }
 
+static int
+snapshotmap(const Mmap *m, Mem *backing)
+{
+  if (!m->length || m->length > MEM_PAGES * PAGE_SIZE ||
+      (m->offset | m->length | m->address) & PAGE_MASK || m->prep.generation || m->prep.index ||
+      m->prep.reserved || m->prot & ~(7U | MAP_PROTECTED) || memstat(m->mem, backing) ||
+      backing->kind == MEM_MMIO || m->offset > backing->bytes ||
+      m->length > backing->bytes - m->offset ||
+      (backing->state != MEM_DATA && backing->state != MEM_SEALED && backing->state != MEM_SHARED))
+    return SP_BAD;
+  return backing->busy ? SP_BUSY : 0;
+}
+
+int
+spacesnapshotbuild(Spaceid sourceid, Spaceid targetid)
+{
+  Space    *source = find(sourceid), *target = find(targetid), *s;
+  Spacetxn *tree = snapshot;
+  Mmap     *m, *alias;
+  Mem       backing;
+  Memid     memory;
+  Prepinfo  prep;
+  Prepid    none;
+  Hvs       vs;
+  Hpte      entry;
+  Sourcectx context;
+  u32       work = 0, pages, i, previous, fresh;
+  u64       pa, address;
+  int       error;
+  if (!tree || !source || !target || source != find(tree->source) || target != find(tree->target) ||
+      (tree->phase != SNAP_READY &&
+       (tree->phase < SNAP_CHECK_LOGS || tree->phase > SNAP_MAP_REUSE)))
+    return SP_BAD;
+  if (source->busy || target->busy || source == active || target == active)
+    return SP_BUSY;
+  if (tree->owner.generation &&
+      (prepstat(tree->owner, &prep) || prep.state != PREP_ACTIVE || !prep.cloning))
+    return snapshotfail(tree, SP_BUSY);
+  none.generation = none.index = none.reserved = 0;
+  while (work < 32) {
+    if (tree->phase == SNAP_READY)
+      return 0;
+    if (tree->phase == SNAP_CHECK_LOGS) {
+      if (tree->slot == SPACES) {
+        tree->phase = SNAP_CHECK_SOURCE;
+        tree->node = source->maps;
+        tree->commit = 0;
+        continue;
+      }
+      s = &spaces[tree->slot];
+      if (!s->state || tree->node == PG_NONE) {
+        tree->slot++;
+        tree->node =
+            tree->slot < SPACES && spaces[tree->slot].state ? spaces[tree->slot].maps : PG_NONE;
+      } else {
+        if (tree->node >= MMAPS || tree->aux++ == MMAPS)
+          return snapshotfail(tree, SP_BAD);
+        m = &mappings[tree->node];
+        if (m->prot & (MAP_NEW_PROTECTION | MAP_SNAPSHOT_OWNER | MAP_NEW_MASK))
+          return snapshotfail(tree, SP_BUSY);
+        tree->node = m->next;
+      }
+      work++;
+    } else if (tree->phase == SNAP_CHECK_SOURCE) {
+      if (tree->node == PG_NONE) {
+        if (tree->commit != source->mapcount)
+          return snapshotfail(tree, SP_BAD);
+        tree->phase = SNAP_CHECK_ROOM;
+        tree->node = freemap;
+        tree->slot = 0;
+        continue;
+      }
+      if (tree->node >= MMAPS || tree->commit++ == MMAPS)
+        return snapshotfail(tree, SP_BAD);
+      error = snapshotmap(&mappings[tree->node], &backing);
+      if (error)
+        return snapshotfail(tree, error);
+      tree->phase = SNAP_CHECK_PAGES;
+      tree->page = 0;
+      work++;
+    } else if (tree->phase == SNAP_CHECK_PAGES) {
+      m = &mappings[tree->node];
+      view(source, &vs, &context);
+      while (tree->page < m->length / PAGE_SIZE && work < 32) {
+        address = m->address + (u64) tree->page * PAGE_SIZE;
+        if (mempage(m->mem, (u32) (m->offset / PAGE_SIZE) + tree->page, &pa) ||
+            !hal_vm_lookup(&vs, address, &entry) || entry.pa != pa || entry.attr != VM_NORMAL ||
+            !matchesprot(m, &entry) ||
+            hal_vm_replace(&vs, address, &entry, entry.pa, entry.prot & ~VM_USER))
+          return snapshotfail(tree, SP_BAD);
+        tree->page++;
+        work++;
+      }
+      if (tree->page == m->length / PAGE_SIZE) {
+        tree->node = m->next;
+        tree->phase = SNAP_CHECK_SOURCE;
+      }
+    } else if (tree->phase == SNAP_CHECK_ROOM) {
+      if (tree->slot == tree->commit) {
+        tree->phase = SNAP_FIND_SOURCE;
+        tree->node = tree->page = source->maps;
+        continue;
+      }
+      if (tree->node == PG_NONE)
+        return snapshotfail(tree, SP_FULL);
+      if (tree->node >= MMAPS)
+        return snapshotfail(tree, SP_BAD);
+      tree->slot++;
+      tree->node = mappings[tree->node].next;
+      work++;
+    } else if (tree->phase == SNAP_FIND_SOURCE) {
+      if (tree->node == PG_NONE) {
+        tree->phase = SNAP_READY;
+        return 0;
+      }
+      m = &mappings[tree->node];
+      if (tree->page == tree->node) {
+        if (memstat(m->mem, &backing))
+          panic("snapshot source lifetime");
+        tree->phase = backing.state == MEM_DATA ? SNAP_DATA_CHECK : SNAP_MAP_FRESH;
+        continue;
+      }
+      if (samemem(mappings[tree->page].mem, m->mem)) {
+        tree->slot = (u16) (tree->page + 1);
+        tree->page = target->maps;
+        tree->phase = SNAP_FIND_TARGET;
+      } else
+        tree->page = mappings[tree->page].next;
+      work++;
+    } else if (tree->phase == SNAP_FIND_TARGET) {
+      if (tree->page == PG_NONE)
+        panic("snapshot mapping correspondence");
+      if (mappings[tree->page].address == mappings[tree->slot - 1].address) {
+        tree->slot = (u16) (tree->page + 1);
+        tree->phase = SNAP_MAP_REUSE;
+      } else
+        tree->page = mappings[tree->page].next;
+      work++;
+    } else if (tree->phase == SNAP_DATA_CHECK) {
+      m = &mappings[tree->node];
+      if (memstat(m->mem, &backing) || backing.kind != MEM_RAM || backing.state != MEM_DATA ||
+          backing.refs < backing.managers || backing.writes > MMAPS || backing.cowmaps > MMAPS)
+        return snapshotfail(tree, SP_BAD);
+      if (backing.busy || backing.fork)
+        return snapshotfail(tree, SP_BUSY);
+      tree->slot = (u16) backing.writes;
+      tree->commit = (u16) backing.cowmaps;
+      tree->aux = 0;
+      tree->page = memmaps[m->mem.index];
+      tree->phase = SNAP_DATA_ALIASES;
+      work++;
+    } else if (tree->phase == SNAP_DATA_ALIASES) {
+      m = &mappings[tree->node];
+      if (tree->page == PG_NONE) {
+        if (memstat(m->mem, &backing) || tree->slot || tree->commit)
+          return snapshotfail(tree, SP_BAD);
+        if (tree->aux != backing.refs - backing.managers)
+          return snapshotfail(tree, SP_BUSY);
+        tree->phase = SNAP_DATA_PROTECT;
+        tree->page = memmaps[m->mem.index];
+        tree->slot = 0;
+        continue;
+      }
+      if (tree->page >= MMAPS || tree->aux == MMAPS)
+        return snapshotfail(tree, SP_BAD);
+      alias = &mappings[tree->page];
+      previous = maplinks[tree->page].previous;
+      if (maplinks[tree->page].space >= SPACES ||
+          (previous == PG_NONE ? tree->page != memmaps[m->mem.index]
+                               : (previous >= MMAPS || maplinks[previous].next != tree->page)) ||
+          !samemem(alias->mem, m->mem))
+        return snapshotfail(tree, SP_BAD);
+      s = &spaces[maplinks[tree->page].space];
+      error = snapshotmap(alias, &backing);
+      if (error)
+        return snapshotfail(tree, error);
+      if (!s->state || s->busy || s == active)
+        return snapshotfail(tree, SP_BUSY);
+      if ((logicalprot(alias) != VM_READ && logicalprot(alias) != (VM_READ | VM_WRITE)) ||
+          ((alias->prot & MAP_PROTECTED) && !(logicalprot(alias) & VM_WRITE)))
+        return snapshotfail(tree, SP_BAD);
+      pages = (u32) (alias->length / PAGE_SIZE);
+      if (pages > 32 - work)
+        return 1;
+      view(s, &vs, &context);
+      for (i = 0; i < pages; i++) {
+        address = alias->address + (u64) i * PAGE_SIZE;
+        if (mempage(m->mem, (u32) (alias->offset / PAGE_SIZE) + i, &pa) ||
+            !hal_vm_lookup(&vs, address, &entry) || entry.pa != pa || entry.attr != VM_NORMAL ||
+            !matchesprot(alias, &entry) ||
+            hal_vm_replace(&vs, address, &entry, entry.pa, entry.prot & ~VM_USER))
+          return snapshotfail(tree, SP_BAD);
+      }
+      if (logicalprot(alias) & VM_WRITE) {
+        if (!tree->slot)
+          return snapshotfail(tree, SP_BAD);
+        tree->slot--;
+      }
+      if (alias->prot & MAP_PROTECTED) {
+        if (!tree->commit)
+          return snapshotfail(tree, SP_BAD);
+        tree->commit--;
+      }
+      tree->aux++;
+      tree->page = maplinks[tree->page].next;
+      work += pages;
+    } else if (tree->phase == SNAP_DATA_PROTECT) {
+      if (tree->page == PG_NONE) {
+        tree->phase = SNAP_MAP_FRESH;
+        continue;
+      }
+      alias = &mappings[tree->page];
+      if (!(logicalprot(alias) & VM_WRITE) ||
+          ((alias->prot & MAP_PROTECTED) && !(alias->prot & MAP_NEW_PROTECTION))) {
+        tree->page = maplinks[tree->page].next;
+        tree->slot = 0;
+        work++;
+        continue;
+      }
+      if (!(alias->prot & MAP_NEW_PROTECTION)) {
+        if (memprotectref(alias->mem, 1))
+          panic("snapshot partial protection count");
+        alias->prot |= MAP_PROTECTED | MAP_NEW_PROTECTION;
+      }
+      s = &spaces[maplinks[tree->page].space];
+      view(s, &vs, &context);
+      while (tree->slot < alias->length / PAGE_SIZE && work < 32) {
+        address = alias->address + (u64) tree->slot * PAGE_SIZE;
+        if (!hal_vm_lookup(&vs, address, &entry))
+          panic("snapshot protection lookup");
+        if (entry.prot & VM_WRITE)
+          alias->prot |= 1U << (MAP_NEW_SHIFT + tree->slot);
+        if (hal_vm_replace(&vs, address, &entry, entry.pa,
+                           (logicalprot(alias) & ~VM_WRITE) | VM_COW))
+          panic("snapshot protection commit");
+        tree->slot++;
+        work++;
+      }
+      if (tree->slot == alias->length / PAGE_SIZE) {
+        tree->page = maplinks[tree->page].next;
+        tree->slot = 0;
+      }
+    } else if (tree->phase == SNAP_MAP_FRESH || tree->phase == SNAP_MAP_REUSE) {
+      m = &mappings[tree->node];
+      pages = (u32) (m->length / PAGE_SIZE);
+      if (pages > 32 - work)
+        return 1;
+      fresh = tree->phase == SNAP_MAP_FRESH;
+      if (memstat(m->mem, &backing))
+        panic("snapshot source lifetime");
+      if (!fresh)
+        memory = mappings[tree->slot - 1].mem;
+      else {
+        if (backing.state == MEM_DATA)
+          error = memforkclone(m->mem, target->acct, &memory);
+        else if (backing.state == MEM_SEALED)
+          error = memimmutable(m->mem, target->acct, &memory);
+        else {
+          memory = m->mem;
+          error = memsharedhold(memory);
+        }
+        if (error)
+          return snapshotfail(tree, error);
+      }
+      error = map(targetid, memory, m->offset, m->address, m->length, logicalprot(m), none,
+                  backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE), 1);
+      if (error) {
+        if (fresh && memfree(memory))
+          panic("snapshot unmapped Mem rollback");
+        return snapshotfail(tree, error);
+      }
+      if (fresh)
+        mappings[target->maps].prot |= MAP_SNAPSHOT_OWNER;
+      tree->phase = SNAP_FIND_SOURCE;
+      tree->node = m->next;
+      tree->page = source->maps;
+      work += pages;
+    } else
+      panic("snapshot building phase");
+  }
+  return 1;
+}
+
+static int
+snapshotbegin(Spaceid sourceid, Spaceid targetid, Prepid owner)
+{
+  int error = spacesnapshotopen(sourceid, targetid, owner);
+  if (error)
+    return error;
+  do {
+    error = spacesnapshotbuild(sourceid, targetid);
+  } while (error == 1);
+  if (error && spacesnapshotend(sourceid, targetid, 0))
+    panic("snapshot failed build rollback");
+  return error;
+}
 int
 spacesnapshotbegin(Spaceid sourceid, Spaceid targetid)
 {
   Prepid none;
   none.generation = none.index = none.reserved = 0;
-  return snapshotbegin(sourceid, targetid, 1, &standalone, none);
+  return snapshotbegin(sourceid, targetid, none);
 }
 int
 spacesnapshotprep(Spaceid sourceid, Spaceid targetid, Prepid id)
 {
-  Prepinfo  prep;
-  Spacetxn *tree;
-  if (prepstat(id, &prep) || prep.state != PREP_ACTIVE || prep.origin != PREP_FORK ||
-      !prep.cloning || !prep.target || prep.space.index != targetid.index ||
-      prep.space.generation != targetid.generation || targetid.reserved || prepforktree(id, &tree))
-    return SP_BAD;
-  /* The Proc and this exact active Prep each own one root lease. Fork's caller
-     already checked the source/target tables and fixed deadline. */
-  return snapshotbegin(sourceid, targetid, 2, tree, id);
+  return id.generation ? snapshotbegin(sourceid, targetid, id) : SP_BAD;
+}
+
+static int
+snapshotrelease(Spacetxn *tree)
+{
+  Prepid owner = tree->owner;
+  if (spacedrop(tree->target) || spacedrop(tree->source))
+    panic("snapshot root lease release");
+  tree->phase = 0;
+  snapshot = NULL;
+  if (owner.generation && prepdrop(owner))
+    panic("snapshot preparation ownership release");
+  return 0;
 }
 
 int
@@ -1174,7 +1403,6 @@ spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
   Hvs       vs;
   Hpte      entry;
   Sourcectx context;
-  Prepid    owner;
   u32       work = 0, pages;
   u64       address;
   if (!tree || !source || !target || source != find(tree->source) || target != find(tree->target) ||
@@ -1182,10 +1410,19 @@ spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
     return SP_BAD;
   if (source->busy || target->busy || source == active || target == active)
     return SP_BUSY;
-  if (tree->phase == SNAP_READY) {
+  /* Initial admission has made no PTE/backing changes. In particular, a
+     foreign journal rejected by CHECK_LOGS must never be undone by this scope. */
+  if (tree->phase == SNAP_REJECTED ||
+      (tree->phase >= SNAP_CHECK_LOGS && tree->phase <= SNAP_CHECK_ROOM))
+    return commit ? SP_BAD : snapshotrelease(tree);
+  if (tree->phase == SNAP_READY || tree->phase == SNAP_FAILED ||
+      (tree->phase >= SNAP_FIND_SOURCE && tree->phase <= SNAP_MAP_REUSE)) {
+    if (tree->phase != SNAP_READY && commit)
+      return SP_BAD;
     tree->phase = SNAP_OWNERS;
     tree->commit = commit;
     tree->node = target->maps;
+    tree->slot = tree->page = 0;
   } else if (tree->commit != commit)
     return SP_BAD;
   while (work < 32) {
@@ -1267,14 +1504,7 @@ spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
   }
   if (tree->phase != SNAP_JOURNAL || tree->slot != SPACES)
     return 1;
-  owner = tree->owner;
-  if (spacedrop(tree->target) || spacedrop(tree->source))
-    panic("snapshot root lease release");
-  tree->phase = 0;
-  snapshot = NULL;
-  if (owner.generation && prepdrop(owner))
-    panic("snapshot preparation ownership release");
-  return 0;
+  return snapshotrelease(tree);
 }
 
 int

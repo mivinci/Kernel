@@ -71,4 +71,5 @@ void forklifetest(void);
 void forkjournaltest(void);
 void forkstagetest(void);
 void forktreetest(void);
+void forkbuildtest(void);
 #endif

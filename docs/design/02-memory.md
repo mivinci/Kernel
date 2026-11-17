@@ -800,3 +800,23 @@ Prep192→256，192槽增加12288字节，达到既定256字节上限；Space64/
 本轮最终本地556项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、normal无fixture、两个FORKTREECHECK和上述实际池/静态帧。被停止的旧Mmap池扫描回归保留为test-qemu-pool-scan.log，不计入最终110场景；未执行CI、真实硬件、性能或原生fork验收。
 
 这里只持久化结束/回滚责任：构建和保护的循环尚未迁移游标，调用者仍IRQ屏蔽、同步重复step到0；全局日志/其他Space别名尚未具备跨调度冻结与独立清理归属，不能在中间返回后任意开放IRQ、运行另一个root或丢弃整个克隆C栈。Prep CPU清理链、STOP/KILL转交、内核root续点、真正每32页调度检查点、原生fork准入与发布仍待接通。
+
+### 映射构建的预检、别名保护与安装游标（2026-11-18）
+
+本节进一步替代上述映射构建的一次性循环。spacesnapshotopen只检查主体/空目标/准确准备租约并取得原有三个事务引用及串行排他；源预检、私有别名保护和孩子安装由spacesnapshotbuild逐批推进，1为仍有工作、0为READY、负值为失败且必须abort。现有spacesnapshotbegin/prep保持同步包装，循环build后才返回；构建失败先调用已有结束/回滚机制，不改变普通Space入口或用户ABI。
+
+阶段顺序：沿Space映射链检查无遗留日志；逐源映射检查种类/范围及逐页PTE；有界检查空闲Mmap容量；按源前缀及目标链分批查找同Mem视图；对新DATA视图沿Mem别名链检查所有引用、映射/保护计数及真实PTE；逐页将新RW别名保护成COW；最后以不超过16页的完整map事务安装一条孩子映射。SEALED用immutable、SHARED保留同一显式对象；多窗口复用已映射视图。可信内部安装只接收已预检源的下一条准确映射，跳过对孩子已建前缀的重复不相交扫描，普通map仍保留原检查。
+
+每次build至多32个映射扫描/元数据动作或页工作单位；别名预检和完整安装最多16页，余量不足留到下一批；保护有单独页游标。新视图的创建引用在同一次调用内转交Mmap拥有引用，失败则立即释放，不把Memid临时拥有责任留给退栈C局部。Spacetxn仍64字节：完整source/target/owner不变，phase选择node/page及三个u16扫描/计数游标的含义，各值不超过既定池/页上限；Prep仍256，无固定池增长。
+
+部分保护例：三条16页RW别名尚未克隆backing，第一批只改其中16个叶便返回。每条开始前就登记新增保护计数及日志标记，每个原RW页另记掩码；abort恢复已改叶，不改原COW或未处理的RW叶，并准确撤销那次保护计数。混合旧COW/RW的host场景对逐叶权限和Mem全字段做前后比较。若全部保护后才因孩子额度不足失败，记录进入FAILED，后续build拒绝，必须由abort先清孩子前缀再恢复父PTE；不能在失败状态上继续堆映射。初始准入阶段没有本次保护，该阶段的abort只释放自己的租约，尤其不能撤销被检查发现的外来日志。
+
+准备取消后，下一次build看到Prep已非ACTIVE即终止；若尚未改PTE则只归还租约，否则交已有回滚游标。已有结束方向在开始时固定，未到READY不能commit。原生错误翻译/真实KILL出口尚未接入，不把内部Space的BUSY当作已冻结的fork取消ABI。
+
+新增4项host验完整分批构建/去重及每次实际叶变化≤32、初始准入撤销、额度失败后必须abort、部分保护与旧COW混合回滚；原有Space/统一fork组合继续覆盖DATA/代码/共享、额外引用和后段失败。sigframe两架构各三组可信组合验完整构建后提交、部分保护后取消、全部保护后真实额度失败；每架构42次build调用、160个实际叶变化（含取消时16个），每次≤32，最终全部页/费用归基线。不运行孩子或原生fork。
+
+spacesnapshotbuild静态帧ARM512/RV560、open均336、结束step ARM240/RV272，forksnapshot仍ARM1280/RV1024。日志及最终本地验证状态归build/host/stage80-fork-tree-building/和status；单个静态帧/页工作次数不是完整栈深、IRQ时延或性能证明。
+
+本轮最终本地560项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果与当前源码/头哈希、normal无fixture、两个FORKBUILDCHECK、静态帧及实际未增长的固定池。未执行CI、真实硬件、性能、原生fork或调度检查点验收。
+
+本轮仍全程IRQ屏蔽、不得在build之间运行其他VM工作。其他Space别名尚未取得跨调度冻结/稳定清理责任；独立spaceclone、未映射Mem的spacesnapshotclone、Local/Signal/现场组合仍有同步循环。下一步须接这些责任的准备归属、CPU清理接管和内核root续点，才能开放每32页调度/STOP/KILL检查点及原生fork；不能因映射build有游标便宣称整个fork已可丢栈。

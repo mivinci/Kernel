@@ -1,6 +1,6 @@
 # 当前状态
 
-更新：2026-11-17（Asia/Shanghai）。设计入口：[总览](design/00-overview.md)；协作规则：[AGENTS.md](../AGENTS.md)。
+更新：2026-11-18（Asia/Shanghai）。设计入口：[总览](design/00-overview.md)；协作规则：[AGENTS.md](../AGENTS.md)。
 
 ## 目标与分支
 
@@ -22,8 +22,8 @@
 
 ## 最新本地验证
 
-- 本地make unit通过556项、fmt-check及make test-qemu的110个两架构场景全部通过；日志及当前源码/头哈希、normal无fixture、静态帧/固定池证据归`build/host/stage79-fork-tree-ending/`。未执行CI/目标真实硬件/性能验收。
-- 映射事务结束/回滚游标现内嵌Prep，独立持源/目标root及Prep引用，取消普通租约后仍可分批结束，最后才解冻并允许prepforkfinish。沿Space映射链扫描，避免遍历8192个Mmap空槽。两项新host和两架构各三组可信事务验证：每架构33次step、两次abort共192个叶变化，每次叶移除/恢复合计≤32，费用/页归基线。Prep192→256，默认池增12KiB；Space64/Mmap64/Mem96/Local48/Proc512不变。结束step静态帧ARM240/RV288，forksnapshot仍ARM1280/RV1024。构建游标、Prep CPU清理接管、每32页检查点和STOP/KILL安全转交仍待接；当前仍同步IRQ屏蔽且全局日志不可跨调度，原生准入/真实调用捕获/Fix/专用发布未接。
+- 本地make unit通过560项、fmt-check及make test-qemu的110个两架构场景全部通过；日志、当前源码/头哈希、normal无fixture、静态帧及固定池证据归`build/host/stage80-fork-tree-building/`。未执行CI/目标真实硬件/性能验收。
+- 映射构建的源/PTE预检、私有别名检查/逐页保护、去重和孩子安装现按Prep游标分批，每次最多32个扫描/页工作单位；失败必须abort，初始准入撤销只归还本次租约，部分保护精确恢复原RW位。4项新host及两架构各三组可信事务验完整构建/部分取消/真实额度失败，每架构42次build、160个叶变化，每次≤32，最终页/费用归基线。Spacetxn64/Prep256及固定池不增；build静态帧ARM512/RV560，forksnapshot仍ARM1280/RV1024。其他Space别名跨调度冻结、未映射/Local/Signal组合循环、Prep CPU接管、内核root续点和STOP/KILL检查点仍待接；当前仍IRQ屏蔽，不跨调度或丢弃整个克隆C栈，原生fork未开放。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续

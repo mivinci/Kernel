@@ -155,3 +155,135 @@ forktreetest(void)
   puthex(after.allocated);
   putstr("\n");
 }
+
+void
+forkbuildtest(void)
+{
+  Setid      set;
+  Set        group;
+  Acctid     accounts[2];
+  Spaceid    roots[2];
+  Space      space;
+  Lifeid     lives[2];
+  Life       life;
+  Imageid    images[2];
+  Handle     pids[2];
+  Prepid     prep;
+  Prepinfo   state;
+  Spacetxn  *tree;
+  Memid      memory;
+  Liferesult result;
+  Cowpool    pool;
+  Pgstat     before, after;
+  u64        value, observed;
+  u32        mode, i, steps, total = 0, previous, current, partial = 0, changes = 0;
+  int        error;
+  pgstat(&before);
+  for (mode = 0; mode < 3; mode++) {
+    REQUIRE(!setcreate(512, 512, 4, &set));
+    for (i = 0; i < 2; i++) {
+      pids[i] = handlepack(HANDLE_PROCESS, 8000 + mode * 2 + i, i + 1);
+      REQUIRE(!acctcreate(set, mode == 2 && i ? 1 : 128, mode == 2 && i ? 1 : 128, &accounts[i]) &&
+              !spacecreate(accounts[i], &roots[i]) &&
+              !lifecreate(set, pids[i], i ? pids[0] : 1, &lives[i]) &&
+              !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&
+              !localinit(&tables[i], entries[i], 16, accounts[i], roots[i]));
+      tables[i].owner = pids[i];
+      tables[i].image = 1;
+    }
+    REQUIRE(!lifepublish(lives[0]) && !imageactivate(images[0]) &&
+            !memcreate(accounts[0], 16 * PAGE_SIZE, &memory));
+    value = 0x4141;
+    REQUIRE(!memwrite(memory, 0, &value, sizeof(value)));
+    for (i = 0; i < 3; i++)
+      REQUIRE(!spacemap(roots[0], memory, 0, 0x10000 + (u64) i * 0x20000, 16 * PAGE_SIZE,
+                        VM_READ | VM_WRITE));
+    REQUIRE(!prepforkcreate(&tables[0], &tables[1], lives[1], images[1], &prep) &&
+            !prepforktree(prep, &tree) && !spacesnapshotopen(roots[0], roots[1], prep) &&
+            !spacestat(roots[0], &space) && space.refs == 2 && !spacestat(roots[1], &space) &&
+            space.refs == 3 && !prepstat(prep, &state) && state.refs == 2);
+    previous = steps = 0;
+    do {
+      error = spacesnapshotbuild(roots[0], roots[1]);
+      current = leaves(roots[1], 0) + 48 - leaves(roots[0], 1);
+      REQUIRE(current >= previous && current - previous <= 32);
+      changes += current - previous;
+      previous = current;
+      steps++;
+      REQUIRE(steps < 300);
+      if (mode == 1 && current) {
+        partial = current;
+        REQUIRE(error == 1 && partial <= 32 && !leaves(roots[1], 0) && !prepcancel(prep) &&
+                spacesnapshotbuild(roots[0], roots[1]) == SP_BUSY &&
+                spacesnapshotbuild(roots[0], roots[1]) == SP_BAD);
+        break;
+      }
+      if (error == 1) {
+        REQUIRE(spacesnapshotstep(roots[0], roots[1], 1) == SP_BAD &&
+                spaceactivate(roots[0]) == SP_BUSY && spaceactivate(roots[1]) == SP_BUSY &&
+                prepforkfinish(prep) == -ERR_STATE);
+      }
+    } while (error == 1);
+    total += steps;
+    if (!mode)
+      REQUIRE(!error && current == 96 && !spacesnapshotbuild(roots[0], roots[1]));
+    if (mode == 2)
+      REQUIRE(error == MEM_LIMIT && current == 48 && !leaves(roots[1], 0) &&
+              spacesnapshotbuild(roots[0], roots[1]) == SP_BAD && !prepcancel(prep));
+    REQUIRE(!spacesnapshotend(roots[0], roots[1], !mode) && !tree->phase &&
+            !prepstat(prep, &state) && state.refs == 1 &&
+            prepforkfinish(prep) == (mode ? -ERR_REVOKED : 0));
+    if (!mode) {
+      value = 0x4242;
+      REQUIRE(!spacewrite(roots[0], 0x10000, &value, sizeof(value)) &&
+              !spaceread(roots[1], 0x10000, &observed, sizeof(observed)) && observed == 0x4141);
+    } else
+      REQUIRE(!leaves(roots[1], 0) && leaves(roots[0], 1) == 48);
+    REQUIRE(!prepcancel(prep) && !prepdrop(prep) && !memfree(memory));
+    for (i = 0; i < 2; i++) {
+      REQUIRE(!imageend(images[i], i ? IMAGE_ABORT : IMAGE_EXIT) && !localclose(&tables[i]));
+      while ((error = localdrain(&tables[i], 32)) > 0) {
+      }
+      REQUIRE(!error);
+      while ((error = spaceclear(roots[i], 32)) > 0) {
+      }
+      REQUIRE(!error && !spacedestroy(roots[i]) && !acctclose(accounts[i]) &&
+              !acctunbind(accounts[i]) && !imagedetach(images[i]));
+      if (i) {
+        REQUIRE(!lifestat(lives[i], &life) && life.state == LIFE_ABORTED);
+      } else
+        REQUIRE(!lifeend(lives[i], LIFE_EXIT, 42, NULL));
+      REQUIRE(!lifedetach(lives[i]));
+      if (!lifestat(lives[i], &life) && life.waitref)
+        REQUIRE(!lifecollect(lives[i], life.parent, &result));
+    }
+    cowpool(&pool);
+    REQUIRE(!pool.groups && !pool.branches && !pool.prepaid && !pgreserved() && !cowcheck() &&
+            !acctcheck() && !pgcheck() && !lifecheck() && !groupcheck() && !setstat(set, &group) &&
+            !group.charged && !group.instances && !setclose(set));
+  }
+  pgstat(&after);
+  REQUIRE(before.allocated == after.allocated && before.free == after.free && partial &&
+          changes == 144 + partial);
+  putstr("FORKBUILDCHECK cases=");
+  puthex(3);
+  putstr(" built=");
+  puthex(1);
+  putstr(" cancelled=");
+  puthex(1);
+  putstr(" failed=");
+  puthex(1);
+  putstr(" steps=");
+  puthex(total);
+  putstr(" partial=");
+  puthex(partial);
+  putstr(" changes=");
+  puthex(changes);
+  putstr(" bounded=");
+  puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}

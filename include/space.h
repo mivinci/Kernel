@@ -23,13 +23,15 @@ struct Spaceid
   u64 generation;
   u32 index, reserved;
 };
-/* Prep-owned end cursor; no borrowed C frame or user pointer survives a step. */
+/* Prep-owned build/end cursor; no borrowed C frame or user pointer survives a
+   step. source/target/owner stay fixed. Phase selects node/page and the small
+   scan/count cursors; every index/count is bounded by SPACES/MMAPS/MEM_PAGES. */
 struct Spacetxn
 {
   Spaceid source, target;
   Prepid  owner;
-  u32     phase, node, page;
-  u16     slot, commit;
+  u32     node, page;
+  u16     phase, slot, commit, aux;
 };
 STATIC_ASSERT(sizeof(Spacetxn) == 64, space_transaction_budget);
 struct Space
@@ -84,6 +86,13 @@ int spacesnapshotbegin(Spaceid source, Spaceid target);
 /* Exact active FORK Prep owns the second root lease; caller first checks its
    source/target table relation with prepsnapshotcheck. Same no-checkpoint scope. */
 int spacesnapshotprep(Spaceid source, Spaceid target, Prepid prep);
+/* Trusted resumable mapping preparation. Zero Prep selects standalone storage.
+   open takes leases/exclusion; build returns 1 for more, 0 for READY, negative
+   on failure (abort required). IRQs stay masked: no scheduler/other VM work.
+   Each build call charges at most 32 mapping scans/page units, including all
+   mapped DATA alias checks/protection and complete <=16-page map installation. */
+int spacesnapshotopen(Spaceid source, Spaceid target, Prepid prep);
+int spacesnapshotbuild(Spaceid source, Spaceid target);
 int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
 /* End only: at most 32 mapping scans/page edits per call, 1 means more.
    First call fixes commit/abort. Same IRQ-masked/no-checkpoint scope; abort

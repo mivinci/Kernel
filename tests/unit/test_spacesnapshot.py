@@ -4,6 +4,7 @@ import test_kernelcow as support
 from test_mem import Memid,Memory
 from test_space import Spaceid
 from test_pgt import Entry
+from test_prep import Prepid
 from test_acct import Acctid,Setid,Account
 
 
@@ -236,6 +237,94 @@ class SpaceSnapshotTests(unittest.TestCase):
         self.lib.spacesnapshotend.argtypes=[Spaceid,Spaceid,C.c_uint32]
         self.lib.spacesnapshotstep.argtypes=[Spaceid,Spaceid,C.c_uint32]
         self.lib.spaceclone.argtypes=[Memid,Acctid,C.POINTER(Memid)]
+
+    def building(self):
+        self.journal()
+        self.lib.spacesnapshotopen.argtypes=[Spaceid,Spaceid,Prepid]
+        self.lib.spacesnapshotbuild.argtypes=[Spaceid,Spaceid]
+
+    def test_build_cursor_bounds_protection_and_installation_and_deduplicates_aliases(self):
+        def body():
+            self.building();parent=self.create();data=self.memory_create(16*4096)
+            addresses=[0x10000,0x30000,0x50000]
+            for va in addresses:self.assertEqual(self.map(parent,data,address=va,length=16*4096),0)
+            account,child=self.destination();before=bytes(self.mstat(data)),self.pstat().allocated
+            self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+            def progress():
+                return sum(self.lib.spacelookup(child,va+i*4096,C.byref(Entry()))+
+                           (not bool(self.lookup(parent,va+i*4096)[1]&2))
+                           for va in addresses for i in range(16))
+            steps=0;previous=0
+            while True:
+                status=self.lib.spacesnapshotbuild(parent,child);self.assertIn(status,(0,1))
+                current=progress();self.assertGreaterEqual(current,previous);self.assertLessEqual(current-previous,32)
+                previous=current;steps+=1
+                if not status:break
+                self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
+                for sid in (parent,child):self.assertEqual(self.lib.spaceactivate(sid),-4)
+                self.assertLess(steps,1000)
+            self.assertEqual(current,96);self.assertGreater(steps,1)
+            self.assertEqual((self.account(account).cow,self.account(account).reserved),(16,16))
+            self.assertEqual(self.lib.spacesnapshotbuild(parent,child),0)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),before)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_failed_build_is_terminal_until_abort_and_preserves_the_protection_journal(self):
+        def body():
+            self.building();parent=self.create();data=self.memory_create();self.assertEqual(self.map(parent,data),0)
+            account,child=self.destination(1);before=bytes(self.mstat(data)),self.pstat().allocated
+            self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+            steps=0
+            while True:
+                error=self.lib.spacesnapshotbuild(parent,child);steps+=1
+                if error!=1:break
+                self.assertLess(steps,1000)
+            self.assertEqual(error,-2)
+            self.assertEqual(self.lookup(parent,0x10000)[1],25)
+            self.assertEqual(self.lib.spacesnapshotbuild(parent,child),-1)
+            self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
+            self.assertEqual(self.lib.spaceactivate(parent),-4)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual(self.lookup(parent,0x10000)[1],11)
+            self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),before)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_abort_during_initial_admission_releases_only_its_leases(self):
+        def body():
+            self.building();parent=self.create();data=self.memory_create();self.assertEqual(self.map(parent,data),0)
+            _,child=self.destination();before=bytes(self.mstat(data)),self.pstat().allocated
+            self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+            self.assertEqual(self.lib.spacesnapshotbuild(parent,child),1)
+            self.assertEqual(self.lib.spacesnapshotstep(parent,child,1),-1)
+            self.assertEqual(self.lib.spacesnapshotstep(parent,child,0),0)
+            self.assertEqual((self.stat(parent).refs,self.stat(child).refs),(1,1))
+            self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),before)
+            self.snapshot(parent,child)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_abort_partial_protection_restores_only_new_rw_bits_of_mixed_cow_aliases(self):
+        def body():
+            self.building();parent=self.create();data=self.memory_create(16*4096)
+            addresses=[0x10000,0x30000,0x50000]
+            for va in addresses:self.assertEqual(self.map(parent,data,address=va,length=16*4096),0)
+            _,sibling=self.destination();self.snapshot(parent,sibling)
+            self.assertEqual(self.lib.spacewrite(parent,0x10000,C.create_string_buffer(b'p'),1),0)
+            _,child=self.destination()
+            def permissions():return [self.lookup(parent,va+i*4096)[1] for va in addresses for i in range(16)]
+            original=permissions();self.assertEqual(sum(bool(x&2) for x in original),3)
+            state=bytes(self.mstat(data));allocated=self.pstat().allocated
+            self.assertEqual(self.lib.spacesnapshotopen(parent,child,Prepid()),0)
+            for _ in range(1000):
+                self.assertEqual(self.lib.spacesnapshotbuild(parent,child),1)
+                writable=sum(bool(x&2) for x in permissions())
+                if 0<writable<3:break
+            else:self.fail('no partial alias protection boundary')
+            self.assertEqual(self.stat(child).mapcount,0)
+            self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
+            self.assertEqual(permissions(),original)
+            self.assertEqual((bytes(self.mstat(data)),self.pstat().allocated),(state,allocated))
+        for lib in self.libs:self.exercise(lib,body)
 
     def test_abort_cursor_bounds_leaf_changes_and_keeps_roots_frozen_until_final_release(self):
         def body():

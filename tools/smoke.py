@@ -761,6 +761,14 @@ def exercise(args, run_dir, record):
                             not 24 <= trees[0].get("steps",0) < 60):
                         raise SmokeError("fork tree ending cursor/root ownership/bounded leaf changes mismatch")
                     record["fork_tree_ending"]=trees[0]
+                    builds=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKBUILDCHECK ")]
+                    if (len(builds)!=1 or {key:builds[0].get(key) for key in ("cases","built","cancelled","failed","bounded","charged","allocated")} !=
+                            dict(cases=3,built=1,cancelled=1,failed=1,bounded=1,charged=0,allocated=transition["tables"]) or
+                            not 1 <= builds[0].get("partial",0) <= 32 or
+                            builds[0].get("changes") != 144 + builds[0]["partial"] or
+                            not 3 < builds[0].get("steps",0) < 900):
+                        raise SmokeError("fork mapped build cursor/partial protection/cancellation mismatch")
+                    record["fork_tree_building"]=builds[0]
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","charged","allocated")} !=
