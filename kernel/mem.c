@@ -53,6 +53,12 @@ setbranch(u32 node, Cowid id)
   blocks[node].order = BLOCK_COW | id.index;
 }
 static void
+clearbacking(Mem *m)
+{
+  m->backing.generation = 0;
+  m->backing.index = m->backing.reserved = 0;
+}
+static void
 releaseblocks(Acctid acct, u32 head)
 {
   Acctblk block;
@@ -86,7 +92,10 @@ reap(Mem *m)
     return;
   if (m->managers || m->writes || m->execs || m->busy || m->cowmaps)
     panic("data manager references");
-  if (m->kind == MEM_MMIO) {
+  if (m->kind == MEM_IMMUTABLE) {
+    if (memrelease(m->backing))
+      panic("immutable backing reference");
+  } else if (m->kind == MEM_MMIO) {
     if (devdrop(m->head))
       panic("device backing reference");
   } else
@@ -152,6 +161,7 @@ create(Acctid acct, u64 bytes, Memid *out, u32 state)
   m->refs = m->managers = 1;
   m->state = state;
   m->kind = MEM_RAM;
+  clearbacking(m);
   m->writes = m->execs = m->busy = m->cowmaps = 0;
   out->generation = m->generation;
   out->index = slot;
@@ -175,6 +185,56 @@ int
 memshared(Acctid acct, u64 bytes, Memid *out)
 {
   return create(acct, bytes, out, MEM_SHARED);
+}
+
+int
+memimmutable(Memid source, Acctid target, Memid *out)
+{
+  Mem  *m = find(source), *origin, *copy;
+  Memid canonical;
+  Acct  from, to, payer;
+  u32   slot;
+  int   error;
+  if (!m || !out || !m->refs || m->state != MEM_SEALED ||
+      (m->kind != MEM_RAM && m->kind != MEM_IMMUTABLE) || acctstat(m->acct, &from) ||
+      acctstat(target, &to) || to.state != AC_ACTIVE || from.set != to.set ||
+      (m->acct.generation == target.generation && m->acct.index == target.index))
+    return MEM_BAD;
+  canonical = m->kind == MEM_IMMUTABLE ? m->backing : source;
+  origin = find(canonical);
+  if (!origin || !origin->refs || origin->kind != MEM_RAM || origin->state != MEM_SEALED ||
+      origin->bytes != m->bytes || origin->pages != m->pages || acctstat(origin->acct, &payer) ||
+      payer.set != from.set)
+    return MEM_BAD;
+  if (m->busy || origin->busy)
+    return MEM_BUSY;
+  if (origin->refs == 0xffffffffU)
+    return MEM_LIMIT;
+  slot = freemem;
+  if (slot == PG_NONE)
+    return MEM_FULL;
+  error = accthold(target);
+  if (error)
+    return error;
+  /* A held immutable reference may be forked after its manager/payer exits.
+     This adds no manager to the canonical Mem and cannot enable mutation. */
+  origin->refs++;
+  copy = &memories[slot];
+  freemem = copy->head;
+  copy->generation++;
+  copy->bytes = m->bytes;
+  copy->acct = target;
+  copy->head = PG_NONE;
+  copy->pages = m->pages;
+  copy->refs = copy->managers = 1;
+  copy->state = MEM_SEALED;
+  copy->kind = MEM_IMMUTABLE;
+  copy->cowmaps = copy->writes = copy->execs = copy->busy = 0;
+  copy->backing = canonical;
+  out->generation = copy->generation;
+  out->index = slot;
+  out->reserved = 0;
+  return 0;
 }
 
 int
@@ -252,6 +312,7 @@ memclone(Memid source, Acctid target, Memid *out)
   copy->refs = copy->managers = 1;
   copy->state = MEM_DATA;
   copy->kind = MEM_RAM;
+  clearbacking(copy);
   copy->writes = copy->execs = copy->busy = copy->cowmaps = 0;
   m->busy = 0;
   out->generation = copy->generation;
@@ -353,6 +414,7 @@ memdevice(Acctid acct, u32 device, Memid *out)
   m->refs = m->managers = 1;
   m->state = MEM_DATA;
   m->kind = MEM_MMIO;
+  clearbacking(m);
   m->writes = m->execs = m->busy = m->cowmaps = 0;
   out->generation = m->generation;
   out->index = slot;
@@ -422,6 +484,7 @@ memstat(Memid id, Mem *out)
   out->busy = m->busy;
   out->kind = m->kind;
   out->cowmaps = m->cowmaps;
+  out->backing = m->backing;
   return 0;
 }
 
@@ -434,6 +497,8 @@ mempage(Memid id, u32 page, u64 *pa)
     return MEM_BAD;
   if (m->kind == MEM_MMIO)
     return devpage(m->head, page, pa);
+  if (m->kind == MEM_IMMUTABLE)
+    return mempage(m->backing, page, pa);
   for (node = m->head; page; page--)
     node = blocks[node].next;
   if (blocks[node].order & BLOCK_COW) {

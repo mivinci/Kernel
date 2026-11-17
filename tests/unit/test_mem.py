@@ -8,7 +8,7 @@ class Memid(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('index', C.c_uint32), ('reserved', C.c_uint32)]
 class Memory(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('bytes', C.c_uint64), ('acct', Acctid)] + [
-        (x, C.c_uint32) for x in ('head', 'pages', 'refs', 'managers', 'state', 'writes', 'execs', 'busy', 'kind', 'cowmaps')]
+        (x, C.c_uint32) for x in ('head', 'pages', 'refs', 'managers', 'state', 'writes', 'execs', 'busy', 'kind', 'cowmaps')] + [('backing', Memid)]
 
 class MemoryTests(unittest.TestCase):
     extra_flags = ('-DMEMS=4', '-DBREFS=16', '-DMMAPS=4')
@@ -49,12 +49,19 @@ class MemoryTests(unittest.TestCase):
             finally:
                 for sid, address in self.maps:
                     lib.spaceunmap(sid, address)
+                # Release each actual owner before any retained test Op refs.
+                # Canonical code references belong to their immutable views.
                 for mid in self.mems:
                     m = Memory()
                     while not lib.memstat(mid, C.byref(m)) and m.managers:
                         self.assertEqual(lib.memfree(mid), 0)
-                    while not lib.memstat(mid, C.byref(m)) and m.refs > m.managers:
-                        self.assertEqual(lib.memrelease(mid), 0)
+                for immutable in (True, False):
+                    for mid in self.mems:
+                        m = Memory()
+                        while not lib.memstat(mid, C.byref(m)) and m.refs > m.managers:
+                            if (m.kind == 2) != immutable:
+                                break
+                            self.assertEqual(lib.memrelease(mid), 0)
         support.AddressSpaceTests.exercise(self, lib, body)
 
     def memory_create(self, size=4096):

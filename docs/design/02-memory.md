@@ -716,3 +716,23 @@ CASE=cow新增第五组真实用户原生copy：父在两个COW页上经__sys_co
 普通空间写包括查询/旧sigaction等输出，因而复用同一逻辑权限/别名准备机制；不能据此声称所有库Rctx/重启或跨服务输出已完成。原生fork进程/Local/会话/信号继承、提交/失败状态机及exec仍待接，不以独立fixture进程当fork交付。
 
 本地make unit全部473项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage69-kernel-cow/，含当前Space源码/HAL契约哈希、SDK用户/汇编源码哈希及原始COW/sigframe结果。目标trace独立核对15次用户store硬件故障/14次解析，以及信号帧下方COW页无用户fault；影子全零与成功sigreturn另由CPU断言。未执行CI、真实硬件、性能或完整fork验收。
+
+### fork 封存代码的规范 backing 视图（2026-11-17）
+
+新增可信内部memimmutable(source, target_acct, out)，为SEALED代码/不可变内容创建目标Acct所属的独立Mem视图，物理backing仍只由原Acct出资一次，不创建COW额度或新RAM页。源必须是仍被管理/映射/其他合法持有者保留的SEALED RAM或immutable视图，目标须为同Set的不同活Acct；普通DATA、LOADING、SHARED、MMIO、跨Set或目标关闭拒绝。没有新增原生调用、用户种类或任意跨Acct私有共享入口；未来fork准备在拥有准确源引用和目标Acct时才能调用。
+
+Mem新增16字节完整backing Memid，记录从72增至88字节，仍低于96预算；默认8192槽的memories数组为720896字节，比前一阶段增加131072字节实际内核BSS。Blockref16、Acct64、Mmap64不变。MEM_IMMUTABLE为内核持久来源kind=2，state始终SEALED，head不指Blockref链。普通RAM/MMIO创建清空backing，immutable创建填入规范SEALED RAM Mem；mempage经backing取得原物理页，最后reap通过memrelease(backing)解除引用，不遍历空head、不调用acctfree释放别人的页。
+
+每份视图持自身逻辑Acct引用及规范backing的一份非管理引用。若源已是immutable，新的视图直接指其canonical backing，不指中间视图；创建前重新核验canonical真实kind/state/几何/Set。多代fork因此不会形成无界Mem引用链或因后代仍执行代码而保留所有祖先Acct。只读/执行权限来自SEALED及既有Local/Space规则：视图可R/RX、不可RW/普通memwrite/COW克隆，重复seal仅幂等，不重新同步或走空块链。接收空间仍必须是其逻辑Acct，不能把规范物理出资者误当拥有其他Space的写权。
+
+原出资者可以先free最后管理Handle并退出，canonical managers=0但已有视图/映射保留页和稳定原Acct费用；可信持有者仍可从这个SEALED存续记录或退休中间视图准备后代，不通过普通memhold/memretain复活管理权。新视图只增加不可变引用，引用上限/Mem池/目标Acct引用失败时输出及所有引用保持。最后视图与原映射都结束才释放原始Blockref和原Acct；中间视图的最后映射解除则立即结束它自己的逻辑Acct责任。
+
+例：A出资P并封存，B视图与C从B准备的视图都直接指A的canonical P。B退出、解除最后映射后B的Mem/Acct可回收，C不保留B；A也退出后只保留P实际费用，不把费用移到C。C仍可R/RX访问同P，最后unmap后A/P费用结清。普通RAM耗尽不阻止增加这份已预付元数据池内的只读视图，但新Space页表仍须自身额度/实际页，不能把无代码页分配当作fork准入保证。
+
+10项两种真实页表编码的host专项检查单出资/无物理页或COW承诺、多代引用扁平化、中间Acct回收、原出资CLOSING滞留/最终结清、退休可执行源/中间视图继续准备、普通RAM耗尽、R/RX与拒绝写、种类/跨Set/关闭/旧身份拒绝及Mem池满的失败无副作用。旧测试清理器曾把canonical的所有非管理引用都当临时Op提前释放，已改为先解除真实管理所有者、再清理剩余显式测试引用；生产引用规则未因此放宽。
+
+seal两架构实际创建两代代码视图，核对视图创建不增加物理allocated，中间视图/Acct立即回收；原出资者管理/映射解除并CLOSING后，最终视图的真实RX页表仍指相同PA，实际执行封存指令返回42。最后unmap回收原canonical/原Acct，所有页表、逻辑视图及Set费用归零，主机独立核对IMMUTABLECHECK。
+
+本切片是完整fork内存分类的代码侧基础，尚未遍历整个父Space快照、去重私有Mem别名、安装孩子Local原Handle/墓碑或接forkprepare/commit/abort。未实现的fork/exec、活动信号层和运行库Fix仍须后续事务，不以这个可信代码共享fixture冒充用户fork。
+
+本地最终make unit全部483项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage70-immutable/，含每项当前Mem源码/头哈希、两架构规范视图执行/费用结果及memories数组720896字节读回。早期host清理顺序错误退出保留immutable-before-cleanup.log，修正清理器后10项专项及最终全量通过。未执行CI、真实硬件、性能或原生fork发布/继承验收。

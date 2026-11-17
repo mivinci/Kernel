@@ -926,6 +926,10 @@ def exercise(args, run_dir, record):
                     record["user_stack"] = stacks[0]
                     record["user"] = checks
                 if args.case == "seal":
+                    immutable=[fields(line) for line in serial.read_text().splitlines() if line.startswith("IMMUTABLECHECK ")]
+                    if immutable != [dict(views=2,result=42,intermediate=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("immutable fork view/payer/lifetime mismatch")
+                    record["immutable_views"]=immutable[0]
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SEALCHECK ")]
                     if checks != [{"result": 42, "allocated": transition["tables"]}]:
                         raise SmokeError("sealed code execution/cleanup mismatch")
