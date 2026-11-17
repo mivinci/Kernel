@@ -902,6 +902,10 @@ def exercise(args, run_dir, record):
                     if checks != [{"slots": 128, "charged": 0, "allocated": transition["tables"]}]:
                         raise SmokeError("local table cleanup/count mismatch")
                     record["locals"] = checks[0]
+                    inherited=[fields(line) for line in serial.read_text().splitlines() if line.startswith("LOCALFORKCHECK ")]
+                    if inherited != [dict(inherited=9,omitted=3,aliases=2,attenuated=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("fork Local identity/rebinding/tombstone mismatch")
+                    record["local_fork"]=inherited[0]
                 if args.case == "stacks":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("STACKCHECK ")]
                     if len(checks) != 1 or not 0 < checks[0].get("depth", 0) <= 16384:

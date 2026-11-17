@@ -254,7 +254,7 @@ def build(args, directory, run_dir):
         if args.case == "life":
             sources.append(ROOT / "tests/kernel/lifetest.c")
         if args.case == "locals":
-            sources.append(ROOT / "tests/kernel/localtest.c")
+            sources += [ROOT / "tests/kernel/localtest.c", ROOT / "tests/kernel/localforktest.c"]
         if args.case == "stacks":
             sources += [ROOT / "tests/kernel/stacktest.c", ROOT / "tests/kernel" / args.arch / "switchprobe.S"]
         if args.case == "switch":

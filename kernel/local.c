@@ -1343,3 +1343,229 @@ localquery(Rtable *table, u64 cursor, Queryrec *records, u32 count, u32 *written
   *written = n;
   return 0;
 }
+
+static int
+sameid(Memid a, Memid b)
+{
+  return a.index == b.index && a.generation == b.generation && !a.reserved && !b.reserved;
+}
+static void
+clearforkslot(Local *slot)
+{
+  slot->objectgen = slot->rights = slot->offset = slot->length = 0;
+  slot->object = slot->subtype = slot->inherit = slot->source = 0;
+}
+static void
+copyforkslot(Local *to, const Local *from)
+{
+  to->generation = from->generation;
+  to->objectgen = from->objectgen;
+  to->rights = from->rights;
+  to->offset = from->offset;
+  to->length = from->length;
+  to->object = from->object;
+  to->subtype = from->subtype;
+  to->inherit = from->inherit;
+  to->source = from->source;
+}
+static const Forkbinding *
+forkbinding(const Forkbinding *bindings, u32 count, Memid id)
+{
+  u32 i;
+  for (i = 0; i < count; i++)
+    if (sameid(bindings[i].source, id))
+      return &bindings[i];
+  return NULL;
+}
+static int
+forkmem(Rtable *source, Rtable *target, const Local *slot, const Forkbinding *binding)
+{
+  Mem old, view;
+  if (!binding || slot->source == LOCAL_LOAD || !sameid(binding->source, memory(slot)) ||
+      memstat(binding->source, &old) || memstat(binding->target, &view) || !old.managers ||
+      !view.refs || old.bytes != view.bytes || old.pages != view.pages || old.state != view.state ||
+      old.kind == MEM_MMIO || view.kind == MEM_MMIO || (slot->rights & ~(LOCAL_GRANT | 15UL)) ||
+      !slot->rights || slot->inherit & ~3U || ((slot->offset | slot->length) & PAGE_MASK) ||
+      !slot->length || slot->offset > view.bytes || slot->length > view.bytes - slot->offset)
+    return -ERR_INVALID;
+  if (old.busy || view.busy)
+    return -ERR_BUSY;
+  if (old.state == MEM_SHARED)
+    return old.kind == MEM_RAM && sameid(binding->source, binding->target) ? 0 : -ERR_DENIED;
+  if ((old.state != MEM_DATA && old.state != MEM_SEALED) || old.acct.index != source->acct.index ||
+      old.acct.generation != source->acct.generation || view.acct.index != target->acct.index ||
+      view.acct.generation != target->acct.generation || sameid(binding->source, binding->target) ||
+      (old.state == MEM_DATA && view.kind != MEM_RAM) ||
+      (old.state == MEM_SEALED && view.kind != MEM_IMMUTABLE))
+    return -ERR_DENIED;
+  return 0;
+}
+int
+localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count,
+          const Createarg *limits)
+{
+  u64                generations[LOCALS];
+  Acct               parent, child;
+  Space              parentspace, childspace;
+  Createpolicy       policy;
+  Local             *slot, *dest;
+  const Forkbinding *binding;
+  Image              image;
+  Imageid            childimage;
+  u32                i, j;
+  int                error;
+  if (!source || !target || source == target || !source->slots || !target->slots ||
+      source->state != LOCAL_OPEN || target->state != LOCAL_OPEN || !source->count ||
+      source->count > LOCALS || target->count != source->count || source->slots == target->slots ||
+      count > LOCALS || (count && !bindings) || !limits || limits->reserved ||
+      limits->resources != target->count || !limits->pending || limits->pending > PENDING_CALLS ||
+      limits->resources < 3 || handletype(source->owner) != HANDLE_PROCESS ||
+      handletype(target->owner) != HANDLE_PROCESS || source->owner == target->owner ||
+      !source->image || !target->image || acctstat(source->acct, &parent) ||
+      acctstat(target->acct, &child) || parent.state != AC_ACTIVE || child.state != AC_ACTIVE ||
+      parent.set != child.set ||
+      (source->acct.index == target->acct.index &&
+       source->acct.generation == target->acct.generation) ||
+      child.limit != limits->memlimit || child.exec_limit != limits->exec_limit ||
+      spacestat(source->space, &parentspace) || spacestat(target->space, &childspace) ||
+      parentspace.acct.index != source->acct.index ||
+      parentspace.acct.generation != source->acct.generation ||
+      childspace.acct.index != target->acct.index ||
+      childspace.acct.generation != target->acct.generation)
+    return -ERR_INVALID;
+  if (imagefind(source->owner, source->image, &childimage) || imagestat(childimage, &image) ||
+      image.state != IMAGE_ACTIVE || imagefind(target->owner, target->image, &childimage) ||
+      imagestat(childimage, &image) || image.state != IMAGE_PREPARING)
+    return -ERR_STATE;
+  if ((u64) source->slots < (u64) target->slots + target->count * sizeof(Local) &&
+      (u64) target->slots < (u64) source->slots + source->count * sizeof(Local))
+    return -ERR_INVALID;
+  for (i = 0; i < target->count; i++)
+    if (target->slots[i].subtype || target->slots[i].generation > HANDLE_GENERATION_MAX)
+      return -ERR_STATE;
+  for (i = 0; i < count; i++) {
+    if (bindings[i].source.reserved || bindings[i].target.reserved)
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (sameid(bindings[i].source, bindings[j].source) ||
+          sameid(bindings[i].target, bindings[j].target))
+        return -ERR_INVALID;
+  }
+  /* Entire source admission before taking new references. Manager handles
+     remain scoped to their child's already prepared logical view. */
+  for (i = 0; i < source->count; i++) {
+    slot = &source->slots[i];
+    if (slot->generation > HANDLE_GENERATION_MAX ||
+        (slot->subtype && slot->subtype < LOCAL_FLOOR && !slot->generation))
+      return -ERR_INVALID;
+    if (!slot->subtype || slot->subtype >= LOCAL_FLOOR)
+      continue;
+    switch (slot->subtype) {
+    case LOCAL_SPACE:
+      if (slot->objectgen != source->space.generation || slot->object != source->space.index ||
+          !slot->rights || slot->rights & ~3UL || slot->offset || slot->length || slot->inherit)
+        return -ERR_DENIED;
+      break;
+    case LOCAL_ALLOC:
+      if (slot->objectgen != source->acct.generation || slot->object != source->acct.index ||
+          !slot->rights || slot->rights & ~7UL || slot->offset || slot->length || slot->inherit)
+        return -ERR_DENIED;
+      break;
+    case LOCAL_CREATE:
+      error = localcreatecheck(source, handlepack(HANDLE_RESOURCE, slot->generation, i), limits,
+                               &policy);
+      if (error)
+        return error;
+      if (policy.set.index != parent.set)
+        return -ERR_DENIED;
+      break;
+    case LOCAL_MEM:
+      if (!(slot->inherit & LOCAL_FORK))
+        break;
+      error = forkmem(source, target, slot, forkbinding(bindings, count, memory(slot)));
+      if (error)
+        return error;
+      break;
+    case LOCAL_CALL:
+    case LOCAL_SEND:
+    case LOCAL_NOTIFY:
+      if (!(slot->inherit & LOCAL_FORK))
+        break;
+      if (!(slot->rights & LOCAL_USE) || slot->rights & ~(LOCAL_USE | LOCAL_GRANT) ||
+          slot->inherit & ~3U || slot->length ||
+          (slot->subtype == LOCAL_NOTIFY ? (!slot->offset || slot->offset & 0xffffffffUL)
+                                         : slot->offset != 0))
+        return -ERR_INVALID;
+      error = imagestat(endpoint(slot), &image);
+      if (error)
+        return error;
+      break;
+    case LOCAL_CONTROL:
+    case LOCAL_OBSERVE:
+    case LOCAL_IRQ_BIND:
+    case LOCAL_CONSTRUCT:
+      break;
+    default:
+      return -ERR_NOTSUP;
+    }
+  }
+  for (i = 0; i < target->count; i++) {
+    generations[i] = target->slots[i].generation;
+    clearforkslot(&target->slots[i]);
+    target->slots[i].generation = source->slots[i].generation;
+  }
+  for (i = 0; i < source->count; i++) {
+    slot = &source->slots[i];
+    dest = &target->slots[i];
+    if (!slot->subtype || slot->subtype >= LOCAL_FLOOR)
+      continue;
+    error = 0;
+    if (slot->subtype == LOCAL_SPACE)
+      error = convert(spacehold(target->space));
+    else if (slot->subtype == LOCAL_ALLOC)
+      error = convert(accthold(target->acct));
+    else if (slot->subtype == LOCAL_CREATE) {
+      error = localcreator(source, handlepack(HANDLE_RESOURCE, slot->generation, i), &policy);
+      if (!error)
+        error = convert(sethold(policy.set));
+    } else if (slot->subtype == LOCAL_MEM && (slot->inherit & LOCAL_FORK)) {
+      binding = forkbinding(bindings, count, memory(slot));
+      error = convert(memforkhold(binding->target, target->acct));
+    } else if ((slot->subtype == LOCAL_CALL || slot->subtype == LOCAL_SEND ||
+                slot->subtype == LOCAL_NOTIFY) &&
+               (slot->inherit & LOCAL_FORK)) {
+      error = imagehold(endpoint(slot), IMAGE_CLEANUP);
+    } else
+      continue;
+    if (error)
+      goto failed;
+    copyforkslot(dest, slot);
+    if (slot->subtype == LOCAL_SPACE) {
+      dest->objectgen = target->space.generation;
+      dest->object = target->space.index;
+    } else if (slot->subtype == LOCAL_ALLOC) {
+      dest->objectgen = target->acct.generation;
+      dest->object = target->acct.index;
+    } else if (slot->subtype == LOCAL_CREATE) {
+      dest->rights = CREATE_USE;
+      dest->offset = limits->memlimit;
+      dest->length = limits->exec_limit;
+      dest->object = policy.set.index | (limits->resources << 8) | (limits->pending << 16);
+    } else if (slot->subtype == LOCAL_MEM) {
+      binding = forkbinding(bindings, count, memory(slot));
+      dest->objectgen = binding->target.generation;
+      dest->object = binding->target.index;
+      dest->source = 3;
+    }
+  }
+  return 0;
+failed:
+  for (j = 0; j < target->count; j++) {
+    dest = &target->slots[j];
+    if (dest->subtype && removeentry(dest))
+      panic("fork table rollback reference");
+    clearforkslot(dest);
+    dest->generation = generations[j];
+  }
+  return error;
+}

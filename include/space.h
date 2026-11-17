@@ -64,6 +64,9 @@ int spaceclone(Memid source, Acctid target, Memid *out);
    Failure empties target and restores new source protections. No Proc/Local
    inheritance, user authority or native fork publication is provided. */
 int spacesnapshot(Spaceid source, Spaceid target);
+/* Borrow the corresponding prepared target view for an already mapped source
+   Mem, checking every source alias correspondence. No reference or grant. */
+int spacesnapshotview(Spaceid source, Spaceid target, Memid original, Memid *view);
 /* Trusted child/private mapping: logical RW, initially hardware R/COW. */
 int spacecowmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length);
 /* Inactive spaces only. Resolve exactly a COW-marked logical-W address and

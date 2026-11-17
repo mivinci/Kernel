@@ -68,6 +68,9 @@ int memimmutable(Memid source, Acctid target, Memid *out);
 /* Trusted snapshot holds a retained explicit SHARED Mem for map construction,
    even if its last manager was dropped. Never applies to private/MMIO pages. */
 int memsharedhold(Memid source);
+/* Trusted fork installation into the exact target logical view. The view must
+   already be retained by a prepared map/owner; never a canonical parent DATA. */
+int memforkhold(Memid view, Acctid target);
 /* Space transaction only: all aliases/references must be frozen and validated.
    These accept a mapped/retiring private view but grant no new authority. */
 int memcowshared(Memid id, u32 page);

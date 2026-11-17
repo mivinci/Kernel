@@ -59,6 +59,7 @@ void          arch_usercheck(Hctx *context, u32 phase);
 #endif
 void lifetest(void);
 void localtest(void);
+void localforktest(void);
 void stacktest(Hvs *kernel);
 void switchtest(Hvs *kernel);
 void sealtest(Hvs *kernel);

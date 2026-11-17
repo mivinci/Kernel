@@ -103,6 +103,7 @@ testmain(Hvs *space, const Dtinfo *hardware)
   putstr("READY life-restored\n");
 #elif BOOT_CASE == 19
   localtest();
+  localforktest();
   putstr("READY locals-restored\n");
 #elif BOOT_CASE == 18
   stacktest(space);

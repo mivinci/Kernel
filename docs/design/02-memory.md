@@ -758,3 +758,5 @@ CASE=cow两架构新增五映射快照（两个私有Mem、其中一份有两个
 本接口仅快照已提交Mmap，不代表捕获未映射Local Mem、保留资源Handle值/墓碑、RPC/IRQ继承策略、信号活动层或libsys Fix。forkprepare/commit/abort必须把上述映射结果纳入准备对象、建立目标Local和用户现场并做完整失败收尾；此时仍无原生fork/_Fork发布或完整exec。没有把设备拒绝规则当作最终驱动fork策略，也未减少net/服务目标。
 
 最终本地make unit全部496项、make fmt-check通过。make test-qemu全部110个两架构场景通过，加入未知Op引用预检前的13个早期结果按源码哈希识别并逐项补跑，最终110项均核对当前Space/Mem源码及契约头哈希；其余97项复用完整回归中相同最终代码的结果。证据build/host/stage71-space-snapshot/保留全量日志、13项补跑、最终目录/哈希及接管回滚反例。无CI、真实硬件、性能或完整原生fork发布/继承验收。
+
+Local继承接续（2026-11-17）：已增加spacesnapshotview借用准确的父Mem→孩子去重视图，并以可信memforkhold为已保留孩子视图安装新的Local管理引用；SHARED仍同一对象，私有/SEALED只能指孩子Acct的克隆/immutable视图，不重开父DATA或设备权。未映射但继承的Mem需准备者另行预付绑定。具体原Handle/墓碑、失败引用回滚及双架构组合证据见03末尾；统一Space+Local准备/取消和原生fork续点仍未完成。

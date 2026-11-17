@@ -1326,3 +1326,27 @@ SHARED授权接续（2026-11-16）：固定CONTROL/准备CONFIG的grant/revoke�
 原生sigsuspend复用Procstage与线程既有计费内核栈，wait_kind扩充SIGNAL=6，无Rq、组或额外等待对象引用。原M保存在该调用的既有C续点，安装W/检查pending/登记/撤用户根全程IRQ屏蔽；切CPU后仅可递送信号使其入READY。唤醒回原C续点复核，捕获时将M交给下一预付Sigctx的restore_mask，原syscall退栈后才进入handler；杀死BLOCKED或已醒READY的续点时，镜像终结清空银行，离栈清理丢弃其C续点，不伪造请求收尾。普通阻塞call/recv/wait的信号中断仍未接，可信排队只额外允许这个独占信号等待。实际场景与验证见11末尾。
 
 IRQ递送/调度接续（2026-11-17）：用户现场默认开启IRQ，是否启用时间片仍独立；无timer且存在ARMED绑定时CPU可idle等待设备。外设只向固定Image的持久Event位提交，不改用户寄存器或泛化打断同步请求；唤醒另一READY驱动在用户安全出口按FIFO让出，内核只设置reschedule_requested并在已有安全检查点响应，不把外设记为timer tick。imageend立即撤下绑定，CPU稍后释放Local池记录；细节与真实IRQ/伙伴进展验收见05末尾。
+
+### fork 的独立 Local 继承事务（2026-11-17）
+
+新增可信内部localfork(source_table, target_table, bindings, count, child_limits)，只处理资源表，不新增syscall/用户授权。源须为当前有效ACTIVE镜像，目标须为不同完整PID的PREPARING镜像、同Set但不同活Acct、同槽容量的已初始化空表；校验Space/Acct归属及真实目标limit/exec_limit/资源槽；pending输入只按编译上限和源CREATE策略核验，拥有Proc预付规格的上层必须提供其真实值，不能将任意用户值传入。表存储不能重叠。目标新实例未发布，不能把它当运行中任意INSTALL替代品；Proc层还须负责父子/准备/期限/凭据及原生CREATE准入。
+
+继承以父资源表作为子的新逻辑槽谱系：每个槽复制父43位generation，允许继承的项在同索引/同generation建立独立引用，因此复制到子用户内存中的Handle数值保持有效；不继承的项保持subtype=0及同一父generation墓碑，下一次普通publish才递增，不会重装同值使父的非继承整数变成子授权。父本来已空闲的槽也保留最后generation；父谱系已经耗尽的空槽保持耗尽，普通分配跳过，不回绕。
+
+这是03开头已经冻结的受控fork继承例外，不是普通localinit/exec清表时把代次重置为0。目标空表在物理运行槽中曾经使用过的generation可能高于父值；在不同完整PID/PREPARING镜像上下文中，资源谱系来自实际被复制的父内存/表，不能改用旧目标槽的无关generation而使父合法Handle失效。旧目标Image/表epoch、RPC/REQUEST和CONTROL仍核验其原完整主体，不能因物理Local槽复用接入这个新孩子。不存在把同一活动主体旧Handle代次递减再复活的普通入口。
+
+SELF SPACE/ALLOC按原槽/代次重绑定目标Space/Acct，低位使用权不增加；设备DMA种类的ALLOC不经本通道继承。CREATE保持固定Set，但只安装CREATE_USE，清CREDENTIAL/SERVICE/GRANT，并按孩子实际memlimit/exec_limit/资源槽/pending减权，仍须不高于源策略。CALL/SEND/NOTIFY只有显式FORK标记才继承，保持原完整对端Image、通知mask及权利；即使被引用对端已经ENDED也只保留那个不可用旧绑定，不按PID或服务名重连。未标FORK入口、CONTROL/OBSERVE/IRQ_BIND/CONSTRUCT及内部资源回复保底/接收槽不复制引用，只有墓碑；全局RPC/REQUEST归属不进入Local表。
+
+Mem继承使用显式Forkbinding（32字节source Memid/target Memid）清单，最多LOCALS项，完整预检拒绝重复源/目标和非法窗口/种类。私有DATA指向孩子Acct的已预付逻辑视图，SEALED指向孩子immutable视图，SHARED必须仍是同一显式共享Mem；不能把父原DATA对象或其他Acct页绑定进子表。多个父Handle窗口绑定同一个孩子Mem，保留offset/length/使用权及继承标记；source=LOAD的临时加载权不进入此通道。源SEALED Handle可能仍含封存前的静态WRITE/SEAL位，动态SEALED限制继续拒绝实际写/执行增权，不能据原始位重开写窗口。
+
+新增spacesnapshotview只借用前一阶段已经生成的目标视图：逐个匹配父Mem所有已映射别名的相同VA/offset/length/逻辑权限，并核对目标Mem身份、种类/Acct和一致的去重结果；不通过猜索引返回句柄、不取得管理引用。映射未持管理引用的孩子逻辑视图由可信memforkhold在目标准确Acct下取得新的Local管理责任；它只适用于已保留的合法fork视图，不恢复父私有管理权、不用于MMIO。未映射但标FORK的Mem仍需准备者单独预付clone/immutable视图并纳入同一绑定清单，本轮host和QEMU分别覆盖该路径。
+
+完整源/绑定/目标预检后才取新引用。中途引用溢出等失败会逐项解除本次已经安装的SPACE/ALLOC/Set/Mem/Image引用，目标所有generation恢复进入前值、不留下活表项；原本无效槽的对象残留字段可清零，没有用户可观察授权。源表完全不修改。为回滚保存LOCALS个旧目标u64 generation，默认128项共1024字节临时栈；LLVM两架构localfork静态帧均1536字节，精确.su证据归本轮，不冒充最大调用深度、IRQ屏蔽时间或性能证明。Local48/Rtable/Proc及固定池没有因继承复制而新增字段。
+
+10项两种真实页表编码host专项验证原Handle/SELF/Mem别名重绑定、未继承/已free/耗尽槽的墓碑和后续复用、CREATE精确减权、mapped与unmapped私有视图、SHARED/代码规则、旧对端Image绑定、错误绑定/规格/活动目标拒绝，并把Image.cleanup实际填到65535测试后段OVERFLOW：已取的SELF引用及全部目标generation精确回滚。这个真实计数上限测试不是用未实现的成功占位替代失败路径。
+
+locals两架构新增可信组合场景：先用完整Space快照得到映射视图，再为一份未映射Mem预付孩子分支；继承9个合法原Handle，3个非继承活项保持墓碑。CPU通过原SELF/私有Mem Handle在孩子再map别名，更新孩子实际页后其R/RW别名一致、父仍旧值；SHARED写双方可见，代码拒绝RW；未映射私有写也不改父，CREATE只剩孩子规格的USE。之后父/子引用、映射、Life/Image/Set及全部页归零，主机独立检查LOCALFORKCHECK。
+
+当前Local与Space仍是两项独立可信准备机制。localfork失败本身不回滚一个已单独完成的spacesnapshot，未映射绑定的暂持拥有记录也仍由上层负责；不能把先后两次调用称为完整原子fork。后续fork准备对象必须统一本次Space/Local/信号/现场及服务事务的提交/取消责任，建立原用户返回0/PID的续点，再接原生forkprep/forkcommit/forkabort和libsys Fix。该fixture未运行子fork返回现场，不把资源表继承验收称为已完成用户fork。
+
+本地make unit全部506项、make fmt-check及make test-qemu全部110个两架构场景通过；精确目录/Local、Mem、Space源码和契约头哈希、两个LOCALFORKCHECK及1536字节静态帧证据归build/host/stage72-local-fork/。普通镜像不含fixture，编译数据库由构建同步。没有CI、目标真实硬件、性能或完整原生fork执行/发布验收。

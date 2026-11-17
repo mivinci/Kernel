@@ -202,6 +202,27 @@ memsharedhold(Memid source)
   return 0;
 }
 int
+memforkhold(Memid view, Acctid target)
+{
+  Mem *m = find(view);
+  Acct account;
+  if (!m || !m->refs || acctstat(target, &account) || account.state != AC_ACTIVE)
+    return MEM_BAD;
+  if (m->state == MEM_SHARED && m->kind == MEM_RAM)
+    return memsharedhold(view);
+  if ((m->kind != MEM_RAM && m->kind != MEM_IMMUTABLE) ||
+      (m->state != MEM_DATA && m->state != MEM_SEALED) || m->acct.generation != target.generation ||
+      m->acct.index != target.index)
+    return MEM_BAD;
+  if (m->busy)
+    return MEM_BUSY;
+  if (m->refs == 0xffffffffU || m->managers == 0xffffffffU)
+    return MEM_LIMIT;
+  m->refs++;
+  m->managers++;
+  return 0;
+}
+int
 memimmutable(Memid source, Acctid target, Memid *out)
 {
   Mem  *m = find(source), *origin, *copy;

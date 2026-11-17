@@ -1135,3 +1135,49 @@ failed:
   snapshotjournal(1);
   return error;
 }
+
+int
+spacesnapshotview(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out)
+{
+  Space *source = find(sourceid), *target = find(targetid);
+  Mmap  *parent, *child;
+  Mem    a, b;
+  Memid  found;
+  Acct   sa, ta;
+  u32    node, peer, matches = 0;
+  if (!source || !target || source == target || !out || acctstat(source->acct, &sa) ||
+      acctstat(target->acct, &ta) || sa.set != ta.set || memstat(original, &a))
+    return SP_BAD;
+  if (source->busy || target->busy || source == active || target == active)
+    return SP_BUSY;
+  for (node = source->maps; node != PG_NONE; node = mappings[node].next) {
+    parent = &mappings[node];
+    if (!samemem(parent->mem, original))
+      continue;
+    for (peer = target->maps; peer != PG_NONE; peer = mappings[peer].next)
+      if (mappings[peer].address == parent->address)
+        break;
+    if (peer == PG_NONE)
+      return SP_BAD;
+    child = &mappings[peer];
+    if (parent->prep.generation || child->prep.generation || parent->offset != child->offset ||
+        parent->length != child->length || logicalprot(parent) != logicalprot(child) ||
+        memstat(child->mem, &b) || a.bytes != b.bytes || a.state != b.state)
+      return SP_BAD;
+    if (a.state == MEM_SHARED) {
+      if (a.kind != MEM_RAM || !samemem(original, child->mem))
+        return SP_BAD;
+    } else if ((a.state != MEM_DATA && a.state != MEM_SEALED) || b.kind == MEM_MMIO ||
+               b.acct.index != target->acct.index || b.acct.generation != target->acct.generation ||
+               samemem(original, child->mem))
+      return SP_BAD;
+    if (matches && !samemem(found, child->mem))
+      return SP_BAD;
+    found = child->mem;
+    matches++;
+  }
+  if (!matches)
+    return SP_BAD;
+  *out = found;
+  return 0;
+}

@@ -37,6 +37,7 @@
 typedef struct Createpolicy Createpolicy;
 typedef struct Local        Local;
 typedef struct Rtable       Rtable;
+typedef struct Forkbinding  Forkbinding;
 struct Createpolicy
 {
   Setid set;
@@ -60,6 +61,18 @@ struct Rtable
   Handle  owner;
   u64     image, epoch;
 };
+struct Forkbinding
+{
+  Memid source, target;
+};
+STATIC_ASSERT(sizeof(Forkbinding) == 32, fork_binding_size);
+/* Trusted table transaction, empty target/new child identity only. Exact slot
+   and generation values derive from the parent lineage; noninherited slots
+   retain tombstones. Bindings are prepared child views, never user input.
+   Does not clone mappings/unmapped Mem or publish a Proc. Limits describe the
+   actual child Acct/table/pending specification for CREATE attenuation. */
+int localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 count,
+              const Createarg *limits);
 STATIC_ASSERT(sizeof(Local) == 48, local_budget);
 /* Storage is zeroed once; generations survive table close/rebinding. Context is
    borrowed from its owner, which keeps Acct/Space alive until drain completes. */
