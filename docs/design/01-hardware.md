@@ -128,6 +128,60 @@ HAL只收Hctx/Hkctx/Hvs/Hboot等硬件类型或定宽标量，不收Proc/Rq/FS�
 
 Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建堆/预算；页表map若需分配由同一回调取得，失败上层事务回滚。Hpte=[pa,prot,attr,present]四u64；attr NORMAL=0、DEVICE=1、DMA_COHERENT=2、DMA_NONCOHERENT=3。Htrap=[kind(u32),fromuser(u32),code(u64),address(u64),syscall_nr(u64)]总32；kind SYSCALL=1、IRQ=2、TIMER=3、PAGEFAULT=4、ILLEGAL=5、OTHER=6。HAL不在这些接口中睡眠或调用schedule，长批量外层管理调度检查点。信号构帧/校验复用Hctx并按11指定布局，不让core直接写架构CSR位。
 
+## 目标平台与真机硬件矩阵（2026-11-18）
+
+终极目标是在真实硬件上运行；QEMU 是开发与 CI 平台，不是目标平台。首批参考板每架构一块：
+
+| 项 | ARM64 参考板（暂定） | RV64 参考板 |
+| --- | --- | --- |
+| 板卡 | NanoPi NEO3 | VisionFive 2；同 SoC 的 Milk-V Mars 视为等价板 |
+| SoC | Rockchip RK3328（Cortex-A53×4） | StarFive JH7110（U74×4） |
+| 内存 | 1 GB | 2 / 4 / 8 GB |
+| 中断控制器 | GIC-400（GICv2） | SiFive PLIC（兼容） |
+| 串口 | dw-apb-uart（16550 兼容） | dw-apb-uart（同 IP） |
+| 存储 | dw-mshc | dw-mshc |
+| 以太网 | dwmac-rk（dwmac 3.x） | dwmac-5.20 |
+| 固件链 | U-Boot + ATF（BL31/PSCI） | BootROM → SPL → OpenSBI → U-Boot |
+
+现有实现与外设的对应：
+
+| 能力 | 现状 | 真机所需 |
+| --- | --- | --- |
+| 中断控制器 | GICv2 与 PLIC 已接 | 直接复用 |
+| 串口 | NS16550 与 PL011 已接 | 增加 `snps,dw-apb-uart` 匹配（寄存器与 16550 兼容） |
+| 存储 | 无真实块设备驱动 | 新增 dw-mshc，一份覆盖两板 |
+| 以太网 | 无真实网卡驱动 | 新增 dwmac，按 3.x / 5.20 分版本 |
+| 显示 | 无 | 两板均不以显示为 bring-up 前置 |
+| 缓存 | ARM64 I/D 缓存仍关闭 | 必须开启并落实 DMA 一致性 |
+
+已识别容量缺口（不修则无法上真机）：
+
+| 项 | 现值 | 真机目标 |
+| --- | --- | --- |
+| 物理页元数据 | 2^18 页 = 1 GiB（`kernel/main.c` 启动检查） | 至少 2 GiB（2^19）；8 GB 变体需 2^21 或启动期裁剪 |
+| DTB 节点/属性/深度 | 192 / 1536 / 16，`DT_REGS=2`、`DT_DEVICES=64` | 真机 DTB 约 40–90 KiB、300–800 节点，需上调；主机侧用真实 DTB 做解析测试 |
+| compatible 匹配 | 仅覆盖 QEMU 字符串 | 增加 `snps,dw-apb-uart`、`arm,gic-400`、`sifive,plic-1.0.0`、`snps,dw-mshc`、`snps,dwmac-*` |
+| 启动通道 | QEMU 直载 | U-Boot 载荷：DTB 指针按各架构引导约定传入，启动包经 initrd 或固定装载地址交付，字段见 07 |
+
+## 真机可移植性约束（2026-11-18）
+
+以下十条用于防止“QEMU 能过、上真机要重写”；评审时逐条检查，违反按缺陷处理。
+
+| # | 约束 | 反面例子 | 检查方法 |
+| --- | --- | --- | --- |
+| 1 | 服务协议不感知传输层与设备型号 | 应用协议里出现 virtio 队列号、feature 位、ramfb 字段 | 在 `include/proto` 与用户态服务中搜索设备专有名词 |
+| 2 | 物理地址与寄存器地址只能来自 DTB | 硬编码 UART 或 GIC 基址 | 搜索 `kernel/`、`lib/` 中的常量地址 |
+| 3 | QEMU 专属路径不得成为设计前提 | 把 fw_cfg、ramfb、QMP、virtio-rng 当作唯一手段 | 每个仅模拟可用的机制须有板端替代或明确降级 |
+| 4 | 验收不得只依赖主机观测量 | 只用 QMP/pmemsave 断言，程序自身无摘要 | 每个场景检查是否有串口/屏幕可核对的自证 |
+| 5 | 缓存与屏障按真实硬件语义编写 | 以“QEMU 缓存恰好一致”省略 clean/invalidate | 审查 DMA 与代码装载路径，见 09 的同步契约 |
+| 6 | 设备访问经租约与获授权地址 | 用户态拿物理地址直接 DMA | 搜索绕过 `devmap`/`dmaaddr` 的路径 |
+| 7 | 不假设 IOMMU 存在或不存在 | 把 IOMMU 当默认防护，或把“无 IOMMU”写进协议 | DMA 域抽象须能承载两种平台 |
+| 8 | 单核是显式选择而非硬件假设 | 假设只有一个核，未约定次核停放 | 启动路径说明 PSCI/OpenSBI 的次核处理 |
+| 9 | 编译容量留足真机余量 | 页表、DTB、设备窗口按模拟最小值定死 | 容量常量覆盖参考板上限，余量记入 status |
+| 10 | 只协商必需的设备特性 | 协商 mergeable rx/GSO 后才存在可用路径 | 每个协商位须有不协商时的替代路径 |
+
+这十条的目的：换一块板只增加驱动，不修改服务协议、不重做验收方法。
+
 ## 执行与验收
 
 - [ ] 构建拒绝容量越界/非法组合/预算算术溢出，内存报告与链接布局/运行池账目核对，禁用功能不改变 ABI 编号。
