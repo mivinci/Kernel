@@ -43,15 +43,22 @@ fmt-check:
 unit:
 	$(PYTHON) -m unittest discover -s tests/unit -p 'test_*.py' -v
 smoke: build
-	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio)
+	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio) $(if $(INITRD),--initrd "$(INITRD)")
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|heap|cow) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|heap|cow|bootpkg) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+ifeq ($(CASE),bootpkg)
+	$(MAKE) build sdk ARCH="$(ARCH)" CASE=bootpkg
+	$(PYTHON) tests/bootpkg.py --arch "$(ARCH)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)")
+else
 	$(MAKE) smoke ARCH="$(ARCH)" CASE="$(CASE)"
+endif
 
 test-all: unit fmt-check
 	$(MAKE) test-qemu
 
 test-qemu:
+	$(MAKE) scenario ARCH=riscv CASE=bootpkg
+	$(MAKE) scenario ARCH=arm64 CASE=bootpkg
 	$(MAKE) smoke ARCH=riscv CASE=normal
 	$(MAKE) smoke ARCH=arm64 CASE=normal
 	$(MAKE) scenario ARCH=riscv CASE=registers

@@ -112,6 +112,24 @@ def git_output(*args):
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
 
+def arm_image(path):
+    """Keep ELF for symbols; emit its load bytes for the ARM64 Image protocol."""
+    base = 0x40200000
+    elf = read_kernel(path, 183, base)
+    data = Path(path).read_bytes()
+    offset = struct.unpack_from('<Q', data, 32)[0]
+    width, count = struct.unpack_from('<HH', data, 54)
+    end = max(row['pa'] + row['memsz'] for row in elf['segments'])
+    image = bytearray(max(row['pa'] + row['filesz'] for row in elf['segments']) - base)
+    for i in range(count):
+        kind, flags, at, va, pa, filesz, memsz, align = struct.unpack_from('<IIQQQQQQ', data, offset + width*i)
+        if kind == 1:image[pa-base:pa-base+filesz] = data[at:at+filesz]
+    if (len(image) < 64 or struct.unpack_from('<3Q', image, 8) != (0x200000, end-base, 2) or
+            image[32:56] != bytes(24) or image[56:64] != b'ARM\x64\0\0\0\0' or elf['entry'] != base):
+        raise BuildError('invalid ARM64 Image header/load extent')
+    return bytes(image)
+
+
 def compilation_database(directory, entries):
     """Keep clangd's shared database on the most recently selected target."""
     target = ROOT / "build" / "compile_commands.json"
@@ -171,7 +189,8 @@ def build(args, directory, run_dir):
         # The physical ELF runs again at a high alias without runtime relocations.
         # Compiler switch tables must not embed absolute physical code pointers.
         flags += ["-fno-jump-tables"]
-        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24, "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29, "events": 30, "control": 31, "terminate": 32, "creds": 33, "groups": 34, "stats": 35, "createauth": 36, "sigreserve": 37, "spawn": 38, "libsys": 39, "runtime": 40, "elf": 41, "init": 42, "initfatal": 43, "sigconfig": 44, "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48, "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52}[args.case])]
+        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24, "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29, "events": 30, "control": 31, "terminate": 32, "creds": 33, "groups": 34, "stats": 35, "createauth": 36, "sigreserve": 37, "spawn": 38, "libsys": 39, "runtime": 40, "elf": 41, "init": 42, "initfatal": 43, "sigconfig": 44, "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48, "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52, "bootpkg": 53}[args.case])]
+        sources.append(ROOT / "kernel/bootpkg.c")
         sources += [ROOT / "kernel/main.c", ROOT / "kernel/bootimage.c", ROOT / "kernel/bootload.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/group.c", ROOT / "kernel/image.c", ROOT / "kernel/observe.c", ROOT / "kernel/rq.c", ROOT / "kernel/event.c", ROOT / "kernel/irq.c", ROOT / "kernel/irqdesc.c", ROOT / "kernel/signal.c", ROOT / "kernel/fork.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "irq.c", ROOT / "kernel" / args.arch / "irqmap.c", ROOT / "kernel" / args.arch / "irqentry.S", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/cow.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/device.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
                     ROOT / "kernel" / args.arch / "entry.S"]
         if args.case != "normal":
@@ -379,6 +398,13 @@ def build(args, directory, run_dir):
         "qemu": None, "firmware": None,
     }
     if kernel:
+        if args.arch == 'arm64':
+            image = work / 'Image'
+            temporary_image = work / 'Image.tmp'
+            temporary_image.write_bytes(arm_image(artifact))
+            os.replace(temporary_image, image)
+            manifest['boot_image'] = dict(path=str(image.relative_to(ROOT)), sha256=digest(image),
+                                          protocol='arm64-image')
         (work / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     # Replace the summary only after all checks pass; failures retain their run logs.
     target = directory / "manifest.json"
@@ -401,7 +427,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--kind", choices=("hardware", "kernel"), default="hardware")
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow"), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow", "bootpkg"), default="normal")
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")

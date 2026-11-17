@@ -6,6 +6,7 @@
 #include <vm.h>
 #include <space.h>
 #include <kstack.h>
+#include <bootpkg.h>
 #if BOOT_CASE != 0
 #include <ktest.h>
 #endif
@@ -20,8 +21,9 @@
 static volatile u64 zeroed;
 static volatile u64 initialized = 0x12345678;
 
-static Dtinfo hardware;
-static u32    firmware;
+static Dtinfo  hardware;
+static u32     firmware;
+static Bootdir package;
 
 static void
 field(const char *name, u64 number)
@@ -88,6 +90,7 @@ discovery(u64 dtb, u64 available)
   u32 i, j, uart = 0, controller = 0;
   int kernelram = 0, dtbram = 0;
   u64 start = (u64) __kernel_start, end = (u64) __kernel_end;
+  u64 pkgbase = 0, pkgend = 0;
   {
     int error = dtread((const void *) dtb, available, &hardware);
     if (error) {
@@ -108,6 +111,15 @@ discovery(u64 dtb, u64 available)
   }
   if (!kernelram || !dtbram)
     panic("boot outside RAM");
+  if (dtinitrdcheck(&hardware, start, end - start, dtb))
+    panic("initrd boot ownership");
+  if (hardware.initrd.size) {
+    u64 window = start & ~0xfffffffUL;
+    pkgbase = ALIGN_DOWN(hardware.initrd.base, PAGE_SIZE);
+    pkgend = ALIGN_UP(hardware.initrd.base + hardware.initrd.size, PAGE_SIZE);
+    if (pkgbase < window || pkgend > window + 0x40000000)
+      panic("initrd read window");
+  }
   for (i = 0; i < hardware.nreserved; i++) {
     const Dtrange *r = &hardware.reserved[i];
     if ((r->base < end && r->base + r->size > start) ||
@@ -115,6 +127,26 @@ discovery(u64 dtb, u64 available)
       panic("boot reserved overlap");
   }
   firmware = hardware.nreserved;
+  if (hardware.initrd.size) {
+    int error = bootpkgcheck((const void *) hardware.initrd.base, hardware.initrd.size,
+                             hal_boot_machine(), &package);
+    if (error) {
+      field("BOOTPKG error=", (u64) (isize) error);
+      putstr("\n");
+      panic("boot package");
+    }
+    if (dtreserve(&hardware, hardware.initrd.base, hardware.initrd.size))
+      panic("initrd reservation");
+    rangeinfo("INITRD", &hardware.initrd);
+    field("BOOTPKG count=", package.header.count);
+    field(" init=", package.header.init_index);
+    field(" checksum=", package.header.checksum);
+    putstr("\n");
+  }
+#if BOOT_CASE == 53
+  else
+    panic("initrd missing");
+#endif
   if (dtreserve(&hardware, start, end - start) || dtreserve(&hardware, dtb, hardware.size) ||
       dtusable(&hardware))
     panic("boot reservation");

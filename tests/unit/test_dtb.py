@@ -71,7 +71,7 @@ class Device(C.Structure):
 class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
-        ('usable', Range * 64), ('dev', Device * 64)]
+        ('usable', Range * 64), ('dev', Device * 64), ('initrd', Range)]
 
 class DtbTests(unittest.TestCase):
     @classmethod
@@ -97,6 +97,8 @@ class DtbTests(unittest.TestCase):
         cls.lib.dtreserve.restype = C.c_int
         cls.lib.dtusable.argtypes = [C.POINTER(Info)]
         cls.lib.dtusable.restype = C.c_int
+        cls.lib.dtinitrdcheck.argtypes = [C.POINTER(Info), C.c_uint64, C.c_uint64, C.c_uint64]
+        cls.lib.dtinitrdcheck.restype = C.c_int
 
     @classmethod
     def tearDownClass(cls):
@@ -125,6 +127,68 @@ class DtbTests(unittest.TestCase):
         self.assertEqual((device.reg[0].base, device.irq[0].number, device.irq[0].parent, device.protected),
                          (0x10000000, 10, 2, 0))
         self.assertTrue(next(x for x in info.dev[:info.ndev] if x.kind == 4).protected)
+
+    def test_chosen_initrd_widths_and_absence(self):
+        for first in (words, cells):
+            for last in (words, cells):
+                chosen = node('chosen', [('linux,initrd-start', first(0x88000003)),
+                                         ('linux,initrd-end', last(0x88012345))])
+                rc, info = self.parse(blob(basic([chosen])))
+                self.assertEqual(rc, 0)
+                self.assertEqual((info.initrd.base, info.initrd.size), (0x88000003, 0x12342))
+        rc, info = self.parse(blob(basic()))
+        self.assertEqual((rc, info.initrd.base, info.initrd.size), (0, 0, 0))
+
+    def test_chosen_rejects_partial_malformed_reversed_and_non_ram_ranges(self):
+        pairs = [(words(0x88000000), None), (None, cells(0x88001000)),
+                 (b'', cells(0x88001000)), (bytes(12), words(0x88001000)),
+                 (words(0x88000000), b'x'), (cells(0x88000000), cells(0x88000000)),
+                 (cells(0x88001000), cells(0x88000000)),
+                 (cells(0x7fffffff), cells(0x80001000)),
+                 (cells(0x8fffffff), cells(0x90000001)),
+                 (cells(2**64-4096), cells(2**64-1))]
+        for start, end in pairs:
+            props = [('linux,initrd-start', start)] if start is not None else []
+            if end is not None:props.append(('linux,initrd-end', end))
+            with self.subTest(start=start, end=end):
+                self.reject(blob(basic([node('chosen', props)])))
+
+    def test_nested_chosen_cannot_supply_boot_range(self):
+        props = [('linux,initrd-start', cells(0x88000000)),
+                 ('linux,initrd-end', cells(0x88001000))]
+        rc, info = self.parse(blob(basic([node('bus', children=[node('chosen', props)])])))
+        self.assertEqual((rc, info.initrd.size), (0, 0))
+
+    def test_initrd_whole_pages_must_be_owned_exclusively_before_read(self):
+        rc, info = self.parse(blob(basic()))
+        self.assertEqual(rc, 0)
+        info.size = 0x1800
+        for base, size, allowed in ((0x88000003, 0x10001, True),
+                                    (0x80200000, 0x1000, False),
+                                    (0x8021ffff, 1, False),
+                                    (0x8fe00000, 0x1000, False),
+                                    (0x8fe01801, 1, False),
+                                    (0x8fffffff, 2, False),
+                                    (2**64-4096, 4095, False)):
+            info.initrd.base, info.initrd.size = base, size
+            before = bytes(info)
+            result = self.lib.dtinitrdcheck(C.byref(info), 0x80200000, 0x20000, 0x8fe00000)
+            with self.subTest(base=base):self.assertEqual(result == 0, allowed)
+            self.assertEqual(bytes(info), before)
+        info.initrd.base, info.initrd.size = 0x88000101, 0x20
+        info.reserved[0].base, info.reserved[0].size = 0x88000800, 1
+        info.nreserved = 1
+        self.assertLess(self.lib.dtinitrdcheck(C.byref(info), 0x80200000, 0x20000, 0x8fe00000), 0)
+        info.reserved[0].base, info.reserved[0].size = 0x88000101, 0x20
+        self.assertLess(self.lib.dtinitrdcheck(C.byref(info), 0x80200000, 0x20000, 0x8fe00000), 0)
+
+    def test_initrd_reservation_excludes_both_partial_pages_from_allocator(self):
+        rc, info = self.parse(blob(basic([node('chosen', [
+            ('linux,initrd-start', cells(0x88000003)), ('linux,initrd-end', cells(0x88001007))])])))
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.lib.dtreserve(C.byref(info), info.initrd.base, info.initrd.size), 0)
+        self.assertEqual(self.lib.dtusable(C.byref(info)), 0)
+        self.assertFalse(any(r.base < 0x88002000 and r.base+r.size > 0x88000000 for r in info.usable[:info.nusable]))
 
     def test_every_truncation_is_rejected(self):
         data = blob(basic([plic(), uart()]))

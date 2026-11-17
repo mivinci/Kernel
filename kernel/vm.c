@@ -74,8 +74,11 @@ map(u64 va, u64 pa, u64 prot, u32 attr)
 }
 
 static u64
-permissions(u64 pa)
+permissions(const Dtinfo *info, u64 pa)
 {
+  if (info->initrd.size && pa < info->initrd.base + info->initrd.size &&
+      pa + PAGE_SIZE > info->initrd.base)
+    return VM_READ;
   if (pa >= (u64) __text_start && pa < (u64) __text_end)
     return VM_READ | VM_EXEC;
   if (pa >= (u64) __rodata_start && pa < (u64) __rodata_end)
@@ -170,13 +173,13 @@ vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *))
     for (; pa < end; pa += PAGE_SIZE) {
       if (guard(pa) || reserved(info, firmware, pa))
         continue;
-      prot = permissions(pa);
+      prot = permissions(info, pa);
       map(pa + delta, pa, prot, VM_NORMAL);
     }
   }
   for (pa = (u64) __kernel_start; pa < (u64) __kernel_end; pa += PAGE_SIZE) {
     if (!guard(pa))
-      map(pa, pa, permissions(pa), VM_NORMAL);
+      map(pa, pa, permissions(info, pa), VM_NORMAL);
   }
   {
     Hirq       controller;

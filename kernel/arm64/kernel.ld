@@ -18,6 +18,7 @@ SECTIONS {
   __emergency_guard = .; . += 4096; __emergency_bottom = .; . += 4096; __emergency_top = .;
  } :data
  __kernel_end = .;
+ __image_size = __kernel_end - __kernel_start;
  /DISCARD/ : { *(.eh_frame*) *(.comment) }
  ASSERT(__kernel_end - __kernel_start < 0x1000000, "bootstrap exceeds reserved window")
  ASSERT((__stack_top & 15) == 0, "stack alignment")

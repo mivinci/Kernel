@@ -6,9 +6,15 @@
 #include <hal/boot.h>
 #include <arm64/trap.h>
 #include <arm64/console.h>
+#include <abi/bootpkg.h>
 extern char vectors[];
+u64
+hal_boot_machine(void)
+{
+  return BOOTPKG_ARM64;
+}
 void
-arch_start(void)
+arch_start(u64 dtb)
 {
   u64 mode, mask, vm, cpu;
   __asm__ __volatile__("mrs %0, CurrentEL" : "=r"(mode));
@@ -19,7 +25,7 @@ arch_start(void)
     hal_halt();
   __asm__ __volatile__("msr vbar_el1, %0; isb" ::"r"(vectors) : "memory");
   arch_console_init();
-  main(cpu & 0xffffff, 0x40000000, mode, (mask & 0x3c0) == 0x3c0, vm & 1);
+  main(cpu & 0xffffff, dtb, mode, (mask & 0x3c0) == 0x3c0, vm & 1);
 }
 
 void

@@ -19,17 +19,17 @@
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
 - 独立libsys SDK、virtio描述符/共享环与现代MMIO协商复位（无生产DMA后端）、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait及批量堆分配、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
-- 一次性PID1及专用预校验描述装载器已接；真实用户测试覆盖三代孤儿收取、组wait BLOCKED/READY强杀与PID1退出致命。T1.1主机启动包pack/check工具及共享线格式已接；载荷仍在tests/kernel，内核包发现/校验/装载、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止。
+- 一次性PID1及专用预校验描述装载器已接；真实用户测试覆盖三代孤儿收取、组wait BLOCKED/READY强杀与PID1退出致命。T1.1主机启动包pack/check及T1.2内核chosen发现/校验/保留已接；包页R/NX且排除分配，坏包分配前停机、目录全零。ARM64启动改用Image/x0实际DTB。载荷仍在tests/kernel，包内PID1装载、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止。
 
 ## 最新本地验证
 
-- 本地make unit通过588项（新增16项包格式/CLI/C描述检查）、fmt-check及共享头两目标布局编译通过；实际两架构SDK ELF的pack/check与确定性输出验证归`build/host/stage85-boot-package-tool/`。本点仅主机工具/共享头，无内核运行改动，未新增QEMU启动验收；上一完整两架构110场景证据归`build/host/stage84-fork-private-journal/`。未执行CI/目标真实硬件/性能验收。
-- T1.1工具按名称字节排序，拒绝坏checksum/范围/重叠/名称/索引/目标/保留位及坏init描述，失败不覆盖输出；容器不按64KiB截断。实际测试包ARM526248/RV166704字节，只有主机构建结果，不是生产PID1启动。下一步T1.2接chosen initrd范围、保留及内核一致校验，相关真机P0按依赖处理；PID1包访问接口在T1.3前定稿。fork已验证成果保留，源别名/引用稳定、组合长循环、IRQ检查点与STOP/CONT仍未完成，T4前须补齐。
+- 本地make test-all通过：602项host（新增14项内核包/DTB归属/Image检查）、fmt-check及128次两架构QEMU；另有4次带包normal/pages耗尽回收检查。源哈希、normal测试隔离及逐个结果审计归`build/host/stage86-kernel-boot-package/evidence.json`，完整日志同目录。未执行CI/目标真实硬件/性能验收。
+- T1.2两架构各九次真实initrd启动已验好包和八类拒启；另验normal及pages耗尽/回收后包内容不变、目录一致、全部包页R/NX及保留排除，normal无测试源码。不是包内生产PID1启动。下一步T1.3前先定PID1只读访问布局与保留页费用/生命周期，单Mem64KiB限制不绕过；相关真机P0按依赖处理。fork已验证成果保留，源别名/引用稳定、组合长循环、IRQ检查点与STOP/CONT仍未完成，T4前须补齐。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
 
-- 启动包容器已于2026-11-18冻结：DTB chosen initrd范围、FNV-1a64排除checksum字段、无4KiB包内对齐要求及64字节区分大小写名称；格式和T1.1..T1.5验收见[07](design/07-boot.md)。T1.1主机工具已完成，内核容器解析未接；PID1取得其他包项的接口仍须在T1.3前定稿。
+- 启动包T1.1/T1.2已接；格式和五步验收见[07](design/07-boot.md)。T1.3前须定PID1取得其他包项的只读接口、保留页费用与退出责任；不把任意大小包伪装为单个普通Mem。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。
 - IRQ_SOURCE撤销是否影响既有独立IRQ_BIND仍待用户确认，候选和实现边界见05末尾。

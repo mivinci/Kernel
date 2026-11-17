@@ -5,6 +5,12 @@
 #include <diag.h>
 #include <hal/boot.h>
 #include <riscv/trap.h>
+#include <abi/bootpkg.h>
+u64
+hal_boot_machine(void)
+{
+  return BOOTPKG_RISCV;
+}
 void
 arch_start(u64 cpu, u64 dtb)
 {

@@ -301,7 +301,7 @@ kernel/dtb.c使用单次启动的静态工作区，无堆/递归；不是用户�
 
 例：RV64先发现OpenSBI的0x80000000..0x80060000保留区，再加入内核和实际DTB；可用页不得覆盖任何一项。若UART reg落到RAM或PLIC窗口，解析失败并清空结果。simple-bus设备先按唯一完整ranges翻译CPU地址再核对，disabled节点及其后代不产生记录。
 
-物理启动只接受virt固定RAM基址附近、上限1 GiB的可信固件DTB候选地址，候选窗口仅限制首次读取，不据此创造RAM；真实容量来自DTB，blob另限2 MiB。测试profile支持128/256/512 MiB。早期UART常量不用于授权。ARM MMU关闭阶段增加-mstrict-align，避免聚合存储被编译为未对齐访问，进入虚拟内存后重新核对映射属性。
+物理启动只接受virt固定RAM基址附近、上限1 GiB的可信固件DTB候选地址，候选窗口仅限制首次读取，不据此创造RAM；真实容量来自DTB，blob另限2 MiB。测试profile支持128/256/512 MiB。ARM64现从启动协议x0取得实际DTB，不再把RAM基址当DTB；下文记录Image协议。早期UART常量不用于授权。ARM MMU关闭阶段增加-mstrict-align，避免聚合存储被编译为未对齐访问，进入虚拟内存后重新核对映射属性。
 
 本地验证：33项host通过，真实C解析器覆盖逐字节截断、500次种子变异、坏结构/字符串/数量/翻译/IRQ/保留区及失败清空。临时UBSan检查3818个截断、3000次变异和真实DTB输入通过；ASan在本机连空程序也不能完成启动，未取得ASan结果。macOS测试库通过xcrun选SDK及显式系统链接根，目标内核仍freestanding、不使用host SDK。
 
@@ -405,3 +405,15 @@ CASE=irqchip在CPU全局IRQ始终屏蔽时，使用真实UART THRE/TX状态作�
 现代virtio启动配置修正（2026-11-17）：读取实际寄存器发现启动器默认legacy，现明确-global virtio-mmio.force-legacy=false；首次严格version检查的失败保留，不把此前只发现MMIO窗口说成已验modern transport。新mmiogroup在两架构实际读magic/version=2，ARM8个共页窗口完整授权与Acct拒绝/交接见09；全量回归另记录最终数据，未启动队列或DMA。
 
 整页组与modern配置最终本地验证：make unit的341项、格式及make test-qemu的104个两架构场景均通过，日志build/host/stage53-mmio-groups/。没有将寄存器探测称为virtqueue/DMA或块网络业务验收。
+
+### ARM64 Image 与实际DTB入口（2026-11-18）
+
+T1.2真实initrd测试直接观察到原QEMU ELF路径即使传-initrd也只到“initrd missing”。核对QEMU v11.1.0 hw/arm/boot.c：ELF路径保留is_linux=0，initrd装入及chosen属性修补位于is_linux分支；不是靠向固定物理地址补一份包解决。
+
+ARM入口现在带64字节标准Image头：text_offset=0x200000，image_size由链接器__image_size覆盖全部内核/NOLOAD栈，flags=2（LE/4KiB），保留位0和ARM64 magic。第一条分支跨过头到bootentry，启动汇编仍只用x1/x2设置栈和清BSS，保留x0给arch_start；C入口把该真实DTB地址交给公共main，不再写死0x40000000。仍只接受当前EL1/单核/MMU关闭profile，不代表EL2降级、次核停放或任意物理重定位已完成。
+
+tools/build.py从已校验ELF的PT_LOAD提取原字节、补齐文件间隙，生成各CASE的Image；image_size声明包括BSS/栈，文件自身不强制存这些零。构建复核头/范围/入口并把Image路径和SHA256写入manifest。smoke对ARM64校验Image哈希再启动，仍用原ELF核对符号、halt、所有PTE和权限；RV64的OpenSBI/ELF路径不变。
+
+主机测试覆盖提取字节、空隙、完整保留大小及坏头/目标/入口/范围。真实两架构包测试核对实际DTB、initrd内容与R/NX页；其他场景及完整结果见status和build/host/stage86-kernel-boot-package/。早期UART、RAM/DTB容量、缓存/DMA与真实板验收仍未完成，不能由本启动协议修正推定真机可启动。
+
+协议依据：[ARM64启动文档](https://www.kernel.org/doc/html/latest/arch/arm64/booting.html)的Image头和x0约定；[QEMU v11.1.0 ARM启动源码](https://github.com/qemu/qemu/blob/v11.1.0/hw/arm/boot.c)的ELF/Image与initrd分支。

@@ -540,6 +540,38 @@ interrupts(u32 node, Dtdev *dev)
 }
 
 static int
+chosen(Dtinfo *info)
+{
+  const Prop *start, *end;
+  u64         base, limit;
+  u32         i, j;
+  for (i = 1; i < parser.nodes; i++) {
+    if (parser.node[i].parent != 0 || !equal(parser.blob + parser.node[i].name, "chosen"))
+      continue;
+    start = property(i, "linux,initrd-start");
+    end = property(i, "linux,initrd-end");
+    if (!start && !end)
+      continue;
+    if (!start || !end || (start->size != 4 && start->size != 8) ||
+        (end->size != 4 && end->size != 8))
+      return DT_BAD;
+    base = start->size == 4 ? word(value(start)) : wide(value(start));
+    limit = end->size == 4 ? word(value(end)) : wide(value(end));
+    if (limit <= base || limit > ~(u64) PAGE_MASK || info->initrd.size)
+      return DT_BAD;
+    for (j = 0; j < info->nram; j++)
+      if (base >= info->ram[j].base && base - info->ram[j].base < info->ram[j].size &&
+          limit - base <= info->ram[j].size - (base - info->ram[j].base))
+        break;
+    if (j == info->nram)
+      return DT_CONFLICT;
+    info->initrd.base = base;
+    info->initrd.size = limit - base;
+  }
+  return 0;
+}
+
+static int
 discover(Dtinfo *info)
 {
   u32         i, j, k, count, parent;
@@ -770,10 +802,38 @@ dtread(const void *blob, usize available, Dtinfo *info)
   if (!error)
     error = discover(info);
   if (!error)
+    error = chosen(info);
+  if (!error)
     mappable(info);
   if (error)
     clear(info, sizeof(*info));
   return error;
+}
+
+int
+dtinitrdcheck(const Dtinfo *info, u64 kernel, u64 bytes, u64 dtb)
+{
+  u64 base, size, end;
+  u32 i;
+  if (!info->initrd.size)
+    return 0;
+  if (bytes > ~(u64) 0 - kernel || info->size > ~(u64) 0 - dtb ||
+      info->initrd.base > ~(u64) PAGE_MASK ||
+      info->initrd.size > ~(u64) PAGE_MASK - info->initrd.base)
+    return DT_BAD;
+  end = info->initrd.base + info->initrd.size;
+  base = ALIGN_DOWN(info->initrd.base, PAGE_SIZE);
+  size = ALIGN_UP(end, PAGE_SIZE) - base;
+  for (i = 0; i < info->nram; i++)
+    if (base >= info->ram[i].base && base - info->ram[i].base < info->ram[i].size &&
+        size <= info->ram[i].size - (base - info->ram[i].base))
+      break;
+  if (i == info->nram || overlap(base, size, kernel, bytes) || overlap(base, size, dtb, info->size))
+    return DT_CONFLICT;
+  for (i = 0; i < info->nreserved; i++)
+    if (overlap(base, size, info->reserved[i].base, info->reserved[i].size))
+      return DT_CONFLICT;
+  return 0;
 }
 
 int

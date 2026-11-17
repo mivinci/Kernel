@@ -54,10 +54,13 @@ struct Dtinfo
   u64     timebase;
   Dtrange ram[DT_RAM], reserved[DT_RESERVED], usable[DT_USABLE];
   Dtdev   dev[DT_DEVICES];
+  Dtrange initrd;
 };
 
 /* Single boot caller: parser scratch is static, no heap or recursion. */
 int dtread(const void *blob, usize available, Dtinfo *info);
+/* Check entire touched pages against boot/firmware ownership before any read. */
+int dtinitrdcheck(const Dtinfo *info, u64 kernel, u64 bytes, u64 dtb);
 int dtreserve(Dtinfo *info, u64 base, u64 size);
 int dtusable(Dtinfo *info);
 #endif

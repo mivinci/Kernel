@@ -2,6 +2,15 @@
 .section .text.boot,"ax"
 .global _start
 _start:
+ b bootentry
+ .long 0
+ .quad 0x200000
+ .quad __image_size
+ .quad 2
+ .quad 0, 0, 0
+ .long 0x644d5241
+ .long 0
+bootentry:
  msr daifset, #15
  mrs x1, CurrentEL
  cmp x1, #4

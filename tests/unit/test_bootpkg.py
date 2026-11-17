@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import random
 import subprocess
 import sys
 import tempfile
@@ -199,3 +200,109 @@ class PackageDescriptorTests(unittest.TestCase):
                                      '-Wall', '-Wextra', '-Werror', '-I' + str(ROOT / 'include'),
                                      '-x', 'c', '-fsyntax-only', '-'], input=source, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class Directory(C.Structure):
+    _fields_ = [('header', C.c_uint64 * 8), ('items', (C.c_uint64 * 8) * pkg.MAX_ITEMS)]
+
+
+class KernelPackageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        path = Path(cls.temp.name) / 'package.so'
+        command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra',
+                   '-Werror', '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
+                   str(ROOT / 'kernel/bootpkg.c'), '-o', str(path)]
+        if sys.platform == 'darwin':
+            sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
+            command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]
+        subprocess.run(command, check=True, capture_output=True)
+        cls.lib = C.CDLL(str(path))
+        cls.lib.bootpkgcheck.argtypes = [C.c_void_p, C.c_uint64, C.c_uint64, C.POINTER(Directory)]
+        cls.lib.bootpkgcheck.restype = C.c_int
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    def compare(self, data, machine=183, alignment=0):
+        try:
+            expected = pkg.check(data, machine)
+        except pkg.PackageError:
+            expected = None
+        storage = C.create_string_buffer(bytes(alignment) + bytes(data))
+        output = Directory()
+        C.memset(C.byref(output), 0xa5, C.sizeof(output))
+        status = self.lib.bootpkgcheck(C.addressof(storage) + alignment, len(data), machine, C.byref(output))
+        if expected is None:
+            self.assertLess(status, 0)
+            self.assertEqual(bytes(output), bytes(C.sizeof(output)), 'partial directory on failure')
+        else:
+            self.assertEqual(status, 0)
+            self.assertEqual(list(output.header), list(pkg.HEADER.unpack_from(data)))
+            for i, item in enumerate(expected['items']):
+                self.assertEqual(list(output.items[i]), list(pkg.ITEM.unpack_from(data, output.header[5] + i * 64)))
+                self.assertEqual(data[output.items[i][0]:output.items[i][0] + output.items[i][1]], item['name'])
+            self.assertEqual(bytes(output)[64+len(expected['items'])*64:], bytes((pkg.MAX_ITEMS-len(expected['items']))*64))
+        return status
+
+    def test_both_targets_unaligned_input_and_full_capacity(self):
+        for machine in pkg.MACHINES.values():
+            elf = executable(machine)
+            data = pkg.pack([('p%02d' % i, elf) for i in range(32)], machine, 'p31')
+            for alignment in range(8):self.compare(data, machine, alignment)
+            self.compare(data, 243 if machine == 183 else 183)
+
+    def test_every_header_directory_and_descriptor_field_matches_host(self):
+        original = pkg.pack([('sbin/init', executable()), ('sbin/serial', executable())], 183)
+        header = pkg.HEADER.unpack_from(original)
+        row = pkg.ITEM.unpack_from(original, header[5])
+        load = row[4]; descriptor = pkg.HEADER.unpack_from(original, load)
+        offsets = list(range(0, 64, 8)) + list(range(header[5], header[5] + header[4] * 64, 8))
+        offsets += list(range(load, load + 64, 8))
+        offsets += list(range(load + descriptor[5], load + descriptor[5] + descriptor[4] * 48, 8))
+        offsets += list(range(load + descriptor[6], load + descriptor[6] + 128, 8))
+        for offset in offsets:
+            for value in (0, 1, 7, 64, 65, len(original), 2**64-8, 2**64-1):
+                changed = bytearray(original)
+                struct.pack_into('<Q', changed, offset, value)
+                struct.pack_into('<Q', changed, 56, pkg.checksum(changed))
+                with self.subTest(offset=offset, value=value):self.compare(changed, alignment=3)
+
+    def test_truncation_checksum_and_null_do_not_publish(self):
+        data = pkg.pack([('sbin/init', executable())], 183)
+        for size in (0, 1, 63, 64, 127, len(data)-1):self.compare(data[:size])
+        changed = bytearray(data);changed[-1] ^= 1
+        self.assertEqual(self.compare(changed), -2)
+        output = Directory();C.memset(C.byref(output), 0xa5, C.sizeof(output))
+        self.assertLess(self.lib.bootpkgcheck(None, 64, 183, C.byref(output)), 0)
+        self.assertEqual(bytes(output), bytes(C.sizeof(output)))
+        self.assertLess(self.lib.bootpkgcheck(None, 0, 183, None), 0)
+
+    def test_duplicate_names_and_valid_elf_alias_are_rejected(self):
+        data = pkg.pack([('init', executable()), ('peer', executable())], 183, 'init')
+        first = pkg.ITEM.unpack_from(data, 64);second = pkg.ITEM.unpack_from(data, 128)
+        changed = bytearray(data);changed[second[0]:second[0]+4] = b'init'
+        struct.pack_into('<Q', changed, 56, pkg.checksum(changed))
+        self.assertEqual(self.compare(changed), -4)
+        changed = bytearray(data);struct.pack_into('<Q', changed, 128+16, first[2])
+        struct.pack_into('<Q', changed, 56, pkg.checksum(changed))
+        self.assertEqual(self.compare(changed), -7)
+
+    def test_noncanonical_directory_and_nonzero_init_index(self):
+        data = bytearray(pkg.pack([('a', executable()), ('z', executable())], 183, 'z'))
+        table = bytes(data[64:192]);data.extend(bytes(-len(data) % 8))
+        struct.pack_into('<Q', data, 40, len(data));data.extend(table)
+        struct.pack_into('<Q', data, 16, len(data));struct.pack_into('<Q', data, 56, pkg.checksum(data))
+        self.assertEqual(self.compare(data, alignment=7), 0)
+
+    def test_seeded_metadata_and_payload_mutations_match_host(self):
+        rng = random.Random(86)
+        original = pkg.pack([('sbin/init', executable()), ('sbin/serial', executable())], 183)
+        for i in range(400):
+            changed = bytearray(original)
+            for _ in range(rng.randrange(1, 5)):
+                at = rng.randrange(len(changed));changed[at] ^= rng.randrange(1, 256)
+            if i & 1:struct.pack_into('<Q', changed, 56, pkg.checksum(changed))
+            with self.subTest(i=i):self.compare(changed, alignment=i % 8)

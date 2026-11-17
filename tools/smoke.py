@@ -18,6 +18,7 @@ import uuid
 
 from build import BuildError, ROOT, digest, read_kernel, PROFILES
 from run import _group_exists, _stop_group, install_stop_handlers, run_command
+import bootpkg
 
 
 VM_FAULTS = {"textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11}
@@ -117,6 +118,9 @@ def validate_output(text, arch, case, names, ram_mb=256):
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
+    elif case == "bootpkg":
+        if ready != ["READY bootpkg-checked"] or panics or traps:
+            raise SmokeError("boot package parsing did not finish")
     elif case == "cow":
         if ready != ["READY cow-restored"] or panics or traps:
             raise SmokeError("COW branch scenario did not finish")
@@ -362,7 +366,11 @@ def validate_discovery(text, arch, ram_mb, names, boot):
     if (len(uart) != 1 or uart[0]["mmio"][0]["base"] != (0x10000000 if arch == "riscv" else 0x9000000)
             or uart[0]["irq"][0]["number"] != (10 if arch == "riscv" else 33)):
         raise SmokeError("UART discovery differs from virt hardware")
-    return {"summary": summary, "ranges": ranges, "devices": devices}
+    initrds = [fields(x) for x in lines if x.startswith("INITRD ")]
+    if len(initrds) > 1 or (initrds and not covered(initrds[0]["base"], initrds[0]["size"])):
+        raise SmokeError("initrd not uniquely reserved")
+    return {"summary": summary, "ranges": ranges, "devices": devices,
+            "initrd": initrds[0] if initrds else None}
 
 
 def validate_pages(text, discovery, case):
@@ -441,6 +449,9 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
     special = [{"base": names["__kernel_start"], "size": names["__kernel_end"] - names["__kernel_start"]},
                {"base": boot["boot"]["dtb"], "size": boot["layout"]["dtb_size"]},
                {"base": pages["metadata"]["base"], "size": pages["metadata"]["size"]}]
+    initrd = discovery.get("initrd")
+    if initrd:
+        special.append(initrd)
     firmware = [x for x in discovery["ranges"]["RESERVED"] if x not in special]
     guards = {names["__stack_guard"], names["__emergency_guard"]}
     def check(va, pa, prot, device=False):
@@ -459,6 +470,8 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
                     raise SmokeError("guard or firmware page mapped")
                 continue
             prot = 5 if names["__text_start"] <= pa < names["__text_end"] else 1 if names["__rodata_start"] <= pa < names["__rodata_end"] else 3
+            if initrd and pa < initrd["base"] + initrd["size"] and pa + 4096 > initrd["base"]:
+                prot = 1
             check(high(pa), pa, prot)
             expected_count += 1
     uart = next(x for x in discovery["devices"] if x["kind"] in (1, 2))["mmio"][0]["base"]
@@ -487,6 +500,72 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
             "low_mappings": 0, "guards": 2, "all_permissions_checked": True}
 
 
+PACKAGE_ERRORS = {'header': -1, 'checksum': -2, 'directory': -3, 'name': -4,
+                  'elf': -5, 'load': -6, 'overlap': -7, 'missing': None}
+
+
+def package_directory(qmp, run_dir, names):
+    path = run_dir / 'package-directory.bin'
+    qmp.command('pmemsave', {'val': names['package'], 'size': 64 + 32 * 64, 'filename': str(path)})
+    return path.read_bytes()
+
+
+def rejected_package(args, qmp, run_dir, names, registers, record):
+    text = (run_dir / 'serial.log').read_text().replace('\r', '')
+    lines = text.splitlines()
+    boots = [fields(line) for line in lines if line.startswith('BOOT ')]
+    expected = 'PANIC initrd missing' if args.bootpkg_error == 'missing' else 'PANIC boot package'
+    if (len(boots) != 1 or [x for x in lines if x.startswith('PANIC ')] != [expected] or
+            any(x.startswith(('META ', 'PAGES ', 'LAYOUT ', 'VM ', 'READY ', 'TRAP ', 'INITRD ')) for x in lines)):
+        raise SmokeError('package rejection allocated/published state or had wrong diagnostic')
+    boot = boots[0]
+    if boot != dict(mode=1 if args.arch == 'riscv' else 4, cpu=0, dtb=boot.get('dtb'), mask=1, vm=0):
+        raise SmokeError('invalid rejected boot entry')
+    error = PACKAGE_ERRORS[args.bootpkg_error]
+    errors = [fields(line) for line in lines if line.startswith('BOOTPKG ')]
+    if errors != ([] if error is None else [dict(error=error & ((1 << 64)-1))]):
+        raise SmokeError('wrong package failure reason')
+    match = re.search(r'\bpc\s+([0-9a-f]+)', registers, re.I) if args.arch == 'riscv' else re.search(r'\bPC=([0-9a-f]+)', registers)
+    if not match or not names['hal_halt'] <= int(match[1], 16) < names['hal_halt'] + 16:
+        raise SmokeError('rejected package did not halt before VM')
+    if args.arch == 'riscv':
+        for name, mask, expected_value in (('satp', (1<<64)-1, 0), ('sstatus', 2, 0), ('sie', (1<<64)-1, 0)):
+            value = re.search(r'\b' + name + r'\s+([0-9a-f]+)', registers)
+            if not value or int(value[1], 16) & mask != expected_value:
+                raise SmokeError('incorrect rejected boot ' + name)
+        if not re.search(r'\bpriv\s+S\b', registers):raise SmokeError('rejected boot not supervisor')
+    else:
+        value = re.search(r'PSTATE=([0-9a-f]+)', registers)
+        if not value or int(value[1], 16) & 0x3cf != 0x3c5:
+            raise SmokeError('incorrect rejected boot EL/DAIF')
+    if package_directory(qmp, run_dir, names) != bytes(64 + 32*64):
+        raise SmokeError('rejected input exposed partial directory')
+    record['package_rejection'] = dict(reason=args.bootpkg_error, directory_zero=True, before_allocation=True,
+                                       physical_halt=True)
+
+
+def accepted_package(args, qmp, run_dir, names, discovery):
+    data = args.initrd.read_bytes()
+    info = bootpkg.check(data, PROFILES[args.arch]['machine'])
+    initrd = discovery.get('initrd')
+    if not initrd or initrd['size'] != len(data):
+        raise SmokeError('chosen initrd size differs from input')
+    rows = [fields(x) for x in (run_dir / 'serial.log').read_text().splitlines() if x.startswith('BOOTPKG ')]
+    if rows != [dict(count=len(info['items']), init=info['init_index'], checksum=info['checksum'])]:
+        raise SmokeError('kernel package summary differs from host')
+    table = struct.unpack_from('<Q', data, 40)[0]
+    expected = data[:64] + data[table:table + len(info['items'])*64]
+    expected += bytes((32-len(info['items']))*64)
+    if package_directory(qmp, run_dir, names) != expected:
+        raise SmokeError('kernel directory differs from wire input')
+    path = run_dir / 'retained-package.bin'
+    qmp.command('pmemsave', {'val': initrd['base'], 'size': initrd['size'], 'filename': str(path)})
+    if path.read_bytes() != data:
+        raise SmokeError('allocator/VM changed retained package')
+    return dict(bytes=len(data), count=len(info['items']), init_index=info['init_index'],
+                sha256=digest(path), directory_checked=True, retained_unchanged=True, read_only=True)
+
+
 def exercise(args, run_dir, record):
     manifest_path = ROOT / "build" / args.arch / args.case / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -496,6 +575,12 @@ def exercise(args, run_dir, record):
         raise SmokeError("bootstrap artifact/manifest mismatch")
     read_kernel(artifact, PROFILES[args.arch]["machine"],
                 0x80200000 if args.arch == "riscv" else 0x40200000)
+    boot_artifact = artifact
+    if args.arch == 'arm64':
+        image = manifest.get('boot_image', {})
+        boot_artifact = ROOT / image.get('path', '')
+        if image.get('protocol') != 'arm64-image' or digest(boot_artifact) != image.get('sha256'):
+            raise SmokeError('ARM64 boot Image/manifest mismatch')
     record["build"] = manifest
     inspect = run_command([manifest["tools"]["readelf"]["path"], "-s", str(artifact)],
                           run_dir / "symbols.log", args.timeout)
@@ -524,7 +609,10 @@ def exercise(args, run_dir, record):
         command = [qemu, *machine, "-accel", "tcg", "-smp", "1", "-m", str(args.ram) + "M", "-nodefaults",
                    "-display", "none", "-monitor", "none", "-serial", "file:" + str(serial),
                    "-qmp", "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
-                   "-global", "virtio-mmio.force-legacy=false", "-kernel", str(artifact)]
+                   "-global", "virtio-mmio.force-legacy=false", "-kernel", str(boot_artifact)]
+        if args.initrd:
+            command += ['-initrd', str(args.initrd)]
+            record['initrd'] = dict(path=str(args.initrd), bytes=args.initrd.stat().st_size, sha256=digest(args.initrd))
         if args.virtio:
             command += ["-device", "virtio-rng-device"]
         if args.trace:
@@ -550,6 +638,7 @@ def exercise(args, run_dir, record):
                 record["guest_executed"] = True
                 expected = "PANIC init exited\n" if args.case == "initfatal" else "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
                     "READY early-boot\n" if args.case == "normal" else
+                    "READY bootpkg-checked\n" if args.case == "bootpkg" else
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
                     "READY spaces-restored\n" if args.case == "spaces" else
@@ -590,6 +679,8 @@ def exercise(args, run_dir, record):
                     "READY user-restored\n" if args.case == "user" else
                     "READY seal-restored\n" if args.case == "seal" else
                     "READY memory-restored\n" if args.case == "memory" else "READY registers-restored\n")
+                if args.bootpkg_error:
+                    expected = 'PANIC initrd missing\n' if args.bootpkg_error == 'missing' else 'PANIC boot package\n'
                 while True:
                     if proc.poll() is not None or time.monotonic() >= deadline:
                         raise SmokeError("QEMU exited/timed out before expected diagnostic")
@@ -605,6 +696,16 @@ def exercise(args, run_dir, record):
                 record["stopped_status"] = qmp.command("query-status")
                 registers = qmp.command("human-monitor-command", {"command-line": "info registers"})
                 (run_dir / "registers.log").write_text(registers)
+                if args.bootpkg_error:
+                    if record['stopped_status']['running']:
+                        raise SmokeError('rejected boot still running')
+                    rejected_package(args, qmp, run_dir, names, registers, record)
+                    qmp.command('quit')
+                    proc.wait(timeout=max(0.01, deadline-time.monotonic()))
+                    if proc.returncode != 0 or _group_exists(proc.pid):
+                        raise SmokeError('rejected boot QEMU cleanup failed')
+                    record['returncode'] = proc.returncode
+                    return
                 vm_lines = [x for x in serial.read_text().splitlines() if x.startswith("VM ")]
                 if len(vm_lines) != 1:
                     raise SmokeError("missing VM transition")
@@ -1006,6 +1107,8 @@ def exercise(args, run_dir, record):
                     record["memory"] = memory
                 record["vm_audit"] = audit_vm(qmp, run_dir, args.arch, names, record["discovery"],
                                                  transition, record["observed"], record["pages"], record.get("retained_init"))
+                if args.initrd:
+                    record['package'] = accepted_package(args, qmp, run_dir, names, record['discovery'])
                 qmp.command("pmemsave", {"val": record["observed"]["boot"]["dtb"],
                                          "size": record["observed"]["layout"]["dtb_size"],
                                          "filename": str(run_dir / "runtime.dtb")})
@@ -1025,7 +1128,9 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow", "bootpkg", *VM_FAULTS), default="normal")
+    parser.add_argument('--initrd', type=Path)
+    parser.add_argument('--bootpkg-error', choices=PACKAGE_ERRORS)
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
@@ -1033,6 +1138,9 @@ def main():
     parser.add_argument("--ram", type=int, choices=(128, 256, 512), default=256)
     parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
+    if args.initrd:args.initrd = args.initrd.resolve()
+    if args.bootpkg_error and (args.case != 'bootpkg' or bool(args.initrd) == (args.bootpkg_error == 'missing')):
+        parser.error('package rejection requires CASE=bootpkg and an initrd except for missing')
     if args.case == "virtiodev":
         args.virtio = True
     if args.timeout is None:

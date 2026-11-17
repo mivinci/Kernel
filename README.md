@@ -19,7 +19,7 @@ make sdk ARCH=arm64
 
 `make sdk`另生成用户态`libvirtio.a`，现含描述符管理、split ring访问层及现代MMIO探测/协商/复位；尚无生产DMA后端或实际设备队列I/O。
 
-产物在 `build/<架构>/normal/kernel.elf`；`make hardware ARCH=...` 仍可单独构建保留硬件归档。
+产物在 `build/<架构>/normal/kernel.elf`；ARM64另生成同目录的`Image`，smoke用它走标准ARM64启动协议并从x0取得DTB，ELF仍供符号/页表审计。RV64仍由OpenSBI启动ELF。`make hardware ARCH=...` 仍可单独构建保留硬件归档。
 可通过 `CC`、`LD`、`AR`、`READELF` 覆盖 LLVM 工具路径；当前不支持 GNU `CROSS` profile。
 构建生成 `build/compile_commands.json` 及各架构副本，供 clangd 使用；共享数据库选择最近构建的架构。
 用 `make compdb ARCH=riscv` 或 `ARCH=arm64` 切换，必要时重启 clangd。共享头文件按其推断的翻译单元使用目标参数。
@@ -33,7 +33,9 @@ python3 tools/bootpkg.py pack --arch arm64 --init sbin/init \
 python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 ```
 
-`--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序，也尚未让内核从initrd启动。容器格式、预算与T1后续边界见07末尾。
+`--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序。内核现从chosen读取并保留/校验initrd，尚未从包启动生产PID1。容器格式、预算与T1后续边界见07末尾。
+
+`make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行九次真实initrd启动；只验证容器，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容和包页R/NX属性。
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
