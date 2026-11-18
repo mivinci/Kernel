@@ -234,7 +234,11 @@ sh 建数据管道和 ready/gate，两个孩子进入同组，安装各自 fd并
 
 启动顺序：内核进入init→serial→tty→blk→fs→sh；无存储配置在fs前明确只用启动包/tmpfs，不伪造磁盘功能。init内部dev解析受信设备清单、匹配驱动、分配既定Set/预算与设备权；普通程序加载/fork/exec/wait不经init。初始init死亡panic/halt，不复用PID1。服务create使用SERVICE创建权，init显式持该服务持续CONTROL（含INSTALL），对已运行服务grant仍须该固定目标INSTALL和独立源GRANT；普通父只持发布前CONSTRUCT CONFIG。监督观察也传该目标CONTROL QUERY，不以init身份跳过basis。
 
-init控制协议words=[opcode,seq,arg0,arg1]：READY=1、LOOKUP=2、SHUTDOWN=3、STATUS=4；READY带启动清单服务编号及自身image，由内核source验证，普通应用不能自称服务；READY期限由init在该受管服务成功start时另设绝对10秒；到期可凭固定CONTROL取消/终止并记录阶段。此为清单服务监督策略，区别于发布前PREP_NS，不施加于普通fork/exec/spawn进程，内核不计时等待execready。LOOKUP仅返回按策略允许的后端CALL资源reply，不授予设备/全局管理；重复seq只返回原业务状态/EALREADY，资源结果从原RPC/稳定返回现场恢复，不重复安装资源。基本服务之间的静态CALL/NOTIFY在构造期grant，动态文件连接按10两次交付。
+init控制协议words=[(version<<32)|opcode,seq,arg0,arg1]：word0高32位为协议版本1，低32位READY=1、LOOKUP=2、SHUTDOWN=3、STATUS=4；未知版本或操作不推进业务状态，不把版本0当作兼容协议。READY带启动清单服务编号及自身image，由内核source验证，普通应用不能自称服务；READY期限由init在该受管服务成功start时另设绝对10秒；到期可凭固定CONTROL取消/终止并记录阶段。此为清单服务监督策略，区别于发布前PREP_NS，不施加于普通fork/exec/spawn进程，内核不计时等待execready。LOOKUP仅返回按策略允许的后端CALL资源reply，不授予设备/全局管理；重复seq只返回原业务状态/EALREADY，资源结果从原RPC/稳定返回现场恢复，不重复安装资源。基本服务之间的静态CALL/NOTIFY在构造期grant，动态文件连接按10两次交付。
+
+例如受管serial在STARTING时发送[0x0000000100000001,seq,服务编号,自身image]；init核对内核提供的完整source/image、清单实例及期限后才转为READY。同一编号的旧实例、word0=1的无版本消息和高32位为2的未知版本均不能发布当前实例；超时后的迟到READY不能把FAILED改回READY。此编码由用户于2026-11-18确认，四字大小不变；协议定义不代表服务监督已经实现。
+
+共享定义位于include/proto/init.h，SDK导出同一文件并记录头文件哈希。2026-11-18本地两架构SDK构建、导出文件逐字节比较及目标编译期编码/拆分检查通过，fmt-check通过；编译检查产物在build/host/stage102-init-protocol/。本点仅落定协议编码，不改变内核或init运行路径，未重跑QEMU，不以此前stage101结果代替实际READY验收。
 
 spawn属性只支持SETSIGMASK、SETSIGDEF、SETPGROUP、RESETIDS；RESETIDS仅将有效值设为已有真实值，首版固定凭据要求合法，否则拒绝，调度/setsid扩展flag不静默接受。文件动作OPEN/CLOSE/DUP2按顺序，PATH查找至多32项/总4096字节，空分量表示cwd，遇EACCES继续其他项后择优报告，ENOEXEC不执行sh脚本替代。参数/动作先快照，最多128动作；准备失败正错误返回且无已发布孩子，文件外部效果不回滚。
 

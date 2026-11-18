@@ -36,6 +36,7 @@
 - 006完整本地验收通过：固件单冷入口、当前RUNNING/其余启用CPU STOPPED，异常清空快照并拒启；正常不唤醒核，CASE=cpus实际唤醒到无栈入口后自停放。四核8次与全量均通过；Hirq保持64字节，按CPUINTC选S上下文，主机每条HMP显式cpu-index。SMC/ARM非零affinity仅模型边界、板端/EL2降级未验，不称SMP；详细证据/失败记录见01/006末尾。
 - T1.4初始SYSTEM QUERY/所选标准UART库存已完整本地验收：Boot352字节/四项含tag7，精确初始Image绑定、真实MMIO RW/GRANT与IRQ_SOURCE BIND，查询不重装授权；失效STALE。仅六字段标准布局，DW扩展待确认。接续从真实包装载serial、完成控制READY和监督；首服务未启动，Set/domain CONTROL及其他SYSTEM业务仍待接。
 - UART启动记录候选增加data[6]=reg-shift/data[7]=reg-io-width，保留六字段前缀与结构大小，已异步询问用户；确认前不改生产ABI，详见07末尾。内部005解析可继续，不因这个候选暂停整个目标。
+- init控制协议版本编码已于2026-11-18确认：word0高32位版本1、低32位opcode，其他三字不变；共享proto/init.h及SDK导出已接，两架构SDK/目标编译检查与格式通过。未改运行路径或重跑QEMU，实际serial/READY监督仍待接，详见07。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。

@@ -40,6 +40,7 @@ def build(args):
     if 'clang' not in tools['cc']['version'].lower():
         raise BuildError('this profile requires Clang')
     exported = [ROOT / 'include/types.h', *sorted((ROOT / 'include/abi').glob('*.h')),
+                *sorted((ROOT / 'include/proto').glob('*.h')),
                 *sorted((ROOT / 'include/abi').glob('*.inc')),
                 *sorted((ROOT / 'lib/libsys/include/sys').glob('*.h')),
                 *sorted((ROOT / 'lib/libc/include').rglob('*.h'))]
@@ -332,6 +333,7 @@ def build(args):
     compilation_database(directory, kernel + entries)
     headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
     headers += list((ROOT / 'include/abi').glob('*.inc'))
+    headers += list((ROOT / 'include/proto').glob('*.h'))
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
