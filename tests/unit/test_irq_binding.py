@@ -200,7 +200,7 @@ class IrqBindingTests(unittest.TestCase):
             self.assertEqual(source.value,0)
             self.assertEqual(self.lib.localirqsource(C.byref(table),32,C.byref(source)),0)
             self.assertEqual(self.lib.localirqresolve(C.byref(table),source.value,C.byref(index)),0)
-            event=Event();binding=C.c_int64()
+            event=Event();self.events.append(event);binding=C.c_int64()
             self.assertEqual(self.lib.localirqbind(C.byref(table),image,C.byref(event),index.value,16,C.byref(binding)),0)
             self.assertEqual(self.lib.localirqack(C.byref(table),binding.value,image),0)
             rows=(Queryrec*4)();written=C.c_uint32();next_cursor=C.c_uint64()

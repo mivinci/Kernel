@@ -25,6 +25,8 @@ make bootpkg ARCH=arm64
 构建生成 `build/compile_commands.json` 及各架构副本，供 clangd 使用；共享数据库选择最近构建的架构。
 用 `make compdb ARCH=riscv` 或 `ARCH=arm64` 切换，必要时重启 clangd。共享头文件按其推断的翻译单元使用目标参数。
 
+早期串口地址现从DTB的`chosen/stdout-path`取得，支持绝对路径与`aliases`别名，不再有QEMU固定地址回退。首次MMIO前先校验结构、窗口及寄存器属性；完整RAM/IRQ发现随后执行。固件需准备串口时钟、pinmux和波特率；控制台描述损坏时安全停止且无内核串口输出，不能由此推定已在真实板验收。详见01末尾及issue 001。
+
 启动包主机工具按包内名称打包原生ELF，额外为指定init生成装载描述：
 
 ```sh

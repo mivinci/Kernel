@@ -23,12 +23,13 @@
 
 ## 最新本地验证
 
-- 最新完整make test-all通过641项host、fmt-check及144次两架构QEMU。IRQ专项由真实用户代码bind并删SOURCE后继续收UART中断，覆盖弱CONTROL/裸IRQ/冲突/非法位/保留输入及高位拒绝。另有10次生产init事件循环、4次包内exit42、6次分配前拒启及RAM128/256/512。全部结果核对当前源码/共享头哈希；normal和实际init链接无测试载荷，默认包只含init。证据`build/host/stage94-native-irq-source/evidence.json`与test-all.log；无CI/真机/性能验收。
+- 最新完整make test-all通过649项host、fmt-check及148次两架构QEMU。新增4次早期控制台反例：坏IRQ仍可诊断、坏stdout不回退并物理halt。另有10次生产init事件循环、4次包内exit42、6次分配前拒启及RAM128/256/512。全部结果核对当前源码/共享头哈希；normal和实际init链接无测试载荷。证据`build/host/stage95-early-console/evidence.json`与test-all.log；首次host的Event寿命失败日志保留，修正后全量通过。无CI/真机/性能验收。
 - native审计逐页核对完整用户/内核映射、ELF代码/RO字节、栈/guard、Boot/SELF资源、隔离包视图和精确Acct owner；用户initstate显示正确目录/字节数/checksum并阻塞，私有页/页表/内核栈收费与实际owner集合一致，包仍保留且不重复计费。早期私有store符号被优化拆分及RV idle sie假设已直接观测后修正，失败记录保留。完整fork仍待T4前补源别名/长循环/IRQ检查点与STOP/CONT。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
 
+- 001早期UART已移除固定基址/ARM固定波特率，先按chosen/stdout-path验证控制台再输出，完整发现随后执行；完整回归已通过，真实板待验，dw-apb/DTB容量仍属005。下一优先处理004的页元数据/直接映射容量及窗口冲突，不能只放宽一处页数判断。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。

@@ -791,6 +791,135 @@ mappable(Dtinfo *info)
   }
 }
 int
+dtconsole(const void *blob, usize available, Dtinfo *scratch, Dtuart *out)
+{
+  const Prop *p, *alias;
+  const u8   *path;
+  Dtuart      result;
+  Dtrange     range[DT_RAM];
+  u32         i, j, at, length, target = NONE, chosen_node = NONE, aliases = NONE, count;
+  int         error;
+  if (!scratch || !out)
+    return DT_BAD;
+  clear(out, sizeof(*out));
+  clear(&result, sizeof(result));
+  clear(&parser, sizeof(parser));
+  clear(scratch, sizeof(*scratch));
+  if (!blob)
+    return DT_BAD;
+  error = flatten(blob, available, scratch);
+  if (!error)
+    error = metadata();
+  if (error)
+    return error;
+  for (i = 1; i < parser.nodes; i++) {
+    if (parser.node[i].parent != 0)
+      continue;
+    if (equal(parser.blob + parser.node[i].name, "chosen")) {
+      if (chosen_node != NONE)
+        return DT_BAD;
+      chosen_node = i;
+    }
+    if (equal(parser.blob + parser.node[i].name, "aliases")) {
+      if (aliases != NONE)
+        return DT_BAD;
+      aliases = i;
+    }
+  }
+  if (chosen_node == NONE || !(p = property(chosen_node, "stdout-path")) || !single(p))
+    return DT_UNSUPPORTED;
+  path = value(p);
+  for (length = 0; path[length] && path[length] != ':'; length++) {
+  }
+  if (!length)
+    return DT_BAD;
+  if (path[0] != '/') {
+    if (aliases == NONE)
+      return DT_UNSUPPORTED;
+    alias = NULL;
+    for (i = parser.node[aliases].first;
+         i < parser.node[aliases].first + parser.node[aliases].count; i++) {
+      const u8 *name = parser.blob + parser.strings + parser.prop[i].name;
+      for (j = 0; j < length && name[j] == path[j]; j++) {
+      }
+      if (j == length && !name[j])
+        alias = &parser.prop[i];
+    }
+    if (!alias || !single(alias))
+      return DT_BAD;
+    path = value(alias);
+    for (length = 0; path[length]; length++) {
+    }
+  }
+  if (path[0] != '/' || length < 2)
+    return DT_BAD;
+  target = 0;
+  for (at = 1; at < length;) {
+    u32 begin = at, match = NONE;
+    while (at < length && path[at] != '/')
+      at++;
+    if (at == begin)
+      return DT_BAD;
+    for (i = 1; i < parser.nodes; i++) {
+      const u8 *name = parser.blob + parser.node[i].name;
+      if (parser.node[i].parent != target)
+        continue;
+      for (j = 0; j < at - begin && name[j] == path[begin + j]; j++) {
+      }
+      if (j == at - begin && !name[j]) {
+        if (match != NONE)
+          return DT_BAD;
+        match = i;
+      }
+    }
+    if (match == NONE)
+      return DT_UNSUPPORTED;
+    target = match;
+    if (at < length && ++at == length)
+      return DT_BAD;
+  }
+  result.kind = parser.node[target].kind;
+  if (!parser.node[target].enabled || (result.kind != DT_UART16550 && result.kind != DT_PL011))
+    return DT_UNSUPPORTED;
+  count = 0;
+  error = registers(target, range, &count, DT_RAM);
+  if (error || count != 1)
+    return error ? error : DT_UNSUPPORTED;
+  result.reg = range[0];
+  if (property(target, "big-endian") || property(target, "reg-offset"))
+    return DT_UNSUPPORTED;
+  if (scalar(target, "reg-shift", 0, &result.shift) ||
+      scalar(target, "reg-io-width", result.kind == DT_PL011 ? 4 : 1, &result.width))
+    return DT_BAD;
+  if (result.shift > 4 || (result.width != 1 && result.width != 4) ||
+      (result.kind == DT_PL011 && (result.shift || result.width != 4)) || !result.reg.base ||
+      (result.reg.base & (result.width - 1)) ||
+      result.reg.size < ((u64) (result.kind == DT_PL011 ? 0x30 : 5) << result.shift) + result.width)
+    return DT_UNSUPPORTED;
+  /* Diagnose later discovery failures without first writing an address that
+     aliases RAM or another described MMIO window. CPU reg values are hart IDs. */
+  for (i = 0; i < parser.nodes; i++) {
+    if (i == target || !property(i, "reg"))
+      continue;
+    p = property(i, "device_type");
+    if (p && equal(value(p), "cpu"))
+      continue;
+    count = 0;
+    error = registers(i, range, &count, DT_RAM);
+    if (error)
+      return error;
+    for (j = 0; j < count; j++)
+      if (overlap(result.reg.base, result.reg.size, range[j].base, range[j].size))
+        return DT_CONFLICT;
+  }
+  for (i = 0; i < scratch->nreserved; i++)
+    if (overlap(result.reg.base, result.reg.size, scratch->reserved[i].base,
+                scratch->reserved[i].size))
+      return DT_CONFLICT;
+  *out = result;
+  return 0;
+}
+int
 dtread(const void *blob, usize available, Dtinfo *info)
 {
   int error;

@@ -72,6 +72,8 @@ class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
         ('usable', Range * 64), ('dev', Device * 64), ('initrd', Range), ('bootedge', Range * 2)]
+class Uart(C.Structure):
+    _fields_=[('reg',Range)]+[(x,C.c_uint32) for x in ('kind','shift','width','reserved')]
 
 class DtbTests(unittest.TestCase):
     @classmethod
@@ -93,6 +95,8 @@ class DtbTests(unittest.TestCase):
         subprocess.run(["clang", "-std=c89", "-ffreestanding", "-I" + str(ROOT / "include"), "-fsyntax-only", str(harness)], check=True)
         cls.lib.dtread.argtypes = [C.c_void_p, C.c_uint64, C.POINTER(Info)]
         cls.lib.dtread.restype = C.c_int
+        cls.lib.dtconsole.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(Info),C.POINTER(Uart)]
+        cls.lib.dtconsole.restype=C.c_int
         cls.lib.dtreserve.argtypes = [C.POINTER(Info), C.c_uint64, C.c_uint64]
         cls.lib.dtreserve.restype = C.c_int
         cls.lib.dtusable.argtypes = [C.POINTER(Info)]
@@ -116,6 +120,55 @@ class DtbTests(unittest.TestCase):
     def reject(self, data):
         rc, _ = self.parse(data)
         self.assertLess(rc, 0)
+
+    def early(self, tree, expected=0):
+        data=blob(tree);memory=C.create_string_buffer(data);scratch=Info();out=Uart()
+        C.memset(C.byref(out),0xa5,C.sizeof(out))
+        self.assertEqual(self.lib.dtconsole(memory,len(data),C.byref(scratch),C.byref(out)),expected)
+        if expected:self.assertEqual(bytes(out),bytes(C.sizeof(out)))
+        return out
+
+    def test_console_selects_explicit_path_and_alias_before_interrupt_discovery(self):
+        # The IRQ parent is intentionally absent: early diagnostics must work
+        # before full device/interrupt discovery reports this failure.
+        serial=uart(address=0x12345000,extra=(('reg-shift',words(2)),('reg-io-width',words(4))))
+        for path in (b'/uart:115200n8\0',b'serial0:115200n8\0'):
+            tree=basic([serial,node('aliases',[('serial0',b'/uart\0')]),node('chosen',[('stdout-path',path)])])
+            out=self.early(tree)
+            self.assertEqual((out.reg.base,out.kind,out.shift,out.width),(0x12345000,1,2,4))
+            self.assertLess(self.parse(blob(tree))[0],0)
+
+    def test_console_translates_selected_bus_and_accepts_pl011_without_clock_guess(self):
+        serial=node('serial@100',[('compatible',b'arm,pl011\0'),('reg',words(0x100,0x100))])
+        bus=node('soc',[('compatible',b'simple-bus\0'),('#address-cells',words(1)),('#size-cells',words(1)),
+                        ('ranges',words(0)+cells(0x23450000)+words(0x1000))],[serial])
+        out=self.early(basic([bus,node('chosen',[('stdout-path',b'/soc/serial@100\0')])]))
+        self.assertEqual((out.reg.base,out.reg.size,out.kind,out.width),(0x23450100,0x100,2,4))
+
+    def test_console_never_falls_back_to_first_uart_for_missing_or_wrong_selection(self):
+        for chosen in ([],[node('chosen')],[node('chosen',[('stdout-path',b'/missing\0')])],
+                       [node('chosen',[('stdout-path',b'serial0\0')])]):
+            self.early(basic([uart(),*chosen]),-3)
+        self.early(basic([uart(extra=(('status',b'disabled\0'),)),node('chosen',[('stdout-path',b'/uart\0')])]),-3)
+
+    def test_console_rejects_unsafe_window_and_register_layout_without_partial_output(self):
+        selected=node('chosen',[('stdout-path',b'/uart\0')])
+        for serial in (uart(size=4),uart(extra=(('reg-shift',words(5)),)),
+                       uart(extra=(('reg-io-width',words(2)),)),uart(extra=(('big-endian',b''),)),
+                       uart(extra=(('reg-offset',words(4)),))):
+            self.early(basic([serial,selected]),-3)
+        self.early(basic([uart(address=0x80000000),selected]),-4)
+        other=node('unknown',[('reg',cells(0x10000000)+cells(0x100))])
+        self.early(basic([uart(),other,selected]),-4)
+
+    def test_console_rejects_truncated_and_ambiguous_descriptors(self):
+        data=blob(basic([uart(),node('chosen',[('stdout-path',b'/uart\0')])]))
+        memory=C.create_string_buffer(data)
+        for length in range(len(data)):
+            scratch=Info();out=Uart()
+            self.assertLess(self.lib.dtconsole(memory,length,C.byref(scratch),C.byref(out)),0)
+            self.assertEqual(bytes(out),bytes(C.sizeof(out)))
+        self.early(basic([uart(),uart(),node('chosen',[('stdout-path',b'/uart\0')])]),-1)
 
     def test_memory_and_known_devices_without_authorizing_unknown(self):
         unknown = node('unknown', [('compatible', b'vendor,unknown\0'), ('reg', b'garbage')])

@@ -5,7 +5,6 @@
 #include <diag.h>
 #include <hal/boot.h>
 #include <arm64/trap.h>
-#include <arm64/console.h>
 #include <abi/bootpkg.h>
 extern char vectors[];
 u64
@@ -24,7 +23,6 @@ arch_start(u64 dtb)
   if (mode != 4)
     hal_halt();
   __asm__ __volatile__("msr vbar_el1, %0; isb" ::"r"(vectors) : "memory");
-  arch_console_init();
   main(cpu & 0xffffff, dtb, mode, (mask & 0x3c0) == 0x3c0, vm & 1);
 }
 

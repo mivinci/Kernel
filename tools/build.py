@@ -181,7 +181,7 @@ def build(args, directory, run_dir):
     include_files.sort()
     headers = {str(p.relative_to(ROOT)): digest(p) for p in include_files}
     flags = profile["flags"] + COMMON + ["-I" + str(ROOT / "include")]
-    sources = [ROOT / "kernel" / args.arch / "console.c"]
+    sources = [ROOT / "kernel/console.c"]
     kernel = args.kind == "kernel"
     work = directory / args.case if kernel else directory
     work.mkdir(exist_ok=True)

@@ -26,6 +26,7 @@ static volatile u64 initialized = 0x12345678;
 static Dtinfo  hardware;
 static u32     firmware;
 static Bootdir package;
+static Dtuart  diagnostic;
 
 static void
 field(const char *name, u64 number)
@@ -258,6 +259,15 @@ void
 main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
 {
   u64 local, ram;
+  /* No UART access before the bounded firmware descriptor has been checked. */
+  if (cpu != 0 || mask != 1 || vm != 0)
+    hal_halt();
+  ram = (u64) __kernel_start & ~0xfffffffUL;
+  if ((dtb & 7) || dtb < ram || dtb > ram + 0x40000000 - 40 ||
+      dtconsole((const void *) dtb, MIN(0x200000, ram + 0x40000000 - dtb), &hardware,
+                &diagnostic) ||
+      hal_debug_init(&diagnostic))
+    hal_halt();
   putstr("BOOT mode=");
   puthex(mode);
   putstr(" cpu=");
@@ -269,17 +279,11 @@ main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
   putstr(" vm=");
   puthex(vm);
   putstr("\n");
-  if (cpu != 0 || mask != 1 || vm != 0)
-    panic("entry state");
   if (zeroed != 0 || initialized != 0x12345678)
     panic("data initialization");
   local = (u64) &local;
   if (local < (u64) __stack_bottom || local >= (u64) __stack_top)
     panic("stack");
-  /* Only this bootstrap read window is platform-fixed; resources come from DTB. */
-  ram = (u64) __kernel_start & ~0xfffffffUL;
-  if ((dtb & 7) || dtb < ram || dtb > ram + 0x40000000 - 40)
-    panic("dtb range");
   discovery(dtb, MIN(0x200000, ram + 0x40000000 - dtb));
   putstr("LAYOUT start=");
   puthex((u64) __kernel_start);

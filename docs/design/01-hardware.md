@@ -417,3 +417,21 @@ tools/build.py从已校验ELF的PT_LOAD提取原字节、补齐文件间隙，�
 主机测试覆盖提取字节、空隙、完整保留大小及坏头/目标/入口/范围。真实两架构包测试核对实际DTB、initrd内容与R/NX页；其他场景及完整结果见status和build/host/stage86-kernel-boot-package/。早期UART、RAM/DTB容量、缓存/DMA与真实板验收仍未完成，不能由本启动协议修正推定真机可启动。
 
 协议依据：[ARM64启动文档](https://www.kernel.org/doc/html/latest/arch/arm64/booting.html)的Image头和x0约定；[QEMU v11.1.0 ARM启动源码](https://github.com/qemu/qemu/blob/v11.1.0/hw/arm/boot.c)的ELF/Image与initrd分支。
+
+### 早期UART必须先取得DTB描述（2026-11-18，issue 001）
+
+已移除RV/ARM固定uartbase和ARM按24MHz重写波特率的初始化。启动入口先核对CPU/MMU/IRQ状态和既有有界DTB候选窗口，再执行dtconsole冷路径；只有成功取得Dtuart并经HAL检查后才进行第一笔UART MMIO与BOOT输出。ARM陷阱向量仍在进入公共main前安装；此变更不新增输入或设备中断业务。
+
+dtconsole复用同一flatten/metadata及registers/ranges翻译，临时使用调用者已有Dtinfo缓冲，不新增解析池、堆或另一套wire解码器。第一阶段检查整个结构、明确的chosen/stdout-path（绝对路径或根aliases别名，冒号后的选项只作选择分隔、不解释或重配波特率）、节点启用及精确UART窗口。必须唯一命中一个支持的NS16550或PL011；不猜第一个UART，不使用固定地址回退。之后完整dtread重新建立RAM/CPU/IRQ/设备/启动包资源，早期选择本身不授予用户态MMIO权限。
+
+Dtuart保存精确reg/类型/reg-shift/reg-io-width；目前支持字节或32位访问、shift 0..4，PL011固定32位且shift=0。要求窗口完整覆盖诊断寄存器、访问对齐，拒绝不支持的big-endian/reg-offset；翻译后与其他reg/RAM/保留范围重叠则拒绝。这里没有提前把dw-apb-uart别名当作完整支持，issue 005仍须核对其寄存器属性及板端DTB。完整发现仍沿用当前只接受一个UART的限制，多UART生产库存后续需显式扩展。
+
+共享的轮询HAL实现放kernel/console.c，两架构复用同一设备寄存器逻辑，无ISA寄存器或条件分支。NS16550仅轮询已有配置；PL011只保留现有格式/分频器并置UARTEN/TXE，时钟、pinmux、复位和波特率由引导器准备。高半区转换仍由hal_debug_rebase更新同一UART地址，诊断映射仍为Device。未初始化时putc不访问地址0；若DTB结构、选择或安全窗口不能验证，就停止且不写任何猜测MMIO；因此损坏DTB本身的串口诊断仍须依靠引导器/板端调试，而不是声称能凭损坏描述可靠输出。
+
+失败例：结构和UART选择有效，但UART interrupts越界→早期HAL取得精确窗口→打印BOOT→完整发现返回DT错误并panic/halt；stdout-path被破坏→没有可信UART→HAL不初始化→物理halt，内核无串口输出且不进入分配器。tests/earlyconsole.py从当前normal实际runtime.dtb只修改相关属性，验证这两条路径；每架构2次，新增至test-qemu。QMP核对实际物理hal_halt及未进入META/PAGES/VM，而非只匹配文本。自定义DTB只裁去未使用的尾部填充，避免QEMU再次扩容触及2MiB上限，不裁任何有效section。
+
+host覆盖绝对路径/带选项别名、嵌套总线翻译、PL011配置保留、NS16550步长/位宽/重映射、无默认回退、disabled/重复节点、全部截断、RAM/未知设备冲突及非法窗口不访问。证据归build/host/stage95-early-console/；本点是本地实现与QEMU验证，真实参考板上电、固件串口准备及DTB容量仍待验，不能称issue 001已完成板端验收。
+
+首次全量host回归暴露上一点IRQ授权测试的Python Event在方法返回后被回收，而C绑定到清理阶段仍持其地址；现由测试显式持有至表解绑/清理完成，专项10项复验通过。此修正仅是host fixture寿命，不修改内核IRQ状态机；失败日志保留在test-all-initial-host.log，最终全量结果另记录。
+
+本点最终完整make test-all通过649项host、格式及148次两架构QEMU，其中新增4次实际DTB早期控制台反例。全部结果核对当前源码/共享头哈希，生产normal和init链接继续隔离fixture，10次生产init仍进入事件循环。dtconsole两架构编译帧均288字节，非完整栈深证明。证据build/host/stage95-early-console/evidence.json与test-all.log；无CI/真机/性能验收，issue 001仍保留板端待验状态。
