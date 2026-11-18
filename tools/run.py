@@ -2,7 +2,9 @@
 """Run a bounded host command and retain its log; own only its process group."""
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+import fcntl
 import json
 import math
 import os
@@ -12,6 +14,17 @@ import subprocess
 import sys
 import time
 import uuid
+
+
+@contextmanager
+def run_guard(root, exclusive=False):
+    """Writers share this lock; explicit pruning requires exclusive access."""
+    directory = Path(root) / 'build/.locks'
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / 'retention.lock').open('a') as lock:
+        operation = fcntl.LOCK_EX | fcntl.LOCK_NB if exclusive else fcntl.LOCK_SH
+        fcntl.flock(lock, operation)
+        yield
 
 
 @dataclass
@@ -148,6 +161,7 @@ def run_command(argv, log, timeout, cwd=None):
                   error, time.monotonic() - start, str(path), cleanup_error)
 
 
+@run_guard(Path(__file__).resolve().parents[1])
 def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)

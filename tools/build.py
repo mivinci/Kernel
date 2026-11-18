@@ -15,7 +15,7 @@ import subprocess
 import sys
 import uuid
 
-from run import install_stop_handlers, run_command
+from run import install_stop_handlers, run_command, run_guard
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -442,6 +442,7 @@ def build(args, directory, run_dir):
           (args.arch, artifact.relative_to(ROOT), sum(x["cached"] for x in objects), len(objects)))
 
 
+@run_guard(ROOT)
 def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import bootpkg
 import smoke
-from run import install_stop_handlers
+from run import install_stop_handlers, run_guard
 
 
 def fixtures(data):
@@ -41,6 +41,7 @@ def fixtures(data):
     yield 'missing', None, 'missing'
 
 
+@run_guard(ROOT)
 def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)

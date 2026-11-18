@@ -16,9 +16,11 @@ endif
 AR ?= llvm-ar
 READELF ?= llvm-readelf
 ARCH ?=
+KEEP ?= 20
+GRACE_HOURS ?= 24
 SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
 
-.PHONY: all help build hardware compdb sdk bootpkg clean fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
+.PHONY: all help build hardware compdb sdk bootpkg clean clean-runs fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
@@ -28,6 +30,7 @@ help:
 	@echo "make test-cpus        : 两架构四核单主核启动/真实IRQ/自停放（需OPENSBI）"
 	@echo "make fmt / fmt-check  : 源码格式"
 	@echo "make clean ARCH=...   : 清除该架构构建目录"
+	@echo "make clean-runs       : 预览旧运行清理（KEEP=20，CONFIRM=1执行）"
 	@echo "make smoke ARCH=... / make scenario ARCH=... CASE=registers|fault|pages"
 build:
 	$(PYTHON) tools/build.py --kind kernel --case "$(if $(CASE),$(CASE),normal)" --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
@@ -40,6 +43,8 @@ hardware:
 	$(PYTHON) tools/build.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 clean:
 	$(PYTHON) tools/build.py --arch "$(ARCH)" --clean
+clean-runs:
+	$(PYTHON) tools/prune.py --keep "$(KEEP)" --grace-hours "$(GRACE_HOURS)" $(if $(filter 1,$(CONFIRM)),--apply) $(if $(REPORT),--report "$(REPORT)")
 fmt:
 	$(CLANG_FORMAT) -i $(SOURCES)
 fmt-check:

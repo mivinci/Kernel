@@ -18,7 +18,7 @@ import time
 import uuid
 
 from build import BuildError, ROOT, digest, read_kernel, PROFILES, BOOT_CASES
-from run import _group_exists, _stop_group, install_stop_handlers, run_command
+from run import _group_exists, _stop_group, install_stop_handlers, run_command, run_guard
 import bootpkg
 from elf import plan as elfplan
 from layout import KBASE, KMAP_BYTES, KIO, KSTACK_BASE
@@ -1533,6 +1533,7 @@ def exercise(args, run_dir, record):
                 if gdb:gdb.close()
 
 
+@run_guard(ROOT)
 def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)

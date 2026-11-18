@@ -18,8 +18,9 @@ sys.path.insert(0,str(ROOT/'tools'))
 from build import digest
 from gdbpipe import GdbPipe
 from smoke import Qmp,SmokeError,symbols,check_arm64_cache
-from run import _stop_group,_group_exists,install_stop_handlers
+from run import _stop_group,_group_exists,install_stop_handlers,run_guard
 
+@run_guard(ROOT)
 def main():
     install_stop_handlers();artifact=ROOT/'build/arm64/normal/kernel.elf';baseline=None
     for directory in sorted((ROOT/'build/arm64/smoke').iterdir(),key=lambda p:p.stat().st_mtime,reverse=True):

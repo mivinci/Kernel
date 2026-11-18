@@ -13,7 +13,7 @@ import uuid
 
 from build import ROOT, PROFILES, COMMON, BuildError, compilation_database, digest, read_elf
 from elf import pack
-from run import install_stop_handlers, run_command
+from run import install_stop_handlers, run_command, run_guard
 from sdkheaders import export_private_headers, check_private_headers
 
 
@@ -358,6 +358,7 @@ def build(args):
     print(args.arch + ': ' + str(artifact.relative_to(ROOT)))
 
 
+@run_guard(ROOT)
 def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)

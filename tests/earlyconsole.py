@@ -14,7 +14,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 from smoke import Qmp,SmokeError,symbols
 from build import digest
-from run import _stop_group,install_stop_handlers
+from run import _stop_group,install_stop_handlers,run_guard
 from fdt import properties
 
 def run(arch,baseline,case,directory):
@@ -80,6 +80,7 @@ def run(arch,baseline,case,directory):
             if qmp:qmp.close()
             _stop_group(proc)
 
+@run_guard(ROOT)
 def main():
     install_stop_handlers();parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arch',choices=('arm64','riscv'),required=True);args=parser.parse_args()
