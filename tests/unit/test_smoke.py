@@ -70,7 +70,7 @@ def fixture(arch, case):
         for i in range(2 if case == "registers" else 1):
             text += "TRAP cause=%016x pc=%016x address=%016x sp=%016x\n" % (
                 cause, base + 0x100 + i * 4, 0, base + 0x6f00)
-    text += {"normal": "READY early-boot\n", "registers": "READY registers-restored\n",
+    text += {"normal": "INIT pid=0000000000000001 image=0000000000000001 state=0000000000000006\n", "registers": "READY registers-restored\n",
              "fault": "PANIC exception\n"}[case]
     return text, names
 
@@ -202,8 +202,9 @@ class InitOutputTests(unittest.TestCase):
     def test_live_init_and_fatal_user_exit_require_distinct_exact_outcomes(self):
         for arch in ('riscv','arm64'):
             text,names=fixture(arch,'normal')
-            live=text.replace('READY early-boot','READY init-restored')
-            fatal=text.replace('READY early-boot','PANIC init exited')
+            text=''.join(x for x in text.splitlines(True) if not x.startswith('INIT '))
+            live=text+'READY init-restored\n'
+            fatal=text+'PANIC init exited\n'
             validate_output(live,arch,'init',names)
             validate_output(fatal,arch,'initfatal',names)
             for sample in (live, fatal+fatal, fatal.replace('init exited','exception'),fatal+'READY init-restored\n'):

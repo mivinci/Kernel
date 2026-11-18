@@ -144,6 +144,32 @@ def build(args):
     invoke('link-csu', [tools['ld']['path'], '-r', '-m', profile['emulation'],
                        *[str(obj) for _, obj in extra_units[len(libc_sources):-1]], '-o', str(crt)])
     read_elf(crt, profile['machine'], allow_undefined=True)
+    init_sources = [ROOT/'sbin/init/main.c', ROOT/'sbin/init/package.c']
+    init_objects = []
+    init_directory = directory/'sbin'
+    init_directory.mkdir(exist_ok=True)
+    for source in init_sources:
+        obj = sdk/'obj/sbin/init'/source.with_suffix('.o').name
+        obj.parent.mkdir(parents=True,exist_ok=True)
+        command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
+        invoke('compile-init-'+source.stem,command)
+        read_elf(obj,profile['machine'],allow_undefined=True)
+        entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
+        init_objects.append(str(obj))
+    init_elf = init_directory/'init.elf'
+    init_tmp = init_directory/'init.tmp.elf'
+    init_command = [tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections',
+                    '--build-id=none','-Map='+str(init_directory/'init.map'),str(crt),
+                    *init_objects,str(libc_archive),str(archive),'-o',str(init_tmp)]
+    invoke('link-init',init_command)
+    init_info = read_elf(init_tmp,profile['machine'],kind=2)
+    pack(init_tmp.read_bytes(),profile['machine'],256)
+    os.replace(init_tmp,init_elf)
+    (init_directory/'init.manifest.json').write_text(json.dumps(dict(arch=args.arch,
+        artifact=str(init_elf.relative_to(ROOT)),sha256=digest(init_elf),elf=init_info,
+        sources={str(p.relative_to(ROOT)):digest(p) for p in init_sources+[ROOT/'sbin/init/package.h']},
+        link=init_command,no_test_payload=True,libc_sha256=digest(libc_archive),
+        libsys_sha256=digest(archive),crt_sha256=digest(crt)),indent=2)+'\n')
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
     ringuser_object = sdk / 'obj/ringuser.o'
     command = [tools['cc']['path'], *flags, '-c', str(ringuser_source), '-o', str(ringuser_object)]
@@ -216,6 +242,7 @@ def build(args):
         invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
+    package_exit=link_adoption('packageexit',[compile_adoption(ROOT/'tests/kernel/packageexit.c','packageexit')])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
     parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
@@ -305,6 +332,8 @@ def build(args):
     headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
     headers += list((ROOT / 'include/abi').glob('*.inc'))
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
+                    init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
+                    package_exit_artifact=str(package_exit.relative_to(ROOT)),
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
                     cow_user_fault_pc=cow_fault_address, cow_user_image_sha256=digest(cow_user_image),
                     libvirtio_archive=str(virtio_archive.relative_to(ROOT)), libvirtio_sha256=digest(virtio_archive), libvirtio_audit_sha256=digest(virtio_audit),
@@ -313,7 +342,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + [runtime_source,parent_source,ringuser_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + [runtime_source,parent_source,ringuser_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

@@ -18,7 +18,7 @@ READELF ?= llvm-readelf
 ARCH ?=
 SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
 
-.PHONY: all help build hardware compdb sdk clean fmt fmt-check unit smoke scenario bench test-all test-qemu
+.PHONY: all help build hardware compdb sdk bootpkg clean fmt fmt-check unit smoke scenario bench test-all test-qemu
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
@@ -31,6 +31,8 @@ build:
 	$(PYTHON) tools/build.py --kind kernel --case "$(if $(CASE),$(CASE),normal)" --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 sdk:
 	$(PYTHON) tools/user.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
+bootpkg: sdk
+	$(PYTHON) tools/bootpkg.py pack --arch "$(ARCH)" --init sbin/init --entry "sbin/init=build/$(ARCH)/sbin/init.elf" --output "build/$(ARCH)/boot.pkg"
 compdb: build
 hardware:
 	$(PYTHON) tools/build.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
@@ -43,7 +45,8 @@ fmt-check:
 unit:
 	$(PYTHON) -m unittest discover -s tests/unit -p 'test_*.py' -v
 smoke: build
-	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio) $(if $(INITRD),--initrd "$(INITRD)")
+	$(if $(and $(filter normal,$(if $(CASE),$(CASE),normal)),$(if $(INITRD),,yes)),$(MAKE) bootpkg ARCH="$(ARCH)",@true)
+	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio) $(if $(INITRD),--initrd "$(INITRD)",$(if $(filter normal,$(if $(CASE),$(CASE),normal)),--initrd "build/$(ARCH)/boot.pkg"))
 scenario:
 	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|heap|cow|bootpkg) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 ifeq ($(CASE),bootpkg)
@@ -61,6 +64,8 @@ test-qemu:
 	$(MAKE) scenario ARCH=arm64 CASE=bootpkg
 	$(MAKE) smoke ARCH=riscv CASE=normal
 	$(MAKE) smoke ARCH=arm64 CASE=normal
+	$(PYTHON) tests/packageboot.py --arch riscv $(if $(OPENSBI),--firmware "$(OPENSBI)")
+	$(PYTHON) tests/packageboot.py --arch arm64
 	$(MAKE) scenario ARCH=riscv CASE=registers
 	$(MAKE) scenario ARCH=arm64 CASE=registers
 	$(MAKE) scenario ARCH=riscv CASE=fault

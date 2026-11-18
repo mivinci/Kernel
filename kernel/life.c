@@ -212,8 +212,14 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
   Handle owner;
   if (!l)
     return -ERR_STALE;
-  if (l->pid == 1)
+  if (l->pid == 1) {
+    putstr("INITEXIT reason=");
+    puthex(reason);
+    putstr(" code=");
+    puthex(code);
+    putstr("\n");
     panic("init exited");
+  }
   if (l->state != LIFE_LIVE)
     return -ERR_STATE;
   if (reason < LIFE_EXIT || reason > LIFE_FAULT || code > 255 ||

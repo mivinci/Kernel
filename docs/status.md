@@ -18,18 +18,18 @@
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
-- 独立libsys SDK、virtio描述符/共享环与现代MMIO协商复位（无生产DMA后端）、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait及批量堆分配、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
-- 一次性PID1及预校验装载器、bootstore保留/边界隔离、可信MEM_BOOT分片和只读快照已接；Boot格式2/144字节、Mem仍64KiB。现有完整视图构造器可回滚全部前缀，Boot字段须匹配精确源/完整Mmap和真实PA/R/USER/普通属性，configure、发布及PID1装载前均核验，拒绝普通只读副本冒充。ARM64使用Image/x0实际DTB。包内PID1启动、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止，载荷仍在tests/kernel。
+- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。normal的PID1现用真实外部包，普通用户ELF装载仍以测试只读源验证，非FS稳定装载会话；fd/Fix适配、完整spawn/fork/exec未接，virtio尚无生产DMA。
+- T1.1..T1.3已接：normal从chosen外部包按init_index装载实际sbin/init，经csu/libc/libsys校验目录并进入孤儿收取/CHILD事件循环，继续调度/IRQ-idle；缺包/坏包分配前拒启。Boot格式2、只读包/边界隔离、分片归属与发布复查真实有效。初始仅SELF_SPACE/ALLOC，bootstrap Set4096/6144页/1实例、8槽；16 Set清单/CREATE SERVICE/SYSTEM/设备发权、首服务READY及失败监督仍待T1.4/T1.5。不是完整服务管理或可用sh。
 
 ## 最新本地验证
 
-- 最新本地630项host、fmt-check及完整130次两架构QEMU通过，补强用例后另完整make unit仍630项；最终结果均核对当前源码/共享头哈希及normal隔离。11项分片/视图host用例包含521页构造后段失败全回滚、实际PTE篡改、别名及内容相同的假源；guest真实包描述构造普通未发布Proc，核对合法配置、5类伪声明/发布复查及完整清理，不执行该测试进程。证据`build/host/stage91-boot-view-admission/evidence.json`与日志；无CI/真机/性能验收。
-- T1.2两架构各九次真实initrd启动已验好包和八类拒启；另验normal及pages耗尽/回收后包内容不变、目录一致、全部包页R/NX及保留排除，normal无测试源码。不是包内生产PID1启动。用户已确认PID1专用只读包视图；接下来按T1.3接入受跟踪映射、边界页隔离及独立保留费用，单Mem64KiB限制不绕过。相关真机P0按依赖处理；fork的源别名/引用稳定、组合长循环、IRQ检查点与STOP/CONT仍待T4前补齐。
+- 最新完整make test-all通过640项host、fmt-check及142次两架构QEMU。10次生产init进入事件循环、2次真实包内exit42致命、6次缺包/坏checksum/坏描述在分配前拒启；另覆盖非首init、整页源及RAM128/256/512。normal源码和实际init链接无测试载荷，默认包只含init。证据`build/host/stage92-package-pid1/evidence.json`与test-all.log；无CI/真机/性能验收。
+- native审计逐页核对完整用户/内核映射、ELF代码/RO字节、栈/guard、Boot/SELF资源、隔离包视图和精确Acct owner；用户initstate显示正确目录/字节数/checksum并阻塞，私有页/页表/内核栈收费与实际owner集合一致，包仍保留且不重复计费。早期私有store符号被优化拆分及RV idle sie假设已直接观测后修正，失败记录保留。完整fork仍待T4前补源别名/长循环/IRQ检查点与STOP/CONT。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
 
-- PID1只读包视图机制已接：16MiB窗口、64KiB分片，完整构造/失败回滚和Boot真实归属核验可用。下一步在启动路径为一次性PID1建立视图和授权完备Boot，再从包内指定描述装载真实init；生产init/启动清单仍未交付。原生fork/exec未因可信快照而开放。规格见[07](design/07-boot.md#pid1-启动包只读视图2026-11-18-已确定)及08。
+- 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。
 - IRQ_SOURCE撤销是否影响既有独立IRQ_BIND仍待用户确认，候选和实现边界见05末尾。

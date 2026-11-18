@@ -8,6 +8,7 @@
 #include <kstack.h>
 #include <bootpkg.h>
 #include <bootstore.h>
+#include <bootstart.h>
 #if BOOT_CASE != 0
 #include <ktest.h>
 #endif
@@ -144,7 +145,7 @@ discovery(u64 dtb, u64 available)
     field(" checksum=", package.header.checksum);
     putstr("\n");
   }
-#if BOOT_CASE == 53
+#if BOOT_CASE == 0 || BOOT_CASE == 53
   else
     panic("initrd missing");
 #endif
@@ -248,8 +249,7 @@ virtualmain(Hvs *space)
 #if BOOT_CASE != 0
   testmain(space, &hardware);
 #else
-  UNUSED(space);
-  putstr("READY early-boot\n");
+  bootstart(&package);
 #endif
   hal_halt();
 }

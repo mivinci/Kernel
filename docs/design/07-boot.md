@@ -244,7 +244,7 @@ sh首版最多8条管道成员，同组ready/gate方案固定：每成员ready�
 
 ## 里程碑：启动进入可用的 sh（2026-11-17）
 
-现状：`normal` 初始化后停机；启动包主机工具及内核发现/校验已接，生产 `sbin/init`、包内PID1装载、清单/SYSTEM 与设备发权未接；原有程序运行来源仍为单镜像PID1与用户态ELF装载测试。
+现状：normal现从DTB外部包按指定描述装载实际sbin/init，已建立只读目录并进入孤儿收取/CHILD事件循环；服务启动/READY、完整清单/SYSTEM及设备发权未接。默认包仅含实际init，不是完整恢复环境或可用sh。
 
 按文件系统优先推进，每阶段独立验收：
 
@@ -276,6 +276,8 @@ T1 分五步，每步可独立提交与验收；前一步不通过不进入下�
 | T1.4 | init 侧：取得包目录并拉起首个服务，复用现有用户态 `elfcheck`/`load` | init 按名从包装载 serial 或 sh，完成 create/configure/start 并收到 READY | T1.3 |
 | T1.5 | 就绪与监督衔接：READY 握手、失败降级、缺项与坏包诊断 | 服务不 READY 时 init 报明确失败并停在可诊断状态，不把失败伪装成成功 | T1.4 |
 
+T1.1..T1.3现已接入；T1.4/T1.5尚未交付。T1.3的初始Boot只授真实SELF_SPACE/SELF_ALLOC及包视图，不用无后端的SYSTEM或假服务清单填充资源表。
+
 跨步骤注意：
 
 - **PID1访问接口已于2026-11-18确定**：内核将已核验包建立专用只读视图，通过Boot格式2给出精确用户VA/字节数；init复用现有装载器自行选择程序，内核不替它决定加载谁。完整生命周期见下节；确认方案不等于映射后端已实现。
@@ -287,7 +289,7 @@ T1 分五步，每步可独立提交与验收；前一步不通过不进入下�
 
 ### 启动主线实施复查（2026-11-18）
 
-当前fork映射游标切片已完成局部验收，已优先推进T1.1/T1.2，接下来按T1.3推进生产启动；不把完整fork/exec或全部信号作为打包、容器校验及PID1装载的前置。它们仍是T4关键路径，现有fork成果与剩余验收保留在02/03，不降低完整sh目标。
+fork映射游标切片完成局部验收后已优先推进T1.1..T1.3，下一步进入T1.4真实服务装载/授权与READY；完整fork/exec和信号仍是T4关键路径，现有成果与剩余验收保留在02/03，不降低完整sh目标。
 
 实施时须提前衔接以下边界，不据此声称接口已经冻结或功能已实现：
 
@@ -475,3 +477,21 @@ host另验精确/缺失/部分/隐藏字段、只读内容副本、错误源页�
 CASE=bootpkg还从真实包读取init装载描述，构造一个测试用的普通未发布Proc（不消耗一次性PID1）；有效完整视图可configure，随后依次篡改VA/长度、移除首片、用逐字节相同的普通只读副本替代、错用下一包页，均被拒绝。VA错误及缺片还核对procpublish拒绝；重建视图后再次configure成功并取消/清理，普通页/账目与保留引用归零。该构造只验证共用的声明/发布机制，不执行这个测试进程，不冒充生产sbin/init，也未完成T1.3的包内PID1启动。证据归build/host/stage91-boot-view-admission/及status。
 
 本点最终本地630项host、格式及130次两架构QEMU全部通过；补强窗口外别名与构造器Mmap槽不足后另完整make unit仍通过630项。最终130份结果核对当前源码、共享头哈希和normal隔离，两架构好包/整页包各记录5类拒绝、2次配置及2次发布拒绝，取消后无普通页/账目或保留借用泄漏。映射构造器编译帧ARM4464/RV4416字节，核验器ARM368/RV400字节，是有界启动冷路径暂存，不作完整栈深/延迟证明。无CI/真机/性能验收，生产PID1包启动仍待执行。
+
+### T1.3：普通镜像从包运行真实 PID1（2026-11-18）
+
+normal现强制从chosen取得外部包；缺失、checksum或描述坏时在页分配/PID1准入前拒启。kernel/bootstart.c只在normal链接，复用已核验目录的init_index，取得一次性PID1、完整只读包视图与真实SELF_SPACE/SELF_ALLOC，按包内Bootimage调用现有bootimageload，配置后再复查发布。不内嵌用户ELF、不从磁盘或任意路径读取、不把其他包项装进PID1；包页和所有私有镜像/栈/Boot仍按既有不同预算归属。
+
+当前bootstrap Set常规/峰值4096/6144页、仅1实例；init取同样额度与8个本地槽，初始Boot仅两个SELF资源、一个按选中名称生成的argv及精确包视图字段，288字节。此为T1.3实际所需授权，不声称16 Set服务清单、CREATE SERVICE/SYSTEM、设备/IRQ发权已完成；T1.4接入它们时须使用真实后端而非空Handle。PID1准入之后任何装载/发布失败仍致命停机，不重试复用其身份或运行半份镜像。
+
+实际sbin/init由csu→libc→libsys启动为独立ELF，源码只在sbin/init，默认包仅含此实际程序。其package模块按字节解码只读目录、复查FNV/范围/唯一名称/区间互斥和基本ELF身份，建立有界32项目录和精确名称查询；不解释内核专用装载描述内部，也不把斜杠当文件系统权限。main核对原生PID1/父0/image及所选名称，随后用非阻塞wait收取孤儿，阻塞等待CHILD事件并重查；错误走实际_exit，PID1不可恢复。服务装载/READY和STATUS管理协议还未接，不以此事件循环冒充完整服务管理。
+
+内核在实际调度PID1并观察到其首个阻塞状态后打印INIT诊断，随后保持正常调度/IRQ-idle循环，不在normal打印测试READY或停在hal_halt。该首行来自内核实际状态观察；此时fd/serial尚未接，不新增专用打印syscall，也不称用户终端输出已实现。用户进程的目录状态由QMP独立读取验证，不能用该首行替代用户代码执行证据。真实PID1退出另输出INITEXIT的reason/code后致命停机。
+
+make sdk另产出build/<架构>/sbin/init.elf及独立链接/源哈希清单，链接输入仅csu、两份init源码和正式libc/libsys；make bootpkg生成默认外部boot.pkg，make smoke normal自动构建/传入它。编译数据库包括生产init。tests/packageboot.py给同一normal内核传测试包，覆盖非首目录init、整页零副本、缺包、坏checksum/描述，以及测试专用ELF真实return42；退出fixture只在tests/kernel和SDK测试产物中，不能进入默认生产包或normal源码列表。
+
+native QMP审计全部用户低地址页表及精确共享的内核高半区，逐页检查ELF代码/只读内容、用户权限/属性、私有页互斥、64KiB栈与上下guard、Boot/argv/实际SELF资源和全部隔离包页；还导出Page元数据，核对所有私有页/用户页表/内核栈归精确init Acct，且无未解释的同账目页，原包/边界副本仍为未私有计费的RESERVED。实际用户initstate须显示已校验正确目录/字节数/checksum并阻塞；该结构是用户程序内部状态，不是新增wire ABI或内核授权来源。
+
+normal成功时主机确认CPU在内核IRQ-idle、定时器/控制器状态正确，并独立核对活PID1与保留账目，不要求停止系统来模拟成功；退出反例核对实际用户root下的致命halt和code42。证据归build/host/stage92-package-pid1/及status。T1.3完成不等于T1全交付，下一步仍是T1.4首个真实服务、授权/READY与后续失败监督。
+
+本点最终本地make test-all通过640项host、格式及142次两架构QEMU；其中10次生产init live审计、2次包内真实PID1 exit42、6次普通镜像分配前拒启。全量结果核对当前内核源码/共享头哈希；实际init ELF与默认包、源码/库哈希和独立链接输入亦核对，无fixture混入。最初审计依赖私有store符号被LLVM拆分，已改为实际bootstorestat诊断并独立核对PTE/页owner；RV idle的SEIE+STIE=0x220与fatal halt清sie差别已按真实HAL/寄存器修正，失败记录保留。无CI/真机/性能验收，未宣称服务清单或M3完成。

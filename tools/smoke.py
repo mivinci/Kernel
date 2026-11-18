@@ -20,6 +20,7 @@ import uuid
 from build import BuildError, ROOT, digest, read_kernel, PROFILES
 from run import _group_exists, _stop_group, install_stop_handlers, run_command
 import bootpkg
+from elf import plan as elfplan
 
 
 VM_FAULTS = {"textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11}
@@ -114,7 +115,7 @@ def fields(line):
     return {key: int(value, 16) for key, value in re.findall(r"(\w+)=([0-9a-f]{16})(?: |$)", line)}
 
 
-def validate_output(text, arch, case, names, ram_mb=256):
+def validate_output(text, arch, case, names, ram_mb=256, init_exit=None):
     lines = text.replace("\r", "").splitlines()
     boots = [line for line in lines if line.startswith("BOOT ")]
     layouts = [line for line in lines if line.startswith("LAYOUT ")]
@@ -144,8 +145,12 @@ def validate_output(text, arch, case, names, ram_mb=256):
             or (dtb < layout["end"] and dtb + size > layout["start"])):
         raise SmokeError("invalid or overlapping DTB extent")
     if case == "normal":
-        if ready != ["READY early-boot"] or panics or traps:
-            raise SmokeError("normal image did not reach its sole expected stop")
+        starts=[fields(x) for x in lines if x.startswith('INIT ')]
+        if init_exit is None:
+            if ready or panics or traps or starts != [dict(pid=1,image=1,state=6)]:
+                raise SmokeError('production PID1 did not reach its first blocked state')
+        elif ready or traps or starts or panics != ['PANIC init exited']:
+            raise SmokeError('package PID1 did not take its fatal exit path')
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
@@ -540,6 +545,133 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
             "low_mappings": 0, "guards": 2, "all_permissions_checked": True}
 
 
+def audit_package_init(qmp, run_dir, args, record, transition):
+    data=args.initrd.read_bytes();info=bootpkg.check(data,PROFILES[args.arch]['machine'])
+    member=info['items'][info['init_index']]
+    raw=data[member['elf_off']:member['elf_off']+member['elf_bytes']]
+    artifact=args.init_elf or ROOT/'build'/args.arch/'sbin/init.elf'
+    if artifact.read_bytes()!=raw:raise SmokeError('selected package init ELF differs from audit artifact')
+    parsed=run_command([record['build']['tools']['readelf']['path'],'-s',str(artifact)],run_dir/'init-symbols.log',args.timeout)
+    if not parsed.ok:raise SmokeError('could not inspect init symbols')
+    user_symbols=symbols(Path(parsed.log).read_text())
+    entry,image=elfplan(raw,PROFILES[args.arch]['machine'],4096)
+    retained=record['retained_init'];discovery=record['discovery'];root=retained['root']
+    directory=run_dir/'init-tables';directory.mkdir()
+    kernel_root=struct.unpack('<512Q',(run_dir/'tables'/('%016x.bin'%transition['root'])).read_bytes())
+    tables={};leaves={}
+    def usable(pa):
+        return pa%4096==0 and any(x['base']<=pa and pa+4096<=x['base']+x['size'] for x in discovery['ranges']['USABLE'])
+    def walk(pa,level,prefix):
+        if pa in tables or not usable(pa) or len(tables)>=2048:raise SmokeError('invalid init page-table ownership')
+        path=directory/('%016x.bin'%pa)
+        qmp.command('pmemsave',{'val':pa,'size':4096,'filename':str(path)})
+        rows=struct.unpack('<512Q',path.read_bytes());tables[pa]=rows
+        if level==0 and rows[256:]!=kernel_root[256:]:raise SmokeError('init did not borrow exact kernel high half')
+        for i,pte in enumerate(rows[:256] if level==0 else rows):
+            if not pte:continue
+            target=((pte&0x003ffffffffffc00)<<2) if args.arch=='riscv' else pte&0x0000fffffffff000
+            va=prefix|(i<<(30-9*level))
+            if level<2:
+                if pte!=((target>>2)|1 if args.arch=='riscv' else target|3):raise SmokeError('invalid init intermediate PTE')
+                walk(target,level+1,va)
+            else:leaves[va]=(target,pte)
+    walk(root,0,0)
+    cache={}
+    def physical(pa):
+        if pa not in cache:
+            path=run_dir/('init-page-%016x.bin'%pa)
+            qmp.command('pmemsave',{'val':pa,'size':4096,'filename':str(path)})
+            cache[pa]=path.read_bytes()
+        return cache[pa]
+    def read(va,size):
+        out=b''
+        while size:
+            page=va&~4095;offset=va-page;take=min(size,4096-offset)
+            if page not in leaves:raise SmokeError('missing init data page')
+            out+=physical(leaves[page][0])[offset:offset+take];va+=take;size-=take
+        return out
+    startup=read(0x3fff000000,144);head=struct.unpack('<18Q',startup)
+    if (head[:4]!=(bootpkg.BOOT_MAGIC,2,288,0) or head[4]!=1 or head[5]!=144 or head[6] or head[8]!=2 or
+            head[9]!=152 or any(head[i] for i in (7,10,11,12,13)) or head[14:16]!=(0x10000,1<<38) or
+            head[16:]!=(0x3ffe000000+discovery['initrd']['base']%4096,len(data))):
+        raise SmokeError('invalid production Boot header')
+    startup=read(0x3fff000000,head[2])
+    arg,length=struct.unpack_from('<II',startup,head[5])
+    if arg!=216 or length!=len(member['name'])+1 or startup[arg:arg+length]!=member['name']+b'\0':
+        raise SmokeError('init argv does not identify selected member')
+    for i in range(2):
+        tag,handle,flags,reserved=struct.unpack_from('<4Q',startup,head[9]+i*32)
+        if tag!=i+1 or handle>>59!=2 or not (handle>>16)&((1<<43)-1) or flags or reserved:
+            raise SmokeError('invalid initial SELF resource')
+    expected={va:dict(prot=page['prot'],kind='image',data=bytes(page['data'])) for va,page in image.items()}
+    for va in range(0x3ffffe0000,0x3fffff0000,4096):expected[va]=dict(prot=3,kind='stack')
+    expected[0x3fff000000]=dict(prot=1,kind='boot')
+    offset=discovery['initrd']['base']%4096;count=(offset+len(data)+4095)//4096
+    logical=bytes(offset)+data+bytes(-(offset+len(data))%4096)
+    edges=discovery.get('bootedges',[]);edge=0
+    for i in range(count):
+        pa=(discovery['initrd']['base']&~4095)+i*4096
+        if i==0 and offset:pa=edges[0]['base'];edge=1
+        if i==count-1 and (offset+len(data))%4096:
+            pa=edges[0 if offset and count==1 else edge]['base']
+        expected[0x3ffe000000+i*4096]=dict(prot=1,kind='package',pa=pa,data=logical[i*4096:(i+1)*4096])
+    if set(leaves)!=set(expected):raise SmokeError('unexpected init mapping or missing image/Boot/stack/package page')
+    private=set();kernel_tables={int(p.stem,16) for p in (run_dir/'tables').glob('*.bin')}
+    stack_pages={x['pa'] for x in retained['stacks']}
+    for va,item in expected.items():
+        pa,pte=leaves[va];prot=item['prot']
+        if args.arch=='riscv':wanted=(pa>>2)|0xd1|2|(4 if prot&2 else 0)|(8 if prot&4 else 0)
+        else:wanted=pa|3|1024|64|(1<<53)|(0 if prot&2 else 128)|(0 if prot&4 else 1<<54)|0x304
+        if pte!=wanted:raise SmokeError('incorrect init PA/permission/attribute at %x'%va)
+        if item['kind']=='package':
+            if pa!=item['pa'] or physical(pa)!=item['data']:raise SmokeError('init package mapping does not preserve isolated source')
+        else:
+            if not usable(pa) or pa in private or pa in tables or pa in kernel_tables or pa in stack_pages:
+                raise SmokeError('init private pages alias protected/backing/table memory')
+            private.add(pa)
+            if item['kind']=='image' and not prot&2 and physical(pa)!=item['data']:
+                raise SmokeError('init immutable image bytes differ from native ELF')
+    if retained['charged']!=len(tables)+len(private)+5:
+        raise SmokeError('PID1 Acct charge differs from private pages/tables/kernel stack')
+    metadata=record['pages']['metadata'];path=run_dir/'init-page-metadata.bin'
+    qmp.command('pmemsave',{'val':metadata['base'],'size':metadata['size'],'filename':str(path)})
+    records=path.read_bytes()
+    def page_record(pa):
+        index=0
+        for region in discovery['ranges']['RAM']:
+            if region['base']<=pa<region['base']+region['size']:
+                return struct.unpack_from('<6IQ',records,32*(index+(pa-region['base'])//4096))
+            index+=region['size']//4096
+        raise SmokeError('accounted init page outside RAM metadata')
+    owned=set(tables)|private|stack_pages|{retained['stack_table']}
+    if len(owned)!=retained['charged'] or not retained.get('acct'):
+        raise SmokeError('init physical ownership classes overlap')
+    for pa in owned:
+        meta=page_record(pa)
+        if meta[0]!=2 or meta[1] or meta[6]!=retained['acct']:
+            raise SmokeError('init private/table/stack page lacks its exact Acct owner')
+    charged=sum(1 for i in range(metadata['records']) if struct.unpack_from('<Q',records,i*32+24)[0]==retained['acct'])
+    if charged!=len(owned):raise SmokeError('unmapped or unaccounted PID1-owned physical pages')
+    retained_pages=set(range(discovery['initrd']['base']&~4095,
+                             (discovery['initrd']['base']+len(data)+4095)&~4095,4096))|{x['base'] for x in edges}
+    if any(page_record(pa)[0] or page_record(pa)[6] for pa in retained_pages):
+        raise SmokeError('retained package was allocated or charged as private memory')
+    if args.init_exit is None:
+        if 'initstate' not in user_symbols:raise SmokeError('missing production init state')
+        state=struct.unpack('<8Q',read(user_symbols['initstate'],64))
+        if state!=(1,1,1,len(info['items']),len(data),info['checksum'],0,0):raise SmokeError('init did not validate catalog and block in orphan event loop')
+    else:
+        exits=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITEXIT ')]
+        if exits!=[dict(reason=1,code=args.init_exit)]:raise SmokeError('wrong package PID1 exit reason/code')
+    stores=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITPACKAGE ')]
+    if stores!=[dict(pages=count,copies=len(edges),retained=count+len(edges),refs=(count+15)//16)]:
+        raise SmokeError('live package backing lifetime/charge mismatch')
+    return dict(pid=1,entry=entry,elf_sha256=digest(artifact),private_pages=len(private),
+                user_tables=len(tables),package_pages=count,package_refs=stores[0]['refs'],
+                complete_pte_audit=True,immutable_bytes_checked=True,boot_checked=True,
+                physical_owner_audit=True,catalog_checked=args.init_exit is None,exit_code=args.init_exit)
+
+
 PACKAGE_ERRORS = {'header': -1, 'checksum': -2, 'directory': -3, 'name': -4,
                   'elf': -5, 'load': -6, 'overlap': -7, 'missing': None}
 
@@ -636,6 +768,10 @@ def accepted_package(args, qmp, run_dir, names, discovery):
 
 
 def exercise(args, run_dir, record):
+    args.init_exit=getattr(args,'init_exit',None)
+    args.init_elf=getattr(args,'init_elf',None)
+    normal_live=args.case=='normal' and args.init_exit is None
+    normal_fatal=args.case=='normal' and args.init_exit is not None
     manifest_path = ROOT / "build" / args.arch / args.case / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     artifact = ROOT / manifest["artifact"]
@@ -708,8 +844,8 @@ def exercise(args, run_dir, record):
                     raise SmokeError("QEMU did not start paused")
                 qmp.command("cont")
                 record["guest_executed"] = True
-                expected = "PANIC init exited\n" if args.case == "initfatal" else "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
-                    "READY early-boot\n" if args.case == "normal" else
+                expected = "PANIC init exited\n" if args.case == "initfatal" or normal_fatal else "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
+                    "INIT pid=0000000000000001 image=0000000000000001 state=0000000000000006\n" if args.case == "normal" else
                     "READY bootpkg-checked\n" if args.case == "bootpkg" else
                     "READY pages-restored\n" if args.case == "pages" else
                     "READY budget-restored\n" if args.case == "budget" else
@@ -767,6 +903,18 @@ def exercise(args, run_dir, record):
                 qmp.command("stop")
                 record["stopped_status"] = qmp.command("query-status")
                 registers = qmp.command("human-monitor-command", {"command-line": "info registers"})
+                if normal_live and not args.bootpkg_error:
+                    idle_vm=[fields(x) for x in serial.read_text().splitlines() if x.startswith('VM ')]
+                    if len(idle_vm)!=1:raise SmokeError('missing production VM transition')
+                    idle_delta=idle_vm[0]['delta']
+                    for retry in range(20):
+                        idle_lo=(names['idlewait']+idle_delta)&((1<<64)-1)
+                        idle_hi=(names['idleresume']+idle_delta)&((1<<64)-1)
+                        observed_pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
+                        if observed_pc and idle_lo<=int(observed_pc[1],16)<=idle_hi:break
+                        qmp.command('cont');time.sleep(.003);qmp.command('stop')
+                        registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
+                    record['stopped_status']=qmp.command('query-status')
                 (run_dir / "registers.log").write_text(registers)
                 if args.bootpkg_error:
                     if record['stopped_status']['running']:
@@ -783,21 +931,23 @@ def exercise(args, run_dir, record):
                     raise SmokeError("missing VM transition")
                 transition = {key: int(value, 16) for key, value in re.findall(r"(\w+)=([0-9a-f]{16})(?: |$)", vm_lines[0])}
                 delta = transition["delta"]
-                halt = (names["hal_halt"] + delta) & ((1 << 64) - 1)
+                halt = (names["idlewait" if normal_live else "hal_halt"] + delta) & ((1 << 64) - 1)
+                stop_end=(names['idleresume']+delta)&((1<<64)-1) if normal_live else halt+15
                 match = re.search(r"\bpc\s+([0-9a-f]+)", registers, re.I) if args.arch == "riscv" else re.search(r"\bPC=([0-9a-f]+)", registers)
                 if (record["stopped_status"]["running"] or not match
-                        or not halt <= int(match[1], 16) < halt + 16):
-                    raise SmokeError("guest did not stop in expected halt loop")
+                        or not halt <= int(match[1], 16) <= stop_end):
+                    raise SmokeError("guest did not stop in expected halt/idle loop")
                 if args.arch == "riscv":
                     if not re.search(r"\bpriv\s+S\b", registers):
                         raise SmokeError("QMP did not observe supervisor mode")
-                    for name, forbidden in (("sstatus", 2), ("sie", (1 << 64) - 1)):
+                    for name, mask, wanted in (("sstatus",2,2 if normal_live else 0),
+                                               ("sie",(1<<64)-1,0x220 if normal_live else 0)):
                         value = re.search(r"\b" + name + r"\s+([0-9a-f]+)", registers)
-                        if not value or int(value[1], 16) & forbidden:
+                        if not value or int(value[1],16)&mask!=wanted:
                             raise SmokeError("QMP observed unexpected " + name)
                     value = re.search(r"\bsatp\s+([0-9a-f]+)", registers)
                     expected_root = transition["root"]
-                    if args.case == "initfatal":
+                    if args.case == "initfatal" or normal_fatal:
                         retained = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITRETAIN ")]
                         if len(retained) != 1:
                             raise SmokeError("missing retained init root")
@@ -806,10 +956,10 @@ def exercise(args, run_dir, record):
                         raise SmokeError("QMP observed incorrect satp")
                 else:
                     value = re.search(r"PSTATE=([0-9a-f]+)", registers)
-                    expected_state = 0x3c4 if args.case == "fault" or args.case in VM_FAULTS else 0x3c5
+                    expected_state = 0x345 if normal_live else 0x3c4 if args.case == "fault" or args.case in VM_FAULTS else 0x3c5
                     if not value or int(value[1], 16) & 0x3cf != expected_state:
                         raise SmokeError("QMP observed unexpected EL/DAIF/stack selection")
-                record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram)
+                record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram,args.init_exit)
                 record["discovery"] = validate_discovery(serial.read_text(errors="replace"), args.arch,
                                                           args.ram, names, record["observed"])
                 record["discovery"]["table_pages"] = transition["tables"]
@@ -962,7 +1112,7 @@ def exercise(args, run_dir, record):
                             {"children":6,"retained":2,"automatic":4,"old_result":1,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("signal mask/action/child policy mismatch")
                     record["signal_configuration"]=checks[0]
-                if args.case in ("init", "initfatal"):
+                if args.case in ("init", "initfatal", "normal"):
                     retained = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITRETAIN ")]
                     stacks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITSTACK ")]
                     if (len(retained) != 1 or retained[0].get("charged",0) <= 20 or len(stacks) != 4 or
@@ -1181,6 +1331,8 @@ def exercise(args, run_dir, record):
                                                  transition, record["observed"], record["pages"], record.get("retained_init"))
                 if args.initrd:
                     record['package'] = accepted_package(args, qmp, run_dir, names, record['discovery'])
+                if args.case=='normal':
+                    record['package_init']=audit_package_init(qmp,run_dir,args,record,transition)
                 qmp.command("pmemsave", {"val": record["observed"]["boot"]["dtb"],
                                          "size": record["observed"]["layout"]["dtb_size"],
                                          "filename": str(run_dir / "runtime.dtb")})
@@ -1202,6 +1354,8 @@ def main():
     parser.add_argument("--arch", choices=PROFILES, required=True)
     parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow", "bootpkg", *VM_FAULTS), default="normal")
     parser.add_argument('--initrd', type=Path)
+    parser.add_argument('--init-elf',type=Path,help='ELF corresponding to the package init for page/symbol audit')
+    parser.add_argument('--init-exit',type=int,help='expect fatal native PID1 exit with this code')
     parser.add_argument('--bootpkg-error', choices=PACKAGE_ERRORS)
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
@@ -1212,8 +1366,10 @@ def main():
     parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
     if args.initrd:args.initrd = args.initrd.resolve()
-    if args.bootpkg_error and (args.case != 'bootpkg' or bool(args.initrd) == (args.bootpkg_error == 'missing')):
-        parser.error('package rejection requires CASE=bootpkg and an initrd except for missing')
+    if args.bootpkg_error and (args.case not in ('bootpkg','normal') or bool(args.initrd) == (args.bootpkg_error == 'missing')):
+        parser.error('package rejection requires bootpkg/normal and an initrd except for missing')
+    if args.init_exit is not None and (args.case!='normal' or not 0<=args.init_exit<=255 or args.bootpkg_error):
+        parser.error('native init exit requires normal and a code 0..255')
     if args.case == "virtiodev":
         args.virtio = True
     if args.timeout is None:

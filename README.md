@@ -1,6 +1,6 @@
 # Kernel
 
-面向 ARM64 与 RISC-V 的微内核操作系统，以最小可用和高性能为目标。目前已实现启动、DTB发现、物理页/预算、内核映射和DATA/CODE映射、代码封存与同步用户态入口，已用独立测试载荷进入U/EL0；已接可信Local/Life/Proc构造、FIFO协作入口和分步回收；已有自身内存、时间查询与消息IPC原生调用，以及协作yield和IPC阻塞/唤醒，已接用户态timer时间片和可信准备期限，已接原生create及构造加载/发布、父wait退出结果、可靠固定镜像观察及CHILD/LIFE提示，已有独立libsys及csu/main静态C用户ELF验证；完整信号/阻塞调度、完整libc、生产init/文件装载及系统服务仍待接。
+面向 ARM64 与 RV64 的微内核操作系统，以最小可用和高性能为目标。已接启动/DTB、物理页与预算、用户映射/封存、进程构造/调度、原生消息IPC及部分libc。普通镜像现从DTB启动包进入真正的用户态`sbin/init`，校验包目录并进入孤儿收取/CHILD事件循环；服务装载/READY、SYSTEM与设备清单、完整信号/fork/exec、文件/终端及net仍待完成，不是已可用的sh系统。
 
 ![架构图](docs/architecture.jpg)
 
@@ -15,6 +15,7 @@ make unit
 make fmt-check
 make sdk ARCH=riscv
 make sdk ARCH=arm64
+make bootpkg ARCH=arm64
 ```
 
 `make sdk`另生成用户态`libvirtio.a`，现含描述符管理、split ring访问层及现代MMIO探测/协商/复位；尚无生产DMA后端或实际设备队列I/O。
@@ -33,11 +34,11 @@ python3 tools/bootpkg.py pack --arch arm64 --init sbin/init \
 python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 ```
 
-`--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序。内核现从chosen读取并保留/校验initrd，尚未从包启动生产PID1。容器格式、预算与T1后续边界见07末尾。
+`--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失程序。`make sdk`另构建`build/<架构>/sbin/init.elf`，`make bootpkg`生成默认`build/<架构>/boot.pkg`，当前仅含实际实现的init，不冒充基础服务/救援清单。内核从chosen范围核验容器并只按指定init描述装载PID1。格式、预算与T1边界见07末尾。
 
-进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。保留后端、可信分片/快照和完整视图构造已接；非零包字段必须匹配全部MEM_BOOT分片和实际只读PTE，普通只读副本不能冒充。生产PID1尚未从包启动。
+进程启动Boot统一为格式2（144字节头），追加精确只读包VA/长度；旧格式不兼容，需重建SDK/包。ELF和堆避开16MiB包窗口；Mem仍最多64KiB。PID1获得受跟踪的R/NX分片视图，首尾包外字节隔离为0，包原页/副本只计启动保留一次，各进程页表单独计费。
 
-`make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行十次真实initrd启动（含整页无副本包）；验证容器、保留后端及可信分片/快照/回收，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容、隔离副本的包外字节为0及原页/副本R/NX属性。
+`CASE=bootpkg`使用十个SDK测试包验证格式、分片/快照及拒启，不执行包内程序。`normal`必须有包；`make smoke ARCH=...`自动构建默认生产包并启动，也可传`INITRD=/absolute/path/boot.pkg`。直接运行smoke工具时可用`--init-elf`指定该包中init的ELF供独立审计。缺包/坏包在页分配前拒启；完整回归另覆盖非首目录项、整页包和包内PID1真实exit致命。
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
@@ -97,10 +98,10 @@ make test-all OPENSBI="$OPENSBI"
 make test-qemu OPENSBI="$OPENSBI"
 ```
 
-`CASE=normal|registers|fault|pages` 使用独立对象/ELF；普通镜像初始化物理页和内核地址空间后停止，不自动运行测试。
+`CASE=normal|registers|fault|pages`使用独立对象/ELF。普通镜像不含测试源码，从外部包运行实际init；内核在观察到其阻塞后输出`INIT pid=...`并继续调度/IRQ空闲循环，不打印服务READY或停在测试halt。
 主机测试位于 `tests/unit/`，guest测试的C/汇编载荷、入口和私有声明位于 `tests/kernel/`；构建按CASE选择链接，normal不包含测试源码。
 寄存器场景检查两次陷阱之间的整数寄存器保存/恢复；故障场景核对非法指令的异常原因与 PC。
-主机使用本地 QMP socket，核对特权/中断状态与实际 halt 地址，随后退出并回收自身 QEMU；不能只凭输出标记判定成功。
+主机核对特权/中断状态与实际halt/IRQ-idle地址，再退出并回收自身QEMU。normal另逐页核对PID1 ELF代码/只读数据、全部映射/权限、栈/guard、Boot/资源、隔离包视图和实际页元数据Acct owner，并读取用户程序状态确认已校验目录并阻塞；不能只凭输出标记成功。
 受限环境可用`QMP_STDIO=1 make ...`，或直接给smoke加`--qmp-stdio`，使用QMP标准输入输出管道而不创建socket监听；审计和超时/退出检查相同，result记录实际传输方式。默认仍为本地Unix socket。
 默认超时10秒；`CASE=timer|irq`使用25秒，验证真实10秒固定准备期限。失败保留串口、QEMU 输出、命令、符号及结果。需要异常 trace 时加 `TRACE=1`。
 `RAM=128|256|512` 改变实际QEMU内存，`VIRTIO=1` 添加virtio-rng设备；normal只发现传输窗口；virtiodev另固定附加RNG并验证用户态协商/复位，尚不进行队列或业务I/O。
@@ -171,13 +172,13 @@ QEMU 记录在 `build/<架构>/smoke/<运行编号>/`，包含构建快照、实
 
 `creds`另验证原生observe/obsread/obsnext/obsack/obsdrop：SOURCE/CHILD的真实REQUEST关联、MONITOR显式CONTROL QUERY、合并LIFE、DRAINING与证明释放、旧cookie不跟随槽复用及观察者死亡回收；含OBSERVE原生grant的准备期配额安装。host覆盖每服务128/系统1024预付、表满终态枚举、撤权后既有记录和cookie代次耗尽。测试permit由可信fixture安装；生产清单、真实exec/FUTURE和FS业务清理仍待接。
 
-`make sdk ARCH=...`输出build/<架构>/sdk/中的公共头、私有运行时桩头、libsys.a、user.ld及独立自定义入口的libsysuser.elf；不链接libc/fs/net，并审计全部库对象的未解析符号。SDK单元合入compile_commands.json。`CASE=libsys`按预校验装载描述将该实际ELF映射到两个可信fixture构造的用户进程，验证Boot、BSS/数据、内存和IPC/退出及完整回收。csu/main及可写argv/environ接续见runtime；普通用户ELF加载器接续见elf；生产init清单仍待接，normal仍初始化后停止。
+`make sdk ARCH=...`输出sdk/中的公共头、私有桩头、库/启动对象及测试ELF，另输出sbin/init.elf和独立链接清单。libsys自身不反向依赖libc/fs/net，审计未解析符号；编译单元合入compile_commands.json。`CASE=libsys`仍用独立测试ELF验证内存/IPC与回收；normal只从包执行实际init，不链接这些fixture。完整服务清单仍待接。
 
 SDK现另输出crt0.o、libc.a和runtimeuser.elf，常规程序按crt0.o/app.o/libc.a/libsys.a链接；自定义入口仍可仅用libsys。`CASE=runtime`两架构各验证10份真实main镜像，包括可写参数/环境、构造与清理顺序、32个atexit用户槽、exit/_exit、畸形或未支持Boot拒绝及完整回收。基础libc仅声明已实现接口，已接基础malloc/calloc/realloc/free，stdio流/文件适配及线程TLS仍未接；fd/Fix启动内容暂以127退出，normal尚未启动生产init。
 
 `CASE=elf`由真实用户C程序通过libsys解析嵌入的完整静态ELF，原生create并为孩子逐页装载、写入真实SELF Boot、configure/start，最终wait孩子main退出42；孩子仅3启动资源槽，父表只留1临时槽也可装载。另验证预算/源读取/VA冲突/坏Boot回滚及完整回收。私有elfcheck/load/clean在SDK中供运行时和init复用，尚非完整posix_spawn/exec，也未接FS稳定文件来源或生产init清单。
 
-`CASE=init`使用可信一次性procboot启动真实用户态PID1，PID1通过libsys创建父和两份孙进程，验证自己不能越权收取未孤儿的孙进程，以及旧父退出后未收取终态/活孩子的接管与三次原生wait。结果保留活init，费用回到其启动基线，QMP逐页审计保留内核栈和guard。`CASE=initfatal`验证真实用户PID1调用exit严格致命停机。载荷仍是独立测试ELF，生产sbin/init/启动包/清单授权未接，normal仍初始化后停止。
+`CASE=init/initfatal`仍是独立测试ELF，覆盖三代孤儿接管、权限与真实PID1致命退出。normal则从真实外部包装载sbin/init，包内exit另由tests/packageboot.py验证；服务清单/设备授权及READY监督尚未完成。
 
 libsys场景另验证原生__sys_copy：最多64KiB、物理别名重叠拒绝、只读/封存目标和非法范围FAULT、设备属性拒绝及unmap后失效；无需临时页。当前单核复制全程保持IRQ屏蔽/VM_BUSY，未测最长屏蔽时间，尚未接COW/信号/文件I/O包装，不宣称其性能或完整POSIX缓冲处理。
 
