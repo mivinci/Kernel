@@ -23,14 +23,15 @@
 
 ## 最新本地验证
 
-- 最新完整make test-all通过658项host、fmt-check及158次两架构QEMU，终稿补强禁用CPUINTC父关系后完整make unit通过659项，全部QEMU源码/共享头哈希与终稿一致。含512 MiB/2 GiB/8 GiB两架构pages与normal共12次矩阵、真实PID1/IRQ及早期失败反例；normal和生产init链接无fixture。板描述另核对完整源树SHA256及RAM/UART/GIC/PLIC拓扑，NEO3原始拒绝/显式适配成功分别保留。证据`build/host/stage97-board-discovery/evidence.json`、test-all.log、unit-final.log；无CI/真机/性能验收。
+- 最新完整make test-all通过662项host、fmt-check及158次两架构QEMU，全部源码/共享头哈希与终稿一致。含512 MiB/2 GiB/8 GiB两架构pages与normal共12次矩阵、真实PID1/IRQ及早期失败反例；生产链接无fixture。板描述核对完整源树SHA256及RAM/UART/GIC/PLIC、存储/网卡精确窗口与全部IRQ，NEO3原始拒绝/显式适配成功分别保留。证据`build/host/stage98-storage-network-discovery/evidence.json`与test-all.log；首次host测试库存隔离失败日志保留，修正后全量通过。无CI/真机/性能验收。
 - native审计逐页核对完整用户/内核映射、ELF代码/RO字节、栈/guard、Boot/SELF资源、隔离包视图和精确Acct owner；用户initstate显示正确目录/字节数/checksum并阻塞，私有页/页表/内核栈收费与实际owner集合一致，包仍保留且不重复计费。早期私有store符号被优化拆分及RV idle sie假设已直接观测后修正，失败记录保留。完整fork仍待T4前补源别名/长循环/IRQ检查点与STOP/CONT。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
 
-- 001早期UART已移除固定基址/ARM固定波特率，完整回归通过，真实板待验；004的完整8 GiB元数据/直接映射与设备栈窗口迁移已通过本地全量，布局统一include/layout.inc，不裁剪RAM。下一优先005的真实板DTB解析，再处理007缓存/DMA前置与006次核停放。
+- 001早期UART已移除固定基址/ARM固定波特率，004完整8 GiB元数据/直接映射与设备栈窗口迁移已通过本地全量；005解析和存储/网卡发现已本地验收，真实板仍待验。下一处理007缓存/DMA前置与006启动CPU/控制器选择及次核停放，再接生产SYSTEM设备库存。
 - 005解析切片已通过本地全量：1024节点/8192属性/32深度、4 reg/16 IRQ，设备仍64项；完整固定来源树在tests/fixtures/dtb。VF2原始树、NEO3显式测试适配树read/console通过，NEO3原始树拒绝，不放宽零长度检查。原始/适配/固件dump区别见01末尾。005仍需存储/网络设备发现及板端验证；006仍需启动hart/CPU选择与停放，不能把多hart拓扑解析当成SMP或上板已实现。
+- 005后续已补MSHC/DWMAC家族/具体别名与多IRQ库存，完整板树实际SD/MMC/GMAC窗口及IRQ已核对且完整回归通过；不写设备寄存器或授DMA/生产Handle。家族不代表寄存器版本/PHY/时钟/复位已实现，实际blk/net驱动仍待完成。设备发现本地验收与板端运行严格分开，详见01/005末尾。
 - UART启动记录候选增加data[6]=reg-shift/data[7]=reg-io-width，保留六字段前缀与结构大小，已异步询问用户；确认前不改生产ABI，详见07末尾。内部005解析可继续，不因这个候选暂停整个目标。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。

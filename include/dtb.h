@@ -19,8 +19,21 @@ enum Dtkind
   DT_GIC,
   DT_CLINT,
   DT_CPUINTC,
-  DT_TIMER
+  DT_TIMER,
+  DT_MSHC,
+  DT_DWMAC
 };
+/* Protocol drivers remain in userspace; classification alone grants nothing. */
+INLINE int
+dtperipheral(u32 kind)
+{
+  return (kind >= DT_UART16550 && kind <= DT_VIRTIO) || kind == DT_MSHC || kind == DT_DWMAC;
+}
+INLINE int
+dtprotected(u32 kind)
+{
+  return kind >= DT_PLIC && kind <= DT_TIMER;
+}
 enum Dterror
 {
   DT_BAD = -1,

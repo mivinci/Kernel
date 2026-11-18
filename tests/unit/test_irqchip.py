@@ -89,6 +89,22 @@ class IrqChipTests(unittest.TestCase):
             self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),None,0),0)
             self.assertEqual(out.count,0);self.assertFalse(out.source)
 
+    def test_storage_and_multi_irq_mac_use_exact_parent_and_deduplicate_all_sources(self):
+        for arch,lib in self.libs:
+            info=self.fixture(arch);info.dev[1].kind=9;info.dev[2].kind=10;info.dev[2].nirq=3
+            original=info.dev[2].irq[0]
+            info.dev[2].irq[1]=Irq(original.parent,21 if arch=='riscv' else 49,original.flags,0)
+            info.dev[2].irq[2]=Irq(original.parent,info.dev[1].irq[0].number,original.flags,0)
+            out=Controller();storage=(Source*64)()
+            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),0)
+            self.assertEqual(out.count,3)
+            self.assertEqual([storage[i].number for i in range(3)],
+                             [info.dev[1].irq[0].number,info.dev[2].irq[0].number,info.dev[2].irq[1].number])
+            before=bytes(out),bytes(storage)
+            info.dev[2].irq[2].parent=99
+            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),-4)
+            self.assertEqual((bytes(out),bytes(storage)),before)
+
     def test_minimal_device_windows_use_the_declared_supervisor_context(self):
         for arch,lib in self.libs:
             info=self.fixture(arch);storage=(Source*64)();out=Controller();pages=(C.c_uint64*3)()

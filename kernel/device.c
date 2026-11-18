@@ -52,7 +52,7 @@ devinit(const Dtinfo *info)
       end = d->reg[j].base + d->reg[j].size;
       if (!((d->mappable | d->groupable) & (1U << j)))
         continue;
-      if (d->kind < DT_UART16550 || d->kind > DT_VIRTIO || d->protected)
+      if (!dtperipheral(d->kind) || d->protected)
         return DEV_DENIED;
       start = ALIGN_DOWN(d->reg[j].base, PAGE_SIZE);
       bytes = ALIGN_UP(end, PAGE_SIZE) - start;
@@ -68,8 +68,7 @@ devinit(const Dtinfo *info)
           if ((i != k || j != l) && overlaps(start, bytes, &info->dev[k].reg[l])) {
             const Dtdev *other = &info->dev[k];
             if ((d->mappable & (1U << j)) || bytes != PAGE_SIZE || other->protected ||
-                other->kind < DT_UART16550 || other->kind > DT_VIRTIO ||
-                !(other->groupable & (1U << l)) ||
+                !dtperipheral(other->kind) || !(other->groupable & (1U << l)) ||
                 ALIGN_DOWN(other->reg[l].base, PAGE_SIZE) != start ||
                 other->reg[l].size > start + PAGE_SIZE - other->reg[l].base)
               return DEV_DENIED;

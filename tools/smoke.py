@@ -387,7 +387,7 @@ def validate_discovery(text, arch, ram_mb, names, boot):
     all_mmio = []
     for i, d in enumerate(devices):
         if (d.get("index") != i or d.get("regs") != len(d["mmio"]) or d.get("irqs") != len(d["irq"])
-                or d.get("protected") != int(d.get("kind", 0) >= 4)
+                or d.get("protected") != int(d.get("kind", 0) in (4,5,6,7,8))
                 or d.get("mappable",0) & ~((1<<d["regs"])-1)
                 or d.get("groupable",0) & ~((1<<d["regs"])-1)
                 or (d["protected"] and (d.get("mappable",0) or d.get("groupable",0)))):

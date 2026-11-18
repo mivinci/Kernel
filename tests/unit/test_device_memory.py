@@ -208,6 +208,24 @@ class DeviceMemoryTests(unittest.TestCase):
             entry=space.Entry();self.lib.spacelookup(sid,0x10000,C.byref(entry));self.assertEqual(entry.attr,1)
         for lib in self.libs:self.exercise(lib,body)
 
+class DevicePeripheralInventoryTests(unittest.TestCase):
+    setUpClass=classmethod(space.AddressSpaceTests.setUpClass.__func__)
+    tearDownClass=classmethod(space.AddressSpaceTests.tearDownClass.__func__)
+    pstat=space.AddressSpaceTests.pstat
+    def test_storage_and_mac_windows_are_devices_without_kernel_controller_privilege(self):
+        for lib in self.libs:
+            def body():
+                signatures(lib);info=inventory();info.dev[0].kind=9;info.dev[1].kind=10
+                self.assertEqual(lib.devinit(C.byref(info)),0)
+                for device in (0,1):
+                    index=C.c_uint32();record=Device()
+                    self.assertEqual(lib.devwindow(device,0,C.byref(index)),0)
+                    self.assertEqual(index.value,device*DT_REGS)
+                    self.assertEqual(lib.devstat(index.value,C.byref(record)),0)
+                    self.assertEqual((record.kind,record.allowed,record.refs,record.mappings),(9+device,1,0,0))
+                self.assertEqual(lib.devcheck(),0)
+            space.AddressSpaceTests.exercise(self,lib,body)
+
 class DeviceInventoryTests(unittest.TestCase):
     setUpClass=classmethod(space.AddressSpaceTests.setUpClass.__func__)
     tearDownClass=classmethod(space.AddressSpaceTests.tearDownClass.__func__)

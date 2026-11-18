@@ -407,6 +407,11 @@ class DtbTests(unittest.TestCase):
         self.assertIn(plic.irq[2].parent,active)
         uart=next(d for d in info.dev[:info.ndev] if d.kind==1)
         self.assertEqual((uart.reg[0].base,uart.irq[0].number,uart.mappable),(0x10000000,32,1))
+        peripherals=[d for d in info.dev[:info.ndev] if d.kind in (9,10)]
+        self.assertEqual([(d.kind,d.reg[0].base,[q.number for q in d.irq[:d.nirq]]) for d in peripherals],
+                         [(9,0x16010000,[74]),(9,0x16020000,[75]),
+                          (10,0x16030000,[7,6,5]),(10,0x16040000,[78,77,76])])
+        self.assertTrue(all(d.mappable==1 and not d.protected for d in peripherals))
         memory=C.create_string_buffer(data);out=Uart()
         self.assertEqual(self.lib.dtconsole(memory,len(data),C.byref(Info()),C.byref(out)),0)
         self.assertEqual((out.reg.base,out.kind,out.shift,out.width),(0x10000000,1,2,4))
@@ -421,6 +426,10 @@ class DtbTests(unittest.TestCase):
                          [(0xff811000,0x1000),(0xff812000,0x2000),(0xff814000,0x2000),(0xff816000,0x2000)])
         timer=next(d for d in info.dev[:info.ndev] if d.kind==8)
         self.assertEqual([q.flags&15 for q in timer.irq[:timer.nirq]],[8]*4)
+        peripherals=[d for d in info.dev[:info.ndev] if d.kind in (9,10)]
+        self.assertEqual([(d.kind,d.reg[0].base,d.irq[0].number) for d in peripherals],
+                         [(9,0xff500000,44),(10,0xff540000,56)])
+        self.assertTrue(all(d.mappable==1 and not d.protected for d in peripherals))
         memory=C.create_string_buffer(data);out=Uart()
         self.assertEqual(self.lib.dtconsole(memory,len(data),C.byref(Info()),C.byref(out)),0)
         self.assertEqual((out.reg.base,out.reg.size,out.kind,out.shift,out.width),(0xff130000,0x100,1,2,4))
@@ -441,6 +450,30 @@ class DtbTests(unittest.TestCase):
         device=next(d for d in info.dev[:info.ndev] if d.kind==1)
         self.assertEqual((device.mappable,device.groupable),(0,0))
         self.early(basic([uart(),bus,node('chosen',[('stdout-path',b'/uart\0')])]),-4)
+
+    def test_storage_and_mac_geometry_is_bounded_and_disabled_nodes_do_not_publish(self):
+        def peripheral(kind,regs=None,irqs=None,status=b'okay\0'):
+            return node('io',[('compatible',kind),('reg',regs or cells(0x20000000)+cells(0x1000)),
+                              ('interrupt-parent',words(2)),('interrupts',irqs or words(20)),('status',status)])
+        for compatible,kind in ((b'snps,dw-mshc\0',9),(b'rockchip,rk3328-dw-mshc\0',9),
+                                (b'starfive,jh7110-mmc\0',9),(b'rockchip,rk3328-gmac\0',10),
+                                (b'snps,dwmac-3.70a\0',10),(b'snps,dwmac-5.20\0',10)):
+            rc,info=self.parse(blob(basic([plic(),peripheral(compatible)])))
+            self.assertEqual(rc,0)
+            device=next(d for d in info.dev[:info.ndev] if d.kind==kind)
+            self.assertEqual((device.protected,device.mappable),(0,1))
+            rc,info=self.parse(blob(basic([plic(),peripheral(compatible,status=b'disabled\0')])))
+            self.assertEqual(rc,0);self.assertFalse(any(d.kind==kind for d in info.dev[:info.ndev]))
+        two=cells(0x20000000)+cells(4096)+cells(0x20002000)+cells(4096)
+        rc,info=self.parse(blob(basic([plic(),peripheral(b'snps,dwmac\0',two,words(20,21,22))])))
+        self.assertEqual(rc,0);device=next(d for d in info.dev[:info.ndev] if d.kind==10)
+        self.assertEqual((device.nreg,device.nirq,device.mappable),(2,3,3))
+        self.reject(blob(basic([plic(),peripheral(b'snps,dw-mshc\0',two)])))
+        self.reject(blob(basic([plic(),peripheral(b'snps,dw-mshc\0',irqs=words(20,21))])))
+        self.reject(blob(basic([plic(),peripheral(b'snps,dwmac\0',irqs=words(20,21,22,23,24))])))
+        # Similar names do not become hardware authority through prefix matching.
+        rc,info=self.parse(blob(basic([plic(),peripheral(b'snps,dwmac-not-a-device\0')])))
+        self.assertEqual(rc,0);self.assertFalse(any(d.kind==10 for d in info.dev[:info.ndev]))
 
     def test_unaligned_reservations_round_outward_and_fully_reserved_ram(self):
         rc, info = self.parse(blob(basic(ram_base=0x80000001, ram_size=0x8fff),

@@ -4,7 +4,7 @@ irqdescribe(const Dtinfo *info, Hirq *out, Hirqsource *storage, u32 capacity)
 {
   const Dtdev *controller = NULL, *device;
   Hirqsource   sources[HIRQ_SOURCES];
-  u32          i, j, count = 0;
+  u32          i, j, irq, count = 0;
   if (!info || !out || info->ndev > DT_DEVICES || capacity > HIRQ_SOURCES)
     return DT_BAD;
   for (i = 0; i < info->ndev; i++)
@@ -23,23 +23,28 @@ irqdescribe(const Dtinfo *info, Hirq *out, Hirqsource *storage, u32 capacity)
     return DT_CONFLICT;
   for (i = 0; i < info->ndev; i++) {
     device = &info->dev[i];
-    if (device->kind < DT_UART16550 || device->kind > DT_VIRTIO)
+    if (!dtperipheral(device->kind))
       continue;
-    if (device->nirq != 1 || device->irq[0].reserved ||
-        device->irq[0].parent != controller->phandle)
+    if (!device->nirq || device->nirq > DT_IRQS ||
+        (device->kind != DT_DWMAC && device->nirq != 1) ||
+        (device->kind == DT_DWMAC && device->nirq > 4))
       return DT_CONFLICT;
-    for (j = 0; j < count; j++)
-      if (sources[j].number == device->irq[0].number)
-        break;
-    if (j < count) {
-      if (sources[j].flags != device->irq[0].flags)
+    for (irq = 0; irq < device->nirq; irq++) {
+      if (device->irq[irq].reserved || device->irq[irq].parent != controller->phandle)
         return DT_CONFLICT;
-      continue;
+      for (j = 0; j < count; j++)
+        if (sources[j].number == device->irq[irq].number)
+          break;
+      if (j < count) {
+        if (sources[j].flags != device->irq[irq].flags)
+          return DT_CONFLICT;
+        continue;
+      }
+      if (count == capacity)
+        return DT_FULL;
+      sources[count].number = device->irq[irq].number;
+      sources[count++].flags = device->irq[irq].flags;
     }
-    if (count == capacity)
-      return DT_FULL;
-    sources[count].number = device->irq[0].number;
-    sources[count++].flags = device->irq[0].flags;
   }
   if (count && !storage)
     return DT_BAD;

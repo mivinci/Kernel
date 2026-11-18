@@ -350,6 +350,16 @@ metadata(void)
       n->kind = DT_CPUINTC;
     else if (has(i, "arm,armv8-timer"))
       n->kind = DT_TIMER;
+    else if (has(i, "snps,dw-mshc") || has(i, "rockchip,rk3328-dw-mshc") ||
+             has(i, "rockchip,rk3288-dw-mshc") || has(i, "starfive,jh7110-mmc"))
+      n->kind = DT_MSHC;
+    else if (has(i, "snps,dwmac") || has(i, "snps,dwmac-3.40a") || has(i, "snps,dwmac-3.50a") ||
+             has(i, "snps,dwmac-3.610") || has(i, "snps,dwmac-3.70a") ||
+             has(i, "snps,dwmac-3.710") || has(i, "snps,dwmac-4.00") ||
+             has(i, "snps,dwmac-4.10a") || has(i, "snps,dwmac-4.20a") ||
+             has(i, "snps,dwmac-5.10a") || has(i, "snps,dwmac-5.20") ||
+             has(i, "rockchip,rk3328-gmac") || has(i, "starfive,jh7110-dwmac"))
+      n->kind = DT_DWMAC;
   }
   return 0;
 }
@@ -525,7 +535,7 @@ interrupts(u32 node, Dtdev *dev)
     if (((dev->kind == DT_PLIC || dev->kind == DT_CLINT) &&
          parser.node[parent].kind != DT_CPUINTC) ||
         (dev->kind == DT_TIMER && parser.node[parent].kind != DT_GIC) ||
-        (dev->kind <= DT_VIRTIO && parser.node[parent].kind != DT_PLIC &&
+        (dtperipheral(dev->kind) && parser.node[parent].kind != DT_PLIC &&
          parser.node[parent].kind != DT_GIC))
       return DT_UNSUPPORTED;
     if (!count || count > 3 || !span(at, count * 4, p->size))
@@ -675,13 +685,14 @@ discover(Dtinfo *info)
     dev = &info->dev[info->ndev++];
     dev->kind = n->kind;
     dev->phandle = n->phandle;
-    dev->protected = n->kind >= DT_PLIC;
+    dev->protected = dtprotected(n->kind);
     if (n->kind != DT_CPUINTC && n->kind != DT_TIMER) {
       error = registers(i, dev->reg, &dev->nreg, DT_REGS);
       if (error)
         return error;
       if ((n->kind == DT_GIC && dev->nreg != 2 && dev->nreg != 4) ||
-          (n->kind != DT_GIC && dev->nreg != 1))
+          (n->kind != DT_GIC && n->kind != DT_DWMAC && dev->nreg != 1) ||
+          (n->kind == DT_DWMAC && dev->nreg > 2))
         return DT_UNSUPPORTED;
     }
     if (n->kind == DT_PLIC || n->kind == DT_GIC || n->kind == DT_CPUINTC) {
@@ -702,7 +713,8 @@ discover(Dtinfo *info)
       error = interrupts(i, dev);
       if (error)
         return error;
-      if ((n->kind <= DT_VIRTIO && dev->nirq != 1) ||
+      if ((n->kind <= DT_VIRTIO && dev->nirq != 1) || (n->kind == DT_MSHC && dev->nirq != 1) ||
+          (n->kind == DT_DWMAC && (!dev->nirq || dev->nirq > 4)) ||
           (n->kind == DT_CLINT && (!dev->nirq || dev->nirq % 2)) ||
           (n->kind == DT_TIMER && dev->nirq != 4))
         return DT_UNSUPPORTED;
@@ -882,7 +894,7 @@ mappable(Dtinfo *info)
                 ranges[k].size <= end - ranges[k].base)
               for (other = 0; other < info->ndev; other++)
                 if (parser.device[other] == node && !info->dev[other].protected &&
-                    info->dev[other].kind >= DT_UART16550 && info->dev[other].kind <= DT_VIRTIO)
+                    dtperipheral(info->dev[other].kind))
                   for (region = 0; region < info->dev[other].nreg; region++)
                     if (info->dev[other].reg[region].base == ranges[k].base &&
                         info->dev[other].reg[region].size == ranges[k].size)

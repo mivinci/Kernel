@@ -160,7 +160,7 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 | --- | --- | --- |
 | 物理页元数据 | 004已修复至2^21页/8 GiB，直接映射及布局同步扩容，本地完整矩阵通过 | 两架构大内存证据见02末尾；板端仍待验 |
 | DTB 节点/属性/深度 | 005解析切片已扩到1024 / 8192 / 32，`DT_REGS=4`、`DT_IRQS=16`，`DT_DEVICES=64` | 完整固定来源板树本地主机检查通过，板端仍待验，见文末 |
-| compatible 匹配 | 仅覆盖 QEMU 字符串 | 增加 `snps,dw-apb-uart`、`arm,gic-400`、`sifive,plic-1.0.0`、`snps,dw-mshc`、`snps,dwmac-*` |
+| compatible 匹配 | 已接UART/GIC/PLIC及MSHC/DWMAC具体版本/两板别名，完整源树本地核对通过 | 实际板端运行、时钟/PHY/驱动仍待验，不以家族匹配代替驱动支持 |
 | 启动通道 | QEMU 直载 | U-Boot 载荷：DTB 指针按各架构引导约定传入，启动包经 initrd 或固定装载地址交付，字段见 07 |
 
 ## 真机可移植性约束（2026-11-18）
@@ -453,3 +453,17 @@ NEO3厂商原树明确拒绝：缺RAM/stdout、空splash reg及USB PHY的零长�
 37项DTB测试与13项设备映射专项通过；首次完整host暴露旧设备fixture将DT_REGS=2的索引/组起点写死，现按DT_REGS/DT_DEVICES计算并专项复验，失败保留unit-initial.log。完整make test-all正在运行，未提交或替换既有653host/158QEMU基线。生产字段、硬件运行、SMP启动及额外GIC/PLIC上下文选择仍未实现，不能从解析成功推定可上板。
 
 最终验收：补强禁用CPUINTC须属于实际CPU节点，DTB专项38项通过。完整make test-all的658项host、格式与158次两架构QEMU通过；终稿完整make unit再通过659项，全部运行结果的源码/共享头哈希与终稿一致。完整12次512 MiB/2 GiB/8 GiB矩阵、生产PID1与IRQ/MMIO未回归，生产链接无fixture。Dtdev=352、Dtinfo=24272字节，启动发现缓冲仍静态；这不是栈深/性能证明。证据build/host/stage97-board-discovery/evidence.json、test-all.log、unit-final.log。NEO3原始树拒绝、显式适配树成功、VF2原始树成功分别记录；无CI/板端运行验收。005存储/网络发现、006启动CPU/控制器上下文选择和停放、007缓存/DMA仍待执行，生产UART记录候选仍待用户确认。
+
+### 存储与网卡描述发现（2026-11-18，005接续）
+
+当前未提交实现新增内部DT_MSHC=9、DT_DWMAC=10，识别明确的DesignWare MSHC及RK3328/JH7110别名、DWMAC公开具体版本与两板别名；使用完整compatible字符串匹配，不以任意dwmac前缀制造设备。它们是设备家族元数据，不是寄存器版本选择或驱动已实现的标志；现有BOOT_RESOURCE仍只冻结UART种类，不把内部枚举直接变成新的生产线协议。
+
+MSHC只接受一份非空reg与一条IRQ；DWMAC按已核对的绑定范围保留最多两份reg、最多四条IRQ，父关系/范围/容量/相交失败仍拒绝，不只截取第一个。dtprotected现明确仅PLIC/GIC/CLINT/CPUINTC/TIMER，外设不会因为新增编号大于4被误判为内核设备。devinit仍须检查真实RAM/保留/整页邻居才能登记MMIO窗口，未产生用户Handle、映射或DMA授权。irqdescribe将每条外设IRQ独立核验并按源号去重，flags冲突、错误父及容量不足保持输出不变；既有UART/virtio单IRQ限制保留。
+
+完整固定来源样本已观察到NEO3的MSHC@ff500000/IRQ44与GMAC@ff540000/IRQ56，VF2的MMC@16010000/IRQ74、MMC@16020000/IRQ75及GMAC@16030000/IRQ7,6,5、GMAC@16040000/IRQ78,77,76；全部精确窗口由原树reg取得，不硬编码为实现地址。disabled节点不产生记录，原始NEO3无效启动输入仍拒绝，完整参考树未替换为提取节点。
+
+39项DTB和7项IRQ描述专项已通过；另增设备库存准入检查，完整回归运行中，证据build/host/stage98-storage-network-discovery/。该切片不写存储/网卡寄存器，不读取卡/收发包，不接PHY/时钟/复位/pinmux，不提交DMA缓存同步或板端启动支持；实际blk/net驱动仍按09/12及全项目目标后续完成。既有控制器HAL暂不接受板端多hart上下文/四GIC窗口，006须显式选择启动CPU和正确控制器窗口。
+
+具体几何按固定Linux v6.12绑定复核：Documentation/devicetree/bindings/mmc/starfive,jh7110-mmc.yaml（blob 553a75195c2e7114034ada1e42938111e33c97fa）与net/snps,dwmac.yaml（blob 4e2ba1bf788c9866e7ffa4ff6774ec1b49eacc67）；家族枚举不解释具体版本的DMA描述符或MAC寄存器。新增14项设备内存专项通过；首次全量host因新旧库存测试复用一次性初始化实例而失败，现各用独立动态库库存，未放松devinit一次性规则。失败日志test-all-initial-host.log保留，完整回归已重新运行，尚未提交或宣称最终通过。
+
+本点最终完整make test-all通过662项host、格式和158次两架构QEMU，含全部12次512 MiB/2 GiB/8 GiB矩阵、生产PID1及真实UART IRQ/MMIO。全部成功结果核对当前源码/共享头哈希，生产normal/init链接无fixture；完整板树的两份/四份存储网卡记录逐项核对精确reg及全部IRQ，原始NEO3坏输入仍拒绝。证据build/host/stage98-storage-network-discovery/evidence.json与test-all.log，首次host测试库存隔离失败保留。该交付完成005的本地设备发现，不代表实际驱动、DMA、板端或CI/性能验收；006/007和全项目的blk/net等服务仍继续。
