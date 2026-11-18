@@ -11,6 +11,13 @@
 #define SERIAL_RX_READY   (UINT64_C(1) << 32)
 #define SERIAL_TX_ROOM    (UINT64_C(1) << 33)
 
+/* Serial-private Boot tags; flags/reserved remain zero, values are Handles. */
+#define SERIAL_INIT_CALL 0x100
+#define SERIAL_MMIO      0x101
+#define SERIAL_IRQ_BIND  0x102
+#define SERIAL_RX_RING   0x103
+#define SERIAL_TX_RING   0x104
+
 typedef struct Serialring Serialring;
 struct Serialring
 {

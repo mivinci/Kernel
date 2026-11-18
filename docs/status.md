@@ -37,7 +37,7 @@
 - T1.4初始SYSTEM QUERY/所选标准UART库存已完整本地验收：Boot352字节/四项含tag7，精确初始Image绑定、真实MMIO RW/GRANT与IRQ_SOURCE BIND，查询不重装授权；失效STALE。仅六字段标准布局，DW扩展待确认。接续从真实包装载serial、完成控制READY和监督；首服务未启动，Set/domain CONTROL及其他SYSTEM业务仍待接。
 - UART启动记录候选增加data[6]=reg-shift/data[7]=reg-io-width，保留六字段前缀与结构大小，已异步询问用户；确认前不改生产ABI，详见07末尾。内部005解析可继续，不因这个候选暂停整个目标。
 - 生产UART/早期诊断交接候选已询问：debughandoff 0x74、初始SYSTEM CONSOLE=0x20，普通输出进有界日志，panic停止调度后独占恢复固件配置并输出停机；待确认，不修改当前QUERY权限或诊断路径，详见07/14。
-- serial启动候选已询问：不改Boot，私有tag 0x100..0x104传INIT_CALL/MMIO/IRQ_BIND/RX_RING/TX_RING，argv传种类/页内偏移/窗口长度/服务编号；待确认，不提前添加生产标签或装载流程，详见07。
+- serial启动约定已于2026-11-18确认：不改Boot，私有tag 0x100..0x104传INIT_CALL/MMIO/IRQ_BIND/RX_RING/TX_RING，argv传种类/页内偏移/窗口长度/服务编号；共享标签已写入proto/serial.h，两架构SDK/格式及导出检查通过，实际用户ELF/归档哈希不变，未重跑QEMU。解析/装载尚未接，证据stage105，详见07。
 - init控制协议版本编码已于2026-11-18确认：word0高32位版本1、低32位opcode，其他三字不变；共享proto/init.h及SDK导出已接，两架构目标编译检查通过。实际serial/READY监督仍待接，详见07。
 - 串口环proto/serial.h与libsys私有serialinit/read/write已通过本地全量：16 KiB固定布局、32字节批次、acquire/release、背压与失败不提交；不自动notify/yield/reset。共享映射/IRQ循环、装载/READY和端点恢复仍待接，详见11末尾。
 - UART PIO后端已本地验收：保留固件波特率/字符格式，32次有界尝试、FIFO背压、错误统计及LSR读清暂存、PL011 BUSY稍后重试；ISA IO在libsys，驱动在sbin/serial，不依赖内核HAL。实际共享映射/IRQ服务循环、外部字节流、装载/READY、交接和端点恢复仍待接，详见09执行与验收。
