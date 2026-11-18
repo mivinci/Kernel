@@ -1,10 +1,58 @@
 from pathlib import Path
 import sys
+import subprocess
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from smoke import SmokeError, validate_output
+from smoke import Qmp
+
+
+class QmpPipeTests(unittest.TestCase):
+    def server(self,script):
+        process=subprocess.Popen([sys.executable,'-u','-c',script],stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        self.addCleanup(self.stop,process)
+        return process
+
+    def stop(self,process):
+        if process.poll() is None:process.kill()
+        process.wait(timeout=3)
+        for stream in (process.stdin,process.stdout,process.stderr):
+            if stream and not stream.closed:stream.close()
+
+    def test_fragmented_greeting_and_event_do_not_replace_matching_reply(self):
+        process=self.server('''import sys,json,time
+sys.stdout.write('{"QMP":');sys.stdout.flush();time.sleep(.01)
+sys.stdout.write('{} }\\n');sys.stdout.flush()
+request=json.loads(sys.stdin.readline())
+print(json.dumps({'event':'RESUME'}))
+print(json.dumps({'id':999,'return':'old'}))
+print(json.dumps({'id':request['id'],'return':{'running':False}}))
+''')
+        client=Qmp(None,time.monotonic()+3,process)
+        self.assertEqual(client.command('query-status'),{'running':False})
+        client.close()
+
+    def test_error_reply_and_eof_fail_explicitly(self):
+        process=self.server('''import sys,json
+print('{"QMP":{}}')
+request=json.loads(sys.stdin.readline())
+print(json.dumps({'id':request['id'],'error':{'class':'GenericError','desc':'denied'}}))
+''')
+        client=Qmp(None,time.monotonic()+3,process)
+        with self.assertRaisesRegex(SmokeError,'denied'):client.command('bad-command')
+        with self.assertRaisesRegex(SmokeError,'closed'):client.read()
+        client.close()
+
+    def test_pipe_has_a_deadline_without_socket_support(self):
+        process=self.server('import time\nprint(\'{"QMP":{}}\')\ntime.sleep(10)\n')
+        client=Qmp(None,time.monotonic()+3,process)
+        client.stream.deadline=time.monotonic()+.03
+        with self.assertRaisesRegex(SmokeError,'timed out'):client.command('query-status')
+        client.close()
 
 
 def fixture(arch, case):

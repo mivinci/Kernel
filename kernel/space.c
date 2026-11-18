@@ -1669,7 +1669,7 @@ spacesnapshotview(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out
         a.bytes != b.bytes || a.state != b.state)
       return SP_BAD;
     if (a.state == MEM_SHARED) {
-      if (a.kind != MEM_RAM || !samemem(original, child->mem))
+      if ((a.kind != MEM_RAM && a.kind != MEM_BOOT) || !samemem(original, child->mem))
         return SP_BAD;
     } else if ((a.state != MEM_DATA && a.state != MEM_SEALED) || b.kind == MEM_MMIO ||
                b.acct.index != target->acct.index || b.acct.generation != target->acct.generation ||

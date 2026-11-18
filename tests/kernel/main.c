@@ -6,6 +6,7 @@ testmain(Hvs *space, const Dtinfo *hardware)
   UNUSED(space);
   UNUSED(hardware);
 #if BOOT_CASE == 53
+  bootviewtest();
   putstr("READY bootpkg-checked\n");
 #elif BOOT_CASE == 52
   cowpagetest();

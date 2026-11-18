@@ -28,7 +28,7 @@ class AddressSpaceTests(unittest.TestCase):
             path = Path(cls.tmp.name) / (arch + '.so')
             command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
                        '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
-                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'group.c', 'image.c', 'irq.c', 'event.c', 'observe.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'cow.c', 'pgt.c', 'mem.c', 'device.c', arch + '/vm.c')],
+                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'group.c', 'image.c', 'irq.c', 'event.c', 'observe.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'cow.c', 'pgt.c', 'mem.c', 'device.c', 'bootstore.c', 'dtb.c', arch + '/vm.c')],
                        *[str(ROOT / 'kernel' / x.format(arch=arch)) for x in getattr(cls, 'extra_sources', ())],
                        str(shim), '-o', str(path)]
             command += list(getattr(cls, 'extra_flags', ()))
@@ -74,6 +74,8 @@ class AddressSpaceTests(unittest.TestCase):
         info = Info()
         info.nram = info.nusable = 1
         info.ram[0] = info.usable[0] = Range(0x80000000, C.sizeof(self.memory))
+        if hasattr(self, 'prepare_memory'):
+            self.prepare_memory(info)
         self.assertEqual(lib.pginit(C.byref(info), self.metadata, 1024, 0), 0)
         self.raw = []
         def allocate(context, out):

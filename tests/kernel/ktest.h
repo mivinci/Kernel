@@ -4,6 +4,7 @@
 #include <hal/vm.h>
 #include <dtb.h>
 void testmain(Hvs *space, const Dtinfo *hardware);
+void bootviewtest(void);
 void chiptest(const Dtinfo *hardware);
 void bindtest(const Dtinfo *hardware);
 void grouppagetest(const Dtinfo *hardware);

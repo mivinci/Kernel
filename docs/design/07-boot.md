@@ -445,3 +445,19 @@ Bootstore为48字节内部统计记录，另保存两边界PA；记录base/bytes
 host直接检查整页、单边、双边、同页、两页跨界、容量、缺少/重复/冲突保留、无空闲页及usable重算失败的整份回滚。实际两架构bootpkg suite现每架构十次：原九类加整页零副本包；QMP导出隔离页逐字节核对包外0、包内原内容和R/NX，原包仍逐字节不变。用户Mem/Space分片、fork/unmap清理、PID1非零Boot字段授权与包内生产PID1装载尚未接；本点不称T1.3完成。结果归build/host/stage89-retained-package/及status。
 
 本点最终本地make test-all通过616项host、格式和130次两架构QEMU；另四次带包normal/pages全部通过实际分配耗尽/回收后的原包与副本导出核对。134份最终结果核对当前源码，完整场景另核对全部共享头哈希及normal无tests源码。编译栈帧prepare为ARM1168/RV1216字节、copyedge48字节，不是完整栈深/IRQ延迟证明；无CI/板端/性能验收。
+
+### 保留包 Mem/Space 分片与快照（2026-11-18）
+
+可信memboot(acct,first,pages)现建立最多16页的MEM_BOOT内部视图，范围仅按已准备bootstore的逻辑页索引解释，不接受用户PA。Mem仍96字节、固定池容量不变；head记录首逻辑页而非Blockref链，state=MEM_SHARED用于跨映射共享同一内容，kind=MEM_BOOT另强制只允许READ、拒绝WRITE/EXEC、memwrite/封存及Local安装。该内容状态不意味着可写或可转授；普通alloc/grant/reply没有创建它或取得其管理Handle的入口。
+
+建立分片只取得一份Acct元数据引用和bootstore借用，不分配数据页、不增加该Acct的used/reserved；页表仍由目标Space的Acct分配并计费。mempage从bootstore取得已隔离的实际原页/副本。最后管理引用放弃后，已有Mmap仍保留Mem；最后Mem引用结束时只bootstoredrop并解除Acct引用，不进入releaseblocks/pgfree，恢复源retained不变。bootstore.refs统计活Mem分片数，不是映射条数，不能随着fork把同一物理费用乘一次。
+
+可信Space快照沿既有SHARED路径共享同一分片，只对已持映射引用的精确输入允许临时恢复构建管理引用，提交/失败均释放临时持有。新增不可变分片不参与DATA写分离/COW承诺，PTE始终R/NX；checked-copy和内核代写仍经原逻辑权限检查，不能因为kind是普通内存就写入。源进程/Space先清理后，孩子仍能读包；原Acct可在CLOSING且used=0时仅保留元数据引用，最后孩子unmap后结清，不把原包页计入这个旧Acct。
+
+tests/kernel/bootviewtest.c只链接CASE=bootpkg：逐片建映射并放弃管理引用，逐页核对真实PA/R/USER/普通属性、逐字节核对包内容/边界0，拒绝W/X/代写/封存/用户Handle，快照后清父Space并关闭/解绑父Acct，孩子继续读包；清孩子后普通账目和分配页回到基线、bootstore.refs=0而retained不变。host另以4个Mem/Mmap的小池检查分片范围、无数据页分配、临时快照失败回滚、页表预算失败和关闭账目拒绝，不借扩大池隐藏失败。
+
+此切片仍是可信构造/快照，不是原生fork，也未给生产PID1发布非零Boot字段；configure/bootimageload继续拒绝伪包声明。下一步须核验精确包分片与字段的一致性，再接入包内PID1装载。验证证据归build/host/stage90-boot-mem-views/与status。
+
+本地验证遇到扩展权限自动审批超时、沙箱禁止创建Unix socket；smoke新增可选QMP stdio管道（QMP_STDIO=1/--qmp-stdio），无需socket监听而保留相同QMP命令、寄存器/页表/退出审计。默认socket路径保留；管道的消息分片、异步event/迟到id、错误/EOF和截止均有host检查，实际传输方式写入result。该工具接续不改变内核协议。
+
+本点最终本地625项host、格式与完整130次两架构QEMU通过；test-all初次host为624项，随后将映射池准入失败与真正的后段页表预算失败分成两例，再完整make unit到625项。后段反例先装孩子低VA映射，再因远处第二范围需新页表而耗尽预算，核对部分映射/临时管理/页表费用全撤回后仍可正常重试。所有最终130份result为stdio传输且源码/共享头哈希与终稿一致；另保留此前ARM64 socket的十次包场景成功记录。无CI/板端/性能验收，也没有生产PID1包视图发布。

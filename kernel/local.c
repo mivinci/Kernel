@@ -304,6 +304,8 @@ localmem(Rtable *t, Memid id, u64 rights, u64 offset, u64 length, u32 inherit, H
   if (!rights || rights & ~(LOCAL_GRANT | 15UL) || inherit & ~3U || (offset | length) & PAGE_MASK ||
       !length || memstat(id, &m) || !m.managers || offset > m.bytes || length > m.bytes - offset)
     return -ERR_INVALID;
+  if (m.kind == MEM_BOOT)
+    return -ERR_DENIED;
   if ((m.state != MEM_SHARED && m.kind != MEM_MMIO &&
        (m.acct.index != t->acct.index || m.acct.generation != t->acct.generation)) ||
       (m.state != MEM_SHARED && (inherit & LOCAL_EXEC)))

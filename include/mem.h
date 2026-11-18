@@ -16,6 +16,7 @@
 #define MEM_RAM         0
 #define MEM_MMIO        1
 #define MEM_IMMUTABLE   2
+#define MEM_BOOT        3
 #define MEM_FORK_SOURCE 1
 #define MEM_FORK_VIEW   2
 #define MEM_DENIED      -7
@@ -57,6 +58,9 @@ void meminit(void);
 int  memcreate(Acctid acct, u64 bytes, Memid *out);
 int  memcode(Acctid acct, u64 bytes, Memid *out);
 int  memshared(Acctid acct, u64 bytes, Memid *out);
+/* Trusted retained-package slice, pages counted from bootstore logical start.
+   No physical allocation/charge, user Handle, write or execute authority. */
+int memboot(Acctid acct, u32 first, u32 pages, Memid *out);
 /* Trusted preparation: private DATA only, all writable source maps must be Space-protected.
    Target gets independent logical pages; existing read-only source maps stay.
    Output unchanged on failure; no user fork authority or PTE protection here. */
@@ -74,8 +78,8 @@ int memforkcommit(Memid view);
    flattens view ancestry, allocates no RAM pages/COW credits. Source must be
    a retained SEALED view; output is unchanged on failure. */
 int memimmutable(Memid source, Acctid target, Memid *out);
-/* Trusted snapshot holds a retained explicit SHARED Mem for map construction,
-   even if its last manager was dropped. Never applies to private/MMIO pages. */
+/* Trusted snapshot holds retained shared RAM or read-only boot backing for map
+   construction, even after its last manager. Never private/MMIO pages. */
 int memsharedhold(Memid source);
 /* Trusted fork installation into the exact target logical view. The view must
    already be retained by a prepared map/owner; never a canonical parent DATA. */

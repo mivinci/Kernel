@@ -35,9 +35,9 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 `--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序。内核现从chosen读取并保留/校验initrd，尚未从包启动生产PID1。容器格式、预算与T1后续边界见07末尾。
 
-进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。保留后端已按原页加最多两页隔离副本排除可分配RAM并单独统计，用户包映射后端未接，内核仍拒绝非零包字段，不代表PID1已能读取包。
+进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。保留后端按原页加最多两页隔离副本排除可分配RAM并单独统计，可信Mem/Space分片和只读快照已接；尚未向PID1发布包视图，内核仍拒绝非零包字段。
 
-`make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行十次真实initrd启动（含整页无副本包）；只验证容器和保留后端，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容、隔离副本的包外字节为0及原页/副本R/NX属性。
+`make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行十次真实initrd启动（含整页无副本包）；验证容器、保留后端及可信分片/快照/回收，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容、隔离副本的包外字节为0及原页/副本R/NX属性。
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
@@ -101,6 +101,7 @@ make test-qemu OPENSBI="$OPENSBI"
 主机测试位于 `tests/unit/`，guest测试的C/汇编载荷、入口和私有声明位于 `tests/kernel/`；构建按CASE选择链接，normal不包含测试源码。
 寄存器场景检查两次陷阱之间的整数寄存器保存/恢复；故障场景核对非法指令的异常原因与 PC。
 主机使用本地 QMP socket，核对特权/中断状态与实际 halt 地址，随后退出并回收自身 QEMU；不能只凭输出标记判定成功。
+受限环境可用`QMP_STDIO=1 make ...`，或直接给smoke加`--qmp-stdio`，使用QMP标准输入输出管道而不创建socket监听；审计和超时/退出检查相同，result记录实际传输方式。默认仍为本地Unix socket。
 默认超时10秒；`CASE=timer|irq`使用25秒，验证真实10秒固定准备期限。失败保留串口、QEMU 输出、命令、符号及结果。需要异常 trace 时加 `TRACE=1`。
 `RAM=128|256|512` 改变实际QEMU内存，`VIRTIO=1` 添加virtio-rng设备；normal只发现传输窗口；virtiodev另固定附加RNG并验证用户态协商/复位，尚不进行队列或业务I/O。
 启动解析实际DTB，输出RAM、保留区、可用页和支持设备的窗口/中断；主机独立核对，并保存guest收到的runtime.dtb。

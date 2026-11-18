@@ -4,6 +4,7 @@
 #include <device.h>
 #include <diag.h>
 #include <vm.h>
+#include <bootstore.h>
 
 static Mem      memories[MEMS];
 static Blockref blocks[BREFS];
@@ -104,6 +105,9 @@ reap(Mem *m)
   } else if (m->kind == MEM_MMIO) {
     if (devdrop(m->head))
       panic("device backing reference");
+  } else if (m->kind == MEM_BOOT) {
+    if (bootstoredrop())
+      panic("boot backing reference");
   } else
     releaseblocks(m->acct, m->head);
   if (staged) {
@@ -206,10 +210,50 @@ memshared(Acctid acct, u64 bytes, Memid *out)
 }
 
 int
+memboot(Acctid acct, u32 first, u32 pages, Memid *out)
+{
+  Bootstore store;
+  Acct      account;
+  Mem      *m;
+  u32       slot;
+  int       error;
+  if (!initialized || !out || !pages || pages > MEM_PAGES || bootstorestat(&store) ||
+      !store.bytes || first >= store.pages || pages > store.pages - first ||
+      acctstat(acct, &account) || account.state != AC_ACTIVE)
+    return MEM_BAD;
+  slot = freemem;
+  if (slot == PG_NONE)
+    return MEM_FULL;
+  error = accthold(acct);
+  if (error)
+    return error;
+  if (bootstorehold()) {
+    acctdrop(acct);
+    return MEM_LIMIT;
+  }
+  m = &memories[slot];
+  freemem = m->head;
+  m->generation++;
+  m->bytes = (u64) pages * PAGE_SIZE;
+  m->acct = acct;
+  m->head = first;
+  m->pages = pages;
+  m->refs = m->managers = 1;
+  m->state = MEM_SHARED;
+  m->kind = MEM_BOOT;
+  clearbacking(m);
+  m->writes = m->execs = m->busy = m->cowmaps = 0;
+  out->generation = m->generation;
+  out->index = slot;
+  out->reserved = 0;
+  return 0;
+}
+
+int
 memsharedhold(Memid source)
 {
   Mem *m = find(source);
-  if (!m || !m->refs || m->kind != MEM_RAM || m->state != MEM_SHARED)
+  if (!m || !m->refs || (m->kind != MEM_RAM && m->kind != MEM_BOOT) || m->state != MEM_SHARED)
     return MEM_BAD;
   if (m->busy)
     return MEM_BUSY;
@@ -226,7 +270,7 @@ memforkhold(Memid view, Acctid target)
   Acct account;
   if (!m || !m->refs || acctstat(target, &account) || account.state != AC_ACTIVE)
     return MEM_BAD;
-  if (m->state == MEM_SHARED && m->kind == MEM_RAM)
+  if (m->state == MEM_SHARED && (m->kind == MEM_RAM || m->kind == MEM_BOOT))
     return memsharedhold(view);
   if ((m->kind != MEM_RAM && m->kind != MEM_IMMUTABLE) ||
       (m->state != MEM_DATA && m->state != MEM_SEALED) || m->acct.generation != target.generation ||
@@ -638,6 +682,8 @@ mempage(Memid id, u32 page, u64 *pa)
     return MEM_BAD;
   if (m->kind == MEM_MMIO)
     return devpage(m->head, page, pa);
+  if (m->kind == MEM_BOOT)
+    return bootstorepage((u64) m->head + page, pa);
   if (m->kind == MEM_IMMUTABLE)
     return mempage(m->backing, page, pa);
   for (node = m->head; page; page--)
@@ -662,6 +708,8 @@ memcanmap(Memid id, u64 prot)
     return MEM_BAD;
   if (m->busy || m->fork == MEM_FORK_SOURCE)
     return MEM_BUSY;
+  if (m->kind == MEM_BOOT)
+    return prot == VM_READ ? 0 : MEM_BAD;
   /* No public COW PTE path yet: a shared private backing can only acquire
      read-only mappings. Writable CPU aliases must not bypass separation. */
   if (m->kind == MEM_RAM && (prot & VM_WRITE))
@@ -753,8 +801,8 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
   u64          pa, take, i;
   u32          node, page, first, last;
   int          shared, error;
-  if (!m || !m->managers || m->kind == MEM_MMIO || m->state == MEM_SEALED || !source || !bytes ||
-      offset > m->bytes || bytes > m->bytes - offset)
+  if (!m || !m->managers || m->kind == MEM_MMIO || m->kind == MEM_BOOT || m->state == MEM_SEALED ||
+      !source || !bytes || offset > m->bytes || bytes > m->bytes - offset)
     return MEM_BAD;
   if (m->busy || m->fork == MEM_FORK_SOURCE)
     return MEM_BUSY;

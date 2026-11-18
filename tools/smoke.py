@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import re
+import select
 import shutil
 import socket
 import struct
@@ -27,23 +28,53 @@ class SmokeError(Exception):
     pass
 
 
+class QmpPipe:
+    def __init__(self, process, deadline):
+        self.input, self.output = process.stdin, process.stdout
+        self.deadline, self.buffer = deadline, b''
+
+    def readline(self):
+        while b'\n' not in self.buffer:
+            remaining = self.deadline-time.monotonic()
+            if remaining <= 0 or not select.select([self.output], [], [], remaining)[0]:
+                raise SmokeError('QMP pipe timed out')
+            part = os.read(self.output.fileno(), 65536)
+            if not part:raise SmokeError('QMP pipe closed unexpectedly')
+            self.buffer += part
+        line, self.buffer = self.buffer.split(b'\n', 1)
+        return line+b'\n'
+
+    def write(self, data):
+        self.input.write(data)
+        self.input.flush()
+
+    def close(self):
+        self.input.close()
+        self.output.close()
+
+
 class Qmp:
-    def __init__(self, path, deadline):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    def __init__(self, path, deadline, process=None):
+        self.sock, self.stream = None, None
         self.deadline = deadline
-        self.sock.settimeout(max(0.01, deadline - time.monotonic()))
         try:
-            self.sock.connect(str(path))
-            self.stream = self.sock.makefile("rwb", buffering=0)
+            if process:
+                self.stream = QmpPipe(process, deadline)
+            else:
+                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.sock.settimeout(max(0.01, deadline-time.monotonic()))
+                self.sock.connect(str(path))
+                self.stream = self.sock.makefile('rwb', buffering=0)
             if "QMP" not in self.read():
                 raise SmokeError("missing QMP greeting")
         except BaseException:
-            self.sock.close()
+            if self.stream:self.stream.close()
+            if self.sock:self.sock.close()
             raise
         self.serial = 0
 
     def read(self):
-        self.sock.settimeout(max(0.01, self.deadline - time.monotonic()))
+        if self.sock:self.sock.settimeout(max(0.01, self.deadline-time.monotonic()))
         line = self.stream.readline()
         if not line:
             raise SmokeError("QMP closed unexpectedly")
@@ -64,7 +95,7 @@ class Qmp:
 
     def close(self):
         self.stream.close()
-        self.sock.close()
+        if self.sock:self.sock.close()
 
 
 def symbols(text):
@@ -581,6 +612,12 @@ def accepted_package(args, qmp, run_dir, names, discovery):
     summaries = [fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('BOOTSTORE ')]
     if summaries != [dict(pages=pages,copies=len(partial),retained=pages+len(partial),refs=0)] or len(edges) != len(partial):
         raise SmokeError('retained boot backing accounting mismatch')
+    if args.case == 'bootpkg':
+        views=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('BOOTVIEW ')]
+        transitions=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('VM ')]
+        expected=dict(chunks=(pages+15)//16,pages=pages,snapshots=1,denied=7,refs=0,charged=0,
+                      allocated=transitions[0]['tables'])
+        if views != [expected]:raise SmokeError('retained package mapping/snapshot cleanup mismatch')
     for index,(page,first,end) in enumerate(partial):
         expected = bytearray(4096)
         begin = page*4096+first-offset
@@ -632,11 +669,13 @@ def exercise(args, run_dir, record):
         record["firmware"] = None
         machine = ["-machine", "virt-11.1,gic-version=2,secure=off,virtualization=off", "-cpu", "cortex-a53"]
     serial = run_dir / "serial.log"
+    pipe_qmp = getattr(args,'qmp_stdio',False) or os.environ.get('QMP_STDIO') == '1'
+    record['qmp_transport'] = 'stdio' if pipe_qmp else 'unix'
     with tempfile.TemporaryDirectory(prefix="kernel-qmp-") as temporary:
         path = Path(temporary) / "qmp.sock"
         command = [qemu, *machine, "-accel", "tcg", "-smp", "1", "-m", str(args.ram) + "M", "-nodefaults",
                    "-display", "none", "-monitor", "none", "-serial", "file:" + str(serial),
-                   "-qmp", "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
+                   "-qmp", 'stdio' if pipe_qmp else "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
                    "-global", "virtio-mmio.force-legacy=false", "-kernel", str(boot_artifact)]
         if args.initrd:
             command += ['-initrd', str(args.initrd)]
@@ -650,14 +689,15 @@ def exercise(args, run_dir, record):
         deadline = time.monotonic() + args.timeout
         qmp = None
         with (run_dir / "qemu.log").open("wb") as output:
-            proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
+            proc = subprocess.Popen(command, stdin=subprocess.PIPE if pipe_qmp else subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE if pipe_qmp else output,
+                                    stderr=output if pipe_qmp else subprocess.STDOUT, start_new_session=True)
             try:
-                while not path.exists():
+                while not pipe_qmp and not path.exists():
                     if proc.poll() is not None or time.monotonic() >= deadline:
                         raise SmokeError("QEMU exited/timed out before QMP")
                     time.sleep(0.02)
-                qmp = Qmp(path, deadline)
+                qmp = Qmp(path, deadline, proc if pipe_qmp else None)
                 qmp.command("qmp_capabilities")
                 record["initial_status"] = qmp.command("query-status")
                 if record["initial_status"]["running"]:
@@ -1161,6 +1201,7 @@ def main():
     parser.add_argument('--bootpkg-error', choices=PACKAGE_ERRORS)
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
+    parser.add_argument('--qmp-stdio', action='store_true', help='use QMP pipes without a socket listener')
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--ram", type=int, choices=(128, 256, 512), default=256)
