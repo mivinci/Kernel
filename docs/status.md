@@ -19,17 +19,17 @@
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
 - 独立libsys SDK、virtio描述符/共享环与现代MMIO协商复位（无生产DMA后端）、csu/main、可写argv/environ、基础libc/errno/退出/身份/组会话/wait及批量堆分配、C locale整数转换与内存snprintf/vsnprintf、用户态ELF装载已接，库依赖审计无隐藏libc反向依赖。来源仍是只读嵌入ELF，非FS稳定装载会话；fd/Fix启动适配、完整POSIX spawn/fork/exec未接。
-- 一次性PID1及预校验装载器已接，按字节解码未对齐描述。Boot格式2/144字节，Mem仍64KiB。bootstore原页/边界隔离及可信MEM_BOOT分片/Space只读映射和快照已接：不分配私有数据页，页表归目标Acct，最后Mem只解除借用，恢复源保留；拒绝W/X、代写和用户Handle。ARM64使用Image/x0实际DTB。非零Boot字段与精确分片归属核验、包内PID1装载、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止，载荷仍在tests/kernel。
+- 一次性PID1及预校验装载器、bootstore保留/边界隔离、可信MEM_BOOT分片和只读快照已接；Boot格式2/144字节、Mem仍64KiB。现有完整视图构造器可回滚全部前缀，Boot字段须匹配精确源/完整Mmap和真实PA/R/USER/普通属性，configure、发布及PID1装载前均核验，拒绝普通只读副本冒充。ARM64使用Image/x0实际DTB。包内PID1启动、生产sbin/init/SYSTEM/设备发权未接，normal仍初始化后停止，载荷仍在tests/kernel。
 
 ## 最新本地验证
 
-- 最新本地625项host、fmt-check及完整130次两架构QEMU通过（test-all首轮624项，补强后段回滚后另完整make unit到625项）。最终QEMU均用QMP stdio管道并核对当前源码/共享头哈希及normal隔离；此前ARM socket包场景10次也通过。6项小池分片测试覆盖范围/权限/快照/父清理/容量及后段页表预算回滚，guest核对PA/PTE/全部字节/旧Acct关闭及最终结清。证据`build/host/stage90-boot-mem-views/evidence.json`与日志；未执行CI/目标真实硬件/性能验收。
+- 最新本地630项host、fmt-check及完整130次两架构QEMU通过，补强用例后另完整make unit仍630项；最终结果均核对当前源码/共享头哈希及normal隔离。11项分片/视图host用例包含521页构造后段失败全回滚、实际PTE篡改、别名及内容相同的假源；guest真实包描述构造普通未发布Proc，核对合法配置、5类伪声明/发布复查及完整清理，不执行该测试进程。证据`build/host/stage91-boot-view-admission/evidence.json`与日志；无CI/真机/性能验收。
 - T1.2两架构各九次真实initrd启动已验好包和八类拒启；另验normal及pages耗尽/回收后包内容不变、目录一致、全部包页R/NX及保留排除，normal无测试源码。不是包内生产PID1启动。用户已确认PID1专用只读包视图；接下来按T1.3接入受跟踪映射、边界页隔离及独立保留费用，单Mem64KiB限制不绕过。相关真机P0按依赖处理；fork的源别名/引用稳定、组合长循环、IRQ检查点与STOP/CONT仍待T4前补齐。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
 
-- PID1只读包视图已确定：16MiB窗口、Mem分片64KiB，bootstore保留和可信映射/快照/回收已接。下一步核验Boot字段与完整MEM_BOOT分片/实际PTE的一致性，再接包内PID1装载；当前configure/bootimageload仍拒绝非零包字段。原生fork/exec未因可信只读快照而开放。规格见[07](design/07-boot.md#pid1-启动包只读视图2026-11-18-已确定)及08。
+- PID1只读包视图机制已接：16MiB窗口、64KiB分片，完整构造/失败回滚和Boot真实归属核验可用。下一步在启动路径为一次性PID1建立视图和授权完备Boot，再从包内指定描述装载真实init；生产init/启动清单仍未交付。原生fork/exec未因可信快照而开放。规格见[07](design/07-boot.md#pid1-启动包只读视图2026-11-18-已确定)及08。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。
 - IRQ_SOURCE撤销是否影响既有独立IRQ_BIND仍待用户确认，候选和实现边界见05末尾。

@@ -35,7 +35,7 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 `--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序。内核现从chosen读取并保留/校验initrd，尚未从包启动生产PID1。容器格式、预算与T1后续边界见07末尾。
 
-进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。保留后端按原页加最多两页隔离副本排除可分配RAM并单独统计，可信Mem/Space分片和只读快照已接；尚未向PID1发布包视图，内核仍拒绝非零包字段。
+进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。保留后端、可信分片/快照和完整视图构造已接；非零包字段必须匹配全部MEM_BOOT分片和实际只读PTE，普通只读副本不能冒充。生产PID1尚未从包启动。
 
 `make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行十次真实initrd启动（含整页无副本包）；验证容器、保留后端及可信分片/快照/回收，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容、隔离副本的包外字节为0及原页/副本R/NX属性。
 

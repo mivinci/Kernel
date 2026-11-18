@@ -201,7 +201,7 @@ def build(args, directory, run_dir):
             flags += ["-DCOW_REFS=8"]
             sources += [ROOT / "tests/kernel/cowtest.c", ROOT / "tests/kernel/snapshotest.c"]
         if args.case == "bootpkg":
-            sources.append(ROOT / "tests/kernel/bootviewtest.c")
+            sources += [ROOT / "tests/kernel/bootviewtest.c", ROOT / "tests/kernel/load.c"]
         if args.case == "registers":
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):

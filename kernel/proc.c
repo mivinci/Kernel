@@ -544,7 +544,7 @@ validate(Proc *p, const Config *c)
   if (boot.magic != BOOT_MAGIC || boot.format != BOOT_FORMAT || boot.bytes != c->bootsz ||
       boot.flags || boot.user_lo != 0x10000 || boot.user_hi != (1UL << 38))
     return -ERR_INVALID;
-  if (boot.package_va || boot.package_bytes)
+  if (spacebootcheck(p->space, boot.package_va, boot.package_bytes))
     return -ERR_INVALID;
   return 0;
 }

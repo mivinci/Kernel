@@ -75,6 +75,11 @@ int spacehold(Spaceid id);
 int spacedrop(Spaceid id);
 int spacedestroy(Spaceid id);
 int spacestat(Spaceid id, Space *out);
+/* Trusted boot construction only; fixed retained-source window, no user PA.
+   map rolls back its entire prefix on failure. check accepts zero fields only
+   when no boot backing is mapped, otherwise requires the exact complete view. */
+int spacebootmap(Spaceid id);
+int spacebootcheck(Spaceid id, u64 address, u64 bytes);
 /* 1 means this serialized snapshot retains the root/map layout, 0 free;
    negative is stale/invalid. Cleanup must defer before draining its Locals. */
 int spacefrozen(Spaceid id);

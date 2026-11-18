@@ -286,7 +286,7 @@ package字段成对全零表示无包，否则字节数非零、精确用户范�
 
 共享头BOOT_HEADER_BYTES=144及两个字段偏移断言已接；csu/libsys/libc、内核Boot/描述检查、主机ELF/包工具和guest生成器统一格式2，无格式1兼容分支。版本/头长/新增字段偏移集中在abi/boot.inc，由C头重新导出、汇编直接包含，SDK也导出并记录其哈希；tools/elf.py从共享定义读取magic/format/header字节数和ELF上界，避免工具自留旧128字节头。原生spawn的手工头使用同一常量，孩子按resources_off找资源，不写死头后句柄地址。外层Bootimage/Bootpkg格式及Fix布局不变。
 
-libsys bootcheck只核验非零包字段的成对/范围/溢出表示，不凭表示创造权限。当前包视图后端未接，procconfigure和bootimageload暂时拒绝任何非零包字段；后续须替换为真实受跟踪视图核验后才允许PID1带包发布，不能先放开整数检查。构建模板始终要求两字段0，不因为将来运行时允许视图而放开模板。
+libsys bootcheck只核验非零包字段的成对/范围/溢出表示，不凭表示创造权限。内核现由spacebootcheck核验精确保留源、完整MEM_BOOT分片及真实PTE，procconfigure/发布复查和bootimageload装载前均调用它；仅完整受跟踪视图可声明非零字段。构建模板始终要求两字段0，不因运行时允许视图而放开模板。生产PID1包启动仍待接入，不能把这个机制称为已启动init服务。
 
 host新增旧格式拒绝、窗口边界/溢出/单边字段、模板禁止包声明、ELF不得占包窗口；procs与init/initfatal额外真实核对伪包字段拒绝。完整结果与日志归build/host/stage88-boot-package-abi/及status，不把本次线格式迁移称为用户包映射或生产init已经启动。
 

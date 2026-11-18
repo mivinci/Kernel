@@ -3,6 +3,8 @@
 #include <vm.h>
 #include <prep.h>
 #include <abi/mem.h>
+#include <abi/boot.h>
+#include <bootstore.h>
 #define MAP_PROTECTED      0x80000000U
 #define MAP_NEW_PROTECTION 0x40000000U
 #define MAP_NEW_SHIFT      8
@@ -10,6 +12,8 @@
 #define MAP_SNAPSHOT_OWNER 0x20000000U
 #define MAP_JOURNALED      0x10000000U
 STATIC_ASSERT(MEM_PAGES <= 16, protection_mask_capacity);
+STATIC_ASSERT((BOOT_PACKAGE_HI - BOOT_PACKAGE_LO) % (MEM_PAGES * PAGE_SIZE) == 0,
+              boot_slice_window);
 
 typedef struct Sourcectx Sourcectx;
 typedef struct Copyspan  Copyspan;
@@ -347,6 +351,120 @@ spacestat(Spaceid id, Space *out)
   out->refs = s->refs;
   out->frozen = s->frozen;
   return 0;
+}
+
+int
+spacebootcheck(Spaceid id, u64 address, u64 bytes)
+{
+  Space    *s = find(id);
+  Bootstore store;
+  Mem       mem;
+  Mmap     *m;
+  Hvs       vs;
+  Hpte      entry;
+  Sourcectx source;
+  u64       count = 0, first, i, pa;
+  u32       node;
+  if (!s)
+    return SP_BAD;
+  if (s->busy || insnapshot(s))
+    return SP_BUSY;
+  if (address || bytes) {
+    if (bootstorestat(&store) || !store.bytes || !store.pages ||
+        address != BOOT_PACKAGE_LO + (store.base & PAGE_MASK) || bytes != store.bytes ||
+        store.pages > (BOOT_PACKAGE_HI - BOOT_PACKAGE_LO) / PAGE_SIZE)
+      return SP_BAD;
+  }
+  view(s, &vs, &source);
+  for (node = s->maps; node != PG_NONE; node = m->next) {
+    m = &mappings[node];
+    if (memstat(m->mem, &mem))
+      return SP_BAD;
+    if (mem.kind != MEM_BOOT) {
+      if (bytes && m->address < BOOT_PACKAGE_HI && m->address + m->length > BOOT_PACKAGE_LO)
+        return SP_BAD;
+      continue;
+    }
+    if (!bytes || m->address < BOOT_PACKAGE_LO || m->address >= BOOT_PACKAGE_HI ||
+        (m->address | m->offset | m->length) & PAGE_MASK || !m->length ||
+        m->length > (u64) MEM_PAGES * PAGE_SIZE || m->prot != VM_READ || m->owner.load.generation ||
+        m->owner.load.index || m->owner.load.reserved || mem.state != MEM_SHARED ||
+        m->offset > mem.bytes || m->length > mem.bytes - m->offset)
+      return SP_BAD;
+    first = (m->address - BOOT_PACKAGE_LO) / PAGE_SIZE;
+    if (first >= store.pages || m->length / PAGE_SIZE > store.pages - first ||
+        (u64) mem.head + m->offset / PAGE_SIZE != first ||
+        m->length / PAGE_SIZE > store.pages - count)
+      return SP_BAD;
+    for (i = 0; i < m->length / PAGE_SIZE; i++)
+      if (bootstorepage(first + i, &pa) ||
+          !hal_vm_lookup(&vs, m->address + i * PAGE_SIZE, &entry) || entry.pa != pa ||
+          entry.prot != (VM_READ | VM_USER) || entry.attr != VM_NORMAL)
+        return SP_BAD;
+    count += m->length / PAGE_SIZE;
+  }
+  return !bytes || count == store.pages ? 0 : SP_BAD;
+}
+
+int
+spacebootmap(Spaceid id)
+{
+  Memid     slices[(BOOT_PACKAGE_HI - BOOT_PACKAGE_LO) / PAGE_SIZE / MEM_PAGES];
+  Space    *s = find(id);
+  Bootstore store;
+  Acct      account;
+  Mmap     *m;
+  Mem       mem;
+  u64       first, pages;
+  u32       count, reserved = 0, mapped = 0, node, i;
+  int       error;
+  if (!s || bootstorestat(&store) || !store.bytes || !store.pages ||
+      store.pages > (BOOT_PACKAGE_HI - BOOT_PACKAGE_LO) / PAGE_SIZE ||
+      acctstat(s->acct, &account) || account.state != AC_ACTIVE)
+    return SP_BAD;
+  if (s->busy || s == active || insnapshot(s))
+    return SP_BUSY;
+  for (node = s->maps; node != PG_NONE; node = m->next) {
+    m = &mappings[node];
+    if (memstat(m->mem, &mem) || mem.kind == MEM_BOOT ||
+        (m->address < BOOT_PACKAGE_HI && m->address + m->length > BOOT_PACKAGE_LO))
+      return SP_CONFLICT;
+  }
+  count = (u32) ((store.pages + MEM_PAGES - 1) / MEM_PAGES);
+  if (count > freecount)
+    return SP_FULL;
+  for (i = 0; i < count; i++) {
+    first = (u64) i * MEM_PAGES;
+    pages = MIN(MEM_PAGES, store.pages - first);
+    error = memboot(s->acct, (u32) first, (u32) pages, &slices[i]);
+    if (error)
+      goto failed;
+    reserved++;
+  }
+  for (i = 0; i < count; i++) {
+    first = (u64) i * MEM_PAGES;
+    pages = MIN(MEM_PAGES, store.pages - first);
+    error =
+        spacemap(id, slices[i], 0, BOOT_PACKAGE_LO + first * PAGE_SIZE, pages * PAGE_SIZE, VM_READ);
+    if (error)
+      goto failed;
+    mapped++;
+  }
+  error = spacebootcheck(id, BOOT_PACKAGE_LO + (store.base & PAGE_MASK), store.bytes);
+  if (error)
+    goto failed;
+  for (i = 0; i < reserved; i++)
+    if (memfree(slices[i]))
+      panic("boot slice ownership release");
+  return 0;
+failed:
+  for (i = 0; i < mapped; i++)
+    if (spaceunmap(id, BOOT_PACKAGE_LO + (u64) i * MEM_PAGES * PAGE_SIZE))
+      panic("boot map rollback");
+  for (i = 0; i < reserved; i++)
+    if (memfree(slices[i]))
+      panic("boot slice rollback");
+  return error;
 }
 
 int

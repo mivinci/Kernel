@@ -5,6 +5,10 @@
 #include <local.h>
 #include <vm.h>
 #include <diag.h>
+#include <bootpkg.h>
+#include <bootimage.h>
+#include <hal/boot.h>
+#include "load.h"
 
 static Rtable table;
 static Local  slots[1];
@@ -49,6 +53,131 @@ clear(Spaceid root)
     error = spaceclear(root, 32);
   } while (error == 1);
   REQUIRE(!error);
+}
+
+static Handle
+bootresourceat(Rtable *resources, Spaceid root)
+{
+  Hpte  entry;
+  Memid memory;
+  u64   pa;
+  u32   i;
+  REQUIRE(spacelookup(root, BOOT_PACKAGE_HI, &entry));
+  for (i = 0; i < resources->count; i++) {
+    const Local *slot = &resources->slots[i];
+    if (slot->subtype != LOCAL_MEM)
+      continue;
+    memory.generation = slot->objectgen;
+    memory.index = slot->object;
+    memory.reserved = 0;
+    if (!mempage(memory, 0, &pa) && pa == entry.pa)
+      return handlepack(HANDLE_RESOURCE, slot->generation, i);
+  }
+  panic("boot fixture resource");
+}
+
+static void
+claims(const Bootstore *store)
+{
+  Bootdir         directory;
+  Bootimage       image;
+  const u8       *data = kaddr(store->base), *descriptor;
+  const Bootitem *item;
+  Boot            boot;
+  Config          config;
+  Setid           set;
+  Set             total;
+  Handle          pid, startup;
+  Procinfo        process;
+  Rtable         *resources;
+  Memid           substitute;
+  Bootstore       state;
+  Pgstat          before, after;
+  u64             i, first, pages, pa, denied = 0;
+  int             error;
+  pgstat(&before);
+  REQUIRE(!bootpkgcheck(data, store->bytes, hal_boot_machine(), &directory));
+  item = &directory.item[directory.header.init_index];
+  descriptor = data + item->load_off;
+  REQUIRE(!bootimagecheck(descriptor, item->load_bytes, &image));
+  REQUIRE(!setcreate(4096, 8192, 8, &set));
+  REQUIRE(!procnew(set, 1, 1024, 1024, LOCALS, &pid) && !procinfo(pid, &process));
+  REQUIRE(!spacebootmap(process.space));
+  for (i = 0; i < sizeof(boot); i++)
+    ((u8 *) &boot)[i] = 0;
+  boot.magic = BOOT_MAGIC;
+  boot.format = BOOT_FORMAT;
+  boot.bytes = sizeof(boot);
+  boot.user_lo = BOOT_USER_LO;
+  boot.user_hi = BOOT_USER_HI;
+  boot.package_va = BOOT_PACKAGE_LO + (store->base & PAGE_MASK);
+  boot.package_bytes = store->bytes;
+  testload(pid, descriptor, item->load_bytes, &boot, sizeof(boot));
+  config.entry = image.entry;
+  config.stack = 0x3fffff0000UL;
+  config.boot = BOOT_PACKAGE_HI;
+  config.bootsz = sizeof(boot);
+  config.sigmask = config.sigdefault = 0;
+  resources = proctable(pid);
+  REQUIRE(resources);
+  startup = bootresourceat(resources, process.space);
+  boot.package_va++;
+  REQUIRE(!localwrite(resources, startup, 0, &boot, sizeof(boot)));
+  REQUIRE(procconfigure(pid, &config, 0) == -ERR_INVALID && procpublish(pid) == -ERR_INVALID);
+  denied++;
+  boot.package_va--;
+  boot.package_bytes--;
+  REQUIRE(!localwrite(resources, startup, 0, &boot, sizeof(boot)));
+  REQUIRE(procconfigure(pid, &config, 0) == -ERR_INVALID);
+  denied++;
+  boot.package_bytes++;
+  REQUIRE(!localwrite(resources, startup, 0, &boot, sizeof(boot)));
+  REQUIRE(!spaceunmap(process.space, BOOT_PACKAGE_LO));
+  REQUIRE(procconfigure(pid, &config, 0) == -ERR_INVALID && procpublish(pid) == -ERR_INVALID);
+  denied++;
+  pages = MIN(MEM_PAGES, store->pages);
+  REQUIRE(!memcreate(process.acct, pages * PAGE_SIZE, &substitute));
+  for (i = 0; i < pages; i++) {
+    REQUIRE(!bootstorepage(i, &pa));
+    REQUIRE(!memwrite(substitute, i * PAGE_SIZE, kaddr(pa), PAGE_SIZE));
+  }
+  REQUIRE(!spacemap(process.space, substitute, 0, BOOT_PACKAGE_LO, pages * PAGE_SIZE, VM_READ));
+  REQUIRE(!memfree(substitute));
+  REQUIRE(procconfigure(pid, &config, 0) == -ERR_INVALID);
+  denied++;
+  REQUIRE(!spaceunmap(process.space, BOOT_PACKAGE_LO));
+  if (store->pages > pages) {
+    REQUIRE(!memboot(process.acct, 1, (u32) pages, &substitute));
+    REQUIRE(!spacemap(process.space, substitute, 0, BOOT_PACKAGE_LO, pages * PAGE_SIZE, VM_READ));
+    REQUIRE(!memfree(substitute));
+    REQUIRE(procconfigure(pid, &config, 0) == -ERR_INVALID);
+    denied++;
+    REQUIRE(!spaceunmap(process.space, BOOT_PACKAGE_LO));
+  }
+  for (first = MEM_PAGES; first < store->pages; first += MEM_PAGES)
+    REQUIRE(!spaceunmap(process.space, BOOT_PACKAGE_LO + first * PAGE_SIZE));
+  REQUIRE(!spacebootmap(process.space) && !procconfigure(pid, &config, 0));
+  REQUIRE(!procdestroy(pid));
+  do {
+    error = procclean(pid);
+  } while (error > 0);
+  REQUIRE(!error);
+  REQUIRE(!setstat(set, &total) && !total.charged && !total.instances && !total.leases);
+  REQUIRE(!setclose(set));
+  REQUIRE(!bootstorestat(&state) && !state.refs && state.retained == store->retained);
+  pgstat(&after);
+  REQUIRE(after.allocated == before.allocated && after.free == before.free);
+  putstr("BOOTCLAIM denied=");
+  puthex(denied);
+  putstr(" configured=");
+  puthex(2);
+  putstr(" publish_denied=");
+  puthex(2);
+  putstr(" refs=");
+  puthex(state.refs);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
 }
 
 void
@@ -112,6 +241,7 @@ bootviewtest(void)
   REQUIRE(!spacedestroy(child) && !acctclose(b) && !acctunbind(b));
   REQUIRE(!setstat(set, &total) && !total.charged && !total.instances && !total.leases);
   REQUIRE(!setclose(set));
+  claims(&initial);
   pgstat(&after);
   REQUIRE(after.allocated == before.allocated && after.free == before.free && !pgcheck() &&
           !acctcheck());

@@ -26,6 +26,7 @@ class BootMemTests(unittest.TestCase):
     page=memory.MemoryTests.page
     map=memory.MemoryTests.map
     lookup=memory.MemoryTests.lookup
+    memory_create=memory.MemoryTests.memory_create
     serial=0
 
     def fresh(self,prototype):
@@ -42,18 +43,22 @@ class BootMemTests(unittest.TestCase):
                     'memboot':[Acctid,C.c_uint32,C.c_uint32,C.POINTER(memory.Memid)],
                     'memcanmap':[memory.Memid,C.c_uint64],
                     'spacesnapshot':[space.Spaceid,space.Spaceid],
+                    'spacebootmap':[space.Spaceid],
+                    'spacebootcheck':[space.Spaceid,C.c_uint64,C.c_uint64],
+                    'hal_vm_replace':[C.POINTER(space.Hvs),C.c_uint64,C.POINTER(space.Entry),C.c_uint64,C.c_uint64],
                     'acctbudget':[Acctid,C.c_uint64,C.c_uint64]}
         for name,args in signatures.items():getattr(lib,name).argtypes=args
         return lib
 
     def prepare_memory(self,info):
-        info.nreserved=1;info.initrd=Range(BASE+256*PAGE+3,20*PAGE+17)
+        self.package_pages=getattr(self,'package_pages',20)
+        info.nreserved=1;info.initrd=Range(BASE+256*PAGE+3,self.package_pages*PAGE+17)
         info.reserved[0]=info.initrd
         self.content=bytes((i*13+7)&255 for i in range(info.initrd.size))
         C.memmove(C.addressof(self.memory)+256*PAGE+3,self.content,len(self.content))
         self.assertEqual(self.lib.dtusable(C.byref(info)),0)
         self.assertEqual(self.lib.bootstoreprepare(C.byref(info)),0)
-        self.assertEqual((self.bstat().pages,self.bstat().copies),(21,2))
+        self.assertEqual((self.bstat().pages,self.bstat().copies),(self.package_pages+1,2))
 
     def bstat(self):
         out=Store();self.assertEqual(self.lib.bootstorestat(C.byref(out)),0);return out
@@ -69,9 +74,11 @@ class BootMemTests(unittest.TestCase):
                     self.assertEqual(self.lib.spacedestroy(sid),0)
                     self.assertEqual(self.lib.acctclose(acct),0)
                     self.assertEqual(self.lib.acctunbind(acct),0)
+                for sid in self.ids:
+                    while self.lib.spaceclear(sid,32)>0:pass
         memory.MemoryTests.exercise(self,lib,run)
         self.assertEqual(self.bstat().refs,0)
-        self.assertEqual(self.bstat().retained,23)
+        self.assertEqual(self.bstat().retained,self.package_pages+3)
 
     def slice(self,first=0,pages=16):
         out=memory.Memid()
@@ -202,3 +209,102 @@ class BootMemTests(unittest.TestCase):
             self.assertEqual((self.astat().used,self.pstat().allocated,self.bstat().refs),(before.used,physical.allocated,1))
             self.assertEqual(self.lib.memfree(mid),0);self.assertEqual(self.bstat().refs,0)
         for lib in self.libs:self.exercise(lib,body)
+
+    def test_complete_view_requires_exact_fields_and_survives_snapshot(self):
+        def body():
+            parent=self.create();child=self.child();store=self.bstat()
+            self.assertEqual(self.lib.spacebootcheck(parent,0,0),0)
+            self.assertLess(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+            self.assertEqual(self.lib.spacebootmap(parent),0)
+            self.assertEqual(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+            for va,size in ((0,0),(WINDOW+4,store.bytes),(WINDOW+3,store.bytes-1),
+                            (WINDOW+3,0),(0,store.bytes),(WINDOW+3,2**64-1)):
+                self.assertLess(self.lib.spacebootcheck(parent,va,size),0)
+            before=self.stat(parent).mapcount,self.bstat().refs,self.astat().used
+            self.assertLess(self.lib.spacebootmap(parent),0)
+            self.assertEqual((self.stat(parent).mapcount,self.bstat().refs,self.astat().used),before)
+            alias=self.slice(0,1)
+            self.assertEqual(self.map(parent,alias,0x10000,PAGE,prot=1),0)
+            self.assertLess(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+            self.assertEqual(self.lib.spaceunmap(parent,0x10000),0)
+            self.assertEqual(self.lib.memfree(alias),0)
+            self.assertEqual(self.lib.spacesnapshot(parent,child),0)
+            self.assertEqual(self.lib.spacebootcheck(child,WINDOW+3,store.bytes),0)
+            self.assertEqual(self.lib.spaceunmap(parent,WINDOW),0)
+            self.assertLess(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+            self.assertEqual(self.lib.spacebootcheck(child,WINDOW+3,store.bytes),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_read_only_data_and_wrong_boot_page_cannot_impersonate_source(self):
+        def body():
+            parent=self.create();store=self.bstat()
+            self.assertEqual(self.lib.spacebootmap(parent),0)
+            content=self.read(parent,WINDOW,16*PAGE)
+            self.assertEqual(self.lib.spaceunmap(parent,WINDOW),0)
+            fake=self.memory_create(16*PAGE)
+            data=C.create_string_buffer(content)
+            self.assertEqual(self.lib.memwrite(fake,0,data,len(content)),0)
+            self.assertEqual(self.map(parent,fake,WINDOW,16*PAGE,prot=1),0)
+            self.assertEqual(self.read(parent,WINDOW,16*PAGE),content)
+            self.assertLess(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+            self.assertEqual(self.lib.spaceunmap(parent,WINDOW),0)
+            wrong=self.slice(1,16)
+            self.assertEqual(self.map(parent,wrong,WINDOW,16*PAGE,prot=1),0)
+            self.assertLess(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_real_pte_pa_and_permissions_are_part_of_claim(self):
+        def body():
+            parent=self.create();store=self.bstat()
+            self.assertEqual(self.lib.spacebootmap(parent),0)
+            root=self.stat(parent);view=space.Hvs(root.root,root.pages,self.source,1)
+            original=space.Entry();self.lib.spacelookup(parent,WINDOW,C.byref(original))
+            for pa,prot in ((original.pa,3),(self.page_for_store(1),1)):
+                self.assertEqual(self.lib.hal_vm_replace(C.byref(view),WINDOW,C.byref(original),pa,prot),0)
+                self.assertLess(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+                changed=space.Entry();self.lib.spacelookup(parent,WINDOW,C.byref(changed))
+                self.assertEqual(self.lib.hal_vm_replace(C.byref(view),WINDOW,C.byref(changed),original.pa,1),0)
+            self.assertEqual(self.lib.spacebootcheck(parent,WINDOW+3,store.bytes),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def page_for_store(self,index):
+        out=C.c_uint64();self.assertEqual(self.lib.bootstorepage(index,C.byref(out)),0);return out.value
+
+    def test_builder_mem_and_map_pool_failures_leave_no_prefix(self):
+        def body():
+            parent=self.create()
+            for _ in range(3):self.slice(0,1)
+            before=self.astat().refs,self.bstat().refs,self.pstat().allocated
+            self.assertLess(self.lib.spacebootmap(parent),0)
+            self.assertEqual(self.stat(parent).mapcount,0)
+            self.assertEqual((self.astat().refs,self.bstat().refs,self.pstat().allocated),before)
+            for mid in self.mems:self.assertEqual(self.lib.memfree(mid),0)
+            ordinary=self.memory_create()
+            for va in (0x10000,0x20000,0x30000):self.assertEqual(self.map(parent,ordinary,va,prot=1),0)
+            before=self.astat().refs,self.bstat().refs,self.pstat().allocated,self.stat(parent).mapcount
+            self.assertLess(self.lib.spacebootmap(parent),0)
+            self.assertEqual((self.astat().refs,self.bstat().refs,self.pstat().allocated,self.stat(parent).mapcount),before)
+            for va in (0x10000,0x20000,0x30000):self.assertEqual(self.lib.spaceunmap(parent,va),0)
+            self.assertEqual(self.lib.memfree(ordinary),0)
+            self.assertEqual(self.lib.spacebootmap(parent),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_large_builder_rolls_back_after_installing_first_512_pages(self):
+        class Large:
+            extra_flags=('-DMEMS=64','-DBREFS=16','-DMMAPS=64')
+        memory.MemoryTests.setUpClass.__func__(Large)
+        self.package_pages=520
+        def body():
+            parent=self.create();before=self.astat().used,self.astat().refs,self.pstat().allocated
+            self.assertEqual(self.lib.acctbudget(self.aid,3,3),0)
+            self.assertLess(self.lib.spacebootmap(parent),0)
+            self.assertEqual(self.stat(parent).mapcount,0)
+            self.assertEqual((self.astat().used,self.astat().refs,self.pstat().allocated),before)
+            self.assertEqual(self.bstat().refs,0)
+            self.assertEqual(self.lib.spacebootcheck(parent,0,0),0)
+            self.assertEqual(self.lib.acctbudget(self.aid,128,128),0)
+            self.assertEqual(self.lib.spacebootmap(parent),0)
+            self.assertEqual(self.lib.spacebootcheck(parent,WINDOW+3,self.bstat().bytes),0)
+        try:
+            for lib in Large.libs:self.exercise(lib,body)
+        finally:Large.tmp.cleanup()

@@ -618,6 +618,10 @@ def accepted_package(args, qmp, run_dir, names, discovery):
         expected=dict(chunks=(pages+15)//16,pages=pages,snapshots=1,denied=7,refs=0,charged=0,
                       allocated=transitions[0]['tables'])
         if views != [expected]:raise SmokeError('retained package mapping/snapshot cleanup mismatch')
+        claims=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('BOOTCLAIM ')]
+        if claims != [dict(denied=4+int(pages>16),configured=2,publish_denied=2,refs=0,
+                           allocated=transitions[0]['tables'])]:
+            raise SmokeError('package Boot claim admission/publication/cleanup mismatch')
     for index,(page,first,end) in enumerate(partial):
         expected = bytearray(4096)
         begin = page*4096+first-offset
