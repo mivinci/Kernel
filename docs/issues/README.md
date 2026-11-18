@@ -18,5 +18,6 @@
 | [006](006-secondary-cores.md) | 次核停放未约定 | P1 | 待硬件：本地四核已验，缺上板 |
 | [007](007-cache-dma.md) | 缓存开启与 DMA 一致性未验证 | P0 | 进行中：ARM64 开启已验；DMA/RV 可在 QEMU 继续，板端待硬件 |
 | [009](009-device-ram-window.md) | Device 租约不支持 RAM 型窗口（`simple-framebuffer` 前置） | P1 | 待处理 |
+| [010](010-sdk-private-export.md) | SDK 私有头导出靠手工名单、无一致性检查 | P2 | 待处理 |
 
 2026-11-18 用户确认暂无实物板（NanoPi NEO3 / VisionFive 2）。001、005、006 的本地实现已完成，等待上板确认；007 的非一致 DMA 与 RV 后端可在 QEMU 继续推进；003 按“无主机观测演练”在 QEMU 上先建验收方法。
