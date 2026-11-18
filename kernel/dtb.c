@@ -1050,7 +1050,8 @@ dtconsole(const void *blob, usize available, Dtinfo *scratch, Dtuart *out)
   if (result.shift > 4 || (result.width != 1 && result.width != 4) ||
       (result.kind == DT_PL011 && (result.shift || result.width != 4)) || !result.reg.base ||
       (result.reg.base & (result.width - 1)) ||
-      result.reg.size < ((u64) (result.kind == DT_PL011 ? 0x30 : 5) << result.shift) + result.width)
+      (result.kind == DT_UART16550 && ((1U << result.shift) & (result.width - 1))) ||
+      result.reg.size < ((u64) (result.kind == DT_PL011 ? 0x48 : 5) << result.shift) + result.width)
     return DT_UNSUPPORTED;
   /* Diagnose later discovery failures without first writing an address that
      aliases RAM or another described MMIO window. CPU reg values are hart IDs. */

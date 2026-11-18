@@ -23,6 +23,7 @@ class SystemLocalTests(unittest.TestCase):
             specs={'localinit':[C.POINTER(Table),C.POINTER(Local),C.c_uint32,space.Acctid,space.Spaceid],
                    'localsystem':[C.POINTER(Table),Imageid,C.POINTER(C.c_int64)],
                    'localsystemquery':[C.POINTER(Table),C.c_int64,C.POINTER(Imageid)],
+                   'localsystemaccess':[C.POINTER(Table),C.c_int64,C.c_uint64,C.POINTER(Imageid)],
                    'localfree':[C.POINTER(Table),C.c_int64],
                    'localinherit':[C.POINTER(Table),C.c_int64,C.c_uint64],
                    'localcopy':[C.POINTER(Table),C.c_int64,C.POINTER(Table),C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)],
@@ -96,4 +97,17 @@ class SystemLocalTests(unittest.TestCase):
             self.assertEqual(self.lib.localsystemquery(C.byref(table),handle.value,C.byref(out)),-5)
             slot.rights=1
             self.assertEqual(self.lib.localsystemquery(C.byref(table),handle.value,C.byref(out)),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_console_right_cannot_be_assumed_by_an_ordinary_image_or_wrong_business_bit(self):
+        def body():
+            life=self.create();image=self.image(life);table,storage=self.table(image)
+            handle=C.c_int64();out=Imageid()
+            self.assertEqual(self.lib.localsystem(C.byref(table),image,C.byref(handle)),0)
+            self.lib.lifepublish(life);self.lib.imageactivate(image)
+            self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,0x20,C.byref(out)),-5)
+            slot=storage[handle.value&65535];slot.rights=0x21
+            self.assertEqual(self.lib.localsystemquery(C.byref(table),handle.value,C.byref(out)),0)
+            self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,0x20,C.byref(out)),-5)
+            self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,2,C.byref(out)),-5)
         for lib in self.libs:self.exercise(lib,body)

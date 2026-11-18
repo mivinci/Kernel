@@ -792,6 +792,12 @@ def audit_package_init(qmp, run_dir, args, record, transition):
         record['serial_startup']=dict(pid=proof[0],retirement_queries=proof[1],retired=True,
                                       rx_bytes=proof[3],tx_bytes=proof[4],number=proof[5],uart_kind=proof[6],
                                       child_exit=42,irq_freed_rejected=True,device_io=False,service_ready=False)
+    if 'handoffproof' in user_symbols:
+        proof=struct.unpack('<8Q',read(user_symbols['handoffproof'],64))
+        if proof[0]!=1 or not 1<=proof[1]<=64 or proof[2] not in (1,2) or proof[3]!=1 or any(proof[4:]):
+            raise SmokeError('native UART handoff/repeated call/configuration mutation proof mismatch')
+        record['console_handoff']=dict(transferred=True,attempts=proof[1],uart_kind=proof[2],
+                                       repeat_after_mutation=True,fatal_restored_output=True)
     stores=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITPACKAGE ')]
     if stores!=[dict(pages=count,copies=len(edges),retained=count+len(edges),refs=(count+15)//16)]:
         raise SmokeError('live package backing lifetime/charge mismatch')

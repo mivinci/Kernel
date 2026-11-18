@@ -360,3 +360,5 @@ IRQ_SOURCE接续（2026-11-18）：原生0x70现已接target CONTROL IRQ/source 
 fork现场接续（2026-11-17）：共享syscall头补入已冻结的SYS_FORKPREP=0x49、SYS_FORKCOMMIT=0x4a、SYS_FORKABORT=0x4b，原生分派仍返回NOTSUP。HAL子现场派生遵循03的返回布局，非IPC的t0/x9=0；实际Image身份通过getid取得，不塞入返回元数据。本轮双架构用户执行验证仅覆盖可信合成现场的恢复，不表示原生fork已实现，详见03末尾。
 
 fork生命周期接续（2026-11-17）：Proc/Prep可信构造现可保有FORK来源、克隆阶段和原有固定期限，普通configure/start拒绝FORK来源；来源/阶段只在内部结构中，不增加Queryrec或syscall输入字段。0x49..0x4b仍NOTSUP，尚未开放同步内部构造作为原生forkprep，分批检查点与Fix/专用发布仍待03/08的完整契约。
+
+debughandoff接续（2026-11-18）：原生0x74仅收a0/x0的精确初始SYSTEM CONSOLE句柄，其他参数必须0，无业务输出；普通CONTROL/uid0/PID不补权，错误输出全0。未排空BUSY且不转移所有权，成功后持有效权限重复调用幂等；具体UART/日志/panic语义与733项host/167次双架构QEMU证据见07/14，不表示生产serial已经启动。

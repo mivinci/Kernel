@@ -132,6 +132,7 @@ int localirqsource(Rtable *table, u32 number, Handle *out);
 int localirqresolve(Rtable *table, Handle handle, u32 *source);
 int localsystem(Rtable *table, Imageid image, Handle *out);
 int localsystemquery(Rtable *table, Handle authority, Imageid *out);
+int localsystemaccess(Rtable *table, Handle authority, u64 right, Imageid *out);
 int localirqack(Rtable *table, Handle binding, Imageid image);
 int localirqunbind(Rtable *table, Handle binding, Imageid image);
 int localobserver(Rtable *table, Handle permit, u32 relation);

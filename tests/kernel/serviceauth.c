@@ -4,6 +4,9 @@
 #include <abi/system.h>
 #include "private/start.h"
 #include "private/syscall.h"
+#include "private/io.h"
+#include <abi/syscall.h>
+volatile u64 handoffproof[8];
 
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -15,8 +18,69 @@ static Handle system, memory, source;
 static u64    windowbytes;
 static u64    uartkind, uartoffset, uartbytes;
 static u64    uartshift, uartwidth;
-extern int    serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
-                           u64 offset, u64 bytes, u64 shift, u64 width);
+static void
+regwrite(u64 base, u32 offset, u32 value)
+{
+  u64 address = base + ((u64) offset << uartshift);
+  if (uartwidth == 4)
+    iowrite32(address, value);
+  else
+    iowrite8(address, value);
+}
+static int
+handoff(const Bootview *boot)
+{
+  Maparg mapping;
+  Sysret result;
+  u64    args[7], i, turns, base;
+  isize  error;
+  REQUIRE(__sys_debughandoff(0) == -ERR_BAD_HANDLE &&
+              __sys_debughandoff(bootresource(boot, BOOT_SELF_SPACE)) == -ERR_DENIED,
+          180);
+  for (i = 0; i < 7; i++)
+    args[i] = 0;
+  args[0] = (u64) system;
+  args[1] = 1;
+  REQUIRE(__sys_enter(SYS_DEBUGHANDOFF, args, &result) == -ERR_INVALID, 181);
+  for (i = 0; i < 8; i++)
+    REQUIRE(!((u64 *) &result)[i], 182);
+  for (turns = 0; turns < 64; turns++) {
+    error = __sys_debughandoff(system);
+    if (!error)
+      break;
+    REQUIRE(error == -ERR_BUSY && !__sys_yield(), 183);
+  }
+  REQUIRE(turns < 64 && !__sys_debughandoff(system), 184);
+  handoffproof[0] = 1;
+  handoffproof[1] = turns + 1;
+  handoffproof[2] = uartkind;
+  mapping.mem = memory;
+  mapping.offset = 0;
+  mapping.address = 0x2000000;
+  mapping.length = windowbytes;
+  mapping.prot = MAP_READ | MAP_WRITE;
+  mapping.reserved = 0;
+  REQUIRE(!__sys_map(bootresource(boot, BOOT_SELF_SPACE), &mapping), 185);
+  base = mapping.address + uartoffset;
+  /* Fatal-only recovery must restore the captured configuration, not depend
+     on the outgoing driver's DLAB/divisor/format/enabled state. */
+  if (uartkind == BOOT_UART_NS16550) {
+    regwrite(base, 3, 0x80);
+    regwrite(base, 0, 0);
+    regwrite(base, 1, 0);
+  } else {
+    regwrite(base, 0x30, 0);
+    regwrite(base, 0x24, 1);
+    regwrite(base, 0x28, 0);
+    regwrite(base, 0x2c, 0);
+  }
+  REQUIRE(!__sys_debughandoff(system), 186);
+  handoffproof[3] = 1;
+  REQUIRE(!__sys_unmap(bootresource(boot, BOOT_SELF_SPACE), mapping.address), 187);
+  return 0;
+}
+extern int serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
+                        u64 offset, u64 bytes, u64 shift, u64 width);
 static int
 inventory(const Bootview *boot, u64 image)
 {
@@ -111,8 +175,8 @@ main(int argc, char **argv)
         listener = (Handle) records[i].data[0];
       }
       if (records[i].data[1] == RESOURCE_SYSTEM) {
-        REQUIRE((Handle) records[i].data[0] == system && records[i].data[2] == SYSTEM_QUERY &&
-                    !records[i].data[5],
+        REQUIRE((Handle) records[i].data[0] == system &&
+                    records[i].data[2] == (SYSTEM_QUERY | SYSTEM_CONSOLE) && !records[i].data[5],
                 129);
         systems++;
       }
@@ -177,6 +241,9 @@ main(int argc, char **argv)
   REQUIRE(!__sys_destroy(view) && !__sys_free(control), 113);
   error = __sys_wait(-1, WAIT_WNOHANG, &pid, &image, &cursor, &next);
   REQUIRE(error == -ERR_CHILD, 114);
+  error = handoff(boot);
+  if (error)
+    return (int) error;
   REQUIRE(!__sys_free(system) && !__sys_free(memory), 140);
   REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0, records, 1, &written, &next) ==
                   -ERR_BAD_HANDLE &&

@@ -1,5 +1,12 @@
 #include "private/syscall.h"
 #include <abi/syscall.h>
+isize
+__sys_debughandoff(Handle system)
+{
+  const u64 args[7] = {(u64) system, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_DEBUGHANDOFF, args, &result);
+}
 NORETURN void
 __sys_exit(u64 code)
 {

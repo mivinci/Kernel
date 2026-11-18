@@ -6,6 +6,11 @@
 #include <hal/boot.h>
 #include <riscv/trap.h>
 #include <abi/bootpkg.h>
+void
+hal_debug_sync(void)
+{
+  __asm__ __volatile__("fence iorw, iorw" ::: "memory");
+}
 u64
 hal_boot_machine(void)
 {

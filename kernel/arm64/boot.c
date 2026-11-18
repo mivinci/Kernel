@@ -6,6 +6,11 @@
 #include <hal/boot.h>
 #include <arm64/trap.h>
 #include <abi/bootpkg.h>
+void
+hal_debug_sync(void)
+{
+  __asm__ __volatile__("dsb sy" ::: "memory");
+}
 extern char vectors[];
 u64
 hal_boot_machine(void)

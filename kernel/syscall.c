@@ -113,6 +113,7 @@ syscall(Hctx *context)
     used = 1;
     break;
   case SYS_IRQACK:
+  case SYS_DEBUGHANDOFF:
   case SYS_SIGRETURN:
   case SYS_SIGSUSPEND:
   case SYS_OBSREAD:
@@ -171,6 +172,13 @@ syscall(Hctx *context)
       outputs[2] = observation.reason;
     }
     break;
+  case SYS_DEBUGHANDOFF: {
+    Imageid owner;
+    status = localsystemaccess(table, (Handle) args[0], SYSTEM_CONSOLE, &owner);
+    if (!status)
+      status = diaghandoff();
+    break;
+  }
   case SYS_OBSREAD:
     status = procobsread(args[0], &observation);
     if (!status) {

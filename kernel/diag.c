@@ -6,6 +6,8 @@
 #include <klog.h>
 static u8  pending[KLOG_TEXT];
 static u32 used, fatal;
+static u32 handed;
+static u64 boundary;
 static void
 flush(void)
 {
@@ -49,13 +51,48 @@ puthex(u64 value)
   }
   hal_irq_restore(state);
 }
+int
+diaghandoff(void)
+{
+  Klogstat stats;
+  int      error;
+  if (fatal)
+    return -ERR_STATE;
+  if (handed)
+    return 0;
+  flush();
+  error = hal_debug_handoff();
+  if (error)
+    return error;
+  klogstat(&stats);
+  boundary = stats.last;
+  handed = 1;
+  return 0;
+}
 
 NORETURN void
 panic(const char *reason)
 {
+  Klogrec  record;
+  Klogstat stats;
+  u64      sequence;
+  u32      i;
   (void) hal_irq_save();
   flush();
   fatal = 1;
+  if (!hal_debug_panic() && handed) {
+    klogstat(&stats);
+    sequence = MAX(stats.first, boundary == UINT64_MAX ? UINT64_MAX : boundary + 1);
+    while (sequence <= stats.last && sequence > boundary) {
+      if (klogread(sequence, &record))
+        break;
+      for (i = 0; i < record.bytes; i++)
+        hal_debug_putc(record.text[i]);
+      if (sequence == UINT64_MAX)
+        break;
+      sequence++;
+    }
+  }
   putstr("PANIC ");
   putstr(reason);
   putstr("\n");

@@ -24,6 +24,7 @@ isize         __sys_getid(Handle *pid, u64 *image, Handle *parent);
 isize         __sys_alloc(Handle authority, const Allocarg *args, Handle *out);
 isize         __sys_copy(void *destination, const void *source, u64 bytes);
 isize         __sys_free(Handle resource);
+isize         __sys_debughandoff(Handle system);
 isize         __sys_inherit(Handle resource, u64 flags);
 isize         __sys_map(Handle space, const Maparg *args);
 isize         __sys_unmap(Handle space, u64 address);

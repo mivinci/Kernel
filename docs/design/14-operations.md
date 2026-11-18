@@ -171,3 +171,17 @@ kernel/klog.c提供内部64 KiB定长存储，227条288字节记录及160字节�
 6项host专项在O0/O2验证二进制内容/元数据/清零、非法输入不修改、完整记录多轮覆盖与cursor缺口、缩小序号上限后的耗尽不复用、碎片+hex组行、600字节长行及早期无时钟状态；假HAL核对记录/输出发生在IRQ屏蔽且调用后恢复。两架构normal/fault实际运行已通过，smoke独立导出真实64 KiB BSS记录并核对布局、连续序号、级别、零填充及每条内容存在于串口，fatal须有ERROR PANIC记录。完整回归进行中，证据归build/host/stage108-kernel-journal/，无CI/真机/性能验收。
 
 最终完整make test-all通过728项host、fmt-check及167次两架构QEMU，140份运行结果另通过实际journal存储审计；其他成功场景含明确分配前拒启等，不因没有journal快照而冒充同一审计。全部结果源码/头及两架构SDK哈希匹配终稿，日志核心对象无未定义符号。证据evidence.json/test-all.log及各运行的kernel-journal.bin。此点不含debughandoff、panic UART恢复、用户日志查询、实际serial READY或CI/板端/性能验收。
+
+### UART交接与致命诊断恢复（2026-11-18）
+
+已接原生0x74及libsys私有__sys_debughandoff。权限检查在幂等检查之前：必须为精确初始PID1/image1的有效SYSTEM CONSOLE，uid0、裸PID及普通CONTROL不能替代；余参数非零INVALID，错误及成功均无业务输出。初始SYSTEM保留QUERY并另授CONSOLE，不新增GRANT/继承。普通生产init尚未调用此入口，实际serial装载/READY仍待接。
+
+HAL在首次受检UART初始化时保存固件分频/字符格式和控制配置；NS16550临时选择DLAB读取两份分频后清DLAB，PL011保留IBRD/FBRD/LCR_H和启用后的CR，不猜时钟或写死波特率。PL011完整访问窗必须覆盖DMACR，NS32位访问的步长必须逐寄存器对齐，DTB/console首次访问前一致拒绝不合法布局。寄存器访问通过架构侧有序设备屏障完成，公共控制台没有架构寄存器条件分支。
+
+交接仅一次读取TX状态，须同时满足FIFO和移位寄存器空；BUSY不改归属、由init稍后重试，不在内核等待排空。成功后即使再次调用、用户改变DLAB/波特率或释放设备句柄，普通hal_debug_putc也不再读取或写入UART；日志继续保存诊断，不依服务退出或IRQ解绑自动恢复。diaghandoff提交现有半行并固定日志边界。
+
+panic先屏蔽IRQ且不再调度，提交待写诊断，再独占恢复UART。NS屏蔽IRQ、恢复分频/字符格式并清FIFO；PL屏蔽IRQ/关闭DMA请求与UART，最多4096次观察BUSY清除，恢复分频和字符格式、关硬件流控/回环并启用最小轮询输出。恢复成功只回放日志边界之后仍保留的至多227条记录，再输出ERROR PANIC并halt，不恢复用户驱动。设备不可排空时返回TIMEDOUT并保持普通输出静默；每个轮询输出字节最多4096次尝试，第一次超时后停止继续碰设备，丢失输出字节饱和计数，内存日志保留。观察次数上限不是纳秒延迟保证，关闭UART DMA请求也不证明外部DMA引擎已停；此致命路径不回收DMA内存或重启服务。
+
+主机专项覆盖FIFO空但移位忙、幂等及交接后无MMIO（重定位到不可访问地址仍可静默调用）、PL固件配置恢复/IRQ和DMA请求屏蔽、坏设备有界失败及输出丢失统计；授权专项拒绝普通镜像即使可信测试强行加CONSOLE位。原生包PID1另验证错误授权、未用寄存器/零输出、BUSY重试与重复交接，之后故意改坏NS的DLAB/分频或禁用PL并改分频/格式，最终真实PID1 exit触发panic恢复与日志回放。两架构用例已通过，保留完整PTE/Acct/日志及唯一BOOT/INITEXIT/PANIC审计，不以静态标记或只读写寄存器模型替代运行。
+
+完整make test-all通过733项host、fmt-check及167次双架构QEMU；140份实际日志快照保持布局/序号/元数据/串口内容审计，两架构原生交接证明均核对到真实serviceauth ELF及exit42。所有运行源码/头和SDK源码/头/库/启动对象哈希匹配终稿，证据归build/host/stage109-console-handoff/evidence.json/test-all.log。QEMU输出恢复不代表实物串行线路已按原波特率解码，也未验证目标板时钟/复位/电气行为；无CI/板端/性能验收。

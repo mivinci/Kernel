@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- 控制台交接通过733项host、格式及167次双架构QEMU，源码/头与SDK哈希匹配；140份日志快照及两架构原生交接/配置破坏后的panic恢复已核对。初始SYSTEM另获CONSOLE，普通诊断交接后仅入日志；轮询有界。证据stage109-console-handoff/evidence.json/test-all.log。生产init尚未调用或启动serial，无CI/板端/性能验收。
+
 - 诊断日志前置通过完整728项host/格式与167次两架构QEMU，140份真实64 KiB日志快照另核对记录/序号/元数据/零填充及串口内容，fatal须含ERROR PANIC。源码/头及SDK哈希一致，核心无外部依赖；证据stage108-kernel-journal/evidence.json/test-all.log。普通串口仍同步输出，未接交接/恢复或用户日志查询，无CI/板端/性能验收。
 
 - SDK导出工具修复通过722项host/格式及四次两架构SDK构建：新增/删除/残留头探针、精确集合/内容/manifest及检查不改文件/last-run均通过。库归档/csu/代表用户ELF哈希与改动前相同，未改运行代码或重跑QEMU；证据stage107-sdk-headers/evidence.json，issue010已关闭。
@@ -33,7 +35,7 @@
 
 ## 待确认与接续
 
-- 2026-11-18用户集中确认五项：控制台交接0x74/CONSOLE0x20；UART库存data[6..7]布局及serial七参数；资源reply描述符a1/x1；Siginfo来源1/2/3；DMA代次域/固定解除方向。UART库存/七参数解析已同步实现并本地验证；其余实现仍待接，DMA具体权限/调用ABI仍须冻结。
+- 2026-11-18用户集中确认五项：控制台交接0x74/CONSOLE0x20；UART库存data[6..7]布局及serial七参数；资源reply描述符a1/x1；Siginfo来源1/2/3；DMA代次域/固定解除方向。控制台交接及UART库存/七参数解析已实现并本地验证；其余实现仍待接，DMA具体权限/调用ABI仍须冻结。
 - issues：010 SDK私有头自动导出/检查已修复；003无主机观测试点与007按已确认DMA方向接续，009排图形机制前，001/005/006等待实板。当前继续控制台交接与实际serial服务，不把本地结果当作上板完成。
 
 - 001早期UART、004完整8 GiB、005板描述/设备发现、006单主核/停放与007 ARM64开启前置均已有本地交付，真实板及007非一致DMA/RV后端仍待验。接续生产SYSTEM/设备库存与真实serial装载/READY，再按T1..T4推进sh；不能把本地前置当作M3或全项目完成。
@@ -42,8 +44,7 @@
 - 007的ARM64开启前置已通过本地全量：入口M/C关闭、独占启动RAM/表页及最后镜像/栈同步，随后M/C/I开启；保留代码/页表同步，主机命名管道GDB独立读SCTLR/TCR/MAIR。漏I-cache反例仅证明控制状态审计，不是漏DMA维护的旧数据反例；007仍留非一致DMA/RV后端/板端待验。接续006的启动CPU/控制器选择及停放，避免在等待生产UART/DMA协议确认时停止全项目进展。
 - 006完整本地验收通过：固件单冷入口、当前RUNNING/其余启用CPU STOPPED，异常清空快照并拒启；正常不唤醒核，CASE=cpus实际唤醒到无栈入口后自停放。四核8次与全量均通过；Hirq保持64字节，按CPUINTC选S上下文，主机每条HMP显式cpu-index。SMC/ARM非零affinity仅模型边界、板端/EL2降级未验，不称SMP；详细证据/失败记录见01/006末尾。
 - T1.4初始SYSTEM QUERY/UART库存已本地验收：Boot352字节/四项含tag7，精确初始Image绑定、真实MMIO RW/GRANT与IRQ_SOURCE BIND，查询不重装授权；失效STALE。现含data[6]=shift/data[7]=width及对齐验证，结构大小不变。接续从真实包装载serial、完成控制READY和监督；首服务未启动，Set/domain CONTROL及其他SYSTEM业务仍待接。
-- 生产UART/早期诊断交接已确认：debughandoff 0x74、初始SYSTEM CONSOLE=0x20，普通输出进有界日志，panic停止调度后独占恢复固件配置并输出停机；实现待接，当前权限仍仅QUERY，详见07/14。
-- 已接控制台交接所需的内部64 KiB诊断日志：完整记录覆盖/丢失统计、256字节分段、来源/级别/时间及序号耗尽；putstr/puthex和panic已记录，现仍保留轮询输出。继续有界UART排空/交接、panic独占恢复与原生0x74权限检查，不把日志前置当作交接或serial已交付，详见14末尾。
+- 生产UART/早期诊断交接已接：debughandoff 0x74、精确初始SYSTEM CONSOLE=0x20，确认FIFO/移位寄存器排空后交接，忙则BUSY；普通输出仅进64 KiB日志，panic屏蔽IRQ后独占恢复固件配置、回放交接后保留记录并停机。两架构本地全量已验，生产serial装载/READY尚未接，详见07/14。
 - serial启动约定已确认并接严格解析/真实RESOURCE预检：私有tag 0x100..0x104，七参数含shift/width；失败不提交输出。独立fixture实际装载孩子并验证跨Set授权和SHARED往返，尚非生产serial主循环/READY。RESOURCE不暴露底层Mem身份，真实MMIO/独立SHARED来源仍由可信加载器保证，详见07。
 - init控制协议版本编码已于2026-11-18确认：word0高32位版本1、低32位opcode，其他三字不变；共享proto/init.h及SDK导出已接，两架构目标编译检查通过。实际serial/READY监督仍待接，详见07。
 - 串口环proto/serial.h与libsys私有serialinit/read/write已通过本地全量：16 KiB固定布局、32字节批次、acquire/release、背压与失败不提交；不自动notify/yield/reset。共享映射/IRQ循环、装载/READY和端点恢复仍待接，详见11末尾。

@@ -3,6 +3,16 @@
 #include <clock.h>
 static u8  output[4096];
 static u64 count, masked, now, available, violations;
+int
+hal_debug_handoff(void)
+{
+  return 0;
+}
+int
+hal_debug_panic(void)
+{
+  return 0;
+}
 void
 diagmocktime(u64 time, u64 valid)
 {

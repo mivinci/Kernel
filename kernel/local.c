@@ -730,11 +730,18 @@ localsystem(Rtable *table, Imageid image, Handle *out)
   error = imagehold(image, IMAGE_CLEANUP);
   if (error)
     return error;
-  publish(table, slot, LOCAL_SYSTEM, image.generation, image.index, SYSTEM_QUERY, 0, 0, 0, 0, out);
+  publish(table, slot, LOCAL_SYSTEM, image.generation, image.index,
+          SYSTEM_QUERY | (owner.pid == 1 && owner.number == 1 ? SYSTEM_CONSOLE : 0), 0, 0, 0, 0,
+          out);
   return 0;
 }
 int
 localsystemquery(Rtable *table, Handle authority, Imageid *out)
+{
+  return localsystemaccess(table, authority, SYSTEM_QUERY, out);
+}
+int
+localsystemaccess(Rtable *table, Handle authority, u64 right, Imageid *out)
 {
   Local  *slot;
   Image   owner;
@@ -746,7 +753,8 @@ localsystemquery(Rtable *table, Handle authority, Imageid *out)
   slot = find(table, authority, 0);
   if (!slot)
     return -ERR_BAD_HANDLE;
-  if (slot->subtype != LOCAL_SYSTEM || slot->rights != SYSTEM_QUERY)
+  if ((right != SYSTEM_QUERY && right != SYSTEM_CONSOLE) || slot->subtype != LOCAL_SYSTEM ||
+      slot->rights & ~(SYSTEM_QUERY | SYSTEM_CONSOLE) || !(slot->rights & right))
     return -ERR_DENIED;
   image.generation = slot->objectgen;
   image.index = slot->object;
@@ -755,6 +763,8 @@ localsystemquery(Rtable *table, Handle authority, Imageid *out)
     return -ERR_STALE;
   if (owner.state != IMAGE_ACTIVE)
     return -ERR_STATE;
+  if (right == SYSTEM_CONSOLE && (owner.pid != 1 || owner.number != 1))
+    return -ERR_DENIED;
   *out = image;
   return 0;
 }
