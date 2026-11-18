@@ -115,7 +115,8 @@ discovery(u64 dtb, u64 available)
   for (i = 0; i < hardware.nreserved; i++) {
     const Dtrange *r = &hardware.reserved[i];
     if ((r->base < end && r->base + r->size > start) ||
-        (r->base < dtb + hardware.size && r->base + r->size > dtb))
+        (r->base < ALIGN_UP(dtb + hardware.size, PAGE_SIZE) &&
+         r->base + r->size > ALIGN_DOWN(dtb, PAGE_SIZE)))
       panic("boot reserved overlap");
   }
   firmware = hardware.nreserved;

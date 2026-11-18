@@ -201,5 +201,5 @@ vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *))
   continuation = next;
   pgrelocate(delta);
   active = 1;
-  hal_vm_enter(kernelspace.root, delta, vmhigh);
+  hal_vm_enter(kernelspace.root, delta, vmhigh, info, firmware);
 }

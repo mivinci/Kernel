@@ -15,6 +15,10 @@ bootentry:
  mrs x1, CurrentEL
  cmp x1, #4
  b.ne hal_halt
+ // The physical bootstrap only accepts the MMU and data cache disabled.
+ mrs x1, sctlr_el1
+ tbnz x1, #0, hal_halt
+ tbnz x1, #2, hal_halt
  mrs x1, mpidr_el1
  and x1, x1, #0xffffff
  cbnz x1, hal_halt

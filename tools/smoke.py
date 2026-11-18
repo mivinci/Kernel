@@ -22,12 +22,26 @@ from run import _group_exists, _stop_group, install_stop_handlers, run_command
 import bootpkg
 from elf import plan as elfplan
 from layout import KBASE, KMAP_BYTES, KIO, KSTACK_BASE
+from gdbpipe import GdbPipe
 
 
 VM_FAULTS = {"textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11}
 
 class SmokeError(Exception):
     pass
+
+def check_arm64_cache(values,enabled):
+    control=values['SCTLR_EL1']
+    mask,wanted=(0x1005,0x1005) if enabled else (5,0)
+    if control&mask!=wanted:
+        raise SmokeError('unexpected ARM64 MMU/data/instruction cache state')
+    if enabled:
+        if values['MAIR_EL1']&0xffff!=0xff00:
+            raise SmokeError('unexpected ARM64 Device/normal cache attributes')
+        for shift,wanted in ((8,1),(10,1),(12,3),(24,1),(26,1),(28,3)):
+            if (values['TCR_EL1']>>shift)&3!=wanted:
+                raise SmokeError('unexpected ARM64 page-walk cache/shareability state')
+    return dict(values,translated=enabled,independent_gdb_read=True)
 
 
 class QmpPipe:
@@ -814,6 +828,8 @@ def exercise(args, run_dir, record):
     record['qmp_transport'] = 'stdio' if pipe_qmp else 'unix'
     with tempfile.TemporaryDirectory(prefix="kernel-qmp-") as temporary:
         path = Path(temporary) / "qmp.sock"
+        deadline = time.monotonic() + args.timeout
+        gdb = GdbPipe(Path(temporary)/'gdb',deadline) if args.arch=='arm64' else None
         command = [qemu, *machine, "-accel", "tcg", "-smp", "1", "-m", str(args.ram) + "M", "-nodefaults",
                    "-display", "none", "-monitor", "none", "-serial", "file:" + str(serial),
                    "-qmp", 'stdio' if pipe_qmp else "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
@@ -825,14 +841,18 @@ def exercise(args, run_dir, record):
             command += ["-device", "virtio-rng-device"]
         if args.trace:
             command += ["-d", "int,guest_errors", "-D", str(run_dir / "trace.log")]
+        if gdb:command+=['-gdb',gdb.argument]
         record["argv"] = command
         (run_dir / "launch.json").write_text(json.dumps(record, indent=2) + "\n")
-        deadline = time.monotonic() + args.timeout
         qmp = None
         with (run_dir / "qemu.log").open("wb") as output:
-            proc = subprocess.Popen(command, stdin=subprocess.PIPE if pipe_qmp else subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE if pipe_qmp else output,
-                                    stderr=output if pipe_qmp else subprocess.STDOUT, start_new_session=True)
+            try:
+                proc = subprocess.Popen(command, stdin=subprocess.PIPE if pipe_qmp else subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE if pipe_qmp else output,
+                                        stderr=output if pipe_qmp else subprocess.STDOUT, start_new_session=True)
+            except BaseException:
+                if gdb:gdb.close()
+                raise
             try:
                 while not pipe_qmp and not path.exists():
                     if proc.poll() is not None or time.monotonic() >= deadline:
@@ -843,6 +863,7 @@ def exercise(args, run_dir, record):
                 record["initial_status"] = qmp.command("query-status")
                 if record["initial_status"]["running"]:
                     raise SmokeError("QEMU did not start paused")
+                if gdb:record['cache_entry']=check_arm64_cache(gdb.registers(['SCTLR_EL1','TCR_EL1','MAIR_EL1']),False)
                 qmp.command("cont")
                 record["guest_executed"] = True
                 expected = "PANIC init exited\n" if args.case == "initfatal" or normal_fatal else "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
@@ -917,6 +938,9 @@ def exercise(args, run_dir, record):
                         registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
                     record['stopped_status']=qmp.command('query-status')
                 (run_dir / "registers.log").write_text(registers)
+                if gdb:
+                    record['cache_state']=check_arm64_cache(gdb.registers(['SCTLR_EL1','TCR_EL1','MAIR_EL1']),not bool(args.bootpkg_error))
+                    for name,text in gdb.descriptions.items():(run_dir/('gdb-'+name)).write_text(text)
                 if args.bootpkg_error:
                     if record['stopped_status']['running']:
                         raise SmokeError('rejected boot still running')
@@ -1347,6 +1371,7 @@ def exercise(args, run_dir, record):
                 if qmp is not None:
                     qmp.close()
                 _stop_group(proc)
+                if gdb:gdb.close()
 
 
 def main():

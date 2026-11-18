@@ -449,7 +449,7 @@ Mem新增writes/execs/busy，为64字节；计数按Mmap记录而非页数维护
 
 user镜像用可信构造器创建1页SEALED代码、16页RW/NX栈和1页R/NX Boot，固定地址遵循首版布局。载荷先检查初始整数/FP清零和Boot首参数，再设置逐寄存器不同的哨兵，经两次ecall/svc往返保持原值及非零FP控制状态；随后分别写Boot、写CODE、读内核、读guard、执行栈，核对用户来源、异常码、PC及故障VA。只读Boot头是该测试的空启动信息，不等于已实现Boot解析、csu、ELF装载或init。
 
-边界：正常镜像仍只初始化后停机；测试使用已有受guard保护的启动内核栈，不是已创建Proc/线程栈。用户根激活只在可信内核入口提供，不是原生syscall；当前不能修改活动根，后续运行期map须先接安全出口和有界Op。ARM启动profile仍保持缓存关闭，QEMU只能验证序列可执行及架构行为；真实缓存、多核广播、DMA、CI与性能尚未验收。
+边界：本切片当时正常镜像仍只初始化后停机，测试使用启动内核栈，未提供原生用户根激活或活动根修改。ARM缓存当时关闭；后续Proc/运行期映射及007缓存开启分别见后文和01末尾，不能用当时的序列检查证明真实缓存、多核广播、DMA、CI或性能。
 
 
 2026-11-15接续：用户场景已按03末尾栈生命周期切片迁入独立计费内核栈，陷阱结束后切回CPU启动栈再回收；本节上文“用户测试使用启动内核栈”仅描述先前切片。新增栈映射使用永久KIO父表、每栈独占叶表并计费，仍不开放用户资源授权、活动用户根修改或运行期Op。
@@ -642,7 +642,7 @@ HAL新增hal_vm_replace(vs, va, expected_hpte, new_pa, new_prot)，只替换一�
 
 先完整检查canonical/对齐/40位PA边界、READ及W^X、root用户/内核范围、expected present/权限/属性。expected来自lookup并须重编码后逐位等于当前原始叶，防止旧快照或未识别软件/保留位被覆盖；失败不写表/不失效。新叶继承原普通/Device属性和root规定的USER位，调用者不能在new_prot指定USER、改变内存类型或令Device可执行。同叶no-op不失效。全部编码在break之前计算，避免目标恰含编码器会读取的只读常量时在失效期间访问它。
 
-成功顺序为旧叶清0→现有hal_vm_commit→写新叶→hal_vm_commit，两个阶段之间没有可失败的分配或回调式外部业务；表页数/费用不变。ARM继续使用dsb ishst/tlbi vmalle1/dsb ish/isb，RV继续使用sfence.vma zero,zero；当前UP/无ASID、ARM缓存关闭配置下保守全局失效。参照[TF-A v2.12.0 xlat工具的BBM说明](https://github.com/ARM-software/arm-trusted-firmware/blob/v2.12.0/lib/xlat_tables_v2/xlat_tables_utils.c)及[RISC-V Privileged 20240411](https://docs.riscv.org/reference/isa/v20240411/_attachments/riscv-privileged.pdf)核对清旧描述符/失效/新描述符的顺序，未复制其实现。没有新增面向多核、非一致表缓存或目标真机的保证，代码同步仍由已有seal/调用者负责。
+成功顺序为旧叶清0→现有hal_vm_commit→写新叶→hal_vm_commit，两个阶段之间没有可失败的分配或回调式外部业务；表页数/费用不变。ARM继续使用dsb ishst/tlbi vmalle1/dsb ish/isb，RV继续使用sfence.vma zero,zero；本切片当时在UP/无ASID、ARM缓存关闭配置下检查，后续007开启缓存的本地全量见01末尾，仍用相同保守全局失效。参照[TF-A v2.12.0 xlat工具的BBM说明](https://github.com/ARM-software/arm-trusted-firmware/blob/v2.12.0/lib/xlat_tables_v2/xlat_tables_utils.c)及[RISC-V Privileged 20240411](https://docs.riscv.org/reference/isa/v20240411/_attachments/riscv-privileged.pdf)核对清旧描述符/失效/新描述符的顺序，未复制其实现。没有新增面向多核、非一致表缓存或目标真机的保证，代码同步仍由已有seal/调用者负责。
 
 host新增三组真实ARM/RV编码检查，提交钩子读取实际槽，确认第一次commit见0、第二次见新叶；核对失败/旧快照/未知位/no-op的无修改与无维护、零alloc/free，以及用户高半区/特权/Device属性限制。元数据/编码mock不替代真实TLB验证。
 

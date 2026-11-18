@@ -4,6 +4,7 @@
 #define HVS_USER 48
 #ifndef __ASSEMBLER__
 #include <types.h>
+#include <dtb.h>
 #define VM_READ   1
 #define VM_WRITE  2
 #define VM_EXEC   4
@@ -60,7 +61,10 @@ void  hal_code_sync(u64 pa, u64 bytes);
 /* Caller must have stopped using this root on the CPU before destroying it. */
 void hal_vm_destroy(Hvs *vs);
 /* Bootstrap transition only; no user context switch contract yet. */
-NORETURN void hal_vm_enter(u64 root, u64 delta, void (*next)(void));
+/* info's post-firmware reservations are exclusively owned boot RAM. ARM
+   discards stale pre-MMU cache lines before enabling coherent normal memory. */
+NORETURN void hal_vm_enter(u64 root, u64 delta, void (*next)(void), const Dtinfo *info,
+                           u32 firmware);
 void          hal_vm_drop_low(Hvs *vs);
 #endif
 #endif

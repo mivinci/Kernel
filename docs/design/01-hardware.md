@@ -152,7 +152,7 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 | 存储 | 无真实块设备驱动 | 新增 dw-mshc，一份覆盖两板 |
 | 以太网 | 无真实网卡驱动 | 新增 dwmac，按 3.x / 5.20 分版本 |
 | 显示 | 无 | 两板均不以显示为 bring-up 前置 |
-| 缓存 | ARM64 I/D 缓存仍关闭 | 必须开启并落实 DMA 一致性 |
+| 缓存 | ARM64已开启I/D，本地寄存器审计及全量通过；RV控制状态未观测 | 非一致DMA、平台后端与板端仍待验，007未标整体完成 |
 
 已识别容量缺口（不修则无法上真机）：
 
@@ -467,3 +467,19 @@ MSHC只接受一份非空reg与一条IRQ；DWMAC按已核对的绑定范围保�
 具体几何按固定Linux v6.12绑定复核：Documentation/devicetree/bindings/mmc/starfive,jh7110-mmc.yaml（blob 553a75195c2e7114034ada1e42938111e33c97fa）与net/snps,dwmac.yaml（blob 4e2ba1bf788c9866e7ffa4ff6774ec1b49eacc67）；家族枚举不解释具体版本的DMA描述符或MAC寄存器。新增14项设备内存专项通过；首次全量host因新旧库存测试复用一次性初始化实例而失败，现各用独立动态库库存，未放松devinit一次性规则。失败日志test-all-initial-host.log保留，完整回归已重新运行，尚未提交或宣称最终通过。
 
 本点最终完整make test-all通过662项host、格式和158次两架构QEMU，含全部12次512 MiB/2 GiB/8 GiB矩阵、生产PID1及真实UART IRQ/MMIO。全部成功结果核对当前源码/共享头哈希，生产normal/init链接无fixture；完整板树的两份/四份存储网卡记录逐项核对精确reg及全部IRQ，原始NEO3坏输入仍拒绝。证据build/host/stage98-storage-network-discovery/evidence.json与test-all.log，首次host测试库存隔离失败保留。该交付完成005的本地设备发现，不代表实际驱动、DMA、板端或CI/性能验收；006/007和全项目的blk/net等服务仍继续。
+
+### ARM64缓存开启前置（2026-11-18，007进行中）
+
+ARM64物理入口现限定EL1、MMU和D-cache关闭，I-cache可开或关但不得持有旧镜像指令；启动输入（镜像/DTB/启动包）须已由固件完成PoC交接，且不存在并发写入这些内核自有页的固件/DMA。入口在BSS/栈写入前拒绝M/C已开的状态，不擅自关闭或丢弃未交接的脏缓存。该限定沿既有物理Image profile，不扩展EL2降级、其他启动CPU或板端固件准备。
+
+不能只置SCTLR位：ARM私有hal_boot_cache_prepare在所有启动写入/页表构建完成后，以物理地址对后固件保留项（Page元数据、DTB、包及隔离副本）和完整三层4KiB表页执行逐行DC IVAC/DSB SY，排除固件保留区；最后汇编对当前镜像/BSS/活动栈做同样处理，再IC IALLU、DSB/ISB并同时开启M/C/I。维护粒度取CTR_EL0，超过页大小的粒度拒绝；范围须页对齐且确属RAM，DTB与固件保留项的整页冲突在发现阶段拒绝。没有全cache set/way清理，也不把此仅M/C关闭、全页独占的discard入口当作运行期DMA同步。
+
+原有运行期页表DSB/TLBI及代码封存的DC CVAU→DSB→IC IALLU→DSB/ISB保留；MAIR normal=WB、Device=nGnRnE，TCR页表遍历为inner/outer WBWA与inner shareable。C/汇编的hal_vm_enter内部调用追加只读Dtinfo/固件保留前缀，RV64不使用这些参数，现有fence.i/页表切换路径不变。本轮没有实现或观测RV平台cache开关，不称两架构物理缓存都已证明开启。
+
+主机新增有截止的GDB RSP只读寄存器工具，通过QEMU命名管道而非网络/socket监听，独立读取实际SCTLR_EL1/TCR_EL1/MAIR_EL1；启动前核对M/C关闭，运行后核对M/C/I与memory/table-walk属性。检查来自CPU寄存器，不依赖新增内核打印。XML编号/分片/转义/RLE/校验和/截止均受边界约束并有host反例，描述和读值随运行记录保留；不新增guest调试syscall或生产权限。
+
+tests/cacheaudit.py仅在build下复制生产Image，校验目标确为开启I-cache的ORR，再以单条NOP替换；真实启动生产PID1后独立读到M/C开、I关，审计必须拒绝。生产Image/ELF不改，也不链接fixture。该反例只证明控制状态审计能发现漏开I-cache，不能代替“漏DMA维护应观察到旧数据”的反例；QEMU对物理cache/非一致设备的建模限制和真实板验证仍须后续落实。
+
+本点最终完整make test-all通过667项host、格式及159次两架构QEMU，全部成功结果核对当前源码/共享头哈希。ARM64有77次独立GDB入口检查、66次运行M/C/I与MAIR/TCR属性检查、11次早期M/C关闭检查；另有1次漏I-cache开启的实际控制反例，审计正确拒绝且生产Image未变。全部12次容量矩阵、真实PID1/IRQ/代码封存/COW等仍通过，生产normal/init链接无fixture。hal_boot_cache_prepare编译帧16字节、hal_code_sync为32字节，不代表完整调用栈深或性能。证据build/host/stage99-arm64-cache/evidence.json与test-all.log；无CI、板端、物理缓存一致性、非一致DMA或RV缓存状态证明，007仍进行中。
+
+协议依据固定Linux v6.12的Documentation/arch/arm64/booting.rst、kernel/head.S、mm/cache.S（blob b57776a68f156d0be28a73c6036073494f3961e0、cb68adcabe0789201aa4b37befaa686c67dc7db7、503567c864fde05d52e1e621839e9dc4f50f21dc），未复制其实现作为本项目代码。

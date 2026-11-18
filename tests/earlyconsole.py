@@ -48,6 +48,8 @@ def run(arch,baseline,case,directory):
         offset,size=props[path,'interrupts'];data[offset:offset+size]=b'\xff'*size
     dtb=directory/'input.dtb';dtb.write_bytes(data)
     record=json.loads((baseline/'result.json').read_text());command=list(record['argv'])
+    if '-gdb' in command:
+        index=command.index('-gdb');del command[index:index+2]
     serial=directory/'serial.log'
     command[command.index('-serial')+1]='file:'+str(serial)
     command[command.index('-qmp')+1]='stdio'

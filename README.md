@@ -49,6 +49,8 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
 启动元数据和RAM直接映射现支持最多8 GiB、最低RAM起8 GiB跨度；超限拒启，不静默裁剪。`include/layout.inc`统一内核/审计布局，设备和内核栈位于RAM窗口之后。`make test-memory`另用512 MiB、2 GiB、8 GiB在两架构各运行pages与normal，并纳入完整回归；这不是板端或性能验收。
+
+ARM64在物理入口要求EL1、MMU/D-cache关闭，启动输入须完成固件PoC交接；同步自有启动RAM/表页及最后镜像/栈后开启M/C/I，运行期代码/页表同步保留。ARM smoke通过本地命名管道GDB独立读取SCTLR/TCR/MAIR，无额外GDB程序或监听端口；全量另含独立Image漏I-cache开启的审计反例。它只证明控制状态拒绝，不代表物理cache、非一致DMA、RV平台cache或板端已验证，007仍进行中。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
 
 ```sh
@@ -129,7 +131,7 @@ make test-qemu OPENSBI="$OPENSBI"
 `CASE=stacks` 验证默认64个计费内核栈、独占叶表、分步失败回滚、续点持有/切离后回收与观测水位；user场景也已迁到独立计费栈，完成陷阱后切回CPU启动栈再回收。
 `CASE=locals` 验证128槽、授权子窗口/减权、封存及独立引用，并覆盖固定镜像CALL/NOTIFY入口、复制及旧入口失效/释放；`life`验证默认256份保留结果、运行槽复用和清理引用；`procs`验证默认63个普通运行槽（槽0保留给初始init）、构造失败回滚、发布前复查、两个真实U/EL0入口以及退出后CPU分批回收。这些构造场景为可信内核/测试接入，未提供原生create/start/grant/wait。
 `CASE=prep` 验证父通过准备权为孩子Acct分配、临时映射发布屏障、旧加载权失效及取消后的费用滞留；`CASE=syscalls` 则通过三个真实用户程序验证自身内存syscall、协作yield/FP保持、动态代码执行及unmap后硬件故障，不使用测试陷阱回调；也检查真实硬件计数推进及time/getres寄存器结果。
-`CASE=timer`让两个无主动syscall的忙循环经真实timer IRQ轮转，验证10秒准备到期、旧临时映射滞留及最终回收。可信CPU入口可启用约5ms用户时间片；内核IRQ全现场、CPU空闲唤醒及自身alloc受控窗口已接，IRQ只请求检查点调度。`CASE=irq`验证内核整数/FP现场、开IRQ/WFI边界、独立空闲到期/回收及真实原生分配检查点；尚无IRQ嵌套、通用长Op或完整阻塞调度；ARM缓存仍关闭。这套检查不代表完整操作系统、调度、真实硬件缓存、完整IRQ、性能或CI验收。
+`CASE=timer`让两个无主动syscall的忙循环经真实timer IRQ轮转，验证10秒准备到期、旧临时映射滞留及最终回收。可信CPU入口可启用约5ms用户时间片；内核IRQ全现场、CPU空闲唤醒及自身alloc受控窗口已接，IRQ只请求检查点调度。`CASE=irq`验证内核整数/FP现场、开IRQ/WFI边界、独立空闲到期/回收及真实原生分配检查点；尚无IRQ嵌套、通用长Op或完整阻塞调度，ARM64缓存开启后的本地全量也已覆盖这些场景。这套检查不代表完整操作系统、调度、真实物理cache/DMA、完整IRQ、性能或CI验收。
 
 每个内核C单元生成`.su`编译帧报告，镜像目录`stack-usage.json`汇总；仅统计各函数帧，不代表完整调用链/汇编或最坏栈深证明。
 构建记录在 `build/<架构>/manifest.json` 及各镜像目录，最新尝试结果在 `last-run.json`，逐命令日志在 `runs/`。

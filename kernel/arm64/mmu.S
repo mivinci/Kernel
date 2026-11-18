@@ -9,6 +9,14 @@ hal_vm_commit:
  ret
 .global hal_vm_enter
 hal_vm_enter:
+ // Invalidate exclusively owned boot data and all constructed table pages.
+ stp x0, x1, [sp, #-32]!
+ stp x2, x30, [sp, #16]
+ mov x1, x3
+ mov w2, w4
+ bl hal_boot_cache_prepare
+ ldp x2, x30, [sp, #16]
+ ldp x0, x1, [sp], #32
  add x2, x2, x1
  ldr x3, =__stack_top
  add x3, x3, x1
@@ -29,8 +37,30 @@ hal_vm_enter:
  tlbi vmalle1
  dsb sy
  isb
+ // Last uncached writes included BSS/data and the active physical stack.
+ mrs x9, ctr_el0
+ ubfx x9, x9, #16, #4
+ mov x10, #4
+ lsl x10, x10, x9
+ ldr x11, =__kernel_start
+ ldr x12, =__kernel_end
+3:
+ dc ivac, x11
+ add x11, x11, x10
+ cmp x11, x12
+ b.lo 3b
+ dsb sy
+ ic iallu
+ dsb sy
+ isb
  mrs x8, sctlr_el1
  orr x8, x8, #1
+.global hal_vm_enable_dcache
+hal_vm_enable_dcache:
+ orr x8, x8, #4
+.global hal_vm_enable_icache
+hal_vm_enable_icache:
+ orr x8, x8, #0x1000
  msr sctlr_el1, x8
  isb
  br x6

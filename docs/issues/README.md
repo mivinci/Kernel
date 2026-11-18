@@ -16,4 +16,4 @@
 | [004](004-page-capacity.md) | 物理页元数据上限 1 GiB | P0 | 已修复：8 GiB本地验收 |
 | [005](005-dtb-capacity.md) | DTB 解析容量与 compatible 匹配 | P0 | 进行中：解析及设备发现本地通过，板端待验 |
 | [006](006-secondary-cores.md) | 次核停放未约定 | P1 | 待处理 |
-| [007](007-cache-dma.md) | 缓存开启与 DMA 一致性未验证 | P0 | 待处理 |
+| [007](007-cache-dma.md) | 缓存开启与 DMA 一致性未验证 | P0 | 进行中：ARM64开启本地通过，DMA/RV后端/板端待验 |

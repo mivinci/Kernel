@@ -65,6 +65,7 @@ test-qemu:
 	$(MAKE) scenario ARCH=arm64 CASE=bootpkg
 	$(MAKE) smoke ARCH=riscv CASE=normal
 	$(MAKE) smoke ARCH=arm64 CASE=normal
+	$(PYTHON) tests/cacheaudit.py
 	$(PYTHON) tests/earlyconsole.py --arch riscv
 	$(PYTHON) tests/earlyconsole.py --arch arm64
 	$(PYTHON) tests/packageboot.py --arch riscv $(if $(OPENSBI),--firmware "$(OPENSBI)")

@@ -11,7 +11,7 @@
 
 ## 已实现边界
 
-- RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM缓存仍关闭；现接GICv2/PLIC外设控制器HAL及Device映射、固定镜像IRQ_BIND/ACK/解绑与真实EVENT。原生bind现核对CONTROL IRQ及本地IRQ_SOURCE BIND；SOURCE删除不级联已有绑定，生产SYSTEM发权仍待接。
+- RV64/ARM64启动、DTB、伙伴页、内核高半区/W^X/guard、完整整数与FP陷阱现场、单核调度和约5ms用户timer已接。内核IRQ只请求安全点调度，无嵌套IRQ；ARM64已在启动自有RAM/表页同步后开启I/D缓存，实际寄存器与本地全量已验，非一致DMA/RV物理cache状态及板端未验。现接GICv2/PLIC、Device映射及固定镜像IRQ_BIND/ACK/解绑/真实EVENT；原生bind要求CONTROL IRQ及本地IRQ_SOURCE BIND，SOURCE删除不级联已有绑定，生产SYSTEM发权仍待接。
 - Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。Mem内容状态保留到最终回收，managers=0表示退役；现接SEALED规范backing多代视图，Mem96字节，现有临时DATA视图自持的原页接管账本。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；现接全局零阶容量及COW额度双重承诺、兑现/取消/旧页转交及原出资者替换基础（Acct64字节）；现接可信逻辑页组/预付分支、DATA Mem克隆及未映射写分离，现接PTE COW位、全部别名分离提交及真实用户DATA写fault原PC重试；现接内核代写/copy及COW栈信号帧；现接可信整个Space映射快照/去重及跨Mem失败回滚；现接独立Local继承/原Handle与墓碑/私有视图重绑定；现接独立fork信号动作/活动帧cookie继承及HAL子返回现场派生，现由可信forksnapshot统一Space/Local/未映射Mem/保底/Signal/现场的同步提交与后段回滚；现接可信Proc/Prep构造、取消/期限及父退出即时撤销；原生fork准入/分批检查点/专用发布与生产发权/DMA仍未接。
 - Local48、Life128、Proc512、Prep256、Image64、Obs48、Rq192、Space64、Set56；结果/镜像/账目与运行槽独立回收。两层Sigctx预付RV704/ARM960，cookie跨PID/image复用不重置，不回绕。
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权；生产PID1已安装16 Set对应的CREATE SERVICE权限，实际服务发布仍待接。
@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- 最新完整make test-all通过662项host、fmt-check及158次两架构QEMU，全部源码/共享头哈希与终稿一致。含512 MiB/2 GiB/8 GiB两架构pages与normal共12次矩阵、真实PID1/IRQ及早期失败反例；生产链接无fixture。板描述核对完整源树SHA256及RAM/UART/GIC/PLIC、存储/网卡精确窗口与全部IRQ，NEO3原始拒绝/显式适配成功分别保留。证据`build/host/stage98-storage-network-discovery/evidence.json`与test-all.log；首次host测试库存隔离失败日志保留，修正后全量通过。无CI/真机/性能验收。
+- 最新完整make test-all通过667项host、fmt-check及159次两架构QEMU，全部源码/共享头哈希匹配终稿，生产链接无fixture。ARM64有77次独立GDB入口检查、66次M/C/I开启及属性核对、11次早期M/C关闭检查；另有独立Image漏I-cache开启反例，实际M/C开而I关，被审计拒绝且生产Image未变。完整12次512 MiB/2 GiB/8 GiB矩阵/真实PID1/IRQ仍通过。证据`build/host/stage99-arm64-cache/evidence.json`与test-all.log；不代表物理cache/非一致DMA、RV缓存控制或板端/CI/性能已验。
 - native审计逐页核对完整用户/内核映射、ELF代码/RO字节、栈/guard、Boot/SELF资源、隔离包视图和精确Acct owner；用户initstate显示正确目录/字节数/checksum并阻塞，私有页/页表/内核栈收费与实际owner集合一致，包仍保留且不重复计费。早期私有store符号被优化拆分及RV idle sie假设已直接观测后修正，失败记录保留。完整fork仍待T4前补源别名/长循环/IRQ检查点与STOP/CONT。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
@@ -32,6 +32,7 @@
 - 001早期UART已移除固定基址/ARM固定波特率，004完整8 GiB元数据/直接映射与设备栈窗口迁移已通过本地全量；005解析和存储/网卡发现已本地验收，真实板仍待验。下一处理007缓存/DMA前置与006启动CPU/控制器选择及次核停放，再接生产SYSTEM设备库存。
 - 005解析切片已通过本地全量：1024节点/8192属性/32深度、4 reg/16 IRQ，设备仍64项；完整固定来源树在tests/fixtures/dtb。VF2原始树、NEO3显式测试适配树read/console通过，NEO3原始树拒绝，不放宽零长度检查。原始/适配/固件dump区别见01末尾。005仍需存储/网络设备发现及板端验证；006仍需启动hart/CPU选择与停放，不能把多hart拓扑解析当成SMP或上板已实现。
 - 005后续已补MSHC/DWMAC家族/具体别名与多IRQ库存，完整板树实际SD/MMC/GMAC窗口及IRQ已核对且完整回归通过；不写设备寄存器或授DMA/生产Handle。家族不代表寄存器版本/PHY/时钟/复位已实现，实际blk/net驱动仍待完成。设备发现本地验收与板端运行严格分开，详见01/005末尾。
+- 007的ARM64开启前置已通过本地全量：入口M/C关闭、独占启动RAM/表页及最后镜像/栈同步，随后M/C/I开启；保留代码/页表同步，主机命名管道GDB独立读SCTLR/TCR/MAIR。漏I-cache反例仅证明控制状态审计，不是漏DMA维护的旧数据反例；007仍留非一致DMA/RV后端/板端待验。接续006的启动CPU/控制器选择及停放，避免在等待生产UART/DMA协议确认时停止全项目进展。
 - UART启动记录候选增加data[6]=reg-shift/data[7]=reg-io-width，保留六字段前缀与结构大小，已异步询问用户；确认前不改生产ABI，详见07末尾。内部005解析可继续，不因这个候选暂停整个目标。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
