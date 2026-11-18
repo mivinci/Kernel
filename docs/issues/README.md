@@ -12,8 +12,9 @@
 | --- | --- | --- | --- |
 | [001](001-early-uart.md) | 早期 UART 基址仍为 QEMU 硬编码 | P0 | 进行中：已移除，板端待验 |
 | [002](002-graphics-backend.md) | 图形后端顺序与真机目标不一致 | P1 | 已修复（设计层）：13 已改为三后端与能力位，实现待 G2 |
-| [003](003-board-verification.md) | 验收依赖 QMP，真机无等价手段 | P1 | 待处理 |
+| [003](003-board-verification.md) | 验收依赖 QMP，真机无等价手段（001/005/007 的共同前置） | **P0** | 待处理 |
 | [004](004-page-capacity.md) | 物理页元数据上限 1 GiB | P0 | 已修复：8 GiB本地验收 |
 | [005](005-dtb-capacity.md) | DTB 解析容量与 compatible 匹配 | P0 | 进行中：解析及设备发现本地通过，板端待验 |
 | [006](006-secondary-cores.md) | 次核停放未约定 | P1 | 已修复：本地四核单主核验收，板端未验 |
 | [007](007-cache-dma.md) | 缓存开启与 DMA 一致性未验证 | P0 | 进行中：ARM64开启本地通过，DMA/RV后端/板端待验 |
+| [009](009-device-ram-window.md) | Device 租约不支持 RAM 型窗口（`simple-framebuffer` 前置） | P1 | 待处理 |
