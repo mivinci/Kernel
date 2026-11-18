@@ -34,6 +34,20 @@ PROFILES = {
 }
 COMMON = ["-std=c89", "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
           "-fno-pic", "-fno-pie", "-O2", "-Wall", "-Wextra", "-Werror"]
+BOOT_CASES = {
+    "normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4,
+    "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9,
+    "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14,
+    "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19,
+    "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24,
+    "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29,
+    "events": 30, "control": 31, "terminate": 32, "creds": 33, "groups": 34,
+    "stats": 35, "createauth": 36, "sigreserve": 37, "spawn": 38, "libsys": 39,
+    "runtime": 40, "elf": 41, "init": 42, "initfatal": 43, "sigconfig": 44,
+    "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48,
+    "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52, "bootpkg": 53,
+    "cpus": 54,
+}
 
 
 class BuildError(Exception):
@@ -189,9 +203,11 @@ def build(args, directory, run_dir):
         # The physical ELF runs again at a high alias without runtime relocations.
         # Compiler switch tables must not embed absolute physical code pointers.
         flags += ["-fno-jump-tables"]
-        flags += ["-DBOOT_CASE=" + str({"normal": 0, "registers": 1, "fault": 2, "pages": 3, "textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11, "budget": 12, "spaces": 13, "memory": 14, "seal": 15, "user": 16, "switch": 17, "stacks": 18, "locals": 19, "life": 20, "procs": 21, "prep": 22, "syscalls": 23, "timer": 24, "irq": 25, "images": 26, "requests": 27, "ipc": 28, "ipcdepth": 29, "events": 30, "control": 31, "terminate": 32, "creds": 33, "groups": 34, "stats": 35, "createauth": 36, "sigreserve": 37, "spawn": 38, "libsys": 39, "runtime": 40, "elf": 41, "init": 42, "initfatal": 43, "sigconfig": 44, "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48, "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52, "bootpkg": 53}[args.case])]
+        flags += ["-DBOOT_CASE=" + str(BOOT_CASES[args.case])]
         sources.append(ROOT / "kernel/bootpkg.c")
         sources.append(ROOT / "kernel/bootstore.c")
+        sources += [ROOT / 'kernel/bootcpu.c', ROOT / 'kernel' / args.arch / 'cpu.c',
+                    ROOT / 'kernel' / args.arch / 'firmware.S']
         if args.case == 'normal':
             sources.append(ROOT / 'kernel/bootstart.c')
         sources += [ROOT / "kernel/main.c", ROOT / "kernel/bootimage.c", ROOT / "kernel/bootload.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/group.c", ROOT / "kernel/image.c", ROOT / "kernel/observe.c", ROOT / "kernel/rq.c", ROOT / "kernel/event.c", ROOT / "kernel/irq.c", ROOT / "kernel/irqdesc.c", ROOT / "kernel/signal.c", ROOT / "kernel/fork.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "irq.c", ROOT / "kernel" / args.arch / "irqmap.c", ROOT / "kernel" / args.arch / "irqentry.S", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/cow.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/device.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
@@ -202,6 +218,8 @@ def build(args, directory, run_dir):
         if args.case == "cow":
             flags += ["-DCOW_REFS=8"]
             sources += [ROOT / "tests/kernel/cowtest.c", ROOT / "tests/kernel/snapshotest.c"]
+        if args.case == 'cpus':
+            sources += [ROOT/'tests/kernel/cputest.c', ROOT/'tests/kernel'/args.arch/'cpustart.c']
         if args.case == "bootpkg":
             sources += [ROOT / "tests/kernel/bootviewtest.c", ROOT / "tests/kernel/load.c"]
         if args.case == "registers":
@@ -307,6 +325,8 @@ def build(args, directory, run_dir):
     if not header_source.exists() or header_source.read_text() != generated:
         header_source.write_text(generated)
     units = [(p, work / "obj" / p.relative_to(ROOT).with_suffix(".o")) for p in sources]
+    if len({obj for source,obj in units}) != len(units):
+        raise BuildError('source files collide at the same object path')
     units.append((header_source, checks / "headers.o"))
     def stack_source(source):
         return kernel and source.suffix == ".c" and source != header_source
@@ -432,7 +452,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--kind", choices=("hardware", "kernel"), default="hardware")
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "textwrite", "rodatawrite", "dataexec", "guard", "null", "identity", "alias", "unmapped", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow", "bootpkg"), default="normal")
+    parser.add_argument("--case", choices=tuple(BOOT_CASES), default="normal")
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")

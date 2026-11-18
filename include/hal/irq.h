@@ -16,7 +16,7 @@ struct Hirq
 {
   u64               base[2], bytes[2];
   const Hirqsource *source;
-  u32               kind, regions, count, limit, parent[2];
+  u32               kind, regions, count, limit, context, reserved;
 };
 struct Htimer
 {

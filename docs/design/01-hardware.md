@@ -15,7 +15,7 @@
 
 ## 首轮硬件目标（已确定方向）
 
-以固定版本 QEMU virt、单核、TCG 为首轮正确性目标，显式固定 CPU/扩展/机器参数，不依赖默认 CPU 或随版本变化的 max。
+以固定版本QEMU virt、单主核、TCG为首轮正确性目标，显式固定CPU/扩展/机器参数，不依赖默认CPU或随版本变化的max。单主核指仅一个OS执行核，不假设机器只有一个物理核；006另验四核机器的固件停放与实际自停放。
 RV64 使用明确扩展及 OpenSBI、PLIC、NS16550；ARM64 显式选定 64 位 CPU、GICv2、PL011，两边使用实际 DTB。
 blk/net/dis/input 分别以 virtio-blk/net/gpu/input 为目标，优先现代 virtio-mmio，用户态共享传输/队列实现，服务仍隔离。
 不同时维护 legacy virtio 兼容层；图形/输入的 MMIO 设备组合须先实际探测两架构 QEMU 支持，再冻结启动命令，未验证不称可运行。
@@ -384,7 +384,7 @@ Rq预算实现补充（2026-11-16）：Rq184字节、1024槽共188416字节；Rq
 
 已实现冻结的hal_irq_claim/number/mask/complete/unmask，并将一次性控制器初始化与timer源初始化分开。Hirq为64字节内部硬件描述，Hirqsource为8字节；只借用启动来源数组至init返回，不保留调用者栈指针。核心irqdescribe按实际DTB父关系收集受支持外设线，合并同flags共享线，冲突/容量/错误父拓扑拒绝且不发布部分输出；它不是IRQ授权或驱动绑定。Htimer仅保留四组timer IRQ/flags，不再重复保存GIC窗口。
 
-hal_irq_pages由对应架构校验物理窗口/溢出/拓扑并返回最小映射页；核心只用通用KIRQ窗口建立Device页，不写PLIC/GIC寄存器偏移或CPU位。RV64当前只接受既定单hart的[M或NONE,S]两个上下文，S为第二个上下文；映射priority页、S claim/threshold页和enable页共3页，不映射整个PLIC。GICv2使用distributor与CPU interface各1页，拒绝重叠窗口；现有无Security Extensions profile不变。QMP页表审计现独立核对PLIC三页的真实PA、设备属性及无其他别名，UART仍为独立Device页。
+hal_irq_pages由对应架构校验物理窗口/溢出/拓扑并返回最小映射页；核心只用通用KIRQ窗口建立Device页，不写PLIC/GIC寄存器偏移或CPU位。本切片最初RV只接受[M或NONE,S]两个上下文，后续006已按实际启动CPU选择完整列表中的S上下文，见文末；仍只映射priority、S claim/threshold和enable共3页。GICv2使用distributor与CPU interface各1页，拒绝重叠；无Security Extensions profile不变。QMP独立核对实际PA、Device属性及无其他别名，UART仍独立。
 
 PLIC以priority=0屏蔽并保留S context enable，完成后再由unmask恢复priority=1；不先清enable再complete，因为规范要求未enable的completion可被忽略。读写用IO fence排序，threshold维持0，controller初始化仅启用CPU的SEIE类型、所有外设线保持priority0/enable0；timer初始化只处理STIE而不清除SEIE。全局SIE仍由原临界/调度边界控制。
 
@@ -483,3 +483,27 @@ tests/cacheaudit.py仅在build下复制生产Image，校验目标确为开启I-c
 本点最终完整make test-all通过667项host、格式及159次两架构QEMU，全部成功结果核对当前源码/共享头哈希。ARM64有77次独立GDB入口检查、66次运行M/C/I与MAIR/TCR属性检查、11次早期M/C关闭检查；另有1次漏I-cache开启的实际控制反例，审计正确拒绝且生产Image未变。全部12次容量矩阵、真实PID1/IRQ/代码封存/COW等仍通过，生产normal/init链接无fixture。hal_boot_cache_prepare编译帧16字节、hal_code_sync为32字节，不代表完整调用栈深或性能。证据build/host/stage99-arm64-cache/evidence.json与test-all.log；无CI、板端、物理缓存一致性、非一致DMA或RV缓存状态证明，007仍进行中。
 
 协议依据固定Linux v6.12的Documentation/arch/arm64/booting.rst、kernel/head.S、mm/cache.S（blob b57776a68f156d0be28a73c6036073494f3961e0、cb68adcabe0789201aa4b37befaa686c67dc7db7、503567c864fde05d52e1e621839e9dc4f50f21dc），未复制其实现作为本项目代码。
+
+### 单主入口与CPU停放校验接续（2026-11-18，006进行中）
+
+启用CPU的64位ID、CPUINTC phandle及固件方法现保存在Dtinfo.cpu[16]，dtconsole早期阶段与完整dtread共用提取/重复ID检查。ARM识别明确PSCI smc/hvc conduit，未知方法不可用；RV按既定SBI启动profile实际探测HSM，不用未知方法猜OFF状态。disabled固件CPU不作为OS可启用域，不能为了单核OS关闭固件驻留管理核。描述本身不激活SMP。
+
+生产契约为固件只向一个PE交付冷入口，其他启用CPU应已在固件停放；bootcpucheck先探测PSCI>=0.2或SBI HSM，再查询当前CPU必须RUNNING、其余必须STOPPED，全部成功才发布固定快照并进行第一笔UART MMIO/后续页初始化。任何缺当前ID、重复/混合方法、旧/不支持接口、查询错误、ON/PENDING均清空快照并拒启，不以WFI或受限继续冒充OFF。PSCI CPU_OFF/SBI hart_stop只停调用自身的核，不声称主核能直接远程关掉已运行的次核。
+
+两架构固件自停放入口不使用共享栈/BSS/MMIO，实际运行验证见本节最终结果；正常启动只查询已停放核，不主动唤醒闲置核。PSCI版本/亲和状态和SBI HSM常量按固定Linux v6.12的include/uapi/linux/psci.h（blob 42a40ad3fb622ce330ae4acb9a99bfef4dd3c0e5）与arch/riscv/include/asm/sbi.h（blob 98f631b051dba8c646583ec83239d20180668eb1）核对。冷入口单一性依靠明确固件交接，不用缓存关闭时不可靠的共享锁选主。
+
+当前39项DTB与4项双后端CPU host模型通过，ARM64/RV64单核normal经实际PSCI/HSM探测查询通过。首次链接因cpu.c/cpu.S被构建器投到同名cpu.o而失败，已将汇编命名firmware.S，并增加对象路径冲突拒绝；原始link日志保留在build/<架构>/runs/。证据build/host/stage100-cpu-bootstrap/。非零启动PE入口、PLIC上下文选择、四核运行/自停放及完整回归尚未完成，未提交006，不替换667host/159QEMU基线，不能称多核机器启动或板端验证已完成。
+
+后续已移除启动核必须0的入口限制，ARM读取完整Aff3/Aff2/Aff1/Aff0，RV保留固件a0提供的64位hart ID；仍要求固件只交付一个冷入口，不在缓存关闭时用共享锁选主。完整发现复核早期CPU ID/method/CPUINTC清单。内核仍只在该核运行、只维护一套调度/栈/VM活动状态，没有用户可用的CPU启动权或SMP调度。
+
+Hirq仍64字节，原parent[2]改为选中的context及reserved=0。irqdescribe凭实际启动CPU的CPUINTC phandle，在完整PLIC上下文顺序中唯一选择S中断9的索引，保留被屏蔽或不成M/S对的其他槽；不从hart ID乘2猜上下文。PLIC认领/阈值地址取base+0x200000+context*0x1000，enable页及页内偏移取base+0x2000+context*0x80；范围/容量/缺少或歧义上下文失败不改输出。GIC保留四个保护窗口时只归一化首两个运行接口，其他窗口不授给用户。测试芯片探针也按归一化context检查enable，避免把旧context1写死在fixture。
+
+主机QMP每条HMP寄存器请求显式带cpu-index，不能依赖一次“cpu N”命令跨QMP请求生效；首次RV四核已运行生产PID1却误读CPU0固件寄存器的失败记录保留，现有回归覆盖每条索引及显式覆盖不污染默认值。停止后保存所有虚拟CPU的寄存器和query-cpus-fast库存，实际主核必须与固件交接/状态快照一致；主核MMU/用户映像及IRQ核对都针对该核。
+
+CASE=cpus只链接tests/kernel：逐个PSCI CPU_ON/SBI hart_start到生产无栈自停放入口，次核实际执行CPU_OFF/hart_stop，主核在1秒有界轮询中确认STOPPED，再复核所有其他核OFF与页分配守恒。若OFF调用失败而仅WFI，固件仍报告RUNNING/待处理，不能当作成功；生产路径不唤醒闲置核。此场景与四核normal/pages/irqbind组成make test-cpus的两架构8次矩阵，已专项通过，并已纳入完整回归。
+
+RV矩阵确定选择hart1：测试在固件运行前保留完整原DTB/保留表项，为/chosen添加opensbi,config的cold-boot-harts phandle，写回独立QEMU实例的FDT输入并逐块读回核对；不改kernel Image、CPU寄存器或内核状态，内核不依赖这个固件私有属性。最初尝试FW_DYNAMIC preferred hart仅影响重定位、未固定最终冷启动核，失败结果保留；已按OpenSBI v1.8.1 platform/generic/platform.c（blob 01fa03e0da4874d97da91f6e4d0358f1d5cd982e）的实际冷启动许可机制改正。主机FDT工具有完整属性/保留表保真、拒绝覆盖已有配置及坏输入检查，不依赖启动竞速获得非零覆盖。
+
+本点最终完整make test-all通过678项host、格式及167次两架构QEMU。162份启动准入快照及实际CPU库存/各核寄存器保留；8次四核矩阵中RV的normal/pages/真实IRQ/自停放确定hart1/context3，ARM对应场景通过，两架构各实际唤醒并自停放三个次核，页账目守恒。12次512 MiB/2 GiB/8 GiB矩阵与生产PID1/缓存审计仍通过，全部源码/共享头哈希匹配终稿，生产链接无fixture。证据build/host/stage100-cpu-bootstrap/evidence.json与test-all.log；HMP误选核、FW_DYNAMIC重定位偏好误当冷启动许可及对象名冲突的失败均保留。
+
+Dtinfo=24528字节、Dtcpu=16、Bootcpus快照=272、Hirq仍64；bootcpucheck编译帧两架构80字节，早期CPU提取ARM192/RV208字节，不代表完整栈深或性能。PSCI SMC与ARM非零affinity仅模型/代码边界，真实板/EL2降级/固件交接未验；006标记为本地四核停放完成，不称SMP调度或通用多核板端支持已完成。

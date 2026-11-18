@@ -4,13 +4,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from test_dtb import Info, Range, Irq
+from test_dtb import Info, Range, Irq, Cpu
 
 ROOT=Path(__file__).resolve().parents[2]
 class Source(C.Structure):
     _fields_=[('number',C.c_uint32),('flags',C.c_uint32)]
 class Controller(C.Structure):
-    _fields_=[('base',C.c_uint64*2),('bytes',C.c_uint64*2),('source',C.POINTER(Source))]+[(name,C.c_uint32) for name in ('kind','regions','count','limit')]+[('parent',C.c_uint32*2)]
+    _fields_=[('base',C.c_uint64*2),('bytes',C.c_uint64*2),('source',C.POINTER(Source))]+[(name,C.c_uint32) for name in ('kind','regions','count','limit','context','reserved')]
 
 class IrqChipTests(unittest.TestCase):
     @classmethod
@@ -24,7 +24,7 @@ class IrqChipTests(unittest.TestCase):
                 sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
                 command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
             subprocess.run(command,check=True,capture_output=True)
-            lib=C.CDLL(str(path));lib.irqdescribe.argtypes=[C.POINTER(Info),C.POINTER(Controller),C.POINTER(Source),C.c_uint32]
+            lib=C.CDLL(str(path));lib.irqdescribe.argtypes=[C.POINTER(Info),C.c_uint64,C.POINTER(Controller),C.POINTER(Source),C.c_uint32]
             lib.hal_irq_pages.argtypes=[C.POINTER(Controller),C.POINTER(C.c_uint64)]
             cls.libs.append((arch,lib))
     @classmethod
@@ -32,6 +32,7 @@ class IrqChipTests(unittest.TestCase):
 
     def fixture(self,arch):
         info=Info();info.ndev=4;controller=info.dev[0]
+        info.cpus=1;info.cpu[0]=Cpu(0,1,3 if arch=='riscv' else 2)
         controller.kind=4 if arch=='riscv' else 5;controller.phandle=7
         controller.nreg=1 if arch=='riscv' else 2;controller.nirq=2 if arch=='riscv' else 0
         controller.reg[0]=Range(0xc000000,0x600000) if arch=='riscv' else Range(0x8000000,0x10000)
@@ -47,11 +48,11 @@ class IrqChipTests(unittest.TestCase):
         self.assertEqual(C.sizeof(Controller),64)
         for arch,lib in self.libs:
             info=self.fixture(arch);out=Controller();storage=(Source*64)()
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),0)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),0)
             self.assertEqual((out.kind,out.regions,out.count),(1 if arch=='riscv' else 2,info.dev[0].nreg,2))
             self.assertEqual([(out.source[i].number,out.source[i].flags) for i in range(2)],[(info.dev[i].irq[0].number,info.dev[i].irq[0].flags) for i in (1,2)])
             self.assertEqual(list(out.base),[info.dev[0].reg[0].base,info.dev[0].reg[1].base])
-            self.assertEqual(list(out.parent),[11,9] if arch=='riscv' else [0,0])
+            self.assertEqual((out.context,out.reserved),(1 if arch=='riscv' else 0,0))
 
     def test_missing_multiple_or_inconsistent_controller_fails_without_publishing(self):
         for arch,lib in self.libs:
@@ -66,13 +67,13 @@ class IrqChipTests(unittest.TestCase):
                 info=self.fixture(arch);mutate(info);out=Controller();storage=(Source*64)()
                 C.memset(C.byref(out),0xa5,C.sizeof(out));C.memset(storage,0x5a,C.sizeof(storage))
                 before=bytes(out),bytes(storage)
-                self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),error)
+                self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),error)
                 self.assertEqual((bytes(out),bytes(storage)),before)
 
     def test_plic_cpu_contexts_must_share_one_parent(self):
         arch,lib=self.libs[0];info=self.fixture(arch);out=Controller();storage=(Source*64)()
         info.dev[0].irq[1].parent=99
-        self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),-4)
+        self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),-4)
         self.assertEqual(bytes(out),bytes(C.sizeof(out)))
 
     def test_source_capacity_is_checked_after_deduplication_without_partial_output(self):
@@ -80,13 +81,13 @@ class IrqChipTests(unittest.TestCase):
             info=self.fixture(arch);storage=(Source*64)();out=Controller()
             for capacity,error in ((0,-2),(1,-2),(65,-1)):
                 before=bytes(out),bytes(storage)
-                self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,capacity),error)
+                self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,capacity),error)
                 self.assertEqual((bytes(out),bytes(storage)),before)
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,2),0)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,2),0)
             self.assertEqual(out.count,2)
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),None,2),-1)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),None,2),-1)
             info.ndev=1
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),None,0),0)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),None,0),0)
             self.assertEqual(out.count,0);self.assertFalse(out.source)
 
     def test_storage_and_multi_irq_mac_use_exact_parent_and_deduplicate_all_sources(self):
@@ -96,36 +97,65 @@ class IrqChipTests(unittest.TestCase):
             info.dev[2].irq[1]=Irq(original.parent,21 if arch=='riscv' else 49,original.flags,0)
             info.dev[2].irq[2]=Irq(original.parent,info.dev[1].irq[0].number,original.flags,0)
             out=Controller();storage=(Source*64)()
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),0)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),0)
             self.assertEqual(out.count,3)
             self.assertEqual([storage[i].number for i in range(3)],
                              [info.dev[1].irq[0].number,info.dev[2].irq[0].number,info.dev[2].irq[1].number])
             before=bytes(out),bytes(storage)
             info.dev[2].irq[2].parent=99
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),-4)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),-4)
             self.assertEqual((bytes(out),bytes(storage)),before)
 
     def test_minimal_device_windows_use_the_declared_supervisor_context(self):
         for arch,lib in self.libs:
             info=self.fixture(arch);storage=(Source*64)();out=Controller();pages=(C.c_uint64*3)()
-            self.assertEqual(lib.irqdescribe(C.byref(info),C.byref(out),storage,64),0)
+            self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),0)
             self.assertEqual(lib.hal_irq_pages(C.byref(out),pages),3 if arch=='riscv' else 2)
             self.assertEqual(list(pages),[0xc000000,0xc201000,0xc002000] if arch=='riscv' else [0x8000000,0x8010000,0])
             if arch=='riscv':
-                out.parent[0]=0xffffffff
+                info.dev[0].irq[0].number=0xffffffff
+                self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),0)
                 self.assertEqual(lib.hal_irq_pages(C.byref(out),pages),3)
 
     def test_bad_window_extent_topology_and_alias_leave_all_page_outputs_unchanged(self):
         for arch,lib in self.libs:
             info=self.fixture(arch);storage=(Source*64)();good=Controller()
-            lib.irqdescribe(C.byref(info),C.byref(good),storage,64)
+            lib.irqdescribe(C.byref(info),0,C.byref(good),storage,64)
             mutations=[lambda x:setattr(x,'kind',99),lambda x:setattr(x,'regions',0),
                 lambda x:x.base.__setitem__(0,x.base[0]+1),lambda x:x.bytes.__setitem__(0,4095),
                 lambda x:x.base.__setitem__(0,(1<<64)-4096),lambda x:setattr(x,'count',65),
-                lambda x:setattr(x,'source',C.POINTER(Source)()),lambda x:x.parent.__setitem__(1,11)]
+                lambda x:setattr(x,'source',C.POINTER(Source)()),lambda x:setattr(x,'reserved',1)]
             if arch=='riscv':mutations += [lambda x:setattr(x,'limit',0),lambda x:setattr(x,'limit',1024),lambda x:x.bytes.__setitem__(0,0x201fff)]
             else:mutations += [lambda x:x.base.__setitem__(1,x.base[0]),lambda x:x.bytes.__setitem__(1,1)]
             for mutate in mutations:
                 out=Controller.from_buffer_copy(bytes(good));mutate(out);pages=(C.c_uint64*3)(11,22,33)
                 self.assertEqual(lib.hal_irq_pages(C.byref(out),pages),-1)
                 self.assertEqual(list(pages),[11,22,33])
+
+    def test_nonzero_hart_selects_its_s_context_even_with_masked_or_unpaired_m_entries(self):
+        arch,lib=self.libs[0];info=self.fixture(arch);info.cpus=2
+        info.cpu[0]=Cpu(0,11,3);info.cpu[1]=Cpu(4,12,3)
+        controller=info.dev[0];controller.nirq=3
+        controller.irq[0]=Irq(11,11,0,0)
+        controller.irq[1]=Irq(12,0xffffffff,0,0)
+        controller.irq[2]=Irq(12,9,0,0)
+        out=Controller();storage=(Source*64)();pages=(C.c_uint64*3)()
+        self.assertEqual(lib.irqdescribe(C.byref(info),4,C.byref(out),storage,64),0)
+        self.assertEqual(out.context,2)
+        self.assertEqual(lib.hal_irq_pages(C.byref(out),pages),3)
+        self.assertEqual(list(pages),[0xc000000,0xc202000,0xc002000])
+        before=bytes(out),bytes(storage)
+        self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),-4)
+        self.assertEqual((bytes(out),bytes(storage)),before)
+        self.assertEqual(lib.irqdescribe(C.byref(info),99,C.byref(out),storage,64),-4)
+        out.context=33
+        self.assertEqual(lib.hal_irq_pages(C.byref(out),pages),3)
+        self.assertEqual(list(pages),[0xc000000,0xc221000,0xc003000])
+
+    def test_four_gic_regions_remain_protected_but_only_runtime_pair_is_selected(self):
+        arch,lib=self.libs[1];info=self.fixture(arch);info.dev[0].nreg=4
+        info.dev[0].reg[2]=Range(0x8020000,8192);info.dev[0].reg[3]=Range(0x8030000,8192)
+        out=Controller();storage=(Source*64)()
+        self.assertEqual(lib.irqdescribe(C.byref(info),0,C.byref(out),storage,64),0)
+        self.assertEqual((out.regions,out.context,out.reserved),(2,0,0))
+        self.assertEqual(list(out.base),[0x8000000,0x8010000])

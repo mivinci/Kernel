@@ -72,10 +72,12 @@ class Irq(C.Structure):
 class Device(C.Structure):
     _fields_ = [('kind', C.c_uint32), ('nreg', C.c_uint32), ('nirq', C.c_uint32), ('phandle', C.c_uint32),
                 ('reg', Range * DT_REGS), ('irq', Irq * 16), ('limit', C.c_uint32), ('protected', C.c_uint32), ('mappable',C.c_uint32),('groupable',C.c_uint32)]
+class Cpu(C.Structure):
+    _fields_=[('id',C.c_uint64),('intc',C.c_uint32),('method',C.c_uint32)]
 class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
-        ('usable', Range * 64), ('dev', Device * 64), ('initrd', Range), ('bootedge', Range * 2)]
+        ('usable', Range * 64), ('dev', Device * 64), ('initrd', Range), ('bootedge', Range * 2),('cpu',Cpu*16)]
 class Uart(C.Structure):
     _fields_=[('reg',Range)]+[(x,C.c_uint32) for x in ('kind','shift','width','reserved')]
 

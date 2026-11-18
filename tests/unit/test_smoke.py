@@ -11,6 +11,21 @@ from smoke import Qmp
 
 
 class QmpPipeTests(unittest.TestCase):
+    def test_hmp_cpu_index_is_explicit_on_every_request_and_override_is_local(self):
+        process=self.server('''import sys,json
+print('{"QMP":{}}')
+for _ in range(3):
+ r=json.loads(sys.stdin.readline())
+ print(json.dumps({'id':r['id'],'return':r.get('arguments',{})}),flush=True)
+''')
+        client=Qmp(None,time.monotonic()+3,process);client.cpu_index=3
+        args={'command-line':'info registers'}
+        self.assertEqual(client.command('human-monitor-command',args)['cpu-index'],3)
+        self.assertNotIn('cpu-index',args)
+        self.assertEqual(client.command('human-monitor-command',dict(args,**{'cpu-index':0}))['cpu-index'],0)
+        self.assertEqual(client.command('human-monitor-command',args)['cpu-index'],3)
+        client.close()
+
     def server(self,script):
         process=subprocess.Popen([sys.executable,'-u','-c',script],stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE,stderr=subprocess.PIPE)

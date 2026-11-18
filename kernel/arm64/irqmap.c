@@ -3,8 +3,8 @@ int
 hal_irq_pages(const Hirq *c, u64 pages[HIRQ_WINDOWS])
 {
   u32 i;
-  if (!c || !pages || c->kind != HIRQ_GIC || c->regions != 2 || c->limit || c->parent[0] ||
-      c->parent[1] || c->count > HIRQ_SOURCES || (c->count && !c->source))
+  if (!c || !pages || c->kind != HIRQ_GIC || c->regions != 2 || c->limit || c->context ||
+      c->reserved || c->count > HIRQ_SOURCES || (c->count && !c->source))
     return -1;
   for (i = 0; i < 2; i++)
     if (!c->base[i] || (c->base[i] & PAGE_MASK) || c->bytes[i] < PAGE_SIZE ||

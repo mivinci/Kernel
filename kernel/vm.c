@@ -147,7 +147,7 @@ vmhigh(void)
 }
 
 NORETURN void
-vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *))
+vmstart(const Dtinfo *info, u32 firmware, u64 cpu, void (*next)(Hvs *))
 {
   u64      pa, end, base = ~(u64) 0, uart = 0, prot;
   u32      i, found = 0;
@@ -190,7 +190,7 @@ vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *))
     Hirqsource sources[HIRQ_SOURCES];
     u64        windows[HIRQ_WINDOWS];
     int        count;
-    if (irqdescribe(info, &controller, sources, HIRQ_SOURCES) ||
+    if (irqdescribe(info, cpu, &controller, sources, HIRQ_SOURCES) ||
         (count = hal_irq_pages(&controller, windows)) < 0)
       panic("interrupt controller windows");
     for (i = 0; i < (u32) count; i++)

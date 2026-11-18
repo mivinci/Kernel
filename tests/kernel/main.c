@@ -1,11 +1,19 @@
 #include "ktest.h"
+#include "chip.h"
 #include <diag.h>
 void
-testmain(Hvs *space, const Dtinfo *hardware)
+testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
 {
   UNUSED(space);
   UNUSED(hardware);
-#if BOOT_CASE == 53
+  UNUSED(cpu);
+#if BOOT_CASE == 47 || BOOT_CASE == 48
+  chipcpu(hardware, cpu);
+#endif
+#if BOOT_CASE == 54
+  cputest(hardware, cpu);
+  putstr("READY cpus-stopped\n");
+#elif BOOT_CASE == 53
   bootviewtest();
   putstr("READY bootpkg-checked\n");
 #elif BOOT_CASE == 52

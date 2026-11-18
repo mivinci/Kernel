@@ -26,7 +26,7 @@ struct Irqstat
   u32     number, bit, state, reserved;
 };
 /* Hardware description is not authority. Inventory is immutable after init. */
-int irqdescribe(const Dtinfo *info, Hirq *out, Hirqsource *storage, u32 capacity);
+int irqdescribe(const Dtinfo *info, u64 cpu, Hirq *out, Hirqsource *storage, u32 capacity);
 int irqinit(const Hirq *controller);
 int irqsource(u32 number, u32 *out);
 /* Trusted typed construction; the single returned ref must become a Local. */

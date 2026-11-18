@@ -2,6 +2,7 @@
 #ifndef _DTB_H
 #define _DTB_H
 #include <types.h>
+#include <hal/cpu.h>
 #define DT_RAM      8
 #define DT_RESERVED 32
 #define DT_DEVICES  64
@@ -47,6 +48,13 @@ typedef struct Dtirq   Dtirq;
 typedef struct Dtdev   Dtdev;
 typedef struct Dtinfo  Dtinfo;
 typedef struct Dtuart  Dtuart;
+typedef struct Dtcpu   Dtcpu;
+
+struct Dtcpu
+{
+  u64 id;
+  u32 intc, method;
+};
 
 struct Dtrange
 {
@@ -76,6 +84,7 @@ struct Dtinfo
   Dtdev   dev[DT_DEVICES];
   Dtrange initrd;
   Dtrange bootedge[2];
+  Dtcpu   cpu[DT_CPUS];
 };
 
 /* Single boot caller: parser scratch is static, no heap or recursion. */

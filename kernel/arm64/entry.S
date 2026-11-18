@@ -19,9 +19,6 @@ bootentry:
  mrs x1, sctlr_el1
  tbnz x1, #0, hal_halt
  tbnz x1, #2, hal_halt
- mrs x1, mpidr_el1
- and x1, x1, #0xffffff
- cbnz x1, hal_halt
  msr spsel, #1
  adr x1, earlyvectors
  msr vbar_el1, x1

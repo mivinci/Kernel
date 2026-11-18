@@ -1,12 +1,20 @@
 #include <irq.h>
 int
-irqdescribe(const Dtinfo *info, Hirq *out, Hirqsource *storage, u32 capacity)
+irqdescribe(const Dtinfo *info, u64 cpu, Hirq *out, Hirqsource *storage, u32 capacity)
 {
   const Dtdev *controller = NULL, *device;
   Hirqsource   sources[HIRQ_SOURCES];
-  u32          i, j, irq, count = 0;
-  if (!info || !out || info->ndev > DT_DEVICES || capacity > HIRQ_SOURCES)
+  u32          i, j, irq, count = 0, intc = 0, found = 0, context = 0, selected = 0;
+  if (!info || !out || !info->cpus || info->cpus > DT_CPUS || info->ndev > DT_DEVICES ||
+      capacity > HIRQ_SOURCES)
     return DT_BAD;
+  for (i = 0; i < info->cpus; i++)
+    if (info->cpu[i].id == cpu) {
+      intc = info->cpu[i].intc;
+      found++;
+    }
+  if (found != 1)
+    return DT_CONFLICT;
   for (i = 0; i < info->ndev; i++)
     if (info->dev[i].kind == DT_PLIC || info->dev[i].kind == DT_GIC) {
       if (controller)
@@ -14,13 +22,24 @@ irqdescribe(const Dtinfo *info, Hirq *out, Hirqsource *storage, u32 capacity)
       controller = &info->dev[i];
     }
   if (!controller || !controller->phandle ||
-      (controller->kind == DT_GIC ? (controller->nreg != 2 || controller->nirq)
-                                  : (controller->nreg != 1 || controller->nirq != 2)))
+      (controller->kind == DT_GIC
+           ? ((controller->nreg != 2 && controller->nreg != 4) || controller->nirq)
+           : (controller->nreg != 1 || !controller->nirq || controller->nirq > DT_IRQS)))
     return DT_UNSUPPORTED;
-  if (controller->kind == DT_PLIC &&
-      (!controller->irq[0].parent || controller->irq[0].parent != controller->irq[1].parent ||
-       controller->irq[0].reserved || controller->irq[1].reserved))
-    return DT_CONFLICT;
+  if (controller->kind == DT_PLIC) {
+    if (!intc)
+      return DT_CONFLICT;
+    for (i = 0; i < controller->nirq; i++) {
+      if (!controller->irq[i].parent || controller->irq[i].reserved)
+        return DT_CONFLICT;
+      if (controller->irq[i].parent == intc && controller->irq[i].number == 9) {
+        context = i;
+        selected++;
+      }
+    }
+    if (selected != 1)
+      return DT_CONFLICT;
+  }
   for (i = 0; i < info->ndev; i++) {
     device = &info->dev[i];
     if (!dtperipheral(device->kind))
@@ -55,12 +74,13 @@ irqdescribe(const Dtinfo *info, Hirq *out, Hirqsource *storage, u32 capacity)
   for (i = 0; i < 2; i++) {
     out->base[i] = i < controller->nreg ? controller->reg[i].base : 0;
     out->bytes[i] = i < controller->nreg ? controller->reg[i].size : 0;
-    out->parent[i] = i < controller->nirq ? controller->irq[i].number : 0;
   }
   out->source = count ? storage : NULL;
   out->kind = controller->kind == DT_PLIC ? HIRQ_PLIC : HIRQ_GIC;
-  out->regions = controller->nreg;
+  out->regions = controller->kind == DT_GIC ? 2 : 1;
   out->count = count;
   out->limit = controller->limit;
+  out->context = context;
+  out->reserved = 0;
   return 0;
 }

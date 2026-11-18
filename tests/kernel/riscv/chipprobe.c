@@ -1,7 +1,18 @@
 #include "chip.h"
 #include <vm.h>
 #include <diag.h>
-static u8 saved;
+#include <irq.h>
+static u8  saved;
+static u64 enableoffset;
+void
+chipcpu(const Dtinfo *info, u64 cpu)
+{
+  Hirq       controller;
+  Hirqsource sources[HIRQ_SOURCES];
+  if (irqdescribe(info, cpu, &controller, sources, HIRQ_SOURCES) || controller.kind != HIRQ_PLIC)
+    panic("test PLIC context");
+  enableoffset = (0x2000UL + (u64) controller.context * 0x80) & PAGE_MASK;
+}
 void
 chipbegin(void)
 {
@@ -35,5 +46,6 @@ u32
 chipmaskcheck(u32 number)
 {
   return *(volatile u32 *) (KIRQ_DIST + 4 * number) == 0 &&
-         (*(volatile u32 *) (KIRQ_ENABLE + 0x80 + 4 * (number / 32)) & (1U << (number % 32))) != 0;
+         (*(volatile u32 *) (KIRQ_ENABLE + enableoffset + 4 * (number / 32)) &
+          (1U << (number % 32))) != 0;
 }

@@ -9,5 +9,5 @@
 STATIC_ASSERT(KMAP_BYTES <= KIO - KBASE, direct_map_before_devices);
 void         *kaddr(u64 pa);
 u64           kphysical(const void *va);
-NORETURN void vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *));
+NORETURN void vmstart(const Dtinfo *info, u32 firmware, u64 cpu, void (*next)(Hvs *));
 #endif

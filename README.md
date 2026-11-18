@@ -27,7 +27,7 @@ make bootpkg ARCH=arm64
 
 早期串口地址现从DTB的`chosen/stdout-path`取得，支持绝对路径与`aliases`别名，不再有QEMU固定地址回退。首次MMIO前先校验结构、窗口及寄存器属性；完整RAM/IRQ发现随后执行。固件需准备串口时钟、pinmux和波特率；控制台描述损坏时安全停止且无内核串口输出，不能由此推定已在真实板验收。详见01末尾及issue 001。
 
-DTB解析容量现为1024节点/8192属性/32深度、每设备4个reg/16个IRQ；支持dw-apb-uart/GIC-400描述与多hart拓扑保留，启动仍受单核profile限制。`tests/fixtures/dtb`保留完整固定来源板描述、来源哈希及NEO3显式测试适配；解析通过不代表板端启动、存储/网络驱动或SMP已完成，见005和01末尾。
+DTB解析容量现为1024节点/8192属性/32深度、每设备4个reg/16个IRQ；支持dw-apb-uart/GIC-400描述与多hart拓扑，OS只运行在固件选定的一个主核。`tests/fixtures/dtb`保留完整固定来源板描述、来源哈希及NEO3显式测试适配；解析通过不代表板端启动、存储/网络驱动或SMP已完成，见005/006和01末尾。
 MSHC/SD/MMC及DWMAC/GMAC的具体compatible和板别名现已接入发现，精确保留窗口和多条IRQ；它们沿既有MMIO库存校验，未新增生产设备Handle、DMA或设备协议操作，实际blk/net驱动仍待实现。
 
 启动包主机工具按包内名称打包原生ELF，额外为指定init生成装载描述：
@@ -47,10 +47,14 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 `CASE=bootpkg`使用十个SDK测试包验证格式、分片/快照及拒启，不执行包内程序。`normal`必须有包；`make smoke ARCH=...`自动构建默认生产包并启动，也可传`INITRD=/absolute/path/boot.pkg`。直接运行smoke工具时可用`--init-elf`指定该包中init的ELF供独立审计。缺包/坏包在页分配前拒启；完整回归另覆盖非首目录项、整页包和包内PID1真实exit致命。
 
-QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
+QEMU默认使用TCG、1个虚拟CPU、256 MiB，另验4个虚拟CPU的单OS主核profile；ARM固定`virt-11.1`/Cortex-A53，RV64固定virt/rv64并关闭V/H。
 启动元数据和RAM直接映射现支持最多8 GiB、最低RAM起8 GiB跨度；超限拒启，不静默裁剪。`include/layout.inc`统一内核/审计布局，设备和内核栈位于RAM窗口之后。`make test-memory`另用512 MiB、2 GiB、8 GiB在两架构各运行pages与normal，并纳入完整回归；这不是板端或性能验收。
 
 ARM64在物理入口要求EL1、MMU/D-cache关闭，启动输入须完成固件PoC交接；同步自有启动RAM/表页及最后镜像/栈后开启M/C/I，运行期代码/页表同步保留。ARM smoke通过本地命名管道GDB独立读取SCTLR/TCR/MAIR，无额外GDB程序或监听端口；全量另含独立Image漏I-cache开启的审计反例。它只证明控制状态拒绝，不代表物理cache、非一致DMA、RV平台cache或板端已验证，007仍进行中。
+
+启动要求固件只交付一个冷入口；在UART/页初始化前以PSCI/HSM确认主核RUNNING、其余启用CPU STOPPED，未知/ON/PENDING/错误拒启，disabled固件管理核不属于OS域。PLIC按实际启动CPU的CPUINTC唯一选择S上下文，不再固定hart0/context1。`make test-cpus`在两架构各跑四核normal/pages/irqbind/cpus：普通路径不唤醒核，专用fixture逐个唤醒到无栈入口后自停放并核对页守恒，不是SMP调度。
+
+`CPUS=4`选择四核测试；RV fixture的`BOOT_HART=1`在固件启动前只修改该QEMU实例的FDT cold-boot-harts配置并读回验证，不改kernel Image或CPU寄存器，普通内核不依赖这个固件私有配置。主机每次HMP显式选择CPU并保存各核寄存器，避免把CPU0固件WFI误当主核。PSCI SMC、ARM非零affinity及真实板/EL2降级仍未运行验收。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
 
 ```sh
@@ -106,6 +110,8 @@ make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
 # 单独验证两架构512 MiB、2 GiB、8 GiB的页回收与生产启动
 make test-memory OPENSBI="$OPENSBI"
+make test-cpus OPENSBI="$OPENSBI"
+make scenario ARCH=riscv CASE=cpus CPUS=4 BOOT_HART=1 OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
 make test-qemu OPENSBI="$OPENSBI"
 ```

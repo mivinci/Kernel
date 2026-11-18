@@ -32,7 +32,7 @@ hal_irq_init(const Hirq *controller, const u64 mapped[HIRQ_WINDOWS])
       return -1;
   __asm__ __volatile__("csrc sie, %0" ::"r"(512UL) : "memory");
   for (i = 0; i < (controller->limit + 32) / 32; i++)
-    write32(mapped[2] + 0x80 + 4 * i, 0);
+    write32(mapped[2] + ((0x2000UL + (u64) controller->context * 0x80) & PAGE_MASK) + 4 * i, 0);
   for (i = 1; i <= controller->limit; i++)
     write32(mapped[0] + 4 * i, 0);
   write32(mapped[1], 0);
@@ -41,7 +41,7 @@ hal_irq_init(const Hirq *controller, const u64 mapped[HIRQ_WINDOWS])
   barrier();
   priorities = mapped[0];
   context = mapped[1];
-  enables = mapped[2] + 0x80;
+  enables = mapped[2] + ((0x2000UL + (u64) controller->context * 0x80) & PAGE_MASK);
   limit = controller->limit;
   __asm__ __volatile__("csrs sie, %0" ::"r"(512UL) : "memory");
   return 0;

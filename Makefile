@@ -18,13 +18,14 @@ READELF ?= llvm-readelf
 ARCH ?=
 SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
 
-.PHONY: all help build hardware compdb sdk bootpkg clean fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory
+.PHONY: all help build hardware compdb sdk bootpkg clean fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
 	@echo "make sdk ARCH=...     : 构建独立 libsys SDK 与用户 ELF"
 	@echo "make unit             : 主机驱动测试"
 	@echo "make test-memory      : 两架构512 MiB/2 GiB/8 GiB pages与normal（需OPENSBI）"
+	@echo "make test-cpus        : 两架构四核单主核启动/真实IRQ/自停放（需OPENSBI）"
 	@echo "make fmt / fmt-check  : 源码格式"
 	@echo "make clean ARCH=...   : 清除该架构构建目录"
 	@echo "make smoke ARCH=... / make scenario ARCH=... CASE=registers|fault|pages"
@@ -47,9 +48,9 @@ unit:
 	$(PYTHON) -m unittest discover -s tests/unit -p 'test_*.py' -v
 smoke: build
 	$(if $(and $(filter normal,$(if $(CASE),$(CASE),normal)),$(if $(INITRD),,yes)),$(MAKE) bootpkg ARCH="$(ARCH)",@true)
-	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(VIRTIO),--virtio) $(if $(INITRD),--initrd "$(INITRD)",$(if $(filter normal,$(if $(CASE),$(CASE),normal)),--initrd "build/$(ARCH)/boot.pkg"))
+	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(CPUS),--cpus "$(CPUS)") $(if $(BOOT_HART),--boot-hart "$(BOOT_HART)") $(if $(VIRTIO),--virtio) $(if $(INITRD),--initrd "$(INITRD)",$(if $(filter normal,$(if $(CASE),$(CASE),normal)),--initrd "build/$(ARCH)/boot.pkg"))
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|heap|cow|bootpkg) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|heap|cow|bootpkg|cpus) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 ifeq ($(CASE),bootpkg)
 	$(MAKE) build sdk ARCH="$(ARCH)" CASE=bootpkg
 	$(PYTHON) tests/bootpkg.py --arch "$(ARCH)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)")
@@ -162,9 +163,12 @@ test-qemu:
 	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
 	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1
 	$(MAKE) test-memory
+	$(MAKE) test-cpus
 
 test-memory:
 	@for test_ram in 512 2048 8192; do for test_arch in riscv arm64; do for test_case in pages normal; do $(MAKE) smoke ARCH=$$test_arch CASE=$$test_case RAM=$$test_ram VIRTIO=1 || exit $$?; done; done; done
+test-cpus:
+	@for test_arch in riscv arm64; do if [ "$$test_arch" = riscv ]; then test_hart=1; else test_hart=; fi; for test_case in normal pages irqbind cpus; do $(MAKE) smoke ARCH=$$test_arch CASE=$$test_case CPUS=4 BOOT_HART=$$test_hart || exit $$?; done; done
 bench:
 	@echo "$@: 性能基准尚未实现；启动与异常检查不代表性能验收。" >&2
 	@exit 1

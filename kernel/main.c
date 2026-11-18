@@ -9,6 +9,7 @@
 #include <bootpkg.h>
 #include <bootstore.h>
 #include <bootstart.h>
+#include <bootcpu.h>
 #if BOOT_CASE != 0
 #include <ktest.h>
 #endif
@@ -23,10 +24,12 @@
 static volatile u64 zeroed;
 static volatile u64 initialized = 0x12345678;
 
-static Dtinfo  hardware;
-static u32     firmware;
-static Bootdir package;
-static Dtuart  diagnostic;
+static Dtinfo         hardware;
+static u32            firmware;
+static Bootdir        package;
+static Dtuart         diagnostic;
+static Bootcpus       cpustate;
+static volatile isize cpuerror;
 
 static void
 field(const char *name, u64 number)
@@ -91,8 +94,12 @@ discovery(u64 dtb, u64 available)
       panic("dtb parse");
     }
   }
-  if (hardware.cpus != 1)
-    panic("cpu profile");
+  if (hardware.cpus != cpustate.count)
+    panic("cpu descriptor changed");
+  for (i = 0; i < hardware.cpus; i++)
+    if (hardware.cpu[i].id != cpustate.cpu[i].id || hardware.cpu[i].method != cpustate.method ||
+        hardware.cpu[i].intc != cpustate.cpu[i].intc)
+      panic("cpu identity changed");
   if (dtb < end && dtb + hardware.size > start)
     panic("dtb kernel overlap");
   for (i = 0; i < hardware.nram; i++) {
@@ -224,8 +231,12 @@ virtualmain(Hvs *space)
   if (clockinit())
     panic("clock initialization");
   hal_trap_init();
-  if (irqdescribe(&hardware, &controller, sources, HIRQ_SOURCES))
+  if (irqdescribe(&hardware, cpustate.current, &controller, sources, HIRQ_SOURCES))
     panic("interrupt controller description");
+  field("IRQ_CPU current=", cpustate.current);
+  field(" context=", controller.context);
+  field(" regions=", controller.regions);
+  putstr("\n");
   if (hal_irq_init(&controller, windows) || irqinit(&controller))
     panic("interrupt controller initialization");
   if (hal_timer_init(&timer))
@@ -238,7 +249,7 @@ virtualmain(Hvs *space)
   if (spaceinit(space))
     panic("user root initialization");
 #if BOOT_CASE != 0
-  testmain(space, &hardware);
+  testmain(space, &hardware, cpustate.current);
 #else
   bootstart(&package);
 #endif
@@ -249,14 +260,16 @@ void
 main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
 {
   u64 local, ram;
+  u32 i;
   /* No UART access before the bounded firmware descriptor has been checked. */
-  if (cpu != 0 || mask != 1 || vm != 0)
+  if (mask != 1 || vm != 0)
     hal_halt();
   ram = (u64) __kernel_start & ~0xfffffffUL;
   if ((dtb & 7) || dtb < ram || dtb > ram + KMAP_BYTES - 40 ||
-      dtconsole((const void *) dtb, MIN(0x200000, ram + KMAP_BYTES - dtb), &hardware,
-                &diagnostic) ||
-      hal_debug_init(&diagnostic))
+      dtconsole((const void *) dtb, MIN(0x200000, ram + KMAP_BYTES - dtb), &hardware, &diagnostic))
+    hal_halt();
+  cpuerror = bootcpucheck(&hardware, cpu, &cpustate);
+  if (cpuerror || hal_debug_init(&diagnostic))
     hal_halt();
   putstr("BOOT mode=");
   puthex(mode);
@@ -269,6 +282,17 @@ main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
   putstr(" vm=");
   puthex(vm);
   putstr("\n");
+  field("CPU_BOOT current=", cpustate.current);
+  field(" count=", cpustate.count);
+  field(" off=", cpustate.count - 1);
+  field(" method=", cpustate.method);
+  putstr("\n");
+  for (i = 0; i < cpustate.count; i++) {
+    field("CPU_STATE id=", cpustate.cpu[i].id);
+    field(" state=", cpustate.cpu[i].state);
+    field(" intc=", cpustate.cpu[i].intc);
+    putstr("\n");
+  }
   if (zeroed != 0 || initialized != 0x12345678)
     panic("data initialization");
   local = (u64) &local;
@@ -286,5 +310,5 @@ main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
   putstr(" dtb_size=");
   puthex(hardware.size);
   putstr("\n");
-  vmstart(&hardware, firmware, virtualmain);
+  vmstart(&hardware, firmware, cpustate.current, virtualmain);
 }

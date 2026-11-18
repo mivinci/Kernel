@@ -15,22 +15,7 @@ sys.path.insert(0,str(ROOT/'tools'))
 from smoke import Qmp,SmokeError,symbols
 from build import digest
 from run import _stop_group,install_stop_handlers
-
-def properties(data):
-    at,strings=struct.unpack_from('>II',data,8);stack=[];out={}
-    while True:
-        tag=struct.unpack_from('>I',data,at)[0];at+=4
-        if tag==1:
-            end=data.index(0,at);stack.append(data[at:end].decode());at=(end+4)&~3
-        elif tag==2:stack.pop()
-        elif tag==3:
-            length,name=struct.unpack_from('>II',data,at);at+=8
-            end=data.index(0,strings+name);key=data[strings+name:end].decode()
-            out[('/'+'/'.join(stack[1:]),key)]=(at,length)
-            at=(at+length+3)&~3
-        elif tag==4:continue
-        elif tag==9:return out
-        else:raise SmokeError('invalid baseline DTB structure')
+from fdt import properties
 
 def run(arch,baseline,case,directory):
     original=(baseline/'runtime.dtb').read_bytes();data=bytearray(original);props=properties(data)
@@ -64,9 +49,15 @@ def run(arch,baseline,case,directory):
             qmp=Qmp(None,deadline,proc);qmp.command('qmp_capabilities');qmp.command('cont')
             while time.monotonic()<deadline:
                 time.sleep(.05);qmp.command('stop')
-                registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
-                match=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
-                if match and names['hal_halt']<=int(match[1],16)<names['hal_halt']+16:break
+                halted=[]
+                for cpu in qmp.command('query-cpus-fast'):
+                    registers=qmp.command('human-monitor-command',{'command-line':'info registers','cpu-index':cpu['cpu-index']})
+                    match=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
+                    if match and names['hal_halt']<=int(match[1],16)<names['hal_halt']+16:
+                        halted.append((cpu['cpu-index'],registers))
+                if len(halted)==1:
+                    selected_cpu,registers=halted[0];break
+                if len(halted)>1:raise SmokeError('multiple CPUs entered the kernel cold halt')
                 qmp.command('cont')
             else:raise SmokeError('early failure did not reach physical halt')
             (directory/'registers.txt').write_text(registers)
@@ -83,7 +74,7 @@ def run(arch,baseline,case,directory):
             if proc.returncode:raise SmokeError('QEMU failed')
             result=dict(arch=arch,case='earlyconsole/'+case,ok=True,guest_executed=True,
                         build=record['build'],qmp_transport='stdio',baseline=str(baseline),
-                        input_sha256=digest(dtb),physical_halt=True,serial_checked=True,argv=command,returncode=0)
+                        input_sha256=digest(dtb),physical_halt=True,boot_cpu_index=selected_cpu,serial_checked=True,argv=command,returncode=0)
             (directory/'result.json').write_text(json.dumps(result,indent=2)+'\n')
         finally:
             if qmp:qmp.close()

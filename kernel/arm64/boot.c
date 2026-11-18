@@ -23,7 +23,7 @@ arch_start(u64 dtb)
   if (mode != 4)
     hal_halt();
   __asm__ __volatile__("msr vbar_el1, %0; isb" ::"r"(vectors) : "memory");
-  main(cpu & 0xffffff, dtb, mode, (mask & 0x3c0) == 0x3c0, vm & 1);
+  main(cpu & 0xff00ffffffUL, dtb, mode, (mask & 0x3c0) == 0x3c0, vm & 1);
 }
 
 void

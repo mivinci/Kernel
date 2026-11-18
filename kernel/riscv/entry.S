@@ -6,7 +6,6 @@
 _start:
  csrci sstatus, 2
  csrw sie, zero
- bnez a0, hal_halt
  la t0, __emergency_top
  csrw sscratch, t0
  la t0, trapentry

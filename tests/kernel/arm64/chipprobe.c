@@ -4,6 +4,12 @@
 #include <diag.h>
 static u32 saved;
 void
+chipcpu(const Dtinfo *info, u64 cpu)
+{
+  UNUSED(info);
+  UNUSED(cpu);
+}
+void
 chipbegin(void)
 {
   saved = *(volatile u32 *) (KIO + 0x38);

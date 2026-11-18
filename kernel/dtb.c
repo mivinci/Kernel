@@ -364,6 +364,82 @@ metadata(void)
   return 0;
 }
 
+/* The early UART phase needs the OS CPU domain before any MMIO access. */
+static int
+bootcpus(Dtinfo *info)
+{
+  const Prop *p, *type;
+  Dtcpu      *cpu;
+  u32         i, j, parent, root = NONE, conduit = CPU_POWER_NONE, psci = NONE;
+  for (i = 1; i < parser.nodes; i++) {
+    if (!parser.node[i].enabled)
+      continue;
+    if (parser.node[i].parent == 0 && equal(parser.blob + parser.node[i].name, "cpus")) {
+      if (root != NONE)
+        return DT_BAD;
+      root = i;
+    }
+    if (has(i, "arm,psci-0.2") || has(i, "arm,psci-1.0")) {
+      if (psci != NONE)
+        return DT_BAD;
+      psci = i;
+      p = property(i, "method");
+      if (!single(p))
+        return DT_BAD;
+      if (equal(value(p), "smc"))
+        conduit = CPU_PSCI_SMC;
+      else if (equal(value(p), "hvc"))
+        conduit = CPU_PSCI_HVC;
+      else
+        return DT_UNSUPPORTED;
+    }
+  }
+  if (root == NONE || parser.node[root].ac < 1 || parser.node[root].ac > 2 || parser.node[root].sc)
+    return DT_BAD;
+  p = property(root, "timebase-frequency");
+  if (p) {
+    if (p->size != 4 || !word(value(p)))
+      return DT_BAD;
+    info->timebase = word(value(p));
+  }
+  for (i = 1; i < parser.nodes; i++) {
+    if (!parser.node[i].enabled)
+      continue;
+    type = property(i, "device_type");
+    if (!type || !equal(value(type), "cpu"))
+      continue;
+    parent = parser.node[i].parent;
+    if (parent != root)
+      return DT_UNSUPPORTED;
+    p = property(i, "reg");
+    if (!p || p->size != parser.node[root].ac * 4)
+      return DT_BAD;
+    if (info->cpus == DT_CPUS)
+      return DT_FULL;
+    cpu = &info->cpu[info->cpus];
+    cells(value(p), parser.node[root].ac, &cpu->id);
+    for (j = 0; j < info->cpus; j++)
+      if (info->cpu[j].id == cpu->id)
+        return DT_CONFLICT;
+    p = property(i, "enable-method");
+    if (p && !single(p))
+      return DT_BAD;
+    if (has(i, "riscv"))
+      cpu->method = CPU_SBI_HSM;
+    else if (!p || equal(value(p), "psci"))
+      cpu->method = conduit;
+    for (j = 1; j < parser.nodes; j++) {
+      if (parser.node[j].parent != i || !parser.node[j].enabled ||
+          parser.node[j].kind != DT_CPUINTC)
+        continue;
+      if (cpu->intc || !parser.node[j].phandle)
+        return DT_BAD;
+      cpu->intc = parser.node[j].phandle;
+    }
+    info->cpus++;
+  }
+  return info->cpus ? 0 : DT_BAD;
+}
 static int
 translate(u32 parent, u64 *address, u64 size)
 {
@@ -593,7 +669,7 @@ chosen(Dtinfo *info)
 static int
 discover(Dtinfo *info)
 {
-  u32         i, j, k, count, parent;
+  u32         i, j, k, count;
   int         error;
   const Prop *p;
   Node       *n;
@@ -620,45 +696,6 @@ discover(Dtinfo *info)
       error = registers(i, info->ram, &info->nram, DT_RAM);
       if (error)
         return error;
-    }
-    if (p && equal(value(p), "cpu")) {
-      if (n->parent == NONE || !equal(parser.blob + parser.node[n->parent].name, "cpus"))
-        return DT_UNSUPPORTED;
-      p = property(i, "reg");
-      parent = n->parent;
-      if (!p || parser.node[parent].sc || parser.node[parent].ac < 1 ||
-          parser.node[parent].ac > 2 || p->size != parser.node[parent].ac * 4)
-        return DT_BAD;
-      if (info->cpus == DT_CPUS)
-        return DT_FULL;
-      {
-        u64         id, other;
-        const Prop *prior, *type;
-        cells(value(p), parser.node[parent].ac, &id);
-        for (j = 0; j < i; j++) {
-          type = property(j, "device_type");
-          if (!parser.node[j].enabled || parser.node[j].parent != parent || !type ||
-              !equal(value(type), "cpu"))
-            continue;
-          prior = property(j, "reg");
-          if (!prior || prior->size != p->size)
-            return DT_BAD;
-          cells(value(prior), parser.node[parent].ac, &other);
-          if (id == other)
-            return DT_CONFLICT;
-        }
-      }
-      info->cpus++;
-    }
-    if (equal(parser.blob + n->name, "cpus")) {
-      if (n->parent != 0)
-        return DT_UNSUPPORTED;
-      p = property(i, "timebase-frequency");
-      if (p) {
-        if (p->size != 4 || !word(value(p)))
-          return DT_BAD;
-        info->timebase = word(value(p));
-      }
     }
     if (n->parent != NONE && equal(parser.blob + parser.node[n->parent].name, "reserved-memory")) {
       if (parser.node[n->parent].parent != 0)
@@ -927,6 +964,8 @@ dtconsole(const void *blob, usize available, Dtinfo *scratch, Dtuart *out)
   error = flatten(blob, available, scratch);
   if (!error)
     error = metadata();
+  if (!error)
+    error = bootcpus(scratch);
   if (error)
     return error;
   for (i = 1; i < parser.nodes; i++) {
@@ -1044,6 +1083,8 @@ dtread(const void *blob, usize available, Dtinfo *info)
   error = flatten(blob, available, info);
   if (!error)
     error = metadata();
+  if (!error)
+    error = bootcpus(info);
   if (!error)
     error = discover(info);
   if (!error)

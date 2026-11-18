@@ -17,12 +17,13 @@ import tempfile
 import time
 import uuid
 
-from build import BuildError, ROOT, digest, read_kernel, PROFILES
+from build import BuildError, ROOT, digest, read_kernel, PROFILES, BOOT_CASES
 from run import _group_exists, _stop_group, install_stop_handlers, run_command
 import bootpkg
 from elf import plan as elfplan
 from layout import KBASE, KMAP_BYTES, KIO, KSTACK_BASE
 from gdbpipe import GdbPipe
+from fdt import cold_boot_hart
 
 
 VM_FAULTS = {"textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11}
@@ -97,6 +98,9 @@ class Qmp:
         return json.loads(line)
 
     def command(self, name, arguments=None):
+        if name=='human-monitor-command' and getattr(self,'cpu_index',None) is not None:
+            arguments=dict(arguments or {})
+            arguments.setdefault('cpu-index',self.cpu_index)
         self.serial += 1
         message = {"execute": name, "id": self.serial}
         if arguments is not None:
@@ -129,8 +133,69 @@ def symbols(text):
 def fields(line):
     return {key: int(value, 16) for key, value in re.findall(r"(\w+)=([0-9a-f]{16})(?: |$)", line)}
 
+def validate_cpus(text,arch,count,current):
+    lines=text.splitlines();headers=[fields(x) for x in lines if x.startswith('CPU_BOOT ')]
+    states=[fields(x) for x in lines if x.startswith('CPU_STATE ')]
+    expected=dict(current=current,count=count,off=count-1,method=3 if arch=='riscv' else 2)
+    if headers!=[expected] or len(states)!=count or {x.get('id') for x in states}!=set(range(count)):
+        raise SmokeError('invalid firmware CPU admission domain')
+    for state in states:
+        if (set(state)!=set(('id','state','intc')) or
+                state['state']!=(0 if state['id']==current else 1) or
+                (not 0<state['intc']<=0xffffffff if arch=='riscv' else state['intc']!=0)):
+            raise SmokeError('firmware did not report one running CPU and stopped peers')
+    if arch=='riscv' and len({x['intc'] for x in states})!=count:
+        raise SmokeError('ambiguous CPU interrupt-controller identity')
+    return dict(expected,states=states)
 
-def validate_output(text, arch, case, names, ram_mb=256, init_exit=None):
+def validate_irq_cpu(text,discovery,admission):
+    current=admission['current'];context=0;regions=2
+    controllers=[x for x in discovery['devices'] if x['kind'] in (4,5)]
+    if len(controllers)!=1:raise SmokeError('ambiguous CPU interrupt controller')
+    controller=controllers[0]
+    if controller['kind']==4:
+        active=next(x for x in admission['states'] if x['id']==current)
+        contexts=[i for i,q in enumerate(controller['irq']) if q['parent']==active['intc'] and q['number']==9]
+        if len(contexts)!=1:raise SmokeError('missing active CPU S-mode PLIC context')
+        context=contexts[0];regions=1
+    rows=[fields(x) for x in text.splitlines() if x.startswith('IRQ_CPU ')]
+    expected=dict(current=current,context=context,regions=regions)
+    if rows!=[expected]:raise SmokeError('wrong normalized CPU interrupt context')
+    return expected
+
+def set_firmware_boot_hart(qmp,gdb,run_dir,hart,entry,image_end,ram_mb):
+    # Explicit firmware cold-boot policy, not a kernel-state override.
+    registers=qmp.command('human-monitor-command',{'command-line':'info registers','cpu-index':0})
+    match=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I)
+    if not match:raise SmokeError('missing reset CPU PC for firmware input')
+    base=int(match[1],16)&~4095;path=run_dir/'firmware-reset-page.bin'
+    qmp.command('pmemsave',{'val':base,'size':4096,'filename':str(path)})
+    data=path.read_bytes();ram=entry&~0xfffffff;limit=ram+ram_mb*1024*1024;candidates=[]
+    for address in sorted(set(struct.unpack_from('<Q',data,i)[0] for i in range(0,256,8))):
+        if not ram<=address<=limit-40 or address%8:continue
+        header=run_dir/('firmware-candidate-%x.bin'%address)
+        qmp.command('pmemsave',{'val':address,'size':40,'filename':str(header)})
+        raw=header.read_bytes()
+        if raw[:4]==bytes.fromhex('d00dfeed'):
+            size=struct.unpack_from('>I',raw,4)[0]
+            if 40<=size<=min(0x200000,limit-address):candidates.append((address,size))
+    if len(candidates)!=1:raise SmokeError('ambiguous reset FDT input')
+    address,size=candidates[0]
+    if address<image_end and address+size>ram:raise SmokeError('FDT input overlaps firmware/kernel load area')
+    before=run_dir/'firmware-dtb-before.bin';qmp.command('pmemsave',{'val':address,'size':size,'filename':str(before)})
+    modified,phandle=cold_boot_hart(before.read_bytes(),hart)
+    if len(modified)>limit-address:raise SmokeError('cold boot FDT outside RAM')
+    after=run_dir/'firmware-dtb-input.bin';after.write_bytes(modified)
+    gdb.request('qSupported:qXfer:features:read+')
+    for offset in range(0,len(modified),4096):
+        chunk=modified[offset:offset+4096];value=chunk.hex().encode()
+        if gdb.request('M%x,%x:%s'%(address+offset,len(chunk),value.decode()))!=b'OK' or gdb.request('m%x,%x'%(address+offset,len(chunk)))!=value:
+            raise SmokeError('cold boot FDT write/readback failed')
+    return dict(hart=hart,address=address,phandle=phandle,before_sha256=digest(before),input_sha256=digest(after),
+                mechanism='OpenSBI chosen/opensbi-config cold-boot-harts',kernel_image_unchanged=True)
+
+
+def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1):
     lines = text.replace("\r", "").splitlines()
     boots = [line for line in lines if line.startswith("BOOT ")]
     layouts = [line for line in lines if line.startswith("LAYOUT ")]
@@ -147,7 +212,7 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None):
     delta = vm["delta"] if vm else 0
     def high(pa):
         return (pa + delta) & ((1 << 64) - 1)
-    if (boot.get("mode") != (1 if arch == "riscv" else 4) or boot.get("cpu") != 0
+    if (boot.get("mode") != (1 if arch == "riscv" else 4) or boot.get("cpu") not in range(cpus)
             or boot.get("mask") != 1 or boot.get("vm") != 0):
         raise SmokeError("incorrect entry privilege/interrupt/MMU state")
     for key, name in (("start", "__kernel_start"), ("end", "__kernel_end"),
@@ -166,6 +231,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None):
                 raise SmokeError('production PID1 did not reach its first blocked state')
         elif ready or traps or starts or panics != ['PANIC init exited']:
             raise SmokeError('package PID1 did not take its fatal exit path')
+    elif case == 'cpus':
+        if ready!=['READY cpus-stopped'] or panics or traps:
+            raise SmokeError('CPU self-stop test did not finish')
     elif case == "registers":
         if ready != ["READY registers-restored"] or panics or len(traps) != 2:
             raise SmokeError("register round trip did not complete")
@@ -338,7 +406,7 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None):
             "opensbi_version": firmware[1] if firmware else None, "vm": vm}
 
 
-def validate_discovery(text, arch, ram_mb, names, boot):
+def validate_discovery(text, arch, ram_mb, names, boot, cpus=1):
     lines = text.replace("\r", "").splitlines()
     summaries = [fields(x) for x in lines if x.startswith("DT ")]
     ranges = {kind: [fields(x) for x in lines if x.startswith(kind + " ")]
@@ -356,7 +424,7 @@ def validate_discovery(text, arch, ram_mb, names, boot):
     if len(summaries) != 1:
         raise SmokeError("missing/duplicate discovery summary")
     summary = summaries[0]
-    if summary.get("cpus") != 1 or summary.get("devices") != len(devices):
+    if summary.get("cpus") != cpus or summary.get("devices") != len(devices):
         raise SmokeError("discovery counts mismatch")
     ram = 0x80000000 if arch == "riscv" else 0x40000000
     if ranges["RAM"] != [{"base": ram, "size": ram_mb * 1024 * 1024}]:
@@ -544,7 +612,11 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
                 device_pages += 1
         elif d["kind"] == 4:
             base = d["mmio"][0]["base"]
-            for i, offset in enumerate((0,0x201000,0x2000)):
+            active=next(x for x in discovery['cpu_admission']['states'] if x['id']==boot['boot']['cpu'])
+            contexts=[i for i,q in enumerate(d['irq']) if q['parent']==active['intc'] and q['number']==9]
+            if len(contexts)!=1:raise SmokeError('missing or ambiguous active PLIC S context')
+            context=contexts[0]
+            for i, offset in enumerate((0,0x200000+context*4096,(0x2000+context*0x80)&~4095)):
                 check(KIO+4096+i*4096,base+offset,3,device=True)
                 device_pages += 1
     if retained:
@@ -706,7 +778,8 @@ def rejected_package(args, qmp, run_dir, names, registers, record):
             any(x.startswith(('META ', 'PAGES ', 'LAYOUT ', 'VM ', 'READY ', 'TRAP ', 'INITRD ')) for x in lines)):
         raise SmokeError('package rejection allocated/published state or had wrong diagnostic')
     boot = boots[0]
-    if boot != dict(mode=1 if args.arch == 'riscv' else 4, cpu=0, dtb=boot.get('dtb'), mask=1, vm=0):
+    if (boot != dict(mode=1 if args.arch == 'riscv' else 4, cpu=boot.get('cpu'), dtb=boot.get('dtb'), mask=1, vm=0)
+            or boot.get('cpu') not in range(getattr(args,'cpus',1))):
         raise SmokeError('invalid rejected boot entry')
     error = PACKAGE_ERRORS[args.bootpkg_error]
     errors = [fields(line) for line in lines if line.startswith('BOOTPKG ')]
@@ -829,8 +902,8 @@ def exercise(args, run_dir, record):
     with tempfile.TemporaryDirectory(prefix="kernel-qmp-") as temporary:
         path = Path(temporary) / "qmp.sock"
         deadline = time.monotonic() + args.timeout
-        gdb = GdbPipe(Path(temporary)/'gdb',deadline) if args.arch=='arm64' else None
-        command = [qemu, *machine, "-accel", "tcg", "-smp", "1", "-m", str(args.ram) + "M", "-nodefaults",
+        gdb = GdbPipe(Path(temporary)/'gdb',deadline) if args.arch=='arm64' or getattr(args,'boot_hart',None) is not None else None
+        command = [qemu, *machine, "-accel", "tcg", "-smp", str(getattr(args,'cpus',1)), "-m", str(args.ram) + "M", "-nodefaults",
                    "-display", "none", "-monitor", "none", "-serial", "file:" + str(serial),
                    "-qmp", 'stdio' if pipe_qmp else "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
                    "-global", "virtio-mmio.force-legacy=false", "-kernel", str(boot_artifact)]
@@ -863,10 +936,13 @@ def exercise(args, run_dir, record):
                 record["initial_status"] = qmp.command("query-status")
                 if record["initial_status"]["running"]:
                     raise SmokeError("QEMU did not start paused")
-                if gdb:record['cache_entry']=check_arm64_cache(gdb.registers(['SCTLR_EL1','TCR_EL1','MAIR_EL1']),False)
+                if args.arch=='arm64':record['cache_entry']=check_arm64_cache(gdb.registers(['SCTLR_EL1','TCR_EL1','MAIR_EL1']),False)
+                if getattr(args,'boot_hart',None) is not None:
+                    record['firmware_boot_input']=set_firmware_boot_hart(qmp,gdb,run_dir,args.boot_hart,names['_start'],names['__kernel_end'],args.ram)
                 qmp.command("cont")
                 record["guest_executed"] = True
                 expected = "PANIC init exited\n" if args.case == "initfatal" or normal_fatal else "PANIC exception\n" if args.case == "fault" or args.case in VM_FAULTS else (
+                    'READY cpus-stopped\n' if args.case=='cpus' else
                     "INIT pid=0000000000000001 image=0000000000000001 state=0000000000000006\n" if args.case == "normal" else
                     "READY bootpkg-checked\n" if args.case == "bootpkg" else
                     "READY pages-restored\n" if args.case == "pages" else
@@ -923,6 +999,23 @@ def exercise(args, run_dir, record):
                 # Confirm the guest reaches the halt loop rather than trusting its printed marker.
                 time.sleep(0.02)
                 qmp.command("stop")
+                boot_rows=[fields(x) for x in serial.read_text().splitlines() if x.startswith('BOOT ')]
+                if len(boot_rows)!=1:raise SmokeError('missing primary CPU identity')
+                selected_cpu=boot_rows[0]['cpu']
+                if selected_cpu not in range(getattr(args,'cpus',1)):
+                    raise SmokeError('boot CPU not in configured domain')
+                if getattr(args,'boot_hart',None) is not None and selected_cpu!=args.boot_hart:
+                    raise SmokeError('firmware did not select the requested boot hart')
+                record['cpu_admission']=validate_cpus(serial.read_text(),args.arch,getattr(args,'cpus',1),selected_cpu)
+                record['cpu_inventory']=qmp.command('query-cpus-fast')
+                if {x['cpu-index'] for x in record['cpu_inventory']}!=set(range(getattr(args,'cpus',1))):
+                    raise SmokeError('QMP CPU inventory differs from launch configuration')
+                qmp.cpu_index=selected_cpu
+                record['boot_cpu_index']=selected_cpu
+                for cpu in record['cpu_inventory']:
+                    index=cpu['cpu-index']
+                    snapshot=qmp.command('human-monitor-command',{'command-line':'info registers','cpu-index':index})
+                    (run_dir/('cpu-%d-registers.log'%index)).write_text(snapshot)
                 record["stopped_status"] = qmp.command("query-status")
                 registers = qmp.command("human-monitor-command", {"command-line": "info registers"})
                 if normal_live and not args.bootpkg_error:
@@ -938,7 +1031,7 @@ def exercise(args, run_dir, record):
                         registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
                     record['stopped_status']=qmp.command('query-status')
                 (run_dir / "registers.log").write_text(registers)
-                if gdb:
+                if args.arch=='arm64':
                     record['cache_state']=check_arm64_cache(gdb.registers(['SCTLR_EL1','TCR_EL1','MAIR_EL1']),not bool(args.bootpkg_error))
                     for name,text in gdb.descriptions.items():(run_dir/('gdb-'+name)).write_text(text)
                 if args.bootpkg_error:
@@ -984,11 +1077,24 @@ def exercise(args, run_dir, record):
                     expected_state = 0x345 if normal_live else 0x3c4 if args.case == "fault" or args.case in VM_FAULTS else 0x3c5
                     if not value or int(value[1], 16) & 0x3cf != expected_state:
                         raise SmokeError("QMP observed unexpected EL/DAIF/stack selection")
-                record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram,args.init_exit)
+                record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram,args.init_exit,getattr(args,'cpus',1))
                 record["discovery"] = validate_discovery(serial.read_text(errors="replace"), args.arch,
-                                                          args.ram, names, record["observed"])
+                                                          args.ram, names, record["observed"],getattr(args,'cpus',1))
+                record['discovery']['cpu_admission']=record['cpu_admission']
+                record['irq_cpu']=validate_irq_cpu(serial.read_text(),record['discovery'],record['cpu_admission'])
                 record["discovery"]["table_pages"] = transition["tables"]
                 record["pages"] = validate_pages(serial.read_text(errors="replace"), record["discovery"], args.case)
+                if args.case=='cpus':
+                    rows=[fields(x) for x in serial.read_text().splitlines() if x.startswith('CPU_CYCLE ')]
+                    count=getattr(args,'cpus',1)
+                    if (len(rows)!=count-1 or {x.get('id') for x in rows}!=set(range(count))-{selected_cpu} or
+                            any(set(x)!=set(('id','off')) or x['off']!=1 for x in rows)):
+                        raise SmokeError('CPU power cycle did not stop each enabled peer')
+                    summary=[fields(x) for x in serial.read_text().splitlines() if x.startswith('CPU_STOPCHECK ')]
+                    expected=dict(count=count,cycled=count-1,off=count-1,allocated=transition['tables'],
+                                  free=record['pages']['initial']['managed']-transition['tables'])
+                    if summary!=[expected]:raise SmokeError('CPU power cycle changed kernel page ownership')
+                    record['cpu_stop_test']=dict(expected,cycles=rows)
                 if args.case == "budget":
                     account_lines = [x for x in serial.read_text().splitlines() if x.startswith("ACCOUNT ")]
                     if len(account_lines) != 1:
@@ -1378,7 +1484,7 @@ def main():
     install_stop_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=PROFILES, required=True)
-    parser.add_argument("--case", choices=("normal", "registers", "fault", "pages", "budget", "spaces", "memory", "seal", "user", "switch", "stacks", "locals", "life", "procs", "prep", "syscalls", "timer", "irq", "images", "requests", "ipc", "ipcdepth", "events", "control", "terminate", "creds", "groups", "stats", "createauth", "sigreserve", "spawn", "libsys", "runtime", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqchip", "irqbind", "mmiogroup", "virtiodev", "heap", "cow", "bootpkg", *VM_FAULTS), default="normal")
+    parser.add_argument("--case", choices=tuple(BOOT_CASES), default="normal")
     parser.add_argument('--initrd', type=Path)
     parser.add_argument('--init-elf',type=Path,help='ELF corresponding to the package init for page/symbol audit')
     parser.add_argument('--init-exit',type=int,help='expect fatal native PID1 exit with this code')
@@ -1390,7 +1496,12 @@ def main():
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--ram", type=int, choices=(128, 256, 512, 2048, KMAP_BYTES // (1024 * 1024)), default=256)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument('--cpus',type=int,choices=(1,4),default=1)
+    parser.add_argument('--boot-hart',type=int,help='explicit OpenSBI cold-boot-harts policy for RISC-V fixtures')
     args = parser.parse_args()
+    if args.case=='cpus' and args.cpus!=4:parser.error('cpus fixture requires --cpus 4')
+    if args.boot_hart is not None and (args.arch!='riscv' or args.boot_hart not in range(args.cpus)):
+        parser.error('preferred boot hart requires RISC-V and an enabled CPU index')
     if args.initrd:args.initrd = args.initrd.resolve()
     if args.bootpkg_error and (args.case not in ('bootpkg','normal') or bool(args.initrd) == (args.bootpkg_error == 'missing')):
         parser.error('package rejection requires bootpkg/normal and an initrd except for missing')
@@ -1405,7 +1516,7 @@ def main():
     run_dir = ROOT / "build" / args.arch / "smoke" / uuid.uuid4().hex
     run_dir.mkdir(parents=True)
     record = {"arch": args.arch, "case": args.case, "ram_mb": args.ram,
-              "extra_virtio": args.virtio, "ok": False, "guest_executed": False}
+              "extra_virtio": args.virtio, "cpu_count": args.cpus, "ok": False, "guest_executed": False}
     try:
         exercise(args, run_dir, record)
         record["ok"] = True
