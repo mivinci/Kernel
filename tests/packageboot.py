@@ -33,6 +33,8 @@ def cases(arch):
     yield 'load',bad,init,'load',None
     exiting=ROOT/'build'/arch/'sdk/packageexit.elf'
     yield 'native-exit',bootpkg.pack([('sbin/init',exiting.read_bytes())],machine),exiting,None,42
+    authority=ROOT/'build'/arch/'sdk/serviceauth.elf'
+    yield 'service-authority',bootpkg.pack([('sbin/init',authority.read_bytes())],machine),authority,None,42
 
 
 def main():

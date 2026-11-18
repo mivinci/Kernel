@@ -6,22 +6,23 @@
 #include <abi/mem.h>
 #include <abi/proc.h>
 #include <abi/ipc.h>
+#include <abi/resource.h>
 #include <prepid.h>
 #include <image.h>
 #include <irq.h>
 #define LOCALS          128
-#define LOCAL_CREATE    1
-#define LOCAL_SPACE     2
-#define LOCAL_ALLOC     3
-#define LOCAL_MEM       4
-#define LOCAL_CALL      5
-#define LOCAL_SEND      6
-#define LOCAL_NOTIFY    7
-#define LOCAL_CONTROL   8
-#define LOCAL_OBSERVE   9
-#define LOCAL_IRQ_BIND  11
+#define LOCAL_CREATE    RESOURCE_CREATE
+#define LOCAL_SPACE     RESOURCE_SPACE
+#define LOCAL_ALLOC     RESOURCE_ALLOC
+#define LOCAL_MEM       RESOURCE_MEM
+#define LOCAL_CALL      RESOURCE_CALL
+#define LOCAL_SEND      RESOURCE_SEND
+#define LOCAL_NOTIFY    RESOURCE_NOTIFY
+#define LOCAL_CONTROL   RESOURCE_CONTROL
+#define LOCAL_OBSERVE   RESOURCE_OBSERVE
+#define LOCAL_IRQ_BIND  RESOURCE_IRQ_BIND
 #define LOCAL_USE       1
-#define LOCAL_CONSTRUCT 14
+#define LOCAL_CONSTRUCT RESOURCE_CONSTRUCT
 #define LOCAL_LOAD      4
 #define LOCAL_GRANT     (1UL << 63)
 #define LOCAL_FORK      1

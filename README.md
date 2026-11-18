@@ -38,6 +38,8 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 进程启动Boot统一为格式2（144字节头），追加精确只读包VA/长度；旧格式不兼容，需重建SDK/包。ELF和堆避开16MiB包窗口；Mem仍最多64KiB。PID1获得受跟踪的R/NX分片视图，首尾包外字节隔离为0，包原页/副本只计启动保留一次，各进程页表单独计费。
 
+生产启动现建立16个预算Set，PID1持对应CREATE SERVICE及可减权转授的自身CALL；Boot启动数据320字节，含SELF_SPACE、SELF_ALLOC和首服务CREATE，init本地表128槽。SYSTEM/设备清单、实际服务装载与READY仍待完成，详见07末尾。
+
 `CASE=bootpkg`使用十个SDK测试包验证格式、分片/快照及拒启，不执行包内程序。`normal`必须有包；`make smoke ARCH=...`自动构建默认生产包并启动，也可传`INITRD=/absolute/path/boot.pkg`。直接运行smoke工具时可用`--init-elf`指定该包中init的ELF供独立审计。缺包/坏包在页分配前拒启；完整回归另覆盖非首目录项、整页包和包内PID1真实exit致命。
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。

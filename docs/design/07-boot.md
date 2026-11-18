@@ -495,3 +495,25 @@ native QMP审计全部用户低地址页表及精确共享的内核高半区，�
 normal成功时主机确认CPU在内核IRQ-idle、定时器/控制器状态正确，并独立核对活PID1与保留账目，不要求停止系统来模拟成功；退出反例核对实际用户root下的致命halt和code42。证据归build/host/stage92-package-pid1/及status。T1.3完成不等于T1全交付，下一步仍是T1.4首个真实服务、授权/READY与后续失败监督。
 
 本点最终本地make test-all通过640项host、格式及142次两架构QEMU；其中10次生产init live审计、2次包内真实PID1 exit42、6次普通镜像分配前拒启。全量结果核对当前内核源码/共享头哈希；实际init ELF与默认包、源码/库哈希和独立链接输入亦核对，无fixture混入。最初审计依赖私有store符号被LLVM拆分，已改为实际bootstorestat诊断并独立核对PTE/页owner；RV idle的SEIE+STIE=0x220与fatal halt清sie差别已按真实HAL/寄存器修正，失败记录保留。无CI/真机/性能验收，未宣称服务清单或M3完成。
+
+### 首个设备的 BOOT_RESOURCE 记录（2026-11-18确认）
+
+06已冻结QUERY_BOOT_RESOURCE及前缀[resource,kind,start,length,irq,flags]。用户同意以下首个serial服务的具体记录与授权规则；本节冻结设计，尚未实现：
+
+- 仅有效、属于初始init镜像且含QUERY的SYSTEM Handle可读；不接受authority=0、裸PID、普通CONTROL或uid0身份替代。初次仅授QUERY，不为尚未实现的CLOCK/HALT/REBOOT/POLICY填充空权限或假句柄。
+- 每条Queryrec为一个实际获授且独占页可映射的UART窗口，type=BOOT_RESOURCE、pid/image为该初始镜像、stamp及cursor绑定不可变启动库存。data[0..5]=[MMIO管理Handle,UART种类,精确物理start,精确字节length,IRQ_SOURCE Handle或0,flags=0]，data[6..19]保留0；UART种类1=NS16550、2=PL011，与现有DT发现值统一进共享ABI定义。这里的irq传完整资源Handle，不让init凭硬件中断号制造权限。
+- MMIO源给init READ/WRITE/GRANT、无继承，仅可按已有目标CONFIG/INSTALL规则转授给驱动；IRQ_SOURCE仅BIND、无GRANT/继承，由init通过目标CONTROL IRQ建立驱动自己的ACK槽。元数据中的PA/类型不授予额外映射或DMA权。
+- 当前只发实际支持的独占页UART；其他设备、共享页组、缺少后端的记录不输出空Handle冒充支持。启动包已由Boot格式2的真实只读视图交付，不再发一条无管理Handle的假镜像资源记录。
+- query只读、无安装/映射副作用；输出范围、计数、cursor/初始镜像及授权均须核验，失败不发布半份行。全局Set/domain CONTROL及其枚举另按已有范围接入，不借本UART记录隐式实现。
+
+本节只收口首个UART设备发现与授权关联，不能据此声称已完成SYSTEM全部操作或所有设备生产发权。IRQ_SOURCE撤销与既有IRQ_BIND的关系见05的已确认规则。
+
+### T1.4前置：生产启动清单与服务构造授权（2026-11-18）
+
+normal现一次建立16个平坦Set：0供init（4096/6144页、1实例），1供普通应用（32768/40960页、48实例），2..15供服务（每组4096/6144页、8实例）。这些是准入上限，不预留等量物理页。init本地表增至128槽，安装每Set一份真实CREATE，包含USE/CREDENTIAL/SERVICE/GRANT，上限4096/6144页、128资源、16接收；普通孩子仍按Createarg夹取并清除特权与再授予位。普通CREATE再转授仍NOTSUP。
+
+Boot追加BOOT_CREATE指向第2号服务Set，启动数据从288增至320字节，头仍为格式2/144字节、三个资源项，名称移到248。init另持绑定自身当前Image的CALL USE|GRANT，凭已有自身RESOURCE查询发现，再经构造期CONFIG减权转授给服务；不新增Boot tag或绕过connect授权。Set/domain CONTROL、SYSTEM、设备清单、实际serial装载和READY尚未交付，本点不是T1.4完成。
+
+tests/kernel/serviceauth.c作为独立测试包PID1，经原生接口枚举16份CREATE，使用Boot指定CREATE在另一Set构造未发布孩子，核对持续CONTROL、孩子账目规格及减权CALL的完整目标身份，然后取消、释放并核对无可收取孩子。它不发布空服务或发送READY，不进入生产init链接或默认包。两架构包启动审计同时核对实际ELF、完整PTE与物理Acct归属；证据归build/host/stage93-service-bootstrap/。
+
+本点完整make test-all通过640项host、格式与144次两架构QEMU；全部结果核对当前源码/共享头哈希，10次生产init live、4次实际包内exit42（其中2次为服务授权用例）及6次分配前拒启。实际生产init链接与默认包继续不含fixture。无CI/真机/性能验收，尚未完成T1.4或可用sh。

@@ -243,6 +243,7 @@ def build(args):
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
     package_exit=link_adoption('packageexit',[compile_adoption(ROOT/'tests/kernel/packageexit.c','packageexit')])
+    service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth')])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
     parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
@@ -334,6 +335,7 @@ def build(args):
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
+                    service_auth_artifact=str(service_auth.relative_to(ROOT)),
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
                     cow_user_fault_pc=cow_fault_address, cow_user_image_sha256=digest(cow_user_image),
                     libvirtio_archive=str(virtio_archive.relative_to(ROOT)), libvirtio_sha256=digest(virtio_archive), libvirtio_audit_sha256=digest(virtio_audit),

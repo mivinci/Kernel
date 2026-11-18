@@ -10,10 +10,12 @@ struct Bootpacket
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[2];
+  Resentry resources[3];
   u8       name[BOOTPKG_NAME_BYTES + 1];
 };
 static Bootpacket packet;
+static Setid      sets[AC_SETS];
+STATIC_ASSERT(AC_SETS == 16, initial_set_policy_count);
 
 static void
 field(const char *name, u64 value)
@@ -37,9 +39,9 @@ bootstart(const Bootdir *directory)
   Bootstore       source;
   const Bootitem *item;
   const u8       *data;
-  Setid           set;
   Set             budget;
-  Handle          pid;
+  Handle          pid, creator, listener;
+  Createpolicy    policy;
   Procinfo        process;
   Rtable         *table;
   Kstack          stack;
@@ -53,19 +55,43 @@ bootstart(const Bootdir *directory)
     panic("initial package source");
   item = &directory->item[directory->header.init_index];
   data = kaddr(source.base);
-  /* Bootstrap init only. Service Set policy/CREATE and SYSTEM follow in T1.4. */
-  if (setcreate(4096, 6144, 1, &set) || procboot(set, 4096, 6144, 8, &pid) || pid != 1 ||
-      procinfo(pid, &process))
+  /* Fixed flat cohorts, not runtime Set creation. Index 0 is init, 1 ordinary
+     applications; 2..15 are service cohorts. Limits are ceilings, not RAM
+     reservations. Set/domain CONTROL and SYSTEM are separate later grants. */
+  for (i = 0; i < AC_SETS; i++)
+    if (setcreate(i == 1 ? 32768 : 4096, i == 1 ? 40960 : 6144,
+                  i == 0   ? 1
+                  : i == 1 ? 48
+                           : 8,
+                  &sets[i]))
+      panic("initial Set policy");
+  if (procboot(sets[0], 4096, 6144, LOCALS, &pid) || pid != 1 || procinfo(pid, &process))
     panic("initial process admission");
   table = proctable(pid);
   if (!table || spacebootmap(process.space))
     panic("initial package view");
+  policy.memlimit = 4096;
+  policy.exec_limit = 6144;
+  policy.resources = LOCALS;
+  policy.pending = 16;
+  policy.rights = CREATE_USE | CREATE_CREDENTIAL | CREATE_SERVICE | LOCAL_GRANT;
+  for (i = 0; i < AC_SETS; i++) {
+    policy.set = sets[i];
+    if (localcreate(table, &policy, &creator))
+      panic("initial CREATE policy");
+    if (i == 2) {
+      packet.resources[2].tag = BOOT_CREATE;
+      packet.resources[2].handle = creator;
+    }
+  }
+  if (localendpoint(table, process.identity, LOCAL_CALL, LOCAL_USE | LOCAL_GRANT, 0, 0, &listener))
+    panic("initial listener");
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = sizeof(packet);
   packet.header.argc = 1;
   packet.header.argv_off = offsetof(Bootpacket, arg);
-  packet.header.resource_count = 2;
+  packet.header.resource_count = 3;
   packet.header.resources_off = offsetof(Bootpacket, resources);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
@@ -81,8 +107,13 @@ bootstart(const Bootdir *directory)
   packet.resources[1].handle = resource(table, LOCAL_ALLOC);
   if (bootimageload(pid, data + item->load_off, item->load_bytes, &packet, sizeof(packet)) ||
       spacestat(process.space, &space) || kstackstat(process.stack, &stack) ||
-      setstat(set, &budget) || bootstorestat(&source))
+      setstat(sets[0], &budget) || bootstorestat(&source))
     panic("initial image load");
+  field("INITPOLICY sets=", AC_SETS);
+  field(" creates=", AC_SETS);
+  field(" listener=", (u64) listener);
+  field(" default_set=", settag(sets[2]));
+  putstr("\n");
   field("INITPACKAGE pages=", source.pages);
   field(" copies=", source.copies);
   field(" retained=", source.retained);

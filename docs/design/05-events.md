@@ -307,15 +307,15 @@ LIFE观察提示接续（2026-11-16）：已接有界服务观察表与EVENT_LIF
 
 该HAL切片最终完整回归为312项host/格式/100个双架构QEMU，通过；证据build/host/stage50-irq-controller/，没有把HAL轮询验证称为原生驱动事件系统验收。
 
-### 开放问题：IRQ_SOURCE撤销与既有绑定（待用户确认）
+### IRQ_SOURCE撤销与既有绑定（2026-11-18确认）
 
-原文只规定“授权撤销时屏蔽并解除投递”，未区分创建绑定的IRQ_SOURCE与驱动持有的IRQ_BIND。候选：删除/撤销某份IRQ_SOURCE只拒绝该份授权的后续bind；独立IRQ_BIND继续由目标镜像持有，IRQ_BIND撤销、irqunbind或镜像结束才屏蔽并清事件。这样不把管理者某个源副本的删除当作撤销所有派生绑定；与现有独立授权行为一致。该候选尚未确认，不依赖此选择的绑定状态、ACK、事件递送和目标终结清理已接，见下节；IRQ_SOURCE授权/原生bind仍未实现，不提前采用候选源撤销行为。
+删除/撤销某份IRQ_SOURCE只拒绝该份授权的后续bind；独立IRQ_BIND继续由目标镜像持有，IRQ_BIND撤销、irqunbind或镜像结束才屏蔽并清事件。“授权撤销时屏蔽并解除投递”指IRQ_BIND撤销，不把管理者某个源副本的删除当作撤销所有派生绑定。用户已同意该推荐方案；绑定状态、ACK、事件递送和目标终结清理已接，见下节，IRQ_SOURCE授权/原生bind仍未实现。
 
 ### IRQ绑定状态与真实递送接续（2026-11-17）
 
 已接固定64份Binding（每份56字节）及不可变启动IRQ库存，来源只取已验证DTB/HAL描述，不把任意整数变成用户授权。绑定精确持有Imageid、完整PID、独占bit16..31及目标Event；每份活绑定持1个Image cleanup引用和目标本地IRQ_BIND ACK槽（子类型11、仅ACK、不转授/继承）。按PID槽组织最多16份的所有者链，结束镜像不用扫描其他驱动；全局库存/记录/头部在默认配置共4360字节固定BSS，无中断期分配。
 
-当前创建仅经可信内核procirqinstall，生产IRQ_SOURCE授权及原生0x70 irqbind继续NOTSUP，等待前节源撤销取舍；可信fixture不是用户绑定管理入口。已接原生0x71 irqack和0x72 irqunbind及私有libsys桩，未用输入必须0，错误输出0。ACK只解析当前本地IRQ_BIND与当前Image；unbind要求目标CONTROL IRQ，再在目标表解析确认Handle，不要求泛化INSTALL，不把QUERY或认识PID当权力。
+当前创建仅经可信内核procirqinstall，生产IRQ_SOURCE授权及原生0x70 irqbind继续NOTSUP，后续按前节已确认的独立撤销规则接入；可信fixture不是用户绑定管理入口。已接原生0x71 irqack和0x72 irqunbind及私有libsys桩，未用输入必须0，错误输出0。ACK只解析当前本地IRQ_BIND与当前Image；unbind要求目标CONTROL IRQ，再在目标表解析确认Handle，不要求泛化INSTALL，不把QUERY或认识PID当权力。
 
 状态例：可信安装到PREPARING镜像→DISABLED，源屏蔽、位/Local/Image引用同时取得；发布前不能ACK。镜像ACTIVE后首次ACK→ARMED；真实认领→HAL屏蔽/完成→DELIVERED并置持久IRQ位。事件未取走时ACK为STATE；recv取走位后ACK→ARMED，ARMED重复ACK仍STATE。位/源已占、表/池满、错误Image或输入失败不先屏蔽旧所有者，也不取半份引用。IRQ事件仍为提示，words[1]不增加绑定代次，words[2..3]/source/request/image为0；设备队列/中断条件处理由驱动负责，内核不假装验证它们。
 

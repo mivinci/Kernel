@@ -345,7 +345,9 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 
 原生sigsuspend接续（2026-11-17）：0x63一个mask输入，其他输入必须0；未知mask位INVALID且原掩码不变，KILL/STOP位规范清除。保存原M后原子安装临时W、检查可递送pending并登记PROCESS_WAIT_SIGNAL=6；捕获后先固定INTERRUPTED返回现场，沿原C栈退至统一出口建立handler H帧，帧restore_mask取M。正常sigreturn恢复M后原调用返回-INTERRUPTED，不返回成功，不因普通IPC通知/事件假醒；默认终止不返回。两层满额时捕获信号仍pending，默认终止可越过满层的较低编号捕获信号；STOP/CONT真实源尚未接，不能由此声称已验其状态语义。
 
-IRQ原生接续（2026-11-17）：已接0x71单输入IRQ_BIND ACK及0x72双输入CONTROL IRQ/目标本地binding，未用输入INVALID、失败输出0、成功无额外结果。确认槽为RESOURCE子类型11，仅ACK=1、inherit=0，不转授；Local free/revoke即拆绑定。资源查询仍按冻结字段，不暴露Event指针或内部ID。0x70/source权限仍待05的IRQ_SOURCE撤销决策，继续NOTSUP，不将可信安装当原生bind权限验证。
+IRQ原生接续（2026-11-17）：已接0x71单输入IRQ_BIND ACK及0x72双输入CONTROL IRQ/目标本地binding，未用输入INVALID、失败输出0、成功无额外结果。确认槽为RESOURCE子类型11，仅ACK=1、inherit=0，不转授；Local free/revoke即拆绑定。资源查询仍按冻结字段，不暴露Event指针或内部ID。0x70/source权限继续NOTSUP，后续遵循05于2026-11-18确认的独立撤销规则，不将可信安装当原生bind权限验证。
+
+启动授权接续（2026-11-18）：RESOURCE子类型1..15统一命名于include/abi/resource.h，内核Local引用同一来源；名称存在不代表各类型都已实现。首个UART的BOOT_RESOURCE记录和SYSTEM QUERY限制见07末尾的已确认规格，data[4]为IRQ_SOURCE Handle或0，不是硬件IRQ号；实现尚待接入。
 
 上述ACK/解绑及生命周期的最终完整回归通过321项host和102个双架构QEMU；未用输入、外表Handle、旧代、消费边界和真实硬件EVENT由05的新场景核验。0x70保留NOTSUP，Source撤销决策未采用候选默认。
 
