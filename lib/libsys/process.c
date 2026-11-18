@@ -126,6 +126,18 @@ __sys_setsid(Handle *sid)
 }
 
 isize
+__sys_irqbind(Handle target, Handle source, u32 bit, Handle *binding)
+{
+  const u64 args[7] = {(u64) target, (u64) source, bit, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!binding)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_IRQBIND, args, &result);
+  *binding = (Handle) result.values[0];
+  return error;
+}
+isize
 __sys_irqack(Handle binding)
 {
   const u64 args[7] = {(u64) binding, 0, 0, 0, 0, 0, 0};

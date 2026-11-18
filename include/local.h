@@ -10,27 +10,28 @@
 #include <prepid.h>
 #include <image.h>
 #include <irq.h>
-#define LOCALS          128
-#define LOCAL_CREATE    RESOURCE_CREATE
-#define LOCAL_SPACE     RESOURCE_SPACE
-#define LOCAL_ALLOC     RESOURCE_ALLOC
-#define LOCAL_MEM       RESOURCE_MEM
-#define LOCAL_CALL      RESOURCE_CALL
-#define LOCAL_SEND      RESOURCE_SEND
-#define LOCAL_NOTIFY    RESOURCE_NOTIFY
-#define LOCAL_CONTROL   RESOURCE_CONTROL
-#define LOCAL_OBSERVE   RESOURCE_OBSERVE
-#define LOCAL_IRQ_BIND  RESOURCE_IRQ_BIND
-#define LOCAL_USE       1
-#define LOCAL_CONSTRUCT RESOURCE_CONSTRUCT
-#define LOCAL_LOAD      4
-#define LOCAL_GRANT     (1UL << 63)
-#define LOCAL_FORK      1
-#define LOCAL_EXEC      2
-#define LOCAL_SEAL      8
-#define LOCAL_OPEN      1
-#define LOCAL_CLOSING   2
-#define LOCAL_DEAD      3
+#define LOCALS           128
+#define LOCAL_CREATE     RESOURCE_CREATE
+#define LOCAL_SPACE      RESOURCE_SPACE
+#define LOCAL_ALLOC      RESOURCE_ALLOC
+#define LOCAL_MEM        RESOURCE_MEM
+#define LOCAL_CALL       RESOURCE_CALL
+#define LOCAL_SEND       RESOURCE_SEND
+#define LOCAL_NOTIFY     RESOURCE_NOTIFY
+#define LOCAL_CONTROL    RESOURCE_CONTROL
+#define LOCAL_OBSERVE    RESOURCE_OBSERVE
+#define LOCAL_IRQ_BIND   RESOURCE_IRQ_BIND
+#define LOCAL_IRQ_SOURCE RESOURCE_IRQ_SOURCE
+#define LOCAL_USE        1
+#define LOCAL_CONSTRUCT  RESOURCE_CONSTRUCT
+#define LOCAL_LOAD       4
+#define LOCAL_GRANT      (1UL << 63)
+#define LOCAL_FORK       1
+#define LOCAL_EXEC       2
+#define LOCAL_SEAL       8
+#define LOCAL_OPEN       1
+#define LOCAL_CLOSING    2
+#define LOCAL_DEAD       3
 /* Internal empty-slot ownership, never public RESOURCE subtypes. */
 #define LOCAL_DRAFT   0xfffdU
 #define LOCAL_STAGED  0x80U
@@ -125,6 +126,8 @@ int localcontrol(Rtable *table, Lifeid life, u64 rights, Handle *out);
 int localobserve(Rtable *table, u64 rights, Handle *out);
 /* Trusted target installation; no raw-number native bind admission here. */
 int localirqbind(Rtable *table, Imageid image, Event *event, u32 source, u32 bit, Handle *out);
+int localirqsource(Rtable *table, u32 number, Handle *out);
+int localirqresolve(Rtable *table, Handle handle, u32 *source);
 int localirqack(Rtable *table, Handle binding, Imageid image);
 int localirqunbind(Rtable *table, Handle binding, Imageid image);
 int localobserver(Rtable *table, Handle permit, u32 relation);

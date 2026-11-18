@@ -718,6 +718,41 @@ bindingid(const Local *local)
   return id;
 }
 int
+localirqsource(Rtable *table, u32 number, Handle *out)
+{
+  Local *slot;
+  u32    source;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!table || table->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  error = irqsource(number, &source);
+  if (error)
+    return error;
+  slot = empty(table);
+  if (!slot)
+    return sloterror(table);
+  /* Immutable inventory indices have no ref or binding ownership. */
+  publish(table, slot, LOCAL_IRQ_SOURCE, 0, source, IRQ_SOURCE_BIND, 0, 0, 0, 0, out);
+  return 0;
+}
+int
+localirqresolve(Rtable *table, Handle handle, u32 *source)
+{
+  Local *slot = find(table, handle, LOCAL_IRQ_SOURCE);
+  if (!source)
+    return -ERR_INVALID;
+  *source = 0;
+  if (!slot)
+    return -ERR_BAD_HANDLE;
+  if (!(slot->rights & IRQ_SOURCE_BIND))
+    return -ERR_DENIED;
+  *source = slot->object;
+  return 0;
+}
+int
 localirqbind(Rtable *table, Imageid image, Event *event, u32 source, u32 bit, Handle *out)
 {
   Local *slot;
@@ -1116,6 +1151,11 @@ removeentry(Local *l)
   }
   if (l->subtype == LOCAL_RECEIVE)
     return -ERR_BUSY;
+  if (l->subtype == LOCAL_IRQ_SOURCE) {
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_IRQ_BIND) {
     if (irqdrop(bindingid(l)))
       panic("IRQ local reference");
@@ -1225,7 +1265,7 @@ localfree(Rtable *t, Handle h)
   Local *l = find(t, h, 0);
   return l && (l->subtype == LOCAL_MEM || l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND ||
                l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL ||
-               l->subtype == LOCAL_IRQ_BIND)
+               l->subtype == LOCAL_IRQ_BIND || l->subtype == LOCAL_IRQ_SOURCE)
              ? removeentry(l)
              : -ERR_BAD_HANDLE;
 }
@@ -1326,7 +1366,8 @@ queryrecord(const Rtable *table, u32 index, Queryrec *out)
     out->data[7] = image.number;
   } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
              l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT &&
-             l->subtype != LOCAL_CREATE && l->subtype != LOCAL_OBSERVE)
+             l->subtype != LOCAL_CREATE && l->subtype != LOCAL_OBSERVE &&
+             l->subtype != LOCAL_IRQ_SOURCE && l->subtype != LOCAL_IRQ_BIND)
     return -ERR_NOTSUP;
   return 0;
 }
@@ -1637,6 +1678,7 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
       break;
     case LOCAL_CONTROL:
     case LOCAL_OBSERVE:
+    case LOCAL_IRQ_SOURCE:
     case LOCAL_IRQ_BIND:
     case LOCAL_CONSTRUCT:
       break;

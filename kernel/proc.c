@@ -1916,6 +1916,23 @@ controlproc(Rtable *source, Handle authority, u64 rights, Proc **out, u64 *grant
   return 0;
 }
 int
+procirqbind(Rtable *source, Handle authority, Handle irq, u32 bit, Handle *out)
+{
+  Proc *target;
+  u32   index;
+  int   error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  error = controlproc(source, authority, CONTROL_IRQ, &target, NULL);
+  if (error)
+    return error;
+  error = localirqresolve(source, irq, &index);
+  return error
+             ? error
+             : localirqbind(&target->resources, target->identity, &target->events, index, bit, out);
+}
+int
 procirqunbind(Rtable *source, Handle authority, Handle binding)
 {
   Proc *target;

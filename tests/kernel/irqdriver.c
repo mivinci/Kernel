@@ -19,7 +19,7 @@ extern u32   mmioclear(u64 base);
 int
 main(int argc, char **argv)
 {
-  Handle binding, control, weak, stale, space, io;
+  Handle binding, control, weak, stale, space, io, source, rejected;
   u64    mode, args[7];
   Maparg mapping;
   u8     byte = 0xa5;
@@ -53,6 +53,7 @@ main(int argc, char **argv)
   stale = bootresource(sysboot(), 260);
   space = bootresource(sysboot(), BOOT_SELF_SPACE);
   io = bootresource(sysboot(), 261);
+  source = bootresource(sysboot(), 262);
   mapping.mem = io;
   mapping.offset = 0;
   mapping.address = 0x2000000;
@@ -97,7 +98,28 @@ main(int argc, char **argv)
     REQUIRE(!result.values[i], 159);
   for (i = 0; i < 7; i++)
     args[i] = 0;
-  REQUIRE(__sys_enter(SYS_IRQBIND, args, &result) == -ERR_NOTSUP, 160);
+  REQUIRE(__sys_enter(SYS_IRQBIND, args, &result) == -ERR_BAD_HANDLE, 160);
+  args[0] = (u64) control;
+  args[1] = (u64) source;
+  args[2] = 16;
+  args[3] = 1;
+  REQUIRE(__sys_enter(SYS_IRQBIND, args, &result) == -ERR_INVALID, 194);
+  for (i = 0; i < 7; i++)
+    REQUIRE(!result.values[i], 195);
+  args[2] = (1UL << 32) | 16;
+  args[3] = 0;
+  REQUIRE(__sys_enter(SYS_IRQBIND, args, &result) == -ERR_INVALID, 196);
+  rejected = 99;
+  REQUIRE(__sys_irqbind(weak, source, 16, &rejected) == -ERR_DENIED && !rejected, 187);
+  REQUIRE(__sys_irqbind(control, 10, 16, &rejected) == -ERR_BAD_HANDLE && !rejected, 188);
+  REQUIRE(__sys_irqbind(control, source, 16, &rejected) == -ERR_BUSY && !rejected, 189);
+  REQUIRE(!__sys_irqunbind(control, binding), 190);
+  REQUIRE(__sys_irqbind(control, source, 15, &rejected) == -ERR_INVALID && !rejected, 191);
+  REQUIRE(!__sys_irqbind(control, source, 16, &binding) && binding > 0, 192);
+  REQUIRE(!__sys_free(source) && __sys_irqbind(control, source, 17, &rejected) == -ERR_BAD_HANDLE &&
+              !rejected,
+          193);
+  irq_trace[11] = (u64) binding;
   REQUIRE(!__sys_irqack(binding) && __sys_irqack(binding) == -ERR_STATE, 161);
   irq_trace[0] = 1;
   REQUIRE(!__sys_yield(), 162);

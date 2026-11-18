@@ -68,6 +68,7 @@ syscall(Hctx *context)
   case SYS_COPY:
   case SYS_CONFIGURE:
   case SYS_GETCRED:
+  case SYS_IRQBIND:
     used = 7;
     break;
   case SYS_GRANT:
@@ -237,6 +238,14 @@ syscall(Hctx *context)
         outputs[2] |= WAIT_FAULT;
       outputs[3] = child.sequence;
     }
+    break;
+  case SYS_IRQBIND:
+    if (args[2] > IRQ_BIT_MAX)
+      status = -ERR_INVALID;
+    else
+      status = procirqbind(table, (Handle) args[0], (Handle) args[1], (u32) args[2], &handle);
+    if (!status)
+      outputs[0] = (u64) handle;
     break;
   case SYS_IRQACK:
     status = procirqack((Handle) args[0]);

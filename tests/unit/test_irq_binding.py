@@ -35,6 +35,9 @@ class IrqBindingTests(unittest.TestCase):
                 'localinit':[C.POINTER(Table),C.POINTER(Local),C.c_uint32,space.Acctid,space.Spaceid],
                 'localirqbind':[C.POINTER(Table),Imageid,C.POINTER(Event),C.c_uint32,C.c_uint32,C.POINTER(C.c_int64)],
                 'localirqack':[C.POINTER(Table),C.c_int64,Imageid],
+                'localirqsource':[C.POINTER(Table),C.c_uint32,C.POINTER(C.c_int64)],
+                'localirqresolve':[C.POINTER(Table),C.c_int64,C.POINTER(C.c_uint32)],
+                'localquery':[C.POINTER(Table),C.c_uint64,C.POINTER(Queryrec),C.c_uint32,C.POINTER(C.c_uint32),C.POINTER(C.c_uint64)],
                 'localirqunbind':[C.POINTER(Table),C.c_int64,Imageid],
                 'localspace':[C.POINTER(Table),C.c_uint64,C.POINTER(C.c_int64)],
                 'localclose':[C.POINTER(Table)],'localdrain':[C.POINTER(Table),C.c_uint32],
@@ -188,6 +191,32 @@ class IrqBindingTests(unittest.TestCase):
             self.assertEqual(self.lib.localfree(C.byref(table),handle.value),0)
             self.assertEqual(self.lib.irqstat(reference,C.byref(State())),-4)
             self.assertEqual(self.lib.irqwaiting(),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_source_deletion_preserves_independent_binding_and_hides_hardware_identity(self):
+        def body():
+            _,image=self.active(9011);table,storage=self.table(image);source=C.c_int64();index=C.c_uint32()
+            self.assertEqual(self.lib.localirqsource(C.byref(table),999,C.byref(source)),-3)
+            self.assertEqual(source.value,0)
+            self.assertEqual(self.lib.localirqsource(C.byref(table),32,C.byref(source)),0)
+            self.assertEqual(self.lib.localirqresolve(C.byref(table),source.value,C.byref(index)),0)
+            event=Event();binding=C.c_int64()
+            self.assertEqual(self.lib.localirqbind(C.byref(table),image,C.byref(event),index.value,16,C.byref(binding)),0)
+            self.assertEqual(self.lib.localirqack(C.byref(table),binding.value,image),0)
+            rows=(Queryrec*4)();written=C.c_uint32();next_cursor=C.c_uint64()
+            self.assertEqual(self.lib.localquery(C.byref(table),0,rows,4,C.byref(written),C.byref(next_cursor)),0)
+            self.assertEqual(written.value,2)
+            self.assertEqual(sorted(row.data[1] for row in rows[:2]),[10,11])
+            for row in rows[:2]:self.assertTrue(all(v==0 for v in row.data[3:]))
+            denied=C.c_int64()
+            self.assertEqual(self.lib.localcopy(C.byref(table),source.value,C.byref(table),1,0,0,0,C.byref(denied)),-5)
+            self.assertEqual(self.lib.localinherit(C.byref(table),source.value,1),-5)
+            masks=self.lib.test_irq_masks()
+            self.assertEqual(self.lib.localfree(C.byref(table),source.value),0)
+            self.assertEqual(self.lib.test_irq_masks(),masks)
+            self.assertEqual(self.lib.localirqresolve(C.byref(table),source.value,C.byref(index)),-3)
+            target=Imageid();self.assertEqual(self.lib.irqfire(33,C.byref(target)),1)
+            self.assertEqual(event.pending,1<<16)
         for lib in self.libs:self.exercise(lib,body)
 
     def test_full_local_table_does_not_take_a_source_or_mask_an_owner(self):

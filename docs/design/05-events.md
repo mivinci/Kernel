@@ -309,7 +309,7 @@ LIFE观察提示接续（2026-11-16）：已接有界服务观察表与EVENT_LIF
 
 ### IRQ_SOURCE撤销与既有绑定（2026-11-18确认）
 
-删除/撤销某份IRQ_SOURCE只拒绝该份授权的后续bind；独立IRQ_BIND继续由目标镜像持有，IRQ_BIND撤销、irqunbind或镜像结束才屏蔽并清事件。“授权撤销时屏蔽并解除投递”指IRQ_BIND撤销，不把管理者某个源副本的删除当作撤销所有派生绑定。用户已同意该推荐方案；绑定状态、ACK、事件递送和目标终结清理已接，见下节，IRQ_SOURCE授权/原生bind仍未实现。
+删除/撤销某份IRQ_SOURCE只拒绝该份授权的后续bind；独立IRQ_BIND继续由目标镜像持有，IRQ_BIND撤销、irqunbind或镜像结束才屏蔽并清事件。“授权撤销时屏蔽并解除投递”指IRQ_BIND撤销，不把管理者某个源副本的删除当作撤销所有派生绑定。用户已同意该推荐方案；绑定状态、ACK、事件递送和目标终结清理及后续原生bind接续见下文。
 
 ### IRQ绑定状态与真实递送接续（2026-11-17）
 
@@ -330,5 +330,17 @@ host新增9项覆盖发布/ACK/消费、失败不影响旧源与引用、跨Imag
 CASE=irqbind两架构各7个驱动案例另含1个忙伙伴：U/EL0外设IRQ、EL1/CPU idle递送、无timer/timer共存、错误授权/保留输入、消费前ACK、旧Handle、新唤醒后解绑重等、正常free/unbind/退出、强杀与未发布取消。5次真实用户EVENT消费/FP舍入恢复、5次陈旧Handle拒绝、3次消费前ACK拒绝，CPU独立核对生命周期及每例池槽/页/Set/Acct回收。测试设备处理仍由tests/kernel的UART刺激/清理桥完成，不称用户MMIO权限或生产serial驱动已交付。最终源码完整make test-all通过321项host、格式及102个RV64/ARM64 QEMU，包含上述忙伙伴和最终池槽失效断言；专项9项host及格式另通过，SDK单向审计通过。日志、102个原始目录和关键源码哈希在build/host/stage51-irq-delivery/。未执行CI/目标真实硬件/性能验收，原生bind与IRQ_SOURCE仍待确认，不将可信安装当用户绑定准入已交付。
 
 UART用户设备访问接续（2026-11-17）：09的可信独占页MMIO已接，irqbind载荷通过实际U/EL0 Device映射清UART寄存器并读回后ACK，管理Cap先丢而映射继续；CPU桥只作刺激/强杀场景停设备/轮次间清理，不再代替正常设备下半段。Source授权和原生0x70仍按上面的开放问题等待确认。
+
+### IRQ_SOURCE与原生bind接续（2026-11-18）
+
+已接可信localirqsource，仅将已初始化、不可变IRQ库存中的真实源安装为当前表的IRQ_SOURCE BIND；Local保存库存索引，无新对象池或源引用，不持绑定所有权，不转授/继承。普通用户仍不能凭硬件IRQ号生成源授权；生产发放将由SYSTEM启动库存路径接入，本点只在明确fixture中安装源。
+
+原生0x70及libsys私有桩现要求目标CONTROL IRQ与调用者本地IRQ_SOURCE BIND，完整核对目标Life/Proc当前镜像，调用既有绑定后端原子取得独占源、专用bit、目标Local槽及Image清理引用，返回的是目标表中的IRQ_BIND Handle。准备镜像可绑定但首次ACK仍须发布；未用参数非0、bit越界或高位截断均INVALID，失败输出0，不改变已有所有者。
+
+SOURCE free/revoke/表关闭仅删本地授权，不mask、不清事件、不撤销独立BIND；BIND自身删除、显式解绑或镜像结束保留原清理语义。RESOURCE查询现支持SOURCE与BIND，只输出本地Handle/子类型/权限，窗口、继承和目标字段0，不泄露库存索引或内核指针。fork不继承SOURCE/BIND，保留既定墓碑规则。
+
+两架构irqbind场景的真实用户驱动先拒绝弱CONTROL、裸IRQ整数、已占源、非法bit、保留参数及高位bit，再解绑旧fixture绑定，经syscall建立新绑定；删除SOURCE后旧Handle不能再bind，但新BIND仍能ACK、接真实UART中断、在用户Device映射清设备后继续ACK。主机小池检查删除SOURCE不产生mask，独立BIND仍可递送，且两种查询不泄露硬件身份。此测试不是生产serial上线；SYSTEM/BOOT_RESOURCE发权仍待接。
+
+本点完整make test-all通过641项host、格式与144次两架构QEMU；全部成功结果核对当前源码/共享头哈希，normal及生产init链接无fixture。最终两架构IRQ场景包含新增保留参数/高位bit拒绝、SOURCE删除后真实递送及既有退出/强杀/取消清理；证据build/host/stage94-native-irq-source/evidence.json与test-all.log。无CI/板端/性能验收；下一步优先按issues登记处理早期UART地址来源，再接生产SYSTEM设备库存。
 
 MMIO升级后的最终完整回归为334项host、格式和102个两架构QEMU，通过；普通驱动案例由用户清UART使能并读回，忙伙伴的窗口map被DENIED，证据build/host/stage52-mmio/。源权限/原生bind仍未采用未确认规则。

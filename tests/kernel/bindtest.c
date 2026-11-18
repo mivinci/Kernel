@@ -12,7 +12,7 @@ struct Irqpacket
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[7];
+  Resentry resources[8];
   char     name[8];
 };
 extern const u8  irq_image[], irq_image_end[];
@@ -82,7 +82,7 @@ bindtest(const Dtinfo *hardware)
 {
   Setid      set;
   Set        account;
-  Handle     pid, binding, control, weak, kill, stale = 0, busy, busy_kill, io;
+  Handle     pid, binding, control, weak, kill, stale = 0, busy, busy_kill, io, source;
   Rtable    *table, *busy_table;
   Procinfo   process, current, busy_info;
   Irqpacket  packet;
@@ -115,6 +115,7 @@ bindtest(const Dtinfo *hardware)
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     table = proctable(pid);
     REQUIRE(!procirqinstall(pid, number, 16, &binding));
+    REQUIRE(!localirqsource(table, number, &source));
     REQUIRE(!procmmioinstall(pid, device, 0, 3, &io));
     io_identity.generation = table->slots[handleindex(io)].objectgen;
     io_identity.index = table->slots[handleindex(io)].object;
@@ -134,7 +135,7 @@ bindtest(const Dtinfo *hardware)
     packet.header.bytes = sizeof(packet);
     packet.header.argc = 1;
     packet.header.argv_off = offsetof(Irqpacket, arg);
-    packet.header.resource_count = stale ? 7 : 6;
+    packet.header.resource_count = stale ? 8 : 7;
     packet.header.resources_off = offsetof(Irqpacket, resources);
     packet.header.user_lo = BOOT_USER_LO;
     packet.header.user_hi = BOOT_USER_HI;
@@ -153,8 +154,10 @@ bindtest(const Dtinfo *hardware)
     packet.resources[4].handle = weak;
     packet.resources[5].tag = 261;
     packet.resources[5].handle = io;
-    packet.resources[6].tag = 260;
-    packet.resources[6].handle = stale;
+    packet.resources[6].tag = 262;
+    packet.resources[6].handle = source;
+    packet.resources[7].tag = 260;
+    packet.resources[7].handle = stale;
     testload(pid, irq_image, (u64) (irq_image_end - irq_image), &packet, sizeof(packet));
     if (mode == 6) {
       REQUIRE(!imageend(process.identity, IMAGE_ABORT) && !lifecancel(process.life));
@@ -164,6 +167,10 @@ bindtest(const Dtinfo *hardware)
     REQUIRE(!procpublish(pid) && !procrunone());
     REQUIRE(!spaceread(process.space, irq_trace_address, trace, sizeof(trace)) && trace[0] == 1 &&
             !trace[31]);
+    binding = (Handle) trace[11];
+    REQUIRE(binding > 0);
+    identity.generation = table->slots[handleindex(binding)].objectgen;
+    identity.index = table->slots[handleindex(binding)].object;
     REQUIRE(!irqstat(identity, &state) && state.state == IRQ_ARMED);
     REQUIRE(!memstat(io_identity, &io_memory) && io_memory.kind == MEM_MMIO &&
             io_memory.state == MEM_DATA && !io_memory.managers && io_memory.refs == 1);
