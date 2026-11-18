@@ -1172,6 +1172,10 @@ def exercise(args, run_dir, record):
                     if checks != [dict(cases=7,received=5,stale=5,early=3,revoked=2,busy=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("IRQ delivery/lifetime/local handle mismatch")
                     record["irq_bindings"]=checks[0]
+                    uart_checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("UARTPORTCHECK ")]
+                    if uart_checks != [dict(cases=1,tx=1,rx_empty=1,masks=4)]:
+                        raise SmokeError("userspace UART backend/access adapter mismatch")
+                    record["uart_backend"]=uart_checks[0]
                 if args.case == "irqchip":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("IRQCHIPCHECK ")]
                     uart=next(device for device in record["discovery"]["devices"] if device["kind"] in (1,2))

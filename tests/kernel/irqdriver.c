@@ -8,6 +8,8 @@ volatile u64 irq_trace[32];
 extern u64   frame_fp(u64 mode);
 extern u32   mmioready(u64 base);
 extern u32   mmioclear(u64 base);
+extern u32   mmiokind(void);
+extern u32   uartusercheck(u64 base, u32 kind);
 #define BIT ((u64) 1 << 16)
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -137,6 +139,10 @@ main(int argc, char **argv)
           166);
   irq_trace[2]++;
   REQUIRE(mmioclear(mapping.address), 186);
+  if (!mode) {
+    irq_trace[12] = uartusercheck(mapping.address, mmiokind());
+    REQUIRE(irq_trace[12] == 42, 197);
+  }
   irq_trace[0] = 2;
   REQUIRE(!__sys_yield(), 167);
   REQUIRE(frame_fp(2) == 2, 168);

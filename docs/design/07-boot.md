@@ -536,6 +536,14 @@ tests/kernel/serviceauth.c作为独立测试包PID1，经原生接口枚举16份
 
 此方案及调用号/权限均未确认、未实现，SYSTEM生产权限仍仅QUERY；不提前修改ABI、普通诊断或panic路径。UART寄存器后端及共享环可以独立推进，实际服务启动前须收口并验证交接。
 
+候选实现还须有界确认早期TX FIFO及移位寄存器排空后才完成交接，忙则返回BUSY供init稍后重试，不在内核无限轮询，也不让serial的初始化复位截断早期诊断。该要求同属待确认交接方案，不表示当前hal_debug_putc已改为有界日志或具备排空握手。
+
+### 开放问题：serial的Boot资源与启动参数（待用户确认）
+
+2026-11-18已异步询问候选：保留通用Boot格式及SELF资源标签，serial私有tag 0x100..0x104依次为INIT_CALL、UART_MMIO、IRQ_BIND、RX_RING、TX_RING，全部只指向已实际安装的本地Handle，flags/reserved仍0；不能照抄init句柄或拿参数整数伪装资源。argv为程序名、UART种类、页内偏移、精确窗口长度、清单服务编号，恰好五项；种类首期仅ns16550/pl011，其他数值为严格无符号十进制，检查溢出/窗口几何/编号，不通过环境变量或板名猜硬件。
+
+候选不增加Boot字段、独立配置页或内核调用；标签仅在serial启动契约内解释，非新的通用资源种类，也不把测试用257等标签当作生产规格证据。实际权限、映射范围和目标身份仍从已授资源核验，argv不创造授权。该候选尚未确认，不修改生产包/装载行为或协议头中的资源标签。tty连接及通知绑定/代次握手随实际服务接续单独收口，不以这份候选冒充所有启动接口都已完整定义。
+
 ### T1.4接续：初始SYSTEM与只读UART库存（2026-11-18）
 
 已实现真实LOCAL_SYSTEM QUERY，强持有精确Imageid清理引用，只在绑定镜像ACTIVE且table的完整PID/image匹配时可用；不含GRANT，不继承/转授，关闭/free释放自身引用，旧代次或旧镜像不改绑新表。这里只实现QUERY=1，不填CLOCK/HALT/REBOOT/POLICY假权限，普通CONTROL或uid0不能替代。类型及UART种类字面来源分别为abi/resource.h、abi/system.h，Local仍48字节。
