@@ -1,5 +1,7 @@
 """Exercise the real C parser on bounded synthetic blobs, without target hardware."""
 import ctypes as C
+import hashlib
+import json
 from pathlib import Path
 import random
 import sys
@@ -9,6 +11,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+DT_REGS = 4
+DT_DEVICES = 64
 
 def words(*values):
     return struct.pack('>' + 'I' * len(values), *values)
@@ -67,7 +71,7 @@ class Irq(C.Structure):
     _fields_ = [('parent', C.c_uint32), ('number', C.c_uint32), ('flags', C.c_uint32), ('reserved', C.c_uint32)]
 class Device(C.Structure):
     _fields_ = [('kind', C.c_uint32), ('nreg', C.c_uint32), ('nirq', C.c_uint32), ('phandle', C.c_uint32),
-                ('reg', Range * 2), ('irq', Irq * 4), ('limit', C.c_uint32), ('protected', C.c_uint32), ('mappable',C.c_uint32),('groupable',C.c_uint32)]
+                ('reg', Range * DT_REGS), ('irq', Irq * 16), ('limit', C.c_uint32), ('protected', C.c_uint32), ('mappable',C.c_uint32),('groupable',C.c_uint32)]
 class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
@@ -332,6 +336,14 @@ class DtbTests(unittest.TestCase):
         d = next(x for x in info.dev[:info.ndev] if x.kind == 4)
         self.assertEqual([q.number for q in d.irq[:d.nirq]], [0xffffffff, 9])
 
+    def test_disabled_context_reference_requires_an_actual_cpu_parent(self):
+        fake=node('off',[('status',b'disabled\0')],[node('intc',[
+            ('compatible',b'riscv,cpu-intc\0'),('phandle',words(9)),
+            ('interrupt-controller',b''),('#interrupt-cells',words(1))])])
+        name,props,children=plic()
+        props=[(key,words(9,11,1,9) if key=='interrupts-extended' else value) for key,value in props]
+        self.reject(blob(basic([fake,node(name,props,children),uart()])))
+
     def test_gic_spi_number_and_trigger(self):
         gic = node('gic', [('compatible', b'arm,cortex-a15-gic\0'), ('phandle', words(2)),
                            ('interrupt-controller', b''), ('#interrupt-cells', words(3)),
@@ -347,13 +359,13 @@ class DtbTests(unittest.TestCase):
             self.reject(blob(basic([gic, armuart(spec)])))
 
     def test_fixed_capacity_and_unsupported_cells(self):
-        for count in (17, 200):
+        for count in (33, 200):
             nested = node('leaf')
             for i in range(count):
                 nested = node('n' + str(i), children=[nested])
             self.reject(blob(basic([nested])))
-        self.reject(blob(basic([node('n' + str(i)) for i in range(200)])))
-        self.reject(blob(basic([node('p', [('p' + str(i), b'') for i in range(1600)])])))
+        self.reject(blob(basic([node('n' + str(i)) for i in range(1024)])))
+        self.reject(blob(basic([node('p', [('p' + str(i), b'') for i in range(8192)])])))
         self.reject(blob(basic(), [(0x81000000 + i * 0x1000, 0x100) for i in range(33)]))
         rc, info = self.parse(blob(basic(ac=1, sc=1)))
         self.assertEqual(rc, 0)
@@ -361,6 +373,74 @@ class DtbTests(unittest.TestCase):
         before = bytes(info)
         self.assertEqual(self.lib.dtreserve(C.byref(info), 0x81000000, 4096), -2)
         self.assertEqual(bytes(info), before)
+
+    def test_large_tree_and_nonzero_cpu_ids_are_descriptions_not_smp_activation(self):
+        tree=basic([node('padding'+str(i),[('value',words(i))]) for i in range(800)])
+        self.assertEqual(self.parse(blob(tree))[0],0)
+        name,props,children=basic()
+        cpus=children[1]
+        second=node('cpu@4',[('device_type',b'cpu\0'),('reg',words(4))])
+        tree=node(name,props,[children[0],node(cpus[0],cpus[1],[*cpus[2],second])])
+        rc,info=self.parse(blob(tree));self.assertEqual((rc,info.cpus),(0,2))
+        duplicate=node('cpu@duplicate',[('device_type',b'cpu\0'),('reg',words(0))])
+        self.reject(blob(node(name,props,[children[0],node(cpus[0],cpus[1],[*cpus[2],duplicate])])))
+
+    def fixture(self,name):
+        directory=ROOT/'tests/fixtures/dtb'
+        manifest=json.loads((directory/'provenance.json').read_text())
+        data=(directory/name).read_bytes()
+        self.assertEqual(hashlib.sha256(data).hexdigest(),manifest['fixtures'][name]['sha256'])
+        self.assertEqual(len(data),manifest['fixtures'][name]['bytes'])
+        return data
+
+    def test_full_visionfive2_source_tree_preserves_disabled_hart_context_ordinals(self):
+        data=self.fixture('visionfive2-v1.3b.dtb');rc,info=self.parse(data)
+        self.assertEqual((rc,info.cpus,info.nram,info.nreserved),(0,4,1,0))
+        self.assertEqual((info.ram[0].base,info.ram[0].size),(0x40000000,0x100000000))
+        plic=next(d for d in info.dev[:info.ndev] if d.kind==4)
+        clint=next(d for d in info.dev[:info.ndev] if d.kind==6)
+        self.assertEqual((plic.reg[0].base,plic.reg[0].size),(0xc000000,0x4000000))
+        self.assertEqual([q.number for q in plic.irq[:plic.nirq]],[11,11,9,11,9,11,9,11,9])
+        self.assertEqual([q.number for q in clint.irq[:clint.nirq]],[3,7]*5)
+        active={d.phandle for d in info.dev[:info.ndev] if d.kind==7}
+        self.assertNotIn(plic.irq[0].parent,active)
+        self.assertIn(plic.irq[2].parent,active)
+        uart=next(d for d in info.dev[:info.ndev] if d.kind==1)
+        self.assertEqual((uart.reg[0].base,uart.irq[0].number,uart.mappable),(0x10000000,32,1))
+        memory=C.create_string_buffer(data);out=Uart()
+        self.assertEqual(self.lib.dtconsole(memory,len(data),C.byref(Info()),C.byref(out)),0)
+        self.assertEqual((out.reg.base,out.kind,out.shift,out.width),(0x10000000,1,2,4))
+
+    def test_full_neo3_tree_requires_explicit_boot_data_and_preserves_all_gic_windows(self):
+        self.reject(self.fixture('neo3-vendor.dtb'))
+        data=self.fixture('neo3-kernel-boot.dtb');rc,info=self.parse(data)
+        self.assertEqual((rc,info.cpus,info.nram,info.nreserved),(0,4,1,0))
+        self.assertEqual((info.ram[0].base,info.ram[0].size),(0,0x40000000))
+        gic=next(d for d in info.dev[:info.ndev] if d.kind==5)
+        self.assertEqual([(r.base,r.size) for r in gic.reg[:gic.nreg]],
+                         [(0xff811000,0x1000),(0xff812000,0x2000),(0xff814000,0x2000),(0xff816000,0x2000)])
+        timer=next(d for d in info.dev[:info.ndev] if d.kind==8)
+        self.assertEqual([q.flags&15 for q in timer.irq[:timer.nirq]],[8]*4)
+        memory=C.create_string_buffer(data);out=Uart()
+        self.assertEqual(self.lib.dtconsole(memory,len(data),C.byref(Info()),C.byref(out)),0)
+        self.assertEqual((out.reg.base,out.reg.size,out.kind,out.shift,out.width),(0xff130000,0x100,1,2,4))
+
+    def test_invalid_zero_extent_still_denies_early_console_and_mapping_authority(self):
+        other=node('unknown',[('reg',cells(0x20000000)+cells(0))])
+        self.early(basic([uart(),other,node('chosen',[('stdout-path',b'/uart\0')])]),-1)
+        rc,info=self.parse(blob(basic([plic(),uart(),other])))
+        self.assertEqual(rc,0)
+        self.assertTrue(all(not d.mappable for d in info.dev[:info.ndev]))
+
+    def test_unrelated_translated_bus_aperture_blocks_uart_authority(self):
+        # The bus itself has no reg; its parent aperture still occupies CPU PA.
+        bus=node('bridge',[('#address-cells',words(3)),('#size-cells',words(2)),
+                           ('ranges',words(0x82000000,0,0)+cells(0x10000000)+cells(0x1000))])
+        rc,info=self.parse(blob(basic([plic(),uart(),bus])))
+        self.assertEqual(rc,0)
+        device=next(d for d in info.dev[:info.ndev] if d.kind==1)
+        self.assertEqual((device.mappable,device.groupable),(0,0))
+        self.early(basic([uart(),bus,node('chosen',[('stdout-path',b'/uart\0')])]),-4)
 
     def test_unaligned_reservations_round_outward_and_fully_reserved_ram(self):
         rc, info = self.parse(blob(basic(ram_base=0x80000001, ram_size=0x8fff),
@@ -404,10 +484,13 @@ class DtbTests(unittest.TestCase):
         unknown=node('other',[('reg',b'garbage')])
         child=node('child',[('reg',cells(0x12340000)+cells(0x100))])
         bus=node('unsupported',[('#address-cells',words(2)),('#size-cells',words(2))],[child])
-        for other in (unknown,bus):
-            rc,info=self.parse(blob(basic([plic(),uart(),other])))
-            self.assertEqual(rc,0)
-            self.assertTrue(all(not d.mappable for d in info.dev[:info.ndev]))
+        rc,info=self.parse(blob(basic([plic(),uart(),unknown])))
+        self.assertEqual(rc,0)
+        self.assertTrue(all(not d.mappable for d in info.dev[:info.ndev]))
+        # No ranges means a local address domain, not an unknown CPU alias.
+        rc,info=self.parse(blob(basic([plic(),uart(),bus])))
+        self.assertEqual(rc,0)
+        self.assertEqual(next(d for d in info.dev[:info.ndev] if d.kind==1).mappable,1)
 
     def test_rounding_into_ram_never_expands_authority(self):
         rc,info=self.parse(blob(basic([plic(),uart(0x80000080,0x80)],ram_base=0x80000180)))

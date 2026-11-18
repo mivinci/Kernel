@@ -6,8 +6,9 @@
 #define DT_RESERVED 32
 #define DT_DEVICES  64
 #define DT_USABLE   64
-#define DT_REGS     2
-#define DT_IRQS     4
+#define DT_REGS     4
+#define DT_IRQS     16
+#define DT_CPUS     16
 
 enum Dtkind
 {

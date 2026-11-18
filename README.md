@@ -27,6 +27,8 @@ make bootpkg ARCH=arm64
 
 早期串口地址现从DTB的`chosen/stdout-path`取得，支持绝对路径与`aliases`别名，不再有QEMU固定地址回退。首次MMIO前先校验结构、窗口及寄存器属性；完整RAM/IRQ发现随后执行。固件需准备串口时钟、pinmux和波特率；控制台描述损坏时安全停止且无内核串口输出，不能由此推定已在真实板验收。详见01末尾及issue 001。
 
+DTB解析容量现为1024节点/8192属性/32深度、每设备4个reg/16个IRQ；支持dw-apb-uart/GIC-400描述与多hart拓扑保留，启动仍受单核profile限制。`tests/fixtures/dtb`保留完整固定来源板描述、来源哈希及NEO3显式测试适配；解析通过不代表板端启动、存储/网络驱动或SMP已完成，见005和01末尾。
+
 启动包主机工具按包内名称打包原生ELF，额外为指定init生成装载描述：
 
 ```sh

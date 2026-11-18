@@ -1,0 +1,231 @@
+{
+  "boards": [
+    {
+      "id": "neo3",
+      "repository_full_name": "friendlyarm/kernel-rockchip",
+      "ref": "758118c9a424038bfb5fef63bcac0d2dd9c67a84",
+      "root": "arch/arm64/boot/dts/rockchip/rk3328-nanopi-r2-rev02.dts"
+    },
+    {
+      "id": "vf2",
+      "repository_full_name": "torvalds/linux",
+      "ref": "adc218676eef25575469234709c2d87185ca223a",
+      "root": "arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2-v1.3b.dts"
+    }
+  ],
+  "files": [
+    {
+      "id": "neo3",
+      "path": "arch/arm64/boot/dts/rockchip/rk3328-nanopi-r2-rev02.dts",
+      "sha": "0637724cb886943fc5bf973432c7c8722a483646",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/arch/arm64/boot/dts/rockchip/rk3328-nanopi-r2-rev02.dts"
+    },
+    {
+      "id": "vf2",
+      "path": "arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2-v1.3b.dts",
+      "sha": "d4ea4a2c0b9bbeefeff8e1d1fe07cb87759604d8",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2-v1.3b.dts"
+    },
+    {
+      "id": "neo3",
+      "path": "arch/arm64/boot/dts/rockchip/rk3328-nanopi-r2-common.dtsi",
+      "sha": "9d7e6868074316e5cccb9c30c6fdc8a5e5b41b46",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/arch/arm64/boot/dts/rockchip/rk3328-nanopi-r2-common.dtsi"
+    },
+    {
+      "id": "vf2",
+      "path": "arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2.dtsi",
+      "sha": "18f38fc790a4d1b7d53910473e7f0f488e504a56",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2.dtsi"
+    },
+    {
+      "id": "neo3",
+      "path": "arch/arm64/boot/dts/rockchip/rk3328.dtsi",
+      "sha": "9053f06e14c4b75efcef276c34fad9037053c0ce",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/arch/arm64/boot/dts/rockchip/rk3328.dtsi"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/input/input.h",
+      "sha": "bcf0ae100f21af8cfe0afc49d0a9107d4dfa62d7",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/input/input.h"
+    },
+    {
+      "id": "vf2",
+      "path": "arch/riscv/boot/dts/starfive/jh7110-common.dtsi",
+      "sha": "d6c55f1cc96a9242b8a9ef63060c72a1498caf1b",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/arch/riscv/boot/dts/starfive/jh7110-common.dtsi"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/clock/rk3328-cru.h",
+      "sha": "62479fddb96b207231abffddfbc8edf28667cb85",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/clock/rk3328-cru.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/gpio/gpio.h",
+      "sha": "2cc10ae4bbb7ba29bb7503992e1bd5c0036acc27",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/gpio/gpio.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/interrupt-controller/arm-gic.h",
+      "sha": "0c85f65c81c7da2554f65e7702b1d053df3f6b06",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/interrupt-controller/arm-gic.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/interrupt-controller/irq.h",
+      "sha": "a8b310555f14a2a56340c1c04c77dcf1d59f7226",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/interrupt-controller/irq.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/pinctrl/rockchip.h",
+      "sha": "c7815372ee111f556e9625735396d3ff65ee6b4e",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/pinctrl/rockchip.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/soc/rockchip-system-status.h",
+      "sha": "54e6206d6bb9e2297d4dfd897e1f364d7d447706",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/soc/rockchip-system-status.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/suspend/rockchip-rk3328.h",
+      "sha": "972f8bb5e2814690c32499895c3b254c00ce8b9d",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/suspend/rockchip-rk3328.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/power/rk3328-power.h",
+      "sha": "02e3d7fc1cce850e93c7406e5591c4918ac57669",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/power/rk3328-power.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/soc/rockchip,boot-mode.h",
+      "sha": "1436e1d32619aa7cb18372dda4be031e2d01d6de",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/soc/rockchip,boot-mode.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/thermal/thermal.h",
+      "sha": "b5e6b0069ac7703b927a0c040ffcbd764c1afd89",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/thermal/thermal.h"
+    },
+    {
+      "id": "neo3",
+      "path": "arch/arm64/boot/dts/rockchip/rk3328-dram-default-timing.dtsi",
+      "sha": "a3f5ff4bdc470040fb9e710cfff5d1e0fffe2501",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/arch/arm64/boot/dts/rockchip/rk3328-dram-default-timing.dtsi"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/input/linux-event-codes.h",
+      "sha": "693bbcd2670a41ce72418214217c613d8ad52037",
+      "symlink_target": "../../uapi/linux/input-event-codes.h",
+      "resolved_sha": "8876c981ca2ee772b0f329ded633c78f10f06351",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/input/linux-event-codes.h"
+    },
+    {
+      "id": "vf2",
+      "path": "arch/riscv/boot/dts/starfive/jh7110.dtsi",
+      "sha": "0d8339357bad32f95ffa0396e9a7cea328d705ff",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/arch/riscv/boot/dts/starfive/jh7110.dtsi"
+    },
+    {
+      "id": "vf2",
+      "path": "arch/riscv/boot/dts/starfive/jh7110-pinfunc.h",
+      "sha": "256de17f526113639cb0538ff4d4ad6114f9705f",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/arch/riscv/boot/dts/starfive/jh7110-pinfunc.h"
+    },
+    {
+      "id": "vf2",
+      "path": "include/dt-bindings/gpio/gpio.h",
+      "sha": "b5d531237448241f1870e7d8d4cf1a6411877562",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/include/dt-bindings/gpio/gpio.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/clock/rockchip-ddr.h",
+      "sha": "b065432e7793b80743efd67c1795914749b6d71c",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/clock/rockchip-ddr.h"
+    },
+    {
+      "id": "neo3",
+      "path": "include/dt-bindings/memory/rk3328-dram.h",
+      "sha": "171f41c256d390fb4f9b1159fcd7f1ebf00a47ba",
+      "url": "https://github.com/friendlyarm/kernel-rockchip/blob/758118c9a424038bfb5fef63bcac0d2dd9c67a84/include/dt-bindings/memory/rk3328-dram.h"
+    },
+    {
+      "id": "vf2",
+      "path": "include/dt-bindings/clock/starfive,jh7110-crg.h",
+      "sha": "467ccab3bfaaa9724cecaf7eaaa1598210f7f180",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/include/dt-bindings/clock/starfive,jh7110-crg.h"
+    },
+    {
+      "id": "vf2",
+      "path": "include/dt-bindings/power/starfive,jh7110-pmu.h",
+      "sha": "7b4f24927dee82c2852c78b8c523cb5dff9cbe04",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/include/dt-bindings/power/starfive,jh7110-pmu.h"
+    },
+    {
+      "id": "vf2",
+      "path": "include/dt-bindings/reset/starfive,jh7110-crg.h",
+      "sha": "eaf4a0d84f6a9266f3558c7a46c7e1f1e37f0c0e",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/include/dt-bindings/reset/starfive,jh7110-crg.h"
+    },
+    {
+      "id": "vf2",
+      "path": "include/dt-bindings/thermal/thermal.h",
+      "sha": "bc7babb1a67cd4910f3bc9c54eefff2a574591b7",
+      "url": "https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/include/dt-bindings/thermal/thermal.h"
+    }
+  ],
+  "fixtures": {
+    "neo3-vendor.dtb": {
+      "bytes": 60597,
+      "sha256": "2f37c4932eff164f319476ab8dd936fc7f280bed47c70f38f6ecd521cf17e0f9"
+    },
+    "visionfive2-v1.3b.dtb": {
+      "bytes": 32040,
+      "sha256": "1826e14d92c1ca336919f810f8f6c98102ed0065a9b9581087cf933b27f347ac"
+    },
+    "neo3-kernel-boot.dtb": {
+      "bytes": 60546,
+      "sha256": "033709e25c6d8bc1363058205f39f6b4694adf84150455fcd0c8924576488d64"
+    },
+    "neo3-kernel-boot.dts": {
+      "sha256": "4d64769cba3b83cf969d5ef72792c601c4a1d474d2ec48f3aae3577e1b8800be"
+    }
+  },
+  "generated_by": {
+    "preprocess": [
+      "clang",
+      "-E",
+      "-nostdinc",
+      "-undef",
+      "-D__DTS__",
+      "-x",
+      "assembler-with-cpp",
+      "-I<tree>/include",
+      "-I<root-directory>",
+      "<source>",
+      "-o",
+      "<output.dts>"
+    ],
+    "compile": [
+      "dtc",
+      "-I",
+      "dts",
+      "-O",
+      "dtb",
+      "-o",
+      "<output.dtb>",
+      "<output.dts>"
+    ]
+  }
+}

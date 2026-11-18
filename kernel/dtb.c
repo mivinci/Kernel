@@ -1,8 +1,8 @@
 #include <dtb.h>
 
-#define NODES 192
-#define PROPS 1536
-#define DEPTH 16
+#define NODES 1024
+#define PROPS 8192
+#define DEPTH 32
 #define NONE  0xffffffffU
 
 typedef struct Prop   Prop;
@@ -334,7 +334,7 @@ metadata(void)
       for (j = 0; j < i; j++)
         if (parser.node[j].phandle == n->phandle)
           return DT_BAD;
-    if (has(i, "ns16550a"))
+    if (has(i, "ns16550a") || has(i, "snps,dw-apb-uart"))
       n->kind = DT_UART16550;
     else if (has(i, "arm,pl011"))
       n->kind = DT_PL011;
@@ -342,7 +342,7 @@ metadata(void)
       n->kind = DT_VIRTIO;
     else if (has(i, "riscv,plic0") || has(i, "sifive,plic-1.0.0"))
       n->kind = DT_PLIC;
-    else if (has(i, "arm,cortex-a15-gic"))
+    else if (has(i, "arm,cortex-a15-gic") || has(i, "arm,gic-400"))
       n->kind = DT_GIC;
     else if (has(i, "riscv,clint0") || has(i, "sifive,clint0"))
       n->kind = DT_CLINT;
@@ -363,9 +363,7 @@ translate(u32 parent, u64 *address, u64 size)
   u64         child, host, bytes, result = 0;
   while (parent != 0) {
     n = &parser.node[parent];
-    if (n->parent == NONE ||
-        (!has(parent, "simple-bus") && !equal(parser.blob + n->name, "reserved-memory") &&
-         n->kind != DT_GIC))
+    if (n->parent == NONE)
       return DT_UNSUPPORTED;
     p = &parser.node[n->parent];
     ranges = property(parent, "ranges");
@@ -439,13 +437,22 @@ registers(u32 node, Dtrange *out, u32 *count, u32 capacity)
 }
 
 static int
-lookup(u32 phandle, u32 *node)
+lookup(u32 phandle, u32 *node, int topology)
 {
-  u32 i;
+  u32         i;
+  const Prop *type;
   if (!phandle)
     return DT_BAD;
   for (i = 0; i < parser.nodes; i++) {
-    if (parser.node[i].phandle == phandle && parser.node[i].enabled) {
+    if (parser.node[i].phandle == phandle &&
+        (parser.node[i].enabled || (topology && parser.node[i].kind == DT_CPUINTC))) {
+      if (!parser.node[i].enabled) {
+        if (parser.node[i].parent == NONE)
+          return DT_BAD;
+        type = property(parser.node[i].parent, "device_type");
+        if (!type || !equal(value(type), "cpu"))
+          return DT_BAD;
+      }
       *node = i;
       return 0;
     }
@@ -478,7 +485,8 @@ irqspec(u32 parent, const u8 *p, Dtirq *irq)
     number = word(p + 4);
     flags = word(p + 8);
     if (kind > 1 || (kind == 0 && number > 987) || (kind == 1 && number > 15) ||
-        ((flags & 15) != 1 && (flags & 15) != 4) || flags & ~0xff0fU || (kind == 0 && flags & ~15U))
+        ((flags & 15) != 1 && (flags & 15) != 4 && !(kind == 1 && (flags & 15) == 8)) ||
+        flags & ~0xff0fU || (kind == 0 && flags & ~15U))
       return DT_UNSUPPORTED;
     irq->number = number + (kind == 0 ? 32 : 16);
     irq->flags = flags;
@@ -511,7 +519,8 @@ interrupts(u32 node, Dtdev *dev)
     handle = extended ? word(value(p) + at) : parser.node[node].iparent;
     if (extended)
       at += 4;
-    if (lookup(handle, &parent) || scalar(parent, "#interrupt-cells", 0, &count))
+    if (lookup(handle, &parent, dev->kind == DT_PLIC || dev->kind == DT_CLINT) ||
+        scalar(parent, "#interrupt-cells", 0, &count))
       return DT_BAD;
     if (((dev->kind == DT_PLIC || dev->kind == DT_CLINT) &&
          parser.node[parent].kind != DT_CPUINTC) ||
@@ -610,11 +619,24 @@ discover(Dtinfo *info)
       if (!p || parser.node[parent].sc || parser.node[parent].ac < 1 ||
           parser.node[parent].ac > 2 || p->size != parser.node[parent].ac * 4)
         return DT_BAD;
+      if (info->cpus == DT_CPUS)
+        return DT_FULL;
       {
-        u64 id;
+        u64         id, other;
+        const Prop *prior, *type;
         cells(value(p), parser.node[parent].ac, &id);
-        if (id != 0)
-          return DT_UNSUPPORTED;
+        for (j = 0; j < i; j++) {
+          type = property(j, "device_type");
+          if (!parser.node[j].enabled || parser.node[j].parent != parent || !type ||
+              !equal(value(type), "cpu"))
+            continue;
+          prior = property(j, "reg");
+          if (!prior || prior->size != p->size)
+            return DT_BAD;
+          cells(value(prior), parser.node[parent].ac, &other);
+          if (id == other)
+            return DT_CONFLICT;
+        }
       }
       info->cpus++;
     }
@@ -658,7 +680,8 @@ discover(Dtinfo *info)
       error = registers(i, dev->reg, &dev->nreg, DT_REGS);
       if (error)
         return error;
-      if ((n->kind == DT_GIC && dev->nreg != 2) || (n->kind != DT_GIC && dev->nreg != 1))
+      if ((n->kind == DT_GIC && dev->nreg != 2 && dev->nreg != 4) ||
+          (n->kind != DT_GIC && dev->nreg != 1))
         return DT_UNSUPPORTED;
     }
     if (n->kind == DT_PLIC || n->kind == DT_GIC || n->kind == DT_CPUINTC) {
@@ -679,16 +702,28 @@ discover(Dtinfo *info)
       error = interrupts(i, dev);
       if (error)
         return error;
-      if ((n->kind <= DT_VIRTIO && dev->nirq != 1) || (n->kind == DT_PLIC && dev->nirq != 2) ||
-          (n->kind == DT_CLINT && dev->nirq != 2) || (n->kind == DT_TIMER && dev->nirq != 4))
+      if ((n->kind <= DT_VIRTIO && dev->nirq != 1) ||
+          (n->kind == DT_CLINT && (!dev->nirq || dev->nirq % 2)) ||
+          (n->kind == DT_TIMER && dev->nirq != 4))
         return DT_UNSUPPORTED;
-      if (n->kind == DT_PLIC &&
-          (dev->irq[1].number != 9 || (dev->irq[0].number != 11 && dev->irq[0].number != NONE) ||
-           dev->irq[0].parent != dev->irq[1].parent))
-        return DT_UNSUPPORTED;
-      if (n->kind == DT_CLINT && (dev->irq[0].number != 3 || dev->irq[1].number != 7 ||
-                                  dev->irq[0].parent != dev->irq[1].parent))
-        return DT_UNSUPPORTED;
+      if (n->kind == DT_PLIC)
+        for (j = 0; j < dev->nirq; j++) {
+          if (dev->irq[j].number != 9 && dev->irq[j].number != 11 && dev->irq[j].number != NONE)
+            return DT_UNSUPPORTED;
+          for (k = 0; k < j; k++)
+            if (dev->irq[j].parent == dev->irq[k].parent &&
+                dev->irq[j].number == dev->irq[k].number && dev->irq[j].number != NONE)
+              return DT_CONFLICT;
+        }
+      if (n->kind == DT_CLINT)
+        for (j = 0; j < dev->nirq; j += 2) {
+          if (dev->irq[j].number != 3 || dev->irq[j + 1].number != 7 ||
+              dev->irq[j].parent != dev->irq[j + 1].parent)
+            return DT_UNSUPPORTED;
+          for (k = 0; k < j; k += 2)
+            if (dev->irq[j].parent == dev->irq[k].parent)
+              return DT_CONFLICT;
+        }
     }
   }
   if (!info->nram || !info->cpus)
@@ -712,14 +747,86 @@ discover(Dtinfo *info)
   return 0;
 }
 
+/* Local bus addresses (I2C, SPI, ports, partitions) have no CPU mapping
+   without a chain of ranges. Unknown translated buses remain conservative. */
+static int
+cpuaddress(u32 node)
+{
+  u32         parent = parser.node[node].parent;
+  const Prop *type = property(node, "device_type");
+  if (type && equal(value(type), "cpu"))
+    return 0;
+  while (parent != 0) {
+    if (parent == NONE)
+      return 0;
+    if (!property(parent, "ranges"))
+      return 0;
+    if (!parser.node[parent].ac || parser.node[parent].ac > 2 || !parser.node[parent].sc ||
+        parser.node[parent].sc > 2)
+      return -1;
+    parent = parser.node[parent].parent;
+  }
+  return 1;
+}
+static int
+ancestor(u32 parent, u32 node)
+{
+  for (node = parser.node[node].parent; node != NONE; node = parser.node[node].parent)
+    if (node == parent)
+      return 1;
+  return 0;
+}
+/* CPU-addressed registers and bus apertures. Apertures contain descendants,
+   but exclude unrelated devices from occupying the same physical page. */
+static int
+occupancy(u32 node, Dtrange *out, u32 *count, u32 *regs)
+{
+  const Node *n = &parser.node[node], *parent;
+  const Prop *ranges;
+  u32         at, width;
+  u64         address, size;
+  int         domain = cpuaddress(node), error;
+  *count = *regs = 0;
+  if (!domain)
+    return 0;
+  if (domain < 0)
+    return DT_UNSUPPORTED;
+  if (property(node, "reg")) {
+    error = registers(node, out, count, DT_RAM);
+    if (error)
+      return error;
+  }
+  *regs = *count;
+  ranges = property(node, "ranges");
+  if (!ranges || !ranges->size || n->parent == NONE)
+    return 0;
+  parent = &parser.node[n->parent];
+  if (!n->ac || n->ac > 4 || !parent->ac || parent->ac > 2 || !n->sc || n->sc > 2)
+    return DT_UNSUPPORTED;
+  width = (n->ac + parent->ac + n->sc) * 4;
+  if (ranges->size % width)
+    return DT_BAD;
+  for (at = 0; at < ranges->size; at += width) {
+    cells(value(ranges) + at + n->ac * 4, parent->ac, &address);
+    cells(value(ranges) + at + (n->ac + parent->ac) * 4, n->sc, &size);
+    if (!size || size > ~(u64) 0 - address ||
+        (parent->ac == 1 && (address >= 0x100000000UL || size > 0x100000000UL - address)))
+      return DT_BAD;
+    error = translate(n->parent, &address, size);
+    if (!error)
+      error = addrange(out, count, DT_RAM, address, size, 0);
+    if (error)
+      return error;
+  }
+  return 0;
+}
 static void
 mappable(Dtinfo *info)
 {
-  Dtrange     ranges[DT_RAM];
-  const Prop *type;
-  Dtdev      *device;
-  u64         start, bytes, end;
-  u32         i, j, k, node, count, other, region, known;
+  Dtrange ranges[DT_RAM];
+  Dtdev  *device;
+  u64     start, bytes, end;
+  u32     i, j, k, node, count, regs, other, region, known;
   /* Only exclusive, completely described pages are candidates. */
   for (i = 0; i < info->ndev; i++) {
     device = &info->dev[i];
@@ -748,13 +855,9 @@ mappable(Dtinfo *info)
   /* Disabled and unknown devices still occupy physical address space.
      CPU reg properties name harts, rather than MMIO addresses. */
   for (node = 0; node < parser.nodes; node++) {
-    if (!property(node, "reg"))
+    if (!property(node, "reg") && !property(node, "ranges"))
       continue;
-    type = property(node, "device_type");
-    if (type && equal(value(type), "cpu"))
-      continue;
-    count = 0;
-    if (registers(node, ranges, &count, DT_RAM)) {
+    if (occupancy(node, ranges, &count, &regs)) {
       for (i = 0; i < info->ndev; i++)
         info->dev[i].mappable = info->dev[i].groupable = 0;
       return;
@@ -767,6 +870,8 @@ mappable(Dtinfo *info)
         start = ALIGN_DOWN(device->reg[j].base, PAGE_SIZE);
         end = ALIGN_UP(device->reg[j].base + device->reg[j].size, PAGE_SIZE);
         for (k = 0; k < count; k++) {
+          if (k >= regs && ancestor(node, parser.device[i]))
+            continue;
           if (node == parser.device[i] && ranges[k].base == device->reg[j].base &&
               ranges[k].size == device->reg[j].size)
             continue;
@@ -797,7 +902,7 @@ dtconsole(const void *blob, usize available, Dtinfo *scratch, Dtuart *out)
   const u8   *path;
   Dtuart      result;
   Dtrange     range[DT_RAM];
-  u32         i, j, at, length, target = NONE, chosen_node = NONE, aliases = NONE, count;
+  u32         i, j, at, length, target = NONE, chosen_node = NONE, aliases = NONE, count, regs;
   int         error;
   if (!scratch || !out)
     return DT_BAD;
@@ -899,18 +1004,17 @@ dtconsole(const void *blob, usize available, Dtinfo *scratch, Dtuart *out)
   /* Diagnose later discovery failures without first writing an address that
      aliases RAM or another described MMIO window. CPU reg values are hart IDs. */
   for (i = 0; i < parser.nodes; i++) {
-    if (i == target || !property(i, "reg"))
+    if (!property(i, "reg") && !property(i, "ranges"))
       continue;
-    p = property(i, "device_type");
-    if (p && equal(value(p), "cpu"))
-      continue;
-    count = 0;
-    error = registers(i, range, &count, DT_RAM);
+    error = occupancy(i, range, &count, &regs);
     if (error)
       return error;
-    for (j = 0; j < count; j++)
+    for (j = 0; j < count; j++) {
+      if ((j < regs && i == target) || (j >= regs && ancestor(i, target)))
+        continue;
       if (overlap(result.reg.base, result.reg.size, range[j].base, range[j].size))
         return DT_CONFLICT;
+    }
   }
   for (i = 0; i < scratch->nreserved; i++)
     if (overlap(result.reg.base, result.reg.size, scratch->reserved[i].base,

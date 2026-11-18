@@ -1,0 +1,33 @@
+/* Kernel host-test boot description, not a live firmware DTB dump.
+ * Retain the full vendor tree. Supply RAM/console policy and remove the
+ * zero-sized Linux splash placeholder that a bootloader normally fills. */
+#include "arch/arm64/boot/dts/rockchip/rk3328-nanopi-r2-rev02.dts"
+
+/delete-node/ &drm_logo;
+
+&display_subsystem {
+  /delete-property/ logo-memory-region;
+};
+
+/ {
+  memory@0 {
+    device_type = "memory";
+    reg = <0 0 0 0x40000000>;
+  };
+  chosen {
+    stdout-path = "serial2:1500000n8";
+  };
+  fiq-debugger {
+    status = "disabled";
+  };
+};
+
+&uart2 {
+  status = "okay";
+};
+
+/* Vendor node has an empty MMIO extent; no PHY support is claimed here. */
+&u3phy {
+  /delete-property/ reg;
+  status = "disabled";
+};

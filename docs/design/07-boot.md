@@ -517,3 +517,9 @@ Boot追加BOOT_CREATE指向第2号服务Set，启动数据从288增至320字节�
 tests/kernel/serviceauth.c作为独立测试包PID1，经原生接口枚举16份CREATE，使用Boot指定CREATE在另一Set构造未发布孩子，核对持续CONTROL、孩子账目规格及减权CALL的完整目标身份，然后取消、释放并核对无可收取孩子。它不发布空服务或发送READY，不进入生产init链接或默认包。两架构包启动审计同时核对实际ELF、完整PTE与物理Acct归属；证据归build/host/stage93-service-bootstrap/。
 
 本点完整make test-all通过640项host、格式与144次两架构QEMU；全部结果核对当前源码/共享头哈希，10次生产init live、4次实际包内exit42（其中2次为服务授权用例）及6次分配前拒启。实际生产init链接与默认包继续不含fixture。无CI/真机/性能验收，尚未完成T1.4或可用sh。
+
+### 开放问题：UART启动记录的访问布局（待用户确认）
+
+005的真实板描述接入需要保留UART寄存器步长与位宽；现有已确认BOOT_RESOURCE仅有六字段前缀且data[6..19]全0，不能靠UART种类或板名猜这些属性。候选保留data[0..5]及flags=0不变，增加data[6]=reg-shift、data[7]=reg-io-width，data[8..19]仍0；Queryrec大小、QUERY_BOOT_RESOURCE调用号和SYSTEM权限均不改变。
+
+候选按现有早期HAL支持范围核对：NS16550兼容设备shift 0..4、width 1或4；PL011 shift=0、width=4，地址/访问对齐及真实窗口必须有效。当前不支持的big-endian/reg-offset继续明确拒绝，不用缺省字段冒充已支持。它们只是受信库存的访问元数据，不产生额外MMIO/DMA权。用户确认前不修改已冻结的六字段记录或实现此候选生产查询；内部DTB解析与容量修复可以独立推进。

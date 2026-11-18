@@ -159,7 +159,7 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 | 项 | 现值 | 真机目标 |
 | --- | --- | --- |
 | 物理页元数据 | 004已修复至2^21页/8 GiB，直接映射及布局同步扩容，本地完整矩阵通过 | 两架构大内存证据见02末尾；板端仍待验 |
-| DTB 节点/属性/深度 | 192 / 1536 / 16，`DT_REGS=2`、`DT_DEVICES=64` | 真机 DTB 约 40–90 KiB、300–800 节点，需上调；主机侧用真实 DTB 做解析测试 |
+| DTB 节点/属性/深度 | 005解析切片已扩到1024 / 8192 / 32，`DT_REGS=4`、`DT_IRQS=16`，`DT_DEVICES=64` | 完整固定来源板树本地主机检查通过，板端仍待验，见文末 |
 | compatible 匹配 | 仅覆盖 QEMU 字符串 | 增加 `snps,dw-apb-uart`、`arm,gic-400`、`sifive,plic-1.0.0`、`snps,dw-mshc`、`snps,dwmac-*` |
 | 启动通道 | QEMU 直载 | U-Boot 载荷：DTB 指针按各架构引导约定传入，启动包经 initrd 或固定装载地址交付，字段见 07 |
 
@@ -435,3 +435,21 @@ host覆盖绝对路径/带选项别名、嵌套总线翻译、PL011配置保留�
 首次全量host回归暴露上一点IRQ授权测试的Python Event在方法返回后被回收，而C绑定到清理阶段仍持其地址；现由测试显式持有至表解绑/清理完成，专项10项复验通过。此修正仅是host fixture寿命，不修改内核IRQ状态机；失败日志保留在test-all-initial-host.log，最终全量结果另记录。
 
 本点最终完整make test-all通过649项host、格式及148次两架构QEMU，其中新增4次实际DTB早期控制台反例。全部结果核对当前源码/共享头哈希，生产normal和init链接继续隔离fixture，10次生产init仍进入事件循环。dtconsole两架构编译帧均288字节，非完整栈深证明。证据build/host/stage95-early-console/evidence.json与test-all.log；无CI/真机/性能验收，issue 001仍保留板端待验状态。
+
+### 真实板DTB解析接续（2026-11-18，005进行中）
+
+当前未提交实现将解析结构上限改为1024节点/8192属性/32深度，依据NEO3固定厂商样本417节点/1853属性/6深度及VF2 Linux v6.12样本175节点/1129属性/6深度留余量。DT_DEVICES仍64，避免突破已有u64共享页成员集；DT_REGS=4、DT_IRQS=16、DT_CPUS=16，超限拒绝而非截断。CPU描述允许非0且不同的ID，启用CPU重复ID拒绝；启动仍显式单核，main/HAL尚未开放多CPU或VF2实际启动hart选择，后续006负责。
+
+增加snps,dw-apb-uart与arm,gic-400匹配；GIC保留2或4个完整窗口，PLIC/CLINT保留多hart上下文顺序，对禁用CPU的CPUINTC仅允许控制器拓扑引用，不使其成为启用设备。ARM PPI允许既有timer HAL支持的低电平编码，SPI仍拒绝低电平不支持编码。irqdescribe/HAL仍按当前受限启动profile准入，不把多上下文解析当成板端IRQ已工作。
+
+地址翻译按明确ranges链处理，不依赖simple-bus名字猜映射；无ranges的嵌套reg属于局部域，不能当CPU地址冲突。未知CPU地址reg失败仍关闭MMIO候选；非空ranges的父地址aperture也计入占用，即使总线自身无reg。aperture包围自身后代不算自冲突，对无关UART重叠仍拒绝；不以忽略未知节点换取可映射权限。寄存器步长/位宽已由内部Dtuart保留，生产BOOT_RESOURCE字段扩展仍待07确认。
+
+截至此处34项DTB主机、6项IRQ描述及两架构pages通过（日志build/host/stage97-board-discovery/及/private/tmp/stage97-*.log）；VF2完整原始树dtread/dtconsole通过，NEO3仍有厂商零长度reg边界待处理。原始DTS研究样本与显式引导适配在/private/tmp/kernel-board-dtb-research-20261118；未纳入仓库可复现验收，未跑完整回归，未提交005，不替换653host/158QEMU已提交基线，不声称真机可启动或DMA/存储/网络驱动已实现。
+
+后续样本接入：tests/fixtures/dtb保留完整VF2 v1.3b原始编译树、NEO3厂商原始编译树及显式kernel-boot适配树；provenance.json记录固定commit、全部依赖blob（含符号链接目标）、编译命令及产物SHA256，README说明复现和原始SPDX归属。测试不联网，先检查哈希，再验证真实RAM/UART/GIC四窗口/PLIC及CLINT完整上下文顺序；没有以提取少数节点替代整树。两树源输入均无固件保留表项，测试不臆造固件保留；运行时固件reserved仍须另验。
+
+NEO3厂商原树明确拒绝：缺RAM/stdout、空splash reg及USB PHY的零长度reg不能猜为可用窗口。相邻适配源显式供应测试RAM/stdout，移除空splash及引用、停FIQ debugger并启选中UART，禁用不支持的PHY并删其无效reg；这是测试启动策略，不是固件实测dump或已实现的U-Boot修补。适配后dtread/dtconsole通过，零长度寄存器仍使早期console拒绝、普通发现关闭MMIO候选；未放宽占用安全检查。
+
+37项DTB测试与13项设备映射专项通过；首次完整host暴露旧设备fixture将DT_REGS=2的索引/组起点写死，现按DT_REGS/DT_DEVICES计算并专项复验，失败保留unit-initial.log。完整make test-all正在运行，未提交或替换既有653host/158QEMU基线。生产字段、硬件运行、SMP启动及额外GIC/PLIC上下文选择仍未实现，不能从解析成功推定可上板。
+
+最终验收：补强禁用CPUINTC须属于实际CPU节点，DTB专项38项通过。完整make test-all的658项host、格式与158次两架构QEMU通过；终稿完整make unit再通过659项，全部运行结果的源码/共享头哈希与终稿一致。完整12次512 MiB/2 GiB/8 GiB矩阵、生产PID1与IRQ/MMIO未回归，生产链接无fixture。Dtdev=352、Dtinfo=24272字节，启动发现缓冲仍静态；这不是栈深/性能证明。证据build/host/stage97-board-discovery/evidence.json、test-all.log、unit-final.log。NEO3原始树拒绝、显式适配树成功、VF2原始树成功分别记录；无CI/板端运行验收。005存储/网络发现、006启动CPU/控制器上下文选择和停放、007缓存/DMA仍待执行，生产UART记录候选仍待用户确认。
