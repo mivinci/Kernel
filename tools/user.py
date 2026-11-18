@@ -55,6 +55,7 @@ def build(args):
     shutil.copyfile(ROOT / 'lib/libsys/private/start.h', sdk / 'private/start.h')
     shutil.copyfile(ROOT / 'lib/libsys/private/elf.h', sdk / 'private/elf.h')
     shutil.copyfile(ROOT / 'lib/libsys/private/vm.h', sdk / 'private/vm.h')
+    shutil.copyfile(ROOT / 'lib/libsys/private/serial.h', sdk / 'private/serial.h')
     shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
     (sdk / 'private/virtio').mkdir(exist_ok=True)
     for name in ('queue.h', 'ring.h', 'device.h'):
@@ -62,7 +63,7 @@ def build(args):
     (sdk / 'private/virtqueue.h').unlink(missing_ok=True)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))

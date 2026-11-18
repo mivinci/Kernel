@@ -1,13 +1,53 @@
 /* CPU-backed device fixture only: these pages are not native DMA grants. */
 #include "ringuser.h"
 #include "private/virtio/ring.h"
+#include "private/serial.h"
 #include <unistd.h>
-static u8 pages[3][PAGE_SIZE] ALIGNED(PAGE_SIZE);
+static u8         pages[3][PAGE_SIZE] ALIGNED(PAGE_SIZE);
+static Serialring serialring;
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c))                                                                                      \
       _exit(229);                                                                                  \
   } while (0)
+static void
+serialcheck(void)
+{
+  u8    source[SERIAL_BATCH], output[SERIAL_BATCH];
+  u32   i, j;
+  isize amount;
+  CHECK(!serialinit(&serialring, 1));
+  for (i = 0; i < SERIAL_BATCH; i++)
+    source[i] = (u8) i;
+  CHECK(serialwrite(&serialring, 2, source, 1) == -ERR_STALE);
+  CHECK(serialwrite(&serialring, 1, serialring.data, 1) == -ERR_INVALID);
+  for (i = 0; i < SERIAL_CAPACITY / SERIAL_BATCH; i++)
+    CHECK(serialwrite(&serialring, 1, source, SERIAL_BATCH) == SERIAL_BATCH);
+  CHECK(!serialwrite(&serialring, 1, source, 1));
+  CHECK(serialread(&serialring, 1, output, 17) == 17);
+  for (i = 0; i < 17; i++)
+    CHECK(output[i] == i);
+  CHECK(serialwrite(&serialring, 1, source, SERIAL_BATCH) == 17);
+  for (i = 0; i < SERIAL_CAPACITY; i += SERIAL_BATCH) {
+    amount = serialread(&serialring, 1, output, SERIAL_BATCH);
+    CHECK(amount == SERIAL_BATCH);
+    for (j = 0; j < SERIAL_BATCH; j++)
+      CHECK(output[j] == (i + j < SERIAL_CAPACITY - 17 ? (i + j + 17) % SERIAL_BATCH
+                                                       : i + j - (SERIAL_CAPACITY - 17)));
+  }
+  CHECK(serialring.producer == 8209 && serialring.consumer == 8209);
+  serialring.consumer++;
+  CHECK(serialwrite(&serialring, 1, source, 1) == -ERR_PEER);
+  CHECK(!serialinit(&serialring, 3));
+  serialring.producer = serialring.consumer = UINT64_MAX - 1;
+  CHECK(serialwrite(&serialring, 3, source, 2) == -ERR_OVERFLOW);
+  CHECK(serialwrite(&serialring, 3, source, 1) == 1);
+  __atomic_store_n(&serialring.flags, SERIAL_EOF, __ATOMIC_RELEASE);
+  CHECK(serialwrite(&serialring, 3, source, 1) == -ERR_STATE);
+  CHECK(serialread(&serialring, 3, output, SERIAL_BATCH) == 1 && !output[0]);
+  CHECK(!serialread(&serialring, 3, output, SERIAL_BATCH));
+  CHECK(serialring.producer == UINT64_MAX && serialring.consumer == UINT64_MAX);
+}
 static int
 ringsync(void *context, u32 region, u32 phase, u64 offset, u64 length)
 {
@@ -44,6 +84,7 @@ ringusercheck(void)
   Vdone    done[VQ_BATCH];
   u64      counts[3];
   u32      published, count, more, head;
+  serialcheck();
   counts[0] = counts[1] = counts[2] = 0;
   ops.context = counts;
   ops.sync = ringsync;

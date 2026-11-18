@@ -308,6 +308,10 @@ serial/tty静态共享区包含两个独立SPSC方向环，各头64字节八u64=
 
 RX_READY用用户bit32、TX_ROOM用bit33，静态授予对应目标掩码，不允许serial借通知发内核位。环满背压/设备FIFO溢出计数，不能覆盖未消费数据；驱动每批最多32字节/完成项后允许让出，仍有工作不睡等第二次通知。serial退出/授权撤销不是DMA设备停机证明。
 
+共享布局唯一来源为include/proto/serial.h。libsys私有serialinit/read/write提供普通一致SHARED内存上的有界字节操作：单生产者仅写producer，单消费者仅写consumer，以无锁64位acquire/release发布；初始化仅在分享前或双方停止后执行。每次至多32字节，返回实际字节数，满/空返回0，0不等于EOF；旧epoch、损坏几何/位置、重叠调用缓冲及计数溢出分别拒绝，失败不推进位置。EOF/ERROR不清空已有队列，消费者仍可排空，生产者不再追加。识别终结时消费者须先acquire读取终结标志，再读取/排空队列，不用读前的空快照断言没有最终数据。
+
+该辅助层不执行notify、yield或活环重置；批次间让出/重新检查工作及排空后的epoch握手仍由服务状态机负责，不能把计数耗尽返回OVERFLOW当成已实现自动恢复。映射有效性、单写者及运行期epoch/几何不变是两端契约，不是对恶意共享写入的内存安全承诺，也不将一致内存原子操作当作DMA/cache维护。
+
 Termarg位：iflag ICRNL=1；oflag OPOST=1、ONLCR=2；lflag ICANON=1、ECHO=2、ISIG=4；cflag CS8=1；cc索引VINTR=0、VQUIT=1、VERASE=2、VKILL=3、VEOF=4、VTIME=5、VMIN=6、VSUSP=7，其他cc必须0。输入Ctrl字符按当前模式解释，不由serial直接kill前台PID。公开libc flag转换保持这些固定协议数值，未知配置拒绝。
 
 信号帧恢复时ARM64 pstate只接受用户NZCV字段变化，EL/中断屏蔽等由内核重建；FPCR只允许用户修改舍入/FZ/DN位，其他位须与该层可信快照一致并保留原合法状态，不能因库API子集较小而拒绝原本合法的FP控制现场；FPSR仅合法累积状态位。RV64 x0必须0，sstatus非用户字段与该层可信快照一致后由内核构造U态返回，FCSR允许fflags及0..4舍入模式；其他原始控制取值若未被用户改变则按该层可信快照保留，不把handler的临时舍入模式泄漏到外层。PC/SP和映射权限重新校验，不接受特权寄存器原值直写；保持合法非默认舍入模式的测试必须覆盖。
@@ -526,3 +530,13 @@ sigframe两架构在原11个真实用户处理场景之外，新增两组可信�
 本地make unit全部516项、make fmt-check及make test-qemu全部110个两架构场景通过；证据build/host/stage73-signal-fork/，含所有Signal/Space源码/契约头哈希、两架构SIGFORKCHECK、新旧银行对象尺寸及静态帧。freestanding结构赋值链接失败保留arm64-before-copy-fix.log及原link-kernel.log，改为8字节cookie写后全量链接/运行通过。无CI、真实硬件、性能或handler中原生_Fork返回0/完整Fix验收。
 
 fork快照接续（2026-11-17）：sigfork现由可信forksnapshot在Space/Local/保底已准备后作为最后可失败阶段调用；失败清空孩子视图并恢复父页日志，不回绕已消耗cookie。两层帧/孩子cookie的双架构组合证据归03末尾和stage75，尚无原生fork/Prep发布及运行库Fix联动。
+
+### 串口SPSC字节辅助层（2026-11-18）
+
+已接include/proto/serial.h布局及libsys私有serialinit/read/write，SDK导出同源协议/私有头并记录哈希；无libc、libatomic或用户态HAL依赖。16 KiB映射的头、数据与剩余零填充由布局断言锁定，初始化完整清零；运行读写仅触及有效数据和各自位置，每次最多32字节。
+
+8项host测试各在O0/O2运行：零填充/布局、坏输入及缓冲别名、满环不覆盖与跨尾数据顺序、损坏头/位置不提交、EOF/ERROR保留待消费数据、u64计数耗尽不回绕、5000步独立FIFO对照，以及真正并发的SPSC线程传输131072字节。两架构CASE=runtime在真实用户态调用同一生产辅助代码，实际检查填满/背压、跨尾排空、旧epoch/别名/坏位置拒绝及UINT64_MAX终点；无条件CHECK失败会真实_exit，非打印常量冒充成功。
+
+目标用例使用测试进程自己的普通内存，尚非serial/tty跨进程SHARED映射或设备收发。正常init链接不含测试ringusercheck/serialring或这些未使用辅助函数；SDK对象无未定义符号。实际UART后端、通知/IRQ主循环、服务装载与READY、端点退出/重连及epoch握手仍待接，不能将本点称为实际serial服务已交付。完整回归及产物核对证据归build/host/stage103-serial-ring/。
+
+最终完整make test-all通过689项host、fmt-check及167次两架构QEMU，含12次内存容量和8次四核/真实IRQ/停放场景。独立核对全部成功guest结果的源码/共享头哈希、两架构SDK源/头/归档/实际runtime ELF及导出内容，检查测试符号确实存在于runtime而不进入生产init；证据evidence.json和完整test-all.log。无CI、板端、性能或实际serial READY验收。
