@@ -1,12 +1,23 @@
 """Validate the frozen static ELF profile and build a page-based boot image."""
 import struct
+from pathlib import Path
+import re
+
+def _bootconstant(name):
+    directory = Path(__file__).resolve().parents[1] / 'include/abi'
+    text = (directory / 'boot.h').read_text() + '\n' + (directory / 'boot.inc').read_text()
+    match = re.search(r'^#define\s+' + name + r'\s+(?:UINT64_C\((0x[0-9a-fA-F]+|[0-9]+)\)|(0x[0-9a-fA-F]+|[0-9]+))\s*$', text, re.M)
+    if not match:raise ValueError('missing shared ' + name + ' literal')
+    return int(match.group(1) or match.group(2), 0)
 
 PAGE = 4096
 USER_LO = 0x10000
-RESERVED_LO = 0x3fff000000
+RESERVED_LO = _bootconstant('BOOT_IMAGE_HI')
 USER_HI = 1 << 38
 LOAD_MAGIC = 0x4b494d4730303031
-BOOT_MAGIC = 0x4b424f4f54303031
+BOOT_MAGIC = _bootconstant('BOOT_MAGIC')
+BOOT_FORMAT = _bootconstant('BOOT_FORMAT')
+BOOT_HEADER_BYTES = _bootconstant('BOOT_HEADER_BYTES')
 
 class ElfError(ValueError):
     pass
@@ -75,11 +86,11 @@ def pack(data, machine, max_pages=256):
         raise ElfError('page plan exceeds boot descriptor segment limit')
     boot_off = 64 + 48 * len(segments)
     blob = bytearray(boot_off)
-    blob.extend(struct.pack('<16Q', BOOT_MAGIC, 1, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, USER_LO, USER_HI))
+    blob.extend(struct.pack('<18Q', BOOT_MAGIC, BOOT_FORMAT, BOOT_HEADER_BYTES, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, USER_LO, USER_HI, 0, 0))
     for i, segment in enumerate(segments):
         blob.extend(b'\0' * (-len(blob) % 8))
         content = bytes(segment['data']).rstrip(b'\0')
         struct.pack_into('<6Q', blob, 64 + i * 48, len(blob), len(content), segment['va'], len(segment['data']), segment['prot'], 0)
         blob.extend(content)
-    struct.pack_into('<8Q', blob, 0, LOAD_MAGIC, 1, len(blob), entry, len(segments), 64, boot_off, 128)
+    struct.pack_into('<8Q', blob, 0, LOAD_MAGIC, 1, len(blob), entry, len(segments), 64, boot_off, BOOT_HEADER_BYTES)
     return bytes(blob)

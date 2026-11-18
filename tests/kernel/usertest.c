@@ -4,6 +4,7 @@
 #include <diag.h>
 #include <hal/boot.h>
 #include <vm.h>
+#include <abi/boot.h>
 extern const u8 user_begin[], user_end[];
 static Spaceid  userspace;
 static Memid    code, stack, boot;
@@ -38,7 +39,7 @@ NORETURN void
 usertest(Hvs *kernel)
 {
   Hpte   pte;
-  u64    header[16], top, used;
+  u64    header[BOOT_HEADER_BYTES / sizeof(u64)], top, used;
   Pgstat after;
   u32    i;
   UNUSED(kernel);
@@ -48,10 +49,10 @@ usertest(Hvs *kernel)
   REQUIRE(!memcode(acct, PAGE_SIZE, &code));
   REQUIRE(!memwrite(code, 0, user_begin, (u64) (user_end - user_begin)) && !memseal(code));
   REQUIRE(!memcreate(acct, 16 * PAGE_SIZE, &stack) && !memcreate(acct, PAGE_SIZE, &boot));
-  for (i = 0; i < 16; i++)
+  for (i = 0; i < ARRAY_SIZE(header); i++)
     header[i] = 0;
   header[0] = 0x4b424f4f54303031UL;
-  header[1] = 1;
+  header[1] = BOOT_FORMAT;
   header[2] = sizeof(header);
   header[14] = 0x10000;
   header[15] = 1UL << 38;

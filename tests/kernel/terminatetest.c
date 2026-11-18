@@ -52,7 +52,7 @@ load(Handle pid, const Procinfo *self, const Procinfo info[9], u32 role)
   for (i = 0; i < 8; i++)
     resources[i] = 0;
   header.magic = BOOT_MAGIC;
-  header.format = 1;
+  header.format = BOOT_FORMAT;
   header.bytes = sizeof(header) + sizeof(resources);
   header.resource_count = 2;
   header.resources_off = sizeof(header);

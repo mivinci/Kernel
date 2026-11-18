@@ -62,7 +62,7 @@ load(Handle pid, Setid ordinary, Setid service, u32 role, const Lifeid *victim)
   for (i = 0; i < 8; i++)
     config[i] = resources[i] = 0;
   header.magic = BOOT_MAGIC;
-  header.format = 1;
+  header.format = BOOT_FORMAT;
   header.bytes = sizeof(header) + sizeof(resources);
   header.resource_count = 2;
   header.resources_off = sizeof(header);

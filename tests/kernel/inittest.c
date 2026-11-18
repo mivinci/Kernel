@@ -107,6 +107,11 @@ inittest(void)
   REQUIRE(bootimageload(pid, init_image, (u64) (init_image_end - init_image), &packet,
                         sizeof(packet)) == -ERR_INVALID);
   packet.header.flags = 0;
+  packet.header.package_va = BOOT_PACKAGE_LO;
+  packet.header.package_bytes = 1;
+  REQUIRE(bootimageload(pid, init_image, (u64) (init_image_end - init_image), &packet,
+                        sizeof(packet)) == -ERR_INVALID);
+  packet.header.package_va = packet.header.package_bytes = 0;
   REQUIRE(!bootimageload(pid, init_image, (u64) (init_image_end - init_image), &packet,
                          sizeof(packet)));
   {

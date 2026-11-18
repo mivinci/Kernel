@@ -50,7 +50,7 @@ load(Handle pid, u64 entry)
   for (i = 0; i < sizeof(header); i++)
     ((u8 *) &header)[i] = 0;
   header.magic = BOOT_MAGIC;
-  header.format = 1;
+  header.format = BOOT_FORMAT;
   header.bytes = sizeof(header) + sizeof(resources);
   header.resource_count = 2;
   header.resources_off = sizeof(header);

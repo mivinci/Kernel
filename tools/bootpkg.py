@@ -10,7 +10,7 @@ import struct
 import sys
 import tempfile
 
-from elf import BOOT_MAGIC, LOAD_MAGIC, PAGE, RESERVED_LO, USER_LO, USER_HI, ElfError
+from elf import BOOT_MAGIC, BOOT_FORMAT, BOOT_HEADER_BYTES, LOAD_MAGIC, PAGE, RESERVED_LO, USER_LO, USER_HI, ElfError
 from elf import pack as loadpack, plan
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,7 +93,7 @@ def _loadcheck(data, machine):
         raise PackageError('truncated init descriptor')
     magic, version, size, entry, count, table, boot, bootbytes = HEADER.unpack_from(data)
     if (magic != LOAD_MAGIC or version != 1 or size != len(data) or not 1 <= count <= 64 or
-            table < 64 or table & 7 or boot < 64 or boot & 7 or not 128 <= bootbytes <= 65536):
+            table < 64 or table & 7 or boot < 64 or boot & 7 or not BOOT_HEADER_BYTES <= bootbytes <= 65536):
         raise PackageError('invalid init descriptor header')
     regions = [(0, 64, 'load header'), _region(table, count * 48, size, 'load table'),
                _region(boot, bootbytes, size, 'load Boot')]
@@ -114,9 +114,9 @@ def _loadcheck(data, machine):
     _disjoint(segments)
     if not executable or entry % (4 if machine == MACHINES['arm64'] else 2):
         raise PackageError('invalid init entry')
-    startup = struct.unpack_from('<16Q', data, boot)
-    if (startup[:4] != (BOOT_MAGIC, 1, bootbytes, 0) or
-            startup[14:] != (USER_LO, USER_HI)):
+    startup = struct.unpack_from('<18Q', data, boot)
+    if (startup[:4] != (BOOT_MAGIC, BOOT_FORMAT, bootbytes, 0) or
+            startup[14:] != (USER_LO, USER_HI, 0, 0)):
         raise PackageError('invalid init descriptor Boot')
 
 

@@ -276,7 +276,21 @@ open 类操作应先保留有代次的本地结果位置，成功返回后再在
 
 ## 首版启动、修复和交接ABI（已冻结）
 
-Boot格式1，little endian，头128字节、16个u64：magic@0=0x4b424f4f54303031、format@8=1、bytes@16、flags@24、argc@32、argv_off@40、envc@48、env_off@56、resource_count@64、resources_off@72、fd_count@80、fds_off@88、fix_off@96、fix_bytes@104、user_lo@112、user_hi@120。flags首版全部保留为0，待接入状态由fd/连接描述中的token表示；总长<=65536，所有表8字节对齐、范围无溢出且不得重叠头/其他表；字符串区可由合法只读引用共享，字符串长度含NUL并核验结尾。
+Boot格式2，little endian，头144字节、18个u64：magic@0=0x4b424f4f54303031、format@8=2、bytes@16、flags@24、argc@32、argv_off@40、envc@48、env_off@56、resource_count@64、resources_off@72、fd_count@80、fds_off@88、fix_off@96、fix_bytes@104、user_lo@112、user_hi@120、package_va@128、package_bytes@136。flags首版全部保留为0，待接入状态由fd/连接描述中的token表示；总长<=65536，所有表8字节对齐、范围无溢出且不得重叠头/其他表；字符串区可由合法只读引用共享，字符串长度含NUL并核验结尾。格式1不兼容，所有生成者和消费者一起切换；包外Bootimage/Bootpkg仍使用各自格式号，不混为同一版本。
+
+package字段成对全零表示无包，否则字节数非零、精确用户范围在[0x3ffe000000,0x3fff000000)且不溢出，起点可非页对齐。它指向当前镜像由内核跟踪的专用普通内存R/NX视图，不是创建者指针或物理地址；不计入Boot自身bytes，不授予映射/写/执行/转授权限。包分片和生命周期按07；普通创建/exec的生成器置0，fork继承已有只读映射时才保留相应字段。构建侧Bootimage中的Boot仅是模板，两字段必须0，不能由构建输入声称已有用户视图。实际configure须核验受跟踪包视图，不能只凭这两个整数信任任意R映射。
+
+统一ELF与运行库堆上界BOOT_IMAGE_HI=0x3ffe000000；其上16MiB为包窗口，再上16MiB保留原Boot/栈/guard等启动区域。超过窗口的容器仍可通过通用容器校验，但不能在此装载布局发布PID1；必须在装载前给出容量错误，不能静默截包。
+
+#### 格式2接入边界（2026-11-18）
+
+共享头BOOT_HEADER_BYTES=144及两个字段偏移断言已接；csu/libsys/libc、内核Boot/描述检查、主机ELF/包工具和guest生成器统一格式2，无格式1兼容分支。版本/头长/新增字段偏移集中在abi/boot.inc，由C头重新导出、汇编直接包含，SDK也导出并记录其哈希；tools/elf.py从共享定义读取magic/format/header字节数和ELF上界，避免工具自留旧128字节头。原生spawn的手工头使用同一常量，孩子按resources_off找资源，不写死头后句柄地址。外层Bootimage/Bootpkg格式及Fix布局不变。
+
+libsys bootcheck只核验非零包字段的成对/范围/溢出表示，不凭表示创造权限。当前包视图后端未接，procconfigure和bootimageload暂时拒绝任何非零包字段；后续须替换为真实受跟踪视图核验后才允许PID1带包发布，不能先放开整数检查。构建模板始终要求两字段0，不因为将来运行时允许视图而放开模板。
+
+host新增旧格式拒绝、窗口边界/溢出/单边字段、模板禁止包声明、ELF不得占包窗口；procs与init/initfatal额外真实核对伪包字段拒绝。完整结果与日志归build/host/stage88-boot-package-abi/及status，不把本次线格式迁移称为用户包映射或生产init已经启动。
+
+本点最终本地make test-all通过608项host、格式和128次两架构QEMU；两架构导出SDK仅用其include目录即可编译sys/boot.h，Boot大小/字段偏移/版本断言均通过。首轮spawn手工汇编使用旧头和固定孩子资源偏移导致失败，记录保留，改用共享常量及resources_off后从头重跑全量。全部最终结果逐一核对当前源码及共享头哈希；未执行CI/板端/性能验收，包视图后端仍待接入。
 
 argv/env条目Strref=(u32 offset,u32 length)，8字节；总参数/环境字节与指针数换算开销合计<=16384，argc/envc各<=256。资源条目Resentry=32字节，tag/handle/flags/reserved四u64；tag SELF_SPACE=1、SELF_ALLOC=2、CREATE=3、FS_CALL=4、TTY_CALL=5、TERMINAL=6、SYSTEM=7、BOOT_IMAGE=8、其余受信设备tag从256起，重复必需tag拒绝，flags继承位按03，不凭tag造权。
 
@@ -403,7 +417,7 @@ Boot/Strref/Resentry/Bootfd共享布局已写入abi/boot.h；资源表上限128�
 
 新增make sdk ARCH=riscv|arm64，输出build/<架构>/sdk/libsys.a、include（公共sys头/共享abi及types）、private/syscall.h、user.ld与独立测试ELF/预校验镜像。tools/user.py逐目标构建，先把库的全部对象合并审计未解析符号，再链接自定义_start的C用户程序；不只依靠GC后的测试ELF掩盖未用函数中的libc依赖。SDK有版本/命令日志、源码/头/链接脚本/产物哈希及last-run状态；失败不默认为成功。两架构SDK编译记录并入各自及共享compile_commands.json，clangd仍选择最近构建架构。
 
-tools/elf.py为构建期ELF64校验/预校验镜像生成器；检查目标、ET_EXEC/版本/头范围、32程序头上限、动态段/解释器/可执行栈拒绝、文件/内存/溢出/对齐、字节段重叠、执行入口及页权限并集。只读与RX共享边界页合并，产生W+X则拒绝；先按调用者页预算计算合并页数，再物化内容，BSS不覆盖别段有效数据。首版ET_EXEC装载范围为[0x10000,0x3fff000000)，顶部16MiB留给Boot/栈等启动布局。它不是已接FS快照的普通用户态装载器。
+tools/elf.py为构建期ELF64校验/预校验镜像生成器；检查目标、ET_EXEC/版本/头范围、32程序头上限、动态段/解释器/可执行栈拒绝、文件/内存/溢出/对齐、字节段重叠、执行入口及页权限并集。只读与RX共享边界页合并，产生W+X则拒绝；先按调用者页预算计算合并页数，再物化内容，BSS不覆盖别段有效数据。当前ET_EXEC装载范围为[0x10000,0x3ffe000000)，顶部32MiB留给包/Boot/栈等启动布局；Boot格式2接续已将原16MiB预留扩大。它不是已接FS快照的普通用户态装载器。
 
 预校验镜像沿既定64字节外头/48字节段表，magic固定0x4b494d4730303031、format=1；段表最多64条，覆盖32个原始LOAD的页边界权限分拆。file_off相对整个镜像，bytes为完整镜像长度，段VA/mem_bytes页对齐，尾部零填充由目标Mem保证。kernel/bootimage.c只核验该描述与Boot头的安全边界、范围、保留位和W^X；架构入口对齐仍由Proc configure检查，内核不读取普通ELF头。测试装载器在可信fixture创建的Proc中按描述逐页分配/复制/封存/映射，并补上该主体真实Boot资源；正常镜像尚未启动init。嵌入汇编记录镜像哈希，避免.incbin内容改变后误命中旧对象缓存。
 
@@ -507,7 +521,7 @@ CASE=runtime每架构5个有效main各21项组/会话检查，共105项：读取
 
 malloc(0)/calloc的零乘积采用最小分配，成功返回可独立free的非空对齐指针；realloc(p,0)采用同一最小分配策略，成功返回非空指针并仍需显式free。零长对象不提供可访问字节承诺。realloc(NULL,n)等同malloc；收缩和右邻空闲足够时原地调整，否则先分配并复制min(旧请求长度,新长度)，新分配失败保留旧对象和内容。calloc先检查乘法溢出并清零实际请求字节；大小/页取整溢出及后端分配失败返回NULL/ENOMEM。成功分配和free保留errno；free(NULL)无操作。非法指针、重复free和用户破坏头部仍属无效C调用，不增加内核指针授权接口。以上是已实现子集及本实现明确的零长策略，完整ISO C/POSIX验收仍见15。
 
-libsys新增私有vm模块，128个32字节Vregion共4096字节BSS，元数据在arena之外。运行时提供页对齐边界；本libc首次需要arena时，以链接器__image_end为下界、既有装载上界BOOT_IMAGE_HI为上界初始化，避开顶部16MiB启动区。BOOT_IMAGE_HI只为现有几何命名，不改变Boot线布局；ELF加载器复用这一C常量。SDK user.ld给出隐藏__image_end，自定义链接脚本须提供相同私有契约。显式初始化过的私有VM范围由调用运行时负责保持有效，不把任一应用VA硬编码为普遍空闲。普通不引用分配器的程序不因启动代码强制链接堆状态。
+libsys新增私有vm模块，128个32字节Vregion共4096字节BSS，元数据在arena之外。运行时提供页对齐边界；本libc首次需要arena时，以链接器__image_end为下界、装载上界BOOT_IMAGE_HI为上界初始化，当前避开顶部32MiB包/启动区。ELF加载器复用这一C常量，Boot格式2的字段变化另见前文。SDK user.ld给出隐藏__image_end，自定义链接脚本须提供相同私有契约。显式初始化过的私有VM范围由调用运行时负责保持有效，不把任一应用VA硬编码为普遍空闲。普通不引用分配器的程序不因启动代码强制链接堆状态。
 
 sysvmget按16页/64KiB拆成连续VA上的DATA/RW/NX映射，每块map后立即free Mem管理引用，只有一份临时资源槽也能装配大块；每次从当前已校验Boot取得真实SELF_SPACE/SELF_ALLOC，不用裸PID或猜句柄。已知区域先避让，未知native map冲突不替换旧映射，最多64个候选后明确NOMEM；这不是空间空洞穷尽证明。区域表满为CAPACITY，原生费用始终归本进程Acct。当前是匿名DATA后端，不暴露POSIX mmap/munmap，也未接生产装载临时窗口的统一预留或fork/Fix重绑。
 

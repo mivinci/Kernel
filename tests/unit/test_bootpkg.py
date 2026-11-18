@@ -262,7 +262,7 @@ class KernelPackageTests(unittest.TestCase):
         offsets = list(range(0, 64, 8)) + list(range(header[5], header[5] + header[4] * 64, 8))
         offsets += list(range(load, load + 64, 8))
         offsets += list(range(load + descriptor[5], load + descriptor[5] + descriptor[4] * 48, 8))
-        offsets += list(range(load + descriptor[6], load + descriptor[6] + 128, 8))
+        offsets += list(range(load + descriptor[6], load + descriptor[6] + pkg.BOOT_HEADER_BYTES, 8))
         for offset in offsets:
             for value in (0, 1, 7, 64, 65, len(original), 2**64-8, 2**64-1):
                 changed = bytearray(original)

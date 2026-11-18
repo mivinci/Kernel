@@ -40,6 +40,7 @@ def build(args):
     if 'clang' not in tools['cc']['version'].lower():
         raise BuildError('this profile requires Clang')
     exported = [ROOT / 'include/types.h', *sorted((ROOT / 'include/abi').glob('*.h')),
+                *sorted((ROOT / 'include/abi').glob('*.inc')),
                 *sorted((ROOT / 'lib/libsys/include/sys').glob('*.h')),
                 *sorted((ROOT / 'lib/libc/include').rglob('*.h'))]
     for source in exported:
@@ -302,6 +303,7 @@ def build(args):
     kernel = [x for x in kernel if '/sdk/' not in x['output']]
     compilation_database(directory, kernel + entries)
     headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
+    headers += list((ROOT / 'include/abi').glob('*.inc'))
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
                     cow_user_fault_pc=cow_fault_address, cow_user_image_sha256=digest(cow_user_image),

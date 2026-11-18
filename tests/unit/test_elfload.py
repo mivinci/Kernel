@@ -10,7 +10,7 @@ from test_userboot import executable
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from elf import plan,ElfError,BOOT_MAGIC,USER_LO,USER_HI,PAGE
+from elf import plan,ElfError,BOOT_MAGIC,BOOT_FORMAT,BOOT_HEADER_BYTES,USER_LO,USER_HI,PAGE
 
 READ=C.CFUNCTYPE(C.c_int64,C.c_void_p,C.c_uint64,C.c_void_p,C.c_uint64)
 class Source(C.Structure):
@@ -70,9 +70,9 @@ class ElfLoaderTests(unittest.TestCase):
         return Source(None,len(data),self.reader)
 
     def packet(self):
-        data=bytearray(224)
-        struct.pack_into('<16Q',data,0,BOOT_MAGIC,1,len(data),0,0,0,0,0,3,128,0,0,0,0,USER_LO,USER_HI)
-        for i in range(3):struct.pack_into('<4Q',data,128+i*32,i+1,0,0,0)
+        data=bytearray(BOOT_HEADER_BYTES+3*32)
+        struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,len(data),0,0,0,0,0,3,BOOT_HEADER_BYTES,0,0,0,0,USER_LO,USER_HI,0,0)
+        for i in range(3):struct.pack_into('<4Q',data,BOOT_HEADER_BYTES+i*32,i+1,0,0,0)
         return C.create_string_buffer(bytes(data))
 
     def setup_load(self,machine,lib,fail=None):
@@ -90,7 +90,7 @@ class ElfLoaderTests(unittest.TestCase):
     def test_boundary_permission_merge_file_bytes_bss_and_boot_self_handles(self):
         for machine,lib in self.libs:
             source,parsed,work,packet,config=self.setup_load(machine,lib)
-            self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,224,C.byref(work),C.byref(config)),0)
+            self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,BOOT_HEADER_BYTES+96,C.byref(work),C.byref(config)),0)
             self.assertEqual((work.memory,work.mapped,config.entry),(0,0,USER_LO))
             page=C.create_string_buffer(PAGE);prot=C.c_uint64()
             self.assertEqual(lib.mock_peek(USER_LO,page,PAGE,C.byref(prot)),0)
@@ -99,23 +99,23 @@ class ElfLoaderTests(unittest.TestCase):
             self.assertEqual((prot.value,page.raw),(3,b'D'*16+bytes(PAGE-16)))
             self.assertEqual(lib.mock_peek(USER_LO+3*PAGE,page,PAGE,C.byref(prot)),0)
             self.assertEqual(page.raw,bytes(PAGE))
-            boot=C.create_string_buffer(224)
-            self.assertEqual(lib.mock_peek(0x3fff000000,boot,224,C.byref(prot)),0)
+            boot=C.create_string_buffer(BOOT_HEADER_BYTES+96)
+            self.assertEqual(lib.mock_peek(0x3fff000000,boot,BOOT_HEADER_BYTES+96,C.byref(prot)),0)
             self.assertEqual(prot.value,1)
-            for i in range(3):self.assertEqual(struct.unpack_from('<Q',boot.raw,136+i*32)[0],(2<<59)|(7<<16)|i)
-            self.assertEqual(struct.unpack_from('<Q',packet.raw,136)[0],0)
+            for i in range(3):self.assertEqual(struct.unpack_from('<Q',boot.raw,BOOT_HEADER_BYTES+8+i*32)[0],(2<<59)|(7<<16)|i)
+            self.assertEqual(struct.unpack_from('<Q',packet.raw,BOOT_HEADER_BYTES+8)[0],0)
             self.assertEqual((lib.mock_locals(),lib.mock_alias(),lib.mock_bad_free()),(0,0,0))
             lib.mock_abort();self.assertEqual(lib.mock_live(),0)
 
     def test_every_native_step_failure_releases_temporary_responsibility(self):
         for machine,lib in self.libs:
             source,parsed,work,packet,config=self.setup_load(machine,lib)
-            self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,224,C.byref(work),C.byref(config)),0)
+            self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,BOOT_HEADER_BYTES+96,C.byref(work),C.byref(config)),0)
             steps=lib.mock_steps();lib.mock_abort()
             for step in range(1,steps+1):
                 source,parsed,work,packet,config=self.setup_load(machine,lib);lib.mock_fail(step)
                 with self.subTest(machine=machine,step=step):
-                    self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,224,C.byref(work),C.byref(config)),-10)
+                    self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,BOOT_HEADER_BYTES+96,C.byref(work),C.byref(config)),-10)
                     self.assertEqual((work.failure,work.memory,work.mapped,config.entry),(-10,0,0,0))
                     self.assertEqual((lib.mock_locals(),lib.mock_alias(),lib.mock_bad_free()),(0,0,0))
                     lib.mock_abort();self.assertEqual(lib.mock_live(),0)
@@ -125,7 +125,7 @@ class ElfLoaderTests(unittest.TestCase):
             for unmaps,frees in ((2,0),(0,2)):
                 source,parsed,work,packet,config=self.setup_load(machine,lib)
                 lib.mock_cleanup_fail(unmaps,frees)
-                self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,224,C.byref(work),C.byref(config)),-5)
+                self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,BOOT_HEADER_BYTES+96,C.byref(work),C.byref(config)),-5)
                 self.assertEqual(work.failure,-5);self.assertGreater(work.memory,0)
                 self.assertEqual(bool(work.mapped),bool(unmaps))
                 lib.mock_cleanup_fail(0,0)
@@ -136,7 +136,7 @@ class ElfLoaderTests(unittest.TestCase):
     def test_source_read_failure_cleans_alias_and_does_not_publish_config(self):
         for machine,lib in self.libs:
             source,parsed,work,packet,config=self.setup_load(machine,lib,fail=PAGE)
-            self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,224,C.byref(work),C.byref(config)),-2)
+            self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,BOOT_HEADER_BYTES+96,C.byref(work),C.byref(config)),-2)
             self.assertEqual((work.failure,work.memory,work.mapped,config.entry),(-2,0,0,0))
             lib.mock_abort();self.assertEqual(lib.mock_live(),0)
 
@@ -145,7 +145,7 @@ class ElfLoaderTests(unittest.TestCase):
             for field,value in (('scratch',0),('scratch_bytes',0),('image',0),('view',0),('mapped',1),('memory',7)):
                 source,parsed,work,packet,config=self.setup_load(machine,lib)
                 setattr(work,field,value)
-                self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,224,C.byref(work),C.byref(config)),-1)
+                self.assertEqual(lib.elfload(C.byref(source),C.byref(parsed),packet,BOOT_HEADER_BYTES+96,C.byref(work),C.byref(config)),-1)
                 self.assertEqual(lib.mock_steps(),0)
                 self.assertEqual(getattr(work,field),value)
                 self.assertEqual(config.entry,0)

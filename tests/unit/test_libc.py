@@ -9,7 +9,7 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from elf import BOOT_MAGIC,USER_LO,USER_HI
+from elf import BOOT_MAGIC,BOOT_FORMAT,BOOT_HEADER_BYTES,USER_LO,USER_HI
 
 class LibcTests(unittest.TestCase):
     @classmethod
@@ -76,11 +76,11 @@ int test_late(void){return late_result==-1&&late_errno==EBUSY;}
     def tearDownClass(cls):cls.temp.cleanup()
 
     def boot(self,args=(),env=(),extra=0):
-        count=len(args)+len(env);at=128+count*8;data=bytearray(at)
-        struct.pack_into('<16Q',data,0,BOOT_MAGIC,1,0,0,len(args),128 if args else 0,
-                         len(env),128+len(args)*8 if env else 0,0,0,0,0,0,0,USER_LO,USER_HI)
+        count=len(args)+len(env);at=BOOT_HEADER_BYTES+count*8;data=bytearray(at)
+        struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,0,0,len(args),BOOT_HEADER_BYTES if args else 0,
+                         len(env),BOOT_HEADER_BYTES+len(args)*8 if env else 0,0,0,0,0,0,0,USER_LO,USER_HI,0,0)
         for i,string in enumerate((*args,*env)):
-            content=string+b'\0';struct.pack_into('<II',data,128+8*i,len(data),len(content));data.extend(content)
+            content=string+b'\0';struct.pack_into('<II',data,BOOT_HEADER_BYTES+8*i,len(data),len(content));data.extend(content)
         data.extend(bytes(extra));struct.pack_into('<Q',data,16,len(data))
         return data
 

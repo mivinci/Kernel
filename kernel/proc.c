@@ -541,8 +541,10 @@ validate(Proc *p, const Config *c)
     return error;
   if (spaceread(p->space, c->boot, &boot, sizeof(boot)))
     return -ERR_FAULT;
-  if (boot.magic != BOOT_MAGIC || boot.format != 1 || boot.bytes != c->bootsz || boot.flags ||
-      boot.user_lo != 0x10000 || boot.user_hi != (1UL << 38))
+  if (boot.magic != BOOT_MAGIC || boot.format != BOOT_FORMAT || boot.bytes != c->bootsz ||
+      boot.flags || boot.user_lo != 0x10000 || boot.user_hi != (1UL << 38))
+    return -ERR_INVALID;
+  if (boot.package_va || boot.package_bytes)
     return -ERR_INVALID;
   return 0;
 }

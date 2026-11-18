@@ -88,6 +88,9 @@ bootimagecheck(const void *input, u64 available, Bootimage *out)
       read64(boot + 8) != BOOT_FORMAT || read64(boot + 16) != header.boot_bytes ||
       read64(boot + 24) || read64(boot + 112) != BOOT_USER_LO || read64(boot + 120) != BOOT_USER_HI)
     return -ERR_INVALID;
+  /* Descriptor Boot is a build template, never authority for an existing view. */
+  if (read64(boot + 128) || read64(boot + 136))
+    return -ERR_INVALID;
   out->magic = header.magic;
   out->format = header.format;
   out->bytes = header.bytes;

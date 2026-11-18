@@ -1,5 +1,6 @@
 #include <abi/syscall.h>
 #include <abi/ipc.h>
+#include <abi/boot.inc>
 .arch armv8-a+fp+simd
 .section .rodata
 .balign 8
@@ -2111,9 +2112,9 @@ spawn_copy_0:
  movk x10, #20303, lsl #32
  movk x10, #19266, lsl #48
  str x10, [x9, #0]
- movz x10, #1
+ movz x10, #BOOT_FORMAT
  str x10, [x9, #8]
- movz x10, #224
+ movz x10, #(BOOT_HEADER_BYTES + 96)
  str x10, [x9, #16]
  movz x10, #0
  str x10, [x9, #24]
@@ -2127,7 +2128,7 @@ spawn_copy_0:
  str x10, [x9, #56]
  movz x10, #3
  str x10, [x9, #64]
- movz x10, #128
+ movz x10, #BOOT_HEADER_BYTES
  str x10, [x9, #72]
  movz x10, #0
  str x10, [x9, #80]
@@ -2143,10 +2144,12 @@ spawn_copy_0:
  movz x10, #0
  movk x10, #64, lsl #32
  str x10, [x9, #120]
+ str xzr, [x9, #BOOT_PACKAGE_VA_OFFSET]
+ str xzr, [x9, #BOOT_PACKAGE_BYTES_OFFSET]
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #32]
- movz x9, #128
+ movz x9, #BOOT_HEADER_BYTES
  movk x9, #5, lsl #16
  movz x10, #1
  str x10, [x9, #0]
@@ -2157,7 +2160,7 @@ spawn_copy_0:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #224]
- movz x9, #160
+ movz x9, #(BOOT_HEADER_BYTES + 32)
  movk x9, #5, lsl #16
  movz x10, #2
  str x10, [x9, #0]
@@ -2168,7 +2171,7 @@ spawn_copy_0:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #416]
- movz x9, #192
+ movz x9, #(BOOT_HEADER_BYTES + 64)
  movk x9, #5, lsl #16
  movz x10, #3
  str x10, [x9, #0]
@@ -2228,7 +2231,7 @@ spawn_copy_0:
  movk x10, #65280, lsl #16
  movk x10, #63, lsl #32
  str x10, [x9, #16]
- movz x10, #224
+ movz x10, #(BOOT_HEADER_BYTES + 96)
  str x10, [x9, #24]
  movz x10, #0
  str x10, [x9, #32]
@@ -3392,9 +3395,9 @@ spawn_copy_1:
  movk x10, #20303, lsl #32
  movk x10, #19266, lsl #48
  str x10, [x9, #0]
- movz x10, #1
+ movz x10, #BOOT_FORMAT
  str x10, [x9, #8]
- movz x10, #224
+ movz x10, #(BOOT_HEADER_BYTES + 96)
  str x10, [x9, #16]
  movz x10, #0
  str x10, [x9, #24]
@@ -3408,7 +3411,7 @@ spawn_copy_1:
  str x10, [x9, #56]
  movz x10, #3
  str x10, [x9, #64]
- movz x10, #128
+ movz x10, #BOOT_HEADER_BYTES
  str x10, [x9, #72]
  movz x10, #0
  str x10, [x9, #80]
@@ -3424,10 +3427,12 @@ spawn_copy_1:
  movz x10, #0
  movk x10, #64, lsl #32
  str x10, [x9, #120]
+ str xzr, [x9, #BOOT_PACKAGE_VA_OFFSET]
+ str xzr, [x9, #BOOT_PACKAGE_BYTES_OFFSET]
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #32]
- movz x9, #128
+ movz x9, #BOOT_HEADER_BYTES
  movk x9, #5, lsl #16
  movz x10, #1
  str x10, [x9, #0]
@@ -3438,7 +3443,7 @@ spawn_copy_1:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #224]
- movz x9, #160
+ movz x9, #(BOOT_HEADER_BYTES + 32)
  movk x9, #5, lsl #16
  movz x10, #2
  str x10, [x9, #0]
@@ -3449,7 +3454,7 @@ spawn_copy_1:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #416]
- movz x9, #192
+ movz x9, #(BOOT_HEADER_BYTES + 64)
  movk x9, #5, lsl #16
  movz x10, #3
  str x10, [x9, #0]
@@ -3509,7 +3514,7 @@ spawn_copy_1:
  movk x10, #65280, lsl #16
  movk x10, #63, lsl #32
  str x10, [x9, #16]
- movz x10, #224
+ movz x10, #(BOOT_HEADER_BYTES + 96)
  str x10, [x9, #24]
  movz x10, #0
  str x10, [x9, #32]
@@ -4700,9 +4705,9 @@ spawn_copy_2:
  movk x10, #20303, lsl #32
  movk x10, #19266, lsl #48
  str x10, [x9, #0]
- movz x10, #1
+ movz x10, #BOOT_FORMAT
  str x10, [x9, #8]
- movz x10, #224
+ movz x10, #(BOOT_HEADER_BYTES + 96)
  str x10, [x9, #16]
  movz x10, #0
  str x10, [x9, #24]
@@ -4716,7 +4721,7 @@ spawn_copy_2:
  str x10, [x9, #56]
  movz x10, #3
  str x10, [x9, #64]
- movz x10, #128
+ movz x10, #BOOT_HEADER_BYTES
  str x10, [x9, #72]
  movz x10, #0
  str x10, [x9, #80]
@@ -4732,10 +4737,12 @@ spawn_copy_2:
  movz x10, #0
  movk x10, #64, lsl #32
  str x10, [x9, #120]
+ str xzr, [x9, #BOOT_PACKAGE_VA_OFFSET]
+ str xzr, [x9, #BOOT_PACKAGE_BYTES_OFFSET]
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #32]
- movz x9, #128
+ movz x9, #BOOT_HEADER_BYTES
  movk x9, #5, lsl #16
  movz x10, #1
  str x10, [x9, #0]
@@ -4746,7 +4753,7 @@ spawn_copy_2:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #224]
- movz x9, #160
+ movz x9, #(BOOT_HEADER_BYTES + 32)
  movk x9, #5, lsl #16
  movz x10, #2
  str x10, [x9, #0]
@@ -4757,7 +4764,7 @@ spawn_copy_2:
  movz x9, #1024
  movk x9, #4, lsl #16
  ldr x11, [x9, #416]
- movz x9, #192
+ movz x9, #(BOOT_HEADER_BYTES + 64)
  movk x9, #5, lsl #16
  movz x10, #3
  str x10, [x9, #0]
@@ -4817,7 +4824,7 @@ spawn_copy_2:
  movk x10, #65280, lsl #16
  movk x10, #63, lsl #32
  str x10, [x9, #16]
- movz x10, #224
+ movz x10, #(BOOT_HEADER_BYTES + 96)
  str x10, [x9, #24]
  movz x10, #0
  str x10, [x9, #32]
@@ -5715,9 +5722,9 @@ spawn_child_begin:
  umov x9, v31.d[0]
  cbnz x9, spawn_child_bad
  mov x21, x0
- movz x9, #200
+ ldr x9, [x21, #72]
  add x9, x21, x9
- ldr x22, [x9, #0]
+ ldr x22, [x9, #72]
  movz x28, #159
  movz x0, #0
  movz x1, #0

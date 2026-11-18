@@ -136,7 +136,7 @@ preptest(void)
   for (i = 0; i < sizeof(header); i++)
     ((u8 *) &header)[i] = 0;
   header.magic = BOOT_MAGIC;
-  header.format = 1;
+  header.format = BOOT_FORMAT;
   header.bytes = sizeof(header);
   header.user_lo = 0x10000;
   header.user_hi = 1UL << 38;

@@ -1,5 +1,6 @@
 #include <abi/syscall.h>
 #include <abi/ipc.h>
+#include <abi/boot.inc>
 .option norvc
 .section .rodata
 .balign 8
@@ -2653,9 +2654,9 @@ spawn_copy_0:
  li t0, 327680
  li t1, 5422984103440953393
  sd t1, 0(t0)
- li t1, 1
+ li t1, BOOT_FORMAT
  sd t1, 8(t0)
- li t1, 224
+ li t1, (BOOT_HEADER_BYTES + 96)
  sd t1, 16(t0)
  li t1, 0
  sd t1, 24(t0)
@@ -2669,7 +2670,7 @@ spawn_copy_0:
  sd t1, 56(t0)
  li t1, 3
  sd t1, 64(t0)
- li t1, 128
+ li t1, BOOT_HEADER_BYTES
  sd t1, 72(t0)
  li t1, 0
  sd t1, 80(t0)
@@ -2683,9 +2684,11 @@ spawn_copy_0:
  sd t1, 112(t0)
  li t1, 274877906944
  sd t1, 120(t0)
+ sd zero, BOOT_PACKAGE_VA_OFFSET(t0)
+ sd zero, BOOT_PACKAGE_BYTES_OFFSET(t0)
  li t0, 263168
  ld t2, 32(t0)
- li t0, 327808
+ li t0, (327680 + BOOT_HEADER_BYTES)
  li t1, 1
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -2694,7 +2697,7 @@ spawn_copy_0:
  sd t1, 24(t0)
  li t0, 263168
  ld t2, 224(t0)
- li t0, 327840
+ li t0, (327680 + BOOT_HEADER_BYTES + 32)
  li t1, 2
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -2703,7 +2706,7 @@ spawn_copy_0:
  sd t1, 24(t0)
  li t0, 263168
  ld t2, 416(t0)
- li t0, 327872
+ li t0, (327680 + BOOT_HEADER_BYTES + 64)
  li t1, 3
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -2769,7 +2772,7 @@ spawn_copy_0:
  sd t1, 8(t0)
  li t1, 274861129728
  sd t1, 16(t0)
- li t1, 224
+ li t1, (BOOT_HEADER_BYTES + 96)
  sd t1, 24(t0)
  li t1, 0
  sd t1, 32(t0)
@@ -4418,9 +4421,9 @@ spawn_copy_1:
  li t0, 327680
  li t1, 5422984103440953393
  sd t1, 0(t0)
- li t1, 1
+ li t1, BOOT_FORMAT
  sd t1, 8(t0)
- li t1, 224
+ li t1, (BOOT_HEADER_BYTES + 96)
  sd t1, 16(t0)
  li t1, 0
  sd t1, 24(t0)
@@ -4434,7 +4437,7 @@ spawn_copy_1:
  sd t1, 56(t0)
  li t1, 3
  sd t1, 64(t0)
- li t1, 128
+ li t1, BOOT_HEADER_BYTES
  sd t1, 72(t0)
  li t1, 0
  sd t1, 80(t0)
@@ -4448,9 +4451,11 @@ spawn_copy_1:
  sd t1, 112(t0)
  li t1, 274877906944
  sd t1, 120(t0)
+ sd zero, BOOT_PACKAGE_VA_OFFSET(t0)
+ sd zero, BOOT_PACKAGE_BYTES_OFFSET(t0)
  li t0, 263168
  ld t2, 32(t0)
- li t0, 327808
+ li t0, (327680 + BOOT_HEADER_BYTES)
  li t1, 1
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -4459,7 +4464,7 @@ spawn_copy_1:
  sd t1, 24(t0)
  li t0, 263168
  ld t2, 224(t0)
- li t0, 327840
+ li t0, (327680 + BOOT_HEADER_BYTES + 32)
  li t1, 2
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -4468,7 +4473,7 @@ spawn_copy_1:
  sd t1, 24(t0)
  li t0, 263168
  ld t2, 416(t0)
- li t0, 327872
+ li t0, (327680 + BOOT_HEADER_BYTES + 64)
  li t1, 3
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -4534,7 +4539,7 @@ spawn_copy_1:
  sd t1, 8(t0)
  li t1, 274861129728
  sd t1, 16(t0)
- li t1, 224
+ li t1, (BOOT_HEADER_BYTES + 96)
  sd t1, 24(t0)
  li t1, 0
  sd t1, 32(t0)
@@ -6221,9 +6226,9 @@ spawn_copy_2:
  li t0, 327680
  li t1, 5422984103440953393
  sd t1, 0(t0)
- li t1, 1
+ li t1, BOOT_FORMAT
  sd t1, 8(t0)
- li t1, 224
+ li t1, (BOOT_HEADER_BYTES + 96)
  sd t1, 16(t0)
  li t1, 0
  sd t1, 24(t0)
@@ -6237,7 +6242,7 @@ spawn_copy_2:
  sd t1, 56(t0)
  li t1, 3
  sd t1, 64(t0)
- li t1, 128
+ li t1, BOOT_HEADER_BYTES
  sd t1, 72(t0)
  li t1, 0
  sd t1, 80(t0)
@@ -6251,9 +6256,11 @@ spawn_copy_2:
  sd t1, 112(t0)
  li t1, 274877906944
  sd t1, 120(t0)
+ sd zero, BOOT_PACKAGE_VA_OFFSET(t0)
+ sd zero, BOOT_PACKAGE_BYTES_OFFSET(t0)
  li t0, 263168
  ld t2, 32(t0)
- li t0, 327808
+ li t0, (327680 + BOOT_HEADER_BYTES)
  li t1, 1
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -6262,7 +6269,7 @@ spawn_copy_2:
  sd t1, 24(t0)
  li t0, 263168
  ld t2, 224(t0)
- li t0, 327840
+ li t0, (327680 + BOOT_HEADER_BYTES + 32)
  li t1, 2
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -6271,7 +6278,7 @@ spawn_copy_2:
  sd t1, 24(t0)
  li t0, 263168
  ld t2, 416(t0)
- li t0, 327872
+ li t0, (327680 + BOOT_HEADER_BYTES + 64)
  li t1, 3
  sd t1, 0(t0)
  sd t2, 8(t0)
@@ -6337,7 +6344,7 @@ spawn_copy_2:
  sd t1, 8(t0)
  li t1, 274861129728
  sd t1, 16(t0)
- li t1, 224
+ li t1, (BOOT_HEADER_BYTES + 96)
  sd t1, 24(t0)
  li t1, 0
  sd t1, 32(t0)
@@ -7646,9 +7653,9 @@ spawn_child_begin:
  j spawn_child_bad
 99:
  mv s2, a0
- li t0, 200
+ ld t0, 72(s2)
  add t0, s2, t0
- ld s3, 0(t0)
+ ld s3, 72(t0)
  li s9, 159
  li a0, 0
  li a1, 0

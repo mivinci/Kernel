@@ -61,6 +61,12 @@ bootcheck(const void *data, u64 available, Bootview *out)
       header->argc > BOOT_ARG_COUNT || header->envc > BOOT_ARG_COUNT ||
       header->resource_count > BOOT_RESOURCE_COUNT || header->fd_count > BOOT_FD_COUNT)
     return -ERR_INVALID;
+  if (header->package_va || header->package_bytes) {
+    if (!header->package_bytes || header->package_va < BOOT_PACKAGE_LO ||
+        header->package_va >= BOOT_PACKAGE_HI ||
+        header->package_bytes > BOOT_PACKAGE_HI - header->package_va)
+      return -ERR_INVALID;
+  }
   regions[0].offset = 0;
   regions[0].bytes = sizeof(Boot);
   regions[1].offset = header->argv_off;

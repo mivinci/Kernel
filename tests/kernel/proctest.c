@@ -60,7 +60,7 @@ load(Handle pid)
   for (i = 0; i < sizeof(header); i++)
     ((u8 *) &header)[i] = 0;
   header.magic = BOOT_MAGIC;
-  header.format = 1;
+  header.format = BOOT_FORMAT;
   header.bytes = sizeof(header);
   header.user_lo = 0x10000;
   header.user_hi = 1UL << 38;
@@ -73,6 +73,16 @@ load(Handle pid)
   c.boot = 0x3fff000000UL;
   c.bootsz = sizeof(header);
   c.sigmask = c.sigdefault = 0;
+  header.format = 1;
+  REQUIRE(!localwrite(t, boot, 0, &header, sizeof(header)));
+  REQUIRE(procconfigure(pid, &c, 0) == -ERR_INVALID);
+  header.format = BOOT_FORMAT;
+  header.package_va = BOOT_PACKAGE_LO;
+  header.package_bytes = 1;
+  REQUIRE(!localwrite(t, boot, 0, &header, sizeof(header)));
+  REQUIRE(procconfigure(pid, &c, 0) == -ERR_INVALID);
+  header.package_va = header.package_bytes = 0;
+  REQUIRE(!localwrite(t, boot, 0, &header, sizeof(header)));
   REQUIRE(!procconfigure(pid, &c, 0));
   bad.entry = c.entry;
   bad.stack = c.stack + 1;

@@ -8,7 +8,7 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from elf import ElfError, plan, pack, PAGE, BOOT_MAGIC, USER_LO, USER_HI
+from elf import ElfError, plan, pack, PAGE, BOOT_MAGIC, BOOT_FORMAT, BOOT_HEADER_BYTES, RESERVED_LO, USER_LO, USER_HI
 
 
 def executable(machine=183, loads=None):
@@ -62,7 +62,7 @@ class StaticUserElfTests(unittest.TestCase):
         self.assertEqual(plan(data,243,1)[0],USER_LO+2)
         struct.pack_into('<H',data,18,183)
         with self.assertRaisesRegex(ElfError,'aligned'):plan(data,183,1)
-        data=executable();struct.pack_into('<Q',data,104,0x3fff000000-USER_LO)
+        data=executable();struct.pack_into('<Q',data,104,RESERVED_LO-USER_LO)
         with self.assertRaisesRegex(ElfError,'budget'):plan(data,183,256)
 
 class View(C.Structure):
@@ -97,11 +97,11 @@ class UserBootTests(unittest.TestCase):
     def tearDownClass(cls):cls.temp.cleanup()
 
     def valid(self):
-        data=bytearray(256)
-        struct.pack_into('<16Q',data,0,BOOT_MAGIC,1,len(data),0,1,128,1,136,2,144,0,0,0,0,USER_LO,USER_HI)
-        struct.pack_into('<II',data,128,208,4);struct.pack_into('<II',data,136,212,4)
-        for i in range(2):struct.pack_into('<4Q',data,144+32*i,i+1,(2<<59)|(1<<16)|i,0,0)
-        data[208:216]=b'cat\0X=y\0'
+        data=bytearray(272)
+        struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,len(data),0,1,144,1,152,2,160,0,0,0,0,USER_LO,USER_HI,0,0)
+        struct.pack_into('<II',data,144,224,4);struct.pack_into('<II',data,152,228,4)
+        for i in range(2):struct.pack_into('<4Q',data,160+32*i,i+1,(2<<59)|(1<<16)|i,0,0)
+        data[224:232]=b'cat\0X=y\0'
         return data
 
     def check(self,data,status=0,available=None):
@@ -118,42 +118,65 @@ class UserBootTests(unittest.TestCase):
         self.assertFalse(self.lib.bootarg(C.byref(view),1,0))
         self.assertEqual(self.lib.bootresource(C.byref(view),2),(2<<59)|(1<<16)|1)
         self.assertEqual(self.lib.bootresource(C.byref(view),7),0)
-        data=bytearray(128);struct.pack_into('<16Q',data,0,BOOT_MAGIC,1,128,*([0]*11),USER_LO,USER_HI)
+        data=bytearray(BOOT_HEADER_BYTES);struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,BOOT_HEADER_BYTES,*([0]*11),USER_LO,USER_HI,0,0)
         self.check(data)
 
     def test_shared_byte_strings_valid_but_tables_and_strings_cannot_alias_metadata(self):
-        data=self.valid();struct.pack_into('<II',data,136,208,4);self.check(data)
-        for offset,value in ((40,0),(40,136),(40,129),(40,2**64-8),(72,128),
+        data=self.valid();struct.pack_into('<II',data,152,224,4);self.check(data)
+        for offset,value in ((40,0),(40,152),(40,145),(40,2**64-8),(72,144),
                              (104,2**64-1)):
             bad=self.valid();struct.pack_into('<Q',bad,offset,value)
             with self.subTest(offset=offset,value=value):self.check(bad,-1)
-        bad=self.valid();struct.pack_into("<QQ",bad,96,128,8);self.check(bad,-1)
-        for offset,length in ((0,4),(144,4),(255,4),(208,0),(0xffffffff,4)):
-            bad=self.valid();struct.pack_into('<II',bad,128,offset,length);self.check(bad,-1)
-        bad=self.valid();bad[211]=1;self.check(bad,-1)
+        bad=self.valid();struct.pack_into("<QQ",bad,96,144,8);self.check(bad,-1)
+        for offset,length in ((0,4),(160,4),(271,4),(224,0),(0xffffffff,4)):
+            bad=self.valid();struct.pack_into('<II',bad,144,offset,length);self.check(bad,-1)
+        bad=self.valid();bad[227]=1;self.check(bad,-1)
 
     def test_caps_reserved_fields_invalid_handles_and_duplicate_required_tags(self):
-        for offset,value in ((0,0),(8,2),(16,127),(16,65537),(24,1),(32,257),(48,257),
-                             (64,129),(80,129),(112,0),(120,2**64-1),(144,9),
-                             (152,1),(160,4),(168,1),(176,1)):
+        for offset,value in ((0,0),(8,1),(16,143),(16,65537),(24,1),(32,257),(48,257),
+                             (64,129),(80,129),(112,0),(120,2**64-1),(160,9),
+                             (168,1),(176,4),(184,1),(192,1)):
             bad=self.valid();struct.pack_into('<Q',bad,offset,value);self.check(bad,-1)
-        self.check(self.valid(),-1,available=128)
+        self.check(self.valid(),-1,available=144)
 
     def test_argument_bytes_include_pointer_and_null_terminator_overhead(self):
         for extra in (0,1):
             length=16384-24+extra
-            data=bytearray(136+length)
-            struct.pack_into('<16Q',data,0,BOOT_MAGIC,1,len(data),0,1,128,0,0,0,0,0,0,0,0,USER_LO,USER_HI)
-            struct.pack_into('<II',data,128,136,length);data[136:]=b'x'*(length-1)+b'\0'
+            data=bytearray(152+length)
+            struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,len(data),0,1,144,0,0,0,0,0,0,0,0,USER_LO,USER_HI,0,0)
+            struct.pack_into('<II',data,144,152,length);data[152:]=b'x'*(length-1)+b'\0'
             self.check(data,-1 if extra else 0)
 
     def test_fd_ids_flags_reserved_and_duplicate_rows(self):
-        data=bytearray(224);handle=(2<<59)|(1<<16)
-        struct.pack_into('<16Q',data,0,BOOT_MAGIC,1,len(data),0,0,0,0,0,0,0,2,128,0,0,USER_LO,USER_HI)
-        for i in range(2):struct.pack_into('<6Q',data,128+i*48,i,0,handle,1,7,0)
+        data=bytearray(240);handle=(2<<59)|(1<<16)
+        struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,len(data),0,0,0,0,0,0,0,2,144,0,0,USER_LO,USER_HI,0,0)
+        for i in range(2):struct.pack_into('<6Q',data,144+i*48,i,0,handle,1,7,0)
         self.check(data)
-        for offset,value in ((128,128),(136,2),(144,1),(168,1),(176,0)):
+        for offset,value in ((144,128),(152,2),(160,1),(184,1),(192,0)):
             bad=bytearray(data);struct.pack_into('<Q',bad,offset,value);self.check(bad,-1)
+
+    def test_package_view_range_pair_and_format_two_are_checked(self):
+        lo,hi=0x3ffe000000,0x3fff000000
+        for va,size,expected in ((0,0,0),(lo,1,0),(lo+3,hi-lo-3,0),(hi-1,1,0),
+                                  (0,1,-1),(lo,0,-1),(lo-1,1,-1),(hi,1,-1),
+                                  (lo,hi-lo+1,-1),(lo,2**64-1,-1)):
+            data=self.valid();struct.pack_into('<QQ',data,128,va,size)
+            with self.subTest(va=va,size=size):self.check(data,expected)
+        data=self.valid();struct.pack_into('<Q',data,8,1);self.check(data,-1)
+        self.check(data[:128],-1)
+
+    def test_boot_template_cannot_claim_an_existing_package_view(self):
+        data=bytearray(pack(executable(),183));header=struct.unpack_from('<8Q',data)
+        for offset,value in ((128,0x3ffe000000),(136,1)):
+            changed=bytearray(data);struct.pack_into('<Q',changed,header[6]+offset,value)
+            storage=C.create_string_buffer(bytes(changed));out=Image()
+            self.assertEqual(self.lib.bootimagecheck(storage,len(changed),C.byref(out)),-1)
+            self.assertEqual(bytes(out),bytes(C.sizeof(out)))
+
+    def test_elf_cannot_use_the_package_window(self):
+        for va in (RESERVED_LO,RESERVED_LO+PAGE,0x3fff000000-PAGE):
+            data=executable(loads=[(5,PAGE,va,b'code',PAGE)])
+            with self.subTest(va=va),self.assertRaisesRegex(ElfError,'startup'):plan(data,183,4)
 
     def test_boot_descriptor_ranges_permissions_and_initialization(self):
         image=pack(executable(),183)

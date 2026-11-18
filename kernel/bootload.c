@@ -32,6 +32,9 @@ bootimageload(Handle pid, const void *data, u64 bytes, const void *startup, u64 
   if (boot->magic != BOOT_MAGIC || boot->format != BOOT_FORMAT || boot->bytes != startupbytes ||
       boot->flags || boot->user_lo != BOOT_USER_LO || boot->user_hi != BOOT_USER_HI)
     return -ERR_INVALID;
+  /* Nonzero package fields require the retained-view admission path. */
+  if (boot->package_va || boot->package_bytes)
+    return -ERR_INVALID;
   table = proctable(pid);
   if (!table)
     return -ERR_STATE;
