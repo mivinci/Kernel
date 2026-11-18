@@ -539,6 +539,33 @@ def validate_pages(text, discovery, case):
     return result
 
 
+def audit_journal(qmp, directory, names, serial):
+    if 'klogstorage' not in names:
+        raise SmokeError('missing kernel journal storage')
+    path=directory/'kernel-journal.bin'
+    qmp.command('pmemsave',{'val':names['klogstorage'],'size':65536,'filename':str(path)})
+    data=path.read_bytes();rows=[]
+    for offset in range(0,(65536//288)*288,288):
+        sequence,nanos,source,length,level,flags,reserved=struct.unpack_from('<3QHBBI',data,offset)
+        if not sequence:
+            if any(data[offset:offset+288]):raise SmokeError('dirty unused journal record')
+            continue
+        text=data[offset+32:offset+32+length]
+        if (not 1<=length<=256 or level not in (1,2) or flags&~1 or source or reserved or
+                (not flags and nanos) or any(data[offset+32+length:offset+288]) or text not in serial):
+            raise SmokeError('invalid journal metadata/payload or serial mismatch')
+        rows.append((sequence,level,text))
+    rows.sort()
+    if not rows or [r[0] for r in rows]!=list(range(rows[0][0],rows[-1][0]+1)):
+        raise SmokeError('kernel journal sequence gap or duplicate')
+    if any(data[(65536//288)*288:]):raise SmokeError('dirty journal tail padding')
+    panic=serial.rsplit(b'PANIC ',1)
+    if len(panic)==2 and not any(level==2 and b'PANIC ' in text for _,level,text in rows):
+        raise SmokeError('fatal diagnostic missing from kernel journal')
+    return dict(records=len(rows),first=rows[0][0],last=rows[-1][0],bytes=65536,
+                metadata_checked=True,payload_matches_serial=True)
+
+
 def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, retained=None):
     ram = min(x["base"] for x in discovery["ranges"]["RAM"])
     delta = (KBASE - ram) & ((1 << 64) - 1)
@@ -1483,6 +1510,7 @@ def exercise(args, run_dir, record):
                     record['package'] = accepted_package(args, qmp, run_dir, names, record['discovery'])
                 if args.case=='normal':
                     record['package_init']=audit_package_init(qmp,run_dir,args,record,transition)
+                record['kernel_journal']=audit_journal(qmp,run_dir,names,serial.read_bytes().replace(b'\r',b''))
                 qmp.command("pmemsave", {"val": record["observed"]["boot"]["dtb"],
                                          "size": record["observed"]["layout"]["dtb_size"],
                                          "filename": str(run_dir / "runtime.dtb")})
