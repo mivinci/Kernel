@@ -25,6 +25,9 @@ STATIC_ASSERT(offsetof(Resreply, business) == 32, resource_reply_business);
 #define RQ_FINISHED         2
 #define RQ_RELEASED         4
 #define RQ_CANCEL_REQUESTED 8
+#define RQ_CHECK_LIVE       1
+#define RQ_CHECK_CANCEL     2
+#define RQ_CHECK_DRAINING   4
 #define IPC_NONE            0
 #define IPC_CALL            1
 #define IPC_SEND            2

@@ -14,6 +14,17 @@
 #define SERIAL_RX_ROOM  (UINT64_C(1) << 32)
 #define SERIAL_TX_READY (UINT64_C(1) << 33)
 
+#define SERIAL_VERSION      UINT64_C(1)
+#define SERIAL_BIND         1
+#define SERIAL_STATUS       2
+#define SERIAL_WORD(opcode) ((SERIAL_VERSION << 32) | (u32) (opcode))
+#define SERIAL_IRQ_BIT      16
+#define SERIAL_IRQ_EVENT    (UINT64_C(1) << SERIAL_IRQ_BIT)
+
+/* Control CALL: version/opcode, nonzero sequence, argument0, argument1.
+   BIND: local installed NOTIFY, expected peer image. STATUS: zero, zero.
+   Reply: signed native business status, sequence, two operation values. */
+
 /* Serial-private Boot tags; flags/reserved remain zero, values are Handles. */
 #define SERIAL_INIT_CALL 0x100
 #define SERIAL_MMIO      0x101

@@ -138,31 +138,39 @@ def build(args):
                        *[str(obj) for _, obj in extra_units[len(libc_sources):-1]], '-o', str(crt)])
     read_elf(crt, profile['machine'], allow_undefined=True)
     init_sources = [ROOT/'sbin/init/main.c', ROOT/'sbin/init/package.c']
-    init_objects = []
     init_directory = directory/'sbin'
     init_directory.mkdir(exist_ok=True)
-    for source in init_sources:
-        obj = sdk/'obj/sbin/init'/source.with_suffix('.o').name
-        obj.parent.mkdir(parents=True,exist_ok=True)
-        command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
-        invoke('compile-init-'+source.stem,command)
-        read_elf(obj,profile['machine'],allow_undefined=True)
-        entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
-        init_objects.append(str(obj))
-    init_elf = init_directory/'init.elf'
-    init_tmp = init_directory/'init.tmp.elf'
-    init_command = [tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections',
-                    '--build-id=none','-Map='+str(init_directory/'init.map'),str(crt),
-                    *init_objects,str(libc_archive),str(archive),'-o',str(init_tmp)]
-    invoke('link-init',init_command)
-    init_info = read_elf(init_tmp,profile['machine'],kind=2)
-    pack(init_tmp.read_bytes(),profile['machine'],256)
-    os.replace(init_tmp,init_elf)
-    (init_directory/'init.manifest.json').write_text(json.dumps(dict(arch=args.arch,
-        artifact=str(init_elf.relative_to(ROOT)),sha256=digest(init_elf),elf=init_info,
-        sources={str(p.relative_to(ROOT)):digest(p) for p in init_sources+[ROOT/'sbin/init/package.h']},
-        link=init_command,no_test_payload=True,libc_sha256=digest(libc_archive),
-        libsys_sha256=digest(archive),crt_sha256=digest(crt)),indent=2)+'\n')
+    def program(name, program_sources, program_headers):
+        if not all(p.is_relative_to(ROOT/'sbin'/name) for p in program_sources + program_headers):
+            raise BuildError('production program sources must belong to its service directory')
+        objects = []
+        for source in program_sources:
+            obj = sdk/'obj/sbin'/name/source.with_suffix('.o').name
+            obj.parent.mkdir(parents=True,exist_ok=True)
+            command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
+            invoke('compile-'+name+'-'+source.stem,command)
+            read_elf(obj,profile['machine'],allow_undefined=True)
+            entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
+            objects.append(str(obj))
+        artifact = init_directory/(name+'.elf')
+        temporary = init_directory/(name+'.tmp.elf')
+        link = [tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections',
+                '--build-id=none','-Map='+str(init_directory/(name+'.map')),str(crt),
+                *objects,str(libc_archive),str(archive),'-o',str(temporary)]
+        invoke('link-'+name,link)
+        info = read_elf(temporary,profile['machine'],kind=2)
+        pack(temporary.read_bytes(),profile['machine'],256)
+        os.replace(temporary,artifact)
+        (init_directory/(name+'.manifest.json')).write_text(json.dumps(dict(arch=args.arch,
+            artifact=str(artifact.relative_to(ROOT)),sha256=digest(artifact),elf=info,
+            sources={str(p.relative_to(ROOT)):digest(p) for p in program_sources+program_headers},
+            link=link,no_test_payload=True,libc_sha256=digest(libc_archive),
+            libsys_sha256=digest(archive),crt_sha256=digest(crt)),indent=2)+'\n')
+        return artifact
+    init_elf = program('init',init_sources,[ROOT/'sbin/init/package.h'])
+    serial_sources = [ROOT/'sbin/serial'/name for name in ('main.c','start.c','uart.c','io.c','control.c')]
+    serial_headers = [ROOT/'sbin/serial'/name for name in ('start.h','uart.h','io.h','control.h')]
+    serial_elf = program('serial',serial_sources,serial_headers)
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
     ringuser_object = sdk / 'obj/ringuser.o'
     command = [tools['cc']['path'], *flags, '-c', str(ringuser_source), '-o', str(ringuser_object)]
@@ -241,6 +249,8 @@ def build(args):
     uart_source=ROOT/'sbin/serial/uart.c'
     serial_verify=link_adoption('serialverify',[compile_adoption(ROOT/'tests/kernel/serialverify.c','serialverify'),compile_adoption(serial_start_source,'serial-start'),compile_adoption(serial_io_source,'serial-io'),compile_adoption(uart_source,'serial-verify-uart')])
     service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth'),compile_adoption(ROOT/'tests/kernel/serialparent.c','serialparent'),embedded_elf(serial_verify,'serial_verify')])
+    serial_peer=link_adoption('serialpeer',[compile_adoption(ROOT/'tests/kernel/serialpeer.c','serialpeer')])
+    serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer')])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
     parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
@@ -333,12 +343,15 @@ def build(args):
     headers += [ROOT / 'sbin/serial/uart.h']
     headers += [ROOT / 'sbin/serial/start.h']
     headers += [ROOT / 'sbin/serial/io.h']
+    headers += [ROOT / 'sbin/serial/control.h']
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     private_headers=final_private_headers,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
+                    serial_artifact=str(serial_elf.relative_to(ROOT)),serial_artifact_sha256=digest(serial_elf),
+                    serial_service_test=str(serial_service_test.relative_to(ROOT)),serial_peer_artifact=str(serial_peer.relative_to(ROOT)),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
                     service_auth_artifact=str(service_auth.relative_to(ROOT)),
                     serial_verify_artifact=str(serial_verify.relative_to(ROOT)),serial_verify_sha256=digest(serial_verify),
@@ -350,7 +363,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

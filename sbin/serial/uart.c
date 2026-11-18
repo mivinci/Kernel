@@ -149,6 +149,10 @@ uartrx(Uart *uart, void *data, u32 bytes, u32 *more)
   if (uart->kind == BOOT_UART_PL011 && !*more) {
     writereg(uart, 4, 0);
     writereg(uart, 0x44, 0x7d0);
+    /* Arrival after the empty observation can have its RX latch cleared by
+       ICR. Recheck after acknowledging: either work remains or a later arrival
+       retains its interrupt. Never sleep on the pre-ack empty snapshot. */
+    *more = !(readreg(uart, 0x18) & 0x10);
   }
   return copied;
 }

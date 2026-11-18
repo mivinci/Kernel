@@ -1,6 +1,43 @@
 #include "private/syscall.h"
 #include <abi/syscall.h>
 isize
+__sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds)
+{
+  const u64 args[7] = {clock, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!seconds || !nanoseconds)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_CLOCK_GETTIME, args, &result);
+  *seconds = (int64_t) result.values[0];
+  *nanoseconds = result.values[1];
+  return error;
+}
+isize
+__sys_alarmset(u64 deadline, u64 *generation)
+{
+  const u64 args[7] = {deadline, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!generation)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_ALARMSET, args, &result);
+  *generation = result.values[0];
+  return error;
+}
+isize
+__sys_alarmcancel(u64 *generation)
+{
+  const u64 args[7] = {0, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!generation)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_ALARMCANCEL, args, &result);
+  *generation = result.values[0];
+  return error;
+}
+isize
 __sys_debughandoff(Handle system)
 {
   const u64 args[7] = {(u64) system, 0, 0, 0, 0, 0, 0};

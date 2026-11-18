@@ -35,6 +35,9 @@ def cases(arch):
     yield 'native-exit',bootpkg.pack([('sbin/init',exiting.read_bytes())],machine),exiting,None,42
     authority=ROOT/'build'/arch/'sdk/serviceauth.elf'
     yield 'service-authority',bootpkg.pack([('sbin/init',authority.read_bytes())],machine),authority,None,42
+    serial=ROOT/'build'/arch/'sdk/serialservice.elf'
+    yield 'serial-service',bootpkg.pack([('sbin/init',serial.read_bytes())],machine),serial,None,42
+    yield 'serial-timeout',bootpkg.pack([('tests/serial-timeout',serial.read_bytes())],machine,init='tests/serial-timeout'),serial,None,42
 
 
 @run_guard(ROOT)
@@ -44,16 +47,22 @@ def main():
     parser.add_argument('--arch',choices=bootpkg.MACHINES,required=True)
     parser.add_argument('--firmware')
     parser.add_argument('--qemu')
+    parser.add_argument('--only',help='run one named package fixture')
+    parser.add_argument('--uart-trace',action='store_true',help='record PL011 device events for diagnosis')
     args=parser.parse_args()
     directory=ROOT/'build'/args.arch/'packageboot'/('suite-'+uuid.uuid4().hex)
     directory.mkdir(parents=True)
     records=[]
     for name,data,artifact,error,exitcode in cases(args.arch):
+        if args.only and name!=args.only:continue
         run=directory/name;run.mkdir();path=run/'input.pkg'
         if data is not None:path.write_bytes(data)
         options=argparse.Namespace(arch=args.arch,case='normal',ram=256,qemu=args.qemu,
-            firmware=args.firmware,trace=False,timeout=15,virtio=False,initrd=path if data is not None else None,
+            firmware=args.firmware,trace=False,timeout=30 if name.startswith('serial-') else 15,virtio=False,initrd=path if data is not None else None,
             bootpkg_error=error,init_elf=artifact,init_exit=exitcode)
+        options.serial_input = name=='serial-service'
+        options.serial_probe = name.startswith('serial-')
+        options.uart_trace = args.uart_trace
         record=dict(arch=args.arch,case='normal',fixture=name,ok=False)
         try:
             smoke.exercise(options,run,record);record['ok']=True
@@ -63,6 +72,7 @@ def main():
         print('%s %s/packageboot/%s: %s'%('OK' if record['ok'] else 'FAILED',args.arch,name,run),flush=True)
         if not record['ok']:print(record['error'],file=sys.stderr)
     (directory/'suite.json').write_text(json.dumps(records,indent=2)+'\n')
+    if not records:parser.error('unknown package fixture')
     return 0 if all(x['ok'] for x in records) else 1
 
 

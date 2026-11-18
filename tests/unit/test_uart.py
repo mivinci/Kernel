@@ -188,6 +188,40 @@ class UartTests(unittest.TestCase):
             self.assertEqual(sum(op[:2] == ('read', 0x18) for op in device.operations), 1)
             self.assertFalse(any(op[0] == 'write' and op[1] in (0x24, 0x28, 0x2c, 0x34, 0x48)
                                  for op in device.operations))
+
+    def test_pl011_arrival_during_clear_cannot_leave_unobserved_data_without_irq(self):
+        for lib in self.libs:
+            device, uart = self.fresh(lib, 2)
+            self.assertEqual(lib.uartmask(C.byref(uart), 1, 0), 0)
+            arrived, pending = [False], [False]
+
+            def read(address, width):
+                offset = device.offset(address, width)
+                value = device.read(address, width)
+                if offset == 0 and not device.rx:
+                    pending[0] = False
+                return value
+
+            def write(address, value, width):
+                offset = device.offset(address, width)
+                # A real arrival may occur after FR reported empty, before ICR.
+                # The RX interrupt latches on the FIFO threshold transition.
+                if offset == 4 and not arrived[0]:
+                    device.rx.append((0x5a, 0))
+                    arrived[0] = pending[0] = True
+                if offset == 0x44 and value & 0x10:
+                    pending[0] = False
+                device.write(address, value, width)
+
+            callbacks = Read(read), Write(write)
+            lib.uartmockio(*callbacks)
+            data, more = (C.c_ubyte * 32)(), C.c_uint32()
+            self.assertEqual(lib.uartrx(C.byref(uart), data, 32, C.byref(more)), 0)
+            self.assertEqual(len(device.rx), 1)
+            self.assertTrue(more.value or pending[0], 'data remained but both continuation and IRQ were lost')
+            self.assertEqual(lib.uartrx(C.byref(uart), data, 32, C.byref(more)), 1)
+            self.assertEqual(data[0], 0x5a)
+            self.assertFalse(more.value)
             device.shiftbusy = False
             self.assertEqual(lib.uartinit(C.byref(uart), device.base, 4096, 2, 0, 4), 0)
             self.assertEqual(uart.initialized, 1)

@@ -240,6 +240,8 @@ init控制协议words=[(version<<32)|opcode,seq,arg0,arg1]：word0高32位为协
 
 2026-11-18另确认serial/tty晚绑定：serial先完成设备、环和IRQ就绪并报告READY；init待tty就绪后凭serial固定CONTROL INSTALL安装对端NOTIFY，以精确PID1/image发起控制CALL绑定，绑定时重查持久状态并补提示，绑定完成前不发布tty连接。双方NOTIFY各仅授用户bit32/33，反向含义及资源约束见11。这样不要求tty在serial之前运行，也不让init转发串口字节；控制CALL详细布局和状态失败语义须随实现收口。
 
+READY接收结果使用普通四字reply=[s64原生业务状态,原seq,服务编号,服务image]；成功状态0仅表示init接受该精确实例的就绪，不代替tty晚绑定或授予资源。错误后两字0。服务以CALL_ASYNC|CALL_CONTROL提交唯一READY请求，保存RPC，不同步等待init；在设备/管理事件循环中rqpoll重查，成功保存回复并ACK_RESULT|ACK_RELEASE。错误、10秒期限或init失效停止正常设备操作，未完成请求按原RPC取消/退出收尾，不重发新READY来猜原结果。这里复用既有错误号及控制出站预算，不增加内核权限；实现验收仍按本篇执行项。
+
 共享定义位于include/proto/init.h，SDK导出同一文件并记录头文件哈希。2026-11-18本地两架构SDK构建、导出文件逐字节比较及目标编译期编码/拆分检查通过，fmt-check通过；编译检查产物在build/host/stage102-init-protocol/。本点仅落定协议编码，不改变内核或init运行路径，未重跑QEMU，不以此前stage101结果代替实际READY验收。
 
 spawn属性只支持SETSIGMASK、SETSIGDEF、SETPGROUP、RESETIDS；RESETIDS仅将有效值设为已有真实值，首版固定凭据要求合法，否则拒绝，调度/setsid扩展flag不静默接受。文件动作OPEN/CLOSE/DUP2按顺序，PATH查找至多32项/总4096字节，空分量表示cwd，遇EACCES继续其他项后择优报告，ENOEXEC不执行sh脚本替代。参数/动作先快照，最多128动作；准备失败正错误返回且无已发布孩子，文件外部效果不回滚。
@@ -589,3 +591,11 @@ tests/kernel/serialparent及serialverify为独立实际ELF测试，不进入生�
 已接sbin/serial/io.c的双向有界步骤，具体背压/私有TX保留/IRQ掩码及失败副作用见09末尾。独立包PID1现先交接控制台，再启动原实际孩子；该孩子在私有普通一致环上实际驱动UART发送一个换行并检查空闲步骤，保留原跨Set SHARED往返与退休审计。主机从journal重建内核输出，独立确认串口只额外出现该换行。该fixture未发送READY、不进入生产init，未将私有环冒充真实tty连接。
 
 完整753项host、格式及167次双架构QEMU通过，140份journal及全部源码/SDK哈希另核对；生产init ELF与stage110完全相同、无测试符号。证据build/host/stage111-serial-io/。用户已确认反向通知和晚绑定方向，已写本篇首版协议及11；下一步仍为实际serial main、IRQ ACK事件循环、生产装载/READY与监督，不以推进步骤替代T1.4。
+
+### 独立serial程序与READY接续（2026-11-19）
+
+已构建独立生产sbin/serial ELF，使用既有Boot七参数、独立会话、实际Device/SHARED/IRQ和异步READY；控制BIND/STATUS按11首版格式，默认构建不混入测试同伴或PID1入口。测试PID1实际加载该生产ELF，完成READY/晚绑定、两批外部UART输入与真实TX，另验证不回READY时仍响应BUSY并在实际10秒后失败退出/收尾。IRQ与PL011丢唤醒反例及完整验证进度见09末尾，证据stage112-serial-service/。
+
+生产init尚未接默认清单装载/READY状态机，make bootpkg仍只打入实际init，不能将测试PID1的加载器说成T1.4已交付。下一步复用现有用户ELF加载器从真实包中装载本程序，按固定CONTROL保存管理状态并实现期限/退出监督，再启动tty依赖。
+
+本地完整763项host/格式及171次双架构QEMU通过，144份日志/全部结果源码与SDK哈希匹配。逐字节核对测试PID1嵌入的生产serial ELF，独立服务源码/头/实际链接清单无fixture；不是只凭READY文本或编译成功验收。

@@ -261,3 +261,19 @@ RX按共享环现有空位读取设备，满环不读UART数据寄存器且屏�
 完整make test-all通过753项host、fmt-check及167次双架构QEMU；140份实际日志快照保持审计，结果内核源码/头及SDK源码/头/导出/归档哈希匹配终稿。生产init ELF与stage110相同且无推进测试符号，实际serviceauth/serialverify ELF另核对；证据归build/host/stage111-serial-io/evidence.json/test-all.log，无CI/板端/性能结论。
 
 本点尚无生产serial main/READY、外部RX流、真实IRQ ACK主循环或对端NOTIFY晚绑定。用户已确认的反向提示/晚绑定方向已写07/11及共享位定义，后续据此连接服务；生产init继续不含fixture，不把此有界步骤当作T1.4或tty交付。
+
+### 独立serial服务与实际IRQ事件循环（2026-11-19）
+
+sbin/serial/main.c现作为独立csu→libc→libsys程序构建build/<架构>/sbin/serial.elf，不把测试入口或后端放进默认init。启动核验既有七参数/真实资源/父PID1后显式setsid，映射实际Device及两个普通SHARED环，保留固件波特率/格式并初始化PIO；PL011 BUSY以1ms闹钟重试且受10秒上限约束，等待中仍可回复管理请求BUSY，不无限轮询。
+
+设备、环和IRQ就绪后以CALL_ASYNC|CALL_CONTROL向精确init镜像提交唯一READY，设备事件循环继续工作；rqpoll核对普通四字接受结果并确认/释放原RPC。超时不重发，屏蔽设备IRQ、release发布RX ERROR、尝试提示已绑定对端、取消原RPC并退出；硬杀等不可运行用户清理的路径仍由init/内核生命周期监督负责，不假定这段失败函数总能执行。这里没有DMA或宣称关闭UART请求就是停外部DMA引擎。
+
+IRQ_BIND固定设备位16，首次初始化后ACK启用；实际消费IRQ事件后先处理设备，仍有again工作则让出并继续，排空/背压稳定后再ACK重新启用。没有数据和控制工作时阻塞recv，不靠周期timer扫描UART；READY确认后取消本进程闹钟。SOURCE/绑定/设备属性仍由已有内核授权强制，不以参数位或uid0补权。控制BIND/STATUS及最近请求结果缓存按11的首次协议实现，接收口只接受精确PID1/image，环数据不回调init。
+
+49项串口host专项已通过，新增9项控制反例在O0/O2验证实际资源查询、权限/镜像/代次/继承/保留字段、真实notify失败不提交、序号缓存/不回绕、离线/取消、终结环及有界分页。独立ELF和每程序源/头/链接输入清单已生成，编译数据库含实际服务源码。
+
+测试包PID1用原生构造接口装载上述同一生产ELF及只持SHARED/CALL/NOTIFY的测试同伴，检查READY、未授权绑定拒绝、错误image、绑定/重复及BUSY；同伴不是tty。主机确认实际TX输出后，只在PID1的原生QUERY_PROC已证明驱动BLOCKED（且独立SID/PGID为自身）时分两次从UART输入FIFO注入3+4字节。同伴在非满RX时不发RX_ROOM提示，第二批必须由重新启用的设备IRQ唤醒；24字节真实输出及7字节输入、STATUS计数、固定CONTROL停止、父wait与最终Run退休均核对。另一个包不回复READY，仍可取得STATUS BUSY，实际10秒后服务退出106、RX ERROR保留，父完成原REQUEST并检查退休。
+
+最初测试接收器把无可收取结果的CHILD提示误判为失败；真实内存快照确认提示位8而WNOHANG无结果后，已按持久wait状态继续重查。强化ARM64输入又暴露PL011判空后清ICR的漏唤醒窗口：新字节可在判空与清中断之间到达，旧代码同时失去IRQ和more。确定性host反例运行旧生产C失败，修复为清后重查FR，保证已有数据转为again或后来的到达保留IRQ；没有加timer轮询替代IRQ。保留旧C/ELF、失败QEMU、只读快照及设备trace（trace改变时序的成功运行不冒充故障捕获）。修复后ARM64无trace连续三次加强场景及两架构READY超时通过。
+
+完整make test-all通过763项host、fmt-check及171次双架构QEMU；144份journal保持审计。四份真实服务结果分别核对两架构阻塞后双批输入/重新启用IRQ与READY超时，完整结果源码/头及SDK源码/头/导出/归档哈希匹配；独立生产ELF的链接输入无fixture，测试PID1嵌入字节与该生产ELF逐字节相同。证据build/host/stage112-serial-service/evidence.json/test-all.log。默认生产init仍只建立包目录/收取循环，尚未从默认包拉起服务或提供全局READY监督；本点不等于T1.4/T1.5、生产tty、可用sh、CI或实板完成。

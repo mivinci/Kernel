@@ -799,6 +799,22 @@ def audit_package_init(qmp, run_dir, args, record, transition):
             raise SmokeError('native UART handoff/repeated call/configuration mutation proof mismatch')
         record['console_handoff']=dict(transferred=True,attempts=proof[1],uart_kind=proof[2],
                                        repeat_after_mutation=True,fatal_restored_output=True)
+    if 'serialserviceproof' in user_symbols:
+        proof=struct.unpack('<16Q',read(user_symbols['serialserviceproof'],128))
+        if (proof[0]!=1 or proof[1]>>59!=1 or proof[2] not in (1,2) or proof[6]!=1 or
+                proof[7] not in (1,2) or any(proof[10:])):
+            raise SmokeError('actual serial service READY/retirement proof mismatch')
+        if proof[2]==1:
+            if (proof[3]>>59!=1 or proof[4:6]!=(7,24) or proof[8:10]!=(1,1) or
+                    record.get('serial_input',{}).get('sent')!=7 or
+                    len(record.get('serial_injection_gates',[]))!=2):
+                raise SmokeError('actual serial service late-binding/external byte exchange mismatch')
+        elif proof[3:6]!=(106,0,0) or any(proof[8:10]):
+            raise SmokeError('actual serial READY timeout did not stop and retire the service')
+        record['serial_service']=dict(pid=proof[1],mode='live' if proof[2]==1 else 'ready-timeout',
+                                      peer=proof[3] if proof[2]==1 else None,rx_bytes=proof[4],
+                                      tx_bytes=proof[5],retired=True,uart_kind=proof[7],
+                                      actual_service=True,production_init_launch=False)
     stores=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITPACKAGE ')]
     if stores!=[dict(pages=count,copies=len(edges),retained=count+len(edges),refs=(count+15)//16)]:
         raise SmokeError('live package backing lifetime/charge mismatch')
@@ -806,6 +822,38 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                 user_tables=len(tables),package_pages=count,package_refs=stores[0]['refs'],
                 complete_pte_audit=True,immutable_bytes_checked=True,boot_checked=True,
                 physical_owner_audit=True,catalog_checked=args.init_exit is None,exit_code=args.init_exit)
+
+
+def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof'):
+    """Read a fixture's retained state even when its final assertion failed."""
+    rows=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITRETAIN ')]
+    if len(rows)!=1:raise SmokeError('missing retained probe root')
+    inspected=run_command([record['build']['tools']['readelf']['path'],'-s',str(args.init_elf)],run_dir/'probe-symbols.log',args.timeout)
+    if not inspected.ok:raise SmokeError('could not inspect native probe symbols')
+    address=symbols(Path(inspected.log).read_text())['serialserviceproof']
+    ram=0x80000000 if args.arch=='riscv' else 0x40000000
+    saved=0
+    def physical(pa,size):
+        nonlocal saved
+        if not ram<=pa<pa+size<=ram+args.ram*1024*1024:raise SmokeError('probe outside RAM')
+        path=run_dir/(label+'-%03d.bin'%saved);saved+=1
+        qmp.command('pmemsave',{'val':pa,'size':size,'filename':str(path)})
+        return path.read_bytes()
+    payload=b''
+    while len(payload)<128:
+        va=address+len(payload);table=rows[0]['root']
+        for level,shift in enumerate((30,21,12)):
+            pte=struct.unpack('<Q',physical(table+8*((va>>shift)&511),8))[0]
+            target=((pte&0x003ffffffffffc00)<<2) if args.arch=='riscv' else pte&0x0000fffffffff000
+            if level<2:
+                if pte!=((target>>2)|1 if args.arch=='riscv' else target|3):raise SmokeError('invalid probe table')
+                table=target
+            elif (pte&0x13!=0x13 if args.arch=='riscv' else pte&0x43!=0x43):
+                raise SmokeError('invalid probe user leaf')
+        length=min(128-len(payload),4096-(va&4095))
+        payload+=physical(target+(va&4095),length)
+    (run_dir/(label+'.bin')).write_bytes(payload)
+    return list(struct.unpack('<16Q',payload))
 
 
 PACKAGE_ERRORS = {'header': -1, 'checksum': -2, 'directory': -3, 'name': -4,
@@ -952,8 +1000,16 @@ def exercise(args, run_dir, record):
         path = Path(temporary) / "qmp.sock"
         deadline = time.monotonic() + args.timeout
         gdb = GdbPipe(Path(temporary)/'gdb',deadline) if args.arch=='arm64' or getattr(args,'boot_hart',None) is not None else None
+        serial_options=['-serial','file:'+str(serial)]
+        input_fd=None
+        if getattr(args,'serial_input',False):
+            input_path=Path(temporary)/'uart-input'
+            os.mkfifo(input_path)
+            input_fd=os.open(input_path,os.O_RDWR|os.O_NONBLOCK)
+            serial_options=['-chardev','file,id=uart,path='+str(serial)+',input-path='+str(input_path),
+                            '-serial','chardev:uart']
         command = [qemu, *machine, "-accel", "tcg", "-smp", str(getattr(args,'cpus',1)), "-m", str(args.ram) + "M", "-nodefaults",
-                   "-display", "none", "-monitor", "none", "-serial", "file:" + str(serial),
+                   "-display", "none", "-monitor", "none", *serial_options,
                    "-qmp", 'stdio' if pipe_qmp else "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
                    "-global", "virtio-mmio.force-legacy=false", "-kernel", str(boot_artifact)]
         if args.initrd:
@@ -963,6 +1019,10 @@ def exercise(args, run_dir, record):
             command += ["-device", "virtio-rng-device"]
         if args.trace:
             command += ["-d", "int,guest_errors", "-D", str(run_dir / "trace.log")]
+        if getattr(args,'uart_trace',False):
+            events=run_dir/'uart-trace-events'
+            events.write_text('pl011_fifo_rx_put\npl011_read_fifo\npl011_irq_state\npl011_write\n')
+            command+=['-trace','events='+str(events)+',file='+str(run_dir/'uart-trace.log')]
         if gdb:command+=['-gdb',gdb.argument]
         record["argv"] = command
         (run_dir / "launch.json").write_text(json.dumps(record, indent=2) + "\n")
@@ -974,6 +1034,7 @@ def exercise(args, run_dir, record):
                                         stderr=output if pipe_qmp else subprocess.STDOUT, start_new_session=True)
             except BaseException:
                 if gdb:gdb.close()
+                if input_fd is not None:os.close(input_fd)
                 raise
             try:
                 while not pipe_qmp and not path.exists():
@@ -1040,6 +1101,21 @@ def exercise(args, run_dir, record):
                     if proc.poll() is not None or time.monotonic() >= deadline:
                         raise SmokeError("QEMU exited/timed out before expected diagnostic")
                     text = serial.read_text(errors="replace").replace("\r", "") if serial.exists() else ""
+                    if input_fd is not None:
+                        gates=record.setdefault('serial_injection_gates',[])
+                        markers=('serial-live\n','serial-next\n')
+                        if len(gates)<2 and markers[len(gates)] in text:
+                            index=len(gates)
+                            qmp.command('stop')
+                            snapshot=probe_package_init(qmp,run_dir,args,record,'serial-service-gate%d'%index)
+                            if snapshot[8+index]==1:
+                                payload=(b'uar',b't-rx')[index]
+                                sent=os.write(input_fd,payload)
+                                if sent!=len(payload):raise SmokeError('short external UART input injection')
+                                gates.append(dict(proof=snapshot,bytes=sent,driver_blocked=True))
+                                record['serial_input']=dict(sent=sum(x['bytes'] for x in gates),
+                                                            hex=(b'uar' if index==0 else b'uart-rx').hex())
+                            qmp.command('cont')
                     if expected in text:
                         break
                     if "PANIC " in text:
@@ -1126,6 +1202,8 @@ def exercise(args, run_dir, record):
                     expected_state = 0x345 if normal_live else 0x3c4 if args.case == "fault" or args.case in VM_FAULTS else 0x3c5
                     if not value or int(value[1], 16) & 0x3cf != expected_state:
                         raise SmokeError("QMP observed unexpected EL/DAIF/stack selection")
+                if getattr(args,'serial_probe',False):
+                    record['serial_probe']=probe_package_init(qmp,run_dir,args,record)
                 record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram,args.init_exit,getattr(args,'cpus',1))
                 record["discovery"] = validate_discovery(serial.read_text(errors="replace"), args.arch,
                                                           args.ram, names, record["observed"],getattr(args,'cpus',1))
@@ -1532,6 +1610,7 @@ def exercise(args, run_dir, record):
                     qmp.close()
                 _stop_group(proc)
                 if gdb:gdb.close()
+                if input_fd is not None:os.close(input_fd)
 
 
 @run_guard(ROOT)

@@ -316,6 +316,20 @@ NOTIFY的精确bit32/33掩码由可信init创建/授予时保证；现有RESOURC
 
 例子：serial镜像S已READY但未绑定，RX环有17字节且没有tty连接发布。tty新镜像T已READY，init安装指向T的NOTIFY并发起绑定；若提交的是旧T0的句柄/镜像则拒绝，S的旧状态和环位置不变，init撤销本次安装项。成功则S按实际RX数据及TX空位补提示，init确认绑定成功后才发布依赖连接。若T在绑定中退出，提示失败/退出观察进入本次失败收尾，不凭迟到成功复活T或把旧环直接重定向到下个tty；活环重置仍须双方停止及epoch协议。
 
+#### 首次serial控制连接的实现收口
+
+按上述已确认方向，serial接收端单独使用版本1的控制协议：四字请求=[(version<<32)|opcode,seq,arg0,arg1]，BIND=1、STATUS=2。与init接收端的READY编号分属不同目标协议，不新增syscall。仅接收来自Boot INIT_CALL所指精确PID1/image的CALL；SEND不能管理服务。seq必须非0且单调，不回绕。普通reply=[s64原生业务状态,原seq,value0,value1]，机制状态仍独立于业务状态。
+
+首个UART的IRQ_BIND固定投递设备位16，由init实际bind时选择；驱动只能在消费该事件并完成本批设备处理后ACK，首次初始化完成后ACK一次启用。RESOURCE当前也不暴露绑定位，此启动约定由可信init配置，不通过额外整数制造IRQ权。
+
+BIND参数为init已安装到serial本地表的NOTIFY Handle及预期peer image。serial核对实际RESOURCE种类/USE且无GRANT、继承0及完整目标身份，拒绝自身目标；精确两位掩码仍由init创建时保证。两环必须仍为本epoch且无终结标志。重查环并保守补发RX_READY|TX_ROOM双位提示（可含无工作提示），同时通过内核实际操作检查两位均获授权和对端有效；仅成功后提交绑定并回复目标PID/image。绑定不分配或安装资源；失败仍未绑定，由init撤销其记录的安装项，不按不可信输入随意free其他本地资源。已有绑定不接受新目标或活环重置，返回BUSY；替换/恢复另走停止和epoch协议。
+
+STATUS要求arg0/arg1均0，成功value0/value1分别为UART累计接收/发送字节（不是上层已消费或物理排空证明）。READY结果尚未确认时，未取消的已知新请求返回BUSY，无设备/绑定副作用，业务参数校验在就绪后进行；精确重复仍返回已缓存的原结果。未知版本/操作返回NOTSUP，未授权来源返回DENIED，均不推进控制序号。
+
+每实例仅缓存最近一次已识别、已授权请求及回复，不建无限历史表：较旧seq返回STALE；同seq且四字完全相同返回该回复，不重复查询/通知/提交；同seq内容不同返回STATE。新seq的业务失败也记录结果，修正后须用新seq。协作取消在副作用前观测到时记录CANCELLED；操作已开始则回复实际结果，不能伪称零效果。机制已终结的REQUEST只rqfinish，不执行迟到命令；缓存不是跨新RPC安装资源的许可。
+
+例子：BIND seq1的镜像不匹配，回复STALE并仍未绑定；init撤销该安装项，安装正确NOTIFY，以seq2绑定成功。完全相同的seq2再来只回原结果，不再次通知；随后STATUS seq3后，旧seq2返回STALE，原RPC的内核结果仍可独立查询。peer退出后的新BIND不能复活此旧环，须按恢复协议重建。实现落地/运行结果记录在本篇和09末尾，不以本段文字表示服务已经上线。
+
 共享布局唯一来源为include/proto/serial.h。libsys私有serialinit/read/write提供普通一致SHARED内存上的有界字节操作：单生产者仅写producer，单消费者仅写consumer，以无锁64位acquire/release发布；初始化仅在分享前或双方停止后执行。每次至多32字节，返回实际字节数，满/空返回0，0不等于EOF；旧epoch、损坏几何/位置、重叠调用缓冲及计数溢出分别拒绝，失败不推进位置。EOF/ERROR不清空已有队列，消费者仍可排空，生产者不再追加。识别终结时消费者须先acquire读取终结标志，再读取/排空队列，不用读前的空快照断言没有最终数据。
 
 该辅助层不执行notify、yield或活环重置；批次间让出/重新检查工作及排空后的epoch握手仍由服务状态机负责，不能把计数耗尽返回OVERFLOW当成已实现自动恢复。映射有效性、单写者及运行期epoch/几何不变是两端契约，不是对恶意共享写入的内存安全承诺，也不将一致内存原子操作当作DMA/cache维护。
@@ -552,3 +566,7 @@ fork快照接续（2026-11-17）：sigfork现由可信forksnapshot在Space/Local
 serial推进接续（2026-11-18）：sbin/serial/io.c已连接现有UART与两个SPSC方向，满RX屏蔽设备接收中断并保留数据，TX部分发送由私有32字节缓冲持有，提示与again供外层推进；具体步骤、失败副作用及专项/两架构验证见09末尾。反向RX_ROOM/TX_READY与精确PID1/image控制晚绑定方向已由用户确认，尚非已交付的生产serial/tty循环。
 
 该接续完整753项host/格式及167次双架构QEMU已通过，含两架构实际UART字节的journal/串口独立核对；默认生产init ELF保持不变，未声明外部RX、实际IRQ服务循环或READY/tty上线。证据stage111-serial-io/，详细验收归09。
+
+独立serial接续（2026-11-19）：上述首次控制协议、异步READY和实际IRQ循环已落生产程序；原生测试PID1加载同一ELF并核对晚绑定/反例、阻塞后两批UART输入、实际TX与超时退出。测试同伴不是tty，不授MMIO/IRQ，不以它代替行规程、终端或默认init上线。PL011判空/ICR漏唤醒已通过旧C反例修复为清后重查；详细执行/完整回归状态见09末尾及stage112-serial-service/。
+
+该接续完整763项host/格式及171次双架构QEMU通过；实际服务每架构分别验证阻塞后双批输入/IRQ重新启用与READY超时退出，144份journal及来源/ELF/SDK哈希另核对。生产init装载/监督及实际tty仍是后续，不以测试字节同伴替代它们。
