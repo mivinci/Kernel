@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- init配置/管理引擎通过780项host/格式及179次双架构QEMU，152份日志与源码/SDK/配置哈希匹配。真实包加载serial的READY后监督回收、未READY超时、缺镜像、装载预算不足两架构各四例通过PTE/Acct/物理owner审计，最终回到初始PID1费用；原生入口不是默认init。证据stage113-init-services/，无CI/板端。
+
 - 独立serial通过763项host/格式及171次双架构QEMU，144份日志和源码/SDK哈希一致。原生测试PID1装载与独立构建逐字节相同的生产ELF，验证异步READY、精确控制/晚绑定、实际阻塞后分两批外部输入、24字节输出、IRQ重新启用及10秒READY超时/收尾。PL011判空/清中断竞态有旧C失败反例，已改清后重查；生产init/serial链接无fixture。证据stage112-serial-service/，无CI/板端/性能结论。
 
 - 010 SDK导出与011运行保留工具已修复。011当时清理8,326个目录，15,699个保留目录/174万文件内容与集合不变，统计23.42→17.19 GB；规则见14末尾，证据stage110-run-retention/。控制台交接/64 KiB日志历史证据及边界见07/14，不在本页重复阶段记录。
@@ -31,6 +33,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage113前置已本地全量验收：定宽配置/生成/运行复核、分阶段装载监督与回收已实现。初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis；父wait/镜像确认/缓冲回收独立。尚未切生产init main/默认包；首次必需serial失败后恢复诊断停机还是先补存活失败通道，已询问待用户确认，见07。该确认前继续已定的资源回复等前置，不把未切默认写成T1.4完成。
 
 - 下一步：生产init从真实包/清单装载上述serial ELF，复用实际设备/IRQ和固定CONTROL，接READY期限/退出监督；默认包与生产主循环同步切换并做两架构验证。然后按T1..T4接tty/fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 

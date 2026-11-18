@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "services": [
+    {
+      "id": 1,
+      "kind": "serial",
+      "image": "sbin/serial",
+      "creator": "default-service",
+      "required": true,
+      "memory_pages": 64,
+      "exec_pages": 128,
+      "resources": 16,
+      "pending": 4,
+      "depends": []
+    }
+  ]
+}

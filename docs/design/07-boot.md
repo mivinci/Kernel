@@ -112,6 +112,14 @@ init 读取基础服务原始 ELF，按既定用户态加载器校验/装载；�
 依赖以服务 READY 为条件，独立服务可并行初始化；必需服务失败进入对应救援或失败状态，可选 net/dis/win 失败不阻止串口环境。
 编译配置选择硬件支持与容量，清单选择程序与启动策略；两者不重复定义 ABI 或绕过运行时资源检查。
 
+首个默认配置采用config/boot.json，经主机构建校验后生成小端只读init配置并嵌入init ELF；不向格式1启动包塞非ELF成员或新增目录字段。配置头64字节八u64=[magic,format,bytes,machine,count,records_off,record_bytes,checksum]，magic=0x4b53455256494331、format=1，记录从offset64紧接且每项160字节，最多16项；总长须精确匹配，无扩展尾。checksum为FNV-1a64，计算时头offset56..63视为0，只检测损坏。
+
+每项前九u64=[服务编号,kind,flags,creator_tag,memlimit,exec_limit,resources,pending,dependencies]，随后64字节带NUL/零填充的包内镜像名，末尾三u64保留0。编号1..16唯一，依赖bit(n-1)引用编号n，完整图无环。首期只实现kind1=选中控制台UART的serial，flags1=必需，creator_tag=BOOT_CREATE；仅允许一项控制台UART记录，不把数组容量当成已实现其他服务。默认64/128页、16资源、4接收额度，仍受真实CREATE/Set限制。后续服务类型及设备/创建域选择按对应主题接续，未知kind/flags拒绝，不从整数标签创造权限。镜像路径是精确包成员名，主机按目标静态ELF校验，运行时仍核对包内真实内容。
+
+初始配置校验失败是init故障；有效配置缺失镜像、装载失败、READY期限或运行退出则记录该服务FAILED并完成构造/运行清理，不假称已有救援终端。首个serial不自动重试；首次基础终端建立前，清理后触发致命引导诊断还是保持init存活并先补失败出口，2026-11-19已向用户询问，待确认后实现。设备和缓冲必须在旧Run退出/清理后处理，不能因超时直接复用。清单控制的默认包必须同时携带init与实际serial ELF，不能用测试同伴替代服务。
+
+初始init显式获得仅OBSERVE_MONITOR、无GRANT/继承的观察许可，由自身RESOURCE查询发现真实Handle，不增Boot字段。服务观察仍须传该固定CONTROL QUERY作basis并锁定PID/image，许可不允许无依据按PID观察或转授。退出结果归父wait，镜像观察/通知由原cookie确认，业务及设备收尾各自处理，不能互相替代。
+
 - [ ] 重复名称、依赖环、缺失镜像、超限预算和损坏生成记录明确失败。
 - [ ] 验证独立服务初始化可并行、依赖者不会提前启动，可选服务故障不阻断串口。
 
@@ -241,6 +249,8 @@ init控制协议words=[(version<<32)|opcode,seq,arg0,arg1]：word0高32位为协
 2026-11-18另确认serial/tty晚绑定：serial先完成设备、环和IRQ就绪并报告READY；init待tty就绪后凭serial固定CONTROL INSTALL安装对端NOTIFY，以精确PID1/image发起控制CALL绑定，绑定时重查持久状态并补提示，绑定完成前不发布tty连接。双方NOTIFY各仅授用户bit32/33，反向含义及资源约束见11。这样不要求tty在serial之前运行，也不让init转发串口字节；控制CALL详细布局和状态失败语义须随实现收口。
 
 READY接收结果使用普通四字reply=[s64原生业务状态,原seq,服务编号,服务image]；成功状态0仅表示init接受该精确实例的就绪，不代替tty晚绑定或授予资源。错误后两字0。服务以CALL_ASYNC|CALL_CONTROL提交唯一READY请求，保存RPC，不同步等待init；在设备/管理事件循环中rqpoll重查，成功保存回复并ACK_RESULT|ACK_RELEASE。错误、10秒期限或init失效停止正常设备操作，未完成请求按原RPC取消/退出收尾，不重发新READY来猜原结果。这里复用既有错误号及控制出站预算，不增加内核权限；实现验收仍按本篇执行项。
+
+初始STATUS只允许注册实例查询自身：参数为服务编号/自身image，init同时核对内核source/image及注册记录，普通reply=[s64状态,seq,服务状态,原生失败码]；不提供任意PID全局查询。READY与STATUS在每实例共用单调非0seq，缓存最近一次请求/回复，完全相同的最近seq返回原结果、同seq异内容STATE、更旧seq STALE；未知版本/操作和未授权来源不推进序号。LOOKUP/SHUTDOWN在相应资源交付/系统策略实现前明确NOTSUP，不返回init本地Handle冒充转授。机制已终结的REQUEST只finish，不执行迟到READY；已取消的新READY不发布并进入停止，STATUS取消不改变服务运行状态。
 
 共享定义位于include/proto/init.h，SDK导出同一文件并记录头文件哈希。2026-11-18本地两架构SDK构建、导出文件逐字节比较及目标编译期编码/拆分检查通过，fmt-check通过；编译检查产物在build/host/stage102-init-protocol/。本点仅落定协议编码，不改变内核或init运行路径，未重跑QEMU，不以此前stage101结果代替实际READY验收。
 
@@ -599,3 +609,15 @@ tests/kernel/serialparent及serialverify为独立实际ELF测试，不进入生�
 生产init尚未接默认清单装载/READY状态机，make bootpkg仍只打入实际init，不能将测试PID1的加载器说成T1.4已交付。下一步复用现有用户ELF加载器从真实包中装载本程序，按固定CONTROL保存管理状态并实现期限/退出监督，再启动tty依赖。
 
 本地完整763项host/格式及171次双架构QEMU通过，144份日志/全部结果源码与SDK哈希匹配。逐字节核对测试PID1嵌入的生产serial ELF，独立服务源码/头/实际链接清单无fixture；不是只凭READY文本或编译成功验收。
+
+### init配置与管理引擎接续（2026-11-19）
+
+已接config/boot.json→tools/initcfg.py→定宽小端配置及sbin/init/manifest.c运行时复核。8项host在两架构格式和O0/O2解码中验证精确布局/不对齐输入、checksum/目标/范围/零填充、预算、缺镜像/错误ELF/超页数、依赖缺项/环和CLI失败不覆盖已有输出。格式1目前只有必需控制台UART一项，容量16不表示其他服务类别已实现；无新包类型或内核配置解析器。
+
+sbin/init/service.c现提供实际状态记录和分阶段管理引擎：核对包中镜像后才交接，BUSY以截止/闹钟退让、未创建孩子前不会占用Prep期限；按真实Boot CREATE构造并持固定CONTROL，父Acct出资两个独立SHARED环，保留初始化/终结标记所需的有界父映射，不转发字节。孩子镜像/栈/Boot仍由现有用户ELF加载器计入孩子Acct，发布前卸除所有加载别名。成功start后重新取单调时间设10秒READY期限，不复用构造期限。
+
+READY/自STATUS严格核对完整source/image/编号、REQUEST状态、实际CONTROL查询及期限，最近请求结果缓存按前述协议；不把已终结或取消的READY当作新发布。镜像MONITOR只用初始明确许可和固定CONTROL basis，父wait独立领取退出结果。STOPPING先撤可用状态并终止，已发布孩子须等wait与实际Run退休；未发布孩子按原view取消。之后才解除父映射、free父SHARED引用/CONTROL并FAILED，不因超时提前复用或假定DMA已停止。首期无自动重试或活环重置。
+
+9项host管理模型在O0/O2覆盖BUSY不提前create、缺镜像/预算/部分map/授权/装载失败、READY身份/缓存、超时先停后等wait/退休、DRAINING只finish。该模型使用主机可映射窗口替代真实低VA，不能当作原生运行证明。原生测试入口另外调用相同生产管理模块，从真实包加载实际serial ELF，验证READY后明确停止、未发READY仍能STATUS后超时、缺镜像和真实装载预算不足；每架构四例已通过完整PTE/Acct/物理owner审计，运行费用最终回到初始实际PID1集合。
+
+完整make test-all通过780项host、fmt-check及179次双架构QEMU；152份journal与全部结果源码/头、SDK源码/头、配置blob/JSON及库哈希另核对。两架构各四项管理原生路径的真实PTE、物理owner及费用审计保持，最后费用回到初始实际PID1集合。证据build/host/stage113-init-services/evidence.json/test-all.log，无CI/实板结果。生产init main和默认包尚未切换，首次必需serial引导失败的最终诊断策略仍等用户选择；这些原生入口仅验证管理模块，不冒充默认启动已启用。后续默认常驻验收还须独立核对活孩子页表/内核栈和父持有的SHARED费用，不能放宽原有无遗漏/无别名检查。

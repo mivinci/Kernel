@@ -28,16 +28,21 @@ isize         __sys_debughandoff(Handle system);
 isize         __sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds);
 isize         __sys_alarmset(u64 deadline, u64 *generation);
 isize         __sys_alarmcancel(u64 *generation);
-isize         __sys_inherit(Handle resource, u64 flags);
-isize         __sys_map(Handle space, const Maparg *args);
-isize         __sys_unmap(Handle space, u64 address);
-isize         __sys_seal(Handle memory);
-isize         __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count,
-                          u64 *written, u64 *next);
-isize         __sys_create(Handle authority, const Createarg *args, Handle *view, Handle *pid,
-                           Handle *control);
-isize         __sys_configure(Handle view, const Config *config, u64 reserve);
-isize         __sys_connect(Handle authority, u64 kind, u64 rights, u64 bits, Handle *out);
+isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 image, u64 *cookie,
+                    u64 *state, u64 *reason);
+isize __sys_obsread(u64 cookie, u64 *state, u64 *reason, Handle *pid, u64 *image);
+isize __sys_obsack(u64 cookie);
+isize __sys_obsdrop(u64 cookie);
+isize __sys_inherit(Handle resource, u64 flags);
+isize __sys_map(Handle space, const Maparg *args);
+isize __sys_unmap(Handle space, u64 address);
+isize __sys_seal(Handle memory);
+isize __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count,
+                  u64 *written, u64 *next);
+isize __sys_create(Handle authority, const Createarg *args, Handle *view, Handle *pid,
+                   Handle *control);
+isize __sys_configure(Handle view, const Config *config, u64 reserve);
+isize __sys_connect(Handle authority, u64 kind, u64 rights, u64 bits, Handle *out);
 isize __sys_grant(Handle target, Handle source, u64 rights, u64 offset, u64 bytes, u64 inherit,
                   Handle *out);
 isize __sys_start(Handle view);

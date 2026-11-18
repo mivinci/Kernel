@@ -815,6 +815,25 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                                       peer=proof[3] if proof[2]==1 else None,rx_bytes=proof[4],
                                       tx_bytes=proof[5],retired=True,uart_kind=proof[7],
                                       actual_service=True,production_init_launch=False)
+    if 'initserviceproof' in user_symbols:
+        proof=struct.unpack('<16Q',read(user_symbols['initserviceproof'],128))
+        error=struct.unpack('<q',struct.pack('<Q',proof[5]))[0]
+        if (proof[0]!=1 or proof[1] not in (1,2,3,4) or proof[2:4]!=(1,4) or
+                proof[8]!=1 or any(proof[13:])):
+            raise SmokeError('init manager completion/cleanup proof mismatch')
+        if proof[1] in (1,2):
+            if (proof[4]!=(8 if proof[1]==1 else 7) or error!=(-14 if proof[1]==1 else -21) or
+                    proof[6:11]!=(1,265,1,1,1)):
+                raise SmokeError('init manager READY/timeout/observation/wait result mismatch')
+        elif proof[1]==3:
+            if proof[4]!=1 or error!=-1 or any(proof[6:8]+proof[9:12]):
+                raise SmokeError('init manager missing-image path published a child')
+        elif proof[4]!=5 or error!=-8 or any(proof[6:8]+proof[9:11]) or not proof[11]:
+            raise SmokeError('init manager budget failure did not abort its preparation')
+        record['init_manager']=dict(mode=('live','ready-timeout','missing-image','load-budget')[proof[1]-1],
+                                    stage=proof[4],error=error,reclaimed=True,waited=proof[9],
+                                    published=bool(proof[10]),own_charge=proof[12],
+                                    production_engine=True,default_init=False)
     stores=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITPACKAGE ')]
     if stores!=[dict(pages=count,copies=len(edges),retained=count+len(edges),refs=(count+15)//16)]:
         raise SmokeError('live package backing lifetime/charge mismatch')
@@ -824,13 +843,13 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                 physical_owner_audit=True,catalog_checked=args.init_exit is None,exit_code=args.init_exit)
 
 
-def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof'):
+def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof', symbol='serialserviceproof'):
     """Read a fixture's retained state even when its final assertion failed."""
     rows=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITRETAIN ')]
     if len(rows)!=1:raise SmokeError('missing retained probe root')
     inspected=run_command([record['build']['tools']['readelf']['path'],'-s',str(args.init_elf)],run_dir/'probe-symbols.log',args.timeout)
     if not inspected.ok:raise SmokeError('could not inspect native probe symbols')
-    address=symbols(Path(inspected.log).read_text())['serialserviceproof']
+    address=symbols(Path(inspected.log).read_text())[symbol]
     ram=0x80000000 if args.arch=='riscv' else 0x40000000
     saved=0
     def physical(pa,size):
@@ -1204,6 +1223,8 @@ def exercise(args, run_dir, record):
                         raise SmokeError("QMP observed unexpected EL/DAIF/stack selection")
                 if getattr(args,'serial_probe',False):
                     record['serial_probe']=probe_package_init(qmp,run_dir,args,record)
+                if getattr(args,'manager_probe',False):
+                    record['manager_probe']=probe_package_init(qmp,run_dir,args,record,'init-services-proof','initserviceproof')
                 record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram,args.init_exit,getattr(args,'cpus',1))
                 record["discovery"] = validate_discovery(serial.read_text(errors="replace"), args.arch,
                                                           args.ram, names, record["observed"],getattr(args,'cpus',1))

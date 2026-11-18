@@ -1,4 +1,5 @@
 #include <bootstart.h>
+#include <abi/observe.h>
 #include <bootstore.h>
 #include <bootimage.h>
 #include <proc.h>
@@ -100,7 +101,7 @@ bootstart(const Bootdir *directory, const Dtinfo *hardware, const Dtuart *uart)
   const Bootitem *item;
   const u8       *data;
   Set             budget;
-  Handle          pid, creator, listener, system;
+  Handle          pid, creator, listener, system, observer;
   Createpolicy    policy;
   Procinfo        process;
   Rtable         *table;
@@ -148,6 +149,8 @@ bootstart(const Bootdir *directory, const Dtinfo *hardware, const Dtuart *uart)
     panic("initial listener");
   if (initialdevices(pid, table, process.identity, hardware, uart, &system))
     panic("initial device authority");
+  if (localobserve(table, OBSERVE_MONITOR, &observer))
+    panic("initial monitor authority");
   packet.resources[3].tag = BOOT_SYSTEM;
   packet.resources[3].handle = system;
   packet.header.magic = BOOT_MAGIC;

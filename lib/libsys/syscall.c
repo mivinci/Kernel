@@ -1,6 +1,50 @@
 #include "private/syscall.h"
 #include <abi/syscall.h>
 isize
+__sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 image, u64 *cookie,
+              u64 *state, u64 *reason)
+{
+  const u64 args[7] = {(u64) permit, (u64) basis, relation, (u64) pid, image, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!cookie || !state || !reason)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_OBSERVE, args, &result);
+  *cookie = result.values[0];
+  *state = result.values[1];
+  *reason = result.values[2];
+  return error;
+}
+isize
+__sys_obsread(u64 cookie, u64 *state, u64 *reason, Handle *pid, u64 *image)
+{
+  const u64 args[7] = {cookie, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!state || !reason || !pid || !image)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_OBSREAD, args, &result);
+  *state = result.values[0];
+  *reason = result.values[1];
+  *pid = (Handle) result.values[2];
+  *image = result.values[3];
+  return error;
+}
+isize
+__sys_obsack(u64 cookie)
+{
+  const u64 args[7] = {cookie, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_OBSACK, args, &result);
+}
+isize
+__sys_obsdrop(u64 cookie)
+{
+  const u64 args[7] = {cookie, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_OBSDROP, args, &result);
+}
+isize
 __sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds)
 {
   const u64 args[7] = {clock, 0, 0, 0, 0, 0, 0};

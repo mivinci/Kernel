@@ -15,6 +15,7 @@ from build import ROOT, PROFILES, COMMON, BuildError, compilation_database, dige
 from elf import pack
 from run import install_stop_handlers, run_command, run_guard
 from sdkheaders import export_private_headers, check_private_headers
+import initcfg
 
 
 def build(args):
@@ -171,6 +172,10 @@ def build(args):
     serial_sources = [ROOT/'sbin/serial'/name for name in ('main.c','start.c','uart.c','io.c','control.c')]
     serial_headers = [ROOT/'sbin/serial'/name for name in ('start.h','uart.h','io.h','control.h')]
     serial_elf = program('serial',serial_sources,serial_headers)
+    init_configuration = ROOT/'config/boot.json'
+    init_config = sdk/'init.cfg'
+    init_config.write_bytes(initcfg.generate(json.loads(init_configuration.read_text()),
+                                            {'sbin/serial':serial_elf},profile['machine']))
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
     ringuser_object = sdk / 'obj/ringuser.o'
     command = [tools['cc']['path'], *flags, '-c', str(ringuser_source), '-o', str(ringuser_object)]
@@ -238,6 +243,10 @@ def build(args):
         assembly=sdk/(symbol+'.S')
         assembly.write_text('/* elf sha256: '+digest(artifact)+' */\n.section .rodata\n.balign 8\n.global '+symbol+','+symbol+'_end\n'+symbol+':\n.incbin "'+str(artifact)+'"\n'+symbol+'_end:\n')
         return compile_adoption(assembly,symbol)
+    def embedded_config(artifact):
+        assembly=sdk/'init-config.S'
+        assembly.write_text('/* configuration sha256: '+digest(artifact)+' */\n.section .rodata\n.balign 8\n.global init_config,init_config_end\ninit_config:\n.incbin '+json.dumps(str(artifact))+'\ninit_config_end:\n')
+        return compile_adoption(assembly,'init-config')
     def link_adoption(label,objects,libraries=()):
         artifact=sdk/(label+'.elf')
         invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
@@ -251,6 +260,10 @@ def build(args):
     service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth'),compile_adoption(ROOT/'tests/kernel/serialparent.c','serialparent'),embedded_elf(serial_verify,'serial_verify')])
     serial_peer=link_adoption('serialpeer',[compile_adoption(ROOT/'tests/kernel/serialpeer.c','serialpeer')])
     serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer')])
+    init_service_sources=[ROOT/'sbin/init'/name for name in ('service.c','manifest.c','package.c')]
+    init_service_test=link_adoption('initservices',[compile_adoption(ROOT/'tests/kernel/initservices.c','initservices'),
+        *[compile_adoption(source,'init-manager-'+source.stem) for source in init_service_sources],embedded_config(init_config)])
+    no_ready=link_adoption('noready',[compile_adoption(ROOT/'tests/kernel/noready.c','noready'),compile_adoption(serial_start_source,'noready-start')])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
     parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
@@ -344,6 +357,7 @@ def build(args):
     headers += [ROOT / 'sbin/serial/start.h']
     headers += [ROOT / 'sbin/serial/io.h']
     headers += [ROOT / 'sbin/serial/control.h']
+    headers += [ROOT / 'sbin/init/service.h', ROOT / 'sbin/init/manifest.h']
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
@@ -352,6 +366,9 @@ def build(args):
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     serial_artifact=str(serial_elf.relative_to(ROOT)),serial_artifact_sha256=digest(serial_elf),
                     serial_service_test=str(serial_service_test.relative_to(ROOT)),serial_peer_artifact=str(serial_peer.relative_to(ROOT)),
+                    init_service_test=str(init_service_test.relative_to(ROOT)),no_ready_artifact=str(no_ready.relative_to(ROOT)),
+                    init_config_artifact=str(init_config.relative_to(ROOT)),init_config_sha256=digest(init_config),
+                    init_config_source=str(init_configuration.relative_to(ROOT)),init_config_source_sha256=digest(init_configuration),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
                     service_auth_artifact=str(service_auth.relative_to(ROOT)),
                     serial_verify_artifact=str(serial_verify.relative_to(ROOT)),serial_verify_sha256=digest(serial_verify),
@@ -363,7 +380,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + init_service_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),
