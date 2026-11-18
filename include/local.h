@@ -7,6 +7,7 @@
 #include <abi/proc.h>
 #include <abi/ipc.h>
 #include <abi/resource.h>
+#include <abi/system.h>
 #include <prepid.h>
 #include <image.h>
 #include <irq.h>
@@ -22,6 +23,7 @@
 #define LOCAL_OBSERVE    RESOURCE_OBSERVE
 #define LOCAL_IRQ_BIND   RESOURCE_IRQ_BIND
 #define LOCAL_IRQ_SOURCE RESOURCE_IRQ_SOURCE
+#define LOCAL_SYSTEM     RESOURCE_SYSTEM
 #define LOCAL_USE        1
 #define LOCAL_CONSTRUCT  RESOURCE_CONSTRUCT
 #define LOCAL_LOAD       4
@@ -128,6 +130,8 @@ int localobserve(Rtable *table, u64 rights, Handle *out);
 int localirqbind(Rtable *table, Imageid image, Event *event, u32 source, u32 bit, Handle *out);
 int localirqsource(Rtable *table, u32 number, Handle *out);
 int localirqresolve(Rtable *table, Handle handle, u32 *source);
+int localsystem(Rtable *table, Imageid image, Handle *out);
+int localsystemquery(Rtable *table, Handle authority, Imageid *out);
 int localirqack(Rtable *table, Handle binding, Imageid image);
 int localirqunbind(Rtable *table, Handle binding, Imageid image);
 int localobserver(Rtable *table, Handle permit, u32 relation);

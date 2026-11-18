@@ -1,6 +1,7 @@
 /* Native bootstrap authority exercise; never publishes a fake service. */
 #include <sys/boot.h>
 #include <abi/resource.h>
+#include <abi/system.h>
 #include "private/start.h"
 #include "private/syscall.h"
 
@@ -10,18 +11,74 @@
       return n;                                                                                    \
   } while (0)
 
+static Handle system, memory, source;
+static u64    windowbytes;
+static int
+inventory(const Bootview *boot, u64 image)
+{
+  Queryrec row;
+  Maparg   mapping;
+  u64      written = 99, next = 99, i;
+  system = bootresource(boot, BOOT_SYSTEM);
+  REQUIRE(system > 0, 120);
+  for (i = 0; i < sizeof(row); i++)
+    ((u8 *) &row)[i] = 0xa5;
+  REQUIRE(__sys_query(0, QUERY_BOOT_RESOURCE, 0, &row, 1, &written, &next) == -ERR_DENIED &&
+              !written && !next,
+          121);
+  for (i = 0; i < sizeof(row); i++)
+    REQUIRE(((const u8 *) &row)[i] == 0xa5, 122);
+  REQUIRE(!__sys_query(system, QUERY_BOOT_RESOURCE, 0, &row, 1, &written, &next) && written == 1 &&
+              !next && row.type == QUERY_BOOT_RESOURCE && row.pid == 1 && row.image == image &&
+              row.stamp == 1 && row.data[0] && row.data[4] &&
+              (row.data[1] == BOOT_UART_NS16550 || row.data[1] == BOOT_UART_PL011) && row.data[2] &&
+              row.data[3] && !row.data[5],
+          123);
+  for (i = 6; i < 20; i++)
+    REQUIRE(!row.data[i], 124);
+  memory = (Handle) row.data[0];
+  source = (Handle) row.data[4];
+  windowbytes = ((row.data[2] & 4095) + row.data[3] + 4095) & ~4095UL;
+  REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0x20001, &row, 1, &written, &next) ==
+                  -ERR_STALE &&
+              !written && !next,
+          125);
+  REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0, NULL, 1, &written, &next) == -ERR_INVALID &&
+              !written && !next,
+          126);
+  REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0, (Queryrec *) 0x3000000, 1, &written, &next) ==
+                  -ERR_FAULT &&
+              !written && !next,
+          142);
+  REQUIRE(__sys_inherit(system, 1) == -ERR_DENIED && __sys_inherit(source, 1) == -ERR_DENIED, 127);
+  mapping.mem = memory;
+  mapping.offset = 0;
+  mapping.address = 0x2000000;
+  mapping.length = windowbytes;
+  mapping.prot = 3;
+  mapping.reserved = 0;
+  REQUIRE(!__sys_map(bootresource(boot, BOOT_SELF_SPACE), &mapping) &&
+              !__sys_unmap(bootresource(boot, BOOT_SELF_SPACE), mapping.address),
+          128);
+  return 0;
+}
+
 int
 main(int argc, char **argv)
 {
   const Bootview *boot = sysboot();
   Handle          creator, listener = 0, view, pid, control, installed;
-  Handle          self, parent;
-  u64             image, cursor = 0, written, next, i, creates = 0, found = 0;
-  Queryrec        records[4], own, child;
-  Createarg       args;
-  isize           error;
+  Handle          self, parent, device, binding;
+  u64 image, cursor = 0, written, next, i, creates = 0, found = 0, systems = 0, memories = 0,
+             sources = 0;
+  Queryrec  records[8], own, child;
+  Createarg args;
+  isize     error;
   (void) argv;
   REQUIRE(argc == 1 && !__sys_getid(&self, &image, &parent) && self == 1 && !parent, 100);
+  error = inventory(boot, image);
+  if (error)
+    return (int) error;
   creator = bootresource(boot, BOOT_CREATE);
   REQUIRE(creator > 0, 101);
   do {
@@ -40,10 +97,29 @@ main(int argc, char **argv)
         REQUIRE(!listener, 104);
         listener = (Handle) records[i].data[0];
       }
+      if (records[i].data[1] == RESOURCE_SYSTEM) {
+        REQUIRE((Handle) records[i].data[0] == system && records[i].data[2] == SYSTEM_QUERY &&
+                    !records[i].data[5],
+                129);
+        systems++;
+      }
+      if ((Handle) records[i].data[0] == memory) {
+        REQUIRE(records[i].data[1] == RESOURCE_MEM && records[i].data[2] == ((1UL << 63) | 3) &&
+                    !records[i].data[3] && records[i].data[4] == windowbytes && !records[i].data[5],
+                130);
+        memories++;
+      }
+      if ((Handle) records[i].data[0] == source) {
+        REQUIRE(records[i].data[1] == RESOURCE_IRQ_SOURCE && records[i].data[2] == 1 &&
+                    !records[i].data[5],
+                131);
+        sources++;
+      }
     }
     cursor = next;
   } while (cursor);
-  REQUIRE(creates == 16 && found == 1 && listener, 105);
+  REQUIRE(creates == 16 && found == 1 && listener && systems == 1 && memories == 1 && sources == 1,
+          105);
   REQUIRE(!__sys_query(0, QUERY_ACCT, 0, &own, 1, &written, &next) && written == 1 && !next, 106);
   args.memlimit = 64;
   args.exec_limit = 128;
@@ -58,7 +134,20 @@ main(int argc, char **argv)
               !next && child.data[0] != own.data[0] && child.data[1] == 64 && child.data[2] == 128,
           108);
   REQUIRE(!__sys_grant(view, listener, 1, 0, 0, 0, &installed) && installed > 0, 109);
-  REQUIRE(!__sys_query(view, QUERY_RESOURCE, 0, records, 4, &written, &next), 110);
+  REQUIRE(__sys_grant(view, system, 1, 0, 0, 0, &device) == -ERR_DENIED && !device, 132);
+  REQUIRE(__sys_grant(view, source, 1, 0, 0, 0, &device) == -ERR_DENIED && !device, 133);
+  REQUIRE(__sys_query(control, QUERY_BOOT_RESOURCE, 0, records, 1, &written, &next) ==
+                  -ERR_DENIED &&
+              !written && !next,
+          134);
+  REQUIRE(!__sys_grant(view, memory, 3, 0, windowbytes, 0, &device) && device > 0, 135);
+  REQUIRE(!__sys_irqbind(control, source, 16, &binding) && binding > 0, 136);
+  REQUIRE(!__sys_free(source), 137);
+  REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0, records, 1, &written, &next) == -ERR_STALE &&
+              !written && !next,
+          138);
+  REQUIRE(!__sys_irqunbind(control, binding), 139);
+  REQUIRE(!__sys_query(view, QUERY_RESOURCE, 0, records, 8, &written, &next) && !next, 110);
   found = 0;
   for (i = 0; i < written; i++)
     if ((Handle) records[i].data[0] == installed) {
@@ -71,5 +160,10 @@ main(int argc, char **argv)
   REQUIRE(!__sys_destroy(view) && !__sys_free(control), 113);
   error = __sys_wait(-1, WAIT_WNOHANG, &pid, &image, &cursor, &next);
   REQUIRE(error == -ERR_CHILD, 114);
+  REQUIRE(!__sys_free(system) && !__sys_free(memory), 140);
+  REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0, records, 1, &written, &next) ==
+                  -ERR_BAD_HANDLE &&
+              !written && !next,
+          141);
   return 42;
 }

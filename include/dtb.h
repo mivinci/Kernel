@@ -3,6 +3,7 @@
 #define _DTB_H
 #include <types.h>
 #include <hal/cpu.h>
+#include <abi/system.h>
 #define DT_RAM      8
 #define DT_RESERVED 32
 #define DT_DEVICES  64
@@ -13,8 +14,8 @@
 
 enum Dtkind
 {
-  DT_UART16550 = 1,
-  DT_PL011,
+  DT_UART16550 = BOOT_UART_NS16550,
+  DT_PL011 = BOOT_UART_PL011,
   DT_VIRTIO,
   DT_PLIC,
   DT_GIC,

@@ -762,6 +762,8 @@ A 的孩子 B 已退出但未收取，C 仍运行。A 死亡后，B 的既有结
 
 RESOURCE 子类型编号固定：1 CREATE、2 SPACE、3 ALLOC、4 MEM、5 CALL、6 SEND、7 NOTIFY、8 CONTROL、9 OBSERVE、10 IRQ_SOURCE、11 IRQ_BIND、12 TERMINAL、13 EXEC_VIEW、14 CONSTRUCT、15 SYSTEM。仅有对应子类型才解析其权限位；同一位号不构成跨子类型权限。
 
+SYSTEM实现接续（2026-11-18）：Local已接仅QUERY的精确Image绑定及清理引用，禁止继承/GRANT，free/表关闭只释放该引用，不牵连独立设备授权；生产安装与库存只绑定初始PID1/image1，不按uid或裸PID补权。681项host/格式/167次两架构QEMU本地全量通过；实际边界、Boot布局及原生事务归07末尾，不称SYSTEM全部业务位或全局管理域已实现。
+
 | 子类型 | 子类型内权限位，从bit0起 | 绑定范围与默认继承 |
 | --- | --- | --- |
 | CREATE | CREATE、CREDENTIAL、SERVICE | 固定集合、单实例/峰值上限、实例额度；普通孩子继承CREATE_USE=1，CREDENTIAL/SERVICE/GRANT清零；各上限夹到孩子Createarg |

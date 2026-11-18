@@ -206,6 +206,7 @@ def build(args, directory, run_dir):
         flags += ["-DBOOT_CASE=" + str(BOOT_CASES[args.case])]
         sources.append(ROOT / "kernel/bootpkg.c")
         sources.append(ROOT / "kernel/bootstore.c")
+        sources.append(ROOT / 'kernel/bootresource.c')
         sources += [ROOT / 'kernel/bootcpu.c', ROOT / 'kernel' / args.arch / 'cpu.c',
                     ROOT / 'kernel' / args.arch / 'firmware.S']
         if args.case == 'normal':

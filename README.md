@@ -1,6 +1,6 @@
 # Kernel
 
-面向 ARM64 与 RV64 的微内核操作系统，以最小可用和高性能为目标。已接启动/DTB、物理页与预算、用户映射/封存、进程构造/调度、原生消息IPC及部分libc。普通镜像现从DTB启动包进入真正的用户态`sbin/init`，校验包目录并进入孤儿收取/CHILD事件循环；服务装载/READY、SYSTEM与设备清单、完整信号/fork/exec、文件/终端及net仍待完成，不是已可用的sh系统。
+面向 ARM64 与 RV64 的微内核操作系统，以最小可用和高性能为目标。已接启动/DTB、物理页与预算、用户映射/封存、进程构造/调度、原生消息IPC及部分libc。普通镜像现从DTB启动包进入真正的用户态`sbin/init`，校验包目录并进入孤儿收取/CHILD事件循环；初始SYSTEM只读查询和标准UART发权已接，实际服务装载/READY、其他设备及管理业务、完整信号/fork/exec、文件/终端及net仍待完成，不是已可用的sh系统。
 
 ![架构图](docs/architecture.jpg)
 
@@ -43,7 +43,7 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 进程启动Boot统一为格式2（144字节头），追加精确只读包VA/长度；旧格式不兼容，需重建SDK/包。ELF和堆避开16MiB包窗口；Mem仍最多64KiB。PID1获得受跟踪的R/NX分片视图，首尾包外字节隔离为0，包原页/副本只计启动保留一次，各进程页表单独计费。
 
-生产启动现建立16个预算Set，PID1持对应CREATE SERVICE及可减权转授的自身CALL；Boot启动数据320字节，含SELF_SPACE、SELF_ALLOC和首服务CREATE，init本地表128槽。SYSTEM/设备清单、实际服务装载与READY仍待完成，详见07末尾。
+生产启动现建立16个预算Set，PID1持CREATE SERVICE及可减权转授的自身CALL；Boot格式2/144字节头，启动数据352字节，含SELF_SPACE、SELF_ALLOC、首服务CREATE和SYSTEM，init表128槽。仅初始Image持SYSTEM QUERY，按已确认六字段读取选中标准UART的实际MMIO RW/GRANT及IRQ_SOURCE BIND；查询不发权，原授权释放即STALE，不自动重装。DW步长/位宽扩展未采用，实际服务/READY及其他设备/管理业务仍待接，见07末尾。
 
 `CASE=bootpkg`使用十个SDK测试包验证格式、分片/快照及拒启，不执行包内程序。`normal`必须有包；`make smoke ARCH=...`自动构建默认生产包并启动，也可传`INITRD=/absolute/path/boot.pkg`。直接运行smoke工具时可用`--init-elf`指定该包中init的ELF供独立审计。缺包/坏包在页分配前拒启；完整回归另覆盖非首目录项、整页包和包内PID1真实exit致命。
 

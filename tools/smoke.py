@@ -678,17 +678,17 @@ def audit_package_init(qmp, run_dir, args, record, transition):
             out+=physical(leaves[page][0])[offset:offset+take];va+=take;size-=take
         return out
     startup=read(0x3fff000000,144);head=struct.unpack('<18Q',startup)
-    if (head[:4]!=(bootpkg.BOOT_MAGIC,2,320,0) or head[4]!=1 or head[5]!=144 or head[6] or head[8]!=3 or
+    if (head[:4]!=(bootpkg.BOOT_MAGIC,2,352,0) or head[4]!=1 or head[5]!=144 or head[6] or head[8]!=4 or
             head[9]!=152 or any(head[i] for i in (7,10,11,12,13)) or head[14:16]!=(0x10000,1<<38) or
             head[16:]!=(0x3ffe000000+discovery['initrd']['base']%4096,len(data))):
         raise SmokeError('invalid production Boot header')
     startup=read(0x3fff000000,head[2])
     arg,length=struct.unpack_from('<II',startup,head[5])
-    if arg!=248 or length!=len(member['name'])+1 or startup[arg:arg+length]!=member['name']+b'\0':
+    if arg!=280 or length!=len(member['name'])+1 or startup[arg:arg+length]!=member['name']+b'\0':
         raise SmokeError('init argv does not identify selected member')
-    for i in range(3):
+    for i in range(4):
         tag,handle,flags,reserved=struct.unpack_from('<4Q',startup,head[9]+i*32)
-        if tag!=i+1 or handle>>59!=2 or not (handle>>16)&((1<<43)-1) or flags or reserved:
+        if tag!=(1,2,3,7)[i] or handle>>59!=2 or not (handle>>16)&((1<<43)-1) or flags or reserved:
             raise SmokeError('invalid initial SELF resource')
     expected={va:dict(prot=page['prot'],kind='image',data=bytes(page['data'])) for va,page in image.items()}
     for va in range(0x3ffffe0000,0x3fffff0000,4096):expected[va]=dict(prot=3,kind='stack')

@@ -1,4 +1,5 @@
 #include <proc.h>
+#include <bootresource.h>
 #include <hal/context.h>
 #include <abi/boot.h>
 #include <diag.h>
@@ -2342,8 +2343,22 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
   if (!count || count > QUERY_RECORDS || kind < QUERY_PROC || kind > QUERY_BOOT_RESOURCE ||
       cursor >> 59 || (cursor && !(cursor >> 16)))
     return -ERR_INVALID;
-  if (kind == QUERY_BOOT_RESOURCE)
-    return -ERR_DENIED; /* SYSTEM/boot enumeration is not in this profile. */
+  if (kind == QUERY_BOOT_RESOURCE) {
+    error = bootresourcequery(source, authority, cursor, records, (u32) count, &n, &following);
+    if (error)
+      return error;
+    error = range(current, address, count * sizeof(Queryrec), VM_READ | VM_WRITE);
+    if (error)
+      return error;
+    if (n) {
+      error = spacewrite(source->space, address, records, (u64) n * sizeof(Queryrec));
+      if (error)
+        return error == SP_BUSY ? -ERR_BUSY : -ERR_FAULT;
+    }
+    *written = n;
+    *next = following;
+    return 0;
+  }
   identity = current->life;
   if (authority) {
     error = localqueryprep(source, authority, &target);

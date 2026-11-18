@@ -498,7 +498,7 @@ normal成功时主机确认CPU在内核IRQ-idle、定时器/控制器状态正�
 
 ### 首个设备的 BOOT_RESOURCE 记录（2026-11-18确认）
 
-06已冻结QUERY_BOOT_RESOURCE及前缀[resource,kind,start,length,irq,flags]。用户同意以下首个serial服务的具体记录与授权规则；本节冻结设计，尚未实现：
+06已冻结QUERY_BOOT_RESOURCE及前缀[resource,kind,start,length,irq,flags]。用户同意以下首个serial服务记录与授权规则；标准布局的初始QUERY实现与验收见本篇末尾，字段6/7扩展仍待确认：
 
 - 仅有效、属于初始init镜像且含QUERY的SYSTEM Handle可读；不接受authority=0、裸PID、普通CONTROL或uid0身份替代。初次仅授QUERY，不为尚未实现的CLOCK/HALT/REBOOT/POLICY填充空权限或假句柄。
 - 每条Queryrec为一个实际获授且独占页可映射的UART窗口，type=BOOT_RESOURCE、pid/image为该初始镜像、stamp及cursor绑定不可变启动库存。data[0..5]=[MMIO管理Handle,UART种类,精确物理start,精确字节length,IRQ_SOURCE Handle或0,flags=0]，data[6..19]保留0；UART种类1=NS16550、2=PL011，与现有DT发现值统一进共享ABI定义。这里的irq传完整资源Handle，不让init凭硬件中断号制造权限。
@@ -523,3 +523,17 @@ tests/kernel/serviceauth.c作为独立测试包PID1，经原生接口枚举16份
 005的真实板描述接入需要保留UART寄存器步长与位宽；现有已确认BOOT_RESOURCE仅有六字段前缀且data[6..19]全0，不能靠UART种类或板名猜这些属性。候选保留data[0..5]及flags=0不变，增加data[6]=reg-shift、data[7]=reg-io-width，data[8..19]仍0；Queryrec大小、QUERY_BOOT_RESOURCE调用号和SYSTEM权限均不改变。
 
 候选按现有早期HAL支持范围核对：NS16550兼容设备shift 0..4、width 1或4；PL011 shift=0、width=4，地址/访问对齐及真实窗口必须有效。当前不支持的big-endian/reg-offset继续明确拒绝，不用缺省字段冒充已支持。它们只是受信库存的访问元数据，不产生额外MMIO/DMA权。用户确认前不修改已冻结的六字段记录或实现此候选生产查询；内部DTB解析与容量修复可以独立推进。
+
+### T1.4接续：初始SYSTEM与只读UART库存（2026-11-18）
+
+已实现真实LOCAL_SYSTEM QUERY，强持有精确Imageid清理引用，只在绑定镜像ACTIVE且table的完整PID/image匹配时可用；不含GRANT，不继承/转授，关闭/free释放自身引用，旧代次或旧镜像不改绑新表。这里只实现QUERY=1，不填CLOCK/HALT/REBOOT/POLICY假权限，普通CONTROL或uid0不能替代。类型及UART种类字面来源分别为abi/resource.h、abi/system.h，Local仍48字节。
+
+生产启动仅为精确PID1/image1准备一份不可变库存，首期只授已选中诊断UART的受支持独占页窗口：NS16550 shift=0/width=1或PL011 shift=0/width=4。安装真实MMIO READ/WRITE/GRANT、IRQ_SOURCE BIND及SYSTEM QUERY，先核对槽位，失败撤回本次句柄；只读查询不创建句柄或映射。字段6/7扩展未确认前，不把DW等其他访问布局当成默认可用：没有实际后端/独占页资格时不发设备记录，可读库存为空，不发0 Handle假行。其他设备及Set/domain CONTROL仍后续接入。
+
+Boot仍格式2/144字节头，总启动数据增至352字节、四个条目SELF_SPACE/SELF_ALLOC/服务CREATE/SYSTEM（tag7），名称偏移280；MMIO/IRQ_SOURCE从BOOT_RESOURCE记录获得，不额外增临时Boot tag。query要求实际本地SYSTEM及精确初始Image绑定，输出冻结六字段且data[6..19]=0，192字节Queryrec大小不变。首期一条记录，stamp=1且无继续cursor；非0旧/伪cursor为STALE。查询核对原MMIO/源授权仍存活、设备实际几何/源绑定相符；原授权释放或槽复用后返回STALE，不重装或猜新句柄。请求输出的全部count范围均核验，失败不写半行/计数。
+
+新的tests/kernel/serviceauth原生包在两架构验证SYSTEM/资源枚举、authority0/普通CONTROL拒绝、保留字段、cursor和输出边界、MMIO实际map/unmap、SYSTEM/SOURCE不继承/转授、孩子的MMIO减权grant与真实IRQ bind/unbind，以及SOURCE释放后库存STALE/既有BIND仍可显式解绑，最后取消孩子并free自身管理句柄。此为权限事务测试，不发布空服务或冒充serial READY；普通init仍只执行真实目录/孤儿循环。
+
+最终完整make test-all通过681项host、格式和167次两架构QEMU，所有源码/共享头及SDK源/库/链接输入核对；两架构service-authority包的实际ELF SHA与当前用例源码构建匹配，实际return42及完整用户PTE/Acct审计通过，不计早期未重建SDK的结果。12次内存与8次四核矩阵、真实IRQ和缓存审计继续通过，生产normal/init不含fixture。证据build/host/stage101-system-inventory/evidence.json及test-all.log。procquery编译帧两架构3440字节，非完整栈深或性能证明。
+
+首次大记录赋值引入隐式memcpy已改定长volatile字节复制，libsys补既有SYS_INHERIT私有桩；原生测试NULL输出按已有query边界为INVALID，合法但未映射指针为FAULT，未为该测试修改通用范围语义。初始失败日志保留。此点完成生产SYSTEM查询/标准UART发权前置，不称T1.4、SYSTEM全部操作、首服务装载/READY或板端/CI/性能已完成。

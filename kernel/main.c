@@ -251,7 +251,7 @@ virtualmain(Hvs *space)
 #if BOOT_CASE != 0
   testmain(space, &hardware, cpustate.current);
 #else
-  bootstart(&package);
+  bootstart(&package, &hardware, &diagnostic);
 #endif
   hal_halt();
 }

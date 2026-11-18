@@ -708,6 +708,56 @@ localobserve(Rtable *table, u64 rights, Handle *out)
   publish(table, slot, LOCAL_OBSERVE, owner.generation, owner.index, rights, 0, 0, 0, 0, out);
   return 0;
 }
+int
+localsystem(Rtable *table, Imageid image, Handle *out)
+{
+  Local *slot;
+  Image  owner;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!table || table->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  error = ownedimage(table, image, &owner);
+  if (error)
+    return error;
+  if (owner.state != IMAGE_PREPARING)
+    return -ERR_STATE;
+  slot = empty(table);
+  if (!slot)
+    return sloterror(table);
+  error = imagehold(image, IMAGE_CLEANUP);
+  if (error)
+    return error;
+  publish(table, slot, LOCAL_SYSTEM, image.generation, image.index, SYSTEM_QUERY, 0, 0, 0, 0, out);
+  return 0;
+}
+int
+localsystemquery(Rtable *table, Handle authority, Imageid *out)
+{
+  Local  *slot;
+  Image   owner;
+  Imageid image;
+  if (!out)
+    return -ERR_INVALID;
+  out->generation = 0;
+  out->index = out->reserved = 0;
+  slot = find(table, authority, 0);
+  if (!slot)
+    return -ERR_BAD_HANDLE;
+  if (slot->subtype != LOCAL_SYSTEM || slot->rights != SYSTEM_QUERY)
+    return -ERR_DENIED;
+  image.generation = slot->objectgen;
+  image.index = slot->object;
+  image.reserved = 0;
+  if (ownedimage(table, image, &owner))
+    return -ERR_STALE;
+  if (owner.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  *out = image;
+  return 0;
+}
 static Irqid
 bindingid(const Local *local)
 {
@@ -1156,6 +1206,17 @@ removeentry(Local *l)
     l->rights = 0;
     return 0;
   }
+  if (l->subtype == LOCAL_SYSTEM) {
+    Imageid image;
+    image.generation = l->objectgen;
+    image.index = l->object;
+    image.reserved = 0;
+    if (imagedrop(image, IMAGE_CLEANUP))
+      panic("SYSTEM image reference");
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_IRQ_BIND) {
     if (irqdrop(bindingid(l)))
       panic("IRQ local reference");
@@ -1265,7 +1326,8 @@ localfree(Rtable *t, Handle h)
   Local *l = find(t, h, 0);
   return l && (l->subtype == LOCAL_MEM || l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND ||
                l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL ||
-               l->subtype == LOCAL_IRQ_BIND || l->subtype == LOCAL_IRQ_SOURCE)
+               l->subtype == LOCAL_IRQ_BIND || l->subtype == LOCAL_IRQ_SOURCE ||
+               l->subtype == LOCAL_SYSTEM)
              ? removeentry(l)
              : -ERR_BAD_HANDLE;
 }
@@ -1367,7 +1429,8 @@ queryrecord(const Rtable *table, u32 index, Queryrec *out)
   } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
              l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT &&
              l->subtype != LOCAL_CREATE && l->subtype != LOCAL_OBSERVE &&
-             l->subtype != LOCAL_IRQ_SOURCE && l->subtype != LOCAL_IRQ_BIND)
+             l->subtype != LOCAL_IRQ_SOURCE && l->subtype != LOCAL_IRQ_BIND &&
+             l->subtype != LOCAL_SYSTEM)
     return -ERR_NOTSUP;
   return 0;
 }
@@ -1679,6 +1742,7 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
     case LOCAL_CONTROL:
     case LOCAL_OBSERVE:
     case LOCAL_IRQ_SOURCE:
+    case LOCAL_SYSTEM:
     case LOCAL_IRQ_BIND:
     case LOCAL_CONSTRUCT:
       break;

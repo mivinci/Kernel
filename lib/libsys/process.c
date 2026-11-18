@@ -1,6 +1,13 @@
 #include "private/syscall.h"
 #include <abi/syscall.h>
 isize
+__sys_inherit(Handle resource, u64 flags)
+{
+  const u64 args[7] = {(u64) resource, flags, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_INHERIT, args, &result);
+}
+isize
 __sys_create(Handle authority, const Createarg *arg, Handle *view, Handle *pid, Handle *control)
 {
   const u64 args[7] = {(u64) authority, (u64) arg, 0, 0, 0, 0, 0};

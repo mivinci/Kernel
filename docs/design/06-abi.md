@@ -351,6 +351,8 @@ IRQ原生接续（2026-11-17）：已接0x71单输入IRQ_BIND ACK及0x72双输�
 
 IRQ_SOURCE接续（2026-11-18）：原生0x70现已接target CONTROL IRQ/source IRQ_SOURCE BIND/bit三输入，成功a1/x1为目标表的IRQ_BIND，失败及其余输出为0；libsys提供__sys_irqbind。SOURCE仅可信库存安装，不转授/继承，删除不级联BIND；RESOURCE同时支持SOURCE/BIND，除本地Handle/类型/权限外字段为0。生产SYSTEM发权尚未接，验证与边界见05末尾。
 
+初始SYSTEM查询接续（2026-11-18）：QUERY_BOOT_RESOURCE由实际SYSTEM QUERY且精确初始Image限定，返回已确认六字段，后14字保留0；192字节Queryrec不变。Boot仍格式2/144字节头，生产数据352字节/四项含BOOT_SYSTEM=7。仅选中标准访问布局且独占页可用UART有实际记录，读取不发权/映射；原授予被释放返回STALE，不自动重装。已有SYS_INHERIT补libsys私有桩，无新调用号。681项host/格式/167次两架构QEMU通过，验证和失败边界见07末尾；两字段候选仍未采用。
+
 上述ACK/解绑及生命周期的最终完整回归通过321项host和102个双架构QEMU；未用输入、外表Handle、旧代、消费边界和真实硬件EVENT由05的新场景核验。0x70保留NOTSUP，Source撤销决策未采用候选默认。
 
 原生HANDLER接续（2026-11-17）：sigaction的48字节/三个参数保持，现接两入口用户RX/普通映射检查后才交付old并提交；输入输出别名使用快照，原生旧输出失败不换动作。NODEFER/RESETHAND/SIGINFO已可用于原生自定义trampoline，RESTART/NOCLDSTOP仍NOTSUP；递送重查及证据见11末尾。libc mask接口依旧使用原生寄存器old值，故公开sigprocmask的old复制失败发生在已提交mask之后，不回滚；没有新增old指针原生参数或魔法查询how。

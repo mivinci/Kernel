@@ -4,13 +4,15 @@
 #include <proc.h>
 #include <diag.h>
 #include <vm.h>
+#include <bootresource.h>
+#include <device.h>
 
 typedef struct Bootpacket Bootpacket;
 struct Bootpacket
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[3];
+  Resentry resources[4];
   u8       name[BOOTPKG_NAME_BYTES + 1];
 };
 static Bootpacket packet;
@@ -33,14 +35,69 @@ resource(Rtable *table, u32 subtype)
   panic("initial resource");
 }
 
+static int
+initialdevices(Handle pid, Rtable *table, Imageid image, const Dtinfo *hardware, const Dtuart *uart,
+               Handle *system)
+{
+  Handle memory = 0, irq = 0;
+  u32    i, device = DT_DEVICES, matches = 0, window, number = 0, usable = 0;
+  int    error;
+  if (!hardware || hardware->ndev > DT_DEVICES || !uart || !system)
+    return -ERR_INVALID;
+  *system = 0;
+  for (i = 0; i < hardware->ndev; i++)
+    if (hardware->dev[i].kind == uart->kind && hardware->dev[i].nreg == 1 &&
+        hardware->dev[i].reg[0].base == uart->reg.base &&
+        hardware->dev[i].reg[0].size == uart->reg.size) {
+      device = i;
+      matches++;
+    }
+  if (matches != 1)
+    return -ERR_INVALID;
+  if (!uart->shift && ((uart->kind == BOOT_UART_NS16550 && uart->width == 1) ||
+                       (uart->kind == BOOT_UART_PL011 && uart->width == 4))) {
+    error = devwindow(device, 0, &window);
+    if (!error)
+      usable = 1;
+    else if (error != DEV_DENIED)
+      return -ERR_INVALID;
+  }
+  error = localrooms(table, usable ? 3 : 1);
+  if (error)
+    return error;
+  if (usable) {
+    if (hardware->dev[device].nirq != 1)
+      return -ERR_NOTSUP;
+    number = hardware->dev[device].irq[0].number;
+    error = procmmioinstall(pid, device, 0, VM_READ | VM_WRITE | LOCAL_GRANT, &memory);
+    if (!error)
+      error = localirqsource(table, number, &irq);
+    if (error)
+      goto failed;
+  }
+  error = localsystem(table, image, system);
+  if (!error)
+    error = bootresourceinit(table, image, usable ? uart : NULL, memory, irq, number);
+  if (!error)
+    return 0;
+failed:
+  if (*system && localfree(table, *system))
+    panic("initial SYSTEM rollback");
+  if (irq && localfree(table, irq))
+    panic("initial IRQ source rollback");
+  if (memory && localfree(table, memory))
+    panic("initial MMIO rollback");
+  *system = 0;
+  return error;
+}
 NORETURN void
-bootstart(const Bootdir *directory)
+bootstart(const Bootdir *directory, const Dtinfo *hardware, const Dtuart *uart)
 {
   Bootstore       source;
   const Bootitem *item;
   const u8       *data;
   Set             budget;
-  Handle          pid, creator, listener;
+  Handle          pid, creator, listener, system;
   Createpolicy    policy;
   Procinfo        process;
   Rtable         *table;
@@ -57,7 +114,7 @@ bootstart(const Bootdir *directory)
   data = kaddr(source.base);
   /* Fixed flat cohorts, not runtime Set creation. Index 0 is init, 1 ordinary
      applications; 2..15 are service cohorts. Limits are ceilings, not RAM
-     reservations. Set/domain CONTROL and SYSTEM are separate later grants. */
+     reservations. Set/domain CONTROL remain separate later grants. */
   for (i = 0; i < AC_SETS; i++)
     if (setcreate(i == 1 ? 32768 : 4096, i == 1 ? 40960 : 6144,
                   i == 0   ? 1
@@ -86,12 +143,16 @@ bootstart(const Bootdir *directory)
   }
   if (localendpoint(table, process.identity, LOCAL_CALL, LOCAL_USE | LOCAL_GRANT, 0, 0, &listener))
     panic("initial listener");
+  if (initialdevices(pid, table, process.identity, hardware, uart, &system))
+    panic("initial device authority");
+  packet.resources[3].tag = BOOT_SYSTEM;
+  packet.resources[3].handle = system;
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = sizeof(packet);
   packet.header.argc = 1;
   packet.header.argv_off = offsetof(Bootpacket, arg);
-  packet.header.resource_count = 3;
+  packet.header.resource_count = 4;
   packet.header.resources_off = offsetof(Bootpacket, resources);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
