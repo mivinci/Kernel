@@ -75,6 +75,12 @@ main(int argc, char **argv)
   mapping.address = 0x2000000;
   mapping.prot = 3;
   REQUIRE(!__sys_free(io) && mmioready(mapping.address), 181);
+  {
+    const u64 descriptor[7] = {0, 0x2000000, 0, 0, 0, REPLY_RESOURCE, 0};
+    REQUIRE(__sys_enter(SYS_REPLY, descriptor, &result) == -ERR_FAULT, 198);
+    for (i = 0; i < 8; i++)
+      REQUIRE(!((u64 *) &result)[i], 199);
+  }
   irq_trace[10] = 1;
   REQUIRE(binding > 0 && control > 0 && weak > 0 && !frame_fp(2), 152);
   REQUIRE(__sys_irqack(0) == -ERR_BAD_HANDLE && __sys_irqack(space) == -ERR_BAD_HANDLE, 153);

@@ -749,3 +749,15 @@ ACCEPTED协作取消保留槽，合法资源回复可按既定规则提交实际
 验证：libsys两架构跨Set场景新增两次核心提交。异步MEM结果由真实rqpoll/rqwait读到kind4，保留三个64位业务字（含最高位），ACK后仍可map并读原页；无GRANT/只授页窗口，不能再grant。同步CALL结果在内核自动ACK后仍有可用后端USE入口，调用它得到真实业务303，free后旧Handle拒绝。原SHARED出资者退出/最后unmap及全部页/Set归零断言继续成立。
 
 6项新增host覆盖保底变普通/重复回复与查询无第二次安装、ACK独立引用、CALL固定后端及无GRANT、私有/超权/坏窗口/错接收者描述符原子拒绝、ACCEPTED取消后成功交付、CALL目标Image.cleanup计数耗尽OVERFLOW时不消耗槽/可重试、旧镜像表重绑后的合法/非法迟到资源回复，以及普通CALL不能被强装。本地完整267项host、格式及92个两架构QEMU通过；补齐普通CALL不能强装与迟到/重复引用反例后完整268项host、格式通过，日志build/host/stage42-resource-core/。两架构实际嵌入镜像/SDK/当前用户源码哈希一致；原生描述符输入、资源reply_recv（禁止）、实际exec、信号重启、DMA安全、FS连接补偿及性能/CI仍未完成。
+
+### 原生资源回复描述符（2026-11-19）
+
+已将06确认的a1/x1指针接到SYS_REPLY REPLY_RESOURCE。未用a2..a4/a6先拒绝；完整56字节地址/对齐核验后，spaceread整区预检普通可读用户映射并只快照一次，随后当前接收者的Rmail/Rtable直接进入rqreplyresource原子核心。RW、RO或只读跨页都可作为描述符源，不要求源可写；缺页/Device/不可读不会部分安装。未修改既有要求精确RW的其他输出预检，不把描述符读权限推广成其他接口减权。入口没有借用户指针跨调度保存状态。
+
+libsys的ipc_reply_resource(request,descriptor)只用该入口，成功/失败无服务端业务输出；安装结果仍由原调用者取得RESOURCE_REPLY。reply_recv保持普通四字消息及自己的RECV选项，不因RECV_NONBLOCK同值1而将普通业务字误解成描述符。资源回复既有种类、GRANT来源检查、CALL接收同意、保底槽/协作取消、一次安装及强制终结独立收尾语义不变。
+
+已移除测试CPU的可信交付桥及无其他调用者的procreplyresource包装；内核测试现在只读取用户运行证明，不代为安装或写完成标记。真实用户服务分别完成跨页（第二页RO）SHARED窗口交付和后端CALL交付，调用者重复poll/ack后仍可映射/调用，旧本地Handle free后拒绝。25项原生拒绝断言含未用寄存器、未知选项、零/错齐/越界/缺页、源句柄/权限/窗口、跨页缺后页；每次错误确认输出0且REQUEST仍LIVE/可取消。独立IRQ用户载荷以实际Device映射指针验证FAULT，无MMIO读取。
+
+另外验证接收者未同意时拒绝交付；ACCEPTED协作取消后保留接收槽并提交实际资源结果；普通reply_recv只返回普通消息且归还预留槽。调用者真实退出并清理后，服务观察DRAINING，再用合法描述符只finish旧责任，没有新安装/引用，最后精确页/Acct回基线。ARM64测试中结构体快照曾引入libc memcpy依赖，已改用现有受检查copy，保持独立libsys测试镜像不链接libc。
+
+完整make test-all通过780项host、fmt-check及179次双架构QEMU；152份journal及全部结果内核源码/头、SDK源码/头/归档哈希匹配。两架构libsys分别确认2份实际资源安装、25项原生拒绝、未同意拒绝、ACCEPTED取消后交付及调用者退出后的迟到finish；4份IRQ运行另验证Device描述符源FAULT。可信交付桥和旧包装均已从源码移除，原生结果字段由主机另核对。证据build/host/stage114-native-resource-reply/evidence.json/test-all.log。这不是完整FS/TTY连接协议、原生exec或性能/板端/CI验收；用户态跨服务补偿和同seq不重复资源安装的上层策略仍须按10/11实现。

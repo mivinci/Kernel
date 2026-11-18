@@ -88,8 +88,10 @@ syscall(Hctx *context)
     used = 15;
     break;
   case SYS_CALL:
-  case SYS_REPLY:
     used = 63;
+    break;
+  case SYS_REPLY:
+    used = args[5] == REPLY_RESOURCE ? 35 : 63;
     break;
   case SYS_SEND:
     used = 31;

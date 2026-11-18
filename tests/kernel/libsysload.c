@@ -95,9 +95,7 @@ libsysload(void)
   Liferesult result;
   Pgstat     before, after;
   u32        i, ended, turns = 0, source_cleaned = 0, resource_commits = 0;
-  Rtable    *service;
   u64        handoff[16];
-  Resreply   descriptor;
   int        error;
   pgstat(&before);
   for (i = 0; i < 2; i++) {
@@ -106,26 +104,12 @@ libsysload(void)
   }
   load(pids[0], &info[1], 1);
   load(pids[1], &info[0], 0);
-  service = proctable(pids[1]);
   REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]));
   do {
     REQUIRE(!procrunone() && ++turns < 64);
     REQUIRE(!spaceread(info[1].space, libsys_resource_address, handoff, sizeof(handoff)));
-    if (handoff[0] && handoff[0] != resource_commits) {
-      u64 done;
-      REQUIRE(handoff[0] == resource_commits + 1 && handoff[0] <= 2);
-      descriptor.source = (Handle) handoff[2];
-      descriptor.rights = handoff[3];
-      descriptor.offset = handoff[4];
-      descriptor.length = handoff[5];
-      for (i = 0; i < 3; i++)
-        descriptor.business[i] = handoff[6 + i];
-      /* A typed trusted bridge exercises the commit without inventing the
-         still-unconfirmed syscall descriptor-pointer register. */
-      REQUIRE(!procreplyresource(service, (Handle) handoff[1], &descriptor));
-      done = ++resource_commits;
-      REQUIRE(!spacewrite(info[1].space, libsys_resource_address + 10 * 8, &done, sizeof(done)));
-    }
+    REQUIRE(handoff[10] >= resource_commits && handoff[10] <= 2);
+    resource_commits = (u32) handoff[10];
     ended = 0;
     for (i = 0; i < 2; i++) {
       REQUIRE(!lifestat(info[i].life, &life));
@@ -159,6 +143,7 @@ libsysload(void)
     REQUIRE(!error && !lifecollect(info[i].life, 1, &result) && result.code == 42);
   }
   REQUIRE(resource_commits == 2);
+  REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1);
   REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
   for (i = 0; i < 2; i++)
     REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
@@ -169,6 +154,14 @@ libsysload(void)
   puthex(2);
   putstr(" resource=");
   puthex(resource_commits);
+  putstr(" native=");
+  puthex(handoff[11]);
+  putstr(" late=");
+  puthex(handoff[12]);
+  putstr(" consent=");
+  puthex(handoff[13]);
+  putstr(" accepted=");
+  puthex(handoff[14]);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

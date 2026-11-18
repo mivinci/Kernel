@@ -43,6 +43,15 @@ ipc_reply(Handle request, const Msg *words)
   return message(SYS_REPLY, request, words, 0, 0, NULL);
 }
 isize
+ipc_reply_resource(Handle request, const Resreply *descriptor)
+{
+  const u64 args[7] = {(u64) request, (u64) descriptor, 0, 0, 0, REPLY_RESOURCE, 0};
+  Sysret    result;
+  if (!descriptor)
+    return -ERR_INVALID;
+  return __sys_enter(SYS_REPLY, args, &result);
+}
+isize
 ipc_reply_recv(Handle request, const Msg *words, u64 mask, u64 options, Ipcmsg *out)
 {
   if (!out)

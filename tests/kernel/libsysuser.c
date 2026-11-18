@@ -1,6 +1,7 @@
 #include <sys/boot.h>
 #include <sys/channel.h>
 #include "private/syscall.h"
+#include <abi/syscall.h>
 static volatile u64       bss[257];
 static volatile u64       initialized = UINT64_C(0x123456789abcdef0);
 static const volatile u64 readonly = UINT64_C(0xfedcba9876543210);
@@ -277,10 +278,29 @@ receiveserver(const Bootview *view)
 }
 volatile u64 resource_trace[16];
 static void
-publishresource(Handle request, const Resreply *reply, u64 stage)
+replyerror(Handle request, u64 address, isize expected, u32 extra)
 {
-  u32 i;
-  u64 state;
+  u64    args[7] = {(u64) request, address, 0, 0, 0, REPLY_RESOURCE, 0};
+  Sysret result;
+  u64    state;
+  u32    i;
+  if (extra)
+    args[extra] = extra == 5 ? 2 : 1;
+  REQUIRE(__sys_enter(SYS_REPLY, args, &result) == expected, 240);
+  for (i = 0; i < 8; i++)
+    REQUIRE(!((u64 *) &result)[i], 241);
+  REQUIRE(!ipc_rqcheck(request, &state) &&
+              (state == RQ_CHECK_LIVE || state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL)),
+          242);
+  resource_trace[11]++;
+}
+
+static void
+publishresource(const Bootview *view, Handle request, const Resreply *reply, u64 stage)
+{
+  u32      i;
+  u64      state;
+  Resreply bad;
   resource_trace[1] = (u64) request;
   resource_trace[2] = (u64) reply->source;
   resource_trace[3] = reply->rights;
@@ -288,12 +308,60 @@ publishresource(Handle request, const Resreply *reply, u64 stage)
   resource_trace[5] = reply->length;
   for (i = 0; i < 3; i++)
     resource_trace[6 + i] = reply->business[i];
-  resource_trace[10] = 0;
   resource_trace[0] = stage;
-  /* The test CPU copies this frozen descriptor and invokes the typed kernel
-     core. No unconfirmed reply descriptor register ABI is exercised here. */
-  REQUIRE(!__sys_yield() && resource_trace[10] == stage, 210);
+  replyerror(request, (u64) reply, -ERR_INVALID, 2);
+  replyerror(request, (u64) reply, -ERR_INVALID, 3);
+  replyerror(request, (u64) reply, -ERR_INVALID, 4);
+  replyerror(request, (u64) reply, -ERR_INVALID, 5);
+  replyerror(request, (u64) reply, -ERR_INVALID, 6);
+  replyerror(request, 0, -ERR_INVALID, 0);
+  replyerror(request, (u64) reply + 1, -ERR_INVALID, 0);
+  replyerror(request, BOOT_USER_HI - 8, -ERR_INVALID, 0);
+  replyerror(request, 0x1200000, -ERR_FAULT, 0);
+  REQUIRE(!__sys_copy(&bad, reply, sizeof(bad)), 159);
+  bad.source = 0;
+  replyerror(request, (u64) &bad, -ERR_BAD_HANDLE, 0);
+  REQUIRE(!__sys_copy(&bad, reply, sizeof(bad)), 159);
+  bad.rights |= UINT64_C(1) << 63;
+  replyerror(request, (u64) &bad, -ERR_DENIED, 0);
+  REQUIRE(!__sys_copy(&bad, reply, sizeof(bad)), 159);
+  bad.offset = 1;
+  replyerror(request, (u64) &bad, -ERR_INVALID, 0);
+  if (stage == 1) {
+    Allocarg alloc;
+    Maparg   map;
+    Handle   descriptor;
+    Handle   space = bootresource(view, BOOT_SELF_SPACE);
+    u64      address = 0x1200000 + PAGE_SIZE - 24;
+    alloc.bytes = 2 * PAGE_SIZE;
+    alloc.kind = ALLOC_DATA;
+    alloc.align = alloc.minaddr = alloc.maxaddr = alloc.reserved = 0;
+    REQUIRE(!__sys_alloc(bootresource(view, BOOT_SELF_ALLOC), &alloc, &descriptor), 243);
+    map.mem = descriptor;
+    map.offset = 0;
+    map.address = 0x1200000;
+    map.length = PAGE_SIZE;
+    map.prot = MAP_READ | MAP_WRITE;
+    map.reserved = 0;
+    REQUIRE(!__sys_map(space, &map) && !__sys_copy((void *) address, reply, 24), 244);
+    replyerror(request, address, -ERR_FAULT, 0);
+    map.offset = PAGE_SIZE;
+    map.address += PAGE_SIZE;
+    REQUIRE(!__sys_map(space, &map) &&
+                !__sys_copy((void *) map.address, (const u8 *) reply + 24, 32),
+            245);
+    REQUIRE(!__sys_unmap(space, map.address), 246);
+    map.prot = MAP_READ;
+    REQUIRE(!__sys_map(space, &map) && !ipc_reply_resource(request, (const Resreply *) address),
+            247);
+    REQUIRE(!__sys_unmap(space, 0x1200000) && !__sys_unmap(space, 0x1201000) &&
+                !__sys_free(descriptor),
+            248);
+  } else
+    REQUIRE(!ipc_reply_resource(request, reply), 210);
+  resource_trace[10] = stage;
   REQUIRE(ipc_rqcheck(request, &state) == -ERR_BAD_HANDLE, 211);
+  REQUIRE(ipc_reply_resource(request, reply) == -ERR_BAD_HANDLE, 239);
 }
 static void
 typedserver(const Bootview *view)
@@ -303,9 +371,17 @@ typedserver(const Bootview *view)
   Maparg   map;
   Resreply reply;
   Msg      words;
-  Handle   memory, space = bootresource(view, BOOT_SELF_SPACE);
+  Handle   memory, request, space = bootresource(view, BOOT_SELF_SPACE);
+  u64      state;
   REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 200, 212);
   REQUIRE(!ipc_defer(received.request), 213);
+  request = received.request;
+  words.words[0] = 206;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_send(bootresource(view, 257), &words), 157);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_SEND && received.words[0] == 207, 158);
+  REQUIRE(!ipc_rqcheck(request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL), 156);
+  resource_trace[14] = 1;
   arg.bytes = 3 * PAGE_SIZE;
   arg.kind = ALLOC_SHARED;
   arg.align = arg.minaddr = arg.maxaddr = arg.reserved = 0;
@@ -325,18 +401,25 @@ typedserver(const Bootview *view)
   reply.business[0] = 17;
   reply.business[1] = 23;
   reply.business[2] = UINT64_C(0x8000000000000042);
-  publishresource(received.request, &reply, 1);
+  publishresource(view, request, &reply, 1);
   REQUIRE(!__sys_unmap(space, 0x1100000) && !__sys_free(memory), 216);
   REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 201, 217);
   REQUIRE(!ipc_defer(received.request), 218);
   reply.source = bootresource(view, 259);
   reply.rights = 1;
   reply.offset = reply.length = 0;
-  publishresource(received.request, &reply, 2);
+  publishresource(view, received.request, &reply, 2);
   REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 202, 219);
   words.words[0] = 303;
   words.words[1] = words.words[2] = words.words[3] = 0;
   REQUIRE(!ipc_reply(received.request, &words), 220);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 203, 249);
+  words.words[0] = (u64) &reply;
+  words.words[1] = 57;
+  words.words[2] = 59;
+  words.words[3] = 61;
+  REQUIRE(ipc_reply_recv(received.request, &words, 0, RECV_NONBLOCK, &received) == -ERR_WOULD_BLOCK,
+          250);
 }
 static void
 checkreceived(Handle handle, u64 subtype, u64 offset, u64 length)
@@ -367,6 +450,10 @@ typedclient(const Bootview *view, Handle peer)
   words.words[1] = words.words[2] = words.words[3] = 0;
   REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0, 224);
   rpc = result.request;
+  REQUIRE(!ipc_recv(0, 0, &result) && result.kind == IPC_SEND && result.words[0] == 206, 155);
+  REQUIRE(!ipc_rqcancel(rpc), 154);
+  words.words[0] = 207;
+  REQUIRE(!ipc_send(bootresource(view, 257), &words), 153);
   REQUIRE(!ipc_rqwait(rpc, 0, &result) && result.kind == IPC_RESOURCE_REPLY && !result.source &&
               !result.request && !result.image,
           225);
@@ -402,6 +489,50 @@ typedclient(const Bootview *view, Handle peer)
   REQUIRE(!ipc_call(backend, &words, 0, &result) && !result.kind && result.words[0] == 303, 236);
   REQUIRE(!__sys_free(backend), 237);
   REQUIRE(ipc_call(backend, &words, 0, &result) == -ERR_BAD_HANDLE, 238);
+  words.words[0] = 203;
+  REQUIRE(!ipc_call(peer, &words, CALL_RECV_MEM, &result) && !result.kind && result.words[0] &&
+              result.words[1] == 57 && result.words[2] == 59 && result.words[3] == 61,
+          251);
+}
+static Handle
+latebegin(const Bootview *view, Handle peer, u32 client)
+{
+  Msg    words;
+  Ipcmsg message;
+  Handle request;
+  words.words[0] = client ? 204 : 205;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  if (client) {
+    REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &message) && message.request, 252);
+    REQUIRE(!ipc_recv(0, 0, &message) && message.kind == IPC_SEND && message.words[0] == 205, 253);
+    return 0;
+  }
+  REQUIRE(!ipc_recv(0, 0, &message) && message.kind == IPC_CALL && message.words[0] == 204, 254);
+  request = message.request;
+  REQUIRE(!ipc_defer(request) && !ipc_send(bootresource(view, 257), &words), 255);
+  return request;
+}
+
+static void
+latefinish(const Bootview *view, Handle request)
+{
+  Allocarg alloc;
+  Resreply reply;
+  Handle   memory;
+  u64      state;
+  alloc.bytes = PAGE_SIZE;
+  alloc.kind = ALLOC_SHARED;
+  alloc.align = alloc.minaddr = alloc.maxaddr = alloc.reserved = 0;
+  REQUIRE(!__sys_alloc(bootresource(view, BOOT_SELF_ALLOC), &alloc, &memory), 160);
+  reply.source = memory;
+  reply.rights = MAP_READ;
+  reply.offset = 0;
+  reply.length = PAGE_SIZE;
+  reply.business[0] = reply.business[1] = reply.business[2] = 0;
+  REQUIRE(!ipc_rqcheck(request, &state) && state == RQ_CHECK_DRAINING, 161);
+  REQUIRE(!ipc_reply_resource(request, &reply) && !__sys_free(memory), 162);
+  REQUIRE(ipc_rqcheck(request, &state) == -ERR_BAD_HANDLE, 163);
+  resource_trace[12] = 1;
 }
 NORETURN void
 _start(const Boot *boot)
@@ -410,7 +541,7 @@ _start(const Boot *boot)
   Ipcmsg   result;
   Msg      words;
   Queryrec records[16];
-  Handle   pid, parent, peer, rpc;
+  Handle   pid, parent, peer, rpc, late;
   u64      image, written, next, state;
   u32      i, client;
   REQUIRE(!bootcheck(boot, boot->bytes, &view), 109);
@@ -481,6 +612,16 @@ _start(const Boot *boot)
       if (i == 2)
         break;
       REQUIRE(!ipc_rqcheck(result.request, &state) && state == 1, 129);
+      if (!i) {
+        Resreply refused;
+        refused.source = bootresource(&view, 259);
+        refused.rights = 1;
+        refused.offset = refused.length = 0;
+        refused.business[0] = refused.business[1] = refused.business[2] = 0;
+        REQUIRE(ipc_reply_resource(result.request, &refused) == -ERR_DENIED, 152);
+        REQUIRE(!ipc_rqcheck(result.request, &state) && state == RQ_CHECK_LIVE, 151);
+        resource_trace[13] = 1;
+      }
       response.words[0] = result.words[3];
       response.words[1] = result.words[2];
       response.words[2] = result.words[1];
@@ -490,8 +631,11 @@ _start(const Boot *boot)
       REQUIRE(!ipc_reply(result.request, &response), 131);
     }
   }
-  if (!client)
+  late = latebegin(&view, peer, client);
+  if (!client) {
     sharedfinish(&view);
+    latefinish(&view, late);
+  }
   REQUIRE(bss[256] == 257 && !__sys_yield(), 132);
   __sys_exit(42);
 }

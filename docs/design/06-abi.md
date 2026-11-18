@@ -335,7 +335,9 @@ libsys桩接续（2026-11-16）：用户态raw入口仅是私有汇编封装，�
 
 资源回复前置接续（2026-11-16）：configure的第三参数0..8现已实际预付/替换镜像保底，超过8 INVALID，空间不足CAPACITY/代次耗尽OVERFLOW且原Config/现场不变。CALL_RECV_MEM/CALL_RECV_CALL现能在原调用者表预留一槽，两者同时置位INVALID，普通reply或终结按原槽来源归还，ACCEPTED协作取消不提前归还；来源/计数与验证见04末尾。
 
-资源reply输入（2026-11-18用户确认）：Resreply保持56字节，REPLY_RESOURCE时a0/x0为request、a1/x1为descriptor_ptr、a2..a4=0、a5=REPLY_RESOURCE、a6=0；reply_recv仍不支持资源交付。内核整区核验并一次快照描述符后复用既有原子安装核心。设计已冻结，实现尚未接，当前原生资源reply仍NOTSUP，不将可接受资源CALL选项误称为资源已安装；以下历史记录的“指针位置未确认”已被本次决定取代。
+资源reply输入（2026-11-18用户确认，2026-11-19接入）：Resreply保持56字节，REPLY_RESOURCE时a0/x0为request、a1/x1为descriptor_ptr、a2..a4=0、a5=REPLY_RESOURCE、a6=0；reply_recv仍不支持资源交付。指针8字节对齐、整区合法且为普通可读用户内存，允许跨页及只读页；内核整区预检并一次快照后复用既有原子安装核心。libsys提供ipc_reply_resource，不扩大Msg或增加目标PID。未知reply选项/未用寄存器非0 INVALID，合法范围内的缺页/Device/不可读页FAULT；失败不安装、不完成当前REQUEST，输出清零。以下历史记录的“指针位置未确认”已被本次决定取代，当前验证见04末尾。
+
+该入口已通过完整780项host/格式及179次双架构QEMU，152份日志与源码/SDK哈希保持核对；原生25项拒绝、跨页RO读取、两种资源实际交付及退出迟到收尾均已验，不再通过可信CPU桥安装。证据stage114-native-resource-reply/，无CI/板端/性能结论。
 
 类型化资源核心接续（2026-11-16）：Resreply的既定56字节字段/偏移已有共享结构与布局断言；内核内部提交可生成RESOURCE_REPLY kind=4，words[0]为已安装本地Handle、其余三业务字不解释，source/request/image均0。同步CALL和异步结果查询已能转出这个kind；RQ_FINISH不返回安装结果。用户服务仍不能通过原生reply发起资源交付，因为描述符指针寄存器位置未获确认，REPLY_RESOURCE仍NOTSUP。04末尾的可信桥只验证同一提交核心/真实接收者，不能当成已冻结候选输入位置。
 

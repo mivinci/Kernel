@@ -15,13 +15,15 @@
 - Set/Acct、Space/Mem/Mmap、DATA/CODE/SHARED、封存及代码同步已接。Mem内容状态保留到最终回收，managers=0表示退役；现接SEALED规范backing多代视图，Mem96字节，现有临时DATA视图自持的原页接管账本。SHARED只向原Acct计费，跨Set减权窗口/撤权后映射保留/出资者退出滞留/最后unmap结清已验。64KiB受检查copy检查权限、普通内存和物理字节重叠，当前全程IRQ屏蔽/VM_BUSY；现接可信独占页MMIO视图、固定Device属性与Acct映射租约；现接可信完整成员整页组与规范化租约；现接全局零阶容量及COW额度双重承诺、兑现/取消/旧页转交及原出资者替换基础（Acct64字节）；现接可信逻辑页组/预付分支、DATA Mem克隆及未映射写分离，现接PTE COW位、全部别名分离提交及真实用户DATA写fault原PC重试；现接内核代写/copy及COW栈信号帧；现接可信整个Space映射快照/去重及跨Mem失败回滚；现接独立Local继承/原Handle与墓碑/私有视图重绑定；现接独立fork信号动作/活动帧cookie继承及HAL子返回现场派生，现由可信forksnapshot统一Space/Local/未映射Mem/保底/Signal/现场的同步提交与后段回滚；现接可信Proc/Prep构造、取消/期限及父退出即时撤销；原生fork准入/分批检查点/专用发布与生产发权/DMA仍未接。
 - Local48、Life128、Proc512、Prep256、Image64、Obs48、Rq192、Space64、Set56；结果/镜像/账目与运行槽独立回收。两层Sigctx预付RV704/ARM960，cookie跨PID/image复用不重置，不回绕。
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权；生产PID1已安装16 Set对应的CREATE SERVICE权限，实际服务发布仍待接。
-- 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure的0..8镜像接收保底与CALL资源预留已接；类型化提交核心可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表。原生REPLY_RESOURCE描述符解码仍NOTSUP，现由明确可信桥验证核心，不称用户服务已可直接交付。
+- 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
 - 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。独立生产serial ELF含真实PIO/IRQ、两环、异步READY和精确init控制，已由原生测试PID1装载运行；默认init仍未拉起服务。普通用户ELF装载尚非FS稳定会话；fd/Fix适配、完整spawn/fork/exec未接，virtio尚无生产DMA。
 - T1.1..T1.3已接：normal从chosen外部包按init_index装载实际sbin/init，校验目录并进入孤儿收取/CHILD循环；缺包/坏包分配前拒启。T1.4前置已有16 Set/CREATE SERVICE、128槽、可减权转授的自身CALL及SYSTEM QUERY/标准UART实际发权；Boot格式2/352字节含SELF_SPACE/ALLOC/CREATE/SYSTEM。默认init的服务装载/监督、其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
+
+- 原生资源reply通过780项host/格式及179次双架构QEMU，152份日志和源码/SDK哈希匹配。两架构各2份资源实际交付、25项拒绝、跨页RO源、未同意拒绝、协作取消后实际结果及退出迟到finish通过，Device指针另由真实映射拒绝；费用/页回基线，可信桥已删除。证据stage114-native-resource-reply/，无CI/板端/性能结果。
 
 - init配置/管理引擎通过780项host/格式及179次双架构QEMU，152份日志与源码/SDK/配置哈希匹配。真实包加载serial的READY后监督回收、未READY超时、缺镜像、装载预算不足两架构各四例通过PTE/Acct/物理owner审计，最终回到初始PID1费用；原生入口不是默认init。证据stage113-init-services/，无CI/板端。
 
@@ -33,6 +35,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage114已接原生资源reply与ipc_reply_resource并通过全量；可据此继续受限LOOKUP/FS/TTY连接策略，不把底层交付当成完整连接。默认init首次失败策略仍等确认。
 
 - stage113前置已本地全量验收：定宽配置/生成/运行复核、分阶段装载监督与回收已实现。初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis；父wait/镜像确认/缓冲回收独立。尚未切生产init main/默认包；首次必需serial失败后恢复诊断停机还是先补存活失败通道，已询问待用户确认，见07。该确认前继续已定的资源回复等前置，不把未切默认写成T1.4完成。
 
@@ -52,7 +56,7 @@
 - 生产UART/早期诊断交接已接：debughandoff 0x74、精确初始SYSTEM CONSOLE=0x20，确认FIFO/移位寄存器排空后交接，忙则BUSY；普通输出仅进64 KiB日志，panic屏蔽IRQ后恢复固件配置并回放交接后保留记录再停机。两架构全量已验，默认init调用/服务编排待接，详见07/14。
 - serial Boot七参数/私有tag、16 KiB双SPSC环、PIO/IRQ、异步READY及BIND/STATUS均已本地验，见07/09/11。生产init编排和实际tty配对/端点恢复仍待接；没有活环自动重置。RESOURCE不暴露Mem底层身份或NOTIFY掩码，真实MMIO/两个独立SHARED及精确双位通知仍由可信加载器保证，内核强制映射属性和通知权限。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
-- 资源reply已确认a1/x1为descriptor_ptr，其他未用参数0、a5为REPLY_RESOURCE，reply_recv不交付；实现待接，详见06。
+- 资源reply已按a1/x1指针、余未用参数0、a5=REPLY_RESOURCE接入，reply_recv保持普通消息；细节与验证见04/06。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段已确认，实现待接，见11。
 - IRQ_SOURCE独立撤销及原生bind已接，SOURCE不转授/继承；初始标准UART的BOOT_RESOURCE已有实际MMIO/IRQ_SOURCE Handle，SYSTEM QUERY已接，其他设备/布局和管理业务仍后续，见05/07末尾。
 - DMA设备实例代次域及固定解除方向已确认，具体权限/调用ABI仍须冻结，见09；缓存反例主机模型不代表DMA/HAL已实现。

@@ -1580,8 +1580,24 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     return receive(args[5], args[1], outputs);
   case SYS_REPLY:
   case SYS_REPLY_RECV:
-    if (nr == SYS_REPLY && args[5])
-      return args[5] == REPLY_RESOURCE ? -ERR_NOTSUP : -ERR_INVALID;
+    if (nr == SYS_REPLY && args[5]) {
+      Resreply descriptor;
+      if (args[5] != REPLY_RESOURCE || args[2] || args[3] || args[4] || args[6] ||
+          !IS_ALIGNED(args[1], 8) || args[1] < BOOT_USER_LO || args[1] >= BOOT_USER_HI ||
+          sizeof(descriptor) > BOOT_USER_HI - args[1])
+        return -ERR_INVALID;
+      /* spaceread prechecks the complete ordinary readable user extent before
+         making one snapshot. No borrowed user pointer reaches the transaction. */
+      error = spaceread(current->space, args[1], &descriptor, sizeof(descriptor));
+      if (error)
+        return error == SP_BUSY ? -ERR_BUSY : -ERR_FAULT;
+      caller = requestcaller((Handle) args[0]);
+      error =
+          rqreplyresource(&current->incoming, &current->resources, (Handle) args[0], &descriptor);
+      if (!error)
+        wakeone(caller);
+      return error;
+    }
     caller = requestcaller((Handle) args[0]);
     error = rqreply(&current->incoming, (Handle) args[0], &message);
     if (!error)
@@ -1868,25 +1884,6 @@ procsigpending(u64 *out)
   return current && current->state == PROC_RUNNING ? siggetpending(current->identity, out)
                                                    : -ERR_STATE;
 }
-int
-procreplyresource(Rtable *source, Handle request, const Resreply *reply)
-{
-  Proc *service, *caller;
-  int   error;
-  if (!source)
-    return -ERR_BAD_HANDLE;
-  service = find(source->owner);
-  if (!service || source != &service->resources || service->resources.image != source->image ||
-      (service->state != PROC_READY && service->state != PROC_RUNNING &&
-       service->state != PROC_BLOCKED))
-    return -ERR_BAD_HANDLE;
-  caller = requestcaller(request);
-  error = rqreplyresource(&service->incoming, source, request, reply);
-  if (!error)
-    wakeone(caller);
-  return error;
-}
-
 /* IRQs remain masked through resolution and publication. No borrowed target
    table or authority may cross a checkpoint in these bounded transactions. */
 static int

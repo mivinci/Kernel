@@ -90,7 +90,6 @@ int           procsigsuspend(u64 mask);
 int           procsigmask(u64 how, u64 mask, u64 *old);
 int           procsigpending(u64 *out);
 /* Typed resource commit; syscall descriptor decoding is a separate ABI step. */
-int  procreplyresource(Rtable *source, Handle request, const Resreply *reply);
 int  procidentity(Handle *pid, u64 *image, Handle *parent);
 void procyield(void);
 void procpausevm(void);
