@@ -245,3 +245,19 @@ vfeatures仅接受已读回复位的RESET，每步读实际status核对当前状
 本地最终make unit通过381项、make fmt-check通过，make test-qemu全部106个两架构场景通过；日志build/host/stage57-virtio-device/，包括反例失败、修复后专项、最终全量、原始QEMU结果目录与源码哈希。SDK两架构libvirtio合并依赖审计通过，普通镜像不链接测试。新场景实际证明无在途请求时的真实协商/复位；无CI/目标真实硬件/性能或在途DMA恢复结论。
 
 MMIO生命周期表示接续（2026-11-17）：Mem不再将最后manager释放后的state改为MEM_RETIRING，改由managers=0表示退役、保留state=DATA及kind=MMIO到最后unmap。Device租约/属性/引用条件不变；不会重新允许映射或增持管理权，详细共用规则与验收见02末尾。旧“RETIRING”文字不再表示一个会覆盖内容类型的状态值。
+
+### serial有界双向推进（2026-11-18）
+
+sbin/serial/io.c在既有UART后端与SPSC辅助层之间连接一个有界推进步骤。serial独占RX生产位置及TX消费位置，对端占相反位置；设备、两环、私有状态必须互不别名，环epoch在运行期不变。初始化只核验现存环，不清空共享数据；每步至多32次RX尝试及32字节TX，返回须由调用者合并发送的RX_READY/TX_ROOM提示，不自行发IPC、调度、ACK内核IRQ或重置活环。
+
+RX按共享环现有空位读取设备，满环不读UART数据寄存器且屏蔽设备RX IRQ；对端释放空间并给RX_ROOM提示后重新推进/开IRQ，不覆盖未消费字节。TX从环取至多32字节，消费者位置发布后剩余数据由私有32字节缓冲持有，UART只能接受部分或暂时不可写时保留offset，不提前读取下一批覆盖它。TX_ROOM只表示共享队列腾出了位置，不承诺已物理发送；物理排空仍须同时检查私有缓冲、共享队列与uartdrained。
+
+仍有已知可推进工作时返回again，外层应让出后继续，不能等第二次提示；设备暂不可写时开TX IRQ后允许等待。环与私有缓冲均无TX工作时关TX IRQ，避免THRE等空闲中断风暴；RX满环不会阻断独立TX进展。环损坏/旧epoch/设备失败屏蔽设备IRQ，保留已提交位置、私有待发字节与映射，不把返回错误当作没有I/O副作用，也不冒充设备停止或DMA安全回收。
+
+7项host专项在O0/O2直接运行生产io/UART/共享环代码，覆盖RX满环不读设备及精确补位、部分/完全堵塞TX的跨批次字节顺序、每步边界和持续工作、空闲IRQ掩码、错误保留、终结标志后的排空，以及两种UART各2000步双向随机流/独立字节流对照。主机MMIO模型不证明物理时序。
+
+实际包PID1在启动测试孩子之前执行已授权debughandoff，之后不再由内核轮询输出；孩子经真实映射，在私有普通一致环上调用同一生产推进代码实际发送一个换行、检查TX消费及UART统计、重跑空闲步骤无again/提示，退出前屏蔽设备IRQ。主机从真实journal重建全部内核输出，对比串口线上恰好多出该换行，不仅相信发送计数器。原有跨Set的两个实际SHARED往返和旧绑定拒绝仍独立验证，不把私有测试环说成新服务已经连接tty。
+
+完整make test-all通过753项host、fmt-check及167次双架构QEMU；140份实际日志快照保持审计，结果内核源码/头及SDK源码/头/导出/归档哈希匹配终稿。生产init ELF与stage110相同且无推进测试符号，实际serviceauth/serialverify ELF另核对；证据归build/host/stage111-serial-io/evidence.json/test-all.log，无CI/板端/性能结论。
+
+本点尚无生产serial main/READY、外部RX流、真实IRQ ACK主循环或对端NOTIFY晚绑定。用户已确认的反向提示/晚绑定方向已写07/11及共享位定义，后续据此连接服务；生产init继续不含fixture，不把此有界步骤当作T1.4或tty交付。

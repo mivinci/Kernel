@@ -787,11 +787,12 @@ def audit_package_init(qmp, run_dir, args, record, transition):
     if 'serialproof' in user_symbols:
         proof=struct.unpack('<8Q',read(user_symbols['serialproof'],64))
         if (proof[0]>>59!=1 or not (proof[0]>>16)&((1<<43)-1) or not 1<=proof[1]<=4096 or
-                proof[2:6]!=(1,7,7,7) or proof[6] not in (1,2) or proof[7]):
+                proof[2:6]!=(1,7,7,7) or proof[6] not in (1,2) or proof[7]!=1):
             raise SmokeError('native serial startup/shared rings/READY-parent retirement proof mismatch')
         record['serial_startup']=dict(pid=proof[0],retirement_queries=proof[1],retired=True,
                                       rx_bytes=proof[3],tx_bytes=proof[4],number=proof[5],uart_kind=proof[6],
-                                      child_exit=42,irq_freed_rejected=True,device_io=False,service_ready=False)
+                                      child_exit=42,irq_freed_rejected=True,device_io=True,service_ready=False,
+                                      bounded_pump=True,external_rx=False)
     if 'handoffproof' in user_symbols:
         proof=struct.unpack('<8Q',read(user_symbols['handoffproof'],64))
         if proof[0]!=1 or not 1<=proof[1]<=64 or proof[2] not in (1,2) or proof[3]!=1 or any(proof[4:]):

@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- 串口有界双向推进通过753项host/格式及167次双架构QEMU，140份日志和源码/SDK哈希一致。两架构真实孩子在交接后实际发UART字节，journal重建独立核对线上额外字节；生产init ELF与stage110相同，无fixture。证据stage111-serial-io/；生产serial main/IRQ ACK循环/READY及晚绑定尚未接，无CI/板端/性能结论。
+
 - issue011已修复：clean-runs默认预览，阶段引用闭包/近期/失败保护及运行锁已接。实际删8,326个旧成功目录，15,699个保留目录及174万文件内容/集合不变；build统计23.42→17.19 GB。清理后746项host/格式、13项专项及双架构normal重跑通过；未改内核运行代码，无CI/板端。证据stage110-run-retention/，规则见14末尾。
 
 - 控制台交接通过733项host、格式及167次双架构QEMU，源码/头与SDK哈希匹配；140份日志快照及两架构原生交接/配置破坏后的panic恢复已核对。初始SYSTEM另获CONSOLE，普通诊断交接后仅入日志；轮询有界。证据stage109-console-handoff/evidence.json/test-all.log。生产init尚未调用或启动serial，无CI/板端/性能验收。
@@ -37,6 +39,8 @@
 
 ## 待确认与接续
 
+- 2026-11-18已确认serial/tty反向bit32=RX_ROOM/bit33=TX_READY及晚绑定：serial先设备/环/IRQ READY，tty就绪后init凭固定CONTROL安装peer NOTIFY并用精确PID1/image控制CALL绑定，重查环状态补提示后才发布tty连接。已写07/11与共享位定义，生产绑定/主循环尚未实现；具体控制消息布局随服务收口。
+
 - 2026-11-18用户集中确认五项：控制台交接0x74/CONSOLE0x20；UART库存data[6..7]布局及serial七参数；资源reply描述符a1/x1；Siginfo来源1/2/3；DMA代次域/固定解除方向。控制台交接及UART库存/七参数解析已实现并本地验证；其余实现仍待接，DMA具体权限/调用ABI仍须冻结。
 - issues：010 SDK导出与011运行证据保留/清理已修复；003无主机观测试点与007按已确认DMA方向接续，009排图形机制前，001/005/006等待实板。控制台交接已验，继续实际serial服务，不把本地结果当作上板完成。
 
@@ -50,7 +54,7 @@
 - serial启动约定已确认并接严格解析/真实RESOURCE预检：私有tag 0x100..0x104，七参数含shift/width；失败不提交输出。独立fixture实际装载孩子并验证跨Set授权和SHARED往返，尚非生产serial主循环/READY。RESOURCE不暴露底层Mem身份，真实MMIO/独立SHARED来源仍由可信加载器保证，详见07。
 - init控制协议版本编码已于2026-11-18确认：word0高32位版本1、低32位opcode，其他三字不变；共享proto/init.h及SDK导出已接，两架构目标编译检查通过。实际serial/READY监督仍待接，详见07。
 - 串口环proto/serial.h与libsys私有serialinit/read/write已通过本地全量：16 KiB固定布局、32字节批次、acquire/release、背压与失败不提交；不自动notify/yield/reset。共享映射/IRQ循环、装载/READY和端点恢复仍待接，详见11末尾。
-- UART PIO后端已本地验收：保留固件波特率/字符格式，32次有界尝试、FIFO背压、错误统计及LSR读清暂存、PL011 BUSY稍后重试；ISA IO在libsys，驱动在sbin/serial，不依赖内核HAL。实际共享映射/IRQ服务循环、外部字节流、装载/READY、交接和端点恢复仍待接，详见09执行与验收。
+- UART PIO及双向有界推进已本地验收：保留固件波特率/字符格式、32次接收上限、FIFO/共享环背压、部分TX保留与错误统计；ISA IO在libsys，驱动在sbin/serial，不依赖内核HAL。交接和实际孩子发送已验，生产serial main/共享映射/IRQ ACK循环、外部RX、READY及端点恢复仍待接，详见09执行与验收。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply已确认a1/x1为descriptor_ptr，其他未用参数0、a5为REPLY_RESOURCE，reply_recv不交付；实现待接，详见06。
 - Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段已确认，实现待接，见11。

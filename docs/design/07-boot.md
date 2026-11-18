@@ -238,6 +238,8 @@ init控制协议words=[(version<<32)|opcode,seq,arg0,arg1]：word0高32位为协
 
 例如受管serial在STARTING时发送[0x0000000100000001,seq,服务编号,自身image]；init核对内核提供的完整source/image、清单实例及期限后才转为READY。同一编号的旧实例、word0=1的无版本消息和高32位为2的未知版本均不能发布当前实例；超时后的迟到READY不能把FAILED改回READY。此编码由用户于2026-11-18确认，四字大小不变；协议定义不代表服务监督已经实现。
 
+2026-11-18另确认serial/tty晚绑定：serial先完成设备、环和IRQ就绪并报告READY；init待tty就绪后凭serial固定CONTROL INSTALL安装对端NOTIFY，以精确PID1/image发起控制CALL绑定，绑定时重查持久状态并补提示，绑定完成前不发布tty连接。双方NOTIFY各仅授用户bit32/33，反向含义及资源约束见11。这样不要求tty在serial之前运行，也不让init转发串口字节；控制CALL详细布局和状态失败语义须随实现收口。
+
 共享定义位于include/proto/init.h，SDK导出同一文件并记录头文件哈希。2026-11-18本地两架构SDK构建、导出文件逐字节比较及目标编译期编码/拆分检查通过，fmt-check通过；编译检查产物在build/host/stage102-init-protocol/。本点仅落定协议编码，不改变内核或init运行路径，未重跑QEMU，不以此前stage101结果代替实际READY验收。
 
 spawn属性只支持SETSIGMASK、SETSIGDEF、SETPGROUP、RESETIDS；RESETIDS仅将有效值设为已有真实值，首版固定凭据要求合法，否则拒绝，调度/setsid扩展flag不静默接受。文件动作OPEN/CLOSE/DUP2按顺序，PATH查找至多32项/总4096字节，空分量表示cwd，遇EACCES继续其他项后择优报告，ENOEXEC不执行sh脚本替代。参数/动作先快照，最多128动作；准备失败正错误返回且无已发布孩子，文件外部效果不回滚。
@@ -548,7 +550,7 @@ SYSTEM查询检查改为核对所需业务位及精确镜像，不因新增CONSO
 
 2026-11-18用户确认采用私有资源tag加argv：保留通用Boot格式及SELF资源标签，serial私有tag 0x100..0x104依次为INIT_CALL、UART_MMIO、IRQ_BIND、RX_RING、TX_RING，全部只指向已实际安装的本地Handle，flags/reserved仍0；不能照抄init句柄或拿参数整数伪装资源。argv为程序名、UART种类、页内偏移、精确窗口长度、清单服务编号、reg-shift、reg-io-width，恰好七项；种类首期仅ns16550/pl011，其他数值为严格无符号十进制，检查溢出/窗口几何/编号，不通过环境变量或板名猜硬件。后两项由集中确认追加，取代此前五项约定，实现须同步更新。
 
-此约定不增加Boot字段、独立配置页或内核调用；标签仅在serial启动契约内解释，非新的通用资源种类，也不把测试用257等标签当作生产规格证据。实际权限、映射范围和目标身份仍从已授资源核验，argv不创造授权。共享标签唯一来源为include/proto/serial.h；首期标准布局仍由已冻结六字段库存确定，未采用UART访问布局扩展。tty连接及通知绑定/代次握手随实际服务接续单独收口，不以这份启动约定冒充所有启动接口都已完整定义。
+此约定不增加Boot字段、独立配置页或内核调用；标签仅在serial启动契约内解释，非新的通用资源种类，也不把测试用257等标签当作生产规格证据。实际权限、映射范围和目标身份仍从已授资源核验，argv不创造授权。共享标签唯一来源为include/proto/serial.h；当前库存保留前六字段，并以data[6..7]携带已确认的shift/width扩展。tty连接的反向通知及晚绑定方向见本篇首版启动协议和11，具体控制消息仍随实际服务接续收口，不以这份启动约定冒充所有启动接口都已完整定义。
 
 共享标签及文档已落定，两架构SDK构建/导出逐字节比较与fmt-check通过；实际init/runtime/IRQ用户ELF及libsys归档的哈希在新增宏前后完全相同。本点未重跑QEMU，未实现参数解析或生产服务启动；此前UART后端的700项host/167次QEMU证据对应bcf950b。启动约定验证记录在build/host/stage105-serial-bootstrap/evidence.json，接续参数解析、真实权限核验与装载。
 
@@ -581,3 +583,9 @@ tests/kernel/serialparent及serialverify为独立实际ELF测试，不进入生�
 当前完整回归进行中，原始与重验日志归build/host/stage106-serial-start/。控制台交接、原生资源reply、Siginfo真实来源及DMA具体ABI尚未实现；实际serial主循环/READY/监督仍是后续交付，不能以此测试孩子代替生产服务。
 
 最终验证完成：715项host、fmt-check通过；12份源码短暂变更结果显式排除并重跑相同场景，最终167份成功QEMU结果及两架构SDK源/头/实际用户ELF哈希全部与终稿一致。两架构service-authority包独立读取serialproof，核对真实孩子身份、7字节双向数据、释放绑定后拒绝和旧运行记录最终消失；完整用户/内核PTE及物理owner/Acct审计继续通过，默认init无fixture。证据evidence.json、test-all.log与rechecks.log；没有CI/真机/性能或生产serial READY验收。
+
+### serial收发推进接续（2026-11-18）
+
+已接sbin/serial/io.c的双向有界步骤，具体背压/私有TX保留/IRQ掩码及失败副作用见09末尾。独立包PID1现先交接控制台，再启动原实际孩子；该孩子在私有普通一致环上实际驱动UART发送一个换行并检查空闲步骤，保留原跨Set SHARED往返与退休审计。主机从journal重建内核输出，独立确认串口只额外出现该换行。该fixture未发送READY、不进入生产init，未将私有环冒充真实tty连接。
+
+完整753项host、格式及167次双架构QEMU通过，140份journal及全部源码/SDK哈希另核对；生产init ELF与stage110完全相同、无测试符号。证据build/host/stage111-serial-io/。用户已确认反向通知和晚绑定方向，已写本篇首版协议及11；下一步仍为实际serial main、IRQ ACK事件循环、生产装载/READY与监督，不以推进步骤替代T1.4。

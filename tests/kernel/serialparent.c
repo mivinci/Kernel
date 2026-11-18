@@ -181,5 +181,6 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
   serialproof[3] = serialproof[4] = 7;
   serialproof[5] = 7;
   serialproof[6] = kind;
+  serialproof[7] = 1;
   return 0;
 }

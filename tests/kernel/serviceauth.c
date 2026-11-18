@@ -28,11 +28,10 @@ regwrite(u64 base, u32 offset, u32 value)
     iowrite8(address, value);
 }
 static int
-handoff(const Bootview *boot)
+handoffstart(const Bootview *boot)
 {
-  Maparg mapping;
   Sysret result;
-  u64    args[7], i, turns, base;
+  u64    args[7], i, turns;
   isize  error;
   REQUIRE(__sys_debughandoff(0) == -ERR_BAD_HANDLE &&
               __sys_debughandoff(bootresource(boot, BOOT_SELF_SPACE)) == -ERR_DENIED,
@@ -51,9 +50,21 @@ handoff(const Bootview *boot)
     REQUIRE(error == -ERR_BUSY && !__sys_yield(), 183);
   }
   REQUIRE(turns < 64 && !__sys_debughandoff(system), 184);
-  handoffproof[0] = 1;
-  handoffproof[1] = turns + 1;
-  handoffproof[2] = uartkind;
+  if (!handoffproof[0]) {
+    handoffproof[0] = 1;
+    handoffproof[1] = turns + 1;
+    handoffproof[2] = uartkind;
+  }
+  return 0;
+}
+static int
+handoff(const Bootview *boot)
+{
+  Maparg mapping;
+  u64    base;
+  int    error = handoffstart(boot);
+  if (error)
+    return error;
   mapping.mem = memory;
   mapping.offset = 0;
   mapping.address = 0x2000000;
@@ -198,6 +209,9 @@ main(int argc, char **argv)
   REQUIRE(creates == 16 && found == 1 && listener && systems == 1 && memories == 1 && sources == 1,
           105);
   REQUIRE(!__sys_query(0, QUERY_ACCT, 0, &own, 1, &written, &next) && written == 1 && !next, 106);
+  error = handoffstart(boot);
+  if (error)
+    return (int) error;
   error = serialparent(creator, listener, memory, source, uartkind, uartoffset, uartbytes,
                        uartshift, uartwidth);
   if (error)

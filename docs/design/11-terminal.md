@@ -308,6 +308,14 @@ serial/tty静态共享区包含两个独立SPSC方向环，各头64字节八u64=
 
 RX_READY用用户bit32、TX_ROOM用bit33，静态授予对应目标掩码，不允许serial借通知发内核位。环满背压/设备FIFO溢出计数，不能覆盖未消费数据；驱动每批最多32字节/完成项后允许让出，仍有工作不睡等第二次通知。serial退出/授权撤销不是DMA设备停机证明。
 
+2026-11-18用户确认反向唤醒：tty→serial在serial接收端以bit32=RX_ROOM、bit33=TX_READY提示已释放RX空间/已追加TX数据；serial→tty继续以bit32=RX_READY、bit33=TX_ROOM提示输入/输出空间。两边各持只允许这两位的独立NOTIFY，位在各目标命名空间内解释，不把反向提示当作额外授权。写方先release发布位置再notify；收方根据持久环位置决定工作/睡眠，提示可合并或重复，不能靠等待第二次通知推进已知工作。
+
+serial可先完成设备/两环/IRQ初始化并向init报告READY，尚无对端NOTIFY时不发布tty连接。tty自身完成初始化并READY后，init用serial的固定CONTROL INSTALL安装指向该精确tty镜像的NOTIFY，再经只接受精确PID1/image的控制CALL绑定；绑定必须核验实际本地NOTIFY目标/权限，重查持久环状态并补发提示，随后才允许发布tty连接。init不转发字节；旧实例/迟到绑定不能复活旧连接。此方向已确认，控制CALL具体字布局与重复/撤销细则仍须在服务实现前写定，本段不冒充已接生产服务。
+
+NOTIFY的精确bit32/33掩码由可信init创建/授予时保证；现有RESOURCE记录能核验种类、USE/GRANT、目标PID/image和继承位，不暴露NOTIFY掩码，不能声称接收方可仅凭该查询独立证明没有额外通知位。实际notify仍受内核掩码强制限制，此连接方向不隐式扩展查询ABI或通知权限。
+
+例子：serial镜像S已READY但未绑定，RX环有17字节且没有tty连接发布。tty新镜像T已READY，init安装指向T的NOTIFY并发起绑定；若提交的是旧T0的句柄/镜像则拒绝，S的旧状态和环位置不变，init撤销本次安装项。成功则S按实际RX数据及TX空位补提示，init确认绑定成功后才发布依赖连接。若T在绑定中退出，提示失败/退出观察进入本次失败收尾，不凭迟到成功复活T或把旧环直接重定向到下个tty；活环重置仍须双方停止及epoch协议。
+
 共享布局唯一来源为include/proto/serial.h。libsys私有serialinit/read/write提供普通一致SHARED内存上的有界字节操作：单生产者仅写producer，单消费者仅写consumer，以无锁64位acquire/release发布；初始化仅在分享前或双方停止后执行。每次至多32字节，返回实际字节数，满/空返回0，0不等于EOF；旧epoch、损坏几何/位置、重叠调用缓冲及计数溢出分别拒绝，失败不推进位置。EOF/ERROR不清空已有队列，消费者仍可排空，生产者不再追加。识别终结时消费者须先acquire读取终结标志，再读取/排空队列，不用读前的空快照断言没有最终数据。
 
 该辅助层不执行notify、yield或活环重置；批次间让出/重新检查工作及排空后的epoch握手仍由服务状态机负责，不能把计数耗尽返回OVERFLOW当成已实现自动恢复。映射有效性、单写者及运行期epoch/几何不变是两端契约，不是对恶意共享写入的内存安全承诺，也不将一致内存原子操作当作DMA/cache维护。
@@ -540,3 +548,7 @@ fork快照接续（2026-11-17）：sigfork现由可信forksnapshot在Space/Local
 目标用例使用测试进程自己的普通内存，尚非serial/tty跨进程SHARED映射或设备收发。正常init链接不含测试ringusercheck/serialring或这些未使用辅助函数；SDK对象无未定义符号。实际UART后端、通知/IRQ主循环、服务装载与READY、端点退出/重连及epoch握手仍待接，不能将本点称为实际serial服务已交付。完整回归及产物核对证据归build/host/stage103-serial-ring/。
 
 最终完整make test-all通过689项host、fmt-check及167次两架构QEMU，含12次内存容量和8次四核/真实IRQ/停放场景。独立核对全部成功guest结果的源码/共享头哈希、两架构SDK源/头/归档/实际runtime ELF及导出内容，检查测试符号确实存在于runtime而不进入生产init；证据evidence.json和完整test-all.log。无CI、板端、性能或实际serial READY验收。
+
+serial推进接续（2026-11-18）：sbin/serial/io.c已连接现有UART与两个SPSC方向，满RX屏蔽设备接收中断并保留数据，TX部分发送由私有32字节缓冲持有，提示与again供外层推进；具体步骤、失败副作用及专项/两架构验证见09末尾。反向RX_ROOM/TX_READY与精确PID1/image控制晚绑定方向已由用户确认，尚非已交付的生产serial/tty循环。
+
+该接续完整753项host/格式及167次双架构QEMU已通过，含两架构实际UART字节的journal/串口独立核对；默认生产init ELF保持不变，未声明外部RX、实际IRQ服务循环或READY/tty上线。证据stage111-serial-io/，详细验收归09。

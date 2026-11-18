@@ -237,7 +237,9 @@ def build(args):
         return artifact
     package_exit=link_adoption('packageexit',[compile_adoption(ROOT/'tests/kernel/packageexit.c','packageexit')])
     serial_start_source=ROOT/'sbin/serial/start.c'
-    serial_verify=link_adoption('serialverify',[compile_adoption(ROOT/'tests/kernel/serialverify.c','serialverify'),compile_adoption(serial_start_source,'serial-start')])
+    serial_io_source=ROOT/'sbin/serial/io.c'
+    uart_source=ROOT/'sbin/serial/uart.c'
+    serial_verify=link_adoption('serialverify',[compile_adoption(ROOT/'tests/kernel/serialverify.c','serialverify'),compile_adoption(serial_start_source,'serial-start'),compile_adoption(serial_io_source,'serial-io'),compile_adoption(uart_source,'serial-verify-uart')])
     service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth'),compile_adoption(ROOT/'tests/kernel/serialparent.c','serialparent'),embedded_elf(serial_verify,'serial_verify')])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
@@ -275,7 +277,6 @@ def build(args):
     if len(suspend_rows)!=1 or int(suspend_rows[0][2])!=256:raise BuildError('signal suspend trace missing')
     suspend_address=int(suspend_rows[0][1],16)
     (sdk/'suspendimage.S').write_text('/* image sha256: '+digest(suspend_image)+' */\n.section .rodata\n.balign 8\n.global suspend_image,suspend_image_end,suspend_trace_address\nsuspend_image:\n.incbin "'+str(suspend_image)+'"\nsuspend_image_end:\n.balign 8\nsuspend_trace_address:\n.quad '+str(suspend_address)+'\n')
-    uart_source=ROOT/'sbin/serial/uart.c'
     irq_user=link_adoption('irqdriver',[compile_adoption(ROOT/'tests/kernel/irqdriver.c','irqdriver'),compile_adoption(ROOT/'tests/kernel/uartuser.c','uartuser'),compile_adoption(uart_source,'serial-uart'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','irqfp'),compile_adoption(ROOT/'tests/kernel'/args.arch/'mmioport.c','mmioport')])
     irq_image=sdk/'irqdriver.img'
     irq_image.write_bytes(pack(irq_user.read_bytes(),profile['machine'],128))
@@ -331,6 +332,7 @@ def build(args):
     headers += list((ROOT / 'include/proto').glob('*.h'))
     headers += [ROOT / 'sbin/serial/uart.h']
     headers += [ROOT / 'sbin/serial/start.h']
+    headers += [ROOT / 'sbin/serial/io.h']
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
@@ -348,7 +350,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

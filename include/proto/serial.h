@@ -10,6 +10,9 @@
 #define SERIAL_ERROR      UINT64_C(2)
 #define SERIAL_RX_READY   (UINT64_C(1) << 32)
 #define SERIAL_TX_ROOM    (UINT64_C(1) << 33)
+/* Reverse hints have meaning at the serial endpoint, not the tty endpoint. */
+#define SERIAL_RX_ROOM  (UINT64_C(1) << 32)
+#define SERIAL_TX_READY (UINT64_C(1) << 33)
 
 /* Serial-private Boot tags; flags/reserved remain zero, values are Handles. */
 #define SERIAL_INIT_CALL 0x100
