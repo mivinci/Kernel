@@ -71,7 +71,7 @@ class Device(C.Structure):
 class Info(C.Structure):
     _fields_ = [(x, C.c_uint32) for x in ('size', 'nram', 'nreserved', 'ndev', 'nusable', 'cpus')] + [
         ('timebase', C.c_uint64), ('ram', Range * 8), ('reserved', Range * 32),
-        ('usable', Range * 64), ('dev', Device * 64), ('initrd', Range)]
+        ('usable', Range * 64), ('dev', Device * 64), ('initrd', Range), ('bootedge', Range * 2)]
 
 class DtbTests(unittest.TestCase):
     @classmethod

@@ -76,6 +76,10 @@ map(u64 va, u64 pa, u64 prot, u32 attr)
 static u64
 permissions(const Dtinfo *info, u64 pa)
 {
+  u32 i;
+  for (i = 0; i < 2; i++)
+    if (info->bootedge[i].size && pa == info->bootedge[i].base)
+      return VM_READ;
   if (info->initrd.size && pa < info->initrd.base + info->initrd.size &&
       pa + PAGE_SIZE > info->initrd.base)
     return VM_READ;

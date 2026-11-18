@@ -7,6 +7,7 @@
 #include <space.h>
 #include <kstack.h>
 #include <bootpkg.h>
+#include <bootstore.h>
 #if BOOT_CASE != 0
 #include <ktest.h>
 #endif
@@ -150,7 +151,21 @@ discovery(u64 dtb, u64 available)
   if (dtreserve(&hardware, start, end - start) || dtreserve(&hardware, dtb, hardware.size) ||
       dtusable(&hardware))
     panic("boot reservation");
+  if (bootstoreprepare(&hardware))
+    panic("boot package retention");
   physicalinit();
+  if (hardware.initrd.size) {
+    Bootstore retained;
+    bootstorestat(&retained);
+    field("BOOTSTORE pages=", retained.pages);
+    field(" copies=", retained.copies);
+    field(" retained=", retained.retained);
+    field(" refs=", retained.refs);
+    putstr("\n");
+    for (i = 0; i < 2; i++)
+      if (hardware.bootedge[i].size)
+        rangeinfo("BOOTEDGE", &hardware.bootedge[i]);
+  }
   field("DT ram=", hardware.nram);
   field(" reserved=", hardware.nreserved);
   field(" usable=", hardware.nusable);

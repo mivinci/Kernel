@@ -35,9 +35,9 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 
 `--arch riscv`选择RV64。工具输出确定性SHA256及目录摘要；不生成缺失的生产程序。内核现从chosen读取并保留/校验initrd，尚未从包启动生产PID1。容器格式、预算与T1后续边界见07末尾。
 
-进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。当前只完成格式及校验，包映射后端未接，内核仍拒绝非零包字段，不代表PID1已能读取包。
+进程启动Boot现统一为格式2（144字节头），追加只读包用户VA/长度；旧格式不兼容，需重新生成SDK/启动包。ELF与堆上界下移，为专用包窗口预留16MiB；普通Mem仍最多64KiB。保留后端已按原页加最多两页隔离副本排除可分配RAM并单独统计，用户包映射后端未接，内核仍拒绝非零包字段，不代表PID1已能读取包。
 
-`make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行九次真实initrd启动；只验证容器，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容和包页R/NX属性。
+`make scenario ARCH=arm64 CASE=bootpkg`（RV64另传`OPENSBI`）自动用SDK测试ELF生成好包及坏包，执行十次真实initrd启动（含整页无副本包）；只验证容器和保留后端，不执行包内程序。也可用`make smoke ARCH=arm64 CASE=bootpkg INITRD=/absolute/path/boot.pkg`检查自己的包。`normal`不含fixture，当前允许不传包继续早期停机；传包时同样完整检查，坏包在页分配前拒启。QMP检查目录、保留内容、隔离副本的包外字节为0及原页/副本R/NX属性。
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。

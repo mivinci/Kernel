@@ -369,8 +369,14 @@ def validate_discovery(text, arch, ram_mb, names, boot):
     initrds = [fields(x) for x in lines if x.startswith("INITRD ")]
     if len(initrds) > 1 or (initrds and not covered(initrds[0]["base"], initrds[0]["size"])):
         raise SmokeError("initrd not uniquely reserved")
+    edges = [fields(x) for x in lines if x.startswith('BOOTEDGE ')]
+    if len(edges) > 2 or any(set(x) != {'base','size'} or x['size'] != 4096 or x['base'] % 4096 or
+                             not covered(x['base'],4096) for x in edges):
+        raise SmokeError('invalid boot edge reservations')
+    if len({x['base'] for x in edges}) != len(edges):
+        raise SmokeError('duplicate boot edge reservation')
     return {"summary": summary, "ranges": ranges, "devices": devices,
-            "initrd": initrds[0] if initrds else None}
+            "initrd": initrds[0] if initrds else None, 'bootedges':edges}
 
 
 def validate_pages(text, discovery, case):
@@ -452,6 +458,7 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
     initrd = discovery.get("initrd")
     if initrd:
         special.append(initrd)
+    special += discovery.get('bootedges',[])
     firmware = [x for x in discovery["ranges"]["RESERVED"] if x not in special]
     guards = {names["__stack_guard"], names["__emergency_guard"]}
     def check(va, pa, prot, device=False):
@@ -471,6 +478,8 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
                 continue
             prot = 5 if names["__text_start"] <= pa < names["__text_end"] else 1 if names["__rodata_start"] <= pa < names["__rodata_end"] else 3
             if initrd and pa < initrd["base"] + initrd["size"] and pa + 4096 > initrd["base"]:
+                prot = 1
+            if any(x['base'] == pa for x in discovery.get('bootedges',[])):
                 prot = 1
             check(high(pa), pa, prot)
             expected_count += 1
@@ -562,8 +571,27 @@ def accepted_package(args, qmp, run_dir, names, discovery):
     qmp.command('pmemsave', {'val': initrd['base'], 'size': initrd['size'], 'filename': str(path)})
     if path.read_bytes() != data:
         raise SmokeError('allocator/VM changed retained package')
+    offset = initrd['base'] % 4096
+    pages = (offset + len(data) + 4095) // 4096
+    partial = []
+    if offset:partial.append((0,offset,min(4096,offset+len(data))))
+    if (offset+len(data)) % 4096 and (not partial or pages != 1):
+        partial.append((pages-1,0,(offset+len(data))%4096))
+    edges = discovery.get('bootedges',[])
+    summaries = [fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('BOOTSTORE ')]
+    if summaries != [dict(pages=pages,copies=len(partial),retained=pages+len(partial),refs=0)] or len(edges) != len(partial):
+        raise SmokeError('retained boot backing accounting mismatch')
+    for index,(page,first,end) in enumerate(partial):
+        expected = bytearray(4096)
+        begin = page*4096+first-offset
+        expected[first:end] = data[begin:begin+end-first]
+        path = run_dir/('boot-edge-%d.bin'%index)
+        qmp.command('pmemsave',{'val':edges[index]['base'],'size':4096,'filename':str(path)})
+        if path.read_bytes() != expected:
+            raise SmokeError('boot edge leaked outside bytes or lost package content')
     return dict(bytes=len(data), count=len(info['items']), init_index=info['init_index'],
-                sha256=digest(path), directory_checked=True, retained_unchanged=True, read_only=True)
+                sha256=digest(run_dir/'retained-package.bin'), directory_checked=True,
+                retained_unchanged=True, read_only=True, isolated_edges=len(partial),retained_pages=pages+len(partial))
 
 
 def exercise(args, run_dir, record):

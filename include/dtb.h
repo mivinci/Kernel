@@ -55,6 +55,7 @@ struct Dtinfo
   Dtrange ram[DT_RAM], reserved[DT_RESERVED], usable[DT_USABLE];
   Dtdev   dev[DT_DEVICES];
   Dtrange initrd;
+  Dtrange bootedge[2];
 };
 
 /* Single boot caller: parser scratch is static, no heap or recursion. */

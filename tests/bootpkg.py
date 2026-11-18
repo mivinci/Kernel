@@ -20,6 +20,11 @@ def fixtures(data):
     row = bootpkg.ITEM.unpack_from(data, table)
     second = bootpkg.ITEM.unpack_from(data, table + 64)
     yield 'good', data, None
+    aligned = bytearray(data)
+    aligned.extend(bytes(-len(aligned) % 4096))
+    struct.pack_into('<Q', aligned, 16, len(aligned))
+    struct.pack_into('<Q', aligned, 56, bootpkg.checksum(aligned))
+    yield 'whole-pages', aligned, None
     changed = bytearray(data);changed[-1] ^= 1
     yield 'checksum', changed, 'checksum'
     for name, at, value in (('header', 8, 2), ('directory', 48, header[4]),

@@ -431,3 +431,17 @@ bootimagecheck内部接口现返回调用者自有的64字节Bootimage值，失�
 tests/kernel的init描述故意放到8对齐标签后1字节，真实bootimageload进入PID1并由主机按PTE/Boot/栈继续核验；非PID1/坏startup拒绝、孤儿收取及PID1退出致命检查保留。host另检查两目标所有8种基址偏移、段解码逐字节一致、截断/null及文件别名失败清零。验证结果归build/host/stage87-unaligned-boot-loader/与status；此项不是包内生产PID1启动，T1.3主体及其访问接口仍未交付。
 
 本地605项完整host、格式及34次针对性两架构QEMU通过：各架构init/initfatal、libsys/runtime/elf、sigframe、cow、normal各一次，加各九次容器正反启动；终稿另重跑39项启动host。所有34份最终结果均核对当前源码哈希，四份PID1结果的ELF符号init_image确为1 mod 8，normal均无tests源码。本点未重跑128次完整QEMU，上一全量基线仍为stage86；无CI/真机/性能验收。
+
+### 专用包视图保留后端（2026-11-18）
+
+kernel/bootstore.c已接一次性可信bootstoreprepare：在完整容器检查、原包/内核/DTB保留及usable计算之后、物理页元数据与pginit之前，为非完整首尾页选择最多两页空闲整页，登记为新保留，再生成包内内容相同、包外字节全零的隔离副本。包原始所有接触页继续保留，包括被副本替代的原页；不改变原包字节。首尾同页仅用一个副本，整页中间段直接引用原PA，整包对齐时不取副本。
+
+Bootstore为48字节内部统计记录，另保存两边界PA；记录base/bytes、原页数pages、额外copies、实际retained=pages+copies与后续借用refs。先核对精确原包保留、完整RAM范围及既定16MiB窗口页数，不能把任意保留范围登记为包；入口只由完整核验后的启动路径调用，不是用户接口。候选边界页另核对RAM/原保留不相交及不重复；reserve/usable重算失败恢复全部输入记录（含被覆盖的未用槽），不发布Bootstore。当前边界页全部属于启动保留，不从普通页分配器分配或释放，不重复向某个进程Acct虚扣。
+
+启动顺序现为容器核验→登记原包/内核/DTB→usable→边界隔离保留→重新usable→元数据/pginit→高半区；原包和副本均映射R/NX普通内存，无低别名。Dtinfo增加内部bootedge[2]，不改变用户ABI；BOOTSTORE/BOOTEDGE串口记录用于独立核对。bootstorepage仅向内核返回范围内实际物理页，不向用户提供任意VA到PA接口。hold/drop仅跟踪后续后端借用，最后drop仍保留恢复源，不复用启动身份或释放原包/副本。
+
+例：包从页内偏移3开始、跨三个原页且尾页不满，原3页与2份边界副本合计保留5页，中间页直接复用。只读内容逻辑上仍为3页，第一/最后逻辑页引用副本；包前3字节及包尾后字节为0。refs从0→2→1→0不改变retained=5或页来源；这只是后端借用记录，不代表已经存在2条用户Mmap。
+
+host直接检查整页、单边、双边、同页、两页跨界、容量、缺少/重复/冲突保留、无空闲页及usable重算失败的整份回滚。实际两架构bootpkg suite现每架构十次：原九类加整页零副本包；QMP导出隔离页逐字节核对包外0、包内原内容和R/NX，原包仍逐字节不变。用户Mem/Space分片、fork/unmap清理、PID1非零Boot字段授权与包内生产PID1装载尚未接；本点不称T1.3完成。结果归build/host/stage89-retained-package/及status。
+
+本点最终本地make test-all通过616项host、格式和130次两架构QEMU；另四次带包normal/pages全部通过实际分配耗尽/回收后的原包与副本导出核对。134份最终结果核对当前源码，完整场景另核对全部共享头哈希及normal无tests源码。编译栈帧prepare为ARM1168/RV1216字节、copyedge48字节，不是完整栈深/IRQ延迟证明；无CI/板端/性能验收。
