@@ -21,6 +21,7 @@ from build import BuildError, ROOT, digest, read_kernel, PROFILES
 from run import _group_exists, _stop_group, install_stop_handlers, run_command
 import bootpkg
 from elf import plan as elfplan
+from layout import KBASE, KMAP_BYTES, KIO, KSTACK_BASE
 
 
 VM_FAULTS = {"textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null": 8, "identity": 9, "alias": 10, "unmapped": 11}
@@ -300,7 +301,7 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None):
                                "rodatawrite": high(names["__rodata_start"]),
                                "guard": high(names["__stack_guard"]), "null": 0,
                                "identity": names["__text_start"], "alias": 1 << 38,
-                               "unmapped": 0xffffffc100200000}.get(case)
+                               "unmapped": KIO + 0x200000}.get(case)
             if expected_target is not None and target != expected_target:
                 raise SmokeError("VM fault target differs from ELF")
         elif frame.get("pc") != high(names["probe_first" if i == 0 else "probe_second"]):
@@ -451,12 +452,12 @@ def validate_pages(text, discovery, case):
 
 def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, retained=None):
     ram = min(x["base"] for x in discovery["ranges"]["RAM"])
-    delta = (0xffffffc000000000 - ram) & ((1 << 64) - 1)
+    delta = (KBASE - ram) & ((1 << 64) - 1)
     def high(pa):
         return (pa + delta) & ((1 << 64) - 1)
     if (transition.get("delta") != delta or not high(names["__text_start"]) <= transition.get("pc", 0) < high(names["__text_end"])
             or not high(names["__stack_bottom"]) <= transition.get("sp", 0) < high(names["__stack_top"])
-            or not 1 <= transition.get("tables", 0) <= 2048 or transition.get("uart") != 0xffffffc100000000):
+            or not 1 <= transition.get("tables", 0) <= 8192 or transition.get("uart") != KIO):
         raise SmokeError("VM transition layout mismatch")
     table_dir = directory / "tables"
     table_dir.mkdir()
@@ -464,7 +465,7 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
     def accessible(pa):
         return pa % 4096 == 0 and any(r["base"] <= pa and pa + 4096 <= r["base"] + r["size"] for r in discovery["ranges"]["USABLE"])
     def walk(pa, level, prefix):
-        if pa in tables or len(tables) >= 2048 or not accessible(pa):
+        if pa in tables or len(tables) >= 8192 or not accessible(pa):
             raise SmokeError("page table cycle or invalid physical allocation")
         target = table_dir / ("%016x.bin" % pa)
         qmp.command("pmemsave", {"val": pa, "size": 4096, "filename": str(target)})
@@ -520,17 +521,17 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
             check(high(pa), pa, prot)
             expected_count += 1
     uart = next(x for x in discovery["devices"] if x["kind"] in (1, 2))["mmio"][0]["base"]
-    check(0xffffffc100000000, uart & ~4095, 3, device=True)
+    check(KIO, uart & ~4095, 3, device=True)
     device_pages = 1
     for d in discovery["devices"]:
         if d["kind"] == 5:
             for i, window in enumerate(d["mmio"]):
-                check(0xffffffc100001000 + i * 4096, window["base"], 3, device=True)
+                check(KIO + 4096 + i * 4096, window["base"], 3, device=True)
                 device_pages += 1
         elif d["kind"] == 4:
             base = d["mmio"][0]["base"]
             for i, offset in enumerate((0,0x201000,0x2000)):
-                check(0xffffffc100001000+i*4096,base+offset,3,device=True)
+                check(KIO+4096+i*4096,base+offset,3,device=True)
                 device_pages += 1
     if retained:
         if retained["stack_table"] not in tables:
@@ -1117,7 +1118,7 @@ def exercise(args, run_dir, record):
                     stacks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITSTACK ")]
                     if (len(retained) != 1 or retained[0].get("charged",0) <= 20 or len(stacks) != 4 or
                         [line.get("index") for line in stacks] != list(range(4)) or
-                        retained[0].get("stack_va") != 0xffffffc101001000):
+                        retained[0].get("stack_va") != KSTACK_BASE + 4096):
                         raise SmokeError("invalid retained PID-1 bookkeeping")
                     record["retained_init"] = dict(retained[0], stacks=stacks)
                     if args.case == "init":
@@ -1362,7 +1363,7 @@ def main():
     parser.add_argument('--qmp-stdio', action='store_true', help='use QMP pipes without a socket listener')
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
     parser.add_argument("--trace", action="store_true")
-    parser.add_argument("--ram", type=int, choices=(128, 256, 512), default=256)
+    parser.add_argument("--ram", type=int, choices=(128, 256, 512, 2048, KMAP_BYTES // (1024 * 1024)), default=256)
     parser.add_argument("--virtio", action="store_true")
     args = parser.parse_args()
     if args.initrd:args.initrd = args.initrd.resolve()
@@ -1373,7 +1374,7 @@ def main():
     if args.case == "virtiodev":
         args.virtio = True
     if args.timeout is None:
-        args.timeout = 25 if args.case in ("timer", "irq") else 10
+        args.timeout = max(25 if args.case in ("timer", "irq") else 10, args.ram / 32)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     run_dir = ROOT / "build" / args.arch / "smoke" / uuid.uuid4().hex

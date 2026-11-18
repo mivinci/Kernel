@@ -114,6 +114,63 @@ releaseblock(u32 index, u32 order)
 }
 
 int
+pgplan(const Dtinfo *info, Dtrange *metadata, u32 *pages)
+{
+  u32 i, j, best = DT_USABLE;
+  u64 count = 0, base = ~(u64) 0, bytes, largest = 0;
+  if (!metadata || !pages)
+    return PG_BAD;
+  metadata->base = metadata->size = 0;
+  *pages = 0;
+  if (!info || !info->nram || info->nram > DT_RAM || info->nusable > DT_USABLE ||
+      info->nreserved > DT_RESERVED)
+    return PG_BAD;
+  for (i = 0; i < info->nram; i++) {
+    if (!validrange(info->ram[i]) || info->ram[i].size / PAGE_SIZE > PG_RAM_PAGES - count ||
+        info->ram[i].base + info->ram[i].size > (1UL << 40))
+      return PG_BAD;
+    for (j = 0; j < i; j++)
+      if (intersects(info->ram[i], info->ram[j]))
+        return PG_BAD;
+    count += info->ram[i].size / PAGE_SIZE;
+    base = MIN(base, info->ram[i].base);
+  }
+  for (i = 0; i < info->nram; i++)
+    if (info->ram[i].base + info->ram[i].size - base > KMAP_BYTES)
+      return PG_BAD;
+  for (i = 0; i < info->nreserved; i++)
+    if (!info->reserved[i].size || info->reserved[i].size > ~(u64) 0 - info->reserved[i].base)
+      return PG_BAD;
+  bytes = ALIGN_UP(count * sizeof(Page), PAGE_SIZE);
+  for (i = 0; i < info->nusable; i++) {
+    Dtrange r = info->usable[i];
+    if (!validrange(r))
+      return PG_BAD;
+    for (j = 0; j < info->nreserved; j++)
+      if (intersects(r, info->reserved[j]))
+        return PG_BAD;
+    for (j = 0; j < i; j++)
+      if (intersects(r, info->usable[j]))
+        return PG_BAD;
+    for (j = 0; j < info->nram; j++)
+      if (r.base >= info->ram[j].base && r.base - info->ram[j].base < info->ram[j].size &&
+          r.size <= info->ram[j].size - (r.base - info->ram[j].base))
+        break;
+    if (j == info->nram)
+      return PG_BAD;
+    if (r.size >= bytes && r.size > largest) {
+      best = i;
+      largest = r.size;
+    }
+  }
+  if (best == DT_USABLE)
+    return PG_NOMEM;
+  metadata->base = info->usable[best].base;
+  metadata->size = bytes;
+  *pages = (u32) count;
+  return 0;
+}
+int
 pginit(const Dtinfo *info, Page *pages, u32 capacity, u64 lowwater)
 {
   u32 i, j, k, count = 0, index, order, region = 0;

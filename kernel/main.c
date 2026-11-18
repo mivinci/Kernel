@@ -47,28 +47,17 @@ rangeinfo(const char *name, const Dtrange *range)
 static void
 physicalinit(void)
 {
-  u32    i;
-  u64    count = 0, bytes, base = 0;
-  Pgstat stats;
-  for (i = 0; i < hardware.nram; i++) {
-    if (hardware.ram[i].base & PAGE_MASK || hardware.ram[i].size & PAGE_MASK ||
-        hardware.ram[i].size / PAGE_SIZE > (1UL << 18) - count)
-      panic("RAM metadata capacity");
-    count += hardware.ram[i].size / PAGE_SIZE;
-  }
-  bytes = ALIGN_UP(count * sizeof(Page), PAGE_SIZE);
-  for (i = 0; i < hardware.nusable; i++) {
-    if (hardware.usable[i].size >= bytes) {
-      base = hardware.usable[i].base;
-      break;
-    }
-  }
-  if (i == hardware.nusable || dtreserve(&hardware, base, bytes) || dtusable(&hardware))
+  u32     count;
+  Dtrange metadata;
+  Pgstat  stats;
+  if (pgplan(&hardware, &metadata, &count))
+    panic("RAM metadata plan");
+  if (dtreserve(&hardware, metadata.base, metadata.size) || dtusable(&hardware))
     panic("metadata reservation");
-  if (pginit(&hardware, (Page *) base, (u32) count, 256))
+  if (pginit(&hardware, (Page *) metadata.base, count, 256))
     panic("page initialization");
-  field("META base=", base);
-  field(" size=", bytes);
+  field("META base=", metadata.base);
+  field(" size=", metadata.size);
   field(" records=", count);
   putstr("\n");
   pgstat(&stats);
@@ -120,7 +109,7 @@ discovery(u64 dtb, u64 available)
     u64 window = start & ~0xfffffffUL;
     pkgbase = ALIGN_DOWN(hardware.initrd.base, PAGE_SIZE);
     pkgend = ALIGN_UP(hardware.initrd.base + hardware.initrd.size, PAGE_SIZE);
-    if (pkgbase < window || pkgend > window + 0x40000000)
+    if (pkgbase < window || pkgend > window + KMAP_BYTES)
       panic("initrd read window");
   }
   for (i = 0; i < hardware.nreserved; i++) {
@@ -263,8 +252,8 @@ main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
   if (cpu != 0 || mask != 1 || vm != 0)
     hal_halt();
   ram = (u64) __kernel_start & ~0xfffffffUL;
-  if ((dtb & 7) || dtb < ram || dtb > ram + 0x40000000 - 40 ||
-      dtconsole((const void *) dtb, MIN(0x200000, ram + 0x40000000 - dtb), &hardware,
+  if ((dtb & 7) || dtb < ram || dtb > ram + KMAP_BYTES - 40 ||
+      dtconsole((const void *) dtb, MIN(0x200000, ram + KMAP_BYTES - dtb), &hardware,
                 &diagnostic) ||
       hal_debug_init(&diagnostic))
     hal_halt();
@@ -284,7 +273,7 @@ main(u64 cpu, u64 dtb, u64 mode, u64 mask, u64 vm)
   local = (u64) &local;
   if (local < (u64) __stack_bottom || local >= (u64) __stack_top)
     panic("stack");
-  discovery(dtb, MIN(0x200000, ram + 0x40000000 - dtb));
+  discovery(dtb, MIN(0x200000, ram + KMAP_BYTES - dtb));
   putstr("LAYOUT start=");
   puthex((u64) __kernel_start);
   putstr(" end=");

@@ -2,9 +2,9 @@ import ctypes as C
 import unittest
 import test_space as support
 from test_acct import Acctid, Account
-from test_pgt import Entry
+from test_pgt import Entry,KIO,KSTACK_BASE
 
-BASE = 0xffffffc101000000
+BASE = KSTACK_BASE
 class Stackid(C.Structure):
     _fields_ = [('generation', C.c_uint64), ('index', C.c_uint32), ('reserved', C.c_uint32)]
 class Stack(C.Structure):
@@ -27,7 +27,7 @@ class StackTests(unittest.TestCase):
                                'kstackused': [Stackid, C.POINTER(C.c_uint64)],
                                'hal_vm_unmap': [C.POINTER(support.Hvs), C.c_uint64]}.items():
                 getattr(lib, name).argtypes = args
-            self.assertEqual(lib.hal_vm_map(C.byref(self.kernel), 0xffffffc100000000, 0x9000000, 3, 1), 0)
+            self.assertEqual(lib.hal_vm_map(C.byref(self.kernel), KIO, 0x9000000, 3, 1), 0)
             self.assertEqual(lib.kstackinit(C.byref(self.kernel)), 0)
             self.stacks = []
             try:

@@ -328,7 +328,7 @@ alloc输入Allocarg=48字节：bytes@0、kind@8、align@16、minaddr@24、maxadd
 
 - [x] 内部pgalloc/pgfree、0..16阶、每阶双向空闲链和32字节Page元数据；物理对齐拆分、验证后逐阶合并，跨RAM区域或保留洞不合并。
 - [x] Pglim的minpa/maxpa_exclusive/align约束同时满足，能够从大块内部选择合法子块；非法约束、无合法块或保护低水位不足时失败，输出和池状态不变。
-- [x] 启动从已验证usable RAM中选择足够大的页对齐区间，先加入DTB保留列表，再初始化Page数组；元数据覆盖每个实际RAM页，不为物理空洞配置记录。当前启动最多262144页（1 GiB），每页32字节；256 MiB默认需2 MiB元数据，物理区间不计入静态ELF窗口。
+- [x] 启动从已验证usable RAM中选择足够大的页对齐区间，先加入DTB保留列表，再初始化Page数组；元数据覆盖每个实际RAM页，不为物理空洞配置记录。本切片最初上限262144页（1 GiB），后续004修复扩到8 GiB，见文末；每页32字节，256 MiB默认需2 MiB元数据，物理区间不计入静态ELF窗口。
 - [x] 主机与两架构真实物理读写、耗尽/归还、错误释放及守恒验证；下述尚未实现部分不能据此勾选阶段04整体通过。
 
 Page采用state/order/head/prev/next/region六个u32及owner一个u64，共32字节。状态区分保留页、空闲块首、已分配块首和块内部；只有有效块首的head/order具有权威性，内部不维护逐页可释放引用。初始化遍历全元数据并排除保留区；分配/释放只更新拆分/合并涉及的块首，不为大块逐页重写归属。owner当前保留为0，尚无进程/Acct身份；它不构成授权或DMA固定证明。
@@ -349,7 +349,7 @@ make test-all现包含44项host、格式及12个QEMU场景，两架构各增加p
 
 - [x] RV64 Sv39和ARM 39位/4 KiB页表；物理ELF装载后建立临时恒等及最终高地址映射，切换PC/栈/异常向量后撤销全部低地址映射。
 - [x] 实际RAM从0xffffffc000000000开始线性映射，保留物理洞与固件占用；代码RX、只读段R、普通RAM/数据/栈RW且NX，两个栈下各一页guard无映射；没有代码的第二个可写别名。
-- [x] UART仅按已解析设备窗口映射到0xffffffc100000000；ARM为Device-nGnRnE、NX，RV64以平台设备PMA为硬件属性，RSW只记录已核对类型，不假装支持Svpbmt。
+- [x] UART仅按已解析设备窗口映射到独立KIO窗口（本切片原0xffffffc100000000，后续004扩容移到0xffffffc400000000，见文末）；ARM为Device-nGnRnE、NX，RV64以平台设备PMA为硬件属性，RSW只记录已核对类型，不假装支持Svpbmt。
 - [x] 页表帧来自同一伙伴分配器并清零；单页map失败回滚本次新表，unmap清除入口并失效后才回收空表；额外故障镜像实测权限、guard、低地址撤销与unmap后的页复用。
 
 页表walk/生命周期在kernel/pgt.c，硬件描述符编码在各架构vm.c，控制寄存器及失效序列在mmu.S；公共核心不包含架构头或ISA分支。Hvs持有根PA、页数和Pgsource回调副本；Pgsource为分配/释放普通RAM帧、当前VA下访问帧及不透明context。access回调使切换前物理访问、切换后直接映射访问及host故障测试使用同一walker。销毁只收Hvs，使用其已有provider，不再重复传可矛盾的分配源；仅允许销毁已停止CPU使用的根。页表编码辅助定义放私有pgt.h，不泄漏到公共核心的HAL头。
@@ -861,3 +861,17 @@ Spacetxn仍64字节：node/page改为受检查的u16索引/页游标，0xffff为
 仍须处理尚未冻结完成的源Mem别名链及引用变化、未映射/Local/Signal组合长循环、自动IRQ/调度检查点与STOP/CONT；不因本次独立Mem反例通过就开放原生fork或允许任意用户VM工作。用户新增真机可移植性问题登记已读取，本切片收尾后按其优先级推进；启动包已由用户后续commit冻结，T1按07的五步交付，不再以旧008为阻塞。
 
 本轮最终本地572项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、独立Mem变更计数、normal无fixture/wrapper及实际未增长的固定池/静态帧。未执行CI、真实硬件、性能、同一源Mem任意别名变更或原生fork检查点验收。
+
+### 完整RAM元数据与8 GiB直接映射（2026-11-18，issue 004）
+
+启动现以只读pgplan先验证全部RAM：最多2097152页（8 GiB）、从最低RAM起物理跨度最多8 GiB，范围/页对齐/相交/算术及现有40位PA约束均须满足。仅为实际RAM页建Page记录，洞不占元数据；超限明确拒启，不裁掉高RAM或把截短后的表冒充完整机器。页数索引仍为u32，Page仍32字节，固定池/Set预算规格不变。
+
+pgplan从全部已核验usable区间中选最大且足够容纳元数据的连续区间（同大小保持输入首项），检查其位于一个RAM区间内、与保留范围及其他usable不冲突；不改Dtinfo/分配器，失败返回清零的规划输出。成功后才把精确metadata区间加入保留列表、重算usable并调用pginit。1/2/8 GiB各需8/16/64 MiB元数据，256 MiB仍需2 MiB；找不到连续空间即拒启，不另设堆或稀疏索引框架。
+
+虚拟布局统一为include/layout.inc：KBASE=0xffffffc000000000，KMAP_BYTES=8 GiB；KIO移到0xffffffc400000000（KBASE后16 GiB），KSTACK_BASE=0xffffffc401000000，仍用2 MiB私有栈槽与独立叶表计费。编译断言保证直接映射不碰设备区、全部栈槽仍处于同一永久KIO父表。用户根仍共享内核高半区，用户Boot/ABI地址未改变。tools/layout.py从同一字面来源读取审计地址，不在host或栈fixture复制第二套新布局。
+
+启动DTB及initrd的首次受信读取候选窗口从内核所在256 MiB对齐基址扩到8 GiB，blob自身仍限2 MiB；候选窗口只约束首次读取，不创造RAM或授权，完整发现仍核验DTB/包的真实RAM和排他保留。直接映射保持4 KiB页、仅真实RAM、固件洞与guard排除、W/X及Device属性；未引入大页、缓存开启、DMA或真实板启动配置。较大内核页表的逐页审计上限相应提高，仍逐一核对实际PA/权限/洞与归属。
+
+主机覆盖1/2/8 GiB完整计数与元数据大小、多银行/空洞、最大可用区选择、超容量/跨度/40位PA/溢出/重叠拒绝、连续空间不足和失败只读。make test-memory在两架构各运行512 MiB/2 GiB/8 GiB的pages与normal，共12次，并纳入test-qemu/test-all；pages真实写读、耗尽、COW保底兑现与回收，normal运行真实包内PID1并审计完整映射/Acct。大内存超时按RAM容量有界放宽，未跳过检查。证据归build/host/stage96-memory-capacity/；最终全量结果见下，不据此声称真机或性能验收。
+
+本点最终完整make test-all通过653项host、格式及158次两架构QEMU。全部12份容量矩阵结果核对完整RAM页数、精确元数据字节、逐页PTE权限/物理归属与pages回收；两架构8 GiB均记录2097152页、64 MiB元数据，真实高PA页表及用户PID1工作。全部结果核对当前源码/共享头哈希，生产normal/init链接无fixture；pgplan编译帧ARM16/RV80字节，不代表完整栈深。证据evidence.json/test-all.log；无CI/真机/性能验收，004标记为本地修复而非整机上板完成。

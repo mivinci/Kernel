@@ -13,7 +13,7 @@
 | [001](001-early-uart.md) | 早期 UART 基址仍为 QEMU 硬编码 | P0 | 进行中：已移除，板端待验 |
 | [002](002-graphics-backend.md) | 图形后端顺序与真机目标不一致 | P1 | 待处理 |
 | [003](003-board-verification.md) | 验收依赖 QMP，真机无等价手段 | P1 | 待处理 |
-| [004](004-page-capacity.md) | 物理页元数据上限 1 GiB | P0 | 待处理 |
+| [004](004-page-capacity.md) | 物理页元数据上限 1 GiB | P0 | 已修复：8 GiB本地验收 |
 | [005](005-dtb-capacity.md) | DTB 解析容量与 compatible 匹配 | P0 | 待处理 |
 | [006](006-secondary-cores.md) | 次核停放未约定 | P1 | 待处理 |
 | [007](007-cache-dma.md) | 缓存开启与 DMA 一致性未验证 | P0 | 待处理 |

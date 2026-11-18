@@ -172,7 +172,7 @@ vmstart(const Dtinfo *info, u32 firmware, void (*next)(Hvs *))
   for (i = 0; i < info->nram; i++) {
     pa = info->ram[i].base;
     end = pa + info->ram[i].size;
-    if (end - base > (1UL << 30))
+    if (end - base > KMAP_BYTES)
       panic("direct map span");
     for (; pa < end; pa += PAGE_SIZE) {
       if (guard(pa) || reserved(info, firmware, pa))

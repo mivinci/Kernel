@@ -3,6 +3,7 @@
 #define _KSTACK_H
 #include <acct.h>
 #include <hal/vm.h>
+#include <layout.inc>
 #ifndef KSTACKS
 #define KSTACKS 64
 #endif
@@ -12,8 +13,6 @@
 #define KS_BUSY      -4
 /* Private 2 MiB slots keep each leaf table charged to exactly one account.
    The permanent KIO parent is shared by every user root. */
-#define KSTACK_BASE   0xffffffc101000000UL
-#define KSTACK_STRIDE 0x200000UL
 
 typedef struct Kstackid Kstackid;
 typedef struct Kstack   Kstack;

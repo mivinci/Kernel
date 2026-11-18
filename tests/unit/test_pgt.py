@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 from test_dtb import ROOT
+sys.path.insert(0,str(ROOT/'tools'))
+from layout import KIO,KSTACK_BASE
 
 ALLOC = C.CFUNCTYPE(C.c_int, C.c_void_p, C.POINTER(C.c_uint64))
 FREE = C.CFUNCTYPE(None, C.c_void_p, C.c_uint64)
@@ -122,7 +124,7 @@ class PageTableTests(unittest.TestCase):
     def test_leaf_replace_breaks_before_making_and_never_allocates_tables(self):
         for lib in self.libs:
             arena = Arena(lib); self.assertEqual(arena.create(), 0)
-            va = 0xffffffc100200000
+            va = KIO + 0x200000
             self.assertEqual(arena.map(va), 0)
             table, index = self.leaf(arena, va)
             pointer = C.addressof(table) + index * 8
@@ -327,14 +329,14 @@ class PageTableTests(unittest.TestCase):
                     continue
                 prot = 5 if pa == names['__text_start'] else 1 if pa == names['__rodata_start'] else 3
                 self.assertEqual(a.map(kbase + pa - ram, pa, prot), 0)
-            a.map(0xffffffc100000000, 0x9000000, 3, 1)
+            a.map(KIO, 0x9000000, 3, 1)
             reservations = [{'base': ram, 'size': 4096}, {'base': ram + 4096, 'size': 4096},
                             {'base': names['__kernel_start'], 'size': 0xb000}, {'base': ram + 0x4000, 'size': 0x8000}]
             discovery = {'ranges': {'RAM': [{'base': ram, 'size': 0x400000}], 'RESERVED': reservations,
                                      'USABLE': [{'base': ram + 0x20b000, 'size': 0x1f5000}]},
                          'devices': [{'kind': 2, 'mmio': [{'base': 0x9000000}]}]}
             transition = {'root': a.space.root, 'delta': kbase - ram, 'pc': kbase + 0x200000,
-                          'sp': kbase + 0x208000, 'tables': a.space.pages, 'uart': 0xffffffc100000000}
+                          'sp': kbase + 0x208000, 'tables': a.space.pages, 'uart': KIO}
             boot = {'boot': {'dtb': ram + 4096}, 'layout': {'dtb_size': 4096}}
             pages = {'metadata': {'base': ram + 0x4000, 'size': 0x8000}}
             with tempfile.TemporaryDirectory() as directory:
@@ -344,7 +346,7 @@ class PageTableTests(unittest.TestCase):
                     return audit_vm(Qmp(a), run, arch, names, discovery, transition, boot, pages, retained)
                 self.assertTrue(audit()['all_permissions_checked'])
                 before=set(a.pages)
-                stackva=0xffffffc101001000
+                stackva=KSTACK_BASE+4096
                 stackpages=[ram+0x10000+i*4096 for i in range(4)]
                 for i,pa in enumerate(stackpages):self.assertEqual(a.map(stackva+i*4096,pa,3),0)
                 allocated=set(a.pages)-before

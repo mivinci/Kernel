@@ -45,6 +45,7 @@ python3 tools/bootpkg.py check --arch arm64 build/arm64/boot.pkg
 `CASE=bootpkg`使用十个SDK测试包验证格式、分片/快照及拒启，不执行包内程序。`normal`必须有包；`make smoke ARCH=...`自动构建默认生产包并启动，也可传`INITRD=/absolute/path/boot.pkg`。直接运行smoke工具时可用`--init-elf`指定该包中init的ELF供独立审计。缺包/坏包在页分配前拒启；完整回归另覆盖非首目录项、整页包和包内PID1真实exit致命。
 
 QEMU 验证使用 TCG、单核、256 MiB；ARM 固定 `virt-11.1`/Cortex-A53，RV64 固定 virt/rv64 并关闭 V/H。
+启动元数据和RAM直接映射现支持最多8 GiB、最低RAM起8 GiB跨度；超限拒启，不静默裁剪。`include/layout.inc`统一内核/审计布局，设备和内核栈位于RAM窗口之后。`make test-memory`另用512 MiB、2 GiB、8 GiB在两架构各运行pages与normal，并纳入完整回归；这不是板端或性能验收。
 RV64 必须通过 `OPENSBI` 指定实际的 RV64 `fw_dynamic.bin` 路径；QEMU 程序路径可用 `QEMU` 覆盖。
 
 ```sh
@@ -98,6 +99,8 @@ make scenario ARCH=arm64 CASE=heap
 make scenario ARCH=arm64 CASE=cow
 make smoke ARCH=arm64 RAM=512 VIRTIO=1
 make test-all OPENSBI="$OPENSBI"
+# 单独验证两架构512 MiB、2 GiB、8 GiB的页回收与生产启动
+make test-memory OPENSBI="$OPENSBI"
 # 单独运行全部QEMU场景（不代替unit/fmt-check）
 make test-qemu OPENSBI="$OPENSBI"
 ```

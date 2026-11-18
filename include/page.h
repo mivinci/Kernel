@@ -2,8 +2,10 @@
 #ifndef _PAGE_H
 #define _PAGE_H
 #include <dtb.h>
-#define PG_ORDER 16
-#define PG_NONE  0xffffffffU
+#include <layout.inc>
+#define PG_RAM_PAGES (KMAP_BYTES / PAGE_SIZE)
+#define PG_ORDER     16
+#define PG_NONE      0xffffffffU
 
 typedef struct Page     Page;
 typedef struct Pgblk    Pgblk;
@@ -43,11 +45,14 @@ enum Pgerror
   PG_BUSY = -3
 };
 STATIC_ASSERT(sizeof(Page) == 32, page_size);
+STATIC_ASSERT(PG_RAM_PAGES <= 0xffffffffU, page_index_capacity);
 
 /* Metadata covers every RAM page (including reserved pages), never MMIO holes.
    'pages' is a caller-owned reserved array; init does not allocate physical pages.
    Each usable interval must already exclude metadata and all boot reservations. */
 int pginit(const Dtinfo *info, Page *pages, u32 capacity, u64 lowwater);
+/* Read-only boot plan: complete RAM coverage, one contiguous metadata area. */
+int pgplan(const Dtinfo *info, Dtrange *metadata, u32 *pages);
 int pgalloc(u32 order, const Pglim *lim, Pgblk *out);
 int pgfree(Pgblk blk);
 /* Capacity for unrestricted zero-order COW faults, separate from lowwater.

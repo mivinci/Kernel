@@ -18,12 +18,13 @@ READELF ?= llvm-readelf
 ARCH ?=
 SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
 
-.PHONY: all help build hardware compdb sdk bootpkg clean fmt fmt-check unit smoke scenario bench test-all test-qemu
+.PHONY: all help build hardware compdb sdk bootpkg clean fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
 	@echo "make sdk ARCH=...     : 构建独立 libsys SDK 与用户 ELF"
 	@echo "make unit             : 主机驱动测试"
+	@echo "make test-memory      : 两架构512 MiB/2 GiB/8 GiB pages与normal（需OPENSBI）"
 	@echo "make fmt / fmt-check  : 源码格式"
 	@echo "make clean ARCH=...   : 清除该架构构建目录"
 	@echo "make smoke ARCH=... / make scenario ARCH=... CASE=registers|fault|pages"
@@ -159,8 +160,10 @@ test-qemu:
 	@for test_case in textwrite rodatawrite dataexec guard null identity alias unmapped; do $(MAKE) scenario ARCH=riscv CASE=$$test_case || exit $$?; $(MAKE) scenario ARCH=arm64 CASE=$$test_case || exit $$?; done
 	$(MAKE) smoke ARCH=riscv RAM=128 VIRTIO=1
 	$(MAKE) smoke ARCH=arm64 RAM=128 VIRTIO=1
-	$(MAKE) smoke ARCH=riscv RAM=512 VIRTIO=1
-	$(MAKE) smoke ARCH=arm64 RAM=512 VIRTIO=1
+	$(MAKE) test-memory
+
+test-memory:
+	@for test_ram in 512 2048 8192; do for test_arch in riscv arm64; do for test_case in pages normal; do $(MAKE) smoke ARCH=$$test_arch CASE=$$test_case RAM=$$test_ram VIRTIO=1 || exit $$?; done; done; done
 bench:
 	@echo "$@: 性能基准尚未实现；启动与异常检查不代表性能验收。" >&2
 	@exit 1

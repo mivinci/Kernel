@@ -158,7 +158,7 @@ Pgsource为核心提供的alloc/free页回调及不透明context，HAL不私建�
 
 | 项 | 现值 | 真机目标 |
 | --- | --- | --- |
-| 物理页元数据 | 2^18 页 = 1 GiB（`kernel/main.c` 启动检查） | 至少 2 GiB（2^19）；8 GB 变体需 2^21 或启动期裁剪 |
+| 物理页元数据 | 004已修复至2^21页/8 GiB，直接映射及布局同步扩容，本地完整矩阵通过 | 两架构大内存证据见02末尾；板端仍待验 |
 | DTB 节点/属性/深度 | 192 / 1536 / 16，`DT_REGS=2`、`DT_DEVICES=64` | 真机 DTB 约 40–90 KiB、300–800 节点，需上调；主机侧用真实 DTB 做解析测试 |
 | compatible 匹配 | 仅覆盖 QEMU 字符串 | 增加 `snps,dw-apb-uart`、`arm,gic-400`、`sifive,plic-1.0.0`、`snps,dw-mshc`、`snps,dwmac-*` |
 | 启动通道 | QEMU 直载 | U-Boot 载荷：DTB 指针按各架构引导约定传入，启动包经 initrd 或固定装载地址交付，字段见 07 |

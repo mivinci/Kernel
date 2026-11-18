@@ -34,6 +34,7 @@ class PageTests(unittest.TestCase):
         subprocess.run(command, check=True, capture_output=True)
         cls.lib = C.CDLL(str(path))
         cls.lib.pginit.argtypes = [C.POINTER(Info), C.POINTER(Page), C.c_uint32, C.c_uint64]
+        cls.lib.pgplan.argtypes = [C.POINTER(Info),C.POINTER(Range),C.POINTER(C.c_uint32)]
         cls.lib.pgalloc.argtypes = [C.c_uint32, C.POINTER(Limits), C.POINTER(Block)]
         cls.lib.pgfree.argtypes = [Block]
         cls.lib.pgstat.argtypes = [C.POINTER(Stats)]
@@ -60,6 +61,41 @@ class PageTests(unittest.TestCase):
             self.assertEqual(self.lib.pgfree(block), 0)
         self.live.clear()
         self.assertEqual(self.lib.pgcheck(), 0)
+
+    def plan(self,ram,usable,reserved=(),expected=0):
+        info=Info()
+        for field,ranges in (('ram',ram),('usable',usable),('reserved',reserved)):
+            setattr(info,'n'+field,len(ranges))
+            for i,(base,size) in enumerate(ranges):getattr(info,field)[i]=Range(base,size)
+        before=bytes(info);metadata=Range(99,99);count=C.c_uint32(99)
+        self.assertEqual(self.lib.pgplan(C.byref(info),C.byref(metadata),C.byref(count)),expected)
+        self.assertEqual(bytes(info),before,'planning mutated firmware RAM or exclusions')
+        if expected:self.assertEqual((metadata.base,metadata.size,count.value),(0,0,0))
+        return metadata,count.value
+
+    def test_boot_plan_covers_complete_one_two_and_eight_gib_without_allocating_it(self):
+        for gib in (1,2,8):
+            base=0x80000000;size=gib<<30
+            area,count=self.plan([(base,size)],[(base+0x1000000,size-0x1000000)])
+            self.assertEqual((area.base,area.size,count),(base+0x1000000,gib*0x800000,gib*262144))
+
+    def test_boot_plan_selects_largest_usable_interval_and_counts_only_real_banks(self):
+        area,count=self.plan([(0x80000000,1<<30),(0x100000000,1<<30)],
+                             [(0x81000000,0x2000000),(0x101000000,0x10000000)])
+        self.assertEqual((area.base,area.size,count),(0x101000000,0x1000000,524288))
+
+    def test_boot_plan_rejects_page_capacity_span_overflow_and_overlapping_banks(self):
+        for ram in ([(0x80000000,(8<<30)+4096)],[(0x80000000,1<<30),(0x300000000,1<<30)],
+                    [(0xfffffffffffff000,8192)],[(0x80000000,1<<30),(0x80001000,4096)],
+                    [(1<<40,4096)]):
+            self.plan(ram,[],expected=-1)
+
+    def test_boot_plan_requires_contiguous_metadata_and_excludes_boot_ownership(self):
+        self.plan([(0x80000000,8<<30)],[(0x81000000,0x2000000)],expected=-2)
+        self.plan([(0x80000000,1<<30)],[(0x81000000,0x2000000)],
+                  [(0x81000000,4096)],expected=-1)
+        self.plan([(0x80000000,1<<30)],[(0x100000000,0x2000000)],expected=-1)
+        self.plan([(0x80000000,1<<30)],[(0x81000000,0x2000000),(0x81001000,0x2000000)],expected=-1)
 
     def init(self, ram, usable, reserved=(), lowwater=0):
         self.assertFalse(self.live)
