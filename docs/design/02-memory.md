@@ -875,3 +875,7 @@ pgplan从全部已核验usable区间中选最大且足够容纳元数据的连�
 主机覆盖1/2/8 GiB完整计数与元数据大小、多银行/空洞、最大可用区选择、超容量/跨度/40位PA/溢出/重叠拒绝、连续空间不足和失败只读。make test-memory在两架构各运行512 MiB/2 GiB/8 GiB的pages与normal，共12次，并纳入test-qemu/test-all；pages真实写读、耗尽、COW保底兑现与回收，normal运行真实包内PID1并审计完整映射/Acct。大内存超时按RAM容量有界放宽，未跳过检查。证据归build/host/stage96-memory-capacity/；最终全量结果见下，不据此声称真机或性能验收。
 
 本点最终完整make test-all通过653项host、格式及158次两架构QEMU。全部12份容量矩阵结果核对完整RAM页数、精确元数据字节、逐页PTE权限/物理归属与pages回收；两架构8 GiB均记录2097152页、64 MiB元数据，真实高PA页表及用户PID1工作。全部结果核对当前源码/共享头哈希，生产normal/init链接无fixture；pgplan编译帧ARM16/RV80字节，不代表完整栈深。证据evidence.json/test-all.log；无CI/真机/性能验收，004标记为本地修复而非整机上板完成。
+
+### 释放合并后的页归属元数据（2026-11-18）
+
+伙伴块释放合并前清除原分配头owner，避免高地址头被合并成INNER后仍残留旧Acct；pgcheck额外拒绝RESERVED/FREE/INNER携owner。真实进程启动/共享环往返后的独立物理审计发现此残留，原费用和释放本身已结清，不能用忽略INNER的统计绕过问题。修复前主机反例保留，修复后专项及715项host/格式/167份最终源码匹配的两架构QEMU结果通过；证据归build/host/stage106-serial-start/，12份旧源码结果排除后已逐项重验。无CI/真机/性能验收。

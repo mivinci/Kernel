@@ -6,6 +6,7 @@
 #include <vm.h>
 #include <bootresource.h>
 #include <device.h>
+#include <prep.h>
 
 typedef struct Bootpacket Bootpacket;
 struct Bootpacket
@@ -54,8 +55,10 @@ initialdevices(Handle pid, Rtable *table, Imageid image, const Dtinfo *hardware,
     }
   if (matches != 1)
     return -ERR_INVALID;
-  if (!uart->shift && ((uart->kind == BOOT_UART_NS16550 && uart->width == 1) ||
-                       (uart->kind == BOOT_UART_PL011 && uart->width == 4))) {
+  if (uart->shift <= 4 && (uart->width == 1 || uart->width == 4) &&
+      !(uart->reg.base & (uart->width - 1)) &&
+      ((uart->kind == BOOT_UART_NS16550 && !((1U << uart->shift) & (uart->width - 1))) ||
+       (uart->kind == BOOT_UART_PL011 && !uart->shift && uart->width == 4))) {
     error = devwindow(device, 0, &window);
     if (!error)
       usable = 1;
@@ -194,6 +197,10 @@ bootstart(const Bootdir *directory, const Dtinfo *hardware, const Dtuart *uart)
   if (proctimerstart() || procpublish(pid))
     panic("initial publication");
   for (;;) {
+    /* Ready user work must not starve retirement or expired preparations.
+       CPU root/stack, no current process; each scan has its existing bound. */
+    if (procwork(1) < 0 || prepwork(1) < 0)
+      panic("initial cleanup");
     error = procrunone();
     if (error == -ERR_WOULD_BLOCK) {
       if (procidle() < 0)

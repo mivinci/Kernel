@@ -96,6 +96,9 @@ releaseblock(u32 index, u32 order)
   Page *b;
   allocator.page[index].state = INNER;
   allocator.page[index].head = PG_NONE;
+  /* This head may become the interior of a lower buddy. Ownership belongs
+     only to allocated heads, including after coalescing and later splits. */
+  allocator.page[index].owner = 0;
   while (order < PG_ORDER) {
     buddy = pa ^ ((u64) PAGE_SIZE << order);
     if (!indexof(buddy, &other))
@@ -471,6 +474,8 @@ pgcheck(void)
   for (i = 0; i < allocator.count;) {
     p = &allocator.page[i];
     if (p->state == RESERVED) {
+      if (p->owner)
+        return PG_BAD;
       i++;
       continue;
     }
@@ -484,11 +489,14 @@ pgcheck(void)
     if (pa & (((u64) PAGE_SIZE << order) - 1) || i + (1U << order) > r->first + r->pages)
       return PG_BAD;
     for (j = 1; j < (1U << order); j++)
-      if (allocator.page[i + j].state != INNER || allocator.page[i + j].region != p->region)
+      if (allocator.page[i + j].state != INNER || allocator.page[i + j].region != p->region ||
+          allocator.page[i + j].owner)
         return PG_BAD;
     if (p->state == ALLOCATED)
       allocated += 1UL << order;
     else {
+      if (p->owner)
+        return PG_BAD;
       scanned += 1UL << order;
       if (order < PG_ORDER && indexof(pa ^ ((u64) PAGE_SIZE << order), &buddy) &&
           allocator.page[buddy].region == p->region && allocator.page[buddy].state == FREE &&

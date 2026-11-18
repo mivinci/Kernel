@@ -1,4 +1,4 @@
-/* Native bootstrap authority exercise; never publishes a fake service. */
+/* Native authority/startup/shared-memory exercise; no service READY is sent. */
 #include <sys/boot.h>
 #include <abi/resource.h>
 #include <abi/system.h>
@@ -13,6 +13,10 @@
 
 static Handle system, memory, source;
 static u64    windowbytes;
+static u64    uartkind, uartoffset, uartbytes;
+static u64    uartshift, uartwidth;
+extern int    serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
+                           u64 offset, u64 bytes, u64 shift, u64 width);
 static int
 inventory(const Bootview *boot, u64 image)
 {
@@ -34,11 +38,20 @@ inventory(const Bootview *boot, u64 image)
               (row.data[1] == BOOT_UART_NS16550 || row.data[1] == BOOT_UART_PL011) && row.data[2] &&
               row.data[3] && !row.data[5],
           123);
-  for (i = 6; i < 20; i++)
+  for (i = 8; i < 20; i++)
     REQUIRE(!row.data[i], 124);
   memory = (Handle) row.data[0];
   source = (Handle) row.data[4];
   windowbytes = ((row.data[2] & 4095) + row.data[3] + 4095) & ~4095UL;
+  uartkind = row.data[1];
+  uartoffset = row.data[2] & PAGE_MASK;
+  uartbytes = row.data[3];
+  uartshift = row.data[6];
+  uartwidth = row.data[7];
+  REQUIRE(uartshift <= 4 && (uartwidth == 1 || uartwidth == 4) && !(uartoffset & (uartwidth - 1)) &&
+              (uartkind == BOOT_UART_PL011 ? (!uartshift && uartwidth == 4)
+                                           : !((1UL << uartshift) & (uartwidth - 1))),
+          143);
   REQUIRE(__sys_query(system, QUERY_BOOT_RESOURCE, 0x20001, &row, 1, &written, &next) ==
                   -ERR_STALE &&
               !written && !next,
@@ -121,6 +134,10 @@ main(int argc, char **argv)
   REQUIRE(creates == 16 && found == 1 && listener && systems == 1 && memories == 1 && sources == 1,
           105);
   REQUIRE(!__sys_query(0, QUERY_ACCT, 0, &own, 1, &written, &next) && written == 1 && !next, 106);
+  error = serialparent(creator, listener, memory, source, uartkind, uartoffset, uartbytes,
+                       uartshift, uartwidth);
+  if (error)
+    return (int) error;
   args.memlimit = 64;
   args.exec_limit = 128;
   args.resources = 8;

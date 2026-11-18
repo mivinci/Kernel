@@ -522,13 +522,19 @@ tests/kernel/serviceauth.c作为独立测试包PID1，经原生接口枚举16份
 
 本点完整make test-all通过640项host、格式与144次两架构QEMU；全部结果核对当前源码/共享头哈希，10次生产init live、4次实际包内exit42（其中2次为服务授权用例）及6次分配前拒启。实际生产init链接与默认包继续不含fixture。无CI/真机/性能验收，尚未完成T1.4或可用sh。
 
-### 开放问题：UART启动记录的访问布局（待用户确认）
+### UART启动记录的访问布局（2026-11-18已确认）
 
-005的真实板描述接入需要保留UART寄存器步长与位宽；现有已确认BOOT_RESOURCE仅有六字段前缀且data[6..19]全0，不能靠UART种类或板名猜这些属性。候选保留data[0..5]及flags=0不变，增加data[6]=reg-shift、data[7]=reg-io-width，data[8..19]仍0；Queryrec大小、QUERY_BOOT_RESOURCE调用号和SYSTEM权限均不改变。
+用户已确认采用下述扩展及serial七参数联动。实现现已同步更新库存、加载器、解析及测试，正在完整回归，不提供旧布局兼容分支。
 
-候选按现有早期HAL支持范围核对：NS16550兼容设备shift 0..4、width 1或4；PL011 shift=0、width=4，地址/访问对齐及真实窗口必须有效。当前不支持的big-endian/reg-offset继续明确拒绝，不用缺省字段冒充已支持。它们只是受信库存的访问元数据，不产生额外MMIO/DMA权。用户确认前不修改已冻结的六字段记录或实现此候选生产查询；内部DTB解析与容量修复可以独立推进。
+BOOT_RESOURCE保留data[0..5]及flags=0不变，增加data[6]=reg-shift、data[7]=reg-io-width，data[8..19]仍0；Queryrec大小、QUERY_BOOT_RESOURCE调用号和SYSTEM权限均不改变。不能靠UART种类或板名猜这些访问属性。
 
-### 开放问题：生产UART与早期诊断交接（待用户确认）
+支持范围：NS16550兼容设备shift 0..4、width 1或4，寄存器步长及基址均须满足访问宽度对齐；PL011 shift=0、width=4，地址/访问对齐及真实窗口必须有效。当前不支持的big-endian/reg-offset继续明确拒绝，不用缺省字段冒充已支持。它们只是受信库存的访问元数据，不产生额外MMIO/DMA权。
+
+serial argv保留前五项，末尾追加shift和width两项，共七项；解析/装载同步调整，不从种类或板名猜寄存器布局。
+
+### 生产UART与早期诊断交接（2026-11-18已确认）
+
+用户已确认采用下述debughandoff=0x74、SYSTEM CONSOLE=0x20、排空/BUSY及panic独占接管规则。以下原提案的待确认措辞已由本次决定取代；实现仍待接，当前SYSTEM生产权限仍仅QUERY，不把设计确认写成代码已交付。
 
 实际serial接管前需解决内核轮询控制台仍写同一UART的冲突：NS16550的DLAB等状态会改变寄存器含义，普通内核输出既可能夹入用户字节，也可能破坏驱动配置。不能因QEMU默认配置恰好可打印而忽略所有权；14要求panic独立输出，单纯永久静默同样不满足目标。
 
@@ -540,13 +546,15 @@ tests/kernel/serviceauth.c作为独立测试包PID1，经原生接口枚举16份
 
 ### serial的Boot资源与启动参数（2026-11-18已确认）
 
-2026-11-18用户确认采用私有资源tag加argv：保留通用Boot格式及SELF资源标签，serial私有tag 0x100..0x104依次为INIT_CALL、UART_MMIO、IRQ_BIND、RX_RING、TX_RING，全部只指向已实际安装的本地Handle，flags/reserved仍0；不能照抄init句柄或拿参数整数伪装资源。argv为程序名、UART种类、页内偏移、精确窗口长度、清单服务编号，恰好五项；种类首期仅ns16550/pl011，其他数值为严格无符号十进制，检查溢出/窗口几何/编号，不通过环境变量或板名猜硬件。
+2026-11-18用户确认采用私有资源tag加argv：保留通用Boot格式及SELF资源标签，serial私有tag 0x100..0x104依次为INIT_CALL、UART_MMIO、IRQ_BIND、RX_RING、TX_RING，全部只指向已实际安装的本地Handle，flags/reserved仍0；不能照抄init句柄或拿参数整数伪装资源。argv为程序名、UART种类、页内偏移、精确窗口长度、清单服务编号、reg-shift、reg-io-width，恰好七项；种类首期仅ns16550/pl011，其他数值为严格无符号十进制，检查溢出/窗口几何/编号，不通过环境变量或板名猜硬件。后两项由集中确认追加，取代此前五项约定，实现须同步更新。
 
 此约定不增加Boot字段、独立配置页或内核调用；标签仅在serial启动契约内解释，非新的通用资源种类，也不把测试用257等标签当作生产规格证据。实际权限、映射范围和目标身份仍从已授资源核验，argv不创造授权。共享标签唯一来源为include/proto/serial.h；首期标准布局仍由已冻结六字段库存确定，未采用UART访问布局扩展。tty连接及通知绑定/代次握手随实际服务接续单独收口，不以这份启动约定冒充所有启动接口都已完整定义。
 
 共享标签及文档已落定，两架构SDK构建/导出逐字节比较与fmt-check通过；实际init/runtime/IRQ用户ELF及libsys归档的哈希在新增宏前后完全相同。本点未重跑QEMU，未实现参数解析或生产服务启动；此前UART后端的700项host/167次QEMU证据对应bcf950b。启动约定验证记录在build/host/stage105-serial-bootstrap/evidence.json，接续参数解析、真实权限核验与装载。
 
 ### T1.4接续：初始SYSTEM与只读UART库存（2026-11-18）
+
+此节stage101为历史六字段交付记录；当前规格以本篇上方已确认的data[6..7]布局与七参数约定为准。2026-11-18后续实现已接扩展及严格启动预检，完整回归进行中。
 
 已实现真实LOCAL_SYSTEM QUERY，强持有精确Imageid清理引用，只在绑定镜像ACTIVE且table的完整PID/image匹配时可用；不含GRANT，不继承/转授，关闭/free释放自身引用，旧代次或旧镜像不改绑新表。这里只实现QUERY=1，不填CLOCK/HALT/REBOOT/POLICY假权限，普通CONTROL或uid0不能替代。类型及UART种类字面来源分别为abi/resource.h、abi/system.h，Local仍48字节。
 
@@ -559,3 +567,17 @@ Boot仍格式2/144字节头，总启动数据增至352字节、四个条目SELF_
 最终完整make test-all通过681项host、格式和167次两架构QEMU，所有源码/共享头及SDK源/库/链接输入核对；两架构service-authority包的实际ELF SHA与当前用例源码构建匹配，实际return42及完整用户PTE/Acct审计通过，不计早期未重建SDK的结果。12次内存与8次四核矩阵、真实IRQ和缓存审计继续通过，生产normal/init不含fixture。证据build/host/stage101-system-inventory/evidence.json及test-all.log。procquery编译帧两架构3440字节，非完整栈深或性能证明。
 
 首次大记录赋值引入隐式memcpy已改定长volatile字节复制，libsys补既有SYS_INHERIT私有桩；原生测试NULL输出按已有query边界为INVALID，合法但未映射指针为FAULT，未为该测试修改通用范围语义。初始失败日志保留。此点完成生产SYSTEM查询/标准UART发权前置，不称T1.4、SYSTEM全部操作、首服务装载/READY或板端/CI/性能已完成。
+
+### serial七参数解析与实际启动权限预检（2026-11-18）
+
+sbin/serial/start.c按完整Boot Strref解析七项参数，不用可能被嵌入NUL截短的argv；十进制只接受数字且检查u64溢出、页内偏移、页取整、精确寄存器末端与访问步长/宽度对齐。所需SELF和五份私有资源标签必须唯一，flags/reserved为0且本地Handle互不相同；未知私有标签不能替代必需标签。失败不提交部分Serialboot。
+
+serialcheck先核对自身完整PID/image与父PID1，再有界分页QUERY_RESOURCE核对真实类型/减权权限/窗口/不继承和INIT_CALL的精确PID1镜像；成功才提交自身及对端身份。不凭uid0或Boot整数补权，不新增管理查询绕过。RESOURCE当前不暴露Mem底层种类/物理身份，因此预检不声称它能独自证明MMIO/SHARED或两份内存不别名：可信加载器仍须供应真实独占设备和两个不同SHARED对象，map从真实授权派生属性。USE/GRANT公共位移至abi/resource.h作为唯一来源，数值未改。
+
+tests/kernel/serialparent及serialverify为独立实际ELF测试，不进入生产init或默认包：包PID1凭SERVICE CREATE在另一Set创建孩子，授减权CALL、真实MMIO、绑定IRQ及两份独立SHARED环；现有elfload写入真实SELF/CREATE句柄，孩子解析/核权、实际map/unmap并接收7字节boot-rx、回传7字节boot-tx。释放IRQ_BIND后再次预检必须拒绝且不破坏原输出，孩子返回42；父wait得到真实结果后持续READY并核对旧CONTROL的PROC查询最终为空，再检查共享字节和精确位置、释放自身引用。它没有初始化UART、发送READY或冒充serial已运行。
+
+该用例暴露并修复生产循环只在idle推进清理的停滞，见03；随后物理owner审计暴露伙伴头合并后INNER残留旧owner，见02。保留旧idle-only版本在4096次持续READY检查后真实退出174，以及旧page.c主机反例；不通过放宽页表/Acct审计掩盖问题。另修正smoke的致命PID1检查：允许唯一合法首次阻塞诊断先于精确INITEXIT/PANIC，仍拒绝重复/错误身份、错误退出码或乱序；实际特权/根/页/费用审计继续执行。首次SELF继承位误读已依据真实Local发布顺序改正，失败记录保留。
+
+当前完整回归进行中，原始与重验日志归build/host/stage106-serial-start/。控制台交接、原生资源reply、Siginfo真实来源及DMA具体ABI尚未实现；实际serial主循环/READY/监督仍是后续交付，不能以此测试孩子代替生产服务。
+
+最终验证完成：715项host、fmt-check通过；12份源码短暂变更结果显式排除并重跑相同场景，最终167份成功QEMU结果及两架构SDK源/头/实际用户ELF哈希全部与终稿一致。两架构service-authority包独立读取serialproof，核对真实孩子身份、7字节双向数据、释放绑定后拒绝和旧运行记录最终消失；完整用户/内核PTE及物理owner/Acct审计继续通过，默认init无fixture。证据evidence.json、test-all.log与rechecks.log；没有CI/真机/性能或生产serial READY验收。

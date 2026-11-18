@@ -459,9 +459,9 @@ CASE=sigframe使用真实csu/main镜像和自定义trampoline验证10种路径�
 
 本地最终验证：完整make test-all的281项host、格式及96个RV64/ARM64 QEMU全部通过；补充3项帧核心host后，完整host重跑284项通过，格式再次通过。日志、96个原始产物目录及关键源码哈希在build/host/stage45-signal-frame/。无CI、真实硬件或性能验收。
 
-#### 开放问题：Siginfo来源编码（待用户确认）
+#### Siginfo来源编码（2026-11-18已确认）
 
-接真实来源前候选原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。当前只冻结64字节布局，尚未实现这些候选数值或真实来源；可信测试code=0不定义生产协议。
+用户已确认原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。64字节布局不变，实现尚未接；可信测试code=0不定义生产协议。后续历史记录的“来源编码待确认”已由本次决定取代。
 
 ### 原生sigsuspend与M/W/H交接接续（2026-11-17）
 

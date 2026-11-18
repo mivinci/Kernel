@@ -246,7 +246,9 @@ def build(args):
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
     package_exit=link_adoption('packageexit',[compile_adoption(ROOT/'tests/kernel/packageexit.c','packageexit')])
-    service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth')])
+    serial_start_source=ROOT/'sbin/serial/start.c'
+    serial_verify=link_adoption('serialverify',[compile_adoption(ROOT/'tests/kernel/serialverify.c','serialverify'),compile_adoption(serial_start_source,'serial-start')])
+    service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth'),compile_adoption(ROOT/'tests/kernel/serialparent.c','serialparent'),embedded_elf(serial_verify,'serial_verify')])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
     parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
@@ -338,10 +340,12 @@ def build(args):
     headers += list((ROOT / 'include/abi').glob('*.inc'))
     headers += list((ROOT / 'include/proto').glob('*.h'))
     headers += [ROOT / 'sbin/serial/uart.h']
+    headers += [ROOT / 'sbin/serial/start.h']
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
                     service_auth_artifact=str(service_auth.relative_to(ROOT)),
+                    serial_verify_artifact=str(serial_verify.relative_to(ROOT)),serial_verify_sha256=digest(serial_verify),
                     artifact_sha256=digest(artifact), image_sha256=digest(image),
                     cow_user_fault_pc=cow_fault_address, cow_user_image_sha256=digest(cow_user_image),
                     libvirtio_archive=str(virtio_archive.relative_to(ROOT)), libvirtio_sha256=digest(virtio_archive), libvirtio_audit_sha256=digest(virtio_audit),
@@ -350,7 +354,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + [runtime_source,parent_source,ringuser_source,uart_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

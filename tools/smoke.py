@@ -226,11 +226,18 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
         raise SmokeError("invalid or overlapping DTB extent")
     if case == "normal":
         starts=[fields(x) for x in lines if x.startswith('INIT ')]
+        exits=[fields(x) for x in lines if x.startswith('INITEXIT ')]
         if init_exit is None:
-            if ready or panics or traps or starts != [dict(pid=1,image=1,state=6)]:
+            if ready or panics or traps or exits or starts != [dict(pid=1,image=1,state=6)]:
                 raise SmokeError('production PID1 did not reach its first blocked state')
-        elif ready or traps or starts or panics != ['PANIC init exited']:
-            raise SmokeError('package PID1 did not take its fatal exit path')
+        else:
+            if (ready or traps or starts not in ([],[dict(pid=1,image=1,state=6)]) or
+                    exits != [dict(reason=1,code=init_exit)] or panics != ['PANIC init exited']):
+                raise SmokeError('package PID1 did not take its fatal exit path')
+            exit_at=next(i for i,x in enumerate(lines) if x.startswith('INITEXIT '))
+            panic_at=lines.index('PANIC init exited')
+            if exit_at>panic_at or (starts and next(i for i,x in enumerate(lines) if x.startswith('INIT '))>exit_at):
+                raise SmokeError('package PID1 exit diagnostics are out of order')
     elif case == 'cpus':
         if ready!=['READY cpus-stopped'] or panics or traps:
             raise SmokeError('CPU self-stop test did not finish')
@@ -750,6 +757,14 @@ def audit_package_init(qmp, run_dir, args, record, transition):
     else:
         exits=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITEXIT ')]
         if exits!=[dict(reason=1,code=args.init_exit)]:raise SmokeError('wrong package PID1 exit reason/code')
+    if 'serialproof' in user_symbols:
+        proof=struct.unpack('<8Q',read(user_symbols['serialproof'],64))
+        if (proof[0]>>59!=1 or not (proof[0]>>16)&((1<<43)-1) or not 1<=proof[1]<=4096 or
+                proof[2:6]!=(1,7,7,7) or proof[6] not in (1,2) or proof[7]):
+            raise SmokeError('native serial startup/shared rings/READY-parent retirement proof mismatch')
+        record['serial_startup']=dict(pid=proof[0],retirement_queries=proof[1],retired=True,
+                                      rx_bytes=proof[3],tx_bytes=proof[4],number=proof[5],uart_kind=proof[6],
+                                      child_exit=42,irq_freed_rejected=True,device_io=False,service_ready=False)
     stores=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITPACKAGE ')]
     if stores!=[dict(pages=count,copies=len(edges),retained=count+len(edges),refs=(count+15)//16)]:
         raise SmokeError('live package backing lifetime/charge mismatch')

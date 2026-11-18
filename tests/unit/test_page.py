@@ -37,6 +37,8 @@ class PageTests(unittest.TestCase):
         cls.lib.pgplan.argtypes = [C.POINTER(Info),C.POINTER(Range),C.POINTER(C.c_uint32)]
         cls.lib.pgalloc.argtypes = [C.c_uint32, C.POINTER(Limits), C.POINTER(Block)]
         cls.lib.pgfree.argtypes = [Block]
+        cls.lib.pgclaim.argtypes = [Block, C.c_uint64]
+        cls.lib.pgrelease.argtypes = [Block, C.c_uint64]
         cls.lib.pgstat.argtypes = [C.POINTER(Stats)]
         cls.lib.pgreserve.argtypes = [C.POINTER(Credit), C.c_uint64]
         cls.lib.pgcancel.argtypes = [C.POINTER(Credit), C.c_uint64]
@@ -117,6 +119,21 @@ class PageTests(unittest.TestCase):
         self.credits.append(credit)
         self.assertEqual(self.lib.pgreserve(C.byref(credit), pages), 0)
         return credit
+
+    def test_released_buddy_heads_never_keep_an_account_owner_in_inner_metadata(self):
+        first, second = self.alloc()[1], self.alloc()[1]
+        blocks = sorted((first, second), key=lambda item: item.pa)
+        for block, owner in zip(blocks, (0x100, 0x200)):
+            self.assertEqual(self.lib.pgclaim(block, owner), 0)
+        for block, owner in zip(blocks, (0x100, 0x200)):
+            self.assertEqual(self.lib.pgrelease(block, owner), 0)
+            del self.live[block.pa]
+        self.assertTrue(all(page.owner == 0 for page in self.metadata))
+        self.assertEqual(self.metadata[1].state, 3)
+        self.metadata[1].owner = 0xabc
+        self.assertEqual(self.lib.pgcheck(), -1)
+        self.metadata[1].owner = 0
+        self.assertEqual(self.lib.pgcheck(), 0)
 
     def redeem(self, credit):
         output = Block(123, 99, 17)

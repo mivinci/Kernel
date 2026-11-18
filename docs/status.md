@@ -23,27 +23,29 @@
 
 ## 最新本地验证
 
-- 最新完整make test-all通过700项host、fmt-check及167次两架构QEMU，全部源码/共享头与SDK源/库/用户ELF哈希、IO指令/屏障及生产init隔离已核对。新增11项O0/O2 UART模型测试；四次单核/四核irqbind在实际Device映射核对同一后端的掩码读回、空RX与一次PIO写。RV64旧LWU返回版本在真实用户检查stage1拒绝，修正LW后通过；失败源码/ELF/串口及最终证据在`build/host/stage104-uart-backend/`。12次容量、8次四核/真实IRQ及缓存审计仍通过；无外部RX流、服务READY、板端/CI/性能验收。
+- 最新完整make test-all通过715项host、fmt-check；12份源码短暂变更结果排除并逐项重验后，167份成功两架构QEMU结果的源码/头与SDK哈希均匹配。实际孩子七参数解析/权限预检、7字节双向SHARED环、释放IRQ后拒绝及持续READY父下孩子运行资源回收通过，完整PTE/Acct/物理owner审计保持。旧idle-only回收停滞及伙伴页owner残留反例保留，证据`build/host/stage106-serial-start/evidence.json`、test-all.log及rechecks.log。生产init无fixture；无实际serial READY、外部RX流、板端/CI/性能验收。
 - native审计逐页核对完整用户/内核映射、ELF代码/RO字节、栈/guard、Boot/SELF资源、隔离包视图和精确Acct owner；用户initstate显示正确目录/字节数/checksum并阻塞，私有页/页表/内核栈收费与实际owner集合一致，包仍保留且不重复计费。早期私有store符号被优化拆分及RV idle sie假设已直接观测后修正，失败记录保留。完整fork仍待T4前补源别名/长循环/IRQ检查点与STOP/CONT。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- 2026-11-18用户集中确认五项：控制台交接0x74/CONSOLE0x20；UART库存data[6..7]布局及serial七参数；资源reply描述符a1/x1；Siginfo来源1/2/3；DMA代次域/固定解除方向。UART库存/七参数解析已同步实现并本地验证；其余实现仍待接，DMA具体权限/调用ABI仍须冻结。
+- issues已复核新增009/010及003优先级调整：先完成当前真实启动暴露的退休清理/页元数据归属缺口，再处理010的SDK导出一致性与003无主机观测试点；007按已确认DMA方向推进，009排图形机制前，001/005/006等待实板，不冒充完成上板。
 
 - 001早期UART、004完整8 GiB、005板描述/设备发现、006单主核/停放与007 ARM64开启前置均已有本地交付，真实板及007非一致DMA/RV后端仍待验。接续生产SYSTEM/设备库存与真实serial装载/READY，再按T1..T4推进sh；不能把本地前置当作M3或全项目完成。
 - 005解析切片已通过本地全量：1024节点/8192属性/32深度、4 reg/16 IRQ，设备仍64项；完整固定来源树在tests/fixtures/dtb。VF2原始树、NEO3显式测试适配树read/console通过，NEO3原始树拒绝，不放宽零长度检查。原始/适配/固件dump区别见01末尾。005仍需存储/网络设备发现及板端验证；006仍需启动hart/CPU选择与停放，不能把多hart拓扑解析当成SMP或上板已实现。
 - 005后续已补MSHC/DWMAC家族/具体别名与多IRQ库存，完整板树实际SD/MMC/GMAC窗口及IRQ已核对且完整回归通过；不写设备寄存器或授DMA/生产Handle。家族不代表寄存器版本/PHY/时钟/复位已实现，实际blk/net驱动仍待完成。设备发现本地验收与板端运行严格分开，详见01/005末尾。
 - 007的ARM64开启前置已通过本地全量：入口M/C关闭、独占启动RAM/表页及最后镜像/栈同步，随后M/C/I开启；保留代码/页表同步，主机命名管道GDB独立读SCTLR/TCR/MAIR。漏I-cache反例仅证明控制状态审计，不是漏DMA维护的旧数据反例；007仍留非一致DMA/RV后端/板端待验。接续006的启动CPU/控制器选择及停放，避免在等待生产UART/DMA协议确认时停止全项目进展。
 - 006完整本地验收通过：固件单冷入口、当前RUNNING/其余启用CPU STOPPED，异常清空快照并拒启；正常不唤醒核，CASE=cpus实际唤醒到无栈入口后自停放。四核8次与全量均通过；Hirq保持64字节，按CPUINTC选S上下文，主机每条HMP显式cpu-index。SMC/ARM非零affinity仅模型边界、板端/EL2降级未验，不称SMP；详细证据/失败记录见01/006末尾。
-- T1.4初始SYSTEM QUERY/所选标准UART库存已完整本地验收：Boot352字节/四项含tag7，精确初始Image绑定、真实MMIO RW/GRANT与IRQ_SOURCE BIND，查询不重装授权；失效STALE。仅六字段标准布局，DW扩展待确认。接续从真实包装载serial、完成控制READY和监督；首服务未启动，Set/domain CONTROL及其他SYSTEM业务仍待接。
-- UART启动记录候选增加data[6]=reg-shift/data[7]=reg-io-width，保留六字段前缀与结构大小，已异步询问用户；确认前不改生产ABI，详见07末尾。内部005解析可继续，不因这个候选暂停整个目标。
-- 生产UART/早期诊断交接候选已询问：debughandoff 0x74、初始SYSTEM CONSOLE=0x20，普通输出进有界日志，panic停止调度后独占恢复固件配置并输出停机；待确认，不修改当前QUERY权限或诊断路径，详见07/14。
-- serial启动约定已于2026-11-18确认：不改Boot，私有tag 0x100..0x104传INIT_CALL/MMIO/IRQ_BIND/RX_RING/TX_RING，argv传种类/页内偏移/窗口长度/服务编号；共享标签已写入proto/serial.h，两架构SDK/格式及导出检查通过，实际用户ELF/归档哈希不变，未重跑QEMU。解析/装载尚未接，证据stage105，详见07。
+- T1.4初始SYSTEM QUERY/UART库存已本地验收：Boot352字节/四项含tag7，精确初始Image绑定、真实MMIO RW/GRANT与IRQ_SOURCE BIND，查询不重装授权；失效STALE。现含data[6]=shift/data[7]=width及对齐验证，结构大小不变。接续从真实包装载serial、完成控制READY和监督；首服务未启动，Set/domain CONTROL及其他SYSTEM业务仍待接。
+- 生产UART/早期诊断交接已确认：debughandoff 0x74、初始SYSTEM CONSOLE=0x20，普通输出进有界日志，panic停止调度后独占恢复固件配置并输出停机；实现待接，当前权限仍仅QUERY，详见07/14。
+- serial启动约定已确认并接严格解析/真实RESOURCE预检：私有tag 0x100..0x104，七参数含shift/width；失败不提交输出。独立fixture实际装载孩子并验证跨Set授权和SHARED往返，尚非生产serial主循环/READY。RESOURCE不暴露底层Mem身份，真实MMIO/独立SHARED来源仍由可信加载器保证，详见07。
 - init控制协议版本编码已于2026-11-18确认：word0高32位版本1、低32位opcode，其他三字不变；共享proto/init.h及SDK导出已接，两架构目标编译检查通过。实际serial/READY监督仍待接，详见07。
 - 串口环proto/serial.h与libsys私有serialinit/read/write已通过本地全量：16 KiB固定布局、32字节批次、acquire/release、背压与失败不提交；不自动notify/yield/reset。共享映射/IRQ循环、装载/READY和端点恢复仍待接，详见11末尾。
 - UART PIO后端已本地验收：保留固件波特率/字符格式，32次有界尝试、FIFO背压、错误统计及LSR读清暂存、PL011 BUSY稍后重试；ISA IO在libsys，驱动在sbin/serial，不依赖内核HAL。实际共享映射/IRQ服务循环、外部字节流、装载/READY、交接和端点恢复仍待接，详见09执行与验收。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
-- 资源reply：候选`reply(request,descriptor_ptr,0,0,0,REPLY_RESOURCE)`，a1/x1指针位置待确认，详见[06](design/06-abi.md)；不提前实现候选解码。
-- Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段候选待用户确认，见[11开放问题](design/11-terminal.md#开放问题siginfo来源编码待用户确认)，尚未采用候选数值。
+- 资源reply已确认a1/x1为descriptor_ptr，其他未用参数0、a5为REPLY_RESOURCE，reply_recv不交付；实现待接，详见06。
+- Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段已确认，实现待接，见11。
 - IRQ_SOURCE独立撤销及原生bind已接，SOURCE不转授/继承；初始标准UART的BOOT_RESOURCE已有实际MMIO/IRQ_SOURCE Handle，SYSTEM QUERY已接，其他设备/布局和管理业务仍后续，见05/07末尾。
-- DMA设备实例域及固定解除入口待确认，见09末尾；新增缓存反例主机模型不代表DMA/HAL已实现。
+- DMA设备实例代次域及固定解除方向已确认，具体权限/调用ABI仍须冻结，见09；缓存反例主机模型不代表DMA/HAL已实现。
 - 继续完成真实信号来源/完整递送与阻塞中断、原生资源交付、生产init/启动包/清单与SYSTEM、IRQ/设备/DMA、fork/exec/COW、文件/终端及用户态服务（包括net）。详细依赖和验收以01..15为准，不缩减总目标。

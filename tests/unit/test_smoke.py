@@ -214,6 +214,20 @@ class VmFaultOutputTests(unittest.TestCase):
                 validate_output(sample, 'riscv', 'textwrite', names)
 
 class InitOutputTests(unittest.TestCase):
+    def test_package_pid1_may_wait_for_a_child_before_its_exact_fatal_exit(self):
+        for arch in ('riscv','arm64'):
+            live,names=fixture(arch,'normal')
+            header=''.join(x for x in live.splitlines(True) if not x.startswith('INIT '))
+            start=next(x for x in live.splitlines(True) if x.startswith('INIT '))
+            ending='INITEXIT reason=0000000000000001 code=000000000000002a\nPANIC init exited\n'
+            for sample in (header+ending,header+start+ending):
+                validate_output(sample,arch,'normal',names,init_exit=42)
+            for sample in (header+start+start+ending,
+                           (header+start+ending).replace('image=0000000000000001','image=0000000000000002'),
+                           header+ending+start,header+start+'PANIC init exited\n',
+                           (header+start+ending).replace('code=000000000000002a','code=000000000000002b')):
+                with self.assertRaises(SmokeError):validate_output(sample,arch,'normal',names,init_exit=42)
+
     def test_live_init_and_fatal_user_exit_require_distinct_exact_outcomes(self):
         for arch in ('riscv','arm64'):
             text,names=fixture(arch,'normal')

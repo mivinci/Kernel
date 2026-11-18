@@ -57,9 +57,10 @@ bootresourceinit(Rtable *table, Imageid image, const Dtuart *uart, Handle memory
   for (i = 0; i < sizeof(candidate); i++)
     ((u8 *) &candidate)[i] = 0;
   if (memory) {
-    if (!uart || uart->reserved || uart->shift ||
-        (uart->kind == BOOT_UART_NS16550 ? uart->width != 1
-         : uart->kind == BOOT_UART_PL011 ? uart->width != 4
+    if (!uart || uart->reserved || uart->shift > 4 || (uart->width != 1 && uart->width != 4) ||
+        (uart->reg.base & (uart->width - 1)) ||
+        (uart->kind == BOOT_UART_NS16550 ? ((1U << uart->shift) & (uart->width - 1))
+         : uart->kind == BOOT_UART_PL011 ? (uart->shift || uart->width != 4)
                                          : 1))
       return -ERR_NOTSUP;
     candidate.type = QUERY_BOOT_RESOURCE;
@@ -71,6 +72,8 @@ bootresourceinit(Rtable *table, Imageid image, const Dtuart *uart, Handle memory
     candidate.data[2] = uart->reg.base;
     candidate.data[3] = uart->reg.size;
     candidate.data[4] = (u64) irq;
+    candidate.data[6] = uart->shift;
+    candidate.data[7] = uart->width;
     error = grants(table, &candidate, number);
     if (error)
       return error;

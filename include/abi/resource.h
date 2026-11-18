@@ -1,5 +1,9 @@
 #ifndef _ABI_RESOURCE_H
 #define _ABI_RESOURCE_H
+#include <stdint.h>
+/* Existing common entry rights, shared with userspace grant/query adapters. */
+#define RESOURCE_USE   1
+#define RESOURCE_GRANT (UINT64_C(1) << 63)
 /* Frozen query RESOURCE subtypes; private Local transaction states are not ABI. */
 #define RESOURCE_CREATE     1
 #define RESOURCE_SPACE      2
