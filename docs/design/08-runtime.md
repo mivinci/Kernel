@@ -536,3 +536,13 @@ sysvmget按16页/64KiB拆成连续VA上的DATA/RW/NX映射，每块map后立即f
 新增CASE=heap，两架构各两个真实C进程，分别覆盖先有外部映射与构造函数中首次malloc。可信测试装载完成后drop装载管理引用，以无新增物理页的固定ALLOC占位保留一个真实空槽。每个进程完成64个小块、跨三份Mem的128KiB大块、原地/移动realloc、零长和calloc溢出，并填满最后槽验证realloc失败仍保留旧内容。两次yield让CPU分别核对活载荷、RW/User/NX普通页及新增费用，以及全部free后Acct精确回到镜像基线、堆映射消失、无新Local残留；之后退出和进程回收归零。早期fixture的装载槽不足、填表计数和构造表借用期问题已逐项定位并修正，原失败运行保留，非分配器PASS证据。
 
 本地make unit全部397项、make fmt-check以及make test-qemu全部108个两架构场景通过；日志build/host/stage58-heap/，保存原始QEMU目录、源码哈希及早期fixture失败。libsys独立与libc合并审计通过，__image_end仅作为明确链接器边界列入libc审计定义；最终独立用户ELF仍检查无未解析符号。未执行CI、真实硬件、性能或fork/信号集成验收。
+
+### SDK私有头导出一致性（2026-11-18，issue 010）
+
+SDK私有导出源根白名单为lib/libsys/private、lib/libc/private、lib/libvirtio/private，前两者保留private根include路径，virtio保留private/virtio路径；根内递归导出.h。新增私有头只需改所属源目录，不需要修改构建脚本；新增库或命名空间才调整白名单。目标路径碰撞在删除旧副本前拒绝，不允许依复制顺序覆盖同名头。
+
+tools/sdkheaders.py先计算完整映射，再重建生成的SDK private目录；旧名字和多余文件不残留。导出后及整个SDK构建结束前核对文件集合/逐字节内容，期间源集合或哈希变化拒绝成功。成功manifest另记录private_headers的目标名、源路径与SHA256。独立只读检查使用`python3 tools/user.py --arch arm64 --check-private-headers`，RV64换riscv；缺失/多余/内容改变时非零退出并列出路径，不静默修复。
+
+7项host专项与两架构实际新增/删除/额外头探针通过，临时源头及额外SDK文件均已移除；最终十份私有头完全同源。两架构库归档/csu/代表用户ELF哈希均与改动前相同，本点不改变运行路径。完整host回归及证据归build/host/stage107-sdk-headers/，不以构建检查代替新的QEMU/CI/板端验收。
+
+最终完整722项host与fmt-check通过，新增/删除探针共四次两架构SDK构建通过，独立检查在失败/成功时均保留导出及原last-run状态；源码与精确导出manifest、运行产物不变的证据见evidence.json。未改内核运行代码，未重跑QEMU；issue010本地修复完成，非CI/板端验收。

@@ -14,6 +14,7 @@ import uuid
 from build import ROOT, PROFILES, COMMON, BuildError, compilation_database, digest, read_elf
 from elf import pack
 from run import install_stop_handlers, run_command
+from sdkheaders import export_private_headers, check_private_headers
 
 
 def build(args):
@@ -50,18 +51,7 @@ def build(args):
                                     else source.relative_to(ROOT / 'lib/libc/include'))
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-    (sdk / 'private').mkdir(exist_ok=True)
-    shutil.copyfile(ROOT / 'lib/libsys/private/syscall.h', sdk / 'private/syscall.h')
-    shutil.copyfile(ROOT / 'lib/libsys/private/start.h', sdk / 'private/start.h')
-    shutil.copyfile(ROOT / 'lib/libsys/private/elf.h', sdk / 'private/elf.h')
-    shutil.copyfile(ROOT / 'lib/libsys/private/vm.h', sdk / 'private/vm.h')
-    shutil.copyfile(ROOT / 'lib/libsys/private/serial.h', sdk / 'private/serial.h')
-    shutil.copyfile(ROOT / 'lib/libsys/private/io.h', sdk / 'private/io.h')
-    shutil.copyfile(ROOT / 'lib/libc/private/libc.h', sdk / 'private/libc.h')
-    (sdk / 'private/virtio').mkdir(exist_ok=True)
-    for name in ('queue.h', 'ring.h', 'device.h'):
-        shutil.copyfile(ROOT / 'lib/libvirtio/private' / name, sdk / 'private/virtio' / name)
-    (sdk / 'private/virtqueue.h').unlink(missing_ok=True)
+    private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
     sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S', args.arch + '/io.S')]
@@ -341,7 +331,11 @@ def build(args):
     headers += list((ROOT / 'include/proto').glob('*.h'))
     headers += [ROOT / 'sbin/serial/uart.h']
     headers += [ROOT / 'sbin/serial/start.h']
+    final_private_headers = check_private_headers(ROOT, sdk)
+    if final_private_headers != private_headers:
+        raise BuildError('SDK private sources changed during build')
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
+                    private_headers=final_private_headers,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
                     service_auth_artifact=str(service_auth.relative_to(ROOT)),
@@ -372,6 +366,8 @@ def main():
         parser.add_argument('--' + name, default=default)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--cross', default='')
+    parser.add_argument('--check-private-headers', action='store_true',
+                        help='check existing SDK exports without copying or compiling')
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")
@@ -382,11 +378,16 @@ def main():
     try:
         with (locks / (args.arch + '-sdk.lock')).open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            build(args)
+            if args.check_private_headers:
+                check_private_headers(ROOT, ROOT / 'build' / args.arch / 'sdk')
+                print(args.arch + ': SDK private headers match source')
+            else:
+                build(args)
     except (BuildError, OSError, ValueError) as error:
-        failure = ROOT / 'build' / args.arch / 'sdk/last-run.json'
-        failure.parent.mkdir(parents=True, exist_ok=True)
-        failure.write_text(json.dumps(dict(ok=False, error=str(error))) + '\n')
+        if not args.check_private_headers:
+            failure = ROOT / 'build' / args.arch / 'sdk/last-run.json'
+            failure.parent.mkdir(parents=True, exist_ok=True)
+            failure.write_text(json.dumps(dict(ok=False, error=str(error))) + '\n')
         print(str(error), file=sys.stderr)
         return 1
     return 0

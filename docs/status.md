@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- SDK导出工具修复通过722项host/格式及四次两架构SDK构建：新增/删除/残留头探针、精确集合/内容/manifest及检查不改文件/last-run均通过。库归档/csu/代表用户ELF哈希与改动前相同，未改运行代码或重跑QEMU；证据stage107-sdk-headers/evidence.json，issue010已关闭。
+
 - 最新完整make test-all通过715项host、fmt-check；12份源码短暂变更结果排除并逐项重验后，167份成功两架构QEMU结果的源码/头与SDK哈希均匹配。实际孩子七参数解析/权限预检、7字节双向SHARED环、释放IRQ后拒绝及持续READY父下孩子运行资源回收通过，完整PTE/Acct/物理owner审计保持。旧idle-only回收停滞及伙伴页owner残留反例保留，证据`build/host/stage106-serial-start/evidence.json`、test-all.log及rechecks.log。生产init无fixture；无实际serial READY、外部RX流、板端/CI/性能验收。
 - native审计逐页核对完整用户/内核映射、ELF代码/RO字节、栈/guard、Boot/SELF资源、隔离包视图和精确Acct owner；用户initstate显示正确目录/字节数/checksum并阻塞，私有页/页表/内核栈收费与实际owner集合一致，包仍保留且不重复计费。早期私有store符号被优化拆分及RV idle sie假设已直接观测后修正，失败记录保留。完整fork仍待T4前补源别名/长循环/IRQ检查点与STOP/CONT。
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
@@ -30,7 +32,7 @@
 ## 待确认与接续
 
 - 2026-11-18用户集中确认五项：控制台交接0x74/CONSOLE0x20；UART库存data[6..7]布局及serial七参数；资源reply描述符a1/x1；Siginfo来源1/2/3；DMA代次域/固定解除方向。UART库存/七参数解析已同步实现并本地验证；其余实现仍待接，DMA具体权限/调用ABI仍须冻结。
-- issues已复核新增009/010及003优先级调整：先完成当前真实启动暴露的退休清理/页元数据归属缺口，再处理010的SDK导出一致性与003无主机观测试点；007按已确认DMA方向推进，009排图形机制前，001/005/006等待实板，不冒充完成上板。
+- issues：010 SDK私有头自动导出/检查已修复；003无主机观测试点与007按已确认DMA方向接续，009排图形机制前，001/005/006等待实板。当前继续控制台交接与实际serial服务，不把本地结果当作上板完成。
 
 - 001早期UART、004完整8 GiB、005板描述/设备发现、006单主核/停放与007 ARM64开启前置均已有本地交付，真实板及007非一致DMA/RV后端仍待验。接续生产SYSTEM/设备库存与真实serial装载/READY，再按T1..T4推进sh；不能把本地前置当作M3或全项目完成。
 - 005解析切片已通过本地全量：1024节点/8192属性/32深度、4 reg/16 IRQ，设备仍64项；完整固定来源树在tests/fixtures/dtb。VF2原始树、NEO3显式测试适配树read/console通过，NEO3原始树拒绝，不放宽零长度检查。原始/适配/固件dump区别见01末尾。005仍需存储/网络设备发现及板端验证；006仍需启动hart/CPU选择与停放，不能把多hart拓扑解析当成SMP或上板已实现。
