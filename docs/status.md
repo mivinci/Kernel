@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- tty输入/输出与读等待核心通过817项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。独立CASE=tty两架构各真实alarm/recv验证总期限与间隔期限，原行编辑/EOF/短读/回显断言保留；默认init/serial ELF与stage117相同。证据stage119-tty-wait/，无CI/板端/性能结果；尚非tty服务或可用终端。
+- 终端关系可信核心通过824项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。两架构CASE=images真实Image结束/新镜像/epoch/满池与引用回收通过；默认init/serial ELF与stage117相同。证据stage120-terminal-relations/，无CI/板端/性能结果。tty输入/输出/双闹钟等待的历史证据见11/stage119，尚非原生终端调用或tty服务。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
 
@@ -35,6 +35,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage120已本地验收：终端关系可信核心持精确Image/session/group引用，前台提交核对epoch并拒绝回绕，真实镜像结束/代次/引用回收通过全量。只链接测试场景，接续Local/原生授权、会话继承与HUP/CONT挂断，不称终端调用已实现。
 
 - 2026-11-19用户已确认前台切换epoch：getfg返回PGID/SID/epoch，setfg带expected_epoch，匹配才提交并递增，旧请求STALE；ttybind仅首次关联，ttysignal按提交时当前前台。已同步06/11及失败例子，终端调用仍未实现，当前没有待回复的确认项。
 

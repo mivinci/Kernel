@@ -287,6 +287,7 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel/rqtest.c")
         if args.case == "images":
             sources.append(ROOT / "tests/kernel/imagetest.c")
+            sources += [ROOT / 'kernel/terminal.c', ROOT / 'tests/kernel/terminaltest.c']
         if args.case == "irq":
             sources += [ROOT / "tests/kernel/irqtest.c", ROOT / "tests/kernel" / args.arch / "irqprobe.S", ROOT / "tests/kernel" / args.arch / "irqnative.S"]
         if args.case == "timer":

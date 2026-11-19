@@ -356,6 +356,12 @@ T4 的 sh 要求作业控制可用，故 STOP/CONT、前台组切换与控制终
 
 ## 执行与验收
 
+终端关系实现接续（2026-11-19，可信核心已本地验收）：kernel/terminal.c以64项固定池保存精确owner Image、session/group引用与epoch，每条56字节，使用现有TERMINAL类别身份；新建从epoch1起，首次关联仅安装同会话约束，成功前台提交才递增。每次新操作检查owner处于PREPARING/ACTIVE，结束后仅允许drop清理旧引用，不跟随新镜像。同一会话旧关联仍占清理引用时拒绝另一终端抢占，最后drop后才释放会话/前台组/Image引用。该机制不自行投递HUP/CONT，不把保留引用称为挂断处理已经完成。
+
+7项host以真实group核心和模拟Image边界检查STALE提交无修改、相同组提交推进版本、跨会话拒绝、槽复用/满池、结束后引用释放，以及UINT64_MAX epoch/u32引用计数耗尽、imagehold失败不发布/不改输出和坏身份拒绝。测试直接设置私有边界值，没有新增生产故障开关。CASE=images链接相同terminal.c，真实Life发布/旧Image EXEC结束并detach/新Image激活，验证旧终端立即拒绝、新终端不接管旧关联、两次drop后旧Image实际回收及新终端可关联；64项满池/代次复用、关系引用与Life/Set/物理页回到基线，两架构专项已通过。ARM64整体结构快照引入隐式memcpy已改为逐字段赋值，失败构建日志保留。
+
+此点仅接可信内核核心和CASE=images，未进入normal生产授权路径。Local转授/原生调用、会话控制终端继承、前台作业策略和HUP/CONT挂断/信号仍待接，不能将可信set视为已完成调用者权限检查。完整make test-all通过824项host、格式检查、191次双架构QEMU；164份journal、最终源码/头/SDK/配置/包哈希及两份真实Image终端关系记录另核对，默认init/serial ELF与stage117相同。CASE=images的编译数据库包含新增源。证据build/host/stage120-terminal-relations/，无CI/板端/性能结果。
+
 - [ ] 两架构信号PC先进入trampoline，六个入口参数与原TF分开，a3/x3的handler地址不会被误读为原RPC；普通返回地址0不得跳回任意旧代码。
 - [ ] 子发布后第一条用户指令前及Fix半途注入HANDLER/NODEFER/STOP/KILL：应用handler只见修复后的子表，父staging内容不变；嵌套只完成同次Fix，不增加发布后ready syscall或远端握手。
 - [ ] sigaction/RESETHAND与前置取消、NODEFER嵌套交错仅使用本次动作快照；一/三参数handler及errno恢复正确，不维护第二份可竞态更新的handler表。

@@ -25,6 +25,7 @@ void syscalltest(void);
 void timertest(void);
 void irqtest(void);
 void imagetest(void);
+void terminaltest(void);
 void rqtest(void);
 void ipctest(void);
 void credtest(void);

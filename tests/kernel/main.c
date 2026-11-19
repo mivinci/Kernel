@@ -107,6 +107,7 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
   putstr("READY requests-restored\n");
 #elif BOOT_CASE == 26
   imagetest();
+  terminaltest();
   putstr("READY images-restored\n");
 #elif BOOT_CASE == 25
   irqtest();
