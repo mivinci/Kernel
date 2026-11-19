@@ -5,7 +5,8 @@
 #include <abi/time.h>
 #include "private/start.h"
 #include "private/syscall.h"
-volatile u64 jobtrace[8];
+volatile u64  jobtrace[8];
+static Handle nested;
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -23,8 +24,16 @@ now(void)
 static void
 handler(u64 signum)
 {
+  Msg    words = {{UINT64_C(0x4e455354), 0, 0, 0}};
+  Ipcmsg result;
   jobtrace[3] = signum;
   jobtrace[5]++;
+  if (nested) {
+    if (ipc_call(nested, &words, CALL_ASYNC, &result) || !result.request ||
+        ipc_rqcancel(result.request) || ipc_rqack(result.request, ACK_RESULT | ACK_RELEASE))
+      __sys_exit(203);
+    jobtrace[1] = 1;
+  }
 }
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
@@ -136,11 +145,78 @@ main(int argc, char **argv)
     jobtrace[3] = message.words[0];
     CHECK(message.words[0] == (mode == 1 ? (u64) 1 << 32 : EVENT_TIMER));
   } else if (mode == 3) {
+    if (child) {
+      CHECK(!install(SIGNAL_USR1, SIGNAL_HANDLER));
+      if (child == 7)
+        nested = peer;
+      jobtrace[0] = 1;
+      if (child == 5 || child == 6) {
+        error = ipc_send(peer, &words);
+        CHECK(error == (child == 5 ? -ERR_INTERRUPTED : 0) && jobtrace[5] == 1);
+      } else {
+        result = 0;
+        error = ipc_call(peer, &words, child == 3 || child == 4 || child >= 8 ? CALL_ASYNC : 0,
+                         &message);
+        if (child == 3 || child == 4 || child >= 8) {
+          CHECK(!error && message.request > 0);
+          result = message.request;
+          error = ipc_rqwait(result, child >= 8 ? RQ_FINISH : 0, &message);
+        }
+        if (child == 1 || child == 3 || child == 7 || child == 8) {
+          CHECK(error == -ERR_INTERRUPTED && jobtrace[3] == SIGNAL_USR1 && jobtrace[5] == 1);
+          if (child != 3 && child != 8)
+            result = message.request;
+          CHECK(result > 0);
+          jobtrace[4] = (u64) result;
+          jobtrace[6] = 1;
+          CHECK(!ipc_rqwait(result, child >= 8 ? RQ_FINISH : 0, &message));
+        } else
+          CHECK(!error && jobtrace[5] == 1);
+        if (child >= 8) {
+          CHECK(!message.kind && !message.request && !message.words[0]);
+          CHECK(!ipc_rqpoll(result, 0, &message));
+        }
+        CHECK(message.words[0] == words.words[0] && !message.request);
+        if (result)
+          CHECK(!ipc_rqack(result, ACK_RESULT | ACK_RELEASE));
+      }
+      jobtrace[6] = 2;
+      jobtrace[0] = 2;
+      jobtrace[7] = 42;
+      return 42;
+    }
     jobtrace[0] = 1;
     CHECK(!ipc_call(peer, &words, 0, &message) && message.words[0] == words.words[0] &&
           !message.request);
     jobtrace[3] = message.words[0];
   } else if (mode == 4 || mode == 9) {
+    if (mode == 4 && child == 2) {
+      CHECK(!install(SIGNAL_USR1, SIGNAL_HANDLER));
+      CHECK(!ipc_recv(0, 0, &message) && message.kind == IPC_CALL);
+      jobtrace[0] = 1;
+      while (!jobtrace[1])
+        jobtrace[2]++;
+      CHECK(ipc_reply_recv(message.request, &words, (u64) 1 << 32, RECV_EVENTS_ONLY, &answer) ==
+                -ERR_INTERRUPTED &&
+            jobtrace[5] == 1);
+      CHECK(ipc_reply(message.request, &words) == -ERR_BAD_HANDLE);
+      CHECK(!ipc_recv((u64) 1 << 32, RECV_EVENTS_ONLY | RECV_NONBLOCK, &answer) &&
+            answer.kind == IPC_EVENT && answer.words[0] == ((u64) 1 << 32));
+      jobtrace[6] = 1;
+      jobtrace[0] = 2;
+      jobtrace[7] = 42;
+      return 42;
+    }
+    if (mode == 4 && child == 1) {
+      CHECK(!ipc_recv(0, 0, &message) && message.kind == IPC_SEND && !message.request &&
+            message.words[0] == words.words[0]);
+      jobtrace[0] = 1;
+      while (!jobtrace[1])
+        jobtrace[2]++;
+      jobtrace[0] = 2;
+      jobtrace[7] = 42;
+      return 42;
+    }
     CHECK(!ipc_recv(0, 0, &message) && message.kind == IPC_CALL);
     jobtrace[0] = 1;
     while (!jobtrace[1])

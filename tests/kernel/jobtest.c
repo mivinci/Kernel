@@ -574,6 +574,107 @@ recvsignal(u32 first)
   clean(&sender, LIFE_EXIT, 42, 1);
   closed(set);
 }
+static void
+requestsignal(u32 mode, u32 queued)
+{
+  Setid  set;
+  Actor  client, server;
+  Handle call;
+  u64    words[8];
+  u32    count;
+  CHECK(!setcreate(1024, 2048, 2, &set));
+  create(set, 1, &client);
+  create(set, 1, &server);
+  CHECK(!localendpoint(proctable(client.pid), server.info.identity,
+                       mode == 5 || mode == 6 ? LOCAL_SEND : LOCAL_CALL, LOCAL_USE, 0, 0, &call));
+  load(&server, 4, mode == 5 || mode == 6 ? 1 : 0, 0);
+  if (queued)
+    CHECK(!procstop(server.pid, SIGNAL_STOP));
+  load(&client, 3, mode, call);
+  state(&client, PROC_BLOCKED);
+  if (!queued) {
+    do {
+      step();
+      trace(&server, words);
+    } while (!words[0]);
+  }
+  if (mode != 7)
+    CHECK(!procstop(client.pid, SIGNAL_STOP));
+  if (mode != 2 && mode != 4 && mode != 6 && mode != 9)
+    send(&client, SIGNAL_USR1);
+  if (mode == 7) {
+    state(&client, PROC_BLOCKED);
+    trace(&client, words);
+    CHECK(words[1] == 1 && words[5] == 1 && words[6] == 1 && words[4] &&
+          !rqcount(client.pid, client.info.image, &count) && count == 1);
+  }
+  if (queued)
+    CHECK(!proccontinue(server.pid));
+  if (mode == 5) {
+    state(&server, PROC_BLOCKED);
+    CHECK(!rqcount(client.pid, client.info.image, &count) && count == 1);
+    send(&server, SIGNAL_KILL);
+    clean(&server, LIFE_SIGNAL, SIGNAL_KILL, 1);
+  } else {
+    release(&server);
+    finish(&server);
+    if (mode != 6) {
+      trace(&server, words);
+      CHECK(words[3] == RQ_CHECK_LIVE);
+    }
+    clean(&server, LIFE_EXIT, 42, 1);
+  }
+  if (mode == 2 || mode == 4 || mode == 6 || mode == 9)
+    send(&client, SIGNAL_USR1);
+  if (mode != 7) {
+    stopped(&client, 2);
+    CHECK(!proccontinue(client.pid));
+  }
+  finish(&client);
+  trace(&client, words);
+  CHECK(words[5] == 1 && words[6] == 2);
+  clean(&client, LIFE_EXIT, 42, 1);
+  closed(set);
+}
+static void
+replysignal(void)
+{
+  Setid  set;
+  Actor  client, server, sender;
+  Handle call, notify;
+  u64    words[8];
+  CHECK(!setcreate(2048, 4096, 3, &set));
+  create(set, 1, &client);
+  create(set, 1, &server);
+  create(set, 1, &sender);
+  CHECK(!localendpoint(proctable(client.pid), server.info.identity, LOCAL_CALL, LOCAL_USE, 0, 0,
+                       &call));
+  CHECK(!localendpoint(proctable(sender.pid), server.info.identity, LOCAL_NOTIFY, LOCAL_USE,
+                       (u64) 1 << 32, 0, &notify));
+  load(&server, 4, 2, 0);
+  load(&client, 3, 0, call);
+  state(&client, PROC_BLOCKED);
+  do {
+    step();
+    trace(&server, words);
+  } while (!words[0]);
+  release(&server);
+  state(&server, PROC_BLOCKED);
+  send(&server, SIGNAL_STOP);
+  send(&server, SIGNAL_USR1);
+  load(&sender, 5, 0, notify);
+  finish(&sender);
+  finish(&client);
+  stopped(&server, 2);
+  CHECK(!proccontinue(server.pid));
+  finish(&server);
+  trace(&server, words);
+  CHECK(words[5] == 1 && words[6] == 1);
+  clean(&client, LIFE_EXIT, 42, 1);
+  clean(&server, LIFE_EXIT, 42, 1);
+  clean(&sender, LIFE_EXIT, 42, 1);
+  closed(set);
+}
 void
 jobtest(void)
 {
@@ -606,11 +707,22 @@ jobtest(void)
   recvsignal(0);
   recvsignal(1);
   recvsignal(2);
+  requestsignal(1, 0);
+  requestsignal(1, 1);
+  requestsignal(2, 0);
+  requestsignal(3, 0);
+  requestsignal(4, 0);
+  requestsignal(5, 1);
+  requestsignal(6, 0);
+  requestsignal(7, 0);
+  requestsignal(8, 0);
+  requestsignal(9, 0);
+  replysignal();
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck() && !groupcheck());
   putstr("JOBSCHECK cases=");
-  puthex(26);
+  puthex(37);
   putstr(" self=");
   puthex(selfseen);
   putstr(" self_cancel=");
@@ -637,6 +749,10 @@ jobtest(void)
   puthex(2);
   putstr(" recv_signal=");
   puthex(3);
+  putstr(" request_signal=");
+  puthex(10);
+  putstr(" reply_signal=");
+  puthex(1);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

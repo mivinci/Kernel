@@ -59,6 +59,7 @@ union Procstage
 #define WAIT_CHILD       PROCESS_WAIT_CHILD
 #define WAIT_SIGNAL      PROCESS_WAIT_SIGNAL
 #define WAIT_INTERRUPTED 0x80000000U
+#define WAIT_SEND        0x40000000U
 #define INTERRUPT_TIMER  1
 #define INTERRUPT_READY  2
 #ifndef WAIT_DEPTH
@@ -1306,9 +1307,22 @@ wakeone(Proc *p)
                    &child, &matched))
       panic("child wait selection");
     wake = child.generation || !matched;
-  } else
-    wake = rqresult(p->stage.wait.request, p->identity, p->stage.wait.options, &result) !=
-           -ERR_WOULD_BLOCK;
+  } else {
+    wake = rqresult(p->stage.wait.request, p->identity, p->stage.wait.options & RQ_FINISH,
+                    &result) != -ERR_WOULD_BLOCK;
+    if (!wake) {
+      wake = siginterruptready(p->identity);
+      if (wake < 0)
+        panic("request wait signal identity");
+      if (wake) {
+        /* SEND must be removed before the server can consume it. CALL keeps
+           its original request and only abandons this synchronous wait. */
+        if ((p->stage.wait.options & WAIT_SEND) && rqcancel(p->stage.wait.request, p->identity))
+          panic("interrupted send cancellation");
+        p->stage.wait.options |= WAIT_INTERRUPTED;
+      }
+    }
+  }
   if (wake) {
     p->stage.wait.subject.peer = 0;
     if (p->state == PROC_STOPPED)
@@ -1459,9 +1473,12 @@ waitresult(Rqid id, u32 options, u32 block, Rqresult *out)
   Handle  peer;
   int     error;
   for (;;) {
-    error = rqresult(id, current->identity, options, out);
+    error = rqresult(id, current->identity, options & RQ_FINISH, out);
     if (error != -ERR_WOULD_BLOCK || !block)
       return error;
+    error = siginterruptready(current->identity);
+    if (error)
+      return error < 0 ? error : -ERR_INTERRUPTED;
     if (rqstat(id, &info))
       panic("IPC wait reference");
     /* The Rq retains the exact target Image; resolve only its original mail. */
@@ -1482,9 +1499,13 @@ waitresult(Rqid id, u32 options, u32 block, Rqresult *out)
     current->stage.wait.request = id;
     current->stage.wait.target.image = target;
     current->stage.wait.subject.peer = peer;
-    current->stage.wait.kind = options == RQ_FINISH ? WAIT_FINISH : WAIT_RESULT;
+    current->stage.wait.kind = options & RQ_FINISH ? WAIT_FINISH : WAIT_RESULT;
     current->stage.wait.options = options;
     sleepcurrent();
+    if (current->stage.wait.options & WAIT_INTERRUPTED) {
+      current->stage.wait.options &= ~WAIT_INTERRUPTED;
+      return -ERR_INTERRUPTED;
+    }
   }
 }
 static int
@@ -1611,6 +1632,11 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
       return -ERR_PEER;
     if (sigstat(current->identity, &signal))
       panic("IPC signal budget");
+    if (kind == IPC_SEND || !(args[5] & CALL_ASYNC)) {
+      error = siginterruptready(current->identity);
+      if (error)
+        return error < 0 ? error : -ERR_INTERRUPTED;
+    }
     context = signal.depth == 0 ? RQ_NORMAL : signal.depth == 1 ? RQ_SIGNAL1 : RQ_SIGNAL2;
     error = rqsubmitto(&current->outgoing, &server->incoming, current->identity, (Handle) args[0],
                        context, kind, &message, (u32) args[5], &id, &current->resources);
@@ -1623,8 +1649,10 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     }
     if (rqhold(id))
       panic("synchronous IPC reference");
-    error = waitresult(id, 0, 1, &result);
-    if (error) {
+    error = waitresult(id, kind == IPC_SEND ? WAIT_SEND : 0, 1, &result);
+    if (error == -ERR_INTERRUPTED && kind == IPC_CALL)
+      outputs[2] = (u64) rqhandle(id, HANDLE_RPC);
+    else if (error) {
       /* No dispatch precedes the first strong-edge check; rejection is queued. */
       if (rqcancel(id, current->identity) || rqack(id, current->identity, 3))
         panic("rejected synchronous wait rollback");
@@ -1865,11 +1893,13 @@ procsigqueue(Handle pid, const Siginfo *info)
   bit = (u64) 1 << (info->signum - 1);
   stop = sigstopkind(info->signum) && action.kind == SIGNAL_DEFAULT && !(state.mask & bit);
   /* Pure jobs and blocked/ignored notifications do not abandon a C wait.
-     Receive and suspend waits can unwind for caught signals; other wait
-     continuations still need their own result/ownership commit handling. */
+     IPC and suspend waits unwind for caught signals; parent and construction
+     waits still need their own result/reference commit handling. */
   if ((p->state == PROC_BLOCKED || (p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED)) &&
       p->stage.wait.kind != WAIT_SIGNAL && !stop && info->signum != SIGNAL_CONT &&
-      p->stage.wait.kind != WAIT_RECV && !(state.mask & bit) && !sigignored(info->signum, &action))
+      p->stage.wait.kind != WAIT_RECV && p->stage.wait.kind != WAIT_RESULT &&
+      p->stage.wait.kind != WAIT_FINISH && !(state.mask & bit) &&
+      !sigignored(info->signum, &action))
     return -ERR_BUSY;
   error = sigqueue(p->identity, info);
   if (error)

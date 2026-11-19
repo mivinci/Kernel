@@ -714,6 +714,22 @@ NOCLDSTOP现允许安装在CHLD动作，生成STOPPED/CONTINUED通知时检查�
 
 具体例子：等待bit32的进程先被STOP停放，再收到USR1，随后bit32通知到达；CONT后原recv返回INTERRUPTED，handler运行一次，下一次非阻塞recv取得仍保留的bit32。若将USR1与bit32顺序互换，进程仍未恢复C续点，因此仍返回INTERRUPTED并保留bit32。另一个场景让原recv实际成功交付bit32后才注入USR1，验证保存的事件结果及一次handler调用。三个场景使用真实独立用户ELF和CPU生产fixture，明确区分就绪与提交。
 
-reply_recv的接收段复用receive，回复提交仍在进入receive之前；本点新增CPU场景直接覆盖recv，回复成功后中断不回滚的组合场景须继续补验。call/send、rqwait及父wait尚保持各自旧边界，不将recv切片称为完整普通等待中断、POSIX trampoline或SA_RESTART。原生sigsend尚未接入，验证信号仍由可信类型化入口产生。
+reply_recv的接收段复用receive，回复提交仍在进入receive之前；本点新增CPU场景直接覆盖recv，回复成功后中断不回滚的组合场景由下节接续补齐。此切片当时尚未接call/send、rqwait及父wait中断，不将recv切片称为完整普通等待中断、POSIX trampoline或SA_RESTART。原生sigsend尚未接入，验证信号仍由可信类型化入口产生。
 
 最终完整make test-all通过846项host、格式检查及193次双架构QEMU；8项信号专项、166份journal及最终源码/头/SDK/包哈希另核对。两架构CASE=jobs各26场景，新增三个接收提交顺序场景，均核对handler次数、事件保留/交付和费用/物理页回基线。默认init/serial ELF与stage127逐字节相同，normal无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage128-recv-signal/；无CI/板端/性能结果。
+
+### 请求等待中断与原RPC归属（2026-11-19）
+
+同步call/send在提交前检查可递送信号，没有请求时返回INTERRUPTED且RPC为0；CALL_ASYNC仍是不可中断的短提交。提交之后，同步call和rqwait仅退出当前等待，不自动取消/确认原Rq。同步call返回原RPC；rqwait调用者保留输入RPC。睡眠C续点持有的临时Rq引用在退栈前归还，原结果/槽的责任继续由同一RPC持有，不能因handler重入或回复已经到达而丢失。
+
+持久回复/错误、或RQ_FINISH要求的server_finished先提交时，等待保持原结果；信号先锁存等待中断时，后续回复不覆盖INTERRUPTED，调用者仍从原RPC取得结果。RQ_FINISH被中断不等于收尾完成，不消费业务结果、不自动ACK_RELEASE。内部等待位与公开RQ_FINISH分开核验，内部位不传入rqresult的公开选项检查。
+
+send没有返回RPC：只允许在尚排队时中断，并在锁存中断的同一内核提交点先rqcancel摘队，不能等调用者恢复C续点才取消。消息已完整复制给接收者时，结果已经固定为成功，不返回会暗示“未交付”的INTERRUPTED。原C续点随后确认并释放取消结果；KILL/退出仍按既有配额关闭和临时引用回收处理。
+
+真实用户场景补齐：排队/已接收call中断后，服务仍看到LIVE并成功回复，调用者恢复后拿到原RPC及原结果；回复先提交时保持同步成功。异步RPC的结果等待和RQ_FINISH分别覆盖信号先到/完成先到。排队send中断后，即使先恢复接收者也只进入阻塞接收，消息未交付；已交付send保持成功。另一个call handler用本层独立槽向同一服务提交并取消异步RPC，外层原RPC仍独立存活，之后正常取得结果和释放。
+
+reply_recv组合场景验证回复成功后进入接收，再被信号中断：原调用者已取得成功回复，服务handler只运行一次，重复回复旧REQUEST被拒绝，接收中断不取走随后到达的bit32事件。调用者/服务/通知者退出后费用与物理页回到场景基线。
+
+本点仍不接父wait/构造清理等待中断、POSIX Rctx/Fix/trampoline、SA_RESTART或原生sigsend授权。信号由可信CPU入口产生，不能据此声称完整作业控制或用户发信生产已接。
+
+最终完整make test-all通过846项host、格式检查及193次双架构QEMU。两架构CASE=jobs各37场景，新增10项请求中断及1项reply_recv组合；166份journal、最终源码/头/SDK/包哈希及费用/页回收另核对。默认init/serial ELF与stage128逐字节相同，normal仍无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage129-request-signal/；无CI/板端/性能结果。
