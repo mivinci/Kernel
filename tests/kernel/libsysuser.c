@@ -4,6 +4,7 @@
 #include "private/conn.h"
 #include "private/bootstrap.h"
 #include "private/connection.h"
+#include "private/operation.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 static volatile u64       bss[257];
@@ -458,9 +459,7 @@ typedserver(const Bootview *view)
     reply.business[0] = received.words[2];
     reply.business[1] = header->connid;
     reply.business[2] = FS_CONN_BYTES;
-    REQUIRE(!ipc_reply_resource(received.request, &reply) && !__sys_unmap(space, map.address) &&
-                !__sys_free(memory),
-            143);
+    REQUIRE(!ipc_reply_resource(received.request, &reply), 143);
     resource_trace[9] = 1;
     REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.source == client &&
                 received.image == clientimage && received.words[0] == FS_ATTACH &&
@@ -472,6 +471,38 @@ typedserver(const Bootview *view)
     words.words[3] = FS_CONN_BYTES;
     REQUIRE(!ipc_reply(received.request, &words), 137);
     resource_trace[9] = 2;
+    REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.source == client &&
+                received.image == clientimage && received.words[0] == FS_READ &&
+                received.words[1] == header->connid && received.words[2] &&
+                received.words[3] < FS_CONN_SLOTS,
+            133);
+    {
+      Fileslot     descriptor;
+      u32          index = (u32) received.words[3];
+      volatile u8 *data =
+          (volatile u8 *) (uintptr_t) (map.address + FS_DATA_OFFSET + index * FS_SLOT_BYTES);
+      Fileslot *wire =
+          (Fileslot *) (uintptr_t) (map.address + FS_DESC_OFFSET + index * FS_DESC_BYTES);
+      REQUIRE(!sysfilerequest((const volatile void *) (uintptr_t) map.address, FS_CONN_BYTES, index,
+                              received.words[2], &descriptor) &&
+                  descriptor.object == 55 && descriptor.span == 1 &&
+                  descriptor.payload_bytes == 4 && descriptor.args[0] == 4 && !descriptor.args[1] &&
+                  !descriptor.args[2] && !descriptor.args[3] && !descriptor.args[4] &&
+                  !descriptor.args[5] && !descriptor.args[6] && !descriptor.args[7],
+              132);
+      data[0] = 't';
+      data[1] = 'e';
+      data[2] = 's';
+      data[3] = 't';
+      wire->state = FS_SLOT_DONE;
+      words.words[0] = 0;
+      words.words[1] = received.words[2];
+      words.words[2] = words.words[3] = 4;
+      REQUIRE(!ipc_reply(received.request, &words) && !__sys_unmap(space, map.address) &&
+                  !__sys_free(memory),
+              131);
+      resource_trace[9] = 3;
+    }
   }
 }
 static void
@@ -501,6 +532,7 @@ typedclient(const Bootview *view, Handle peer)
   Maparg    map;
   Connclaim claim;
   u64       oldmask;
+  u32       i;
   claim.tag = connection_tag;
   claim.seq = 1;
   claim.owner = 303;
@@ -590,6 +622,10 @@ typedclient(const Bootview *view, Handle peer)
     Connentry  entry;
     Bootstrap *active = &connection_work.state.bootstrap;
     Filelease  lease, other;
+    Fileslot   descriptor;
+    Opkey      operation, background, stale, spare;
+    u64        file = 99, sparefile = 100;
+    u32        saved;
     Handle     original;
     u64        originalva;
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
@@ -636,16 +672,73 @@ typedclient(const Bootview *view, Handle peer)
                 connection_work.state.map.address == originalva &&
                 connection_work.state.pages.pages[lease.slot].seq == lease.seq &&
                 !sysbootack(active, claim) && !sysbootfinish(active, claim) &&
-                !sysconninvalidate(&connection_directory, connection_tag) &&
+                !sysconnworkrelease(&connection_work, &connection_directory, lease),
+            134);
+    for (i = 0; i < sizeof(descriptor); i++)
+      ((u8 *) &descriptor)[i] = 0;
+    REQUIRE(!sysopprepare(&connection_work, &connection_directory, SYSFILE_MAIN, 1, 501, &file, 55,
+                          FS_READ, 0, &operation) &&
+                !file,
+            130);
+    descriptor.seq = operation.lease.seq;
+    descriptor.state = FS_SLOT_SUBMITTED;
+    descriptor.object = 55;
+    descriptor.span = 1;
+    descriptor.payload_bytes = 4;
+    descriptor.args[0] = 4;
+    words.words[0] = FS_READ;
+    words.words[1] = connection_work.state.map.connid;
+    words.words[2] = operation.lease.seq;
+    words.words[3] = operation.lease.slot;
+    REQUIRE(
+        !__sys_copy((void *) (uintptr_t) (originalva + FS_DESC_OFFSET +
+                                          operation.lease.slot * FS_DESC_BYTES),
+                    &descriptor, sizeof(descriptor)) &&
+            !ipc_call(peer, &words, CALL_ASYNC, &result) &&
+            !sysopsubmitted(&connection_work, &connection_directory, &operation, &result.request),
+        129);
+    stale.connection.generation = operation.connection.generation;
+    stale.connection.index = operation.connection.index;
+    stale.connection.reserved = 0;
+    stale.lease.seq = operation.lease.seq;
+    stale.lease.slot = operation.lease.slot;
+    stale.lease.span = operation.lease.span;
+    stale.owner = operation.owner;
+    REQUIRE(!sysopbackground(&connection_work, &connection_directory, &operation, &background) &&
+                !operation.lease.seq && !operation.owner &&
+                sysopcancel(&connection_work, &connection_directory, &stale) == -ERR_STALE &&
+                !sysopprepare(&connection_work, &connection_directory, SYSFILE_MAIN, 1, 502,
+                              &sparefile, 56, FS_READ, 0, &spare) &&
+                spare.lease.slot != background.lease.slot &&
+                !sysopabort(&connection_work, &connection_directory, &spare, &sparefile) &&
+                sparefile == 100 && !sysconninvalidate(&connection_directory, connection_tag) &&
                 sysconnworkclean(&connection_work, &connection_directory) == -ERR_BUSY &&
                 sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 1,
                                    &other) == -ERR_PEER &&
-                !sysconnworkrelease(&connection_work, &connection_directory, lease) &&
-                !sysconnworkclean(&connection_work, &connection_directory) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            128);
+    REQUIRE(!ipc_rqwait(connection_work.state.operations[background.lease.slot].rpc, 0, &result),
+            127);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysopcapture(&connection_work, &connection_directory, &background, 0, &result) &&
+                !result.words[0] && result.words[1] == background.lease.seq &&
+                result.words[2] == 4 && result.words[3] == 4 &&
+                !__sys_copy(&saved,
+                            (const void *) (uintptr_t) (originalva + FS_DATA_OFFSET +
+                                                        background.lease.slot * FS_SLOT_BYTES),
+                            sizeof(saved)) &&
+                saved == UINT32_C(0x74736574) &&
+                sysconnworkrelease(&connection_work, &connection_directory, background.lease) ==
+                    -ERR_BUSY &&
+                sysopack(&connection_work, &connection_directory, &background) == -ERR_STATE &&
+                !sysopsaved(&connection_work, &connection_directory, &background) &&
+                !sysopack(&connection_work, &connection_directory, &background) &&
+                !sysopfinish(&connection_work, &connection_directory, &background, &file) &&
+                file == 99 && !sysconnworkclean(&connection_work, &connection_directory) &&
                 !connection_work.state.memory && !connection_work.state.map.mapped &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-            134);
-    resource_trace[9] = 2;
+            126);
+    resource_trace[9] = 3;
   }
 }
 static Handle

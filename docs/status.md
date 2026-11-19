@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- 起始槽/后台责任通过904项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。7项host覆盖双页单头/File一次移交、中断保持/后台key切换、先存后ACK/资源保留、DRAINING收尾、旧key/输出保护与分区背压；两架构真实共享槽READ转后台后仍用原RPC保存4字节，另页独立准备/撤销，失效后完成ACK/File返交/页归还再清连接。实际载荷/SDK一致、8条128字节记录与目录仍在4KiB页内、无memcpy依赖，init/serial与stage139相同；证据stage140-slot-responsibility/。初次ARM按值键隐式拷贝已改只读引用并重跑；尚非File注册表/完整Rctx或生产read；无CI/板端/性能结果。
+
 - 稳定连接工作区/普通复用通过897项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。8项host覆盖MEM+VA一次接管、错误提交保持、reuse owner/原映射保留、资源回复复用拒绝、活页拆除门槛、unmap/free失败重试、来源镜像及内嵌目录预算；两架构实际HELLO→ATTACH普通复用保留原MEM/VA/页租约，再失效/归还/清理。实际工作页符号4096且无额外目录对象、链接载荷/SDK一致，init/serial与stage138相同；证据stage139-connection-work/。尚非生产服务连接池/slot RPC/Rctx/补偿；无CI/板端/性能结果。
 
 - 真实HELLO/受检MEM映射通过889项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。12项bootstrap专项含新增请求/回复校验、真实MEM窗口适配、普通复用边界与映射失败保留；两架构实际HELLO交付9页SHARED、查询窗口/映射/核对头后READY，再ACK/资源移交和解除释放。实际链接载荷与SDK一致、依赖仅短原生操作，init/serial与stage137相同；证据stage138-bootstrap-map/。服务为单次握手fixture，非生产FS/TTY或完整Rctx/补偿；无CI/板端/性能结果。
@@ -63,6 +65,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage140已本地验收：每起始槽128字节记录稳定持有页/原RPC/调用者已固定File身份、结果与资源；前台key显式移交后台并失效，数据/归属保存后才ACK，资源转交后才返File并归还整页。真实共享槽READ与DRAINING原请求收尾已验，接续实际File/CALL引用池、Rctx返回窗口/信号前置、服务私有在途/观察与取消/截止策略，再接VA/Boot/Fix及标准fd服务。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 
 - stage139已本地验收：4KiB私有工作页稳定接管MEM/别名，首工作页内嵌8项目录使总预算保持32KiB；READY带owner串行真实ATTACH普通复用，失效禁止新页且不拆活动租约，解除/释放失败分别保留剩余责任。接续slot RPC/后台唯一责任、CALL/File引用、Rctx/信号返回窗口、VA分配与失效补偿，再接Boot/Fix及FS/TTY/标准fd。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 

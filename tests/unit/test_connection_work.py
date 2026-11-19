@@ -8,7 +8,7 @@ from test_filepages import Pages,Lease
 
 class State(C.Structure):
     _fields_=[('self',Peer),('peer',Peer),('tag',Tag),('space',C.c_int64),('memory',C.c_int64),
-              ('map',Mapping),('pages',Pages),('bootstrap',support.Record)]
+              ('map',Mapping),('pages',Pages),('bootstrap',support.Record),('operations',(C.c_uint8*128)*8)]
 
 
 class Work(C.Structure):

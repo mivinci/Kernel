@@ -146,14 +146,21 @@ isize
 sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected)
 {
   Connentry entry;
+  u32       i;
   isize     error = view(work, cache, &entry);
-  return error ? error : sysfilerelease(&work->state.pages, expected);
+  if (error)
+    return error;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (work->state.operations[i].phase && work->state.operations[i].lease.seq == expected.seq)
+      return -ERR_BUSY;
+  return sysfilerelease(&work->state.pages, expected);
 }
 isize
 sysconnworkclean(Connwork *work, Conncache *cache)
 {
   Connentry  entry;
   Connstate *s;
+  u32        i;
   isize      error = view(work, cache, &entry);
   if (error)
     return error;
@@ -163,6 +170,9 @@ sysconnworkclean(Connwork *work, Conncache *cache)
   if (entry.state != SYSCONN_DRAINING || entry.owner || s->bootstrap.state != SYSBOOT_FREE ||
       !empty(&s->pages))
     return -ERR_BUSY;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (s->operations[i].phase)
+      return -ERR_BUSY;
   if (s->map.mapped) {
     error = sysbootunmap(s->space, &s->map);
     if (error)

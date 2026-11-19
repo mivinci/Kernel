@@ -941,3 +941,19 @@ READY连接可由sysconnreusebegin串行受理一个新ATTACH/EXEC_CLAIM，分�
 8项新增host核对原RPC与MEM/别名的一次移交、错误map/失效claim不移动所有权、reuse重复owner及原映射/页保留、资源回复复用拒绝、DRAINING不借新页/不清活动租约、unmap/free逐步失败重试、源镜像变化及同页目录初始化/预算。原生用户场景以真实HELLO先取得MEM/映射并移入工作页，再保留一个主层页租约发真实ATTACH；fixture按同一source PID/image/token及更大seq回复普通[0,seq,connid,36864]，不新装MEM。客户端确认原MEM、VA和活动租约均不变，再invalidate，验证清理BUSY/新页PEER，归还旧租约后清理到零。
 
 最终完整make test-all通过897项host、格式检查及195次双架构QEMU；8项专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构实际HELLO→工作页接管→ATTACH普通复用→DRAINING页租约门槛→解除/释放均通过，页/费用回基线。实际用户符号connection_work精确4096字节且无独立connection_directory对象，依赖集合/SDK私有头一致，init/serial ELF与stage138相同且无新增模块/测试符号，clangd数据库已更新。证据build/host/stage139-connection-work/；无CI/板端/性能结果。预算审查曾发现独立目录额外占用32KiB之外存储，已在最终版本改为首工作页预留区内嵌，先前回归在主机阶段主动停止并保留日志。服务仍为单次HELLO/ATTACH fixture，不是完整生产连接池/观察/token权限实现；CALL/File与slot RPC责任、Rctx/handler返回窗口、VA分配、超时补偿、Boot/Fix和标准fd/服务继续待接，两项已有接口问题仍待用户回复。
+
+### 起始槽的原RPC/File责任与后台移交（2026-11-20）
+
+工作页内现落8条Slotop，每条128字节：原页租约、RPC、owner/File/object/deadline、机制状态、四字结果/资源Handle、opcode/phase/flags/kind。File是调用者事先固定的一份本地引用身份，prepare成功把输入owned_file清零后移入记录；本层尚无File注册表、引用计数或权限分配，不把整数99等测试哨兵当真实File。Opkey包含连接目录代次/索引、页seq/起点/span和owner incarnation，不能只凭fd或复用的Rctx索引定位原责任。
+
+phase FREE/PREPARED/WAITING/RESULT/ACKED=0..4，与既有Rctx phase分别管理，未新增公开ABI。prepare原子取得本层页/页对并预登记File、稳定对象、操作和截止，双页只在起始槽持一条记录；续页无第二份File/RPC责任。控制/清理槽当前只开放CLOSE的记录准入，双页只允许PATH与已冻结fork/exec冷操作，不借普通读写扩大页或控制预算。实际共享描述符/payload的生成、未用args和业务校验仍由逐操作层完成，记录不读应用裸指针。
+
+原生提交后将唯一RPC移入WAITING并清原变量；查询/等待中断及非终结错误保留记录，不自动取消或重发。capture只固定原RPC的终结机制状态/四字短结果及可识别安装资源，服务业务状态仍在原words中。畸形传输形状标BAD_RESULT但保留资源，调用者负责补偿；不因一次返回错误丢掉MEM或误判已零效果。短poll/cancel/ACK均针对原RPC；外层阻塞等待与返回寄存器仍须后续Rctx/trampoline接管，不在短信号保护段等待服务。
+
+显式background移动把原前台key清零，原记录owner置0并标后台，返回同连接/页seq/span的后台key；旧前台key因owner不匹配立即STALE，页、原RPC、File和截止不移动到另一槽、不形成第二笔业务请求。后台记录不保存应用输出指针；过期/中断后迟到数据只能稳定保存到私有责任/补偿位置，不能回写已结束应用调用的原缓冲。本点只提供唯一责任移动，未自动实现逻辑超时、协作取消策略或事件循环推进。
+
+SAVED由调用者在真实结果/数据/资源归属稳定、实际访问结束后显式标记，不能从共享DONE推导。只有SAVED才可ACK_RESULT|ACK_RELEASE，原生server_finished不满足时ACK失败且完整记录保留；成功后RPC清零但已安装资源仍自持，须显式移交。finish要求ACKED/SAVED且无自持RPC/资源，才把固定File引用返交调用者并释放精确整span、清原记录；PREPARED abort只可在原请求未提交前执行。普通workrelease不能越过活Slotop，连接清理也同时核对页与8条记录，防止只因共享页标志空闲提前unmap。
+
+7项host覆盖双页仅头记录/File一次移交、等待中断保持/后台key切换、同后端另页独立进展、先存数据再ACK与ACK失败/资源归属、DRAINING收取原结果再释放、旧key/输出别名、普通页满不窃取信号预算及畸形结果资源保留。真实libsys场景在HELLO/普通ATTACH后发布一个有槽READ：fixture核对实际source/connid/seq/slot、私有快照中的object55/span1/args长度和未用字，写4字节到原SHARED页并只reply原Rq。客户端把原请求转后台，另一个普通页可准备/abort独立File哨兵，然后invalidate；后台仍从原RPC保存结果与私有4字节快照、核对SAVED前ACK拒绝，完成ACK/File返交/整页归还后才拆除连接。没有重发READ或新RESULT请求，业务仍是受限服务fixture，不代表POSIX read或生产FS。
+
+最终完整make test-all通过904项host、格式检查及195次双架构QEMU；7项槽责任专项、168份journal、最终源码/头/SDK/包哈希与实际链接用户载荷和SDK打包ELF逐字节一致另核对。两架构真实共享槽READ均从原RPC保存数据、后台持有唯一页/File责任、SAVED前ACK拒绝、收尾归还后拆除，页/费用回基线。对象依赖仅短IPC及既有本地目录/页账本，SDK私有头一致，实际connection_work仍4096字节且无额外目录，init/serial ELF与stage139相同且无新增模块/测试符号，clangd数据库已更新。证据build/host/stage140-slot-responsibility/；无CI/板端/性能结果。初次全量的ARM独立libsys链接审计发现40字节Opkey按值转传引入编译器memcpy，已改为稳定的const Opkey引用，原键不得与输出重叠、调用者保护期间不得改写；ARM对象核对无memcpy依赖后从头完整重跑。旧构建/审计失败日志保留，不通过链接libc隐藏依赖。File/CALL注册、Rctx返回窗口与handler注入、服务端私有在途表/生命周期观察、逐操作错误/取消/截止策略、VA分配、Boot/Fix和标准fd/FS/TTY仍待接。两个已有接口问题保持待用户回复。

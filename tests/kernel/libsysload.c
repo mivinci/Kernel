@@ -144,7 +144,7 @@ libsysload(void)
   }
   REQUIRE(resource_commits == 2);
   REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1 &&
-          handoff[15] == 1 && handoff[9] == 2);
+          handoff[15] == 1 && handoff[9] == 3);
   REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
   for (i = 0; i < 2; i++)
     REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
@@ -168,7 +168,9 @@ libsysload(void)
   putstr(" hello=");
   puthex(1);
   putstr(" reuse=");
-  puthex(handoff[9] - 1);
+  puthex(1);
+  putstr(" slot_ops=");
+  puthex(handoff[9] - 2);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");
