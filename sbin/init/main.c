@@ -1,9 +1,6 @@
-/* Initial userspace catalog and orphan-reaping loop. Service launch follows
-   separately; reaching this loop is not a service READY handshake. */
-#include "package.h"
-#include <sys/channel.h>
-#include <sys/wait.h>
-#include <errno.h>
+/* Bounded service supervision and orphan collection for the initial image. */
+#include "service.h"
+#include <abi/time.h>
 #include <unistd.h>
 #include "private/start.h"
 #include "private/elf.h"
@@ -17,6 +14,8 @@ struct Initstate
    Not a wire ABI or authority source. */
 volatile Initstate initstate;
 static Package     package;
+static Manifest    manifest;
+extern const u8    init_config[], init_config_end[];
 
 static NORETURN void
 failed(u64 code)
@@ -26,21 +25,36 @@ failed(u64 code)
   _exit((int) code);
 }
 
-static void
+static u32
 reap(void)
 {
-  pid_t pid;
-  for (;;) {
-    pid = waitpid(-1, NULL, WNOHANG);
-    if (pid > 0) {
-      initstate.reaped++;
-      continue;
-    }
-    if (!pid || errno == ECHILD)
-      return;
-    if (errno != EINTR)
+  Handle pid;
+  u64    kind, code, sequence;
+  u32    i;
+  isize  error;
+  for (i = 0; i < 16; i++) {
+    error = __sys_wait(-1, WAIT_WNOHANG, &pid, &kind, &code, &sequence);
+    if (error == -ERR_CHILD || (!error && !pid))
+      return 0;
+    if (error == -ERR_INTERRUPTED)
+      return 1;
+    if (error)
       failed(104);
+    initstate.reaped++;
+    serviceexit(pid, kind, code);
   }
+  return 1;
+}
+
+static u64
+now(void)
+{
+  int64_t seconds;
+  u64     nanos;
+  if (__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos) || seconds < 0 ||
+      nanos >= UINT64_C(1000000000) || (u64) seconds > (UINT64_MAX - nanos) / UINT64_C(1000000000))
+    failed(107);
+  return (u64) seconds * UINT64_C(1000000000) + nanos;
 }
 
 int
@@ -49,7 +63,8 @@ main(int argc, char **argv)
   const Bootview *boot = sysboot();
   const Bootitem *own;
   Handle          pid, parent;
-  u64             image;
+  u64             image, current, next, generation;
+  u32             work, reapwork, phase;
   Ipcmsg          message;
   isize           error;
   if (__sys_getid(&pid, &image, &parent) || pid != 1 || parent || !image)
@@ -67,14 +82,36 @@ main(int argc, char **argv)
   initstate.files = package.header.count;
   initstate.bytes = package.header.bytes;
   initstate.checksum = package.header.checksum;
+  if (manifestopen(init_config, (u64) (init_config_end - init_config), elfmachine(), &manifest))
+    failed(105);
+  if (serviceinit(&manifest, &package, boot, image))
+    failed(106);
   for (;;) {
-    reap();
-    initstate.phase = 1;
-    error = ipc_recv(EVENT_CHILD, RECV_EVENTS_ONLY, &message);
-    if (error == -ERR_INTERRUPTED)
+    reapwork = reap();
+    current = now();
+    if (servicestep(current, &work, &next))
+      failed(108);
+    phase = servicephase();
+    /* FAILED is settled only after constructor/Run, wait, observation and
+       parent-owned buffers have finished their independent cleanup. */
+    if (phase == 3)
+      failed(110);
+    initstate.phase = phase == 1 ? 1 : 0;
+    error = next ? __sys_alarmset(next, &generation) : __sys_alarmcancel(&generation);
+    if (error)
+      failed(109);
+    error = ipc_recv(EVENT_CHILD | EVENT_LIFE | EVENT_TIMER | EVENT_RQ_CANCEL,
+                     work || reapwork ? RECV_NONBLOCK : 0, &message);
+    if (error == -ERR_WOULD_BLOCK || error == -ERR_INTERRUPTED) {
+      if (__sys_yield())
+        failed(111);
       continue;
-    if (error || message.kind != IPC_EVENT || message.source || message.request ||
-        !(message.words[0] & EVENT_CHILD))
+    }
+    if (error)
       failed(103);
+    if (message.kind == IPC_CALL && servicemessage(&message, now()))
+      failed(112);
+    if ((work || reapwork) && __sys_yield())
+      failed(111);
   }
 }

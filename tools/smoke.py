@@ -20,6 +20,7 @@ import uuid
 from build import BuildError, ROOT, digest, read_kernel, PROFILES, BOOT_CASES
 from run import _group_exists, _stop_group, install_stop_handlers, run_command, run_guard
 import bootpkg
+import initinspect
 from elf import plan as elfplan
 from layout import KBASE, KMAP_BYTES, KIO, KSTACK_BASE
 from gdbpipe import GdbPipe
@@ -539,12 +540,36 @@ def validate_pages(text, discovery, case):
     return result
 
 
-def audit_journal(qmp, directory, names, serial):
+def journal_after_handoff(qmp, directory, names):
+    """Called while stopped; retain actual serial bytes separately."""
+    path=directory/'kernel-journal-live.bin'
+    qmp.command('pmemsave',{'val':names['klogstorage'],'size':65536,'filename':str(path)})
+    data=path.read_bytes()
+    marker=directory/'console-boundary.bin'
+    qmp.command('pmemsave',{'val':names['boundary'],'size':8,'filename':str(marker)})
+    boundary=struct.unpack('<Q',marker.read_bytes())[0]
+    rows=[]
+    for offset in range(0,(65536//288)*288,288):
+        sequence=struct.unpack_from('<Q',data,offset)[0]
+        size=struct.unpack_from('<H',data,offset+24)[0]
+        if sequence>boundary:
+            if not 1<=size<=256:raise SmokeError('invalid post-handoff journal size')
+            rows.append((sequence,data[offset+32:offset+32+size]))
+    return b''.join(text for _,text in sorted(rows))
+
+
+def audit_journal(qmp, directory, names, serial, isolated=False):
     if 'klogstorage' not in names:
         raise SmokeError('missing kernel journal storage')
     path=directory/'kernel-journal.bin'
     qmp.command('pmemsave',{'val':names['klogstorage'],'size':65536,'filename':str(path)})
     data=path.read_bytes();rows=[]
+    boundary=0
+    if isolated:
+        marker=directory/'console-boundary.bin'
+        qmp.command('pmemsave',{'val':names['boundary'],'size':8,'filename':str(marker)})
+        boundary=struct.unpack('<Q',marker.read_bytes())[0]
+        if not boundary:raise SmokeError('production serial never acquired the console')
     for offset in range(0,(65536//288)*288,288):
         sequence,nanos,source,length,level,flags,reserved=struct.unpack_from('<3QHBBI',data,offset)
         if not sequence:
@@ -552,7 +577,8 @@ def audit_journal(qmp, directory, names, serial):
             continue
         text=data[offset+32:offset+32+length]
         if (not 1<=length<=256 or level not in (1,2) or flags&~1 or source or reserved or
-                (not flags and nanos) or any(data[offset+32+length:offset+288]) or text not in serial):
+                (not flags and nanos) or any(data[offset+32+length:offset+288]) or
+                (text not in serial and not (isolated and sequence>boundary))):
             raise SmokeError('invalid journal metadata/payload or serial mismatch')
         rows.append((sequence,level,text))
     rows.sort()
@@ -563,7 +589,9 @@ def audit_journal(qmp, directory, names, serial):
     if len(panic)==2 and not any(level==2 and b'PANIC ' in text for _,level,text in rows):
         raise SmokeError('fatal diagnostic missing from kernel journal')
     return dict(records=len(rows),first=rows[0][0],last=rows[-1][0],bytes=65536,
-                metadata_checked=True,payload_matches_serial=True)
+                metadata_checked=True,payload_matches_serial=all(text in serial for _,_,text in rows),
+                console_boundary=boundary,post_handoff_records=sum(s>boundary for s,_,_ in rows) if isolated else 0,
+                serial_prefix_checked=True)
 
 
 def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, retained=None):
@@ -603,7 +631,7 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
                 va = bits | 0xffffff8000000000
                 leaves[va] = (address, entry)
     walk(transition["root"], 0, 0)
-    if len(tables) != transition["tables"] + (1 if retained else 0):
+    if len(tables) != transition["tables"] + (1 + len(retained.get('extra_stacks', [])) if retained else 0):
         raise SmokeError("page table ownership count mismatch")
     special = [{"base": names["__kernel_start"], "size": names["__kernel_end"] - names["__kernel_start"]},
                {"base": boot["boot"]["dtb"], "size": boot["layout"]["dtb_size"]},
@@ -654,12 +682,13 @@ def audit_vm(qmp, directory, arch, names, discovery, transition, boot, pages, re
                 check(KIO+4096+i*4096,base+offset,3,device=True)
                 device_pages += 1
     if retained:
-        if retained["stack_table"] not in tables:
-            raise SmokeError("retained init stack table not reachable")
-        for i, stack in enumerate(retained["stacks"]):
-            check(retained["stack_va"] + i * 4096, stack["pa"], 3)
-        if retained["stack_va"] - 4096 in leaves or retained["stack_va"] + 4 * 4096 in leaves:
-            raise SmokeError("retained init stack guard mapped")
+        for owner in [retained, *retained.get('extra_stacks', [])]:
+            if owner["stack_table"] not in tables:
+                raise SmokeError("retained process stack table not reachable")
+            for i, stack in enumerate(owner["stacks"]):
+                check(owner["stack_va"] + i * 4096, stack["pa"], 3)
+            if owner["stack_va"] - 4096 in leaves or owner["stack_va"] + 4 * 4096 in leaves:
+                raise SmokeError("retained process stack guard mapped")
     if leaves:
         raise SmokeError("unexpected alias, hole or MMIO mapping")
     return {"table_pages": len(tables), "normal_pages": expected_count, "device_pages": device_pages,
@@ -727,6 +756,9 @@ def audit_package_init(qmp, run_dir, args, record, transition):
     expected={va:dict(prot=page['prot'],kind='image',data=bytes(page['data'])) for va,page in image.items()}
     for va in range(0x3ffffe0000,0x3fffff0000,4096):expected[va]=dict(prot=3,kind='stack')
     expected[0x3fff000000]=dict(prot=1,kind='boot')
+    if record.get('production_init',{}).get('children'):
+        for base in (0x3000000,0x3010000):
+            for va in range(base,base+16384,4096):expected[va]=dict(prot=3,kind='shared')
     offset=discovery['initrd']['base']%4096;count=(offset+len(data)+4095)//4096
     logical=bytes(offset)+data+bytes(-(offset+len(data))%4096)
     edges=discovery.get('bootedges',[]);edge=0
@@ -780,7 +812,7 @@ def audit_package_init(qmp, run_dir, args, record, transition):
     if args.init_exit is None:
         if 'initstate' not in user_symbols:raise SmokeError('missing production init state')
         state=struct.unpack('<8Q',read(user_symbols['initstate'],64))
-        if state!=(1,1,1,len(info['items']),len(data),info['checksum'],0,0):raise SmokeError('init did not validate catalog and block in orphan event loop')
+        if state!=(1,1,1,len(info['items']),len(data),info['checksum'],0,0):raise SmokeError('init did not validate catalog and reach service supervision')
     else:
         exits=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITEXIT ')]
         if exits!=[dict(reason=1,code=args.init_exit)]:raise SmokeError('wrong package PID1 exit reason/code')
@@ -837,19 +869,23 @@ def audit_package_init(qmp, run_dir, args, record, transition):
     stores=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITPACKAGE ')]
     if stores!=[dict(pages=count,copies=len(edges),retained=count+len(edges),refs=(count+15)//16)]:
         raise SmokeError('live package backing lifetime/charge mismatch')
+    if 'production_init' in record:
+        initinspect.audit_child(qmp,run_dir,args,record,transition['root'],leaves,data,info)
     return dict(pid=1,entry=entry,elf_sha256=digest(artifact),private_pages=len(private),
                 user_tables=len(tables),package_pages=count,package_refs=stores[0]['refs'],
                 complete_pte_audit=True,immutable_bytes_checked=True,boot_checked=True,
                 physical_owner_audit=True,catalog_checked=args.init_exit is None,exit_code=args.init_exit)
 
 
-def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof', symbol='serialserviceproof'):
+def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof', symbol='serialserviceproof', words=16, address=None):
     """Read a fixture's retained state even when its final assertion failed."""
     rows=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITRETAIN ')]
     if len(rows)!=1:raise SmokeError('missing retained probe root')
-    inspected=run_command([record['build']['tools']['readelf']['path'],'-s',str(args.init_elf)],run_dir/'probe-symbols.log',args.timeout)
-    if not inspected.ok:raise SmokeError('could not inspect native probe symbols')
-    address=symbols(Path(inspected.log).read_text())[symbol]
+    if address is None:
+        artifact=args.init_elf or ROOT/'build'/args.arch/'sbin/init.elf'
+        inspected=run_command([record['build']['tools']['readelf']['path'],'-s',str(artifact)],run_dir/'probe-symbols.log',args.timeout)
+        if not inspected.ok:raise SmokeError('could not inspect native probe symbols')
+        address=symbols(Path(inspected.log).read_text())[symbol]
     ram=0x80000000 if args.arch=='riscv' else 0x40000000
     saved=0
     def physical(pa,size):
@@ -859,7 +895,7 @@ def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof',
         qmp.command('pmemsave',{'val':pa,'size':size,'filename':str(path)})
         return path.read_bytes()
     payload=b''
-    while len(payload)<128:
+    while len(payload)<words*8:
         va=address+len(payload);table=rows[0]['root']
         for level,shift in enumerate((30,21,12)):
             pte=struct.unpack('<Q',physical(table+8*((va>>shift)&511),8))[0]
@@ -869,10 +905,10 @@ def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof',
                 table=target
             elif (pte&0x13!=0x13 if args.arch=='riscv' else pte&0x43!=0x43):
                 raise SmokeError('invalid probe user leaf')
-        length=min(128-len(payload),4096-(va&4095))
+        length=min(words*8-len(payload),4096-(va&4095))
         payload+=physical(target+(va&4095),length)
     (run_dir/(label+'.bin')).write_bytes(payload)
-    return list(struct.unpack('<16Q',payload))
+    return list(struct.unpack('<%dQ'%words,payload))
 
 
 PACKAGE_ERRORS = {'header': -1, 'checksum': -2, 'directory': -3, 'name': -4,
@@ -1018,10 +1054,10 @@ def exercise(args, run_dir, record):
     with tempfile.TemporaryDirectory(prefix="kernel-qmp-") as temporary:
         path = Path(temporary) / "qmp.sock"
         deadline = time.monotonic() + args.timeout
-        gdb = GdbPipe(Path(temporary)/'gdb',deadline) if args.arch=='arm64' or getattr(args,'boot_hart',None) is not None else None
+        gdb = GdbPipe(Path(temporary)/'gdb',deadline) if args.arch=='arm64' or getattr(args,'boot_hart',None) is not None or getattr(args,'serial_failure',False) else None
         serial_options=['-serial','file:'+str(serial)]
         input_fd=None
-        if getattr(args,'serial_input',False):
+        if getattr(args,'serial_input',False) or (normal_live and not args.bootpkg_error) or getattr(args,'serial_failure',False):
             input_path=Path(temporary)/'uart-input'
             os.mkfifo(input_path)
             input_fd=os.open(input_path,os.O_RDWR|os.O_NONBLOCK)
@@ -1135,7 +1171,28 @@ def exercise(args, run_dir, record):
                                 record['serial_input']=dict(sent=sum(x['bytes'] for x in gates),
                                                             hex=(b'uar' if index==0 else b'uart-rx').hex())
                             qmp.command('cont')
-                    if expected in text:
+                    if normal_live and not args.bootpkg_error:
+                        if 'INITRETAIN ' in text:
+                            qmp.command('stop')
+                            snapshot=probe_package_init(qmp,run_dir,args,record,'production-init-state','initstate',8)
+                            qmp.command('cont')
+                            if snapshot[0]==1:
+                                record['init_ready_snapshot']=snapshot
+                                break
+                    elif getattr(args,'serial_failure',False) and 'production_ring_fault' not in record and 'INITRETAIN ' in text:
+                        qmp.command('stop')
+                        snapshot=probe_package_init(qmp,run_dir,args,record,'production-ready-before-fault','initstate',8)
+                        vm=next(fields(x) for x in text.splitlines() if x.startswith('VM '))
+                        registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
+                        pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
+                        lo=(names['idlewait']+vm['delta'])&((1<<64)-1)
+                        hi=(names['idleresume']+vm['delta'])&((1<<64)-1)
+                        if snapshot[0]==1 and pc and lo<=int(pc[1],16)<=hi:
+                            root=next(fields(x)['root'] for x in text.splitlines() if x.startswith('INITRETAIN '))
+                            record['production_ring_fault']=initinspect.invalidate_ring(qmp,gdb,run_dir,args,root,vm['delta'])
+                            if os.write(input_fd,b'!')!=1:raise SmokeError('short fault-wakeup UART injection')
+                        qmp.command('cont')
+                    if (not normal_live or args.bootpkg_error) and expected in text:
                         break
                     if "PANIC " in text:
                         raise SmokeError("unexpected panic; see serial.log")
@@ -1169,6 +1226,30 @@ def exercise(args, run_dir, record):
                     for retry in range(20):
                         idle_lo=(names['idlewait']+idle_delta)&((1<<64)-1)
                         idle_hi=(names['idleresume']+idle_delta)&((1<<64)-1)
+                        observed_pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
+                        if observed_pc and idle_lo<=int(observed_pc[1],16)<=idle_hi:break
+                        qmp.command('cont');time.sleep(.003);qmp.command('stop')
+                        registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
+                    if input_fd is None:
+                        raise SmokeError('production serial input backend is missing')
+                    observed_pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
+                    if not observed_pc or not idle_lo<=int(observed_pc[1],16)<=idle_hi:
+                        raise SmokeError('production services did not block before external UART input')
+                    payload=b'init-rx'
+                    if os.write(input_fd,payload)!=len(payload):
+                        raise SmokeError('short production UART input injection')
+                    while True:
+                        qmp.command('cont');time.sleep(.01);qmp.command('stop')
+                        received=probe_package_init(qmp,run_dir,args,record,'production-rx-ring',words=12,address=0x3000000)
+                        if received[3]==len(payload):
+                            if received[:3]!=[0x4b5352494e473031,8192,1] or any(received[4:8]) or struct.pack('<4Q',*received[8:])[:len(payload)]!=payload:
+                                raise SmokeError('production serial lost or changed external input')
+                            break
+                        if received[3]>len(payload) or time.monotonic()>=deadline:
+                            raise SmokeError('production serial did not deliver external UART input')
+                    record['production_uart_input']=dict(bytes=len(payload),hex=payload.hex(),blocked_before_injection=True)
+                    registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
+                    for retry in range(20):
                         observed_pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
                         if observed_pc and idle_lo<=int(observed_pc[1],16)<=idle_hi:break
                         qmp.command('cont');time.sleep(.003);qmp.command('stop')
@@ -1225,7 +1306,10 @@ def exercise(args, run_dir, record):
                     record['serial_probe']=probe_package_init(qmp,run_dir,args,record)
                 if getattr(args,'manager_probe',False):
                     record['manager_probe']=probe_package_init(qmp,run_dir,args,record,'init-services-proof','initserviceproof')
-                record["observed"] = validate_output(serial.read_text(errors="replace"), args.arch, args.case, names, args.ram,args.init_exit,getattr(args,'cpus',1))
+                diagnostics=serial.read_text(errors='replace')
+                if normal_live:
+                    diagnostics+=journal_after_handoff(qmp,run_dir,names).decode('utf-8')
+                record["observed"] = validate_output(diagnostics, args.arch, args.case, names, args.ram,args.init_exit,getattr(args,'cpus',1))
                 record["discovery"] = validate_discovery(serial.read_text(errors="replace"), args.arch,
                                                           args.ram, names, record["observed"],getattr(args,'cpus',1))
                 record['discovery']['cpu_admission']=record['cpu_admission']
@@ -1610,13 +1694,15 @@ def exercise(args, run_dir, record):
                                   "allocated": transition["tables"]}:
                         raise SmokeError("memory cleanup/count mismatch")
                     record["memory"] = memory
+                if normal_live or getattr(args,'production_init',False):
+                    initinspect.prepare(qmp,run_dir,args,record,names,record['retained_init'])
                 record["vm_audit"] = audit_vm(qmp, run_dir, args.arch, names, record["discovery"],
                                                  transition, record["observed"], record["pages"], record.get("retained_init"))
                 if args.initrd:
                     record['package'] = accepted_package(args, qmp, run_dir, names, record['discovery'])
                 if args.case=='normal':
                     record['package_init']=audit_package_init(qmp,run_dir,args,record,transition)
-                record['kernel_journal']=audit_journal(qmp,run_dir,names,serial.read_bytes().replace(b'\r',b''))
+                record['kernel_journal']=audit_journal(qmp,run_dir,names,serial.read_bytes().replace(b'\r',b''),normal_live)
                 qmp.command("pmemsave", {"val": record["observed"]["boot"]["dtb"],
                                          "size": record["observed"]["layout"]["dtb_size"],
                                          "filename": str(run_dir / "runtime.dtb")})

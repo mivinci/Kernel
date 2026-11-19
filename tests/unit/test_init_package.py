@@ -108,36 +108,64 @@ class InitMainTests(unittest.TestCase):
         shim.write_text('''#include <setjmp.h>
 #define main initprogram
 #define _exit mock_exit
-#define waitpid mock_waitpid
-#define __errno_location mock_errno
 #include "'''+str(ROOT/'sbin/init/main.c')+'''"
 #undef main
+const u8 init_config[1]={0},init_config_end[1]={0};
 static jmp_buf jump;
 static Boot initial;
 static Bootview view;
 static Resentry resources[2];
-static int scenario,children,receives,waits,result,errors;
+static int scenario,children,receives,waits,result,steps,exits,messages,yields;
 static u64 machine;
-int *mock_errno(void){return &errors;}
 const Bootview *sysboot(void){return &view;}
 u32 elfmachine(void){return (u32)machine;}
 isize __sys_getid(Handle *pid,u64 *image,Handle *parent){*pid=scenario==1?2:1;*image=1;*parent=0;return 0;}
 NORETURN void mock_exit(int code){result=code;longjmp(jump,1);}
-pid_t mock_waitpid(pid_t selector,int *status,int options){
-  waits++;if(selector!=-1||status||options!=WNOHANG)mock_exit(240);
-  if(scenario==3){errors=EIO;return -1;}
-  if(children){children--;return 42;}
-  errors=ECHILD;return -1;
+isize manifestopen(const void *data,u64 bytes,u64 target,Manifest *out){
+  (void)data;(void)bytes;(void)out;if(target!=machine)mock_exit(242);
+  return scenario==6?-ERR_INVALID:0;
+}
+isize serviceinit(const Manifest *m,const Package *p,const Bootview *b,u64 image){
+  if(!m||!p||b!=&view||image!=1)mock_exit(243);return scenario==7?-ERR_DENIED:0;
+}
+void serviceexit(Handle pid,u64 kind,u64 code){
+  if(pid!=42||kind!=WAIT_EXITED||code!=31)mock_exit(244);exits++;
+}
+isize servicestep(u64 tick,u32 *work,u64 *next){
+  if(tick!=1000000001UL)mock_exit(245);steps++;*work=scenario==10;*next=scenario==11?tick+1:0;
+  if(steps==1&&initstate.reaped!=(scenario==10?16UL:2UL))mock_exit(246);
+  return scenario==8?-ERR_STATE:0;
+}
+u32 servicephase(void){return scenario==9?(steps<3?0:3):1;}
+isize servicemessage(const Ipcmsg *m,u64 tick){
+  if(m->kind!=IPC_CALL||tick!=1000000001UL)mock_exit(247);messages++;return scenario==12?-ERR_STATE:0;
+}
+isize __sys_clock_gettime(u64 kind,int64_t *seconds,u64 *nanos){
+  if(kind!=CLOCK_MONOTONIC)mock_exit(248);*seconds=1;*nanos=1;return 0;
+}
+isize __sys_alarmset(u64 deadline,u64 *generation){
+  if(deadline!=1000000002UL)mock_exit(249);*generation=1;return 0;
+}
+isize __sys_alarmcancel(u64 *generation){*generation=1;return 0;}
+isize __sys_yield(void){yields++;return 0;}
+isize __sys_wait(Handle selector,u64 options,Handle *pid,u64 *kind,u64 *code,u64 *sequence){
+  waits++;if(selector!=-1||options!=WAIT_WNOHANG)mock_exit(240);
+  if(scenario==3)return -ERR_STATE;
+  if(children){children--;*pid=42;*kind=WAIT_EXITED;*code=31;*sequence=1;return 0;}
+  return -ERR_CHILD;
 }
 isize ipc_recv(u64 mask,u64 options,Ipcmsg *out){
-  receives++;if(mask!=EVENT_CHILD||options!=RECV_EVENTS_ONLY||!out)mock_exit(241);
+  receives++;if(mask!=(EVENT_CHILD|EVENT_LIFE|EVENT_TIMER|EVENT_RQ_CANCEL)||
+    options!=(scenario==10?RECV_NONBLOCK:0)||!out)mock_exit(241);
   if(scenario==5&&receives==1)return -ERR_INTERRUPTED;
-  if(receives>(scenario==5?2:1)){result=0;longjmp(jump,1);}
-  out->kind=IPC_EVENT;out->source=out->request=0;
-  out->words[0]=scenario==4?EVENT_LIFE:EVENT_CHILD;return 0;
+  if(scenario==4)return -ERR_STATE;
+  if(scenario!=9&&receives>(scenario==5?2:1)){result=0;longjmp(jump,1);}
+  out->kind=scenario==11||scenario==12?IPC_CALL:IPC_EVENT;
+  out->source=out->request=0;out->words[0]=EVENT_CHILD;return 0;
 }
 int exercise(const void *data,u64 bytes,u64 target,int mode){
-  u64 i;char *argv[2];scenario=mode;machine=target;children=2;receives=waits=result=errors=0;
+  u64 i;char *argv[2];scenario=mode;machine=target;children=mode==10?20:2;
+  receives=waits=result=steps=exits=messages=yields=0;
   for(i=0;i<sizeof(initstate);i++)((volatile u8 *)&initstate)[i]=0;
   initial.package_va=(u64)data;initial.package_bytes=bytes;initial.resource_count=2;
   resources[0].tag=BOOT_SELF_SPACE;resources[0].handle=((Handle)HANDLE_RESOURCE<<59)|(1UL<<16);
@@ -148,11 +176,12 @@ int exercise(const void *data,u64 bytes,u64 target,int mode){
   return result;
 }
 u64 value(u32 index){return index==0?initstate.phase:index==1?initstate.reaped:index==2?initstate.files:
-  index==3?initstate.error:index==4?(u64)waits:(u64)receives;}
+  index==3?initstate.error:index==4?(u64)waits:index==5?(u64)receives:index==6?(u64)steps:
+  index==7?(u64)exits:index==8?(u64)messages:(u64)yields;}
 ''')
         path=root/'main.so'
         command=['clang','-std=c89','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror',
-                 '-shared','-fPIC','-I'+str(ROOT/'include'),'-I'+str(ROOT/'lib/libsys/include'),
+                 '-shared','-fPIC','-I'+str(ROOT/'sbin/init'),'-I'+str(ROOT/'include'),'-I'+str(ROOT/'lib/libsys/include'),
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'lib/libsys'),
                  str(shim),str(ROOT/'sbin/init/package.c'),str(ROOT/'lib/libsys/boot.c'),'-o',str(path)]
         if sys.platform=='darwin':
@@ -170,7 +199,7 @@ u64 value(u32 index){return index==0?initstate.phase:index==1?initstate.reaped:i
         if corrupt:data[-1]^=1
         storage=C.create_string_buffer(bytes(data))
         code=self.lib.exercise(storage,len(data),machine,mode)
-        return code,[self.lib.value(i) for i in range(6)]
+        return code,[self.lib.value(i) for i in range(10)]
 
     def test_catalog_and_orphan_drain_precede_blocking_event_receive(self):
         for machine in (183,243):
@@ -183,7 +212,7 @@ u64 value(u32 index){return index==0?initstate.phase:index==1?initstate.reaped:i
             code,state=self.runmain(mode,corrupt=corrupt)
             self.assertEqual((code,state[0],state[3],state[5]),(expected,2,expected,0))
 
-    def test_wait_or_unexpected_event_failure_is_fatal(self):
+    def test_wait_or_receive_failure_is_fatal(self):
         for mode,expected in ((3,104),(4,103)):
             code,state=self.runmain(mode)
             self.assertEqual((code,state[0],state[3]),(expected,2,expected))
@@ -192,3 +221,26 @@ u64 value(u32 index){return index==0?initstate.phase:index==1?initstate.reaped:i
         code,state=self.runmain(5)
         self.assertEqual(code,0);self.assertEqual(state[:4],[1,2,1,0])
         self.assertEqual(state[5],3);self.assertGreaterEqual(state[4],5)
+
+    def test_configuration_and_manager_errors_are_explicit(self):
+        for mode,expected in ((6,105),(7,106),(8,108),(12,112)):
+            code,state=self.runmain(mode)
+            self.assertEqual((code,state[0],state[3]),(expected,2,expected))
+
+    def test_required_failure_exits_only_after_manager_reports_settled(self):
+        code,state=self.runmain(9)
+        self.assertEqual((code,state[0],state[3],state[6],state[5]),(110,2,110,3,2))
+        self.assertEqual(state[7],2)
+
+    def test_reap_batch_yields_and_preserves_remaining_children(self):
+        code,state=self.runmain(10)
+        self.assertEqual(code,0)
+        self.assertEqual(state[1],20)
+        self.assertEqual(state[7],20)
+        self.assertEqual(state[6],2)
+        self.assertGreater(state[9],0)
+
+    def test_call_is_dispatched_and_absolute_deadline_is_armed(self):
+        code,state=self.runmain(11)
+        self.assertEqual(code,0)
+        self.assertEqual(state[8],1)

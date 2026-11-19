@@ -5,6 +5,7 @@ This is a control-state counterexample, not a model of noncoherent DMA or proof
 that QEMU implements stale physical cache contents.
 """
 import json
+import argparse
 from pathlib import Path
 import struct
 import subprocess
@@ -17,7 +18,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 from build import digest
 from gdbpipe import GdbPipe
-from smoke import Qmp,SmokeError,symbols,check_arm64_cache
+from smoke import Qmp,SmokeError,symbols,check_arm64_cache,probe_package_init
 from run import _stop_group,_group_exists,install_stop_handlers,run_guard
 
 @run_guard(ROOT)
@@ -41,6 +42,8 @@ def main():
     directory=ROOT/'build/arm64/cacheaudit'/('suite-'+uuid.uuid4().hex);directory.mkdir(parents=True)
     fixture=directory/'Image';fixture.write_bytes(image);serial=directory/'serial.log'
     command=list(record['argv']);index=command.index('-gdb');del command[index:index+2]
+    if '-chardev' in command:
+        index=command.index('-chardev');del command[index:index+2]
     command[command.index('-kernel')+1]=str(fixture)
     command[command.index('-serial')+1]='file:'+str(serial)
     command[command.index('-qmp')+1]='stdio'
@@ -56,9 +59,14 @@ def main():
                 entry=gdb.registers(['SCTLR_EL1','TCR_EL1','MAIR_EL1']);check_arm64_cache(entry,False)
                 if entry['SCTLR_EL1']&0x1000:raise SmokeError('counterexample requires reset I-cache disabled')
                 qmp.command('cont')
+                options=argparse.Namespace(arch='arm64',ram=256,init_elf=None,timeout=15)
                 while time.monotonic()<deadline:
                     text=serial.read_text() if serial.exists() else ''
-                    if 'INIT pid=0000000000000001 image=0000000000000001 state=0000000000000006\n' in text:break
+                    if 'INITRETAIN ' in text:
+                        qmp.command('stop')
+                        state=probe_package_init(qmp,directory,options,dict(build=build),'counterexample-init','initstate',8)
+                        if state[0]==1:break
+                        qmp.command('cont')
                     if 'PANIC ' in text:raise SmokeError('counterexample did not run production PID1')
                     time.sleep(.02)
                 else:raise SmokeError('cache counterexample startup timed out')

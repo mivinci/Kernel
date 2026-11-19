@@ -37,7 +37,7 @@ build:
 sdk:
 	$(PYTHON) tools/user.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 bootpkg: sdk
-	$(PYTHON) tools/bootpkg.py pack --arch "$(ARCH)" --init sbin/init --entry "sbin/init=build/$(ARCH)/sbin/init.elf" --output "build/$(ARCH)/boot.pkg"
+	$(PYTHON) tools/bootpkg.py pack --arch "$(ARCH)" --init sbin/init --entry "sbin/init=build/$(ARCH)/sbin/init.elf" --entry "sbin/serial=build/$(ARCH)/sbin/serial.elf" --output "build/$(ARCH)/boot.pkg"
 compdb: build
 hardware:
 	$(PYTHON) tools/build.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"

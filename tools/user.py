@@ -138,14 +138,19 @@ def build(args):
     invoke('link-csu', [tools['ld']['path'], '-r', '-m', profile['emulation'],
                        *[str(obj) for _, obj in extra_units[len(libc_sources):-1]], '-o', str(crt)])
     read_elf(crt, profile['machine'], allow_undefined=True)
-    init_sources = [ROOT/'sbin/init/main.c', ROOT/'sbin/init/package.c']
+    init_sources = [ROOT/'sbin/init'/name for name in ('main.c','package.c','manifest.c','service.c')]
     init_directory = directory/'sbin'
     init_directory.mkdir(exist_ok=True)
-    def program(name, program_sources, program_headers):
+    def program(name, program_sources, program_headers, configuration=None):
         if not all(p.is_relative_to(ROOT/'sbin'/name) for p in program_sources + program_headers):
             raise BuildError('production program sources must belong to its service directory')
         objects = []
-        for source in program_sources:
+        units = list(program_sources)
+        if configuration is not None:
+            assembly=sdk/(name+'-config.S')
+            assembly.write_text('/* configuration sha256: '+digest(configuration)+' */\n.section .rodata\n.balign 8\n.global init_config,init_config_end\ninit_config:\n.incbin '+json.dumps(str(configuration))+'\ninit_config_end:\n')
+            units.append(assembly)
+        for source in units:
             obj = sdk/'obj/sbin'/name/source.with_suffix('.o').name
             obj.parent.mkdir(parents=True,exist_ok=True)
             command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
@@ -166,9 +171,9 @@ def build(args):
             artifact=str(artifact.relative_to(ROOT)),sha256=digest(artifact),elf=info,
             sources={str(p.relative_to(ROOT)):digest(p) for p in program_sources+program_headers},
             link=link,no_test_payload=True,libc_sha256=digest(libc_archive),
-            libsys_sha256=digest(archive),crt_sha256=digest(crt)),indent=2)+'\n')
+            libsys_sha256=digest(archive),crt_sha256=digest(crt),
+            configuration_sha256=digest(configuration) if configuration else None),indent=2)+'\n')
         return artifact
-    init_elf = program('init',init_sources,[ROOT/'sbin/init/package.h'])
     serial_sources = [ROOT/'sbin/serial'/name for name in ('main.c','start.c','uart.c','io.c','control.c')]
     serial_headers = [ROOT/'sbin/serial'/name for name in ('start.h','uart.h','io.h','control.h')]
     serial_elf = program('serial',serial_sources,serial_headers)
@@ -176,6 +181,7 @@ def build(args):
     init_config = sdk/'init.cfg'
     init_config.write_bytes(initcfg.generate(json.loads(init_configuration.read_text()),
                                             {'sbin/serial':serial_elf},profile['machine']))
+    init_elf = program('init',init_sources,[ROOT/'sbin/init'/name for name in ('package.h','manifest.h','service.h')],init_config)
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
     runtime_support = [ringuser_source, ROOT/'tests/kernel/ttyuser.c', ROOT/'sbin/tty/term.c']
     runtime_objects = []

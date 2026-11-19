@@ -116,7 +116,7 @@ init 读取基础服务原始 ELF，按既定用户态加载器校验/装载；�
 
 每项前九u64=[服务编号,kind,flags,creator_tag,memlimit,exec_limit,resources,pending,dependencies]，随后64字节带NUL/零填充的包内镜像名，末尾三u64保留0。编号1..16唯一，依赖bit(n-1)引用编号n，完整图无环。首期只实现kind1=选中控制台UART的serial，flags1=必需，creator_tag=BOOT_CREATE；仅允许一项控制台UART记录，不把数组容量当成已实现其他服务。默认64/128页、16资源、4接收额度，仍受真实CREATE/Set限制。后续服务类型及设备/创建域选择按对应主题接续，未知kind/flags拒绝，不从整数标签创造权限。镜像路径是精确包成员名，主机按目标静态ELF校验，运行时仍核对包内真实内容。
 
-初始配置校验失败是init故障；有效配置缺失镜像、装载失败、READY期限或运行退出则记录该服务FAILED并完成构造/运行清理，不假称已有救援终端。首个serial不自动重试；2026-11-19用户确认首次基础终端建立前，必需serial失败须先撤销构造或终止运行实例并完成回收，再由init致命退出触发现有PID1 panic，恢复UART诊断并停机。设备和缓冲必须在旧Run退出/清理后处理，不能因超时直接复用。清单控制的默认包必须同时携带init与实际serial ELF，不能用测试同伴替代服务。该策略已确认，默认init接入和运行验收仍待执行。
+初始配置校验失败是init故障；有效配置缺失镜像、装载失败、READY期限或运行退出则记录该服务FAILED并完成构造/运行清理，不假称已有救援终端。首个serial不自动重试；2026-11-19用户确认首次基础终端建立前，必需serial失败须先撤销构造或终止运行实例并完成回收，再由init致命退出触发现有PID1 panic，恢复UART诊断并停机。设备和缓冲必须在旧Run退出/清理后处理，不能因超时直接复用。清单控制的默认包必须同时携带init与实际serial ELF，不能用测试同伴替代服务。默认init已接此策略并通过两架构本地验收，具体范围与证据见本篇末尾。
 
 初始init显式获得仅OBSERVE_MONITOR、无GRANT/继承的观察许可，由自身RESOURCE查询发现真实Handle，不增Boot字段。服务观察仍须传该固定CONTROL QUERY作basis并锁定PID/image，许可不允许无依据按PID观察或转授。退出结果归父wait，镜像观察/通知由原cookie确认，业务及设备收尾各自处理，不能互相替代。
 
@@ -294,7 +294,7 @@ T1 分五步，每步可独立提交与验收；前一步不通过不进入下�
 | T1.4 | init 侧：取得包目录并拉起首个服务，复用现有用户态 `elfcheck`/`load` | init 按名从包装载 serial 或 sh，完成 create/configure/start 并收到 READY | T1.3 |
 | T1.5 | 就绪与监督衔接：READY 握手、失败降级、缺项与坏包诊断 | 服务不 READY 时 init 报明确失败并停在可诊断状态，不把失败伪装成成功 | T1.4 |
 
-T1.1..T1.3现已接入；T1.4/T1.5尚未交付。T1.3的初始Boot只授真实SELF_SPACE/SELF_ALLOC及包视图，不用无后端的SYSTEM或假服务清单填充资源表。
+T1.1..T1.5已完成本地验收：默认init装载实际serial并监督READY/退出，失败按已确认策略清理后诊断停机，2026-11-19完整回归及证据见文末。初始Boot现含真实SELF_SPACE/SELF_ALLOC/CREATE/SYSTEM及包视图，不用无后端的Handle或假服务清单填充资源表；尚非可用终端或sh，无CI/板端结果。
 
 跨步骤注意：
 
@@ -621,3 +621,17 @@ READY/自STATUS严格核对完整source/image/编号、REQUEST状态、实际CON
 9项host管理模型在O0/O2覆盖BUSY不提前create、缺镜像/预算/部分map/授权/装载失败、READY身份/缓存、超时先停后等wait/退休、DRAINING只finish。该模型使用主机可映射窗口替代真实低VA，不能当作原生运行证明。原生测试入口另外调用相同生产管理模块，从真实包加载实际serial ELF，验证READY后明确停止、未发READY仍能STATUS后超时、缺镜像和真实装载预算不足；每架构四例已通过完整PTE/Acct/物理owner审计，运行费用最终回到初始实际PID1集合。
 
 完整make test-all通过780项host、fmt-check及179次双架构QEMU；152份journal与全部结果源码/头、SDK源码/头、配置blob/JSON及库哈希另核对。两架构各四项管理原生路径的真实PTE、物理owner及费用审计保持，最后费用回到初始实际PID1集合。证据build/host/stage113-init-services/evidence.json/test-all.log，无CI/实板结果。生产init main和默认包尚未切换，首次必需serial引导失败的最终诊断策略仍等用户选择；这些原生入口仅验证管理模块，不冒充默认启动已启用。后续默认常驻验收还须独立核对活孩子页表/内核栈和父持有的SHARED费用，不能放宽原有无遗漏/无别名检查。
+
+### 默认init装载与监督首个serial（2026-11-19）
+
+生产main现复用实际manifest/service引擎；构建先生成serial ELF，再按config/boot.json校验并生成只读配置，嵌入生产init，默认启动包同时携带两个真实ELF。固定记录/包格式不变；主机产物记录配置哈希，运行仍复核目录、配置与镜像，不把主机校验当作运行授权。init每轮最多收取16个孩子状态，交给服务管理后推进一次有界阶段，按最近绝对期限设置alarm；已知工作只非阻塞接收并yield，无工作接收READY/CHILD/LIFE/TIMER等，不同步call等待服务，也不定时轮询已READY的serial。
+
+用户已确认失败策略落实：必需serial缺镜像、装载失败、READY期限或已上线退出，进入既有STOPPING清理；只有servicephase=3确认构造/实际Run、父wait、镜像观察和父持有两环/CONTROL各自收尾后，init才以110退出，触发既有PID1 panic恢复UART并停机。配置损坏在服务初始化前以105退出。机制自身违反不变量仍按明确init错误终止，不伪造已清理成功或自动重试；其他服务类型/恢复方案后续按各主题实现。
+
+正常启动专项已在两架构通过真实默认包：init按名装载独立serial并收READY，serial取得其实际结果后两进程均进入调度idle；主机随后注入7字节UART输入，实际IRQ唤醒serial并写入共享RX环，父不转发字节。serial尚未绑定tty，无终端连接发布，也不输出测试握手。交接后INIT阻塞诊断只在64KiB journal，主机以用户真实initstate及journal独立观测，不重新抢UART或新增测试syscall。
+
+tools/initinspect.py在停止guest后读取私有Space/Acct/Kstack数组，先以实际符号长度检查布局；两进程全部用户PTE、内核高半区/两栈guard、ELF只读字节/Boot、精确Device属性及父子SHARED别名逐页核对。父两环页仅计父Acct，子映射费计子Acct；两者私有页/页表/内核栈与全部物理owner集合精确相等，保留包仍不转私有收费。正常有界日志仅核对交接前串口前缀和交接后原记录，不把隔离后的日志假称物理输出。
+
+tests/packageboot.py追加生产缺serial、未READY、真实装载预算失败、坏配置四种包；另在两个生产进程READY并idle后，由QEMU调试器故意破坏活RX环epoch并注入一字节IRQ，真实serial因坏协议退出121，init监督/收取/回收后退出110。该注入只在主机反例，不在生产代码加入故障开关或把活环重置定义成恢复协议。全部失败逐页复核仅余PID1、费用回初始基线、无孩子Space/Acct/栈及父环映射；超时/已上线退出同时验证恢复串口的实际PANIC和真实halt。
+
+最终完整make test-all通过792项host、格式检查及189次双架构QEMU；162份journal、最终源码/头/SDK/配置哈希与默认包两个实际ELF另核对。16次生产启动含128 MiB/512 MiB/2 GiB/8 GiB及四核/非零RV启动hart，均验证READY/实际外部UART输入；10次生产失败覆盖上述五类，两架构费用和实际halt通过。14项init主循环专项验证每轮16次收取上限/让出、消息分发/绝对期限和清理完成后才退出。旧主循环mock及反例复用失效输入管道均已修正，失败日志保留；未改变内核状态机迁就检查。证据build/host/stage117-default-init/，无CI/板端结果，不称TTY/fd/Fix、M3、net或GUI完成。
