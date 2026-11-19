@@ -183,8 +183,7 @@ def build(args):
                                             {'sbin/serial':serial_elf},profile['machine']))
     init_elf = program('init',init_sources,[ROOT/'sbin/init'/name for name in ('package.h','manifest.h','service.h')],init_config)
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
-    runtime_support = [ringuser_source, ROOT/'tests/kernel/ttyuser.c', ROOT/'tests/kernel/ttyinputuser.c',
-                       ROOT/'sbin/tty/term.c', ROOT/'sbin/tty/input.c']
+    runtime_support = [ringuser_source]
     runtime_objects = []
     for source in runtime_support:
         obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
@@ -264,6 +263,15 @@ def build(args):
         invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
+    tty_sources=[ROOT/name for name in ('tests/kernel/ttywaituser.c','tests/kernel/ttyuser.c',
+        'tests/kernel/ttyinputuser.c','sbin/tty/term.c','sbin/tty/input.c','sbin/tty/wait.c')]
+    tty_elf=link_adoption('ttyuser',[compile_adoption(source,'tty-'+source.stem) for source in tty_sources])
+    tty_image=sdk/'ttyuser.img'
+    tty_image.write_bytes(pack(tty_elf.read_bytes(),profile['machine'],128))
+    inspection=invoke('inspect-tty',[tools['readelf']['path'],'-s',str(tty_elf)])
+    tty_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='ttytrace']
+    if len(tty_rows)!=1 or int(tty_rows[0][2])!=64:raise BuildError('missing tty trace')
+    (sdk/'ttyimage.S').write_text('/* image sha256: '+digest(tty_image)+' */\n.section .rodata\n.balign 8\n.global tty_image,tty_image_end,tty_trace_address\ntty_image:\n.incbin '+json.dumps(str(tty_image))+'\ntty_image_end:\n.balign 8\ntty_trace_address:\n.quad '+str(int(tty_rows[0][1],16))+'\n')
     package_exit=link_adoption('packageexit',[compile_adoption(ROOT/'tests/kernel/packageexit.c','packageexit')])
     serial_start_source=ROOT/'sbin/serial/start.c'
     serial_io_source=ROOT/'sbin/serial/io.c'
@@ -372,11 +380,13 @@ def build(args):
     headers += [ROOT / 'sbin/init/service.h', ROOT / 'sbin/init/manifest.h']
     headers += [ROOT / 'sbin/tty/term.h', ROOT / 'tests/kernel/ttyuser.h']
     headers += [ROOT / 'sbin/tty/input.h']
+    headers += [ROOT / 'sbin/tty/wait.h']
     headers += list((ROOT / 'include/proto').glob('*.h'))
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
+                    tty_artifact=str(tty_elf.relative_to(ROOT)),tty_sha256=digest(tty_elf),tty_image_sha256=digest(tty_image),
                     private_headers=final_private_headers,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     serial_artifact=str(serial_elf.relative_to(ROOT)),serial_artifact_sha256=digest(serial_elf),
@@ -395,7 +405,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + init_service_sources + runtime_support + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

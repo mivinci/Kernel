@@ -284,6 +284,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
     elif case == "elf":
         if ready != ["READY elf-restored"] or panics or traps:
             raise SmokeError("native user ELF loader did not finish")
+    elif case == "tty":
+        if ready != ["READY tty-restored"] or panics or traps:
+            raise SmokeError("tty input/output/wait scenario did not finish")
     elif case == "runtime":
         if ready != ["READY runtime-restored"] or panics or traps:
             raise SmokeError("csu/libc main and exit test did not finish")
@@ -1125,6 +1128,7 @@ def exercise(args, run_dir, record):
                     "READY init-restored\n" if args.case == "init" else
                     "READY elf-restored\n" if args.case == "elf" else
                     "READY runtime-restored\n" if args.case == "runtime" else
+                    "READY tty-restored\n" if args.case == "tty" else
                     "READY libsys-restored\n" if args.case == "libsys" else
                     "READY spawn-restored\n" if args.case == "spawn" else
                     "READY sigreserve-restored\n" if args.case == "sigreserve" else
@@ -1503,6 +1507,11 @@ def exercise(args, run_dir, record):
                             {"children":2,"rollback":4,"invalid":1,"slots":3,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("user ELF preparation/rollback/slot conservation mismatch")
                     record["elf_loader"] = checks[0]
+                if args.case == "tty":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('TTYCHECK ')]
+                    if checks != [dict(input=1,alarm=2,interbyte=1,nonblock=1,canonical=1,blocked=1,charged=0,allocated=transition['tables'])]:
+                        raise SmokeError('tty native input/output/timer outcome or resource mismatch')
+                    record['tty']=checks[0]
                 if args.case == "runtime":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or

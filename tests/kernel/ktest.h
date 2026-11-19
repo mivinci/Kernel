@@ -37,6 +37,7 @@ void forkcontexttest(void);
 void spawntest(void);
 void libsysload(void);
 void runtimetest(void);
+void ttytest(void);
 void elftest(void);
 void inittest(void);
 void sigconfigtest(void);

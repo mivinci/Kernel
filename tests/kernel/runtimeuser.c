@@ -9,7 +9,6 @@
 #include "private/syscall.h"
 #include "private/virtio/ring.h"
 #include "ringuser.h"
-#include "ttyuser.h"
 volatile u64        runtime_trace[13];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
@@ -379,7 +378,6 @@ main(int argc, char **argv)
   runtime_trace[9] = formatcheck();
   runtime_trace[10] = groupcheck();
   runtime_trace[11] = queuecheck();
-  ttyusercheck();
   runtime_trace[12] = ringusercheck();
   errno = EDOM;
   runtime_trace[6] = 42;

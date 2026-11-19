@@ -10,7 +10,10 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
 #if BOOT_CASE == 47 || BOOT_CASE == 48
   chipcpu(hardware, cpu);
 #endif
-#if BOOT_CASE == 54
+#if BOOT_CASE == 55
+  ttytest();
+  putstr("READY tty-restored\n");
+#elif BOOT_CASE == 54
   cputest(hardware, cpu);
   putstr("READY cpus-stopped\n");
 #elif BOOT_CASE == 53
