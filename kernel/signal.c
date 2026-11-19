@@ -718,34 +718,18 @@ sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target
   target->forked = 1;
   return 0;
 }
-int
-sigdeliver(Imageid id, Spaceid space, Hctx *context)
+static int
+deliverframe(Signal *s, Spaceid space, Hctx *context, u32 signum, const Siginfo *info, u32 pending)
 {
-  Signal  *s = find(id);
-  Image    image;
   Sigctx  *layer;
   Sigframe packet;
   Sigact   reset_action;
   u8      *bytes = (u8 *) &packet;
   u64      bit, sp, frame, cookie, mask;
-  u32      i, signum;
+  u32      i;
   int      error;
-  if (!s || !context)
-    return -ERR_STATE;
-  if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
-    return -ERR_STATE;
-  signum = nextsignal(s);
-  if (!signum)
-    return 0;
   i = signum - 1;
   bit = (u64) 1 << i;
-  if (s->actions[i].kind == SIGNAL_DEFAULT) {
-    s->pending &= ~bit;
-    clearinfo(&s->info[i]);
-    return (sigstopkind(signum) ? SIG_DELIVER_STOP : 0) | (int) signum;
-  }
-  if (s->depth == SIGNAL_DEPTH)
-    return 0;
   layer = &s->contexts[s->depth];
   if (layer->state || layer->request.generation)
     return -ERR_STATE;
@@ -758,7 +742,7 @@ sigdeliver(Imageid id, Spaceid space, Hctx *context)
   frame = ALIGN_DOWN(sp - sizeof(packet), 16UL);
   if (frame < BOOT_USER_LO || frame >= BOOT_USER_HI || sizeof(packet) > BOOT_USER_HI - frame)
     return -ERR_FAULT;
-  error = sigcookie(id, &cookie);
+  error = sigcookie(s->identity, &cookie);
   if (error)
     return error;
   for (i = 0; i < sizeof(packet); i++)
@@ -771,7 +755,7 @@ sigdeliver(Imageid id, Spaceid space, Hctx *context)
       layer->wait_kind == PROCESS_WAIT_SIGNAL ? layer->restore_mask : s->mask;
   packet.head.cookie = cookie;
   {
-    const u8 *from = (const u8 *) &s->info[signum - 1];
+    const u8 *from = (const u8 *) info;
     u8       *to = (u8 *) &packet.info;
     for (i = 0; i < sizeof(packet.info); i++)
       to[i] = from[i];
@@ -799,17 +783,59 @@ sigdeliver(Imageid id, Spaceid space, Hctx *context)
   layer->state = 1;
   s->depth++;
   s->mask = layer->active_mask;
-  s->pending &= ~bit;
-  clearinfo(&s->info[signum - 1]);
+  if (pending) {
+    s->pending &= ~bit;
+    clearinfo(&s->info[signum - 1]);
+  }
   if (layer->action.flags & SIGNAL_RESETHAND) {
     reset_action.kind = SIGNAL_DEFAULT;
     reset_action.handler = reset_action.trampoline = reset_action.mask = reset_action.flags =
         reset_action.reserved = 0;
     copyaction(&s->actions[signum - 1], &reset_action);
-    if (signum == SIGNAL_CHLD && policy(id, &reset_action))
+    if (signum == SIGNAL_CHLD && policy(s->identity, &reset_action))
       panic("signal reset policy");
   }
   return 0;
+}
+int
+sigdeliver(Imageid id, Spaceid space, Hctx *context)
+{
+  Signal *s = find(id);
+  Image   image;
+  u32     signum;
+  if (!s || !context || imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  signum = nextsignal(s);
+  if (!signum)
+    return 0;
+  if (s->actions[signum - 1].kind == SIGNAL_DEFAULT) {
+    s->pending &= ~((u64) 1 << (signum - 1));
+    clearinfo(&s->info[signum - 1]);
+    return (sigstopkind(signum) ? SIG_DELIVER_STOP : 0) | (int) signum;
+  }
+  if (s->depth == SIGNAL_DEPTH)
+    return 0;
+  return deliverframe(s, space, context, signum, &s->info[signum - 1], 1);
+}
+int
+sigfault(Imageid id, Spaceid space, Hctx *context, const Siginfo *info)
+{
+  Signal *s = find(id);
+  Image   image;
+  u64     bit;
+  int     error = sigvalidinfo(info);
+  if (error)
+    return error;
+  if (info->signum != SIGNAL_SEGV && info->signum != SIGNAL_ILL && info->signum != SIGNAL_BUS &&
+      info->signum != SIGNAL_FPE)
+    return -ERR_INVALID;
+  if (!s || !context || imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  bit = (u64) 1 << (info->signum - 1);
+  if ((s->mask & bit) || s->actions[info->signum - 1].kind != SIGNAL_HANDLER ||
+      s->depth >= SIGNAL_DEPTH || s->contexts[s->depth].wait_kind)
+    return -ERR_STATE;
+  return deliverframe(s, space, context, info->signum, info, 0);
 }
 int
 sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)

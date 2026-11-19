@@ -190,13 +190,82 @@ install(u64 mode)
             196);
   }
 }
+static void
+forcedhandler(u64 signum, const Siginfo *info, void *context)
+{
+  u64 mask, pending, first = frame_trace[12] == 0;
+  UNUSED(context);
+  REQUIRE(signum == SIGNAL_SEGV && info->signum == signum && !info->code && !info->pid &&
+              !info->uid && !info->reserved0 && !info->reserved[0] && !info->reserved[1] &&
+              info->address == (first ? 0xa011U : 0xb022U) &&
+              info->reason == (first ? 0xa1U : 0xb2U) &&
+              info->status == (first ? 0xf001U : 0xf002U),
+          203);
+  REQUIRE(!__sys_sigpending(&pending) && pending == (first ? (u64) 1 << (SIGNAL_SEGV - 1) : 0),
+          204);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, 0, &mask) &&
+              mask == (1 | ((u64) 1 << (SIGNAL_TERM - 1)) | ((u64) 1 << (SIGNAL_SEGV - 1))),
+          205);
+  REQUIRE(frame_fp(first ? 2 : 3) == 1, 206);
+  frame_trace[12]++;
+  errno = ENOENT;
+}
+static NORETURN void
+forcedtrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address,
+                 u64 flags)
+{
+  Sighead *head = (Sighead *) address;
+  int      saved_errno = errno;
+  REQUIRE(function == (u64) forcedhandler && flags == SIGNAL_SIGINFO &&
+              (u64) context == address + SIGNAL_FRAME_TF && (u64) info == address + 64 &&
+              head->magic == SIGNAL_FRAME_MAGIC && head->depth == 1 && !head->previous &&
+              head->restore_mask == 1 && !head->flags && !head->reserved && head->cookie,
+          207);
+  if (!frame_trace[12])
+    frame_trace[6] = head->cookie;
+  else {
+    REQUIRE(head->cookie > frame_trace[6], 208);
+    frame_trace[7] = head->cookie;
+  }
+  forcedhandler(signum, info, context);
+  errno = saved_errno;
+  __sys_sigreturn((void *) address);
+}
+static int
+forceduser(void)
+{
+  Sigact action;
+  u64    mask, pending;
+  action.kind = SIGNAL_HANDLER;
+  action.handler = (u64) forcedhandler;
+  action.trampoline = (u64) forcedtrampoline;
+  action.mask = (u64) 1 << (SIGNAL_TERM - 1);
+  action.flags = SIGNAL_SIGINFO;
+  action.reserved = 0;
+  REQUIRE(!__sys_sigaction(SIGNAL_SEGV, &action, NULL) &&
+              !__sys_sigmask(SIGNAL_SETMASK, 1, &mask) && !mask,
+          209);
+  errno = EDOM;
+  REQUIRE(frame_fp(1) == 0, 210);
+  frame_trace[0] = 1;
+  while (frame_trace[12] < 2)
+    REQUIRE(!__sys_yield(), 211);
+  REQUIRE(frame_trace[12] == 2 && frame_fp(0) == 1 && errno == EDOM &&
+              !__sys_sigmask(SIGNAL_BLOCK, 0, &mask) && mask == 1 && !__sys_sigpending(&pending) &&
+              !pending,
+          212);
+  frame_trace[0] = 99;
+  return 42;
+}
 int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= ':', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= ';', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
+  if (mode == 11)
+    return forceduser();
   frame_trace[2] = (u64) (uintptr_t) handler;
   frame_trace[3] = (u64) (uintptr_t) trampoline;
   install(mode);

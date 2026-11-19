@@ -28,8 +28,8 @@ int sigactionvalid(u32 signum, const Sigact *action);
 int sigactioncheck(Imageid image, u32 signum, const Sigact *action);
 int siggetaction(Imageid image, u32 signum, Sigact *out);
 int sigsetaction(Imageid image, u32 signum, const Sigact *action);
-/* Typed fixture producer; native USER/CHILD/FAULT production and ordinary
-   blocked-syscall interruption remain separate from action registration. */
+/* Trusted producers; native selection/credentials stay in Proc. Registration
+   alone grants no authority over another Image. */
 int siginstall(Imageid image, u32 signum, const Sigact *action);
 int sigqueue(Imageid image, const Siginfo *info);
 int sigvalidinfo(const Siginfo *info);
@@ -42,6 +42,11 @@ int sigchild(Imageid image, Handle child, u32 ruid, u64 reason, u64 status);
 /* Completed-user-return boundary only; SIG_DELIVER_STOP|signum requests a
    default stop, other positive results request default exit. */
 int sigdeliver(Imageid image, Spaceid space, Hctx *context);
+/* Trusted synchronous-fault frame, not an asynchronous pending entry. Caller
+   owns normalized metadata and the matching Image/Space/context. Every error
+   requires its fail-closed fault policy; blocked/ignored/default/full-depth or
+   a reserved suspend layer must not wait for a later user return. */
+int sigfault(Imageid image, Spaceid space, Hctx *context, const Siginfo *info);
 int sigrestore(Imageid image, Spaceid space, Hctx *context, u64 frame);
 int sigdiscard(Imageid image);
 /* Runnable pending signal, respecting the prepaid handler depth. */

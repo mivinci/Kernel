@@ -763,3 +763,17 @@ USER来源只由内核构造，code=1、pid=发送者完整PID、uid=发送者eu
 最终完整make test-all通过846项host、格式检查及195次双架构QEMU；168份journal、最终源码/头/SDK/包哈希及两份54请求的原生发信证明另核对。新CASE不链接用户入口wrapper，普通测试Set费用/实例归零，实际PID1保持原费用/物理页与阻塞状态，其保留内核栈和guard仍由主机页表审计。默认serial ELF与stage130逐字节相同，init装载段亦逐字节相同，只有.strtab内LLVM局部标签编号改变；普通包/镜像无测试载荷，clangd数据库已更新。证据build/host/stage131-native-sigsend/；无CI/板端/性能结果。此点尚无libc kill/raise、标准sigaction/trampoline、FAULT或终端ttysignal生产，不把原生USER发信称为完整POSIX或作业控制；GROUP target=0的原子当前组选择仍待用户回复。
 
 默认故障退出接续（2026-11-20）：HAL现区分页/访问、明确总线/对齐及算术异常，公共内核默认分别以SEGV、BUS、FPE终止，非法/未支持类别仍ILL，Life保留原始PC/address/cause。ARM实际未对齐PC与两架构非法指令的执行证据及精确映射见01末尾；本点未生产FAULT来源Siginfo，也未把已安装的HANDLER接到同步硬件故障，不把默认映射修正称作已实现可恢复故障信号。GROUP target=0提问仍独立待回复。
+
+### 可信同步帧与同号pending隔离（2026-11-20）
+
+内核内部sigfault接受可信调用者提供的完整Siginfo和匹配Image/Space/Hctx，只为SEGV/ILL/BUS/FPE构造直接帧，不先进入普通pending。必须为未屏蔽的HANDLER且有空闲预付层；默认/忽略、屏蔽、达到两层上限或下一层已预留给sigsuspend时返回失败，调用者必须执行明确的不可恢复故障策略，不能等待用户返回后再试。此函数不是原生用户入口，不提供跨镜像授权或公开reason编码。
+
+直接帧与普通异步递送共用原有入口/栈检查、用户写入、cookie、完整TF/FP、mask与RESETHAND构造核心。只有普通pending路径在提交帧时消费对应位及元数据；直接帧不清除、不替换同号的异步pending或其第一份元数据。共享原语仍使用原两层预付，无新增Sigctx/Rq/通用待办对象；失败不修改用户Hctx、mask、depth或pending，cookie取得后的失败仍允许消耗该单调序号，不回绕。
+
+6项新增host组合覆盖两架构后端：同号直接帧/异步帧的不同完整元数据与先后、四类故障信号、旧mask恢复、默认/忽略/屏蔽/满深度拒绝、sigsuspend预留层不被夺取、入口/栈失效时原pending保持、RESETHAND不丢弃异步信号。旧的异步递送、M-W-H恢复、COW栈与fork活动帧继续经同一核心验证。
+
+CASE=sigframe新增一个真实用户运输模型：仅测试链接的入口wrapper在用户yield退栈后排入私有code=0的SEGV哨兵，再直接构造同号但另一份元数据的帧。首handler重查时异步位仍pending，首次sigreturn后再收到原异步帧，两次均为depth1、cookie递增，FP与errno各自恢复，最终mask回原值、pending归零并正常退出42；CPU核对银行及页/费用归零。source code=0、reason/address/status中的哨兵只检查既定64字节运输，不定义公开FAULT reason，也没有把普通yield伪装成真实硬件故障。
+
+最终完整make test-all通过855项host、格式检查及195次双架构QEMU；6项host专项、168份journal及最终源码/头/SDK/包哈希另核对。两架构sigframe由11增至12项，正常5/非法帧6/默认终止1；从实际QEMU内核ELF提取的frame_image与当前SDK打包用户ELF逐字节一致。默认init/serial ELF与stage132逐字节相同，clangd数据库已更新，证据build/host/stage133-sync-frames/；无CI/板端/性能结果。正常内核不链接wrapper或测试载荷，实际硬件故障当前仍走默认终止边界，尚未接到此直接帧原语。
+
+开放问题：FAULT reason候选MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12，以及初次故障递送失败按原故障终止并保留原始诊断，已向用户提问，尚未冻结或加入abi/signal.h。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则，不因本候选改变。另一个GROUP target=0问题仍独立待回复；实际FAULT生产与libc kill/raise按确认结果接续。
