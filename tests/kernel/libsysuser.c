@@ -427,6 +427,39 @@ typedserver(const Bootview *view)
   words.words[3] = 61;
   REQUIRE(ipc_reply_recv(received.request, &words, 0, RECV_NONBLOCK, &received) == -ERR_WOULD_BLOCK,
           250);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL &&
+              received.words[0] == FS_HELLO && !received.words[1] && received.words[2] &&
+              received.words[3] == UINT64_MAX,
+          147);
+  {
+    Handle    pid, parent;
+    u64       image;
+    Filehead *header = (Filehead *) 0x1100000;
+    REQUIRE(!__sys_getid(&pid, &image, &parent), 146);
+    arg.bytes = FS_CONN_BYTES;
+    REQUIRE(!__sys_alloc(bootresource(view, BOOT_SELF_ALLOC), &arg, &memory), 145);
+    map.mem = memory;
+    map.length = FS_CONN_BYTES;
+    REQUIRE(!__sys_map(space, &map), 144);
+    header->magic = FS_CONN_MAGIC;
+    header->bytes = FS_CONN_BYTES;
+    header->connid = ((u64) 1 << 16) | 5;
+    header->serverimage = image;
+    header->slots = FS_CONN_SLOTS;
+    header->slotbytes = FS_SLOT_BYTES;
+    header->reserved[0] = header->reserved[1] = 0;
+    reply.source = memory;
+    reply.rights = MAP_READ | MAP_WRITE;
+    reply.offset = 0;
+    reply.length = FS_CONN_BYTES;
+    reply.business[0] = received.words[2];
+    reply.business[1] = header->connid;
+    reply.business[2] = FS_CONN_BYTES;
+    REQUIRE(!ipc_reply_resource(received.request, &reply) && !__sys_unmap(space, map.address) &&
+                !__sys_free(memory),
+            143);
+    resource_trace[9] = 1;
+  }
 }
 static void
 checkreceived(Handle handle, u64 subtype, u64 offset, u64 length)
@@ -538,6 +571,40 @@ typedclient(const Bootview *view, Handle peer)
   REQUIRE(!ipc_call(peer, &words, CALL_RECV_MEM, &result) && !result.kind && result.words[0] &&
               result.words[1] == 57 && result.words[2] == 59 && result.words[3] == 61,
           251);
+  {
+    Bootmap   mapped = {0, 0, 0, 0, 0, 0};
+    Bootreply validated;
+    Connentry entry;
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
+                !sysbootprepare(&bootstrap_record, claim, FS_HELLO, UINT64_MAX, 0) &&
+                !sysbootrequest(&bootstrap_record, claim, &words) &&
+                !ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
+                !sysbootsubmitted(&bootstrap_record, claim, &result.request) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            142);
+    REQUIRE(!ipc_rqwait(bootstrap_record.rpc, 0, &result), 141);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysbootcapture(&bootstrap_record, claim, 0, &result) &&
+                !sysbootreply(&bootstrap_record, claim, 0, &validated) && validated.memory &&
+                validated.bytes == FS_CONN_BYTES && !validated.offset &&
+                !sysbootmap(&bootstrap_record, claim, space, 0x1200000, connection_peer.image,
+                            &mapped) &&
+                mapped.mapped && mapped.verified &&
+                !sysconnready(&connection_directory, claim, mapped.connid) &&
+                !sysconnview(&connection_directory, connection_tag, &entry) &&
+                entry.state == SYSCONN_READY && entry.connid == validated.connid &&
+                !sysbootack(&bootstrap_record, claim) &&
+                !sysbootresource(&bootstrap_record, claim, &memory) &&
+                !sysbootfinish(&bootstrap_record, claim) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            140);
+    REQUIRE(((volatile Filehead *) 0x1200000)->connid == mapped.connid &&
+                !sysconninvalidate(&connection_directory, connection_tag) &&
+                !sysbootunmap(space, &mapped) && !mapped.mapped && !__sys_free(memory),
+            139);
+    resource_trace[9] = 1;
+  }
 }
 static Handle
 latebegin(const Bootview *view, Handle peer, u32 client)

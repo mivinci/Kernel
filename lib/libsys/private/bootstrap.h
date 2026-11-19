@@ -10,6 +10,18 @@
 #define SYSBOOT_RESOURCE_MOVED 1
 #define SYSBOOT_BAD_RESULT     2
 typedef struct Bootstrap Bootstrap;
+typedef struct Bootreply Bootreply;
+typedef struct Bootmap   Bootmap;
+struct Bootreply
+{
+  Handle memory;
+  u64    connid, bytes, offset;
+};
+struct Bootmap
+{
+  u64 address, bytes, connid, serverimage;
+  u32 mapped, verified;
+};
 struct Bootstrap
 {
   Connclaim claim;
@@ -48,4 +60,19 @@ isize sysbootresource(Bootstrap *record, Connclaim claim, Handle *out);
 isize sysbootfinish(Bootstrap *record, Connclaim claim);
 /* Only before submission. This does not cancel a request or undo an effect. */
 isize sysbootunprepare(Bootstrap *record, Connclaim claim);
+/* Real FS handshake shape. Output is borrowed metadata, never a second owned
+   resource. reuse_connid requires a privately retained verified mapping;
+   HELLO cannot accept an ordinary reuse reply. Native MEM query authorizes
+   the returned window; result words never authorize a physical range. */
+isize sysbootrequest(Bootstrap *record, Connclaim claim, Msg *out);
+isize sysbootreply(Bootstrap *record, Connclaim claim, u64 reuse_connid, Bootreply *out);
+/* Caller pre-reserves an exclusive page-aligned VA range and supplies actual
+   SELF_SPACE and exact peer image. map must be zero/fresh. A failure after
+   native map leaves mapped=1 until explicit unmap succeeds; record continues
+   owning the MEM and cannot finish. Success verifies the fixed header before
+   the caller may publish connection READY. No Rctx/timeout/VA allocator here.
+   Native calls are short and require caller signal exclusion. */
+isize sysbootmap(Bootstrap *record, Connclaim claim, Handle space, u64 address, u64 serverimage,
+                 Bootmap *map);
+isize sysbootunmap(Handle space, Bootmap *map);
 #endif

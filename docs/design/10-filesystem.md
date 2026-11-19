@@ -913,3 +913,17 @@ rollback只允许在尚未提交任何原请求/未发生远端效果时由原cl
 7项host覆盖唯一RPC移交、重入不覆盖、等待中断/查询失败保持、协作取消不清记录、资源结果先存后ACK、ACK失败保持/释放后资源仍自持、终结错误和外部等待捕获、畸形结果资源保留、旧claim与输出别名。真实libsys用户模型复用现有ACCEPTED取消后成功交付MEM场景：先prepare，再在短信号屏蔽段异步提交/移入RPC，解屏蔽后等待；受保护capture后ACK，结束因尚持资源返回BUSY，随后显式移交MEM并结束记录，再按原测试映射/读值/解除/释放。这里使用私有FS_ATTACH元数据与既有非FS消息载荷，只验运输责任，不假装已执行HELLO/ATTACH协议或完整连接映射。
 
 最终完整make test-all通过884项host、格式检查及195次双架构QEMU；7项专项、168份journal、最终源码/头/SDK/包哈希及实际链接libsys载荷与SDK打包ELF逐字节一致另核对。两架构均验证原RPC移交/结果保存/ACK后资源自持/显式移交后映射与回收；bootstrap.o只依赖非阻塞poll、短cancel/ACK，私有SDK头一致，init/serial ELF与stage136相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage137-bootstrap-rpc/；无CI/板端/性能结果。首次完整回归ARM用户ELF增大，构造期保留资源超过16项，旧fixture错误要求单批枚举结束；已按既有cursor遍历改正并从头重跑全量，不放宽内核上限，旧失败日志保留。下一步接真实bootstrap请求/回复校验、MEM类型/权限/窗口及映射、连接READY原子安装、Rctx/返回窗口与失效补偿；已保存的deadline本点仅元数据，不自动产生超时/新内核deadline。Boot/Fix、标准fd/FS/TTY仍待接，两个已有用户问题仍保持待回复。
+
+### 原生HELLO与受检MEM映射（2026-11-20）
+
+sysbootrequest从受保护的PREPARED记录构造既定四字[opcode,0,claim.seq,token]，HELLO的token必须UINT64_MAX，ATTACH/EXEC_CLAIM非零；不另建命名空间或消息布局。sysbootreply只从已保存的原结果解析：机制失败原样保留，业务负状态是失败，成功seq必须与claim一致、connid代次非0/索引<128、bytes精确36864。首次资源回复必须是仍由记录持有的安装资源；有已验证私有连接的ATTACH/EXEC_CLAIM才可接受普通复用确认，connid须与私有旧值精确匹配，HELLO不以普通回复猜MEM。
+
+新交付资源经原生本主体RESOURCE查询核对完整Handle、MEM子类型、精确RW权限、页对齐窗口及长度36864，offset+length不溢出；映射使用真实授权offset，不把服务给的整数当作物理地址或扩大窗口。RESOURCE本身不暴露SHARED backing，SHARED来源依赖“同一次原生资源reply”的既有内核准入规则，不能将任意普通MEM数字/手工伪造capture当作该来源证明。查询失败/失效/不匹配保留原结果和资源供收尾，不静默free或重发HELLO。
+
+sysbootmap要求调用者事先独占预留页对齐用户VA范围，并传真实SELF_SPACE、后端image及零初始化的Bootmap。先完成回复/授权验证，再以RW/NX请求原生map；成功立即把精确地址/长度/connid/image与mapped=1登记，随后用受检查copy读取64字节固定头，核验magic/bytes/connid/image/8槽/4096字节/保留0才标verified。bad header或copy失败保留mapped=1/verified=0，不擅自发布READY；显式unmap失败仍保留完整映射记录，只有原生解除成功才清零。映射管理不替代VA分配器，也不扫描整个控制页padding或服务每次请求的私有权限。
+
+bootstrap记录仍拥有MEM直到显式移交，Bootmap只保存别名信息、不成为第二个MEM所有者。调用者在短保护段中验证map.verified后提交原Connclaim READY、ACK原RPC、移交MEM并结束bootstrap；后续连接拥有MEM和映射的工作区仍待统一接入。关闭/失败应先使目录DRAINING并保留必要记录，再解除映射/释放实际授权，未知状态不忘记原事务。不以头快照保证服务永不改写共享头，真正权限仍来自原CALL、资源窗口和各次私有业务核验。
+
+新增5项host覆盖请求/序号/窗口输出不变、错误MEM类型/权限/大小/offset/失效、仅允许既有连接的普通复用、映射和固定头校验、map失败无别名、坏头/复制失败保留别名、unmap失败不清记录。与前7项责任记录测试共12项专项。独立libsys原生场景新增实际HELLO：真实客户端按新目录claim发出请求，服务分配/映射/初始化9页SHARED MEM，经资源reply交付；客户端用新适配核验/映射并提交READY、完成原RPC与资源移交，再显式invalidate/unmap/free。服务只作为单次握手fixture，不是生产FS/TTY，也未实现跨全部客户端的唯一连接/生命周期观察。
+
+最终完整make test-all通过889项host、格式检查及195次双架构QEMU；12项bootstrap专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构实际HELLO均完成9页资源交付、原生窗口查询/映射/固定头核验、原claim READY提交、ACK与资源移交及invalidate/unmap/free，旧页/费用守恒继续通过。bootstrap.o仅依赖原生query/map/copy/unmap及短poll/cancel/ACK，SDK私有头一致，init/serial ELF与stage137相同且无新增测试/模块符号，clangd数据库已更新。证据build/host/stage138-bootstrap-map/；无CI/板端/性能结果。真实普通复用、失败补偿及返回窗口handler注入仍须接续；Rctx/生命周期稳定拥有MEM+VA、VA分配、超时/token/File补偿、Boot/Fix与标准fd接口未完成。两个先前接口提问保持待回复，不提前落实候选。

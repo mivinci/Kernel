@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- 真实HELLO/受检MEM映射通过889项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。12项bootstrap专项含新增请求/回复校验、真实MEM窗口适配、普通复用边界与映射失败保留；两架构实际HELLO交付9页SHARED、查询窗口/映射/核对头后READY，再ACK/资源移交和解除释放。实际链接载荷与SDK一致、依赖仅短原生操作，init/serial与stage137相同；证据stage138-bootstrap-map/。服务为单次握手fixture，非生产FS/TTY或完整Rctx/补偿；无CI/板端/性能结果。
+
 - bootstrap固定责任记录通过884项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。7项host覆盖RPC唯一移交、中断保持、结果捕获、ACK失败/成功、资源显式移交及旧claim/输出保护；两架构实际资源模型先存结果再ACK，资源仍自持时拒绝结束，再移交并map/read/unmap/free。SDK/实际链接载荷一致，bootstrap.o只依赖短poll/cancel/ACK，init/serial与stage136相同；证据stage137-bootstrap-rpc/。初次ARM单批RESOURCE枚举旧假设已修正并重跑全量；尚非实际bootstrap握手或完整Rctx返回窗口，未验CI/板端/性能。
 
 - 后端冷路识别/连接目录通过877项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。8项host覆盖真实目标枚举适配、唯一键/8项容量、owner/序号/代次、失效保留与迟到提交、来源/输出/损坏；两架构实际RESOURCE查询核对CALL固定目标，不同CALL授权命中同目录，free后STALE且SPACE拒绝。实际链接libsys载荷与SDK一致，conn.o仅依赖__sys_query，私有头一致，init/serial与stage135相同；证据stage136-connection-directory/。尚非HELLO/MEM/RPC责任集成；无CI/板端/性能结果。
@@ -59,6 +61,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage138已本地验收：生成冻结四字握手，原回复seq/connid/大小校验、原生MEM权限/窗口查询与显式VA映射/固定头核验已接；坏头/复制失败保留mapped未verified别名，只有显式unmap成功才清零。实际HELLO/READY两架构通过，接续稳定连接工作区接管MEM+VA、真实复用、Rctx/handler返回窗口与失败补偿，再接File/Boot/Fix及服务。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 
 - stage137已本地验收：128字节bootstrap责任记录保存原RPC、固定机制/四字结果和自持资源；等待中断不结束记录，ACK只释放RPC，资源显式移交后才能结束。仅非阻塞/短操作，外层解屏蔽等待及Rctx返回窗口仍待接；真实HELLO/ATTACH回复、MEM窗口/映射/READY和失效补偿接续。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 

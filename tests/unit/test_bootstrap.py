@@ -19,6 +19,9 @@ class Record(C.Structure):
 
 STUB=r'''
 #include <sys/channel.h>
+#include "private/syscall.h"
+#include <abi/resource.h>
+#include <proto/file.h>
 static Ipcmsg result;
 static isize polling,acking,cancelling;
 static Handle seen;
@@ -30,6 +33,18 @@ u64 testget(u32 key){return key==0?polls:key==1?acks:key==2?cancels:(u64)seen;}
 isize ipc_rqpoll(Handle rpc,u64 options,Ipcmsg *out){u32 i;const u8 *p=(const u8*)&result;u8 *q=(u8*)out;polls++;seen=rpc;if(options)return -ERR_INVALID;for(i=0;i<sizeof(result);i++)q[i]=p[i];return polling;}
 isize ipc_rqack(Handle rpc,u64 options){acks++;seen=rpc;return options==3?acking:-ERR_INVALID;}
 isize ipc_rqcancel(Handle rpc){cancels++;seen=rpc;return cancelling;}
+static Handle memid;
+static u64 rights,offset,length,kind,maps,unmaps;
+static isize queryerror,maperror,copyerror,unmaperror;
+static Filehead header;
+void testmemory(Handle memory,u64 subtype,u64 access,u64 off,u64 bytes,u64 connid,u64 image){memid=memory;kind=subtype;rights=access;offset=off;length=bytes;maps=unmaps=0;queryerror=maperror=copyerror=unmaperror=0;header.magic=FS_CONN_MAGIC;header.bytes=FS_CONN_BYTES;header.connid=connid;header.serverimage=image;header.slots=8;header.slotbytes=4096;header.reserved[0]=header.reserved[1]=0;}
+void testmaperror(isize query,isize map,isize copy,isize unmap){queryerror=query;maperror=map;copyerror=copy;unmaperror=unmap;}
+void testheader(u64 magic){header.magic=magic;}
+u64 testmapping(u32 key){return key?unmaps:maps;}
+isize __sys_query(Handle authority,u64 query,u64 cursor,Queryrec *rows,u64 count,u64 *written,u64 *next){u32 i;if(authority||query!=QUERY_RESOURCE||cursor||count!=16)return -ERR_INVALID;if(queryerror)return queryerror;rows[0].type=QUERY_RESOURCE;for(i=0;i<20;i++)rows[0].data[i]=0;rows[0].data[0]=(u64)memid;rows[0].data[1]=kind;rows[0].data[2]=rights;rows[0].data[3]=offset;rows[0].data[4]=length;*written=1;*next=0;return 0;}
+isize __sys_map(Handle space,const Maparg *arg){maps++;if(space<=0||arg->mem!=memid||arg->offset!=offset||arg->length!=length||arg->prot!=3||arg->reserved)return -ERR_INVALID;return maperror;}
+isize __sys_unmap(Handle space,u64 address){unmaps++;if(space<=0||!address)return -ERR_INVALID;return unmaperror;}
+isize __sys_copy(void *out,const void *from,u64 bytes){u32 i;u8 *a=out;const u8 *b=(const u8*)&header;if(!from||bytes!=sizeof(header))return -ERR_INVALID;if(copyerror)return copyerror;for(i=0;i<bytes;i++)a[i]=b[i];return 0;}
 '''
 
 
