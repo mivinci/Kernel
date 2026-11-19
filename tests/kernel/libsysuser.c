@@ -1,10 +1,14 @@
 #include <sys/boot.h>
 #include <sys/channel.h>
 #include "private/syscall.h"
+#include "private/conn.h"
 #include <abi/syscall.h>
 static volatile u64       bss[257];
 static volatile u64       initialized = UINT64_C(0x123456789abcdef0);
 static const volatile u64 readonly = UINT64_C(0xfedcba9876543210);
+static Conncache          connection_directory;
+static Conntag            connection_tag;
+static Connpeer           connection_peer;
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -485,9 +489,24 @@ typedclient(const Bootview *view, Handle peer)
           232);
   backend = (Handle) result.words[0];
   checkreceived(backend, 5, 0, 0);
+  {
+    Connpeer alias;
+    Conntag  tag;
+    REQUIRE(backend != peer && !sysconnpeer(backend, &alias) && alias.pid == connection_peer.pid &&
+                alias.image == connection_peer.image &&
+                !sysconnbind(&connection_directory, alias, &tag) &&
+                tag.index == connection_tag.index && tag.generation == connection_tag.generation,
+            155);
+  }
   words.words[0] = 202;
   REQUIRE(!ipc_call(backend, &words, 0, &result) && !result.kind && result.words[0] == 303, 236);
   REQUIRE(!__sys_free(backend), 237);
+  {
+    Connpeer old = connection_peer;
+    REQUIRE(sysconnpeer(backend, &old) == -ERR_STALE && old.pid == connection_peer.pid &&
+                old.image == connection_peer.image,
+            154);
+  }
   REQUIRE(ipc_call(backend, &words, 0, &result) == -ERR_BAD_HANDLE, 238);
   words.words[0] = 203;
   REQUIRE(!ipc_call(peer, &words, CALL_RECV_MEM, &result) && !result.kind && result.words[0] &&
@@ -564,6 +583,27 @@ _start(const Boot *boot)
   REQUIRE(i < written && records[i].data[1] == 5 && records[i].data[6] != (u64) pid &&
               records[i].data[7] == 1,
           117);
+  {
+    Connpeer  self, unchanged;
+    Connclaim claim, nested;
+    self.pid = pid;
+    self.image = image;
+    REQUIRE(!sysconnpeer(peer, &connection_peer) &&
+                connection_peer.pid == (Handle) records[i].data[6] &&
+                connection_peer.image == records[i].data[7] &&
+                !sysconninit(&connection_directory, self) &&
+                !sysconnbind(&connection_directory, connection_peer, &connection_tag) &&
+                !sysconnbegin(&connection_directory, connection_tag, 101, &claim) &&
+                sysconnbegin(&connection_directory, connection_tag, 202, &nested) == -ERR_BUSY &&
+                !sysconnrollback(&connection_directory, claim) &&
+                !sysconncheck(&connection_directory, self),
+            152);
+    unchanged = connection_peer;
+    REQUIRE(sysconnpeer(bootresource(&view, BOOT_SELF_SPACE), &unchanged) == -ERR_BAD_HANDLE &&
+                unchanged.pid == connection_peer.pid && unchanged.image == connection_peer.image,
+            151);
+    resource_trace[15] = 1;
+  }
   memory(bootresource(&view, BOOT_SELF_ALLOC), bootresource(&view, BOOT_SELF_SPACE));
   copycheck(bootresource(&view, BOOT_SELF_ALLOC), bootresource(&view, BOOT_SELF_SPACE), boot);
   words.words[0] = UINT64_C(0x0123456789abcdef);

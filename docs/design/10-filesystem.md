@@ -885,3 +885,17 @@ Filepages是每连接独立的私有占用账本，Filelease=(seq:u64,slot:u32,s
 6项host覆盖固定头私有边界/身份、输出不变与重叠拒绝、序号/状态/span/payload和续页规则、分区不窃取、双页原子占用/释放、旧序号、溢出/损坏及2000步固定种子占用模型。runtime用户模型使用私有普通内存字节区模拟线格式，检查快照隔离、共享DONE不影响私有占用及各分区；这不是实际HELLO或SHARED MEM连接证明。最终完整make test-all通过869项host、格式检查及195次双架构QEMU；6项专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构各5个有效main调用该原语，libsys file.o无未定义依赖，协议/私有SDK头一致，默认init/serial ELF与stage134相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage135-file-slots/；无CI/板端/性能结果。
 
 接续：真实后端身份/唯一连接缓存、MEM领取/映射、bootstrap原RPC持有、Rctx转后台唯一责任和服务端私有in-flight登记，再接逐操作语义与File/Boot/Fix。现有sysstart仍拒绝非零fd/Fix，标准fd API未启用；GROUP target=0与公开FAULT原因/失败策略两项仍待用户回复，不因本组件落地而改变其状态。
+
+### 后端冷路识别与唯一接入门闩（2026-11-20）
+
+私有sysconnpeer从本主体QUERY_RESOURCE枚举中定位完整本地CALL Handle，核对RESOURCE_CALL及USE，再取得内核记录的固定目标PID/image；不按Handle整数或共享头猜后端。不匹配/已释放返回STALE，错误子类型拒绝，失败不覆盖旧输出。查询按128项本地上限及16项原生批次有界推进，仅用于新授权冷路径，热I/O不追加查询。该结果识别固定授权目标，不证明目标此后仍ACTIVE，也不授予File/session权。
+
+Conncache固定8项，以完整后端PID/image为唯一键，另保存本地客户端PID/image；同一后端两份不同CALL授权命中同一目录代次。相同PID的新image是另一身份，旧项仍计容量；满表不淘汰READY或DRAINING来绕过8后端上限。目录尺寸小于一页，可嵌入既定私有工作区，本层无全局表/动态分配，不持有或释放CALL/MEM、映射、File或RPC。
+
+状态FREE/UNCLAIMED/CONNECTING/READY/DRAINING/RETIRED对应0..5。begin只从UNCLAIMED推进并产生单调bootstrap seq和非零Rctx incarnation owner；已有CONNECTING返回BUSY，不能让同层/handler重发建立请求。ready必须匹配原目录代次、seq、owner及合法connid后提交，重复或迟到结果拒绝。invalidate转DRAINING并保留尚未结清的owner；同后端bind不再生成第二项，资源结清后由原owner确认，再在后端已结束/客户端结束且其余责任均已结清的前提下forget。目录代次与序号不回绕，耗尽退休或拒绝新事务。
+
+rollback只允许在尚未提交任何原请求/未发生远端效果时由原claim退回UNCLAIMED，不能因为等待中断、缺少本地RPC值或结果未明而调用。目录不保存原RPC或已安装资源，不能单独实现接入、取消、超时或补偿；接下来的固定bootstrap责任记录必须在提交前登记，并与原生短提交/结果接管在短信号排除段协调。READY也不构成此模块自行认证映射/资源已可用的证据，调用者须先稳定保存并验证这些资源。源PID/image检查在Boot/Fix本地边界使用，不把fork后仅修改self字段当作修复父连接归属。
+
+8项host覆盖完整CALL冷路枚举、子类型/权限/目标格式及错误输出保持，唯一键/满8项、owner与旧seq、DRAINING不重建、迟到ready/清理/忘记及两类代次耗尽、来源镜像与输出重叠/重复键损坏。libsys独立真实用户场景使用实际RESOURCE查询核对初始CALL，收到另一份指向同后端的CALL资源后仍命中同一目录；free该授权后识别为STALE，SPACE被拒绝，两进程原有资源交付/收尾与页/费用守恒继续验证。模型begin/rollback发生在任何建立请求提交前，不把该检查称为已执行HELLO。
+
+最终完整make test-all通过877项host、格式检查及195次双架构QEMU；8项专项、168份journal、最终源码/头/SDK/包哈希另核对。两架构原生场景均完成真实CALL固定目标及别名同键检查，从实际QEMU内核提取的libsys用户载荷与SDK打包ELF逐字节一致。conn.o仅依赖原生__sys_query，SDK私有头一致，默认init/serial ELF与stage135相同且不含新增模块符号，clangd数据库已更新。证据build/host/stage136-connection-directory/；无CI/板端/性能结果。此点是身份/相位目录，不是已启用的端到端连接：原RPC责任、共享MEM安装/映射、Rctx/后台记录、File/Boot/Fix与真实FS/TTY服务继续待接；两个已有接口问题仍待用户回复。

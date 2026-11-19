@@ -143,7 +143,8 @@ libsysload(void)
     REQUIRE(!error && !lifecollect(info[i].life, 1, &result) && result.code == 42);
   }
   REQUIRE(resource_commits == 2);
-  REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1);
+  REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1 &&
+          handoff[15] == 1);
   REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
   for (i = 0; i < 2; i++)
     REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
@@ -162,6 +163,8 @@ libsysload(void)
   puthex(handoff[13]);
   putstr(" accepted=");
   puthex(handoff[14]);
+  putstr(" peer_lookup=");
+  puthex(handoff[15]);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");
