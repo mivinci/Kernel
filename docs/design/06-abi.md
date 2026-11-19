@@ -90,8 +90,8 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 | 0x67 | setpg | pid,pgid | status |
 | 0x68 | setsid | 无 | a1=SID |
 | 0x69 | ttybind | terminal,sid | status |
-| 0x6a | getfg | terminal | a1=PGID |
-| 0x6b | setfg | terminal,pgid | status |
+| 0x6a | getfg | terminal | a1=PGID,a2=SID,a3=epoch |
+| 0x6b | setfg | terminal,pgid,expected_epoch | status；匹配关联版本才提交并递增 |
 | 0x6c | ttysignal | terminal,signum | status；限定前台信号 |
 | 0x6d | getcred | subject,pid,image | 0/0/0为自身；真实REQUEST的source或合法CHILD/FUTURE，或固定CONTROL QUERY目标；a1..a4=ruid/euid/rgid/egid |
 | 0x6e | ttycreate | system,owner_control | a1=本地TERMINAL授权，a2=TERMINAL_ID；绑定TTY完整PID/image |
@@ -105,7 +105,7 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 
 编号冲突已收口（2026-11-19用户确认）：历史shutdown=0x74与后来已确认/实现的debughandoff重复；保留debughandoff=0x74，尚未实现的shutdown改为0x76，reboot保持0x75。0x74不能解释为关机，不建立旧编号兼容层。
 
-终端调用尚未实现；上表getfg/setfg的旧参数缺少11要求的关联代次校验。2026-11-19提出getfg额外返回SID/epoch、setfg增加expected_epoch，待用户确认，具体开放问题见11“前台切换、模式与孤儿组”；确认前不以旧两参数接口提前实现切换。
+终端调用尚未实现；2026-11-19用户确认getfg额外返回SID/epoch、setfg增加expected_epoch。getfg仅使用a0，setfg使用a0..a2；未用输入必须为0，失败输出清零。setfg在授权与关系检查后核对关联epoch，不匹配返回STALE且不改变前台；匹配才原子提交新前台并递增epoch，不回绕，耗尽返回OVERFLOW且保留旧关联。ttybind仅首次关联，ttysignal仍按提交时当前前台组投递。具体语义及例子见11“前台切换、模式与孤儿组”，不保留旧两参数setfg兼容路径。
 
 getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.md#会话与进程组操作2026-11-16用户确认)为准。getpg仅使用a0，setpg仅使用a0/a1，setsid无参数；未使用输入必须为0。成功getpg只返回a1/a2，setsid只返回a1，setpg无额外输出；失败输出清零。负选择器为INVALID，非进程类别为BAD_HANDLE，消失/已收取目标为STALE，关系越权或会话首进程操作为DENIED，孩子已成功exec为STATE，关系池满为CAPACITY；失败不改变成员关系。
 

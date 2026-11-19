@@ -36,7 +36,7 @@
 
 ## 待确认与接续
 
-- 唯一当前待确认项：前台切换epoch。建议getfg返回PGID/SID/epoch，setfg带expected_epoch，匹配才提交并递增，旧请求STALE；ttybind仅首次关联，ttysignal按提交时当前前台。已询问，尚无确认，不提前实现冲突的旧参数ABI，见06/11。
+- 2026-11-19用户已确认前台切换epoch：getfg返回PGID/SID/epoch，setfg带expected_epoch，匹配才提交并递增，旧请求STALE；ttybind仅首次关联，ttysignal按提交时当前前台。已同步06/11及失败例子，终端调用仍未实现，当前没有待回复的确认项。
 
 - stage119已本地验收：四种VMIN/VTIME、非阻塞/规范模式优先与绝对期限等待状态已接并通过全量。tty输入/输出专项独立为CASE=tty/用户ELF，两架构各双闹钟阻塞/唤醒通过，避免挤占通用runtime/ELF样例额度。等待不消费输入，服务请求提交/取消、活模式变化和前台授权仍待接。
 
