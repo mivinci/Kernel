@@ -18,10 +18,12 @@
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化排队、两层用户帧/原生sigreturn、HANDLER两入口检查、sigsuspend及libc mask子集，完整GPR/FP/cookie/权限核验保留。CHILD退出/STOP/CONT、Run停放/继续、普通等待中断及原生sigsend/USER已接。默认用户故障按HAL区分SEGV/BUS/FPE/ILL；可信直接帧原语已接但尚未接实际硬件FAULT/公开原因编码。libc kill/raise、POSIX sigaction/Rctx/Fix/重启仍待接。
-- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，含真实PIO/IRQ、两环、异步READY和精确init控制，两架构全量已验。普通用户ELF装载尚非FS稳定会话；fd/Fix适配、完整spawn/fork/exec未接，virtio尚无生产DMA。
+- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，含真实PIO/IRQ、两环、异步READY和精确init控制，两架构全量已验。现接私有128项/4KiB fd槽表的预留、代次/状态提交与旧引用移交；File/连接/Rctx及Boot/Fix适配仍未接，普通装载尚非FS会话，完整spawn/fork/exec与生产DMA仍待接。
 - T1.1..T1.5已本地验收：默认init服务装载/READY/监督与失败清理后诊断停机已接。normal含真实init/serial ELF，16 Set/CREATE SERVICE、128槽、固定CONTROL、标准UART/IRQ发权与Boot格式2已用；其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
+
+- 本地fd槽表通过863项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。8项host覆盖预留保护、条件替换、引用移交、标志独立、代次退休、输出别名及1500步所有权守恒；两架构各5个有效main执行128槽/耗尽测试，原5个Boot拒绝仍通过。实际链接用户镜像与SDK打包ELF一致，fd.o无未定义依赖、SDK私有头一致，init/serial与stage133相同；证据stage134-fd-slots/。尚非标准fd API或Boot/Fix/后端接入；无CI/板端/性能结果。
 
 - 可信同步帧通过855项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。6项host专项覆盖不消费同号pending、mask/容量/预留层拒绝、失败保持与RESETHAND；两架构各12个sigframe场景，新增真实用户运输模型核对两份私有元数据、两次独立callback、cookie/FP/errno/mask。实际链接用户镜像与SDK打包ELF逐字节一致，init/serial与stage132相同；证据stage133-sync-frames/。这是可信code=0模型，不是已接硬件FAULT/公开reason；无CI/板端/性能结果。
 
@@ -51,6 +53,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage134已本地验收：私有fd槽表存储/状态机与显式引用移交已接，LIVE仅表示本地可见，File/连接/Rctx层仍须先pin/保证收尾容量；当前sysstart仍拒绝非零fd/Fix。接续实际File引用/连接、Rctx保护与Boot/Fix本地安装，再接后端CLAIM和标准fd操作；GROUP target=0与FAULT原因/失败策略两项提问仍待回复。
 
 - stage133已本地验收：可信同步帧原语与普通异步递送共用帧构造，保留同号pending及原元数据；6项host专项和两架构真实用户运输模型、实际链接产物均核对通过。公开FAULT reason及初次递送失败策略已提问，候选表见11末尾，未加入ABI或接入实际硬件故障；GROUP target=0提问仍独立待回复。
 

@@ -109,7 +109,8 @@ bootcheck(const void *data, u64 available, Bootview *out)
   }
   for (i = 0; i < header->fd_count; i++) {
     const Bootfd *fd = &view.fds[i];
-    if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~1UL || fd->reserved || !resource(fd->backend_call))
+    if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~((u64) BOOT_FD_CLOEXEC) || fd->reserved ||
+        !resource(fd->backend_call))
       return -ERR_INVALID;
     for (j = 0; j < i; j++)
       if (view.fds[j].fd == fd->fd)

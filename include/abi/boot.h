@@ -9,6 +9,7 @@
 #define BOOT_ARG_COUNT      256
 #define BOOT_RESOURCE_COUNT 128
 #define BOOT_FD_COUNT       128
+#define BOOT_FD_CLOEXEC     1
 #define BOOT_SELF_SPACE     1
 #define BOOT_SELF_ALLOC     2
 #define BOOT_CREATE         3

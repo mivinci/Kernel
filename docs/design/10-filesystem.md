@@ -853,3 +853,19 @@ LIFE仅对新观察到的ENDED置提示，检查点和recv受理前各自核对�
 实际场景：服务S接到A的请求，同时观察A的SOURCE和未发布B的CHILD。A退出、B取消后，S收一个合并LIFE提示，分别读到EXIT/ABORT；S确认B后，可信CPU可释放B的准备证据。A的Rq仍在DRAINING时SOURCE可以核验既有ENDED；rqfinish后REQUEST失效，S原cookie仍可读，最后obsack解除观察。S保存业务清理责任的动作仍由未来服务实现，测试不把观察确认当作DMA安全证明。
 
 验证：新增host覆盖128槽满后全部终态枚举、8服务总预付上限、Local grant减权/失败回滚、撤销后既有cookie、防跨观察者/跨预付区重放、代次耗尽、固定旧EXEC镜像及父结果独立回收。creds两架构U/EL0载荷已验证SOURCE/CHILD/MONITOR授权与拒绝、合并LIFE、DRAINING及证明释放、原生grant配额安装和观察者死亡自动清理。完整217项host、格式及82个两架构QEMU通过，日志build/host/stage31-observations/test-all.log；最终creds两架构复跑见同目录*-final.log。生产启动清单发权、真实exec观察者更替及FS业务/DMA仍未接，不宣称文件服务已实现。
+
+### 本地fd槽表原语（2026-11-20）
+
+libsys私有Fdtable固定128项、每项32字节、总尺寸4096字节，存储由使用fd模块的调用者在发布前预付；库本身无全局表、malloc、原生调用或IPC。sysfdinit只用于无所有权的新存储，不是销毁活表的接口；重新初始化前须先移交全部LIVE引用并撤销预留。原生短消息程序不会因归档库增加该对象而自动分配工作区。fd模块每次调用前由运行库保证短暂屏蔽可捕获信号，所有操作有界且不跨RPC；此层不是文件服务、File引用池或公开POSIX fd API。
+
+槽状态FREE=0、RESERVED=1、LIVE=2、RETIRED=3。每槽记录generation/file/flags/state，file仅为非零的本地File身份，不是内核Handle，也不单独提供后端权限；LIVE只表示本地描述符可见，不证明后端连接已经CLAIM/READY。后端偏移、访问模式、O_APPEND/O_NONBLOCK、连接及准备token仍由对应File/连接记录负责，表内只保留独立的FD_CLOEXEC。其既有位1现以abi/boot.h的BOOT_FD_CLOEXEC为唯一常量来源，Bootfd布局/格式不变。
+
+Fdtag=(generation:u64,index:u32,state:u32)标识受理时观察的槽状态，不能仅比较fd整数或代次。reserve选择minimum起最低FREE项，推进代次并标RESERVED；发布必须仍匹配原RESERVED标签，随后以同一代次转LIVE。旧预留标签因state改变而失效，不能在发布后cancel或覆盖新fd。cancel和detach推进代次；replace则在重查旧标签后推进代次并提交新LIVE值。UINT64_MAX从不回绕，最后的关闭/取消将槽退休；需要新身份却无法推进时返回OVERFLOW且旧描述符不变。
+
+publish/replace成功时，调用者事先准备的一份本地File引用移交表；失败仍由调用者持有。detach/replace成功将旧LIVE引用连同旧标签/标志移交调用者的预付收尾记录，不自行关闭后端，不按已复用fd整数再次定位。输出记录必须由调用者保证无待覆盖的所有权且不得与表重叠，失败保持其内容。条件replace拒绝仍RESERVED的目标，也拒绝已换代或状态已改变的旧观察；同文件身份替换仍是一次引用移交，不能暗自省掉新/旧引用记账。源File的pin、同fd dup2无操作、别名计数及旧对象关闭容量在上层处理，本地提交不重读源fd数字。
+
+具体场景：外层open已预留fd4，handler不能用replace窃取该槽；外层发布后原RESERVED标签也不能取消LIVE fd4。另一场景观察fd3/gen7指向A，handler先将其替换为B/gen8，迟到detach(gen7)返回STALE，B和旧输出记录保持原样。两个描述符均指本地File42时，修改一个CLOEXEC不改变另一个；将目标再替换为同一File42时仍返回旧引用，由上层按别名/在途引用规则归还。
+
+8项host覆盖最低空闲/128满表、预留/发布/撤销/复用、代次与状态ABA、条件替换/旧引用移交、别名标志、UINT64_MAX退休、非法输入/内部损坏/输出重叠及1500步固定种子所有权守恒。随机模型分开累计新准备、表内LIVE、调用者外部/收尾及已释放引用，不把本地删除当作后端已排空。runtime独立用户载荷也调用实际libsys原语，核对128项及代次耗尽；该载荷只在测试镜像，默认init/serial不引用fd模块。
+
+最终完整make test-all通过863项host、格式检查及195次双架构QEMU；8项fd专项、168份journal、最终源码/头/SDK/包哈希另核对。两架构runtime各5个有效main调用实际libsys槽表原语，原5个非法/暂不支持Boot案例仍在main前拒绝；测试载荷从实际链接内核提取并与SDK打包ELF逐字节核对。fd.o无未定义符号依赖，SDK私有头逐字节一致，默认init/serial ELF与stage133相同且不含fd模块/测试符号，clangd数据库已更新。证据build/host/stage134-fd-slots/；无CI/板端/性能结果。实际File/连接引用池、Rctx保护与预付收尾、Boot/Fix安装/CLAIM、dup/dup2/close/read/write及FS/TTY服务仍待接；sysstart继续拒绝非零fd/Fix，不把纯本地表原语当作已启用启动fd。
