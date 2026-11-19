@@ -17,11 +17,13 @@
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权；生产PID1已安装16 Set对应的CREATE SERVICE权限，默认serial实际发布/READY已接。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
-- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。CHILD退出/STOP/CONT真实来源、Run停放/继续及recv/call/send/rqwait/父wait中断已接。原生sigsend/USER已接16字节选择器、UID/CONTROL权限与分批组快照；libc kill/raise、FAULT、重启及POSIX sigaction前置仍待接。
+- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。CHILD退出/STOP/CONT、Run停放/继续、recv/call/send/rqwait/父wait中断及原生sigsend/USER已接。默认用户故障现按HAL区分SEGV/BUS/FPE/ILL并保留原始诊断；libc kill/raise、同步FAULT handler/元数据、重启及POSIX sigaction前置仍待接。
 - 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，含真实PIO/IRQ、两环、异步READY和精确init控制，两架构全量已验。普通用户ELF装载尚非FS稳定会话；fd/Fix适配、完整spawn/fork/exec未接，virtio尚无生产DMA。
 - T1.1..T1.5已本地验收：默认init服务装载/READY/监督与失败清理后诊断停机已接。normal含真实init/serial ELF，16 Set/CREATE SERVICE、128槽、固定CONTROL、标准UART/IRQ发权与Boot格式2已用；其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
+
+- 默认故障分类通过849项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。新增3项host覆盖RV cause、ARM FSC/ISS2及原生来源；两架构syscalls扩为5进程/8次调度，实际故障Life代码、原未映射地址及新增非法指令/ARM对齐故障PC正确，页/费用回基线。init/serial ELF与stage131相同；证据stage132-fault-classes/。BUS外部错误/FPE仅host解码，未声称硬件产生；同步handler/FAULT Siginfo、CI/板端/性能均未验。
 
 - 原生sigsend通过846项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。两架构各54请求验证四种UID匹配、uid0不绕过、同会话CONT、CONTROL显式权、零信号无效果、部分授权、USER元数据、组内自KILL与ALL保留真实PID1/自身；32接收者场景验证分批后修改选择器、复用PID槽及迟到成员不改快照。普通Set归零，保留PID1费用/物理基线与内核栈审计通过；serial ELF与stage130相同，init仅.strtab标签变化、装载段相同。证据stage131-native-sigsend/，无CI/板端/性能结果。
 
@@ -48,7 +50,9 @@
 
 ## 待确认与接续
 
-- stage131已本地验收：原生sigsend与USER生产已接；libc kill/raise尚未接。待用户确认GROUP target=0在内核受理时固定当前组，避免libc kill(0)先getpg再发信期间组切换/重建选错目标。正公开PGID与PID/CONTROL/ALL规则已实现；0接续未提前实现。之后继续FAULT、POSIX Rctx/Fix/trampoline/重启、前台与tty服务。
+- stage132已本地验收：HAL分类与默认终止映射已接，公共内核不解释架构寄存器，内部HT类别不充作公开FAULT reason。后续接同步故障handler/归一化元数据及POSIX前置；GROUP target=0的当前组提问仍待回复，不阻止其他已冻结工作。
+
+- stage131已本地验收：原生sigsend与USER生产已接；libc kill/raise尚未接。待用户确认GROUP target=0在内核受理时固定当前组，避免libc kill(0)先getpg再发信期间组切换/重建选错目标。正公开PGID与PID/CONTROL/ALL规则已实现；0接续未提前实现。默认故障映射由stage132补齐，继续同步FAULT、POSIX Rctx/Fix/trampoline/重启、前台与tty服务。
 
 - stage130已本地验收：父wait可被独立信号或不匹配报告的CHLD提示中断，结果优先与中断先锁存分开；组引用在正常/中断/中断后被杀路径各归还一次，libc EINTR保持status。下一步接已确认的16字节selector、逐成员授权及USER来源sigsend；之后接FAULT生产和POSIX Rctx/Fix/trampoline及重启。
 
@@ -80,7 +84,7 @@
 
 - stage113管理引擎已由stage117接入默认init；初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis，父wait/镜像确认/缓冲回收独立。2026-11-19确认的首次必需serial清理后诊断停机已实现，其他服务/恢复方向按07/09接续。
 
-- 下一步：接原生发信生产/授权、FAULT与POSIX中断/重启前置，再接setfg/TTOU、控制终端继承/挂断及tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
+- 下一步：接libc发信、同步FAULT与POSIX中断/重启前置，再接setfg/TTOU、控制终端继承/挂断及tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 
 - 2026-11-18确认的反向bit32=RX_ROOM/bit33=TX_READY与晚绑定已按07/11落定v1 BIND/STATUS及最近结果缓存，serial侧已实现/本地验；生产tty配对和init编排仍待接，绑定前不发布tty连接。
 

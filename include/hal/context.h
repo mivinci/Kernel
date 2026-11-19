@@ -25,6 +25,10 @@ struct Htrap
 #define HT_PAGEFAULT    4
 #define HT_ILLEGAL      5
 #define HT_OTHER        6
+#define HT_ACCESS       7
+#define HT_ALIGN        8
+#define HT_BUS          9
+#define HT_ARITH        10
 #define HAL_CONTEXT_BAD -1
 STATIC_ASSERT(sizeof(Hinit) == 24, hinit_size);
 STATIC_ASSERT(sizeof(Htrap) == 32, htrap_size);

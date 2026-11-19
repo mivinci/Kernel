@@ -1,4 +1,5 @@
 #include <abi/syscall.h>
+#include <abi/signal.h>
 .section .rodata
 .balign 8
 .global native_begin, native_end
@@ -722,4 +723,20 @@ native_bad:
  mov x8, #SYS_EXIT
  svc #0
  b native_bad
+.global native_illegal, native_align
+native_illegal:
+ .inst 0
+native_align:
+ adr x9, native_align_target
+ add x9, x9, #2
+ br x9
+native_align_target:
+ nop
+ b native_align_target
 native_end:
+.balign 8
+.global native_align_signal, native_align_pc_offset
+native_align_signal:
+ .quad SIGNAL_BUS
+native_align_pc_offset:
+ .quad native_align_target-native_begin+2

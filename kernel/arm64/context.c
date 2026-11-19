@@ -20,21 +20,34 @@ void
 hal_trap_decode(const Hctx *context, Htrap *trap)
 {
   u64 code = context->tf.cause;
+  u32 fault = (u32) (code & 63);
   trap->code = code;
   trap->address = context->tf.address;
   trap->kind = HT_OTHER;
-  trap->fromuser = (context->tf.status & 15) == 0;
+  trap->fromuser = (context->tf.status & 31) == 0;
   trap->syscall_nr = context->tf.x[8];
   if (code == (1UL << 63)) {
     trap->kind = HT_IRQ;
     return;
   }
-  code >>= 26;
+  /* ISS2 occupies higher ESR bits; only EC[31:26] selects the class. */
+  code = (code >> 26) & 63;
   if (code == 0x15)
     trap->kind = HT_SYSCALL;
-  else if (code == 0x20 || code == 0x21 || code == 0x24 || code == 0x25)
-    trap->kind = HT_PAGEFAULT;
-  else if (code == 0)
+  else if (code == 0x20 || code == 0x21 || code == 0x24 || code == 0x25) {
+    if (fault <= 15)
+      trap->kind = HT_PAGEFAULT;
+    else if ((code == 0x24 || code == 0x25) && fault == 0x21)
+      trap->kind = HT_ALIGN;
+    else if ((code == 0x24 || code == 0x25) && fault == 0x11)
+      trap->kind = HT_ACCESS;
+    else if (fault == 0x10 || (fault >= 0x14 && fault <= 0x18) || (fault >= 0x1c && fault <= 0x1f))
+      trap->kind = HT_BUS;
+  } else if (code == 0x22 || code == 0x26)
+    trap->kind = HT_ALIGN;
+  else if (code == 0x2c)
+    trap->kind = HT_ARITH;
+  else if (code == 0 || code == 0x0e)
     trap->kind = HT_ILLEGAL;
 }
 
@@ -42,7 +55,7 @@ u32
 hal_user_writefault(const Hctx *context)
 {
   u64 code = context->tf.cause;
-  return !(context->tf.status & 15) && ((code >> 26) & 63) == 0x24 && (code & 63) == 15 &&
+  return !(context->tf.status & 31) && ((code >> 26) & 63) == 0x24 && (code & 63) == 15 &&
          (code & 64) && !(code & 0x580);
 }
 

@@ -4,7 +4,9 @@
 #include <diag.h>
 #include <clock.h>
 #include <hal/clock.h>
-extern const u8 native_begin[], native_end[], native_fault[];
+extern const u8  native_begin[], native_end[], native_fault[];
+extern const u8  native_illegal[], native_align[];
+extern const u64 native_align_signal, native_align_pc_offset;
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -65,7 +67,10 @@ load(Handle pid, u64 entry, u32 fault)
   REQUIRE(!localmap(t, space, code, 0, entry, PAGE_SIZE, VM_READ | VM_EXEC));
   REQUIRE(!localmap(t, space, stack, 0, 0x3ffffe0000UL, 65536, VM_READ | VM_WRITE));
   REQUIRE(!localmap(t, space, boot, 0, 0x3fff000000UL, PAGE_SIZE, VM_READ));
-  c.entry = entry + (fault ? (u64) (native_fault - native_begin) : 0);
+  c.entry = entry + (fault == 1   ? (u64) (native_fault - native_begin)
+                     : fault == 2 ? (u64) (native_illegal - native_begin)
+                     : fault == 3 ? (u64) (native_align - native_begin)
+                                  : 0);
   c.stack = 0x3fffff0000UL;
   c.boot = 0x3fff000000UL;
   c.bootsz = header.bytes;
@@ -77,13 +82,13 @@ syscalltest(void)
 {
   Setid      set;
   Set        group;
-  Handle     pids[3];
-  Lifeid     ids[3];
+  Handle     pids[5];
+  Lifeid     ids[5];
   Procinfo   info;
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u32        i, j, turns = 0;
+  u32        i, j, turns = 0, expected, reason;
   int        error;
   u64        start, now, frequency = hal_clock_freq(), nanos;
   isize      seconds;
@@ -102,45 +107,58 @@ syscalltest(void)
   putstr("\n");
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
-  for (i = 0; i < 3; i++) {
+  for (i = 0; i < 5; i++) {
     REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &info));
     ids[i] = info.life;
-    load(pids[i], 0x10000 + (u64) i * 0x10000, i == 2);
+    load(pids[i], 0x10000 + (u64) i * 0x10000, i < 2 ? 0 : i - 1);
   }
   while (!(error = procrunone())) {
     REQUIRE(++turns <= 10);
   }
-  REQUIRE(error == -ERR_WOULD_BLOCK && turns == 6);
-  for (i = 0; i < 3; i++) {
+  REQUIRE(error == -ERR_WOULD_BLOCK && turns == 8);
+  for (i = 0; i < 5; i++) {
+    expected = i < 2 ? 42 : i == 2 ? SIGNAL_SEGV : i == 3 ? SIGNAL_ILL : (u32) native_align_signal;
+    reason = i < 2 ? LIFE_EXIT : LIFE_FAULT;
     REQUIRE(!lifestat(ids[i], &life));
-    if (life.reason != (i == 2 ? LIFE_FAULT : LIFE_EXIT) || life.code != (i == 2 ? 11 : 42)) {
+    if (life.reason != reason || life.code != expected) {
       putstr("SYSCALLRESULT code=");
       puthex(life.code);
       putstr(" pc=");
       puthex(life.fault.pc);
       putstr("\n");
     }
-    REQUIRE(life.reason == (i == 2 ? LIFE_FAULT : LIFE_EXIT) && life.code == (i == 2 ? 11 : 42));
+    REQUIRE(life.reason == reason && life.code == expected);
     if (i == 2)
       REQUIRE(life.fault.address == 0x40000);
+    if (i == 3)
+      REQUIRE(life.fault.pc == 0x10000 + (u64) i * 0x10000 + (u64) (native_illegal - native_begin));
+    if (i == 4)
+      REQUIRE(life.fault.pc == 0x10000 + (u64) i * 0x10000 + native_align_pc_offset);
     for (j = 0; j < 32; j++) {
       error = procclean(pids[i]);
       REQUIRE(error >= 0);
       if (!error)
         break;
     }
-    REQUIRE(j < 32 && !lifecollect(ids[i], 1, &result) && result.code == (i == 2 ? 11U : 42U));
+    REQUIRE(j < 32 && !lifecollect(ids[i], 1, &result) && result.code == expected &&
+            result.reason == reason);
   }
   REQUIRE(!setstat(set, &group) && !group.charged && !group.instances && !setclose(set));
   pgstat(&after);
   REQUIRE(before.free == after.free && before.allocated == after.allocated && !acctcheck() &&
           !pgcheck());
   putstr("SYSCALLCHECK processes=");
-  puthex(3);
+  puthex(5);
   putstr(" turns=");
   puthex(turns);
   putstr(" exit=");
   puthex(42);
+  putstr(" faults=");
+  puthex(3);
+  putstr(" illegal=");
+  puthex(native_align_signal == SIGNAL_BUS ? 1 : 2);
+  putstr(" pc_align=");
+  puthex(native_align_signal == SIGNAL_BUS ? 1 : 0);
   putstr(" charged=");
   puthex(group.charged);
   putstr(" allocated=");

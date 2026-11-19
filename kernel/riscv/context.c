@@ -31,6 +31,11 @@ hal_trap_decode(const Hctx *context, Htrap *trap)
     trap->kind = HT_SYSCALL;
   else if (code == 12 || code == 13 || code == 15)
     trap->kind = HT_PAGEFAULT;
+  else if (code == 1 || code == 5 || code == 7)
+    /* Access faults can include PMA/PMP rejection, not just a bus failure. */
+    trap->kind = HT_ACCESS;
+  else if (code == 0 || code == 4 || code == 6)
+    trap->kind = HT_ALIGN;
   else if (code == 2)
     trap->kind = HT_ILLEGAL;
 }

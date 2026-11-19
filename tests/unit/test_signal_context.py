@@ -8,6 +8,8 @@ ROOT=Path(__file__).resolve().parents[2]
 
 class Initial(C.Structure):
     _fields_=[(name,C.c_uint64) for name in ('entry','sp','arg')]
+class Decoded(C.Structure):
+    _fields_=[('kind',C.c_uint32),('fromuser',C.c_uint32)]+[(name,C.c_uint64) for name in ('code','address','syscall_nr')]
 class RvTrap(C.Structure):
     _fields_=[('x',C.c_uint64*32)]+[(name,C.c_uint64) for name in ('pc','status','cause','address')]
 class ArmTrap(C.Structure):
@@ -44,6 +46,7 @@ class SignalContextTests(unittest.TestCase):
             lib.hal_signal_enter.argtypes=[C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint32]
             lib.hal_signal_restore.argtypes=[C.c_void_p,C.c_void_p,C.c_void_p]
             lib.hal_user_writefault.argtypes=[C.c_void_p]
+            lib.hal_trap_decode.argtypes=[C.c_void_p,C.POINTER(Decoded)]
             cls.targets.append((arch,kind,lib))
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
@@ -69,6 +72,55 @@ class SignalContextTests(unittest.TestCase):
                 self.assertEqual(context.bytes(),before)
             context.value.tf.cause=valid
             context.value.tf.status |= 0x100 if arch=='riscv' else 5
+            self.assertEqual(lib.hal_user_writefault(context.pointer),0)
+
+    def test_riscv_synchronous_fault_classes_preserve_raw_diagnostics(self):
+        arch,kind,lib=next(item for item in self.targets if item[0]=='riscv')
+        context=self.initial(kind,lib)
+        context.value.tf.x[17]=0x64
+        expected={0:8,1:7,2:5,4:8,5:7,6:8,7:7,8:1,12:4,13:4,15:4}
+        for cause in range(32):
+            context.value.tf.cause=cause
+            before=context.bytes();trap=Decoded()
+            lib.hal_trap_decode(context.pointer,C.byref(trap))
+            self.assertEqual((trap.kind,trap.fromuser,trap.code,trap.address,trap.syscall_nr),
+                             (expected.get(cause,6),1,cause,0x12345678,0x64))
+            self.assertEqual(context.bytes(),before)
+        for cause,kind in (((1<<63)|5,3),((1<<63)|9,2)):
+            context.value.tf.cause=cause;trap=Decoded()
+            lib.hal_trap_decode(context.pointer,C.byref(trap))
+            self.assertEqual((trap.kind,trap.code),(kind,cause))
+        context.value.tf.status|=0x100
+        lib.hal_trap_decode(context.pointer,C.byref(trap))
+        self.assertEqual(trap.fromuser,0)
+
+    def test_arm_abort_status_distinguishes_pages_alignment_and_external_failures(self):
+        arch,kind,lib=next(item for item in self.targets if item[0]=='arm64')
+        context=self.initial(kind,lib)
+        external={0x10,*range(0x14,0x19),*range(0x1c,0x20)}
+        for ec in (0x20,0x21,0x24,0x25):
+            for fsc in range(64):
+                context.value.tf.cause=(ec<<26)|fsc|(1<<32)
+                expected=4 if fsc<=15 else 8 if ec in (0x24,0x25) and fsc==0x21 else 7 if ec in (0x24,0x25) and fsc==0x11 else 9 if fsc in external else 6
+                before=context.bytes();trap=Decoded()
+                lib.hal_trap_decode(context.pointer,C.byref(trap))
+                self.assertEqual((trap.kind,trap.fromuser,trap.code,trap.address),
+                                 (expected,1,context.value.tf.cause,0x12345678),(ec,fsc))
+                self.assertEqual(context.bytes(),before)
+
+    def test_arm_ec_excludes_iss2_and_rejects_aarch32_as_native_user_origin(self):
+        arch,kind,lib=next(item for item in self.targets if item[0]=='arm64')
+        context=self.initial(kind,lib);context.value.tf.x[8]=0x64
+        for ec,expected in ((0,5),(0xe,5),(0x15,1),(0x22,8),(0x26,8),(0x2c,10),(0x3c,6)):
+            context.value.tf.cause=(ec<<26)|(0x123<<32);trap=Decoded();before=context.bytes()
+            lib.hal_trap_decode(context.pointer,C.byref(trap))
+            self.assertEqual((trap.kind,trap.fromuser,trap.code,trap.syscall_nr),
+                             (expected,1,context.value.tf.cause,0x64))
+            self.assertEqual(context.bytes(),before)
+        for status in (4,5,0x10,0x1f):
+            context.value.tf.status=status;context.value.tf.cause=(0x24<<26)|64|15
+            trap=Decoded();lib.hal_trap_decode(context.pointer,C.byref(trap))
+            self.assertEqual(trap.fromuser,0)
             self.assertEqual(lib.hal_user_writefault(context.pointer),0)
 
     def test_signal_entry_maps_exact_six_arguments_and_preserves_other_user_state(self):

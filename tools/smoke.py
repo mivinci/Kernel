@@ -1671,7 +1671,7 @@ def exercise(args, run_dir, record):
                     record["timer"] = checks[0]
                 if args.case == "syscalls":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("SYSCALLCHECK ")]
-                    if checks != [{"processes": 3, "turns": 6, "exit": 42, "charged": 0, "allocated": transition["tables"]}]:
+                    if checks != [dict(processes=5,turns=8,exit=42,faults=3,illegal=2 if args.arch=='riscv' else 1,pc_align=0 if args.arch=='riscv' else 1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("native syscall/continuation/reclamation mismatch")
                     record["syscalls"] = checks[0]
                 if args.case == "prep":

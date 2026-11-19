@@ -507,3 +507,28 @@ RV矩阵确定选择hart1：测试在固件运行前保留完整原DTB/保留表
 本点最终完整make test-all通过678项host、格式及167次两架构QEMU。162份启动准入快照及实际CPU库存/各核寄存器保留；8次四核矩阵中RV的normal/pages/真实IRQ/自停放确定hart1/context3，ARM对应场景通过，两架构各实际唤醒并自停放三个次核，页账目守恒。12次512 MiB/2 GiB/8 GiB矩阵与生产PID1/缓存审计仍通过，全部源码/共享头哈希匹配终稿，生产链接无fixture。证据build/host/stage100-cpu-bootstrap/evidence.json与test-all.log；HMP误选核、FW_DYNAMIC重定位偏好误当冷启动许可及对象名冲突的失败均保留。
 
 Dtinfo=24528字节、Dtcpu=16、Bootcpus快照=272、Hirq仍64；bootcpucheck编译帧两架构80字节，早期CPU提取ARM192/RV208字节，不代表完整栈深或性能。PSCI SMC与ARM非零affinity仅模型/代码边界，真实板/EL2降级/固件交接未验；006标记为本地四核停放完成，不称SMP调度或通用多核板端支持已完成。
+
+### 默认用户故障终止与HAL分类（2026-11-20）
+
+Htrap仍32字节，新增内部类别ACCESS/ALIGN/BUS/ARITH，原始code/address/syscall_nr不改写。公共内核仅按HAL类别选择默认SEGV/BUS/FPE/ILL，不解释架构寄存器；COW仍先由原有精确用户写fault及逻辑COW检查处理。内部HT类别不作为公开Siginfo.reason编码，FAULT帧生产与标准转换另接。
+
+映射依据核对RISC-V Privileged ISA v20260120的scause及PMA/PMP检查规则、Arm A-profile Architecture Registers 2026-09的ESR_EL1 EC/IFSC/DFSC表。实施边界如下，未列出的异常保留OTHER并沿现有受控ILL终止；不声称实现未启用的硬件扩展或调试协议。
+
+| 架构来源 | HAL类别 | 默认用户终止信号 |
+| --- | --- | --- |
+| RV页故障12/13/15 | PAGEFAULT | SEGV |
+| RV访问故障1/5/7，可能含PMA/PMP拒绝 | ACCESS | SEGV，不擅自认定为总线错误 |
+| RV地址不对齐0/4/6 | ALIGN | BUS |
+| RV非法指令2 | ILLEGAL | ILL |
+| ARM指令/数据abort的FSC 0..15 | PAGEFAULT | SEGV |
+| ARM数据tag检查FSC 0x11 | ACCESS | SEGV，不表示开启MTE |
+| ARM明确外部/奇偶错误FSC 0x10、0x14..0x18、0x1c..0x1f | BUS | BUS |
+| ARM数据对齐FSC 0x21，PC/SP对齐EC 0x22/0x26 | ALIGN | BUS |
+| ARM非法指令/执行态EC 0/0x0e | ILLEGAL | ILL |
+| ARM AArch64浮点异常EC 0x2c | ARITH | FPE |
+
+ARM仅提取EC[31:26]，不再让ESR高位ISS2改变异常类别；native用户来源要求PSTATE[4:0]=EL0t，AArch32状态不被当作本系统支持的用户现场，COW判定使用同一来源约束。IRQ/syscall类别与原有原始诊断仍保留，内核自身故障继续诊断停机，不包装成用户信号。
+
+新增3项host检查RV基础cause、ARM全部64种abort状态、ISS2与来源边界，并逐字节检查Hctx整数/FP现场不变；原有6项上下文测试继续运行。真实syscalls场景扩为5进程/8次调度：原两个寄存器/FP正常退出及未映射读取保留，另加两架构非法指令和ARM真实未对齐PC分支。ARM须以LIFE_FAULT/BUS退出并保留精确故障PC；RV相应额外载荷为第二个非法指令，不能冒充已触发该QEMU可能模拟的访存对齐异常。全部页/费用与实例回基线。
+
+最终完整make test-all通过849项host、格式检查及195次双架构QEMU；9项上下文专项、168份journal及最终源码/头/SDK/包哈希另核对。两架构syscalls均为5进程/8次调度，三次真实故障的原因/代码正确，原未映射故障地址及新增故障的精确PC匹配，全部页/费用回基线；默认init/serial ELF与stage131逐字节相同，normal无测试载荷，clangd数据库已更新。证据build/host/stage132-fault-classes/。外部abort及浮点类别当前是host解码证据，没有真实硬件FPE/总线故障产生证明；未完成CI/板端/性能验收。本点只修正默认终止映射，未接同步故障handler/FAULT Siginfo生产，不将其称为完整可恢复故障信号。

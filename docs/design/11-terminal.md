@@ -761,3 +761,5 @@ USER来源只由内核构造，code=1、pid=发送者完整PID、uid=发送者eu
 32个接收者的组场景在首批8个投递后暂停原C续点，CPU修改原用户选择器、终止后复用尚未投递目标的槽并发布同组新成员；其余原目标仍收到原信号，重用槽的新PID和迟到成员均无pending，发送者最后收到自己的USER帧。所有普通测试Set最终费用/实例为0；保留PID1的费用与物理页基线不变，主机继续核对实际内核页表、保留内核栈及guard，不把这部分存活页当作泄漏豁免。最初fixture误从已发布表调用仅构造期的proctable，已在发布前保存测试Handle；保留PID1最初未纳入主机栈审计也已补齐，失败日志保留。
 
 最终完整make test-all通过846项host、格式检查及195次双架构QEMU；168份journal、最终源码/头/SDK/包哈希及两份54请求的原生发信证明另核对。新CASE不链接用户入口wrapper，普通测试Set费用/实例归零，实际PID1保持原费用/物理页与阻塞状态，其保留内核栈和guard仍由主机页表审计。默认serial ELF与stage130逐字节相同，init装载段亦逐字节相同，只有.strtab内LLVM局部标签编号改变；普通包/镜像无测试载荷，clangd数据库已更新。证据build/host/stage131-native-sigsend/；无CI/板端/性能结果。此点尚无libc kill/raise、标准sigaction/trampoline、FAULT或终端ttysignal生产，不把原生USER发信称为完整POSIX或作业控制；GROUP target=0的原子当前组选择仍待用户回复。
+
+默认故障退出接续（2026-11-20）：HAL现区分页/访问、明确总线/对齐及算术异常，公共内核默认分别以SEGV、BUS、FPE终止，非法/未支持类别仍ILL，Life保留原始PC/address/cause。ARM实际未对齐PC与两架构非法指令的执行证据及精确映射见01末尾；本点未生产FAULT来源Siginfo，也未把已安装的HANDLER接到同步硬件故障，不把默认映射修正称作已实现可恢复故障信号。GROUP target=0提问仍独立待回复。

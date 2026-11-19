@@ -36,7 +36,7 @@ syscall(Hctx *context)
   u64        args[HAL_SYSCALL_ARGS], outputs[8], used = 0;
   Handle     handle = 0, pid = 0, parent = 0;
   u64        image = 0;
-  u32        i;
+  u32        i, signum;
   isize      status = 0, seconds = 0;
   if (!table)
     panic("user trap without current process");
@@ -49,7 +49,11 @@ syscall(Hctx *context)
     fault.pc = context->tf.pc;
     fault.address = trap.address;
     fault.cause = trap.code;
-    procexit(LIFE_FAULT, trap.kind == HT_PAGEFAULT ? 11 : 4, &fault);
+    signum = trap.kind == HT_PAGEFAULT || trap.kind == HT_ACCESS ? SIGNAL_SEGV
+             : trap.kind == HT_ALIGN || trap.kind == HT_BUS      ? SIGNAL_BUS
+             : trap.kind == HT_ARITH                             ? SIGNAL_FPE
+                                                                 : SIGNAL_ILL;
+    procexit(LIFE_FAULT, signum, &fault);
   }
   for (i = 0; i < 8; i++)
     outputs[i] = 0;
