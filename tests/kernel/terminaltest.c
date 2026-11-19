@@ -1,5 +1,6 @@
 #include "ktest.h"
 #include <terminal.h>
+#include <proc.h>
 #include <diag.h>
 static Handle retained[TERMINALS];
 #define CHECK(c)                                                                                   \
@@ -11,6 +12,64 @@ static Handle retained[TERMINALS];
       panic("terminal relationships");                                                             \
     }                                                                                              \
   } while (0)
+
+static void
+localcheck(void)
+{
+  Setid    set;
+  Set      budget;
+  Handle   parent, child, terminal, full, query, signal, denied, target;
+  Procinfo source, destination;
+  Rtable  *from, *to;
+  Queryrec rows[8];
+  Image    state;
+  u64      bits, next;
+  u32      written, i, found = 0;
+  int      error;
+  CHECK(!setcreate(256, 512, 2, &set) && !procnew(set, 1, 64, 128, 8, &parent) &&
+        !procinfo(parent, &source) && !procnew(set, 1, 64, 128, 8, &child) &&
+        !procinfo(child, &destination));
+  from = proctable(parent);
+  to = proctable(child);
+  CHECK(from && to && !terminalnew(source.identity, &terminal));
+  CHECK(!localterminal(from, terminal, TERMINAL_RIGHTS | LOCAL_GRANT, TERMINAL_SIGNALS, 0, &full));
+  CHECK(localinherit(from, full, LOCAL_FORK) == -ERR_DENIED);
+  CHECK(!terminaldrop(terminal));
+  CHECK(!localcopy(from, full, to, TERMINAL_QUERY | TERMINAL_FG, 0, 0, LOCAL_FORK | LOCAL_EXEC,
+                   &query));
+  CHECK(!localcopy(from, full, to, TERMINAL_SIGNAL, (u64) 1 << (SIGNAL_INT - 1), 0, 0, &signal));
+  CHECK(!localterminalaccess(to, signal, TERMINAL_SIGNAL, &target, &bits) && target == terminal &&
+        bits == ((u64) 1 << (SIGNAL_INT - 1)));
+  CHECK(localterminalaccess(to, query, TERMINAL_SIGNAL, &target, &bits) == -ERR_DENIED && !target &&
+        !bits);
+  CHECK(localcopy(from, full, to, TERMINAL_SIGNAL, (u64) 1 << (SIGNAL_KILL - 1), 0, 0, &denied) ==
+            -ERR_DENIED &&
+        !denied);
+  CHECK(localcopy(to, query, from, TERMINAL_BIND, 0, 0, 0, &denied) == -ERR_DENIED && !denied);
+  CHECK(!procdestroy(parent));
+  from = NULL;
+  while ((error = procclean(parent)) > 0) {
+  }
+  CHECK(!error && !imagestat(source.identity, &state) && state.state == IMAGE_ENDED);
+  CHECK(localterminalaccess(to, query, TERMINAL_QUERY, &target, &bits) == -ERR_STALE && !target &&
+        !bits);
+  CHECK(!localquery(to, 0, rows, ARRAY_SIZE(rows), &written, &next) && !next);
+  for (i = 0; i < written; i++)
+    if (rows[i].data[0] == (u64) query) {
+      CHECK(rows[i].data[1] == RESOURCE_TERMINAL &&
+            rows[i].data[2] == (TERMINAL_QUERY | TERMINAL_FG) && !rows[i].data[3] &&
+            rows[i].data[5] == 3 && rows[i].data[6] == (u64) parent &&
+            rows[i].data[7] == source.image);
+      found++;
+    }
+  CHECK(found == 1 && !localfree(to, query) && !localfree(to, signal) &&
+        imagestat(source.identity, &state) == -ERR_STALE);
+  CHECK(!procdestroy(child));
+  to = NULL;
+  while ((error = procclean(child)) > 0) {
+  }
+  CHECK(!error && !setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+}
 
 void
 terminaltest(void)
@@ -74,6 +133,7 @@ terminaltest(void)
   CHECK(!groupdrop(first) && !groupdrop(second) && !groupdrop(alien) && !groupdrop(sid) &&
         !groupdrop(foreign) && !groupcheck());
   CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+  localcheck();
   pgstat(&after);
   CHECK(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
         !acctcheck());
@@ -86,6 +146,8 @@ terminaltest(void)
   putstr(" capacity=");
   puthex(TERMINALS);
   putstr(" reclaimed=");
+  puthex(1);
+  putstr(" local=");
   puthex(1);
   putstr(" charged=");
   puthex(budget.charged);

@@ -11,6 +11,8 @@
 #include <prepid.h>
 #include <image.h>
 #include <irq.h>
+#include <terminal.h>
+#include <abi/terminal.h>
 #define LOCALS           128
 #define LOCAL_CREATE     RESOURCE_CREATE
 #define LOCAL_SPACE      RESOURCE_SPACE
@@ -24,6 +26,7 @@
 #define LOCAL_IRQ_BIND   RESOURCE_IRQ_BIND
 #define LOCAL_IRQ_SOURCE RESOURCE_IRQ_SOURCE
 #define LOCAL_SYSTEM     RESOURCE_SYSTEM
+#define LOCAL_TERMINAL   RESOURCE_TERMINAL
 #define LOCAL_USE        RESOURCE_USE
 #define LOCAL_CONSTRUCT  RESOURCE_CONSTRUCT
 #define LOCAL_LOAD       4
@@ -125,6 +128,11 @@ int localinit(Rtable *table, Local *storage, u32 count, Acctid acct, Spaceid spa
 int localendpoint(Rtable *table, Imageid target, u32 kind, u64 rights, u64 bits, u32 inherit,
                   Handle *out);
 int localcontrol(Rtable *table, Lifeid life, u64 rights, Handle *out);
+/* Trusted install/resolve. Native creation, preparation-only grant and
+   caller session/foreground policy are checked by Proc separately. */
+int localterminal(Rtable *table, Handle terminal, u64 rights, u64 signals, u32 inherit,
+                  Handle *out);
+int localterminalaccess(Rtable *table, Handle authority, u64 right, Handle *terminal, u64 *signals);
 int localobserve(Rtable *table, u64 rights, Handle *out);
 /* Trusted target installation; no raw-number native bind admission here. */
 int localirqbind(Rtable *table, Imageid image, Event *event, u32 source, u32 bit, Handle *out);

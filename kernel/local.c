@@ -640,6 +640,60 @@ controlled(const Local *l)
   id.reserved = 0;
   return id;
 }
+static Handle
+terminalid(const Local *entry)
+{
+  return handlepack(HANDLE_TERMINAL, entry->objectgen, entry->object);
+}
+int
+localterminal(Rtable *table, Handle terminal, u64 rights, u64 signals, u32 inherit, Handle *out)
+{
+  Local *slot;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!table || table->state != LOCAL_OPEN)
+    return -ERR_STATE;
+  if (!(rights & TERMINAL_RIGHTS) || rights & ~((u64) TERMINAL_RIGHTS | LOCAL_GRANT) ||
+      signals & ~TERMINAL_SIGNALS || ((rights & TERMINAL_SIGNAL) ? !signals : signals != 0) ||
+      inherit & ~3U || (inherit && (rights & (TERMINAL_SIGNAL | TERMINAL_BIND))))
+    return -ERR_INVALID;
+  slot = empty(table);
+  if (!slot)
+    return sloterror(table);
+  error = terminalhold(terminal);
+  if (error)
+    return error;
+  publish(table, slot, LOCAL_TERMINAL, handlegen(terminal), handleindex(terminal), rights, signals,
+          0, inherit, 0, out);
+  return 0;
+}
+int
+localterminalaccess(Rtable *table, Handle authority, u64 right, Handle *terminal, u64 *signals)
+{
+  Local   *slot = find(table, authority, LOCAL_TERMINAL);
+  Terminal state;
+  Handle   id;
+  int      error;
+  if (!terminal || !signals ||
+      (right != TERMINAL_QUERY && right != TERMINAL_FG && right != TERMINAL_SIGNAL &&
+       right != TERMINAL_BIND))
+    return -ERR_INVALID;
+  *terminal = 0;
+  *signals = 0;
+  if (!slot)
+    return -ERR_BAD_HANDLE;
+  if (!(slot->rights & right))
+    return -ERR_DENIED;
+  id = terminalid(slot);
+  error = terminalstat(id, &state);
+  if (error)
+    return error;
+  *terminal = id;
+  *signals = slot->offset;
+  return 0;
+}
 int
 localcontrol(Rtable *t, Lifeid target, u64 rights, Handle *out)
 {
@@ -908,6 +962,16 @@ localcopy(Rtable *source, Handle h, Rtable *target, u64 rights, u64 offset, u64 
   }
   if (l->subtype == LOCAL_CREATE)
     return -ERR_NOTSUP; /* Delegated CREATE policy still needs SERVICE/POLICY admission. */
+  if (l->subtype == LOCAL_TERMINAL) {
+    Imageid image;
+    Image   state;
+    if (length || offset & ~l->offset)
+      return -ERR_DENIED;
+    if (!target || imagefind(target->owner, target->image, &image) || imagestat(image, &state) ||
+        state.state != IMAGE_PREPARING)
+      return -ERR_STATE;
+    return localterminal(target, terminalid(l), rights, offset, inherit, out);
+  }
   if (l->subtype == LOCAL_CONTROL) {
     if (offset || length || inherit)
       return -ERR_INVALID;
@@ -1227,6 +1291,13 @@ removeentry(Local *l)
     l->rights = 0;
     return 0;
   }
+  if (l->subtype == LOCAL_TERMINAL) {
+    if (terminaldrop(terminalid(l)))
+      panic("terminal local reference");
+    l->subtype = 0;
+    l->rights = 0;
+    return 0;
+  }
   if (l->subtype == LOCAL_IRQ_BIND) {
     if (irqdrop(bindingid(l)))
       panic("IRQ local reference");
@@ -1325,6 +1396,9 @@ localinherit(Rtable *t, Handle h, u64 flags)
       return -ERR_DENIED;
     if ((flags & LOCAL_EXEC) && backing.state != MEM_SHARED)
       return -ERR_DENIED;
+  } else if (l->subtype == LOCAL_TERMINAL) {
+    if (flags && l->rights & (TERMINAL_SIGNAL | TERMINAL_BIND))
+      return -ERR_DENIED;
   } else if (l->subtype != LOCAL_CALL && l->subtype != LOCAL_SEND && l->subtype != LOCAL_NOTIFY)
     return -ERR_DENIED;
   l->inherit = (u8) flags;
@@ -1337,7 +1411,7 @@ localfree(Rtable *t, Handle h)
   return l && (l->subtype == LOCAL_MEM || l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND ||
                l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL ||
                l->subtype == LOCAL_IRQ_BIND || l->subtype == LOCAL_IRQ_SOURCE ||
-               l->subtype == LOCAL_SYSTEM)
+               l->subtype == LOCAL_SYSTEM || l->subtype == LOCAL_TERMINAL)
              ? removeentry(l)
              : -ERR_BAD_HANDLE;
 }
@@ -1434,6 +1508,13 @@ queryrecord(const Rtable *table, u32 index, Queryrec *out)
   } else if (l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND || l->subtype == LOCAL_NOTIFY) {
     if (imagestat(endpoint(l), &image))
       return -ERR_STALE;
+    out->data[6] = (u64) image.pid;
+    out->data[7] = image.number;
+  } else if (l->subtype == LOCAL_TERMINAL) {
+    Imageid owner;
+    if (terminalimage(terminalid(l), &owner) || imagestat(owner, &image))
+      return -ERR_STALE;
+    out->data[3] = l->offset;
     out->data[6] = (u64) image.pid;
     out->data[7] = image.number;
   } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
@@ -1749,6 +1830,20 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
       if (error)
         return error;
       break;
+    case LOCAL_TERMINAL:
+      if (!(slot->inherit & LOCAL_FORK))
+        break;
+      if (!(slot->rights & (TERMINAL_QUERY | TERMINAL_FG)) ||
+          slot->rights & ~((u64) TERMINAL_QUERY | TERMINAL_FG | LOCAL_GRANT) ||
+          slot->inherit & ~3U || slot->offset || slot->length)
+        return -ERR_INVALID;
+      {
+        Imageid owner;
+        error = terminalimage(terminalid(slot), &owner);
+      }
+      if (error)
+        return error;
+      break;
     case LOCAL_CONTROL:
     case LOCAL_OBSERVE:
     case LOCAL_IRQ_SOURCE:
@@ -1783,6 +1878,8 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
                 slot->subtype == LOCAL_NOTIFY) &&
                (slot->inherit & LOCAL_FORK)) {
       error = imagehold(endpoint(slot), IMAGE_CLEANUP);
+    } else if (slot->subtype == LOCAL_TERMINAL && (slot->inherit & LOCAL_FORK)) {
+      error = terminalretain(terminalid(slot));
     } else
       continue;
     if (error)

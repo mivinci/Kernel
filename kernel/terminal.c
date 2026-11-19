@@ -59,6 +59,14 @@ terminalhold(Handle id)
   Terminal *terminal = find(id);
   if (!live(terminal))
     return -ERR_STALE;
+  return terminalretain(id);
+}
+int
+terminalretain(Handle id)
+{
+  Terminal *terminal = find(id);
+  if (!terminal)
+    return -ERR_STALE;
   if (terminal->refs == ~(u32) 0)
     return -ERR_OVERFLOW;
   terminal->refs++;
@@ -134,6 +142,20 @@ terminalset(Handle id, Handle group, u64 expected)
   terminal->epoch++;
   if (previous && groupdrop(previous))
     panic("old terminal foreground reference");
+  return 0;
+}
+
+int
+terminalimage(Handle id, Imageid *out)
+{
+  Terminal *terminal = find(id);
+  if (!out)
+    return -ERR_INVALID;
+  if (!terminal)
+    return -ERR_STALE;
+  out->generation = terminal->owner.generation;
+  out->index = terminal->owner.index;
+  out->reserved = 0;
   return 0;
 }
 

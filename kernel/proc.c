@@ -2023,6 +2023,11 @@ procgrant(Rtable *source, Handle authority, Handle resource, u64 rights, u64 off
   error = localnative(source, resource);
   if (error)
     return error;
+  if (source->slots[handleindex(resource)].subtype == LOCAL_TERMINAL) {
+    error = prepareproc(source, authority, PREP_CONFIG, &p);
+    if (error)
+      return error;
+  }
   return localcopy(source, resource, &p->resources, rights, offset, length, (u32) inherit, out);
 }
 int

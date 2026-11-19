@@ -107,6 +107,8 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 
 终端调用尚未实现；2026-11-19用户确认getfg额外返回SID/epoch、setfg增加expected_epoch。getfg仅使用a0，setfg使用a0..a2；未用输入必须为0，失败输出清零。setfg在授权与关系检查后核对关联epoch，不匹配返回STALE且不改变前台；匹配才原子提交新前台并递增epoch，不回绕，耗尽返回OVERFLOW且保留旧关联。ttybind仅首次关联，ttysignal仍按提交时当前前台组投递。具体语义及例子见11“前台切换、模式与孤儿组”，不保留旧两参数setfg兼容路径。
 
+2026-11-19用户另确认TERMINAL Local低位QUERY/FG/SIGNAL/BIND=1/2/4/8，信号mask仅允许INT/QUIT/TSTP/HUP/WINCH。grant对TERMINAL的offset为减权后的mask、length=0；无SIGNAL则mask=0。仅QUERY/FG可FORK/EXEC继承；只有有效CONSTRUCT/EXEC_VIEW CONFIG可以grant TERMINAL，CONTROL INSTALL不能替代。RESOURCE对此类型data[3]=信号mask、data[4]=0、data[6..7]=精确tty PID/image；旧失效授权可被枚举，不表示可继续使用。头文件唯一来源abi/terminal.h，实际创建/前台调用支持边界见11末尾。
+
 getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.md#会话与进程组操作2026-11-16用户确认)为准。getpg仅使用a0，setpg仅使用a0/a1，setsid无参数；未使用输入必须为0。成功getpg只返回a1/a2，setsid只返回a1，setpg无额外输出；失败输出清零。负选择器为INVALID，非进程类别为BAD_HANDLE，消失/已收取目标为STALE，关系越权或会话首进程操作为DENIED，孩子已成功exec为STATE，关系池满为CAPACITY；失败不改变成员关系。
 
 ### 固定参数结构（已冻结）

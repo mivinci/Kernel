@@ -302,6 +302,8 @@ SIGCHLD在退出结果提交点决定保留/自动收取：DEFAULT/HANDLER保留
 
 终端由init用ttycreate(SYSTEM POLICY,TTY CONTROL)建立，绑定TTY完整PID/image；返回的TERMINAL授权仅通过构造grant减权给TTY/sh。TTY镜像终结即撤销该终端新操作，旧SID/前台关联进入挂断清理，引用归零后回收，重建TTY使用新终端代次。内核不解析UART协议，也不由普通进程用整数自建终端。
 
+2026-11-19用户确认Local权限：QUERY=1、FG=2、SIGNAL=4、BIND=8；SIGNAL只授INT/QUIT/TSTP/HUP/WINCH的子集。grant offset表示减权后的信号mask，length=0，其他权限仍只能缩小；无SIGNAL则mask=0。QUERY/FG可使用既有FORK/EXEC继承位，SIGNAL/BIND不继承；从完整管理权减为QUERY/FG时可给产物设置这两种继承标记，不要求完整管理权自身带可继承标记。TERMINAL只经有效CONSTRUCT/EXEC_VIEW准备期转授，运行中CONTROL INSTALL拒绝，资源reply亦不交付终端权。RESOURCE查询data[3]为信号mask、data[4]=0、data[6..7]为精确tty PID/image；查询旧失效Local仍报告其旧身份，不把它改绑到新镜像。
+
 tty模式首版：ICANON、ECHO、ISIG、ICRNL、OPOST/ONLCR；控制字符VINTR=^C、VQUIT=^\、VSUSP=^Z、VERASE=DEL、VKILL=^U、VEOF=^D、VMIN/VTIME。规范行缓冲4096，原始环8192；溢出丢当前超限输入并记录计数，不覆盖已有待读内容。非规范模式固定四种组合：VMIN=0/VTIME=0立即返回已有字节或0；VMIN>0/VTIME=0等min(VMIN,请求长度)字节；VMIN=0/VTIME>0从接受READ起计时，有任意字节即返回、到期无数据返回0；VMIN>0/VTIME>0先无期限等首字节，再按每次到字节重置的间隔计时，达到min或间隔到期返回已有量。VTIME单位0.1秒，O_NONBLOCK优先返回现有数据或EAGAIN；不新增内核TTY等待对象。tcsetattr TCSANOW/TCSADRAIN/TCSAFLUSH顺序通过TTYCTL服务实现，排空只等已提交输出，不占死控制循环。
 
 2026-11-19用户确认行规程边界：规范行最多4095普通字节，另留一字节给LF；控制字符值0表示禁用，NUL仍可作为普通输入。DEL仅删当前未提交行的最后一个字节并回显BS/空格/BS；^U仅清当前未提交行并回显LF，均不修改已完成待读行。ISIG的VINTR/VQUIT/VSUSP丢弃全部未交付输入及尚未提交给后端的输出，再请求INT/QUIT/TSTP；已交付字节不能撤回。此处输出清空仅涉及tty尚持有的staging/业务输出，不能重置serial活环或写serial拥有的位置；后端已收下的前缀继续按原所有权完成。ECHO关闭不影响编辑/信号语义；溢出只丢本次输入并累计饱和计数，不覆盖旧字节。
@@ -361,6 +363,18 @@ T4 的 sh 要求作业控制可用，故 STOP/CONT、前台组切换与控制终
 7项host以真实group核心和模拟Image边界检查STALE提交无修改、相同组提交推进版本、跨会话拒绝、槽复用/满池、结束后引用释放，以及UINT64_MAX epoch/u32引用计数耗尽、imagehold失败不发布/不改输出和坏身份拒绝。测试直接设置私有边界值，没有新增生产故障开关。CASE=images链接相同terminal.c，真实Life发布/旧Image EXEC结束并detach/新Image激活，验证旧终端立即拒绝、新终端不接管旧关联、两次drop后旧Image实际回收及新终端可关联；64项满池/代次复用、关系引用与Life/Set/物理页回到基线，两架构专项已通过。ARM64整体结构快照引入隐式memcpy已改为逐字段赋值，失败构建日志保留。
 
 此点仅接可信内核核心和CASE=images，未进入normal生产授权路径。Local转授/原生调用、会话控制终端继承、前台作业策略和HUP/CONT挂断/信号仍待接，不能将可信set视为已完成调用者权限检查。完整make test-all通过824项host、格式检查、191次双架构QEMU；164份journal、最终源码/头/SDK/配置/包哈希及两份真实Image终端关系记录另核对，默认init/serial ELF与stage117相同。CASE=images的编译数据库包含新增源。证据build/host/stage120-terminal-relations/，无CI/板端/性能结果。
+
+### TERMINAL Local减权与引用（2026-11-19）
+
+abi/terminal.h现给出已确认权限及信号集合。Local仍为48字节：objectgen/object保存内部终端代次/索引，rights为业务位/GRANT，offset为信号mask、length=0；每份可见Local持一个终端引用，不为授权创建另一个终端或增加Image引用。可信localterminal在取得空槽、验证字段后才hold并发布，失败无表项/引用泄漏；localterminalaccess仅接受单个业务权限，查精确旧终端的owner liveness，ENDED立即STALE，成功返回内部身份与授权mask，仍由Proc核对调用者会话和前台资格。
+
+localcopy检查源GRANT/权限子集和信号mask子集，拒绝非0 length及非PREPARING目标；原生procgrant还重新要求输入为PREP_CONFIG构造权限，不能凭持续CONTROL INSTALL安装终端权，即使它指向尚未start的孩子。资源reply保留原MEM/CALL白名单，不增加终端交付。QUERY/FG产物可以标FORK/EXEC，SIGNAL/BIND任一仍在权集中时禁止继承；这是授权句柄继承，不是控制终端会话关系已经接入。
+
+fork只复制标记FORK的QUERY/FG表项和原Handle/墓碑，使用独立保留引用；未继承的SIGNAL/BIND不带入。旧tty已ENDED时，fork仍可保留旧失效Local，保持其身份/STALE语义，不把父已持有的失效授权当成新授权重新安装。专用terminalretain只供已有引用复制，普通安装/hold仍检查live。RESOURCE枚举通过保留Image返回旧tty身份和mask，不在过期条目处中断整张表枚举；free/revoke/close/fork回滚各归还自己的引用，最后drop才结清原终端持有的Image/关系引用。
+
+例子：init持完整TERMINAL，向准备中的sh减为QUERY|FG并标FORK|EXEC，向tty减为SIGNAL/INT子集且不继承。sh不能由该句柄生成SIGNAL或转授无GRANT产物；tty退出后，两者操作旧Local均STALE，枚举仍显示旧PID/image。sh fork出的孩子继承同一个失效身份，不能复活tty；父子分别free后，最后一份引用释放旧终端和Image。正在运行的进程不能靠CONTROL INSTALL取得新终端授权。
+
+新增5项host以真实Local/Image/Life/Space/fork核心验证准备期减权、信号子集/越权拒绝、运行目标拒绝、QUERY/FG继承和SIGNAL/BIND不继承、旧tty结束后查询/继承但不可使用、坏字段/满槽不泄漏；与终端/fork既有专项共22项通过。两架构CASE=images新增实际Proc准备表转授/权限拒绝、构造撤销后的旧Image保留/STALE/枚举、最后两表项free使Image实际回收及两Proc费用归零。完整make test-all通过829项host、格式检查、191次双架构QEMU；164份journal、最终源码/头/SDK/配置/包哈希与新权限头精确导出另核对，默认init/serial ELF与stage117相同，CASE=images编译数据库含新增核心/测试。证据build/host/stage121-terminal-local/；尚未发放初次原生终端权、开放终端syscall、接控制终端继承或真实挂断信号；当前Proc grant的准备期限制未以已发权原生用户场景验收，不将可信表项测试冒充它。无CI/板端/性能结果。
 
 - [ ] 两架构信号PC先进入trampoline，六个入口参数与原TF分开，a3/x3的handler地址不会被误读为原RPC；普通返回地址0不得跳回任意旧代码。
 - [ ] 子发布后第一条用户指令前及Fix半途注入HANDLER/NODEFER/STOP/KILL：应用handler只见修复后的子表，父staging内容不变；嵌套只完成同次Fix，不增加发布后ready syscall或远端握手。

@@ -1612,7 +1612,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("image pool/identity retention mismatch")
                     record["images"] = checks[0]
                     terminals=[fields(line) for line in serial.read_text().splitlines() if line.startswith('TERMINALCHECK ')]
-                    if terminals != [dict(epoch=4,stale=1,exec=1,capacity=64,reclaimed=1,charged=0)]:
+                    if terminals != [dict(epoch=4,stale=1,exec=1,capacity=64,reclaimed=1,local=1,charged=0)]:
                         raise SmokeError('trusted terminal relationship lifetime/epoch mismatch')
                     record['terminal_relationships']=terminals[0]
                 if args.case == "irq":

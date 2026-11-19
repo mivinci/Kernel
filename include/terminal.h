@@ -20,6 +20,9 @@ STATIC_ASSERT(sizeof(Terminal) == 56, terminal_record_size);
    image. Public terminal IDs are identities, never native authority. */
 int terminalnew(Imageid owner, Handle *out);
 int terminalhold(Handle id);
+/* Copy a reference already owned by an existing table, including a revoked
+   owner. Preserves stale inherited Handles; never validates a new authority. */
+int terminalretain(Handle id);
 int terminaldrop(Handle id);
 /* Internal session/group handles, not public SID/PGID. First bind only.
    Native caller must establish session/foreground permissions separately. */
@@ -29,4 +32,6 @@ int terminalset(Handle id, Handle group, u64 expected);
    reject new operations, while refs keep old relations until final drop.
    This does not perform HUP/CONT, input flushing or service recovery. */
 int terminalstat(Handle id, Terminal *out);
+/* Retained diagnostic identity only, including ENDED owner; grants no use. */
+int terminalimage(Handle id, Imageid *out);
 #endif

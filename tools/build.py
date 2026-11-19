@@ -214,6 +214,7 @@ def build(args, directory, run_dir):
             sources.append(ROOT / 'kernel/bootstart.c')
         sources += [ROOT / "kernel/main.c", ROOT / "kernel/bootimage.c", ROOT / "kernel/bootload.c", ROOT / "kernel/handle.c", ROOT / "kernel/local.c", ROOT / "kernel/prep.c", ROOT / "kernel/life.c", ROOT / "kernel/group.c", ROOT / "kernel/image.c", ROOT / "kernel/observe.c", ROOT / "kernel/rq.c", ROOT / "kernel/event.c", ROOT / "kernel/irq.c", ROOT / "kernel/irqdesc.c", ROOT / "kernel/signal.c", ROOT / "kernel/fork.c", ROOT / "kernel/proc.c", ROOT / "kernel/context.c", ROOT / "kernel/syscall.c", ROOT / "kernel/clock.c", ROOT / "kernel" / args.arch / "clock.c", ROOT / "kernel" / args.arch / "irq.c", ROOT / "kernel" / args.arch / "irqmap.c", ROOT / "kernel" / args.arch / "irqentry.S", ROOT / "kernel" / args.arch / "switch.S", ROOT / "kernel" / args.arch / "context.c", ROOT / "kernel" / args.arch / "user.S", ROOT / "kernel/diag.c", ROOT / "kernel/dtb.c", ROOT / "kernel/page.c", ROOT / "kernel/acct.c", ROOT / "kernel/cow.c", ROOT / "kernel/kstack.c", ROOT / "kernel/space.c", ROOT / "kernel/mem.c", ROOT / "kernel/device.c", ROOT / "kernel/pgt.c", ROOT / "kernel/vm.c", ROOT / "kernel" / args.arch / "vm.c", ROOT / "kernel" / args.arch / "cache.c", ROOT / "kernel" / args.arch / "mmu.S", ROOT / "kernel" / args.arch / "boot.c",
                     ROOT / "kernel" / args.arch / "entry.S"]
+        sources.append(ROOT / 'kernel/terminal.c')
         if args.case != "normal":
             flags += ["-I" + str(ROOT / "tests/kernel"), "-I" + str(ROOT / "tests/kernel" / args.arch)]
             sources.append(ROOT / "tests/kernel/main.c")
@@ -287,7 +288,7 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel/rqtest.c")
         if args.case == "images":
             sources.append(ROOT / "tests/kernel/imagetest.c")
-            sources += [ROOT / 'kernel/terminal.c', ROOT / 'tests/kernel/terminaltest.c']
+            sources.append(ROOT / 'tests/kernel/terminaltest.c')
         if args.case == "irq":
             sources += [ROOT / "tests/kernel/irqtest.c", ROOT / "tests/kernel" / args.arch / "irqprobe.S", ROOT / "tests/kernel" / args.arch / "irqnative.S"]
         if args.case == "timer":

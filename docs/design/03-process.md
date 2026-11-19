@@ -780,6 +780,8 @@ SYSTEM实现接续（2026-11-18）：Local已接仅QUERY的精确Image绑定及�
 | EXEC_VIEW/CONSTRUCT | MAP、CONFIG、PUBLISH、ABORT、ALLOC | 固定source PID/image与一次准备；不可转授/继承，提交或撤销时统一失效 |
 | SYSTEM | QUERY、CLOCK、HALT、REBOOT、POLICY | 仅启动清单指定的init；不继承、不通过运行中reply授予 |
 
+2026-11-19用户确认TERMINAL细则：QUERY=1、FG=2、SIGNAL=4、BIND=8，GRANT仍bit63。SIGNAL掩码仅INT/QUIT/TSTP/HUP/WINCH，grant的offset对TERMINAL表示缩小后的信号位集合，length必须0；去掉SIGNAL时掩码为0，不能扩位。仅QUERY/FG可标记FORK/EXEC，SIGNAL/BIND不继承。初次授权由ttycreate取得，仅经有效CONSTRUCT/EXEC_VIEW CONFIG准备期转授，运行中CONTROL INSTALL拒绝TERMINAL；句柄不是终端关联本身，继承句柄不跳过会话/前台检查。具体实现边界见11末尾。
+
 所有可转授RESOURCE统一使用bit63的GRANT；表内低位仅业务使用权，MEM READ/WRITE/EXEC/SEAL/DMA依次bit0..4，CALL/SEND USE为bit0。GRANT控制普通grant源权限，并与CONTROL CONNECT共同限制connect产物的GRANT；target须是本次有效CONSTRUCT/EXEC_VIEW CONFIG或固定进程CONTROL INSTALL，不能以QUERY/CONNECT/GRANT替代。grant永不增权/扩窗口；CREATE的再授予还要求源SERVICE或init POLICY，普通CREATE不能任意传播给既有进程。grant的inherit字段仅两位：FORK=1、EXEC=2，默认0；目标子类型禁止的继承位一律拒绝。EXEC=2只适用显式共享MEM、CALL/SEND/NOTIFY、必要启动SELF/CREATE重绑定；应用私有MEM不因设置EXEC而保留旧映射。运行中resource reply只允许受限SHARED MEM或后端CALL USE，默认FORK=1、EXEC=0；fd所需exec继承由服务交接重新建立，不把旧调用权盲目改绑对端。
 
 初始启动清单建立16个Set及各自绑定的CREATE/集合CONTROL，不提供运行时任意集合创建/迁移。create使用SERVICE权限时额外向调用者返回a3/x3=该孩子的持续CONTROL（QUERY/TERMINATE/BUDGET/IRQ/REVOKE/CONNECT/INSTALL及GRANT），普通创建该输出0；这不是构造权发布后自动升级，SERVICE只授init且不继承。connect(authority,kind,rights,bits)凭CONTROL CONNECT或本主体仍有效的未发布CONSTRUCT建立固定目标镜像的CALL/SEND/NOTIFY入口，不能凭PID建立；构造期建立的入口可在发布后使用，但不含持续监督权。NOTIFY掩码只用户位，其他kind的bits=0。请求带GRANT的产物时，输入CONTROL必须同时含CONNECT和GRANT；仅CONNECT只能生成USE，缺任一位DENIED。CONSTRUCT仅能生成USE，不能生成GRANT；SYSTEM/POLICY或裸PID不替代显式目标authority。普通USE入口不能提升。

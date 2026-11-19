@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- 终端关系可信核心通过824项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。两架构CASE=images真实Image结束/新镜像/epoch/满池与引用回收通过；默认init/serial ELF与stage117相同。证据stage120-terminal-relations/，无CI/板端/性能结果。tty输入/输出/双闹钟等待的历史证据见11/stage119，尚非原生终端调用或tty服务。
+- TERMINAL Local通过829项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。两架构真实准备表减权/拒绝、旧Image结束后查询/STALE及最后表项释放回收通过；host另验fork句柄继承和信号权不继承。默认init/serial ELF与stage117相同，证据stage121-terminal-local/，无CI/板端/性能结果；尚未发放原生终端权或开放终端调用，tty历史证据见11/stage119。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
 
@@ -35,6 +35,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage121已本地验收：TERMINAL低位QUERY/FG/SIGNAL/BIND=1/2/4/8、信号子集mask、准备期grant及仅QUERY/FG继承已同步03/06/11；Local安装/减权/查询/回收与fork引用通过全量。ttycreate/getfg/setfg等原生入口未开放，初次发权/原生grant门禁的用户态验收、会话继承和挂断仍待接。
 
 - stage120已本地验收：终端关系可信核心持精确Image/session/group引用，前台提交核对epoch并拒绝回绕，真实镜像结束/代次/引用回收通过全量。只链接测试场景，接续Local/原生授权、会话继承与HUP/CONT挂断，不称终端调用已实现。
 
@@ -56,7 +58,7 @@
 
 - stage113管理引擎已由stage117接入默认init；初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis，父wait/镜像确认/缓冲回收独立。2026-11-19确认的首次必需serial清理后诊断停机已实现，其他服务/恢复方向按07/09接续。
 
-- 下一步：接tty后端/请求循环、前台授权与真实信号，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
+- 下一步：接初次原生终端发权、会话绑定/getfg/setfg与用户态门禁验收，补控制终端继承/挂断及真实信号，再接tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 
 - 2026-11-18确认的反向bit32=RX_ROOM/bit33=TX_READY与晚绑定已按07/11落定v1 BIND/STATUS及最近结果缓存，serial侧已实现/本地验；生产tty配对和init编排仍待接，绑定前不发布tty连接。
 

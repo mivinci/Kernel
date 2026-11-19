@@ -29,7 +29,7 @@ class AddressSpaceTests(unittest.TestCase):
             path = Path(cls.tmp.name) / (arch + '.so')
             command = ['clang', '-std=c89', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
                        '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
-                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'group.c', 'image.c', 'irq.c', 'event.c', 'observe.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'cow.c', 'pgt.c', 'mem.c', 'device.c', 'bootstore.c', 'dtb.c', arch + '/vm.c')],
+                       *[str(ROOT / 'kernel' / x) for x in ('clock.c', 'space.c', 'local.c', 'prep.c', 'life.c', 'group.c', 'image.c', 'terminal.c', 'irq.c', 'event.c', 'observe.c', 'rq.c', 'handle.c', 'kstack.c', 'acct.c', 'page.c', 'cow.c', 'pgt.c', 'mem.c', 'device.c', 'bootstore.c', 'dtb.c', arch + '/vm.c')],
                        *[str(ROOT / 'kernel' / x.format(arch=arch)) for x in getattr(cls, 'extra_sources', ())],
                        str(shim), '-o', str(path)]
             command += list(getattr(cls, 'extra_flags', ()))
