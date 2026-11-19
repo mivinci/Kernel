@@ -973,3 +973,17 @@ confirmed仅供调用者匹配实际后端关闭结果或完成明确生命周�
 该原生fixture尚无后端CLOSE事务，因此不调用confirmed。它检查sysfilerefconnection仍为1，保留CLOSING及MEM/VA直到Image退出；CPU在清理前核对客户端完成轨迹，随后验证原生退出确实释放实际映射/资源/费用。审查曾发现直接拆连接会绕过未确认File锚，已在最终场景改为上述保留策略，先前回归在host阶段中止并保留日志；不把缺少后端关闭协议伪装为正常close成功。
 
 最终完整make test-all通过910项host、格式检查及195次双架构QEMU；6项引用专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构均以真实注册ID串接fd别名与原槽pin，最后关闭等pin归还并保持锚/原连接至Image退出，CPU清理前核对轨迹，实际页/费用回基线。Filepool对象无未定义依赖，私有SDK头一致，实际符号为256*64+24字节引用表、4096字节fd表与4096字节连接工作页；init/serial ELF与stage140相同且无新增模块/测试符号，clangd数据库已更新。证据build/host/stage141-file-references/；无CI/板端/性能结果。本层是客户端聚合引用与预付最后关闭责任，不是服务端File注册/权限或标准dup/close实现；真实CLOSE结果/控制Rq保底、CALL所有权、Rctx/handler返回窗口、Boot/Fix及生产FS/TTY继续待接。两个已有接口问题仍保持待用户回复。
+
+### 后端reference_id关闭与控制预算（2026-11-20）
+
+冻结的CLOSE参数为object=session、args=[reference_id]，reference_id不能从本地File ID或session猜测。客户端Fileref现显式保存session/reference_id/prepare_token三项，大小由64增至72字节，256项及源身份/序号共18456字节；这是私有SDK/ELF存储修正，数量上限仍256，线上Bootfd/Fix/槽布局和原32 KiB连接预算不变。没有用同一字段在准备token与已领取引用间隐式切换，未增加新操作码或内核接口。
+
+sysfilecloseprepare要求已摘除最后fd、pins=0的原关闭锚，核对本地File ID/关闭序号、目录代次及已登记的后端session/reference_id。使用控制页6/单页原槽记录，在原请求提交前登记关闭anchor的运输责任，再写SUBMITTED描述符，payload=0、object=session、args[0]=reference_id，保留/未用args全0；四字请求仍[CLOSE,connid,seq,6]。本层不等待，调用者在短保护段以CALL_ASYNC|CALL_CONTROL提交并移交原RPC后恢复信号。提交前copy失败只abort本次页/运输记录，原File关闭锚保留；不能因为正在等待或未知结果而调用该回滚。
+
+sysfilecloseresult从同一原槽/RPC的固定结果核对机制成功、IPC_NONE、无自持资源/异常形状、业务status=0、原页seq及其余输出0，同时重新匹配原File关闭锚与session。未回复、PEER/CANCELLED/REVOKED、业务错误、错seq或资源回复均保留原锚/槽/资源，不伪报已关闭或自动重发。验证成功后调用者才标SAVED并ACK原RPC；complete只在ACKED之后归还控制页责任、确认同一个File锚，未ACK时BUSY。控制页结果确认并不证明DMA停止，服务端最终排空仍按各自规则独立处理。
+
+本点不扩展DRAINING的新业务准入。正常最后关闭在既有READY连接执行，成功后sysfilerefconnection才为0，再invalidate/unmap/free；连接已故障或未知结果时仍须后续恢复/后台策略接管，不能临时新建连接或恢复已复用fd。成功确认后的旧File ID变STALE，迟到关闭不会关闭同号新fd。POSIX close/EINPROGRESS、1秒控制期限与完整Rctx/trampoline返回窗口仍须单独接入，本层是受保护的私有transport适配。
+
+6项新增host覆盖真实reference_id而非本地ID/session的参数、原结果与ACK前后确认、错误seq/资源/未回复/传输失败保持、提交前copy失败仅释放运输、旧锚和重复prepare不改原关闭。原生用户场景保留后端SHARED映射至CLOSE结束：服务fixture同时defer八笔原生压力探针，填满调用者普通8槽，客户端第九笔普通调用得到CAPACITY，却仍通过控制Rq发送页6的CLOSE。fixture核对真实source/image、connid/seq、object55/reference77及未用参数，只回复原关闭一次，再完成8笔探针；客户端校验未ACK不能complete，ACK后确认File锚、排空探针，最后解除连接，页/费用回基线。探针用于原生预算压力，不是绕开文件页分区的普通FS业务。
+
+同场景的READ描述符已统一为正文冻结的[offset,length,data_off,io_flags]=[0,4,0,0]，不再沿用早期运输fixture把长度放args[0]的私有哨兵排列。最终完整make test-all通过916项host、格式检查及195次双架构QEMU；6项关闭专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构实际普通8槽满额/第9笔CAPACITY、控制CLOSE成功、确认前ACK门槛、原File失效及探针/共享页/费用归零均通过；私有SDK头和依赖集合一致，引用表18456字节、fd表/连接工作页各4096字节，init/serial ELF与stage141相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage142-native-close/；无CI/板端/性能结果。服务仍为边界明确的fixture，尚非生产FS/TTY/File权限/观察清理；错误恢复、CALL所有权、Rctx/信号前置、VA/Boot/Fix及标准fd接口继续待接。两个先前接口问题保持待用户回复。

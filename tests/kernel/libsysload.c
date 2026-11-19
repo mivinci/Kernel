@@ -129,7 +129,7 @@ libsysload(void)
           u64 client_trace[16];
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
-                  client_trace[9] == 4);
+                  client_trace[9] == 5);
           while ((error = procclean(pids[0])) > 0) {
           }
           REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
@@ -148,7 +148,7 @@ libsysload(void)
   }
   REQUIRE(resource_commits == 2);
   REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1 &&
-          handoff[15] == 1 && handoff[9] == 3);
+          handoff[15] == 1 && handoff[9] == 4);
   REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
   for (i = 0; i < 2; i++)
     REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
@@ -174,9 +174,13 @@ libsysload(void)
   putstr(" reuse=");
   puthex(1);
   putstr(" slot_ops=");
-  puthex(handoff[9] - 2);
+  puthex(1);
   putstr(" file_refs=");
   puthex(1);
+  putstr(" control_close=");
+  puthex(handoff[9] - 3);
+  putstr(" ordinary_full=");
+  puthex(8);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

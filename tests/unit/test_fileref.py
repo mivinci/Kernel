@@ -10,7 +10,7 @@ MAX=(1<<56)-1
 
 
 class Ref(C.Structure):
-    _fields_=[('generation',C.c_uint64),('connection',Tag),('session',C.c_uint64),('token',C.c_uint64)]+[(n,C.c_uint32) for n in ('aliases','pins','state','reserved')]+[('close_sequence',C.c_uint64)]
+    _fields_=[('generation',C.c_uint64),('connection',Tag),('session',C.c_uint64),('reference',C.c_uint64),('token',C.c_uint64)]+[(n,C.c_uint32) for n in ('aliases','pins','state','reserved')]+[('close_sequence',C.c_uint64)]
 
 
 class Pool(C.Structure):
@@ -33,7 +33,7 @@ class FileReferenceTests(unittest.TestCase):
         subprocess.run(cmd,check=True,capture_output=True);cls.lib=C.CDLL(str(path))
         signatures={
             'sysfilerefinit':[C.POINTER(Pool),Peer],'sysfilerefcheck':[C.POINTER(Pool),Peer],
-            'sysfilerefnew':[C.POINTER(Pool),Peer,Tag,C.c_uint64,C.c_uint64,C.POINTER(C.c_uint64)],
+            'sysfilerefnew':[C.POINTER(Pool),Peer,Tag,C.c_uint64,C.c_uint64,C.c_uint64,C.POINTER(C.c_uint64)],
             'sysfilerefview':[C.POINTER(Pool),Peer,C.c_uint64,C.POINTER(Ref)],
             'sysfilerefclose':[C.POINTER(Pool),Peer,C.c_uint64,C.POINTER(Close)],
             'sysfilerefconfirmed':[C.POINTER(Pool),Peer,C.POINTER(Close)]}
@@ -48,12 +48,12 @@ class FileReferenceTests(unittest.TestCase):
 
     def setUp(self):
         self.pool=Pool();self.self=Peer(pid(1),9);self.tag=Tag(8,2,0)
-        self.assertEqual(C.sizeof(Ref),64)
+        self.assertEqual(C.sizeof(Ref),72)
         self.assertEqual(self.lib.sysfilerefinit(C.byref(self.pool),self.self),0)
 
     def new(self):
         file=C.c_uint64()
-        self.assertEqual(self.lib.sysfilerefnew(C.byref(self.pool),self.self,self.tag,55,66,C.byref(file)),0)
+        self.assertEqual(self.lib.sysfilerefnew(C.byref(self.pool),self.self,self.tag,55,77,66,C.byref(file)),0)
         return file.value
 
     def view(self,file):
@@ -93,7 +93,7 @@ class FileReferenceTests(unittest.TestCase):
         files=[self.new() for _ in range(256)];out=C.c_uint64(77)
         for file in files:
             self.assertEqual(self.lib.sysfilerefdrop(C.byref(self.pool),self.self,file),0)
-        self.assertEqual(self.lib.sysfilerefnew(C.byref(self.pool),self.self,self.tag,55,0,C.byref(out)),-9)
+        self.assertEqual(self.lib.sysfilerefnew(C.byref(self.pool),self.self,self.tag,55,77,0,C.byref(out)),-9)
         self.assertEqual(out.value,77)
         self.assertEqual(self.lib.sysfilerefcheck(C.byref(self.pool),self.self),0)
 

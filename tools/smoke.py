@@ -1559,8 +1559,8 @@ def exercise(args, run_dir, record):
                 if args.case == "libsys":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("LIBSYSCHECK ")]
                     if (len(checks) != 1 or not 6 <= checks[0].get("turns", 0) < 64 or
-                            {k: checks[0].get(k) for k in ("actors", "resource", "native", "late", "consent", "accepted", "peer_lookup", "hello", "reuse", "slot_ops", "file_refs", "receive", "shared", "payer_exit", "charged", "allocated")} !=
-                            {"actors": 2, "resource": 2, "native": 25, "late": 1, "consent": 1, "accepted": 1, "peer_lookup": 1, "hello": 1, "reuse": 1, "slot_ops": 1, "file_refs": 1, "receive": 1, "shared": 1, "payer_exit": 1, "charged": 0, "allocated": transition["tables"]}):
+                            {k: checks[0].get(k) for k in ("actors", "resource", "native", "late", "consent", "accepted", "peer_lookup", "hello", "reuse", "slot_ops", "file_refs", "control_close", "ordinary_full", "receive", "shared", "payer_exit", "charged", "allocated")} !=
+                            {"actors": 2, "resource": 2, "native": 25, "late": 1, "consent": 1, "accepted": 1, "peer_lookup": 1, "hello": 1, "reuse": 1, "slot_ops": 1, "file_refs": 1, "control_close": 1, "ordinary_full": 8, "receive": 1, "shared": 1, "payer_exit": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("standalone libsys user ELF/reference mismatch")
                     record["libsys"] = checks[0]
                 if args.case == "spawn":

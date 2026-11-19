@@ -25,12 +25,13 @@ valid(const Fileref *entry)
     return 0;
   if (entry->state == SYSFILE_REF_FREE || entry->state == SYSFILE_REF_RETIRED)
     return !entry->connection.generation && !entry->connection.index &&
-           !entry->connection.reserved && !entry->session && !entry->token && !entry->aliases &&
-           !entry->pins && !entry->close_sequence &&
+           !entry->connection.reserved && !entry->session && !entry->reference && !entry->token &&
+           !entry->aliases && !entry->pins && !entry->close_sequence &&
            (entry->state == SYSFILE_REF_RETIRED ? entry->generation == SYSFILE_GEN_MAX
                                                 : entry->generation < SYSFILE_GEN_MAX);
   if (!entry->generation || !entry->connection.generation ||
-      entry->connection.index >= SYSCONN_COUNT || entry->connection.reserved || !entry->session)
+      entry->connection.index >= SYSCONN_COUNT || entry->connection.reserved || !entry->session ||
+      !entry->reference)
     return 0;
   return entry->state == SYSFILE_REF_LIVE
              ? entry->aliases && !entry->close_sequence
@@ -106,13 +107,14 @@ sysfilerefconnection(const Filepool *pool, Connpeer self, Conntag connection)
   return 0;
 }
 isize
-sysfilerefnew(Filepool *pool, Connpeer self, Conntag connection, u64 session, u64 token, u64 *file)
+sysfilerefnew(Filepool *pool, Connpeer self, Conntag connection, u64 session, u64 reference,
+              u64 token, u64 *file)
 {
   Fileref *entry;
   u32      i;
   isize    error;
   if (!output(pool, file, sizeof(*file)) || !connection.generation ||
-      connection.index >= SYSCONN_COUNT || connection.reserved || !session)
+      connection.index >= SYSCONN_COUNT || connection.reserved || !session || !reference)
     return -ERR_INVALID;
   error = sysfilerefcheck(pool, self);
   if (error)
@@ -125,6 +127,7 @@ sysfilerefnew(Filepool *pool, Connpeer self, Conntag connection, u64 session, u6
     entry->connection.generation = connection.generation;
     entry->connection.index = connection.index;
     entry->session = session;
+    entry->reference = reference;
     entry->token = token;
     entry->aliases = 1;
     entry->state = SYSFILE_REF_LIVE;

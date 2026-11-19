@@ -14,7 +14,7 @@ struct Fileref
 {
   u64     generation;
   Conntag connection;
-  u64     session, token;
+  u64     session, reference, token;
   u32     aliases, pins, state, reserved;
   u64     close_sequence;
 };
@@ -28,7 +28,7 @@ struct Fileclose
 {
   u64 file, sequence;
 };
-STATIC_ASSERT(sizeof(Fileref) == 64, local_file_reference_size);
+STATIC_ASSERT(sizeof(Fileref) == 72, local_file_reference_size);
 STATIC_ASSERT(sizeof(Fileclose) == 16, local_file_close_key);
 /* Private client-Image registry and prepaid last-close anchor. No backend
    permissions, offset or mutable File status is cached as authority here.
@@ -40,8 +40,8 @@ isize sysfilerefcheck(const Filepool *pool, Connpeer self);
 /* Before connection teardown: 1 while any live/pending-close reference still
    uses this exact directory incarnation, 0 only when none remain. */
 isize sysfilerefconnection(const Filepool *pool, Connpeer self, Conntag connection);
-isize sysfilerefnew(Filepool *pool, Connpeer self, Conntag connection, u64 session, u64 token,
-                    u64 *file);
+isize sysfilerefnew(Filepool *pool, Connpeer self, Conntag connection, u64 session, u64 reference,
+                    u64 token, u64 *file);
 isize sysfilerefview(Filepool *pool, Connpeer self, u64 file, Fileref *out);
 isize sysfilerefalias(Filepool *pool, Connpeer self, u64 file);
 isize sysfilerefdrop(Filepool *pool, Connpeer self, u64 file);

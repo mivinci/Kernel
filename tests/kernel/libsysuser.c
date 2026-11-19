@@ -7,6 +7,7 @@
 #include "private/operation.h"
 #include "private/fileref.h"
 #include "private/fd.h"
+#include "private/close.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 static volatile u64       bss[257];
@@ -490,7 +491,7 @@ typedserver(const Bootview *view)
       REQUIRE(!sysfilerequest((const volatile void *) (uintptr_t) map.address, FS_CONN_BYTES, index,
                               received.words[2], &descriptor) &&
                   descriptor.object == 55 && descriptor.span == 1 &&
-                  descriptor.payload_bytes == 4 && descriptor.args[0] == 4 && !descriptor.args[1] &&
+                  descriptor.payload_bytes == 4 && !descriptor.args[0] && descriptor.args[1] == 4 &&
                   !descriptor.args[2] && !descriptor.args[3] && !descriptor.args[4] &&
                   !descriptor.args[5] && !descriptor.args[6] && !descriptor.args[7],
               132);
@@ -502,10 +503,43 @@ typedserver(const Bootview *view)
       words.words[0] = 0;
       words.words[1] = received.words[2];
       words.words[2] = words.words[3] = 4;
-      REQUIRE(!ipc_reply(received.request, &words) && !__sys_unmap(space, map.address) &&
-                  !__sys_free(memory),
-              131);
+      REQUIRE(!ipc_reply(received.request, &words), 131);
       resource_trace[9] = 3;
+      {
+        Handle pressure[8];
+        u32    j;
+        for (j = 0; j < 8; j++) {
+          REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL &&
+                      received.source == client && received.image == clientimage &&
+                      received.words[0] == 0xf00d && received.words[1] == j &&
+                      !ipc_defer(received.request),
+                  121);
+          pressure[j] = received.request;
+        }
+        REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL &&
+                    received.source == client && received.image == clientimage &&
+                    received.words[0] == FS_CLOSE && received.words[1] == header->connid &&
+                    received.words[3] == 6 &&
+                    !sysfilerequest((const volatile void *) (uintptr_t) map.address, FS_CONN_BYTES,
+                                    6, received.words[2], &descriptor) &&
+                    descriptor.object == 55 && descriptor.span == 1 && !descriptor.payload_bytes &&
+                    descriptor.args[0] == 77 && !descriptor.args[1] && !descriptor.args[2] &&
+                    !descriptor.args[3] && !descriptor.args[4] && !descriptor.args[5] &&
+                    !descriptor.args[6] && !descriptor.args[7],
+                120);
+        words.words[0] = 0;
+        words.words[1] = received.words[2];
+        words.words[2] = words.words[3] = 0;
+        REQUIRE(!ipc_reply(received.request, &words), 119);
+        for (j = 0; j < 8; j++) {
+          words.words[0] = 0xf00d;
+          words.words[1] = j;
+          words.words[2] = words.words[3] = 0;
+          REQUIRE(!ipc_reply(pressure[j], &words), 118);
+        }
+        REQUIRE(!__sys_unmap(space, map.address) && !__sys_free(memory), 117);
+        resource_trace[9] = 4;
+      }
     }
   }
 }
@@ -627,7 +661,8 @@ typedclient(const Bootview *view, Handle peer)
     Bootstrap *active = &connection_work.state.bootstrap;
     Filelease  lease, other;
     Fileslot   descriptor;
-    Opkey      operation, background, stale, spare;
+    Opkey      operation, background, stale, spare, close_operation;
+    Handle     pressure[8];
     u64        file = 99, sparefile = 100;
     u64        fileid;
     Fileref    reference;
@@ -687,8 +722,8 @@ typedclient(const Bootview *view, Handle peer)
       ((u8 *) &descriptor)[i] = 0;
     sysfdinit(&file_descriptors);
     REQUIRE(!sysfilerefinit(&file_registry, connection_work.state.self) &&
-                !sysfilerefnew(&file_registry, connection_work.state.self, connection_tag, 55, 0,
-                               &file),
+                !sysfilerefnew(&file_registry, connection_work.state.self, connection_tag, 55, 77,
+                               0, &file),
             125);
     fileid = file;
     REQUIRE(!sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 0 &&
@@ -707,7 +742,7 @@ typedclient(const Bootview *view, Handle peer)
     descriptor.object = 55;
     descriptor.span = 1;
     descriptor.payload_bytes = 4;
-    descriptor.args[0] = 4;
+    descriptor.args[1] = 4;
     words.words[0] = FS_READ;
     words.words[1] = connection_work.state.map.connid;
     words.words[2] = operation.lease.seq;
@@ -749,10 +784,9 @@ typedclient(const Bootview *view, Handle peer)
                 reference.pins == 1 &&
                 sysfilerefclose(&file_registry, connection_work.state.self, fileid, &closing) ==
                     -ERR_BUSY &&
-                !sysconninvalidate(&connection_directory, connection_tag) &&
                 sysconnworkclean(&connection_work, &connection_directory) == -ERR_BUSY &&
-                sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 1,
-                                   &other) == -ERR_PEER &&
+                sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 2,
+                                   &other) == -ERR_BUSY &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             128);
     REQUIRE(!ipc_rqwait(connection_work.state.operations[background.lease.slot].rpc, 0, &result),
@@ -784,9 +818,50 @@ typedclient(const Bootview *view, Handle peer)
             connection_work.state.memory == original && connection_work.state.map.mapped &&
             !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
         126);
-    /* The backend CLOSE protocol is not wired yet. Keep the closing anchor
-       through this Image exit, never manufacture a successful confirmation. */
-    resource_trace[9] = 4;
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask), 116);
+    for (i = 0; i < 8; i++) {
+      words.words[0] = 0xf00d;
+      words.words[1] = i;
+      words.words[2] = words.words[3] = 0;
+      REQUIRE(!ipc_call(peer, &words, CALL_ASYNC, &result) && result.request, 115);
+      pressure[i] = result.request;
+    }
+    REQUIRE(ipc_call(peer, &words, CALL_ASYNC, &result) == -ERR_CAPACITY && !result.request &&
+                !sysfilecloseprepare(&file_registry, &connection_work, &connection_directory,
+                                     &closing, 503, 0, &close_operation, &words) &&
+                close_operation.lease.slot == 6 &&
+                !ipc_call(peer, &words, SYSFILE_CLOSE_OPTIONS, &result) &&
+                !sysopsubmitted(&connection_work, &connection_directory, &close_operation,
+                                &result.request) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            114);
+    REQUIRE(!ipc_rqwait(connection_work.state.operations[6].rpc, 0, &result), 113);
+    REQUIRE(
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+            !sysopcapture(&connection_work, &connection_directory, &close_operation, 0, &result) &&
+            !sysfilecloseresult(&file_registry, &connection_work, &connection_directory, &closing,
+                                &close_operation) &&
+            sysfileclosecomplete(&file_registry, &connection_work, &connection_directory, &closing,
+                                 &close_operation) == -ERR_BUSY &&
+            !sysopsaved(&connection_work, &connection_directory, &close_operation) &&
+            !sysopack(&connection_work, &connection_directory, &close_operation) &&
+            !sysfileclosecomplete(&file_registry, &connection_work, &connection_directory, &closing,
+                                  &close_operation) &&
+            sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) ==
+                -ERR_STALE &&
+            !sysfilerefconnection(&file_registry, connection_work.state.self, connection_tag) &&
+            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+        112);
+    for (i = 0; i < 8; i++) {
+      REQUIRE(!ipc_rqwait(pressure[i], 0, &result) && result.words[0] == 0xf00d &&
+                  result.words[1] == i && !ipc_rqack(pressure[i], ACK_RESULT | ACK_RELEASE),
+              111);
+    }
+    REQUIRE(!sysconninvalidate(&connection_directory, connection_tag) &&
+                !sysconnworkclean(&connection_work, &connection_directory) &&
+                !connection_work.state.memory && !connection_work.state.map.mapped,
+            110);
+    resource_trace[9] = 5;
   }
 }
 static Handle
