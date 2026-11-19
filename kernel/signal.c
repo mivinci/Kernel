@@ -406,6 +406,25 @@ sigqueue(Imageid id, const Siginfo *info)
   s->pending |= bit;
   return 0;
 }
+int
+sigchild(Imageid id, Handle child, u32 ruid, u64 reason, u64 status)
+{
+  Siginfo info;
+  if (child == 1 || handlekind(child) != HANDLE_PROCESS || reason != WAIT_EXITED ||
+      status & ~((u64) 255 | WAIT_SIGNALLED | WAIT_FAULT) ||
+      ((status & WAIT_FAULT) && !(status & WAIT_SIGNALLED)) ||
+      ((status & WAIT_SIGNALLED) && (!(status & 255) || (status & 255) > 31)))
+    return -ERR_INVALID;
+  clearinfo(&info);
+  info.signum = SIGNAL_CHLD;
+  info.code = SIGNAL_SOURCE_CHILD;
+  info.pid = (u64) child;
+  info.uid = ruid;
+  info.reason = reason;
+  info.status = status;
+  return sigqueue(id, &info);
+}
+
 static u32
 nextsignal(const Signal *s)
 {

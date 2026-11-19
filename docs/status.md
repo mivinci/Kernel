@@ -36,6 +36,8 @@
 
 ## 待确认与接续
 
+- stage115已本地验收：真实退出CHLD的SOURCE_CHILD元数据按提交时Life父/ruid/策略排队，wait/观察责任独立；782项host/格式、179次双架构QEMU及152份journal/源码/SDK哈希核对通过，真实用户handler与后续wait均验证。证据stage115-child-signal/，无CI/板端结果。USER/FAULT生产、STOP/CONT与普通阻塞中断仍待接，不将来源常量视为完整信号实现。
+
 - stage114已接原生资源reply与ipc_reply_resource并通过全量；可据此继续受限LOOKUP/FS/TTY连接策略，不把底层交付当成完整连接。默认init首次失败策略仍等确认。
 
 - stage113前置已本地全量验收：定宽配置/生成/运行复核、分阶段装载监督与回收已实现。初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis；父wait/镜像确认/缓冲回收独立。尚未切生产init main/默认包；首次必需serial失败后恢复诊断停机还是先补存活失败通道，已询问待用户确认，见07。该确认前继续已定的资源回复等前置，不把未切默认写成T1.4完成。
@@ -57,7 +59,7 @@
 - serial Boot七参数/私有tag、16 KiB双SPSC环、PIO/IRQ、异步READY及BIND/STATUS均已本地验，见07/09/11。生产init编排和实际tty配对/端点恢复仍待接；没有活环自动重置。RESOURCE不暴露Mem底层身份或NOTIFY掩码，真实MMIO/两个独立SHARED及精确双位通知仍由可信加载器保证，内核强制映射属性和通知权限。
 - 下一步T1.4：从真实目录装载首个实际服务，补真实服务清单/预算、CREATE SERVICE/固定CONTROL、设备/IRQ授权和READY握手；不能用空进程或测试hello充当serial/sh，不能把T1.3当全部T1完成。normal已要求包，make smoke自动构建默认生产包；原生fork/exec仍未开放。规格见[07](design/07-boot.md)及各主题。
 - 资源reply已按a1/x1指针、余未用参数0、a5=REPLY_RESOURCE接入，reply_recv保持普通消息；细节与验证见04/06。
-- Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段已确认，实现待接，见11。
+- Siginfo来源code USER=1/CHILD=2/FAULT=3及各来源字段已确认；CHILD真实退出已接，USER/FAULT生产仍待接，见11。
 - IRQ_SOURCE独立撤销及原生bind已接，SOURCE不转授/继承；初始标准UART的BOOT_RESOURCE已有实际MMIO/IRQ_SOURCE Handle，SYSTEM QUERY已接，其他设备/布局和管理业务仍后续，见05/07末尾。
 - DMA设备实例代次域及固定解除方向已确认，具体权限/调用ABI仍须冻结，见09；缓存反例主机模型不代表DMA/HAL已实现。
 - 继续完成真实信号来源/完整递送与阻塞中断、原生资源交付、生产init/启动包/清单与SYSTEM、IRQ/设备/DMA、fork/exec/COW、文件/终端及用户态服务（包括net）。详细依赖和验收以01..15为准，不缩减总目标。

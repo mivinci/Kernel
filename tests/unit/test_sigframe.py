@@ -74,6 +74,51 @@ class SignalFrameTests(unittest.TestCase):
         self.assertEqual(self.lib.spaceread(self.mapped,address,result,len(result)),0)
         return result
 
+    def test_committed_child_metadata_is_complete_coalesced_and_unrelated_fields_zero(self):
+        def body():
+            lib=self.lib
+            lib.sigchild.argtypes=[Imageid,C.c_int64,C.c_uint32,C.c_uint64,C.c_uint64]
+            action=support.Action(2,0x10080,0x10040,0,8,0)
+            self.assertEqual(lib.siginstall(self.identity,17,C.byref(action)),0)
+            pid=(1<<59)|(7<<16)|9
+            self.assertEqual(lib.sigchild(self.identity,pid,123,1,31),0)
+            self.assertEqual(lib.sigchild(self.identity,pid+1,456,1,9|256),0)
+            self.assertEqual(lib.sigdeliver(self.identity,self.mapped,self.user.pointer),0)
+            address=self.user.value.tf.x[2] if self.kind is context.Rv else self.user.value.tf.sp
+            info=support.Info.from_buffer_copy(self.packet(address).raw[64:128])
+            self.assertEqual((info.signum,info.code,info.pid,info.uid,info.reason,info.status),(17,2,pid,123,1,31))
+            self.assertEqual((info.reserved0,info.address,*info.reserved),(0,0,0,0))
+            self.assertEqual(lib.sigrestore(self.identity,self.mapped,self.user.pointer,address),0)
+            self.assertEqual(self.snapshot(self.identity).pending,0)
+            self.assertEqual(lib.sigchild(self.identity,pid,321,1,11|256|1024),0)
+            self.assertEqual(lib.sigdeliver(self.identity,self.mapped,self.user.pointer),0)
+            address=self.user.value.tf.x[2] if self.kind is context.Rv else self.user.value.tf.sp
+            info=support.Info.from_buffer_copy(self.packet(address).raw[64:128])
+            self.assertEqual((info.uid,info.reason,info.status),(321,1,11|256|1024))
+            self.assertEqual(lib.sigrestore(self.identity,self.mapped,self.user.pointer,address),0)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_invalid_child_status_never_queues_and_ignore_does_not_restore_old_metadata(self):
+        def body():
+            lib=self.lib
+            lib.sigchild.argtypes=[Imageid,C.c_int64,C.c_uint32,C.c_uint64,C.c_uint64]
+            pid=(1<<59)|(7<<16)|9
+            before=self.snapshot(self.identity).pending
+            for child,reason,status in ((0,1,0),(1,1,0),(2<<59,1,0),(pid,2,0),
+                                        (pid,1,1<<63),(pid,1,1024),(pid,1,256),(pid,1,256|32)):
+                self.assertEqual(lib.sigchild(self.identity,child,0,reason,status),-1)
+                self.assertEqual(self.snapshot(self.identity).pending,before)
+            action=support.Action(2,0x10080,0x10040,0,8,0)
+            self.assertEqual(lib.siginstall(self.identity,17,C.byref(action)),0)
+            self.assertEqual(lib.sigchild(self.identity,pid,7,1,42),0)
+            ignored=support.Action(1,0,0,0,0,0)
+            self.assertEqual(lib.sigsetaction(self.identity,17,C.byref(ignored)),0)
+            self.assertEqual(self.snapshot(self.identity).pending,0)
+            self.assertEqual(lib.sigchild(self.identity,pid,8,1,43),0)
+            self.assertEqual(lib.sigsetaction(self.identity,17,C.byref(action)),0)
+            self.assertEqual(self.snapshot(self.identity).pending,0)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_depth_limit_preserves_first_pending_info_then_delivers_after_pop(self):
         def body():
             outer=self.push();inner=self.push()

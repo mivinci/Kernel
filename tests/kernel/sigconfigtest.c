@@ -117,6 +117,8 @@ sigconfigtest(void)
   REQUIRE(trace[3] == 2 && trace[4] == 4 && trace[5] == 1 &&
           trace[7] == ((u64) 1 << (SIGNAL_USR1 - 1)) && trace[14] == 1 && retained == 3 &&
           automatic == 60);
+  REQUIRE(trace[16] == 1 && trace[17] == trace[8] && trace[18] == 0 &&
+          trace[19] == SIGNAL_SOURCE_CHILD && trace[20] == WAIT_EXITED && trace[21] == 31);
   while ((error = procclean(pid)) > 0) {
   }
   REQUIRE(!error && !lifecollect(parent.life, 1, &result) && result.code == 42);
@@ -136,6 +138,8 @@ sigconfigtest(void)
   puthex(4);
   putstr(" old_result=");
   puthex(trace[14]);
+  putstr(" child_info=");
+  puthex(trace[16]);
   putstr(" charged=");
   puthex(account.charged);
   putstr(" allocated=");

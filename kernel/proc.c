@@ -726,8 +726,26 @@ procrunone(void)
 static void
 end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
 {
+  Life  child;
+  Proc *parent;
+  u64   status;
   if (lifeend(p->life, reason, code, fault))
     panic("process exit result");
+  if (lifestat(p->life, &child))
+    panic("committed child identity");
+  parent = find(child.parent);
+  if (!(child.exit_policy & LIFE_IGNORECHLD) && parent &&
+      (parent->state == PROC_READY || parent->state == PROC_RUNNING ||
+       parent->state == PROC_BLOCKED)) {
+    status = code;
+    if (reason != LIFE_EXIT)
+      status |= WAIT_SIGNALLED;
+    if (reason == LIFE_FAULT)
+      status |= WAIT_FAULT;
+    if (sigchild(parent->identity, child.pid, child.cred.ruid, WAIT_EXITED, status))
+      panic("committed child signal");
+    wakeone(parent);
+  }
   p->state = PROC_EXITING;
   if (imageend(p->identity, IMAGE_EXIT) || rqquotaend(&p->outgoing) || sigdiscard(p->identity))
     panic("process image/request exit");

@@ -42,6 +42,9 @@
 #define SIGNAL_BLOCK           0
 #define SIGNAL_UNBLOCK         1
 #define SIGNAL_SETMASK         2
+#define SIGNAL_SOURCE_USER     1
+#define SIGNAL_SOURCE_CHILD    2
+#define SIGNAL_SOURCE_FAULT    3
 #ifndef __ASSEMBLER__
 #include <types.h>
 #include <abi/base.h>

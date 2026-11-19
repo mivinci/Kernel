@@ -485,6 +485,8 @@ CASE=sigframe使用真实csu/main镜像和自定义trampoline验证10种路径�
 
 用户已确认原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。64字节布局不变，实现尚未接；可信测试code=0不定义生产协议。后续历史记录的“来源编码待确认”已由本次决定取代。
 
+2026-11-19接续先接CHILD真实退出生产：共享头统一SOURCE_USER/CHILD/FAULT常量；CHILD的reason/status采用原生wait kind/code，当前退出为WAIT_EXITED及exit code，信号终止另置WAIT_SIGNALLED，故障另置WAIT_FAULT。不是libc wait编码或Linux si_code。STOP/CONT尚未产生状态，不能假装本次已经支持。USER/FAULT的真实来源及归一化异常映射另接，不因有常量就开放sigsend或同步故障处理。
+
 ### 原生sigsuspend与M/W/H交接接续（2026-11-17）
 
 已接原生0x63和私有__sys_sigsuspend。输入先验证，保存当前M、安装清除KILL/STOP的W、检查pending并登记信号等待在现有单核IRQ屏蔽边界原子完成；没有unmask后才另睡眠的窗口。M先位于线程预付内核栈的原syscall续点，捕获成立时转入下一Sigctx，未新增通用等待对象。唤醒仅入FIFO并回原C续点复查；原调用先固定-INTERRUPTED的完整用户返回现场再退栈，统一出口以W和动作快照构造H，用户前缀restore_mask取M。正常sigreturn恢复M，handler中临时sigmask不覆盖它；显式合法帧mask编辑仍生效。
@@ -570,3 +572,13 @@ serial推进接续（2026-11-18）：sbin/serial/io.c已连接现有UART与两�
 独立serial接续（2026-11-19）：上述首次控制协议、异步READY和实际IRQ循环已落生产程序；原生测试PID1加载同一ELF并核对晚绑定/反例、阻塞后两批UART输入、实际TX与超时退出。测试同伴不是tty，不授MMIO/IRQ，不以它代替行规程、终端或默认init上线。PL011判空/ICR漏唤醒已通过旧C反例修复为清后重查；详细执行/完整回归状态见09末尾及stage112-serial-service/。
 
 该接续完整763项host/格式及171次双架构QEMU通过；实际服务每架构分别验证阻塞后双批输入/IRQ重新启用与READY超时退出，144份journal及来源/ELF/SDK哈希另核对。生产init装载/监督及实际tty仍是后续，不以测试字节同伴替代它们。
+
+### CHLD真实退出来源（2026-11-19）
+
+sigchild从可信已提交孩子身份和退出状态构造完整64字节Siginfo，code=SOURCE_CHILD、signum=CHLD、pid=完整PID、uid=ruid、reason/status=原生WAIT kind/code，所有无关字段清零。只接受当前已实现的WAIT_EXITED与合法退出/信号/故障状态，不用非法输入补造停止/继续通知。sigqueue继续负责IGNORE、掩码、首份信息合并及层数限制，构造器不绕过这些规则或自行递送。
+
+Proc.end在lifeend已提交结果/当时父策略后，按Life的实际逻辑父身份向其当前镜像排队；显式IGNORECHLD不产生通知，NOCLDWAIT未IGNORE仍允许通知，不消费/重建wait记录。目标Proc必须仍可运行或等待，已退出父不会因旧PID收到通知；逻辑孤儿归属按Life既有规则，不为历史退出重新生成信号。普通wait/recv的中断规则保持原边界，CHILD事件仍独立唤醒相应重查；信号递送只在完成用户返回点，不能在孩子退出的内核C续点直接进入父handler。
+
+两项新增host在两架构现场布局直接读取实际用户帧，验证CHILD字段与零填充、同号首份元数据合并、信号/故障退出状态、非法PID/原因/状态不修改及IGNORE后不复活旧信息。原生sigconfig的父安装自定义CHLD handler/trampoline，真实孩子以31退出，handler逐字段核对PID/ruid/code/reason/status与零字段，再经原生sigreturn恢复，父仍按正常wait取得唯一结果。主机另核对用户trace及child_info=1并保留全部原策略/清理检查；没有由可信fixture调用sigqueue伪造此CHLD。
+
+两架构专项及完整make test-all已通过：782项host、格式检查、179次双架构QEMU；独立核对152份journal、最终源码/头/SDK哈希与两份真实孩子退出handler记录，证据build/host/stage115-child-signal/。无CI或板端结果。USER sigsend、同步FAULT生产/归一化、STOP/CONT、普通阻塞中断、libc标准siginfo转换仍未实现，本次不把共享常量或可信code0测试当作它们的交付。

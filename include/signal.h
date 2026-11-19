@@ -26,6 +26,9 @@ int sigsetaction(Imageid image, u32 signum, const Sigact *action);
    blocked-syscall interruption remain separate from action registration. */
 int siginstall(Imageid image, u32 signum, const Sigact *action);
 int sigqueue(Imageid image, const Siginfo *info);
+/* A committed child status; pid/ruid come from Life, never user input.
+   reason/status follow native WAIT kind/code. Other Siginfo fields are zero. */
+int sigchild(Imageid image, Handle child, u32 ruid, u64 reason, u64 status);
 /* Completed-user-return boundary only; positive result requests default exit. */
 int sigdeliver(Imageid image, Spaceid space, Hctx *context);
 int sigrestore(Imageid image, Spaceid space, Hctx *context, u64 frame);
