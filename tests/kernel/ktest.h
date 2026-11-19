@@ -4,6 +4,7 @@
 #include <hal/vm.h>
 #include <dtb.h>
 void testmain(Hvs *space, const Dtinfo *hardware, u64 cpu);
+void sigsendtest(void);
 void cputest(const Dtinfo *hardware, u64 current);
 int  testcpustart(u32 method, u64 id);
 void bootviewtest(void);

@@ -61,6 +61,7 @@
 #define SYS_SIGMASK      0x61
 #define SYS_SIGPENDING   0x62
 #define SYS_SIGSUSPEND   0x63
+#define SYS_SIGSEND      0x64
 #define SYS_SIGRETURN    0x65
 #define SYS_GETID        0x4f
 #endif

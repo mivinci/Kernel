@@ -84,7 +84,7 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 | 0x61 | sigmask | how,mask | a1=oldmask |
 | 0x62 | sigpending | 无 | a1=mask |
 | 0x63 | sigsuspend | mask | 仅中断/退出 |
-| 0x64 | sigsend | selector指针,signum | status；16字节选择器一次快照，含signum=0检查 |
+| 0x64 | sigsend | Sigsel指针,signum | status；16字节选择器一次快照，含signum=0检查 |
 | 0x65 | sigreturn | frameptr | 成功恢复现场，不普通返回 |
 | 0x66 | getpg | pid | a1=PGID,a2=SID |
 | 0x67 | setpg | pid,pgid | status |
@@ -128,6 +128,7 @@ getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.
 | Resreply / 56 | source@0、rights@8、offset@16、length@24、business[3]@32 |
 | Budgetarg / 32 | memlimit@0、exec_limit@8、max_instances@16、reserved@24；Acct调整时max_instances要求0 |
 | Sigact / 48 | kind@0、handler@8、trampoline@16、mask@24、flags@32、reserved@40；DEFAULT=0、IGNORE=1、HANDLER=2 |
+| Sigsel / 16 | kind:u64@0、target:s64@8；PID=1、GROUP=2、CONTROL=3、ALL=4；完整选择器须8字节对齐并位于普通可读用户内存 |
 | Queryrec / 192 | type@0、pid@8、image@16、stamp@24、data[20]@32；所有未用字0 |
 
 Budget CONTROL只改绑定目标Acct的limit/exec_limit，SYSTEM POLICY通过绑定集合的CONTROL改集合上限；降到当前charged以下返回BUSY，不强制回收。资源槽/请求预付数量创建后不在线扩表，不能借budget改变ABI容量。管理者不得凭数字构造新设备/集合身份。

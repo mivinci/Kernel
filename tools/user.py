@@ -279,6 +279,13 @@ def build(args):
     job_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='jobtrace']
     if len(job_rows)!=1 or int(job_rows[0][2])!=64:raise BuildError('missing job trace')
     (sdk/'jobimage.S').write_text('/* image sha256: '+digest(job_image)+' */\n.section .rodata\n.balign 8\n.global job_image,job_image_end,job_trace_address\njob_image:\n.incbin '+json.dumps(str(job_image))+'\njob_image_end:\n.balign 8\njob_trace_address:\n.quad '+str(int(job_rows[0][1],16))+'\n')
+    send_elf=link_adoption('sigsenduser',[compile_adoption(ROOT/'tests/kernel/sigsenduser.c','sigsenduser')])
+    send_image=sdk/'sigsenduser.img'
+    send_image.write_bytes(pack(send_elf.read_bytes(),profile['machine'],128))
+    inspection=invoke('inspect-sigsend',[tools['readelf']['path'],'-s',str(send_elf)])
+    send_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='sendtrace']
+    if len(send_rows)!=1 or int(send_rows[0][2])!=128:raise BuildError('missing sigsend trace')
+    (sdk/'sendimage.S').write_text('/* image sha256: '+digest(send_image)+' */\n.section .rodata\n.balign 8\n.global send_image,send_image_end,send_trace_address\nsend_image:\n.incbin '+json.dumps(str(send_image))+'\nsend_image_end:\n.balign 8\nsend_trace_address:\n.quad '+str(int(send_rows[0][1],16))+'\n')
     package_exit=link_adoption('packageexit',[compile_adoption(ROOT/'tests/kernel/packageexit.c','packageexit')])
     serial_start_source=ROOT/'sbin/serial/start.c'
     serial_io_source=ROOT/'sbin/serial/io.c'
@@ -394,6 +401,7 @@ def build(args):
         raise BuildError('SDK private sources changed during build')
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     tty_artifact=str(tty_elf.relative_to(ROOT)),tty_sha256=digest(tty_elf),tty_image_sha256=digest(tty_image),
+                    sigsend_artifact=str(send_elf.relative_to(ROOT)),sigsend_sha256=digest(send_elf),sigsend_image_sha256=digest(send_image),
                     job_artifact=str(job_elf.relative_to(ROOT)),job_sha256=digest(job_elf),job_image_sha256=digest(job_image),
                     private_headers=final_private_headers,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),

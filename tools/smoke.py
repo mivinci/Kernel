@@ -294,6 +294,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
     elif case == "elf":
         if ready != ["READY elf-restored"] or panics or traps:
             raise SmokeError("native user ELF loader did not finish")
+    elif case == "sigsend":
+        if ready != ["READY sigsend-restored"] or panics or traps:
+            raise SmokeError("native signal selector/authorization scenario did not finish")
     elif case == "jobs":
         if ready != ["READY jobs-restored"] or panics or traps:
             raise SmokeError("Run stop/continue scenario did not finish")
@@ -1149,6 +1152,7 @@ def exercise(args, run_dir, record):
                     "READY elf-restored\n" if args.case == "elf" else
                     "READY runtime-restored\n" if args.case == "runtime" else
                     "READY jobs-restored\n" if args.case == "jobs" else
+                    "READY sigsend-restored\n" if args.case == "sigsend" else
                     "READY tty-restored\n" if args.case == "tty" else
                     "READY libsys-restored\n" if args.case == "libsys" else
                     "READY spawn-restored\n" if args.case == "spawn" else
@@ -1502,7 +1506,7 @@ def exercise(args, run_dir, record):
                             {"children":6,"retained":2,"automatic":4,"old_result":1,"child_info":1,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("signal mask/action/child policy mismatch")
                     record["signal_configuration"]=checks[0]
-                if args.case in ("init", "initfatal", "normal"):
+                if args.case in ("init", "initfatal", "normal", "sigsend"):
                     retained = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITRETAIN ")]
                     stacks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITSTACK ")]
                     if (len(retained) != 1 or retained[0].get("charged",0) <= 20 or len(stacks) != 4 or
@@ -1526,6 +1530,15 @@ def exercise(args, run_dir, record):
                             {"children":2,"rollback":4,"invalid":1,"slots":3,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("user ELF preparation/rollback/slot conservation mismatch")
                     record["elf_loader"] = checks[0]
+                if args.case == "sigsend":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('SIGSENDCHECK ')]
+                    if (len(checks)!=1 or {k:v for k,v in checks[0].items() if k not in ('allocated','baseline','init_charge')} !=
+                            dict(calls=54,credentials=4,partial=2,root_denied=1,control=2,self_kill=1,snapshot=32,reused=1,late=1,init=1,charged=0) or
+                            checks[0].get('allocated')!=checks[0].get('baseline') or checks[0].get('init_charge',0)<=0 or
+                            checks[0].get('init_charge')!=record['retained_init']['charged'] or
+                            checks[0].get('baseline',0)!=transition['tables']+checks[0].get('init_charge',0)):
+                        raise SmokeError('native signal permission/snapshot/retained-init conservation mismatch')
+                    record['sigsend']=checks[0]
                 if args.case == "jobs":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('JOBSCHECK ')]
                     if checks != [dict(cases=46,self=1,self_cancel=1,busy=1,notify=1,alarm=1,suspend=1,rpc=5,wait=1,group=1,killed=3,signals=9,child_jobs=2,recv_signal=3,request_signal=10,reply_signal=1,wait_signal=9,charged=0,allocated=transition['tables'])]:

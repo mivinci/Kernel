@@ -45,12 +45,24 @@
 #define SIGNAL_SOURCE_USER     1
 #define SIGNAL_SOURCE_CHILD    2
 #define SIGNAL_SOURCE_FAULT    3
+#define SIGNAL_SELECT_PID      1
+#define SIGNAL_SELECT_GROUP    2
+#define SIGNAL_SELECT_CONTROL  3
+#define SIGNAL_SELECT_ALL      4
 #ifndef __ASSEMBLER__
 #include <types.h>
 #include <abi/base.h>
 typedef struct Sigact  Sigact;
 typedef struct Sighead Sighead;
 typedef struct Siginfo Siginfo;
+typedef struct Sigsel  Sigsel;
+struct Sigsel
+{
+  u64    kind;
+  Handle target;
+};
+STATIC_ASSERT(sizeof(Sigsel) == 16, signal_selector_size);
+STATIC_ASSERT(offsetof(Sigsel, target) == 8, signal_selector_target);
 struct Sigact
 {
   u64 kind, handler, trampoline, mask, flags, reserved;

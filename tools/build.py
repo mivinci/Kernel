@@ -46,7 +46,7 @@ BOOT_CASES = {
     "runtime": 40, "elf": 41, "init": 42, "initfatal": 43, "sigconfig": 44,
     "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48,
     "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52, "bootpkg": 53,
-    "cpus": 54, "tty": 55, "jobs": 56,
+    "cpus": 54, "tty": 55, "jobs": 56, "sigsend": 57,
 }
 
 
@@ -229,7 +229,7 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):
             sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
-        if args.case in ("libsys", "runtime", "tty", "jobs", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "heap", "cow"):
+        if args.case in ("libsys", "runtime", "tty", "jobs", "sigsend", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "heap", "cow"):
             invoke("build-sdk", [sys.executable, str(ROOT / "tools/user.py"), "--arch", args.arch,
                                   "--cc", tools["cc"]["path"], "--ld", tools["ld"]["path"],
                                   "--ar", tools["ar"]["path"], "--readelf", tools["readelf"]["path"]])
@@ -242,6 +242,8 @@ def build(args, directory, run_dir):
                 sources += [ROOT / "tests/kernel/ttytest.c", directory / "sdk/ttyimage.S"]
             elif args.case == "jobs":
                 sources += [ROOT / "tests/kernel/jobtest.c", directory / "sdk/jobimage.S"]
+            elif args.case == "sigsend":
+                sources += [ROOT / "tests/kernel/sigsendtest.c", directory / "sdk/sendimage.S"]
             elif args.case == "elf":
                 sources += [ROOT / "tests/kernel/elftest.c", directory / "sdk/elfimage.S"]
             elif args.case == "cow":

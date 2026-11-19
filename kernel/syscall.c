@@ -84,6 +84,7 @@ syscall(Hctx *context)
   case SYS_INHERIT:
   case SYS_BUDGET:
   case SYS_REVOKE:
+  case SYS_SIGSEND:
     used = 3;
     break;
   case SYS_CONNECT:
@@ -359,6 +360,9 @@ syscall(Hctx *context)
     break;
   case SYS_SIGSUSPEND:
     status = procsigsuspend(args[0]);
+    break;
+  case SYS_SIGSEND:
+    status = procsigsend(args[0], args[1]);
     break;
   case SYS_SIGRETURN:
     procsigreturn(args[0]);

@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-17已接组/会话、wait策略、原生信号配置/两层帧/sigreturn/sigsuspend及libc mask子集，局部双架构证据见文末与status。终端/作业控制、真实来源、普通等待中断/重启及POSIX trampoline仍未完成，未完成CI/真实硬件/性能验收。
+状态：2026-11-20已接组/会话、wait策略、原生信号配置/两层帧/sigreturn/sigsuspend、普通等待中断、原生sigsend及USER/CHILD来源，局部双架构证据见文末与status。完整终端/作业控制、FAULT、POSIX trampoline/Rctx/Fix及重启仍未完成，未完成CI/真实硬件/性能验收。
 
 职责修订：普通会话/进程组与前台操作由 sh、tty 直接请求内核并接受关系/权限校验；init 仅配置初始终端权限。wait/自动收取依内核退出记录，不再以 init 复制和 exack 为前置。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -39,9 +39,9 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 ### 基础信号语义（已确定）
 
 首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
-实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择、CHLD停止/继续及普通等待中断的局部实现与实际用户验收见03/本篇末尾；sigsend/ttysignal授权与USER/FAULT生产、完整前台/终端关联及POSIX中断/重启适配仍待接，不能称为完整用户作业控制。
+实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择、CHLD停止/继续、普通等待中断及原生sigsend/USER来源的实际用户验收见03/本篇末尾；ttysignal、FAULT、完整前台/终端关联及POSIX中断/重启适配仍待接，不能称为完整用户作业控制。
 
-原生sigsend（2026-11-19用户确认，尚未实现）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。实现时须验证完整选择器快照、陈旧身份、部分授权及signum=0无状态变化，不将确认方案记作代码交付。
+原生sigsend（2026-11-19用户确认，实际接入与验收边界见文末）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。完整选择器快照、陈旧身份、部分授权及signum=0无状态变化的实际验证见文末，不将原生入口称为完整POSIX发信层。
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
 KILL/STOP 不可捕获、忽略或屏蔽；KILL 对停止中的进程也立即进入内核退出处理，不等待 CONT。
 每进程保存 pending/mask 和有上限的 action 表，普通信号可合并、不按次数排队；数据消息仍走 IPC。
@@ -745,3 +745,19 @@ reply_recv组合场景验证回复成功后进入接收，再被信号中断：�
 新增九个真实用户场景覆盖原生/libc的PID或冻结组wait、信号先到/退出先到、忽略/屏蔽USR1，以及已中断组等待者在停止期间被KILL。另由孩子真实STOP生成CHLD，打断只等待退出的父；父handler返回后用WNOHANG|WUNTRACED仍取得STOPPED/序号2，再屏蔽CHLD并等待CONT后的最终退出/序号4。CPU核对组引用精确差值、waitref、handler次数及所有页/费用回基线。早期专项把旧mode8的被杀组等待fixture误选为新场景，已通过显式配置区分，失败日志保留；没有为此修改内核关系规则。
 
 最终完整make test-all通过846项host、格式检查及193次双架构QEMU；两架构CASE=jobs各46场景，新增9项父wait中断/结果优先/引用收尾场景。166份journal、最终源码/头/SDK/包哈希及默认init/serial ELF与stage129逐字节相同另核对，normal仍无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage130-wait-signal/；无CI/板端/性能结果。原生sigsend、FAULT生产、POSIX信号trampoline/Rctx/Fix及SA_RESTART继续待接，不能把父wait中断视为这些接口的交付。
+
+### 原生sigsend与USER来源接续（2026-11-19接入，2026-11-20验收）
+
+SYS_SIGSEND=0x64及私有__sys_sigsend已接：内核完整复制一次8字节对齐的16字节Sigsel，不持用户指针跨调度。未知kind、无效signal、ALL非零target、未使用寄存器非零拒绝；不可读普通内存返回FAULT，错位返回INVALID。PID/GROUP只解析完整公开身份，CONTROL复用固定Life的TERMINATE授权，构造中/已结束实例不属于可投递Run。GROUP当前只接受正公开PGID，0选择当前组的接续规则已另行提问，尚待回复，未提前实现。
+
+PID/组/ALL的普通授权核对sender ruid/euid与target ruid/euid四种匹配；CONT另允许实际同会话，uid0无额外权。CONTROL显式TERMINATE不附加UID/会话条件。signum=0只检查存活和权限，不排队、不解除停止，也不生成USER元数据。无匹配活Run返回STALE，匹配但全无权返回DENIED，至少一次成功则成功；全失败且存在已授权目标时保留实际投递错误，不伪报权限拒绝。
+
+组/ALL先固定最多PROCS（配置上限64）个完整PID，每8个目标主动让出一次CPU；每次投递重新核验该完整PID仍对应活Run及当前凭据/会话，不因槽位复用改投新实例。不持临时Life/Group/Local引用跨让出，发送者退出可以丢弃整份C续点。组内调用者排在最后，确保组KILL/STOP在发送者结束或停放前已处理其他选定成员；ALL始终排除PID1和调用者。组成员在批次之间迁移或新发布不改既有快照；这不是对整个组的一次全局原子状态转换。
+
+USER来源只由内核构造，code=1、pid=发送者完整PID、uid=发送者euid，address/reason/status及保留字段全0。普通信号仍按既有pending合并、mask和handler深度规则递送，不借USER字段制造孩子报告或终端权。原生STOP/CONT/KILL直接复用已验证的Life/Run状态机，handler仍在统一用户出口且原syscall退栈后递送。
+
+独立CASE=sigsend使用实际用户ELF，经真实syscall/libsys桩完成54个请求：四种UID匹配、uid0拒绝、同/异会话CONT、CONTROL减权和跨会话显式权、零信号不改变停止状态、构造/结束/陈旧目标、非法描述符/编号/未用参数、组/ALL部分授权、真实USER完整PID/euid及零字段。组内KILL测试中发送者槽早于目标，仍须先终止目标；ALL KILL保留真实阻塞PID1和调用者，不能用不存在的假init冒充排除规则。
+
+32个接收者的组场景在首批8个投递后暂停原C续点，CPU修改原用户选择器、终止后复用尚未投递目标的槽并发布同组新成员；其余原目标仍收到原信号，重用槽的新PID和迟到成员均无pending，发送者最后收到自己的USER帧。所有普通测试Set最终费用/实例为0；保留PID1的费用与物理页基线不变，主机继续核对实际内核页表、保留内核栈及guard，不把这部分存活页当作泄漏豁免。最初fixture误从已发布表调用仅构造期的proctable，已在发布前保存测试Handle；保留PID1最初未纳入主机栈审计也已补齐，失败日志保留。
+
+最终完整make test-all通过846项host、格式检查及195次双架构QEMU；168份journal、最终源码/头/SDK/包哈希及两份54请求的原生发信证明另核对。新CASE不链接用户入口wrapper，普通测试Set费用/实例归零，实际PID1保持原费用/物理页与阻塞状态，其保留内核栈和guard仍由主机页表审计。默认serial ELF与stage130逐字节相同，init装载段亦逐字节相同，只有.strtab内LLVM局部标签编号改变；普通包/镜像无测试载荷，clangd数据库已更新。证据build/host/stage131-native-sigsend/；无CI/板端/性能结果。此点尚无libc kill/raise、标准sigaction/trampoline、FAULT或终端ttysignal生产，不把原生USER发信称为完整POSIX或作业控制；GROUP target=0的原子当前组选择仍待用户回复。

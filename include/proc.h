@@ -59,6 +59,7 @@ int procgetpg(Handle pid, Handle *pgid, Handle *sid);
 int procsetpg(Handle pid, Handle pgid);
 int procsetsid(Handle *sid);
 int procwait(Handle selector, u32 options, Liferesult *out);
+int procsigsend(u64 selector, u64 signum);
 /* Trusted normalized job transitions, not native signal authorization.
    Stop parks the Run with its prior READY/BLOCKED continuation intact. A
    current Run parks at its next safe checkpoint before returning to userspace. */

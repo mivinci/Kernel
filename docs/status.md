@@ -1,6 +1,6 @@
 # 当前状态
 
-更新：2026-11-19（Asia/Shanghai）。设计入口：[总览](design/00-overview.md)；协作规则：[AGENTS.md](../AGENTS.md)。
+更新：2026-11-20（Asia/Shanghai）。设计入口：[总览](design/00-overview.md)；协作规则：[AGENTS.md](../AGENTS.md)。
 
 ## 目标与分支
 
@@ -17,11 +17,13 @@
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权；生产PID1已安装16 Set对应的CREATE SERVICE权限，默认serial实际发布/READY已接。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
-- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。CHILD退出/STOP/CONT真实来源、Run停放/继续及recv/call/send/rqwait/父wait信号中断已接；USER/FAULT生产、重启及POSIX sigaction前置仍待接。
+- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。CHILD退出/STOP/CONT真实来源、Run停放/继续及recv/call/send/rqwait/父wait中断已接。原生sigsend/USER已接16字节选择器、UID/CONTROL权限与分批组快照；libc kill/raise、FAULT、重启及POSIX sigaction前置仍待接。
 - 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，含真实PIO/IRQ、两环、异步READY和精确init控制，两架构全量已验。普通用户ELF装载尚非FS稳定会话；fd/Fix适配、完整spawn/fork/exec未接，virtio尚无生产DMA。
 - T1.1..T1.5已本地验收：默认init服务装载/READY/监督与失败清理后诊断停机已接。normal含真实init/serial ELF，16 Set/CREATE SERVICE、128槽、固定CONTROL、标准UART/IRQ发权与Boot格式2已用；其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
+
+- 原生sigsend通过846项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。两架构各54请求验证四种UID匹配、uid0不绕过、同会话CONT、CONTROL显式权、零信号无效果、部分授权、USER元数据、组内自KILL与ALL保留真实PID1/自身；32接收者场景验证分批后修改选择器、复用PID槽及迟到成员不改快照。普通Set归零，保留PID1费用/物理基线与内核栈审计通过；serial ELF与stage130相同，init仅.strtab标签变化、装载段相同。证据stage131-native-sigsend/，无CI/板端/性能结果。
 
 - 父wait中断通过846项host/格式及193次双架构QEMU，166份journal与最终源码/SDK/包哈希匹配。两架构各46个作业场景，新增原生/libc、PID/冻结组、信号/结果优先、CHLD停止提示、忽略/屏蔽与已中断续点被KILL的9项；核对EINTR不改应用status、原报告仍可收取及组引用精确归还。默认init/serial ELF与stage129相同；证据stage130-wait-signal/，无CI/板端/性能结果。原生sigsend、FAULT生产与POSIX重启仍待接。
 
@@ -46,6 +48,8 @@
 
 ## 待确认与接续
 
+- stage131已本地验收：原生sigsend与USER生产已接；libc kill/raise尚未接。待用户确认GROUP target=0在内核受理时固定当前组，避免libc kill(0)先getpg再发信期间组切换/重建选错目标。正公开PGID与PID/CONTROL/ALL规则已实现；0接续未提前实现。之后继续FAULT、POSIX Rctx/Fix/trampoline/重启、前台与tty服务。
+
 - stage130已本地验收：父wait可被独立信号或不匹配报告的CHLD提示中断，结果优先与中断先锁存分开；组引用在正常/中断/中断后被杀路径各归还一次，libc EINTR保持status。下一步接已确认的16字节selector、逐成员授权及USER来源sigsend；之后接FAULT生产和POSIX Rctx/Fix/trampoline及重启。
 
 - stage129已本地验收：call/rqwait只退出等待并保留原RPC，SEND在中断提交点原子摘队，已固定结果优先；handler独立IPC及reply_recv已回复后中断的组合已验。父wait中断/组引用归还由stage130补齐，原生sigsend及POSIX Rctx/Fix/trampoline/SA_RESTART继续接续。
@@ -58,7 +62,7 @@
 
 - stage125已本地验收：可信procstop/proccontinue连接Life报告与真实Run，停止期间仅推进底层可恢复状态/已完成等待边，不入队；Proc仍512，退出清理与恢复状态显式复用原phase字节。固定CONTROL可原生查询/终止已停目标，原生wait交付STOP/CONT/EXIT；停放决策仍为可信CPU fixture，尚非原生sigsend/完整作业控制。ttycreate/ttybind/getfg与Life历史见03/11末尾。
 
-- 2026-11-19用户确认两项sigsend规则：16字节显式selector（PID/GROUP/CONTROL/ALL）编码，以及ruid/euid匹配、CONT同会话例外与组逐目标授权/部分成功语义。冻结正文见11基础信号语义，原生入口尚未实现。recv中断切片已验收，继续补其他等待及原生发信。
+- 2026-11-19用户确认两项sigsend规则：16字节显式selector（PID/GROUP/CONTROL/ALL）编码，以及ruid/euid匹配、CONT同会话例外与组逐目标授权/部分成功语义。冻结正文见11基础信号语义，原生入口及USER来源已在stage131接入；GROUP的0当前组接续另待确认，不混用旧负数PID编码。
 
 - stage119已本地验收：四种VMIN/VTIME、非阻塞/规范模式优先与绝对期限等待状态已接并通过全量。tty输入/输出专项独立为CASE=tty/用户ELF，两架构各双闹钟阻塞/唤醒通过，避免挤占通用runtime/ELF样例额度。等待不消费输入，服务请求提交/取消、活模式变化和前台授权仍待接。
 

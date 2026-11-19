@@ -10,7 +10,10 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
 #if BOOT_CASE == 47 || BOOT_CASE == 48
   chipcpu(hardware, cpu);
 #endif
-#if BOOT_CASE == 56
+#if BOOT_CASE == 57
+  sigsendtest();
+  putstr("READY sigsend-restored\n");
+#elif BOOT_CASE == 56
   jobtest();
   putstr("READY jobs-restored\n");
 #elif BOOT_CASE == 55

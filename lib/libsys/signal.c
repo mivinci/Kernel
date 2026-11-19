@@ -1,6 +1,13 @@
 #include "private/syscall.h"
 #include <abi/syscall.h>
 isize
+__sys_sigsend(const Sigsel *selector, u64 signum)
+{
+  const u64 args[7] = {(u64) selector, signum, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_SIGSEND, args, &result);
+}
+isize
 __sys_sigaction(u64 signum, const Sigact *action, Sigact *old)
 {
   const u64 args[7] = {signum, (u64) action, (u64) old, 0, 0, 0, 0};

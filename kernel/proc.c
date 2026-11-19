@@ -2081,6 +2081,103 @@ controlproc(Rtable *source, Handle authority, u64 rights, Proc **out, u64 *grant
     *granted = available;
   return 0;
 }
+static int
+signalrun(Proc *p)
+{
+  return p && (p->state == PROC_READY || p->state == PROC_RUNNING || p->state == PROC_BLOCKED ||
+               p->state == PROC_STOPPED);
+}
+int
+procsigsend(u64 address, u64 signum)
+{
+  Sigsel  selector;
+  Siginfo info;
+  Life    sender, target;
+  Handle  members[PROCS], group = 0, self = 0;
+  Group   sendergroup, targetgroup;
+  Proc   *p;
+  u32     i, count = 0, success = 0, control = 0;
+  int     error, failure = -ERR_STALE;
+  if (!current || current->state != PROC_RUNNING || vm_paused)
+    return -ERR_STATE;
+  if (signum > SIGNAL_COUNT || (signum && !(SIGNAL_SUPPORTED & ((u64) 1 << (signum - 1)))) ||
+      !IS_ALIGNED(address, 8))
+    return -ERR_INVALID;
+  error = spaceread(current->space, address, &selector, sizeof(selector));
+  if (error)
+    return error == SP_BUSY ? -ERR_BUSY : -ERR_FAULT;
+  if (lifestat(current->life, &sender))
+    return -ERR_STATE;
+  if (signum == SIGNAL_CONT && selector.kind != SIGNAL_SELECT_CONTROL &&
+      groupstat(sender.group, &sendergroup))
+    return -ERR_STATE;
+  if (selector.kind == SIGNAL_SELECT_PID || selector.kind == SIGNAL_SELECT_CONTROL) {
+    if (selector.kind == SIGNAL_SELECT_CONTROL) {
+      error = controlproc(&current->resources, selector.target, CONTROL_TERMINATE, &p, NULL);
+      if (error)
+        return error;
+      control = 1;
+    } else {
+      if (handletype(selector.target) != HANDLE_PROCESS)
+        return -ERR_BAD_HANDLE;
+      p = find(selector.target);
+    }
+    if (!signalrun(p))
+      return -ERR_STALE;
+    members[count++] = pidof(p);
+  } else {
+    if (selector.kind == SIGNAL_SELECT_GROUP) {
+      if (handletype(selector.target) != HANDLE_PROCESS)
+        return -ERR_BAD_HANDLE;
+      error = groupmatch(selector.target, &group);
+      if (error)
+        return error;
+    } else if (selector.kind != SIGNAL_SELECT_ALL || selector.target)
+      return -ERR_INVALID;
+    /* Snapshot complete PIDs, never borrowed Proc/Local/Group pointers. The
+       array remains safe if a later batch yields and a target slot is reused. */
+    for (i = 0; i < PROCS; i++) {
+      p = &processes[i];
+      if (!signalrun(p) || lifestat(p->life, &target) ||
+          (selector.kind == SIGNAL_SELECT_GROUP && target.group != group) ||
+          (selector.kind == SIGNAL_SELECT_ALL && (target.pid == 1 || p == current)))
+        continue;
+      if (p == current)
+        self = target.pid;
+      else
+        members[count++] = target.pid;
+    }
+    /* Group KILL/STOP must reach the other selected members before the sender
+       exits or parks itself. No owned reference needs cleanup across a yield. */
+    if (self)
+      members[count++] = self;
+  }
+  for (i = 0; i < sizeof(info); i++)
+    ((u8 *) &info)[i] = 0;
+  info.signum = (u32) signum;
+  info.code = SIGNAL_SOURCE_USER;
+  info.pid = (u64) sender.pid;
+  info.uid = sender.cred.euid;
+  for (i = 0; i < count; i++) {
+    p = find(members[i]);
+    if (signalrun(p) && !lifestat(p->life, &target)) {
+      if (control || sender.cred.ruid == target.cred.ruid || sender.cred.ruid == target.cred.euid ||
+          sender.cred.euid == target.cred.ruid || sender.cred.euid == target.cred.euid ||
+          (signum == SIGNAL_CONT && !groupstat(target.group, &targetgroup) &&
+           sendergroup.session == targetgroup.session)) {
+        error = signum ? procsigqueue(target.pid, &info) : 0;
+        if (!error)
+          success = 1;
+        else if (failure == -ERR_STALE || failure == -ERR_DENIED)
+          failure = error;
+      } else if (failure == -ERR_STALE)
+        failure = -ERR_DENIED;
+    }
+    if ((i + 1) % 8 == 0 && i + 1 < count)
+      procyield();
+  }
+  return success ? 0 : failure;
+}
 int
 procttycreate(Rtable *source, Handle system, Handle control, Handle *resource, Handle *id)
 {

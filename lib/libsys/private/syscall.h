@@ -57,6 +57,7 @@ isize __sys_sigaction(u64 signum, const Sigact *action, Sigact *old);
 isize __sys_sigmask(u64 how, u64 mask, u64 *old);
 isize __sys_sigpending(u64 *out);
 isize __sys_sigsuspend(u64 mask);
+isize __sys_sigsend(const Sigsel *selector, u64 signum);
 isize __sys_irqack(Handle binding);
 isize __sys_irqbind(Handle target, Handle source, u32 bit, Handle *binding);
 isize __sys_irqunbind(Handle target, Handle binding);
