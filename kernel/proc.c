@@ -111,6 +111,7 @@ pidof(const Proc *p)
 }
 static void wakeone(Proc *p);
 static void ready(Proc *p);
+static int  terminate(Proc *p);
 static Proc *
 find(Handle pid)
 {
@@ -1823,21 +1824,45 @@ procsiginstall(Handle pid, u32 signum, const Sigact *action)
 int
 procsigqueue(Handle pid, const Siginfo *info)
 {
-  Proc *p = find(pid);
-  int   error;
+  Proc   *p = find(pid);
+  Sigstat state;
+  Sigact  action;
+  u64     bit;
+  u32     stop;
+  int     error = sigvalidinfo(info);
+  if (error)
+    return error;
   if (!p)
     return -ERR_STALE;
-  /* Ordinary blocked syscall interruption is separate. A signal-only waiter
-     may be awakened without transferring any Rq responsibility. */
-  if (p->state != PROC_READY && p->state != PROC_RUNNING &&
-      !(p->state == PROC_BLOCKED && p->stage.wait.kind == WAIT_SIGNAL) &&
-      !(p->state == PROC_STOPPED &&
-        (p->phase.resume == PROC_READY || p->stage.wait.kind == WAIT_SIGNAL)))
+  if (p->state != PROC_READY && p->state != PROC_RUNNING && p->state != PROC_BLOCKED &&
+      p->state != PROC_STOPPED)
+    return -ERR_BUSY;
+  error = siggetaction(p->identity, info->signum, &action);
+  if (error)
+    return error;
+  if (sigstat(p->identity, &state))
+    return -ERR_STALE;
+  if (info->signum == SIGNAL_KILL)
+    return terminate(p);
+  bit = (u64) 1 << (info->signum - 1);
+  stop = sigstopkind(info->signum) && action.kind == SIGNAL_DEFAULT && !(state.mask & bit);
+  /* Pure jobs and blocked/ignored notifications do not abandon a C wait.
+     General caught-signal interruption of ordinary waits is separate. */
+  if ((p->state == PROC_BLOCKED || (p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED)) &&
+      p->stage.wait.kind != WAIT_SIGNAL && !stop && info->signum != SIGNAL_CONT &&
+      !(state.mask & bit) && !sigignored(info->signum, &action))
     return -ERR_BUSY;
   error = sigqueue(p->identity, info);
-  if (!error)
-    wakeone(p);
-  return error;
+  if (error)
+    return error;
+  if (info->signum == SIGNAL_CONT && proccontinue(pid))
+    panic("signal continue preflight");
+  if (stop) {
+    if (procstop(pid, info->signum) || sigcancel(p->identity, bit))
+      panic("signal stop preflight");
+  }
+  wakeone(p);
+  return 0;
 }
 NORETURN void
 procbadsignal(u64 frame)
@@ -1856,12 +1881,20 @@ procuserreturn(Hctx *context)
   int signal;
   if (!proccurrent(context) || vm_paused || current->stage.wait.kind)
     panic("user return boundary");
-  proccheckpoint();
-  signal = sigdeliver(current->identity, current->space, context);
-  if (signal < 0)
-    procbadsignal(hal_user_sp(context));
-  if (signal > 0)
-    procexit(LIFE_SIGNAL, (u32) signal, NULL);
+  for (;;) {
+    proccheckpoint();
+    signal = sigdeliver(current->identity, current->space, context);
+    if (signal < 0)
+      procbadsignal(hal_user_sp(context));
+    if (signal & SIG_DELIVER_STOP) {
+      if (procstop(pidof(current), (u32) signal & ~SIG_DELIVER_STOP))
+        panic("default stop admission");
+      continue;
+    }
+    if (signal > 0)
+      procexit(LIFE_SIGNAL, (u32) signal, NULL);
+    break;
+  }
   hal_user_enter(context);
 }
 NORETURN void
@@ -1885,6 +1918,15 @@ procsigsuspend(u64 mask)
     return error;
   for (;;) {
     error = sigwaitreturn(current->identity, original);
+    if (error > 0 && (error & SIG_DELIVER_STOP)) {
+      if (procstop(pidof(current), (u32) error & ~SIG_DELIVER_STOP))
+        panic("suspend stop admission");
+      current->stage.wait.kind = WAIT_SIGNAL;
+      current->stage.wait.subject.peer = 0;
+      current->stage.wait.options = 0;
+      sleepcurrent();
+      continue;
+    }
     if (!error)
       return -ERR_INTERRUPTED;
     if (error != -ERR_WOULD_BLOCK)
@@ -1910,7 +1952,7 @@ procsigaction(u64 signum, u64 input, u64 output)
   if (input) {
     if (spaceread(current->space, input, &action, sizeof(action)))
       return -ERR_FAULT;
-    error = sigactionvalid((u32) signum, &action);
+    error = sigactioncheck(current->identity, (u32) signum, &action);
     if (error)
       return error;
     if (action.kind == SIGNAL_HANDLER &&
@@ -2226,8 +2268,12 @@ procstop(Handle pid, u32 signum)
       (p->state == PROC_RUNNING && p != current))
     return -ERR_STATE;
   error = lifestop(p->life, signum);
-  if (error || p->state == PROC_STOPPED)
+  if (error)
     return error;
+  if (sigcancel(p->identity, (u64) 1 << (SIGNAL_CONT - 1)))
+    panic("stop pending continue");
+  if (p->state == PROC_STOPPED)
+    return 0;
   if (p == current) {
     p->phase.resume = PROC_RUNNING;
     reschedule_requested = 1;
@@ -2256,6 +2302,8 @@ proccontinue(Handle pid)
   error = lifecontinue(p->life);
   if (error)
     return error;
+  if (sigcancel(p->identity, SIG_STOPS))
+    panic("continue pending stops");
   if (p->state == PROC_STOPPED) {
     p->phase.cleanup = 0;
     if (resume == PROC_READY)
@@ -2294,13 +2342,18 @@ procterminate(Rtable *source, Handle authority)
   p = find(life.pid);
   if (!p || p->life.generation != identity.generation || p->life.index != identity.index)
     return -ERR_STALE;
+  return terminate(p);
+}
+static int
+terminate(Proc *p)
+{
   if (p == current)
-    procexit(LIFE_SIGNAL, 9, NULL);
+    procexit(LIFE_SIGNAL, SIGNAL_KILL, NULL);
   if (p->state == PROC_READY)
     unready(p);
   else if (p->state != PROC_BLOCKED && p->state != PROC_STOPPED)
     return -ERR_STATE;
-  end(p, LIFE_SIGNAL, 9, NULL);
+  end(p, LIFE_SIGNAL, SIGNAL_KILL, NULL);
   /* Outgoing death records are terminal before releasing the abandoned waiter.
      This can reclaim a QUEUED/replied Rq, but never fabricates server finish. */
   if ((p->stage.wait.kind == WAIT_RESULT || p->stage.wait.kind == WAIT_FINISH) &&

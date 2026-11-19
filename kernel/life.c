@@ -208,6 +208,18 @@ lifecancel(Lifeid id)
   return 0;
 }
 int
+lifejobcheck(Lifeid id, u32 stopped)
+{
+  Life *l = find(id);
+  if (!l)
+    return -ERR_STALE;
+  if (stopped > 1)
+    return -ERR_INVALID;
+  if (l->state != LIFE_LIVE)
+    return -ERR_STATE;
+  return l->stopped != stopped && l->sequence >= ~(u64) 0 - 1 ? -ERR_OVERFLOW : 0;
+}
+int
 lifestop(Lifeid id, u32 signum)
 {
   Life *l = find(id);

@@ -24,15 +24,27 @@ static void
 handler(u64 signum)
 {
   jobtrace[3] = signum;
+  jobtrace[5]++;
 }
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
 {
-  if (signum != SIGNAL_USR1 || info->signum != signum || function != (u64) handler ||
+  if ((signum != SIGNAL_USR1 && signum != SIGNAL_CONT && signum != SIGNAL_TSTP) ||
+      info->signum != signum || function != (u64) handler ||
       context != (void *) (address + SIGNAL_FRAME_TF) || flags)
     __sys_exit(202);
   handler(signum);
   __sys_sigreturn((void *) address);
+}
+static isize
+install(u32 signum, u64 kind)
+{
+  Sigact action;
+  action.kind = kind;
+  action.handler = kind == SIGNAL_HANDLER ? (u64) handler : 0;
+  action.trampoline = kind == SIGNAL_HANDLER ? (u64) trampoline : 0;
+  action.mask = action.flags = action.reserved = 0;
+  return __sys_sigaction(signum, &action, NULL);
 }
 int
 main(int argc, char **argv)
@@ -52,9 +64,35 @@ main(int argc, char **argv)
     child = child * 10 + argv[1][i] - '0';
   }
   if (mode == 0) {
+    if (child == 1 || child == 2 || child == 7)
+      CHECK(!__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_TSTP - 1), &state));
+    if (child == 2)
+      CHECK(!install(SIGNAL_USR1, SIGNAL_HANDLER));
+    if (child == 3 || child == 7) {
+      CHECK(!install(SIGNAL_CONT, SIGNAL_HANDLER));
+      CHECK(!__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_CONT - 1), &state));
+    }
+    if (child == 4)
+      CHECK(!install(SIGNAL_CONT, SIGNAL_IGNORE));
+    if (child == 5 || child == 6)
+      CHECK(!install(SIGNAL_TSTP, child == 5 ? SIGNAL_HANDLER : SIGNAL_IGNORE));
     jobtrace[0] = 1;
     while (!jobtrace[1])
       jobtrace[2]++;
+    if (child == 1) {
+      CHECK(!__sys_sigmask(SIGNAL_UNBLOCK, (u64) 1 << (SIGNAL_TSTP - 1), &state));
+      jobtrace[3] = 1;
+    } else if (child == 2) {
+      CHECK(__sys_sigsuspend(0) == -ERR_INTERRUPTED && jobtrace[3] == SIGNAL_USR1);
+      CHECK(!__sys_sigmask(SIGNAL_BLOCK, 0, &state) && (state & ((u64) 1 << (SIGNAL_TSTP - 1))));
+      jobtrace[4] = state;
+    } else if (child == 3 || child == 7) {
+      CHECK(!__sys_sigpending(&state));
+      jobtrace[4] = state;
+      CHECK(!__sys_sigmask(
+          SIGNAL_UNBLOCK, ((u64) 1 << (SIGNAL_TSTP - 1)) | ((u64) 1 << (SIGNAL_CONT - 1)), &state));
+      CHECK(jobtrace[3] == SIGNAL_CONT && jobtrace[5] == 1);
+    }
   } else if (mode == 1 || mode == 2) {
     if (mode == 1 && child == 1) {
       action.kind = SIGNAL_HANDLER;

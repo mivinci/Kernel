@@ -276,6 +276,7 @@ u32 outstanding(void){return instances;}
                     'lifecreate': [Setid, C.c_int64, C.c_int64, C.POINTER(support.Lifeid)],
                     'lifebootgroup': [support.Lifeid], 'lifepublish': [support.Lifeid],
                     'lifestop': [support.Lifeid, C.c_uint32], 'lifecontinue': [support.Lifeid],
+                    'lifejobcheck': [support.Lifeid, C.c_uint32],
                     'setversion': [support.Lifeid, C.c_uint64], 'lifestat': [support.Lifeid, C.POINTER(support.Life)],
                     'lifeend': [support.Lifeid, C.c_uint32, C.c_uint32, C.POINTER(support.Fault)],
                     'lifetake': [support.Lifeid, C.c_int64, C.c_uint32, C.POINTER(support.Result)],
@@ -295,6 +296,9 @@ u32 outstanding(void){return instances;}
                     self.assertEqual(lib.lifestat(identity, C.byref(state)), 0)
                     self.assertEqual((state.stopped, state.sequence), (stopped, (1 << 64) - 2))
                     before = bytes(state)
+                    self.assertEqual(lib.lifejobcheck(identity, int(not stopped)), -20)
+                    self.assertEqual(lib.lifejobcheck(identity, int(stopped)), 0)
+                    self.assertEqual(lib.lifejobcheck(identity, 2), -1)
                     self.assertEqual(lib.lifecontinue(identity) if stopped else lib.lifestop(identity, 20), -20)
                     self.assertEqual(lib.lifestat(identity, C.byref(state)), 0)
                     self.assertEqual(bytes(state), before)

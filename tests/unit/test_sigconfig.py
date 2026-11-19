@@ -147,13 +147,13 @@ class SignalConfigTests(unittest.TestCase):
             self.assertEqual(lib.sigcheck(),0)
         for lib in self.libs:self.exercise(lib,body)
 
-    def test_typed_source_rejects_reserved_special_and_ended_without_mutation(self):
+    def test_typed_source_rejects_reserved_and_ended_without_mutation(self):
         def body():
             lib=self.lib
             lib.sigqueue.argtypes=[Imageid,C.POINTER(Info)]
             life,image=self.active(1110)
             for info,error in [(Info(signum=0),-1),(Info(signum=5),-1),
-                    (Info(signum=10,reserved0=1),-1)]+[(Info(signum=n),-18) for n in (9,18,19,20,21,22)]:
+                    (Info(signum=10,reserved0=1),-1)]:
                 before=bytes(self.snapshot(image))
                 self.assertEqual(lib.sigqueue(image,C.byref(info)),error)
                 self.assertEqual(bytes(self.snapshot(image)),before)

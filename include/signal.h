@@ -6,6 +6,11 @@
 #include <hal/context.h>
 #include <abi/signal.h>
 #define SIGNAL_BAD_FRAME_CAUSE UINT64_C(0x8000000000000065)
+/* Kernel-only delivery result; never a native wait or user ABI value. */
+#define SIG_DELIVER_STOP 0x100
+#define SIG_STOPS                                                                                  \
+  ((UINT64_C(1) << (SIGNAL_STOP - 1)) | (UINT64_C(1) << (SIGNAL_TSTP - 1)) |                       \
+   (UINT64_C(1) << (SIGNAL_TTIN - 1)) | (UINT64_C(1) << (SIGNAL_TTOU - 1)))
 typedef struct Sigstat Sigstat;
 struct Sigstat
 {
@@ -20,16 +25,22 @@ int sigrelease(Imageid image);
 int sigcookie(Imageid image, u64 *out);
 int sigmaskvalid(u64 mask);
 int sigactionvalid(u32 signum, const Sigact *action);
+int sigactioncheck(Imageid image, u32 signum, const Sigact *action);
 int siggetaction(Imageid image, u32 signum, Sigact *out);
 int sigsetaction(Imageid image, u32 signum, const Sigact *action);
 /* Typed fixture producer; native USER/CHILD/FAULT production and ordinary
    blocked-syscall interruption remain separate from action registration. */
 int siginstall(Imageid image, u32 signum, const Sigact *action);
 int sigqueue(Imageid image, const Siginfo *info);
+int sigvalidinfo(const Siginfo *info);
+int sigstopkind(u32 signum);
+int sigignored(u32 signum, const Sigact *action);
+int sigcancel(Imageid image, u64 mask);
 /* A committed child status; pid/ruid come from Life, never user input.
    reason/status follow native WAIT kind/code. Other Siginfo fields are zero. */
 int sigchild(Imageid image, Handle child, u32 ruid, u64 reason, u64 status);
-/* Completed-user-return boundary only; positive result requests default exit. */
+/* Completed-user-return boundary only; SIG_DELIVER_STOP|signum requests a
+   default stop, other positive results request default exit. */
 int sigdeliver(Imageid image, Spaceid space, Hctx *context);
 int sigrestore(Imageid image, Spaceid space, Hctx *context, u64 frame);
 int sigdiscard(Imageid image);

@@ -98,6 +98,8 @@ int lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault);
    Duplicate transitions do not generate a new version or parent hint. */
 int lifestop(Lifeid id, u32 signum);
 int lifecontinue(Lifeid id);
+/* Nonmutating capacity/state check for a normalized transition. */
+int lifejobcheck(Lifeid id, u32 stopped);
 /* Detach only after the Proc owner has stopped and relinquished its resources. */
 int lifedetach(Lifeid id);
 int lifehold(Lifeid id, u32 kind);

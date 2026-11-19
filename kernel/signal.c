@@ -174,11 +174,36 @@ clearinfo(Siginfo *info)
   for (i = 0; i < sizeof(*info); i++)
     bytes[i] = 0;
 }
-static int
-ignored(u32 signum, const Sigact *action)
+int
+sigignored(u32 signum, const Sigact *action)
 {
   return action->kind == SIGNAL_IGNORE ||
-         (action->kind == SIGNAL_DEFAULT && (signum == SIGNAL_CHLD || signum == SIGNAL_WINCH));
+         (action->kind == SIGNAL_DEFAULT &&
+          (signum == SIGNAL_CHLD || signum == SIGNAL_WINCH || signum == SIGNAL_CONT));
+}
+int
+sigstopkind(u32 signum)
+{
+  return signum == SIGNAL_STOP || signum == SIGNAL_TSTP || signum == SIGNAL_TTIN ||
+         signum == SIGNAL_TTOU;
+}
+int
+sigactioncheck(Imageid id, u32 signum, const Sigact *action)
+{
+  Signal *s;
+  Image   image;
+  int     error = actionvalid(signum, action);
+  if (error)
+    return error;
+  s = find(id);
+  if (!s)
+    return -ERR_STALE;
+  if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  if (sigstopkind(signum) && action->kind == SIGNAL_DEFAULT &&
+      (s->pending & ((u64) 1 << (signum - 1))))
+    return lifejobcheck(image.life, 1);
+  return 0;
 }
 static int
 policy(Imageid id, const Sigact *action)
@@ -210,7 +235,7 @@ setaction(Imageid id, u32 signum, const Sigact *action)
 {
   Signal *s = find(id);
   Image   image;
-  int     error = actionvalid(signum, action);
+  int     error = sigactioncheck(id, signum, action);
   if (error)
     return error;
   if (!s)
@@ -221,7 +246,7 @@ setaction(Imageid id, u32 signum, const Sigact *action)
     return error;
   copyaction(&s->actions[signum - 1], action);
   s->actions[signum - 1].mask &= ~SIGNAL_UNMASKABLE;
-  if (ignored(signum, action)) {
+  if (sigignored(signum, action)) {
     s->pending &= ~((u64) 1 << (signum - 1));
     clearinfo(&s->info[signum - 1]);
   }
@@ -375,6 +400,32 @@ entrycheck(Spaceid space, u64 pc)
              : -ERR_FAULT;
 }
 int
+sigvalidinfo(const Siginfo *info)
+{
+  return !info || !validnumber(info->signum) || info->reserved0 || info->reserved[0] ||
+                 info->reserved[1]
+             ? -ERR_INVALID
+             : 0;
+}
+int
+sigcancel(Imageid id, u64 mask)
+{
+  Signal *s = find(id);
+  Image   image;
+  u32     i;
+  if (mask & ~SIGNAL_SUPPORTED)
+    return -ERR_INVALID;
+  if (!s)
+    return -ERR_STALE;
+  if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  s->pending &= ~mask;
+  for (i = 0; i < SIGNAL_COUNT; i++)
+    if (mask & ((u64) 1 << i))
+      clearinfo(&s->info[i]);
+  return 0;
+}
+int
 sigqueue(Imageid id, const Siginfo *info)
 {
   Signal   *s = find(id);
@@ -383,18 +434,27 @@ sigqueue(Imageid id, const Siginfo *info)
   const u8 *from;
   u32       i, signum;
   u64       bit;
-  if (!info || !validnumber(info->signum) || info->reserved0 || info->reserved[0] ||
-      info->reserved[1])
-    return -ERR_INVALID;
+  int       error = sigvalidinfo(info);
+  if (error)
+    return error;
   signum = info->signum;
-  if (signum == SIGNAL_KILL || signum == SIGNAL_STOP || signum == SIGNAL_CONT ||
-      signum == SIGNAL_TSTP || signum == SIGNAL_TTIN || signum == SIGNAL_TTOU)
-    return -ERR_NOTSUP;
   if (!s)
     return -ERR_STALE;
   if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
     return -ERR_STATE;
-  if (ignored(signum, &s->actions[signum - 1]))
+  if (signum == SIGNAL_CONT ||
+      (sigstopkind(signum) && s->actions[signum - 1].kind == SIGNAL_DEFAULT)) {
+    error = lifejobcheck(image.life, signum != SIGNAL_CONT);
+    if (error)
+      return error;
+  }
+  if (signum == SIGNAL_CONT)
+    error = sigcancel(id, SIG_STOPS);
+  else if (sigstopkind(signum))
+    error = sigcancel(id, (u64) 1 << (SIGNAL_CONT - 1));
+  if (error)
+    return error;
+  if (sigignored(signum, &s->actions[signum - 1]))
     return 0;
   bit = (u64) 1 << (signum - 1);
   if (s->pending & bit)
@@ -430,8 +490,10 @@ nextsignal(const Signal *s)
 {
   u64 pending = s->pending & ~s->mask;
   u32 i;
+  if (pending & ((u64) 1 << (SIGNAL_KILL - 1)))
+    return SIGNAL_KILL;
   for (i = 0; i < SIGNAL_COUNT; i++)
-    if ((pending & ((u64) 1 << i)) && !ignored(i + 1, &s->actions[i]) &&
+    if ((pending & ((u64) 1 << i)) && !sigignored(i + 1, &s->actions[i]) &&
         (s->actions[i].kind == SIGNAL_DEFAULT || s->depth < SIGNAL_DEPTH))
       return i + 1;
   return 0;
@@ -459,6 +521,11 @@ sigwaitreturn(Imageid id, u64 mask)
   if (ready <= 0)
     return ready < 0 ? ready : -ERR_WOULD_BLOCK;
   i = nextsignal(s) - 1;
+  if (s->actions[i].kind == SIGNAL_DEFAULT && sigstopkind(i + 1)) {
+    s->pending &= ~((u64) 1 << i);
+    clearinfo(&s->info[i]);
+    return SIG_DELIVER_STOP | (int) (i + 1);
+  }
   if (s->actions[i].kind == SIGNAL_DEFAULT)
     return 0;
   layer = &s->contexts[s->depth];
@@ -648,7 +715,7 @@ sigdeliver(Imageid id, Spaceid space, Hctx *context)
   if (s->actions[i].kind == SIGNAL_DEFAULT) {
     s->pending &= ~bit;
     clearinfo(&s->info[i]);
-    return (int) signum;
+    return (sigstopkind(signum) ? SIG_DELIVER_STOP : 0) | (int) signum;
   }
   if (s->depth == SIGNAL_DEPTH)
     return 0;

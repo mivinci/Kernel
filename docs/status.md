@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- 默认作业信号核心通过844项host/格式及193次双架构QEMU，166份journal和最终源码/SDK/包哈希匹配。两架构22场景含默认STOP/CONT/KILL、masked TSTP、纯停止保留sigsuspend及原mask、CONT handler先恢复后递送、捕获/忽略区别与双向pending抵消；新增6项host，27项专项通过。默认init/serial ELF与stage125相同；证据stage126-signal-jobs/，无CI/板端/性能结果。生成仍用可信入口，原生sigsend/ttysignal权限与USER来源、停止/继续CHLD和普通阻塞中断未接。
+
 - 真实Run停放/继续通过838项host/格式及193次双架构QEMU，166份日志和最终源码/SDK哈希匹配。两架构13场景覆盖忙循环/当前安全点停放、CONT抵消、通知/闹钟/handler不绕过停止、CALL阻塞/已完成续点、三类停止终止清理、原生wait三结果及组lease；fork冻结内核续点的停放/恢复/终止亦验。默认init/serial ELF与stage124相同，normal无注入wrapper/测试载荷；证据stage125-run-stop/，无CI/板端/性能结果。尚无原生sigsend/ttysignal生产与完整作业控制。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
@@ -35,6 +37,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage126已本地验收：默认作业信号与pending抵消已接；KILL复用统一终止，默认/忽略/屏蔽CONT不阻止恢复，handler按mask递送；纯STOP/CONT不使sigsuspend假返回。具体状态与失败边界见11末尾。sigsend两项提问仍待回复，继续保留候选状态，不据此开放原生入口。
 
 - stage125已本地验收：可信procstop/proccontinue连接Life报告与真实Run，停止期间仅推进底层可恢复状态/已完成等待边，不入队；Proc仍512，退出清理与恢复状态显式复用原phase字节。固定CONTROL可原生查询/终止已停目标，原生wait交付STOP/CONT/EXIT；停放决策仍为可信CPU fixture，尚非原生sigsend/完整作业控制。ttycreate/ttybind/getfg与Life历史见03/11末尾。
 

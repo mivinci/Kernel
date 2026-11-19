@@ -39,7 +39,7 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 ### 基础信号语义（已确定）
 
 首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
-实现接续：Life持久报告、可信Run停放/恢复及原生wait三种结果的实际用户验收见03末尾；sigsend/ttysignal授权与生产、默认信号停止/继续选择及CHLD停止/继续仍待接，不能称为完整用户作业控制。
+实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择及原生wait三种结果的实际用户验收见03/本篇末尾；sigsend/ttysignal授权与生产、CHLD停止/继续及普通阻塞中断仍待接，不能称为完整用户作业控制。
 
 原生sigsend开放问题（2026-11-19，以下为待用户确认的候选，未实现）：selector建议为一次快照的16字节指针结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。候选普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。选择器ABI与授权/部分成功两项均已向用户提问，确认前不把候选当冻结正文或新增成功入口。
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
@@ -677,3 +677,19 @@ sbin/tty/wait.c为一个已接受READ保存私有参数/期限，按固定四种
 新增CASE=tty及独立ttyuser.elf，原输入/输出核心专项移入该载荷，不继续将tty测试增长计入通用runtimeuser/ELF加载器的64页样例。测试ELF只链接已存在的生产tty模块及tests/kernel载荷，不创建生产tty main或加入默认包。可信测试装载器按自身逐页保留Local的已有契约供足测试资源槽，初次误配8槽在发布前被拒，已修正fixture而未放宽原生装载器权限/容量检查。
 
 12项host在O0/O2覆盖四组合、已有输入、MIN/长度夹取、规范EOF、非阻塞/零长优先、重复检查不延时、到期前后字节顺序、绝对时间倒退/溢出及随机期限模型。两架构独立原生场景通过总期限available=0与间隔期限available=1两种快照，各一次0.1秒真实alarm+recv阻塞/唤醒并再检查等待判定，保留原输入/输出全部断言及退出/费用归零核对；不是向客户端交付完整READ的证明。完整make test-all通过817项host、格式检查和191次双架构QEMU；164份journal、最终源码/头/SDK/配置/包哈希及独立tty实际用户调用另核对，默认init/serial ELF与stage117相同，通用runtime ELF不再链接tty fixture；新增源均进入clangd数据库。证据build/host/stage119-tty-wait/；尚非生产tty进程、完整read/取消事务、实际前台信号或可用sh，无CI/板端/性能结果。
+
+### 默认作业信号与待处理抵消（2026-11-19）
+
+Signal核心现接受KILL/STOP/CONT/TSTP/TTIN/TTOU；生成任一停止类信号时清除旧pending CONT，生成CONT时清除四种pending停止信号及其旧元数据，抵消发生在生成点，即使新动作被忽略也适用。只清pending，不撤回已进入的handler或改写活动帧。CONT默认忽略通知，DEFAULT/IGNORE以及屏蔽均不阻止恢复Run；HANDLER仍按mask/深度递送。KILL在核心选择中优先，不占新handler层；STOP不可捕获/忽略/屏蔽，其他停止类按动作与mask区分。
+
+可信procsigqueue对KILL直接使用与固定CONTROL terminate相同的退出/等待引用清理；对未屏蔽的默认停止立即调用Run停放并消费该信号，对被屏蔽的默认停止保留pending，解屏蔽后的用户出口返回内部SIG_DELIVER_STOP标记再停放。该标记不属于用户ABI或wait kind/code。捕获的TSTP/TTIN/TTOU进入普通handler而非停止，忽略时不形成停止报告。CONT先按生成规则清旧停止信号，再恢复Run，handler可以留pending，恢复不重复生成CONT状态。
+
+纯默认停止不使sigsuspend假返回：若临时换mask后选中默认停止，在原C等待链保留original mask与WAIT_SIGNAL，停放后CONT只恢复原等待；仍须可递送handler或终止才结束本次等待。例子：用户原先屏蔽TSTP，TSTP pending；sigsuspend(0)先停止。默认CONT后继续睡眠，最后USR1 handler经真实帧/sigreturn执行后才返回INTERRUPTED，并恢复原TSTP mask。另例：停止Run把CONT配置HANDLER且仍屏蔽CONT，CONT生成后Run先恢复、handler不执行；解除CONT屏蔽后handler才执行一次，重复CONT不重复推进Life状态。
+
+默认停止/继续排队前，以Life的无副作用状态/版本检查保留最后退出版本；失败不先抵消对向pending。已排队捕获停止信号切回DEFAULT时也先检查，原生sigaction在写old输出前完成该检查；不能先写用户输出再在动作提交点失败。原有可信procstop/proccontinue也分别清对向pending，保持真实Run与Signal账本一致。此检查不改变Life128/Proc512或预付的两层Signal上下文大小，未加入新权限位、调用号或成功占位。
+
+新增6项host在两个VM/现场后端验证非分配型默认停止、CONT默认忽略、生成时双向抵消及被忽略信号仍清旧状态、masked停止/sigsuspend选择不占层、捕获/忽略动作区别、KILL优先与满两层时默认停止仍能推进、坏字段/坏cancel mask不部分修改；既有版本边界专项另验无副作用job检查在O0/O2保留最终退出版本。两架构CASE=jobs保留原13场景，再增加9个真实用户场景，包含busy默认停止/继续、masked TSTP在sigmask返回前停放、纯停止保留sigsuspend与原mask、masked CONT handler先恢复后递送、显式IGNORE CONT仍恢复、捕获/忽略TSTP不停止、双向pending抵消、阻塞/停止目标KILL，以及默认忽略通知不误唤醒RECV；每景退出/引用/Set/页回基线。22场景专项与27项host专项已过，完整回归及终稿证据核对进行中。
+
+此处的生成入口仍是可信类型化生产者，fixture使用私有元数据，不是原生sigsend/ttysignal权限或USER来源验收；选择器/UID/组逐目标授权两项继续待用户确认。CHLD停止/继续、NOCLDSTOP、普通阻塞handler中断、POSIX trampoline、前台切换/tty服务仍待接。普通阻塞的未屏蔽可捕获信号一般仍返回BUSY；CONT可恢复其原等待，但该handler不绕过尚未接入的普通等待中断机制，不以本轮sigsuspend证明冒充它。
+
+最终完整make test-all通过844项host、格式检查、193次双架构QEMU；27项专项、166份journal、最终源码/头/SDK/包哈希、两份22场景Run证明和既有fork停放证明另核对。默认init/serial ELF与stage125逐字节相同；normal源/符号仍无测试注入wrapper或jobtest，编译数据库已更新。初次host专项仍期望特殊信号NOTSUP，已随实际核心支持移除该旧断言并增加独立正反例，旧失败日志保留。证据build/host/stage126-signal-jobs/；无CI/板端/性能结果，未将待确认sigsend候选落成ABI。

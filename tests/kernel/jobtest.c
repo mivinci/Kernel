@@ -4,6 +4,7 @@
 #include <diag.h>
 #include <hal/context.h>
 #include <rq.h>
+#include <signal.h>
 #include <abi/boot.h>
 extern const u8          job_image[], job_image_end[];
 extern const u64         job_trace_address;
@@ -404,6 +405,124 @@ waiting(u32 kill)
   }
   closed(set);
 }
+static void
+send(Actor *actor, u32 signum)
+{
+  Siginfo info;
+  u32     i;
+  for (i = 0; i < sizeof(info); i++)
+    ((u8 *) &info)[i] = 0;
+  info.signum = signum;
+  CHECK(!procsigqueue(actor->pid, &info));
+}
+static void
+pending(Actor *actor, u64 mask)
+{
+  Sigstat signal;
+  CHECK(!sigstat(actor->info.identity, &signal) && signal.pending == mask);
+}
+static void
+signalbusy(u32 mode)
+{
+  Setid set;
+  Actor actor;
+  Life  life;
+  u64   words[8], before;
+  CHECK(!setcreate(512, 1024, 1, &set));
+  create(set, 1, &actor);
+  load(&actor, 0, mode, 0);
+  do {
+    step();
+    trace(&actor, words);
+  } while (words[0] != 1 || words[2] < 100);
+  if (mode == 1 || mode == 2) {
+    send(&actor, SIGNAL_TSTP);
+    pending(&actor, (u64) 1 << (SIGNAL_TSTP - 1));
+    CHECK(!procinfo(actor.pid, &actor.info) && actor.info.state == PROC_READY);
+    release(&actor);
+    state(&actor, PROC_STOPPED);
+    trace(&actor, words);
+    CHECK(words[0] == 1 && !words[3]);
+    pending(&actor, 0);
+    send(&actor, SIGNAL_CONT);
+    if (mode == 2) {
+      CHECK(!procinfo(actor.pid, &actor.info) && actor.info.state == PROC_BLOCKED);
+      CHECK(procrunone() == -ERR_WOULD_BLOCK && procidle() >= 0);
+      trace(&actor, words);
+      CHECK(words[0] == 1 && !words[3]);
+      send(&actor, SIGNAL_USR1);
+    }
+  } else if (mode == 5 || mode == 6) {
+    send(&actor, SIGNAL_TSTP);
+    do {
+      step();
+      trace(&actor, words);
+    } while (mode == 5 && words[5] != 1);
+    CHECK(!procinfo(actor.pid, &actor.info) && actor.info.state == PROC_READY &&
+          !lifestat(actor.info.life, &life) && !life.stopped && life.sequence == 1);
+    pending(&actor, 0);
+    CHECK((mode == 5 && words[3] == SIGNAL_TSTP) || (mode == 6 && !words[3]));
+    release(&actor);
+  } else if (mode == 7) {
+    send(&actor, SIGNAL_TSTP);
+    pending(&actor, (u64) 1 << (SIGNAL_TSTP - 1));
+    send(&actor, SIGNAL_CONT);
+    pending(&actor, (u64) 1 << (SIGNAL_CONT - 1));
+    send(&actor, SIGNAL_TSTP);
+    pending(&actor, (u64) 1 << (SIGNAL_TSTP - 1));
+    send(&actor, SIGNAL_CONT);
+    pending(&actor, (u64) 1 << (SIGNAL_CONT - 1));
+    CHECK(!lifestat(actor.info.life, &life) && !life.stopped && life.sequence == 1);
+    release(&actor);
+  } else {
+    send(&actor, SIGNAL_STOP);
+    stopped(&actor, 2);
+    pending(&actor, 0);
+    send(&actor, SIGNAL_CONT);
+    pending(&actor, mode == 3 ? (u64) 1 << (SIGNAL_CONT - 1) : 0);
+    CHECK(!procinfo(actor.pid, &actor.info) && actor.info.state == PROC_READY);
+    trace(&actor, words);
+    before = words[2];
+    step();
+    trace(&actor, words);
+    CHECK(words[2] > before && !words[3]);
+    if (mode == 3) {
+      send(&actor, SIGNAL_CONT);
+      CHECK(!lifestat(actor.info.life, &life) && life.sequence == 3);
+    }
+    release(&actor);
+  }
+  finish(&actor);
+  trace(&actor, words);
+  if (mode == 1)
+    CHECK(words[3] == 1);
+  if (mode == 2)
+    CHECK(words[3] == SIGNAL_USR1 && words[5] == 1 && (words[4] & ((u64) 1 << (SIGNAL_TSTP - 1))));
+  if (mode == 3 || mode == 7)
+    CHECK(words[3] == SIGNAL_CONT && words[5] == 1 && words[4] == ((u64) 1 << (SIGNAL_CONT - 1)));
+  clean(&actor, LIFE_EXIT, 42, 1);
+  closed(set);
+}
+static void
+signalkill(void)
+{
+  Setid set;
+  Actor actor;
+  CHECK(!setcreate(512, 1024, 1, &set));
+  create(set, 1, &actor);
+  load(&actor, 1, 0, 0);
+  state(&actor, PROC_BLOCKED);
+  send(&actor, SIGNAL_WINCH);
+  send(&actor, SIGNAL_CHLD);
+  pending(&actor, 0);
+  CHECK(!procinfo(actor.pid, &actor.info) && actor.info.state == PROC_BLOCKED);
+  send(&actor, SIGNAL_STOP);
+  stopped(&actor, 2);
+  send(&actor, SIGNAL_KILL);
+  CHECK(!procinfo(actor.pid, &actor.info) && actor.info.state == PROC_EXITING);
+  clean(&actor, LIFE_SIGNAL, SIGNAL_KILL, 1);
+  closed(set);
+}
 void
 jobtest(void)
 {
@@ -423,11 +542,20 @@ jobtest(void)
   rpc(0, 0, 1);
   waiting(0);
   waiting(1);
+  signalbusy(0);
+  signalbusy(1);
+  signalbusy(2);
+  signalbusy(3);
+  signalbusy(4);
+  signalbusy(5);
+  signalbusy(6);
+  signalbusy(7);
+  signalkill();
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck() && !groupcheck());
   putstr("JOBSCHECK cases=");
-  puthex(13);
+  puthex(22);
   putstr(" self=");
   puthex(selfseen);
   putstr(" self_cancel=");
@@ -448,6 +576,8 @@ jobtest(void)
   puthex(1);
   putstr(" killed=");
   puthex(3);
+  putstr(" signals=");
+  puthex(9);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");
