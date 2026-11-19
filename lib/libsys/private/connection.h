@@ -56,7 +56,8 @@ isize sysconnworkadopt(Connwork *work, Conncache *cache, Connclaim claim, Handle
 isize sysconnworkreuse(Connwork *work, Conncache *cache, Connclaim claim);
 isize sysconnworkreserve(Connwork *work, Conncache *cache, u32 context, u32 span, Filelease *out);
 isize sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected);
-/* Directory must be DRAINING with no active bootstrap owner, bootstrap record
+/* Caller must first settle all File/close references (sysfilerefconnection=0).
+   Directory must be DRAINING with no active bootstrap owner, bootstrap record
    FREE and no occupied pages. Unmap before free; either failure retains the
    remaining exact responsibility for retry. Does not evict/forget the key. */
 isize sysconnworkclean(Connwork *work, Conncache *cache);

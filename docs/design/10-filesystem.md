@@ -957,3 +957,19 @@ SAVED由调用者在真实结果/数据/资源归属稳定、实际访问结束�
 7项host覆盖双页仅头记录/File一次移交、等待中断保持/后台key切换、同后端另页独立进展、先存数据再ACK与ACK失败/资源归属、DRAINING收取原结果再释放、旧key/输出别名、普通页满不窃取信号预算及畸形结果资源保留。真实libsys场景在HELLO/普通ATTACH后发布一个有槽READ：fixture核对实际source/connid/seq/slot、私有快照中的object55/span1/args长度和未用字，写4字节到原SHARED页并只reply原Rq。客户端把原请求转后台，另一个普通页可准备/abort独立File哨兵，然后invalidate；后台仍从原RPC保存结果与私有4字节快照、核对SAVED前ACK拒绝，完成ACK/File返交/整页归还后才拆除连接。没有重发READ或新RESULT请求，业务仍是受限服务fixture，不代表POSIX read或生产FS。
 
 最终完整make test-all通过904项host、格式检查及195次双架构QEMU；7项槽责任专项、168份journal、最终源码/头/SDK/包哈希与实际链接用户载荷和SDK打包ELF逐字节一致另核对。两架构真实共享槽READ均从原RPC保存数据、后台持有唯一页/File责任、SAVED前ACK拒绝、收尾归还后拆除，页/费用回基线。对象依赖仅短IPC及既有本地目录/页账本，SDK私有头一致，实际connection_work仍4096字节且无额外目录，init/serial ELF与stage139相同且无新增模块/测试符号，clangd数据库已更新。证据build/host/stage140-slot-responsibility/；无CI/板端/性能结果。初次全量的ARM独立libsys链接审计发现40字节Opkey按值转传引入编译器memcpy，已改为稳定的const Opkey引用，原键不得与输出重叠、调用者保护期间不得改写；ARM对象核对无memcpy依赖后从头完整重跑。旧构建/审计失败日志保留，不通过链接libc隐藏依赖。File/CALL注册、Rctx返回窗口与handler注入、服务端私有在途表/生命周期观察、逐操作错误/取消/截止策略、VA分配、Boot/Fix和标准fd/FS/TTY仍待接。两个已有接口问题保持待用户回复。
+
+### 客户端File别名、操作pin与最后关闭锚（2026-11-20）
+
+私有Filepool按已确认的每进程256条关闭责任上限预付256条64字节本地记录，另24字节客户端PID/image与关闭序号，共16408字节，按使用该模块的ELF私有存储计费，不挤占32 KiB连接工作页预算。每条保存目录代次/索引、后端session/准备token、fd别名数、在途pin数、状态和关闭序号，不缓存权威偏移/访问权限/O_APPEND/O_NONBLOCK。调用者在已有合法且独立的后端File引用后登记本地记录，不能由本地整数创建服务端权限；同一打开关系的本地dup别名使用同一记录。
+
+私有File ID为generation[55:0]/index[7:0]，全u64位模式，不是内核Handle或服务session。FREE/LIVE/CLOSING/RETIRED=0..3。new取得一条原来FREE记录并推进代次、预留最后关闭存储、建立一个alias，必须在fd发布前完成；满256项时不得淘汰仍活着或尚未确认关闭的记录。fd表继续独立保存自己的代次与CLOEXEC，Filepool不以fd整数定位旧操作；本地alias增加不发DUPREF，跨进程/后端引用仍须真实服务协议。
+
+pin在fd/源代次已固定后、释放短信号保护前取得，并随原槽/RPC责任持有。最后alias drop后状态转CLOSING，禁止新增alias/pin，但旧pin仍可在RESULT/ACK/后台收尾结束后归还；别名已经消失不等于原共享页或业务引用可回收。close只在CLOSING、alias=0、pin=0且尚无关闭序号时返回唯一Fileclose锚；重复close不会为未知结果创建另一事务。关闭序号与记录代次都不回绕，引用计数溢出不丢旧引用，最后代次完成后退休。
+
+confirmed仅供调用者匹配实际后端关闭结果或完成明确生命周期恢复策略后使用：核对原File ID和关闭序号，再归还表项；本点不发CLOSE或核验服务结果，不能因本地alias/pin都0就调用它。sysfilerefconnection在同一客户端Image范围内扫描这份预付表，任一LIVE/CLOSING仍引用精确目录代次即返回1；连接拆除的调用者须先得到0，不能在最后关闭尚未确认时unmap原连接。单纯数据页/RPC都已收尾仍不满足这个File引用条件。源Image变化返回STALE，不把fork后重写self当作修复父引用。
+
+6项host覆盖两个alias/旧操作pin阻止最后关闭、新pin拒绝、关闭锚一次性、已确认后复用拒绝旧ID/迟到结果、256条未确认关闭占满、alias/pin溢出、File代次/关闭序号耗尽、源镜像与输出保护；本地confirmed用例是已验证上层结果的模型，不冒充真实后端关闭。原生共享READ场景现使用真实Filepool ID和Fdtable：两个本地fd指向同一记录，普通后台READ持pin，另页prepare/abort的pin独立归还；随后两个fd都摘除/drop，File仍有原READ的pin，close返回BUSY。原RPC保存/ACK/File返交后unpin，才取得最后关闭锚。
+
+该原生fixture尚无后端CLOSE事务，因此不调用confirmed。它检查sysfilerefconnection仍为1，保留CLOSING及MEM/VA直到Image退出；CPU在清理前核对客户端完成轨迹，随后验证原生退出确实释放实际映射/资源/费用。审查曾发现直接拆连接会绕过未确认File锚，已在最终场景改为上述保留策略，先前回归在host阶段中止并保留日志；不把缺少后端关闭协议伪装为正常close成功。
+
+最终完整make test-all通过910项host、格式检查及195次双架构QEMU；6项引用专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构均以真实注册ID串接fd别名与原槽pin，最后关闭等pin归还并保持锚/原连接至Image退出，CPU清理前核对轨迹，实际页/费用回基线。Filepool对象无未定义依赖，私有SDK头一致，实际符号为256*64+24字节引用表、4096字节fd表与4096字节连接工作页；init/serial ELF与stage140相同且无新增模块/测试符号，clangd数据库已更新。证据build/host/stage141-file-references/；无CI/板端/性能结果。本层是客户端聚合引用与预付最后关闭责任，不是服务端File注册/权限或标准dup/close实现；真实CLOSE结果/控制Rq保底、CALL所有权、Rctx/handler返回窗口、Boot/Fix及生产FS/TTY继续待接。两个已有接口问题仍保持待用户回复。

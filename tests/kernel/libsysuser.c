@@ -5,6 +5,8 @@
 #include "private/bootstrap.h"
 #include "private/connection.h"
 #include "private/operation.h"
+#include "private/fileref.h"
+#include "private/fd.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 static volatile u64       bss[257];
@@ -15,6 +17,8 @@ static Connwork           connection_work;
 static Conntag   connection_tag;
 static Connpeer  connection_peer;
 static Bootstrap bootstrap_record;
+static Filepool  file_registry;
+static Fdtable   file_descriptors;
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -625,6 +629,11 @@ typedclient(const Bootview *view, Handle peer)
     Fileslot   descriptor;
     Opkey      operation, background, stale, spare;
     u64        file = 99, sparefile = 100;
+    u64        fileid;
+    Fileref    reference;
+    Fileclose  closing;
+    Fdtag      descriptor_tag;
+    Fdview     removed;
     u32        saved;
     Handle     original;
     u64        originalva;
@@ -676,6 +685,19 @@ typedclient(const Bootview *view, Handle peer)
             134);
     for (i = 0; i < sizeof(descriptor); i++)
       ((u8 *) &descriptor)[i] = 0;
+    sysfdinit(&file_descriptors);
+    REQUIRE(!sysfilerefinit(&file_registry, connection_work.state.self) &&
+                !sysfilerefnew(&file_registry, connection_work.state.self, connection_tag, 55, 0,
+                               &file),
+            125);
+    fileid = file;
+    REQUIRE(!sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 0 &&
+                !sysfdpublish(&file_descriptors, descriptor_tag, file, 0) &&
+                !sysfilerefalias(&file_registry, connection_work.state.self, fileid) &&
+                !sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 1 &&
+                !sysfdpublish(&file_descriptors, descriptor_tag, fileid, BOOT_FD_CLOEXEC) &&
+                !sysfilerefpin(&file_registry, connection_work.state.self, fileid),
+            124);
     REQUIRE(!sysopprepare(&connection_work, &connection_directory, SYSFILE_MAIN, 1, 501, &file, 55,
                           FS_READ, 0, &operation) &&
                 !file,
@@ -704,6 +726,8 @@ typedclient(const Bootview *view, Handle peer)
     stale.lease.slot = operation.lease.slot;
     stale.lease.span = operation.lease.span;
     stale.owner = operation.owner;
+    REQUIRE(!sysfilerefpin(&file_registry, connection_work.state.self, fileid), 123);
+    sparefile = fileid;
     REQUIRE(!sysopbackground(&connection_work, &connection_directory, &operation, &background) &&
                 !operation.lease.seq && !operation.owner &&
                 sysopcancel(&connection_work, &connection_directory, &stale) == -ERR_STALE &&
@@ -711,7 +735,21 @@ typedclient(const Bootview *view, Handle peer)
                               &sparefile, 56, FS_READ, 0, &spare) &&
                 spare.lease.slot != background.lease.slot &&
                 !sysopabort(&connection_work, &connection_directory, &spare, &sparefile) &&
-                sparefile == 100 && !sysconninvalidate(&connection_directory, connection_tag) &&
+                sparefile == fileid &&
+                !sysfilerefunpin(&file_registry, connection_work.state.self, sparefile),
+            128);
+    for (i = 0; i < 2; i++) {
+      REQUIRE(!sysfdobserve(&file_descriptors, i, &removed) && removed.file == fileid &&
+                  !sysfddetach(&file_descriptors, removed.tag, &removed) &&
+                  !sysfilerefdrop(&file_registry, connection_work.state.self, removed.file),
+              122);
+    }
+    REQUIRE(!sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) &&
+                reference.state == SYSFILE_REF_CLOSING && !reference.aliases &&
+                reference.pins == 1 &&
+                sysfilerefclose(&file_registry, connection_work.state.self, fileid, &closing) ==
+                    -ERR_BUSY &&
+                !sysconninvalidate(&connection_directory, connection_tag) &&
                 sysconnworkclean(&connection_work, &connection_directory) == -ERR_BUSY &&
                 sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 1,
                                    &other) == -ERR_PEER &&
@@ -719,26 +757,36 @@ typedclient(const Bootview *view, Handle peer)
             128);
     REQUIRE(!ipc_rqwait(connection_work.state.operations[background.lease.slot].rpc, 0, &result),
             127);
-    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysopcapture(&connection_work, &connection_directory, &background, 0, &result) &&
-                !result.words[0] && result.words[1] == background.lease.seq &&
-                result.words[2] == 4 && result.words[3] == 4 &&
-                !__sys_copy(&saved,
-                            (const void *) (uintptr_t) (originalva + FS_DATA_OFFSET +
-                                                        background.lease.slot * FS_SLOT_BYTES),
-                            sizeof(saved)) &&
-                saved == UINT32_C(0x74736574) &&
-                sysconnworkrelease(&connection_work, &connection_directory, background.lease) ==
-                    -ERR_BUSY &&
-                sysopack(&connection_work, &connection_directory, &background) == -ERR_STATE &&
-                !sysopsaved(&connection_work, &connection_directory, &background) &&
-                !sysopack(&connection_work, &connection_directory, &background) &&
-                !sysopfinish(&connection_work, &connection_directory, &background, &file) &&
-                file == 99 && !sysconnworkclean(&connection_work, &connection_directory) &&
-                !connection_work.state.memory && !connection_work.state.map.mapped &&
-                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-            126);
-    resource_trace[9] = 3;
+    REQUIRE(
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+            !sysopcapture(&connection_work, &connection_directory, &background, 0, &result) &&
+            !result.words[0] && result.words[1] == background.lease.seq && result.words[2] == 4 &&
+            result.words[3] == 4 &&
+            !__sys_copy(&saved,
+                        (const void *) (uintptr_t) (originalva + FS_DATA_OFFSET +
+                                                    background.lease.slot * FS_SLOT_BYTES),
+                        sizeof(saved)) &&
+            saved == UINT32_C(0x74736574) &&
+            sysconnworkrelease(&connection_work, &connection_directory, background.lease) ==
+                -ERR_BUSY &&
+            sysopack(&connection_work, &connection_directory, &background) == -ERR_STATE &&
+            !sysopsaved(&connection_work, &connection_directory, &background) &&
+            !sysopack(&connection_work, &connection_directory, &background) &&
+            !sysopfinish(&connection_work, &connection_directory, &background, &file) &&
+            file == fileid && !sysfilerefunpin(&file_registry, connection_work.state.self, file) &&
+            !sysfilerefclose(&file_registry, connection_work.state.self, fileid, &closing) &&
+            closing.file == fileid && closing.sequence &&
+            !sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) &&
+            reference.state == SYSFILE_REF_CLOSING && !reference.aliases && !reference.pins &&
+            reference.close_sequence == closing.sequence &&
+            !sysfilerefcheck(&file_registry, connection_work.state.self) &&
+            sysfilerefconnection(&file_registry, connection_work.state.self, connection_tag) == 1 &&
+            connection_work.state.memory == original && connection_work.state.map.mapped &&
+            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+        126);
+    /* The backend CLOSE protocol is not wired yet. Keep the closing anchor
+       through this Image exit, never manufacture a successful confirmation. */
+    resource_trace[9] = 4;
   }
 }
 static Handle

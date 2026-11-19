@@ -18,10 +18,12 @@
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化排队、两层用户帧/原生sigreturn、HANDLER两入口检查、sigsuspend及libc mask子集，完整GPR/FP/cookie/权限核验保留。CHILD退出/STOP/CONT、Run停放/继续、普通等待中断及原生sigsend/USER已接。默认用户故障按HAL区分SEGV/BUS/FPE/ILL；可信直接帧原语已接但尚未接实际硬件FAULT/公开原因编码。libc kill/raise、POSIX sigaction/Rctx/Fix/重启仍待接。
-- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，两架构全量已验。现接128项/4KiB本地fd槽表、FS/TTY连接线格式快照及私有8页分区账本；实际连接/原RPC责任、File/Rctx和Boot/Fix适配仍未接，普通装载尚非FS会话，完整spawn/fork/exec与生产DMA仍待接。
+- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接；默认init/serial两架构已验。现接128项本地fd表、256条客户端File别名/pin/关闭锚、稳定连接MEM/VA工作页及原槽RPC/后台责任，真实HELLO/普通ATTACH/共享READ fixture已验；服务端File/权限、真实CLOSE、Rctx与Boot/Fix、标准fd和完整spawn/fork/exec及生产DMA仍待接。
 - T1.1..T1.5已本地验收：默认init服务装载/READY/监督与失败清理后诊断停机已接。normal含真实init/serial ELF，16 Set/CREATE SERVICE、128槽、固定CONTROL、标准UART/IRQ发权与Boot格式2已用；其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
+
+- 客户端File引用通过910项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。6项host覆盖别名/pin/最后关闭、迟到确认/代次复用、256项预付容量、计数/序号耗尽、源镜像及输出保护；两架构实际fd别名摘除后原后台READ pin仍存，归还后才能取得关闭锚，未确认File阻止拆连接并保留MEM/VA至Image退出，实际回收归零。实际载荷/SDK/对象依赖和引用表/fd表/4KiB工作页大小一致，init/serial与stage140相同；证据stage141-file-references/。未接真实后端CLOSE或标准fd；无CI/板端/性能结果。
 
 - 起始槽/后台责任通过904项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。7项host覆盖双页单头/File一次移交、中断保持/后台key切换、先存后ACK/资源保留、DRAINING收尾、旧key/输出保护与分区背压；两架构真实共享槽READ转后台后仍用原RPC保存4字节，另页独立准备/撤销，失效后完成ACK/File返交/页归还再清连接。实际载荷/SDK一致、8条128字节记录与目录仍在4KiB页内、无memcpy依赖，init/serial与stage139相同；证据stage140-slot-responsibility/。初次ARM按值键隐式拷贝已改只读引用并重跑；尚非File注册表/完整Rctx或生产read；无CI/板端/性能结果。
 
@@ -65,6 +67,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage141已本地验收：256条本地File聚合alias、独立操作pin及预付最后关闭锚已接，连接拆除须先确认该目录代次不再被LIVE/CLOSING File占用。真实共享READ用注册ID替换哨兵，原RPC归还pin后才允许关闭，未实现的后端关闭没有伪造确认。接续真实CLOSE/控制Rq、CALL所有权、Rctx/信号返回窗口与服务端File/观察，再接VA/Boot/Fix/标准fd和FS/TTY。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 
 - stage140已本地验收：每起始槽128字节记录稳定持有页/原RPC/调用者已固定File身份、结果与资源；前台key显式移交后台并失效，数据/归属保存后才ACK，资源转交后才返File并归还整页。真实共享槽READ与DRAINING原请求收尾已验，接续实际File/CALL引用池、Rctx返回窗口/信号前置、服务私有在途/观察与取消/截止策略，再接VA/Boot/Fix及标准fd服务。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 
