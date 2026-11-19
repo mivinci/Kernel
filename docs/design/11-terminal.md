@@ -41,7 +41,7 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
 实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择及原生wait三种结果的实际用户验收见03/本篇末尾；sigsend/ttysignal授权与生产、CHLD停止/继续及普通阻塞中断仍待接，不能称为完整用户作业控制。
 
-原生sigsend开放问题（2026-11-19，以下为待用户确认的候选，未实现）：selector建议为一次快照的16字节指针结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。候选普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。选择器ABI与授权/部分成功两项均已向用户提问，确认前不把候选当冻结正文或新增成功入口。
+原生sigsend（2026-11-19用户确认，尚未实现）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。实现时须验证完整选择器快照、陈旧身份、部分授权及signum=0无状态变化，不将确认方案记作代码交付。
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
 KILL/STOP 不可捕获、忽略或屏蔽；KILL 对停止中的进程也立即进入内核退出处理，不等待 CONT。
 每进程保存 pending/mask 和有上限的 action 表，普通信号可合并、不按次数排队；数据消息仍走 IPC。
@@ -700,8 +700,20 @@ Signal核心现接受KILL/STOP/CONT/TSTP/TTIN/TTOU；生成任一停止类信号
 
 NOCLDSTOP现允许安装在CHLD动作，生成STOPPED/CONTINUED通知时检查该次父动作快照，置位则不产生通知；不抑制EXITED，不清除已有pending、不补发过去被抑制的通知，也不改NOCLDWAIT/显式IGNORE决定退出收取的策略。其他信号仍拒绝NOCLDSTOP；RESTART继续NOTSUP。sigchild先检查目标精确Image存活及合法kind/code，不能用抑制选项绕过旧镜像检查或接受非法状态。
 
-两架构CASE=jobs新增NOCLDSTOP场景，原停止父/孩子STOP→CONT→EXIT场景另安装真实CHLD HANDLER并屏蔽CHLD，以隔离尚未实现的普通wait handler中断：CPU核对无NOCLDSTOP时两次job提交确有pending，有NOCLDSTOP时均无pending，两种配置下退出均产生pending，用户仍以原生wait得到三种报告/版本。清除各次pending只在可信fixture用于逐次观测，不是用户服务的通知确认协议。host另逐个递送四种停止原因及CONT到真实信号帧，核对64字节来源/身份/ruid/kind/code与无关字段0；再验NOCLDSTOP抑制job而保留退出及非法kind/code拒绝。专项已通过，完整回归和终稿证据核对进行中。
+两架构CASE=jobs新增NOCLDSTOP场景，原停止父/孩子STOP→CONT→EXIT场景另安装真实CHLD HANDLER并屏蔽CHLD，以隔离尚未实现的普通wait handler中断：CPU核对无NOCLDSTOP时两次job提交确有pending，有NOCLDSTOP时均无pending，两种配置下退出均产生pending，用户仍以原生wait得到三种报告/版本。清除各次pending只在可信fixture用于逐次观测，不是用户服务的通知确认协议。host另逐个递送四种停止原因及CONT到真实信号帧，核对64字节来源/身份/ruid/kind/code与无关字段0；再验NOCLDSTOP抑制job而保留退出及非法kind/code拒绝。专项与完整回归结果见下文。
 
-本点不开放sigsend/ttysignal、不提供POSIX sigaction trampoline，不将屏蔽CHLD下的wait成功称作普通阻塞handler中断已接。SIGCHLD仍可合并并保留第一份未消费元数据，父必须主动检查持久wait报告；不得按通知次数推断子进程状态历史。原生sigsend两项确认仍待用户回复。
+本点不开放sigsend/ttysignal、不提供POSIX sigaction trampoline，不将屏蔽CHLD下的wait成功称作普通阻塞handler中断已接。SIGCHLD仍可合并并保留第一份未消费元数据，父必须主动检查持久wait报告；不得按通知次数推断子进程状态历史。原生sigsend两项随后已获用户确认，冻结规则见本篇基础信号语义，原生入口仍待实现。
 
 最终完整make test-all通过845项host、格式检查、193次双架构QEMU；20项信号专项、166份journal、最终源码/头/SDK/包哈希及两份23场景证明另核对。默认init/serial ELF与stage126逐字节相同，normal仍无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage127-child-jobs/，无CI/板端/性能结果。
+
+### 接收等待的信号中断（2026-11-19）
+
+阻塞recv在没有可提交消息/事件时检查可递送信号，捕获信号可使原C续点退栈返回INTERRUPTED，再由统一用户出口构造handler帧。忽略、屏蔽及已达两层深度的捕获信号不唤醒；默认停止保留等待，默认终止仍走统一退出。非阻塞recv保持原来的即时结果，不因pending信号伪造中断。
+
+等待者因信号转为可恢复时，在原wait选项中锁存内部中断位；之后的消息/事件不能把此次返回改成成功，也不被此次recv消费。消息/事件先使等待者就绪并不等于接收已经提交；原C续点取走消息/事件之前到达的可递送信号仍可锁存中断。接收实际提交成功之后，则保留结果并在统一用户出口递送handler。信号选择不消费pending位；停止状态只改变底层可恢复状态，CONT之前不执行此C续点或handler。内部位不开放为用户RECV选项，也不改变Proc大小。
+
+具体例子：等待bit32的进程先被STOP停放，再收到USR1，随后bit32通知到达；CONT后原recv返回INTERRUPTED，handler运行一次，下一次非阻塞recv取得仍保留的bit32。若将USR1与bit32顺序互换，进程仍未恢复C续点，因此仍返回INTERRUPTED并保留bit32。另一个场景让原recv实际成功交付bit32后才注入USR1，验证保存的事件结果及一次handler调用。三个场景使用真实独立用户ELF和CPU生产fixture，明确区分就绪与提交。
+
+reply_recv的接收段复用receive，回复提交仍在进入receive之前；本点新增CPU场景直接覆盖recv，回复成功后中断不回滚的组合场景须继续补验。call/send、rqwait及父wait尚保持各自旧边界，不将recv切片称为完整普通等待中断、POSIX trampoline或SA_RESTART。原生sigsend尚未接入，验证信号仍由可信类型化入口产生。
+
+最终完整make test-all通过846项host、格式检查及193次双架构QEMU；8项信号专项、166份journal及最终源码/头/SDK/包哈希另核对。两架构CASE=jobs各26场景，新增三个接收提交顺序场景，均核对handler次数、事件保留/交付和费用/物理页回基线。默认init/serial ELF与stage127逐字节相同，normal无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage128-recv-signal/；无CI/板端/性能结果。

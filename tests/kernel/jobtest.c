@@ -534,6 +534,46 @@ signalkill(void)
   clean(&actor, LIFE_SIGNAL, SIGNAL_KILL, 1);
   closed(set);
 }
+static void
+recvsignal(u32 first)
+{
+  Setid  set;
+  Actor  actor, sender;
+  Handle notify;
+  u64    words[8];
+  CHECK(!setcreate(1024, 2048, 2, &set));
+  create(set, 1, &actor);
+  create(set, 1, &sender);
+  CHECK(!localendpoint(proctable(sender.pid), actor.info.identity, LOCAL_NOTIFY, LOCAL_USE,
+                       (u64) 1 << 32, 0, &notify));
+  load(&actor, 1, first == 2 ? 3 : 2, 0);
+  state(&actor, PROC_BLOCKED);
+  if (first != 2)
+    send(&actor, SIGNAL_STOP);
+  if (first == 1)
+    send(&actor, SIGNAL_USR1);
+  load(&sender, 5, 0, notify);
+  finish(&sender);
+  if (first == 2) {
+    do {
+      step();
+      trace(&actor, words);
+    } while (words[6] != 3);
+    send(&actor, SIGNAL_USR1);
+    release(&actor);
+  } else {
+    if (!first)
+      send(&actor, SIGNAL_USR1);
+    stopped(&actor, 2);
+    CHECK(!proccontinue(actor.pid));
+  }
+  finish(&actor);
+  trace(&actor, words);
+  CHECK(words[5] == 1 && words[6] == (first == 2 ? 3U : 2U));
+  clean(&actor, LIFE_EXIT, 42, 1);
+  clean(&sender, LIFE_EXIT, 42, 1);
+  closed(set);
+}
 void
 jobtest(void)
 {
@@ -563,11 +603,14 @@ jobtest(void)
   signalbusy(6);
   signalbusy(7);
   signalkill();
+  recvsignal(0);
+  recvsignal(1);
+  recvsignal(2);
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck() && !groupcheck());
   putstr("JOBSCHECK cases=");
-  puthex(23);
+  puthex(26);
   putstr(" self=");
   puthex(selfseen);
   putstr(" self_cancel=");
@@ -592,6 +635,8 @@ jobtest(void)
   puthex(9);
   putstr(" child_jobs=");
   puthex(2);
+  putstr(" recv_signal=");
+  puthex(3);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

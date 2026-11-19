@@ -52,14 +52,15 @@ union Procstage
     u32 kind, options;
   } wait;
 };
-#define WAIT_RECV       PROCESS_WAIT_RECV
-#define WAIT_RESULT     PROCESS_WAIT_RESULT
-#define WAIT_FINISH     PROCESS_WAIT_FINISH
-#define WAIT_DESTROY    PROCESS_WAIT_DESTROY
-#define WAIT_CHILD      PROCESS_WAIT_CHILD
-#define WAIT_SIGNAL     PROCESS_WAIT_SIGNAL
-#define INTERRUPT_TIMER 1
-#define INTERRUPT_READY 2
+#define WAIT_RECV        PROCESS_WAIT_RECV
+#define WAIT_RESULT      PROCESS_WAIT_RESULT
+#define WAIT_FINISH      PROCESS_WAIT_FINISH
+#define WAIT_DESTROY     PROCESS_WAIT_DESTROY
+#define WAIT_CHILD       PROCESS_WAIT_CHILD
+#define WAIT_SIGNAL      PROCESS_WAIT_SIGNAL
+#define WAIT_INTERRUPTED 0x80000000U
+#define INTERRUPT_TIMER  1
+#define INTERRUPT_READY  2
 #ifndef WAIT_DEPTH
 #define WAIT_DEPTH 64
 #endif
@@ -1279,16 +1280,26 @@ wakeone(Proc *p)
   if (changed > 0)
     eventpost(&p->events, EVENT_CHILD);
   eventpost(&p->events, rqsignals(&p->outgoing, &p->incoming) | obssignals(p->identity));
+  /* READY only schedules the suspended C continuation; no receive has taken
+     its message/event yet. All signal producers share this commit boundary. */
+  if (p->stage.wait.kind == WAIT_RECV && p->state != PROC_RUNNING) {
+    wake = siginterruptready(p->identity);
+    if (wake < 0)
+      panic("receive signal identity");
+    if (wake)
+      p->stage.wait.options |= WAIT_INTERRUPTED;
+  }
   if (p->state != PROC_BLOCKED && !(p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED))
     return;
   if (p->stage.wait.kind == WAIT_SIGNAL) {
     wake = sigready(p->identity);
     if (wake < 0)
       panic("signal waiter identity");
-  } else if (p->stage.wait.kind == WAIT_RECV)
-    wake = p->incoming.immediate != PG_NONE || (p->events.pending & p->stage.wait.subject.mask) ||
+  } else if (p->stage.wait.kind == WAIT_RECV) {
+    wake = (p->stage.wait.options & WAIT_INTERRUPTED) || p->incoming.immediate != PG_NONE ||
+           (p->events.pending & p->stage.wait.subject.mask) ||
            (!(p->stage.wait.options & RECV_EVENTS_ONLY) && !listempty(&p->incoming.queue));
-  else if (p->stage.wait.kind == WAIT_CHILD) {
+  } else if (p->stage.wait.kind == WAIT_CHILD) {
     if (changed <= 0)
       return;
     if (lifeselect(pidof(p), &p->stage.wait.target.children, p->wait_cursor, p->stage.wait.options,
@@ -1517,10 +1528,17 @@ receive(u64 options, u64 mask, u64 outputs[8])
     }
     if (error != -ERR_WOULD_BLOCK || options & RECV_NONBLOCK)
       return error;
+    error = siginterruptready(current->identity);
+    if (error)
+      return error < 0 ? error : -ERR_INTERRUPTED;
     current->stage.wait.kind = WAIT_RECV;
     current->stage.wait.subject.mask = mask;
     current->stage.wait.options = (u32) options;
     sleepcurrent();
+    if (current->stage.wait.options & WAIT_INTERRUPTED) {
+      current->stage.wait.options &= ~WAIT_INTERRUPTED;
+      return -ERR_INTERRUPTED;
+    }
   }
 }
 isize
@@ -1847,10 +1865,11 @@ procsigqueue(Handle pid, const Siginfo *info)
   bit = (u64) 1 << (info->signum - 1);
   stop = sigstopkind(info->signum) && action.kind == SIGNAL_DEFAULT && !(state.mask & bit);
   /* Pure jobs and blocked/ignored notifications do not abandon a C wait.
-     General caught-signal interruption of ordinary waits is separate. */
+     Receive and suspend waits can unwind for caught signals; other wait
+     continuations still need their own result/ownership commit handling. */
   if ((p->state == PROC_BLOCKED || (p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED)) &&
       p->stage.wait.kind != WAIT_SIGNAL && !stop && info->signum != SIGNAL_CONT &&
-      !(state.mask & bit) && !sigignored(info->signum, &action))
+      p->stage.wait.kind != WAIT_RECV && !(state.mask & bit) && !sigignored(info->signum, &action))
     return -ERR_BUSY;
   error = sigqueue(p->identity, info);
   if (error)

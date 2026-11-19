@@ -94,6 +94,26 @@ main(int argc, char **argv)
       CHECK(jobtrace[3] == SIGNAL_CONT && jobtrace[5] == 1);
     }
   } else if (mode == 1 || mode == 2) {
+    if (mode == 1 && child >= 2) {
+      CHECK(!install(SIGNAL_USR1, SIGNAL_HANDLER));
+      jobtrace[0] = 1;
+      error = ipc_recv((u64) 1 << 32, RECV_EVENTS_ONLY, &message);
+      if (child == 2) {
+        CHECK(error == -ERR_INTERRUPTED && jobtrace[3] == SIGNAL_USR1 && jobtrace[5] == 1);
+        CHECK(!ipc_recv((u64) 1 << 32, RECV_EVENTS_ONLY | RECV_NONBLOCK, &message));
+      } else
+        CHECK(!error);
+      CHECK(message.kind == IPC_EVENT && message.words[0] == ((u64) 1 << 32));
+      jobtrace[6] = child;
+      if (child == 3) {
+        while (!jobtrace[1])
+          jobtrace[2]++;
+        CHECK(jobtrace[3] == SIGNAL_USR1 && jobtrace[5] == 1);
+      }
+      jobtrace[0] = 2;
+      jobtrace[7] = 42;
+      return 42;
+    }
     if (mode == 1 && child == 1) {
       action.kind = SIGNAL_HANDLER;
       action.handler = (u64) handler;

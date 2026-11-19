@@ -526,6 +526,17 @@ sigready(Imageid id)
   return nextsignal(s) != 0;
 }
 int
+siginterruptready(Imageid id)
+{
+  Signal *s = find(id);
+  u32     signum;
+  int     ready = sigready(id);
+  if (ready <= 0)
+    return ready;
+  signum = nextsignal(s);
+  return !(sigstopkind(signum) && s->actions[signum - 1].kind == SIGNAL_DEFAULT);
+}
+int
 sigwaitreturn(Imageid id, u64 mask)
 {
   Signal *s = find(id);

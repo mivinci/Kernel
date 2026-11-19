@@ -46,6 +46,8 @@ int sigrestore(Imageid image, Spaceid space, Hctx *context, u64 frame);
 int sigdiscard(Imageid image);
 /* Runnable pending signal, respecting the prepaid handler depth. */
 int sigready(Imageid image);
+/* Ordinary wait interruption: a default stop preserves the wait instead. */
+int siginterruptready(Imageid image);
 /* Attach the suspended caller mask to the next caught frame. */
 int sigwaitreturn(Imageid image, u64 mask);
 int sigsetmask(Imageid image, u32 how, u64 mask, u64 *old);

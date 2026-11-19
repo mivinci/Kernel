@@ -61,6 +61,31 @@ class SignalJobTests(unittest.TestCase):
     def queue(self, signum):
         self.assertEqual(self.lib.sigqueue(self.identity, C.byref(Info(signum=signum))), 0)
 
+    def test_ordinary_wait_interruption_respects_stop_mask_ignore_and_handler_depth(self):
+        def body():
+            self.lib.siginterruptready.argtypes = [support.Imageid]
+            self.lib.sigcancel.argtypes = [support.Imageid, C.c_uint64]
+            self.assertEqual(self.lib.siginterruptready(self.identity), 0)
+            self.queue(20)
+            self.assertEqual(self.lib.siginterruptready(self.identity), 0)
+            self.assertEqual(self.lib.sigcancel(self.identity, bit(20)), 0)
+            self.assertEqual(self.lib.siginstall(self.identity, 20, C.byref(self.action)), 0)
+            self.queue(20)
+            self.assertEqual(self.lib.siginterruptready(self.identity), 1)
+            old = C.c_uint64()
+            self.assertEqual(self.lib.sigsetmask(self.identity, 2, bit(20), C.byref(old)), 0)
+            self.assertEqual(self.lib.siginterruptready(self.identity), 0)
+            self.assertEqual(self.lib.sigsetmask(self.identity, 2, 0, C.byref(old)), 0)
+            self.assertEqual(self.lib.sigcancel(self.identity, bit(20)), 0)
+            self.push()
+            self.push()
+            self.queue(10)
+            self.assertEqual(self.lib.siginterruptready(self.identity), 0)
+            self.queue(2)
+            self.assertEqual(self.lib.siginterruptready(self.identity), 1)
+        for lib in self.libs:
+            self.exercise(lib, body)
+
     def test_default_stop_is_a_distinct_nonallocating_delivery_and_cont_default_is_ignored(self):
         def body():
             for signum in (19, 20, 21, 22):
