@@ -14,6 +14,7 @@
 #include <irq.h>
 #include <device.h>
 #include <fork.h>
+#include <terminal.h>
 #define CONFIG_IMAGE  1
 #define CONFIG_FORK   2
 #define CONFIG_KERNEL 0x80
@@ -1930,6 +1931,38 @@ controlproc(Rtable *source, Handle authority, u64 rights, Proc **out, u64 *grant
   if (granted)
     *granted = available;
   return 0;
+}
+int
+procttycreate(Rtable *source, Handle system, Handle control, Handle *resource, Handle *id)
+{
+  Imageid owner;
+  Proc   *target;
+  Handle  terminal;
+  int     error;
+  if (!resource || !id)
+    return -ERR_INVALID;
+  *resource = *id = 0;
+  error = localsystemaccess(source, system, SYSTEM_POLICY, &owner);
+  if (error)
+    return error;
+  error = controlproc(source, control, CONTROL_CONNECT, &target, NULL);
+  if (error)
+    return error;
+  error = localrooms(source, 1);
+  if (error)
+    return error;
+  /* Fix the exact current Image while IRQs are masked; CONTROL's Life binding
+     must never make an existing terminal follow a later exec. */
+  error = terminalnew(target->identity, &terminal);
+  if (error)
+    return error;
+  error =
+      localterminal(source, terminal, TERMINAL_RIGHTS | LOCAL_GRANT, TERMINAL_SIGNALS, 0, resource);
+  if (terminaldrop(terminal))
+    panic("terminal creation reference");
+  if (!error)
+    *id = terminal;
+  return error;
 }
 int
 procirqbind(Rtable *source, Handle authority, Handle irq, u32 bit, Handle *out)

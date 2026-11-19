@@ -50,6 +50,7 @@ int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 of
 int procrevoke(Rtable *source, Handle target, Handle resource);
 int procbudget(Rtable *source, Handle target, const Budgetarg *args);
 int procterminate(Rtable *source, Handle target);
+int procttycreate(Rtable *source, Handle system, Handle control, Handle *resource, Handle *id);
 int proccred(Rtable *source, Handle subject, Handle pid, u64 image, Cred *out);
 int procgetpg(Handle pid, Handle *pgid, Handle *sid);
 int procsetpg(Handle pid, Handle pgid);

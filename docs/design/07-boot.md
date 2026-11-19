@@ -550,6 +550,8 @@ serial argv保留前五项，末尾追加shift和width两项，共七项；解�
 
 已确认并接入debughandoff=0x74、SYSTEM CONSOLE=0x20、排空/BUSY及panic独占接管规则，完整733项host/格式及167次双架构QEMU已通过，证据见14末尾。SYSTEM仅精确初始PID1/image1另获CONSOLE，其他测试/可信镜像的QUERY授权不隐式增加此权，不把可信构造接口当作用户任意安装SYSTEM的入口。
 
+终端发权接续（2026-11-19用户确认）：精确初始PID1/image1的SYSTEM另授POLICY=0x10，仅用于已接业务的显式权限检查。ttycreate使用该权加TTY固定CONTROL CONNECT，生成固定于当时精确镜像的TERMINAL，再由init经准备期grant分发；普通镜像SYSTEM仍只有QUERY，不继承/转授。此前“仅QUERY/CONSOLE”记录描述当时交付，当前实现与证据见11末尾。默认init尚未创建tty，不因发权机制接入而改变默认服务清单。
+
 实际serial接管前需解决内核轮询控制台仍写同一UART的冲突：NS16550的DLAB等状态会改变寄存器含义，普通内核输出既可能夹入用户字节，也可能破坏驱动配置。不能因QEMU默认配置恰好可打印而忽略所有权；14要求panic独立输出，单纯永久静默同样不满足目标。
 
 debughandoff调用号0x74，输入精确初始镜像SYSTEM Handle，要求CONSOLE=0x20权，余参数必须0；init在serial成功start前显式交接，普通内核输出转入14既定有界日志，不再访问UART。交接只执行一次，重复调用幂等，不授权用户任意重配设备，不因服务退出/解绑自动恢复轮询。panic停止调度并屏蔽IRQ后独占接管，使用启动时保存的固件访问/波特率配置恢复最小输出，输出后停机，不恢复用户驱动。有界失败路径保留诊断记录，不能在坏设备上无限等待。

@@ -5,6 +5,7 @@
 #include "private/syscall.h"
 #include "private/serial.h"
 #include <string.h>
+#include <sys/channel.h>
 static Serialring pumprx, pumptx;
 #define CHECK(c, n)                                                                                \
   do {                                                                                             \
@@ -65,6 +66,8 @@ main(int argc, char **argv)
   Serialboot boot, before;
   u8         data[SERIAL_BATCH];
   isize      error;
+  Ipcmsg     response;
+  Msg        message = {{UINT64_C(0x54545901), 0, 0, 0}};
   (void) argv;
   CHECK(argc == 7 && !serialboot(sysboot(), &boot), 201);
   error = serialcheck(&boot);
@@ -90,5 +93,10 @@ main(int argc, char **argv)
   CHECK(!__sys_free(boot.handle[SerialIrq]) && serialcheck(&boot) == -ERR_DENIED &&
             !memcmp(&boot, &before, sizeof(boot)),
         208);
+  /* Keep this exact ACTIVE Image alive until the parent issues its terminal.
+     This is fixture synchronization, unrelated to serial's READY protocol. */
+  CHECK(!ipc_call(boot.handle[SerialInit], &message, 0, &response) &&
+            response.words[0] == message.words[0] && !response.request,
+        221);
   return 42;
 }

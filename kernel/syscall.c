@@ -75,6 +75,7 @@ syscall(Hctx *context)
     used = 63;
     break;
   case SYS_IRQUNBIND:
+  case SYS_TTYCREATE:
   case SYS_SIGMASK:
   case SYS_WAIT:
   case SYS_CREATE:
@@ -165,6 +166,13 @@ syscall(Hctx *context)
     procuserreturn(context);
   }
   switch (trap.syscall_nr) {
+  case SYS_TTYCREATE:
+    status = procttycreate(table, (Handle) args[0], (Handle) args[1], &handle, &pid);
+    if (!status) {
+      outputs[0] = (u64) handle;
+      outputs[1] = (u64) pid;
+    }
+    break;
   case SYS_OBSERVE:
     status = procobserve(table, (Handle) args[0], (Handle) args[1], args[2], (Handle) args[3],
                          args[4], &observation);

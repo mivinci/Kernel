@@ -82,6 +82,19 @@ __sys_alarmcancel(u64 *generation)
   return error;
 }
 isize
+__sys_ttycreate(Handle system, Handle control, Handle *resource, Handle *id)
+{
+  const u64 args[7] = {(u64) system, (u64) control, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!resource || !id)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_TTYCREATE, args, &result);
+  *resource = (Handle) result.values[0];
+  *id = (Handle) result.values[1];
+  return error;
+}
+isize
 __sys_debughandoff(Handle system)
 {
   const u64 args[7] = {(u64) system, 0, 0, 0, 0, 0, 0};

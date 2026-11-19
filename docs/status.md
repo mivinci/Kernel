@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- TERMINAL Local通过829项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。两架构真实准备表减权/拒绝、旧Image结束后查询/STALE及最后表项释放回收通过；host另验fork句柄继承和信号权不继承。默认init/serial ELF与stage117相同，证据stage121-terminal-local/，无CI/板端/性能结果；尚未发放原生终端权或开放终端调用，tty历史证据见11/stage119。
+- 原生ttycreate通过829项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。初始SYSTEM POLICY与固定CONTROL CONNECT发权、PREPARING/ACTIVE精确owner、128次满表失败后64项满池、准备期减权/CONTROL安装拒绝、旧owner查询/STALE均已验。默认init/serial可装载段与stage117逐字节相同，仅符号表元数据改变；证据stage122-ttycreate/，无CI/板端/性能结果。默认包尚无tty，其他终端调用待接。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
 
@@ -36,11 +36,9 @@
 
 ## 待确认与接续
 
-- stage121已本地验收：TERMINAL低位QUERY/FG/SIGNAL/BIND=1/2/4/8、信号子集mask、准备期grant及仅QUERY/FG继承已同步03/06/11；Local安装/减权/查询/回收与fork引用通过全量。ttycreate/getfg/setfg等原生入口未开放，初次发权/原生grant门禁的用户态验收、会话继承和挂断仍待接。
+- stage122已本地验收：ttycreate=0x6e、精确初始SYSTEM POLICY=0x10、owner CONTROL CONNECT及完整TERMINAL首授已接；Local/原生准备期grant门禁已由实际用户调用验收。Local引用/继承与epoch可信核心的历史证据见11/stage120..121；尚无控制终端继承/挂断或前台原生调用。
 
-- stage120已本地验收：终端关系可信核心持精确Image/session/group引用，前台提交核对epoch并拒绝回绕，真实镜像结束/代次/引用回收通过全量。只链接测试场景，接续Local/原生授权、会话继承与HUP/CONT挂断，不称终端调用已实现。
-
-- 2026-11-19用户已确认前台切换epoch：getfg返回PGID/SID/epoch，setfg带expected_epoch，匹配才提交并递增，旧请求STALE；ttybind仅首次关联，ttysignal按提交时当前前台。已同步06/11及失败例子，终端调用仍未实现，当前没有待回复的确认项。
+- 2026-11-19已确认下一步ttybind/getfg：BIND可跨会话绑定尚未关联终端，目标会话须有存活成员，不自动选前台；QUERY可跨会话查PGID/SID/epoch，未绑定返回0/0/1。setfg仍须FG、调用者同关联会话及TTOU检查，旧expected_epoch返回STALE。已同步06/11，当前没有待回复的确认项。
 
 - stage119已本地验收：四种VMIN/VTIME、非阻塞/规范模式优先与绝对期限等待状态已接并通过全量。tty输入/输出专项独立为CASE=tty/用户ELF，两架构各双闹钟阻塞/唤醒通过，避免挤占通用runtime/ELF样例额度。等待不消费输入，服务请求提交/取消、活模式变化和前台授权仍待接。
 
@@ -58,7 +56,7 @@
 
 - stage113管理引擎已由stage117接入默认init；初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis，父wait/镜像确认/缓冲回收独立。2026-11-19确认的首次必需serial清理后诊断停机已实现，其他服务/恢复方向按07/09接续。
 
-- 下一步：接初次原生终端发权、会话绑定/getfg/setfg与用户态门禁验收，补控制终端继承/挂断及真实信号，再接tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
+- 下一步：接已确认的ttybind/getfg及用户态门禁验收，再接setfg/TTOU、控制终端继承/挂断及真实信号，继续tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 
 - 2026-11-18确认的反向bit32=RX_ROOM/bit33=TX_READY与晚绑定已按07/11落定v1 BIND/STATUS及最近结果缓存，serial侧已实现/本地验；生产tty配对和init编排仍待接，绑定前不发布tty连接。
 

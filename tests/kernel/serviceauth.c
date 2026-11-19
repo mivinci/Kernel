@@ -6,7 +6,10 @@
 #include "private/syscall.h"
 #include "private/io.h"
 #include <abi/syscall.h>
-volatile u64 handoffproof[8];
+#include <abi/terminal.h>
+volatile u64  handoffproof[8];
+volatile u64  terminalproof[8];
+static Handle terminalslots[128];
 
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -15,9 +18,81 @@ volatile u64 handoffproof[8];
   } while (0)
 
 static Handle system, memory, source;
-static u64    windowbytes;
-static u64    uartkind, uartoffset, uartbytes;
-static u64    uartshift, uartwidth;
+static int
+terminalprepare(Handle view, Handle pid, Handle control, Handle *full)
+{
+  Sysret   result;
+  u64      args[7] = {0, 0, 1, 0, 0, 0, 0};
+  u64      written, next, i, count;
+  Handle   id, denied, query, signal;
+  Queryrec rows[8];
+  REQUIRE(__sys_ttycreate(0, control, full, &id) == -ERR_BAD_HANDLE && !*full && !id, 144);
+  REQUIRE(__sys_ttycreate(memory, control, full, &id) == -ERR_DENIED && !*full && !id, 145);
+  REQUIRE(__sys_ttycreate(system, view, full, &id) == -ERR_BAD_HANDLE && !*full && !id, 146);
+  args[0] = (u64) system;
+  args[1] = (u64) control;
+  REQUIRE(__sys_enter(SYS_TTYCREATE, args, &result) == -ERR_INVALID, 147);
+  for (i = 0; i < 8; i++)
+    REQUIRE(!((u64 *) &result)[i], 148);
+  /* Full caller table must not leak a terminal or Image reference. */
+  for (count = 0; count < 128; count++) {
+    isize error = __sys_connect(control, CONNECT_CALL, RESOURCE_USE, 0, &terminalslots[count]);
+    if (error) {
+      REQUIRE(error == -ERR_CAPACITY, 149);
+      break;
+    }
+  }
+  REQUIRE(count && count < 128, 175);
+  for (i = 0; i < 128; i++)
+    REQUIRE(__sys_ttycreate(system, control, full, &id) == -ERR_CAPACITY && !*full && !id, 176);
+  for (i = 0; i < count; i++)
+    REQUIRE(!__sys_free(terminalslots[i]), 177);
+  /* Exercise the actual 64-record pool after the failed creations. */
+  for (i = 0; i < 64; i++)
+    REQUIRE(!__sys_ttycreate(system, control, &terminalslots[i], &id) &&
+                handlekind(id) == HANDLE_TERMINAL,
+            178);
+  REQUIRE(__sys_ttycreate(system, control, full, &id) == -ERR_CAPACITY && !*full && !id, 179);
+  *full = terminalslots[0];
+  for (i = 1; i < 64; i++)
+    REQUIRE(!__sys_free(terminalslots[i]), 188);
+  REQUIRE(__sys_inherit(*full, 1) == -ERR_DENIED, 189);
+  REQUIRE(__sys_grant(control, *full, TERMINAL_QUERY, 0, 0, 0, &denied) == -ERR_BAD_HANDLE &&
+              !denied,
+          190);
+  REQUIRE(!__sys_grant(view, *full, TERMINAL_QUERY | TERMINAL_FG, 0, 0, 3, &query), 191);
+  REQUIRE(!__sys_grant(view, *full, TERMINAL_SIGNAL, 1UL << (SIGNAL_INT - 1), 0, 0, &signal), 192);
+  REQUIRE(__sys_grant(view, *full, TERMINAL_SIGNAL, 1UL << (SIGNAL_KILL - 1), 0, 0, &denied) ==
+                  -ERR_DENIED &&
+              !denied,
+          193);
+  REQUIRE(!__sys_query(view, QUERY_RESOURCE, 0, rows, 8, &written, &next) && !next, 194);
+  count = 0;
+  for (i = 0; i < written; i++)
+    if ((Handle) rows[i].data[0] == query || (Handle) rows[i].data[0] == signal) {
+      REQUIRE(rows[i].data[1] == RESOURCE_TERMINAL && rows[i].data[6] == (u64) pid &&
+                  rows[i].data[7] == 1 && !rows[i].data[4],
+              195);
+      if ((Handle) rows[i].data[0] == query)
+        REQUIRE(rows[i].data[2] == (TERMINAL_QUERY | TERMINAL_FG) && !rows[i].data[3] &&
+                    rows[i].data[5] == 3,
+                196);
+      else
+        REQUIRE(rows[i].data[2] == TERMINAL_SIGNAL &&
+                    rows[i].data[3] == (1UL << (SIGNAL_INT - 1)) && !rows[i].data[5],
+                197);
+      count++;
+    }
+  REQUIRE(count == 2, 198);
+  terminalproof[0] = 1;
+  terminalproof[1] = 64;
+  terminalproof[2] = 128;
+  terminalproof[3] = 2;
+  return 0;
+}
+static u64 windowbytes;
+static u64 uartkind, uartoffset, uartbytes;
+static u64 uartshift, uartwidth;
 static void
 regwrite(u64 base, u32 offset, u32 value)
 {
@@ -156,7 +231,7 @@ main(int argc, char **argv)
 {
   const Bootview *boot = sysboot();
   Handle          creator, listener = 0, view, pid, control, installed;
-  Handle          self, parent, device, binding;
+  Handle          self, parent, device, binding, terminal, terminalid;
   u64 image, cursor = 0, written, next, i, creates = 0, found = 0, systems = 0, memories = 0,
              sources = 0;
   Queryrec  records[8], own, child;
@@ -187,7 +262,8 @@ main(int argc, char **argv)
       }
       if (records[i].data[1] == RESOURCE_SYSTEM) {
         REQUIRE((Handle) records[i].data[0] == system &&
-                    records[i].data[2] == (SYSTEM_QUERY | SYSTEM_CONSOLE) && !records[i].data[5],
+                    records[i].data[2] == (SYSTEM_QUERY | SYSTEM_CONSOLE | SYSTEM_POLICY) &&
+                    !records[i].data[5],
                 129);
         systems++;
       }
@@ -252,7 +328,19 @@ main(int argc, char **argv)
       found++;
     }
   REQUIRE(found == 1, 112);
+  error = terminalprepare(view, pid, control, &terminal);
+  if (error)
+    return (int) error;
   REQUIRE(!__sys_destroy(view) && !__sys_free(control), 113);
+  REQUIRE(!__sys_create(creator, &args, &view, &pid, &control), 199);
+  REQUIRE(__sys_grant(view, terminal, TERMINAL_QUERY, 0, 0, 0, &installed) == -ERR_STALE &&
+              !installed,
+          200);
+  REQUIRE(!__sys_free(terminal) && !__sys_destroy(view) && !__sys_free(control), 218);
+  REQUIRE(__sys_ttycreate(system, control, &terminal, &terminalid) == -ERR_BAD_HANDLE &&
+              !terminal && !terminalid,
+          219);
+  terminalproof[5] = 1;
   error = __sys_wait(-1, WAIT_WNOHANG, &pid, &image, &cursor, &next);
   REQUIRE(error == -ERR_CHILD, 114);
   error = handoff(boot);

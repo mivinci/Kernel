@@ -43,6 +43,7 @@
 #define SYS_QUERY        0x73
 #define SYS_DEBUGHANDOFF 0x74
 #define SYS_GETCRED      0x6d
+#define SYS_TTYCREATE    0x6e
 #define SYS_TERMINATE    0x44
 #define SYS_BUDGET       0x48
 #define SYS_GRANT        0x46

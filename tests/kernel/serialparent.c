@@ -6,7 +6,10 @@
 #include <proto/serial.h>
 #include <abi/resource.h>
 #include <abi/system.h>
+#include <abi/terminal.h>
+#include <sys/channel.h>
 extern const u8             serial_verify[], serial_verify_end[];
+extern volatile u64         terminalproof[8];
 volatile u64                serialproof[8];
 typedef struct Serialpacket Serialpacket;
 struct Serialpacket
@@ -77,6 +80,9 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
   Allocarg     alloc;
   Queryrec     state;
   Handle       pid, control, call, io, binding, rings[2], remote[2], collected, space;
+  Handle       terminal, terminalid;
+  Ipcmsg       request;
+  Msg          response = {{UINT64_C(0x54545901), 0, 0, 0}};
   u64          reason, code, sequence, written, next;
   u32          i, turns, used = 0;
   u8           data[SERIAL_BATCH];
@@ -151,9 +157,36 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
             !work.mapped,
         162);
   CHECK(!__sys_configure(work.view, &config, 0) && !__sys_start(work.view), 163);
+  CHECK(!ipc_recv(0, 0, &request) && request.kind == IPC_CALL && request.source == pid &&
+            request.image == 1 && request.words[0] == response.words[0],
+        222);
+  CHECK(!__sys_ttycreate(bootresource(sysboot(), BOOT_SYSTEM), control, &terminal, &terminalid) &&
+            handlekind(terminalid) == HANDLE_TERMINAL,
+        223);
+  CHECK(!ipc_reply(request.request, &response), 224);
   CHECK(!__sys_wait(pid, 0, &collected, &reason, &code, &sequence) && collected == pid, 164);
   if (reason != WAIT_EXITED || code != 42)
     return reason == WAIT_EXITED && code ? (int) code : 165;
+  /* Old Local keeps its exact diagnostic identity across the owner's exit. */
+  {
+    Queryrec rows[8];
+    u64      cursor = 0, found = 0, j;
+    do {
+      CHECK(!__sys_query(0, QUERY_RESOURCE, cursor, rows, 8, &written, &next), 225);
+      for (j = 0; j < written; j++)
+        if ((Handle) rows[j].data[0] == terminal) {
+          CHECK(rows[j].data[1] == RESOURCE_TERMINAL &&
+                    rows[j].data[2] == (TERMINAL_RIGHTS | RESOURCE_GRANT) &&
+                    rows[j].data[3] == TERMINAL_SIGNALS && !rows[j].data[4] && !rows[j].data[5] &&
+                    rows[j].data[6] == (u64) pid && rows[j].data[7] == 1,
+                226);
+          found++;
+        }
+      cursor = next;
+    } while (cursor);
+    CHECK(found == 1 && !__sys_free(terminal), 227);
+    terminalproof[4] = 1;
+  }
   /* Yield always leaves this parent READY: retirement must not require idle.
      Keep exact Life CONTROL until PROC query confirms the Run disappeared. */
   for (turns = 0; turns < 4096; turns++) {

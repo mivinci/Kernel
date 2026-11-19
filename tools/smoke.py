@@ -828,6 +828,12 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                                       rx_bytes=proof[3],tx_bytes=proof[4],number=proof[5],uart_kind=proof[6],
                                       child_exit=42,irq_freed_rejected=True,device_io=True,service_ready=False,
                                       bounded_pump=True,external_rx=False)
+    if 'terminalproof' in user_symbols:
+        proof=struct.unpack('<8Q',read(user_symbols['terminalproof'],64))
+        if proof != (1,64,128,2,1,1,0,0):
+            raise SmokeError('native ttycreate authority/pool/table/attenuation/owner proof mismatch')
+        record['terminal_authority']=dict(created=True,pool=proof[1],table_failures=proof[2],
+                                          attenuated=proof[3],active_owner=True,stale_owner=True)
     if 'handoffproof' in user_symbols:
         proof=struct.unpack('<8Q',read(user_symbols['handoffproof'],64))
         if proof[0]!=1 or not 1<=proof[1]<=64 or proof[2] not in (1,2) or proof[3]!=1 or any(proof[4:]):

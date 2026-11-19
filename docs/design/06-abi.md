@@ -105,9 +105,13 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 
 编号冲突已收口（2026-11-19用户确认）：历史shutdown=0x74与后来已确认/实现的debughandoff重复；保留debughandoff=0x74，尚未实现的shutdown改为0x76，reboot保持0x75。0x74不能解释为关机，不建立旧编号兼容层。
 
-终端调用尚未实现；2026-11-19用户确认getfg额外返回SID/epoch、setfg增加expected_epoch。getfg仅使用a0，setfg使用a0..a2；未用输入必须为0，失败输出清零。setfg在授权与关系检查后核对关联epoch，不匹配返回STALE且不改变前台；匹配才原子提交新前台并递增epoch，不回绕，耗尽返回OVERFLOW且保留旧关联。ttybind仅首次关联，ttysignal仍按提交时当前前台组投递。具体语义及例子见11“前台切换、模式与孤儿组”，不保留旧两参数setfg兼容路径。
+ttybind/getfg/setfg/ttysignal尚未实现，ttycreate接续见11末尾；2026-11-19用户确认getfg额外返回SID/epoch、setfg增加expected_epoch。getfg仅使用a0，setfg使用a0..a2；未用输入必须为0，失败输出清零。setfg在授权与关系检查后核对关联epoch，不匹配返回STALE且不改变前台；匹配才原子提交新前台并递增epoch，不回绕，耗尽返回OVERFLOW且保留旧关联。ttybind仅首次关联，ttysignal仍按提交时当前前台组投递。具体语义及例子见11“前台切换、模式与孤儿组”，不保留旧两参数setfg兼容路径。
 
 2026-11-19用户另确认TERMINAL Local低位QUERY/FG/SIGNAL/BIND=1/2/4/8，信号mask仅允许INT/QUIT/TSTP/HUP/WINCH。grant对TERMINAL的offset为减权后的mask、length=0；无SIGNAL则mask=0。仅QUERY/FG可FORK/EXEC继承；只有有效CONSTRUCT/EXEC_VIEW CONFIG可以grant TERMINAL，CONTROL INSTALL不能替代。RESOURCE对此类型data[3]=信号mask、data[4]=0、data[6..7]=精确tty PID/image；旧失效授权可被枚举，不表示可继续使用。头文件唯一来源abi/terminal.h，实际创建/前台调用支持边界见11末尾。
+
+ttycreate首次发权（2026-11-19用户确认）：0x6e仅用a0=SYSTEM、a1=owner_control，其余输入必须0。SYSTEM须有POLICY=0x10且绑定精确初始init镜像；CONTROL须有CONNECT，目标当前Image必须PREPARING/ACTIVE。成功a1=调用者本地TERMINAL、a2=公开TERMINAL_ID，其余输出0；业务权为QUERY|FG|SIGNAL|BIND|GRANT、信号mask为INT/QUIT/TSTP/HUP/WINCH全集、继承0。失败所有输出清零，表满/终端池满不发布半成品，不泄漏Image/终端引用。Local与公开ID各有用途，ID本身不提供授权；后续exec不改绑已有终端。SYSTEM_POLICY字面值唯一来源abi/system.h；没有给其他未接SYSTEM业务提供成功占位。
+
+绑定/查询授权（2026-11-19用户确认，原生入口待接）：ttybind凭BIND可跨会话绑定尚未关联的终端，但SID须为有存活成员的既有会话，不自动选前台。getfg凭QUERY可跨会话查询；未绑定返回PGID=SID=0、epoch=1，绑定未选前台返回PGID=0、真实SID、epoch=1。FG更改前台仍要求调用者属于关联会话并检查TTOU，查询权不替代FG。细则与失败状态见11。
 
 getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.md#会话与进程组操作2026-11-16用户确认)为准。getpg仅使用a0，setpg仅使用a0/a1，setsid无参数；未使用输入必须为0。成功getpg只返回a1/a2，setsid只返回a1，setpg无额外输出；失败输出清零。负选择器为INVALID，非进程类别为BAD_HANDLE，消失/已收取目标为STALE，关系越权或会话首进程操作为DENIED，孩子已成功exec为STATE，关系池满为CAPACITY；失败不改变成员关系。
 

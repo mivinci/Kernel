@@ -110,4 +110,8 @@ class SystemLocalTests(unittest.TestCase):
             self.assertEqual(self.lib.localsystemquery(C.byref(table),handle.value,C.byref(out)),0)
             self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,0x20,C.byref(out)),-5)
             self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,2,C.byref(out)),-5)
+            self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,0x10,C.byref(out)),-5)
+            slot.rights=0x31
+            self.assertEqual(self.lib.localsystemaccess(C.byref(table),handle.value,0x10,C.byref(out)),-5)
+            self.assertEqual(bytes(out),bytes(C.sizeof(out)))
         for lib in self.libs:self.exercise(lib,body)

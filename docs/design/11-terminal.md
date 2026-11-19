@@ -302,6 +302,12 @@ SIGCHLD在退出结果提交点决定保留/自动收取：DEFAULT/HANDLER保留
 
 终端由init用ttycreate(SYSTEM POLICY,TTY CONTROL)建立，绑定TTY完整PID/image；返回的TERMINAL授权仅通过构造grant减权给TTY/sh。TTY镜像终结即撤销该终端新操作，旧SID/前台关联进入挂断清理，引用归零后回收，重建TTY使用新终端代次。内核不解析UART协议，也不由普通进程用整数自建终端。
 
+首次发权细则（2026-11-19用户确认）：SYSTEM POLICY=0x10，只授精确初始init PID1/image1；owner_control须有CONNECT。ttycreate固定到解析时目标PREPARING/ACTIVE的精确镜像，不能随CONTROL的Life绑定追随exec。返回调用者本地的QUERY|FG|SIGNAL|BIND|GRANT、完整允许信号mask、继承0，以及不提供权限的公开TERMINAL_ID；目标表须另经准备期grant取得缩小授权。资源表满或终端池满等失败清理全部临时引用，失败寄存器输出全0。
+
+绑定与查询细则（2026-11-19用户确认，原生入口待接）：ttybind要求BIND这一显式管理权，可跨调用者会话，把尚未关联的终端绑定到指定且有存活成员的会话；不自动设置前台，不重绑已有终端。getfg只要求QUERY，可跨会话读该终端的PGID/SID/epoch；未绑定时PGID=SID=0且epoch=1，已绑定但未选前台时PGID=0、SID为绑定会话、epoch仍1。setfg另要求FG及调用者属于关联会话，并接TTOU检查；QUERY查询不授予切换权。SID/PGID均为既有公开身份，不接受裸内部关系槽号或以uid0绕过授权。
+
+例子：init用TTY构造期间已获得的持续CONTROL创建终端T，再向该准备表grant SIGNAL/INT子集，并向准备中的sh授QUERY|FG和FORK|EXEC。即便CONTROL含INSTALL，改用它运行中grant TERMINAL仍拒绝。若TTY在init持T期间退出，T仍只报告旧PID/image；新TTY镜像必须重新ttycreate，旧T不能对新实例操作。调用者表已满时ttycreate不安装T；释放一个槽后可重试，不遗留占池终端或旧Image费用。
+
 2026-11-19用户确认Local权限：QUERY=1、FG=2、SIGNAL=4、BIND=8；SIGNAL只授INT/QUIT/TSTP/HUP/WINCH的子集。grant offset表示减权后的信号mask，length=0，其他权限仍只能缩小；无SIGNAL则mask=0。QUERY/FG可使用既有FORK/EXEC继承位，SIGNAL/BIND不继承；从完整管理权减为QUERY/FG时可给产物设置这两种继承标记，不要求完整管理权自身带可继承标记。TERMINAL只经有效CONSTRUCT/EXEC_VIEW准备期转授，运行中CONTROL INSTALL拒绝，资源reply亦不交付终端权。RESOURCE查询data[3]为信号mask、data[4]=0、data[6..7]为精确tty PID/image；查询旧失效Local仍报告其旧身份，不把它改绑到新镜像。
 
 tty模式首版：ICANON、ECHO、ISIG、ICRNL、OPOST/ONLCR；控制字符VINTR=^C、VQUIT=^\、VSUSP=^Z、VERASE=DEL、VKILL=^U、VEOF=^D、VMIN/VTIME。规范行缓冲4096，原始环8192；溢出丢当前超限输入并记录计数，不覆盖已有待读内容。非规范模式固定四种组合：VMIN=0/VTIME=0立即返回已有字节或0；VMIN>0/VTIME=0等min(VMIN,请求长度)字节；VMIN=0/VTIME>0从接受READ起计时，有任意字节即返回、到期无数据返回0；VMIN>0/VTIME>0先无期限等首字节，再按每次到字节重置的间隔计时，达到min或间隔到期返回已有量。VTIME单位0.1秒，O_NONBLOCK优先返回现有数据或EAGAIN；不新增内核TTY等待对象。tcsetattr TCSANOW/TCSADRAIN/TCSAFLUSH顺序通过TTYCTL服务实现，排空只等已提交输出，不占死控制循环。
@@ -375,6 +381,14 @@ fork只复制标记FORK的QUERY/FG表项和原Handle/墓碑，使用独立保留
 例子：init持完整TERMINAL，向准备中的sh减为QUERY|FG并标FORK|EXEC，向tty减为SIGNAL/INT子集且不继承。sh不能由该句柄生成SIGNAL或转授无GRANT产物；tty退出后，两者操作旧Local均STALE，枚举仍显示旧PID/image。sh fork出的孩子继承同一个失效身份，不能复活tty；父子分别free后，最后一份引用释放旧终端和Image。正在运行的进程不能靠CONTROL INSTALL取得新终端授权。
 
 新增5项host以真实Local/Image/Life/Space/fork核心验证准备期减权、信号子集/越权拒绝、运行目标拒绝、QUERY/FG继承和SIGNAL/BIND不继承、旧tty结束后查询/继承但不可使用、坏字段/满槽不泄漏；与终端/fork既有专项共22项通过。两架构CASE=images新增实际Proc准备表转授/权限拒绝、构造撤销后的旧Image保留/STALE/枚举、最后两表项free使Image实际回收及两Proc费用归零。完整make test-all通过829项host、格式检查、191次双架构QEMU；164份journal、最终源码/头/SDK/配置/包哈希与新权限头精确导出另核对，默认init/serial ELF与stage117相同，CASE=images编译数据库含新增核心/测试。证据build/host/stage121-terminal-local/；尚未发放初次原生终端权、开放终端syscall、接控制终端继承或真实挂断信号；当前Proc grant的准备期限制未以已发权原生用户场景验收，不将可信表项测试冒充它。无CI/板端/性能结果。
+
+### 原生ttycreate首次发权（2026-11-19）
+
+SYS_TTYCREATE=0x6e与libsys私有桩已接。初始PID1/image1的SYSTEM新增POLICY=0x10，普通镜像仍只有QUERY；localsystemaccess对POLICY与CONSOLE均重新核对精确初始身份，不凭uid0或伪造低位获得权。Proc先检查POLICY和固定CONTROL CONNECT、目标Life/Run/资源表，再检查调用者空槽；terminalnew只接目标当时PREPARING/ACTIVE的精确Image。localterminal安装完整业务/GRANT/信号全集、继承0，成功后归还临时创建引用；安装失败同样drop，系统调用只在全部成功后发布本地Handle与公开ID。没有开放其他POLICY业务的成功占位。
+
+两架构service-authority使用真实用户ELF和原生create/ttycreate/grant/query/free/destroy：错误SYSTEM/owner类型、未用参数及失败寄存器清零；填满父资源表后128次创建失败，再成功取得64项终端并拒绝第65项；释放后准备期QUERY|FG/FORK|EXEC和SIGNAL/INT子集转授成功，KILL扩权及CONTROL INSTALL均拒绝。实际子用户用同步CALL固定ACTIVE镜像，父在其存活时ttycreate，wait后仍查到旧PID/image和完整首授权；另验取消owner后向新准备表grant返回STALE，以及旧CONTROL释放后不能再用。CONTROL各业务位拒绝由既有host穷举另验，不把持完整CONTROL的原生成功路径称为原生逐位拒绝测试；exec固定身份仍用stage120真实Image核心证据，不称原生exec已接。
+
+完整make test-all通过829项host、格式检查及191次双架构QEMU；13项SYSTEM/CONTROL/Local专项、164份journal、最终源码/头/SDK/包哈希和两份实际ttycreate用户证明另核对，保留编译数据库。默认init/serial全部可装载段的内容、权限、地址和大小与stage117一致；新增桩导致编译器局部标签重编号，ELF差异仅.symtab/.strtab，已从stage121保留的实际启动包取旧ELF逐段/逐节核验，而非忽略哈希差异。证据build/host/stage122-ttycreate/；无CI/板端/性能结果。首次专项曾错误重复ACK同步CALL已消费的结果，已按现有IPC契约修正fixture，失败日志保留。默认清单没有tty，ttybind/getfg/setfg/ttysignal、控制终端继承、HUP/CONT和生产tty仍待接。
 
 - [ ] 两架构信号PC先进入trampoline，六个入口参数与原TF分开，a3/x3的handler地址不会被误读为原RPC；普通返回地址0不得跳回任意旧代码。
 - [ ] 子发布后第一条用户指令前及Fix半途注入HANDLER/NODEFER/STOP/KILL：应用handler只见修复后的子表，父staging内容不变；嵌套只完成同次Fix，不增加发布后ready syscall或远端握手。
