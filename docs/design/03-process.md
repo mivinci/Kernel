@@ -1483,3 +1483,21 @@ lifeselect现接受既有wait选项，只选匹配的未消费报告或最终退
 完整make test-all通过838项host、格式检查和191次双架构QEMU；补强最后一个可成功非终结版本的边界后，又完整重跑838项host通过。31项专项、164份journal、最终源码/头/SDK/包哈希、两份真实表jobs记录另核对，保留两架构及共享编译数据库。默认init/serial ELF与stage123逐字节相同，没有改变服务包或加入fixture。证据build/host/stage124-life-jobs/，无CI/板端/性能结果。
 
 接续仍须将暂停/继续接入真实Run，分别保留原READY/阻塞等待或已提交返回的责任，不能仅阻止入队而丢失可恢复的就绪续点；再接原生USER/终端信号、STOP/CONT相互抵消、CHLD停止/继续、NOCLDSTOP、普通阻塞中断与前台策略。当前没有停止任何生产用户进程，也没有新增sigsend/setfg/ttysignal成功占位。
+
+### 真实Run停放与继续（2026-11-19）
+
+可信procstop/proccontinue现连接Life报告与真实Run。就绪目标从队列摘除，阻塞目标保留原C等待续点，两者均进入内部PROC_STOPPED；当前Run只登记延后停放，在安全checkpoint/yield/sleep或专用forkyield边界切出，返回用户前必须经过停放。CONT按保存的可恢复状态恢复，重复操作不重复入队或生成新报告；停放前的CONT可抵消当前Run的未执行停放，但不擅自清除独立调度请求。未发布构造与退出目标不接受停止/继续，错误发生在队列变更之前。
+
+Proc仍512字节：原phase单字节改为显式状态判别联合体，EXITING用cleanup、STOPPED用resume，RUNNING可保存待停放标记。原state/configured/phase/wait_cursor位置不变，联合体大小及相对偏移有静态断言；Procinfo只在EXITING报告清理phase，不把恢复状态冒充清理进度。所有终止提交重置cleanup=0，避免从原resume编号开始跳过释放。Life仍128，未增加池、内核栈或运行时分配。
+
+停止期间，通知/IRQ、闹钟到期、请求完成、孩子结果与sigsuspend的可递送信号仍按持久状态推进；wakeone只把保存的BLOCKED转换为READY、清除已结束的强等待边，不把停止Run入队。CONT可恢复已就绪C续点，或恢复阻塞并重查真实条件。保留未完成请求的真正等待边，不因STOP取消Rq/共享缓冲；已完成请求则不能因STOP留下假边。固定CONTROL query可见PUBLIC STOPPED=6及仍持有的wait种类/选择器，已完成等待的waitpid为0；这不是用户已经执行了返回。CPU停放不撤销资源或证明设备已停止。
+
+固定CONTROL terminate现可直接终止停止目标，不等CONT，并归还被放弃C续点持有的Rq/prep/组wait引用；服务/Acct/观察/独立请求收尾仍走原协议。停止父仍按既有动作/策略接收真实退出SIGCHLD到pending，但不会因此执行用户代码。本轮不产生停止/继续SIGCHLD，也不新增NOCLDSTOP或普通阻塞handler中断。
+
+独立CASE=jobs/真实jobuser.elf覆盖13场景：首次用户进入前停放、当前Run安全点停放及停放前CONT抵消、已运行忙循环在多个真实timer tick内冻结；停止期间NOTIFY/闹钟就绪不运行；sigsuspend期间handler信号保留到CONT后经真实帧/sigreturn执行；CALL的阻塞/已唤醒READY续点保持原回复与预付引用，停止中分别被终止亦不泄漏；停止父在孩子STOP/CONT/EXIT之后用原生wait实际取得三种kind/版本；停止的组wait被原生terminate后精确归还组lease。每景Set费用/实例归零，末尾物理页及Life/Group/Acct校验回基线。CPU fixture负责可信停放决策；用户端实际执行recv/call/reply/notify/sigsuspend/query/terminate/wait，不新增测试syscall。
+
+RPC反例同时验证：A等待B时STOP，B再call A仍得到DEADLOCK；B先回复A后，A仍停止但底层已READY，B再call A可以正常排队，A经CONT返回原回复并退出后，B得到PEER而非假DEADLOCK。此时A分别持有原出站结果和新入站QUEUED责任，不能误期望rq_count仍为1。CASE=sigframe的fork内核续点另验证current在kernel-root借用冻结快照时停放、其他peer完成VM churn后CONT恢复原C链，以及停止续点被CONTROL终止后独立移交/清理构造责任。
+
+完整make test-all通过838项host、格式检查和193次双架构QEMU；38项host专项、166份journal、最终源码/头/SDK/包哈希与两份13场景Run证明、两份fork停放/恢复/终止证明另核对，编译数据库含新增kernel/user测试源。默认init/serial ELF与stage124逐字节相同；normal源/符号均无jobtest或hal_user_enter wrapper，启动包仍只有init/serial。首次fixture误用clock id0，已改用既有CLOCK_MONOTONIC；另一处把RPC双向场景的入站QUEUED责任漏计，已按实际queryroles与后续运行核对修正为2；旧失败日志保留，未放宽内核clock或请求计数。证据build/host/stage125-run-stop/，无CI/板端/性能结果。
+
+当前Run注入只在jobs/sigframe测试内核通过既有hal_user_enter链接wrapper触发，normal不链接该wrapper或jobtest；不把它称作原生发信权限验收。sigsend选择器/逐目标授权尚待冻结，原生USER/终端信号生产、默认停止/继续信号选择与相互抵消、CHLD STOP/CONT及完整前台作业控制仍待接。

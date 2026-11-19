@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- Life停止/继续报告核心通过838项host/格式及191次双架构QEMU，164份日志和最终源码/SDK哈希匹配。8项新增专项、合计31项专项验证选项/一次消费、最新报告合并、引用保留、孤儿接管/旧PID复用、2000步模型及O0/O2版本耗尽/最终退出保底；两架构真实Life/Group/Set表验证通过。默认init/serial ELF与stage123逐字节相同；证据stage124-life-jobs/，无CI/板端/性能结果。尚非真实Run暂停/继续或原生作业信号。
+- 真实Run停放/继续通过838项host/格式及193次双架构QEMU，166份日志和最终源码/SDK哈希匹配。两架构13场景覆盖忙循环/当前安全点停放、CONT抵消、通知/闹钟/handler不绕过停止、CALL阻塞/已完成续点、三类停止终止清理、原生wait三结果及组lease；fork冻结内核续点的停放/恢复/终止亦验。默认init/serial ELF与stage124相同，normal无注入wrapper/测试载荷；证据stage125-run-stop/，无CI/板端/性能结果。尚无原生sigsend/ttysignal生产与完整作业控制。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
 
@@ -36,7 +36,9 @@
 
 ## 待确认与接续
 
-- stage124已本地验收：Life仍128字节，stopped与待消费报告独立；收取STOP/CONT不解除waitref/组/实例，退出覆盖临时报告，最终版本保底不回绕。父wait选项/消费与分发已接，但原生信号生产者和Run暂停尚未接，不能称用户STOP/CONT已可用。ttycreate/ttybind/getfg及授权/epoch历史见11/stage120..123；当前没有待回复的确认项。
+- stage125已本地验收：可信procstop/proccontinue连接Life报告与真实Run，停止期间仅推进底层可恢复状态/已完成等待边，不入队；Proc仍512，退出清理与恢复状态显式复用原phase字节。固定CONTROL可原生查询/终止已停目标，原生wait交付STOP/CONT/EXIT；停放决策仍为可信CPU fixture，尚非原生sigsend/完整作业控制。ttycreate/ttybind/getfg与Life历史见03/11末尾。
+
+- 待用户确认两项sigsend规则：16字节显式selector（PID/GROUP/CONTROL/ALL）编码，以及ruid/euid匹配、CONT同会话例外与组逐目标授权/部分成功语义。已提问，候选细则记11基础信号语义；确认前不实现该ABI或授权入口。
 
 - stage119已本地验收：四种VMIN/VTIME、非阻塞/规范模式优先与绝对期限等待状态已接并通过全量。tty输入/输出专项独立为CASE=tty/用户ELF，两架构各双闹钟阻塞/唤醒通过，避免挤占通用runtime/ELF样例额度。等待不消费输入，服务请求提交/取消、活模式变化和前台授权仍待接。
 
@@ -54,7 +56,7 @@
 
 - stage113管理引擎已由stage117接入默认init；初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis，父wait/镜像确认/缓冲回收独立。2026-11-19确认的首次必需serial清理后诊断停机已实现，其他服务/恢复方向按07/09接续。
 
-- 下一步：将停止/继续接入真实Run，保留原READY/阻塞等待及已提交返回的责任；再接真实信号/阻塞中断、setfg/TTOU、控制终端继承/挂断及tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
+- 下一步：接默认停止/继续信号选择与相互抵消、原生发信生产/授权、CHLD停止/继续及普通阻塞中断，再接setfg/TTOU、控制终端继承/挂断及tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 
 - 2026-11-18确认的反向bit32=RX_ROOM/bit33=TX_READY与晚绑定已按07/11落定v1 BIND/STATUS及最近结果缓存，serial侧已实现/本地验；生产tty配对和init编排仍待接，绑定前不发布tty连接。
 

@@ -316,6 +316,8 @@ reply_recv 分两段：reply 失败则不接收；reply 成功后 recv 被中断
 
 纯 STOP 保留真实等待、结果和等待边，不隐式取消；CONT 后核对持久状态。若 CONT 另需捕获 handler，则走相应的捕获信号中断路径。KILL 不返回用户，等待边撤离及 caller_consumed/caller_released 按既有死亡清理推进，不伪造 server_finished；仍访问中的共享/DMA 缓冲继续隔离计费。
 
+独立停止不阻止底层完成：请求仍未完成时，停止Run保存原强等待边，不能让对端反向call绕过环检查；reply/peer退出等完成原等待后，清除该边并把保存的恢复状态推进为READY，但仍不入运行队列，须CONT才能恢复C续点。原Rq结果和引用保持到正常接管/消费或终止清理，不能因边已结束而丢掉它，也不能因Run尚停止而继续沿过期边误报DEADLOCK。真实双向调用/停止/回复/CONT反例见03末尾。
+
 例子一：A 异步提交 READ 得到 h，随后 rqwait(h) 被信号打断，handler 返回后是 INTERRUPTED；READ 仍可正常完成。A 可再次查询/等待 h，或显式取消；不能因等待中断便回收共享槽。同步call READ的捕获信号采用同样的退出等待语义，并在request返回原h；两者都只从原Rq取结果，不需要另建业务查询请求。
 
 例子二：服务 B 的 reply_recv 已成功回复 A，接收下一条前被信号中断。handler 返回后 B 只处理接收中断，可另行 recv；重做原 reply_recv 会再次使用已失效 REQUEST，不能作为重启实现。若接收下一条 CALL 已先提交，则保留该 REQUEST，handler 的 recv 不能抢占其即时名额。

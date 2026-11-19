@@ -39,7 +39,9 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 ### 基础信号语义（已确定）
 
 首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
-实现接续：停止/继续的Life持久报告核心及wait接线见03末尾；调度暂停/继续、真实信号生产及CHLD停止/继续仍待接，不能将可信状态表用例当作实际用户作业控制。
+实现接续：Life持久报告、可信Run停放/恢复及原生wait三种结果的实际用户验收见03末尾；sigsend/ttysignal授权与生产、默认信号停止/继续选择及CHLD停止/继续仍待接，不能称为完整用户作业控制。
+
+原生sigsend开放问题（2026-11-19，以下为待用户确认的候选，未实现）：selector建议为一次快照的16字节指针结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。候选普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。选择器ABI与授权/部分成功两项均已向用户提问，确认前不把候选当冻结正文或新增成功入口。
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
 KILL/STOP 不可捕获、忽略或屏蔽；KILL 对停止中的进程也立即进入内核退出处理，不等待 CONT。
 每进程保存 pending/mask 和有上限的 action 表，普通信号可合并、不按次数排队；数据消息仍走 IPC。

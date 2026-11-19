@@ -21,6 +21,13 @@
 
 typedef struct Proc     Proc;
 typedef union Procstage Procstage;
+typedef union Procphase Procphase;
+union Procphase
+{
+  /* EXITING uses cleanup. STOPPED uses its resumable scheduling state; RUNNING
+     may carry PROC_RUNNING as a deferred stop until a safe switch boundary. */
+  u8 cleanup, resume;
+};
 union Procstage
 {
   Config config;
@@ -74,12 +81,17 @@ struct Proc
   Procstage stage;
   u64       cpu_ns;
   u32       next;
-  u8        state, configured, phase, wait_cursor;
+  u8        state, configured;
+  Procphase phase;
+  u8        wait_cursor;
   Rquota    outgoing;
   Rmail     incoming;
   Event     events;
 };
 STATIC_ASSERT(sizeof(Proc) <= 512, proc_budget);
+STATIC_ASSERT(sizeof(Procphase) == 1, proc_phase_size);
+STATIC_ASSERT(offsetof(Proc, phase) == offsetof(Proc, state) + 2, proc_phase_offset);
+STATIC_ASSERT(offsetof(Proc, wait_cursor) == offsetof(Proc, phase) + 1, proc_cursor_offset);
 static Proc  processes[PROCS];
 static Local entries[PROCS][LOCALS];
 static Proc *current;
@@ -111,6 +123,15 @@ find(Handle pid)
     return NULL;
   p = &processes[slot];
   return p->state && pidof(p) == pid ? p : NULL;
+}
+static void
+park(Proc *p, u32 resume)
+{
+  if (resume != PROC_READY && resume != PROC_BLOCKED)
+    panic("stop continuation kind");
+  p->phase.resume = (u8) resume;
+  p->state = PROC_STOPPED;
+  p->next = PG_NONE;
 }
 static int
 convert(int error)
@@ -234,7 +255,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   p->prep.generation = 0;
   p->prep.index = p->prep.reserved = 0;
   p->state = PROC_CONSTRUCT;
-  p->configured = p->phase = 0;
+  p->configured = p->phase.cleanup = 0;
   p->next = PG_NONE;
   *out = pid;
   return 0;
@@ -492,7 +513,7 @@ procinfo(Handle pid, Procinfo *out)
   out->image = p->resources.image;
   out->state = p->state;
   out->configured = p->configured != 0;
-  out->phase = p->phase;
+  out->phase = p->state == PROC_EXITING ? p->phase.cleanup : 0;
   out->resources = p->resources.count;
   return 0;
 }
@@ -720,7 +741,8 @@ procrunone(void)
   if (cputime(p, &p->cpu_ns))
     panic("CPU accounting range");
   current = NULL;
-  if (p->state != PROC_EXITING && p->state != PROC_READY && p->state != PROC_BLOCKED)
+  if (p->state != PROC_EXITING && p->state != PROC_READY && p->state != PROC_BLOCKED &&
+      p->state != PROC_STOPPED)
     panic("process CPU return state");
   return 0;
 }
@@ -737,7 +759,7 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
   parent = find(child.parent);
   if (!(child.exit_policy & LIFE_IGNORECHLD) && parent &&
       (parent->state == PROC_READY || parent->state == PROC_RUNNING ||
-       parent->state == PROC_BLOCKED)) {
+       parent->state == PROC_BLOCKED || parent->state == PROC_STOPPED)) {
     status = code;
     if (reason != LIFE_EXIT)
       status |= WAIT_SIGNALLED;
@@ -748,6 +770,7 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
     wakeone(parent);
   }
   p->state = PROC_EXITING;
+  p->phase.cleanup = 0;
   if (imageend(p->identity, IMAGE_EXIT) || rqquotaend(&p->outgoing) || sigdiscard(p->identity))
     panic("process image/request exit");
   /* Withdraw every unpublished child before deferred Local/VM teardown. */
@@ -807,14 +830,14 @@ procclean(Handle pid)
     return -ERR_STATE;
   /* Exit revoked publication already. A fork transaction still borrowing this
      layout must finish/hand off before Local references or root pages drain. */
-  if (p->phase <= 3) {
+  if (p->phase.cleanup <= 3) {
     error = spacefrozen(p->space);
     if (error < 0)
       panic("process cleanup root identity");
     if (error)
       return 1;
   }
-  if (p->phase == 0) {
+  if (p->phase.cleanup == 0) {
     if (acctstat(p->acct, &account) || (account.state == AC_ACTIVE && acctclose(p->acct)))
       panic("process account closing");
     if (imageend(p->identity, IMAGE_ABORT))
@@ -834,14 +857,14 @@ procclean(Handle pid)
     if (error < 0)
       return error;
     if (!error)
-      p->phase++;
-  } else if (p->phase == 1) {
+      p->phase.cleanup++;
+  } else if (p->phase.cleanup == 1) {
     error = spaceclear(p->space, 1);
     if (error < 0)
       return convert(error);
     if (!error)
-      p->phase++;
-  } else if (p->phase == 2) {
+      p->phase.cleanup++;
+  } else if (p->phase.cleanup == 2) {
     if (sigrelease(p->identity))
       panic("process signal cleanup");
     for (i = 0; i < sizeof(p->kernel); i++)
@@ -849,15 +872,15 @@ procclean(Handle pid)
     if (kstackdrop(p->stack) || kstackfree(p->stack))
       panic("process stack cleanup");
     p->user = NULL;
-    p->phase++;
-  } else if (p->phase == 3) {
+    p->phase.cleanup++;
+  } else if (p->phase.cleanup == 3) {
     if (spacedestroy(p->space))
       panic("process root cleanup");
-    p->phase++;
-  } else if (p->phase == 4) {
+    p->phase.cleanup++;
+  } else if (p->phase.cleanup == 4) {
     if (acctunbind(p->acct))
       panic("process account cleanup");
-    p->phase++;
+    p->phase.cleanup++;
   } else {
     if (p->prep.generation) {
       Prepid id = p->prep;
@@ -1041,8 +1064,10 @@ procforkyield(void)
   if (!p || p->state != PROC_RUNNING || !vm_paused || !(p->configured & CONFIG_KERNEL) ||
       prepstat(p->stage.fork.prep, &info) || spacesnapshotabortcheck(p->space, info.space))
     panic("fork kernel continuation boundary");
-  p->state = PROC_READY;
-  ready(p);
+  if (p->phase.resume == PROC_RUNNING)
+    park(p, PROC_READY);
+  else
+    ready(p);
   vm_paused = 0;
   hal_ctx_switch(&p->kernel, &cpu);
   if (current != p || p->state != PROC_RUNNING || !vm_paused || !(p->configured & CONFIG_KERNEL))
@@ -1087,17 +1112,12 @@ void
 procyield(void)
 {
   Proc *p = current;
-  u32   slot;
   if (!p || p->state != PROC_RUNNING || vm_paused)
     panic("yield source");
-  slot = handleindex(pidof(p));
-  p->state = PROC_READY;
-  p->next = PG_NONE;
-  if (readytail == PG_NONE)
-    readyhead = slot;
+  if (p->phase.resume == PROC_RUNNING)
+    park(p, PROC_READY);
   else
-    processes[readytail].next = slot;
-  readytail = slot;
+    ready(p);
   if (spacedeactivate())
     panic("yield root");
   hal_ctx_switch(&p->kernel, &cpu);
@@ -1142,7 +1162,8 @@ interruptfire(void)
       panic("timer preparation expiry");
     for (i = 0; i < PROCS; i++) {
       Proc *p = &processes[i];
-      if ((p->state == PROC_READY || p->state == PROC_RUNNING || p->state == PROC_BLOCKED) &&
+      if ((p->state == PROC_READY || p->state == PROC_RUNNING || p->state == PROC_BLOCKED ||
+           p->state == PROC_STOPPED) &&
           eventexpire(&p->events, now))
         wakeone(p);
     }
@@ -1168,6 +1189,8 @@ interruptfire(void)
             owner->identity.generation != target.generation ||
             owner->identity.index != target.index)
           panic("IRQ owner identity");
+        if (owner->state == PROC_STOPPED)
+          wakeone(owner);
         if (owner->state == PROC_BLOCKED && owner->stage.wait.kind == WAIT_RECV &&
             (owner->events.pending & owner->stage.wait.subject.mask)) {
           owner->stage.wait.subject.peer = 0;
@@ -1248,13 +1271,14 @@ wakeone(Proc *p)
   Lifeid   child;
   u32      matched;
   int      wake, changed;
-  if (!p || (p->state != PROC_READY && p->state != PROC_RUNNING && p->state != PROC_BLOCKED))
+  if (!p || (p->state != PROC_READY && p->state != PROC_RUNNING && p->state != PROC_BLOCKED &&
+             p->state != PROC_STOPPED))
     return;
   changed = lifehint(pidof(p));
   if (changed > 0)
     eventpost(&p->events, EVENT_CHILD);
   eventpost(&p->events, rqsignals(&p->outgoing, &p->incoming) | obssignals(p->identity));
-  if (p->state != PROC_BLOCKED)
+  if (p->state != PROC_BLOCKED && !(p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED))
     return;
   if (p->stage.wait.kind == WAIT_SIGNAL) {
     wake = sigready(p->identity);
@@ -1275,7 +1299,11 @@ wakeone(Proc *p)
            -ERR_WOULD_BLOCK;
   if (wake) {
     p->stage.wait.subject.peer = 0;
-    ready(p);
+    if (p->state == PROC_STOPPED)
+      /* Completion ends the strong wait, not the independent stop. */
+      p->phase.resume = PROC_READY;
+    else
+      ready(p);
   }
 }
 static void
@@ -1319,7 +1347,8 @@ waitedge(Imageid target, Handle *peer)
       *peer = image.pid;
     if (p == current)
       return -ERR_DEADLOCK;
-    if (p->state != PROC_BLOCKED ||
+    if ((p->state != PROC_BLOCKED &&
+         !(p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED)) ||
         (p->stage.wait.kind != WAIT_RESULT && p->stage.wait.kind != WAIT_FINISH) ||
         !p->stage.wait.subject.peer)
       return 0;
@@ -1335,7 +1364,10 @@ sleepcurrent(void)
   Proc *p = current;
   if (!p || p->state != PROC_RUNNING || vm_paused || !p->stage.wait.kind)
     panic("IPC blocking source");
-  p->state = PROC_BLOCKED;
+  if (p->phase.resume == PROC_RUNNING)
+    park(p, PROC_BLOCKED);
+  else
+    p->state = PROC_BLOCKED;
   if (spacedeactivate())
     panic("IPC blocking root");
   hal_ctx_switch(&p->kernel, &cpu);
@@ -1710,7 +1742,8 @@ procmmioinstallgroup(Handle pid, u64 page, u64 members, u64 rights, Handle *out)
   if (!target)
     return -ERR_STALE;
   if (target->state != PROC_CONSTRUCT && target->state != PROC_READY &&
-      target->state != PROC_RUNNING && target->state != PROC_BLOCKED)
+      target->state != PROC_RUNNING && target->state != PROC_BLOCKED &&
+      target->state != PROC_STOPPED)
     return -ERR_STATE;
   if (!(rights & VM_READ) || rights & ~(VM_READ | VM_WRITE | LOCAL_GRANT))
     return -ERR_DENIED;
@@ -1733,7 +1766,8 @@ procmmioinstall(Handle pid, u32 device, u32 region, u64 rights, Handle *out)
   if (!target)
     return -ERR_STALE;
   if (target->state != PROC_CONSTRUCT && target->state != PROC_READY &&
-      target->state != PROC_RUNNING && target->state != PROC_BLOCKED)
+      target->state != PROC_RUNNING && target->state != PROC_BLOCKED &&
+      target->state != PROC_STOPPED)
     return -ERR_STATE;
   if (!(rights & VM_READ) || rights & ~(VM_READ | VM_WRITE | LOCAL_GRANT))
     return -ERR_DENIED;
@@ -1757,7 +1791,8 @@ procirqinstall(Handle pid, u32 number, u32 bit, Handle *out)
   if (!target)
     return -ERR_STALE;
   if (target->state != PROC_CONSTRUCT && target->state != PROC_READY &&
-      target->state != PROC_RUNNING && target->state != PROC_BLOCKED)
+      target->state != PROC_RUNNING && target->state != PROC_BLOCKED &&
+      target->state != PROC_STOPPED)
     return -ERR_STATE;
   error = irqsource(number, &source);
   return error ? error
@@ -1795,7 +1830,9 @@ procsigqueue(Handle pid, const Siginfo *info)
   /* Ordinary blocked syscall interruption is separate. A signal-only waiter
      may be awakened without transferring any Rq responsibility. */
   if (p->state != PROC_READY && p->state != PROC_RUNNING &&
-      !(p->state == PROC_BLOCKED && p->stage.wait.kind == WAIT_SIGNAL))
+      !(p->state == PROC_BLOCKED && p->stage.wait.kind == WAIT_SIGNAL) &&
+      !(p->state == PROC_STOPPED &&
+        (p->phase.resume == PROC_READY || p->stage.wait.kind == WAIT_SIGNAL)))
     return -ERR_BUSY;
   error = sigqueue(p->identity, info);
   if (!error)
@@ -2160,7 +2197,7 @@ unready(Proc *p)
   u32 slot = readyhead, previous = PG_NONE, count;
   for (count = 0; count < PROCS && slot != PG_NONE; count++) {
     if (slot >= PROCS)
-      panic("termination ready index");
+      panic("process ready index");
     if (&processes[slot] == p) {
       if (previous == PG_NONE)
         readyhead = p->next;
@@ -2174,7 +2211,62 @@ unready(Proc *p)
     previous = slot;
     slot = processes[slot].next;
   }
-  panic("termination ready membership");
+  panic("process ready membership");
+}
+int
+procstop(Handle pid, u32 signum)
+{
+  Proc *p = find(pid);
+  u32   resume;
+  int   error;
+  if (!p)
+    return -ERR_STALE;
+  if ((p->state != PROC_READY && p->state != PROC_BLOCKED && p->state != PROC_RUNNING &&
+       p->state != PROC_STOPPED) ||
+      (p->state == PROC_RUNNING && p != current))
+    return -ERR_STATE;
+  error = lifestop(p->life, signum);
+  if (error || p->state == PROC_STOPPED)
+    return error;
+  if (p == current) {
+    p->phase.resume = PROC_RUNNING;
+    reschedule_requested = 1;
+    return 0;
+  }
+  resume = p->state;
+  if (resume == PROC_READY)
+    unready(p);
+  park(p, resume);
+  return 0;
+}
+int
+proccontinue(Handle pid)
+{
+  Proc *p = find(pid);
+  u32   resume;
+  int   error;
+  if (!p)
+    return -ERR_STALE;
+  if (p->state != PROC_READY && p->state != PROC_BLOCKED && p->state != PROC_RUNNING &&
+      p->state != PROC_STOPPED)
+    return -ERR_STATE;
+  resume = p->state == PROC_STOPPED ? p->phase.resume : 0;
+  if (p->state == PROC_STOPPED && resume != PROC_READY && resume != PROC_BLOCKED)
+    panic("stopped Run continuation");
+  error = lifecontinue(p->life);
+  if (error)
+    return error;
+  if (p->state == PROC_STOPPED) {
+    p->phase.cleanup = 0;
+    if (resume == PROC_READY)
+      ready(p);
+    else {
+      p->state = PROC_BLOCKED;
+      wakeone(p);
+    }
+  } else if (p->state == PROC_RUNNING && p->phase.resume == PROC_RUNNING)
+    p->phase.cleanup = 0;
+  return 0;
 }
 /* A READY waiter can still own its saved C frame's Rq reference. All current
    switching paths are commit checkpoints or sleepcurrent; no other transient
@@ -2206,7 +2298,7 @@ procterminate(Rtable *source, Handle authority)
     procexit(LIFE_SIGNAL, 9, NULL);
   if (p->state == PROC_READY)
     unready(p);
-  else if (p->state != PROC_BLOCKED)
+  else if (p->state != PROC_BLOCKED && p->state != PROC_STOPPED)
     return -ERR_STATE;
   end(p, LIFE_SIGNAL, 9, NULL);
   /* Outgoing death records are terminal before releasing the abandoned waiter.
@@ -2374,6 +2466,8 @@ procstate(const Proc *p)
     return PROCESS_BLOCKED;
   case PROC_EXITING:
     return PROCESS_EXITING;
+  case PROC_STOPPED:
+    return PROCESS_STOPPED;
   default:
     return 0;
   }
@@ -2398,7 +2492,7 @@ querystat(Proc *p, const Life *life, Queryrec *record)
   record->data[1] = (u64) pgid;
   record->data[2] = (u64) sid;
   record->data[3] = (u64) procstate(p);
-  if (p->state == PROC_BLOCKED &&
+  if ((p->state == PROC_BLOCKED || (p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED)) &&
       (p->stage.wait.kind == WAIT_RESULT || p->stage.wait.kind == WAIT_FINISH))
     record->data[4] = (u64) p->stage.wait.subject.peer;
   record->data[5] = usage;
@@ -2416,7 +2510,8 @@ querystat(Proc *p, const Life *life, Queryrec *record)
   if (error)
     return error;
   record->data[10] = requests;
-  if (p->state == PROC_READY || p->state == PROC_RUNNING || p->state == PROC_BLOCKED) {
+  if (p->state == PROC_READY || p->state == PROC_RUNNING || p->state == PROC_BLOCKED ||
+      p->state == PROC_STOPPED) {
     record->data[12] = p->stage.wait.kind;
     if (p->stage.wait.kind == WAIT_CHILD) {
       record->data[13] = p->stage.wait.target.children.kind;

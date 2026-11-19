@@ -15,6 +15,7 @@ struct Hctx;
 #define PROC_READY     2
 #define PROC_RUNNING   3
 #define PROC_EXITING   4
+#define PROC_STOPPED   7
 
 typedef struct Procinfo Procinfo;
 struct Procinfo
@@ -58,6 +59,11 @@ int procgetpg(Handle pid, Handle *pgid, Handle *sid);
 int procsetpg(Handle pid, Handle pgid);
 int procsetsid(Handle *sid);
 int procwait(Handle selector, u32 options, Liferesult *out);
+/* Trusted normalized job transitions, not native signal authorization.
+   Stop parks the Run with its prior READY/BLOCKED continuation intact. A
+   current Run parks at its next safe checkpoint before returning to userspace. */
+int procstop(Handle pid, u32 signum);
+int proccontinue(Handle pid);
 int procobserve(Rtable *source, Handle permit, Handle basis, u64 relation, Handle pid, u64 number,
                 Obsresult *out);
 int procobsread(u64 cookie, Obsresult *out);

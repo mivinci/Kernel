@@ -142,7 +142,7 @@ rqpoll/rqwait非消费；rqack只操作本主体RPC。rqcheck仅服务当前持�
 
 query kind固定PROC=1、RQ=2、ACCT=3、LIFE=4、RESOURCE=5、BOOT_RESOURCE=6，最多16条，每条Queryrec；cursor为索引+代次快照，0为首次输入及遍历结束输出；调用者依据next_cursor=0结束本轮，不将其再次当继续位置，不承诺跨条全局原子。主体无QUERY只可查自身非敏感统计；管理查询从CONTROL/SYSTEM授权范围枚举。kind选择仅查询记录，不是对象任意操作码。data字含义：PROC=[parent,pgid,sid,state,waitpid,cpu_ns,used,reserved,resource_count,map_count,rq_count,tty,wait_kind,wait_selector_kind,wait_selector,...]；RQ=[caller,callerimage,server,serverimage,phase,result,flags,...]；ACCT=[set,limit,exec_limit,used,reserved,state,...]；LIFE=[parent,reason,code,wait_pending,observe_refs,cleanup_refs,...]；RESOURCE=[local,subtype,rights,offset,length,inherit,target_pid,target_image,...]；BOOT_RESOURCE仅init可读受信设备/启动镜像记录，其data=[resource,kind,start,length,irq,flags,...]。都不含内核指针/完整他人寄存器。
 
-PROC的state固定CONSTRUCT=1、READY=2、RUNNING=3、BLOCKED=4、EXITING=5、STOPPED=6；STOPPED仅待停止机制接入后产生，不输出内部BUILDING。仅返回仍有运行记录的目标；原运行记录回收后为0条，旧CONTROL不会读到同槽新PID。PROC为整实例单条，cursor只接受0，next=0，image为当前/清理中的镜像，stamp为运行身份代次而非内容版本。
+PROC的state固定CONSTRUCT=1、READY=2、RUNNING=3、BLOCKED=4、EXITING=5、STOPPED=6；可信Run停放已产生STOPPED，不输出内部BUILDING或恢复状态编号，原生发信生产/授权仍待接。仅返回仍有运行记录的目标；原运行记录回收后为0条，旧CONTROL不会读到同槽新PID。PROC为整实例单条，cursor只接受0，next=0，image为当前/清理中的镜像，stamp为运行身份代次而非内容版本。
 
 cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端。wait_kind为0无等待、1接收、2请求结果、3独立收尾、4构造撤销续点、5父wait、6信号等待；READY但尚未恢复的续点仍显示其等待种类。父wait的wait_selector_kind为0任意孩子、1完整PID、2冻结组，wait_selector对应0/PID/公开PGID；不暴露内部GROUP Handle。其他等待的selector两字0，其余保留字0。
 
@@ -334,7 +334,7 @@ RQ query接续（2026-11-16）：kind=2已接，记录pid/image对应所查主�
 
 原生创建接续（2026-11-16）：0x40..0x43已接，create只用a0/a1，configure只用a0..a2，start/destroy只用a0，其他输入必须0；失败全部输出清零。Createarg/Config完整区间一次复制，create先核验本地CREATE类型再读属性，凭据与额度核验见03末尾。SERVICE能力决定额外a3 CONTROL，非SERVICE为0；PID不是目标操作权。CONSTRUCT/加载MEM的已冻结操作不再因旧profile一律NOTSUP，而按精确scope/rights/阶段检查；creds中仅CONFIG的ALLOC现在为DENIED。固定CREATE不属于free允许类型，返回BAD_HANDLE；尚未实现的CREATE通用grant在具体复制操作返回NOTSUP，不以泛化检查封锁已实现的create。EXEC_VIEW、非零reserve_resources及信号配置等未完成部分仍明确拒绝，不从调用号存在推断可用。
 
-原生wait接续（2026-11-16）：用户确认新增ERR_CHILD=22。没有匹配且可收取的孩子返回-CHILD；存在匹配活孩子但尚无结果时，WNOHANG成功且全部输出0，否则阻塞。selector=0在受理时冻结当前组，不能编码为-PGID而与PGID1/任意孩子混淆；INT64_MIN返回INVALID。2026-11-19已接可信Life的STOP/CONT持久报告、选项匹配/原子消费和显式kind转换，但尚无调度暂停或原生STOP/CONT结果生产源，用户端实际运行仍只产生EXITED。QUERY_LIFE存活期终结原因/码仍0，不把内部报告编号当作公共结果。接入及验证边界见03末尾。
+原生wait接续（2026-11-16）：用户确认新增ERR_CHILD=22。没有匹配且可收取的孩子返回-CHILD；存在匹配活孩子但尚无结果时，WNOHANG成功且全部输出0，否则阻塞。selector=0在受理时冻结当前组，不能编码为-PGID而与PGID1/任意孩子混淆；INT64_MIN返回INVALID。2026-11-19已接可信Life报告与真实Run停放，原生wait在用户ELF中实际交付STOPPED/CONTINUED/EXITED；停放决策仍来自可信CPU fixture，尚无原生sigsend/ttysignal生产源。QUERY_LIFE存活期终结原因/码仍0，不把内部报告编号当作公共结果。接入及验证边界见03末尾。
 
 观察原生入口接续（2026-11-16）：0x50..0x54已按既定五/一输入接通，未用寄存器仍必须0，失败输出全0。共享常量为abi/observe.h；cookie为u64，不能按Handle类别或有符号PID解释。obsread/ack/drop可操作本镜像既有cookie而不再要求旧permit/basis仍有效，登记仍先检查两者。RESOURCE查询已识别OBSERVE子类型9，只输出类型/业务权与本地Handle，不暴露内部预付区或Image索引。精确配额/退出清理及本地验证边界见10末尾。
 

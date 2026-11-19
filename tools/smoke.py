@@ -294,6 +294,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
     elif case == "elf":
         if ready != ["READY elf-restored"] or panics or traps:
             raise SmokeError("native user ELF loader did not finish")
+    elif case == "jobs":
+        if ready != ["READY jobs-restored"] or panics or traps:
+            raise SmokeError("Run stop/continue scenario did not finish")
     elif case == "tty":
         if ready != ["READY tty-restored"] or panics or traps:
             raise SmokeError("tty input/output/wait scenario did not finish")
@@ -1145,6 +1148,7 @@ def exercise(args, run_dir, record):
                     "READY init-restored\n" if args.case == "init" else
                     "READY elf-restored\n" if args.case == "elf" else
                     "READY runtime-restored\n" if args.case == "runtime" else
+                    "READY jobs-restored\n" if args.case == "jobs" else
                     "READY tty-restored\n" if args.case == "tty" else
                     "READY libsys-restored\n" if args.case == "libsys" else
                     "READY spawn-restored\n" if args.case == "spawn" else
@@ -1489,7 +1493,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("fork CPU cleanup ownership/drain-before-tree/source-independent rollback mismatch")
                     record["fork_cleanup_handoff"]=cleanup[0]
                     continuations=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FORKCONTCHECK ")]
-                    if continuations != [dict(cases=3,resumed=1,killed=1,self_killed=1,peer_progress=3,vm_churn=15,charged=0,allocated=transition["tables"])]:
+                    if continuations != [dict(cases=3,resumed=1,killed=1,self_killed=1,stopped=2,self_stop=1,peer_progress=3,vm_churn=15,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("fork kernel-root continuation/resume/termination transfer mismatch")
                     record["fork_kernel_continuation"]=continuations[0]
                 if args.case == "sigconfig":
@@ -1522,6 +1526,11 @@ def exercise(args, run_dir, record):
                             {"children":2,"rollback":4,"invalid":1,"slots":3,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("user ELF preparation/rollback/slot conservation mismatch")
                     record["elf_loader"] = checks[0]
+                if args.case == "jobs":
+                    checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('JOBSCHECK ')]
+                    if checks != [dict(cases=13,self=1,self_cancel=1,busy=1,notify=1,alarm=1,suspend=1,rpc=5,wait=1,group=1,killed=3,charged=0,allocated=transition['tables'])]:
+                        raise SmokeError('Run stop/continue and retained-wait responsibility mismatch')
+                    record['jobs']=checks[0]
                 if args.case == "tty":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('TTYCHECK ')]
                     if checks != [dict(input=1,alarm=2,interbyte=1,nonblock=1,canonical=1,blocked=1,charged=0,allocated=transition['tables'])]:

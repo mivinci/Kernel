@@ -11,6 +11,7 @@ static Rtable  *parenttable, *peertable, *childtable;
 static Procinfo parentinfo, childinfo;
 static Prepid   preparation;
 static u32      armed, mode, reached, peerprogress, resumed, churn;
+static u32      selfstopped;
 NORETURN void   __real_hal_user_enter(Hctx *context);
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
@@ -88,6 +89,10 @@ builder(void)
   reached = 1;
   if (mode == 2)
     procexit(LIFE_SIGNAL, 9, NULL);
+  if (!mode) {
+    REQUIRE(!procstop(parentpid, SIGNAL_STOP));
+    selfstopped++;
+  }
   procforkyield();
   resumed++;
   REQUIRE(!mode && peerprogress == 1 && reached == 1 && spacefrozen(parentinfo.space) == 1 &&
@@ -150,10 +155,10 @@ forkcontinuetest(void)
   Liferesult result;
   Cowpool    pool;
   Pgstat     before, after;
-  u32        i, j, work, continued = 0, killed = 0, selfkilled = 0;
+  u32        i, j, work, continued = 0, killed = 0, selfkilled = 0, stopped = 0;
   int        error;
   pgstat(&before);
-  churn = 0;
+  churn = selfstopped = 0;
   for (mode = 0; mode < 3; mode++) {
     reached = peerprogress = resumed = 0;
     preparation.generation = 0;
@@ -175,8 +180,15 @@ forkcontinuetest(void)
     REQUIRE(!procpublish(parentpid) && !procpublish(peerpid));
     armed = 1;
     REQUIRE(!procrunone() && reached == 1 && !resumed && !peerprogress);
+    if (mode < 2) {
+      REQUIRE(!procstop(parentpid, SIGNAL_STOP) && !procinfo(parentpid, &stale) &&
+              stale.state == PROC_STOPPED && !stale.phase && !prepstat(preparation, &prep) &&
+              prep.cloning && spacefrozen(parentinfo.space) == 1);
+      stopped++;
+    }
     REQUIRE(!procrunone() && peerprogress == 1 && !resumed);
     if (!mode) {
+      REQUIRE(procrunone() == -ERR_WOULD_BLOCK && !proccontinue(parentpid));
       REQUIRE(!procrunone() && resumed == 1);
       continued++;
     } else {
@@ -229,6 +241,10 @@ forkcontinuetest(void)
   puthex(killed);
   putstr(" self_killed=");
   puthex(selfkilled);
+  putstr(" stopped=");
+  puthex(stopped);
+  putstr(" self_stop=");
+  puthex(selfstopped);
   putstr(" peer_progress=");
   puthex(3);
   putstr(" vm_churn=");
