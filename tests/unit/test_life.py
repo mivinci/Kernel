@@ -13,7 +13,7 @@ class Cred(C.Structure):
     _fields_=[(x,C.c_uint32) for x in ('ruid','euid','rgid','egid')]
 class Life(C.Structure):
     _fields_=[('generation',C.c_uint64),('pid',C.c_int64),('parent',C.c_int64),('sequence',C.c_uint64),('imagegen',C.c_uint64),('account',C.c_uint64),
-        ('set',C.c_uint64),('group',C.c_int64),('fault',Fault),('cred',Cred)]+[(x,C.c_uint32) for x in ('run','controls','observers','cleanup')]+[(x,C.c_uint8) for x in ('state','reason','code','waitref','instance','child_policy','exit_policy')]
+        ('set',C.c_uint64),('group',C.c_int64),('fault',Fault),('cred',Cred)]+[(x,C.c_uint32) for x in ('run','controls','observers','cleanup')]+[(x,C.c_uint8) for x in ('state','reason','code','waitref','instance','child_policy','exit_policy','stopped')]
 
 class Childsel(C.Structure):
     _fields_=[("value",C.c_int64),("kind",C.c_uint32),("reserved",C.c_uint32)]
@@ -34,7 +34,7 @@ class LifeTests(unittest.TestCase):
                 'lifeend':[Lifeid,C.c_uint32,C.c_uint32,C.POINTER(Fault)],
                 'lifehold':[Lifeid,C.c_uint32],'lifedrop':[Lifeid,C.c_uint32],
                 'lifereparent':[Lifeid,C.c_int64,C.c_int64], 'lifecollect':[Lifeid,C.c_int64,C.POINTER(Result)],
-                'lifeselect':[C.c_int64,C.POINTER(Childsel),C.c_uint32,C.POINTER(Lifeid),C.POINTER(C.c_uint32)],
+                'lifeselect':[C.c_int64,C.POINTER(Childsel),C.c_uint32,C.c_uint32,C.POINTER(Lifeid),C.POINTER(C.c_uint32)],
                 'lifehint':[C.c_int64], 'lifework':[C.c_uint32],
                 'lifestat':[Lifeid,C.POINTER(Life)]}.items():
                 getattr(lib,name).argtypes=args
@@ -309,7 +309,7 @@ class LifeTests(unittest.TestCase):
             self.assertEqual(self.lib.lifehint(1),0)
             for child in children: self.assertEqual(self.stat(child).parent,1)
             choice=Childsel(self.pid(100,2),1,0); ready=Lifeid(); matched=C.c_uint32()
-            self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,C.byref(ready),C.byref(matched)),0)
+            self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,0,C.byref(ready),C.byref(matched)),0)
             self.assertEqual((ready.index,matched.value),(children[0].index,1))
             self.assertEqual(self.lib.lifecollect(children[0],self.pid(100,1),C.byref(Result())),-5)
             self.assertEqual(self.lib.lifedetach(parent),0)
@@ -320,7 +320,7 @@ class LifeTests(unittest.TestCase):
             self.assertEqual(self.lib.lifecheck(),0)
             self.assertEqual(self.lib.lifecollect(children[0],1,C.byref(Result())),0)
             choice=Childsel(self.pid(100,3),1,0)
-            self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,C.byref(ready),C.byref(matched)),0)
+            self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,0,C.byref(ready),C.byref(matched)),0)
             self.assertEqual((ready.generation,matched.value),(0,1))
             self.assertEqual(self.stat(fresh).state,1)
         for lib in self.libs: self.exercise(lib,body)
@@ -334,16 +334,16 @@ class LifeTests(unittest.TestCase):
             group=self.stat(child).group
             ready=Lifeid(); matched=C.c_uint32()
             for choice in (Childsel(0,0,0),Childsel(self.pid(200,2),1,0),Childsel(group,2,0)):
-                self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,C.byref(ready),C.byref(matched)),0)
+                self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,0,C.byref(ready),C.byref(matched)),0)
                 self.assertEqual((ready.generation,matched.value),(0,1))
             self.assertEqual(self.lib.lifeend(child,1,37,None),0)
             for _ in range(2):
                 choice=Childsel(group,2,0)
-                self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,C.byref(ready),C.byref(matched)),0)
+                self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,0,C.byref(ready),C.byref(matched)),0)
                 self.assertEqual((ready.index,matched.value),(child.index,1))
                 self.assertEqual(self.stat(child).waitref,1)
             choice=Childsel(self.pid(201,2),1,0)
-            self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,C.byref(ready),C.byref(matched)),0)
+            self.assertEqual(self.lib.lifeselect(1,C.byref(choice),0,0,C.byref(ready),C.byref(matched)),0)
             self.assertEqual((ready.generation,matched.value),(0,0))
             self.assertEqual(self.lib.lifecheck(),0)
         for lib in self.libs: self.exercise(lib,body)
@@ -362,7 +362,7 @@ class LifeTests(unittest.TestCase):
             self.assertEqual(self.stat(old).waitref,1)
             fresh=self.child(parent,900,3)
             selected=Lifeid();matched=C.c_uint32();choice=Childsel(self.pid(900,3),1,0)
-            self.assertEqual(self.lib.lifeselect(self.pid(900,1),C.byref(choice),0,C.byref(selected),C.byref(matched)),0)
+            self.assertEqual(self.lib.lifeselect(self.pid(900,1),C.byref(choice),0,0,C.byref(selected),C.byref(matched)),0)
             self.assertEqual((matched.value,selected.generation),(1,0))
             self.assertEqual(self.lib.lifeend(fresh,1,42,None),0)
             self.assertEqual((self.stat(fresh).waitref,self.stat(fresh).instance,self.stat(fresh).exit_policy),(0,0,1))

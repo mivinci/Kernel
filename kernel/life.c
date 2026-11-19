@@ -1,5 +1,6 @@
 #include <life.h>
 #include <diag.h>
+#include <abi/signal.h>
 static Life lives[LIFES];
 /* Cached run owner and monotonic death watermark make logical adoption O(1).
    Actual Proc constructors never reuse a full PID generation. */
@@ -109,6 +110,7 @@ lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
   l->state = LIFE_CONSTRUCT;
   l->run = run;
   l->reason = l->code = l->waitref = l->child_policy = l->exit_policy = 0;
+  l->stopped = 0;
   l->instance = 1;
   l->controls = l->observers = l->cleanup = 0;
   l->cred.ruid = l->cred.euid = l->cred.rgid = l->cred.egid = 0;
@@ -206,6 +208,48 @@ lifecancel(Lifeid id)
   return 0;
 }
 int
+lifestop(Lifeid id, u32 signum)
+{
+  Life *l = find(id);
+  if (!l)
+    return -ERR_STALE;
+  if (signum != SIGNAL_STOP && signum != SIGNAL_TSTP && signum != SIGNAL_TTIN &&
+      signum != SIGNAL_TTOU)
+    return -ERR_INVALID;
+  if (l->state != LIFE_LIVE)
+    return -ERR_STATE;
+  if (l->stopped)
+    return 0;
+  /* Reserve the last version for an exit that must never fail for capacity. */
+  if (l->sequence >= ~(u64) 0 - 1)
+    return -ERR_OVERFLOW;
+  l->stopped = 1;
+  l->reason = LIFE_STOPPED;
+  l->code = (u8) signum;
+  l->sequence++;
+  changed(parentof(l));
+  return 0;
+}
+int
+lifecontinue(Lifeid id)
+{
+  Life *l = find(id);
+  if (!l)
+    return -ERR_STALE;
+  if (l->state != LIFE_LIVE)
+    return -ERR_STATE;
+  if (!l->stopped)
+    return 0;
+  if (l->sequence >= ~(u64) 0 - 1)
+    return -ERR_OVERFLOW;
+  l->stopped = 0;
+  l->reason = LIFE_CONTINUED;
+  l->code = 0;
+  l->sequence++;
+  changed(parentof(l));
+  return 0;
+}
+int
 lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
 {
   Life  *l = find(id), *parent;
@@ -228,6 +272,9 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
     return -ERR_INVALID;
   if (l->group && groupdeactivate(l->group))
     panic("ended group membership");
+  if (l->sequence == ~(u64) 0)
+    panic("life final version");
+  l->stopped = 0;
   l->reason = reason;
   l->code = code;
   if (fault) {
@@ -346,6 +393,35 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   return 0;
 }
 int
+lifetake(Lifeid id, Handle parent, u32 options, Liferesult *out)
+{
+  Life *l = find(id);
+  if (!out)
+    return -ERR_INVALID;
+  out->pid = 0;
+  out->sequence = 0;
+  out->reason = out->code = 0;
+  if (options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED))
+    return -ERR_INVALID;
+  if (!l)
+    return -ERR_STALE;
+  if (handletype(parent) != HANDLE_PROCESS || parentof(l) != parent)
+    return -ERR_DENIED;
+  if (l->state == LIFE_ENDED)
+    return lifecollect(id, parent, out);
+  if (l->state != LIFE_LIVE || !l->waitref)
+    return -ERR_STATE;
+  if (!((l->reason == LIFE_STOPPED && (options & WAIT_WUNTRACED)) ||
+        (l->reason == LIFE_CONTINUED && (options & WAIT_WCONTINUED))))
+    return -ERR_WOULD_BLOCK;
+  out->pid = l->pid;
+  out->sequence = l->sequence;
+  out->reason = l->reason;
+  out->code = l->code;
+  l->reason = l->code = 0;
+  return 0;
+}
+int
 lifestat(Lifeid id, Life *out)
 {
   Life *l = find(id);
@@ -370,6 +446,7 @@ lifestat(Lifeid id, Life *out)
   out->instance = l->instance;
   out->child_policy = l->child_policy;
   out->exit_policy = l->exit_policy;
+  out->stopped = l->stopped;
   out->controls = l->controls;
   out->observers = l->observers;
   out->cleanup = l->cleanup;
@@ -545,7 +622,8 @@ lifefindpid(Handle pid, Lifeid *out)
 }
 
 int
-lifeselect(Handle parent, const Childsel *choice, u32 start, Lifeid *ready, u32 *matched)
+lifeselect(Handle parent, const Childsel *choice, u32 start, u32 options, Lifeid *ready,
+           u32 *matched)
 {
   Life *l;
   Group group;
@@ -554,8 +632,10 @@ lifeselect(Handle parent, const Childsel *choice, u32 start, Lifeid *ready, u32 
     return -ERR_INVALID;
   ready->generation = 0;
   ready->index = ready->reserved = *matched = 0;
-  if (!choice || choice->reserved || start >= LIFES || handletype(parent) != HANDLE_PROCESS ||
-      choice->kind > WAIT_SELECT_GROUP || (choice->kind == WAIT_SELECT_ANY && choice->value))
+  if (!choice || choice->reserved || start >= LIFES ||
+      options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED) ||
+      handletype(parent) != HANDLE_PROCESS || choice->kind > WAIT_SELECT_GROUP ||
+      (choice->kind == WAIT_SELECT_ANY && choice->value))
     return -ERR_INVALID;
   if (choice->kind == WAIT_SELECT_PID && handletype(choice->value) != HANDLE_PROCESS)
     return -ERR_BAD_HANDLE;
@@ -570,7 +650,8 @@ lifeselect(Handle parent, const Childsel *choice, u32 start, Lifeid *ready, u32 
         (choice->kind == WAIT_SELECT_GROUP && l->group != choice->value))
       continue;
     *matched = 1;
-    if (l->state == LIFE_ENDED) {
+    if (l->state == LIFE_ENDED || (l->reason == LIFE_STOPPED && (options & WAIT_WUNTRACED)) ||
+        (l->reason == LIFE_CONTINUED && (options & WAIT_WCONTINUED))) {
       ready->generation = l->generation;
       ready->index = index;
       return 0;
@@ -619,6 +700,15 @@ lifecheck(void)
     l = &lives[i];
     if (!l->state)
       continue;
+    if (l->stopped > 1 || (l->state != LIFE_LIVE && l->stopped))
+      return -ERR_STATE;
+    if (l->state == LIFE_LIVE &&
+        (!l->sequence || l->sequence == ~(u64) 0 ||
+         (l->reason != 0 && l->reason != LIFE_STOPPED && l->reason != LIFE_CONTINUED) ||
+         (l->reason == LIFE_STOPPED &&
+          (!l->stopped || l->code < SIGNAL_STOP || l->code > SIGNAL_TTOU)) ||
+         (l->reason != LIFE_STOPPED && l->code) || (l->reason == LIFE_CONTINUED && l->stopped)))
+      return -ERR_STATE;
     if ((l->child_policy | l->exit_policy) & ~(LIFE_AUTOCHILD | LIFE_IGNORECHLD))
       return -ERR_STATE;
     if (l->run != PG_NONE &&

@@ -263,10 +263,16 @@ syscall(Hctx *context)
       outputs[0] = (u64) child.pid;
       outputs[1] = WAIT_EXITED;
       outputs[2] = child.code;
-      if (child.reason != LIFE_EXIT)
-        outputs[2] |= WAIT_SIGNALLED;
-      if (child.reason == LIFE_FAULT)
-        outputs[2] |= WAIT_FAULT;
+      if (child.reason == LIFE_STOPPED)
+        outputs[1] = WAIT_STOPPED;
+      else if (child.reason == LIFE_CONTINUED)
+        outputs[1] = WAIT_CONTINUED;
+      else {
+        if (child.reason != LIFE_EXIT)
+          outputs[2] |= WAIT_SIGNALLED;
+        if (child.reason == LIFE_FAULT)
+          outputs[2] |= WAIT_FAULT;
+      }
       outputs[3] = child.sequence;
     }
     break;

@@ -1664,7 +1664,7 @@ def exercise(args, run_dir, record):
                     record["procs"] = checks[0]
                 if args.case == "life":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("LIFECHECK ")]
-                    if checks != [{"retained": 256, "reused": 1, "instances": 0, "allocated": transition["tables"]}]:
+                    if checks != [{"retained": 256, "reused": 1, "jobs": 1, "instances": 0, "allocated": transition["tables"]}]:
                         raise SmokeError("life pool/result responsibility mismatch")
                     record["life"] = checks[0]
                 if args.case == "locals":

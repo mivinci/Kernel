@@ -1266,7 +1266,8 @@ wakeone(Proc *p)
   else if (p->stage.wait.kind == WAIT_CHILD) {
     if (changed <= 0)
       return;
-    if (lifeselect(pidof(p), &p->stage.wait.target.children, p->wait_cursor, &child, &matched))
+    if (lifeselect(pidof(p), &p->stage.wait.target.children, p->wait_cursor, p->stage.wait.options,
+                   &child, &matched))
       panic("child wait selection");
     wake = child.generation || !matched;
   } else
@@ -1381,11 +1382,11 @@ procwait(Handle selector, u32 options, Liferesult *out)
   if (choice.kind == WAIT_SELECT_GROUP && grouphold(choice.value))
     return -ERR_STATE;
   for (;;) {
-    error = lifeselect(pidof(current), &choice, current->wait_cursor, &child, &matched);
+    error = lifeselect(pidof(current), &choice, current->wait_cursor, options, &child, &matched);
     if (error)
       break;
     if (child.generation) {
-      error = lifecollect(child, pidof(current), out);
+      error = lifetake(child, pidof(current), options, out);
       if (!error)
         current->wait_cursor = (u8) ((child.index + 1) % LIFES);
       break;
@@ -2527,8 +2528,8 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
     } else if (kind == QUERY_LIFE) {
       querybase(&records[0], kind, life.pid, life.sequence);
       records[0].data[0] = (u64) life.parent;
-      records[0].data[1] = life.reason;
-      records[0].data[2] = life.code;
+      records[0].data[1] = life.state == LIFE_ENDED ? life.reason : 0;
+      records[0].data[2] = life.state == LIFE_ENDED ? life.code : 0;
       records[0].data[3] = life.waitref;
       records[0].data[4] = life.observers;
       records[0].data[5] = life.cleanup;

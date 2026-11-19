@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- 原生ttybind/getfg通过830项host/格式及191次双架构QEMU，164份日志和源码/SDK哈希匹配。实际跨会话绑定、QUERY-only客户、重复/抢占拒绝、旧owner查询STALE及清零已验；真实表另验无存活成员拒绝和非零前台公开身份转换。保留ttycreate首授/满表/满池/减权验证；默认init/serial可装载段与stage117逐字节相同，仅符号表元数据改变。证据stage123-terminal-bind/，无CI/板端/性能结果；默认包尚无tty，setfg/ttysignal待接。
+- Life停止/继续报告核心通过838项host/格式及191次双架构QEMU，164份日志和最终源码/SDK哈希匹配。8项新增专项、合计31项专项验证选项/一次消费、最新报告合并、引用保留、孤儿接管/旧PID复用、2000步模型及O0/O2版本耗尽/最终退出保底；两架构真实Life/Group/Set表验证通过。默认init/serial ELF与stage123逐字节相同；证据stage124-life-jobs/，无CI/板端/性能结果。尚非真实Run暂停/继续或原生作业信号。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
 
@@ -36,7 +36,7 @@
 
 ## 待确认与接续
 
-- stage123已本地验收：ttycreate首授、ttybind管理绑定及getfg只读查询已接；绑定不自动选前台或推进epoch，QUERY不替代BIND/FG。串口轮询现等完整PANIC行再判定，保留原超时和终态核验，碎片回归通过。授权/引用历史及前台epoch规则见11/stage120..123；当前没有待回复的确认项，原生setfg/ttysignal、控制终端继承/挂断与真实作业信号仍待接。
+- stage124已本地验收：Life仍128字节，stopped与待消费报告独立；收取STOP/CONT不解除waitref/组/实例，退出覆盖临时报告，最终版本保底不回绕。父wait选项/消费与分发已接，但原生信号生产者和Run暂停尚未接，不能称用户STOP/CONT已可用。ttycreate/ttybind/getfg及授权/epoch历史见11/stage120..123；当前没有待回复的确认项。
 
 - stage119已本地验收：四种VMIN/VTIME、非阻塞/规范模式优先与绝对期限等待状态已接并通过全量。tty输入/输出专项独立为CASE=tty/用户ELF，两架构各双闹钟阻塞/唤醒通过，避免挤占通用runtime/ELF样例额度。等待不消费输入，服务请求提交/取消、活模式变化和前台授权仍待接。
 
@@ -54,7 +54,7 @@
 
 - stage113管理引擎已由stage117接入默认init；初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis，父wait/镜像确认/缓冲回收独立。2026-11-19确认的首次必需serial清理后诊断停机已实现，其他服务/恢复方向按07/09接续。
 
-- 下一步：接前台切换所需STOP/CONT状态、真实信号与阻塞中断，再接setfg/TTOU、控制终端继承/挂断及tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
+- 下一步：将停止/继续接入真实Run，保留原READY/阻塞等待及已提交返回的责任；再接真实信号/阻塞中断、setfg/TTOU、控制终端继承/挂断及tty后端/请求循环，按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 
 - 2026-11-18确认的反向bit32=RX_ROOM/bit33=TX_READY与晚绑定已按07/11落定v1 BIND/STATUS及最近结果缓存，serial侧已实现/本地验；生产tty配对和init编排仍待接，绑定前不发布tty连接。
 

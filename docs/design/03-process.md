@@ -417,6 +417,12 @@ A 原生 wait 已收取 B 的结果，包装层向不可写 status 复制失败�
 
 不消费观察选项若纳入范围，只读取而不收取；不能偷用“查询后独立确认”的旧路径代替普通 wait 的原子领取。停止/继续可按既定规则合并保留当前可报告状态，退出结果不能被覆盖；选择对应状态版本并交付时只消费该版本。
 
+持久报告与实际停止位分开：每个存活Life只保存最新一份未消费的STOPPED/CONTINUED报告，WUNTRACED/WCONTINUED分别选择相应种类；不匹配选项不消费它。收取STOPPED报告只清这份报告，进程仍停止；收取CONTINUED不解除父收取责任或释放组/Set/Run引用。已经停止时再次停止、已运行时再次继续均不产生新状态版本或重复报告。STOP→CONT在父收取前合并为CONT，CONT→STOP合并为最新停止原因；最终退出总是覆盖未收取的临时报告，且必须继续可收取。
+
+Life仍128字节，最后一字节保存stopped，存活期未消费报告使用内部reason/code（STOPPED=4、CONTINUED=5），终结期仍为EXIT/SIGNAL/FAULT=1/2/3；原生wait显式转换为既有WAIT_STOPPED/WAIT_CONTINUED/WAIT_EXITED，不暴露内部编号。QUERY_LIFE的终结原因/码在存活期保持0，不把临时报告当作终结结果。选择/消费之间不允许调度或IRQ开放，父的内核返回记录在同一临界区取得该版本；消费后新变化独立递增并形成新报告，不修改已交付副本。序号不回绕：停止/继续保留最后一个u64版本给最终退出，到保留边界时返回OVERFLOW且不变更任何状态/报告；重复无变化操作不占版本。
+
+例子：孩子发布后sequence=1；STOP产生(2,STOPPED,STOP)，CONT在收取前覆盖为(3,CONTINUED,0)。只带WUNTRACED的父此时无新结果，带WCONTINUED取得版本3且仍保留最终收取责任。随后STOP产生版本4，退出产生版本5并覆盖它；无论父此时是否请求停止报告，最终只收取版本5的退出。若父先取得版本2副本、孩子随后继续，版本2输出不变，版本3另待下次收取。父死亡时，仍未消费的报告随既有逻辑孤儿接管转给init，旧父PID复用不能夺回。
+
 #### 示例：孩子退出与父入睡竞态
 
 A 调用 wait 时尚无退出结果，内核原子检查并登记等待。B 此后退出，发布结果并唤醒 A；若 B 先退出，A 在检查时直接领取，不会漏掉事件。交付成功后信号到达，A 仍返回 B 的结果；若信号先中断尚未领取的等待，B 的结果保留。父 wait 不等 FS 清理或 DMA 停止，相关旧 Life/Acct/观察引用独立存活。
@@ -1463,3 +1469,17 @@ Proc512/Prep256/Spacetxn64及固定池不增长；记录只复用现有联合体
 本轮最终本地570项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、两个FORKCONTCHECK、normal无测试源码且ELF无wrapper符号、实际固定池及静态帧。未执行CI、真实硬件、性能、STOP/CONT或原生fork验收。
 
 游标隔离接续：02末尾改为事务私有Mmap保护日志及实时freecount，不再跨批保存无关全局映射链/空闲链位置。原续点peer在三组场景中各完成5次独立Mem映射分配/写入/复用，恢复或终止回滚后页/费用归基线。记录/固定池不增长；同一源Mem的未完成别名准入仍受限，尚未开放原生fork检查点。
+
+### 停止/继续的Life报告核心（2026-11-19）
+
+可信lifestop/lifecontinue现将实际停止位与最新待消费报告分开，均只接受LIFE_LIVE；停止原因只允许STOP/TSTP/TTIN/TTOU，重复状态不改原原因/版本、不产生新父提示。Life末字节stopped偏移127，sizeof仍128，两架构静态断言锁定，原fault字段位置/用途不变。报告使用存活期reason/code，退出覆盖它并清stopped，保留最后u64版本给强制退出；到保留边界的非幂等STOP/CONT返回OVERFLOW且不修改记录，退出仍能形成UINT64_MAX最终版本。
+
+lifeselect现接受既有wait选项，只选匹配的未消费报告或最终退出；lifetake在调用者保持IRQ屏蔽、select/take之间无检查点的同一临界区消费所选当前版本。收取临时报告不改waitref/Run/Group/Set引用，旧lifecollect仍是可信最终退出收取辅助，不接受临时报告。Proc的父wait/唤醒选择传递真实选项并接入take，syscall分发显式映射内部4/5为既有WAIT_STOPPED=2/WAIT_CONTINUED=3；QUERY_LIFE存活期终结原因/码继续0，不能泄漏内部报告编号。尚无原生信号生产者调用这些状态入口，不能由分发接线声称实际用户停止/继续已实现。
+
+8项新host验证选项/精确一次消费、幂等/最新报告合并、退出覆盖、父死亡后逻辑接管/旧PID复用、构造/坏参数拒绝、既有自动收取策略不抹除存活报告，以及2000步独立状态模型；其中7项连接真实Life/Set/Group和两种VM后端。另1项在O0/O2直接注入私有版本边界，以实际Life/Group和模拟Set/account依赖证明OVERFLOW不改记录、重复转换不占版本、最后退出可到UINT64_MAX并收取；该边界模型不是物理费用证明，未加入生产故障钩子。既有Life/libc wait专项另23项通过。
+
+两架构CASE=life新增真实Life/Group/Set表转换：无选项不报告STOP，WUNTRACED消费后仍停止且所有成员/引用计数不变，CONT独立报告/幂等，STOP→CONT→STOP合并后故障退出覆盖并保留完整原fault信息，旧已交付STOP副本不被修改；最终Set实例/费用及页统计回基线，并验证槽复用不继承stopped。LIFECHECK增加jobs=1，由全部断言通过后输出；测试没有用户Run，不冒充调度暂停或原生wait端到端。
+
+完整make test-all通过838项host、格式检查和191次双架构QEMU；补强最后一个可成功非终结版本的边界后，又完整重跑838项host通过。31项专项、164份journal、最终源码/头/SDK/包哈希、两份真实表jobs记录另核对，保留两架构及共享编译数据库。默认init/serial ELF与stage123逐字节相同，没有改变服务包或加入fixture。证据build/host/stage124-life-jobs/，无CI/板端/性能结果。
+
+接续仍须将暂停/继续接入真实Run，分别保留原READY/阻塞等待或已提交返回的责任，不能仅阻止入队而丢失可恢复的就绪续点；再接原生USER/终端信号、STOP/CONT相互抵消、CHLD停止/继续、NOCLDSTOP、普通阻塞中断与前台策略。当前没有停止任何生产用户进程，也没有新增sigsend/setfg/ttysignal成功占位。
