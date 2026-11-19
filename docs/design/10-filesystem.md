@@ -899,3 +899,17 @@ rollback只允许在尚未提交任何原请求/未发生远端效果时由原cl
 8项host覆盖完整CALL冷路枚举、子类型/权限/目标格式及错误输出保持，唯一键/满8项、owner与旧seq、DRAINING不重建、迟到ready/清理/忘记及两类代次耗尽、来源镜像与输出重叠/重复键损坏。libsys独立真实用户场景使用实际RESOURCE查询核对初始CALL，收到另一份指向同后端的CALL资源后仍命中同一目录；free该授权后识别为STALE，SPACE被拒绝，两进程原有资源交付/收尾与页/费用守恒继续验证。模型begin/rollback发生在任何建立请求提交前，不把该检查称为已执行HELLO。
 
 最终完整make test-all通过877项host、格式检查及195次双架构QEMU；8项专项、168份journal、最终源码/头/SDK/包哈希另核对。两架构原生场景均完成真实CALL固定目标及别名同键检查，从实际QEMU内核提取的libsys用户载荷与SDK打包ELF逐字节一致。conn.o仅依赖原生__sys_query，SDK私有头一致，默认init/serial ELF与stage135相同且不含新增模块符号，clangd数据库已更新。证据build/host/stage136-connection-directory/；无CI/板端/性能结果。此点是身份/相位目录，不是已启用的端到端连接：原RPC责任、共享MEM安装/映射、Rctx/后台记录、File/Boot/Fix与真实FS/TTY服务继续待接；两个已有接口问题仍待用户回复。
+
+### bootstrap原RPC与安装资源的固定记录（2026-11-20）
+
+私有Bootstrap固定128字节，保存原Connclaim、RPC、机制状态/kind/四字结果、尚自持的资源Handle、opcode/token/deadline及本地状态；无应用裸指针。它可嵌入既定每连接4 KiB私有页的独立bootstrap位置，不占数据槽记录；本点不创建全局数组或动态工作区，不将此记录等同三层Rctx或完整后台页。PREPARED在原生短提交前建立；提交成功返回的唯一RPC经受保护短段移入记录，并将原持有变量清零后再恢复信号。所有函数本身不进行阻塞等待。
+
+状态FREE=0、PREPARED=1、WAITING=2、RESULT=3、ACKED=4。record与claim的目录代次/index、seq和owner始终一起检查；第二次提交、旧claim、重复结果捕获及输出覆盖记录自身被拒绝。PREPARED只可在原请求尚未提交时撤销；WAITING保留原RPC，WOULD_BLOCK/INTERRUPTED及非终结查询错误不改写记录。调用者可显式协作取消同一RPC，但cancel成功仍不是实际结果或资源安全证明，不自动重发建立请求。
+
+非阻塞poll在调用者短信号排除段执行；阻塞等待必须由外层恢复信号后执行，返回寄存器/结果稳定保存后再进入短保护段capture。真正的syscall返回窗口仍须后续Rctx/trampoline适配接管，不能仅靠这份记录宣称handler重入已安全。capture只固定原生成功或CANCELLED/PEER/REVOKED终结机制结果，不把等待中断当作业务EINTR。服务业务四字及资源reply的三字原样保存，是否seq/connid/长度/token正确由后续握手适配验证，未在此解释为已成功接入。
+
+结果保存后才能尝试原RPC的ACK_RESULT|ACK_RELEASE；未满足server_finished或其他ACK错误时保留完整记录。成功ACK只归还RPC责任，资源reply已安装的MEM/其他资源仍由记录持有，直到显式移交给连接/补偿记录。原四字结果只是只读快照，words中的Handle副本不构成第二份所有权；移交成功将resource清零并标记，不能重复移交。记录仅在ACKED且无RPC/自持资源时可结束，逻辑token/会话补偿由调用者先接管。畸形传输结果标记BAD_RESULT，但仍保留可识别的已安装资源供显式清理，不因报错或ACK丢掉它。
+
+7项host覆盖唯一RPC移交、重入不覆盖、等待中断/查询失败保持、协作取消不清记录、资源结果先存后ACK、ACK失败保持/释放后资源仍自持、终结错误和外部等待捕获、畸形结果资源保留、旧claim与输出别名。真实libsys用户模型复用现有ACCEPTED取消后成功交付MEM场景：先prepare，再在短信号屏蔽段异步提交/移入RPC，解屏蔽后等待；受保护capture后ACK，结束因尚持资源返回BUSY，随后显式移交MEM并结束记录，再按原测试映射/读值/解除/释放。这里使用私有FS_ATTACH元数据与既有非FS消息载荷，只验运输责任，不假装已执行HELLO/ATTACH协议或完整连接映射。
+
+最终完整make test-all通过884项host、格式检查及195次双架构QEMU；7项专项、168份journal、最终源码/头/SDK/包哈希及实际链接libsys载荷与SDK打包ELF逐字节一致另核对。两架构均验证原RPC移交/结果保存/ACK后资源自持/显式移交后映射与回收；bootstrap.o只依赖非阻塞poll、短cancel/ACK，私有SDK头一致，init/serial ELF与stage136相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage137-bootstrap-rpc/；无CI/板端/性能结果。首次完整回归ARM用户ELF增大，构造期保留资源超过16项，旧fixture错误要求单批枚举结束；已按既有cursor遍历改正并从头重跑全量，不放宽内核上限，旧失败日志保留。下一步接真实bootstrap请求/回复校验、MEM类型/权限/窗口及映射、连接READY原子安装、Rctx/返回窗口与失效补偿；已保存的deadline本点仅元数据，不自动产生超时/新内核deadline。Boot/Fix、标准fd/FS/TTY仍待接，两个已有用户问题仍保持待回复。

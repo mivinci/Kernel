@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- bootstrap固定责任记录通过884项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。7项host覆盖RPC唯一移交、中断保持、结果捕获、ACK失败/成功、资源显式移交及旧claim/输出保护；两架构实际资源模型先存结果再ACK，资源仍自持时拒绝结束，再移交并map/read/unmap/free。SDK/实际链接载荷一致，bootstrap.o只依赖短poll/cancel/ACK，init/serial与stage136相同；证据stage137-bootstrap-rpc/。初次ARM单批RESOURCE枚举旧假设已修正并重跑全量；尚非实际bootstrap握手或完整Rctx返回窗口，未验CI/板端/性能。
+
 - 后端冷路识别/连接目录通过877项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。8项host覆盖真实目标枚举适配、唯一键/8项容量、owner/序号/代次、失效保留与迟到提交、来源/输出/损坏；两架构实际RESOURCE查询核对CALL固定目标，不同CALL授权命中同目录，free后STALE且SPACE拒绝。实际链接libsys载荷与SDK一致，conn.o仅依赖__sys_query，私有头一致，init/serial与stage135相同；证据stage136-connection-directory/。尚非HELLO/MEM/RPC责任集成；无CI/板端/性能结果。
 
 - 文件连接线格式/私有页账本通过869项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。6项host覆盖头/描述符快照、私有边界/身份、页对/续页、分区不窃取、旧租约/溢出及2000步占用模型；两架构各5个有效main使用实际libsys代码，验证共享DONE不释放私有占用。实际链接用户模型与SDK打包ELF一致，file.o无未定义依赖、SDK协议/私有头一致，init/serial与stage134相同；证据stage135-file-slots/。普通内存运输模型不是实际HELLO/SHARED MEM/后端绑定证明；无CI/板端/性能结果。
@@ -57,6 +59,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage137已本地验收：128字节bootstrap责任记录保存原RPC、固定机制/四字结果和自持资源；等待中断不结束记录，ACK只释放RPC，资源显式移交后才能结束。仅非阻塞/短操作，外层解屏蔽等待及Rctx返回窗口仍待接；真实HELLO/ATTACH回复、MEM窗口/映射/READY和失效补偿接续。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 
 - stage136已本地验收：按实际后端PID/image去重的8项目录、唯一bootstrap owner/序号和DRAINING门闩已接，冷路从原生CALL授权查询。目录不拥有/释放RPC/MEM/File/映射；rollback仅限原请求提交前，接续前置登记的原RPC责任、MEM资源验证/映射和Rctx后台移交，再接File/Boot/Fix与服务。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 

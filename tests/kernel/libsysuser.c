@@ -2,6 +2,8 @@
 #include <sys/channel.h>
 #include "private/syscall.h"
 #include "private/conn.h"
+#include "private/bootstrap.h"
+#include <proto/file.h>
 #include <abi/syscall.h>
 static volatile u64       bss[257];
 static volatile u64       initialized = UINT64_C(0x123456789abcdef0);
@@ -9,6 +11,7 @@ static const volatile u64 readonly = UINT64_C(0xfedcba9876543210);
 static Conncache          connection_directory;
 static Conntag            connection_tag;
 static Connpeer           connection_peer;
+static Bootstrap          bootstrap_record;
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -446,14 +449,26 @@ checkreceived(Handle handle, u64 subtype, u64 offset, u64 length)
 static void
 typedclient(const Bootview *view, Handle peer)
 {
-  Msg    words;
-  Ipcmsg result;
-  Handle rpc, memory, backend, space = bootresource(view, BOOT_SELF_SPACE), denied;
-  Maparg map;
+  Msg       words;
+  Ipcmsg    result;
+  Handle    rpc, memory, backend, space = bootresource(view, BOOT_SELF_SPACE), denied;
+  Maparg    map;
+  Connclaim claim;
+  u64       oldmask;
+  claim.tag = connection_tag;
+  claim.seq = 1;
+  claim.owner = 303;
+  sysbootinit(&bootstrap_record);
+  REQUIRE(!sysbootprepare(&bootstrap_record, claim, FS_ATTACH, 55, 0), 150);
   words.words[0] = 200;
   words.words[1] = words.words[2] = words.words[3] = 0;
-  REQUIRE(!ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0, 224);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+              !ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) && result.request > 0,
+          224);
   rpc = result.request;
+  REQUIRE(!sysbootsubmitted(&bootstrap_record, claim, &result.request) && !result.request &&
+              bootstrap_record.rpc == rpc && !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+          149);
   REQUIRE(!ipc_recv(0, 0, &result) && result.kind == IPC_SEND && result.words[0] == 206, 155);
   REQUIRE(!ipc_rqcancel(rpc), 154);
   words.words[0] = 207;
@@ -465,11 +480,22 @@ typedclient(const Bootview *view, Handle peer)
               result.words[3] == UINT64_C(0x8000000000000042),
           226);
   memory = (Handle) result.words[0];
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+              !sysbootcapture(&bootstrap_record, claim, 0, &result) &&
+              bootstrap_record.state == SYSBOOT_RESULT && bootstrap_record.resource == memory &&
+              !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+          148);
   checkreceived(memory, 4, PAGE_SIZE, PAGE_SIZE);
   REQUIRE(!ipc_rqcancel(rpc) && !ipc_rqpoll(rpc, 0, &result) && result.kind == IPC_RESOURCE_REPLY &&
               (Handle) result.words[0] == memory,
           227);
-  REQUIRE(!ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE), 228);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+              !sysbootack(&bootstrap_record, claim) && !bootstrap_record.rpc &&
+              sysbootfinish(&bootstrap_record, claim) == -ERR_BUSY &&
+              !sysbootresource(&bootstrap_record, claim, &memory) &&
+              memory == (Handle) result.words[0] && !sysbootfinish(&bootstrap_record, claim) &&
+              !sysbootcheck(&bootstrap_record) && !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+          228);
   map.mem = memory;
   map.offset = PAGE_SIZE;
   map.address = 0x1000000;
@@ -561,7 +587,7 @@ _start(const Boot *boot)
   Msg      words;
   Queryrec records[16];
   Handle   pid, parent, peer, rpc, late;
-  u64      image, written, next, state;
+  u64      image, written, next, state, cursor = 0, found = 0;
   u32      i, client;
   REQUIRE(!bootcheck(boot, boot->bytes, &view), 109);
   REQUIRE(boot->argc == 1 && boot->envc == 1 && bootarg(&view, 0, 1)[0] == 'S', 110);
@@ -576,21 +602,27 @@ _start(const Boot *boot)
   }
   peer = bootresource(&view, 256);
   REQUIRE(peer > 0 && !bootresource(&view, BOOT_SYSTEM), 115);
-  REQUIRE(!__sys_query(0, QUERY_RESOURCE, 0, records, 16, &written, &next) && !next, 116);
-  for (i = 0; i < written; i++)
-    if ((Handle) records[i].data[0] == peer)
-      break;
-  REQUIRE(i < written && records[i].data[1] == 5 && records[i].data[6] != (u64) pid &&
-              records[i].data[7] == 1,
-          117);
+  do {
+    REQUIRE(!__sys_query(0, QUERY_RESOURCE, cursor, records, 16, &written, &next), 116);
+    for (i = 0; i < written; i++)
+      if ((Handle) records[i].data[0] == peer) {
+        REQUIRE(records[i].data[1] == 5 && records[i].data[6] != (u64) pid &&
+                    records[i].data[7] == 1,
+                117);
+        connection_peer.pid = (Handle) records[i].data[6];
+        connection_peer.image = records[i].data[7];
+        found++;
+      }
+    cursor = next;
+  } while (cursor);
+  REQUIRE(found == 1, 117);
   {
-    Connpeer  self, unchanged;
+    Connpeer  self, unchanged, queried;
     Connclaim claim, nested;
     self.pid = pid;
     self.image = image;
-    REQUIRE(!sysconnpeer(peer, &connection_peer) &&
-                connection_peer.pid == (Handle) records[i].data[6] &&
-                connection_peer.image == records[i].data[7] &&
+    REQUIRE(!sysconnpeer(peer, &queried) && queried.pid == connection_peer.pid &&
+                queried.image == connection_peer.image &&
                 !sysconninit(&connection_directory, self) &&
                 !sysconnbind(&connection_directory, connection_peer, &connection_tag) &&
                 !sysconnbegin(&connection_directory, connection_tag, 101, &claim) &&
