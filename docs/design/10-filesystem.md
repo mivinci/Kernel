@@ -927,3 +927,17 @@ bootstrap记录仍拥有MEM直到显式移交，Bootmap只保存别名信息、�
 新增5项host覆盖请求/序号/窗口输出不变、错误MEM类型/权限/大小/offset/失效、仅允许既有连接的普通复用、映射和固定头校验、map失败无别名、坏头/复制失败保留别名、unmap失败不清记录。与前7项责任记录测试共12项专项。独立libsys原生场景新增实际HELLO：真实客户端按新目录claim发出请求，服务分配/映射/初始化9页SHARED MEM，经资源reply交付；客户端用新适配核验/映射并提交READY、完成原RPC与资源移交，再显式invalidate/unmap/free。服务只作为单次握手fixture，不是生产FS/TTY，也未实现跨全部客户端的唯一连接/生命周期观察。
 
 最终完整make test-all通过889项host、格式检查及195次双架构QEMU；12项bootstrap专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构实际HELLO均完成9页资源交付、原生窗口查询/映射/固定头核验、原claim READY提交、ACK与资源移交及invalidate/unmap/free，旧页/费用守恒继续通过。bootstrap.o仅依赖原生query/map/copy/unmap及短poll/cancel/ACK，SDK私有头一致，init/serial ELF与stage137相同且无新增测试/模块符号，clangd数据库已更新。证据build/host/stage138-bootstrap-map/；无CI/板端/性能结果。真实普通复用、失败补偿及返回窗口handler注入仍须接续；Rctx/生命周期稳定拥有MEM+VA、VA分配、超时/token/File补偿、Boot/Fix与标准fd接口未完成。两个先前接口提问保持待回复，不提前落实候选。
+
+### 稳定连接工作页、ATTACH复用与失效清理（2026-11-20）
+
+Connwork固定4096字节，Connstate内保存本客户端/后端完整身份、目录标签、SELF_SPACE与自持MEM、Bootmap、Filepages和独立Bootstrap。第一个页的预留区可容纳整份8项目录；sysconnworkinit只初始化本连接Connstate，不能清掉同页目录或其他预留责任。断言同时限制Connstate+Conncache+8*128字节责任容量小于一页，8个后端总工作页仍为既定32 KiB，不另增一页目录。后续8条slot RPC/File责任记录尚未实现，当前不能把预留容量视为已完成后台接管。
+
+原claim、目录代次/owner/seq、原资源结果和map的verified/大小/connid/后端image全部核对后，sysconnworkadopt在调用者短信号排除段内提交目录READY并把MEM/别名整体移入工作页。外部Bootmap随成功清零，Bootstrap.resource同时清零并标明已移交，原RPC/短结果仍由该Bootstrap保留直到正常ACK/finish。所有可能失败的检查位于本地所有权移动前，失败不夺走MEM或映射；本地提交期间无原生调用或用户callback可观察半套READY。它仍信任前一步原资源交付/映射证明及当前SELF/独占VA，不是任意用户数字的权限验证器。
+
+READY连接可由sysconnreusebegin串行受理一个新ATTACH/EXEC_CLAIM，分配同一bootstrap命名空间的新seq/owner；目录仍READY，原数据页可继续使用，不能让handler再创建另一份接入。新的owner在普通确认前保留，重复begin返回BUSY。sysconnworkreuse要求工作页仍持已核验MEM/VA及原connid，只接受原结果的普通确认；资源reply或不同connid拒绝，不替换现有映射，不丢弃该回复可能新装的资源，后者仍由bootstrap记录补偿。成功确认仅清本次owner，原MEM/VA/数据租约保持。
+
+失效先将目录转DRAINING，新页租约返回PEER，旧租约仍可按精确seq/span归还。清理要求目录无活动bootstrap owner、Bootstrap完整FREE且所有私有页未占用，否则BUSY；不能因共享DONE、当前Rctx退出或映射仍可访问便拆除。满足前提后先unmap，再free实际自持MEM：unmap失败保留MEM和完整别名，free失败保留MEM而不恢复已经解除的别名，后续只重试剩余步骤。工作页源PID/image不匹配时拒绝操作，不把父工作区更名视作fork修复；清理不自动forget目录或给同一活后端新建连接绕过容量。
+
+8项新增host核对原RPC与MEM/别名的一次移交、错误map/失效claim不移动所有权、reuse重复owner及原映射/页保留、资源回复复用拒绝、DRAINING不借新页/不清活动租约、unmap/free逐步失败重试、源镜像变化及同页目录初始化/预算。原生用户场景以真实HELLO先取得MEM/映射并移入工作页，再保留一个主层页租约发真实ATTACH；fixture按同一source PID/image/token及更大seq回复普通[0,seq,connid,36864]，不新装MEM。客户端确认原MEM、VA和活动租约均不变，再invalidate，验证清理BUSY/新页PEER，归还旧租约后清理到零。
+
+最终完整make test-all通过897项host、格式检查及195次双架构QEMU；8项专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构实际HELLO→工作页接管→ATTACH普通复用→DRAINING页租约门槛→解除/释放均通过，页/费用回基线。实际用户符号connection_work精确4096字节且无独立connection_directory对象，依赖集合/SDK私有头一致，init/serial ELF与stage138相同且无新增模块/测试符号，clangd数据库已更新。证据build/host/stage139-connection-work/；无CI/板端/性能结果。预算审查曾发现独立目录额外占用32KiB之外存储，已在最终版本改为首工作页预留区内嵌，先前回归在主机阶段主动停止并保留日志。服务仍为单次HELLO/ATTACH fixture，不是完整生产连接池/观察/token权限实现；CALL/File与slot RPC责任、Rctx/handler返回窗口、VA分配、超时补偿、Boot/Fix和标准fd/服务继续待接，两项已有接口问题仍待用户回复。

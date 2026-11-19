@@ -3,15 +3,17 @@
 #include "private/syscall.h"
 #include "private/conn.h"
 #include "private/bootstrap.h"
+#include "private/connection.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 static volatile u64       bss[257];
 static volatile u64       initialized = UINT64_C(0x123456789abcdef0);
 static const volatile u64 readonly = UINT64_C(0xfedcba9876543210);
-static Conncache          connection_directory;
-static Conntag            connection_tag;
-static Connpeer           connection_peer;
-static Bootstrap          bootstrap_record;
+static Connwork           connection_work;
+#define connection_directory (*(Conncache *) (void *) connection_work.reserved)
+static Conntag   connection_tag;
+static Connpeer  connection_peer;
+static Bootstrap bootstrap_record;
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -433,7 +435,8 @@ typedserver(const Bootview *view)
           147);
   {
     Handle    pid, parent;
-    u64       image;
+    Handle    client = received.source;
+    u64       image, firstseq = received.words[2], clientimage = received.image;
     Filehead *header = (Filehead *) 0x1100000;
     REQUIRE(!__sys_getid(&pid, &image, &parent), 146);
     arg.bytes = FS_CONN_BYTES;
@@ -459,6 +462,16 @@ typedserver(const Bootview *view)
                 !__sys_free(memory),
             143);
     resource_trace[9] = 1;
+    REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.source == client &&
+                received.image == clientimage && received.words[0] == FS_ATTACH &&
+                !received.words[1] && received.words[2] > firstseq && received.words[3] == 55,
+            138);
+    words.words[0] = 0;
+    words.words[1] = received.words[2];
+    words.words[2] = ((u64) 1 << 16) | 5;
+    words.words[3] = FS_CONN_BYTES;
+    REQUIRE(!ipc_reply(received.request, &words), 137);
+    resource_trace[9] = 2;
   }
 }
 static void
@@ -572,38 +585,67 @@ typedclient(const Bootview *view, Handle peer)
               result.words[1] == 57 && result.words[2] == 59 && result.words[3] == 61,
           251);
   {
-    Bootmap   mapped = {0, 0, 0, 0, 0, 0};
-    Bootreply validated;
-    Connentry entry;
+    Bootmap    mapped = {0, 0, 0, 0, 0, 0};
+    Bootreply  validated;
+    Connentry  entry;
+    Bootstrap *active = &connection_work.state.bootstrap;
+    Filelease  lease, other;
+    Handle     original;
+    u64        originalva;
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysconnworkinit(&connection_work, &connection_directory, connection_tag) &&
                 !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
-                !sysbootprepare(&bootstrap_record, claim, FS_HELLO, UINT64_MAX, 0) &&
-                !sysbootrequest(&bootstrap_record, claim, &words) &&
+                !sysbootprepare(active, claim, FS_HELLO, UINT64_MAX, 0) &&
+                !sysbootrequest(active, claim, &words) &&
                 !ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
-                !sysbootsubmitted(&bootstrap_record, claim, &result.request) &&
+                !sysbootsubmitted(active, claim, &result.request) &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             142);
-    REQUIRE(!ipc_rqwait(bootstrap_record.rpc, 0, &result), 141);
+    REQUIRE(!ipc_rqwait(active->rpc, 0, &result), 141);
+    REQUIRE(
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+            !sysbootcapture(active, claim, 0, &result) &&
+            !sysbootreply(active, claim, 0, &validated) && validated.memory &&
+            validated.bytes == FS_CONN_BYTES && !validated.offset &&
+            !sysbootmap(active, claim, space, 0x1200000, connection_peer.image, &mapped) &&
+            mapped.mapped && mapped.verified &&
+            !sysconnworkadopt(&connection_work, &connection_directory, claim, space, &mapped) &&
+            !mapped.mapped && !active->resource && connection_work.state.memory &&
+            !sysconnview(&connection_directory, connection_tag, &entry) &&
+            entry.state == SYSCONN_READY && entry.connid == validated.connid &&
+            !sysbootack(active, claim) && !sysbootfinish(active, claim) &&
+            !sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 1, &lease) &&
+            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+        140);
+    original = connection_work.state.memory;
+    originalva = connection_work.state.map.address;
+    REQUIRE(((volatile Filehead *) originalva)->connid == validated.connid, 139);
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysbootcapture(&bootstrap_record, claim, 0, &result) &&
-                !sysbootreply(&bootstrap_record, claim, 0, &validated) && validated.memory &&
-                validated.bytes == FS_CONN_BYTES && !validated.offset &&
-                !sysbootmap(&bootstrap_record, claim, space, 0x1200000, connection_peer.image,
-                            &mapped) &&
-                mapped.mapped && mapped.verified &&
-                !sysconnready(&connection_directory, claim, mapped.connid) &&
-                !sysconnview(&connection_directory, connection_tag, &entry) &&
-                entry.state == SYSCONN_READY && entry.connid == validated.connid &&
-                !sysbootack(&bootstrap_record, claim) &&
-                !sysbootresource(&bootstrap_record, claim, &memory) &&
-                !sysbootfinish(&bootstrap_record, claim) &&
+                !sysconnreusebegin(&connection_directory, connection_tag, 405, &claim) &&
+                !sysbootprepare(active, claim, FS_ATTACH, 55, 0) &&
+                !sysbootrequest(active, claim, &words) &&
+                !ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
+                !sysbootsubmitted(active, claim, &result.request) &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-            140);
-    REQUIRE(((volatile Filehead *) 0x1200000)->connid == mapped.connid &&
+            136);
+    REQUIRE(!ipc_rqwait(active->rpc, 0, &result) && result.kind == IPC_NONE, 135);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysbootcapture(active, claim, 0, &result) &&
+                !sysconnworkreuse(&connection_work, &connection_directory, claim) &&
+                connection_work.state.memory == original &&
+                connection_work.state.map.address == originalva &&
+                connection_work.state.pages.pages[lease.slot].seq == lease.seq &&
+                !sysbootack(active, claim) && !sysbootfinish(active, claim) &&
                 !sysconninvalidate(&connection_directory, connection_tag) &&
-                !sysbootunmap(space, &mapped) && !mapped.mapped && !__sys_free(memory),
-            139);
-    resource_trace[9] = 1;
+                sysconnworkclean(&connection_work, &connection_directory) == -ERR_BUSY &&
+                sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 1,
+                                   &other) == -ERR_PEER &&
+                !sysconnworkrelease(&connection_work, &connection_directory, lease) &&
+                !sysconnworkclean(&connection_work, &connection_directory) &&
+                !connection_work.state.memory && !connection_work.state.map.mapped &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            134);
+    resource_trace[9] = 2;
   }
 }
 static Handle

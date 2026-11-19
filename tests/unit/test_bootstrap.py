@@ -36,10 +36,15 @@ isize ipc_rqcancel(Handle rpc){cancels++;seen=rpc;return cancelling;}
 static Handle memid;
 static u64 rights,offset,length,kind,maps,unmaps;
 static isize queryerror,maperror,copyerror,unmaperror;
+static isize freeerror;
+static u64 frees;
 static Filehead header;
 void testmemory(Handle memory,u64 subtype,u64 access,u64 off,u64 bytes,u64 connid,u64 image){memid=memory;kind=subtype;rights=access;offset=off;length=bytes;maps=unmaps=0;queryerror=maperror=copyerror=unmaperror=0;header.magic=FS_CONN_MAGIC;header.bytes=FS_CONN_BYTES;header.connid=connid;header.serverimage=image;header.slots=8;header.slotbytes=4096;header.reserved[0]=header.reserved[1]=0;}
 void testmaperror(isize query,isize map,isize copy,isize unmap){queryerror=query;maperror=map;copyerror=copy;unmaperror=unmap;}
 void testheader(u64 magic){header.magic=magic;}
+void testfreeerror(isize error){freeerror=error;frees=0;}
+u64 testfrees(void){return frees;}
+isize __sys_free(Handle resource){frees++;return resource>0?freeerror:-ERR_BAD_HANDLE;}
 u64 testmapping(u32 key){return key?unmaps:maps;}
 isize __sys_query(Handle authority,u64 query,u64 cursor,Queryrec *rows,u64 count,u64 *written,u64 *next){u32 i;if(authority||query!=QUERY_RESOURCE||cursor||count!=16)return -ERR_INVALID;if(queryerror)return queryerror;rows[0].type=QUERY_RESOURCE;for(i=0;i<20;i++)rows[0].data[i]=0;rows[0].data[0]=(u64)memid;rows[0].data[1]=kind;rows[0].data[2]=rights;rows[0].data[3]=offset;rows[0].data[4]=length;*written=1;*next=0;return 0;}
 isize __sys_map(Handle space,const Maparg *arg){maps++;if(space<=0||arg->mem!=memid||arg->offset!=offset||arg->length!=length||arg->prot!=3||arg->reserved)return -ERR_INVALID;return maperror;}
@@ -54,7 +59,8 @@ class BootstrapTests(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory();folder=Path(cls.temp.name)
         stub=folder/'ipc.c';stub.write_text(STUB);path=folder/'bootstrap.so'
         cmd=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
-             '-I'+str(ROOT/'include'),'-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'lib/libsys/include'),str(ROOT/'lib/libsys/bootstrap.c'),str(stub),'-o',str(path)]
+             '-I'+str(ROOT/'include'),'-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'lib/libsys/include'),str(ROOT/'lib/libsys/bootstrap.c'),str(stub),
+             *[str(ROOT/'lib/libsys'/name) for name in getattr(cls,'extra_sources',())],'-o',str(path)]
         if sys.platform=='darwin':
             sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip();cmd+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
         subprocess.run(cmd,check=True,capture_output=True);cls.lib=C.CDLL(str(path))

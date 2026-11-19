@@ -42,7 +42,7 @@ valid(const Connentry *entry)
   if (entry->state == SYSCONN_CONNECTING)
     return entry->sequence && entry->owner && !entry->connid;
   if (entry->state == SYSCONN_READY)
-    return entry->sequence && !entry->owner && connidok(entry->connid);
+    return entry->sequence && connidok(entry->connid);
   return (!entry->owner || entry->sequence) &&
          (!entry->connid || (entry->sequence && connidok(entry->connid)));
 }
@@ -239,7 +239,9 @@ sysconnready(Conncache *cache, Connclaim claim, u64 connid)
   error = claimat(cache, claim, &entry);
   if (error)
     return error;
-  if (entry->state != SYSCONN_CONNECTING)
+  if (entry->state != SYSCONN_CONNECTING && entry->state != SYSCONN_READY)
+    return -ERR_STALE;
+  if (entry->state == SYSCONN_READY && entry->connid != connid)
     return -ERR_STALE;
   entry->connid = connid;
   entry->owner = 0;
@@ -253,10 +255,38 @@ sysconnrollback(Conncache *cache, Connclaim claim)
   isize      error = claimat(cache, claim, &entry);
   if (error)
     return error;
-  if (entry->state != SYSCONN_CONNECTING)
+  if (entry->state != SYSCONN_CONNECTING && entry->state != SYSCONN_READY)
     return -ERR_STATE;
   entry->owner = 0;
-  entry->state = SYSCONN_UNCLAIMED;
+  if (entry->state == SYSCONN_CONNECTING)
+    entry->state = SYSCONN_UNCLAIMED;
+  return 0;
+}
+isize
+sysconnreusebegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out)
+{
+  Connentry *entry;
+  isize      error;
+  if (!owner || !output(cache, out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = entryat(cache, tag, &entry);
+  if (error)
+    return error;
+  if (entry->state == SYSCONN_DRAINING)
+    return -ERR_PEER;
+  if (entry->owner)
+    return -ERR_BUSY;
+  if (entry->state != SYSCONN_READY)
+    return -ERR_STATE;
+  if (entry->sequence == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  entry->sequence++;
+  entry->owner = owner;
+  out->tag.generation = tag.generation;
+  out->tag.index = tag.index;
+  out->tag.reserved = 0;
+  out->seq = entry->sequence;
+  out->owner = owner;
   return 0;
 }
 isize

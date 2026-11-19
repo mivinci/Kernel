@@ -59,6 +59,9 @@ isize sysconnview(Conncache *cache, Conntag tag, Connentry *out);
    rollback is ONLY before any request was submitted or remote effect occurred.
    These gates do not replace the required prospective RPC/resource record. */
 isize sysconnbegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out);
+/* Serialized ATTACH/EXEC_CLAIM on an already verified connection; preserves
+   READY/connid so existing data operations can continue. */
+isize sysconnreusebegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out);
 isize sysconnready(Conncache *cache, Connclaim claim, u64 connid);
 isize sysconnrollback(Conncache *cache, Connclaim claim);
 isize sysconninvalidate(Conncache *cache, Conntag tag);

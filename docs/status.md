@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- 稳定连接工作区/普通复用通过897项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。8项host覆盖MEM+VA一次接管、错误提交保持、reuse owner/原映射保留、资源回复复用拒绝、活页拆除门槛、unmap/free失败重试、来源镜像及内嵌目录预算；两架构实际HELLO→ATTACH普通复用保留原MEM/VA/页租约，再失效/归还/清理。实际工作页符号4096且无额外目录对象、链接载荷/SDK一致，init/serial与stage138相同；证据stage139-connection-work/。尚非生产服务连接池/slot RPC/Rctx/补偿；无CI/板端/性能结果。
+
 - 真实HELLO/受检MEM映射通过889项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。12项bootstrap专项含新增请求/回复校验、真实MEM窗口适配、普通复用边界与映射失败保留；两架构实际HELLO交付9页SHARED、查询窗口/映射/核对头后READY，再ACK/资源移交和解除释放。实际链接载荷与SDK一致、依赖仅短原生操作，init/serial与stage137相同；证据stage138-bootstrap-map/。服务为单次握手fixture，非生产FS/TTY或完整Rctx/补偿；无CI/板端/性能结果。
 
 - bootstrap固定责任记录通过884项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。7项host覆盖RPC唯一移交、中断保持、结果捕获、ACK失败/成功、资源显式移交及旧claim/输出保护；两架构实际资源模型先存结果再ACK，资源仍自持时拒绝结束，再移交并map/read/unmap/free。SDK/实际链接载荷一致，bootstrap.o只依赖短poll/cancel/ACK，init/serial与stage136相同；证据stage137-bootstrap-rpc/。初次ARM单批RESOURCE枚举旧假设已修正并重跑全量；尚非实际bootstrap握手或完整Rctx返回窗口，未验CI/板端/性能。
@@ -61,6 +63,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage139已本地验收：4KiB私有工作页稳定接管MEM/别名，首工作页内嵌8项目录使总预算保持32KiB；READY带owner串行真实ATTACH普通复用，失效禁止新页且不拆活动租约，解除/释放失败分别保留剩余责任。接续slot RPC/后台唯一责任、CALL/File引用、Rctx/信号返回窗口、VA分配与失效补偿，再接Boot/Fix及FS/TTY/标准fd。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 
 - stage138已本地验收：生成冻结四字握手，原回复seq/connid/大小校验、原生MEM权限/窗口查询与显式VA映射/固定头核验已接；坏头/复制失败保留mapped未verified别名，只有显式unmap成功才清零。实际HELLO/READY两架构通过，接续稳定连接工作区接管MEM+VA、真实复用、Rctx/handler返回窗口与失败补偿，再接File/Boot/Fix及服务。GROUP target=0、FAULT公开原因/初次失败策略两问仍待回复。
 

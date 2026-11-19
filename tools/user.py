@@ -55,7 +55,7 @@ def build(args):
     private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S', args.arch + '/io.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S', args.arch + '/io.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
