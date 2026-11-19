@@ -105,6 +105,8 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 
 编号冲突已收口（2026-11-19用户确认）：历史shutdown=0x74与后来已确认/实现的debughandoff重复；保留debughandoff=0x74，尚未实现的shutdown改为0x76，reboot保持0x75。0x74不能解释为关机，不建立旧编号兼容层。
 
+终端调用尚未实现；上表getfg/setfg的旧参数缺少11要求的关联代次校验。2026-11-19提出getfg额外返回SID/epoch、setfg增加expected_epoch，待用户确认，具体开放问题见11“前台切换、模式与孤儿组”；确认前不以旧两参数接口提前实现切换。
+
 getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.md#会话与进程组操作2026-11-16用户确认)为准。getpg仅使用a0，setpg仅使用a0/a1，setsid无参数；未使用输入必须为0。成功getpg只返回a1/a2，setsid只返回a1，setpg无额外输出；失败输出清零。负选择器为INVALID，非进程类别为BAD_HANDLE，消失/已收取目标为STALE，关系越权或会话首进程操作为DENIED，孩子已成功exec为STATE，关系池满为CAPACITY；失败不改变成员关系。
 
 ### 固定参数结构（已冻结）
