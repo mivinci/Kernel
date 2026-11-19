@@ -99,8 +99,11 @@ kind：NONE=0、CALL=1、SEND=2、EVENT=3、RESOURCE_REPLY=4。普通同步call�
 | 0x71 | irqack | binding | status |
 | 0x72 | irqunbind | target,binding | status |
 | 0x73 | query | authority,kind,cursor,outptr,count | a1=条数,a2=next_cursor |
-| 0x74 | shutdown | system,mode | 固件成功不返回 |
+| 0x74 | debughandoff | system | 已实现的控制台交接；要求精确初始SYSTEM CONSOLE，其余输入0 |
 | 0x75 | reboot | system,mode | 固件成功不返回 |
+| 0x76 | shutdown | system,mode | 固件成功不返回；尚未实现 |
+
+编号冲突已收口（2026-11-19用户确认）：历史shutdown=0x74与后来已确认/实现的debughandoff重复；保留debughandoff=0x74，尚未实现的shutdown改为0x76，reboot保持0x75。0x74不能解释为关机，不建立旧编号兼容层。
 
 getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.md#会话与进程组操作2026-11-16用户确认)为准。getpg仅使用a0，setpg仅使用a0/a1，setsid无参数；未使用输入必须为0。成功getpg只返回a1/a2，setsid只返回a1，setpg无额外输出；失败输出清零。负选择器为INVALID，非进程类别为BAD_HANDLE，消失/已收取目标为STALE，关系越权或会话首进程操作为DENIED，孩子已成功exec为STATE，关系池满为CAPACITY；失败不改变成员关系。
 

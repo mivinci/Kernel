@@ -17,13 +17,13 @@
 - 原生create/configure/start/destroy、孩子出资装载及发布别名屏障、固定CONTROL管理、凭据、组/会话、父wait与孤儿接管、query PROC/RQ/ACCT/LIFE/RESOURCE已接。普通孩子CREATE上限减权；生产PID1已安装16 Set对应的CREATE SERVICE权限，实际服务发布仍待接。
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
-- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。来源编码、真实生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
+- 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT及mask/pending；创建固定IGNORE/mask基线。现接可信类型化安装/排队、两层用户帧与原生sigreturn，校验映射/顶层/cookie与HAL权限，恢复完整GPR/FP/mask；现接原生HANDLER两入口检查、sigsuspend独占等待/M-W-H恢复及libc集合/mask/pending/suspend。CHILD真实退出来源已接，USER/FAULT生产、STOP/CONT、普通阻塞中断/重启及POSIX sigaction前置未接。
 - 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。独立生产serial ELF含真实PIO/IRQ、两环、异步READY和精确init控制，已由原生测试PID1装载运行；默认init仍未拉起服务。普通用户ELF装载尚非FS稳定会话；fd/Fix适配、完整spawn/fork/exec未接，virtio尚无生产DMA。
 - T1.1..T1.3已接：normal从chosen外部包按init_index装载实际sbin/init，校验目录并进入孤儿收取/CHILD循环；缺包/坏包分配前拒启。T1.4前置已有16 Set/CREATE SERVICE、128槽、可减权转授的自身CALL及SYSTEM QUERY/标准UART实际发权；Boot格式2/352字节含SELF_SPACE/ALLOC/CREATE/SYSTEM。默认init的服务装载/监督、其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
 
-- 原生资源reply通过780项host/格式及179次双架构QEMU，152份日志和源码/SDK哈希匹配。两架构各2份资源实际交付、25项拒绝、跨页RO源、未同意拒绝、协作取消后实际结果及退出迟到finish通过，Device指针另由真实映射拒绝；费用/页回基线，可信桥已删除。证据stage114-native-resource-reply/，无CI/板端/性能结果。
+- tty参数/输出前置通过788项host/格式及179次双架构QEMU，152份日志和源码/SDK哈希匹配。Termarg同源导出、未知配置拒绝、有界换行转换及实际用户态TX满环/部分发送通过；不是tty服务、行规程或可用终端。证据stage116-tty-output/，无CI/板端/性能结果；原生资源reply历史证据见06/stage114。
 
 - init配置/管理引擎通过780项host/格式及179次双架构QEMU，152份日志与源码/SDK/配置哈希匹配。真实包加载serial的READY后监督回收、未READY超时、缺镜像、装载预算不足两架构各四例通过PTE/Acct/物理owner审计，最终回到初始PID1费用；原生入口不是默认init。证据stage113-init-services/，无CI/板端。
 
@@ -36,11 +36,15 @@
 
 ## 待确认与接续
 
+- stage116已本地验收：Termarg同源布局、参数校验和独立于serial/PTY的有界OPOST/ONLCR输出转换已接；接续行规程和服务循环，尚未改变默认init/包，详见11末尾。
+
 - stage115已本地验收：真实退出CHLD的SOURCE_CHILD元数据按提交时Life父/ruid/策略排队，wait/观察责任独立；782项host/格式、179次双架构QEMU及152份journal/源码/SDK哈希核对通过，真实用户handler与后续wait均验证。证据stage115-child-signal/，无CI/板端结果。USER/FAULT生产、STOP/CONT与普通阻塞中断仍待接，不将来源常量视为完整信号实现。
 
-- stage114已接原生资源reply与ipc_reply_resource并通过全量；可据此继续受限LOOKUP/FS/TTY连接策略，不把底层交付当成完整连接。默认init首次失败策略仍等确认。
+- stage114已接原生资源reply与ipc_reply_resource并通过全量；可据此继续受限LOOKUP/FS/TTY连接策略，不把底层交付当成完整连接。
 
-- stage113前置已本地全量验收：定宽配置/生成/运行复核、分阶段装载监督与回收已实现。初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis；父wait/镜像确认/缓冲回收独立。尚未切生产init main/默认包；首次必需serial失败后恢复诊断停机还是先补存活失败通道，已询问待用户确认，见07。该确认前继续已定的资源回复等前置，不把未切默认写成T1.4完成。
+- 2026-11-19用户确认ABI冲突收口：debughandoff保留0x74，未实现的shutdown改为0x76，reboot保留0x75；已同步06，无旧编号兼容层。
+
+- stage113前置已本地全量验收：定宽配置/生成/运行复核、分阶段装载监督与回收已实现。初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis；父wait/镜像确认/缓冲回收独立。2026-11-19用户确认首次必需serial失败采用清理后诊断停机，已同步07；接续生产init main/默认包切换及两架构验收，尚非T1.4完成。
 
 - 下一步：生产init从真实包/清单装载上述serial ELF，复用实际设备/IRQ和固定CONTROL，接READY期限/退出监督；默认包与生产主循环同步切换并做两架构验证。然后按T1..T4接tty/fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 

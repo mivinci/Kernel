@@ -177,16 +177,21 @@ def build(args):
     init_config.write_bytes(initcfg.generate(json.loads(init_configuration.read_text()),
                                             {'sbin/serial':serial_elf},profile['machine']))
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
-    ringuser_object = sdk / 'obj/ringuser.o'
-    command = [tools['cc']['path'], *flags, '-c', str(ringuser_source), '-o', str(ringuser_object)]
-    invoke('compile-ringuser', command)
-    read_elf(ringuser_object, profile['machine'], allow_undefined=True)
-    entries.append(dict(directory=str(ROOT), file=str(ringuser_source), output=str(ringuser_object), arguments=command))
+    runtime_support = [ringuser_source, ROOT/'tests/kernel/ttyuser.c', ROOT/'sbin/tty/term.c']
+    runtime_objects = []
+    for source in runtime_support:
+        obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
+        obj.parent.mkdir(parents=True,exist_ok=True)
+        command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
+        invoke('compile-runtime-'+source.stem,command)
+        read_elf(obj,profile['machine'],allow_undefined=True)
+        entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
+        runtime_objects.append(str(obj))
     runtime = sdk / 'runtimeuser.elf'
     temporary_runtime = sdk / 'runtimeuser.tmp.elf'
     invoke('link-runtime', [tools['ld']['path'], '-m', profile['emulation'], '-T', str(linker), '--gc-sections',
                             '--build-id=none', '-Map=' + str(sdk / 'runtimeuser.map'), str(crt),
-                            str(extra_units[-1][1]), str(ringuser_object), str(virtio_archive), str(libc_archive), str(archive), '-o', str(temporary_runtime)])
+                            str(extra_units[-1][1]), *runtime_objects, str(virtio_archive), str(libc_archive), str(archive), '-o', str(temporary_runtime)])
     read_elf(temporary_runtime, profile['machine'], kind=2)
     runtime_content = pack(temporary_runtime.read_bytes(), profile['machine'], 128)
     os.replace(temporary_runtime, runtime)
@@ -358,6 +363,8 @@ def build(args):
     headers += [ROOT / 'sbin/serial/io.h']
     headers += [ROOT / 'sbin/serial/control.h']
     headers += [ROOT / 'sbin/init/service.h', ROOT / 'sbin/init/manifest.h']
+    headers += [ROOT / 'sbin/tty/term.h', ROOT / 'tests/kernel/ttyuser.h']
+    headers += list((ROOT / 'include/proto').glob('*.h'))
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
@@ -380,7 +387,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + init_service_sources + [runtime_source,parent_source,ringuser_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + init_service_sources + runtime_support + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

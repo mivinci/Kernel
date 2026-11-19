@@ -483,7 +483,7 @@ CASE=sigframe使用真实csu/main镜像和自定义trampoline验证10种路径�
 
 #### Siginfo来源编码（2026-11-18已确认）
 
-用户已确认原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。64字节布局不变，实现尚未接；可信测试code=0不定义生产协议。后续历史记录的“来源编码待确认”已由本次决定取代。
+用户已确认原生code为USER=1、CHILD=2、FAULT=3：USER携发送者完整PID/euid；CHILD携孩子PID/ruid及已冻结退出/停止/继续原因与状态；FAULT携故障地址及归一化异常原因。各来源无关字段清零，libc再转换标准si_code，不直接沿用Linux值。64字节布局不变；CHILD真实退出生产已于2026-11-19接入，USER/FAULT及停止/继续仍待接，可信测试code=0不定义生产协议。后续历史记录的“来源编码待确认”已由本次决定取代。
 
 2026-11-19接续先接CHILD真实退出生产：共享头统一SOURCE_USER/CHILD/FAULT常量；CHILD的reason/status采用原生wait kind/code，当前退出为WAIT_EXITED及exit code，信号终止另置WAIT_SIGNALLED，故障另置WAIT_FAULT。不是libc wait编码或Linux si_code。STOP/CONT尚未产生状态，不能假装本次已经支持。USER/FAULT的真实来源及归一化异常映射另接，不因有常量就开放sigsend或同步故障处理。
 
@@ -582,3 +582,13 @@ Proc.end在lifeend已提交结果/当时父策略后，按Life的实际逻辑父
 两项新增host在两架构现场布局直接读取实际用户帧，验证CHILD字段与零填充、同号首份元数据合并、信号/故障退出状态、非法PID/原因/状态不修改及IGNORE后不复活旧信息。原生sigconfig的父安装自定义CHLD handler/trampoline，真实孩子以31退出，handler逐字段核对PID/ruid/code/reason/status与零字段，再经原生sigreturn恢复，父仍按正常wait取得唯一结果。主机另核对用户trace及child_info=1并保留全部原策略/清理检查；没有由可信fixture调用sigqueue伪造此CHLD。
 
 两架构专项及完整make test-all已通过：782项host、格式检查、179次双架构QEMU；独立核对152份journal、最终源码/头/SDK哈希与两份真实孩子退出handler记录，证据build/host/stage115-child-signal/。无CI或板端结果。USER sigsend、同步FAULT生产/归一化、STOP/CONT、普通阻塞中断、libc标准siginfo转换仍未实现，本次不把共享常量或可信code0测试当作它们的交付。
+
+### tty参数与有界输出转换（2026-11-19）
+
+include/proto/tty.h作为Termarg唯一C布局来源，80字节及各字段偏移由断言锁定；固定标志/cc索引对应本篇既定协议，SDK自动导出同源头。sbin/tty/term.c校验独占普通内存中的参数快照：拒绝未知位、非CS8、未用cc及与后端已选速率不一致的配置，不读设备或更改模式。后端实际速率发现和SETATTR事务仍待接，不能将传入校验器的数值视为硬件设置证明。
+
+输出转换独立于serial/PTY：每次至多32输入字节，输出至多64字节，仅同时启用OPOST/ONLCR时将LF转换为CRLF，其他字节保持原值，包括NUL、CR和高位字节。返回实际输出量并单独报告已消费输入前缀；容不下整个CRLF时不消费该LF。未知标志、超批次、坏几何及输入/输出/计数重叠在写出前拒绝，失败保持原输出/计数。编码到私有staging后先排空该段，再接下一输入或按新模式编码，不能在部分后端发送后重新编码原输入。
+
+例子：输入A、LF、B，输出容量2时只消费A；下一次容量4才消费LF、B并产出CR、LF、B。若serial只收下staging的CR，tty保留LF、B并从该后缀重试，既不丢LF也不再补CR。后续WRITE结果须按原输入字节计数，不能返回转换后的设备字节数；服务请求提交/取消及模式变更排序另按10/11既定事务规则实现。
+
+6项host专项在O0/O2验证全部字节透传、全部输出容量的最长合法前缀、成对换行背压、随机部分后端发送、参数拒绝与输出不变。真实runtime用户载荷另调用同一生产模块，并以实际SPSC TX满环/腾出7字节/分段发送验证staging后缀不重复不丢失。完整make test-all通过788项host、格式检查、179次双架构QEMU；152份journal、最终源码/SDK哈希、真实用户调用及生产init/serial无fixture均另核对，clangd编译数据库包含新增源码。此点不是tty服务、行规程、read计时/回显、前台信号或可用终端，不提前创建占位main或将fixture放入默认包；无CI/板端/性能结论。证据build/host/stage116-tty-output/。
