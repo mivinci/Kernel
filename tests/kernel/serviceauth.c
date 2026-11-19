@@ -24,7 +24,8 @@ terminalprepare(Handle view, Handle pid, Handle control, Handle *full)
   Sysret   result;
   u64      args[7] = {0, 0, 1, 0, 0, 0, 0};
   u64      written, next, i, count;
-  Handle   id, denied, query, signal;
+  Handle   id, denied, query, signal, pgid, sid;
+  u64      epoch;
   Queryrec rows[8];
   REQUIRE(__sys_ttycreate(0, control, full, &id) == -ERR_BAD_HANDLE && !*full && !id, 144);
   REQUIRE(__sys_ttycreate(memory, control, full, &id) == -ERR_DENIED && !*full && !id, 145);
@@ -56,6 +57,24 @@ terminalprepare(Handle view, Handle pid, Handle control, Handle *full)
   *full = terminalslots[0];
   for (i = 1; i < 64; i++)
     REQUIRE(!__sys_free(terminalslots[i]), 188);
+  REQUIRE(__sys_getfg(0, &pgid, &sid, &epoch) == -ERR_BAD_HANDLE && !pgid && !sid && !epoch, 236);
+  REQUIRE(__sys_getfg(memory, &pgid, &sid, &epoch) == -ERR_BAD_HANDLE && !pgid && !sid && !epoch,
+          237);
+  REQUIRE(!__sys_getfg(*full, &pgid, &sid, &epoch) && !pgid && !sid && epoch == 1, 238);
+  args[0] = (u64) *full;
+  args[1] = 1;
+  REQUIRE(__sys_enter(SYS_GETFG, args, &result) == -ERR_INVALID, 239);
+  for (i = 0; i < 8; i++)
+    REQUIRE(!((u64 *) &result)[i], 240);
+  REQUIRE(__sys_enter(SYS_TTYBIND, args, &result) == -ERR_INVALID, 241);
+  for (i = 0; i < 8; i++)
+    REQUIRE(!((u64 *) &result)[i], 242);
+  REQUIRE(__sys_ttybind(*full, 0) == -ERR_BAD_HANDLE && __sys_ttybind(*full, pid) == -ERR_STALE &&
+              !__sys_getfg(*full, &pgid, &sid, &epoch) && !pgid && !sid && epoch == 1,
+          243);
+  REQUIRE(!__sys_ttybind(*full, 1) && !__sys_getfg(*full, &pgid, &sid, &epoch) && !pgid &&
+              sid == 1 && epoch == 1,
+          244);
   REQUIRE(__sys_inherit(*full, 1) == -ERR_DENIED, 189);
   REQUIRE(__sys_grant(control, *full, TERMINAL_QUERY, 0, 0, 0, &denied) == -ERR_BAD_HANDLE &&
               !denied,

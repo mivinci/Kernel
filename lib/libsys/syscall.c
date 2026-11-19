@@ -82,6 +82,27 @@ __sys_alarmcancel(u64 *generation)
   return error;
 }
 isize
+__sys_ttybind(Handle terminal, Handle sid)
+{
+  const u64 args[7] = {(u64) terminal, (u64) sid, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_TTYBIND, args, &result);
+}
+isize
+__sys_getfg(Handle terminal, Handle *pgid, Handle *sid, u64 *epoch)
+{
+  const u64 args[7] = {(u64) terminal, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!pgid || !sid || !epoch)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_GETFG, args, &result);
+  *pgid = (Handle) result.values[0];
+  *sid = (Handle) result.values[1];
+  *epoch = result.values[2];
+  return error;
+}
+isize
 __sys_ttycreate(Handle system, Handle control, Handle *resource, Handle *id)
 {
   const u64 args[7] = {(u64) system, (u64) control, 0, 0, 0, 0, 0};

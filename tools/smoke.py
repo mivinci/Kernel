@@ -32,6 +32,16 @@ VM_FAULTS = {"textwrite": 4, "rodatawrite": 5, "dataexec": 6, "guard": 7, "null"
 class SmokeError(Exception):
     pass
 
+
+def diagnostic_ready(text, expected):
+    if expected is not None and expected in text:
+        return True
+    # UART writes can split anywhere, including before a panic's final LF.
+    # Judge a complete diagnostic line, never its in-flight prefix.
+    if re.search(r'(?:^|\n)PANIC [^\n]*\n', text):
+        raise SmokeError('unexpected panic; see serial.log')
+    return False
+
 def check_arm64_cache(values,enabled):
     control=values['SCTLR_EL1']
     mask,wanted=(0x1005,0x1005) if enabled else (5,0)
@@ -830,10 +840,11 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                                       bounded_pump=True,external_rx=False)
     if 'terminalproof' in user_symbols:
         proof=struct.unpack('<8Q',read(user_symbols['terminalproof'],64))
-        if proof != (1,64,128,2,1,1,0,0):
+        if proof != (1,64,128,2,1,1,1,1):
             raise SmokeError('native ttycreate authority/pool/table/attenuation/owner proof mismatch')
         record['terminal_authority']=dict(created=True,pool=proof[1],table_failures=proof[2],
-                                          attenuated=proof[3],active_owner=True,stale_owner=True)
+                                          attenuated=proof[3],active_owner=True,stale_owner=True,
+                                          cross_session_bind=True,query_only_client=True)
     if 'handoffproof' in user_symbols:
         proof=struct.unpack('<8Q',read(user_symbols['handoffproof'],64))
         if proof[0]!=1 or not 1<=proof[1]<=64 or proof[2] not in (1,2) or proof[3]!=1 or any(proof[4:]):
@@ -1202,10 +1213,8 @@ def exercise(args, run_dir, record):
                             record['production_ring_fault']=initinspect.invalidate_ring(qmp,gdb,run_dir,args,root,vm['delta'])
                             if os.write(input_fd,b'!')!=1:raise SmokeError('short fault-wakeup UART injection')
                         qmp.command('cont')
-                    if (not normal_live or args.bootpkg_error) and expected in text:
+                    if diagnostic_ready(text, expected if (not normal_live or args.bootpkg_error) else None):
                         break
-                    if "PANIC " in text:
-                        raise SmokeError("unexpected panic; see serial.log")
                     time.sleep(0.02)
                 # Confirm the guest reaches the halt loop rather than trusting its printed marker.
                 time.sleep(0.02)

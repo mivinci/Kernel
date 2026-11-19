@@ -6,8 +6,23 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from smoke import SmokeError, validate_output
+from smoke import SmokeError, validate_output, diagnostic_ready
 from smoke import Qmp
+
+
+class SerialDiagnosticTests(unittest.TestCase):
+    def test_fragmented_diagnostics_wait_for_full_expected_or_unexpected_lines(self):
+        header = 'BOOTPKG error=fffffffffffffffe\n'
+        for expected in ('PANIC boot package\n', 'PANIC initrd missing\n', 'READY images-restored\n'):
+            for end in range(len(expected)):
+                self.assertFalse(diagnostic_ready(header + expected[:end], expected))
+            self.assertTrue(diagnostic_ready(header + expected, expected))
+        unexpected = 'PANIC exception\n'
+        for expected in ('PANIC boot package\n', 'READY images-restored\n', None):
+            for end in range(len(unexpected)):
+                self.assertFalse(diagnostic_ready(header + unexpected[:end], expected))
+            with self.assertRaises(SmokeError):
+                diagnostic_ready(header + unexpected, expected)
 
 
 class QmpPipeTests(unittest.TestCase):

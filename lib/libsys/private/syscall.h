@@ -26,6 +26,8 @@ isize         __sys_copy(void *destination, const void *source, u64 bytes);
 isize         __sys_free(Handle resource);
 isize         __sys_debughandoff(Handle system);
 isize         __sys_ttycreate(Handle system, Handle control, Handle *resource, Handle *id);
+isize         __sys_ttybind(Handle terminal, Handle sid);
+isize         __sys_getfg(Handle terminal, Handle *pgid, Handle *sid, u64 *epoch);
 isize         __sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds);
 isize         __sys_alarmset(u64 deadline, u64 *generation);
 isize         __sys_alarmcancel(u64 *generation);

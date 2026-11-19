@@ -23,6 +23,10 @@ localcheck(void)
   Rtable  *from, *to;
   Queryrec rows[8];
   Image    state;
+  Life     life;
+  Group    relation, session;
+  Handle   pgid, sid, group;
+  u64      epoch;
   u64      bits, next;
   u32      written, i, found = 0;
   int      error;
@@ -33,6 +37,16 @@ localcheck(void)
   to = proctable(child);
   CHECK(from && to && !terminalnew(source.identity, &terminal));
   CHECK(!localterminal(from, terminal, TERMINAL_RIGHTS | LOCAL_GRANT, TERMINAL_SIGNALS, 0, &full));
+  CHECK(!lifestat(source.life, &life) && !groupstat(life.group, &relation) &&
+        !groupstat(relation.session, &session) && !session.members);
+  CHECK(procttybind(from, full, session.id) == -ERR_STATE &&
+        !procgetfg(from, full, &pgid, &sid, &epoch) && !pgid && !sid && epoch == 1);
+  /* Trusted construction isolates query identity conversion from admission:
+     the native bind above must reject this session with no live members. */
+  CHECK(!sessioncreate(parent, &sid) && !groupcreate(parent, sid, &group) &&
+        !terminalbind(terminal, sid) && !terminalset(terminal, group, 1));
+  CHECK(!procgetfg(from, full, &pgid, &target, &epoch) && pgid == parent && target == parent &&
+        epoch == 2 && !groupdrop(group) && !groupdrop(sid));
   CHECK(localinherit(from, full, LOCAL_FORK) == -ERR_DENIED);
   CHECK(!terminaldrop(terminal));
   CHECK(!localcopy(from, full, to, TERMINAL_QUERY | TERMINAL_FG, 0, 0, LOCAL_FORK | LOCAL_EXEC,
@@ -42,6 +56,7 @@ localcheck(void)
         bits == ((u64) 1 << (SIGNAL_INT - 1)));
   CHECK(localterminalaccess(to, query, TERMINAL_SIGNAL, &target, &bits) == -ERR_DENIED && !target &&
         !bits);
+  CHECK(procgetfg(to, signal, &pgid, &sid, &epoch) == -ERR_DENIED && !pgid && !sid && !epoch);
   CHECK(localcopy(from, full, to, TERMINAL_SIGNAL, (u64) 1 << (SIGNAL_KILL - 1), 0, 0, &denied) ==
             -ERR_DENIED &&
         !denied);
@@ -53,6 +68,7 @@ localcheck(void)
   CHECK(!error && !imagestat(source.identity, &state) && state.state == IMAGE_ENDED);
   CHECK(localterminalaccess(to, query, TERMINAL_QUERY, &target, &bits) == -ERR_STALE && !target &&
         !bits);
+  CHECK(procgetfg(to, query, &pgid, &sid, &epoch) == -ERR_STALE && !pgid && !sid && !epoch);
   CHECK(!localquery(to, 0, rows, ARRAY_SIZE(rows), &written, &next) && !next);
   for (i = 0; i < written; i++)
     if (rows[i].data[0] == (u64) query) {

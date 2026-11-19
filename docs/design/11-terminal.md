@@ -62,7 +62,7 @@ wait 可返回 STOPPED（停止信号）、CONTINUED、EXITED（退出码/终止
 切换按准备/提交执行：校验会话/权限/旧代次，tty 暂停旧组的新输入提交并处理暂存读，准备模式，内核提交新前台及代次，再恢复输入分发。
 准备失败保留旧前台，提交后失败按新代次恢复；重入/过期控制请求不得覆盖更新关联。
 
-前台切换epoch（2026-11-19用户确认）：getfg返回PGID/SID/单调epoch，setfg接terminal/pgid/expected_epoch，匹配才原子提交并递增；旧版本返回STALE且保留当前前台，epoch耗尽返回OVERFLOW而不回绕。ttybind只绑定尚未关联终端，ttysignal仍按实际提交时当前前台投递。epoch只描述该终端关联版本，不能作为其他终端的身份或授权；成功提交即推进版本，即便目标PGID相同也不能让旧请求再次成功。终端创建/镜像绑定、关联引用与挂断回收仍须按本篇生命周期规则独立验证，不能以epoch代替权限或完整准备/提交协议。此为已确认设计，终端调用仍未实现。
+前台切换epoch（2026-11-19用户确认）：getfg返回PGID/SID/单调epoch，setfg接terminal/pgid/expected_epoch，匹配才原子提交并递增；旧版本返回STALE且保留当前前台，epoch耗尽返回OVERFLOW而不回绕。ttybind只绑定尚未关联终端，ttysignal仍按实际提交时当前前台投递。epoch只描述该终端关联版本，不能作为其他终端的身份或授权；成功提交即推进版本，即便目标PGID相同也不能让旧请求再次成功。终端创建/镜像绑定、关联引用与挂断回收仍须按本篇生命周期规则独立验证，不能以epoch代替权限或完整准备/提交协议。原生创建/绑定/查询接续见文末，setfg/ttysignal及完整切换协议仍待实现。
 
 例子：sh读到前台G0、epoch=e，准备切G1；另一次合法切换已先提交G2并推进到e+1，则迟到setfg(G1,e)返回STALE，G2和e+1不变。调用者须重新查询并按实际状态重新准备，不能把原请求改写为新epoch后盲目重试；在此之后的ttysignal依提交时当前G2投递。成功setfg(G1,e+1)与下一次信号的提交先后决定投递到G2还是G1，不依赖tty缓存的PID。
 已交付旧组字节不可重复交付，未提交的旧读须重查资格；尚未分发的终端队列输入按显式保留/清空选项处理，不与旧请求私有缓冲混用。
@@ -304,7 +304,11 @@ SIGCHLD在退出结果提交点决定保留/自动收取：DEFAULT/HANDLER保留
 
 首次发权细则（2026-11-19用户确认）：SYSTEM POLICY=0x10，只授精确初始init PID1/image1；owner_control须有CONNECT。ttycreate固定到解析时目标PREPARING/ACTIVE的精确镜像，不能随CONTROL的Life绑定追随exec。返回调用者本地的QUERY|FG|SIGNAL|BIND|GRANT、完整允许信号mask、继承0，以及不提供权限的公开TERMINAL_ID；目标表须另经准备期grant取得缩小授权。资源表满或终端池满等失败清理全部临时引用，失败寄存器输出全0。
 
-绑定与查询细则（2026-11-19用户确认，原生入口待接）：ttybind要求BIND这一显式管理权，可跨调用者会话，把尚未关联的终端绑定到指定且有存活成员的会话；不自动设置前台，不重绑已有终端。getfg只要求QUERY，可跨会话读该终端的PGID/SID/epoch；未绑定时PGID=SID=0且epoch=1，已绑定但未选前台时PGID=0、SID为绑定会话、epoch仍1。setfg另要求FG及调用者属于关联会话，并接TTOU检查；QUERY查询不授予切换权。SID/PGID均为既有公开身份，不接受裸内部关系槽号或以uid0绕过授权。
+绑定与查询细则（2026-11-19用户确认）：ttybind要求BIND这一显式管理权，可跨调用者会话，把尚未关联的终端绑定到指定且有存活成员的会话；不自动设置前台，不重绑已有终端。getfg只要求QUERY，可跨会话读该终端的PGID/SID/epoch；未绑定时PGID=SID=0且epoch=1，已绑定但未选前台时PGID=0、SID为绑定会话、epoch仍1。setfg另要求FG及调用者属于关联会话，并接TTOU检查；QUERY查询不授予切换权。SID/PGID均为既有公开身份，不接受裸内部关系槽号或以uid0绕过授权。
+
+ttybind的SID=0或不是完整PROCESS语法返回BAD_HANDLE；找不到既有会话返回STALE，只剩预留/清理引用而无存活成员返回STATE。已绑定终端不重绑（STATE），会话已被另一未释放终端占用返回BUSY；失败不改变关联和epoch。getfg/ttybind传非TERMINAL本地Handle返回BAD_HANDLE，正确类型缺业务权返回DENIED；owner结束返回STALE。getfg成功才同时发布公开PGID/SID/epoch，失败三个输出均0；无前台与无会话各自用0表达，不能将内部SESSION_ID/GROUP_ID直接当作公开PROCESS身份返回。ttybind只使用a0/a1，getfg只使用a0，其他输入非0均拒绝。
+
+例子：init与sh分属会话S0/S1，T未绑定时双方QUERY均得到0/0/1；init凭BIND将T绑到有存活sh的S1，查询得到0/S1/1。sh仅持QUERY时可查该结果，调用ttybind则DENIED；再次绑定T返回STATE，另一终端抢S1返回BUSY，均保留原关联。后续选择前台必须走独立FG与TTOU检查；绑定本身不选择sh组、不推进epoch。T的tty owner结束后，两者getfg均STALE且输出0，Local枚举仍显示原tty身份，不能改绑到新镜像。
 
 例子：init用TTY构造期间已获得的持续CONTROL创建终端T，再向该准备表grant SIGNAL/INT子集，并向准备中的sh授QUERY|FG和FORK|EXEC。即便CONTROL含INSTALL，改用它运行中grant TERMINAL仍拒绝。若TTY在init持T期间退出，T仍只报告旧PID/image；新TTY镜像必须重新ttycreate，旧T不能对新实例操作。调用者表已满时ttycreate不安装T；释放一个槽后可重试，不遗留占池终端或旧Image费用。
 
@@ -389,6 +393,16 @@ SYS_TTYCREATE=0x6e与libsys私有桩已接。初始PID1/image1的SYSTEM新增POL
 两架构service-authority使用真实用户ELF和原生create/ttycreate/grant/query/free/destroy：错误SYSTEM/owner类型、未用参数及失败寄存器清零；填满父资源表后128次创建失败，再成功取得64项终端并拒绝第65项；释放后准备期QUERY|FG/FORK|EXEC和SIGNAL/INT子集转授成功，KILL扩权及CONTROL INSTALL均拒绝。实际子用户用同步CALL固定ACTIVE镜像，父在其存活时ttycreate，wait后仍查到旧PID/image和完整首授权；另验取消owner后向新准备表grant返回STALE，以及旧CONTROL释放后不能再用。CONTROL各业务位拒绝由既有host穷举另验，不把持完整CONTROL的原生成功路径称为原生逐位拒绝测试；exec固定身份仍用stage120真实Image核心证据，不称原生exec已接。
 
 完整make test-all通过829项host、格式检查及191次双架构QEMU；13项SYSTEM/CONTROL/Local专项、164份journal、最终源码/头/SDK/包哈希和两份实际ttycreate用户证明另核对，保留编译数据库。默认init/serial全部可装载段的内容、权限、地址和大小与stage117一致；新增桩导致编译器局部标签重编号，ELF差异仅.symtab/.strtab，已从stage121保留的实际启动包取旧ELF逐段/逐节核验，而非忽略哈希差异。证据build/host/stage122-ttycreate/；无CI/板端/性能结果。首次专项曾错误重复ACK同步CALL已消费的结果，已按现有IPC契约修正fixture，失败日志保留。默认清单没有tty，ttybind/getfg/setfg/ttysignal、控制终端继承、HUP/CONT和生产tty仍待接。
+
+### 原生终端绑定与查询（2026-11-19）
+
+ttybind=0x69/getfg=0x6a及libsys私有桩已接。Proc以TERMINAL业务权解析实际表项；BIND将公开SID解析到固定内部会话并要求members>0，再使用既有首次关联/唯一占用事务，不添加前台或改变epoch。QUERY快照保留的终端关系，将内部SESSION/GROUP转换成公开完整PROCESS身份，全部成功才同时发布PGID/SID/epoch；缺权限、坏类型、旧owner均无部分输出。两种操作仍为IRQ屏蔽的有界短事务，不在借用关系记录时调度。
+
+实际用户专项给孩子准备表授QUERY/FORK|EXEC，不授BIND；孩子先读未绑定0/0/1，再真实setsid形成不同于init的会话并用同步CALL固定存活窗口。init凭BIND跨会话绑定后读0/孩子SID/1；孩子在回复后读到同一关联但BIND被拒绝。重复绑定返回STATE、另一终端抢会话BUSY，后者保持0/0/1；owner退出后父持有的两终端getfg均STALE且三输出0。另验0/非TERMINAL、未知会话与未用寄存器拒绝，失败不改epoch。测试额外QUERY占用真实Local，fixture资源槽由8增至16，不改变生产CREATE规格或增加默认tty服务。
+
+两架构CASE=images的真实Proc/Local/Life/Group表另验members=0的既有会话拒绝原生绑定；随后用可信关系核心安排非零前台，检查Proc查询返回真实公开PGID/SID，SIGNAL-only无QUERY被拒，owner结束后清零输出，并随最后表项释放全部关系/Image/费用。非零前台准备使用可信核心，不将此用例称为原生setfg、TTOU或完整作业控制。
+
+完整make test-all通过830项host、格式检查及191次双架构QEMU；26项串口/SYSTEM/CONTROL/Local专项、164份journal、最终源码/头/SDK/包哈希和两份实际跨会话绑定/QUERY-only客户证明另核对，保留两架构及共享编译数据库。默认init/serial可装载段的内容/权限/地址/大小仍与stage117相同，变化仅在局部标签符号元数据。首次原生测试将非TERMINAL句柄误期望为DENIED，已按既有类型化Local规则改为BAD_HANDLE；首轮全量另暴露PANIC半行观测竞态，已补碎片回归并重跑完整全量，原失败保留，细节见14末尾。证据build/host/stage123-terminal-bind/；无CI/板端/性能结果。尚无原生setfg/ttysignal、TTOU/STOP/CONT、控制终端继承/挂断或生产tty，不将只读getfg称为完整前台切换。
 
 - [ ] 两架构信号PC先进入trampoline，六个入口参数与原TF分开，a3/x3的handler地址不会被误读为原RPC；普通返回地址0不得跳回任意旧代码。
 - [ ] 子发布后第一条用户指令前及Fix半途注入HANDLER/NODEFER/STOP/KILL：应用handler只见修复后的子表，父staging内容不变；嵌套只完成同次Fix，不增加发布后ready syscall或远端握手。

@@ -68,6 +68,8 @@ main(int argc, char **argv)
   isize      error;
   Ipcmsg     response;
   Msg        message = {{UINT64_C(0x54545901), 0, 0, 0}};
+  Handle     terminal, pgid, sid;
+  u64        epoch;
   (void) argv;
   CHECK(argc == 7 && !serialboot(sysboot(), &boot), 201);
   error = serialcheck(&boot);
@@ -93,10 +95,21 @@ main(int argc, char **argv)
   CHECK(!__sys_free(boot.handle[SerialIrq]) && serialcheck(&boot) == -ERR_DENIED &&
             !memcmp(&boot, &before, sizeof(boot)),
         208);
+  terminal = bootresource(sysboot(), 0x300);
+  CHECK(terminal > 0 && !__sys_getfg(terminal, &pgid, &sid, &epoch) && !pgid && !sid && epoch == 1,
+        232);
+  CHECK(!__sys_setsid(&sid) && sid == boot.pid, 233);
+  message.words[1] = (u64) sid;
   /* Keep this exact ACTIVE Image alive until the parent issues its terminal.
      This is fixture synchronization, unrelated to serial's READY protocol. */
   CHECK(!ipc_call(boot.handle[SerialInit], &message, 0, &response) &&
             response.words[0] == message.words[0] && !response.request,
         221);
+  CHECK(!__sys_getfg(terminal, &pgid, &sid, &epoch) && !pgid && sid == boot.pid && epoch == 1 &&
+            __sys_ttybind(terminal, sid) == -ERR_DENIED,
+        234);
+  CHECK(__sys_getfg(boot.handle[SerialInit], &pgid, &sid, &epoch) == -ERR_BAD_HANDLE && !pgid &&
+            !sid && !epoch,
+        235);
   return 42;
 }

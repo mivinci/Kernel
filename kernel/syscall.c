@@ -76,6 +76,7 @@ syscall(Hctx *context)
     break;
   case SYS_IRQUNBIND:
   case SYS_TTYCREATE:
+  case SYS_TTYBIND:
   case SYS_SIGMASK:
   case SYS_WAIT:
   case SYS_CREATE:
@@ -126,6 +127,7 @@ syscall(Hctx *context)
   case SYS_START:
   case SYS_DESTROY:
   case SYS_GETPG:
+  case SYS_GETFG:
   case SYS_TERMINATE:
   case SYS_ALARMSET:
   case SYS_CLOCK_GETTIME:
@@ -166,6 +168,17 @@ syscall(Hctx *context)
     procuserreturn(context);
   }
   switch (trap.syscall_nr) {
+  case SYS_TTYBIND:
+    status = procttybind(table, (Handle) args[0], (Handle) args[1]);
+    break;
+  case SYS_GETFG:
+    status = procgetfg(table, (Handle) args[0], &handle, &pid, &image);
+    if (!status) {
+      outputs[0] = (u64) handle;
+      outputs[1] = (u64) pid;
+      outputs[2] = image;
+    }
+    break;
   case SYS_TTYCREATE:
     status = procttycreate(table, (Handle) args[0], (Handle) args[1], &handle, &pid);
     if (!status) {

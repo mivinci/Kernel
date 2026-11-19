@@ -1965,6 +1965,61 @@ procttycreate(Rtable *source, Handle system, Handle control, Handle *resource, H
   return error;
 }
 int
+procttybind(Rtable *source, Handle authority, Handle sid)
+{
+  Handle terminal, session;
+  Group  relation;
+  u64    signals;
+  int    error;
+  error = localterminalaccess(source, authority, TERMINAL_BIND, &terminal, &signals);
+  if (error)
+    return error;
+  if (handletype(sid) != HANDLE_PROCESS)
+    return -ERR_BAD_HANDLE;
+  error = sessionfind(sid, &session);
+  if (error)
+    return error;
+  if (groupstat(session, &relation))
+    return -ERR_STALE;
+  if (!relation.members)
+    return -ERR_STATE;
+  /* BIND is administrative: the caller need not belong to this session. */
+  return terminalbind(terminal, session);
+}
+int
+procgetfg(Rtable *source, Handle authority, Handle *pgid, Handle *sid, u64 *epoch)
+{
+  Handle   terminal, foreground = 0, session = 0;
+  Terminal snapshot;
+  Group    relation;
+  u64      signals;
+  int      error;
+  if (!pgid || !sid || !epoch)
+    return -ERR_INVALID;
+  *pgid = *sid = 0;
+  *epoch = 0;
+  error = localterminalaccess(source, authority, TERMINAL_QUERY, &terminal, &signals);
+  if (error)
+    return error;
+  error = terminalstat(terminal, &snapshot);
+  if (error)
+    return error;
+  if (snapshot.session) {
+    if (groupstat(snapshot.session, &relation))
+      return -ERR_STALE;
+    session = relation.id;
+  }
+  if (snapshot.foreground) {
+    if (groupstat(snapshot.foreground, &relation))
+      return -ERR_STALE;
+    foreground = relation.id;
+  }
+  *pgid = foreground;
+  *sid = session;
+  *epoch = snapshot.epoch;
+  return 0;
+}
+int
 procirqbind(Rtable *source, Handle authority, Handle irq, u32 bit, Handle *out)
 {
   Proc *target;

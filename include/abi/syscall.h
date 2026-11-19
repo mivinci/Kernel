@@ -37,6 +37,8 @@
 #define SYS_GETPG        0x66
 #define SYS_SETPG        0x67
 #define SYS_SETSID       0x68
+#define SYS_TTYBIND      0x69
+#define SYS_GETFG        0x6a
 #define SYS_IRQBIND      0x70
 #define SYS_IRQACK       0x71
 #define SYS_IRQUNBIND    0x72

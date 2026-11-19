@@ -16,7 +16,7 @@ struct Serialpacket
 {
   Boot     header;
   Strref   args[7];
-  Resentry resources[8];
+  Resentry resources[9];
   char     strings[128];
 };
 #define CHECK(c, n)                                                                                \
@@ -80,7 +80,7 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
   Allocarg     alloc;
   Queryrec     state;
   Handle       pid, control, call, io, binding, rings[2], remote[2], collected, space;
-  Handle       terminal, terminalid;
+  Handle       terminal, terminalid, prepared, query, pgid, sid;
   Ipcmsg       request;
   Msg          response = {{UINT64_C(0x54545901), 0, 0, 0}};
   u64          reason, code, sequence, written, next;
@@ -90,7 +90,7 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
   memset(&create, 0, sizeof(create));
   create.memlimit = 64;
   create.exec_limit = 128;
-  create.resources = 8;
+  create.resources = 16;
   create.pending = 1;
   CHECK(!__sys_create(creator, &create, &work.view, &pid, &control) && control, 150);
   work.pid = pid;
@@ -104,6 +104,9 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
                      0, &io),
         153);
   CHECK(!__sys_irqbind(control, irq, 16, &binding), 154);
+  CHECK(!__sys_ttycreate(bootresource(sysboot(), BOOT_SYSTEM), control, &prepared, &terminalid) &&
+            !__sys_grant(work.view, prepared, TERMINAL_QUERY, 0, 0, 3, &query),
+        228);
   memset(&alloc, 0, sizeof(alloc));
   alloc.bytes = SERIAL_RING_BYTES;
   alloc.kind = ALLOC_SHARED;
@@ -124,7 +127,7 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
   packet.header.bytes = sizeof(packet);
   packet.header.argc = 7;
   packet.header.argv_off = offsetof(Serialpacket, args);
-  packet.header.resource_count = 8;
+  packet.header.resource_count = 9;
   packet.header.resources_off = offsetof(Serialpacket, resources);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
@@ -141,6 +144,8 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
   packet.resources[6].handle = remote[0];
   packet.resources[7].tag = SERIAL_TX_RING;
   packet.resources[7].handle = remote[1];
+  packet.resources[8].tag = 0x300;
+  packet.resources[8].handle = query;
   stringarg(&packet, 0, "serial-verify", &used);
   stringarg(&packet, 1, kind == BOOT_UART_NS16550 ? "ns16550" : "pl011", &used);
   numberarg(&packet, 2, offset, &used);
@@ -158,15 +163,26 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
         162);
   CHECK(!__sys_configure(work.view, &config, 0) && !__sys_start(work.view), 163);
   CHECK(!ipc_recv(0, 0, &request) && request.kind == IPC_CALL && request.source == pid &&
-            request.image == 1 && request.words[0] == response.words[0],
+            request.image == 1 && request.words[0] == response.words[0] &&
+            request.words[1] == (u64) pid,
         222);
   CHECK(!__sys_ttycreate(bootresource(sysboot(), BOOT_SYSTEM), control, &terminal, &terminalid) &&
             handlekind(terminalid) == HANDLE_TERMINAL,
         223);
+  CHECK(!__sys_getpg(0, &pgid, &sid) && sid != pid && !__sys_ttybind(prepared, pid) &&
+            !__sys_getfg(prepared, &pgid, &sid, &next) && !pgid && sid == pid && next == 1,
+        229);
+  CHECK(__sys_ttybind(prepared, pid) == -ERR_STATE && __sys_ttybind(terminal, pid) == -ERR_BUSY &&
+            !__sys_getfg(terminal, &pgid, &sid, &next) && !pgid && !sid && next == 1,
+        230);
   CHECK(!ipc_reply(request.request, &response), 224);
   CHECK(!__sys_wait(pid, 0, &collected, &reason, &code, &sequence) && collected == pid, 164);
   if (reason != WAIT_EXITED || code != 42)
     return reason == WAIT_EXITED && code ? (int) code : 165;
+  CHECK(__sys_getfg(prepared, &pgid, &sid, &next) == -ERR_STALE && !pgid && !sid && !next &&
+            __sys_getfg(terminal, &pgid, &sid, &next) == -ERR_STALE && !pgid && !sid && !next &&
+            __sys_ttybind(prepared, pid) == -ERR_STALE,
+        231);
   /* Old Local keeps its exact diagnostic identity across the owner's exit. */
   {
     Queryrec rows[8];
@@ -174,7 +190,7 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
     do {
       CHECK(!__sys_query(0, QUERY_RESOURCE, cursor, rows, 8, &written, &next), 225);
       for (j = 0; j < written; j++)
-        if ((Handle) rows[j].data[0] == terminal) {
+        if ((Handle) rows[j].data[0] == terminal || (Handle) rows[j].data[0] == prepared) {
           CHECK(rows[j].data[1] == RESOURCE_TERMINAL &&
                     rows[j].data[2] == (TERMINAL_RIGHTS | RESOURCE_GRANT) &&
                     rows[j].data[3] == TERMINAL_SIGNALS && !rows[j].data[4] && !rows[j].data[5] &&
@@ -184,8 +200,9 @@ serialparent(Handle creator, Handle listener, Handle mmio, Handle irq, u64 kind,
         }
       cursor = next;
     } while (cursor);
-    CHECK(found == 1 && !__sys_free(terminal), 227);
+    CHECK(found == 2 && !__sys_free(terminal) && !__sys_free(prepared), 227);
     terminalproof[4] = 1;
+    terminalproof[6] = terminalproof[7] = 1;
   }
   /* Yield always leaves this parent READY: retirement must not require idle.
      Keep exact Life CONTROL until PROC query confirms the Run disappeared. */
