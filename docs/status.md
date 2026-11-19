@@ -18,10 +18,12 @@
 - 消息IPC、8/1/1/2出站预付、15+1接收、取消/ACK/独立收尾、事件/闹钟已接。configure保底及CALL资源预留已接；原生56字节描述符快照可原子交付SHARED MEM/CALL USE，ACK不回收资源、迟到回复不改新表，可信CPU桥已移除。FS/TTY上层连接去重/补偿仍未接。
 - 固定Image观察及LIFE、CHILD提示已接；每服务128/总1024观察预付，真实REQUEST或显式CONTROL QUERY限定范围；观察、父收取与实际DMA/业务清理各自独立。
 - 原生信号配置支持DEFAULT/IGNORE、CHLD NOCLDWAIT/NOCLDSTOP及mask/pending；创建固定IGNORE/mask基线。现接可信类型化排队、两层用户帧/原生sigreturn、HANDLER两入口检查、sigsuspend及libc mask子集，完整GPR/FP/cookie/权限核验保留。CHILD退出/STOP/CONT、Run停放/继续、普通等待中断及原生sigsend/USER已接。默认用户故障按HAL区分SEGV/BUS/FPE/ILL；可信直接帧原语已接但尚未接实际硬件FAULT/公开原因编码。libc kill/raise、POSIX sigaction/Rctx/Fix/重启仍待接。
-- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，含真实PIO/IRQ、两环、异步READY和精确init控制，两架构全量已验。现接私有128项/4KiB fd槽表的预留、代次/状态提交与旧引用移交；File/连接/Rctx及Boot/Fix适配仍未接，普通装载尚非FS会话，完整spawn/fork/exec与生产DMA仍待接。
+- 独立libsys/virtio基础库、csu/main、可写argv/environ、基础libc/身份/组会话/wait/堆、C locale数值与格式化及用户态ELF装载已接。默认init从实际包/清单装载独立serial ELF，两架构全量已验。现接128项/4KiB本地fd槽表、FS/TTY连接线格式快照及私有8页分区账本；实际连接/原RPC责任、File/Rctx和Boot/Fix适配仍未接，普通装载尚非FS会话，完整spawn/fork/exec与生产DMA仍待接。
 - T1.1..T1.5已本地验收：默认init服务装载/READY/监督与失败清理后诊断停机已接。normal含真实init/serial ELF，16 Set/CREATE SERVICE、128槽、固定CONTROL、标准UART/IRQ发权与Boot格式2已用；其他设备和管理域仍待接，不是完整服务管理或可用sh。
 
 ## 最新本地验证
+
+- 文件连接线格式/私有页账本通过869项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。6项host覆盖头/描述符快照、私有边界/身份、页对/续页、分区不窃取、旧租约/溢出及2000步占用模型；两架构各5个有效main使用实际libsys代码，验证共享DONE不释放私有占用。实际链接用户模型与SDK打包ELF一致，file.o无未定义依赖、SDK协议/私有头一致，init/serial与stage134相同；证据stage135-file-slots/。普通内存运输模型不是实际HELLO/SHARED MEM/后端绑定证明；无CI/板端/性能结果。
 
 - 本地fd槽表通过863项host/格式及195次双架构QEMU，168份journal与最终源码/SDK/包哈希匹配。8项host覆盖预留保护、条件替换、引用移交、标志独立、代次退休、输出别名及1500步所有权守恒；两架构各5个有效main执行128槽/耗尽测试，原5个Boot拒绝仍通过。实际链接用户镜像与SDK打包ELF一致，fd.o无未定义依赖、SDK私有头一致，init/serial与stage133相同；证据stage134-fd-slots/。尚非标准fd API或Boot/Fix/后端接入；无CI/板端/性能结果。
 
@@ -53,6 +55,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage135已本地验收：冻结连接头/128字节描述符/操作码唯一头、受限私有快照和8页分区租约已接；共享状态不决定页安全释放。接续唯一后端连接目录/真实身份绑定、bootstrap原RPC与资源交付/映射、Rctx/后台唯一责任及服务私有在途记录，再接File/Boot/Fix和标准fd操作。GROUP target=0、公开FAULT原因/失败策略仍待用户回复。
 
 - stage134已本地验收：私有fd槽表存储/状态机与显式引用移交已接，LIVE仅表示本地可见，File/连接/Rctx层仍须先pin/保证收尾容量；当前sysstart仍拒绝非零fd/Fix。接续实际File引用/连接、Rctx保护与Boot/Fix本地安装，再接后端CLAIM和标准fd操作；GROUP target=0与FAULT原因/失败策略两项提问仍待回复。
 

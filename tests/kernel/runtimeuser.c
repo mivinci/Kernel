@@ -10,7 +10,8 @@
 #include "private/virtio/ring.h"
 #include "ringuser.h"
 #include "fdtableuser.h"
-volatile u64        runtime_trace[14];
+#include "fileuser.h"
+volatile u64        runtime_trace[15];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -381,6 +382,7 @@ main(int argc, char **argv)
   runtime_trace[11] = queuecheck();
   runtime_trace[12] = ringusercheck();
   runtime_trace[13] = fdtableusercheck();
+  runtime_trace[14] = fileusercheck();
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)

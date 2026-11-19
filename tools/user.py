@@ -55,7 +55,7 @@ def build(args):
     private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S', args.arch + '/io.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S', args.arch + '/io.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -183,7 +183,7 @@ def build(args):
                                             {'sbin/serial':serial_elf},profile['machine']))
     init_elf = program('init',init_sources,[ROOT/'sbin/init'/name for name in ('package.h','manifest.h','service.h')],init_config)
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
-    runtime_support = [ringuser_source, ROOT/'tests/kernel/fdtableuser.c']
+    runtime_support = [ringuser_source, ROOT/'tests/kernel/fdtableuser.c', ROOT/'tests/kernel/fileuser.c']
     runtime_objects = []
     for source in runtime_support:
         obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
@@ -203,7 +203,7 @@ def build(args):
     os.replace(temporary_runtime, runtime)
     runtime_inspect = invoke('inspect-runtime', [tools['readelf']['path'], '-h','-l','-s',str(runtime)])
     trace_rows = [line.split() for line in runtime_inspect.splitlines() if line.split() and line.split()[-1] == 'runtime_trace']
-    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 112:
+    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 120:
         raise BuildError('runtime trace symbol is missing or has wrong size')
     trace_address = int(trace_rows[0][1],16)
     runtime_image = sdk / 'runtimeuser.img'
@@ -396,6 +396,7 @@ def build(args):
     headers += [ROOT / 'sbin/tty/input.h']
     headers += [ROOT / 'sbin/tty/wait.h']
     headers += [ROOT / 'tests/kernel/fdtableuser.h']
+    headers += [ROOT / 'tests/kernel/fileuser.h']
     headers += list((ROOT / 'include/proto').glob('*.h'))
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:

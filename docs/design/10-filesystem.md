@@ -869,3 +869,19 @@ publish/replace成功时，调用者事先准备的一份本地File引用移交�
 8项host覆盖最低空闲/128满表、预留/发布/撤销/复用、代次与状态ABA、条件替换/旧引用移交、别名标志、UINT64_MAX退休、非法输入/内部损坏/输出重叠及1500步固定种子所有权守恒。随机模型分开累计新准备、表内LIVE、调用者外部/收尾及已释放引用，不把本地删除当作后端已排空。runtime独立用户载荷也调用实际libsys原语，核对128项及代次耗尽；该载荷只在测试镜像，默认init/serial不引用fd模块。
 
 最终完整make test-all通过863项host、格式检查及195次双架构QEMU；8项fd专项、168份journal、最终源码/头/SDK/包哈希另核对。两架构runtime各5个有效main调用实际libsys槽表原语，原5个非法/暂不支持Boot案例仍在main前拒绝；测试载荷从实际链接内核提取并与SDK打包ELF逐字节核对。fd.o无未定义符号依赖，SDK私有头逐字节一致，默认init/serial ELF与stage133相同且不含fd模块/测试符号，clangd数据库已更新。证据build/host/stage134-fd-slots/；无CI/板端/性能结果。实际File/连接引用池、Rctx保护与预付收尾、Boot/Fix安装/CLAIM、dup/dup2/close/read/write及FS/TTY服务仍待接；sysstart继续拒绝非零fd/Fix，不把纯本地表原语当作已启用启动fd。
+
+### 连接线格式与私有页租约（2026-11-20）
+
+已冻结的FS/TTY连接头、128字节槽描述符、槽状态及操作码现集中在proto/file.h：头64字节、控制页4096、8个4096字节数据页，总36864；描述符seq/state/payload/object/span偏移0/8/16/24/32，args在64，保留字段0。13..15仍不分配，不恢复CANCEL/RESULT/RESULT_ACK协议。布局用共享断言锁定，内核不包含该服务协议。
+
+私有sysfilehead只复制一次固定头到私有存储，再以调用者持有的真实映射长度、connid和服务image核对；不从共享bytes创造访问范围，也不凭魔数授予File或后端权限。真实source/backend连接选择、资源/映射来源及有效C存储是调用者前置条件。头函数不扫描整页padding，padding由创建者清零；每个操作的对象归属、固定args及payload仍须由服务按私有记录核验。
+
+sysfilerequest只复制一次被选描述符，要求原消息seq匹配、SUBMITTED、payload不超过span*4096、保留字0；span=2只允许0/2/4起始且续页描述符128字节全0。固定输出不得落在被读连接区内，失败不覆盖旧输出。检查基于这份私有快照；共享字段后续变化不能改写已经保存的快照。这是共同形状检查，不冒充按操作完成权限/未用args或服务私有在途登记。
+
+Filepages是每连接独立的私有占用账本，Filelease=(seq:u64,slot:u32,span:u32)，不是共享状态或RPC所有权表。普通上下文仅0/1，两层handler各2/3和4/5，控制6、收尾7；无可用页返回BUSY，不等待或借其他分区。所有层共用该连接的单调sequence，成功取得页/页对才推进；UINT64_MAX仍可完成旧租约释放，但不再产生新序号。释放须逐项匹配原seq/起始页/span，双页整体归还，不可把续页单独释放或以迟到标签清掉同页新请求。
+
+本层不自动判断请求已完成：共享DONE、handler返回、Rctx离开或应用逻辑超时均不会归还页；调用者必须先保存真实结果/数据/资源并证明访问结束，或把原租约连同原RPC移交预付后台责任。账本不存应用缓冲指针、不发IPC、不分配内存，也不自行销毁File/资源；调用者在短本地信号排除段使用，并只初始化无所有权的新账本。它可嵌入后续每连接4 KiB私有页，但此点尚未实现8条连接目录、bootstrap或8*128字节责任记录。
+
+6项host覆盖固定头私有边界/身份、输出不变与重叠拒绝、序号/状态/span/payload和续页规则、分区不窃取、双页原子占用/释放、旧序号、溢出/损坏及2000步固定种子占用模型。runtime用户模型使用私有普通内存字节区模拟线格式，检查快照隔离、共享DONE不影响私有占用及各分区；这不是实际HELLO或SHARED MEM连接证明。最终完整make test-all通过869项host、格式检查及195次双架构QEMU；6项专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构各5个有效main调用该原语，libsys file.o无未定义依赖，协议/私有SDK头一致，默认init/serial ELF与stage134相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage135-file-slots/；无CI/板端/性能结果。
+
+接续：真实后端身份/唯一连接缓存、MEM领取/映射、bootstrap原RPC持有、Rctx转后台唯一责任和服务端私有in-flight登记，再接逐操作语义与File/Boot/Fix。现有sysstart仍拒绝非零fd/Fix，标准fd API未启用；GROUP target=0与公开FAULT原因/失败策略两项仍待用户回复，不因本组件落地而改变其状态。
