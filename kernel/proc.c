@@ -2255,10 +2255,27 @@ unready(Proc *p)
   }
   panic("process ready membership");
 }
+static void
+jobnotice(Proc *p, u32 stopped, u32 signum)
+{
+  Life  child;
+  Proc *parent;
+  if (lifestat(p->life, &child))
+    panic("job child identity");
+  parent = find(child.parent);
+  if (parent && (parent->state == PROC_READY || parent->state == PROC_RUNNING ||
+                 parent->state == PROC_BLOCKED || parent->state == PROC_STOPPED)) {
+    if (sigchild(parent->identity, child.pid, child.cred.ruid,
+                 stopped ? WAIT_STOPPED : WAIT_CONTINUED, stopped ? signum : 0))
+      panic("committed job child signal");
+    wakeone(parent);
+  }
+}
 int
 procstop(Handle pid, u32 signum)
 {
   Proc *p = find(pid);
+  Life  before;
   u32   resume;
   int   error;
   if (!p)
@@ -2267,11 +2284,15 @@ procstop(Handle pid, u32 signum)
        p->state != PROC_STOPPED) ||
       (p->state == PROC_RUNNING && p != current))
     return -ERR_STATE;
+  if (lifestat(p->life, &before))
+    return -ERR_STALE;
   error = lifestop(p->life, signum);
   if (error)
     return error;
   if (sigcancel(p->identity, (u64) 1 << (SIGNAL_CONT - 1)))
     panic("stop pending continue");
+  if (!before.stopped)
+    jobnotice(p, 1, signum);
   if (p->state == PROC_STOPPED)
     return 0;
   if (p == current) {
@@ -2289,6 +2310,7 @@ int
 proccontinue(Handle pid)
 {
   Proc *p = find(pid);
+  Life  before;
   u32   resume;
   int   error;
   if (!p)
@@ -2299,11 +2321,15 @@ proccontinue(Handle pid)
   resume = p->state == PROC_STOPPED ? p->phase.resume : 0;
   if (p->state == PROC_STOPPED && resume != PROC_READY && resume != PROC_BLOCKED)
     panic("stopped Run continuation");
+  if (lifestat(p->life, &before))
+    return -ERR_STALE;
   error = lifecontinue(p->life);
   if (error)
     return error;
   if (sigcancel(p->identity, SIG_STOPS))
     panic("continue pending stops");
+  if (before.stopped)
+    jobnotice(p, 0, 0);
   if (p->state == PROC_STOPPED) {
     p->phase.cleanup = 0;
     if (resume == PROC_READY)

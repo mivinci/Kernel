@@ -150,6 +150,13 @@ main(int argc, char **argv)
     CHECK(!__sys_terminate(peer) && !__sys_query(peer, QUERY_LIFE, 0, &row, 1, &written, &next) &&
           written == 1 && !next && row.data[1] == 2 && row.data[2] == 9);
   } else if (mode == 7) {
+    action.kind = SIGNAL_HANDLER;
+    action.handler = (u64) handler;
+    action.trampoline = (u64) trampoline;
+    action.mask = action.reserved = 0;
+    action.flags = jobtrace[1] ? SIGNAL_NOCLDSTOP : 0;
+    CHECK(!__sys_sigaction(SIGNAL_CHLD, &action, NULL) &&
+          !__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_CHLD - 1), &state));
     jobtrace[0] = 1;
     CHECK(!__sys_wait(child, WAIT_WUNTRACED, &result, &kind, &code, &sequence) && result == child &&
           kind == WAIT_STOPPED && code == 19 && sequence == 2);

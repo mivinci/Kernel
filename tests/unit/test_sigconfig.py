@@ -69,7 +69,7 @@ class SignalConfigTests(unittest.TestCase):
             out=Action();self.assertEqual(self.lib.siggetaction(image,15,C.byref(out)),0)
             self.assertEqual((out.kind,out.mask),(1,1<<11))
             for number,action,error in ((9,Action(1),-1),(19,Action(1),-1),(5,Action(1),-1),
-                (15,Action(2),-1),(15,Action(1,0,0,0,1,0),-18),(17,Action(0,0,0,0,16,0),-18),
+                (15,Action(2),-1),(15,Action(1,0,0,0,1,0),-18),(15,Action(0,0,0,0,16,0),-1),
                 (15,Action(1,0,0,0,32,0),-1),(15,Action(1,1),-1),(15,Action(1,0,0,0,64,0),-1)):
                 self.assertEqual(self.lib.sigsetaction(image,number,C.byref(action)),error)
                 self.assertEqual(self.lib.siggetaction(image,15,C.byref(out)),0);self.assertEqual(out.kind,1)

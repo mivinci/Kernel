@@ -353,20 +353,23 @@ rpc(u32 awakened, u32 kill, u32 cycle)
 static void
 waiting(u32 kill)
 {
-  Setid  set;
-  Actor  parent, child, controller;
-  Handle control;
-  Group  before, after;
-  Life   life;
-  u64    words[8];
+  Setid   set;
+  Actor   parent, child, controller;
+  Handle  control;
+  Group   before, after;
+  Life    life;
+  Sigstat signal;
+  u64     words[8];
   CHECK(!setcreate(2048, 4096, 3, &set));
   create(set, 1, &parent);
   create(set, parent.pid, &child);
-  load(&parent, kill ? 8 : 7, child.pid, 0);
+  load(&parent, kill == 1 ? 8 : 7, child.pid, 0);
+  if (kill == 2)
+    release(&parent);
   load(&child, 0, 0, 0);
   state(&parent, PROC_BLOCKED);
   CHECK(!procstop(parent.pid, SIGNAL_STOP));
-  if (kill) {
+  if (kill == 1) {
     create(set, 1, &controller);
     CHECK(!localcontrol(proctable(controller.pid), parent.info.life,
                         CONTROL_QUERY | CONTROL_TERMINATE, &control));
@@ -383,12 +386,18 @@ waiting(u32 kill)
     clean(&child, LIFE_EXIT, 42, 1);
   } else {
     CHECK(!procstop(child.pid, SIGNAL_STOP));
+    CHECK(!sigstat(parent.info.identity, &signal) &&
+          signal.pending == (kill == 2 ? 0 : (u64) 1 << (SIGNAL_CHLD - 1)));
+    CHECK(!sigcancel(parent.info.identity, (u64) 1 << (SIGNAL_CHLD - 1)));
     stopped(&parent, 2);
     CHECK(!proccontinue(parent.pid));
     state(&parent, PROC_BLOCKED);
     trace(&parent, words);
     CHECK(words[3] == 1 && words[4] == 2);
     CHECK(!proccontinue(child.pid));
+    CHECK(!sigstat(parent.info.identity, &signal) &&
+          signal.pending == (kill == 2 ? 0 : (u64) 1 << (SIGNAL_CHLD - 1)));
+    CHECK(!sigcancel(parent.info.identity, (u64) 1 << (SIGNAL_CHLD - 1)));
     do {
       step();
       trace(&parent, words);
@@ -396,6 +405,8 @@ waiting(u32 kill)
     CHECK(!procinfo(parent.pid, &parent.info) && parent.info.state == PROC_BLOCKED);
     release(&child);
     finish(&child);
+    CHECK(!sigstat(parent.info.identity, &signal) &&
+          signal.pending == ((u64) 1 << (SIGNAL_CHLD - 1)));
     finish(&parent);
     trace(&parent, words);
     CHECK(words[3] == 3 && words[4] == 2 && words[5] == 3 && words[6] == 4);
@@ -542,6 +553,7 @@ jobtest(void)
   rpc(0, 0, 1);
   waiting(0);
   waiting(1);
+  waiting(2);
   signalbusy(0);
   signalbusy(1);
   signalbusy(2);
@@ -555,7 +567,7 @@ jobtest(void)
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck() && !groupcheck());
   putstr("JOBSCHECK cases=");
-  puthex(22);
+  puthex(23);
   putstr(" self=");
   puthex(selfseen);
   putstr(" self_cancel=");
@@ -578,6 +590,8 @@ jobtest(void)
   puthex(3);
   putstr(" signals=");
   puthex(9);
+  putstr(" child_jobs=");
+  puthex(2);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

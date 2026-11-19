@@ -23,6 +23,8 @@
 
 ## 最新本地验证
 
+- STOP/CONT CHLD与NOCLDSTOP通过845项host/格式、193次双架构QEMU，166份journal及最终源码/SDK/包哈希匹配。实际父安装CHLD动作并屏蔽通知，验证有/无NOCLDSTOP下job通知差异、退出通知保留及原生wait三报告均可收取；host核对全部停止原因/CONT的完整来源帧和非法状态拒绝。默认init/serial ELF与stage126相同；证据stage127-child-jobs/，无CI/板端/性能结果。普通阻塞handler中断与原生sigsend仍未接。
+
 - 默认作业信号核心通过844项host/格式及193次双架构QEMU，166份journal和最终源码/SDK/包哈希匹配。两架构22场景含默认STOP/CONT/KILL、masked TSTP、纯停止保留sigsuspend及原mask、CONT handler先恢复后递送、捕获/忽略区别与双向pending抵消；新增6项host，27项专项通过。默认init/serial ELF与stage125相同；证据stage126-signal-jobs/，无CI/板端/性能结果。生成仍用可信入口，原生sigsend/ttysignal权限与USER来源、停止/继续CHLD和普通阻塞中断未接。
 
 - 真实Run停放/继续通过838项host/格式及193次双架构QEMU，166份日志和最终源码/SDK哈希匹配。两架构13场景覆盖忙循环/当前安全点停放、CONT抵消、通知/闹钟/handler不绕过停止、CALL阻塞/已完成续点、三类停止终止清理、原生wait三结果及组lease；fork冻结内核续点的停放/恢复/终止亦验。默认init/serial ELF与stage124相同，normal无注入wrapper/测试载荷；证据stage125-run-stop/，无CI/板端/性能结果。尚无原生sigsend/ttysignal生产与完整作业控制。
@@ -37,6 +39,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage127已本地验收：真实job提交生成CHLD，NOCLDSTOP仅抑制后续STOP/CONT通知，不消费wait报告、不抑制退出通知。详见11末尾；sigsend两项确认继续待回复，下一步可独立推进普通等待的信号中断/退栈与运行库前置。
 
 - stage126已本地验收：默认作业信号与pending抵消已接；KILL复用统一终止，默认/忽略/屏蔽CONT不阻止恢复，handler按mask递送；纯STOP/CONT不使sigsuspend假返回。具体状态与失败边界见11末尾。sigsend两项提问仍待回复，继续保留候选状态，不据此开放原生入口。
 

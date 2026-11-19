@@ -153,7 +153,7 @@ actionvalid(u32 signum, const Sigact *action)
     return -ERR_INVALID;
   if (action->kind != SIGNAL_HANDLER && (action->handler || action->trampoline))
     return -ERR_INVALID;
-  if (action->flags & (SIGNAL_RESTART | SIGNAL_NOCLDSTOP))
+  if (action->flags & SIGNAL_RESTART)
     return -ERR_NOTSUP;
   if (action->kind == SIGNAL_HANDLER &&
       (!action->handler || !action->trampoline ||
@@ -470,11 +470,27 @@ int
 sigchild(Imageid id, Handle child, u32 ruid, u64 reason, u64 status)
 {
   Siginfo info;
-  if (child == 1 || handlekind(child) != HANDLE_PROCESS || reason != WAIT_EXITED ||
-      status & ~((u64) 255 | WAIT_SIGNALLED | WAIT_FAULT) ||
-      ((status & WAIT_FAULT) && !(status & WAIT_SIGNALLED)) ||
-      ((status & WAIT_SIGNALLED) && (!(status & 255) || (status & 255) > 31)))
+  Signal *s;
+  Image   image;
+  if (child == 1 || handlekind(child) != HANDLE_PROCESS)
     return -ERR_INVALID;
+  if (reason == WAIT_EXITED) {
+    if (status & ~((u64) 255 | WAIT_SIGNALLED | WAIT_FAULT) ||
+        ((status & WAIT_FAULT) && !(status & WAIT_SIGNALLED)) ||
+        ((status & WAIT_SIGNALLED) && (!(status & 255) || (status & 255) > 31)))
+      return -ERR_INVALID;
+  } else if (reason == WAIT_STOPPED) {
+    if (status > SIGNAL_COUNT || !sigstopkind((u32) status))
+      return -ERR_INVALID;
+  } else if (reason != WAIT_CONTINUED || status)
+    return -ERR_INVALID;
+  s = find(id);
+  if (!s)
+    return -ERR_STALE;
+  if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
+    return -ERR_STATE;
+  if (reason != WAIT_EXITED && (s->actions[SIGNAL_CHLD - 1].flags & SIGNAL_NOCLDSTOP))
+    return 0;
   clearinfo(&info);
   info.signum = SIGNAL_CHLD;
   info.code = SIGNAL_SOURCE_CHILD;

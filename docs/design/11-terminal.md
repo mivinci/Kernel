@@ -693,3 +693,15 @@ Signal核心现接受KILL/STOP/CONT/TSTP/TTIN/TTOU；生成任一停止类信号
 此处的生成入口仍是可信类型化生产者，fixture使用私有元数据，不是原生sigsend/ttysignal权限或USER来源验收；选择器/UID/组逐目标授权两项继续待用户确认。CHLD停止/继续、NOCLDSTOP、普通阻塞handler中断、POSIX trampoline、前台切换/tty服务仍待接。普通阻塞的未屏蔽可捕获信号一般仍返回BUSY；CONT可恢复其原等待，但该handler不绕过尚未接入的普通等待中断机制，不以本轮sigsuspend证明冒充它。
 
 最终完整make test-all通过844项host、格式检查、193次双架构QEMU；27项专项、166份journal、最终源码/头/SDK/包哈希、两份22场景Run证明和既有fork停放证明另核对。默认init/serial ELF与stage125逐字节相同；normal源/符号仍无测试注入wrapper或jobtest，编译数据库已更新。初次host专项仍期望特殊信号NOTSUP，已随实际核心支持移除该旧断言并增加独立正反例，旧失败日志保留。证据build/host/stage126-signal-jobs/；无CI/板端/性能结果，未将待确认sigsend候选落成ABI。
+
+### 停止/继续CHLD与NOCLDSTOP（2026-11-19）
+
+可信Run的真实停止/继续提交现从Life读取当时逻辑父、孩子完整PID和ruid，向仍存活父的精确当前Image生成SOURCE_CHILD；STOPPED携原生停止信号号，CONTINUED携0，EXITED保持原退出编码。重复停止/继续不产生新CHLD；父已停放时只积累pending/就绪条件，不绕过独立停止。通知不消费Life报告、组成员/Set或父wait责任。
+
+NOCLDSTOP现允许安装在CHLD动作，生成STOPPED/CONTINUED通知时检查该次父动作快照，置位则不产生通知；不抑制EXITED，不清除已有pending、不补发过去被抑制的通知，也不改NOCLDWAIT/显式IGNORE决定退出收取的策略。其他信号仍拒绝NOCLDSTOP；RESTART继续NOTSUP。sigchild先检查目标精确Image存活及合法kind/code，不能用抑制选项绕过旧镜像检查或接受非法状态。
+
+两架构CASE=jobs新增NOCLDSTOP场景，原停止父/孩子STOP→CONT→EXIT场景另安装真实CHLD HANDLER并屏蔽CHLD，以隔离尚未实现的普通wait handler中断：CPU核对无NOCLDSTOP时两次job提交确有pending，有NOCLDSTOP时均无pending，两种配置下退出均产生pending，用户仍以原生wait得到三种报告/版本。清除各次pending只在可信fixture用于逐次观测，不是用户服务的通知确认协议。host另逐个递送四种停止原因及CONT到真实信号帧，核对64字节来源/身份/ruid/kind/code与无关字段0；再验NOCLDSTOP抑制job而保留退出及非法kind/code拒绝。专项已通过，完整回归和终稿证据核对进行中。
+
+本点不开放sigsend/ttysignal、不提供POSIX sigaction trampoline，不将屏蔽CHLD下的wait成功称作普通阻塞handler中断已接。SIGCHLD仍可合并并保留第一份未消费元数据，父必须主动检查持久wait报告；不得按通知次数推断子进程状态历史。原生sigsend两项确认仍待用户回复。
+
+最终完整make test-all通过845项host、格式检查、193次双架构QEMU；20项信号专项、166份journal、最终源码/头/SDK/包哈希及两份23场景证明另核对。默认init/serial ELF与stage126逐字节相同，normal仍无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage127-child-jobs/，无CI/板端/性能结果。
