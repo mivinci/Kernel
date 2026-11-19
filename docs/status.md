@@ -23,7 +23,7 @@
 
 ## 最新本地验证
 
-- tty参数/输出前置通过788项host/格式及179次双架构QEMU，152份日志和源码/SDK哈希匹配。Termarg同源导出、未知配置拒绝、有界换行转换及实际用户态TX满环/部分发送通过；不是tty服务、行规程或可用终端。证据stage116-tty-output/，无CI/板端/性能结果；原生资源reply历史证据见06/stage114。
+- tty输入核心通过805项host/格式及189次双架构QEMU，162份日志和源码/SDK哈希匹配。规范行编辑/EOF/有界短读/逻辑回显与信号动作、原始字节及满队列专项通过；默认init/serial ELF与stage117相同。证据stage118-tty-input/，无CI/板端/性能结果；输出转换历史证据见11/stage116，尚非tty服务或可用终端。
 
 - 默认init/serial通过792项host/格式及189次双架构QEMU，162份日志与源码/SDK/配置/包ELF哈希匹配。16次实际启动含128 MiB..8 GiB、四核及非零RV启动hart，READY后阻塞/外部IRQ输入与父子完整PTE/物理owner/费用审计通过；10次生产失败均清理回初始PID1费用后诊断停机。证据stage117-default-init/，无CI/板端/性能结果。
 
@@ -35,6 +35,8 @@
 - LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构及共享compile_commands.json、`.su`/stack-usage.json。物理ELF高别名仍需`-fno-jump-tables`；编译帧不是完整栈深或IRQ延迟证明。
 
 ## 待确认与接续
+
+- stage118已本地验收：用户确认的规范行/禁用cc/编辑/ISIG清空规则已写11，私有有界输入核心已接并通过全量。只输出逻辑回显/信号/输出清空动作，VMIN/VTIME、真正前台信号授权、读提交/取消与tty服务仍待接，不改默认包。
 
 - stage117已本地验收：默认包/生产init已接实际serial装载、READY、监督与失败清理后诊断停机；五类生产失败包括运行中坏环退出。活父子页表/两栈/共享环/各Acct与物理owner精确审计，失败回初始PID1费用，详见07末尾。
 
@@ -48,7 +50,7 @@
 
 - stage113管理引擎已由stage117接入默认init；初始init仅获MONITOR无GRANT，仍须固定CONTROL QUERY作basis，父wait/镜像确认/缓冲回收独立。2026-11-19确认的首次必需serial清理后诊断停机已实现，其他服务/恢复方向按07/09接续。
 
-- 下一步：按T2..T4接tty行规程/服务、fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
+- 下一步：接tty的VMIN/VTIME读状态和后端/请求循环、前台授权与真实信号，再按T2..T4接fd/Fix、blk/fs与完整sh，不缩减fork/exec、net及最终图形/GUI目标。
 
 - 2026-11-18确认的反向bit32=RX_ROOM/bit33=TX_READY与晚绑定已按07/11落定v1 BIND/STATUS及最近结果缓存，serial侧已实现/本地验；生产tty配对和init编排仍待接，绑定前不发布tty连接。
 

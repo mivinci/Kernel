@@ -18,6 +18,7 @@ ttyusercheck(void)
   u8    input[TTY_BATCH], output[2 * TTY_BATCH], readback[SERIAL_BATCH];
   u32   i, consumed;
   isize amount;
+  ttyinputusercheck(&tx);
   attr.iflag = TTY_ICRNL;
   attr.oflag = TTY_OPOST | TTY_ONLCR;
   attr.cflag = TTY_CS8;

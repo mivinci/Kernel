@@ -183,7 +183,8 @@ def build(args):
                                             {'sbin/serial':serial_elf},profile['machine']))
     init_elf = program('init',init_sources,[ROOT/'sbin/init'/name for name in ('package.h','manifest.h','service.h')],init_config)
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
-    runtime_support = [ringuser_source, ROOT/'tests/kernel/ttyuser.c', ROOT/'sbin/tty/term.c']
+    runtime_support = [ringuser_source, ROOT/'tests/kernel/ttyuser.c', ROOT/'tests/kernel/ttyinputuser.c',
+                       ROOT/'sbin/tty/term.c', ROOT/'sbin/tty/input.c']
     runtime_objects = []
     for source in runtime_support:
         obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
@@ -370,6 +371,7 @@ def build(args):
     headers += [ROOT / 'sbin/serial/control.h']
     headers += [ROOT / 'sbin/init/service.h', ROOT / 'sbin/init/manifest.h']
     headers += [ROOT / 'sbin/tty/term.h', ROOT / 'tests/kernel/ttyuser.h']
+    headers += [ROOT / 'sbin/tty/input.h']
     headers += list((ROOT / 'include/proto').glob('*.h'))
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
