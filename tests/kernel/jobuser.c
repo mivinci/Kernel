@@ -1,6 +1,8 @@
 /* Real syscall/continuation payload; job transitions come from the CPU fixture. */
 #include <sys/boot.h>
 #include <sys/channel.h>
+#include <sys/wait.h>
+#include <errno.h>
 #include <abi/proc.h>
 #include <abi/time.h>
 #include "private/start.h"
@@ -38,7 +40,8 @@ handler(u64 signum)
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
 {
-  if ((signum != SIGNAL_USR1 && signum != SIGNAL_CONT && signum != SIGNAL_TSTP) ||
+  if ((signum != SIGNAL_USR1 && signum != SIGNAL_CONT && signum != SIGNAL_TSTP &&
+       signum != SIGNAL_CHLD) ||
       info->signum != signum || function != (u64) handler ||
       context != (void *) (address + SIGNAL_FRAME_TF) || flags)
     __sys_exit(202);
@@ -61,11 +64,12 @@ main(int argc, char **argv)
   Ipcmsg   message, answer;
   Msg      words = {{UINT64_C(0x4a4f4253), 0, 0, 0}};
   Queryrec row;
-  Handle   peer = bootresource(sysboot(), 0x100), child = 0, result;
-  u64      kind, code, sequence, generation, written, next, i, state;
+  Handle   peer = bootresource(sysboot(), 0x100), child = 0, result, selector;
+  u64      kind, code, sequence, generation, written, next, i, state, variant;
   u32      mode;
   isize    error;
   Sigact   action;
+  int      status;
   CHECK(argc == 2 && argv[0] && argv[0][0] >= '0' && argv[0][0] <= '9' && !argv[0][1]);
   mode = (u32) (argv[0][0] - '0');
   for (i = 0; argv[1][i]; i++) {
@@ -267,6 +271,55 @@ main(int argc, char **argv)
     jobtrace[3] = 3;
     jobtrace[6] = sequence;
   } else if (mode == 8) {
+    if (child && jobtrace[1]) {
+      variant = jobtrace[1];
+      selector = variant == 3 || variant == 4 || variant >= 7 ? 0 : child;
+      CHECK(!install(SIGNAL_USR1, variant == 7 ? SIGNAL_IGNORE : SIGNAL_HANDLER));
+      if (variant == 5)
+        CHECK(!install(SIGNAL_CHLD, SIGNAL_HANDLER));
+      if (variant == 8)
+        CHECK(!__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_USR1 - 1), &state));
+      jobtrace[0] = 1;
+      if (variant == 4 || variant == 6) {
+        status = 0x1234;
+        errno = 0;
+        result = waitpid(selector, &status, 0);
+        if (variant == 4) {
+          CHECK(result == -1 && errno == EINTR && status == 0x1234 && jobtrace[5] == 1);
+          jobtrace[6] = 1;
+          result = waitpid(selector, &status, 0);
+        }
+        CHECK(result == child && WIFEXITED(status) && WEXITSTATUS(status) == 42);
+      } else {
+        error = __sys_wait(selector, 0, &result, &kind, &code, &sequence);
+        if (variant == 1 || variant == 3 || variant == 5 || variant == 9) {
+          CHECK(error == -ERR_INTERRUPTED && !result && !kind && !code && !sequence &&
+                jobtrace[5] == 1);
+          if (variant == 5) {
+            CHECK(jobtrace[3] == SIGNAL_CHLD &&
+                  !__sys_wait(child, WAIT_WUNTRACED | WAIT_WNOHANG, &result, &kind, &code,
+                              &sequence) &&
+                  result == child && kind == WAIT_STOPPED && code == SIGNAL_STOP && sequence == 2);
+            jobtrace[4] = sequence;
+            CHECK(!__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_CHLD - 1), &state));
+          }
+          jobtrace[6] = 1;
+          error = __sys_wait(selector, 0, &result, &kind, &code, &sequence);
+        }
+        CHECK(!error && result == child && kind == WAIT_EXITED && code == 42 &&
+              sequence == (variant == 5 ? 4U : 2U));
+        if (variant == 8) {
+          CHECK(!__sys_sigpending(&state) && state == ((u64) 1 << (SIGNAL_USR1 - 1)) &&
+                !jobtrace[5]);
+          CHECK(!__sys_sigmask(SIGNAL_UNBLOCK, state, &state));
+        }
+      }
+      CHECK(jobtrace[5] == (variant == 7 ? 0U : 1U));
+      jobtrace[6] = 2;
+      jobtrace[0] = 2;
+      jobtrace[7] = 42;
+      return 42;
+    }
     jobtrace[0] = 1;
     CHECK(!__sys_wait(0, 0, &result, &kind, &code, &sequence));
     return 201; /* This fixture must be killed while its group wait is stopped. */

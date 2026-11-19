@@ -675,6 +675,70 @@ replysignal(void)
   clean(&sender, LIFE_EXIT, 42, 1);
   closed(set);
 }
+static void
+waitsignal(u32 variant)
+{
+  Setid set;
+  Actor parent, child;
+  Life  life;
+  Group before, after;
+  u64   words[8], configuration = variant;
+  u32   group = variant == 3 || variant == 4 || variant >= 7;
+  CHECK(!setcreate(1024, 2048, 2, &set));
+  create(set, 1, &parent);
+  create(set, parent.pid, &child);
+  load(&parent, 8, child.pid, 0);
+  CHECK(
+      !spacewrite(parent.info.space, job_trace_address + 8, &configuration, sizeof(configuration)));
+  load(&child, 0, 0, 0);
+  state(&parent, PROC_BLOCKED);
+  CHECK(!lifestat(parent.info.life, &life) && !groupstat(life.group, &before));
+  if (variant == 5) {
+    send(&child, SIGNAL_STOP);
+    CHECK(!procstop(parent.pid, SIGNAL_STOP));
+    stopped(&parent, 2);
+    CHECK(!proccontinue(parent.pid));
+    state(&parent, PROC_BLOCKED);
+    trace(&parent, words);
+    CHECK(words[3] == SIGNAL_CHLD && words[4] == 2 && words[5] == 1 && words[6] == 1);
+    CHECK(!lifestat(child.info.life, &life) && life.stopped && !life.reason && life.sequence == 2);
+    send(&child, SIGNAL_CONT);
+  } else if (variant == 7 || variant == 8) {
+    send(&parent, SIGNAL_USR1);
+    step();
+    step();
+    CHECK(!procinfo(parent.pid, &parent.info) && parent.info.state == PROC_BLOCKED);
+  } else {
+    CHECK(!procstop(parent.pid, SIGNAL_STOP));
+    if (variant != 2 && variant != 6)
+      send(&parent, SIGNAL_USR1);
+  }
+  release(&child);
+  finish(&child);
+  if (variant == 2 || variant == 6)
+    send(&parent, SIGNAL_USR1);
+  if (variant == 9) {
+    send(&parent, SIGNAL_KILL);
+    CHECK(!lifestat(parent.info.life, &life) && !groupstat(life.group, &after) &&
+          before.refs == after.refs + 1 && before.processes == after.processes);
+    clean(&parent, LIFE_SIGNAL, SIGNAL_KILL, 1);
+    clean(&child, LIFE_EXIT, 42, 1);
+  } else {
+    if (variant != 5 && variant != 7 && variant != 8) {
+      stopped(&parent, 2);
+      CHECK(!proccontinue(parent.pid));
+    }
+    finish(&parent);
+    trace(&parent, words);
+    CHECK(words[5] == (variant == 7 ? 0U : 1U) && words[6] == 2);
+    CHECK(!lifestat(parent.info.life, &life) && !groupstat(life.group, &after) &&
+          before.refs == after.refs + 1 + group);
+    CHECK(!lifestat(child.info.life, &life) && !life.waitref);
+    clean(&child, LIFE_EXIT, 42, 0);
+    clean(&parent, LIFE_EXIT, 42, 1);
+  }
+  closed(set);
+}
 void
 jobtest(void)
 {
@@ -718,11 +782,20 @@ jobtest(void)
   requestsignal(8, 0);
   requestsignal(9, 0);
   replysignal();
+  waitsignal(1);
+  waitsignal(2);
+  waitsignal(3);
+  waitsignal(4);
+  waitsignal(5);
+  waitsignal(6);
+  waitsignal(7);
+  waitsignal(8);
+  waitsignal(9);
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck() && !groupcheck());
   putstr("JOBSCHECK cases=");
-  puthex(37);
+  puthex(46);
   putstr(" self=");
   puthex(selfseen);
   putstr(" self_cancel=");
@@ -753,6 +826,8 @@ jobtest(void)
   puthex(10);
   putstr(" reply_signal=");
   puthex(1);
+  putstr(" wait_signal=");
+  puthex(9);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

@@ -39,7 +39,7 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 ### 基础信号语义（已确定）
 
 首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
-实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择及原生wait三种结果的实际用户验收见03/本篇末尾；sigsend/ttysignal授权与生产、CHLD停止/继续及普通阻塞中断仍待接，不能称为完整用户作业控制。
+实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择、CHLD停止/继续及普通等待中断的局部实现与实际用户验收见03/本篇末尾；sigsend/ttysignal授权与USER/FAULT生产、完整前台/终端关联及POSIX中断/重启适配仍待接，不能称为完整用户作业控制。
 
 原生sigsend（2026-11-19用户确认，尚未实现）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。实现时须验证完整选择器快照、陈旧身份、部分授权及signum=0无状态变化，不将确认方案记作代码交付。
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
@@ -733,3 +733,15 @@ reply_recv组合场景验证回复成功后进入接收，再被信号中断：�
 本点仍不接父wait/构造清理等待中断、POSIX Rctx/Fix/trampoline、SA_RESTART或原生sigsend授权。信号由可信CPU入口产生，不能据此声称完整作业控制或用户发信生产已接。
 
 最终完整make test-all通过846项host、格式检查及193次双架构QEMU。两架构CASE=jobs各37场景，新增10项请求中断及1项reply_recv组合；166份journal、最终源码/头/SDK/包哈希及费用/页回收另核对。默认init/serial ELF与stage128逐字节相同，normal仍无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage129-request-signal/；无CI/板端/性能结果。
+
+### 父wait的信号中断与组引用（2026-11-19）
+
+原生父wait在没有匹配报告、仍有可等待孩子且不是WNOHANG时，才检查可递送信号并登记等待。无孩子的CHILD错误、已有结果及WNOHANG的立即结果优先，不用信号改写这些已确定结果。没有CHILD提示也检查可递送信号，避免USR1等独立来源无法唤醒父wait；有CHILD提示先重查持久报告，报告不匹配本次options时仍可由捕获CHLD中断等待。
+
+信号先取得等待中断结局时，在原wait记录锁存内部中断位，后续孩子退出不覆盖INTERRUPTED，也不消费该退出报告；恢复C续点后清位、退出循环，并归还受理时冻结的组引用。孩子结果先提交并使父可恢复时，按既有Life报告消费规则交付该结果，再递送handler。STOP/CONT非终结报告仍是既有单版本账本，不为本次接续新增历史队列。
+
+默认停止保留等待，忽略/屏蔽信号不退出等待，达到handler深度上限仍保留pending。组引用在正常结果、中断退栈和已锁存中断但尚未恢复C续点时被KILL三种路径各归还一次；中断不清除持久wait报告或已发布的CHILD事件位，也不改变父子关系。libc既有waitpid错误映射现由真实内核中断触发：返回-1/errno=EINTR，应用status保持原值，下一次waitpid仍可取得原孩子结果；不自动重启或重新选择组。
+
+新增九个真实用户场景覆盖原生/libc的PID或冻结组wait、信号先到/退出先到、忽略/屏蔽USR1，以及已中断组等待者在停止期间被KILL。另由孩子真实STOP生成CHLD，打断只等待退出的父；父handler返回后用WNOHANG|WUNTRACED仍取得STOPPED/序号2，再屏蔽CHLD并等待CONT后的最终退出/序号4。CPU核对组引用精确差值、waitref、handler次数及所有页/费用回基线。早期专项把旧mode8的被杀组等待fixture误选为新场景，已通过显式配置区分，失败日志保留；没有为此修改内核关系规则。
+
+最终完整make test-all通过846项host、格式检查及193次双架构QEMU；两架构CASE=jobs各46场景，新增9项父wait中断/结果优先/引用收尾场景。166份journal、最终源码/头/SDK/包哈希及默认init/serial ELF与stage129逐字节相同另核对，normal仍无测试wrapper/载荷，clangd数据库已更新。证据build/host/stage130-wait-signal/；无CI/板端/性能结果。原生sigsend、FAULT生产、POSIX信号trampoline/Rctx/Fix及SA_RESTART继续待接，不能把父wait中断视为这些接口的交付。

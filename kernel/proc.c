@@ -1301,12 +1301,20 @@ wakeone(Proc *p)
            (p->events.pending & p->stage.wait.subject.mask) ||
            (!(p->stage.wait.options & RECV_EVENTS_ONLY) && !listempty(&p->incoming.queue));
   } else if (p->stage.wait.kind == WAIT_CHILD) {
-    if (changed <= 0)
-      return;
-    if (lifeselect(pidof(p), &p->stage.wait.target.children, p->wait_cursor, p->stage.wait.options,
-                   &child, &matched))
-      panic("child wait selection");
-    wake = child.generation || !matched;
+    wake = 0;
+    if (changed > 0) {
+      if (lifeselect(pidof(p), &p->stage.wait.target.children, p->wait_cursor,
+                     p->stage.wait.options & ~WAIT_INTERRUPTED, &child, &matched))
+        panic("child wait selection");
+      wake = child.generation || !matched;
+    }
+    if (!wake) {
+      wake = siginterruptready(p->identity);
+      if (wake < 0)
+        panic("child wait signal identity");
+      if (wake)
+        p->stage.wait.options |= WAIT_INTERRUPTED;
+    }
   } else {
     wake = rqresult(p->stage.wait.request, p->identity, p->stage.wait.options & RQ_FINISH,
                     &result) != -ERR_WOULD_BLOCK;
@@ -1455,11 +1463,22 @@ procwait(Handle selector, u32 options, Liferesult *out)
     }
     if (options & WAIT_WNOHANG)
       break;
+    error = siginterruptready(current->identity);
+    if (error) {
+      if (error > 0)
+        error = -ERR_INTERRUPTED;
+      break;
+    }
     current->stage.wait.target.children = choice;
     current->stage.wait.subject.peer = 0;
     current->stage.wait.kind = WAIT_CHILD;
     current->stage.wait.options = options;
     sleepcurrent();
+    if (current->stage.wait.options & WAIT_INTERRUPTED) {
+      current->stage.wait.options &= ~WAIT_INTERRUPTED;
+      error = -ERR_INTERRUPTED;
+      break;
+    }
   }
   if (choice.kind == WAIT_SELECT_GROUP && groupdrop(choice.value))
     panic("child wait group reference");
@@ -1653,7 +1672,8 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     if (error == -ERR_INTERRUPTED && kind == IPC_CALL)
       outputs[2] = (u64) rqhandle(id, HANDLE_RPC);
     else if (error) {
-      /* No dispatch precedes the first strong-edge check; rejection is queued. */
+      /* SEND interruption already withdrew the queued message at wakeup.
+         Other rejected waits precede dispatch and still own a queued Rq. */
       if (rqcancel(id, current->identity) || rqack(id, current->identity, 3))
         panic("rejected synchronous wait rollback");
     } else {
@@ -1893,13 +1913,13 @@ procsigqueue(Handle pid, const Siginfo *info)
   bit = (u64) 1 << (info->signum - 1);
   stop = sigstopkind(info->signum) && action.kind == SIGNAL_DEFAULT && !(state.mask & bit);
   /* Pure jobs and blocked/ignored notifications do not abandon a C wait.
-     IPC and suspend waits unwind for caught signals; parent and construction
-     waits still need their own result/reference commit handling. */
+     IPC, parent and suspend waits unwind for caught signals; construction
+     cleanup keeps its existing transaction/reference handling. */
   if ((p->state == PROC_BLOCKED || (p->state == PROC_STOPPED && p->phase.resume == PROC_BLOCKED)) &&
       p->stage.wait.kind != WAIT_SIGNAL && !stop && info->signum != SIGNAL_CONT &&
       p->stage.wait.kind != WAIT_RECV && p->stage.wait.kind != WAIT_RESULT &&
-      p->stage.wait.kind != WAIT_FINISH && !(state.mask & bit) &&
-      !sigignored(info->signum, &action))
+      p->stage.wait.kind != WAIT_FINISH && p->stage.wait.kind != WAIT_CHILD &&
+      !(state.mask & bit) && !sigignored(info->signum, &action))
     return -ERR_BUSY;
   error = sigqueue(p->identity, info);
   if (error)
