@@ -76,6 +76,7 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
   runtimetest();
   filecreatetest();
   fscachetest();
+  fsjournaltest();
   putstr("READY runtime-restored\n");
 #elif BOOT_CASE == 39
   libsysload();
