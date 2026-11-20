@@ -88,7 +88,7 @@ elftest(void)
     REQUIRE(procwork(8) >= 0 && prepwork(8) >= 0);
   }
   REQUIRE(trace[0] == 99 && trace[1] == 2 && trace[2] == 4 && trace[3] == 1 && trace[4] > 1 &&
-          trace[5] == 6 && trace[6] == 6 && trace[7] == 2);
+          trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 6);
   while ((error = procclean(pid)) > 0) {
   }
   REQUIRE(!error && !lifecollect(parent.life, 1, &result) && result.code == 42);
@@ -104,6 +104,8 @@ elftest(void)
   puthex(turns);
   putstr(" children=");
   puthex(trace[1]);
+  putstr(" boot_args=");
+  puthex(trace[14]);
   putstr(" rollback=");
   puthex(trace[2]);
   putstr(" invalid=");

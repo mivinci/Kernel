@@ -235,3 +235,86 @@ sysctxargumentview(Rbank *bank, Connpeer self, Rkey key, Argsnap *out)
   out->env_off = out->envc ? out->argc * sizeof(Strref) : 0;
   return 0;
 }
+isize
+sysargboot(const Argsnap *snapshot, Boot *boot, u64 capacity)
+{
+  u64         offset[4], length[4], base, end, used, bytes, i, j;
+  const char *text;
+  Strref      ref;
+  u8         *destination;
+  isize       error;
+  if (capacity > BOOT_MAX_BYTES)
+    capacity = BOOT_MAX_BYTES;
+  if (!boot || ((u64) (uintptr_t) boot & 7) || capacity < sizeof(*boot) ||
+      !separate(boot, capacity, snapshot, sizeof(*snapshot)))
+    return -ERR_INVALID;
+  if (!snapshot->data || snapshot->argc > BOOT_ARG_COUNT || snapshot->envc > BOOT_ARG_COUNT ||
+      snapshot->bytes > BOOT_ARG_BYTES ||
+      snapshot->bytes < (u64) (snapshot->argc + snapshot->envc + 2) * sizeof(char *) ||
+      snapshot->argv_off ||
+      snapshot->env_off != (snapshot->envc ? snapshot->argc * sizeof(Strref) : 0) ||
+      !separate(boot, capacity, snapshot->data, snapshot->bytes))
+    return -ERR_INVALID;
+  if (boot->magic != BOOT_MAGIC || boot->format != BOOT_FORMAT || boot->flags ||
+      boot->user_lo != BOOT_USER_LO || boot->user_hi != BOOT_USER_HI ||
+      boot->bytes < sizeof(*boot) || boot->bytes > capacity || boot->argc || boot->envc ||
+      boot->argv_off || boot->env_off || boot->resource_count > BOOT_RESOURCE_COUNT ||
+      boot->fd_count > BOOT_FD_COUNT)
+    return -ERR_INVALID;
+  if ((boot->package_va || boot->package_bytes) &&
+      (!boot->package_bytes || boot->package_va < BOOT_PACKAGE_LO ||
+       boot->package_va >= BOOT_PACKAGE_HI ||
+       boot->package_bytes > BOOT_PACKAGE_HI - boot->package_va))
+    return -ERR_INVALID;
+  offset[0] = 0;
+  length[0] = sizeof(*boot);
+  offset[1] = boot->resources_off;
+  length[1] = boot->resource_count * sizeof(Resentry);
+  offset[2] = boot->fds_off;
+  length[2] = boot->fd_count * sizeof(Bootfd);
+  offset[3] = boot->fix_off;
+  length[3] = boot->fix_bytes;
+  for (i = 1; i < 4; i++) {
+    if ((offset[i] & 7) || offset[i] > boot->bytes || length[i] > boot->bytes - offset[i])
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (length[i] && length[j] && offset[i] < offset[j] + length[j] &&
+          offset[j] < offset[i] + length[i])
+        return -ERR_INVALID;
+  }
+  used = (u64) (snapshot->argc + snapshot->envc) * sizeof(Strref);
+  for (i = 0; i < snapshot->argc + snapshot->envc; i++) {
+    error = sysargat(snapshot, i >= snapshot->argc, i < snapshot->argc ? i : i - snapshot->argc,
+                     &text, &bytes);
+    if (error || text != (const char *) snapshot->data + used)
+      return -ERR_INVALID;
+    used += bytes;
+  }
+  if (used + 2 * sizeof(char *) != snapshot->bytes)
+    return -ERR_INVALID;
+  for (i = used; i < snapshot->bytes; i++)
+    if (snapshot->data[i])
+      return -ERR_INVALID;
+  base = ALIGN_UP(boot->bytes, 8);
+  if (base > capacity || snapshot->bytes > capacity - base)
+    return -ERR_CAPACITY;
+  end = base + snapshot->bytes;
+  destination = (u8 *) boot;
+  for (i = boot->bytes; i < base; i++)
+    destination[i] = 0;
+  for (i = 0; i < snapshot->bytes; i++)
+    destination[base + i] = snapshot->data[i];
+  for (i = 0; i < snapshot->argc + snapshot->envc; i++) {
+    for (j = 0; j < sizeof(ref); j++)
+      ((u8 *) &ref)[j] = snapshot->data[i * sizeof(ref) + j];
+    ref.offset += (u32) base;
+    for (j = 0; j < sizeof(ref); j++)
+      destination[base + i * sizeof(ref) + j] = ((const u8 *) &ref)[j];
+  }
+  boot->argc = snapshot->argc;
+  boot->envc = snapshot->envc;
+  boot->argv_off = snapshot->argc ? base : 0;
+  boot->env_off = snapshot->envc ? base + snapshot->env_off : 0;
+  boot->bytes = end;
+  return 0;
+}

@@ -644,3 +644,15 @@ sysctxarguments直接使用当前PREPARED层既有16KiB；input_kind/argc/envc�
 最终992项完整host、格式、RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过；前序输入/输出、IO取消与一秒迟到资源、不可取消CLOSE worker仍经过运行。真实libsys/frame载荷、源码/头/SDK/无libc依赖及银行/汇编窗口审计通过；init/serial与stage149逐字节相同，clangd切回RV64/libsys。审计不假定静态测试helper保留符号，按实际库调用指令和载荷验证。
 
 证据build/host/stage150-argument-capture/的unit/场景日志、verify.py和evidence.json。本轮未重跑195场景矩阵，最近完整矩阵为stage144，无CI、板端或性能验收。构建器不等于目标Boot拼装、完整execve/spawn/Fix或公开POSIX；路径空间资金、目标资源/继承/准备及生产服务仍须继续接，创建类reference_id布局仍待确认。
+
+### 接受快照到目标 Boot 的参数打包（2026-11-20）
+
+私有sysargboot把已接受的Argsnap追加到调用者预付的独立Boot缓冲：目标必须尚无argc/envc/参数偏移，原有资源/fd/Fix区间完整位于原bytes内。先核验Boot版本/边界/计数/对齐/包窗口及区域不重叠，再核验快照Strref连续规范布局、字符串终止和两个零预算字。只有全部检查和容量通过后才copy、按目标基址重定位Strref.offset，最后发布argc/envc/offsets/bytes。失败不改变目标；不原地覆写输入，不读取原应用argv/envp，也不降低ARG_MAX来适应目标缓冲不足。
+
+此层只负责表示和布局，保留原资源/fd/Fix/包元数据，不根据tag制造或重标句柄。准备期SELF等占位仍由现有ELF装载器查询精确目标表、填写后再bootcheck；权限和来源核验仍属于该层及内核。路径不是子启动参数的隐式附加字段，独立路径准备和公开exec/spawn前端仍待接。
+
+原生ELF装载测试的父程序已改用同一捕获/打包器，在创建孩子前接受3个argv和2个env，随后修改原文本，再从快照生成Boot；传给elfload的是实际发布bytes而非预付容量。两架构各6个准备场景使用新参数包：2个孩子实际启动并通过原runtime main的argv/env、构造/析构/退出检查，4个预算/源读取/临时映射冲突/资源格式错误继续完整回滚。原来源变化没有污染目标参数，资源占位没有冒充目标SELF权限。
+
+新增10项host覆盖Bootcheck及目标内指针、源快照不变/不重读、资源/fd/Fix/包元数据保留、追加对齐、容量失败全目标不变、旧参数不覆盖、错误既有区间、畸形快照/终止预算、源目标别名以及完整16KiB参数。最终1002项完整host、格式、两架构各elf/libsys/sigframe/normal共8次QEMU与8份journal通过；QEMU实际链接的父载荷及其子ELF与当前SDK逐字节一致，原输入/IO/关闭worker和正常启动继续通过。
+
+证据build/host/stage151-boot-arguments/的unit/场景日志、verify.py和evidence.json；源码/头/SDK/无libc依赖与生产无测试模块审计通过，init/serial与stage150逐字节相同，clangd切回RV64/libsys。本轮未重跑195场景矩阵，最近完整矩阵为stage144；无CI、板端或性能结果。生产init仍使用旧的专用参数拼装，下一步迁移；公开exec/spawn、准备/Fix/继承及生产服务未完成，创建类reference_id布局仍待确认。

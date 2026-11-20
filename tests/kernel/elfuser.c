@@ -6,6 +6,7 @@
 #include <sys/boot.h>
 #include "private/elf.h"
 #include "private/start.h"
+#include "private/argument.h"
 extern const u8       payload_elf[], payload_elf_end[];
 volatile u64          elf_trace[16];
 typedef struct Packet Packet;
@@ -13,9 +14,8 @@ typedef struct Reader Reader;
 struct Packet
 {
   Boot     header;
-  Strref   argv[3], env[2];
   Resentry resources[3];
-  char     strings[64];
+  u8       arguments[BOOT_ARG_BYTES];
 };
 struct Reader
 {
@@ -25,6 +25,9 @@ struct Reader
 static Packet  packet;
 static Elfplan plan;
 static Handle  pressure[128];
+static u64     argument_storage[BOOT_ARG_BYTES / sizeof(u64)];
+static char    argument_word[] = "alpha";
+static char    environment_word[] = "MODE=1";
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -43,26 +46,29 @@ readpayload(void *context, u64 offset, void *destination, u64 bytes)
   return 0;
 }
 static void
-stringref(Strref *ref, const char *string, u32 *offset)
-{
-  u32 bytes = (u32) strlen(string) + 1;
-  ref->offset = (u32) offsetof(Packet, strings) + *offset;
-  ref->length = bytes;
-  memcpy(packet.strings + *offset, string, bytes);
-  *offset += bytes;
-}
-static void
 bootpacket(void)
 {
-  u32 offset = 0;
+  const char *argv[4], *envp[3];
+  Argsnap     snapshot;
+  u64         mask, ignored;
+  argument_word[0] = 'a';
+  environment_word[0] = 'M';
+  argv[0] = "runtime";
+  argv[1] = argument_word;
+  argv[2] = "beta";
+  argv[3] = NULL;
+  envp[0] = environment_word;
+  envp[1] = "X=value";
+  envp[2] = NULL;
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysargcopy(argument_storage, sizeof(argument_storage), argv, envp, &snapshot),
+          215);
+  argument_word[0] = 'X';
+  environment_word[0] = 'Y';
   memset(&packet, 0, sizeof(packet));
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
-  packet.header.bytes = sizeof(packet);
-  packet.header.argc = 3;
-  packet.header.argv_off = offsetof(Packet, argv);
-  packet.header.envc = 2;
-  packet.header.env_off = offsetof(Packet, env);
+  packet.header.bytes = offsetof(Packet, arguments);
   packet.header.resource_count = 3;
   packet.header.resources_off = offsetof(Packet, resources);
   packet.header.user_lo = BOOT_USER_LO;
@@ -70,11 +76,13 @@ bootpacket(void)
   packet.resources[0].tag = BOOT_SELF_SPACE;
   packet.resources[1].tag = BOOT_SELF_ALLOC;
   packet.resources[2].tag = BOOT_CREATE;
-  stringref(&packet.argv[0], "runtime", &offset);
-  stringref(&packet.argv[1], "alpha", &offset);
-  stringref(&packet.argv[2], "beta", &offset);
-  stringref(&packet.env[0], "MODE=1", &offset);
-  stringref(&packet.env[1], "X=value", &offset);
+  REQUIRE(!sysargboot(&snapshot, &packet.header, sizeof(packet)) && packet.header.argc == 3 &&
+              packet.header.envc == 2 && packet.header.bytes < PAGE_SIZE &&
+              argument_word[0] == 'X' && environment_word[0] == 'Y' &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          216);
+  /* Preparing SELF entries remain zero until the loader resolves them. */
+  elf_trace[14]++;
 }
 int
 main(int argc, char **argv)
@@ -121,6 +129,7 @@ main(int argc, char **argv)
     args.rgid = ids[2];
     args.egid = ids[3];
     memset(&work, 0, sizeof(work));
+    bootpacket();
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, 0, &work.sigmask), 214);
     REQUIRE(!__sys_create(create, &args, &work.view, &pid, &control) && pid > 0 && !control, 185);
     work.pid = pid;
@@ -134,7 +143,6 @@ main(int argc, char **argv)
                 written == 3 && !next,
             187);
     elf_trace[5]++;
-    bootpacket();
     if (scenario == 1) {
       count = 0;
       while (!(error = __sys_alloc(allocator, &alloc, &pressure[count]))) {
@@ -159,7 +167,7 @@ main(int argc, char **argv)
     }
     if (scenario == 5)
       packet.resources[0].flags = 4;
-    error = elfload(&source, &plan, &packet, sizeof(packet), &work, &config);
+    error = elfload(&source, &plan, &packet, packet.header.bytes, &work, &config);
     REQUIRE(!work.memory && !work.mapped, 193);
     elf_trace[6]++;
     if (scenario <= 1) {
