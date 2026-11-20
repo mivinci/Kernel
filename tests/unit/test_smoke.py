@@ -6,11 +6,26 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from smoke import SmokeError, validate_output, diagnostic_ready
+from smoke import SmokeError, validate_output, diagnostic_ready, retained_probe_record
 from smoke import Qmp
 
 
 class SerialDiagnosticTests(unittest.TestCase):
+    def test_retained_probe_waits_for_every_uart_fragment_including_the_final_newline(self):
+        row='INITRETAIN charged=0000000000000035 acct=0000000000000100 root=000000004002a000 stack_table=0000000040031000 stack_va=ffffffc401001000\n'
+        for end in range(len(row)):
+            self.assertIsNone(retained_probe_record('BOOT\n'+row[:end]))
+        self.assertEqual(retained_probe_record('BOOT\n'+row)['root'],0x4002a000)
+        self.assertEqual(retained_probe_record(row.replace('\n','\r\n'))['stack_va'],0xffffffc401001000)
+
+    def test_complete_bad_duplicate_or_zero_root_probe_records_fail_explicitly(self):
+        row='INITRETAIN charged=0000000000000035 root=000000004002a000 stack_table=0000000040031000 stack_va=ffffffc401001000\n'
+        for text in (row+row,row.replace('root=000000004002a000','root='),
+                     row.replace('root=000000004002a000','root=0000000000000000'),
+                     row.replace('stack_table=0000000040031000 ',''),
+                     row.replace('root=000000004002a000','root=000000004002a000 root=000000004002b000')):
+            with self.assertRaises(SmokeError):retained_probe_record(text)
+
     def test_fragmented_diagnostics_wait_for_full_expected_or_unexpected_lines(self):
         header = 'BOOTPKG error=fffffffffffffffe\n'
         for expected in ('PANIC boot package\n', 'PANIC initrd missing\n', 'READY images-restored\n'):

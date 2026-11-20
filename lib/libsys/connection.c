@@ -71,6 +71,38 @@ sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag)
   return 0;
 }
 isize
+sysconnworktakecall(Connwork *work, Conncache *cache, Handle *owned_call, Handle *redundant)
+{
+  Connentry  entry;
+  Connpeer   peer;
+  Connstate *s;
+  isize      error = view(work, cache, &entry);
+  if (error)
+    return error;
+  if (!separate(work, sizeof(*work), owned_call, sizeof(*owned_call)) ||
+      !separate(work, sizeof(*work), redundant, sizeof(*redundant)) ||
+      !separate(cache, sizeof(*cache), owned_call, sizeof(*owned_call)) ||
+      !separate(cache, sizeof(*cache), redundant, sizeof(*redundant)) ||
+      !separate(owned_call, sizeof(*owned_call), redundant, sizeof(*redundant)) || *redundant)
+    return -ERR_INVALID;
+  if (entry.state == SYSCONN_DRAINING)
+    return -ERR_PEER;
+  s = &work->state;
+  if (s->call && s->call == *owned_call)
+    return -ERR_STATE;
+  error = sysconnpeer(*owned_call, &peer);
+  if (error)
+    return error;
+  if (peer.pid != s->peer.pid || peer.image != s->peer.image)
+    return -ERR_DENIED;
+  if (s->call)
+    *redundant = *owned_call;
+  else
+    s->call = *owned_call;
+  *owned_call = 0;
+  return 0;
+}
+isize
 sysconnworkadopt(Connwork *work, Conncache *cache, Connclaim claim, Handle space, Bootmap *map)
 {
   Connentry  entry;
@@ -83,10 +115,10 @@ sysconnworkadopt(Connwork *work, Conncache *cache, Connclaim claim, Handle space
   if (!separate(work, sizeof(*work), map, sizeof(*map)) ||
       !separate(cache, sizeof(*cache), map, sizeof(*map)) || handlekind(space) != HANDLE_RESOURCE)
     return -ERR_INVALID;
-  if (s->memory || s->space || s->map.mapped || !empty(&s->pages) ||
-      claim.tag.index != s->tag.index || claim.tag.generation != s->tag.generation ||
-      entry.state != SYSCONN_CONNECTING || entry.owner != claim.owner ||
-      entry.sequence != claim.seq)
+  if (handlekind(s->call) != HANDLE_RESOURCE || s->memory || s->space || s->map.mapped ||
+      !empty(&s->pages) || claim.tag.index != s->tag.index ||
+      claim.tag.generation != s->tag.generation || entry.state != SYSCONN_CONNECTING ||
+      entry.owner != claim.owner || entry.sequence != claim.seq)
     return -ERR_STATE;
   error = sysbootreply(&s->bootstrap, claim, 0, &reply);
   if (error)
@@ -183,6 +215,12 @@ sysconnworkclean(Connwork *work, Conncache *cache)
     if (error)
       return error;
     s->memory = 0;
+  }
+  if (s->call) {
+    error = __sys_free(s->call);
+    if (error)
+      return error;
+    s->call = 0;
   }
   s->space = 0;
   return 0;

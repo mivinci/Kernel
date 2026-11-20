@@ -428,6 +428,9 @@ typedserver(const Bootview *view)
   words.words[0] = 303;
   words.words[1] = words.words[2] = words.words[3] = 0;
   REQUIRE(!ipc_reply(received.request, &words), 220);
+  REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 201 &&
+              !ipc_reply_resource(received.request, &reply),
+          109);
   REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.words[0] == 203, 249);
   words.words[0] = (u64) &reply;
   words.words[1] = 57;
@@ -567,6 +570,7 @@ typedclient(const Bootview *view, Handle peer)
   Msg       words;
   Ipcmsg    result;
   Handle    rpc, memory, backend, space = bootresource(view, BOOT_SELF_SPACE), denied;
+  Handle    donated, extra, redundant = 0;
   Maparg    map;
   Connclaim claim;
   u64       oldmask;
@@ -642,14 +646,24 @@ typedclient(const Bootview *view, Handle peer)
   }
   words.words[0] = 202;
   REQUIRE(!ipc_call(backend, &words, 0, &result) && !result.kind && result.words[0] == 303, 236);
-  REQUIRE(!__sys_free(backend), 237);
-  {
-    Connpeer old = connection_peer;
-    REQUIRE(sysconnpeer(backend, &old) == -ERR_STALE && old.pid == connection_peer.pid &&
-                old.image == connection_peer.image,
-            154);
-  }
-  REQUIRE(ipc_call(backend, &words, 0, &result) == -ERR_BAD_HANDLE, 238);
+  donated = backend;
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+              !sysconnworkinit(&connection_work, &connection_directory, connection_tag) &&
+              !sysconnworktakecall(&connection_work, &connection_directory, &backend, &redundant) &&
+              !backend && !redundant && connection_work.state.call == donated &&
+              !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+          237);
+  words.words[0] = 201;
+  REQUIRE(!ipc_call(peer, &words, CALL_RECV_CALL, &result) && result.kind == IPC_RESOURCE_REPLY,
+          108);
+  extra = (Handle) result.words[0];
+  REQUIRE(extra != donated && !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+              !sysconnworktakecall(&connection_work, &connection_directory, &extra, &redundant) &&
+              !extra && redundant == (Handle) result.words[0] &&
+              connection_work.state.call == donated && !__sys_free(redundant) &&
+              !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+          107);
+  redundant = 0;
   words.words[0] = 203;
   REQUIRE(!ipc_call(peer, &words, CALL_RECV_MEM, &result) && !result.kind && result.words[0] &&
               result.words[1] == 57 && result.words[2] == 59 && result.words[3] == 61,
@@ -672,15 +686,15 @@ typedclient(const Bootview *view, Handle peer)
     u32        saved;
     Handle     original;
     u64        originalva;
-    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysconnworkinit(&connection_work, &connection_directory, connection_tag) &&
-                !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
-                !sysbootprepare(active, claim, FS_HELLO, UINT64_MAX, 0) &&
-                !sysbootrequest(active, claim, &words) &&
-                !ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
-                !sysbootsubmitted(active, claim, &result.request) &&
-                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-            142);
+    REQUIRE(
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+            !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
+            !sysbootprepare(active, claim, FS_HELLO, UINT64_MAX, 0) &&
+            !sysbootrequest(active, claim, &words) &&
+            !ipc_call(connection_work.state.call, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
+            !sysbootsubmitted(active, claim, &result.request) &&
+            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+        142);
     REQUIRE(!ipc_rqwait(active->rpc, 0, &result), 141);
     REQUIRE(
         !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
@@ -700,14 +714,15 @@ typedclient(const Bootview *view, Handle peer)
     original = connection_work.state.memory;
     originalva = connection_work.state.map.address;
     REQUIRE(((volatile Filehead *) originalva)->connid == validated.connid, 139);
-    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysconnreusebegin(&connection_directory, connection_tag, 405, &claim) &&
-                !sysbootprepare(active, claim, FS_ATTACH, 55, 0) &&
-                !sysbootrequest(active, claim, &words) &&
-                !ipc_call(peer, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
-                !sysbootsubmitted(active, claim, &result.request) &&
-                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-            136);
+    REQUIRE(
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+            !sysconnreusebegin(&connection_directory, connection_tag, 405, &claim) &&
+            !sysbootprepare(active, claim, FS_ATTACH, 55, 0) &&
+            !sysbootrequest(active, claim, &words) &&
+            !ipc_call(connection_work.state.call, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
+            !sysbootsubmitted(active, claim, &result.request) &&
+            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+        136);
     REQUIRE(!ipc_rqwait(active->rpc, 0, &result) && result.kind == IPC_NONE, 135);
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
                 !sysbootcapture(active, claim, 0, &result) &&
@@ -751,7 +766,7 @@ typedclient(const Bootview *view, Handle peer)
         !__sys_copy((void *) (uintptr_t) (originalva + FS_DESC_OFFSET +
                                           operation.lease.slot * FS_DESC_BYTES),
                     &descriptor, sizeof(descriptor)) &&
-            !ipc_call(peer, &words, CALL_ASYNC, &result) &&
+            !ipc_call(connection_work.state.call, &words, CALL_ASYNC, &result) &&
             !sysopsubmitted(&connection_work, &connection_directory, &operation, &result.request),
         129);
     stale.connection.generation = operation.connection.generation;
@@ -823,14 +838,16 @@ typedclient(const Bootview *view, Handle peer)
       words.words[0] = 0xf00d;
       words.words[1] = i;
       words.words[2] = words.words[3] = 0;
-      REQUIRE(!ipc_call(peer, &words, CALL_ASYNC, &result) && result.request, 115);
+      REQUIRE(!ipc_call(connection_work.state.call, &words, CALL_ASYNC, &result) && result.request,
+              115);
       pressure[i] = result.request;
     }
-    REQUIRE(ipc_call(peer, &words, CALL_ASYNC, &result) == -ERR_CAPACITY && !result.request &&
+    REQUIRE(ipc_call(connection_work.state.call, &words, CALL_ASYNC, &result) == -ERR_CAPACITY &&
+                !result.request &&
                 !sysfilecloseprepare(&file_registry, &connection_work, &connection_directory,
                                      &closing, 503, 0, &close_operation, &words) &&
                 close_operation.lease.slot == 6 &&
-                !ipc_call(peer, &words, SYSFILE_CLOSE_OPTIONS, &result) &&
+                !ipc_call(connection_work.state.call, &words, SYSFILE_CLOSE_OPTIONS, &result) &&
                 !sysopsubmitted(&connection_work, &connection_directory, &close_operation,
                                 &result.request) &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
@@ -859,9 +876,20 @@ typedclient(const Bootview *view, Handle peer)
     }
     REQUIRE(!sysconninvalidate(&connection_directory, connection_tag) &&
                 !sysconnworkclean(&connection_work, &connection_directory) &&
-                !connection_work.state.memory && !connection_work.state.map.mapped,
+                !connection_work.state.memory && !connection_work.state.map.mapped &&
+                !connection_work.state.call,
             110);
-    resource_trace[9] = 5;
+    {
+      Connpeer old = connection_peer;
+      REQUIRE(sysconnpeer(donated, &old) == -ERR_STALE && old.pid == connection_peer.pid &&
+                  old.image == connection_peer.image,
+              154);
+      REQUIRE(ipc_call(donated, &words, 0, &result) == -ERR_BAD_HANDLE, 238);
+      REQUIRE(!sysconnpeer(peer, &old) && old.pid == connection_peer.pid &&
+                  old.image == connection_peer.image,
+              106);
+    }
+    resource_trace[9] = 6;
   }
 }
 static Handle

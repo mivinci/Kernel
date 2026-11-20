@@ -25,8 +25,10 @@ STUB=r'''
 static Ipcmsg result;
 static isize polling,acking,cancelling;
 static Handle seen;
+static Handle callid,callpid,freeonly;
+static u64 callimage;
 static u64 polls,acks,cancels;
-void testreset(void){u32 i;u8 *p=(u8*)&result;for(i=0;i<sizeof(result);i++)p[i]=0;polling=-ERR_WOULD_BLOCK;acking=cancelling=0;seen=0;polls=acks=cancels=0;}
+void testreset(void){u32 i;u8 *p=(u8*)&result;for(i=0;i<sizeof(result);i++)p[i]=0;polling=-ERR_WOULD_BLOCK;acking=cancelling=0;seen=callid=callpid=freeonly=0;callimage=0;polls=acks=cancels=0;}
 void testresult(isize error,u64 kind,Handle resource,u64 seq,u64 conn,u64 bytes){polling=error;result.kind=kind;result.words[0]=(u64)resource;result.words[1]=seq;result.words[2]=conn;result.words[3]=bytes;}
 void testerrors(isize ack,isize cancel){acking=ack;cancelling=cancel;}
 u64 testget(u32 key){return key==0?polls:key==1?acks:key==2?cancels:(u64)seen;}
@@ -44,11 +46,13 @@ u64 testdescriptor(u32 word){return word<16?((const u64*)&descriptor)[word]:0;}
 void testmemory(Handle memory,u64 subtype,u64 access,u64 off,u64 bytes,u64 connid,u64 image){memid=memory;kind=subtype;rights=access;offset=off;length=bytes;maps=unmaps=0;queryerror=maperror=copyerror=unmaperror=0;header.magic=FS_CONN_MAGIC;header.bytes=FS_CONN_BYTES;header.connid=connid;header.serverimage=image;header.slots=8;header.slotbytes=4096;header.reserved[0]=header.reserved[1]=0;}
 void testmaperror(isize query,isize map,isize copy,isize unmap){queryerror=query;maperror=map;copyerror=copy;unmaperror=unmap;}
 void testheader(u64 magic){header.magic=magic;}
-void testfreeerror(isize error){freeerror=error;frees=0;}
+void testfreeerror(isize error){freeerror=error;freeonly=0;frees=0;}
+void testfreeon(Handle resource,isize error){freeerror=error;freeonly=resource;frees=0;}
+void testcall(Handle resource,Handle pid,u64 image){callid=resource;callpid=pid;callimage=image;}
 u64 testfrees(void){return frees;}
-isize __sys_free(Handle resource){frees++;return resource>0?freeerror:-ERR_BAD_HANDLE;}
+isize __sys_free(Handle resource){frees++;return resource>0?(freeonly&&freeonly!=resource?0:freeerror):-ERR_BAD_HANDLE;}
 u64 testmapping(u32 key){return key?unmaps:maps;}
-isize __sys_query(Handle authority,u64 query,u64 cursor,Queryrec *rows,u64 count,u64 *written,u64 *next){u32 i;if(authority||query!=QUERY_RESOURCE||cursor||count!=16)return -ERR_INVALID;if(queryerror)return queryerror;rows[0].type=QUERY_RESOURCE;for(i=0;i<20;i++)rows[0].data[i]=0;rows[0].data[0]=(u64)memid;rows[0].data[1]=kind;rows[0].data[2]=rights;rows[0].data[3]=offset;rows[0].data[4]=length;*written=1;*next=0;return 0;}
+isize __sys_query(Handle authority,u64 query,u64 cursor,Queryrec *rows,u64 count,u64 *written,u64 *next){u32 i;if(authority||query!=QUERY_RESOURCE||cursor||count!=16)return -ERR_INVALID;if(queryerror)return queryerror;rows[0].type=QUERY_RESOURCE;for(i=0;i<20;i++)rows[0].data[i]=0;rows[0].data[0]=(u64)memid;rows[0].data[1]=kind;rows[0].data[2]=rights;rows[0].data[3]=offset;rows[0].data[4]=length;*written=1;*next=0;if(callid){rows[1].type=QUERY_RESOURCE;for(i=0;i<20;i++)rows[1].data[i]=0;rows[1].data[0]=(u64)callid;rows[1].data[1]=RESOURCE_CALL;rows[1].data[2]=RESOURCE_USE;rows[1].data[6]=(u64)callpid;rows[1].data[7]=callimage;*written=2;}return 0;}
 isize __sys_map(Handle space,const Maparg *arg){maps++;if(space<=0||arg->mem!=memid||arg->offset!=offset||arg->length!=length||arg->prot!=3||arg->reserved)return -ERR_INVALID;return maperror;}
 isize __sys_unmap(Handle space,u64 address){unmaps++;if(space<=0||!address)return -ERR_INVALID;return unmaperror;}
 isize __sys_copy(void *out,const void *from,u64 bytes){u32 i;u8 *a=out;const u8 *b=(const u8*)&header;if(!from)return -ERR_INVALID;if(copyerror)return copyerror;if(bytes==sizeof(descriptor)){a=(u8*)&descriptor;b=from;}else if(bytes!=sizeof(header))return -ERR_INVALID;for(i=0;i<bytes;i++)a[i]=b[i];return 0;}

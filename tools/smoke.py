@@ -144,6 +144,21 @@ def symbols(text):
 def fields(line):
     return {key: int(value, 16) for key, value in re.findall(r"(\w+)=([0-9a-f]{16})(?: |$)", line)}
 
+def retained_probe_record(text):
+    """UART prefixes never authorize stopping the guest or walking its root."""
+    rows=re.findall(r'^INITRETAIN ([^\n]*)\n',text.replace('\r',''),re.M)
+    if not rows:
+        return None
+    if len(rows)!=1:
+        raise SmokeError('duplicate retained probe record')
+    words=rows[0].split(' ')
+    record=fields(rows[0])
+    if (any(not re.fullmatch(r'[a-z_]+=[0-9a-f]{16}',word) for word in words) or
+            len(words)!=len(record) or not {'charged','root','stack_table','stack_va'}<=record.keys() or
+            not all(record[key] for key in ('charged','root','stack_table','stack_va'))):
+        raise SmokeError('invalid complete retained probe record')
+    return record
+
 def validate_cpus(text,arch,count,current):
     lines=text.splitlines();headers=[fields(x) for x in lines if x.startswith('CPU_BOOT ')]
     states=[fields(x) for x in lines if x.startswith('CPU_STATE ')]
@@ -905,8 +920,9 @@ def audit_package_init(qmp, run_dir, args, record, transition):
 
 def probe_package_init(qmp, run_dir, args, record, label='serial-service-proof', symbol='serialserviceproof', words=16, address=None):
     """Read a fixture's retained state even when its final assertion failed."""
-    rows=[fields(x) for x in (run_dir/'serial.log').read_text().splitlines() if x.startswith('INITRETAIN ')]
-    if len(rows)!=1:raise SmokeError('missing retained probe root')
+    retained=retained_probe_record((run_dir/'serial.log').read_text())
+    if retained is None:raise SmokeError('missing complete retained probe root')
+    rows=[retained]
     if address is None:
         artifact=args.init_elf or ROOT/'build'/args.arch/'sbin/init.elf'
         inspected=run_command([record['build']['tools']['readelf']['path'],'-s',str(artifact)],run_dir/'probe-symbols.log',args.timeout)
@@ -1201,14 +1217,14 @@ def exercise(args, run_dir, record):
                                                             hex=(b'uar' if index==0 else b'uart-rx').hex())
                             qmp.command('cont')
                     if normal_live and not args.bootpkg_error:
-                        if 'INITRETAIN ' in text:
+                        if retained_probe_record(text) is not None:
                             qmp.command('stop')
                             snapshot=probe_package_init(qmp,run_dir,args,record,'production-init-state','initstate',8)
                             qmp.command('cont')
                             if snapshot[0]==1:
                                 record['init_ready_snapshot']=snapshot
                                 break
-                    elif getattr(args,'serial_failure',False) and 'production_ring_fault' not in record and 'INITRETAIN ' in text:
+                    elif getattr(args,'serial_failure',False) and 'production_ring_fault' not in record and retained_probe_record(text) is not None:
                         qmp.command('stop')
                         snapshot=probe_package_init(qmp,run_dir,args,record,'production-ready-before-fault','initstate',8)
                         vm=next(fields(x) for x in text.splitlines() if x.startswith('VM '))
@@ -1217,7 +1233,7 @@ def exercise(args, run_dir, record):
                         lo=(names['idlewait']+vm['delta'])&((1<<64)-1)
                         hi=(names['idleresume']+vm['delta'])&((1<<64)-1)
                         if snapshot[0]==1 and pc and lo<=int(pc[1],16)<=hi:
-                            root=next(fields(x)['root'] for x in text.splitlines() if x.startswith('INITRETAIN '))
+                            root=retained_probe_record(text)['root']
                             record['production_ring_fault']=initinspect.invalidate_ring(qmp,gdb,run_dir,args,root,vm['delta'])
                             if os.write(input_fd,b'!')!=1:raise SmokeError('short fault-wakeup UART injection')
                         qmp.command('cont')
@@ -1559,8 +1575,8 @@ def exercise(args, run_dir, record):
                 if args.case == "libsys":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("LIBSYSCHECK ")]
                     if (len(checks) != 1 or not 6 <= checks[0].get("turns", 0) < 64 or
-                            {k: checks[0].get(k) for k in ("actors", "resource", "native", "late", "consent", "accepted", "peer_lookup", "hello", "reuse", "slot_ops", "file_refs", "control_close", "ordinary_full", "receive", "shared", "payer_exit", "charged", "allocated")} !=
-                            {"actors": 2, "resource": 2, "native": 25, "late": 1, "consent": 1, "accepted": 1, "peer_lookup": 1, "hello": 1, "reuse": 1, "slot_ops": 1, "file_refs": 1, "control_close": 1, "ordinary_full": 8, "receive": 1, "shared": 1, "payer_exit": 1, "charged": 0, "allocated": transition["tables"]}):
+                            {k: checks[0].get(k) for k in ("actors", "resource", "native", "late", "consent", "accepted", "peer_lookup", "hello", "reuse", "slot_ops", "file_refs", "control_close", "ordinary_full", "owned_call", "receive", "shared", "payer_exit", "charged", "allocated")} !=
+                            {"actors": 2, "resource": 2, "native": 25, "late": 1, "consent": 1, "accepted": 1, "peer_lookup": 1, "hello": 1, "reuse": 1, "slot_ops": 1, "file_refs": 1, "control_close": 1, "ordinary_full": 8, "owned_call": 1, "receive": 1, "shared": 1, "payer_exit": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("standalone libsys user ELF/reference mismatch")
                     record["libsys"] = checks[0]
                 if args.case == "spawn":

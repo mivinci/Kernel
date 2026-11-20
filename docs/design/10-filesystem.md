@@ -987,3 +987,15 @@ sysfilecloseresult从同一原槽/RPC的固定结果核对机制成功、IPC_NON
 6项新增host覆盖真实reference_id而非本地ID/session的参数、原结果与ACK前后确认、错误seq/资源/未回复/传输失败保持、提交前copy失败仅释放运输、旧锚和重复prepare不改原关闭。原生用户场景保留后端SHARED映射至CLOSE结束：服务fixture同时defer八笔原生压力探针，填满调用者普通8槽，客户端第九笔普通调用得到CAPACITY，却仍通过控制Rq发送页6的CLOSE。fixture核对真实source/image、connid/seq、object55/reference77及未用参数，只回复原关闭一次，再完成8笔探针；客户端校验未ACK不能complete，ACK后确认File锚、排空探针，最后解除连接，页/费用回基线。探针用于原生预算压力，不是绕开文件页分区的普通FS业务。
 
 同场景的READ描述符已统一为正文冻结的[offset,length,data_off,io_flags]=[0,4,0,0]，不再沿用早期运输fixture把长度放args[0]的私有哨兵排列。最终完整make test-all通过916项host、格式检查及195次双架构QEMU；6项关闭专项、168份journal、最终源码/头/SDK/包哈希及实际链接用户载荷与SDK打包ELF逐字节一致另核对。两架构实际普通8槽满额/第9笔CAPACITY、控制CLOSE成功、确认前ACK门槛、原File失效及探针/共享页/费用归零均通过；私有SDK头和依赖集合一致，引用表18456字节、fd表/连接工作页各4096字节，init/serial ELF与stage141相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage142-native-close/；无CI/板端/性能结果。服务仍为边界明确的fixture，尚非生产FS/TTY/File权限/观察清理；错误恢复、CALL所有权、Rctx/信号前置、VA/Boot/Fix及标准fd接口继续待接。两个先前接口问题保持待用户回复。
+
+### 连接CALL的真实目标与独立所有权（2026-11-20）
+
+Connstate新增一份自持CALL，仍在原4096字节工作页内；目录仍按后端完整PID/image去重，不以Handle整数作连接身份。sysconnworktakecall先核对工作页/源Image/目录状态，再冷路QUERY_RESOURCE取得输入CALL的真实固定目标；只有匹配既有peer才移动所有权并清零输入。首次READY资源/映射接管现要求已有一份真正移入的CALL，不依赖外层暂借的入口维持连接生命周期。查询不是目标存活或服务File权限证明，目标已结束后的请求仍由原生PEER规则拒绝。
+
+同后端另一份不同Handle返回到调用者初始为空的redundant位置，不替换或隐式free原主入口；调用者可在确认该新入口未承载其他责任后显式free。输入与现有自持CALL为同一数值时返回STATE，不能把变量复制当成第二份本地授权而释放唯一入口。目标PID/image不同返回DENIED，源镜像/目录失效、错误子类型、非空输出及重叠位置均拒绝并保持原输入/工作页/输出。所有冷路查询和短本地移交由调用者排除可捕获信号；没有锁或远端等待跨保护段。
+
+连接拆除先满足原File关闭、bootstrap、槽RPC/页等既有责任门槛，再按unmap→free MEM→free自持CALL顺序清理；任何一步失败保留剩余精确责任。MEM/别名已经归还但CALL free失败时，工作页只保留该CALL供后续重试，不再次free旧MEM、不恢复映射。SELF_SPACE只是当前主体的借用权，不由工作页free。其他代码自己持有的CALL保持独立，不能因同后端连接关闭而被顺带释放；目录不会随这一清理自动forget/重建。
+
+新增6项CALL所有权host与原8项工作区专项共14项，覆盖首次移入/冗余返回、不匹配PID/image、同Handle数值与非空输出拒绝、DRAINING/源镜像边界，以及最终CALL free失败后的单步重试。原生场景从实际resource reply取得两份不同CALL：第一份接管到工作页，第二份被冷路认出同后端并显式归还/free；HELLO、普通ATTACH、共享READ、压力探针及控制CLOSE都使用自持入口。完成所有File/RPC/页责任后拆除，原入口在QUERY中STALE、直接call为BAD_HANDLE，外层原Boot CALL仍可解析并继续后续独立原生通信；没有用资源同目标性混淆本地引用数量。
+
+最终完整make test-all通过924项host、格式检查及195次双架构QEMU；14项连接专项、15项主机观测专项、168份journal、最终源码/头/SDK/包哈希与实际链接用户载荷和SDK打包ELF逐字节一致另核对。两架构实际独立CALL授予/接管/冗余返还、所有共享操作与控制CLOSE、自持入口清理后STALE/BAD_HANDLE且外层入口继续可用均通过，页/费用回基线。SDK私有头/依赖集合一致，工作页仍4096字节且无额外目录，init/serial ELF与stage142逐字节相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage143-owned-call/；无CI/板端/性能结果。初次全量末段ARM64 8GiB生产观测遇主机串口半行竞态：INITRETAIN只写到root=，轮询已暂停guest并读取未完成字段。现按完整换行记录才允许probe，缺字段/重复/零root的完整记录明确失败；观测专项覆盖每一截断位置，ARM64 8GiB复验后从头完整重跑，失败serial/result日志保留。没有修改guest启动/状态机来掩盖主机观测问题。来源/类型/目标识别复用现有原生接口，未新增权限位、句柄复制特权或ABI。生产连接/服务观察与File权限、Rctx/trampoline返回窗口、1秒控制故障/后台补偿、VA/Boot/Fix及标准fd服务仍待接，两个已有接口问题保持待用户回复。

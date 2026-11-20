@@ -129,7 +129,7 @@ libsysload(void)
           u64 client_trace[16];
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
-                  client_trace[9] == 5);
+                  client_trace[9] == 6);
           while ((error = procclean(pids[0])) > 0) {
           }
           REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
@@ -181,6 +181,8 @@ libsysload(void)
   puthex(handoff[9] - 3);
   putstr(" ordinary_full=");
   puthex(8);
+  putstr(" owned_call=");
+  puthex(1);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

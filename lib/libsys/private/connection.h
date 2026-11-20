@@ -22,7 +22,7 @@ struct Connstate
 {
   Connpeer  self, peer;
   Conntag   tag;
-  Handle    space, memory;
+  Handle    space, memory, call;
   Bootmap   map;
   Filepages pages;
   Bootstrap bootstrap;
@@ -40,11 +40,17 @@ STATIC_ASSERT(offsetof(Connwork, reserved) % 8 == 0, connection_embedded_directo
 STATIC_ASSERT(sizeof(Connwork) == PAGE_SIZE, connection_private_page);
 /* One preallocated private page per backend, never shared. Fresh empty storage
    only. Slot operations carry opaque caller-pinned File references; the File
-   registry, CALL ownership and Rctx return windows remain outside this layer.
+   registry and Rctx return windows remain outside this layer.
    First page reserved space can hold Conncache;
    workinit clears only Connstate, preserving the embedded directory. Caller excludes caught
    signals, owns valid separate storage and has already resolved the peer. */
 isize sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag);
+/* Cold native lookup first. First distinct owned CALL moves into the work
+   page; another Handle to the exact same peer moves to initially-zero redundant
+   for explicit caller release. Same Handle is not two owned references.
+   Failure preserves work/input/output. Inputs remain stable and signals are
+   excluded across short QUERY calls. No backend liveness proof is implied. */
+isize sysconnworktakecall(Connwork *work, Conncache *cache, Handle *owned_call, Handle *redundant);
 /* Moves the installed MEM and verified alias into work while publishing READY
    under one caller-protected local commit. Own bootstrap RESULT/ACKED only.
    On failure no ownership moves. On success external map is cleared and
@@ -58,7 +64,8 @@ isize sysconnworkreserve(Connwork *work, Conncache *cache, u32 context, u32 span
 isize sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected);
 /* Caller must first settle all File/close references (sysfilerefconnection=0).
    Directory must be DRAINING with no active bootstrap owner, bootstrap record
-   FREE and no occupied pages. Unmap before free; either failure retains the
-   remaining exact responsibility for retry. Does not evict/forget the key. */
+   FREE and no occupied pages. Unmap, free MEM, then free owned CALL; failures
+   retain remaining exact responsibility for retry. Never frees SELF_SPACE or
+   another caller's borrowed CALL. Does not evict/forget the key. */
 isize sysconnworkclean(Connwork *work, Conncache *cache);
 #endif
