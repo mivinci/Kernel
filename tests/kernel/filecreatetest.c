@@ -19,6 +19,7 @@ static Handle    creatorclient;
 static u64       injected;
 NORETURN void    __real_hal_user_enter(Hctx *context);
 static void      deadtest(u32 creating);
+static void      resourceendtest(void);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -51,53 +52,41 @@ __wrap_hal_user_enter(Hctx *context)
   }
   __real_hal_user_enter(context);
 }
-void
-filecreatetest(void)
+static void
+loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, const char *roles,
+          u32 count)
 {
-  Setid      set;
-  Set        budget;
-  Procinfo   processes[3];
-  Handle     pids[3], call;
-  Packet     packet;
-  Bootimage  image;
-  Config     config;
-  Life       life;
-  Liferesult result;
-  Pgstat     before, after;
-  u64        trace[16];
-  u32        i, j, turns = 0, ended;
-  int        error;
-  pgstat(&before);
-  CHECK(!setcreate(4096, 8192, 4, &set) &&
-        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  for (i = 0; i < 3; i++)
+  Handle call;
+  Packet packet;
+  Config config;
+  u32    i, j, peer;
+  for (i = 0; i < count; i++)
     CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
-  creatorclient = pids[0];
-  injected = 0;
-  for (i = 0; i < 3; i++) {
+  for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
+    peer = count == 2 ? 1 - i : (i ? 0 : 1);
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
-    CHECK(!localendpoint(table, processes[i ? 0 : 1].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
+    CHECK(!localendpoint(table, processes[peer].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
     packet.header.magic = BOOT_MAGIC;
     packet.header.format = BOOT_FORMAT;
     packet.header.bytes = sizeof(packet);
     packet.header.argc = 1;
     packet.header.argv_off = offsetof(Packet, arg);
-    packet.header.resource_count = i ? 4 : 3;
+    packet.header.resource_count = count == 3 && i ? 4 : 3;
     packet.header.resources_off = offsetof(Packet, resources);
     packet.header.user_lo = BOOT_USER_LO;
     packet.header.user_hi = BOOT_USER_HI;
     packet.arg.offset = offsetof(Packet, role);
     packet.arg.length = 2;
-    packet.role[0] = (char) ('0' + i);
+    packet.role[0] = roles[i];
     packet.resources[0].tag = BOOT_SELF_SPACE;
     packet.resources[0].handle = testresource(table, LOCAL_SPACE);
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
     packet.resources[2].tag = 256;
     packet.resources[2].handle = call;
-    if (i) {
+    if (count == 3 && i) {
       CHECK(!localendpoint(table, processes[i == 1 ? 2 : 1].identity, LOCAL_CALL,
                            LOCAL_USE | LOCAL_GRANT, 0, 0, &call));
       packet.resources[3].tag = 257;
@@ -105,13 +94,34 @@ filecreatetest(void)
     }
     testload(pids[i], filecreate_image, (u64) (filecreate_image_end - filecreate_image), &packet,
              sizeof(packet));
-    config.entry = image.entry;
+    config.entry = image->entry;
     config.stack = 0x3fffff0000UL;
     config.boot = 0x3fff000000UL;
     config.bootsz = sizeof(packet);
     config.sigmask = config.sigdefault = 0;
     CHECK(!procconfigure(pids[i], &config, i ? 0 : 1) && !procpublish(pids[i]));
   }
+}
+void
+filecreatetest(void)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   processes[3];
+  Handle     pids[3];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  u64        trace[16];
+  u32        i, turns = 0, ended;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(4096, 8192, 4, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pids, processes, "012", 3);
+  creatorclient = pids[0];
+  injected = 0;
   do {
     ended = 0;
     for (i = 0; i < 3; i++) {
@@ -192,6 +202,7 @@ filecreatetest(void)
   deadtest(0);
   deadtest(1);
   deadtest(2);
+  resourceendtest();
 }
 static void
 deadtest(u32 creating)
@@ -199,55 +210,23 @@ deadtest(u32 creating)
   Setid      set;
   Set        budget;
   Procinfo   info[2];
-  Handle     pids[2], call;
-  Packet     packet;
+  Handle     pids[2];
   Bootimage  image;
-  Config     config;
   Life       life;
   Liferesult result;
   Pgstat     before, after;
   u64        trace[16];
-  u32        i, j, cleaned = 0, rqcleaned = 0, turns = 0;
+  u32        cleaned = 0, rqcleaned = 0, turns = 0;
+  char       roles[2];
   Rqid       request;
   Rqinfo     pending;
   int        error;
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  for (i = 0; i < 2; i++)
-    CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &info[i]));
-  for (i = 0; i < 2; i++) {
-    Rtable *table = proctable(pids[i]);
-    for (j = 0; j < sizeof(packet); j++)
-      ((u8 *) &packet)[j] = 0;
-    CHECK(!localendpoint(table, info[1 - i].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
-    packet.header.magic = BOOT_MAGIC;
-    packet.header.format = BOOT_FORMAT;
-    packet.header.bytes = sizeof(packet);
-    packet.header.argc = 1;
-    packet.header.argv_off = offsetof(Packet, arg);
-    packet.header.resource_count = 3;
-    packet.header.resources_off = offsetof(Packet, resources);
-    packet.header.user_lo = BOOT_USER_LO;
-    packet.header.user_hi = BOOT_USER_HI;
-    packet.arg.offset = offsetof(Packet, role);
-    packet.arg.length = 2;
-    packet.role[0] = (char) ('3' + creating * 2 + i);
-    packet.resources[0].tag = BOOT_SELF_SPACE;
-    packet.resources[0].handle = testresource(table, LOCAL_SPACE);
-    packet.resources[1].tag = BOOT_SELF_ALLOC;
-    packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
-    packet.resources[2].tag = 256;
-    packet.resources[2].handle = call;
-    testload(pids[i], filecreate_image, (u64) (filecreate_image_end - filecreate_image), &packet,
-             sizeof(packet));
-    config.entry = image.entry;
-    config.stack = 0x3fffff0000UL;
-    config.boot = 0x3fff000000UL;
-    config.bootsz = sizeof(packet);
-    config.sigmask = config.sigdefault = 0;
-    CHECK(!procconfigure(pids[i], &config, i ? 0 : 1) && !procpublish(pids[i]));
-  }
+  roles[0] = (char) ('3' + creating * 2);
+  roles[1] = (char) (roles[0] + 1);
+  loadroles(set, &image, pids, info, roles, 2);
   for (;;) {
     if (!cleaned) {
       CHECK(!procinfo(pids[1], &info[1]));
@@ -327,6 +306,95 @@ deadtest(u32 creating)
   putstr(" recovered=");
   puthex(creating == 2 ? 3 : 2);
   putstr(" quarantined=");
+  puthex(1);
+  putstr(" trusted_cleanup=");
+  puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}
+static void
+resourceendtest(void)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   info[3];
+  Handle     pids[3];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  Rqid       request;
+  Rqinfo     pending;
+  u64        trace[16];
+  u32        i, cleaned = 0, rqcleaned = 0, turns = 0;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(4096, 8192, 4, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pids, info, "9ab", 3);
+  for (;;) {
+    if (!cleaned) {
+      CHECK(!procinfo(pids[2], &info[2]));
+      if (info[2].state == PROC_EXITING) {
+        CHECK(!lifestat(info[2].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+              !spaceread(info[2].space, filecreate_trace_address, trace, sizeof(trace)) &&
+              trace[0] == 2 && trace[1] == 1 && !trace[2] && trace[4] == 1 && !trace[15]);
+        while ((error = procclean(pids[2])) > 0) {
+        }
+        CHECK(!error && !lifecollect(info[2].life, 1, &result));
+        cleaned = 1;
+      }
+    }
+    if (cleaned && !rqcleaned) {
+      CHECK(!spaceread(info[1].space, filecreate_trace_address, trace, sizeof(trace)));
+      if (trace[5]) {
+        CHECK(!rqlookup((Handle) trace[5], info[1].identity, &request) &&
+              !rqstat(request, &pending) && pending.caller == pids[1] &&
+              pending.server == pids[2] && pending.status == -ERR_PEER &&
+              !(pending.flags & RQ_FINISHED) && !rqclean(request, info[2].identity));
+        rqcleaned = 1;
+      }
+    }
+    CHECK(!procinfo(pids[0], &info[0]) && !procinfo(pids[1], &info[1]));
+    if (info[0].state == PROC_EXITING && info[1].state == PROC_EXITING)
+      break;
+    error = procrunone();
+    CHECK(!error || error == -ERR_WOULD_BLOCK);
+    CHECK(++turns < 256);
+    if (error)
+      CHECK(procidle() >= 0);
+  }
+  CHECK(cleaned && rqcleaned);
+  for (i = 0; i < 2; i++) {
+    CHECK(!lifestat(info[i].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+          !spaceread(info[i].space, filecreate_trace_address, trace, sizeof(trace)) &&
+          trace[0] == 2 && !trace[15]);
+    if (!i)
+      CHECK(trace[1] == 1 && trace[2] == 1 && trace[3] == 1);
+    else
+      CHECK(!trace[1] && !trace[2] && trace[4] == 1);
+    while ((error = procclean(pids[i])) > 0) {
+    }
+    CHECK(!error && !lifecollect(info[i].life, 1, &result));
+  }
+  CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck());
+  putstr("RESOURCEDEADCHECK actors=");
+  puthex(3);
+  putstr(" resource_opens=");
+  puthex(1);
+  putstr(" recovered=");
+  puthex(1);
+  putstr(" full_directory=");
+  puthex(1);
+  putstr(" failed_abort=");
+  puthex(1);
+  putstr(" source_usable=");
   puthex(1);
   putstr(" trusted_cleanup=");
   puthex(1);

@@ -50,8 +50,8 @@ target(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key, Creat
   if (!(op->flags & SYSOP_CREATOR) || key->lease.span != 1 ||
       (op->opcode != FS_OPEN && op->opcode != FS_DUPREF && op->opcode != FS_PIPE) ||
       create->phase < SYSFILE_CREATE_PREPARED || create->phase > SYSFILE_CREATE_RESOLVED ||
-      create->count != (op->opcode == FS_PIPE ? 2U : 1U) || create->reserved ||
-      create->disposition > SYSFILE_RESULT_REVOKED ||
+      create->count != (op->opcode == FS_PIPE ? 2U : 1U) ||
+      create->flags & ~SYSFILE_CREATE_PEER_ENDED || create->disposition > SYSFILE_RESULT_ENDED ||
       (create->phase != SYSFILE_CREATE_RESOLVED &&
        op->file != (create->source ? create->source : create->files[0])))
     return -ERR_STATE;
@@ -424,6 +424,8 @@ sameclaim(Connclaim a, Connclaim b)
 static isize
 resource(Createop *create, Slotop *op)
 {
+  if (create->flags & SYSFILE_CREATE_PEER_ENDED)
+    return -ERR_PEER;
   if (op->phase != SYSOP_ACKED || op->opcode != FS_OPEN || op->kind != IPC_RESOURCE_REPLY ||
       create->phase != SYSFILE_CREATE_CAPTURED || create->count != 1 || create->error ||
       !create->token || !create->peer.pid || !create->peer.image)
@@ -669,6 +671,49 @@ sysfilecreaterevoked(Filepool *pool, Connwork *work, Conncache *cache, const Opk
   create->files[0] = create->files[1] = 0;
   create->token = 0;
   create->disposition = SYSFILE_RESULT_REVOKED;
+  create->phase = SYSFILE_CREATE_RESOLVED;
+  return 0;
+}
+isize
+sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Createop  *create;
+  Slotop    *op;
+  Bootstrap *boot;
+  Connclaim  claim;
+  isize      error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (!(create->flags & SYSFILE_CREATE_PEER_ENDED))
+    return -ERR_STATE;
+  if (create->phase == SYSFILE_CREATE_RESOLVED)
+    return create->disposition == SYSFILE_RESULT_ENDED ? 0 : -ERR_STATE;
+  op = &work->state.operations[key->lease.slot];
+  boot = &work->state.bootstrap;
+  if (create->phase != SYSFILE_CREATE_CAPTURED || create->error || create->count != 1 ||
+      op->phase != SYSOP_ACKED || op->opcode != FS_OPEN || op->kind != IPC_RESOURCE_REPLY ||
+      !create->token || sysbootcheck(boot) || boot->state != SYSBOOT_PREPARED ||
+      boot->opcode != FS_ABORT || boot->token != create->token ||
+      boot->claim.owner != create->files[0] || boot->claim.tag.generation ||
+      boot->claim.tag.index != SYSCONN_COUNT)
+    return -ERR_STATE;
+  /* The originating Rctx has already handed off its failed, unsubmitted CALL.
+     Only the creator-owned CALL is freed; any cached borrowed CALL stays put. */
+  if (create->call) {
+    error = __sys_free(create->call);
+    if (error)
+      return error;
+    create->call = 0;
+  }
+  copy(&claim, &boot->claim, sizeof(claim));
+  error = sysfilerefabort(pool, work->state.self, &create->stage);
+  if (!error)
+    error = sysbootunprepare(boot, claim);
+  if (error)
+    return error;
+  create->files[0] = create->files[1] = 0;
+  create->token = 0;
+  create->disposition = SYSFILE_RESULT_ENDED;
   create->phase = SYSFILE_CREATE_RESOLVED;
   return 0;
 }

@@ -22,6 +22,10 @@ class ContextCreatorTests(unittest.TestCase):
     create = creators.FileCreatorTests.create
     op = creators.FileCreatorTests.op
     reply = creators.FileCreatorTests.reply
+    submit = creators.FileCreatorTests.submit
+    capture = creators.FileCreatorTests.capture
+    resourcekey = creators.FileCreatorTests.resourcekey
+    prepare_revoke = creators.FileCreatorTests.prepare_revoke
     returned = ipc.ContextIpcTests.returned
 
     @classmethod
@@ -41,6 +45,9 @@ class ContextCreatorTests(unittest.TestCase):
             'sysctxfinish': [bank, creators.support.Peer, Key],
             'sysctxsignal': [bank, creators.support.Peer, Key, C.c_void_p, C.c_uint64],
             'sysctxinterruptible': [bank, creators.support.Peer, Key],
+            'sysctxbootcall': [bank, creators.support.Peer, C.c_uint32, C.POINTER(bootstrap.Record),
+                               creators.support.Claim, C.c_int64, C.c_uint64, key],
+            'sysctxcreatepeerended': [bank, creators.support.Peer, Key, pool, work, cache, operation],
             'testcapturestatus': [bank, C.c_uint32]}
         for name, args in signatures.items():
             getattr(cls.lib, name).argtypes = args
@@ -156,3 +163,88 @@ class ContextCreatorTests(unittest.TestCase):
         self.assertEqual(self.lib.sysctxcreatecall(self.b,self.self,0,self.p,self.w,self.c,
                          C.byref(operation),alias),-1)
         self.assertEqual((bytes(self.bank),bytes(self.work),bytes(self.pool)),before)
+
+    def failed_abort(self,operation,call=0,status=-14):
+        claim=self.prepare_revoke(operation,call);key=Key()
+        self.assertEqual(self.lib.sysctxbootcall(self.b,self.self,0,C.byref(self.record),claim,
+            call or self.resourcecall,0,C.byref(key)),0)
+        self.returned(key,status=status)
+        self.assertEqual(self.lib.sysctxhandoff(self.b,self.self,key),0)
+        return claim,key
+
+    def mark_resource_end(self,operation,key):
+        return self.lib.sysctxcreatepeerended(self.b,self.self,key,self.p,self.w,self.c,C.byref(operation))
+
+    def test_failed_abort_proves_actual_peer_without_marking_source_or_allocating_directory(self):
+        peer=creators.support.Peer(creators.support.pid(4),29)
+        operation=self.resourcekey(peer)
+        for i in range(7):
+            tag=creators.support.Tag()
+            self.assertEqual(self.lib.sysconnbind(self.c,
+                creators.support.Peer(peer.pid,30+i),C.byref(tag)),0)
+        before=bytes(self.cache.entries)
+        claim,key=self.failed_abort(operation)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),-6)
+        self.assertEqual(self.mark_resource_end(operation,key),0)
+        self.assertEqual((self.create(operation).flags,self.work.state.ended),(1,0))
+        self.assertEqual(bytes(self.cache.entries),before)
+        self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
+        self.assertEqual((self.create(operation).disposition,self.record.state,self.pool.entries[0].state),(3,0,0))
+        self.assertEqual(self.lib.sysfilecreaterevoked(self.p,self.w,self.c,C.byref(operation),claim),-6)
+        files=(C.c_uint64*2)();source=C.c_uint64()
+        self.assertEqual(self.lib.sysfilecreatefinish(self.p,self.w,self.c,C.byref(operation),files,C.byref(source)),0)
+        self.assertEqual((tuple(files),source.value,self.work.state.call),((0,0),0,self.call))
+
+    def test_revocation_error_cannot_prove_actual_backend_end(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.failed_abort(operation,status=-15)
+        before=bytes(self.work),bytes(self.pool)
+        self.assertEqual(self.mark_resource_end(operation,key),-6)
+        self.assertEqual((bytes(self.work),bytes(self.pool)),before)
+
+    def test_wrong_token_sequence_call_peer_and_image_preserve_resource_and_reserve(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.failed_abort(operation)
+        token=self.record.token;self.record.token+=1
+        self.assertEqual(self.mark_resource_end(operation,key),-6)
+        self.record.token=token
+        self.bank.contexts[0].args[3]+=1
+        self.assertEqual(self.mark_resource_end(operation,key),-6)
+        self.bank.contexts[0].args[3]-=1
+        self.lib.testcall(self.resourcecall,self.peer.pid,self.peer.image)
+        before=bytes(self.work),bytes(self.pool)
+        self.assertEqual(self.mark_resource_end(operation,key),-5)
+        self.assertEqual((bytes(self.work),bytes(self.pool)),before)
+        other=creators.support.Peer(self.self.pid,self.self.image+1)
+        self.assertEqual(self.lib.sysctxcreatepeerended(self.b,other,key,self.p,self.w,self.c,
+            C.byref(operation)),-4)
+
+    def test_call_free_failure_preserves_end_proof_after_context_finishes_and_blocks_reattach(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.failed_abort(operation)
+        self.assertEqual(self.mark_resource_end(operation,key),0)
+        self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
+        self.lib.testfreeon(self.resourcecall,-7)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),-7)
+        self.assertEqual((self.create(operation).flags,self.create(operation).call,
+            self.record.state,self.pool.entries[0].state),(1,self.resourcecall,1,4))
+        out=creators.support.Claim();call=C.c_int64();seq=self.cache.sequence
+        self.assertEqual(self.lib.sysfilecreaterevokeprepare(self.p,self.w,self.c,C.byref(operation),
+            0,0,C.byref(out),C.byref(call)),-14)
+        self.assertEqual(self.cache.sequence,seq)
+        self.lib.testfreeon(self.resourcecall,0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
+        self.assertEqual(self.lib.testfrees(),1)
+
+    def test_external_cached_call_is_borrowed_and_never_freed_by_creator_cleanup(self):
+        peer=creators.support.Peer(creators.support.pid(4),29)
+        operation=self.resourcekey(peer);self.create(operation).call=0
+        borrowed=self.resourcecall+1
+        self.lib.testcall(borrowed,peer.pid,peer.image)
+        claim,key=self.failed_abort(operation,borrowed)
+        self.assertEqual(self.mark_resource_end(operation,key),0)
+        self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
+        self.assertEqual((self.lib.testfrees(),self.work.state.call),(0,self.call))

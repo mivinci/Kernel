@@ -20,17 +20,17 @@
 
 ## 最新完成点与证据
 
-- stage161：未回复创建的原生PEER失败可在旧后端结束证明及真实排空后捕获，随后ACK/整组归还预留；DUPREF源pin独立保留。已捕获成功或另一后端CALL/token不走此路径，业务负值不作原生死亡证明；预算保持。
-- 32项创建专项（含6项新恢复）；两架构分别跑未回复OPEN/PIPE死亡场景，原预留先隔离，可信代收尾后释放；另一个独立新调用的提交前PEER错误已实际验证Rctx证明及无RPC回滚。原CLOSE恢复、11引用/信号/ATTACH场景继续通过。
-- 验收：1070项完整host、格式、最终输入下8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
-- 证据：`build/host/stage161-creator-recovery/`。未重跑195矩阵（最近stage154），无CI/板端/性能结果。stage157及后续提交暂未推送，仍待公开发布确认。
+- stage162：已捕获资源的无RPC ABORT提交前PEER失败，可按精确Rctx/claim/token及CALL真实PID/image固定创建者局部结束证明；归还该预留与自持CALL，借用缓存CALL不释放，不把VFS标记为结束。ENDED处分与ABORT成功区分，预算保持。
+- 45项专项（13上下文/32创建）；两架构三进程fixture先交付真实CALL，再结束独立后端，目录以1个VFS及7本地占位填满且无实际后端项。清理不占第九项，VFS连接仍可用；原死亡/创建/信号/ATTACH场景继续通过。
+- 验收：1075项完整host、格式、最终输入下8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
+- 证据：`build/host/stage162-resource-peer-end/`。未重跑195矩阵（最近stage154），无CI/板端/性能结果。stage157及后续提交暂未推送，仍待公开发布确认。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
 - 待确认：生产rqclean的CONTROL_CLEAN=0x80、仅初始init持有及完整REQUEST参数方案已单独提问，尚未修改CONTROL/0x1b实现；候选及04/06旧表差异见04管理代收尾节。
 - 已确认的token定点ABORT、Image统一序号及创建记录与清理运输的类型化衔接已接。生产token授权/撤销、准备观察与服务私有in-flight仍待接；不把三角色fixture当成真实VFS/后端服务，规则见10篇。
-- 创建结果前置、旧后端CLOSE及未回复创建恢复已接；继续已捕获资源/接入bootstrap的失败责任和生产init受限rqclean授权/枚举，再接完整装载/公开前端/Fix。公开POSIX trampoline/errno/SA_RESTART及首次映射故障的完整连接恢复未完成；公开libc kill/raise未接，外部总线/FPE/SP对齐仍仅host分类检查。
+- 创建结果前置、旧后端CLOSE、未回复创建及资源无RPC清理失败恢复已接；继续已提交ABORT/接入bootstrap的排空/映射失败责任和生产init受限rqclean授权/枚举，再接完整装载/公开前端/Fix。公开POSIX trampoline/errno/SA_RESTART及首次映射故障的完整连接恢复未完成；公开libc kill/raise未接，外部总线/FPE/SP对齐仍仅host分类检查。
 - 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 

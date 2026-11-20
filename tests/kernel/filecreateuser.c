@@ -12,6 +12,7 @@
 #define STOP    0xf001
 #define GATE    0xf002
 #define PREPARE 0xf003
+#define ENDPEER 0xf004
 #define CONNID  0x10001
 static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
@@ -395,7 +396,7 @@ client(const Bootview *boot)
 }
 
 static void
-server(const Bootview *boot)
+server(const Bootview *boot, u32 recover)
 {
   Connpeer  peer;
   Allocarg  alloc;
@@ -451,13 +452,27 @@ server(const Bootview *boot)
     opcode = input.words[0];
     zero(&reply, sizeof(reply));
     if (opcode == STOP) {
-      CHECK(!pending && created == 7 && closed == 7);
+      CHECK(!pending && created == (recover ? 0 : 7) && closed == (recover ? 0 : 7));
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;
       reply.words[1] = closed;
       CHECK(!ipc_reply(input.request, &reply));
       break;
+    }
+    if (opcode == ENDPEER) {
+      Msg    message;
+      Ipcmsg result;
+      Handle rpc;
+      CHECK(recover && filecreatetrace[4] == 1);
+      message.words[0] = ENDPEER;
+      message.words[1] = message.words[2] = message.words[3] = 0;
+      CHECK(!ipc_call(bootresource(boot, 257), &message, CALL_ASYNC | CALL_CONTROL, &result));
+      rpc = result.request;
+      filecreatetrace[5] = (u64) rpc;
+      CHECK(ipc_rqwait(rpc, 0, &result) == -ERR_PEER && !ipc_rqwait(rpc, RQ_FINISH, &result) &&
+            !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) && !ipc_reply(input.request, &reply));
+      continue;
     }
     if (opcode == GATE) {
       CHECK(pending && !ipc_reply(input.request, &reply));
@@ -563,7 +578,7 @@ server(const Bootview *boot)
   filecreatetrace[0] = 2;
 }
 static void
-backend(const Bootview *boot)
+backend(const Bootview *boot, u32 recover)
 {
   Connpeer  clientpeer, vfspeer;
   Ipcmsg    input;
@@ -591,6 +606,15 @@ backend(const Bootview *boot)
       reply.words[1] = input.words[3];
       CHECK(!ipc_reply(input.request, &reply));
       continue;
+    }
+    if (input.words[0] == ENDPEER) {
+      CHECK(recover && input.source == vfspeer.pid && input.image == vfspeer.image &&
+            created == 1 && references[0] && !memory);
+      filecreatetrace[1] = 1;
+      filecreatetrace[2] = 0;
+      filecreatetrace[4] = 1;
+      filecreatetrace[0] = 2;
+      return;
     }
     CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
     if (input.words[0] == STOP) {
@@ -843,24 +867,84 @@ deadserver(const Bootview *boot, u64 creating)
   /* Exit with the accepted CLOSE unanswered and both references still live.
      Kernel Image termination, not a fabricated positive reply, drives recovery. */
 }
+static void
+resourceendclient(const Bootview *boot)
+{
+  Opkey     key;
+  Connpeer  peer;
+  Conntag   tag;
+  Connclaim claim;
+  Connentry entry;
+  Handle    call, rpc;
+  Rkey      invocation;
+  Msg       message;
+  Ipcmsg    result;
+  u64       files[2], source = 0;
+  u32       i;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(FS_OPEN, "/bound", 0);
+  collect(&key);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+  peer = work.state.creators[key.lease.slot].peer;
+  for (i = 0; i < SYSCONN_COUNT - 1; i++) {
+    peer.image++;
+    CHECK(!sysconnbind(&cache, peer, &tag));
+  }
+  peer = work.state.creators[key.lease.slot].peer;
+  CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
+  message.words[0] = ENDPEER;
+  message.words[1] = message.words[2] = message.words[3] = 0;
+  CHECK(!ipc_call(work.state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
+  rpc = result.request;
+  CHECK(
+      !ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
+      !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+      !sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call) &&
+      !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim, call, 0,
+                      &invocation) &&
+      sysctxinvoke(&contexts, work.state.self, invocation) == -ERR_PEER &&
+      !sysctxhandoff(&contexts, work.state.self, invocation) &&
+      !sysctxcreatepeerended(&contexts, work.state.self, invocation, &pool, &work, &cache, &key) &&
+      !sysctxfinish(&contexts, work.state.self, invocation) &&
+      !sysfilecreateended(&pool, &work, &cache, &key));
+  zero(files, sizeof(files));
+  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source &&
+        !work.state.ended && !sysconnview(&cache, work.state.tag, &entry) &&
+        entry.state == SYSCONN_READY && sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
+  message.words[0] = STOP;
+  CHECK(!ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
+        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+  filecreatetrace[2] = 1;
+  filecreatetrace[3] = 1;
+  filecreatetrace[0] = 2;
+}
 int
 main(int argc, char **argv)
 {
-  CHECK(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '8' && !argv[0][1]);
+  CHECK(argc == 1 &&
+        ((argv[0][0] >= '0' && argv[0][0] <= '9') || argv[0][0] == 'a' || argv[0][0] == 'b') &&
+        !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
     client(sysboot());
   else if (argv[0][0] == '1')
-    server(sysboot());
+    server(sysboot(), 0);
   else if (argv[0][0] == '2')
-    backend(sysboot());
+    backend(sysboot(), 0);
   else if (argv[0][0] == '3')
     deadclient(sysboot());
   else if (argv[0][0] == '4')
     deadserver(sysboot(), 0);
   else if (argv[0][0] == '5' || argv[0][0] == '7')
     createdeadclient(sysboot(), argv[0][0] == '5' ? FS_OPEN : FS_PIPE);
-  else
+  else if (argv[0][0] == '6' || argv[0][0] == '8')
     deadserver(sysboot(), argv[0][0] == '6' ? FS_OPEN : FS_PIPE);
+  else if (argv[0][0] == '9')
+    resourceendclient(sysboot());
+  else if (argv[0][0] == 'a')
+    server(sysboot(), 1);
+  else
+    backend(sysboot(), 1);
   return 42;
 }

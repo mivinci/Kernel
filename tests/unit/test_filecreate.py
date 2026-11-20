@@ -11,7 +11,7 @@ class Creator(C.Structure):
     _fields_ = [('stage', Stage), ('values', Value*2), ('files', C.c_uint64*2),
                 ('peer', support.Peer), ('call', C.c_int64), ('token', C.c_uint64),
                 ('source', C.c_uint64), ('error', C.c_int64)] + [
-                (n, C.c_uint32) for n in ('phase', 'count', 'disposition', 'reserved')]
+                (n, C.c_uint32) for n in ('phase', 'count', 'disposition', 'flags')]
 
 
 class Words(C.Structure):
@@ -62,6 +62,7 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
             'sysfilecreaterevokeprepare':[pool,work,cache,key,C.c_int64,C.c_uint64,
                                           C.POINTER(support.Claim),C.POINTER(C.c_int64)],
             'sysfilecreaterevoked':[pool,work,cache,key,support.Claim],
+            'sysfilecreateended':[pool,work,cache,key],
             'sysfilecreatefinish':[pool,work,cache,key,C.POINTER(C.c_uint64),C.POINTER(C.c_uint64)],
             'sysfilecreateabort':[pool,work,cache,key,C.POINTER(C.c_uint64)],
             'sysopsubmitted':[work,cache,key,C.POINTER(C.c_int64)],

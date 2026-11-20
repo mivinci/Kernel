@@ -1099,3 +1099,15 @@ stage161增加sysfilecreatefailed，显式处理尚未捕获结果的创建事�
 原生runtime在旧场景后分别增加OPEN、PIPE死亡双角色。服务接收原创建后无reply退出；客户端保存原ERR_PEER/RPC，另一个不同序号和路径的新OPEN在提交前返回原生PEER且未产生RPC。此新调用验证sysctxpeerended的真实Rctx证明，立即回滚其预付ID；它不重放原请求。原OPEN的一份/PIPE的两份预留继续隔离，受信测试管理者在清完旧空间、确认本fixture无下游/DMA后显式rqclean，原结果仍PEER。客户端待真实RQ_FINISH后捕获失败并ACK，最终两组场景分别回收2/3份本地预留（均含1份未提交新调用的回滚），返回新File ID全0，全部本地表/映射/费用/实例归零。这里不声称已实现生产管理授权、实际PIPE语义或公开POSIX创建前端。
 
 1070项完整host、格式、RV64/ARM64各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过；旧CLOSE隔离/可信代收尾、11份引用/创建信号/资源ATTACH-ABORT继续通过。目标布局、SDK源码/头/库、实际链接载荷和无libc依赖审计通过，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage161-creator-recovery/的unit、focused、runtime-riscv-initial及其余场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果。生产rqclean的专用权限及04/06参数类型差异已提出候选询问，未获确认前不实现；已捕获资源与接入失败、生产服务/公开前端/Fix、sh/net/最终GUI继续。
+
+### 资源实际后端结束与无RPC撤销失败（2026-11-21）
+
+stage162处理资源OPEN已经捕获并ACK、但原token的无目录项ABORT在提交前遇内核ERR_PEER且没有产生RPC的情况。sysctxcreatepeerended核对当前Image银行及实际Filepool/原创建键、已handoff的SYS_CALL原生状态、BOOT路由/claim/序号/owner、原token、ABORT选项及全部参数；再通过本主体RESOURCE查询解析该CALL真实PID/image，与Createop已捕获的实际后端精确匹配，才保存创建者局部PEER_ENDED标记。来源VFS与实际后端可以不同，既不把VFS标结束，也不猜目录项/额外创建第九项。撤权、旧context、不同token/seq/目标或缺少证明均保持原责任。
+
+原Createop的保留u32明确命名为flags，增加这一局部证明位；新增ENDED处分，与正向ABORT确认的REVOKED区分，不能将失败标成服务已成功回复。已证明结束的资源拒绝重新ATTACH或重发准备撤销。调用方完成原Rctx续执行后，sysfilecreateended只释放创建者仍自持的CALL及这一份本地预留，并解除精确的未提交bootstrap；free失败保留标记、token、预留及PREPARED记录供重试，不需要已经结束的Rctx继续持有证明。已移入缓存的借用CALL不在此释放。finish仍只返回零新File ID和独立源pin，旧连接/先前ATTACH的RPC、MEM/map、其他File和下游/DMA责任不由本点推断完成。
+
+新增5项host，相关专项合计45项（上下文13、创建32），覆盖实际后端与来源分离、满目录不变、撤权不能作结束证明、错误token/seq/CALL目标/Image拒绝、free失败在Rctx结束后重试、已证明结束不能重新接入，以及缓存借用CALL保持。目标布局不变：Createop184、Connstate2880+Conncache472=3352、工作页4096、Rctx512、Rbank50712；没有新内核调用号或管理权限。
+
+双架构runtime新增客户端/VFS/实际后端三角色：VFS先完成真实准备及CALL/ref/token交付，后端保持存活直至客户端捕获ACK。目录用1个真实VFS和7个本地占位身份填满，不含该实际后端。之后实际后端在接收VFS控制请求后退出，受信测试管理者清完旧空间并确认本fixture无下游/DMA，显式rqclean结清该控制Rq；VFS继续存活。客户端向已结束实际后端提交token ABORT得到无RPC的原生PEER，经新证明/恢复释放本地责任，目录保持满额，VFS项仍READY且后续STOP调用成功。它不把VFS死亡当作实际后端死亡，也不将该失败ABORT描述为已交付业务；原11引用/信号/ATTACH及CLOSE/OPEN/PIPE死亡场景都继续运行。测试装载循环抽成同一roles helper，生产程序不含这些角色或控制码。
+
+1075项完整host、格式、RV64/ARM64各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过。SDK/目标布局、实际链接载荷、无libc依赖及生产无测试代码均已核对，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage162-resource-peer-end/的unit、context/create-initial、runtime-riscv-initial与其他场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果。已提交ABORT的失败/真实排空、首次映射故障的完整连接恢复、生产受限rqclean授权/枚举及服务/公开前端/Fix、sh/net/最终GUI仍待继续；04管理权限候选仍待确认，本点未实现它。

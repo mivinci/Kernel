@@ -1589,6 +1589,11 @@ def exercise(args, run_dir, record):
                     if createdead != expected_dead:
                         raise SmokeError("ended backend creator reservation recovery mismatch")
                     record['creator_recovery']=createdead
+                    resource_dead=[fields(line) for line in serial.read_text().splitlines() if line.startswith("RESOURCEDEADCHECK ")]
+                    if resource_dead != [dict(actors=3,resource_opens=1,recovered=1,full_directory=1,
+                            failed_abort=1,source_usable=1,trusted_cleanup=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("actual resource backend end recovery mismatch")
+                    record['resource_recovery']=resource_dead[0]
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
                             {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "formats", "groups", "queues", "rings", "fd_tables", "file_slots", "charged", "allocated")} !=

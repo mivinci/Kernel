@@ -59,6 +59,12 @@ isize sysfilecreaterevokeprepare(Filepool *pool, Connwork *work, Conncache *cach
    reservation and original creator page. Does not release a backend's CALL. */
 isize sysfilecreaterevoked(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                            Connclaim claim);
+/* After sysctxcreatepeerended proved the exact actual backend and the bound
+   Rctx continuation has finished. Failed ABORT produced no RPC. Releases
+   only this prospective reference and creator-owned CALL, unprepares the
+   exact bootstrap; free failure preserves the proof for retry. Cached
+   connections, prior ATTACH/MEM and unrelated references are independent. */
+isize sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 /* ACKED + RESOLVED only. Moves result IDs and the old source pin once; caller
    publishes/drops those IDs and returns the source pin separately. closing=1
    leaves ownership in the pool's close anchors and returns zero result IDs. */
