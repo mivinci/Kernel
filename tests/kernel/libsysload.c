@@ -3,8 +3,12 @@
 #include <bootimage.h>
 #include "load.h"
 #include <diag.h>
+#include <signal.h>
 extern const u8       libsys_image[], libsys_image_end[];
 extern const u64      libsys_resource_address;
+static Handle         contextpid;
+static u64            contextinjected;
+NORETURN void         __real_hal_user_enter(Hctx *context);
 typedef struct Packet Packet;
 struct Packet
 {
@@ -22,6 +26,30 @@ struct Packet
       panic("libsys user ELF");                                                                    \
     }                                                                                              \
   } while (0)
+NORETURN void
+__wrap_hal_user_enter(Hctx *context)
+{
+  Rtable  *table = proccurrent(context);
+  Procinfo process;
+  Siginfo  info;
+  u64      trace[32], stage;
+  u32      i;
+  if (table && table->owner == contextpid) {
+    REQUIRE(!procinfo(contextpid, &process) &&
+            !spaceread(process.space, libsys_resource_address, trace, sizeof(trace)));
+    stage = trace[16];
+    if (stage >= 1 && stage <= 4 && context->tf.pc == trace[17] &&
+        !(contextinjected & (1UL << stage))) {
+      contextinjected |= 1UL << stage;
+      for (i = 0; i < sizeof(info); i++)
+        ((u8 *) &info)[i] = 0;
+      info.signum = SIGNAL_USR1;
+      REQUIRE(!procsigqueue(contextpid, &info));
+      procuserreturn(context);
+    }
+  }
+  __real_hal_user_enter(context);
+}
 static void
 load(Handle pid, const Procinfo *peer, u32 client)
 {
@@ -104,6 +132,8 @@ libsysload(void)
   }
   load(pids[0], &info[1], 1);
   load(pids[1], &info[0], 0);
+  contextpid = pids[0];
+  contextinjected = 0;
   REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]));
   do {
     REQUIRE(!procrunone() && ++turns < 64);
@@ -126,10 +156,11 @@ libsysload(void)
         }
         ended++;
         if (!i && !source_cleaned) {
-          u64 client_trace[16];
+          u64 client_trace[32];
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
-                  client_trace[9] == 6);
+                  client_trace[9] == 6 && client_trace[19] == 4 && client_trace[20] == 4 &&
+                  client_trace[21] == 30 && contextinjected == 30);
           while ((error = procclean(pids[0])) > 0) {
           }
           REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
@@ -183,6 +214,8 @@ libsysload(void)
   puthex(8);
   putstr(" owned_call=");
   puthex(1);
+  putstr(" rctx_handoffs=");
+  puthex(4);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

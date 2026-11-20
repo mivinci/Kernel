@@ -1,0 +1,207 @@
+#include "private/contextipc.h"
+#include <abi/syscall.h>
+static int
+separate(const void *a, u64 bytes, const void *b, u64 length)
+{
+  u64 x = (u64) (uintptr_t) a, y = (u64) (uintptr_t) b;
+  return a && b && bytes <= UINT64_MAX - x && length <= UINT64_MAX - y &&
+         (x + bytes <= y || y + length <= x);
+}
+static void
+clearroute(Rroute *route)
+{
+  u32          i;
+  volatile u8 *bytes = (volatile u8 *) route;
+  for (i = 0; i < sizeof(*route); i++)
+    bytes[i] = 0;
+}
+static int
+storage(Rbank *bank, const void *record, u64 bytes, Rkey *out)
+{
+  return separate(bank, sizeof(*bank), record, bytes) && separate(record, bytes, out, sizeof(*out));
+}
+static int
+empty(const Ipcmsg *message, u32 request)
+{
+  u32 i;
+  if (message->kind || message->source || message->image || (!request && message->request))
+    return 0;
+  for (i = 0; i < 4; i++)
+    if (message->words[i])
+      return 0;
+  return 1;
+}
+static isize
+prepare(Rbank *bank, Connpeer self, u32 layer, u64 number, Handle target, const Msg *message,
+        u64 options, const Rroute *route, Rkey *out)
+{
+  u64   args[7];
+  u32   i;
+  isize error;
+  args[0] = (u64) target;
+  for (i = 1; i < 7; i++)
+    args[i] = 0;
+  if (number == SYS_CALL) {
+    if (handlekind(target) != HANDLE_RESOURCE ||
+        options & ~((u64) (CALL_RECV_MEM | CALL_RECV_CALL | CALL_CONTROL)))
+      return -ERR_INVALID;
+    for (i = 0; i < 4; i++)
+      args[1 + i] = message->words[i];
+    args[5] = CALL_ASYNC | options;
+  }
+  error = sysctxprepare(bank, self, layer, number, args, out);
+  if (error)
+    return error;
+  for (i = 0; i < sizeof(*route); i++)
+    ((u8 *) &bank->contexts[layer].route)[i] = ((const u8 *) route)[i];
+  return 0;
+}
+isize
+sysctxbootcall(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Connclaim claim,
+               Handle call, u64 options, Rkey *out)
+{
+  Rroute route;
+  Msg    request;
+  isize  error;
+  if (!storage(bank, record, sizeof(*record), out) || options & CALL_CONTROL)
+    return -ERR_INVALID;
+  clearroute(&route);
+  error = sysbootrequest(record, claim, &request);
+  if (error)
+    return error;
+  route.kind = RCTX_ROUTE_BOOT;
+  route.bootstrap = record;
+  route.claim = claim;
+  return prepare(bank, self, layer, SYS_CALL, call, &request, options, &route, out);
+}
+isize
+sysctxbootwait(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Connclaim claim, Rkey *out)
+{
+  Rroute route;
+  isize  error;
+  if (!storage(bank, record, sizeof(*record), out))
+    return -ERR_INVALID;
+  clearroute(&route);
+  error = sysbootrpc(record, claim, &route.rpc);
+  if (error)
+    return error;
+  route.kind = RCTX_ROUTE_BOOT;
+  route.bootstrap = record;
+  route.claim = claim;
+  return prepare(bank, self, layer, SYS_RQWAIT, route.rpc, NULL, 0, &route, out);
+}
+static isize
+operation(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache, const Opkey *key,
+          u64 options, u64 number, Rkey *out)
+{
+  Rroute route;
+  Msg    request;
+  Handle target;
+  isize  error;
+  if (!storage(bank, work, sizeof(*work), out) || !storage(bank, cache, sizeof(*cache), out) ||
+      !separate(key, sizeof(*key), out, sizeof(*out)) || options & CALL_CONTROL)
+    return -ERR_INVALID;
+  if (work->state.self.pid != self.pid || work->state.self.image != self.image)
+    return -ERR_STALE;
+  clearroute(&route);
+  if (number == SYS_CALL) {
+    error = sysoprequest(work, cache, key, &request);
+    target = work->state.call;
+    if (!error && key->lease.slot >= 6)
+      options |= CALL_CONTROL;
+  } else {
+    error = sysoprpc(work, cache, key, &route.rpc);
+    target = route.rpc;
+  }
+  if (error)
+    return error;
+  route.kind = RCTX_ROUTE_OP;
+  route.work = work;
+  route.cache = cache;
+  route.operation.connection.generation = key->connection.generation;
+  route.operation.connection.index = key->connection.index;
+  route.operation.connection.reserved = key->connection.reserved;
+  route.operation.lease.seq = key->lease.seq;
+  route.operation.lease.slot = key->lease.slot;
+  route.operation.lease.span = key->lease.span;
+  route.operation.owner = key->owner;
+  return prepare(bank, self, layer, number, target, &request, options, &route, out);
+}
+isize
+sysctxopcall(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache,
+             const Opkey *key, u64 options, Rkey *out)
+{
+  return operation(bank, self, layer, work, cache, key, options, SYS_CALL, out);
+}
+isize
+sysctxopwait(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache,
+             const Opkey *key, Rkey *out)
+{
+  return operation(bank, self, layer, work, cache, key, 0, SYS_RQWAIT, out);
+}
+isize
+sysctxhandoff(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx   *context;
+  Rroute *route;
+  Ipcmsg  message;
+  Handle  rpc;
+  u32     i;
+  isize   error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  route = &context->route;
+  if (route->kind != RCTX_ROUTE_BOOT && route->kind != RCTX_ROUTE_OP)
+    return -ERR_STATE;
+  if (context->phase == RCTX_CLEANING && route->delivered == 1)
+    return 0;
+  if (context->phase != RCTX_DONE || route->delivered || context->status > 0)
+    return -ERR_STATE;
+  for (i = 0; i < sizeof(message); i++)
+    ((u8 *) &message)[i] = ((const u8 *) &context->result)[i];
+  if (context->number == SYS_CALL) {
+    Msg request;
+    error = route->kind == RCTX_ROUTE_BOOT
+                ? sysbootrequest(route->bootstrap, route->claim, &request)
+                : sysoprequest(route->work, route->cache, &route->operation, &request);
+    if (error)
+      return error;
+    if (!empty(&message, !context->status))
+      return -ERR_STATE;
+    if (!context->status) {
+      if (handlekind(message.request) != HANDLE_RPC)
+        return -ERR_STATE;
+      error = route->kind == RCTX_ROUTE_BOOT
+                  ? sysbootsubmitted(route->bootstrap, route->claim, &message.request)
+                  : sysopsubmitted(route->work, route->cache, &route->operation, &message.request);
+      if (error)
+        return error;
+    }
+  } else if (context->number == SYS_RQWAIT) {
+    error = route->kind == RCTX_ROUTE_BOOT
+                ? sysbootrpc(route->bootstrap, route->claim, &rpc)
+                : sysoprpc(route->work, route->cache, &route->operation, &rpc);
+    if (error)
+      return error;
+    if (rpc != route->rpc || (Handle) context->args[0] != rpc)
+      return -ERR_STALE;
+    if (!context->status || context->status == -ERR_CANCELLED || context->status == -ERR_PEER ||
+        context->status == -ERR_REVOKED) {
+      error = route->kind == RCTX_ROUTE_BOOT
+                  ? sysbootcapture(route->bootstrap, route->claim, context->status, &message)
+                  : sysopcapture(route->work, route->cache, &route->operation, context->status,
+                                 &message);
+      if (error)
+        return error;
+    } else if (!empty(&message, 0))
+      return -ERR_STATE;
+  } else
+    return -ERR_STATE;
+  /* The destination now owns RPC/result/resource, or retains the original
+     waiting responsibility after an error. Keep only status for resume. */
+  for (i = 0; i < sizeof(context->result); i++)
+    ((u8 *) &context->result)[i] = 0;
+  route->delivered = 1;
+  context->phase = RCTX_CLEANING;
+  return 0;
+}

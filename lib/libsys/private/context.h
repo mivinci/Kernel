@@ -17,10 +17,24 @@
 #define RCTX_SNAPSHOT_BYTES 16384
 #ifndef __ASSEMBLER__
 #include "syscall.h"
-#include "conn.h"
-typedef struct Rctx  Rctx;
-typedef struct Rbank Rbank;
-typedef struct Rkey  Rkey;
+#include "operation.h"
+#define RCTX_ROUTE_NONE 0
+#define RCTX_ROUTE_BOOT 1
+#define RCTX_ROUTE_OP   2
+typedef struct Rctx   Rctx;
+typedef struct Rbank  Rbank;
+typedef struct Rkey   Rkey;
+typedef struct Rroute Rroute;
+struct Rroute
+{
+  u64        kind, delivered;
+  Bootstrap *bootstrap;
+  Connwork  *work;
+  Conncache *cache;
+  Connclaim  claim;
+  Opkey      operation;
+  Handle     rpc;
+};
 struct Rctx
 {
   volatile u64 phase;
@@ -29,7 +43,8 @@ struct Rctx
   Sysret       result;
   u64          args[7];
   volatile u64 active;
-  u64          reserved[44];
+  Rroute       route;
+  u64          reserved[29];
 };
 struct Rbank
 {
@@ -56,7 +71,8 @@ STATIC_ASSERT(sizeof(Rbank) == 24 + RCTX_LAYERS * (RCTX_BYTES + RCTX_SNAPSHOT_BY
               runtime_bank_size);
 /* Fresh private preallocated Image storage, never initialize live obligations.
    Three metadata/snapshot layers, no global allocation. Layer selection and
-   File/Op/Bootstrap references remain caller responsibilities in this slice.
+   IPC route registration binds existing File/Op/Bootstrap responsibility;
+   it does not allocate or duplicate those references.
    Prepare/capture/result/finish require caller caught-signal exclusion. */
 /* SIGRETURN keeps its own NORETURN stub, never leaves a live Rctx behind. */
 isize sysctxinit(Rbank *bank, Connpeer self);
@@ -76,6 +92,9 @@ isize sysctxcapture(Rbank *bank, Connpeer self, Rkey key, void *trap);
    record for diagnostics, but CLEANING no longer owns a second tuple. */
 isize sysctxresult(Rbank *bank, Connpeer self, Rkey key, isize *status, Sysret *out);
 isize sysctxfinish(Rbank *bank, Connpeer self, Rkey key);
+/* Library-private lookup shared with the IPC route module. Borrowed metadata,
+   valid only under caller signal exclusion; never an ownership transfer. */
+isize sysctxlookup(Rbank *bank, Connpeer self, Rkey key, Rctx **out);
 /* Architecture-private register decoder and actual assembly entry. Bounds
    supplied only by sysctxcapture from these fixed link symbols. */
 isize           sysctxdecode(Rctx *context, void *trap, u64 begin, u64 end, u64 resume);

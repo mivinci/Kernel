@@ -27,6 +27,9 @@ STATIC_ASSERT(sizeof(Opkey) == 40, slot_operation_key_size);
 isize sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner,
                    u64 *owned_file, u64 object, u64 opcode, u64 deadline, Opkey *out);
 isize sysopsubmitted(Connwork *work, Conncache *cache, const Opkey *key, Handle *owned_rpc);
+/* Borrow PREPARED short request or WAITING RPC, never another owner. */
+isize sysoprequest(Connwork *work, Conncache *cache, const Opkey *key, Msg *out);
+isize sysoprpc(Connwork *work, Conncache *cache, const Opkey *key, Handle *out);
 isize sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize status,
                    const Ipcmsg *result);
 isize sysoppoll(Connwork *work, Conncache *cache, const Opkey *key);

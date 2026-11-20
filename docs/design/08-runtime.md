@@ -562,3 +562,19 @@ libsys 新增私有 context 模块：调用方为当前 PID/image 预付一个50
 最终审计核对168份journal、全部结果的源码/头哈希、SDK导出与依赖、实际链接frame_image及原生陷阱指令/窗口标签/银行大小。默认init/serial与stage143逐字节相同，生产镜像无测试wrapper，clangd数据库切回RV64/sigframe并包含SDK上下文源码。证据为build/host/stage144-runtime-window/{test-all.log,test-remaining.log,verify.py,evidence.json}；清理仅删除成功且未引用的生成目录，312份中间固定结果保持完整，最终结果亦由evidence固定引用。无CI、板端或性能结果。
 
 后续仍须把 Rctx 与原始 Op/Bootstrap 的RPC及资源责任绑定，接实际参数快照、嵌套帧链策略、POSIX trampoline/SA_RESTART 和 fork/Fix修复。本点不代表标准fd、生产tty/fs/blk、sh/net/GUI完成，无CI、板端或性能结果。
+
+### Rctx 与原 RPC 责任交接（2026-11-20）
+
+私有contextipc模块新增Bootstrap/Op的call、wait登记及handoff。Rctx原512字节元数据中使用120字节Rroute保存目标指针、精确claim/Opkey和原RPC，三层银行仍为50712字节。登记前验证当前Image、目标阶段、代次/页租约及输出不重叠；目标私有记录和key在本次交接前由调用者独占保持，不能在另一条路径提前poll/ACK/finish。此为运行库内部约束，不是内核新增对象或权限。
+
+登记的CALL固定ASYNC，直接从既有记录生成四字业务请求，只把标量装入Rctx；可选MEM/CALL接收同意位。Op位于6/7页时自动选择CALL_CONTROL，普通业务不借控制预算；Bootstrap不接受控制选项。提交成功后handoff把原始返回的唯一RPC移入原PREPARED记录，转为WAITING。原生提交错误须无返回RPC/资源，目标仍PREPARED，调用者可显式撤销或在确认未提交后重试，不把它当作已完成业务。
+
+wait登记借用原记录的同一个RPC，返回时再次核对精确原RPC与输入。完成结果及资源移入该记录；INTERRUPTED/WOULD_BLOCK等无结果错误仅结束本次原始等待，记录及RPC保持WAITING。handoff不轮询、不阻塞、不发cancel/ACK、不安装fd、不复制共享数据。失败保留DONE及完整原tuple；成功清空原tuple并置CLEANING，重复handoff幂等，原生status保留给尚未返回的invoke。已绑定记录禁止走裸sysctxresult旁路；活动Rctx仍不能finish，原记录继续承担File pin、页、资源及ACK责任，不能因Rctx复用而释放它们。
+
+例：HELLO异步提交后、第一条结果存储前收到USR1，trampoline先捕获原RPC并handoff，handler看到Bootstrap已WAITING，再用独立层GETID；返回后主层重复handoff不再次提交。原RPC返回MEM时同一窗口再次被打断，资源先归Bootstrap，handler不消费它，主层恢复后才校验/映射/adopt/ACK。共享READ以同样方式提交，转后台后等待的仍是同一RPC；handler前结果移入原起始槽，恢复后才保存数据并ACK、释放页和File pin。四次注入仅存在于libsys测试镜像wrapper，使用私有code=0信号运输，不定义公开来源或POSIX取消策略。
+
+新增8项host直接执行生产模块，覆盖提交唯一转交/裸结果旁路拒绝、MEM结果、等待中断后原RPC保持、提交失败、旧claim/原RPC拒绝、Op页/File/资源责任和存储重叠/镜像拒绝。938项完整host及格式通过；本轮运行RV64/ARM64各libsys、sigframe、normal，共6个QEMU与6份journal。每架构真实四处首存储信号捕获及handler内层调用均通过；八个普通Rq满额时，新的Op控制关闭登记/实际调用/原结果确认继续通过，退出页/Acct与原有生产启动审计保持。
+
+最终审计核对源码/头/SDK、无libc依赖、实际链接用户载荷、返回窗口、银行/trace大小和无测试代码的生产内核；默认init/serial与stage144逐字节相同，clangd切回RV64/libsys。证据build/host/stage145-context-handoff/{unit.log,fmt-check.log,libsys-riscv.log,libsys-arm64.log,sigframe.log,normal.log,verify.py,evidence.json}。初次SDK检查分别拒绝隐式memset/memcpy，已改显式清零/字段复制；测试初始化曾早于Connwork身份建立，已按直接退出码观测修正。失败现场和脚本入口误用记录保留。本轮未重跑195场景完整矩阵，最近完整矩阵仍见stage144，不将旧结果写作本轮验证。
+
+共享数据/参数专用快照、正式信号前置取消、嵌套链/SA_RESTART、fork/Fix修复和标准fd/生产服务仍待接；本点不代表完整POSIX/sh/net/GUI，无CI、板端或性能验收。

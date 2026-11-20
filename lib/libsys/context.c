@@ -27,8 +27,8 @@ source(Rbank *bank, Connpeer self)
     return -ERR_INVALID;
   return bank->self.pid == self.pid && bank->self.image == self.image ? 0 : -ERR_STALE;
 }
-static isize
-find(Rbank *bank, Connpeer self, Rkey key, Rctx **out)
+isize
+sysctxlookup(Rbank *bank, Connpeer self, Rkey key, Rctx **out)
 {
   Rctx *context;
   isize error = source(bank, self);
@@ -100,7 +100,7 @@ sysctxinvoke(Rbank *bank, Connpeer self, Rkey key)
   isize status, error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &old);
   if (error)
     return error;
-  error = find(bank, self, key, &context);
+  error = sysctxlookup(bank, self, key, &context);
   if (!error && (context->phase != RCTX_PREPARED || context->active))
     error = -ERR_STATE;
   if (!error)
@@ -128,7 +128,7 @@ isize
 sysctxcapture(Rbank *bank, Connpeer self, Rkey key, void *trap)
 {
   Rctx *context;
-  isize error = find(bank, self, key, &context);
+  isize error = sysctxlookup(bank, self, key, &context);
   if (error)
     return error;
   return sysctxdecode(context, trap, (u64) (uintptr_t) __sys_ctxreturn_begin,
@@ -139,14 +139,14 @@ sysctxresult(Rbank *bank, Connpeer self, Rkey key, isize *status, Sysret *out)
 {
   Rctx *context;
   u32   i;
-  isize error = find(bank, self, key, &context);
+  isize error = sysctxlookup(bank, self, key, &context);
   if (error)
     return error;
   if (!separate(bank, sizeof(*bank), status, sizeof(*status)) ||
       !separate(bank, sizeof(*bank), out, sizeof(*out)) ||
       !separate(status, sizeof(*status), out, sizeof(*out)))
     return -ERR_INVALID;
-  if (context->phase != RCTX_DONE)
+  if (context->phase != RCTX_DONE || context->route.kind != RCTX_ROUTE_NONE)
     return -ERR_STATE;
   *status = context->status;
   for (i = 0; i < sizeof(*out); i++)
@@ -159,12 +159,14 @@ sysctxfinish(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx *context;
   u64   sequence;
-  isize error = find(bank, self, key, &context);
+  isize error = sysctxlookup(bank, self, key, &context);
   if (error)
     return error;
   if (context->active)
     return -ERR_BUSY;
   if (context->phase != RCTX_CLEANING)
+    return -ERR_STATE;
+  if (context->route.kind && context->route.delivered != 1)
     return -ERR_STATE;
   sequence = context->sequence;
   clear(context);

@@ -130,6 +130,37 @@ sysopsubmitted(Connwork *work, Conncache *cache, const Opkey *key, Handle *owned
   return 0;
 }
 isize
+sysoprequest(Connwork *work, Conncache *cache, const Opkey *key, Msg *out)
+{
+  Slotop *op;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (!output(work, cache, out, sizeof(*out)) || !separate(key, sizeof(*key), out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (op->phase != SYSOP_PREPARED)
+    return -ERR_STATE;
+  out->words[0] = op->opcode;
+  out->words[1] = work->state.map.connid;
+  out->words[2] = key->lease.seq;
+  out->words[3] = key->lease.slot;
+  return 0;
+}
+isize
+sysoprpc(Connwork *work, Conncache *cache, const Opkey *key, Handle *out)
+{
+  Slotop *op;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (!output(work, cache, out, sizeof(*out)) || !separate(key, sizeof(*key), out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (op->phase != SYSOP_WAITING)
+    return -ERR_STATE;
+  *out = op->rpc;
+  return 0;
+}
+isize
 sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize status, const Ipcmsg *result)
 {
   Slotop *op;

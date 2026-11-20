@@ -394,7 +394,7 @@ def build(args, directory, run_dir):
         temporary = work / "kernel.tmp.elf"
         invoke("link-kernel", [tools["ld"]["path"], "-m", profile["emulation"],
                               "-T", str(linker), "--build-id=none", "-Map=" + str(work / "kernel.map"),
-                              *(["--wrap=hal_user_enter"] if args.case in ("sigframe", "jobs") else []),
+                              *(["--wrap=hal_user_enter"] if args.case in ("sigframe", "jobs", "libsys") else []),
                               *actual_objects, "-o", str(temporary)])
         elf = read_kernel(temporary, profile["machine"],
                           0x80200000 if args.arch == "riscv" else 0x40200000)

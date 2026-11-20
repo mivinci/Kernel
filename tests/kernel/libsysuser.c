@@ -8,6 +8,7 @@
 #include "private/fileref.h"
 #include "private/fd.h"
 #include "private/close.h"
+#include "private/contextipc.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 static volatile u64       bss[257];
@@ -20,6 +21,8 @@ static Connpeer  connection_peer;
 static Bootstrap bootstrap_record;
 static Filepool  file_registry;
 static Fdtable   file_descriptors;
+static Rbank     runtime_contexts;
+static Rkey      runtime_key;
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -291,7 +294,77 @@ receiveserver(const Bootview *view)
   words.words[0] = 113;
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
-volatile u64 resource_trace[16];
+volatile u64 resource_trace[32];
+static void
+runtimehandler(u64 signum)
+{
+  Rkey   inner;
+  Sysret result;
+  isize  status;
+  u64    mask, ignored;
+  Rctx  *outer = &runtime_contexts.contexts[0];
+  u64    stage = resource_trace[16];
+  REQUIRE(signum == SIGNAL_USR1 && outer->phase == RCTX_CLEANING && outer->route.delivered &&
+              sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) == -ERR_BUSY,
+          108);
+  if (stage <= 2)
+    REQUIRE(outer->route.bootstrap->state == (stage == 1 ? SYSBOOT_WAITING : SYSBOOT_RESULT) &&
+                outer->route.bootstrap->rpc && (stage == 1 || outer->route.bootstrap->resource),
+            107);
+  else {
+    Slotop *op = &outer->route.work->state.operations[outer->route.operation.lease.slot];
+    REQUIRE(op->phase == (stage == 3 ? SYSOP_WAITING : SYSOP_RESULT) && op->rpc && op->file, 106);
+  }
+  REQUIRE(
+      !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+          !sysctxprepare(&runtime_contexts, connection_work.state.self, 1, SYS_GETID, NULL,
+                         &inner) &&
+          !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) &&
+          !sysctxinvoke(&runtime_contexts, connection_work.state.self, inner) &&
+          !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+          !sysctxresult(&runtime_contexts, connection_work.state.self, inner, &status, &result) &&
+          !status && result.values[0] == (u64) connection_work.state.self.pid &&
+          !sysctxfinish(&runtime_contexts, connection_work.state.self, inner) &&
+          !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+      105);
+  resource_trace[20]++;
+  resource_trace[21] |= 1UL << stage;
+}
+static NORETURN void
+runtimetrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64 address, u64 flags)
+{
+  u64 mask, ignored;
+  REQUIRE(signum == SIGNAL_USR1 && !info->code && function == (u64) runtimehandler && !flags &&
+              !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              sysctxcapture(&runtime_contexts, connection_work.state.self, runtime_key, trap) ==
+                  1 &&
+              !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          104);
+  resource_trace[19]++;
+  runtimehandler(signum);
+  __sys_sigreturn((void *) address);
+}
+static void
+runtimeinit(void)
+{
+  Sigact action;
+  REQUIRE(!sysctxinit(&runtime_contexts, connection_work.state.self), 103);
+  action.kind = SIGNAL_HANDLER;
+  action.handler = (u64) runtimehandler;
+  action.trampoline = (u64) runtimetrampoline;
+  action.mask = action.flags = action.reserved = 0;
+  REQUIRE(!__sys_sigaction(SIGNAL_USR1, &action, NULL), 102);
+  resource_trace[17] = (u64) (uintptr_t) __sys_ctxreturn_begin;
+  resource_trace[18] = (u64) (uintptr_t) __sys_ctxresume;
+}
+static void
+runtimeinvoke(u64 stage)
+{
+  resource_trace[16] = stage;
+  REQUIRE(!sysctxinvoke(&runtime_contexts, connection_work.state.self, runtime_key), 101);
+  resource_trace[16] = 0;
+}
 static void
 replyerror(Handle request, u64 address, isize expected, u32 extra)
 {
@@ -653,6 +726,7 @@ typedclient(const Bootview *view, Handle peer)
               !backend && !redundant && connection_work.state.call == donated &&
               !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
           237);
+  runtimeinit();
   words.words[0] = 201;
   REQUIRE(!ipc_call(peer, &words, CALL_RECV_CALL, &result) && result.kind == IPC_RESOURCE_REPLY,
           108);
@@ -686,19 +760,26 @@ typedclient(const Bootview *view, Handle peer)
     u32        saved;
     Handle     original;
     u64        originalva;
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
+                !sysbootprepare(active, claim, FS_HELLO, UINT64_MAX, 0) &&
+                !sysctxbootcall(&runtime_contexts, connection_work.state.self, 0, active, claim,
+                                connection_work.state.call, CALL_RECV_MEM, &runtime_key) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            142);
+    runtimeinvoke(1);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysctxbootwait(&runtime_contexts, connection_work.state.self, 0, active, claim,
+                                &runtime_key) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            141);
+    runtimeinvoke(2);
     REQUIRE(
         !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-            !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
-            !sysbootprepare(active, claim, FS_HELLO, UINT64_MAX, 0) &&
-            !sysbootrequest(active, claim, &words) &&
-            !ipc_call(connection_work.state.call, &words, CALL_ASYNC | CALL_RECV_MEM, &result) &&
-            !sysbootsubmitted(active, claim, &result.request) &&
-            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-        142);
-    REQUIRE(!ipc_rqwait(active->rpc, 0, &result), 141);
-    REQUIRE(
-        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-            !sysbootcapture(active, claim, 0, &result) &&
+            !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+            !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
             !sysbootreply(active, claim, 0, &validated) && validated.memory &&
             validated.bytes == FS_CONN_BYTES && !validated.offset &&
             !sysbootmap(active, claim, space, 0x1200000, connection_peer.image, &mapped) &&
@@ -762,13 +843,18 @@ typedclient(const Bootview *view, Handle peer)
     words.words[1] = connection_work.state.map.connid;
     words.words[2] = operation.lease.seq;
     words.words[3] = operation.lease.slot;
-    REQUIRE(
-        !__sys_copy((void *) (uintptr_t) (originalva + FS_DESC_OFFSET +
-                                          operation.lease.slot * FS_DESC_BYTES),
-                    &descriptor, sizeof(descriptor)) &&
-            !ipc_call(connection_work.state.call, &words, CALL_ASYNC, &result) &&
-            !sysopsubmitted(&connection_work, &connection_directory, &operation, &result.request),
-        129);
+    REQUIRE(!__sys_copy((void *) (uintptr_t) (originalva + FS_DESC_OFFSET +
+                                              operation.lease.slot * FS_DESC_BYTES),
+                        &descriptor, sizeof(descriptor)) &&
+                !sysctxopcall(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                              &connection_directory, &operation, 0, &runtime_key) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            129);
+    runtimeinvoke(3);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key),
+            129);
     stale.connection.generation = operation.connection.generation;
     stale.connection.index = operation.connection.index;
     stale.connection.reserved = 0;
@@ -804,13 +890,21 @@ typedclient(const Bootview *view, Handle peer)
                                    &other) == -ERR_BUSY &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             128);
-    REQUIRE(!ipc_rqwait(connection_work.state.operations[background.lease.slot].rpc, 0, &result),
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysctxopwait(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                              &connection_directory, &background, &runtime_key) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             127);
+    runtimeinvoke(4);
     REQUIRE(
         !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-            !sysopcapture(&connection_work, &connection_directory, &background, 0, &result) &&
-            !result.words[0] && result.words[1] == background.lease.seq && result.words[2] == 4 &&
-            result.words[3] == 4 &&
+            !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+            !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+            !connection_work.state.operations[background.lease.slot].words[0] &&
+            connection_work.state.operations[background.lease.slot].words[1] ==
+                background.lease.seq &&
+            connection_work.state.operations[background.lease.slot].words[2] == 4 &&
+            connection_work.state.operations[background.lease.slot].words[3] == 4 &&
             !__sys_copy(&saved,
                         (const void *) (uintptr_t) (originalva + FS_DATA_OFFSET +
                                                     background.lease.slot * FS_SLOT_BYTES),
@@ -847,28 +941,35 @@ typedclient(const Bootview *view, Handle peer)
                 !sysfilecloseprepare(&file_registry, &connection_work, &connection_directory,
                                      &closing, 503, 0, &close_operation, &words) &&
                 close_operation.lease.slot == 6 &&
-                !ipc_call(connection_work.state.call, &words, SYSFILE_CLOSE_OPTIONS, &result) &&
-                !sysopsubmitted(&connection_work, &connection_directory, &close_operation,
-                                &result.request) &&
+                !sysctxopcall(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                              &connection_directory, &close_operation, 0, &runtime_key) &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             114);
-    REQUIRE(!ipc_rqwait(connection_work.state.operations[6].rpc, 0, &result), 113);
-    REQUIRE(
-        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-            !sysopcapture(&connection_work, &connection_directory, &close_operation, 0, &result) &&
-            !sysfilecloseresult(&file_registry, &connection_work, &connection_directory, &closing,
-                                &close_operation) &&
-            sysfileclosecomplete(&file_registry, &connection_work, &connection_directory, &closing,
-                                 &close_operation) == -ERR_BUSY &&
-            !sysopsaved(&connection_work, &connection_directory, &close_operation) &&
-            !sysopack(&connection_work, &connection_directory, &close_operation) &&
-            !sysfileclosecomplete(&file_registry, &connection_work, &connection_directory, &closing,
-                                  &close_operation) &&
-            sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) ==
-                -ERR_STALE &&
-            !sysfilerefconnection(&file_registry, connection_work.state.self, connection_tag) &&
-            !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-        112);
+    runtimeinvoke(0);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysctxopwait(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                              &connection_directory, &close_operation, &runtime_key) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            113);
+    runtimeinvoke(0);
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
+                !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                !sysfilecloseresult(&file_registry, &connection_work, &connection_directory,
+                                    &closing, &close_operation) &&
+                sysfileclosecomplete(&file_registry, &connection_work, &connection_directory,
+                                     &closing, &close_operation) == -ERR_BUSY &&
+                !sysopsaved(&connection_work, &connection_directory, &close_operation) &&
+                !sysopack(&connection_work, &connection_directory, &close_operation) &&
+                !sysfileclosecomplete(&file_registry, &connection_work, &connection_directory,
+                                      &closing, &close_operation) &&
+                sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) ==
+                    -ERR_STALE &&
+                !sysfilerefconnection(&file_registry, connection_work.state.self, connection_tag) &&
+                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+            112);
     for (i = 0; i < 8; i++) {
       REQUIRE(!ipc_rqwait(pressure[i], 0, &result) && result.words[0] == 0xf00d &&
                   result.words[1] == i && !ipc_rqack(pressure[i], ACK_RESULT | ACK_RELEASE),
@@ -1003,9 +1104,9 @@ _start(const Boot *boot)
     receiveclient(&view, peer);
   else
     receiveserver(&view);
-  if (client)
+  if (client) {
     typedclient(&view, peer);
-  else
+  } else
     typedserver(&view);
   if (client) {
     REQUIRE(!ipc_call(peer, &words, CALL_ASYNC, &result) && result.request > 0, 118);

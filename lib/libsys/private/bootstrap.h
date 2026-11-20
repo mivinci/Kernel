@@ -43,6 +43,8 @@ void  sysbootinit(Bootstrap *record);
 isize sysbootcheck(const Bootstrap *record);
 isize sysbootprepare(Bootstrap *record, Connclaim claim, u32 opcode, u64 token, u64 deadline);
 isize sysbootsubmitted(Bootstrap *record, Connclaim claim, Handle *owned_rpc);
+/* Borrow the exact WAITING RPC; no transfer or native call. */
+isize sysbootrpc(Bootstrap *record, Connclaim claim, Handle *out);
 /* Protected nonblocking poll, or capture of an external unmasked wait's saved
    result after entering caller protection. No function here blocks. Raw
    query/wait errors leave WAITING; INTERRUPTED does not lose the RPC. Zero

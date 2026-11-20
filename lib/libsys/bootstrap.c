@@ -121,6 +121,19 @@ sysbootsubmitted(Bootstrap *record, Connclaim claim, Handle *owned_rpc)
   return 0;
 }
 isize
+sysbootrpc(Bootstrap *record, Connclaim claim, Handle *out)
+{
+  isize error = match(record, claim);
+  if (error)
+    return error;
+  if (!output(record, out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (record->state != SYSBOOT_WAITING)
+    return -ERR_STATE;
+  *out = record->rpc;
+  return 0;
+}
+isize
 sysbootcapture(Bootstrap *record, Connclaim claim, isize status, const Ipcmsg *result)
 {
   isize error;

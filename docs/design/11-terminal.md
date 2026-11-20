@@ -779,3 +779,5 @@ CASE=sigframe新增一个真实用户运输模型：仅测试链接的入口wrap
 开放问题：FAULT reason候选MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12，以及初次故障递送失败按原故障终止并保留原始诊断，已向用户提问，尚未冻结或加入abi/signal.h。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则，不因本候选改变。另一个GROUP target=0问题仍独立待回复；实际FAULT生产与libc kill/raise按确认结果接续。
 
 Rctx原生返回窗口的用户态接续见[08末尾](08-runtime.md#rctx-原生返回窗口接续2026-11-20)：两架构真实sigframe新增外层GETID第一条存储前捕获、独立内层GETPG和sigreturn安全恢复。仅测试wrapper注入信号，生产内核不含此入口；尚未接POSIX trampoline/SA_RESTART或原RPC责任交接，不改变上述两项待确认边界。
+
+stage145已接[08的原RPC责任交接](08-runtime.md#rctx-与原-rpc-责任交接2026-11-20)：两架构实际HELLO/READ的异步提交与等待返回各在首存储前捕获并移交原RPC/资源，handler用独立层，正常恢复幂等收尾。仅私有测试trampoline调用这些原语；正式POSIX取消前置、共享数据快照与重启策略仍未完成，不能把该运输测试当作公开sigaction/SA_RESTART验收。
