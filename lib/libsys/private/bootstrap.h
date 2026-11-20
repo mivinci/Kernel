@@ -67,6 +67,9 @@ isize sysbootunprepare(Bootstrap *record, Connclaim claim);
    HELLO cannot accept an ordinary reuse reply. Native MEM query authorizes
    the returned window; result words never authorize a physical range. */
 isize sysbootrequest(Bootstrap *record, Connclaim claim, Msg *out);
+/* Exact ordinary [0,abort_seq,0,0] only. Success is token revocation,
+   not MEM authorization or proof that unrelated native resources drained. */
+isize sysbootabortreply(Bootstrap *record, Connclaim claim);
 isize sysbootreply(Bootstrap *record, Connclaim claim, u64 reuse_connid, Bootreply *out);
 /* Caller pre-reserves an exclusive page-aligned VA range and supplies actual
    SELF_SPACE and exact peer image. map must be zero/fresh. A failure after

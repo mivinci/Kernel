@@ -1585,6 +1585,7 @@ def exercise(args, run_dir, record):
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("LIBSYSCHECK ")]
                     if (len(checks) != 1 or not 6 <= checks[0].get("turns", 0) < 256 or
                             checks[0].get("rctx_handoffs") != 4 or
+                            checks[0].get("detached_aborts") != 2 or
                             checks[0].get("cancel_before_handler") != 1 or
                             checks[0].get("stable_snapshot") != 1 or
                             checks[0].get("queued_retries") not in (0, 1) or

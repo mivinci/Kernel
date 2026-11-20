@@ -599,15 +599,21 @@ payload_bytes<=span*4096，所有字符串/数组offset均相对本请求首数�
 | --- | --- | --- | --- | --- |
 | HELLO | 0 | bootstrap_seq | UINT64_MAX | 无共享区输入，仅建立传输连接，不授予File；成功MEM资源reply业务三字=[bootstrap_seq,connid,region_bytes] |
 | ATTACH / EXEC_CLAIM | 0 | bootstrap_seq | prepare_token | token非零，私有准备记录须绑定真实目标source PID/image、用途及原授权方；首次成功MEM资源reply业务三字=[bootstrap_seq,connid,region_bytes]；复用已有连接的ATTACH/EXEC_CLAIM可普通reply=[0,bootstrap_seq,connid,region_bytes]，不安装MEM |
-| ABORT | 0或有效connid | bootstrap_seq或本连接控制seq | prepare_token | 0时仅原准备者/目标的既定取消关系可用，非0还先验证连接；只取消该准备，不读共享槽 |
+| ABORT | 0或有效connid | bootstrap_seq或本连接控制seq | prepare_token | 0时按下述token归属授权，非0还先验证连接；只撤销该token对应的准备或普通OPEN引用，不读共享槽；成功普通reply=[0,abort_seq,0,0] |
 
-bootstrap_seq由运行库在当前客户端实例/镜像对该服务实例/镜像的建立连接命名空间统一发号，所有信号层共享，从1起不回绕；保存结果时以这组完整身份、opcode和bootstrap_seq核对。HELLO/ATTACH/EXEC_CLAIM的参数全部来自寄存器快照和服务私有准备记录，不要求先map才能取得自身共享区。prepare_token只是有代次的服务准备身份，不是可由持有者任意冒领的授权；跨source、旧image、已取消token均拒绝。资源reply提交和原Rq结果的恢复规则沿用04，中断后查询原RPC，不另建Rq重复建立；已有token/连接对象可拒绝重复领取，但不缓存一份可重发资源的业务结果。
+bootstrap_seq由运行库在当前客户端Image内统一发号，HELLO/ATTACH/EXEC_CLAIM和无连接临时ABORT共用一个从1起、不回绕的发号器，跨后端及所有信号层共享。已发序号不因提交前回滚、目录项释放或后端切换而复用；耗尽则拒绝新事务。服务匹配原请求seq，允许间隔，不要求该客户端对本后端的首次seq恰为1。保存结果仍须核对真实客户端PID/image、固定服务PID/image、opcode及bootstrap_seq，统一序号不替代身份授权。目录已满时，客户端仍可凭原CALL、token及预付清理责任向新后端发送临时ABORT，不占第九个目录项，也不淘汰活连接。这里不改变有槽操作按连接发号的规则，四字消息布局不变。
+
+HELLO/ATTACH/EXEC_CLAIM的参数全部来自寄存器快照和服务私有准备记录，不要求先map才能取得自身共享区。prepare_token只是有代次的服务准备身份，不是可由持有者任意冒领的授权；跨source、旧image及已取消token的领取均拒绝；合法重复ABORT按下述幂等规则处理。资源reply提交和原Rq结果的恢复规则沿用04，中断后查询原RPC，不另建Rq重复建立；已有token/连接对象可拒绝重复领取，但不缓存一份可重发资源的业务结果。
+
+普通资源OPEN的token在ATTACH提交后仍标识其唯一引用。ATTACH前沿既定准备者/目标取消关系授权；ATTACH提交并移交后，仅精确目标客户端PID/image可用原token执行ABORT，原VFS准备者失去撤销权。客户端本地map或验证失败时以此补偿；服务按token定位并幂等撤销这一份引用，复用CLOSE的逻辑关闭与实际排空规则，不撤销共享连接或其他引用。成功只证明该引用逻辑关闭，不证明下游访问/DMA已排空；客户端仍须独立结清原RPC、映射及本地CALL责任。重复ABORT不得再次减少引用，服务须保留足以识别原token归属及已撤销状态的有界生命周期记录；不能按同号新token或session误关后来的引用。继承token仍遵守下节既有规则，不扩大原准备者对已发布目标的撤销权。
+
+例如VFS为A准备引用R并交付CALL/token，A的ATTACH已提交而本地map失败：A保存原ATTACH结果、结清其运输责任后，通过该固定后端CALL以原token发送ABORT。后端只关闭R并在原ABORT请求回复[0,abort_seq,0,0]，共享连接上的引用S仍可使用；迟到的VFS撤销请求被拒绝，A重复清理R不会关闭S。
 
 VFS OPEN交付后端CALL时，资源reply业务三字固定为[seq,session,prepare_token]。客户端持该session和token，向后端发送无槽ATTACH；首次MEM交付得到connid/region_bytes后才map；普通复用确认仅核对已经持有的同一映射，不执行第二次安装/map，随后才能使用该会话。连接头connid/bytes必须与本次资源回复匹配；不能把旧镜像connid或token当新连接connid。普通FS OPEN已经有HELLO连接，不需要再建立一次共享区，成功普通reply中的value为新session。
 
 创建类新引用返回格式已于2026-11-20确认：普通OPEN的value=session、bytes=8，VFS资源OPEN保留上述三字，两者均在原槽输出u64 reference_id；DUPREF的value=新reference_id、bytes=0且session不变；PIPE的value=2、bytes=32，原槽依读端/写端顺序输出两条{session:u64,reference_id:u64}。原RPC排空后保存、ACK前接管；free CALL不能代替关闭远端引用。实现与验收边界见文末。
 
-业务取消通过原RPC的rqcancel，结果通过同一RPC的rqpoll/rqwait/rqack处理，不发送文件层控制查询或确认。槽/活动操作键含服务PID/image、客户端PID/image、connid、seq及原REQUEST；seq匹配原槽和返回，不是跨新Rq恢复业务的凭证。ABORT只撤销明确token对应的准备对象，不取消或查询已提交I/O。
+业务取消通过原RPC的rqcancel，结果通过同一RPC的rqpoll/rqwait/rqack处理，不发送文件层控制查询或确认。槽/活动操作键含服务PID/image、客户端PID/image、connid、seq及原REQUEST；seq匹配原槽和返回，不是跨新Rq恢复业务的凭证。ABORT只撤销明确token对应的准备或上述普通OPEN引用，不取消或查询已提交I/O。
 
 #### 示例：不同客户端连接使用相同序号和槽
 
@@ -1043,3 +1049,13 @@ result先固定原寄存器回复，核对opcode/seq/状态及冻结的value/byt
 14项host专项覆盖排空前不SAVED、捕获后不重读、源pin与新DUPREF分开、PIPE整组/错误第二项、负业务无引用、原生/格式/资源子类型错误保持、已提交LIVE优先和重复已持/待提交引用拒绝。独立filecreateuser双角色fixture从真实HELLO取得共享MEM，实际处理5个创建请求：普通OPEN、DUPREF、PIPE、显式结束交付的迟到OPEN和负业务OPEN。累计产生5份后端引用，PIPE两端及迟到OPEN先补偿，两个已发布本地fd随后关闭；服务逐个核对真实source/image、connid/seq/session/reference_id，5份精确CLOSE均确认后才退出。迟到协调GATE仅为测试消息，不是新增文件查询或重发创建；这是协议fixture，尚非生产FS/TTY、权限或完整管道语义。
 
 最终1028项完整host、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过。实际filecreateuser载荷与SDK逐字节一致，5份引用的创建/关闭及页/费用/实例归零，原信号/关闭worker及硬件FAULT继续通过；新模块仅依赖原生copy和既有私有接口，无libc未定义依赖，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage156-file-creator/的unit-reviewed、focused-reviewed、场景-reviewed日志、verify.py和evidence.json。ARM最初把结构体赋值降为memcpy，已改显式有界复制并重验；旧容量测试重复加算已存入Connstate的Slotop，现按实际全部数组/目录检查一页预算，失败日志保留。未重跑195矩阵（最近stage154），无CI/板端/性能结果，完整创建/装载/Fix及sh/net/GUI目标继续。
+
+### Image统一bootstrap发号与无目录项ABORT运输（2026-11-20）
+
+stage157将Conncache的发号器从目录项提升到客户端Image，共用HELLO/ATTACH/EXEC_CLAIM与临时ABORT序号。begin/reusebegin成功才消费新号，提交前rollback、forget及后端更换都不重置Image计数；UINT64_MAX后拒绝新事务，不回绕。目录项仍保存本次seq/owner，原claim与目录代次校验保持；有槽业务序号不改变。新增8字节后Conncache为472字节，与2872字节Connstate合计3344，仍嵌入原4096字节工作页，8连接32KiB预算不变。
+
+sysconnabortbegin只分配新序号和无目录项的私有claim，不创建、驱逐或借用目录项。其tag使用generation=0/index=8的哨兵，仅bootstrap的ABORT接受；它不是目录键或授权。调用方必须在预付记录中另持精确后端CALL/token，且在短保护段内完成发号、prepare和责任登记；发号不代表远端撤销成功。Bootstrap沿用128字节原RPC/result/resource记录，ABORT请求为[ABORT,0,seq,token]；sysbootabortreply只接受原请求对应的普通[0,seq,0,0]，不能把它解析为MEM/连接回复。负业务、机制错误、错误seq/未用字、资源回复均不构成成功补偿，意外安装的资源仍须单独处理。sysctxbootcall对ABORT要求options=0，自动选择CALL_ASYNC|CALL_CONTROL，不同意MEM/CALL接收；原RPC的移交、等待和ACK沿既有Rctx路径，失败不丢责任。
+
+35项目录/bootstrap/Rctx专项覆盖跨后端及复用共享序号、回滚/forget不复用、满8项仍发清理、耗尽/输出别名不消费号、哨兵不能当连接claim、精确回复及ACK失败保留、错误资源责任和控制预算。双架构libsys原生fixture在真实HELLO/ATTACH后填满8项（其中7项仅本地占位身份，无实际服务），通过原固定CALL完成两次无目录项ABORT运输，服务核对真实source/image、token及递增seq；原MEM/VA保持且目录仍满。此fixture只验证清理运输，不证明生产后端的token授权、幂等引用撤销或资源OPEN类型化ATTACH/ABORT已经实现，后者继续待接。
+
+最终1035项完整host、格式检查、两架构各libsys/runtime/sigframe/normal共8次QEMU与8份journal通过。目标布局对象、SDK源码/头及实际链接载荷哈希已核对，libsys审计对象无未定义依赖；stage156的5份引用创建/补偿/关闭继续归零，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage157-bootstrap-abort/的unit、conndir/bootstrap/context、场景日志、目标layout对象、verify.py和evidence.json。首次单项检查把原ATTACH的错误image断言误放入ABORT测试并保留接收选项，已修正该测试选项并通过完整host复验；未放宽实现。未重跑195矩阵（最近stage154），无CI/板端/性能结果。

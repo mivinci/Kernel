@@ -127,6 +127,7 @@ libsysload(void)
   u64        handoff[56];
   u64        replayed = 0, timerwaits = 0, elapsed = 0, started, now;
   u64        closetimer = 0, closeelapsed = 0;
+  u64        aborts = 0;
   int        error;
   pgstat(&before);
   for (i = 0; i < 2; i++) {
@@ -183,7 +184,10 @@ libsysload(void)
                   client_trace[44] == 1 && client_trace[45] &&
                   client_trace[45] == client_trace[46] && client_trace[47] == 1 &&
                   client_trace[48] == 1 && client_trace[49] == 1 && client_trace[50] == 1 &&
-                  client_trace[51] == 1 && client_trace[52] == 1 && contextinjected == 158);
+                  client_trace[51] == 1 && client_trace[52] == 1 && contextinjected == 158 &&
+                  client_trace[53] > 8 && client_trace[54] > client_trace[53] &&
+                  client_trace[55] == 1);
+          aborts = 2;
           replayed = client_trace[24];
           timerwaits = client_trace[31];
           elapsed = client_trace[28] - client_trace[30];
@@ -205,7 +209,7 @@ libsysload(void)
     }
     REQUIRE(!error && !lifecollect(info[i].life, 1, &result) && result.code == 42);
   }
-  REQUIRE(resource_commits == 2);
+  REQUIRE(resource_commits == 2 && aborts == 2 && handoff[53] == 2);
   REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1 &&
           handoff[15] == 1 && handoff[9] == 4 && handoff[16] == 1 && handoff[17] == 1 &&
           handoff[18] == 1 && !handoff[19] && handoff[20] == 1 && handoff[21] == 1);
@@ -233,6 +237,8 @@ libsysload(void)
   puthex(1);
   putstr(" reuse=");
   puthex(1);
+  putstr(" detached_aborts=");
+  puthex(aborts);
   putstr(" slot_ops=");
   puthex(1);
   putstr(" file_refs=");

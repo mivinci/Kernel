@@ -26,7 +26,7 @@ class Entry(C.Structure):
 
 
 class Cache(C.Structure):
-    _fields_=[('self',Peer),('entries',Entry*8)]
+    _fields_=[('self',Peer),('entries',Entry*8),('sequence',C.c_uint64)]
 
 
 def pid(index):
@@ -61,6 +61,8 @@ class ConnectionDirectoryTests(unittest.TestCase):
             'sysconncheck':[C.POINTER(Cache),Peer],'sysconnbind':[C.POINTER(Cache),Peer,C.POINTER(Tag)],
             'sysconnview':[C.POINTER(Cache),Tag,C.POINTER(Entry)],
             'sysconnbegin':[C.POINTER(Cache),Tag,C.c_uint64,C.POINTER(Claim)],
+            'sysconnreusebegin':[C.POINTER(Cache),Tag,C.c_uint64,C.POINTER(Claim)],
+            'sysconnabortbegin':[C.POINTER(Cache),C.c_uint64,C.POINTER(Claim)],
             'sysconnready':[C.POINTER(Cache),Claim,C.c_uint64],
             'sysconnrollback':[C.POINTER(Cache),Claim],'sysconninvalidate':[C.POINTER(Cache),Tag],
             'sysconncleaned':[C.POINTER(Cache),Claim],'sysconnforget':[C.POINTER(Cache),Tag],
@@ -157,7 +159,7 @@ class ConnectionDirectoryTests(unittest.TestCase):
     def test_generation_and_bootstrap_sequence_exhaustion_never_wrap(self):
         self.cache.entries[0].generation=MAX-1
         tag=self.bind(Peer(pid(3),1));self.assertEqual(tag.generation,MAX)
-        self.cache.entries[0].sequence=MAX-1
+        self.cache.sequence=MAX-1
         claim=self.begin(tag);self.assertEqual(claim.seq,MAX)
         self.assertEqual(self.lib.sysconnrollback(C.byref(self.cache),claim),0)
         out=Claim();before=bytes(self.cache)
@@ -176,3 +178,46 @@ class ConnectionDirectoryTests(unittest.TestCase):
         self.assertEqual(self.lib.sysconnbegin(C.byref(self.cache),tag,0,C.byref(Claim())),-1)
         self.cache.entries[1]=Entry.from_buffer_copy(bytes(self.cache.entries[0]))
         self.assertEqual(self.lib.sysconncheck(C.byref(self.cache),self.self),-6)
+
+    def test_bootstrap_sequence_is_shared_across_peers_reuse_and_detached_cleanup(self):
+        first=self.bind(Peer(pid(3),1));second=self.bind(Peer(pid(4),1))
+        a=self.begin(first);b=self.begin(second)
+        self.assertEqual((a.seq,b.seq),(1,2))
+        self.assertEqual(self.lib.sysconnready(C.byref(self.cache),a,65537),0)
+        reuse=Claim()
+        self.assertEqual(self.lib.sysconnreusebegin(C.byref(self.cache),first,202,C.byref(reuse)),0)
+        self.assertEqual(reuse.seq,3)
+        abort=Claim();before=bytes(self.cache.entries)
+        self.assertEqual(self.lib.sysconnabortbegin(C.byref(self.cache),303,C.byref(abort)),0)
+        self.assertEqual((abort.tag.generation,abort.tag.index,abort.seq,abort.owner),(0,8,4,303))
+        self.assertEqual(bytes(self.cache.entries),before)
+        self.assertEqual(self.lib.sysconnrollback(C.byref(self.cache),b),0)
+        self.assertEqual(self.begin(second).seq,5)
+        self.assertEqual(self.lib.sysconnready(C.byref(self.cache),abort,65537),-1)
+
+    def test_full_directory_detached_cleanup_preserves_all_entries_and_checks_exhaustion(self):
+        for i in range(8):self.begin(self.bind(Peer(pid(i+3),1)))
+        out=Tag()
+        self.assertEqual(self.lib.sysconnbind(C.byref(self.cache),Peer(pid(20),1),C.byref(out)),-9)
+        before=bytes(self.cache.entries);abort=Claim()
+        self.assertEqual(self.lib.sysconnabortbegin(C.byref(self.cache),505,C.byref(abort)),0)
+        self.assertEqual((abort.seq,self.cache.sequence),(9,9))
+        self.assertEqual(bytes(self.cache.entries),before)
+        self.cache.sequence=MAX
+        before=bytes(self.cache);saved=bytes(abort)
+        self.assertEqual(self.lib.sysconnabortbegin(C.byref(self.cache),505,C.byref(abort)),-20)
+        self.assertEqual((bytes(self.cache),bytes(abort)),(before,saved))
+
+    def test_forgetting_a_peer_does_not_reset_image_sequence(self):
+        tag=self.bind(Peer(pid(3),1));claim=self.begin(tag)
+        self.assertEqual(self.lib.sysconnrollback(C.byref(self.cache),claim),0)
+        self.assertEqual(self.lib.sysconninvalidate(C.byref(self.cache),tag),0)
+        self.assertEqual(self.lib.sysconnforget(C.byref(self.cache),tag),0)
+        self.assertEqual(self.begin(self.bind(Peer(pid(4),2))).seq,2)
+
+    def test_detached_cleanup_output_alias_or_invalid_owner_does_not_consume_sequence(self):
+        before=bytes(self.cache)
+        alias=C.cast(C.byref(self.cache),C.POINTER(Claim))
+        self.assertEqual(self.lib.sysconnabortbegin(C.byref(self.cache),1,alias),-1)
+        self.assertEqual(self.lib.sysconnabortbegin(C.byref(self.cache),0,C.byref(Claim())),-1)
+        self.assertEqual(bytes(self.cache),before)

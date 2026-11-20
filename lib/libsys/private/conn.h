@@ -40,6 +40,7 @@ struct Conncache
 {
   Connpeer  self;
   Connentry entries[SYSCONN_COUNT];
+  u64       sequence;
 };
 STATIC_ASSERT(sizeof(Connpeer) == 16 && sizeof(Conntag) == 16, connection_identity_size);
 STATIC_ASSERT(sizeof(Connclaim) == 32, connection_claim_size);
@@ -62,6 +63,10 @@ isize sysconnbegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out);
 /* Serialized ATTACH/EXEC_CLAIM on an already verified connection; preserves
    READY/connid so existing data operations can continue. */
 isize sysconnreusebegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out);
+/* A detached token cleanup uses the same Image-wide sequence but no entry.
+   Its sentinel tag is private metadata, never a directory/authority key.
+   Caller retains the exact peer CALL/token in a prepaid responsibility. */
+isize sysconnabortbegin(Conncache *cache, u64 owner, Connclaim *out);
 isize sysconnready(Conncache *cache, Connclaim claim, u64 connid);
 isize sysconnrollback(Conncache *cache, Connclaim claim);
 isize sysconninvalidate(Conncache *cache, Conntag tag);

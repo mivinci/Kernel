@@ -6,8 +6,9 @@
 static int
 claimok(Connclaim claim)
 {
-  return claim.tag.generation && claim.tag.index < SYSCONN_COUNT && !claim.tag.reserved &&
-         claim.seq && claim.owner;
+  return !claim.tag.reserved && claim.seq && claim.owner &&
+         ((claim.tag.generation && claim.tag.index < SYSCONN_COUNT) ||
+          (!claim.tag.generation && claim.tag.index == SYSCONN_COUNT));
 }
 static int
 terminal(isize status)
@@ -57,8 +58,9 @@ sysbootcheck(const Bootstrap *record)
   }
   if (record->state > SYSBOOT_ACKED || !claimok(record->claim) ||
       (record->opcode != FS_HELLO && record->opcode != FS_ATTACH &&
-       record->opcode != FS_EXEC_CLAIM) ||
-      !record->token || (record->opcode == FS_HELLO && record->token != UINT64_MAX) ||
+       record->opcode != FS_EXEC_CLAIM && record->opcode != FS_ABORT) ||
+      (!record->claim.tag.generation && record->opcode != FS_ABORT) || !record->token ||
+      (record->opcode == FS_HELLO && record->token != UINT64_MAX) ||
       record->flags & ~(SYSBOOT_RESOURCE_MOVED | SYSBOOT_BAD_RESULT))
     return -ERR_STATE;
   if (record->state == SYSBOOT_PREPARED || record->state == SYSBOOT_WAITING) {
@@ -84,8 +86,9 @@ isize
 sysbootprepare(Bootstrap *record, Connclaim claim, u32 opcode, u64 token, u64 deadline)
 {
   if (!record || !claimok(claim) || !token ||
-      (opcode != FS_HELLO && opcode != FS_ATTACH && opcode != FS_EXEC_CLAIM) ||
-      (opcode == FS_HELLO && token != UINT64_MAX))
+      (opcode != FS_HELLO && opcode != FS_ATTACH && opcode != FS_EXEC_CLAIM &&
+       opcode != FS_ABORT) ||
+      (!claim.tag.generation && opcode != FS_ABORT) || (opcode == FS_HELLO && token != UINT64_MAX))
     return -ERR_INVALID;
   if (sysbootcheck(record))
     return -ERR_STATE;
@@ -256,6 +259,24 @@ sysbootrequest(Bootstrap *record, Connclaim claim, Msg *out)
   return 0;
 }
 isize
+sysbootabortreply(Bootstrap *record, Connclaim claim)
+{
+  isize error = match(record, claim);
+  if (error)
+    return error;
+  if (record->opcode != FS_ABORT ||
+      (record->state != SYSBOOT_RESULT && record->state != SYSBOOT_ACKED))
+    return -ERR_STATE;
+  if (record->status)
+    return record->status;
+  if (record->flags || record->kind != IPC_NONE || record->resource ||
+      record->words[1] != claim.seq || record->words[2] || record->words[3])
+    return -ERR_INVALID;
+  if ((isize) record->words[0] < 0)
+    return -ERR_PEER;
+  return record->words[0] ? -ERR_INVALID : 0;
+}
+isize
 sysbootreply(Bootstrap *record, Connclaim claim, u64 reuse_connid, Bootreply *out)
 {
   Queryrec  rows[QUERY_RECORDS];
@@ -269,6 +290,8 @@ sysbootreply(Bootstrap *record, Connclaim claim, u64 reuse_connid, Bootreply *ou
   if (error)
     return error;
   if (record->state != SYSBOOT_RESULT && record->state != SYSBOOT_ACKED)
+    return -ERR_STATE;
+  if (record->opcode == FS_ABORT)
     return -ERR_STATE;
   if (record->status)
     return record->status;

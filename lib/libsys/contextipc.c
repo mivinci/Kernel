@@ -1,5 +1,6 @@
 #include "private/contextipc.h"
 #include <abi/syscall.h>
+#include <proto/file.h>
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -69,6 +70,11 @@ sysctxbootcall(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Conncla
   error = sysbootrequest(record, claim, &request);
   if (error)
     return error;
+  if (record->opcode == FS_ABORT) {
+    if (options)
+      return -ERR_INVALID;
+    options = CALL_CONTROL;
+  }
   route.kind = RCTX_ROUTE_BOOT;
   route.bootstrap = record;
   route.claim = claim;

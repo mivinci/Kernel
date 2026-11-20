@@ -78,6 +78,7 @@ class BootstrapTests(unittest.TestCase):
             'sysbootpoll':[C.POINTER(Record),Claim],'sysbootcancel':[C.POINTER(Record),Claim],
             'sysbootack':[C.POINTER(Record),Claim],'sysbootresource':[C.POINTER(Record),Claim,C.POINTER(C.c_int64)],
             'sysbootfinish':[C.POINTER(Record),Claim],'sysbootunprepare':[C.POINTER(Record),Claim],
+            'sysbootabortreply':[C.POINTER(Record),Claim],
             'testresult':[C.c_int64,C.c_uint64,C.c_int64,C.c_uint64,C.c_uint64,C.c_uint64],
             'testerrors':[C.c_int64,C.c_int64],'testget':[C.c_uint32]}
         for name,args in signatures.items():
@@ -178,3 +179,42 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(bytes(self.record),before)
         self.assertEqual(self.lib.sysbootunprepare(C.byref(self.record),self.claim),0)
         self.assertEqual(bytes(self.record),bytes(128))
+
+    def test_detached_claim_is_only_valid_for_abort_and_cannot_be_claimed_as_connection(self):
+        claim=Claim(Tag(0,8,0),41,101)
+        for opcode in (1,3,19):
+            self.assertEqual(self.lib.sysbootprepare(C.byref(self.record),claim,opcode,55,0),-1)
+            self.assertEqual(bytes(self.record),bytes(128))
+        self.assertEqual(self.lib.sysbootprepare(C.byref(self.record),claim,20,55,0),0)
+        rpc=C.c_int64(self.rpc)
+        self.assertEqual(self.lib.sysbootsubmitted(C.byref(self.record),claim,C.byref(rpc)),0)
+        self.lib.testresult(0,0,0,41,0,0)
+        self.assertEqual(self.lib.sysbootpoll(C.byref(self.record),claim),0)
+        self.assertEqual(self.lib.sysbootabortreply(C.byref(self.record),claim),0)
+        self.lib.testerrors(-7,0);before=bytes(self.record)
+        self.assertEqual(self.lib.sysbootack(C.byref(self.record),claim),-7)
+        self.assertEqual(bytes(self.record),before)
+        self.lib.testerrors(0,0)
+        self.assertEqual(self.lib.sysbootack(C.byref(self.record),claim),0)
+        self.assertEqual(self.lib.sysbootabortreply(C.byref(self.record),claim),0)
+        self.assertEqual(self.lib.sysbootfinish(C.byref(self.record),claim),0)
+
+    def test_abort_reply_requires_exact_original_sequence_and_zero_unused_words(self):
+        for status,kind,value,seq,conn,size,error in (
+                (0,0,0,32,0,0,-1),(0,0,0,33,1,0,-1),
+                (0,0,0,33,0,1,-1),(0,0,1,33,0,0,-1),
+                (0,0,-5,33,0,0,-14),(-14,0,0,33,0,0,-14),
+                (0,4,self.mem,33,0,0,-1)):
+            self.lib.sysbootinit(C.byref(self.record))
+            self.assertEqual(self.lib.sysbootprepare(C.byref(self.record),self.claim,20,55,0),0)
+            rpc=C.c_int64(self.rpc)
+            self.assertEqual(self.lib.sysbootsubmitted(C.byref(self.record),self.claim,C.byref(rpc)),0)
+            self.lib.testresult(status,kind,value,seq,conn,size)
+            self.assertEqual(self.lib.sysbootpoll(C.byref(self.record),self.claim),0)
+            before=bytes(self.record)
+            self.assertEqual(self.lib.sysbootabortreply(C.byref(self.record),self.claim),error)
+            self.assertEqual(bytes(self.record),before)
+            if kind==4:
+                self.assertEqual(self.record.resource,self.mem)
+                self.assertEqual(self.lib.sysbootack(C.byref(self.record),self.claim),0)
+                self.assertEqual(self.lib.sysbootfinish(C.byref(self.record),self.claim),-7)

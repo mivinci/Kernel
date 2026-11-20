@@ -117,6 +117,7 @@ sysconninit(Conncache *cache, Connpeer self)
     return -ERR_INVALID;
   cache->self.pid = self.pid;
   cache->self.image = self.image;
+  cache->sequence = 0;
   for (i = 0; i < SYSCONN_COUNT; i++) {
     Connentry *entry = &cache->entries[i];
     entry->generation = entry->peer.pid = entry->peer.image = 0;
@@ -136,7 +137,7 @@ sysconncheck(const Conncache *cache, Connpeer self)
     return -ERR_STALE;
   for (i = 0; i < SYSCONN_COUNT; i++) {
     const Connentry *entry = &cache->entries[i];
-    if (!valid(entry))
+    if (!valid(entry) || entry->sequence > cache->sequence)
       return -ERR_STATE;
     if (entry->state == SYSCONN_FREE || entry->state == SYSCONN_RETIRED)
       continue;
@@ -217,9 +218,9 @@ sysconnbegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out)
     return -ERR_BUSY;
   if (entry->state != SYSCONN_UNCLAIMED)
     return -ERR_STATE;
-  if (entry->sequence == UINT64_MAX)
+  if (cache->sequence == UINT64_MAX)
     return -ERR_OVERFLOW;
-  entry->sequence++;
+  entry->sequence = ++cache->sequence;
   entry->owner = owner;
   entry->state = SYSCONN_CONNECTING;
   out->tag.generation = tag.generation;
@@ -278,14 +279,32 @@ sysconnreusebegin(Conncache *cache, Conntag tag, u64 owner, Connclaim *out)
     return -ERR_BUSY;
   if (entry->state != SYSCONN_READY)
     return -ERR_STATE;
-  if (entry->sequence == UINT64_MAX)
+  if (cache->sequence == UINT64_MAX)
     return -ERR_OVERFLOW;
-  entry->sequence++;
+  entry->sequence = ++cache->sequence;
   entry->owner = owner;
   out->tag.generation = tag.generation;
   out->tag.index = tag.index;
   out->tag.reserved = 0;
   out->seq = entry->sequence;
+  out->owner = owner;
+  return 0;
+}
+isize
+sysconnabortbegin(Conncache *cache, u64 owner, Connclaim *out)
+{
+  isize error;
+  if (!owner || !output(cache, out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = sysconncheck(cache, cache->self);
+  if (error)
+    return error;
+  if (cache->sequence == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  out->tag.generation = 0;
+  out->tag.index = SYSCONN_COUNT;
+  out->tag.reserved = 0;
+  out->seq = ++cache->sequence;
   out->owner = owner;
   return 0;
 }

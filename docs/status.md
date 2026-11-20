@@ -20,14 +20,15 @@
 
 ## 最新完成点与证据
 
-- stage156：原OPEN/DUPREF/PIPE回复经真实排空后捕获一次，ACK前持久保存引用/预留；整组LIVE或CLOSING，源pin单独归还，已提交LIVE与重复旧引用有约束。Createop及目录共3336字节，仍在原4KiB工作页内。
-- 14项专项；两架构真实fixture各5个创建请求产生5份引用，PIPE/迟到OPEN补偿及普通关闭后全部归零。资源OPEN的CALL/真实目标/token/8字节ref已主机验证捕获，后端ATTACH/ABORT及正式信号前置未完成。
-- 验收：1028项完整host、格式、8次双架构QEMU与8份journal；源码/SDK/实际载荷审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
-- 证据：`build/host/stage156-file-creator/`。ARM隐式memcpy和旧容量测试重复加算Slotop已修正并重验，失败日志保留；未重跑195矩阵，最近完整矩阵为stage154。无CI、板端或性能结果。
+- stage157：bootstrap改为Image统一、不回绕发号；临时ABORT不占目录项，经Rctx自动用控制预算发送，精确核对普通回复并保持原RPC/意外交付资源责任。Connstate及嵌入目录共3344字节，仍在原4KiB工作页内。
+- 35项专项；两架构真实fixture在8目录项满额后各完成2次临时ABORT运输并保持原映射；其中7项仅本地占位身份，不是7个运行服务。stage156的5份新引用创建/关闭继续全部归零。资源OPEN完整ATTACH/定点撤销及正式信号前置未完成。
+- 验收：1035项完整host、格式、8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
+- 证据：`build/host/stage157-bootstrap-abort/`。未重跑195矩阵，最近完整矩阵为stage154。无CI、板端或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
+- 已确认：普通资源OPEN在ATTACH后仍允许精确目标以原token定点ABORT，移交后VFS失去撤销权。Image统一序号/临时ABORT运输已接，创建记录与清理运输的类型化衔接、生产token授权及引用撤销待接，规则见10篇。
 - 创建类返回布局已确认并接入捕获；接资源OPEN后端ATTACH/ABORT、创建结果在trampoline中的前置及生命周期恢复。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise与完整信号前端未接。
 - 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。

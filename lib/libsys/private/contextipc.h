@@ -4,7 +4,8 @@
 /* Short caller-protected registration before sysctxinvoke. The destination
    and its exact claim/key stay exclusively bound until handoff. No waiting,
    allocation, ACK, cancellation or application output pointer. CALL is always
-   asynchronous; options select only native MEM/CALL receive consent. */
+   asynchronous; options select only native MEM/CALL receive consent.
+   ABORT requires options=0 and automatically selects CALL_CONTROL. */
 isize sysctxbootcall(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Connclaim claim,
                      Handle call, u64 options, Rkey *out);
 isize sysctxbootwait(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Connclaim claim,

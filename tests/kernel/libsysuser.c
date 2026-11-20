@@ -701,6 +701,22 @@ typedserver(const Bootview *view)
     words.words[3] = FS_CONN_BYTES;
     REQUIRE(!ipc_reply(received.request, &words), 137);
     resource_trace[9] = 2;
+    {
+      u64 lastseq = words.words[1];
+      u32 attempt;
+      for (attempt = 0; attempt < 2; attempt++) {
+        REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL &&
+                    received.source == client && received.image == clientimage &&
+                    received.words[0] == FS_ABORT && !received.words[1] &&
+                    received.words[2] > lastseq && received.words[3] == 55,
+                137);
+        lastseq = received.words[2];
+        words.words[0] = words.words[2] = words.words[3] = 0;
+        words.words[1] = lastseq;
+        REQUIRE(!ipc_reply(received.request, &words), 137);
+        resource_trace[53]++;
+      }
+    }
     REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.source == client &&
                 received.image == clientimage && received.words[0] == FS_READ &&
                 received.words[1] == header->connid && received.words[2] &&
@@ -1348,6 +1364,49 @@ typedclient(const Bootview *view, Handle peer)
                 !sysbootack(active, claim) && !sysbootfinish(active, claim) &&
                 !sysconnworkrelease(&connection_work, &connection_directory, lease),
             134);
+    {
+      Connpeer  otherpeer = connection_peer;
+      Conntag   tag;
+      Connclaim detached;
+      u64       lastseq;
+      u32       attempt;
+      for (attempt = 0; attempt < SYSCONN_COUNT - 1; attempt++) {
+        otherpeer.image++;
+        REQUIRE(!sysconnbind(&connection_directory, otherpeer, &tag) &&
+                    !sysconnbegin(&connection_directory, tag, 500 + attempt, &detached) &&
+                    !sysconnrollback(&connection_directory, detached),
+                134);
+      }
+      otherpeer.image++;
+      REQUIRE(sysconnbind(&connection_directory, otherpeer, &tag) == -ERR_CAPACITY, 134);
+      lastseq = connection_directory.sequence;
+      for (attempt = 0; attempt < 2; attempt++) {
+        REQUIRE(!sysconnabortbegin(&connection_directory, 600 + attempt, &detached) &&
+                    detached.seq > lastseq && !detached.tag.generation &&
+                    detached.tag.index == SYSCONN_COUNT &&
+                    !sysbootprepare(&bootstrap_record, detached, FS_ABORT, 55, 0) &&
+                    !sysctxbootcall(&runtime_contexts, connection_work.state.self, 0,
+                                    &bootstrap_record, detached, connection_work.state.call, 0,
+                                    &runtime_key) &&
+                    runtime_contexts.contexts[0].args[5] == (CALL_ASYNC | CALL_CONTROL) &&
+                    !sysctxinvoke(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                    !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                    !sysctxrewait(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                    !sysctxinvoke(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                    !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                    !sysbootabortreply(&bootstrap_record, detached) &&
+                    !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                    !sysbootack(&bootstrap_record, detached) &&
+                    !sysbootfinish(&bootstrap_record, detached) &&
+                    connection_work.state.memory == original &&
+                    connection_work.state.map.address == originalva &&
+                    sysconnbind(&connection_directory, otherpeer, &tag) == -ERR_CAPACITY,
+                134);
+        resource_trace[53 + attempt] = detached.seq;
+        lastseq = detached.seq;
+      }
+      resource_trace[55] = 1;
+    }
     for (i = 0; i < sizeof(descriptor); i++)
       ((u8 *) &descriptor)[i] = 0;
     sysfdinit(&file_descriptors);

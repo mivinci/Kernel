@@ -175,6 +175,20 @@ class ContextIpcTests(unittest.TestCase):
         self.assertEqual(self.lib.sysctxbootcall(self.b, self.self, 0, C.byref(self.boot),
                                                 self.claim, self.call_handle, 2, out), -1)
         self.assertEqual((bytes(self.bank), bytes(self.boot)), before)
+
+    def test_abort_selects_control_budget_and_rejects_resource_receive_consent(self):
+        self.lib.sysbootinit(C.byref(self.boot))
+        self.assertEqual(self.lib.sysbootprepare(C.byref(self.boot),self.claim,20,55,0),0)
+        before=bytes(self.bank),bytes(self.boot)
+        key=Key()
+        for options in (2,4,8):
+            self.assertEqual(self.lib.sysctxbootcall(self.b,self.self,0,C.byref(self.boot),
+                self.claim,self.call_handle,options,C.byref(key)),-1)
+            self.assertEqual((bytes(self.bank),bytes(self.boot)),before)
+        self.assertEqual(self.lib.sysctxbootcall(self.b,self.self,0,C.byref(self.boot),
+            self.claim,self.call_handle,0,C.byref(key)),0)
+        self.assertEqual(list(self.bank.contexts[0].args),
+                         [self.call_handle,20,0,self.claim.seq,55,9,0])
         self.assertEqual(self.lib.sysctxbootcall(self.b, Peer(self.self.pid, self.self.image + 1),
                                                 0, C.byref(self.boot), self.claim,
-                                                self.call_handle, 2, C.byref(Key())), -4)
+                                                self.call_handle, 0, C.byref(Key())), -4)
