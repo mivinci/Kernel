@@ -195,3 +195,9 @@ unsetenv不分配，从首个匹配洞向前压缩可写指针表，移除全部
 两架构各5次runtime main执行20组、每架构100组环境断言，实际malloc/free支持覆盖/删除/空值/非零overwrite/旧值别名/借用environ/64次覆盖和恢复启动环境。3槽CREATE孩子先由原资源检查证明无可用MEM管理槽，再调用setenv实际取得ENOMEM且环境保持，未为测试补发授权或改资源上限。原文本120组/页边界、ELF两次成功/四种失败、堆/启动包和文件创建死亡恢复都继续通过；这里没有实际fork继承环境或外部shell兼容结论。
 
 1103项完整host、格式、28次双架构QEMU通过：runtime/elf/heap/normal共8次、启动包布局20次，12份journal已核对。SDK/头/库/实际嵌入载荷、setenv/unsetenv原生调用及envset.o仅errno/environ/malloc/free和纯文本依赖已审计；默认程序入口/所有装载段与stage166一致，两架构serial完整ELF保持。clangd切回RV64/runtime。证据build/host/stage167-environment/的unit、focused-reviewed、场景-final、standards及sources.json、上轮init提取件、verify.py和evidence.json。最近完整195矩阵仍为stage165，无CI、板端或性能结果；getopt、文件/终端/公开信号/Fix及sh/net/图形GPU/最终GUI目标继续。
+
+### raise与kill边界（2026-11-21）
+
+stage171已接公开raise：当前单线程运行库按完整自身PID发送支持的非零信号；捕获同步返回、屏蔽合并、忽略、两层嵌套、自我KILL及STOP/实际另一进程CONT已在双架构验证。raise(0)选择Issue 8 pthread_kill允许的EINVAL分支，不改变kill的空信号语义。4项O0/O2主机专项、1135项完整host、格式、8次QEMU及8份内核诊断journal、SDK/真实载荷/生产隔离证据见11末尾及build/host/stage171-libc-raise/。
+
+这不是完整公开信号层：原生安装的测试handler/trampoline不替代公开sigaction、标准siginfo转换、Rctx/Fix或SA_RESTART。公开kill未接：原生仅存活Run的范围与POSIX尚未收取僵尸的存在/权限语义冲突，扩大到僵尸Life及256项快照的候选已提出待用户确认，未实现受限临时封装或静默改变既定授权。原文与候选见11基础语义；整体POSIX/sh/net目标未完成。

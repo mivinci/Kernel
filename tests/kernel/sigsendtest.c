@@ -483,6 +483,57 @@ killing(u32 self)
   closed(set);
 }
 static void
+raising(void)
+{
+  Setid set;
+  Actor caller, controller;
+  u64   words[16];
+  CHECK(!setcreate(1024, 2048, 2, &set));
+  create(set, 17, 23, &caller);
+  load(&caller, 3, 0);
+  state(&caller, PROC_EXITING);
+  trace(&caller, words);
+  CHECK(words[0] == 2 && words[1] == 13 && words[8] == 5 && words[9] == (u64) caller.pid &&
+        words[10] == 23 && words[11] == SIGNAL_SOURCE_USER && words[12] == SIGNAL_USR1 &&
+        words[13] == 1);
+  clean(&caller, LIFE_EXIT, 42);
+  create(set, 17, 23, &caller);
+  load(&caller, 4, 0);
+  state(&caller, PROC_EXITING);
+  trace(&caller, words);
+  CHECK(words[0] == 1);
+  clean(&caller, LIFE_SIGNAL, SIGNAL_KILL);
+  create(set, 17, 23, &caller);
+  create(set, 17, 23, &controller);
+  load(&caller, 5, 0);
+  load(&controller, 1, 0);
+  state(&caller, PROC_STOPPED);
+  started(&controller);
+  trace(&caller, words);
+  CHECK(words[0] == 1 && !words[1]);
+  command(&controller, SIGNAL_SELECT_PID, caller.pid, SIGNAL_CONT, 0, 0);
+  state(&caller, PROC_EXITING);
+  trace(&caller, words);
+  CHECK(words[0] == 2 && words[1] == 1 && !words[8]);
+  finish(&controller, 1);
+  clean(&caller, LIFE_EXIT, 42);
+  clean(&controller, LIFE_EXIT, 42);
+  closed(set);
+  putstr("RAISECHECK cases=");
+  puthex(3);
+  putstr(" groups=");
+  puthex(13);
+  putstr(" handlers=");
+  puthex(5);
+  putstr(" nested=");
+  puthex(1);
+  putstr(" stopped=");
+  puthex(1);
+  putstr(" killed=");
+  puthex(1);
+  putstr("\n");
+}
+static void
 snapshot(u32 zero)
 {
   static Actor receivers[32];
@@ -604,6 +655,7 @@ sigsendtest(void)
   killing(2);
   snapshot(0);
   snapshot(1);
+  raising();
   pgstat(&after);
   pending(&init, 0);
   CHECK(!procinfo(init.pid, &init.info) && init.info.state == PROC_BLOCKED &&

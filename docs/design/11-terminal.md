@@ -44,6 +44,10 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 原生sigsend（2026-11-19用户确认，实际接入与验收边界见文末）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。完整选择器快照、陈旧身份、部分授权及signum=0无状态变化的实际验证见文末，不将原生入口称为完整POSIX发信层。
 2026-11-20补充确认：GROUP target=0对应kill(0)，由内核在受理sigsend时原子固定调用者当前组；正PGID及逐成员授权规则不变。代码接续状态见文末。
 
+2026-11-21公开kill核对发现待确认冲突：POSIX.1-2024的进程生命周期包含尚未被wait收取的僵尸，原生当前却只选择存活Run。已提出修订候选：普通PID/组/ALL选择仍持waitref的ENDED Life，按原凭据/CONT会话规则授权，成功不排队、不改变退出结果；wait收取后即使有CONTROL/观察历史引用也不再是目标。CONTROL管理选择仍只操作存活Run；组/ALL快照从64个Run扩大为最多256个Life，继续每8项让出、排除构造/已收取，ALL仍排除PID1/自身。此候选尚未获确认，未改原生实现，也未用仅存活目标的临时kill封装代替标准目标。依据：[kill原文](https://pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html)的生命周期及ESRCH说明；原文归stage171证据。
+
+公开raise在当前单线程进程中每次查询完整自身PID，转换为原生PID选择器，不缓存PID、不查询组、不增加管理权。支持的非零信号沿已定原生递送；捕获处理完成才返回，屏蔽时保留pending并可按普通信号合并，默认KILL不返回，默认STOP待CONT后返回原调用。0及非法/不支持编号返回-1/EINVAL；[raise原文](https://pubs.opengroup.org/onlinepubs/9799919799/functions/raise.html)引用pthread_kill等价规则，而[Issue 8 pthread_kill](https://pubs.opengroup.org/onlinepubs/9799919799/functions/pthread_kill.html)明确允许对0返回EINVAL，本实现选择该分支。kill(pid,0)仍是独立待接的存在/权限查询，不因raise拒绝0而改变原生signum=0规则。
+
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
 KILL/STOP 不可捕获、忽略或屏蔽；KILL 对停止中的进程也立即进入内核退出处理，不等待 CONT。
 每进程保存 pending/mask 和有上限的 action 表，普通信号可合并、不按次数排队；数据消息仍走 IPC。
@@ -830,3 +834,13 @@ stage165按本篇已定关系定义实现lifeorphan：输入内部GROUP，在序
 本点涉及内核关系层，完整make test-all已退出0：1089项host、格式、195次RV64/ARM64 QEMU、168份journal均通过；16次生产启动、10条生产失败清理及原有真实FAULT、信号/组/创建/连接恢复载荷另核对。新GROUPCHECK含orphan_checks=4，两架构均验证；此前累计的资源ABORT、map冲突运输保留及OPEN/PIPE/CLOSE死亡恢复随矩阵重跑。SDK源码/头/库、实际载荷、默认包及无测试代码边界审计通过，init/serial与stage164逐字节相同，clangd切回RV64/groups。
 
 证据build/host/stage165-orphan-groups/的test-all.log、completion.json、focused-initial、groups-riscv-reviewed、verify.py和evidence.json。首次RV预检把固件路径重复拼接，构建后未执行客体，改回现有明确OPENSBI路径后预检及完整矩阵通过；该启动失败记录保留，不算运行成功项。未完成CI、板端、性能、自动孤儿HUP/CONT、原生setfg/ttysignal或完整作业控制。终端后台候选曾把TTIN读错误套到前台切换，已撤回并按上文POSIX依据修正，尚待用户确认；CLEAN与共享VA候选亦未实现。公开POSIX前端/Fix、生产服务、sh/net/图形/GPU及最终GUI目标继续。
+
+### 公开libc raise（2026-11-21）
+
+stage171新增raise.c及signal.h声明，SDK归档接入；封装只使用getpid、__sys_sigsend与errno，不分配、不使用stdio/RPC或保存跨调用状态。验证编号后一次发送栈上16字节PID选择器，原生错误不自动重发；成功不主动覆盖handler留下的errno。预期的原生INVALID映射EINVAL，资源忙/上限/容量映射EAGAIN，NOMEM映射ENOMEM，不支持映射ENOSYS，其他异常状态映射EIO；这些诊断映射不作为完整POSIX信号层已合规的证明。
+
+取得并归档raise、pthread_kill和kill三份POSIX.1-2024原文。4项host专项在O0/O2链接真实raise/getpid/libsys封装，覆盖全部21个支持编号、完整PID与PID1、0/负数/未支持/整型极值在syscall前拒绝、未用寄存器为0、错误不重发和嵌套调用的独立栈选择器。当前仅单线程实现；未引入pthread接口。
+
+CASE=sigsend新增3个独立实际用户场景：13组普通检查覆盖同步handler返回、屏蔽后的合并pending/解除屏蔽、忽略与默认CONT、handler内raise CONT的第二层递送，共5次handler并核验USER字段及最终完整自身PID/euid；自发KILL按原信号终止且不返回；自发STOP停在原raise内，由另一个真实同凭据用户进程发送CONT后继续原调用，退出42。原59个控制请求增为60（多一次CONT），旧组/UID/授权、32项快照、PID复用/迟到、PID1排除及费用/页基线继续核验。安装handler与trampoline仍使用原生测试代码，不是已交付公开sigaction、Rctx/errno trampoline或SA_RESTART。
+
+1135项完整host、格式及两架构各sigsend/sigframe/jobs/normal共8次QEMU、8份内核诊断journal通过；SDK源/头/库、真实用户ELF到映像打包及实际内嵌载荷、raise.o仅3个预期依赖和两架构真实raise调用已核对。默认init装载段保持、serial完整ELF保持，生产镜像无raise测试载荷；全部构建后clangd切回RV64/sigsend。证据build/host/stage171-libc-raise/的unit/focused-initial、场景日志、standards/sources.json、verify.py与evidence.json。最近完整195矩阵仍为stage165，无CI/板端/性能结果。公开kill因上文僵尸语义候选待确认，原生目标选择未提前改动；完整信号/作业控制、公开文件接口/Fix、生产服务及sh/net/最终GUI目标继续。

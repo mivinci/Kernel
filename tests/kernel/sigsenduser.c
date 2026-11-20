@@ -1,8 +1,13 @@
 #include <sys/boot.h>
 #include <sys/channel.h>
 #include <abi/syscall.h>
+#include <signal.h>
+#include <errno.h>
+#include <limits.h>
+#include <unistd.h>
 #include "private/syscall.h"
 volatile u64 sendtrace[16];
+static u32   nested;
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -19,6 +24,11 @@ handler(u64 signum, const Siginfo *info)
   sendtrace[10] = info->uid;
   sendtrace[11] = info->code;
   sendtrace[12] = signum;
+  if (nested && signum == SIGNAL_USR1) {
+    if (raise(SIGCONT) || sendtrace[12] != SIGNAL_CONT)
+      __sys_exit(204);
+    sendtrace[13]++;
+  }
 }
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
@@ -29,6 +39,50 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 add
   handler(signum, info);
   __sys_sigreturn((void *) address);
 }
+static int
+raisecheck(void)
+{
+  static const int invalid[] = {0, -1, 5, 32, 33, INT_MAX};
+  Sigact           action;
+  sigset_t         mask, previous, pending;
+  u32              i, checks = 0;
+  for (i = 0; i < ARRAY_SIZE(invalid); i++) {
+    errno = EDOM;
+    CHECK(raise(invalid[i]) == -1 && errno == EINVAL && !sendtrace[8]);
+    checks++;
+  }
+  errno = EDOM;
+  CHECK(!raise(SIGUSR1) && sendtrace[8] == 1 && sendtrace[9] == (u64) getpid() && errno == EDOM);
+  checks++;
+  CHECK(!sigemptyset(&mask) && !sigaddset(&mask, SIGUSR1) &&
+        !sigprocmask(SIG_BLOCK, &mask, &previous) && !previous && !raise(SIGUSR1) &&
+        !raise(SIGUSR1) && sendtrace[8] == 1 && !sigpending(&pending) && pending == mask);
+  checks++;
+  CHECK(!sigprocmask(SIG_UNBLOCK, &mask, NULL) && sendtrace[8] == 2 && !sigpending(&pending) &&
+        !pending && errno == EDOM);
+  checks++;
+  action.kind = SIGNAL_IGNORE;
+  action.handler = action.trampoline = action.mask = action.flags = action.reserved = 0;
+  CHECK(!__sys_sigaction(SIGNAL_USR1, &action, NULL) && !raise(SIGUSR1) && sendtrace[8] == 2 &&
+        !sigpending(&pending) && !pending);
+  checks++;
+  action.kind = SIGNAL_HANDLER;
+  action.handler = (u64) handler;
+  action.trampoline = (u64) trampoline;
+  nested = 1;
+  CHECK(!__sys_sigaction(SIGNAL_USR1, &action, NULL) && !raise(SIGUSR1) && sendtrace[8] == 4 &&
+        sendtrace[13] == 1 && errno == EDOM);
+  checks++;
+  nested = 0;
+  CHECK(!raise(SIGUSR1) && sendtrace[8] == 5 && sendtrace[12] == SIGNAL_USR1 && errno == EDOM);
+  checks++;
+  action.kind = SIGNAL_DEFAULT;
+  action.handler = action.trampoline = 0;
+  CHECK(!__sys_sigaction(SIGNAL_CONT, &action, NULL) && !raise(SIGCONT) && sendtrace[8] == 5 &&
+        !sigpending(&pending) && !pending);
+  checks++;
+  return (int) checks;
+}
 int
 main(int argc, char **argv)
 {
@@ -38,7 +92,8 @@ main(int argc, char **argv)
   u64    old, sequence, args[7], i;
   u32    mode, masked;
   isize  error;
-  CHECK(argc == 2 && argv[0][0] >= '0' && argv[0][0] <= '2' && !argv[0][1] && argv[1][0] >= '0' &&
+  int    checks;
+  CHECK(argc == 2 && argv[0][0] >= '0' && argv[0][0] <= '5' && !argv[0][1] && argv[1][0] >= '0' &&
         argv[1][0] <= '1' && !argv[1][1]);
   mode = (u32) (argv[0][0] - '0');
   masked = (u32) (argv[1][0] - '0');
@@ -51,6 +106,26 @@ main(int argc, char **argv)
   if (masked)
     CHECK(!__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_USR1 - 1), &old));
   sendtrace[0] = 1;
+  if (mode == 3) {
+    checks = raisecheck();
+    sendtrace[1] = (u64) checks;
+    if (checks != 13)
+      return checks;
+    sendtrace[0] = 2;
+    return 42;
+  }
+  if (mode == 4) {
+    raise(SIGKILL);
+    return 205;
+  }
+  if (mode == 5) {
+    action.kind = SIGNAL_DEFAULT;
+    action.handler = action.trampoline = 0;
+    CHECK(!__sys_sigaction(SIGNAL_CONT, &action, NULL) && !raise(SIGSTOP));
+    sendtrace[1] = 1;
+    sendtrace[0] = 2;
+    return 42;
+  }
   if (mode == 2) {
     CHECK(!ipc_recv((u64) 1 << 32, RECV_EVENTS_ONLY, &message));
     return 202; /* The retained PID 1 must remain blocked and excluded by ALL. */

@@ -1554,12 +1554,16 @@ def exercise(args, run_dir, record):
                 if args.case == "sigsend":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('SIGSENDCHECK ')]
                     if (len(checks)!=1 or {k:v for k,v in checks[0].items() if k not in ('allocated','baseline','init_charge')} !=
-                            dict(calls=59,credentials=4,partial=2,root_denied=1,control=2,self_kill=2,current_group=1,zero_snapshot=32,group_switch=1,snapshot=32,reused=2,late=2,init=1,charged=0) or
+                            dict(calls=60,credentials=4,partial=2,root_denied=1,control=2,self_kill=2,current_group=1,zero_snapshot=32,group_switch=1,snapshot=32,reused=2,late=2,init=1,charged=0) or
                             checks[0].get('allocated')!=checks[0].get('baseline') or checks[0].get('init_charge',0)<=0 or
                             checks[0].get('init_charge')!=record['retained_init']['charged'] or
                             checks[0].get('baseline',0)!=transition['tables']+checks[0].get('init_charge',0)):
                         raise SmokeError('native signal permission/snapshot/retained-init conservation mismatch')
                     record['sigsend']=checks[0]
+                    raised=[fields(line) for line in serial.read_text().splitlines() if line.startswith('RAISECHECK ')]
+                    if raised != [dict(cases=3,groups=13,handlers=5,nested=1,stopped=1,killed=1)]:
+                        raise SmokeError('public raise delivery/reentry/stop/kill mismatch')
+                    record['raise']=raised[0]
                 if args.case == "jobs":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('JOBSCHECK ')]
                     if checks != [dict(cases=46,self=1,self_cancel=1,busy=1,notify=1,alarm=1,suspend=1,rpc=5,wait=1,group=1,killed=3,signals=9,child_jobs=2,recv_signal=3,request_signal=10,reply_signal=1,wait_signal=9,charged=0,allocated=transition['tables'])]:
