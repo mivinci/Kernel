@@ -41,6 +41,32 @@ hal_trap_decode(const Hctx *context, Htrap *trap)
 }
 
 u32
+hal_fault_reason(const Hctx *context)
+{
+  Htrap trap;
+  hal_trap_decode(context, &trap);
+  if (trap.kind == HT_PAGEFAULT)
+    return SIGNAL_FAULT_MAPERR;
+  if (trap.kind == HT_ACCESS)
+    return SIGNAL_FAULT_ACCERR;
+  if (trap.kind == HT_ALIGN)
+    return SIGNAL_FAULT_ALIGN;
+  if (trap.kind == HT_ILLEGAL)
+    return SIGNAL_FAULT_ILLEGAL;
+  return SIGNAL_FAULT_UNKNOWN;
+}
+
+u64
+hal_fault_address(const Hctx *context)
+{
+  Htrap trap;
+  hal_trap_decode(context, &trap);
+  return trap.kind == HT_PAGEFAULT || trap.kind == HT_ACCESS || trap.kind == HT_ALIGN
+             ? trap.address
+             : context->tf.pc;
+}
+
+u32
 hal_user_writefault(const Hctx *context)
 {
   return !(context->tf.status & 0x100) && context->tf.cause == 15;

@@ -58,6 +58,14 @@ void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);
    Parent and output stay unchanged on error; buffers must be disjoint. */
 int  hal_user_fork(Hctx *out, const Hctx *parent, u64 pid, u64 fixva);
 void hal_trap_decode(const Hctx *context, Htrap *trap);
+/* Normalized abi/signal.h FAULT reason. PAGEFAULT initially returns MAPERR;
+   the core distinguishes a present denied mapping after COW handling.
+   Register-only; raw diagnostic PC/address/cause remain unchanged. */
+u32 hal_fault_reason(const Hctx *context);
+/* Siginfo address: PC for instruction/arithmetic/unknown exceptions, saved
+   SP for SP alignment, zero if the hardware says its fault address is invalid.
+   The raw Htrap/Life diagnostic address is unaffected. */
+u64 hal_fault_address(const Hctx *context);
 /* Ordinary lower-privilege store permission/page fault eligible for COW.
    Core still verifies logical mapping, marker and ownership. No mutation. */
 u32 hal_user_writefault(const Hctx *context);

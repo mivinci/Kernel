@@ -1934,6 +1934,36 @@ procsigqueue(Handle pid, const Siginfo *info)
   return 0;
 }
 NORETURN void
+procfault(Hctx *context, const Htrap *trap)
+{
+  Lifefault fault;
+  Siginfo   info;
+  Hpte      entry;
+  u32       i;
+  if (!trap || !trap->fromuser || !proccurrent(context) || vm_paused)
+    panic("hardware fault source");
+  fault.pc = context->tf.pc;
+  fault.address = trap->address;
+  fault.cause = trap->code;
+  for (i = 0; i < sizeof(info); i++)
+    ((u8 *) &info)[i] = 0;
+  info.code = SIGNAL_SOURCE_FAULT;
+  info.signum = trap->kind == HT_PAGEFAULT || trap->kind == HT_ACCESS ? SIGNAL_SEGV
+                : trap->kind == HT_ALIGN || trap->kind == HT_BUS      ? SIGNAL_BUS
+                : trap->kind == HT_ARITH                              ? SIGNAL_FPE
+                                                                      : SIGNAL_ILL;
+  info.reason = hal_fault_reason(context);
+  if (trap->kind == HT_PAGEFAULT &&
+      spacelookup(current->space, ALIGN_DOWN(trap->address, PAGE_SIZE), &entry))
+    info.reason = SIGNAL_FAULT_ACCERR;
+  info.address = hal_fault_address(context);
+  if (!sigfault(current->identity, current->space, context, &info))
+    hal_user_enter(context);
+  /* A failed first frame must retain the original hardware diagnostics,
+     rather than replacing them with the failing destination frame. */
+  procexit(LIFE_FAULT, info.signum, &fault);
+}
+NORETURN void
 procbadsignal(u64 frame)
 {
   Lifefault fault;

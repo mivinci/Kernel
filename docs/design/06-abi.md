@@ -133,6 +133,8 @@ getpg/setpg/setsid的选择器和授权以[会话与进程组操作](03-process.
 
 Budget CONTROL只改绑定目标Acct的limit/exec_limit，SYSTEM POLICY通过绑定集合的CONTROL改集合上限；降到当前charged以下返回BUSY，不强制回收。资源槽/请求预付数量创建后不在线扩表，不能借budget改变ABI容量。管理者不得凭数字构造新设备/集合身份。
 
+Sigsel的GROUP target=0是明确的当前组选择器，在受理时固定，不是有效Handle。Siginfo的64字节布局、USER/CHILD/FAULT来源和FAULT reason取值见11；公共常量只定义于abi/signal.h。FAULT地址/原因经过归一化，原始PC/address/cause仍由既有诊断/query路径保留，两者不能混用；不增加调用号、帧大小或新的恢复权限。
+
 ### 标志、状态与原子性（已冻结）
 
 CREATE_USE=1、CREATE_CREDENTIAL=2、CREATE_SERVICE=4；普通孩子清除后两位及GRANT，四上限夹到其Createarg（03）。资源槽至少3以容纳SELF_SPACE/SELF_ALLOC/CREATE，pending为1..编译接收上限，无0默认。

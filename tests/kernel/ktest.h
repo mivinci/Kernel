@@ -48,6 +48,7 @@ void elftest(void);
 void inittest(void);
 void sigconfigtest(void);
 void sigframetest(void);
+void faulttest(void);
 void sigforktest(void);
 void suspendtest(void);
 void controltest(void);

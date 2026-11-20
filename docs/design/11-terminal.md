@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：2026-11-20已接组/会话、wait策略、原生信号配置/两层帧/sigreturn/sigsuspend、普通等待中断、原生sigsend及USER/CHILD来源，局部双架构证据见文末与status。完整终端/作业控制、FAULT、POSIX trampoline/Rctx/Fix及重启仍未完成，未完成CI/真实硬件/性能验收。
+状态：2026-11-20已接组/会话、wait策略、原生信号配置/两层帧/sigreturn/sigsuspend、普通等待中断、原生sigsend及USER/CHILD/同步FAULT来源，双架构实现与验证范围见文末和status。完整终端/作业控制、公开POSIX trampoline/Rctx适配/Fix及重启仍未完成，未完成CI/真实硬件/性能验收。
 
 职责修订：普通会话/进程组与前台操作由 sh、tty 直接请求内核并接受关系/权限校验；init 仅配置初始终端权限。wait/自动收取依内核退出记录，不再以 init 复制和 exack 为前置。 以 [init 与普通操作的责任边界](07-boot.md#init-与普通操作的责任边界修订确定) 为准；既有资源安全条件继续有效，未细化的新接口不得提前实现。
 
@@ -39,7 +39,7 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 ### 基础信号语义（已确定）
 
 首轮支持 INT/TERM/HUP/PIPE（默认终止）、KILL（强制终止）、STOP/TSTP/TTIN/TTOU（默认停止）、CONT（继续）及 CHLD（默认忽略通知）。
-实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择、CHLD停止/继续、普通等待中断及原生sigsend/USER来源的实际用户验收见03/本篇末尾；ttysignal、FAULT、完整前台/终端关联及POSIX中断/重启适配仍待接，不能称为完整用户作业控制。
+实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择、CHLD停止/继续、普通等待中断及原生sigsend/USER和同步FAULT来源的实际用户验收见03/本篇末尾；ttysignal、完整前台/终端关联及POSIX中断/重启适配仍待接，不能称为完整用户作业控制。
 
 原生sigsend（2026-11-19用户确认，实际接入与验收边界见文末）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。完整选择器快照、陈旧身份、部分授权及signum=0无状态变化的实际验证见文末，不将原生入口称为完整POSIX发信层。
 2026-11-20补充确认：GROUP target=0对应kill(0)，由内核在受理sigsend时原子固定调用者当前组；正PGID及逐成员授权规则不变。代码接续状态见文末。
@@ -780,7 +780,7 @@ CASE=sigframe新增一个真实用户运输模型：仅测试链接的入口wrap
 
 最终完整make test-all通过855项host、格式检查及195次双架构QEMU；6项host专项、168份journal及最终源码/头/SDK/包哈希另核对。两架构sigframe由11增至12项，正常5/非法帧6/默认终止1；从实际QEMU内核ELF提取的frame_image与当前SDK打包用户ELF逐字节一致。默认init/serial ELF与stage132逐字节相同，clangd数据库已更新，证据build/host/stage133-sync-frames/；无CI/板端/性能结果。正常内核不链接wrapper或测试载荷，实际硬件故障当前仍走默认终止边界，尚未接到此直接帧原语。
 
-2026-11-20用户确认：FAULT reason冻结为MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12。无关字段清零，非法指令/算术故障地址取PC；首次无法递送时按原故障终止并保留原始诊断。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则。以上为已确认设计，尚未加入abi/signal.h或接入实际硬件FAULT生产。
+2026-11-20用户确认：FAULT reason冻结为MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12。无关字段清零，非法指令/算术故障地址取PC；首次无法递送时按原故障终止并保留原始诊断。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则。公共定义和实际硬件生产接入/验收见文末同步硬件FAULT入口。
 
 同日用户确认kill(0)的原子选择：Sigsel GROUP的target=0表示调用者当前组，由内核在受理sigsend时固定；正PGID及既有逐成员授权规则不变。此补充取代前述历史记录中的待回复状态；实现与原生运行验收见文末当前组选择，不将原生接口当作已实现libc kill/raise。
 
@@ -805,3 +805,15 @@ procsigsend现接受GROUP target=0，从受理时的sender Life快照取得内�
 原生sigsend场景每架构从54增至59次请求：新增零选择器纯授权检查、同组允许/拒绝与同凭据组外隔离，以及零选择器KILL在发送者退出前处理其他组员；正PGID自身KILL仍保留。正PGID和零选择器各执行一套32接收者快照：首8项投递后暂停真实内核续点、修改原用户选择器、复用尚未投递的PID槽并新增同组成员。零选择器还把发送者移到另一个已有组；原其余目标及自身继续收到原信号，新组成员、复用槽和迟到成员均无pending。换组由仅测试CPU fixture执行明确Life组变更，不为应用增加管理权限或假称公开POSIX setpgid竞态验收。
 
 最终1003项完整host、格式、两架构各sigsend/groups/creds/jobs/sigframe/normal共12次QEMU及12份journal通过。两份真实发信载荷与当前SDK逐字节一致，59请求的完整身份/来源和页/费用/实例基线、保留PID1状态与真实页表/栈继续核验；源码/头/SDK/内嵌载荷审计通过。生产init/serial与stage152逐字节相同，正常UART/参数观测保持，clangd切回RV64/sigsend。证据build/host/stage153-current-group/的unit、场景日志、verify.py和evidence.json；本轮未重跑195场景矩阵，最近完整矩阵为stage152。无CI、板端或性能结果；libc kill/raise、同步硬件FAULT及完整公开信号前端仍待接。
+
+### 同步硬件FAULT的生产入口（2026-11-20）
+
+原生trap入口保留先尝试普通写COW；未由COW修复的同步异常进入procfault，以HAL归一化原因/地址构造FAULT来源Siginfo，pid/uid/status及保留字段清零。原因常量已加入abi/signal.h，帧/TF/FP布局不变。PAGEFAULT在查实际PTE时按页对齐，存在但拒绝访问为ACCERR，无映射为MAPERR；其他硬件分类、ARM TFV/FnV及SP/PC地址解释归01的HAL契约，核心不读取架构寄存器位。
+
+同步故障不先入普通pending。只对未屏蔽的HANDLER且有预付层时构造直接帧，成功后直接进入该层trampoline，不先重扫异步信号；原同号异步pending/元数据仍由既有sigfault原语保留。默认、忽略、屏蔽、层满、栈/入口/帧写入失败均以原故障信号和原始PC/address/cause终止，不用递送失败覆盖为BAD_SIGNAL_FRAME，也不挂起等待一次不能完成的故障重试。非法sigreturn仍沿原BAD_SIGNAL_FRAME/SEGV路径，不把两类失败合并。
+
+新增独立faultuser ELF与每架构汇编触发器，链接进既有sigframe测试镜像；生产镜像不含测试载荷。每架构11个真实用户场景：未映射读取、只读写入、NX、非法指令及ARM PC不对齐分支，handler检查完整来源/地址/原因后修改合法返回PC并实际sigreturn恢复；RV对应第五例明确为第二个非法指令，不声称QEMU产生了访存对齐异常。另6例覆盖DEFAULT、IGNORE、屏蔽、栈下guard、handler内同号默认屏蔽故障、NODEFER两层耗尽，核对原始Life诊断及没有假成功返回。两层场景第三次故障终止前只允许两次handler，退出后Sigctx深度、页/费用和实例归零。
+
+最终完整make test-all通过1006项host、格式及195次双架构QEMU；12项上下文专项、168份journal、16次生产启动和10条生产失败清理另审计。两份faultuser的源码/头/SDK及实际内嵌载荷逐字节一致，11条真实异常的cause类别、成功/终止和handler次数与源状态机一致；全部现有信号帧/cookie、同号pending隔离、COW及fork、普通等待/IPC和GROUP 0检查继续通过。生产init/serial与stage153逐字节相同，normal不含新增测试代码，clangd切回RV64/sigframe。
+
+证据build/host/stage154-hardware-fault/的test-all.log、context-focused-final.log、verify.py和evidence.json。早期新增fixture漏ABI头的编译失败、页内NX被误判MAPERR的失败与诊断均保留；修正查询按页对齐，另补FnV/SP地址边界后停止旧验证，最后从头完整通过test-all，未拼接不同源码结果。FP子原因的512种标志/TFV组合、FnV和SP地址及原始Hctx不变属于主机分类检查，外部总线/FPE/SP对齐没有实际硬件触发证明。未完成CI、板端、性能或公开POSIX信号前端；创建类引用补偿、生产服务与完整sh/net/GUI目标继续接续。

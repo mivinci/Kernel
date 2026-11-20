@@ -49,6 +49,19 @@
 #define SIGNAL_SELECT_GROUP    2
 #define SIGNAL_SELECT_CONTROL  3
 #define SIGNAL_SELECT_ALL      4
+
+#define SIGNAL_FAULT_MAPERR       1
+#define SIGNAL_FAULT_ACCERR       2
+#define SIGNAL_FAULT_ALIGN        3
+#define SIGNAL_FAULT_BUSERR       4
+#define SIGNAL_FAULT_ILLEGAL      5
+#define SIGNAL_FAULT_FP_INVALID   6
+#define SIGNAL_FAULT_FP_DIVZERO   7
+#define SIGNAL_FAULT_FP_OVERFLOW  8
+#define SIGNAL_FAULT_FP_UNDERFLOW 9
+#define SIGNAL_FAULT_FP_INEXACT   10
+#define SIGNAL_FAULT_FP_OTHER     11
+#define SIGNAL_FAULT_UNKNOWN      12
 #ifndef __ASSEMBLER__
 #include <types.h>
 #include <abi/base.h>

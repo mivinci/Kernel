@@ -1464,6 +1464,10 @@ def exercise(args, run_dir, record):
                         raise SmokeError("signal suspend outcome/resource mismatch")
                     record["signal_suspend"]=checks[0]
                 if args.case == "sigframe":
+                    hardware=[fields(line) for line in serial.read_text().splitlines() if line.startswith("HARDFAULTCHECK ")]
+                    if hardware != [dict(cases=11,recovered=5,fatal=6,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("hardware FAULT delivery/diagnostics/conservation mismatch")
+                    record['hardware_faults']=hardware[0]
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFRAMECHECK ")]
                     if checks != [dict(cases=13, normal=6, invalid=6, terminated=1, cow_stack=1, forced=1, rctx_window=1, charged=0, allocated=transition["tables"])]:
                         raise SmokeError("signal frame outcome/resource mismatch")

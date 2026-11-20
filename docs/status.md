@@ -14,22 +14,22 @@
 - [02 内存](design/02-memory.md)：预算/页/Space/Mem/Mmap、W^X/guard、SHARED/Device、COW 承诺/克隆/写分离、完整整数/FP现场。可信 fork 快照/准备与回滚已接，原生 fork 准入、长操作检查点/发布和完整 exec 仍待接。
 - [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
 - [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
-- [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD来源与原生 sigsend、普通等待中断、ttycreate/ttybind/getfg；可信同步帧与同号 pending 隔离已接。同步硬件 FAULT handler/公开原因编码、setfg/ttysignal、完整终端关联/挂断/孤儿策略及 POSIX trampoline/SA_RESTART 仍待接。
+- [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD/同步FAULT来源与原生 sigsend、普通等待中断、ttycreate/ttybind/getfg；规范FAULT原因/地址、直接帧与同号 pending 隔离已接。setfg/ttysignal、完整终端关联/挂断/孤儿策略及公开 POSIX trampoline/SA_RESTART 仍待接。
 - [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx/快照/IO/关闭worker、参数捕获及目标Boot打包已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、完整exec路径/Fix尚未完成。
 - 用户态 tty 行规程、输出转换与 VMIN/VTIME 等有界核心已验，尚非默认包里的 tty 服务。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
 
 ## 最新完成点与证据
 
-- stage153：原生sigsend接入GROUP target=0，受理时固定当前组与完整PID快照；保留逐成员授权、纯检查和自身最后投递，不重读用户选择器或换组后的成员。
-- 两架构各59次原生请求，零选择器新增同组授权/组外隔离和自身KILL；两套32接收者快照核对选择器修改、PID复用与迟到成员，零选择器另核对发送者中途换组仍按原快照投递。
-- 验收：1003项完整host、格式、12次双架构QEMU与12份journal（sigsend/groups/creds/jobs/sigframe/normal）；源码/SDK/实际载荷审计通过，init/serial与stage152相同，clangd切回RV64/sigsend。
-- 证据：`build/host/stage153-current-group/`。本轮未重跑195场景矩阵，最近完整矩阵为stage152（1003 host、195 QEMU、168 journal）；无CI、板端或性能结果。
+- stage154：同步硬件FAULT接生产直接帧，COW仍优先；规范原因/地址与原始Life诊断分开。首次递送失败按原故障终止，非法sigreturn仍走原BAD_SIGNAL_FRAME。
+- 两架构各11条真实异常/失败路径，handler合法修改PC并恢复，默认/忽略/屏蔽/栈不足/嵌套耗尽保留原诊断。12项HAL专项含FP标志、FnV/SP地址；外部总线/FPE/SP对齐仍无实际硬件触发证明。
+- 验收：完整make test-all通过1006项host、格式、195次双架构QEMU、168份journal，含16次生产启动和10条失败清理；源码/SDK/实际载荷审计通过，init/serial与stage153相同，clangd切回RV64/sigframe。
+- 证据：`build/host/stage154-hardware-fault/`。早期fixture缺头和NX页内分类失败、补地址规则前停止的旧验证均保留；最终从头完整通过，未拼接不同源码结果。无CI、板端或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
-- 已确认但待代码/验收：同步FAULT归一化原因/首次递送失败策略见11末尾；创建类reference_id返回位置（普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref）见10末尾。GROUP target=0已交付；硬件FAULT仍默认受控终止，公开libc kill/raise未接。
-- 接硬件FAULT生产、创建类引用接管/补偿，继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
+- 已确认但待代码/验收：创建类reference_id返回位置（普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref）见10末尾。GROUP target=0及同步FAULT生产已交付，公开libc kill/raise与完整信号前端未接。
+- 接创建类引用接管/补偿，继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 
 ## 硬件与问题登记

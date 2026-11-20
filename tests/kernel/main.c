@@ -50,6 +50,7 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
   putstr("READY sigsuspend-restored\n");
 #elif BOOT_CASE == 45
   sigframetest();
+  faulttest();
   sigforktest();
   forksnapshottest();
   forklifetest();

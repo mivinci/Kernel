@@ -52,6 +52,57 @@ hal_trap_decode(const Hctx *context, Htrap *trap)
 }
 
 u32
+hal_fault_reason(const Hctx *context)
+{
+  Htrap trap;
+  u64   code = context->tf.cause;
+  hal_trap_decode(context, &trap);
+  if (trap.kind == HT_PAGEFAULT)
+    return SIGNAL_FAULT_MAPERR;
+  if (trap.kind == HT_ACCESS)
+    return SIGNAL_FAULT_ACCERR;
+  if (trap.kind == HT_ALIGN)
+    return SIGNAL_FAULT_ALIGN;
+  if (trap.kind == HT_BUS)
+    return SIGNAL_FAULT_BUSERR;
+  if (trap.kind == HT_ILLEGAL)
+    return SIGNAL_FAULT_ILLEGAL;
+  if (trap.kind == HT_ARITH) {
+    /* ESR.TFV guards the exception flags. Prefer the primary IEEE cause
+       over accompanying inexact; denormal/unspecified traps stay OTHER. */
+    if (code & (UINT64_C(1) << 23)) {
+      if (code & 1)
+        return SIGNAL_FAULT_FP_INVALID;
+      if (code & 2)
+        return SIGNAL_FAULT_FP_DIVZERO;
+      if (code & 4)
+        return SIGNAL_FAULT_FP_OVERFLOW;
+      if (code & 8)
+        return SIGNAL_FAULT_FP_UNDERFLOW;
+      if (code & 16)
+        return SIGNAL_FAULT_FP_INEXACT;
+    }
+    return SIGNAL_FAULT_FP_OTHER;
+  }
+  return SIGNAL_FAULT_UNKNOWN;
+}
+
+u64
+hal_fault_address(const Hctx *context)
+{
+  Htrap trap;
+  u64   ec = (context->tf.cause >> 26) & 63;
+  hal_trap_decode(context, &trap);
+  if (ec == 0x26)
+    return context->tf.sp;
+  if (ec == 0x22 || trap.kind == HT_ILLEGAL || trap.kind == HT_ARITH || trap.kind == HT_OTHER)
+    return context->tf.pc;
+  if ((ec == 0x20 || ec == 0x21 || ec == 0x24 || ec == 0x25) && (context->tf.cause & 0x400))
+    return 0;
+  return trap.address;
+}
+
+u32
 hal_user_writefault(const Hctx *context)
 {
   u64 code = context->tf.cause;

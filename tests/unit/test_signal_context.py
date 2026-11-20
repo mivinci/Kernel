@@ -47,6 +47,9 @@ class SignalContextTests(unittest.TestCase):
             lib.hal_signal_restore.argtypes=[C.c_void_p,C.c_void_p,C.c_void_p]
             lib.hal_user_writefault.argtypes=[C.c_void_p]
             lib.hal_trap_decode.argtypes=[C.c_void_p,C.POINTER(Decoded)]
+            lib.hal_fault_reason.argtypes=[C.c_void_p]
+            lib.hal_fault_address.argtypes=[C.c_void_p]
+            lib.hal_fault_address.restype=C.c_uint64
             cls.targets.append((arch,kind,lib))
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
@@ -93,6 +96,48 @@ class SignalContextTests(unittest.TestCase):
         context.value.tf.status|=0x100
         lib.hal_trap_decode(context.pointer,C.byref(trap))
         self.assertEqual(trap.fromuser,0)
+
+    def test_normalized_fault_reasons_preserve_the_complete_trusted_context(self):
+        for arch,kind,lib in self.targets:
+            context=self.initial(kind,lib)
+            samples=({0:3,1:2,2:5,4:3,5:2,6:3,7:2,12:1,13:1,15:1,3:12,8:12,(1<<63)|5:12}
+                     if arch=='riscv' else {(0x24<<26)|7:1,(0x24<<26)|15:1,
+                     (0x24<<26)|0x11:2,(0x24<<26)|0x21:3,(0x20<<26)|0x10:4,
+                     0x22<<26:3,0x26<<26:3,0:5,0xe<<26:5,0x3c<<26:12,1<<63:12})
+            for cause,expected in samples.items():
+                context.value.tf.cause=cause
+                before=context.bytes()
+                self.assertEqual(lib.hal_fault_reason(context.pointer),expected,(arch,cause))
+                self.assertEqual(context.bytes(),before)
+
+    def test_arm_fp_reason_requires_valid_flags_and_prefers_primary_ieee_cause(self):
+        arch,kind,lib=next(item for item in self.targets if item[0]=='arm64')
+        context=self.initial(kind,lib)
+        for valid in (0,1):
+            for flags in range(256):
+                context.value.tf.cause=(0x2c<<26)|(valid<<23)|flags|(0x123<<32)
+                expected=next((reason for bit,reason in ((1,6),(2,7),(4,8),(8,9),(16,10))
+                               if valid and flags&bit),11)
+                before=context.bytes()
+                self.assertEqual(lib.hal_fault_reason(context.pointer),expected,(valid,flags))
+                self.assertEqual(context.bytes(),before)
+
+    def test_normalized_fault_address_never_exposes_invalid_far_or_mutates_raw_diagnostics(self):
+        for arch,kind,lib in self.targets:
+            context=self.initial(kind,lib)
+            if arch=='riscv':
+                samples={cause:0x12345678 for cause in (0,1,4,5,6,7,12,13,15)}
+                samples.update({2:0x10000,3:0x10000})
+            else:
+                samples={(0x24<<26)|7:0x12345678,(0x20<<26)|15:0x12345678,
+                         (0x24<<26)|0x10|0x400:0,(0x20<<26)|0x10|0x400:0,
+                         0x22<<26:0x10000,0x26<<26:0x3fffff0000,0:0x10000,
+                         0x2c<<26:0x10000,0x3c<<26:0x10000}
+            for cause,expected in samples.items():
+                context.value.tf.cause=cause
+                before=context.bytes()
+                self.assertEqual(lib.hal_fault_address(context.pointer),expected,(arch,cause))
+                self.assertEqual(context.bytes(),before)
 
     def test_arm_abort_status_distinguishes_pages_alignment_and_external_failures(self):
         arch,kind,lib=next(item for item in self.targets if item[0]=='arm64')

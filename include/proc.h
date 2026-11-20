@@ -9,6 +9,7 @@
 #include <abi/signal.h>
 #include <observe.h>
 struct Hctx;
+struct Htrap;
 #define PROC_BLOCKED   6
 #define PROC_BUILDING  5
 #define PROC_CONSTRUCT 1
@@ -94,6 +95,7 @@ int           procsiginstall(Handle pid, u32 signum, const Sigact *action);
 int           procsigqueue(Handle pid, const Siginfo *info);
 NORETURN void procsigreturn(u64 frame);
 NORETURN void procbadsignal(u64 frame);
+NORETURN void procfault(struct Hctx *context, const struct Htrap *trap);
 NORETURN void procuserreturn(struct Hctx *context);
 int           procsigaction(u64 signum, u64 input, u64 output);
 int           procsigsuspend(u64 mask);

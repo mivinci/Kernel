@@ -532,3 +532,11 @@ ARM仅提取EC[31:26]，不再让ESR高位ISS2改变异常类别；native用户�
 新增3项host检查RV基础cause、ARM全部64种abort状态、ISS2与来源边界，并逐字节检查Hctx整数/FP现场不变；原有6项上下文测试继续运行。真实syscalls场景扩为5进程/8次调度：原两个寄存器/FP正常退出及未映射读取保留，另加两架构非法指令和ARM真实未对齐PC分支。ARM须以LIFE_FAULT/BUS退出并保留精确故障PC；RV相应额外载荷为第二个非法指令，不能冒充已触发该QEMU可能模拟的访存对齐异常。全部页/费用与实例回基线。
 
 最终完整make test-all通过849项host、格式检查及195次双架构QEMU；9项上下文专项、168份journal及最终源码/头/SDK/包哈希另核对。两架构syscalls均为5进程/8次调度，三次真实故障的原因/代码正确，原未映射故障地址及新增故障的精确PC匹配，全部页/费用回基线；默认init/serial ELF与stage131逐字节相同，normal无测试载荷，clangd数据库已更新。证据build/host/stage132-fault-classes/。外部abort及浮点类别当前是host解码证据，没有真实硬件FPE/总线故障产生证明；未完成CI/板端/性能验收。本点只修正默认终止映射，未接同步故障handler/FAULT Siginfo生产，不将其称为完整可恢复故障信号。
+
+### 同步故障的规范原因与地址（2026-11-20）
+
+HAL增加只读hal_fault_reason/hal_fault_address，将异常寄存器解释留在架构实现；Htrap大小及原始code/address不变。reason使用abi/signal.h的唯一公共定义，取值按11已确认规格。COW处理优先，余下PAGEFAULT由公共进程层按故障页的实际PTE区分未映射MAPERR与存在但拒绝的ACCERR；查页表必须先按页对齐，不能因页内偏移而漏掉NX/只读映射。ACCESS仍按既有SEGV/ACCERR，不将RV PMA/PMP拒绝擅自命名为总线错误。
+
+非法/未知指令及算术故障的规范地址为PC；ARM PC/SP对齐分别用保存的PC/SP，abort的FnV置位时地址清零，其余有效故障地址保持。Life诊断始终另存原始PC/address/cause，不因Siginfo归一化而丢失原值。ARM浮点只在TFV有效时解释标志，按INVALID、DIVZERO、OVERFLOW、UNDERFLOW、INEXACT优先选择主因，其余为FP_OTHER；不把伴随的INEXACT覆盖到溢出等主因上。用户同步帧的构造、失败策略及实际运行范围见11末尾；不将主机分类检查冒充实际外部abort或浮点陷阱证明。
+
+上下文host专项由9增至12项，新增规范原因、FP TFV/全部低8位标志组合及规范地址，逐字节核对原始Hctx不变。完整1006项host/格式/195次QEMU及168份journal通过，真实FAULT场景和失败诊断见11末尾及build/host/stage154-hardware-fault/；实际触发未映射、只读、NX、非法指令与ARM PC对齐，FnV/SP地址及总线/浮点细分类仍仅主机检查。内核自身异常处理保持诊断停机，不将其包装为用户FAULT。

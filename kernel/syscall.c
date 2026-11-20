@@ -28,7 +28,6 @@ syscall(Hctx *context)
 {
   Rtable    *table = proccurrent(context);
   Htrap      trap;
-  Lifefault  fault;
   Liferesult child;
   Obsresult  observation;
   u64        next = 0;
@@ -36,7 +35,7 @@ syscall(Hctx *context)
   u64        args[HAL_SYSCALL_ARGS], outputs[8], used = 0;
   Handle     handle = 0, pid = 0, parent = 0;
   u64        image = 0;
-  u32        i, signum;
+  u32        i;
   isize      status = 0, seconds = 0;
   if (!table)
     panic("user trap without current process");
@@ -46,14 +45,7 @@ syscall(Hctx *context)
   if (trap.kind != HT_SYSCALL) {
     if (trap.kind == HT_PAGEFAULT && hal_user_writefault(context) && !proccowfault(context))
       procuserreturn(context);
-    fault.pc = context->tf.pc;
-    fault.address = trap.address;
-    fault.cause = trap.code;
-    signum = trap.kind == HT_PAGEFAULT || trap.kind == HT_ACCESS ? SIGNAL_SEGV
-             : trap.kind == HT_ALIGN || trap.kind == HT_BUS      ? SIGNAL_BUS
-             : trap.kind == HT_ARITH                             ? SIGNAL_FPE
-                                                                 : SIGNAL_ILL;
-    procexit(LIFE_FAULT, signum, &fault);
+    procfault(context, &trap);
   }
   for (i = 0; i < 8; i++)
     outputs[i] = 0;

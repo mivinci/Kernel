@@ -318,6 +318,13 @@ def build(args):
     if len(sig_rows)!=1 or int(sig_rows[0][2])!=192:raise BuildError('signal config trace missing')
     sig_address=int(sig_rows[0][1],16)
     (sdk/'sigimage.S').write_text('/* image sha256: '+digest(sig_image)+' */\n.section .rodata\n.balign 8\n.global sig_image,sig_image_end,sig_trace_address\nsig_image:\n.incbin "'+str(sig_image)+'"\nsig_image_end:\n.balign 8\nsig_trace_address:\n.quad '+str(sig_address)+'\n')
+    fault_user=link_adoption('faultuser',[compile_adoption(ROOT/'tests/kernel/faultuser.c','faultuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'fault.S','fault-trigger')])
+    fault_image=sdk/'faultuser.img'
+    fault_image.write_bytes(pack(fault_user.read_bytes(),profile['machine'],128))
+    fault_inspect=invoke('inspect-hardware-fault',[tools['readelf']['path'],'-s',str(fault_user)])
+    fault_rows=[line.split() for line in fault_inspect.splitlines() if line.split() and line.split()[-1]=='faulttrace']
+    if len(fault_rows)!=1 or int(fault_rows[0][2])!=128:raise BuildError('hardware fault trace missing')
+    (sdk/'faultimage.S').write_text('/* image sha256: '+digest(fault_image)+' */\n.section .rodata\n.balign 8\n.global fault_image,fault_image_end,fault_trace_address\nfault_image:\n.incbin '+json.dumps(str(fault_image))+'\nfault_image_end:\n.balign 8\nfault_trace_address:\n.quad '+str(int(fault_rows[0][1],16))+'\n')
     frame_user=link_adoption('frameuser',[compile_adoption(ROOT/'tests/kernel/frameuser.c','frameuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'framefp.S','framefp')])
     frame_image=sdk/'frameuser.img'
     frame_image.write_bytes(pack(frame_user.read_bytes(),profile['machine'],128))
@@ -404,6 +411,7 @@ def build(args):
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
                     tty_artifact=str(tty_elf.relative_to(ROOT)),tty_sha256=digest(tty_elf),tty_image_sha256=digest(tty_image),
                     sigsend_artifact=str(send_elf.relative_to(ROOT)),sigsend_sha256=digest(send_elf),sigsend_image_sha256=digest(send_image),
+                    fault_artifact=str(fault_user.relative_to(ROOT)),fault_sha256=digest(fault_user),fault_image_sha256=digest(fault_image),
                     job_artifact=str(job_elf.relative_to(ROOT)),job_sha256=digest(job_elf),job_image_sha256=digest(job_image),
                     private_headers=final_private_headers,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
