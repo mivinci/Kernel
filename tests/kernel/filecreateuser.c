@@ -590,6 +590,10 @@ backend(const Bootview *boot, u32 recover)
   Handle    memory = 0, space = bootresource(boot, BOOT_SELF_SPACE);
   Filehead *head = (Filehead *) ADDRESS;
   u64       sessions[4], references[4], created = 0, closed = 0, token, i;
+  u64       wanted, attached, aborted;
+  wanted = recover == 4 ? 1 : recover == 2 ? 2 : recover == 5 ? 3 : 4;
+  attached = recover == 4 ? 1 : recover == 2 ? 2 : 3;
+  aborted = recover == 4 || recover == 2 ? 1 : recover == 5 ? 2 : 3;
   CHECK(!sysconnpeer(bootresource(boot, 256), &clientpeer) &&
         !sysconnpeer(bootresource(boot, 257), &vfspeer));
   zero(sessions, sizeof(sessions));
@@ -618,14 +622,8 @@ backend(const Bootview *boot, u32 recover)
     }
     CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
     if (input.words[0] == STOP) {
-      CHECK(created == (recover == 4   ? 1
-                        : recover == 2 ? 2
-                                       : 4) &&
-            closed == created &&
-            filecreatetrace[3] == (recover == 4   ? 1
-                                   : recover == 2 ? 2
-                                                  : 3) &&
-            filecreatetrace[4] == (recover == 4 || recover == 2 ? 1 : 3));
+      CHECK(created == wanted && closed == created && filecreatetrace[3] == attached &&
+            filecreatetrace[4] == aborted);
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;
@@ -655,6 +653,11 @@ backend(const Bootview *boot, u32 recover)
       }
       CHECK(references[token - 1]);
       filecreatetrace[3]++;
+      if (recover == 5 && token == 2) {
+        reply.words[0] = (u64) -ERR_DENIED;
+        CHECK(!ipc_reply(input.request, &reply));
+        continue;
+      }
       if (!memory) {
         Handle pid, parent;
         u64    image;
@@ -676,6 +679,16 @@ backend(const Bootview *boot, u32 recover)
         head->serverimage = image;
         head->slots = FS_CONN_SLOTS;
         head->slotbytes = FS_SLOT_BYTES;
+        zero(&transfer, sizeof(transfer));
+        transfer.source = memory;
+        transfer.rights = 3;
+        transfer.length = FS_CONN_BYTES;
+        transfer.business[0] = input.words[2];
+        transfer.business[1] = CONNID;
+        transfer.business[2] = FS_CONN_BYTES;
+        CHECK(!ipc_reply_resource(input.request, &transfer));
+      } else if (recover == 5) {
+        CHECK(token == 3);
         zero(&transfer, sizeof(transfer));
         transfer.source = memory;
         transfer.rights = 3;
@@ -953,6 +966,75 @@ resourceendclient(const Bootview *boot, u32 submitted)
   filecreatetrace[0] = 2;
 }
 static void
+reuseabortclient(const Bootview *boot)
+{
+  Opkey     key;
+  Connpeer  peer;
+  Conntag   tag;
+  Connentry entry;
+  Connclaim attach, abort;
+  Bootmap   mapped;
+  Handle    call, memory, retained, extra, space = bootresource(boot, BOOT_SELF_SPACE);
+  u64       files[2], source = 0, file, address;
+  u32       variant;
+  Msg       message;
+  Ipcmsg    result;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(FS_OPEN, "/bound", 0);
+  collect(&key);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+  peer = work.state.creators[key.lease.slot].peer;
+  CHECK(!sysconnbind(&cache, peer, &tag) && !sysconnworkinit(&backend_work, &cache, tag) &&
+        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &attach, &call));
+  bootstrap(&backend_work.state.bootstrap, attach, call, CALL_RECV_MEM);
+  zero(&mapped, sizeof(mapped));
+  CHECK(
+      !sysbootmap(&backend_work.state.bootstrap, attach, space, ADDRESS + 0x10000, peer.image,
+                  &mapped) &&
+      !sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, attach, space, &mapped, 0));
+  zero(files, sizeof(files));
+  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && files[0] && !source);
+  file = files[0];
+  memory = backend_work.state.memory;
+  retained = backend_work.state.call;
+  address = backend_work.state.map.address;
+  for (variant = 0; variant < 2; variant++) {
+    key = begin(FS_OPEN, "/reuse", 0);
+    collect(&key);
+    CHECK(
+        !sysfilecreateack(&pool, &work, &cache, &key) &&
+        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &attach, &call));
+    bootstrap(&backend_work.state.bootstrap, attach, call, CALL_RECV_MEM);
+    extra = backend_work.state.bootstrap.resource;
+    CHECK((!variant && !extra && sysconnworkreuse(&backend_work, &cache, attach) == -ERR_PEER) ||
+          (variant && extra && extra != memory &&
+           sysconnworkreuse(&backend_work, &cache, attach) == -ERR_INVALID));
+    CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &abort, &call));
+    bootstrap(&work.state.bootstrap, abort, call, CALL_CONTROL);
+    CHECK(!sysfilecreaterevoked(&pool, &work, &cache, &key, abort));
+    zero(files, sizeof(files));
+    CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] &&
+          !source && !sysconnworkreuseabort(&backend_work, &cache, attach) &&
+          !backend_work.state.bootstrap.state && !backend_work.state.ended &&
+          backend_work.state.memory == memory && backend_work.state.call == retained &&
+          backend_work.state.map.address == address && backend_work.state.map.verified &&
+          *(const volatile u64 *) (uintptr_t) address == FS_CONN_MAGIC &&
+          !sysconnview(&cache, tag, &entry) && entry.state == SYSCONN_READY && !entry.owner &&
+          entry.connid == CONNID && (!extra || __sys_free(extra) == -ERR_BAD_HANDLE));
+  }
+  closeat(&backend_work, file, 1);
+  zero(&message, sizeof(message));
+  message.words[0] = STOP;
+  CHECK(!ipc_call(retained, &message, 0, &result) && result.words[0] == 3 && result.words[1] == 3 &&
+        !sysconninvalidate(&cache, tag) && !sysconnworkclean(&backend_work, &cache) &&
+        !ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
+        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+  filecreatetrace[2] = 2;
+  filecreatetrace[3] = filecreatetrace[4] = 1;
+  filecreatetrace[0] = 2;
+}
+static void
 mapdiscardclient(const Bootview *boot)
 {
   Opkey     key;
@@ -1088,7 +1170,7 @@ int
 main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
-        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'k')) &&
+        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'n')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1127,7 +1209,13 @@ main(int argc, char **argv)
     mapdiscardclient(sysboot());
   else if (argv[0][0] == 'j')
     server(sysboot(), 4);
-  else
+  else if (argv[0][0] == 'k')
     backend(sysboot(), 4);
+  else if (argv[0][0] == 'l')
+    reuseabortclient(sysboot());
+  else if (argv[0][0] == 'm')
+    server(sysboot(), 5);
+  else
+    backend(sysboot(), 5);
   return 42;
 }

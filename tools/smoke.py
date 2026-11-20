@@ -1591,6 +1591,10 @@ def exercise(args, run_dir, record):
                     if discarded != [dict(actors=3,bad_header=1,aborted=1,unmapped=1,mem_released=1,call_retained=1,draining=1,charged=0,allocated=transition['tables'])]:
                         raise SmokeError("unpublished transport discard ownership mismatch")
                     record['mapping_discard']=discarded[0]
+                    aborted=[fields(line) for line in serial.read_text().splitlines() if line.startswith("REUSEABORTCHECK ")]
+                    if aborted != [dict(actors=3,attempts=2,business_error=1,unexpected_resource=1,old_file_closed=1,mem_preserved=1,call_preserved=1,mapping_preserved=1,charged=0,allocated=transition['tables'])]:
+                        raise SmokeError("READY bootstrap cleanup changed existing connection ownership")
+                    record['reuse_abort']=aborted[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,

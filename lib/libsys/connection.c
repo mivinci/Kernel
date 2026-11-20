@@ -190,6 +190,62 @@ sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected)
       return -ERR_BUSY;
   return sysfilerelease(&work->state.pages, expected);
 }
+static isize
+bootcleanup(Bootstrap *boot, Connclaim claim, Handle space, Bootmap *map)
+{
+  isize error;
+  if (boot->state == SYSBOOT_WAITING)
+    return -ERR_WOULD_BLOCK;
+  if (boot->state == SYSBOOT_PREPARED)
+    return sysbootunprepare(boot, claim);
+  error = sysbootfinished(boot, claim);
+  if (!error && boot->state == SYSBOOT_RESULT)
+    error = sysbootack(boot, claim);
+  if (!error && map && map->mapped)
+    error = sysbootunmap(space, map);
+  if (!error && boot->resource) {
+    error = __sys_free(boot->resource);
+    if (!error) {
+      boot->resource = 0;
+      boot->flags |= SYSBOOT_RESOURCE_MOVED;
+    }
+  }
+  return error ? error : sysbootfinish(boot, claim);
+}
+isize
+sysconnworkreuseabort(Connwork *work, Conncache *cache, Connclaim claim)
+{
+  Connentry  entry;
+  Connstate *s;
+  Bootstrap *boot;
+  isize      error = view(work, cache, &entry);
+  if (error)
+    return error;
+  s = &work->state;
+  boot = &s->bootstrap;
+  if (claim.tag.reserved || claim.tag.generation != s->tag.generation ||
+      claim.tag.index != s->tag.index || claim.seq != entry.sequence || !claim.owner ||
+      claim.owner != entry.owner)
+    return -ERR_STALE;
+  if (entry.state != SYSCONN_READY || !mapped(s, &entry))
+    return -ERR_STATE;
+  if (sysbootcheck(boot) || boot->state == SYSBOOT_FREE ||
+      (boot->opcode != FS_ATTACH && boot->opcode != FS_EXEC_CLAIM) ||
+      boot->flags & SYSBOOT_RESOURCE_MOVED ||
+      (boot->resource &&
+       (boot->resource == s->memory || boot->resource == s->call || boot->resource == s->space)))
+    return -ERR_STATE;
+  if (boot->claim.tag.generation != claim.tag.generation ||
+      boot->claim.tag.index != claim.tag.index || boot->claim.seq != claim.seq ||
+      boot->claim.owner != claim.owner)
+    return -ERR_STALE;
+  if (boot->status == -ERR_PEER)
+    return -ERR_PEER;
+  error = bootcleanup(boot, claim, 0, NULL);
+  /* The old mapping was READY before this attempt. Releasing its bootstrap
+     lease neither commits the new File nor proves that the peer is alive. */
+  return error ? error : sysconnready(cache, claim, entry.connid);
+}
 isize
 sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle space, Bootmap *map)
 {
@@ -217,7 +273,7 @@ sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle spa
     if (s->operations[i].phase || s->creators[i].phase)
       return -ERR_BUSY;
   if (sysbootcheck(boot) || boot->state == SYSBOOT_FREE || boot->opcode == FS_ABORT ||
-      boot->flags & SYSBOOT_RESOURCE_MOVED)
+      boot->flags & SYSBOOT_RESOURCE_MOVED || (boot->resource && boot->resource == s->call))
     return -ERR_STATE;
   if (boot->claim.tag.generation != claim.tag.generation ||
       boot->claim.tag.index != claim.tag.index || boot->claim.seq != claim.seq ||
@@ -239,26 +295,7 @@ sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle spa
   error = sysconninvalidate(cache, s->tag);
   if (error)
     return error;
-  if (boot->state == SYSBOOT_WAITING)
-    return -ERR_WOULD_BLOCK;
-  if (boot->state == SYSBOOT_PREPARED)
-    error = sysbootunprepare(boot, claim);
-  else {
-    error = sysbootfinished(boot, claim);
-    if (!error && boot->state == SYSBOOT_RESULT)
-      error = sysbootack(boot, claim);
-    if (!error && map->mapped)
-      error = sysbootunmap(space, map);
-    if (!error && boot->resource) {
-      error = __sys_free(boot->resource);
-      if (!error) {
-        boot->resource = 0;
-        boot->flags |= SYSBOOT_RESOURCE_MOVED;
-      }
-    }
-    if (!error)
-      error = sysbootfinish(boot, claim);
-  }
+  error = bootcleanup(boot, claim, space, map);
   return error ? error : sysconncleaned(cache, claim);
 }
 isize

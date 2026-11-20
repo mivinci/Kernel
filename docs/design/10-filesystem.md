@@ -585,7 +585,9 @@ payload_bytes<=span*4096，所有字符串/数组offset均相对本请求首数�
 
 多次VFS打开同一后端只新增各自会话/引用，不新增连接。目标的预付区按该身份唯一连接记录保存；首次HELLO/ATTACH/EXEC_CLAIM实际交付它后标记已交付，不能再次交付另一块来绕过容量。首次ATTACH/EXEC_CLAIM按同意MEM的CALL取得共享区；若服务私有记录和客户端缓存均已有该source/backend的连接，新的会话ATTACH或尚未领取的继承EXEC_CLAIM普通reply=[0,bootstrap_seq,connid,region_bytes]确认绑定既有连接，未用接收槽按04归还，不再次交付MEM。资源reply与普通确认由kind明确区分；客户端没有可用匹配Mem/connid时不能把普通确认当作新授权，必须报协议/连接错误并补偿该会话，不猜本地Handle或重发旧建立操作。新交付CALL的固定目标PID/image通过06的本主体RESOURCE查询取得，作为缓存键，不按Handle整数是否相同猜后端；在固定会话关系后可free多余本地入口引用。该查询只在新授权冷路径使用，热I/O不追加查询。
 
-未发布连接的运输放弃：对仍由精确claim拥有、从未READY的首次bootstrap，调用者先补偿token/session并结束绑定Rctx责任，才能显式放弃运输。固定业务结果不证明原RPC排空；原生RQ_FINISH/ACK成功后依次解除外部Bootmap和释放bootstrap自持MEM，最后解除该claim的目录owner。等待/ACK/unmap/free失败保留剩余步骤，不能丢资源或重新发送ATTACH。工作页已持CALL保持独立，不随MEM释放；源VFS连接不被标死。目录保持DRAINING且不伪造peer-ended，不恢复UNCLAIMED、不忘记仍存活peer的键或自动重发HELLO。已发布READY/已有connid、其他槽责任及已移交MEM均不能走此路径；正常复用连接的失败仍须独立处理。
+未发布连接的运输放弃：对仍由精确claim拥有、从未READY的首次bootstrap，调用者先补偿token/session并结束绑定Rctx责任，才能显式放弃运输。固定业务结果不证明原RPC排空；原生RQ_FINISH/ACK成功后依次解除外部Bootmap和释放bootstrap自持MEM，最后解除该claim的目录owner。等待/ACK/unmap/free失败保留剩余步骤，不能丢资源或重新发送ATTACH。工作页已持CALL保持独立，不随MEM释放；源VFS连接不被标死。目录保持DRAINING且不伪造peer-ended，不恢复UNCLAIMED、不忘记仍存活peer的键或自动重发HELLO。已发布READY/已有connid、其他槽责任及已移交MEM均不能走此路径。
+
+已有READY连接上的失败/放弃确认只补偿本次新引用。该token/session及绑定Rctx已另行结清后，按精确claim等原RPC实际排空/ACK，再释放意外回复所新交付的资源、结束本次bootstrap并解除owner；不unmap、不free原MEM/CALL/SELF_SPACE，不发布失败的新File，也不影响其他File、数据槽与持久操作。普通业务负值不是peer-ended证明；原生PEER则保留完整原记录给全连接死亡处理，不走本地复用清理。WAITING、FINISH/ACK/free失败保留本次责任，不能重新发送ATTACH/EXEC_CLAIM。原READY仅表示旧映射仍已安装，不构成存活证明；已DRAINING或已移交资源不由此恢复。
 
 普通close即使连接仍未接入也须保留原引用的关闭责任；可以推进其唯一接入后关闭。若在handler内遇接入由被打断外层持有而无法独立推进，不能等外层或返回EAGAIN：摘除后明确EIO并把关闭责任交给已预付记录，后续接入/生命周期清理继续处理，fd不恢复；不声称已经后端关闭成功。_exit依旧无需接入，目标ENDED独立收尾。自定义原生入口主动重复HELLO或破坏库表不能取得第二份授权或绕过总容量。
 
@@ -1185,3 +1187,15 @@ WAITING或未完成的原RPC保留全部状态并返回WOULD_BLOCK。固定结�
 8项host专项覆盖坏头、未排空/ACK失败、unmap/free失败重试、精确claim/map/别名拒绝、发布/移交保护、PREPARED与WAITING区分、坏固定回复的原资源清理及其他槽责任阻止。真实三角色fixture新增坏共享头：VFS交付后端CALL/token，ATTACH已ACK并持有实际SHARED MEM；map成功而头校验失败，原File经真实ABORT撤销并释放预留后，旧owner cookie仍可清理运输。客户端核对原VA复制FAULT、旧MEM Handle不能再次free、CALL仍准确指向原peer、入口不伪造ended且拒绝新begin；后端收到控制STOP后自行归还其独立MEM，VFS连接仍可正常STOP。全部页/费用/实例回基线。实际RQ_FINISH未知、ACK/unmap/free失败在本点由host注入，原生场景仅证明先前已ACK的排空路径，不冒充未知下游或DMA恢复。
 
 1143项完整host、格式及双架构runtime/libsys/sigframe/normal共8次QEMU、8份内核诊断journal通过；原map冲突保留运输、ABORT死亡/排空、11份File引用、缓存/日志与环境场景继续通过。SDK私有头、源码/头/库哈希、实际filecreate用户ELF打包及内嵌载荷、connection.o仅预期内部依赖和真实discard调用均已审计；init装载段与serial ELF保持，生产镜像无测试载荷，所有构建后clangd切回RV64/runtime。证据build/host/stage172-bootstrap-discard/含unit/focused-initial、场景日志、verify.py与evidence.json。Connstate2880、Conncache472和4096字节工作页不变，无新内核ABI/权限/池；最近完整195矩阵为stage165，无CI/板端/性能结果。READY复用确认失败、其他bootstrap恢复、VA/rqclean待确认项、公开fd/Fix、生产服务及完整sh/net/最终GUI仍待继续。
+
+### READY复用确认的失败收尾（2026-11-21）
+
+stage173新增私有sysconnworkreuseabort，匹配精确工作页/peer/tag/seq/owner及仍已安装的旧映射，仅处理ATTACH/EXEC_CLAIM本次准备。新引用/token与绑定Rctx须由调用者先补偿；WAITING及原RPC未FINISH不释放owner，FINISH/ACK后才free仍由bootstrap拥有的意外资源，最后恢复旧connid的无owner READY。旧MEM、CALL、Space、map、其他File与槽操作均不移动。原生PEER原样保留，业务负值不冒充后端死亡；DRAINING及已移交资源拒绝。额外资源若伪称已独立拥有的旧MEM/CALL/Space也拒绝，首次放弃路径同步保护原CALL。
+
+两种清理共用私有bootcleanup：只推进原PREPARED撤销或原RPC的FINISH/ACK/独立资源释放/记录结束；首次运输放弃仍可unmap外部Bootmap，READY清理不传map且不unmap。没有新请求、查询存活、File发布或自动重连。Connstate2880、Conncache472、工作页4096及固定池保持，无新内核ABI。旧Rctx状态及生产观察/死亡恢复仍独立，不能凭此宣称服务已经上线。
+
+8项host专项覆盖普通失败与EXEC_CLAIM元数据、意外资源仅释放一次、FINISH/ACK/free失败保持、PREPARED/WAITING、其他槽/操作字节不变、错误claim/操作/原生PEER/DRAINING、已移交及已有资源别名拒绝。初轮共享测试方法被新result方法遮蔽，且直接导入TestCase引发重复收集；已改为明确初始化与模块导入。初始失败/重复结果不计入交付，最终专项为8项。审查补充PEER保护后，最终源码重新完整回归，前一轮主机和RV运行只保留为历史。
+
+真实三角色场景先建立File R1及共享区，再对新R2返回普通业务负值、对R3错误交付同一SHARED backing的另一份MEM授权。两次均经原RPC ACK、准确token ABORT和File预留解除后清理对应bootstrap；验证额外MEM旧Handle不可再free、旧MEM/CALL/VA/connid保持、共享头仍可读、目录owner清零且不伪造ended。随后原R1通过原映射与会话完成CLOSE；后端3份引用全部关闭，VFS也可正常STOP，页/费用/实例回基线。这里真实ATTACH均已ACK；未知排空/ACK/free失败、已有槽并发责任及EXEC_CLAIM仅由host覆盖，不冒充完整exec或生产服务验收。
+
+最终1151项完整host、8项专项、格式及两架构各runtime/libsys/sigframe/normal共8次QEMU、8份内核诊断journal通过。SDK私有头、源码/头/库哈希、实际filecreate ELF打包/内嵌载荷、connection.o仅预期内部依赖及真实reuseabort调用已核对；原首次运输放弃、map冲突保留及已提交ABORT死亡恢复继续通过。init装载段及serial ELF保持，生产镜像无测试载荷；所有构建后clangd切回RV64/runtime。证据build/host/stage173-reuse-abort/含unit-final/focused-final-peer、最终场景日志、fmt-check-final、verify.py与evidence.json；初始测试失败及PEER保护前的结果单独保留、不计最终验收。最近完整195矩阵为stage165，无CI/板端/性能或完整公开fd/Fix、生产fs/tty/blk、sh/net/最终GUI结果。

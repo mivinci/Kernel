@@ -20,7 +20,7 @@ static u64       injected;
 NORETURN void    __real_hal_user_enter(Hctx *context);
 static void      deadtest(u32 creating);
 static void      resourceendtest(u32 submitted);
-static void      mapsalvagetest(u32 discard);
+static void      bootstraptest(u32 variant);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -205,8 +205,9 @@ filecreatetest(void)
   deadtest(2);
   resourceendtest(0);
   resourceendtest(1);
-  mapsalvagetest(0);
-  mapsalvagetest(1);
+  bootstraptest(0);
+  bootstraptest(1);
+  bootstraptest(2);
 }
 static void
 deadtest(u32 creating)
@@ -320,7 +321,7 @@ deadtest(u32 creating)
   putstr("\n");
 }
 static void
-mapsalvagetest(u32 discard)
+bootstraptest(u32 variant)
 {
   Setid      set;
   Set        budget;
@@ -336,7 +337,7 @@ mapsalvagetest(u32 discard)
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  loadroles(set, &image, pids, info, discard ? "ijk" : "cde", 3);
+  loadroles(set, &image, pids, info, variant == 2 ? "lmn" : variant ? "ijk" : "cde", 3);
   do {
     ended = 0;
     for (i = 0; i < 3; i++) {
@@ -357,12 +358,23 @@ mapsalvagetest(u32 discard)
           !spaceread(info[i].space, filecreate_trace_address, trace, sizeof(trace)) &&
           trace[0] == 2 && !trace[15]);
     if (!i)
-      CHECK(trace[1] == (discard ? 1 : 2) && trace[2] == (discard ? 1 : 2) && trace[3] == 1);
+      CHECK(trace[1] == (variant == 2 ? 3
+                         : variant    ? 1
+                                      : 2) &&
+            trace[2] == (variant == 1 ? 1 : 2) && trace[3] == 1 && (variant != 2 || trace[4] == 1));
     else if (i == 1)
-      CHECK(!trace[1] && !trace[2] && trace[4] == (discard ? 1 : 2));
+      CHECK(!trace[1] && !trace[2] && trace[4] == (variant == 2 ? 3 : variant ? 1 : 2));
     else
-      CHECK(trace[1] == (discard ? 1 : 2) && trace[2] == (discard ? 1 : 2) &&
-            trace[3] == (discard ? 1 : 2) && trace[4] == 1);
+      CHECK(trace[1] == (variant == 2 ? 3
+                         : variant    ? 1
+                                      : 2) &&
+            trace[2] == (variant == 2 ? 3
+                         : variant    ? 1
+                                      : 2) &&
+            trace[3] == (variant == 2 ? 3
+                         : variant    ? 1
+                                      : 2) &&
+            trace[4] == (variant == 2 ? 2 : 1));
     while ((error = procclean(pids[i])) > 0) {
     }
     CHECK(!error && !lifecollect(info[i].life, 1, &result));
@@ -371,7 +383,31 @@ mapsalvagetest(u32 discard)
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck());
-  if (discard) {
+  if (variant == 2) {
+    putstr("REUSEABORTCHECK actors=");
+    puthex(3);
+    putstr(" attempts=");
+    puthex(2);
+    putstr(" business_error=");
+    puthex(1);
+    putstr(" unexpected_resource=");
+    puthex(1);
+    putstr(" old_file_closed=");
+    puthex(1);
+    putstr(" mem_preserved=");
+    puthex(1);
+    putstr(" call_preserved=");
+    puthex(1);
+    putstr(" mapping_preserved=");
+    puthex(1);
+    putstr(" charged=");
+    puthex(0);
+    putstr(" allocated=");
+    puthex(after.allocated);
+    putstr("\n");
+    return;
+  }
+  if (variant) {
     putstr("MAPDISCARDCHECK actors=");
     puthex(3);
     putstr(" bad_header=");

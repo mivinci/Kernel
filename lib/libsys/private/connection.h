@@ -82,6 +82,17 @@ isize sysconnworkadopt(Connwork *work, Conncache *cache, Connclaim claim, Handle
 /* Ordinary ATTACH/EXEC_CLAIM confirmation only, matching existing private
    MEM/VA/connid. Resource replies cannot replace a live mapping. */
 isize sysconnworkreuse(Connwork *work, Conncache *cache, Connclaim claim);
+/* End one failed/abandoned ATTACH or EXEC_CLAIM on an existing READY mapping.
+   Caller first settles only this prospective reference/token and its Rctx;
+   existing Files/slot operations remain owned and usable. Exact original
+   RQ_FINISH/ACK precedes freeing any unexpected reply-owned resource. No
+   unmap, CALL release, peer-end proof or new request. Unknown/failure keeps
+   the bootstrap owner; success clears only this attempt, not its old connid.
+   Native PEER preserves the entire record for backend-wide death handling;
+   an ordinary negative business word is not that proof.
+   Caller excludes caught signals. This does not validate a successful reply
+   or authorize publishing the failed reference. */
+isize sysconnworkreuseabort(Connwork *work, Conncache *cache, Connclaim claim);
 isize sysconnworkreserve(Connwork *work, Conncache *cache, u32 context, u32 span, Filelease *out);
 isize sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected);
 /* Abandon one never-published CONNECTING transport after settling logical
