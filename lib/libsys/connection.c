@@ -1,5 +1,6 @@
 #include "private/connection.h"
 #include "private/syscall.h"
+#include <abi/boot.h>
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -188,6 +189,77 @@ sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected)
     if (work->state.operations[i].phase && work->state.operations[i].lease.seq == expected.seq)
       return -ERR_BUSY;
   return sysfilerelease(&work->state.pages, expected);
+}
+isize
+sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle space, Bootmap *map)
+{
+  Connentry  entry;
+  Connstate *s;
+  Bootstrap *boot;
+  u32        i;
+  isize      error = view(work, cache, &entry);
+  if (error)
+    return error;
+  s = &work->state;
+  boot = &s->bootstrap;
+  if (!separate(work, sizeof(*work), map, sizeof(*map)) ||
+      !separate(cache, sizeof(*cache), map, sizeof(*map)))
+    return -ERR_INVALID;
+  if (claim.tag.reserved || claim.tag.generation != s->tag.generation ||
+      claim.tag.index != s->tag.index || claim.seq != entry.sequence || !claim.owner ||
+      claim.owner != entry.owner)
+    return -ERR_STALE;
+  if ((entry.state != SYSCONN_CONNECTING && entry.state != SYSCONN_DRAINING) || entry.connid ||
+      s->memory || s->space || s->map.address || s->map.bytes || s->map.connid ||
+      s->map.serverimage || s->map.mapped || s->map.verified || !empty(&s->pages))
+    return -ERR_BUSY;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (s->operations[i].phase || s->creators[i].phase)
+      return -ERR_BUSY;
+  if (sysbootcheck(boot) || boot->state == SYSBOOT_FREE || boot->opcode == FS_ABORT ||
+      boot->flags & SYSBOOT_RESOURCE_MOVED)
+    return -ERR_STATE;
+  if (boot->claim.tag.generation != claim.tag.generation ||
+      boot->claim.tag.index != claim.tag.index || boot->claim.seq != claim.seq ||
+      boot->claim.owner != claim.owner)
+    return -ERR_STALE;
+  if (map->mapped) {
+    if (map->mapped != 1 || map->verified > 1 || !map->address || (map->address & PAGE_MASK) ||
+        map->address < BOOT_USER_LO || map->address >= BOOT_USER_HI ||
+        FS_CONN_BYTES > BOOT_USER_HI - map->address || map->bytes != FS_CONN_BYTES ||
+        map->connid != boot->words[2] || map->serverimage != s->peer.image ||
+        handlekind(space) != HANDLE_RESOURCE || !boot->resource || boot->status ||
+        boot->kind != IPC_RESOURCE_REPLY || boot->flags & SYSBOOT_BAD_RESULT ||
+        (boot->state != SYSBOOT_RESULT && boot->state != SYSBOOT_ACKED))
+      return -ERR_INVALID;
+  } else if (map->address || map->bytes || map->connid || map->serverimage || map->verified)
+    return -ERR_INVALID;
+  /* This is local abandonment, not a pre-submission rollback or a peer-death
+     proof. Keep the exact peer unavailable rather than issuing a new HELLO. */
+  error = sysconninvalidate(cache, s->tag);
+  if (error)
+    return error;
+  if (boot->state == SYSBOOT_WAITING)
+    return -ERR_WOULD_BLOCK;
+  if (boot->state == SYSBOOT_PREPARED)
+    error = sysbootunprepare(boot, claim);
+  else {
+    error = sysbootfinished(boot, claim);
+    if (!error && boot->state == SYSBOOT_RESULT)
+      error = sysbootack(boot, claim);
+    if (!error && map->mapped)
+      error = sysbootunmap(space, map);
+    if (!error && boot->resource) {
+      error = __sys_free(boot->resource);
+      if (!error) {
+        boot->resource = 0;
+        boot->flags |= SYSBOOT_RESOURCE_MOVED;
+      }
+    }
+    if (!error)
+      error = sysbootfinish(boot, claim);
+  }
+  return error ? error : sysconncleaned(cache, claim);
 }
 isize
 sysconnworkclean(Connwork *work, Conncache *cache)

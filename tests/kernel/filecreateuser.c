@@ -618,9 +618,14 @@ backend(const Bootview *boot, u32 recover)
     }
     CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
     if (input.words[0] == STOP) {
-      CHECK(created == (recover == 2 ? 2 : 4) && closed == created &&
-            filecreatetrace[3] == (recover == 2 ? 2 : 3) &&
-            filecreatetrace[4] == (recover == 2 ? 1 : 3));
+      CHECK(created == (recover == 4   ? 1
+                        : recover == 2 ? 2
+                                       : 4) &&
+            closed == created &&
+            filecreatetrace[3] == (recover == 4   ? 1
+                                   : recover == 2 ? 2
+                                                  : 3) &&
+            filecreatetrace[4] == (recover == 4 || recover == 2 ? 1 : 3));
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;
@@ -665,7 +670,7 @@ backend(const Bootview *boot, u32 recover)
         mapping.prot = 3;
         CHECK(!__sys_map(space, &mapping));
         zero(head, FS_CONN_BYTES);
-        head->magic = FS_CONN_MAGIC;
+        head->magic = recover == 4 ? 0 : FS_CONN_MAGIC;
         head->bytes = FS_CONN_BYTES;
         head->connid = CONNID;
         head->serverimage = image;
@@ -948,6 +953,59 @@ resourceendclient(const Bootview *boot, u32 submitted)
   filecreatetrace[0] = 2;
 }
 static void
+mapdiscardclient(const Bootview *boot)
+{
+  Opkey     key;
+  Connpeer  peer, actual;
+  Conntag   tag;
+  Connentry entry;
+  Connclaim attach, abort, retry;
+  Bootmap   mapped;
+  Handle    call, memory, retained, space = bootresource(boot, BOOT_SELF_SPACE);
+  u64       files[2], source = 0, copied;
+  Msg       message;
+  Ipcmsg    result;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(FS_OPEN, "/bound", 0);
+  collect(&key);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+  peer = work.state.creators[key.lease.slot].peer;
+  CHECK(!sysconnbind(&cache, peer, &tag) && !sysconnworkinit(&backend_work, &cache, tag) &&
+        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &attach, &call));
+  bootstrap(&backend_work.state.bootstrap, attach, call, CALL_RECV_MEM);
+  memory = backend_work.state.bootstrap.resource;
+  zero(&mapped, sizeof(mapped));
+  CHECK(sysbootmap(&backend_work.state.bootstrap, attach, space, ADDRESS + 0x10000, peer.image,
+                   &mapped) == -ERR_INVALID &&
+        mapped.mapped && !mapped.verified &&
+        !sysfilecreatekeepcall(&pool, &work, &cache, &key, &backend_work, attach));
+  retained = backend_work.state.call;
+  CHECK(retained &&
+        !sysfilecreaterevokeprepare(&pool, &work, &cache, &key, retained, 0, &abort, &call));
+  bootstrap(&work.state.bootstrap, abort, call, CALL_CONTROL);
+  CHECK(!sysfilecreaterevoked(&pool, &work, &cache, &key, abort));
+  zero(files, sizeof(files));
+  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source &&
+        backend_work.state.bootstrap.resource == memory && backend_work.state.call == retained &&
+        !sysconnworkdiscard(&backend_work, &cache, attach, space, &mapped) && !mapped.mapped &&
+        !backend_work.state.bootstrap.state && !backend_work.state.ended &&
+        backend_work.state.call == retained && !sysconnview(&cache, tag, &entry) &&
+        entry.state == SYSCONN_DRAINING && !entry.owner &&
+        sysconnbegin(&cache, tag, 999, &retry) == -ERR_PEER &&
+        __sys_copy(&copied, (const void *) (ADDRESS + 0x10000), sizeof(copied)) == -ERR_FAULT &&
+        __sys_free(memory) == -ERR_BAD_HANDLE && !sysconnpeer(retained, &actual) &&
+        actual.pid == peer.pid && actual.image == peer.image);
+  zero(&message, sizeof(message));
+  message.words[0] = STOP;
+  CHECK(!ipc_call(retained, &message, 0, &result) && result.words[0] == 1 && result.words[1] == 1 &&
+        !sysconnworkclean(&backend_work, &cache) &&
+        !ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
+        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+  filecreatetrace[2] = filecreatetrace[3] = 1;
+  filecreatetrace[0] = 2;
+}
+static void
 mapsalvageclient(const Bootview *boot)
 {
   Opkey     key;
@@ -1030,7 +1088,7 @@ int
 main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
-        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'h')) &&
+        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'k')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1063,7 +1121,13 @@ main(int argc, char **argv)
     resourceendclient(sysboot(), 1);
   else if (argv[0][0] == 'g')
     server(sysboot(), 3);
-  else
+  else if (argv[0][0] == 'h')
     backend(sysboot(), 3);
+  else if (argv[0][0] == 'i')
+    mapdiscardclient(sysboot());
+  else if (argv[0][0] == 'j')
+    server(sysboot(), 4);
+  else
+    backend(sysboot(), 4);
   return 42;
 }

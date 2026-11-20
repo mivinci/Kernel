@@ -585,6 +585,8 @@ payload_bytes<=span*4096，所有字符串/数组offset均相对本请求首数�
 
 多次VFS打开同一后端只新增各自会话/引用，不新增连接。目标的预付区按该身份唯一连接记录保存；首次HELLO/ATTACH/EXEC_CLAIM实际交付它后标记已交付，不能再次交付另一块来绕过容量。首次ATTACH/EXEC_CLAIM按同意MEM的CALL取得共享区；若服务私有记录和客户端缓存均已有该source/backend的连接，新的会话ATTACH或尚未领取的继承EXEC_CLAIM普通reply=[0,bootstrap_seq,connid,region_bytes]确认绑定既有连接，未用接收槽按04归还，不再次交付MEM。资源reply与普通确认由kind明确区分；客户端没有可用匹配Mem/connid时不能把普通确认当作新授权，必须报协议/连接错误并补偿该会话，不猜本地Handle或重发旧建立操作。新交付CALL的固定目标PID/image通过06的本主体RESOURCE查询取得，作为缓存键，不按Handle整数是否相同猜后端；在固定会话关系后可free多余本地入口引用。该查询只在新授权冷路径使用，热I/O不追加查询。
 
+未发布连接的运输放弃：对仍由精确claim拥有、从未READY的首次bootstrap，调用者先补偿token/session并结束绑定Rctx责任，才能显式放弃运输。固定业务结果不证明原RPC排空；原生RQ_FINISH/ACK成功后依次解除外部Bootmap和释放bootstrap自持MEM，最后解除该claim的目录owner。等待/ACK/unmap/free失败保留剩余步骤，不能丢资源或重新发送ATTACH。工作页已持CALL保持独立，不随MEM释放；源VFS连接不被标死。目录保持DRAINING且不伪造peer-ended，不恢复UNCLAIMED、不忘记仍存活peer的键或自动重发HELLO。已发布READY/已有connid、其他槽责任及已移交MEM均不能走此路径；正常复用连接的失败仍须独立处理。
+
 普通close即使连接仍未接入也须保留原引用的关闭责任；可以推进其唯一接入后关闭。若在handler内遇接入由被打断外层持有而无法独立推进，不能等外层或返回EAGAIN：摘除后明确EIO并把关闭责任交给已预付记录，后续接入/生命周期清理继续处理，fd不恢复；不声称已经后端关闭成功。_exit依旧无需接入，目标ENDED独立收尾。自定义原生入口主动重复HELLO或破坏库表不能取得第二份授权或绕过总容量。
 
 #### 四字请求头与连接选择（审查修订）
@@ -1173,3 +1175,13 @@ Txn9888字节预付状态包含原Journal2432、128份40字节捕获票据及16/
 10项host专项在O0/O2链接真实cache/journal/txn，覆盖调用者放弃原键后的淘汰阻止、整个提交期间保持脏、后续修改不改变日志/home快照、失败/超时逐点保持、无I/O准备撤销、错误票据/别名、清理部分失败重试、编号耗尽及满128项152操作计划。runtime内核同一实现执行1元数据+1数据的11步事务，元数据捕获后再改，退休后只清旧数据版本；另逐11步注入确定失败与未知后排空，均保持脏且不复用原责任。下层完成仍由fixture模拟，独立失败案例重建测试实例不是生产恢复。
 
 1131项完整host、10项专项、格式及双架构runtime/normal共4次QEMU、4份内核诊断journal通过；两架构cache/journal对象无未定义依赖，txn只依赖这两个内部模块，目标布局、最终源码/头哈希、实际测试链接及普通镜像排除均已核对，所有构建结束后clangd切回RV64/runtime。证据build/host/stage170-cache-journal/含unit/focused-initial、runtime/normal日志、verify.py与evidence.json。首次RV命令误写固件路径，未执行guest，已纠正并保留失败；无真实磁盘、设备flush、DMA排空、逻辑文件事务回滚或挂载恢复结果。盘上编码/分类、生产fs/blk、恢复与真实持久化仍待接，magic/CRC候选尚未获用户确认；最近完整195矩阵仍为stage165，无CI/板端/性能结果。
+
+### 未发布bootstrap运输的显式放弃（2026-11-21）
+
+stage172新增私有sysconnworkdiscard，匹配工作页、完整peer、tag、bootstrap_seq和owner cookie；不按已经释放的File预留重新查询权利。仅接受无connid、无已安装MEM/map、无其他槽/创建责任的首次CONNECTING，或其原DRAINING重试。先检查外部Bootmap及未移交资源归属，再转DRAINING；不设置work.ended，不淘汰READY或误释放已移交资源。
+
+WAITING或未完成的原RPC保留全部状态并返回WOULD_BLOCK。固定结果通过原sysbootfinished及ACK后，依次unmap外部别名、free仍由bootstrap持有的MEM、结束bootstrap并解除精确目录owner；ACK成功而unmap失败不重新ACK，unmap成功而free失败不丢MEM或重新unmap。没有RPC的PREPARED只撤销本地准备。已持CALL、File/token补偿、Rctx和VA预留均独立；调用者须先补偿逻辑引用并结束绑定Rctx，在短屏蔽捕获信号的保护下调用。不发送ABORT/HELLO或重试业务，不把协议失败当后端死亡。成功后键仍DRAINING；只有既定实例终结清理才能忘记，不能通过重新建连取得第二份区。
+
+8项host专项覆盖坏头、未排空/ACK失败、unmap/free失败重试、精确claim/map/别名拒绝、发布/移交保护、PREPARED与WAITING区分、坏固定回复的原资源清理及其他槽责任阻止。真实三角色fixture新增坏共享头：VFS交付后端CALL/token，ATTACH已ACK并持有实际SHARED MEM；map成功而头校验失败，原File经真实ABORT撤销并释放预留后，旧owner cookie仍可清理运输。客户端核对原VA复制FAULT、旧MEM Handle不能再次free、CALL仍准确指向原peer、入口不伪造ended且拒绝新begin；后端收到控制STOP后自行归还其独立MEM，VFS连接仍可正常STOP。全部页/费用/实例回基线。实际RQ_FINISH未知、ACK/unmap/free失败在本点由host注入，原生场景仅证明先前已ACK的排空路径，不冒充未知下游或DMA恢复。
+
+1143项完整host、格式及双架构runtime/libsys/sigframe/normal共8次QEMU、8份内核诊断journal通过；原map冲突保留运输、ABORT死亡/排空、11份File引用、缓存/日志与环境场景继续通过。SDK私有头、源码/头/库哈希、实际filecreate用户ELF打包及内嵌载荷、connection.o仅预期内部依赖和真实discard调用均已审计；init装载段与serial ELF保持，生产镜像无测试载荷，所有构建后clangd切回RV64/runtime。证据build/host/stage172-bootstrap-discard/含unit/focused-initial、场景日志、verify.py与evidence.json。Connstate2880、Conncache472和4096字节工作页不变，无新内核ABI/权限/池；最近完整195矩阵为stage165，无CI/板端/性能结果。READY复用确认失败、其他bootstrap恢复、VA/rqclean待确认项、公开fd/Fix、生产服务及完整sh/net/最终GUI仍待继续。

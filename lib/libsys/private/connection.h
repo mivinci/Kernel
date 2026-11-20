@@ -84,6 +84,16 @@ isize sysconnworkadopt(Connwork *work, Conncache *cache, Connclaim claim, Handle
 isize sysconnworkreuse(Connwork *work, Conncache *cache, Connclaim claim);
 isize sysconnworkreserve(Connwork *work, Conncache *cache, u32 context, u32 span, Filelease *out);
 isize sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected);
+/* Abandon one never-published CONNECTING transport after settling logical
+   token/session references and finishing bound Rctx ownership elsewhere.
+   Exact claim only; invalidates locally to DRAINING, never marks peer ended.
+   WAITING/unfinished RPC keeps every responsibility. Once RQ_FINISH and ACK
+   succeed, unmap the still-external Bootmap and free the bootstrap-owned MEM,
+   then clear only this bootstrap/owner. Retries preserve remaining steps.
+   No CALL release, File rollback, remote request, READY eviction or reconnect.
+   The live peer key stays DRAINING even after successful cleanup. */
+isize sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle space,
+                         Bootmap *map);
 /* Caller must first settle all File/close references (sysfilerefconnection=0).
    Directory must be DRAINING with no active bootstrap owner, bootstrap record
    FREE and no occupied pages. Unmap, free MEM, then free owned CALL; failures

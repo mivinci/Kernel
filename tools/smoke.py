@@ -1587,6 +1587,10 @@ def exercise(args, run_dir, record):
                     if txns != [dict(operations=11,failures=11,timeouts=11,newer=1,state_bytes=9888)]:
                         raise SmokeError("filesystem captured cache transaction mismatch")
                     record['fs_txn']=txns[0]
+                    discarded=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MAPDISCARDCHECK ")]
+                    if discarded != [dict(actors=3,bad_header=1,aborted=1,unmapped=1,mem_released=1,call_retained=1,draining=1,charged=0,allocated=transition['tables'])]:
+                        raise SmokeError("unpublished transport discard ownership mismatch")
+                    record['mapping_discard']=discarded[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,
