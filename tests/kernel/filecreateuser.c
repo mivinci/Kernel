@@ -671,16 +671,136 @@ backend(const Bootview *boot)
   filecreatetrace[2] = closed;
   filecreatetrace[0] = 2;
 }
+static void
+deadclient(const Bootview *boot)
+{
+  Opkey     key;
+  Fileclose anchor;
+  Fileref   reference;
+  Msg       message;
+  Ipcmsg    result;
+  Handle    rpc;
+  u64       files[2], source = 0, first, second;
+  u32       steps = 0;
+  isize     error;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(FS_OPEN, "/a", 0);
+  collect(&key);
+  zero(files, sizeof(files));
+  complete(&key, 0, files, &source);
+  first = files[0];
+  key = begin(FS_OPEN, "/q", 0);
+  collect(&key);
+  zero(files, sizeof(files));
+  complete(&key, 0, files, &source);
+  second = files[0];
+  CHECK(first && second && first != second && !sysfilerefdrop(&pool, work.state.self, first) &&
+        !sysfilerefclose(&pool, work.state.self, first, &anchor) &&
+        !sysfilecloseprepare(&pool, &work, &cache, &anchor, 800, 0, &key, &message) &&
+        !ipc_call(work.state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
+  rpc = result.request;
+  CHECK(!sysopsubmitted(&work, &cache, &key, &result.request) &&
+        ipc_rqwait(rpc, 0, &result) == -ERR_PEER &&
+        !sysopcapture(&work, &cache, &key, -ERR_PEER, &result) &&
+        sysfilecloseresult(&pool, &work, &cache, &anchor, &key) == -ERR_PEER &&
+        !sysoppeerended(&work, &cache, &key) && work.state.ended == 1);
+  CHECK(sysfilecloserecover(&pool, &work, &cache, &anchor, &key) == -ERR_WOULD_BLOCK);
+  filecreatetrace[5] = (u64) rpc;
+  filecreatetrace[6] = 6;
+  do {
+    CHECK(++steps < 64 && !__sys_yield());
+    error = sysfilecloserecover(&pool, &work, &cache, &anchor, &key);
+  } while (error == -ERR_WOULD_BLOCK);
+  CHECK(!error && sysfilerefview(&pool, work.state.self, first, &reference) == -ERR_STALE &&
+        !sysfilerefview(&pool, work.state.self, second, &reference) &&
+        reference.state == SYSFILE_REF_LIVE && reference.aliases == 1 &&
+        !sysfilerefdrop(&pool, work.state.self, second) &&
+        !sysfilerefclose(&pool, work.state.self, second, &anchor) &&
+        !sysfilecloseended(&pool, &work, &cache, &anchor) &&
+        !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
+        !sysconnworkclean(&work, &cache) && !sysconnforget(&cache, work.state.tag));
+  filecreatetrace[2] = 2;
+  filecreatetrace[3] = 1;
+  filecreatetrace[4] = steps;
+  filecreatetrace[0] = 2;
+}
+static void
+deadserver(const Bootview *boot)
+{
+  Connpeer  peer;
+  Allocarg  alloc;
+  Maparg    mapping;
+  Resreply  transfer;
+  Ipcmsg    input;
+  Msg       reply;
+  Filehead *head = (Filehead *) ADDRESS;
+  Fileslot  descriptor;
+  Handle    memory, pid, parent;
+  u64       image, i;
+  CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
+        input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
+        input.words[0] == FS_HELLO && !input.words[1]);
+  zero(&alloc, sizeof(alloc));
+  alloc.bytes = FS_CONN_BYTES;
+  alloc.kind = ALLOC_SHARED;
+  CHECK(!__sys_alloc(bootresource(boot, BOOT_SELF_ALLOC), &alloc, &memory));
+  zero(&mapping, sizeof(mapping));
+  mapping.mem = memory;
+  mapping.address = ADDRESS;
+  mapping.length = FS_CONN_BYTES;
+  mapping.prot = 3;
+  CHECK(!__sys_map(bootresource(boot, BOOT_SELF_SPACE), &mapping) &&
+        !__sys_getid(&pid, &image, &parent));
+  zero(head, FS_CONN_BYTES);
+  head->magic = FS_CONN_MAGIC;
+  head->bytes = FS_CONN_BYTES;
+  head->connid = CONNID;
+  head->serverimage = image;
+  head->slots = FS_CONN_SLOTS;
+  head->slotbytes = FS_SLOT_BYTES;
+  zero(&transfer, sizeof(transfer));
+  transfer.source = memory;
+  transfer.rights = 3;
+  transfer.length = FS_CONN_BYTES;
+  transfer.business[0] = input.words[2];
+  transfer.business[1] = CONNID;
+  transfer.business[2] = FS_CONN_BYTES;
+  CHECK(!ipc_reply_resource(input.request, &transfer));
+  for (i = 0; i < 2; i++) {
+    CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == peer.pid &&
+          input.image == peer.image && input.words[0] == FS_OPEN && input.words[1] == CONNID &&
+          !sysfilerequest(head, FS_CONN_BYTES, (u32) input.words[3], input.words[2], &descriptor));
+    *(volatile u64 *) (ADDRESS + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) = 1000 + i;
+    zero(&reply, sizeof(reply));
+    reply.words[1] = input.words[2];
+    reply.words[2] = 100 + i;
+    reply.words[3] = 8;
+    CHECK(!ipc_reply(input.request, &reply));
+  }
+  CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == peer.pid &&
+        input.image == peer.image && input.words[0] == FS_CLOSE && input.words[1] == CONNID &&
+        input.words[3] == 6);
+  filecreatetrace[1] = 2;
+  filecreatetrace[2] = 1;
+  filecreatetrace[0] = 2;
+  /* Exit with the accepted CLOSE unanswered and both references still live.
+     Kernel Image termination, not a fabricated positive reply, drives recovery. */
+}
 int
 main(int argc, char **argv)
 {
-  CHECK(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '2' && !argv[0][1]);
+  CHECK(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '4' && !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
     client(sysboot());
   else if (argv[0][0] == '1')
     server(sysboot());
-  else
+  else if (argv[0][0] == '2')
     backend(sysboot());
+  else if (argv[0][0] == '3')
+    deadclient(sysboot());
+  else
+    deadserver(sysboot());
   return 42;
 }

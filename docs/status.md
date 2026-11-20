@@ -1,6 +1,6 @@
 # 当前状态
 
-更新：2026-11-20（Asia/Shanghai）。[设计入口](design/00-overview.md) · [协作规则](../AGENTS.md) · [代码规范](style.md)。历史执行与证据保留在各设计主题末尾，本页只作当前交接。
+更新：2026-11-21（Asia/Shanghai）。[设计入口](design/00-overview.md) · [协作规则](../AGENTS.md) · [代码规范](style.md)。历史执行与证据保留在各设计主题末尾，本页只作当前交接。
 
 ## 目标与工作约定
 
@@ -20,16 +20,16 @@
 
 ## 最新完成点与证据
 
-- stage159：创建类Rctx绑定实际Filepool，类型化捕获进入共用信号前置；原结果在handler前保存，未排空/非法回复保持RPC/槽/预留并记录捕获状态，不用服务错误吞掉信号。Rctx仍512字节、银行50712字节，连接预算保持。
-- 39项上下文专项（含8项新创建前置）；两架构在异步提交/业务返回窗口各实际注入一次信号，handler独立OPEN/CLOSE，主层预留/结果不变。含资源ATTACH/ABORT场景共11份引用，最终页/费用/实例归零；资源CALL的信号前置捕获另有host覆盖。
-- 验收：1055项完整host、格式、最终输入下8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
-- 证据：`build/host/stage159-creator-prelude/`。未重跑195矩阵，最近完整矩阵为stage154。无CI、板端或性能结果。stage157及后续本地提交暂未推送，自动审批要求直接确认公开发布，问题已提出。
+- stage160：原RPC的内核PEER结果固定旧后端结束标记，停止新接入；异步CALL无RPC失败的Rctx证明另有host覆盖。CLOSE恢复仍等真实排空/ACK，其他LIVE引用只在自身最后alias关闭后归还。状态及目录共3352字节，工作页/Rctx/银行预算保持。
+- 44项关闭/上下文/工作页专项；两架构新增死亡双进程fixture：接收CLOSE后服务退出，客户端先保持隔离，受信测试管理者确认无下游/DMA且清完旧空间后显式rqclean，再收回两份本地责任。未增加自动排空或客户端管理权；原11引用/信号/ATTACH场景继续通过。
+- 验收：1064项完整host、格式、最终输入下8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
+- 证据：`build/host/stage160-peer-recovery/`。初次死亡场景缺少受信代收尾，正确保持隔离；补齐测试管理动作后通过，失败现场保留。未重跑195矩阵（最近stage154），无CI/板端/性能结果。stage157及后续提交暂未推送，仍待公开发布确认。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
 - 已确认的token定点ABORT、Image统一序号及创建记录与清理运输的类型化衔接已接。生产token授权/撤销、准备观察与服务私有in-flight仍待接；不把三角色fixture当成真实VFS/后端服务，规则见10篇。
-- 创建结果的共用信号前置已接，继续生命周期恢复、完整创建/装载及公开前端/Fix；公开POSIX trampoline/errno/SA_RESTART仍待接。首次映射故障的完整连接恢复仍未完成；资源OPEN原生失败用例是已有连接ATTACH确认后的本地验证拒绝。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise未接。
+- 创建结果共用信号前置及旧后端CLOSE本地恢复已接；继续创建/接入失败的生命周期责任及生产init受限rqclean授权/枚举，再接完整装载/公开前端/Fix。公开POSIX trampoline/errno/SA_RESTART仍待接；首次映射故障的完整连接恢复未完成。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise未接。
 - 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 

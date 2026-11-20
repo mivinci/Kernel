@@ -46,6 +46,7 @@ struct Connstate
   Bootstrap bootstrap;
   Slotop    operations[FS_CONN_SLOTS];
   Createop  creators[FS_CONN_SLOTS];
+  u64       ended;
 };
 struct Connwork
 {

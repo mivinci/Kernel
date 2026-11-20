@@ -224,6 +224,30 @@ sysopcancel(Connwork *work, Conncache *cache, const Opkey *key)
     return error;
   return op->phase == SYSOP_WAITING ? ipc_rqcancel(op->rpc) : -ERR_STATE;
 }
+isize
+sysoppeerended(Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Slotop *op;
+  Ipcmsg  result;
+  u32     i;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (op->phase != SYSOP_WAITING && op->phase != SYSOP_RESULT)
+    return -ERR_STATE;
+  error = ipc_rqpoll(op->rpc, 0, &result);
+  if (error != -ERR_PEER)
+    return error ? error : -ERR_STATE;
+  if (result.kind || result.source || result.request || result.image)
+    return -ERR_STATE;
+  for (i = 0; i < 4; i++)
+    if (result.words[i])
+      return -ERR_STATE;
+  error = sysconninvalidate(cache, key->connection);
+  if (!error)
+    work->state.ended = 1;
+  return error;
+}
 static isize
 interruptible(const Slotop *op)
 {

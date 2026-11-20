@@ -38,4 +38,13 @@ isize sysfilecloseinterrupt(Filepool *pool, Connwork *work, Conncache *cache,
    remaining responsibility for lifecycle recovery; no duplicate submission. */
 isize sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                        const Opkey *key);
+/* Exact old backend has independently been marked ended. These perform local
+   recovery, never claim a successful service CLOSE. Caller has finished bound
+   Rctx handoff/continuations; last fd alias is detached, pins=0. recover keeps
+   an original CLOSE until real RQ_FINISH, native resource disposal and ACK.
+   ended is for an anchor with no submitted Op; any matching slot is BUSY.
+   Neither proof reclaims live aliases, pending IO, other Images or DMA. */
+isize sysfilecloserecover(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                          const Opkey *key);
+isize sysfilecloseended(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor);
 #endif

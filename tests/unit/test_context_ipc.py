@@ -41,6 +41,7 @@ class ContextIpcTests(unittest.TestCase):
             'sysctxopcall': [bank, Peer, C.c_uint32, w, cache, operation, C.c_uint64, key],
             'sysctxopwait': [bank, Peer, C.c_uint32, w, cache, operation, key],
             'sysctxhandoff': [bank, Peer, Key], 'sysctxfinish': [bank, Peer, Key],
+            'sysctxpeerended': [bank, Peer, Key],
             'sysctxresult': [bank, Peer, Key, C.POINTER(C.c_int64), C.POINTER(Result)]}
         for name, args in signatures.items():
             getattr(cls.lib, name).argtypes = args
@@ -193,3 +194,26 @@ class ContextIpcTests(unittest.TestCase):
         self.assertEqual(self.lib.sysctxbootcall(self.b, Peer(self.self.pid, self.self.image + 1),
                                                 0, C.byref(self.boot), self.claim,
                                                 self.call_handle, 0, C.byref(Key())), -4)
+
+    def test_failed_original_call_marks_old_peer_ended_without_a_probe(self):
+        operation=self.prepare();key=Key()
+        self.assertEqual(self.lib.sysctxopcall(self.b,self.self,0,self.w,self.c,
+            C.byref(operation),0,C.byref(key)),0)
+        self.returned(key,status=-14)
+        self.assertEqual(self.lib.sysctxhandoff(self.b,self.self,key),0)
+        self.assertEqual(self.lib.sysctxpeerended(self.b,self.self,key),0)
+        self.assertEqual((self.work.state.ended,self.cache.entries[self.tag.index].state),(1,4))
+        self.assertEqual((self.op(operation).phase,self.op(operation).rpc),(1,0))
+
+    def test_revoked_call_is_not_peer_death_and_changed_call_cannot_retarget_proof(self):
+        operation=self.prepare();key=Key()
+        self.assertEqual(self.lib.sysctxopcall(self.b,self.self,0,self.w,self.c,
+            C.byref(operation),0,C.byref(key)),0)
+        self.returned(key,status=-15)
+        self.assertEqual(self.lib.sysctxhandoff(self.b,self.self,key),0)
+        before=bytes(self.work),bytes(self.cache)
+        self.assertEqual(self.lib.sysctxpeerended(self.b,self.self,key),-6)
+        self.assertEqual((bytes(self.work),bytes(self.cache)),before)
+        self.bank.contexts[0].status=-14;self.bank.contexts[0].args[0]+=1
+        self.assertEqual(self.lib.sysctxpeerended(self.b,self.self,key),-4)
+        self.assertEqual((bytes(self.work),bytes(self.cache)),before)

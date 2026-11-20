@@ -4,6 +4,7 @@
 #include <bootimage.h>
 #include <diag.h>
 #include <signal.h>
+#include <rq.h>
 typedef struct Packet Packet;
 struct Packet
 {
@@ -17,6 +18,7 @@ extern const u64 filecreate_trace_address;
 static Handle    creatorclient;
 static u64       injected;
 NORETURN void    __real_hal_user_enter(Hctx *context);
+static void      deadtest(void);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -181,6 +183,134 @@ filecreatetest(void)
   putstr(" abandoned=");
   puthex(1);
   putstr(" errors=");
+  puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+  deadtest();
+}
+static void
+deadtest(void)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   info[2];
+  Handle     pids[2], call;
+  Packet     packet;
+  Bootimage  image;
+  Config     config;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  u64        trace[16];
+  u32        i, j, cleaned = 0, rqcleaned = 0, turns = 0;
+  Rqid       request;
+  Rqinfo     pending;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(4096, 8192, 4, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  for (i = 0; i < 2; i++)
+    CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &info[i]));
+  for (i = 0; i < 2; i++) {
+    Rtable *table = proctable(pids[i]);
+    for (j = 0; j < sizeof(packet); j++)
+      ((u8 *) &packet)[j] = 0;
+    CHECK(!localendpoint(table, info[1 - i].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
+    packet.header.magic = BOOT_MAGIC;
+    packet.header.format = BOOT_FORMAT;
+    packet.header.bytes = sizeof(packet);
+    packet.header.argc = 1;
+    packet.header.argv_off = offsetof(Packet, arg);
+    packet.header.resource_count = 3;
+    packet.header.resources_off = offsetof(Packet, resources);
+    packet.header.user_lo = BOOT_USER_LO;
+    packet.header.user_hi = BOOT_USER_HI;
+    packet.arg.offset = offsetof(Packet, role);
+    packet.arg.length = 2;
+    packet.role[0] = (char) ('3' + i);
+    packet.resources[0].tag = BOOT_SELF_SPACE;
+    packet.resources[0].handle = testresource(table, LOCAL_SPACE);
+    packet.resources[1].tag = BOOT_SELF_ALLOC;
+    packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
+    packet.resources[2].tag = 256;
+    packet.resources[2].handle = call;
+    testload(pids[i], filecreate_image, (u64) (filecreate_image_end - filecreate_image), &packet,
+             sizeof(packet));
+    config.entry = image.entry;
+    config.stack = 0x3fffff0000UL;
+    config.boot = 0x3fff000000UL;
+    config.bootsz = sizeof(packet);
+    config.sigmask = config.sigdefault = 0;
+    CHECK(!procconfigure(pids[i], &config, i ? 0 : 1) && !procpublish(pids[i]));
+  }
+  for (;;) {
+    if (!cleaned) {
+      CHECK(!procinfo(pids[1], &info[1]));
+      if (info[1].state == PROC_EXITING) {
+        CHECK(!lifestat(info[1].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+              !spaceread(info[1].space, filecreate_trace_address, trace, sizeof(trace)) &&
+              trace[0] == 2 && trace[1] == 2 && trace[2] == 1 && !trace[15]);
+        while ((error = procclean(pids[1])) > 0) {
+        }
+        CHECK(!error && !lifecollect(info[1].life, 1, &result));
+        cleaned = 1;
+      }
+    }
+    if (cleaned && !rqcleaned) {
+      CHECK(!spaceread(info[0].space, filecreate_trace_address, trace, sizeof(trace)));
+      if (trace[6] == 6) {
+        CHECK(!rqlookup((Handle) trace[5], info[0].identity, &request) &&
+              !rqstat(request, &pending) && pending.caller == pids[0] &&
+              pending.server == pids[1] && pending.status == -ERR_PEER &&
+              !(pending.flags & RQ_FINISHED));
+        /* Trusted fixture manager: this server has no downstream/DMA and its
+           full address space is gone. Userland init authorization is separate. */
+        CHECK(!rqclean(request, info[1].identity) && !rqstat(request, &pending) &&
+              pending.status == -ERR_PEER && (pending.flags & RQ_FINISHED));
+        rqcleaned = 1;
+      }
+    }
+    CHECK(!procinfo(pids[0], &info[0]));
+    if (info[0].state == PROC_EXITING)
+      break;
+    error = procrunone();
+    CHECK(!error || error == -ERR_WOULD_BLOCK);
+    CHECK(++turns < 256);
+    if (error)
+      CHECK(procidle() >= 0);
+  }
+  CHECK(!lifestat(info[0].life, &life) &&
+        !spaceread(info[0].space, filecreate_trace_address, trace, sizeof(trace)));
+  if (life.reason != LIFE_EXIT || life.code != 42 || trace[15]) {
+    putstr("FILEDEADRESULT code=");
+    puthex(life.code);
+    putstr(" line=");
+    puthex(trace[15]);
+    putstr("\n");
+  }
+  CHECK(cleaned && rqcleaned && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 2 &&
+        trace[1] == 2 && trace[2] == 2 && trace[3] == 1 && trace[4] < 64 && !trace[15]);
+  while ((error = procclean(pids[0])) > 0) {
+  }
+  CHECK(!error && !lifecollect(info[0].life, 1, &result) && !setstat(set, &budget) &&
+        !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck());
+  putstr("FILEDEADCHECK actors=");
+  puthex(2);
+  putstr(" references=");
+  puthex(2);
+  putstr(" accepted_close=");
+  puthex(1);
+  putstr(" recovered=");
+  puthex(2);
+  putstr(" quarantined=");
+  puthex(1);
+  putstr(" trusted_cleanup=");
   puthex(1);
   putstr(" charged=");
   puthex(0);

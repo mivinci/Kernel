@@ -94,6 +94,8 @@ A已取得TTY CALL Handle，但尚未接入会话。内核清理A的本地授权
 
 Mem交付/map失败、权限准备失败或服务失联均用原操作序号补偿；本地CALL权free与后端File关闭分别执行，不能free后以为后端会话已经消失。连接可以缓存供多个File复用，缓存淘汰需引用归零且在途访问已结清；关闭一个fd不撤掉其他File仍使用的连接。缓存是用户态优化，不减少服务每次请求的身份/模式校验。
 
+固定后端结束的客户端依据只取原绑定RPC返回的内核ERR_PEER，或原异步CALL在未产生RPC时的真实返回窗口；业务负值、REVOKED、CANCELLED和超时不产生该证明。标记只作用于原PID/image及目录代次，停止新接入，仍保留其他LIVE本地引用/别名。最后alias关闭后可依旧后端结束进行本地责任恢复；已有CLOSE的RPC/页仍须等待RQ_FINISH、处理已安装资源并ACK，继而归还记录。受信代收尾及下游/DMA安全沿[04的rqclean约束](04-ipc.md#rqclean-管理代收尾已确定)，后端死亡不自行解除隔离。此处本地恢复完成不改写应用已经确定的I/O错误，也不替代生产管理者的授权或实际排空证明。
+
 ### fd 标志与共享打开状态（已确定）
 
 libsys 的本地 fd 表保存每个描述符独立的 FD_CLOEXEC；服务端 File 保存共享偏移、访问模式及 O_APPEND/O_NONBLOCK 等文件状态标志。客户端缓存不能成为共享状态的第二权威。
@@ -1073,3 +1075,15 @@ revokeprepare借源连接的空闲bootstrap，精确核对仍持或外部保留�
 包括原普通创建场景，每架构9个创建请求产生9份引用，7次CLOSE及2份token撤销归零，重复ABORT不增加关闭数；原负业务与迟到OPEN补偿继续通过。最终1047项完整host、格式、最终输入下两架构各runtime/libsys/sigframe/normal共8次QEMU和8份journal通过。目标布局保持Connstate=2872、Conncache=472、Createop=184、工作页4096；实际三角色ELF与SDK/链接载荷一致，libsys审计无未定义依赖，默认init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage158-resource-open/的unit、focused、场景-reviewed日志、目标layout对象、verify.py和evidence.json；原初验证日志另保留，事务owner的旧Rctx专属注释修正后重新构建/执行最终8场景。未重跑195矩阵（最近stage154），无CI、板端或性能结果；正式trampoline的创建前置、生产服务及完整恢复继续待接。
 
 后续stage159已将此创建捕获接入池绑定的Rctx及共用信号前置，并用两次真实返回窗口信号/handler独立OPEN-CLOSE验证，执行与边界见[08运行库](08-runtime.md#创建类rctx绑定与信号前置捕获2026-11-20)。正式公开POSIX trampoline/errno/SA_RESTART、生产服务和生命周期恢复仍待接，不把测试trampoline视为完整公开前端。
+
+### 旧后端结束证明与CLOSE本地恢复（2026-11-21）
+
+stage160增加原连接的固定旧镜像ended标记。sysoppeerended在精确原Op上重查原RPC，只接受内核ERR_PEER及空结果元组；不消费结果、不推断RQ_FINISH，提交本地DRAINING及结束标记。sysctxpeerended覆盖原异步CALL在提交前因旧目标结束而失败、未产生RPC的情况：须为已handoff的SYS_CALL、原缓存CALL和仍PREPARED的原Op，其他状态或替换入口均拒绝。该CALL证明目前只有host覆盖；原生死亡场景使用真实RPC证明。没有探测消息、重发业务、OBSERVE发权或按服务名称重绑定。同PID新镜像也不能复用旧目录证明。
+
+sysfilecloserecover用于已占原CLOSE槽的关闭锚：核对最后alias已摘、pins=0、原File/关闭序号/目录/旧镜像结束标记，再读取原结果、非阻塞确认真实RQ_FINISH、释放可能持有的本地资源、SAVED及ACK，最后归还原页并确认本地锚。排空/ACK/资源释放失败保留剩余责任，不发第二笔CLOSE。sysfilecloseended用于尚未提交任何对应Op的锚，扫描到该File仍占槽则BUSY；其他LIVE File不被扫描批量释放，仍待各自alias/pin结清。这些函数的0只表示本地恢复结束，不冒充服务成功CLOSE，不把原失败结果改成成功。调用方须先完成原绑定Rctx的handoff/续执行协调；创建类、接入bootstrap和设备恢复仍各持自己的责任。
+
+ended占Connstate新增8字节，Connstate=2880、Conncache=472、合计3352，仍嵌入原4096字节工作页，8连接32KiB保持；Createop184、Rctx512、Rbank50712及快照预算保持。workinit只在全新未接入目录初始化标记，清理/forget不得用新目标身份覆盖旧责任。连接清理继续检查全部原Op/Createop/bootstrap/页，并先解除映射再释放原MEM/CALL。
+
+新增7项关闭恢复与2项Rctx证明host测试，关闭/上下文/工作页专项合计44项，覆盖原内核PEER重查、撤权/取消/普通错误不算结束、DRAINING无证明拒绝、未排空及ACK失败保持、占槽不能走无RPC捷径、另一LIVE别名保留及新镜像不继承证明。原生runtime另运行死亡客户端/服务两角色：先持两份Filepool直接引用，服务接收第一份CLOSE后无reply退出；客户端仍取得原ERR_PEER，首次恢复明确WOULD_BLOCK并保持隔离。受信测试管理者在清理旧服务完整地址空间、确认本fixture无下游/DMA后，校验原RQ归属并显式rqclean；Rq状态仍ERR_PEER，仅FINISHED改变。客户端随后通过真实RQ_FINISH/ACK回收该锚，再关闭另一份本地alias，未发送第二笔CLOSE，映射/费用/实例回基线。这里不是公开fd/生产FS或用户态init的rqclean授权实现。
+
+初次原生场景只清了旧进程，未安排可信代收尾，因而正确持续WOULD_BLOCK；直接观测查回04的隔离约束后，按既有可信IPC fixture方式补入管理动作。未在内核自动调用rqclean，未放宽客户端排空判断，原失败日志/串口现场保留。最终1064项完整host、格式及RV64/ARM64各runtime/libsys/sigframe/normal共8次QEMU、8份journal通过，原11引用/真实创建信号/ATTACH-ABORT场景继续通过。SDK、实际载荷、目标布局及无libc依赖审计通过，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage160-peer-recovery/的unit、close/context/work-initial、场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果；创建及接入失败恢复、生产受限rqclean授权/枚举、服务/公开前端/Fix、sh/net/最终GUI继续。

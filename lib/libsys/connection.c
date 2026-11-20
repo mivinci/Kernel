@@ -24,6 +24,8 @@ view(Connwork *work, Conncache *cache, Connentry *entry)
     return error;
   if (entry->peer.pid != s->peer.pid || entry->peer.image != s->peer.image)
     return -ERR_STALE;
+  if (s->ended > 1 || (s->ended && entry->state != SYSCONN_DRAINING))
+    return -ERR_STATE;
   return sysfilepagescheck(&s->pages);
 }
 static int

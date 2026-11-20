@@ -191,6 +191,29 @@ sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
   return error;
 }
 isize
+sysctxpeerended(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx   *context;
+  Rroute *route;
+  isize   error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  route = &context->route;
+  if (context->phase != RCTX_CLEANING || context->number != SYS_CALL ||
+      context->status != -ERR_PEER || route->kind != RCTX_ROUTE_OP || route->delivered != 1)
+    return -ERR_STATE;
+  error = sysopcheck(route->work, route->cache, &route->operation);
+  if (error)
+    return error;
+  if (context->args[0] != (u64) route->work->state.call ||
+      route->work->state.operations[route->operation.lease.slot].phase != SYSOP_PREPARED)
+    return -ERR_STALE;
+  error = sysconninvalidate(route->cache, route->operation.connection);
+  if (!error)
+    route->work->state.ended = 1;
+  return error;
+}
+isize
 sysctxhandoff(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx   *context;

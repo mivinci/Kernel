@@ -28,6 +28,11 @@ isize sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Co
    RQWAIT before entering a handler. A deferred/invalid service result does not
    suppress the signal: raw responsibility remains stable for continuation. */
 isize sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key);
+/* Failed original asynchronous CALL, no RPC produced: exact handed-off
+   route, cached target and native ERR_PEER mark that old backend ended.
+   No probe or new message is sent; the prospective Op stays PREPARED for
+   explicit pre-submission rollback. Native wait errors use sysoppeerended. */
+isize sysctxpeerended(Rbank *bank, Connpeer self, Rkey key);
 /* After return-window capture or normal return, under caught-signal exclusion.
    Moves raw ownership once, is idempotent after that move, and keeps DONE on
    failure. Transient wait errors keep the original RPC in its destination.

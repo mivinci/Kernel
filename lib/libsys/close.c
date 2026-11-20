@@ -223,3 +223,73 @@ sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclo
     return -ERR_STATE;
   return progress(pool, work, cache, anchor, key, &confirmed);
 }
+static isize
+peerended(Connwork *work, Conncache *cache)
+{
+  Connentry entry;
+  isize     error;
+  if (!work || !cache || work->state.ended != 1)
+    return -ERR_STATE;
+  error = sysconncheck(cache, work->state.self);
+  if (!error)
+    error = sysconnview(cache, work->state.tag, &entry);
+  if (error)
+    return error;
+  if (entry.state != SYSCONN_DRAINING || entry.peer.pid != work->state.peer.pid ||
+      entry.peer.image != work->state.peer.image)
+    return -ERR_STALE;
+  return 0;
+}
+isize
+sysfilecloseended(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor)
+{
+  Fileref reference;
+  u32     i;
+  isize   error = anchorcheck(pool, work, anchor, &reference);
+  if (!error)
+    error = peerended(work, cache);
+  if (error)
+    return error;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (work->state.operations[i].phase && work->state.operations[i].file == anchor->file)
+      return -ERR_BUSY;
+  return sysfilerefconfirmed(pool, work->state.self, anchor);
+}
+isize
+sysfilecloserecover(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                    const Opkey *key)
+{
+  Slotop *op;
+  u64     file = 0;
+  isize   error = target(pool, work, cache, anchor, key, &op);
+  if (!error)
+    error = peerended(work, cache);
+  if (error)
+    return error;
+  if (op->phase == SYSOP_WAITING) {
+    error = sysoppoll(work, cache, key);
+    if (error)
+      return error;
+  }
+  if (op->phase == SYSOP_RESULT) {
+    error = sysopfinished(work, cache, key);
+    if (error)
+      return error;
+    if (op->resource) {
+      error = __sys_free(op->resource);
+      if (error)
+        return error;
+      op->resource = 0;
+      op->flags |= SYSOP_RESOURCE_MOVED;
+    }
+    error = sysopsaved(work, cache, key);
+    if (!error)
+      error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  error = sysopfinish(work, cache, key, &file);
+  if (error)
+    return error;
+  return sysfilerefconfirmed(pool, work->state.self, anchor);
+}

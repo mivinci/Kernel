@@ -1577,6 +1577,11 @@ def exercise(args, run_dir, record):
                             attached=3,revoked=2,abort_requests=3,abandoned=1,errors=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("file creator ownership/attach/token compensation mismatch")
                     record['file_creators']=creators[0]
+                    dead=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILEDEADCHECK ")]
+                    if dead != [dict(actors=2,references=2,accepted_close=1,recovered=2,quarantined=1,
+                            trusted_cleanup=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("ended backend close recovery mismatch")
+                    record['file_recovery']=dead[0]
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
                             {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "formats", "groups", "queues", "rings", "fd_tables", "file_slots", "charged", "allocated")} !=

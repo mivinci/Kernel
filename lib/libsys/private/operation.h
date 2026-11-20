@@ -39,6 +39,11 @@ isize sysoprequest(Connwork *work, Conncache *cache, const Opkey *key, Msg *out)
 isize sysoprpc(Connwork *work, Conncache *cache, const Opkey *key, Handle *out);
 /* Exact private key/state check; no poll or ownership change. */
 isize sysopcheck(Connwork *work, Conncache *cache, const Opkey *key);
+/* Original bound RPC must currently return native ERR_PEER and an empty
+   tuple. This fixes the old backend Image as ended and invalidates only its
+   exact directory entry. Does not ACK, drain or release any page/reference;
+   REVOKED/CANCELLED/timeouts are not peer-death proof. */
+isize sysoppeerended(Connwork *work, Conncache *cache, const Opkey *key);
 /* Nonblocking real-finish proof for a fixed result, or already ACKED. */
 isize sysopfinished(Connwork *work, Conncache *cache, const Opkey *key);
 isize sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize status,
