@@ -73,6 +73,7 @@ wait 可返回 STOPPED（停止信号）、CONTINUED、EXITED（退出码/终止
 已交付旧组字节不可重复交付，未提交的旧读须重查资格；尚未分发的终端队列输入按显式保留/清空选项处理，不与旧请求私有缓冲混用。
 作业停止时保存其终端模式、恢复 shell 模式再交回前台；fg 先恢复模式并设置前台再 CONT，bg 只 CONT 不取得前台。
 后台读遵循 TTIN，后台模式修改/输出按已定义 TTOU 策略检查，不通过直接用户 RPC 绕过终端资格。
+setfg后台处理的具体编码候选待用户确认（2026-11-21）：权限/会话/目标组合法性后先核对旧epoch，STALE不发信号；后台且屏蔽/忽略TTOU时允许操作并继续epoch约束，不发TTOU。仅后台、未屏蔽/忽略且孤儿组返回拟新增ERR_IO=23；默认TTOU向调用者组投递并安全停放，CONT后按原参数重查原epoch；捕获型TTOU投递后本次INTERRUPTED，后续libc决定重启。ttysignal无前台/无存活目标拟为STALE，来源USER记录实际调用者PID/euid，至少一名投递成功则成功。此修正版替代已撤回的“屏蔽/忽略TTOU也EIO”候选，未实施；前文后台读的TTIN错误规则不能直接套用于tcsetpgrp。依据为[POSIX.1-2017原文重印](https://man7.org/linux/man-pages/man3/tcsetpgrp.3p.html)及[OpenBSD官方手册](https://man.openbsd.org/tcsetpgrp.3)明确允许屏蔽/忽略TTOU时继续tcsetpgrp；原生错误编码与停放续执行规则仍须确认。
 若组内没有成员具有同会话且组外的父进程，则为孤儿组；父子/成员关系变化重新判定，孤儿组含停止成员时发送 HUP 与 CONT。
 验证原始模式程序异常、组长先退出、sh 退出、停止期间挂断及切换中 Ctrl-C，不能留下无法恢复的终端模式或停止作业。
 
@@ -316,6 +317,8 @@ SIGCHLD在退出结果提交点决定保留/自动收取：DEFAULT/HANDLER保留
 ttybind的SID=0或不是完整PROCESS语法返回BAD_HANDLE；找不到既有会话返回STALE，只剩预留/清理引用而无存活成员返回STATE。已绑定终端不重绑（STATE），会话已被另一未释放终端占用返回BUSY；失败不改变关联和epoch。getfg/ttybind传非TERMINAL本地Handle返回BAD_HANDLE，正确类型缺业务权返回DENIED；owner结束返回STALE。getfg成功才同时发布公开PGID/SID/epoch，失败三个输出均0；无前台与无会话各自用0表达，不能将内部SESSION_ID/GROUP_ID直接当作公开PROCESS身份返回。ttybind只使用a0/a1，getfg只使用a0，其他输入非0均拒绝。
 
 例子：init与sh分属会话S0/S1，T未绑定时双方QUERY均得到0/0/1；init凭BIND将T绑到有存活sh的S1，查询得到0/S1/1。sh仅持QUERY时可查该结果，调用ttybind则DENIED；再次绑定T返回STATE，另一终端抢S1返回BUSY，均保留原关联。后续选择前台必须走独立FG与TTOU检查；绑定本身不选择sh组、不推进epoch。T的tty owner结束后，两者getfg均STALE且输出0，Local枚举仍显示原tty身份，不能改绑到新镜像。
+
+孤儿组只读判定接续（2026-11-21，stage165）：lifeorphan接内部GROUP身份，只扫描至多PROCS个Run→Life缓存，不扫描任意用户PID或增加权限。只把LIFE_LIVE的已发布成员及父视为存活，停止状态不改变这项存活资格；通过parentof的逻辑收养和liveparent的完整PID核对父关系。同会话且组外的一名存活父即可判非孤儿；空组/只有构造保留亦无这种父关系。无效类别/代次失败输出0。该函数不修改关系，不投递HUP/CONT，也不作为原生setfg/ttysignal或控制终端生命周期已完成的证明。
 
 例子：init用TTY构造期间已获得的持续CONTROL创建终端T，再向该准备表grant SIGNAL/INT子集，并向准备中的sh授QUERY|FG和FORK|EXEC。即便CONTROL含INSTALL，改用它运行中grant TERMINAL仍拒绝。若TTY在init持T期间退出，T仍只报告旧PID/image；新TTY镜像必须重新ttycreate，旧T不能对新实例操作。调用者表已满时ttycreate不安装T；释放一个槽后可重试，不遗留占池终端或旧Image费用。
 
@@ -817,3 +820,13 @@ procsigsend现接受GROUP target=0，从受理时的sender Life快照取得内�
 最终完整make test-all通过1006项host、格式及195次双架构QEMU；12项上下文专项、168份journal、16次生产启动和10条生产失败清理另审计。两份faultuser的源码/头/SDK及实际内嵌载荷逐字节一致，11条真实异常的cause类别、成功/终止和handler次数与源状态机一致；全部现有信号帧/cookie、同号pending隔离、COW及fork、普通等待/IPC和GROUP 0检查继续通过。生产init/serial与stage153逐字节相同，normal不含新增测试代码，clangd切回RV64/sigframe。
 
 证据build/host/stage154-hardware-fault/的test-all.log、context-focused-final.log、verify.py和evidence.json。早期新增fixture漏ABI头的编译失败、页内NX被误判MAPERR的失败与诊断均保留；修正查询按页对齐，另补FnV/SP地址边界后停止旧验证，最后从头完整通过test-all，未拼接不同源码结果。FP子原因的512种标志/TFV组合、FnV和SP地址及原始Hctx不变属于主机分类检查，外部总线/FPE/SP对齐没有实际硬件触发证明。未完成CI、板端、性能或公开POSIX信号前端；创建类引用补偿、生产服务与完整sh/net/GUI目标继续接续。
+
+### 孤儿组只读判定与完整回归（2026-11-21）
+
+stage165按本篇已定关系定义实现lifeorphan：输入内部GROUP，在序列化关系快照中扫描至多PROCS个Run→Life缓存；仅已发布LIFE_LIVE成员及父参与，包括停止者。parentof立即应用死亡水位的逻辑收养，liveparent再核对完整PID，父组须与目标同会话且不同组。任一成员有这样的父即非孤儿；空组、仅构造期或仅同组/异会话父均不能阻止孤儿化。函数不分配、不增加持久字段、不改组/父子关系、不产生信号或管理权；错误输出0，不把过期GROUP或复用PID槽当成新父。
+
+新增6项host在两架构页表模型下调用真实Life/Group核心，覆盖发布前后、停止父/子、同组父与跨会话迁移、多个成员仅一人有合格父、父退出与逻辑收养、活的新PID代次复用以及错误类别/旧代次。原生CASE=groups直接对实际已发布Run/Life关系执行4次检查：父所在组、临时孩子组内的同会话组外父、恢复同组父后、旧父退出且运行槽复用后。临时组在运行用户程序前恢复，原用户态组/会话/退出与费用验收保持；没有借只读分类器冒充setfg/TTOU或孤儿HUP/CONT已交付。
+
+本点涉及内核关系层，完整make test-all已退出0：1089项host、格式、195次RV64/ARM64 QEMU、168份journal均通过；16次生产启动、10条生产失败清理及原有真实FAULT、信号/组/创建/连接恢复载荷另核对。新GROUPCHECK含orphan_checks=4，两架构均验证；此前累计的资源ABORT、map冲突运输保留及OPEN/PIPE/CLOSE死亡恢复随矩阵重跑。SDK源码/头/库、实际载荷、默认包及无测试代码边界审计通过，init/serial与stage164逐字节相同，clangd切回RV64/groups。
+
+证据build/host/stage165-orphan-groups/的test-all.log、completion.json、focused-initial、groups-riscv-reviewed、verify.py和evidence.json。首次RV预检把固件路径重复拼接，构建后未执行客体，改回现有明确OPENSBI路径后预检及完整矩阵通过；该启动失败记录保留，不算运行成功项。未完成CI、板端、性能、自动孤儿HUP/CONT、原生setfg/ttysignal或完整作业控制。终端后台候选曾把TTIN读错误套到前台切换，已撤回并按上文POSIX依据修正，尚待用户确认；CLEAN与共享VA候选亦未实现。公开POSIX前端/Fix、生产服务、sh/net/图形/GPU及最终GUI目标继续。

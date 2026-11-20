@@ -1666,7 +1666,7 @@ def exercise(args, run_dir, record):
                     record["process_statistics"] = checks[0]
                 if args.case == "groups":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("GROUPCHECK ")]
-                    if (len(checks) != 1 or
+                    if (len(checks) != 1 or checks[0].get('orphan_checks') != 4 or
                             {k: checks[0].get(k) for k in ("turns", "reused", "charged", "allocated")} !=
                             {"turns": 3, "reused": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("native group relation/reuse mismatch")

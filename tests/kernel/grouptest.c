@@ -110,13 +110,13 @@ grouptest(void)
 {
   Setid    set;
   Set      account;
-  Handle   pids[5], pgid, sid, inherited, replacement, construct;
+  Handle   pids[5], pgid, sid, inherited, replacement, construct, job;
   Procinfo info[5];
   Life     life;
   Group    relation;
   Pgstat   before, after;
   u64      marker, descendant;
-  u32      i, turns = 0;
+  u32      i, turns = 0, orphan, orphan_checks = 0;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
   for (i = 0; i < 3; i++)
@@ -127,6 +127,8 @@ grouptest(void)
   REQUIRE(!procpublish(pids[0]) && !procrunone());
   turns++;
   REQUIRE(!lifestat(info[0].life, &life) && life.state == LIFE_LIVE);
+  REQUIRE(!lifeorphan(life.group, &orphan) && orphan == 1);
+  orphan_checks++;
   REQUIRE(!spaceread(info[0].space, 0x40080, &marker, sizeof(marker)) && marker == 1);
   REQUIRE(!procnew(set, pids[0], 256, 512, LOCALS, &pids[3]) && !procinfo(pids[3], &info[3]));
   load(pids[3], 0, pids[2], pids[0], 0, 1);
@@ -134,7 +136,13 @@ grouptest(void)
   REQUIRE(pgid == pids[0] && sid == pids[0]);
   descendant = (u64) pids[3];
   REQUIRE(!spacewrite(info[0].space, 0x40018, &descendant, sizeof(descendant)));
-  REQUIRE(!procpublish(pids[3]) && !procrunone());
+  REQUIRE(!procpublish(pids[3]) && !groupstat(inherited, &relation) &&
+          !groupcreate(pids[3], relation.session, &job) && !lifesetgroup(info[3].life, job) &&
+          !lifeorphan(job, &orphan) && !orphan);
+  orphan_checks++;
+  REQUIRE(!lifesetgroup(info[3].life, inherited) && !groupdrop(job) &&
+          !lifeorphan(inherited, &orphan) && orphan == 1 && !procrunone());
+  orphan_checks++;
   turns++;
   collect(pids[0], info[0].life);
   REQUIRE(!groupstat(inherited, &relation) && relation.processes == 1 && relation.members == 1);
@@ -146,6 +154,8 @@ grouptest(void)
   REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[4]) && !procinfo(pids[4], &info[4]));
   REQUIRE(handleindex(pids[4]) == handleindex(pids[0]) && pids[4] != pids[0]);
   replacement = pids[4];
+  REQUIRE(!lifeorphan(inherited, &orphan) && orphan == 1);
+  orphan_checks++;
   REQUIRE(!spacewrite(info[3].space, 0x40028, &replacement, sizeof(replacement)));
   /* A manager keeps the old group joinable while its last member moves. */
   REQUIRE(!grouphold(inherited));
@@ -167,6 +177,8 @@ grouptest(void)
   puthex(turns);
   putstr(" reused=");
   puthex(1);
+  putstr(" orphan_checks=");
+  puthex(orphan_checks);
   putstr(" charged=");
   puthex(account.charged);
   putstr(" allocated=");

@@ -85,6 +85,11 @@ int lifeacct(Lifeid id, Acctid *out);
 int lifebindgroup(Lifeid id, Handle group);
 int lifesetgroup(Lifeid id, Handle group);
 int lifegroup(Lifeid id, Handle *out);
+/* Read-only current orphan classification of an internal process group.
+   Only published live members/parents count, including stopped ones. A
+   same-session parent outside the group makes it non-orphan; full PID and
+   logical adoption are checked. No HUP/CONT or native authority is implied. */
+int lifeorphan(Handle group, u32 *out);
 int lifebootgroup(Lifeid id);
 /* Existing published/result identity or a completed constructor, not authority. */
 int lifefindpid(Handle pid, Lifeid *out);

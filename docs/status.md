@@ -20,16 +20,17 @@
 
 ## 最新完成点与证据
 
-- stage164：bootstrap提交前固定CALL真实目标，同一Rctx经rewait保留其PID/image；已提交ABORT失败也可据原RPC/claim固定实际后端结束证明，仍待真实FINISH/ACK才释放。fresh wait-only不补造目标，ACK/free失败可续收尾；预算保持。
-- 50项上下文专项；两架构分别覆盖无RPC失败和实际接收ABORT后退出，两种三进程场景均保留VFS可用。后者明确先隔离，再由可信测试管理者代收尾，原PEER结果不变；旧创建/死亡/信号/映射冲突场景继续通过。
-- 验收：1083项完整host、格式、8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，Rctx仍512、银行50712，私有input偏移344/路由184已统一重建，init/serial与stage155相同，clangd切回RV64/runtime。
-- 证据：`build/host/stage164-submitted-abort/`。未重跑195矩阵（最近stage154），无CI/板端/性能结果。stage157及后续提交暂未推送，仍待公开发布确认。
+- stage165：lifeorphan只读判定已发布组的当前孤儿状态；同会话组外的存活父阻止孤儿化，停止成员仍算存活，完整PID/逻辑收养不随槽复用重绑。未发HUP/CONT、未开放setfg/ttysignal，无新增状态或权限。
+- 6项主机专项及两架构实际已发布Run/Life的4次关系检查，覆盖空/构造、跨会话、同组父、停止、父退出及复用；原全部用户态创建/信号/连接恢复验收随完整矩阵重跑。
+- 验收：完整make test-all退出0，1089项host、格式、195次双架构QEMU和168份journal通过；SDK/实际载荷/默认启动包审计通过，init/serial与stage164相同，clangd切回RV64/groups。
+- 证据：`build/host/stage165-orphan-groups/`。首个RV预检固件路径拼写错，未执行客体，改回既有路径后通过；失败记录保留。无CI/板端/性能结果。stage157及后续提交暂未推送，仍待公开发布确认。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
 - 待确认：生产rqclean的CONTROL_CLEAN=0x80、仅初始init持有及完整REQUEST参数方案已单独提问，尚未修改CONTROL/0x1b实现；候选及04/06旧表差异见04管理代收尾节。
 - 待确认：堆/连接共用VA登记、保留128堆区域及8份连接预付责任、短屏蔽信号更新范围的方向已提问，见08；当前vm.c仍不承诺信号安全，未新增映射查询或内核保留区。
+- 待确认：setfg/ttysignal的修正版后台/错误规则见11；旧“屏蔽/忽略TTOU也EIO”候选已撤回，修正版允许该情形继续切换。尚未新增ERR_IO=23或开放原生终端调用。
 - 已确认的token定点ABORT、Image统一序号及创建记录与清理运输的类型化衔接已接。生产token授权/撤销、准备观察与服务私有in-flight仍待接；不把三角色fixture当成真实VFS/后端服务，规则见10篇。
 - 创建前置、旧后端CLOSE、未回复创建、资源ABORT无RPC/已提交失败及首次VA冲突恢复已接；继续其他失败bootstrap、持久映射故障及待定VA/管理入口，再接完整装载/公开前端/Fix。公开POSIX trampoline/errno/SA_RESTART未完成；公开libc kill/raise未接，外部总线/FPE/SP对齐仍仅host分类检查。
 - 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。

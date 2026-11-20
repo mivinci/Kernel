@@ -189,6 +189,40 @@ lifepublish(Lifeid id)
   return 0;
 }
 int
+lifeorphan(Handle group, u32 *out)
+{
+  Group relation, parentgroup;
+  Life *child, *parent;
+  u32   slot, entry;
+  int   error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  error = groupstat(group, &relation);
+  if (error)
+    return error;
+  if (relation.kind != HANDLE_GROUP)
+    return -ERR_BAD_HANDLE;
+  for (slot = 0; slot < PROCS; slot++) {
+    entry = runlife[slot];
+    if (!entry || entry > LIFES)
+      continue;
+    child = &lives[entry - 1];
+    if (child->state != LIFE_LIVE || child->group != group)
+      continue;
+    parent = liveparent(parentof(child));
+    if (!parent || parent->group == group || !parent->group)
+      continue;
+    error = groupstat(parent->group, &parentgroup);
+    if (error)
+      return error;
+    if (parentgroup.session == relation.session)
+      return 0;
+  }
+  *out = 1;
+  return 0;
+}
+int
 lifecancel(Lifeid id)
 {
   Life *l = find(id);
