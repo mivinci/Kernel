@@ -76,6 +76,12 @@ match(Connwork *work, Conncache *cache, const Opkey *key, Slotop **out)
   return 0;
 }
 isize
+sysopcheck(Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Slotop *op;
+  return match(work, cache, key, &op);
+}
+isize
 sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner, u64 *owned_file,
              u64 object, u64 opcode, u64 deadline, Opkey *out)
 {
@@ -273,6 +279,17 @@ ended(const Slotop *op)
   return 0;
 }
 isize
+sysopfinished(Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Slotop *op;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (op->phase == SYSOP_ACKED)
+    return 0;
+  return op->phase == SYSOP_RESULT ? ended(op) : -ERR_STATE;
+}
+isize
 sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 bytes, void *out)
 {
   Slotop *op;
@@ -318,10 +335,9 @@ sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, Opkey *
     return error;
   if (!(op->flags & SYSOP_CANCEL_SENT) || now < op->deadline)
     return -ERR_WOULD_BLOCK;
-  error = sysopbackground(work, cache, owned_key, out);
+  error = sysopabandon(work, cache, owned_key, out);
   if (error)
     return error;
-  op->flags |= SYSOP_APP_ENDED;
   return SYSOP_ABANDONED;
 }
 isize
@@ -383,6 +399,15 @@ sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)
   op->flags |= SYSOP_BACKGROUND;
   for (i = 0; i < sizeof(*owned_key); i++)
     ((u8 *) owned_key)[i] = 0;
+  return 0;
+}
+isize
+sysopabandon(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)
+{
+  isize error = sysopbackground(work, cache, owned_key, out);
+  if (error)
+    return error;
+  work->state.operations[out->lease.slot].flags |= SYSOP_APP_ENDED;
   return 0;
 }
 isize

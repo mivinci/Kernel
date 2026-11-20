@@ -999,3 +999,21 @@ Connstate新增一份自持CALL，仍在原4096字节工作页内；目录仍按
 新增6项CALL所有权host与原8项工作区专项共14项，覆盖首次移入/冗余返回、不匹配PID/image、同Handle数值与非空输出拒绝、DRAINING/源镜像边界，以及最终CALL free失败后的单步重试。原生场景从实际resource reply取得两份不同CALL：第一份接管到工作页，第二份被冷路认出同后端并显式归还/free；HELLO、普通ATTACH、共享READ、压力探针及控制CLOSE都使用自持入口。完成所有File/RPC/页责任后拆除，原入口在QUERY中STALE、直接call为BAD_HANDLE，外层原Boot CALL仍可解析并继续后续独立原生通信；没有用资源同目标性混淆本地引用数量。
 
 最终完整make test-all通过924项host、格式检查及195次双架构QEMU；14项连接专项、15项主机观测专项、168份journal、最终源码/头/SDK/包哈希与实际链接用户载荷和SDK打包ELF逐字节一致另核对。两架构实际独立CALL授予/接管/冗余返还、所有共享操作与控制CLOSE、自持入口清理后STALE/BAD_HANDLE且外层入口继续可用均通过，页/费用回基线。SDK私有头/依赖集合一致，工作页仍4096字节且无额外目录，init/serial ELF与stage142逐字节相同且不含新增模块/测试符号，clangd数据库已更新。证据build/host/stage143-owned-call/；无CI/板端/性能结果。初次全量末段ARM64 8GiB生产观测遇主机串口半行竞态：INITRETAIN只写到root=，轮询已暂停guest并读取未完成字段。现按完整换行记录才允许probe，缺字段/重复/零root的完整记录明确失败；观测专项覆盖每一截断位置，ARM64 8GiB复验后从头完整重跑，失败serial/result日志保留。没有修改guest启动/状态机来掩盖主机观测问题。来源/类型/目标识别复用现有原生接口，未新增权限位、句柄复制特权或ABI。生产连接/服务观察与File权限、Rctx/trampoline返回窗口、1秒控制故障/后台补偿、VA/Boot/Fix及标准fd服务仍待接，两个已有接口问题保持待用户回复。
+
+### 关闭裁决与类型化后台 worker（2026-11-20）
+
+libsys新增私有closewatch、closeinterrupt及closework。先核验原File关闭锚/代次、连接、精确Opkey及控制页6/单页/原session，再poll原RPC，不对另一条操作先poll后猜身份。watch使用prepare时给定的一次性绝对单调控制截止，不因handler/STOP/重查续期；interrupt是调用者在摘除后明确选择的中断路径。两者在handler和Rctx交接结束后、短暂屏蔽可捕获信号时调用，不改fd表、不恢复旧fd、不rqcancel，也不提交第二次CLOSE。
+
+固定逻辑关闭确认优先。运输也已完成时返回0、确认原锚并清空前台key；尚需RQ_FINISH/ACK收尾时返回CONFIRMED，唯一责任转后台，未来前端仍保留成功0，不能因后续超时/信号把已确认成功改为错误。结果仍未知时，watch在原截止前WOULD_BLOCK，到期或运输/协议故障返回FAULT供未来EIO；interrupt返回SIGNAL供未来EINPROGRESS。私有裁决不直接写errno，完整公开POSIX close及捕获事件优先级仍由前端接入，不将模型等同标准合规。
+
+转交复用原槽BACKGROUND/APP_ENDED和原File关闭锚，旧key失效，控制页和同一RPC保持占用。closework只收取原关闭的明确成功结果，确认真实访问结束、SAVED/ACK后才释放槽并确认锚；ACK失败保留剩余步骤，不重发CLOSE。错误/未知或异常资源回复不能假装已关闭，保留锚/结果/资源等待服务生命周期恢复。普通IO自动drain不接受CLOSE，也不能把其锚误当File pin归还；无RPC的提交前失败仍保留原锚，由相应准备撤销/恢复路径处理。
+
+12项新增host覆盖成功完成、固定结果优先于过期/中断、逻辑成功但访问仍未结束、超时/中断的不同裁决、ACK重试、协议/运输错误保持、旧锚/输出别名拒绝、重复prepare不替换原请求、旧File记录复用和未设截止的边界。继有关闭适配6项及IO故障收尾10项继续通过。
+
+真实两架构场景保留8笔普通压力请求，服务接收/defer唯一CLOSE后发原生USER/USR1；handler执行独立层GETID，原CLOSE没有取消标记。测试选择继续原关闭，以原生alarm/idle越过prepare时的一秒绝对截止，watch把未知结果转后台，旧页/锚仍不可释放。随后用第二个控制Rq发送纯fixture协调门，普通8槽满额也能推进；服务通过原REQUEST确认状态仍LIVE且未CANCEL，只回复原CLOSE一次，后台worker才确认旧锚。旧RPC/锚在退出前失效，压力请求与连接最后安全释放。协调门不是生产关闭协议或新增RESULT查询，worker本身没有这条调用。
+
+最终972项完整host、格式、RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过；实际用户载荷、源码/头/SDK/依赖及生产无测试代码审计通过，init/serial与stage147逐字节相同，clangd切回RV64/libsys。证据build/host/stage148-close-worker/的unit/场景日志、verify.py和evidence.json。EINPROGRESS及“已确认但运输待清理”的裁决由host执行真实生产模块核验，尚非公开POSIX返回的端到端验证。本轮未重跑195场景矩阵，最近完整矩阵仍为stage144；无CI、板端或性能结果。
+
+### 开放问题：创建类 reference_id 返回位置（2026-11-20）
+
+现有正文给出了CLOSE/DUPREF的reference_id输入及普通OPEN的新session，却未明确新引用返回位置；已向用户提问，以下仅为候选，未冻结、未实现：普通OPEN保持value=session、bytes=8，原槽输出u64 reference_id；VFS交付CALL的业务三字仍[seq,session,prepare_token]，原槽同样输出8字节reference_id。DUPREF保持session，value=新reference_id、bytes=0；PIPE的value=2、bytes=32，原槽按读端/写端顺序输出两条{session:u64,reference_id:u64}。回复及槽数据须在原RPC排空后保存、ACK前接管，未发布fd才能依据原引用做补偿。确认前不实现此创建类适配，不把free CALL等同close远端引用。

@@ -785,3 +785,5 @@ stage145已接[08的原RPC责任交接](08-runtime.md#rctx-与原-rpc-责任交�
 stage146新增[08的前置取消与稳定输出](08-runtime.md#信号前置取消与稳定输出快照2026-11-20)私有原语：显式前台IO策略在handler前请求原RPC取消，首次成功记录一秒绝对截止；CLOSE/后台/原生未登记路径不盲目取消。真实handler改写原共享READ字节后，外层仍从已确认排空的预付私有快照读取原内容。公开POSIX trampoline、handler后超时EIO/后台收尾、重启和Fix仍未完成，不将前置原语当作完整sigaction/SA_RESTART交付。
 
 stage147已接[08的handler后故障裁决](08-runtime.md#handler-后的故障裁决与迟到-io-收尾2026-11-20)私有原语：原结果先查，超过首次固定取消截止仍未知才转原槽后台；READ/WRITE迟到数据不交付，安装资源经真实排空后drop/ACK，归还File pin。两架构用原生USER信号、alarm和idle实际跨过一秒后再开放迟到回复，旧资源/RPC均在进程退出前失效。ABANDONED只供未来前端映射EIO；公开POSIX返回、完整重启/嵌套/Fix及关闭/创建类补偿仍未完成。
+
+stage148的[关闭worker](10-filesystem.md#关闭裁决与类型化后台-worker2026-11-20)已接私有中断/截止裁决：已确认逻辑成功优先，未知摘除后中断和超时分别保留未来EINPROGRESS/EIO，不rqcancel或重发CLOSE。真实handler返回后沿同一关闭等待到截止并转后台，服务通过原REQUEST确认取消位始终为0；公开POSIX trampoline/SA_RESTART和错误生命周期恢复仍未完成。

@@ -15,21 +15,21 @@
 - [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
 - [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
 - [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD来源与原生 sigsend、普通等待中断、ttycreate/ttybind/getfg；可信同步帧与同号 pending 隔离已接。同步硬件 FAULT handler/公开原因编码、setfg/ttysignal、完整终端关联/挂断/孤儿策略及 POSIX trampoline/SA_RESTART 仍待接。
-- [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx窗口/责任交接、取消前置/稳定输出、handler后到期转交及迟到READ/WRITE收尾已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、参数快照/Boot/Fix尚未完成。
+- [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx交接/取消/输出快照、到期转交/IO收尾及类型化关闭worker已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、参数快照/Boot/Fix尚未完成。
 - 用户态 tty 行规程、输出转换与 VMIN/VTIME 等有界核心已验，尚非默认包里的 tty 服务。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
 
 ## 最新完成点与证据
 
-- stage147：handler后先查同一RPC，固定结果优先；仍未知且到首次取消截止时，唯一key转原槽BACKGROUND/APP_ENDED，保留页/RPC/File，返回供未来EIO映射的ABANDONED裁决，不伪报零效果或重发。
-- 仅显式结束的READ/WRITE可自动排空：原RPC结果及空RQ_FINISH证明齐备后，drop迟到资源、ACK并归还File pin；失败保留剩余责任，不复制迟到payload。CLOSE及创建引用类补偿仍待接，预算/128字节记录不变。
-- 验收：960项完整host、格式、6次双架构QEMU与6份journal。两架构真实USER信号/alarm/idle跨过一秒后才交付迟到只读MEM；旧key/页/最后close保持背压，资源及RPC在退出前已失效，随后控制CLOSE通过。实际载荷/SDK/依赖/窗口审计通过，init/serial与stage146相同，clangd切回RV64/libsys。
-- 证据：`build/host/stage147-expired-responsibility/`。只读授权被旧helper的固定RW断言误拒已修，原失败现场保留。未重跑195场景矩阵，最近完整矩阵为stage144（159+36分段完成）；无CI、板端或性能结果。
+- stage148：关闭watch/interrupt/work按原锚/Op身份推进，固定逻辑成功优先；未知中断/截止分别转供未来EINPROGRESS/EIO的后台责任。CLOSE不取消、不重发，已确认但仍待运输收尾时保留未来成功0，原锚继续占位。
+- 两架构实际收到原生USER信号，沿原CLOSE经alarm/idle跨过一秒后转后台；8个普通Rq占满时第二控制槽仍推进fixture协调门，服务确认无取消位且只关闭一次，原确认/finish/ACK齐备后旧锚/RPC才失效。IO收尾回归保持，128字节记录预算不变。
+- 验收：972项完整host、格式、6次双架构QEMU与6份journal；真实载荷/SDK/依赖/窗口审计通过，init/serial与stage147相同，clangd切回RV64/libsys。中断EINPROGRESS/运输待清理的逻辑成功为host私有裁决，尚非公开POSIX返回端到端验收。
+- 证据：`build/host/stage148-close-worker/`。本轮未重跑195场景矩阵，最近完整矩阵为stage144（159+36分段完成）；无CI、板端或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
-- 两项已向用户提问，尚未收到回复，不提前实现：① Sigsel GROUP target=0 在内核受理时固定当前组，供 libc kill(0) 使用；② 同步 FAULT 的12项归一化原因及初次递送失败保留原故障终止策略。候选与边界见11末尾；原生正PGID/PID/CONTROL/ALL已实现，实际硬件故障当前仍默认受控终止。
-- 下一步接关闭中断/超时worker及创建类补偿、公开信号前端、服务私有in-flight/生命周期观察；再接输入参数快照、VA分配、Boot/Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
+- 三项已提问未回复，不提前实现：① Sigsel GROUP target=0 在内核受理时固定当前组；② 同步FAULT归一化原因/首次递送失败策略，见11末尾；③创建类reference_id返回位置，候选普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref，见10末尾。原生正PGID/PID/CONTROL/ALL已实现，硬件FAULT仍默认受控终止。
+- 创建类补偿待第③项冻结；其余接输入参数快照、公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Boot/Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 
 ## 硬件与问题登记

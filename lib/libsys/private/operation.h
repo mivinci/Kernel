@@ -34,6 +34,10 @@ isize sysopsubmitted(Connwork *work, Conncache *cache, const Opkey *key, Handle 
 /* Borrow PREPARED short request or WAITING RPC, never another owner. */
 isize sysoprequest(Connwork *work, Conncache *cache, const Opkey *key, Msg *out);
 isize sysoprpc(Connwork *work, Conncache *cache, const Opkey *key, Handle *out);
+/* Exact private key/state check; no poll or ownership change. */
+isize sysopcheck(Connwork *work, Conncache *cache, const Opkey *key);
+/* Nonblocking real-finish proof for a fixed result, or already ACKED. */
+isize sysopfinished(Connwork *work, Conncache *cache, const Opkey *key);
 isize sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize status,
                    const Ipcmsg *result);
 isize sysoppoll(Connwork *work, Conncache *cache, const Opkey *key);
@@ -63,6 +67,8 @@ isize sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, 
 /* Rctx-to-background unique move. Returns same connection/lease, owner=0,
    clears input key and makes old foreground keys stale. */
 isize sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out);
+/* Explicit application-ended move; does not imply result/remote compensation. */
+isize sysopabandon(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out);
 /* Caller saved result/data/resource ownership and confirmed access ended.
    Shared DONE is insufficient. ACK still checks native server_finished. */
 isize sysopsaved(Connwork *work, Conncache *cache, const Opkey *key);

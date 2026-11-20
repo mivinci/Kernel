@@ -2,7 +2,10 @@
 #define _LIBSYS_CLOSE_H
 #include "fileref.h"
 #include "operation.h"
-#define SYSFILE_CLOSE_OPTIONS (CALL_ASYNC | CALL_CONTROL)
+#define SYSFILE_CLOSE_OPTIONS   (CALL_ASYNC | CALL_CONTROL)
+#define SYSFILE_CLOSE_FAULT     1
+#define SYSFILE_CLOSE_SIGNAL    2
+#define SYSFILE_CLOSE_CONFIRMED 3
 /* Short protected adapter, not POSIX close. A persistent last-close anchor
    already exists, old fd is detached and pins=0. Builds slot6 descriptor with
    real backend reference_id and the frozen four-word request. Caller submits
@@ -18,4 +21,21 @@ isize sysfilecloseresult(Filepool *pool, Connwork *work, Conncache *cache, const
    responsibility and confirms original anchor. No second CLOSE on retry. */
 isize sysfileclosecomplete(Filepool *pool, Connwork *work, Conncache *cache,
                            const Fileclose *anchor, const Opkey *key);
+/* Post-handler, after Rctx handoff/finish, under caught-signal exclusion.
+   Fixed confirmation is processed first. watch uses the original nonzero
+   absolute control deadline supplied at prepare; it never renews it.
+   FAULT uniquely moves unknown responsibility to out (future EIO), SIGNAL
+   does so on explicit interruption (future EINPROGRESS). CONFIRMED preserves
+   logical success while background transport cleanup remains (future 0).
+   No cancel, new
+   CLOSE, errno or fd-table mutation. 0 consumes owned_key after confirmation;
+   WOULD_BLOCK leaves it owned. out must be separate unowned storage. */
+isize sysfileclosewatch(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                        Opkey *owned_key, u64 now, Opkey *out);
+isize sysfilecloseinterrupt(Filepool *pool, Connwork *work, Conncache *cache,
+                            const Fileclose *anchor, Opkey *owned_key, Opkey *out);
+/* Original background CLOSE only. Unknown/error results keep anchor and all
+   remaining responsibility for lifecycle recovery; no duplicate submission. */
+isize sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                       const Opkey *key);
 #endif

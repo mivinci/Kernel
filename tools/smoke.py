@@ -1584,6 +1584,10 @@ def exercise(args, run_dir, record):
                             checks[0].get("real_signal") != 1 or
                             checks[0].get("timer_waits") not in (0, 1) or
                             checks[0].get("control_elapsed_ns", 0) < 1000000000 or
+                            any(checks[0].get(k) != 1 for k in ("close_signal", "close_timeout",
+                                "close_worker", "close_no_cancel", "close_control_gate")) or
+                            checks[0].get("close_timer_waits") not in (0, 1) or
+                            checks[0].get("close_elapsed_ns", 0) < 1000000000 or
                             {k: checks[0].get(k) for k in ("actors", "resource", "native", "late", "consent", "accepted", "peer_lookup", "hello", "reuse", "slot_ops", "file_refs", "control_close", "ordinary_full", "owned_call", "receive", "shared", "payer_exit", "charged", "allocated")} !=
                             {"actors": 2, "resource": 2, "native": 25, "late": 1, "consent": 1, "accepted": 1, "peer_lookup": 1, "hello": 1, "reuse": 1, "slot_ops": 1, "file_refs": 1, "control_close": 1, "ordinary_full": 8, "owned_call": 1, "receive": 1, "shared": 1, "payer_exit": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("standalone libsys user ELF/reference mismatch")

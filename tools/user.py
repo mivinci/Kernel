@@ -107,7 +107,7 @@ def build(args):
     image.write_bytes(content)
     assembly = sdk / 'libsysimage.S'
     resource_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='resource_trace']
-    if len(resource_rows)!=1 or int(resource_rows[0][2])!=256:raise BuildError('resource core trace missing')
+    if len(resource_rows)!=1 or int(resource_rows[0][2])!=320:raise BuildError('resource core trace missing')
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.

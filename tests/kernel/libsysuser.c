@@ -295,7 +295,7 @@ receiveserver(const Bootview *view)
   words.words[0] = 113;
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
-volatile u64 resource_trace[32];
+volatile u64 resource_trace[40];
 static u64
 runtimenow(void)
 {
@@ -316,7 +316,7 @@ runtimehandler(u64 signum)
   Rctx  *outer = &runtime_contexts.contexts[0];
   u64    stage = resource_trace[16];
   REQUIRE(signum == SIGNAL_USR1 && outer->phase == RCTX_CLEANING && outer->route.delivered, 108);
-  if (stage != 5)
+  if (stage <= 4)
     REQUIRE(sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) == -ERR_BUSY,
             108);
   if (stage <= 2)
@@ -345,6 +345,12 @@ runtimehandler(u64 signum)
       shared[0] = shared[1] = shared[2] = shared[3] = 'X';
       resource_trace[23] = 1;
     }
+    if (stage == 6) {
+      REQUIRE(op->opcode == FS_CLOSE && !(op->flags & SYSOP_CANCEL_SENT) &&
+                  op->deadline == resource_trace[33],
+              66);
+      resource_trace[32] = 1;
+    }
   }
   REQUIRE(
       !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
@@ -367,8 +373,8 @@ runtimetrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64
   u64 mask, ignored, now;
   REQUIRE(signum == SIGNAL_USR1 &&
               ((!info->code && resource_trace[16] <= 4) ||
-               (resource_trace[16] == 5 && info->code == SIGNAL_SOURCE_USER &&
-                info->pid == (u64) connection_peer.pid)) &&
+               ((resource_trace[16] == 5 || resource_trace[16] == 6) &&
+                info->code == SIGNAL_SOURCE_USER && info->pid == (u64) connection_peer.pid)) &&
               function == (u64) runtimehandler && !flags &&
               !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask),
           104);
@@ -402,7 +408,7 @@ runtimeinvoke(u64 stage)
 {
   resource_trace[16] = stage;
   REQUIRE(!sysctxinvoke(&runtime_contexts, connection_work.state.self, runtime_key), 101);
-  if (stage != 5)
+  if (stage != 5 && stage != 6)
     resource_trace[16] = 0;
 }
 static void
@@ -671,7 +677,9 @@ typedserver(const Bootview *view)
         resource_trace[17] = 1;
       }
       {
-        Handle pressure[8];
+        Handle pressure[8], close_request;
+        u64    close_seq, state;
+        Sigsel signal;
         u32    j;
         for (j = 0; j < 8; j++) {
           REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL &&
@@ -692,10 +700,32 @@ typedserver(const Bootview *view)
                     !descriptor.args[3] && !descriptor.args[4] && !descriptor.args[5] &&
                     !descriptor.args[6] && !descriptor.args[7],
                 120);
+        close_request = received.request;
+        close_seq = received.words[2];
+        REQUIRE(!ipc_defer(close_request), 65);
+        resource_trace[18] = 1;
+        words.words[0] = 0xa14a;
+        words.words[1] = words.words[2] = words.words[3] = 0;
+        REQUIRE(!ipc_send(bootresource(view, 257), &words), 64);
+        signal.kind = SIGNAL_SELECT_PID;
+        signal.target = client;
+        REQUIRE(!__sys_sigsend(&signal, SIGNAL_USR1), 63);
+        words.words[0] = 0xa14c;
+        REQUIRE(!ipc_send(bootresource(view, 257), &words), 62);
+        REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL &&
+                    received.source == client && received.image == clientimage &&
+                    received.words[0] == 0xa14b && !ipc_rqcheck(close_request, &state) &&
+                    state == RQ_CHECK_LIVE,
+                61);
+        resource_trace[19] = (state & RQ_CHECK_CANCEL) != 0;
+        words.words[0] = 0xa14b;
+        REQUIRE(!ipc_reply(received.request, &words), 60);
+        resource_trace[21] = 1;
         words.words[0] = 0;
-        words.words[1] = received.words[2];
+        words.words[1] = close_seq;
         words.words[2] = words.words[3] = 0;
-        REQUIRE(!ipc_reply(received.request, &words), 119);
+        REQUIRE(!ipc_reply(close_request, &words), 119);
+        resource_trace[20] = 1;
         for (j = 0; j < 8; j++) {
           words.words[0] = 0xf00d;
           words.words[1] = j;
@@ -843,6 +873,102 @@ lateclient(const Bootview *view, Opkey *operation)
   REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 68);
 }
 static void
+closeclient(const Fileclose *anchor)
+{
+  Opkey   operation, background, stale;
+  Msg     words;
+  Ipcmsg  result;
+  Fileref reference;
+  Handle  rpc;
+  u64     mask, ignored, now, deadline, generation;
+  u32     i;
+  isize   error;
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask), 59);
+  now = runtimenow();
+  REQUIRE(now <= UINT64_MAX - SYSOP_CONTROL_NS, 58);
+  deadline = now + SYSOP_CONTROL_NS;
+  resource_trace[33] = deadline;
+  resource_trace[39] = now;
+  REQUIRE(!sysfilecloseprepare(&file_registry, &connection_work, &connection_directory, anchor, 503,
+                               deadline, &operation, &words) &&
+              !sysctxopcall(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                            &connection_directory, &operation, 0, &runtime_key) &&
+              sysctxinterruptible(&runtime_contexts, connection_work.state.self, runtime_key) ==
+                  -ERR_NOTSUP &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          57);
+  runtimeinvoke(6);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          56);
+  waitsend(0xa14a);
+  waitsend(0xa14c);
+  REQUIRE(resource_trace[32] == 1 && !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key),
+          55);
+  resource_trace[16] = 0;
+  rpc = connection_work.state.operations[6].rpc;
+  for (i = 0; i < sizeof(stale); i++)
+    ((u8 *) &stale)[i] = ((const u8 *) &operation)[i];
+  now = runtimenow();
+  if (now < deadline) {
+    REQUIRE(sysfileclosewatch(&file_registry, &connection_work, &connection_directory, anchor,
+                              &operation, now, &background) == -ERR_WOULD_BLOCK &&
+                !__sys_alarmset(deadline, &generation) &&
+                !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+            54);
+    REQUIRE(!ipc_recv(EVENT_TIMER, RECV_EVENTS_ONLY, &result) && result.kind == IPC_EVENT &&
+                result.words[0] & EVENT_TIMER &&
+                !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask),
+            53);
+    resource_trace[38] = 1;
+  }
+  now = runtimenow();
+  REQUIRE(
+      now >= deadline &&
+          sysfileclosewatch(&file_registry, &connection_work, &connection_directory, anchor,
+                            &operation, now, &background) == SYSFILE_CLOSE_FAULT &&
+          !operation.lease.seq && !operation.owner &&
+          connection_work.state.operations[6].rpc == rpc &&
+          !(connection_work.state.operations[6].flags & SYSOP_CANCEL_SENT) &&
+          sysopcancel(&connection_work, &connection_directory, &stale) == -ERR_STALE &&
+          sysconnworkrelease(&connection_work, &connection_directory, background.lease) ==
+              -ERR_BUSY &&
+          !sysfilerefview(&file_registry, connection_work.state.self, anchor->file, &reference) &&
+          reference.state == SYSFILE_REF_CLOSING && reference.close_sequence == anchor->sequence &&
+          sysfileclosework(&file_registry, &connection_work, &connection_directory, anchor,
+                           &background) == -ERR_WOULD_BLOCK,
+      52);
+  resource_trace[34] = now;
+  resource_trace[35] = (u64) rpc;
+  resource_trace[36] = 1;
+  REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 51);
+  words.words[0] = 0xa14b;
+  words.words[1] = words.words[2] = words.words[3] = 0;
+  REQUIRE(!ipc_call(connection_work.state.call, &words, CALL_CONTROL, &result) && !result.kind &&
+              result.words[0] == 0xa14b,
+          50);
+  for (;;) {
+    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask), 49);
+    error = sysfileclosework(&file_registry, &connection_work, &connection_directory, anchor,
+                             &background);
+    if (!error)
+      break;
+    REQUIRE(error == -ERR_WOULD_BLOCK && !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 48);
+    REQUIRE(!ipc_recv(EVENT_RQ_DONE, RECV_EVENTS_ONLY, &result), 47);
+  }
+  REQUIRE(sysfilerefview(&file_registry, connection_work.state.self, anchor->file, &reference) ==
+                  -ERR_STALE &&
+              sysfileclosework(&file_registry, &connection_work, &connection_directory, anchor,
+                               &background) == -ERR_STALE,
+          46);
+  error = ipc_rqpoll(rpc, 0, &result);
+  REQUIRE(error == -ERR_STALE || error == -ERR_BAD_HANDLE, 45);
+  resource_trace[37] = 1;
+  REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 44);
+}
+static void
 typedclient(const Bootview *view, Handle peer)
 {
   Msg       words;
@@ -954,7 +1080,7 @@ typedclient(const Bootview *view, Handle peer)
     Bootstrap *active = &connection_work.state.bootstrap;
     Filelease  lease, other;
     Fileslot   descriptor;
-    Opkey      operation, background, stale, spare, close_operation, delayed;
+    Opkey      operation, background, stale, spare, delayed;
     Handle     pressure[8];
     u64        file = 99, sparefile = 100;
     u64        fileid;
@@ -1185,34 +1311,10 @@ typedclient(const Bootview *view, Handle peer)
       pressure[i] = result.request;
     }
     REQUIRE(ipc_call(connection_work.state.call, &words, CALL_ASYNC, &result) == -ERR_CAPACITY &&
-                !result.request &&
-                !sysfilecloseprepare(&file_registry, &connection_work, &connection_directory,
-                                     &closing, 503, 0, &close_operation, &words) &&
-                close_operation.lease.slot == 6 &&
-                !sysctxopcall(&runtime_contexts, connection_work.state.self, 0, &connection_work,
-                              &connection_directory, &close_operation, 0, &runtime_key) &&
-                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
+                !result.request && !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             114);
-    runtimeinvoke(0);
+    closeclient(&closing);
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
-                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
-                !sysctxopwait(&runtime_contexts, connection_work.state.self, 0, &connection_work,
-                              &connection_directory, &close_operation, &runtime_key) &&
-                !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
-            113);
-    runtimeinvoke(0);
-    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
-                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
-                !sysfilecloseresult(&file_registry, &connection_work, &connection_directory,
-                                    &closing, &close_operation) &&
-                sysfileclosecomplete(&file_registry, &connection_work, &connection_directory,
-                                     &closing, &close_operation) == -ERR_BUSY &&
-                !sysopsaved(&connection_work, &connection_directory, &close_operation) &&
-                !sysopack(&connection_work, &connection_directory, &close_operation) &&
-                !sysfileclosecomplete(&file_registry, &connection_work, &connection_directory,
-                                      &closing, &close_operation) &&
                 sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) ==
                     -ERR_STALE &&
                 !sysfilerefconnection(&file_registry, connection_work.state.self, connection_tag) &&

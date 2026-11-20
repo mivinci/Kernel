@@ -24,6 +24,24 @@ anchorcheck(Filepool *pool, Connwork *work, const Fileclose *anchor, Fileref *ou
     return -ERR_STALE;
   return 0;
 }
+static isize
+target(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor, const Opkey *key,
+       Slotop **out)
+{
+  Fileref reference;
+  Slotop *op;
+  isize   error = anchorcheck(pool, work, anchor, &reference);
+  if (!error)
+    error = sysopcheck(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->phase == SYSOP_PREPARED || op->opcode != FS_CLOSE || key->lease.slot != 6 ||
+      key->lease.span != 1 || op->file != anchor->file || op->object != reference.session)
+    return -ERR_STATE;
+  *out = op;
+  return 0;
+}
 isize
 sysfilecloseprepare(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                     u64 owner, u64 deadline, Opkey *key, Msg *message)
@@ -83,18 +101,14 @@ isize
 sysfilecloseresult(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                    const Opkey *key)
 {
-  Fileref reference;
   Slotop *op;
-  isize   error = anchorcheck(pool, work, anchor, &reference);
+  isize   error = target(pool, work, cache, anchor, key, &op);
   if (error)
     return error;
   error = sysoppoll(work, cache, key);
   if (error)
     return error;
-  op = &work->state.operations[key->lease.slot];
-  if ((op->phase != SYSOP_RESULT && op->phase != SYSOP_ACKED) || op->opcode != FS_CLOSE ||
-      key->lease.slot != 6 || key->lease.span != 1 || op->file != anchor->file ||
-      op->object != reference.session)
+  if (op->phase != SYSOP_RESULT && op->phase != SYSOP_ACKED)
     return -ERR_STATE;
   if (op->status)
     return op->status;
@@ -117,4 +131,95 @@ sysfileclosecomplete(Filepool *pool, Connwork *work, Conncache *cache, const Fil
   if (error)
     return error;
   return sysfilerefconfirmed(pool, work->state.self, anchor);
+}
+static isize
+progress(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+         const Opkey *key, u32 *confirmed)
+{
+  isize error;
+  *confirmed = 0;
+  error = sysfilecloseresult(pool, work, cache, anchor, key);
+  if (error)
+    return error;
+  *confirmed = 1;
+  error = sysopfinished(work, cache, key);
+  if (error)
+    return error;
+  if (work->state.operations[key->lease.slot].phase == SYSOP_RESULT) {
+    error = sysopsaved(work, cache, key);
+    if (!error)
+      error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  return sysfileclosecomplete(pool, work, cache, anchor, key);
+}
+static isize
+step(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor, Opkey *owned_key,
+     u64 now, u32 interrupted, Opkey *out)
+{
+  Slotop *op;
+  u32     confirmed, i;
+  isize   error, outcome;
+  if (!separate(pool, sizeof(*pool), owned_key, sizeof(*owned_key)) ||
+      !separate(work, sizeof(*work), owned_key, sizeof(*owned_key)) ||
+      !separate(cache, sizeof(*cache), owned_key, sizeof(*owned_key)) ||
+      !separate(anchor, sizeof(*anchor), owned_key, sizeof(*owned_key)) ||
+      !separate(pool, sizeof(*pool), out, sizeof(*out)) ||
+      !separate(work, sizeof(*work), out, sizeof(*out)) ||
+      !separate(cache, sizeof(*cache), out, sizeof(*out)) ||
+      !separate(anchor, sizeof(*anchor), out, sizeof(*out)) ||
+      !separate(owned_key, sizeof(*owned_key), out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = target(pool, work, cache, anchor, owned_key, &op);
+  if (error)
+    return error;
+  if (op->flags & SYSOP_BACKGROUND)
+    return -ERR_STATE;
+  error = progress(pool, work, cache, anchor, owned_key, &confirmed);
+  if (!error) {
+    for (i = 0; i < sizeof(*owned_key); i++)
+      ((u8 *) owned_key)[i] = 0;
+    return 0;
+  }
+  outcome = SYSFILE_CLOSE_FAULT;
+  if (confirmed)
+    outcome = SYSFILE_CLOSE_CONFIRMED;
+  else if (error == -ERR_WOULD_BLOCK) {
+    if (interrupted)
+      outcome = SYSFILE_CLOSE_SIGNAL;
+    else {
+      if (!op->deadline)
+        return -ERR_STATE;
+      if (now < op->deadline)
+        return -ERR_WOULD_BLOCK;
+    }
+  }
+  error = sysopabandon(work, cache, owned_key, out);
+  return error ? error : outcome;
+}
+isize
+sysfileclosewatch(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                  Opkey *owned_key, u64 now, Opkey *out)
+{
+  return step(pool, work, cache, anchor, owned_key, now, 0, out);
+}
+isize
+sysfilecloseinterrupt(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                      Opkey *owned_key, Opkey *out)
+{
+  return step(pool, work, cache, anchor, owned_key, 0, 1, out);
+}
+isize
+sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                 const Opkey *key)
+{
+  Slotop *op;
+  u32     confirmed;
+  isize   error = target(pool, work, cache, anchor, key, &op);
+  if (error)
+    return error;
+  if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) != (SYSOP_BACKGROUND | SYSOP_APP_ENDED))
+    return -ERR_STATE;
+  return progress(pool, work, cache, anchor, key, &confirmed);
 }

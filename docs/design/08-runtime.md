@@ -612,3 +612,5 @@ APP_ENDED仅占原128字节槽记录的私有flags位，原预算/布局不变�
 新增10项host覆盖固定结果优先、截止前/恰好到期、唯一key转交/页背压、原生错误/输出别名、未取消/强制事务及普通background排除、迟到payload不复制、资源drop、未排空保持、free失败以及ACK失败不重复free。最终960项完整host、格式及RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过；实际链接载荷/源码/头/SDK/依赖/窗口审计通过，init/serial与stage146逐字节相同，clangd切回RV64/libsys。
 
 证据build/host/stage147-expired-responsibility/的unit/场景日志、verify.py和evidence.json。首次新场景在接收只读MEM时被旧helper固定RW权限的断言拒绝，现按各次声明校验权限；原失败现场保留，未修改授权或请求状态机。未重跑195场景完整矩阵，最近完整矩阵仍为stage144；无CI、板端或性能验收。公开POSIX返回/SA_RESTART、关闭worker、创建类补偿、参数快照/Boot/Fix、标准fd及生产服务继续待接，不称完整sh/net/GUI交付。
+
+stage148的类型化关闭watch/interrupt/work见[10末尾](10-filesystem.md#关闭裁决与类型化后台-worker2026-11-20)：CLOSE不走可中断IO取消/自动drain，固定逻辑成功先保留，未知中断/故障分开移交原关闭锚。两架构实际USER信号及一秒alarm/idle后保留原RPC，普通8槽满额时第二控制槽仍推进纯测试协调门，迟到原确认后才释放锚；公开POSIX返回及服务死亡恢复仍待接。
