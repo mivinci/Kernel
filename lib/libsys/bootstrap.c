@@ -204,6 +204,28 @@ sysbootack(Bootstrap *record, Connclaim claim)
   return 0;
 }
 isize
+sysbootfinished(Bootstrap *record, Connclaim claim)
+{
+  Ipcmsg result;
+  u32    i;
+  isize  error = match(record, claim);
+  if (error)
+    return error;
+  if (record->state == SYSBOOT_ACKED)
+    return 0;
+  if (record->state != SYSBOOT_RESULT)
+    return -ERR_STATE;
+  error = ipc_rqpoll(record->rpc, RQ_FINISH, &result);
+  if (error)
+    return error;
+  if (result.kind || result.source || result.request || result.image)
+    return -ERR_STATE;
+  for (i = 0; i < 4; i++)
+    if (result.words[i])
+      return -ERR_STATE;
+  return 0;
+}
+isize
 sysbootresource(Bootstrap *record, Connclaim claim, Handle *out)
 {
   isize error;

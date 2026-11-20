@@ -1591,9 +1591,10 @@ def exercise(args, run_dir, record):
                     record['creator_recovery']=createdead
                     resource_dead=[fields(line) for line in serial.read_text().splitlines() if line.startswith("RESOURCEDEADCHECK ")]
                     if resource_dead != [dict(actors=3,resource_opens=1,recovered=1,full_directory=1,
-                            failed_abort=1,source_usable=1,trusted_cleanup=1,charged=0,allocated=transition["tables"])]:
+                            failed_abort=1,submitted_abort=mode,quarantined=mode,source_usable=1,
+                            trusted_cleanup=1,charged=0,allocated=transition["tables"]) for mode in (0,1)]:
                         raise SmokeError("actual resource backend end recovery mismatch")
-                    record['resource_recovery']=resource_dead[0]
+                    record['resource_recovery']=resource_dead
                     salvage=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MAPSALVAGECHECK ")]
                     if salvage != [dict(actors=3,native_map_conflict=1,aborted=1,retained_transport=1,
                             reused=1,closed=2,charged=0,allocated=transition["tables"])]:

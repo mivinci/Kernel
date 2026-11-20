@@ -68,9 +68,10 @@ isize sysfilecreaterevokeprepare(Filepool *pool, Connwork *work, Conncache *cach
 isize sysfilecreaterevoked(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                            Connclaim claim);
 /* After sysctxcreatepeerended proved the exact actual backend and the bound
-   Rctx continuation has finished. Failed ABORT produced no RPC. Releases
-   only this prospective reference and creator-owned CALL, unprepares the
-   exact bootstrap; free failure preserves the proof for retry. Cached
+   Rctx continuation has finished. A submitted failed ABORT must actually
+   RQ_FINISH and ACK before releasing its prospective reference/CALL; a failed
+   pre-submission CALL has no RPC and unprepares its bootstrap. Native drain,
+   ACK or free failure preserves the remaining proof/responsibility. Cached
    connections, prior ATTACH/MEM and unrelated references are independent. */
 isize sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 /* ACKED + RESOLVED only. Moves result IDs and the old source pin once; caller

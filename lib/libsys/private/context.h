@@ -39,6 +39,7 @@ struct Rroute
   u64        interruptible, snapshot_offset, snapshot_bytes, snapshot_saved;
   Filepool  *pool;
   isize      capture_status;
+  Connpeer   target;
 };
 struct Rctx
 {
@@ -51,7 +52,7 @@ struct Rctx
   Rroute       route;
   u64          input_bytes, input_saved;
   u32          input_kind, input_argc, input_envc, input_reserved;
-  u64          reserved[19];
+  u64          reserved[17];
 };
 struct Rbank
 {

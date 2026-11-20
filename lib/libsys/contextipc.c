@@ -76,6 +76,9 @@ sysctxbootcall(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Conncla
       return -ERR_INVALID;
     options = CALL_CONTROL;
   }
+  error = sysconnpeer(call, &route.target);
+  if (error)
+    return error;
   route.kind = RCTX_ROUTE_BOOT;
   route.bootstrap = record;
   route.claim = claim;
@@ -239,25 +242,40 @@ sysctxcreatepeerended(Rbank *bank, Connpeer self, Rkey key, Filepool *pool, Conn
   boot = &work->state.bootstrap;
   create = &work->state.creators[operation->lease.slot];
   op = &work->state.operations[operation->lease.slot];
-  if (context->phase != RCTX_CLEANING || context->number != SYS_CALL ||
-      context->status != -ERR_PEER || route->kind != RCTX_ROUTE_BOOT || route->delivered != 1 ||
-      route->bootstrap != boot || sysbootcheck(boot) || boot->state != SYSBOOT_PREPARED ||
-      boot->opcode != FS_ABORT || boot->token != create->token || boot->claim.tag.generation ||
-      boot->claim.tag.index != SYSCONN_COUNT || boot->claim.owner != create->files[0] ||
+  if (context->phase != RCTX_CLEANING || context->status != -ERR_PEER ||
+      route->kind != RCTX_ROUTE_BOOT || route->delivered != 1 || route->bootstrap != boot ||
+      sysbootcheck(boot) || boot->opcode != FS_ABORT || boot->token != create->token ||
+      boot->claim.tag.generation || boot->claim.tag.index != SYSCONN_COUNT ||
+      boot->claim.owner != create->files[0] ||
       route->claim.tag.generation != boot->claim.tag.generation ||
       route->claim.tag.index != boot->claim.tag.index || route->claim.seq != boot->claim.seq ||
       route->claim.tag.reserved || route->claim.owner != boot->claim.owner ||
       create->phase != SYSFILE_CREATE_CAPTURED || create->count != 1 || create->error ||
       !create->token || op->phase != SYSOP_ACKED || op->opcode != FS_OPEN ||
-      op->kind != IPC_RESOURCE_REPLY || context->args[1] != FS_ABORT || context->args[2] ||
-      context->args[3] != boot->claim.seq || context->args[4] != create->token ||
-      context->args[5] != (CALL_ASYNC | CALL_CONTROL) || context->args[6])
+      op->kind != IPC_RESOURCE_REPLY || route->target.pid != create->peer.pid ||
+      route->target.image != create->peer.image)
     return -ERR_STATE;
-  error = sysconnpeer((Handle) context->args[0], &peer);
-  if (error)
-    return error;
-  if (peer.pid != create->peer.pid || peer.image != create->peer.image)
-    return -ERR_DENIED;
+  if (context->number == SYS_CALL) {
+    if (boot->state != SYSBOOT_PREPARED || context->args[1] != FS_ABORT || context->args[2] ||
+        context->args[3] != boot->claim.seq || context->args[4] != create->token ||
+        context->args[5] != (CALL_ASYNC | CALL_CONTROL) || context->args[6])
+      return -ERR_STATE;
+    error = sysconnpeer((Handle) context->args[0], &peer);
+    if (error)
+      return error;
+    if (peer.pid != create->peer.pid || peer.image != create->peer.image)
+      return -ERR_DENIED;
+  } else if (context->number == SYS_RQWAIT) {
+    u32 i;
+    if (boot->state != SYSBOOT_RESULT || boot->status != -ERR_PEER || boot->kind != IPC_NONE ||
+        boot->flags || boot->resource || boot->rpc != route->rpc ||
+        context->args[0] != (u64) route->rpc)
+      return -ERR_STATE;
+    for (i = 0; i < 4; i++)
+      if (boot->words[i])
+        return -ERR_STATE;
+  } else
+    return -ERR_STATE;
   create->flags |= SYSFILE_CREATE_PEER_ENDED;
   return 0;
 }

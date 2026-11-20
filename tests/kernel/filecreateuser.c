@@ -631,6 +631,13 @@ backend(const Bootview *boot, u32 recover)
     if (input.words[0] == FS_ABORT || input.words[0] == FS_ATTACH) {
       token = input.words[3];
       CHECK(!input.words[1] && input.words[2] && token && token <= created);
+      if (recover == 3 && input.words[0] == FS_ABORT) {
+        CHECK(created == 1 && references[0] && !memory);
+        filecreatetrace[1] = 1;
+        filecreatetrace[4] = 1;
+        filecreatetrace[0] = 2;
+        return;
+      }
       reply.words[1] = input.words[2];
       if (input.words[0] == FS_ABORT) {
         if (references[token - 1]) {
@@ -870,7 +877,7 @@ deadserver(const Bootview *boot, u64 creating)
      Kernel Image termination, not a fabricated positive reply, drives recovery. */
 }
 static void
-resourceendclient(const Bootview *boot)
+resourceendclient(const Bootview *boot, u32 submitted)
 {
   Opkey     key;
   Connpeer  peer;
@@ -882,7 +889,8 @@ resourceendclient(const Bootview *boot)
   Msg       message;
   Ipcmsg    result;
   u64       files[2], source = 0;
-  u32       i;
+  u32       i, steps = 0;
+  isize     error;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
   key = begin(FS_OPEN, "/bound", 0);
@@ -897,19 +905,36 @@ resourceendclient(const Bootview *boot)
   CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
   message.words[0] = ENDPEER;
   message.words[1] = message.words[2] = message.words[3] = 0;
-  CHECK(!ipc_call(work.state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
-  rpc = result.request;
+  if (!submitted) {
+    CHECK(!ipc_call(work.state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
+    rpc = result.request;
+    CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
+          !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+  }
+  CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call) &&
+        !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim, call, 0,
+                        &invocation));
+  if (submitted) {
+    CHECK(!sysctxinvoke(&contexts, work.state.self, invocation) &&
+          !sysctxhandoff(&contexts, work.state.self, invocation) &&
+          !sysctxrewait(&contexts, work.state.self, invocation));
+  }
   CHECK(
-      !ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
-      !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
-      !sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call) &&
-      !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim, call, 0,
-                      &invocation) &&
       sysctxinvoke(&contexts, work.state.self, invocation) == -ERR_PEER &&
       !sysctxhandoff(&contexts, work.state.self, invocation) &&
       !sysctxcreatepeerended(&contexts, work.state.self, invocation, &pool, &work, &cache, &key) &&
-      !sysctxfinish(&contexts, work.state.self, invocation) &&
-      !sysfilecreateended(&pool, &work, &cache, &key));
+      !sysctxfinish(&contexts, work.state.self, invocation));
+  if (submitted) {
+    CHECK(sysfilecreateended(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK);
+    filecreatetrace[5] = (u64) work.state.bootstrap.rpc;
+    filecreatetrace[6] = 6;
+    do {
+      CHECK(++steps < 64 && !__sys_yield());
+      error = sysfilecreateended(&pool, &work, &cache, &key);
+    } while (error == -ERR_WOULD_BLOCK);
+    CHECK(!error);
+  } else
+    CHECK(!sysfilecreateended(&pool, &work, &cache, &key));
   zero(files, sizeof(files));
   CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source &&
         !work.state.ended && !sysconnview(&cache, work.state.tag, &entry) &&
@@ -919,6 +944,7 @@ resourceendclient(const Bootview *boot)
         !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
   filecreatetrace[2] = 1;
   filecreatetrace[3] = 1;
+  filecreatetrace[4] = steps;
   filecreatetrace[0] = 2;
 }
 static void
@@ -1004,7 +1030,7 @@ int
 main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
-        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'e')) &&
+        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'h')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1022,7 +1048,7 @@ main(int argc, char **argv)
   else if (argv[0][0] == '6' || argv[0][0] == '8')
     deadserver(sysboot(), argv[0][0] == '6' ? FS_OPEN : FS_PIPE);
   else if (argv[0][0] == '9')
-    resourceendclient(sysboot());
+    resourceendclient(sysboot(), 0);
   else if (argv[0][0] == 'a')
     server(sysboot(), 1);
   else if (argv[0][0] == 'b')
@@ -1031,7 +1057,13 @@ main(int argc, char **argv)
     mapsalvageclient(sysboot());
   else if (argv[0][0] == 'd')
     server(sysboot(), 2);
-  else
+  else if (argv[0][0] == 'e')
     backend(sysboot(), 2);
+  else if (argv[0][0] == 'f')
+    resourceendclient(sysboot(), 1);
+  else if (argv[0][0] == 'g')
+    server(sysboot(), 3);
+  else
+    backend(sysboot(), 3);
   return 42;
 }

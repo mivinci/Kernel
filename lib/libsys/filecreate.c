@@ -730,13 +730,26 @@ sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey
   boot = &work->state.bootstrap;
   if (create->phase != SYSFILE_CREATE_CAPTURED || create->error || create->count != 1 ||
       op->phase != SYSOP_ACKED || op->opcode != FS_OPEN || op->kind != IPC_RESOURCE_REPLY ||
-      !create->token || sysbootcheck(boot) || boot->state != SYSBOOT_PREPARED ||
-      boot->opcode != FS_ABORT || boot->token != create->token ||
-      boot->claim.owner != create->files[0] || boot->claim.tag.generation ||
-      boot->claim.tag.index != SYSCONN_COUNT)
+      !create->token || sysbootcheck(boot) || boot->opcode != FS_ABORT ||
+      boot->token != create->token || boot->claim.owner != create->files[0] ||
+      boot->claim.tag.generation || boot->claim.tag.index != SYSCONN_COUNT)
     return -ERR_STATE;
-  /* The originating Rctx has already handed off its failed, unsubmitted CALL.
-     Only the creator-owned CALL is freed; any cached borrowed CALL stays put. */
+  if (boot->state != SYSBOOT_PREPARED) {
+    u32 i;
+    if ((boot->state != SYSBOOT_RESULT && boot->state != SYSBOOT_ACKED) ||
+        boot->status != -ERR_PEER || boot->kind != IPC_NONE || boot->flags || boot->resource)
+      return -ERR_STATE;
+    for (i = 0; i < 4; i++)
+      if (boot->words[i])
+        return -ERR_STATE;
+    error = sysbootfinished(boot, boot->claim);
+    if (!error && boot->state == SYSBOOT_RESULT)
+      error = sysbootack(boot, boot->claim);
+    if (error)
+      return error;
+  }
+  /* The bound continuation is finished; any submitted RPC drained and ACKed
+     above. Only the creator-owned CALL is freed, never a cached borrowed one. */
   if (create->call) {
     error = __sys_free(create->call);
     if (error)
@@ -746,7 +759,8 @@ sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey
   copy(&claim, &boot->claim, sizeof(claim));
   error = sysfilerefabort(pool, work->state.self, &create->stage);
   if (!error)
-    error = sysbootunprepare(boot, claim);
+    error = boot->state == SYSBOOT_PREPARED ? sysbootunprepare(boot, claim)
+                                            : sysbootfinish(boot, claim);
   if (error)
     return error;
   create->files[0] = create->files[1] = 0;

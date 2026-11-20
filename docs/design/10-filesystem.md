@@ -1123,3 +1123,15 @@ stage163增加sysfilecreatekeepcall，仅在精确后端、原claim/owner/token�
 双架构runtime新增客户端/VFS/后端三角色：首次真实ATTACH已经授予MEM，客户端故意把DATA页映射到拟用VA并写哨兵，再执行原生map，得到ERR_STATE且没有新别名，原哨兵/授予MEM保持。keepcall固定入口，借该CALL执行精确token ABORT并释放第一份File预留；目标工作页仍持原MEM/claim/CALL。解除并释放阻挡页后，客户端map并接管同一个MEM，完成原bootstrap，再执行第二次资源OPEN及普通ATTACH复用，核对MEM/CALL整数均未换，最后一份精确CLOSE及前一份ABORT合计关闭两份引用，所有映射/费用/实例回基线。该故障注入是主动VA占用造成的真实系统调用冲突，不能当作OOM、硬件故障、恶意坏头修复或完整VA分配器验收。
 
 1079项完整host、格式、最终两架构各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过；原创建/信号/实际后端死亡与可信代收尾场景继续通过。目标布局、SDK/私有头导出、实际链接载荷和无libc依赖已核对，init/serial与stage155逐字节相同，clangd切回RV64/runtime。接口注释进一步明确运输独立性后，两架构SDK重新构建，载荷与这8次原生执行的嵌入映像逐字节一致；未因注释变化重复执行无行为差异的场景。证据build/host/stage163-mapping-salvage/的unit、focused-initial、场景-reviewed、sdk-*-final/fmt-check-final日志、目标layout对象、verify.py和evidence.json；首次RV原生检查另保留。未重跑195矩阵（最近stage154），无CI/板端或性能结果。已提交ABORT/失败bootstrap的排空、持久映射故障、生产rqclean候选确认/实现、服务与公开前端/Fix、sh/net/最终GUI继续。
+
+### 已提交ABORT失败的目标证明与真实排空（2026-11-21）
+
+stage164在bootstrap CALL注册前冷查询其真实固定目标，将PID/image保存在Rroute。同一Rctx经sysctxrewait继续原RPC时保留这个提交目标；新鲜的wait-only路由没有它，不能凭当前另一个CALL补造原请求接收者。sysctxcreatepeerended现在同时接受提交前无RPC PEER，以及原提交路由继续RQWAIT取得PEER的情况；后者还核对原RPC/claim/token/owner、空原生失败元组与已保存目标。普通业务负值、错RPC、改变的镜像或缺失原目标均不能释放创建责任，不扫描新后端或重发ABORT。
+
+增加非阻塞sysbootfinished，只查询原RQ_FINISH并验证空完成元组，保留原生/业务结果及资源所有权。已提交失败ABORT先固定结束标记，sysfilecreateended仍保持CALL/token/预留直到真实FINISH，随后ACK原RPC，才释放自持CALL和本地预留并结束bootstrap。未排空返回WOULD_BLOCK；ACK失败保持RESULT，free失败保持已ACKED步骤及证明，重试不再ACK已经释放的RPC。原失败仍PEER，ENDED处分不冒充ABORT成功；来源VFS的状态及其他连接责任保持独立。
+
+提交目标新增16字节占原Rctx保留区，Rctx仍512、Rbank50712、三层16KiB快照及汇编窗口偏移保持；Rroute现184字节，私有input_bytes偏移344，两架构SDK/用户载荷已一致重建。连接侧仍Createop184、Connstate2880+Conncache472=3352、工作页4096。只在bootstrap冷路径增加目标查询，热I/O路由未添加查询，无新内核调用或管理授权。
+
+新增4项host，上下文专项合计50项，覆盖同一提交目标跨rewait保留、未排空及ACK失败保持、fresh wait-only拒绝、改变镜像/原RPC拒绝、ACK后free失败不重复ACK。两架构的三角色资源死亡fixture分别跑两种模式：后端先退出导致ABORT无RPC；以及后端实际接收ABORT后不回复退出。第二种模式客户端明确先看到WOULD_BLOCK，受信测试管理者确认本fixture无下游/DMA并清完旧空间后显式rqclean原ABORT，失败结果不变，再由客户端真实FINISH/ACK/清理。两种都用1个VFS及7本地占位填满目录、没有实际后端目录项，最终VFS项仍READY且后续STOP成功，页/费用/实例归零。该可信测试动作不代表生产init的rqclean接口已实现。
+
+1083项完整host、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU与8份journal通过；旧创建/信号/CLOSE/OPEN/PIPE死亡及映射冲突恢复继续通过。SDK/目标布局、实际链接载荷、无libc依赖与生产无测试代码已核对，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage164-submitted-abort/的unit、focused-initial、runtime-riscv-initial及其他场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果。共享VA登记及rqclean权限/参数候选均已提出待确认，未据此实施；其他bootstrap/持久映射失败、生产服务/公开前端/Fix、sh/net/最终GUI继续。

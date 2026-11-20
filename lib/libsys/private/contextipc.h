@@ -33,9 +33,11 @@ isize sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key);
    No probe or new message is sent; the prospective Op stays PREPARED for
    explicit pre-submission rollback. Native wait errors use sysoppeerended. */
 isize sysctxpeerended(Rbank *bank, Connpeer self, Rkey key);
-/* A detached token ABORT failed before RPC creation with native ERR_PEER.
+/* A detached token ABORT failed with native ERR_PEER.
    Validates the exact bound bootstrap/token/prospective ID and cold-queries
-   the CALL's real PID/image against the captured creator peer. Records an
+   the CALL's real PID/image before submission. A continued RQWAIT keeps that
+   saved target through sysctxrewait; a fresh wait-only route has no proof.
+   Failed pre-submission CALL also rechecks its held CALL. Records an
    irrevocable creator-local end proof, never marks the source VFS ended.
    No new authority, directory slot, remote request or resource release. */
 isize sysctxcreatepeerended(Rbank *bank, Connpeer self, Rkey key, Filepool *pool, Connwork *work,

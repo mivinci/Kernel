@@ -19,7 +19,7 @@ static Handle    creatorclient;
 static u64       injected;
 NORETURN void    __real_hal_user_enter(Hctx *context);
 static void      deadtest(u32 creating);
-static void      resourceendtest(void);
+static void      resourceendtest(u32 submitted);
 static void      mapsalvagetest(void);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
@@ -203,7 +203,8 @@ filecreatetest(void)
   deadtest(0);
   deadtest(1);
   deadtest(2);
-  resourceendtest();
+  resourceendtest(0);
+  resourceendtest(1);
   mapsalvagetest();
 }
 static void
@@ -387,7 +388,7 @@ mapsalvagetest(void)
   putstr("\n");
 }
 static void
-resourceendtest(void)
+resourceendtest(u32 submitted)
 {
   Setid      set;
   Set        budget;
@@ -400,12 +401,12 @@ resourceendtest(void)
   Rqid       request;
   Rqinfo     pending;
   u64        trace[16];
-  u32        i, cleaned = 0, rqcleaned = 0, turns = 0;
+  u32        i, cleaned = 0, rqcleaned = 0, turns = 0, caller = submitted ? 0 : 1;
   int        error;
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  loadroles(set, &image, pids, info, "9ab", 3);
+  loadroles(set, &image, pids, info, submitted ? "fgh" : "9ab", 3);
   for (;;) {
     if (!cleaned) {
       CHECK(!procinfo(pids[2], &info[2]));
@@ -420,10 +421,10 @@ resourceendtest(void)
       }
     }
     if (cleaned && !rqcleaned) {
-      CHECK(!spaceread(info[1].space, filecreate_trace_address, trace, sizeof(trace)));
-      if (trace[5]) {
-        CHECK(!rqlookup((Handle) trace[5], info[1].identity, &request) &&
-              !rqstat(request, &pending) && pending.caller == pids[1] &&
+      CHECK(!spaceread(info[caller].space, filecreate_trace_address, trace, sizeof(trace)));
+      if (trace[5] && (!submitted || trace[6] == 6)) {
+        CHECK(!rqlookup((Handle) trace[5], info[caller].identity, &request) &&
+              !rqstat(request, &pending) && pending.caller == pids[caller] &&
               pending.server == pids[2] && pending.status == -ERR_PEER &&
               !(pending.flags & RQ_FINISHED) && !rqclean(request, info[2].identity));
         rqcleaned = 1;
@@ -444,7 +445,8 @@ resourceendtest(void)
           !spaceread(info[i].space, filecreate_trace_address, trace, sizeof(trace)) &&
           trace[0] == 2 && !trace[15]);
     if (!i)
-      CHECK(trace[1] == 1 && trace[2] == 1 && trace[3] == 1);
+      CHECK(trace[1] == 1 && trace[2] == 1 && trace[3] == 1 &&
+            (!submitted || (trace[4] && trace[4] < 64)));
     else
       CHECK(!trace[1] && !trace[2] && trace[4] == 1);
     while ((error = procclean(pids[i])) > 0) {
@@ -465,6 +467,10 @@ resourceendtest(void)
   puthex(1);
   putstr(" failed_abort=");
   puthex(1);
+  putstr(" submitted_abort=");
+  puthex(submitted);
+  putstr(" quarantined=");
+  puthex(submitted);
   putstr(" source_usable=");
   puthex(1);
   putstr(" trusted_cleanup=");

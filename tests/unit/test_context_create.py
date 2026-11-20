@@ -45,8 +45,11 @@ class ContextCreatorTests(unittest.TestCase):
             'sysctxfinish': [bank, creators.support.Peer, Key],
             'sysctxsignal': [bank, creators.support.Peer, Key, C.c_void_p, C.c_uint64],
             'sysctxinterruptible': [bank, creators.support.Peer, Key],
+            'sysctxrewait': [bank, creators.support.Peer, Key],
             'sysctxbootcall': [bank, creators.support.Peer, C.c_uint32, C.POINTER(bootstrap.Record),
                                creators.support.Claim, C.c_int64, C.c_uint64, key],
+            'sysctxbootwait': [bank, creators.support.Peer, C.c_uint32, C.POINTER(bootstrap.Record),
+                               creators.support.Claim, key],
             'sysctxcreatepeerended': [bank, creators.support.Peer, Key, pool, work, cache, operation],
             'testcapturestatus': [bank, C.c_uint32]}
         for name, args in signatures.items():
@@ -248,3 +251,65 @@ class ContextCreatorTests(unittest.TestCase):
         self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
         self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
         self.assertEqual((self.lib.testfrees(),self.work.state.call),(0,self.call))
+
+    def submitted_abort(self,operation,fresh_wait=False):
+        claim=self.prepare_revoke(operation);key=Key()
+        self.assertEqual(self.lib.sysctxbootcall(self.b,self.self,0,C.byref(self.record),claim,
+            self.resourcecall,0,C.byref(key)),0)
+        self.returned(key,message=bootstrap.Message(request=self.rpc+1))
+        self.assertEqual(self.lib.sysctxhandoff(self.b,self.self,key),0)
+        if fresh_wait:
+            self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
+            self.assertEqual(self.lib.sysctxbootwait(self.b,self.self,0,C.byref(self.record),claim,
+                C.byref(key)),0)
+        else:
+            self.assertEqual(self.lib.sysctxrewait(self.b,self.self,key),0)
+        self.returned(key,status=-14)
+        self.assertEqual(self.lib.sysctxhandoff(self.b,self.self,key),0)
+        return claim,key
+
+    def test_submitted_abort_preserves_target_through_rewait_and_requires_finish_and_ack(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.submitted_abort(operation)
+        self.assertEqual(self.mark_resource_end(operation,key),0)
+        self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
+        self.lib.testfinish(1);before=bytes(self.pool),self.create(operation).call
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),-11)
+        self.assertEqual((bytes(self.pool),self.create(operation).call),before)
+        self.assertEqual((self.record.state,self.record.status),(3,-14))
+        self.lib.testfinish(0);self.lib.testerrors(-7,0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),-7)
+        self.assertEqual(self.record.state,3)
+        self.lib.testerrors(0,0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
+        self.assertEqual((self.record.state,self.pool.entries[0].state,self.create(operation).disposition),(0,0,3))
+
+    def test_fresh_wait_only_context_cannot_invent_original_call_target(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.submitted_abort(operation,fresh_wait=True)
+        before=bytes(self.work),bytes(self.pool)
+        self.assertEqual(self.mark_resource_end(operation,key),-6)
+        self.assertEqual((bytes(self.work),bytes(self.pool)),before)
+
+    def test_submitted_abort_rejects_changed_captured_peer_and_rpc(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.submitted_abort(operation)
+        self.create(operation).peer.image+=1
+        self.assertEqual(self.mark_resource_end(operation,key),-6)
+        self.create(operation).peer.image-=1
+        self.bank.contexts[0].args[0]+=1
+        self.assertEqual(self.mark_resource_end(operation,key),-6)
+        self.assertEqual(self.create(operation).flags,0)
+
+    def test_submitted_abort_free_retry_does_not_ack_the_released_rpc_again(self):
+        operation=self.resourcekey(creators.support.Peer(creators.support.pid(4),29))
+        claim,key=self.submitted_abort(operation)
+        self.assertEqual(self.mark_resource_end(operation,key),0)
+        self.assertEqual(self.lib.sysctxfinish(self.b,self.self,key),0)
+        acks=self.lib.testget(1);self.lib.testfreeon(self.resourcecall,-7)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),-7)
+        self.assertEqual((self.record.state,self.record.rpc,self.record.status),(4,0,-14))
+        self.assertEqual(self.lib.testget(1),acks+1)
+        self.lib.testfreeon(self.resourcecall,0)
+        self.assertEqual(self.lib.sysfilecreateended(self.p,self.w,self.c,C.byref(operation)),0)
+        self.assertEqual(self.lib.testget(1),acks+1)

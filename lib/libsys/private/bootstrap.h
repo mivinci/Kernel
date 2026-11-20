@@ -56,6 +56,9 @@ isize sysbootcancel(Bootstrap *record, Connclaim claim);
    request or kernel failure keeps the full record; successful ACK clears only
    RPC ownership. A resource can remain owned here after the Rq is released. */
 isize sysbootack(Bootstrap *record, Connclaim claim);
+/* Nonblocking actual RQ_FINISH for a fixed result (or already ACKED).
+   Never overwrites original business/native failure or moves resources. */
+isize sysbootfinished(Bootstrap *record, Connclaim claim);
 isize sysbootresource(Bootstrap *record, Connclaim claim, Handle *out);
 /* Caller has accepted/compensated logical token/session responsibilities.
    Neither unknown RPCs nor untransferred resources can be reset. */
