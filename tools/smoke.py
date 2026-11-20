@@ -1572,8 +1572,9 @@ def exercise(args, run_dir, record):
                     record['tty']=checks[0]
                 if args.case == "runtime":
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
-                    if creators != [dict(actors=2,requests=5,references=5,closed=5,abandoned=1,errors=1,charged=0,allocated=transition["tables"])]:
-                        raise SmokeError("ordinary file creator ownership/compensation mismatch")
+                    if creators != [dict(actors=3,requests=9,references=9,closed=9,resource_opens=4,
+                            attached=3,revoked=2,abort_requests=3,abandoned=1,errors=1,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("file creator ownership/attach/token compensation mismatch")
                     record['file_creators']=creators[0]
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or

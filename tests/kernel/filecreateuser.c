@@ -10,8 +10,9 @@
 #define ADDRESS 0x1600000UL
 #define STOP    0xf001
 #define GATE    0xf002
+#define PREPARE 0xf003
 #define CONNID  0x10001
-static Connwork work;
+static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
 static Filepool pool;
 static Fdtable  fds;
@@ -89,7 +90,9 @@ begin(u64 opcode, const char *path, u64 source)
     args[1] = 8192;
   CHECK(!sysfilecreateprepare(&pool, &work, &cache, 0, 100 + filecreatetrace[1], opcode, object,
                               &source, args, path, bytes, &key, &message) &&
-        !source && !ipc_call(work.state.call, &message, CALL_ASYNC, &result) &&
+        !source &&
+        !ipc_call(work.state.call, &message, CALL_ASYNC | (opcode == FS_OPEN ? CALL_RECV_CALL : 0),
+                  &result) &&
         !sysopsubmitted(&work, &cache, &key, &result.request));
   filecreatetrace[1]++;
   return key;
@@ -111,7 +114,7 @@ complete(Opkey *key, u32 closing, u64 files[2], u64 *source)
         !sysfilecreatefinish(&pool, &work, &cache, key, files, source));
 }
 static void
-closefile(u64 file, u32 live)
+closeat(Connwork *connection, u64 file, u32 live)
 {
   Fileclose anchor;
   Opkey     key;
@@ -121,17 +124,123 @@ closefile(u64 file, u32 live)
   if (live)
     CHECK(!sysfilerefdrop(&pool, work.state.self, file));
   CHECK(!sysfilerefclose(&pool, work.state.self, file, &anchor) &&
-        !sysfilecloseprepare(&pool, &work, &cache, &anchor, 900 + filecreatetrace[2], 0, &key,
+        !sysfilecloseprepare(&pool, connection, &cache, &anchor, 900 + filecreatetrace[2], 0, &key,
                              &message) &&
-        !ipc_call(work.state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
+        !ipc_call(connection->state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
   rpc = result.request;
-  CHECK(!sysopsubmitted(&work, &cache, &key, &result.request) && !ipc_rqwait(rpc, 0, &result) &&
-        !sysopcapture(&work, &cache, &key, 0, &result) &&
-        !sysfilecloseresult(&pool, &work, &cache, &anchor, &key) &&
-        !sysopfinished(&work, &cache, &key) && !sysopsaved(&work, &cache, &key) &&
-        !sysopack(&work, &cache, &key) &&
-        !sysfileclosecomplete(&pool, &work, &cache, &anchor, &key));
+  CHECK(!sysopsubmitted(connection, &cache, &key, &result.request) &&
+        !ipc_rqwait(rpc, 0, &result) && !sysopcapture(connection, &cache, &key, 0, &result) &&
+        !sysfilecloseresult(&pool, connection, &cache, &anchor, &key) &&
+        !sysopfinished(connection, &cache, &key) && !sysopsaved(connection, &cache, &key) &&
+        !sysopack(connection, &cache, &key) &&
+        !sysfileclosecomplete(&pool, connection, &cache, &anchor, &key));
   filecreatetrace[2]++;
+}
+static void
+closefile(u64 file, u32 live)
+{
+  closeat(&work, file, live);
+}
+static void
+bootstrap(Bootstrap *record, Connclaim claim, Handle call, u64 options)
+{
+  Msg    message;
+  Ipcmsg result;
+  Handle rpc;
+  CHECK(!sysbootrequest(record, claim, &message) &&
+        !ipc_call(call, &message, CALL_ASYNC | options, &result));
+  rpc = result.request;
+  CHECK(!sysbootsubmitted(record, claim, &result.request) && !ipc_rqwait(rpc, 0, &result) &&
+        !sysbootcapture(record, claim, 0, &result) && !sysbootack(record, claim));
+}
+static void
+resourceopens(const Bootview *boot)
+{
+  Opkey     key;
+  Conntag   tag;
+  Connclaim claim;
+  Connpeer  peer;
+  Bootmap   mapped;
+  Handle    call;
+  u64       files[2], source = 0, bound, reused, token;
+  u32       i;
+  key = begin(FS_OPEN, "/bound", 0);
+  collect(&key);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+  peer = work.state.creators[key.lease.slot].peer;
+  CHECK(!sysconnbind(&cache, peer, &tag) && !sysconnworkinit(&backend_work, &cache, tag) &&
+        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
+  bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
+  zero(&mapped, sizeof(mapped));
+  CHECK(!sysbootmap(&backend_work.state.bootstrap, claim, bootresource(boot, BOOT_SELF_SPACE),
+                    ADDRESS + 0x10000, peer.image, &mapped) &&
+        !sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
+                               bootresource(boot, BOOT_SELF_SPACE), &mapped, 0));
+  zero(files, sizeof(files));
+  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && files[0] && !source);
+  bound = files[0];
+  key = begin(FS_OPEN, "/reuse", 0);
+  collect(&key);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &key) &&
+        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
+  bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
+  zero(&mapped, sizeof(mapped));
+  CHECK(!sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
+                               bootresource(boot, BOOT_SELF_SPACE), &mapped, 0));
+  zero(files, sizeof(files));
+  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && files[0] && !source);
+  reused = files[0];
+  for (i = 0; i < SYSCONN_COUNT - 2; i++) {
+    peer.image++;
+    CHECK(!sysconnbind(&cache, peer, &tag));
+  }
+  peer.image++;
+  CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
+  for (i = 0; i < 2; i++) {
+    key = begin(FS_OPEN, i ? "/failed" : "/cancel", 0);
+    collect(&key);
+    CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+    token = work.state.creators[key.lease.slot].token;
+    if (i) {
+      CHECK(
+          !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
+      bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
+      zero(&mapped, sizeof(mapped));
+      mapped.address = ADDRESS;
+      CHECK(sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
+                                  bootresource(boot, BOOT_SELF_SPACE), &mapped,
+                                  0) == -ERR_INVALID &&
+            !sysconnworkreuse(&backend_work, &cache, claim) &&
+            !sysbootfinish(&backend_work.state.bootstrap, claim));
+    }
+    CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call));
+    bootstrap(&work.state.bootstrap, claim, call, CALL_CONTROL);
+    CHECK(!sysfilecreaterevoked(&pool, &work, &cache, &key, claim));
+    zero(files, sizeof(files));
+    CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source);
+    filecreatetrace[4]++;
+    if (i) {
+      CHECK(!sysconnabortbegin(&cache, 999, &claim) &&
+            !sysbootprepare(&work.state.bootstrap, claim, FS_ABORT, token, 0));
+      bootstrap(&work.state.bootstrap, claim, backend_work.state.call, CALL_CONTROL);
+      CHECK(!sysbootabortreply(&work.state.bootstrap, claim) &&
+            !sysbootfinish(&work.state.bootstrap, claim));
+      filecreatetrace[4]++;
+    }
+  }
+  CHECK(backend_work.state.memory && backend_work.state.map.verified);
+  closeat(&backend_work, bound, 1);
+  closeat(&backend_work, reused, 1);
+  {
+    Msg    message;
+    Ipcmsg result;
+    message.words[0] = STOP;
+    message.words[1] = message.words[2] = message.words[3] = 0;
+    CHECK(!ipc_call(backend_work.state.call, &message, 0, &result) && result.words[0] == 4 &&
+          result.words[1] == 4 && !sysconninvalidate(&cache, backend_work.state.tag) &&
+          !sysconnworkclean(&backend_work, &cache));
+  }
+  filecreatetrace[5] = 1;
 }
 static void
 client(const Bootview *boot)
@@ -196,6 +305,7 @@ client(const Bootview *boot)
   CHECK(!sysfdobserve(&fds, 1, &detached) && detached.file == second &&
         !sysfddetach(&fds, detached.tag, &detached));
   closefile(second, 1);
+  resourceopens(boot);
   gate.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
   rpc = result.request;
@@ -219,7 +329,7 @@ server(const Bootview *boot)
   Filehead *head = (Filehead *) ADDRESS;
   Fileslot  descriptor;
   u64       sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
-  u64       slot, seq, opcode, i, found, number;
+  u64       slot, seq, opcode, i, found, number, resourcepath;
   volatile u64 *data;
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
         input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
@@ -298,6 +408,7 @@ server(const Bootview *boot)
       CHECK(found == 1);
       closed++;
     } else if (opcode == FS_OPEN || opcode == FS_DUPREF || opcode == FS_PIPE) {
+      resourcepath = 0;
       if (opcode == FS_OPEN) {
         const volatile char *path = (const volatile char *) data;
         CHECK(!descriptor.object && !descriptor.args[2] &&
@@ -307,6 +418,30 @@ server(const Bootview *boot)
           CHECK(!ipc_reply(input.request, &reply));
           continue;
         }
+        resourcepath = path[1] == 'b' || path[1] == 'c' || path[1] == 'f' || path[1] == 'r';
+      }
+      if (resourcepath) {
+        Msg    prepare;
+        Ipcmsg result;
+        Handle rpc;
+        u64    token = ++filecreatetrace[4];
+        prepare.words[0] = PREPARE;
+        prepare.words[1] = 200 + token;
+        prepare.words[2] = 2000 + token;
+        prepare.words[3] = token;
+        CHECK(!ipc_call(bootresource(boot, 257), &prepare, CALL_ASYNC | CALL_CONTROL, &result));
+        rpc = result.request;
+        CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] == token &&
+              !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+        data[0] = prepare.words[2];
+        zero(&transfer, sizeof(transfer));
+        transfer.source = bootresource(boot, 257);
+        transfer.rights = RESOURCE_USE;
+        transfer.business[0] = seq;
+        transfer.business[1] = prepare.words[1];
+        transfer.business[2] = token;
+        CHECK(!ipc_reply_resource(input.request, &transfer));
+        continue;
       }
       number = opcode == FS_PIPE ? 2 : 1;
       CHECK(created + number <= 8);
@@ -349,14 +484,125 @@ server(const Bootview *boot)
   filecreatetrace[2] = closed;
   filecreatetrace[0] = 2;
 }
+static void
+backend(const Bootview *boot)
+{
+  Connpeer  clientpeer, vfspeer;
+  Ipcmsg    input;
+  Msg       reply;
+  Resreply  transfer;
+  Allocarg  alloc;
+  Maparg    mapping;
+  Fileslot  descriptor;
+  Handle    memory = 0, space = bootresource(boot, BOOT_SELF_SPACE);
+  Filehead *head = (Filehead *) ADDRESS;
+  u64       sessions[4], references[4], created = 0, closed = 0, token, i;
+  CHECK(!sysconnpeer(bootresource(boot, 256), &clientpeer) &&
+        !sysconnpeer(bootresource(boot, 257), &vfspeer));
+  zero(sessions, sizeof(sessions));
+  zero(references, sizeof(references));
+  for (;;) {
+    CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL);
+    zero(&reply, sizeof(reply));
+    if (input.words[0] == PREPARE) {
+      CHECK(input.source == vfspeer.pid && input.image == vfspeer.image && created < 4 &&
+            input.words[3] == created + 1 && input.words[1] && input.words[2]);
+      sessions[created] = input.words[1];
+      references[created] = input.words[2];
+      created++;
+      reply.words[1] = input.words[3];
+      CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
+    CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
+    if (input.words[0] == STOP) {
+      CHECK(created == 4 && closed == 4 && filecreatetrace[3] == 3 && filecreatetrace[4] == 3);
+      for (i = 0; i < created; i++)
+        CHECK(!references[i]);
+      reply.words[0] = created;
+      reply.words[1] = closed;
+      CHECK(!ipc_reply(input.request, &reply));
+      break;
+    }
+    if (input.words[0] == FS_ABORT || input.words[0] == FS_ATTACH) {
+      token = input.words[3];
+      CHECK(!input.words[1] && input.words[2] && token && token <= created);
+      reply.words[1] = input.words[2];
+      if (input.words[0] == FS_ABORT) {
+        if (references[token - 1]) {
+          references[token - 1] = 0;
+          closed++;
+        }
+        filecreatetrace[4]++;
+        CHECK(!ipc_reply(input.request, &reply));
+        continue;
+      }
+      CHECK(references[token - 1]);
+      filecreatetrace[3]++;
+      if (!memory) {
+        Handle pid, parent;
+        u64    image;
+        CHECK(!__sys_getid(&pid, &image, &parent));
+        zero(&alloc, sizeof(alloc));
+        alloc.bytes = FS_CONN_BYTES;
+        alloc.kind = ALLOC_SHARED;
+        CHECK(!__sys_alloc(bootresource(boot, BOOT_SELF_ALLOC), &alloc, &memory));
+        zero(&mapping, sizeof(mapping));
+        mapping.mem = memory;
+        mapping.address = ADDRESS;
+        mapping.length = FS_CONN_BYTES;
+        mapping.prot = 3;
+        CHECK(!__sys_map(space, &mapping));
+        zero(head, FS_CONN_BYTES);
+        head->magic = FS_CONN_MAGIC;
+        head->bytes = FS_CONN_BYTES;
+        head->connid = CONNID;
+        head->serverimage = image;
+        head->slots = FS_CONN_SLOTS;
+        head->slotbytes = FS_SLOT_BYTES;
+        zero(&transfer, sizeof(transfer));
+        transfer.source = memory;
+        transfer.rights = 3;
+        transfer.length = FS_CONN_BYTES;
+        transfer.business[0] = input.words[2];
+        transfer.business[1] = CONNID;
+        transfer.business[2] = FS_CONN_BYTES;
+        CHECK(!ipc_reply_resource(input.request, &transfer));
+      } else {
+        reply.words[2] = CONNID;
+        reply.words[3] = FS_CONN_BYTES;
+        CHECK(!ipc_reply(input.request, &reply));
+      }
+      continue;
+    }
+    CHECK(input.words[0] == FS_CLOSE && input.words[1] == CONNID && input.words[3] == 6 &&
+          !sysfilerequest(head, FS_CONN_BYTES, 6, input.words[2], &descriptor) &&
+          descriptor.span == 1 && !descriptor.payload_bytes);
+    i = 0;
+    while (i < created && (sessions[i] != descriptor.object || references[i] != descriptor.args[0]))
+      i++;
+    CHECK(i < created && references[i]);
+    references[i] = 0;
+    closed++;
+    reply.words[1] = input.words[2];
+    CHECK(!ipc_reply(input.request, &reply));
+  }
+  CHECK(memory && !__sys_unmap(space, ADDRESS) && !__sys_free(memory) &&
+        !__sys_free(bootresource(boot, 256)) && !__sys_free(bootresource(boot, 257)));
+  filecreatetrace[1] = created;
+  filecreatetrace[2] = closed;
+  filecreatetrace[0] = 2;
+}
 int
 main(int argc, char **argv)
 {
-  CHECK(argc == 1 && (argv[0][0] == '0' || argv[0][0] == '1') && !argv[0][1]);
+  CHECK(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '2' && !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
     client(sysboot());
-  else
+  else if (argv[0][0] == '1')
     server(sysboot());
+  else
+    backend(sysboot());
   return 42;
 }

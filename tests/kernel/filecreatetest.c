@@ -8,7 +8,7 @@ struct Packet
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[3];
+  Resentry resources[4];
   char     role[2];
 };
 extern const u8  filecreate_image[], filecreate_image_end[];
@@ -27,8 +27,8 @@ filecreatetest(void)
 {
   Setid      set;
   Set        budget;
-  Procinfo   processes[2];
-  Handle     pids[2], call;
+  Procinfo   processes[3];
+  Handle     pids[3], call;
   Packet     packet;
   Bootimage  image;
   Config     config;
@@ -41,19 +41,19 @@ filecreatetest(void)
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  for (i = 0; i < 2; i++)
+  for (i = 0; i < 3; i++)
     CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
-  for (i = 0; i < 2; i++) {
+  for (i = 0; i < 3; i++) {
     Rtable *table = proctable(pids[i]);
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
-    CHECK(!localendpoint(table, processes[1 - i].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
+    CHECK(!localendpoint(table, processes[i ? 0 : 1].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
     packet.header.magic = BOOT_MAGIC;
     packet.header.format = BOOT_FORMAT;
     packet.header.bytes = sizeof(packet);
     packet.header.argc = 1;
     packet.header.argv_off = offsetof(Packet, arg);
-    packet.header.resource_count = 3;
+    packet.header.resource_count = i ? 4 : 3;
     packet.header.resources_off = offsetof(Packet, resources);
     packet.header.user_lo = BOOT_USER_LO;
     packet.header.user_hi = BOOT_USER_HI;
@@ -66,6 +66,12 @@ filecreatetest(void)
     packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
     packet.resources[2].tag = 256;
     packet.resources[2].handle = call;
+    if (i) {
+      CHECK(!localendpoint(table, processes[i == 1 ? 2 : 1].identity, LOCAL_CALL,
+                           LOCAL_USE | LOCAL_GRANT, 0, 0, &call));
+      packet.resources[3].tag = 257;
+      packet.resources[3].handle = call;
+    }
     testload(pids[i], filecreate_image, (u64) (filecreate_image_end - filecreate_image), &packet,
              sizeof(packet));
     config.entry = image.entry;
@@ -77,12 +83,12 @@ filecreatetest(void)
   }
   do {
     ended = 0;
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 3; i++) {
       CHECK(!procinfo(pids[i], &processes[i]));
       if (processes[i].state == PROC_EXITING)
         ended++;
     }
-    if (ended == 2)
+    if (ended == 3)
       break;
     error = procrunone();
     CHECK(!error || error == -ERR_WOULD_BLOCK);
@@ -90,7 +96,7 @@ filecreatetest(void)
     if (error)
       CHECK(procidle() >= 0);
   } while (1);
-  for (i = 0; i < 2; i++) {
+  for (i = 0; i < 3; i++) {
     CHECK(!lifestat(processes[i].life, &life) &&
           !spaceread(processes[i].space, filecreate_trace_address, trace, sizeof(trace)));
     if (life.reason != LIFE_EXIT || life.code != 42 || trace[15]) {
@@ -103,7 +109,13 @@ filecreatetest(void)
       putstr("\n");
       panic("file creator result");
     }
-    CHECK(trace[0] == 2 && trace[1] == 5 && trace[2] == 5 && (i || trace[3] == 1));
+    CHECK(trace[0] == 2);
+    if (!i)
+      CHECK(trace[1] == 9 && trace[2] == 7 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1);
+    else if (i == 1)
+      CHECK(trace[1] == 5 && trace[2] == 5 && trace[4] == 4);
+    else
+      CHECK(trace[1] == 4 && trace[2] == 4 && trace[3] == 3 && trace[4] == 3);
     while ((error = procclean(pids[i])) > 0) {
     }
     CHECK(!error && !lifecollect(processes[i].life, 1, &result));
@@ -115,13 +127,21 @@ filecreatetest(void)
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck());
   putstr("FILECREATECHECK actors=");
-  puthex(2);
+  puthex(3);
   putstr(" requests=");
-  puthex(5);
+  puthex(9);
   putstr(" references=");
-  puthex(5);
+  puthex(9);
   putstr(" closed=");
-  puthex(5);
+  puthex(9);
+  putstr(" resource_opens=");
+  puthex(4);
+  putstr(" attached=");
+  puthex(3);
+  putstr(" revoked=");
+  puthex(2);
+  putstr(" abort_requests=");
+  puthex(3);
   putstr(" abandoned=");
   puthex(1);
   putstr(" errors=");

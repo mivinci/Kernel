@@ -1059,3 +1059,15 @@ sysconnabortbegin只分配新序号和无目录项的私有claim，不创建、�
 35项目录/bootstrap/Rctx专项覆盖跨后端及复用共享序号、回滚/forget不复用、满8项仍发清理、耗尽/输出别名不消费号、哨兵不能当连接claim、精确回复及ACK失败保留、错误资源责任和控制预算。双架构libsys原生fixture在真实HELLO/ATTACH后填满8项（其中7项仅本地占位身份，无实际服务），通过原固定CALL完成两次无目录项ABORT运输，服务核对真实source/image、token及递增seq；原MEM/VA保持且目录仍满。此fixture只验证清理运输，不证明生产后端的token授权、幂等引用撤销或资源OPEN类型化ATTACH/ABORT已经实现，后者继续待接。
 
 最终1035项完整host、格式检查、两架构各libsys/runtime/sigframe/normal共8次QEMU与8份journal通过。目标布局对象、SDK源码/头及实际链接载荷哈希已核对，libsys审计对象无未定义依赖；stage156的5份引用创建/补偿/关闭继续归零，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage157-bootstrap-abort/的unit、conndir/bootstrap/context、场景日志、目标layout对象、verify.py和evidence.json。首次单项检查把原ATTACH的错误image断言误放入ABORT测试并保留接收选项，已修正该测试选项并通过完整host复验；未放宽实现。未重跑195矩阵（最近stage154），无CI/板端/性能结果。
+
+### 资源OPEN的类型化ATTACH与token补偿（2026-11-20）
+
+stage158在原Createop与Bootstrap记录上接资源OPEN的后端绑定/定点撤销，不增加结构大小、动态责任或线上操作。原OPEN先捕获并ACK；attachprepare核对真实后端PID/image、初始化工作页及空闲bootstrap，以仍预留的完整File ID作为私有事务owner，绑定原token并开始首次接入或普通复用。该owner是本地事务身份，不是权限或可复用槽索引；全部claim仍核对目录代次/序号。提交CALL、保存原RPC/回复、接收MEM及映射仍用既有运输接口；准备函数只返回借用CALL和claim，不发远端请求。
+
+attached仅接原ATTACH的ACKED结果，先核对token/claim、业务回复、精确映射和已持引用冲突，再移交CALL。首次由后端工作页接管CALL/MEM及外部已验证map；已有连接只接受普通确认及空外部map，保留原MEM/VA，释放新增冗余CALL。冗余CALL free失败仍留在Createop，原预留和ATTACH记录保持，重试不重新提交ATTACH。成功后将引用提交到真实后端目录项，结束该bootstrap；原创建页仍由原Op直到finish归还。已结束应用交付不能变成LIVE，可转CLOSING由原关闭worker接管；已选择的结果不能换处分。借用已移交后端CALL进行后续清理时，不把它再次当成创建者独占引用free。
+
+revokeprepare借源连接的空闲bootstrap，精确核对仍持或外部保留的CALL真实目标，按Image统一发号开始无目录项ABORT；目录满额不需第九项。revoked必须匹配原创建者File ID、原token及ACKED的[0,abort_seq,0,0]才释放本地预留。负业务/机制错误、旧claim、错误token或未ACK均保持责任；原创建者CALL释放失败也保持token/预留，可从已存成功回复继续，不重复远端清理。完成标记REVOKED与转CLOSING区分，finish只返回零新File ID及独立源pin。这里的ABORT成功不证明其他ATTACH运输、MEM/map或下游访问已排空，其独立责任仍须收尾；首次映射故障后的完整连接恢复/生命周期worker尚未接入。
+
+26项host专项包含普通创建、首次资源接管、连接复用、无效map/旧claim不移动资源、重复prepare门槛、冗余CALL及清理CALL free失败重试、精确token/ACK门槛、错误后端/回复保持、已持引用重复拒绝、已结束应用只可关闭补偿。双架构原生fixture扩为客户端、VFS、独立后端三进程。VFS只用私有测试PREPARE向固定后端登记目标引用，然后在原OPEN交付CALL及8字节ref；后端按实际IPC source/image区分固定VFS与客户端。4个资源OPEN分别走首次MEM/map/CALL接管、普通确认复用、ATTACH前撤销、已有连接ATTACH确认后因非空外部map被本地验证拒绝再撤销。两次撤销期间连接上另两份File保留，重复一次原token的ABORT不再减引用，随后两份精确CLOSE均成功。私有PREPARE不是新增生产协议；本例不是生产VFS、权限/观察/继承实现，也不把模拟的本地map元数据拒绝称为原生硬件映射故障。
+
+包括原普通创建场景，每架构9个创建请求产生9份引用，7次CLOSE及2份token撤销归零，重复ABORT不增加关闭数；原负业务与迟到OPEN补偿继续通过。最终1047项完整host、格式、最终输入下两架构各runtime/libsys/sigframe/normal共8次QEMU和8份journal通过。目标布局保持Connstate=2872、Conncache=472、Createop=184、工作页4096；实际三角色ELF与SDK/链接载荷一致，libsys审计无未定义依赖，默认init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage158-resource-open/的unit、focused、场景-reviewed日志、目标layout对象、verify.py和evidence.json；原初验证日志另保留，事务owner的旧Rctx专属注释修正后重新构建/执行最终8场景。未重跑195矩阵（最近stage154），无CI、板端或性能结果；正式trampoline的创建前置、生产服务及完整恢复继续待接。

@@ -55,7 +55,8 @@ isize sysconninit(Conncache *cache, Connpeer self);
 isize sysconncheck(const Conncache *cache, Connpeer self);
 isize sysconnbind(Conncache *cache, Connpeer peer, Conntag *out);
 isize sysconnview(Conncache *cache, Conntag tag, Connentry *out);
-/* owner is a nonzero private Rctx incarnation, not just its reusable index.
+/* owner is a nonzero private transaction identity, never a reusable index:
+   an Rctx incarnation or a creator's still-reserved full File ID.
    begin never restarts CONNECTING; ready requires stable resources/result.
    rollback is ONLY before any request was submitted or remote effect occurred.
    These gates do not replace the required prospective RPC/resource record. */

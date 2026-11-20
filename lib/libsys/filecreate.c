@@ -51,7 +51,7 @@ target(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key, Creat
       (op->opcode != FS_OPEN && op->opcode != FS_DUPREF && op->opcode != FS_PIPE) ||
       create->phase < SYSFILE_CREATE_PREPARED || create->phase > SYSFILE_CREATE_RESOLVED ||
       create->count != (op->opcode == FS_PIPE ? 2U : 1U) || create->reserved ||
-      create->disposition > 1 ||
+      create->disposition > SYSFILE_RESULT_REVOKED ||
       (create->phase != SYSFILE_CREATE_RESOLVED &&
        op->file != (create->source ? create->source : create->files[0])))
     return -ERR_STATE;
@@ -361,6 +361,268 @@ sysfilecreatesettle(Filepool *pool, Connwork *work, Conncache *cache, const Opke
   if (closing || create->error)
     create->files[0] = create->files[1] = 0;
   create->disposition = closing;
+  create->phase = SYSFILE_CREATE_RESOLVED;
+  return 0;
+}
+static int
+samepeer(Connpeer a, Connpeer b)
+{
+  return a.pid == b.pid && a.image == b.image;
+}
+static int
+sameclaim(Connclaim a, Connclaim b)
+{
+  return a.tag.generation == b.tag.generation && a.tag.index == b.tag.index && !a.tag.reserved &&
+         !b.tag.reserved && a.seq == b.seq && a.owner == b.owner;
+}
+static isize
+resource(Createop *create, Slotop *op)
+{
+  if (op->phase != SYSOP_ACKED || op->opcode != FS_OPEN || op->kind != IPC_RESOURCE_REPLY ||
+      create->phase != SYSFILE_CREATE_CAPTURED || create->count != 1 || create->error ||
+      !create->token || !create->peer.pid || !create->peer.image)
+    return -ERR_STATE;
+  return 0;
+}
+static isize
+backendview(Filepool *pool, Connwork *work, Conncache *cache, Createop *create, Connwork *backend,
+            Connentry *entry)
+{
+  isize error;
+  if (!backend || (backend != work && !separate(work, sizeof(*work), backend, sizeof(*backend))) ||
+      !separate(pool, sizeof(*pool), backend, sizeof(*backend)) ||
+      !separate(backend, sizeof(backend->state), cache, sizeof(*cache)))
+    return -ERR_INVALID;
+  if (!samepeer(backend->state.self, work->state.self) ||
+      !samepeer(backend->state.peer, create->peer))
+    return -ERR_STALE;
+  error = sysconnview(cache, backend->state.tag, entry);
+  if (error)
+    return error;
+  if (!samepeer(entry->peer, create->peer))
+    return -ERR_STALE;
+  return entry->state == SYSCONN_DRAINING ? -ERR_PEER : 0;
+}
+static int
+bootmatches(Bootstrap *boot, Connclaim claim, Createop *create, u32 opcode)
+{
+  return !sysbootcheck(boot) && boot->state == SYSBOOT_ACKED && boot->opcode == opcode &&
+         boot->token == create->token && sameclaim(boot->claim, claim) &&
+         claim.owner == create->files[0];
+}
+isize
+sysfilecreateattachprepare(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                           Connwork *backend, u64 deadline, Connclaim *claim, Handle *call)
+{
+  Createop *create;
+  Connentry entry;
+  Connclaim prepared;
+  isize     error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (!external(pool, work, cache, claim, sizeof(*claim)) ||
+      !external(pool, work, cache, call, sizeof(*call)) ||
+      !separate(claim, sizeof(*claim), call, sizeof(*call)) ||
+      !separate(key, sizeof(*key), claim, sizeof(*claim)) ||
+      !separate(key, sizeof(*key), call, sizeof(*call)) || !backend ||
+      !separate(backend, sizeof(*backend), key, sizeof(*key)) ||
+      !separate(backend, sizeof(*backend), claim, sizeof(*claim)) ||
+      !separate(backend, sizeof(*backend), call, sizeof(*call)))
+    return -ERR_INVALID;
+  error = resource(create, &work->state.operations[key->lease.slot]);
+  if (!error)
+    error = backendview(pool, work, cache, create, backend, &entry);
+  if (error)
+    return error;
+  if (!create->call)
+    return -ERR_STATE;
+  if (sysbootcheck(&backend->state.bootstrap))
+    return -ERR_STATE;
+  if (backend->state.bootstrap.state != SYSBOOT_FREE)
+    return -ERR_BUSY;
+  error = entry.state == SYSCONN_READY
+              ? sysconnreusebegin(cache, backend->state.tag, create->files[0], &prepared)
+              : sysconnbegin(cache, backend->state.tag, create->files[0], &prepared);
+  if (error)
+    return error;
+  error = sysbootprepare(&backend->state.bootstrap, prepared, FS_ATTACH, create->token, deadline);
+  if (error) {
+    if (sysconnrollback(cache, prepared))
+      return -ERR_STATE;
+    return error;
+  }
+  copy(claim, &prepared, sizeof(prepared));
+  *call = create->call;
+  return 0;
+}
+isize
+sysfilecreateattached(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                      Connwork *backend, Connclaim claim, Handle space, Bootmap *map, u32 closing)
+{
+  Createop  *create;
+  Connentry  entry;
+  Bootstrap *boot;
+  Bootreply  reply;
+  Handle     owned, redundant = 0;
+  u32        i;
+  isize      error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (closing > 1 || !external(pool, work, cache, map, sizeof(*map)) || !backend ||
+      !separate(backend, sizeof(*backend), key, sizeof(*key)) ||
+      !separate(backend, sizeof(*backend), map, sizeof(*map)) ||
+      !separate(key, sizeof(*key), map, sizeof(*map)))
+    return -ERR_INVALID;
+  if (create->phase == SYSFILE_CREATE_RESOLVED)
+    return create->peer.pid && create->disposition == closing ? 0 : -ERR_STATE;
+  error = resource(create, &work->state.operations[key->lease.slot]);
+  if (!error)
+    error = backendview(pool, work, cache, create, backend, &entry);
+  if (error)
+    return error;
+  boot = &backend->state.bootstrap;
+  if (!bootmatches(boot, claim, create, FS_ATTACH) ||
+      claim.tag.generation != backend->state.tag.generation ||
+      claim.tag.index != backend->state.tag.index || entry.sequence != claim.seq ||
+      (entry.owner && entry.owner != claim.owner))
+    return -ERR_STALE;
+  if (!closing && work->state.operations[key->lease.slot].flags & SYSOP_APP_ENDED)
+    return -ERR_STATE;
+  if (entry.owner) {
+    error = sysbootreply(boot, claim, entry.state == SYSCONN_READY ? entry.connid : 0, &reply);
+    if (error)
+      return error;
+    if (entry.state == SYSCONN_READY && (map->address || map->bytes || map->connid ||
+                                         map->serverimage || map->mapped || map->verified))
+      return -ERR_INVALID;
+    if (entry.state == SYSCONN_CONNECTING &&
+        (map->mapped != 1 || map->verified != 1 || !map->address || (map->address & PAGE_MASK) ||
+         map->bytes != reply.bytes || map->connid != reply.connid ||
+         map->serverimage != create->peer.image))
+      return -ERR_INVALID;
+  }
+  for (i = 0; i < SYSFILE_REFS; i++) {
+    const Fileref *held = &pool->entries[i];
+    if ((held->state == SYSFILE_REF_LIVE || held->state == SYSFILE_REF_CLOSING) &&
+        held->connection.generation == claim.tag.generation &&
+        held->connection.index == claim.tag.index && held->session == create->values[0].session &&
+        held->reference == create->values[0].reference)
+      return -ERR_INVALID;
+  }
+  if (create->call) {
+    owned = create->call;
+    error = sysconnworktakecall(backend, cache, &owned, &redundant);
+    if (error)
+      return error;
+    create->call = redundant;
+    if (redundant) {
+      error = __sys_free(redundant);
+      if (error)
+        return error;
+      create->call = 0;
+    }
+  }
+  if (entry.owner) {
+    error = entry.state == SYSCONN_READY ? sysconnworkreuse(backend, cache, claim)
+                                         : sysconnworkadopt(backend, cache, claim, space, map);
+    if (error)
+      return error;
+  } else if (entry.state != SYSCONN_READY || entry.sequence != claim.seq ||
+             !backend->state.memory || !backend->state.map.verified)
+    return -ERR_STALE;
+  copy(&create->values[0].connection, &backend->state.tag, sizeof(backend->state.tag));
+  error = sysfilerefcommit(pool, work->state.self, &create->stage, create->values, closing);
+  if (error)
+    return error;
+  error = sysbootfinish(boot, claim);
+  if (error)
+    return error;
+  if (closing)
+    create->files[0] = 0;
+  create->token = 0;
+  create->disposition = closing;
+  create->phase = SYSFILE_CREATE_RESOLVED;
+  return 0;
+}
+isize
+sysfilecreaterevokeprepare(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                           Handle call, u64 deadline, Connclaim *claim, Handle *borrowed_call)
+{
+  Createop  *create;
+  Connpeer   peer;
+  Connclaim  prepared;
+  Bootstrap *boot;
+  isize      error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  boot = &work->state.bootstrap;
+  if (!external(pool, work, cache, claim, sizeof(*claim)) ||
+      !external(pool, work, cache, borrowed_call, sizeof(*borrowed_call)) ||
+      !separate(claim, sizeof(*claim), borrowed_call, sizeof(*borrowed_call)) ||
+      !separate(key, sizeof(*key), claim, sizeof(*claim)) ||
+      !separate(key, sizeof(*key), borrowed_call, sizeof(*borrowed_call)))
+    return -ERR_INVALID;
+  error = resource(create, &work->state.operations[key->lease.slot]);
+  if (error)
+    return error;
+  if (sysbootcheck(boot))
+    return -ERR_STATE;
+  if (boot->state != SYSBOOT_FREE)
+    return -ERR_BUSY;
+  if (!call)
+    call = create->call;
+  error = sysconnpeer(call, &peer);
+  if (error)
+    return error;
+  if (!samepeer(peer, create->peer))
+    return -ERR_DENIED;
+  error = sysconnabortbegin(cache, create->files[0], &prepared);
+  if (!error)
+    error = sysbootprepare(boot, prepared, FS_ABORT, create->token, deadline);
+  if (error)
+    return error;
+  copy(claim, &prepared, sizeof(prepared));
+  *borrowed_call = call;
+  return 0;
+}
+isize
+sysfilecreaterevoked(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                     Connclaim claim)
+{
+  Createop  *create;
+  Bootstrap *boot;
+  isize      error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (create->phase == SYSFILE_CREATE_RESOLVED)
+    return create->peer.pid && create->disposition == SYSFILE_RESULT_REVOKED && !create->files[0]
+               ? 0
+               : -ERR_STATE;
+  error = resource(create, &work->state.operations[key->lease.slot]);
+  if (error)
+    return error;
+  boot = &work->state.bootstrap;
+  if (claim.tag.generation || claim.tag.index != SYSCONN_COUNT ||
+      !bootmatches(boot, claim, create, FS_ABORT))
+    return -ERR_STALE;
+  error = sysbootabortreply(boot, claim);
+  if (error)
+    return error;
+  if (create->call) {
+    error = __sys_free(create->call);
+    if (error)
+      return error;
+    create->call = 0;
+  }
+  error = sysfilerefabort(pool, work->state.self, &create->stage);
+  if (error)
+    return error;
+  error = sysbootfinish(boot, claim);
+  if (error)
+    return error;
+  create->files[0] = create->files[1] = 0;
+  create->token = 0;
+  create->disposition = SYSFILE_RESULT_REVOKED;
   create->phase = SYSFILE_CREATE_RESOLVED;
   return 0;
 }

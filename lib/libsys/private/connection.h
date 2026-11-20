@@ -6,6 +6,7 @@
 #define SYSFILE_CREATE_PREPARED 1
 #define SYSFILE_CREATE_CAPTURED 2
 #define SYSFILE_CREATE_RESOLVED 3
+#define SYSFILE_RESULT_REVOKED  2
 typedef struct Connstate Connstate;
 typedef struct Connwork  Connwork;
 typedef struct Slotop    Slotop;
