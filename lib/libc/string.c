@@ -69,3 +69,121 @@ strchr(const char *string, int byte)
     string++;
   }
 }
+void *
+memchr(const void *memory, int byte, size_t bytes)
+{
+  const u8 *data = memory;
+  size_t    i;
+  for (i = 0; i < bytes; i++)
+    if (data[i] == (u8) byte)
+      return (void *) (data + i);
+  return NULL;
+}
+size_t
+strnlen(const char *string, size_t bytes)
+{
+  size_t length = 0;
+  while (length < bytes && string[length])
+    length++;
+  return length;
+}
+int
+strncmp(const char *a, const char *b, size_t bytes)
+{
+  size_t i;
+  for (i = 0; i < bytes; i++) {
+    if ((u8) a[i] != (u8) b[i])
+      return (int) (u8) a[i] - (int) (u8) b[i];
+    if (!a[i])
+      return 0;
+  }
+  return 0;
+}
+char *
+strrchr(const char *string, int byte)
+{
+  const char *last = NULL;
+  for (;;) {
+    if ((u8) *string == (u8) byte)
+      last = string;
+    if (!*string)
+      return (char *) last;
+    string++;
+  }
+}
+char *
+strstr(const char *string, const char *pattern)
+{
+  const char *at, *next;
+  if (!*pattern)
+    return (char *) string;
+  for (; *string; string++) {
+    at = string;
+    next = pattern;
+    while (*next && *at == *next) {
+      at++;
+      next++;
+    }
+    if (!*next)
+      return (char *) string;
+  }
+  return NULL;
+}
+size_t
+strspn(const char *string, const char *accepted)
+{
+  size_t length = 0;
+  while (string[length] && strchr(accepted, (u8) string[length]))
+    length++;
+  return length;
+}
+size_t
+strcspn(const char *string, const char *rejected)
+{
+  size_t length = 0;
+  while (string[length] && !strchr(rejected, (u8) string[length]))
+    length++;
+  return length;
+}
+char *
+strpbrk(const char *string, const char *accepted)
+{
+  for (; *string; string++)
+    if (strchr(accepted, (u8) *string))
+      return (char *) string;
+  return NULL;
+}
+char *
+strcpy(char *destination, const char *source)
+{
+  size_t i;
+  for (i = 0; source[i]; i++)
+    destination[i] = source[i];
+  destination[i] = 0;
+  return destination;
+}
+char *
+strncpy(char *destination, const char *source, size_t bytes)
+{
+  size_t i;
+  for (i = 0; i < bytes && source[i]; i++)
+    destination[i] = source[i];
+  for (; i < bytes; i++)
+    destination[i] = 0;
+  return destination;
+}
+char *
+strcat(char *destination, const char *source)
+{
+  strcpy(destination + strlen(destination), source);
+  return destination;
+}
+char *
+strncat(char *destination, const char *source, size_t bytes)
+{
+  size_t end = strlen(destination), i;
+  for (i = 0; i < bytes && source[i]; i++)
+    destination[end + i] = source[i];
+  destination[end + i] = 0;
+  return destination;
+}

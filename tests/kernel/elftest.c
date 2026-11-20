@@ -80,6 +80,8 @@ elftest(void)
         puthex(life.reason);
         putstr(" code=");
         puthex(life.code);
+        putstr(" loader_error=");
+        puthex(trace[15]);
         putstr("\n");
         panic("user loader result");
       }

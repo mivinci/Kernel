@@ -203,7 +203,7 @@ def build(args):
     os.replace(temporary_runtime, runtime)
     runtime_inspect = invoke('inspect-runtime', [tools['readelf']['path'], '-h','-l','-s',str(runtime)])
     trace_rows = [line.split() for line in runtime_inspect.splitlines() if line.split() and line.split()[-1] == 'runtime_trace']
-    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 120:
+    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 128:
         raise BuildError('runtime trace symbol is missing or has wrong size')
     trace_address = int(trace_rows[0][1],16)
     runtime_image = sdk / 'runtimeuser.img'

@@ -11,7 +11,8 @@
 #include "ringuser.h"
 #include "fdtableuser.h"
 #include "fileuser.h"
-volatile u64        runtime_trace[15];
+#include "stringuser.h"
+volatile u64        runtime_trace[16];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -383,6 +384,7 @@ main(int argc, char **argv)
   runtime_trace[12] = ringusercheck();
   runtime_trace[13] = fdtableusercheck();
   runtime_trace[14] = fileusercheck();
+  runtime_trace[15] = stringusercheck(&view);
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)

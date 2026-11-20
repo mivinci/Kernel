@@ -47,12 +47,29 @@
 
 补充本阶段接口：clock_settime（time.h），仅支持受明确校时授权限制的 CLOCK_REALTIME；clock_getres 返回实际分辨率。时间来源/可信校准状态属于原生扩展，不因成功设置时间自动成立。具体契约及用例见 [时间接口](05-events.md)，当前未实现。
 libc 导出标准 API，libsys 实现 fd/连接/服务适配和负错误码协议；POSIX 层按每个接口转换错误，原生 UNKNOWN 等结果必须定义 POSIX 可表达的失败映射，不能泄漏私有返回值。共享缓冲仍待真实完成后复用。
+
+基础文本补充登记（2026-11-21，责任模块均为libc/string.c、公开于string.h；代码已接入，验收见文末）。以下原型采用项目C89声明形式；复制/拼接的非重叠、有效存储及容量前提仍按规范，不因省略restrict拼写变成重叠复制接口。所有函数在有效输入上保持errno，无分配、I/O或库全局状态；不是检查任意应用指针并返回EFAULT的系统接口。
+
+| 符号与原型 | 返回/边界 | POSIX.1-2024原文 |
+| --- | --- | --- |
+| `void *memchr(const void *, int, size_t)` | unsigned char比较；首匹配即停止，可查NUL后的二进制数据 | [memchr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/memchr.html) |
+| `size_t strnlen(const char *, size_t)` | 至多读取maxlen，未见NUL返回maxlen | [strnlen](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strnlen.html) |
+| `int strncmp(const char *, const char *, size_t)` | 最多n字节、NUL处停止；首不同字节按unsigned char决定符号 | [strncmp](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncmp.html) |
+| `char *strrchr(const char *, int)` | 最后匹配，可返回结尾NUL，未找到NULL | [strrchr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strrchr.html) |
+| `char *strstr(const char *, const char *)` | 第一个完整子串，空pattern返回原基址 | [strstr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strstr.html) |
+| `size_t strspn(const char *, const char *)` | 初始全在接受字节集合中的长度 | [strspn](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strspn.html) |
+| `size_t strcspn(const char *, const char *)` | 初始全不在拒绝集合中的长度 | [strcspn](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcspn.html) |
+| `char *strpbrk(const char *, const char *)` | 第一个属于集合的源字节，未找到NULL | [strpbrk](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strpbrk.html) |
+| `char *strcpy(char *, const char *)` | 复制含NUL，返回目标原基址 | [strcpy](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcpy.html) |
+| `char *strncpy(char *, const char *, size_t)` | 写满n字节，不足补NUL；截断时不保证NUL，返回原基址 | [strncpy](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncpy.html) |
+| `char *strcat(char *, const char *)` | 从目标NUL追加含NUL源串，返回原基址 | [strcat](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcat.html) |
+| `char *strncat(char *, const char *, size_t)` | 最多追加n个源字节，另写NUL，返回原基址 | [strncat](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncat.html) |
 新增硬链接、追加原子性、PID 选择器与组号协议、实时时钟与标准属性等是待补齐设计，不因本表存在而视为原状态机已覆盖；阶段 00 冻结具体契约后进入对应实现阶段。
 
 验收分三层：host 测试检查纯库逻辑/布局/错误转换；RV64 与 ARM64 QEMU 测试真实服务和故障路径；选取有明确版本的外部单线程静态程序重新编译运行，登记补丁与缺失接口。三层结果分别记入 status.md，不以自编小程序替代外部软件兼容结论。
 每个纳入接口至少覆盖正常、边界、权限/无效参数、资源耗尽、信号/取消及适用的服务故障路径；不适用项标明原因。系统容量限制通过公开查询或明确配置报告，超限失败不得泄漏资源。
 
-规范参考：[POSIX.1-2024](https://pubs.opengroup.org/onlinepubs/9799919799/)、[函数索引](https://pubs.opengroup.org/onlinepubs/9799919799/functions/contents.html)。此次在线正文访问返回 403，不能将本表视为已完成逐条规范审计；逐符号标准核对仍为各接口对外兼容验收前置，基础机制实现不据此声称标准通过。
+规范参考：[POSIX.1-2024](https://pubs.opengroup.org/onlinepubs/9799919799/)、[函数索引](https://pubs.opengroup.org/onlinepubs/9799919799/functions/contents.html)。初次在线正文访问返回403；后续成功取得的逐符号原文与核对范围登记在对应条目/验收中，不能将本表视为整套标准已审计。基础机制实现或部分函数通过不等于完整标准兼容。
 
 ## 中断规则的审查索引
 
@@ -152,3 +169,15 @@ stdlib.h现声明并实现malloc/calloc/realloc/free，16字节对齐、溢出/�
 ### 信号集合与等待前端（2026-11-17）
 
 新增signal.h及64位sigset_t，实际提供sigemptyset/sigfillset/sigaddset/sigdelset/sigismember、sigprocmask/sigpending/sigsuspend。set=NULL查询忽略how、KILL/STOP不可屏蔽、集合编号错误EINVAL、原生/指针错误转errno，实际捕获等待返回EINTR；对象助手要求有效C存储，调用路径不依赖分配器或stdio。mask旧输出FAULT保留已提交变更，不逆向覆盖handler后续状态。原生HANDLER已接，公开POSIX sigaction/trampoline、来源code转换、sigsend/kill/raise及普通等待重启仍未完成；Native/可信生产者验证边界与证据见11末尾，不将这些子集叫完整POSIX信号。
+
+### 基础字节串扩展（2026-11-21）
+
+stage166按正文逐符号登记接入memchr、strnlen、strncmp、strrchr、strstr、strspn、strcspn、strpbrk、strcpy、strncpy、strcat、strncat。实现只访问调用者有效C对象，按字节/NUL工作，不解释Unicode，不分配或引用库全局状态，有效输入保持errno。比较首不同字节按unsigned char决定符号；memchr遇首匹配即停止，strnlen不越maxlen；strncpy写满n且截断时可无NUL，strncat最多复制n个源字节再另写NUL，复制/拼接返回原目标基址。重叠复制、容量不足或任意非法指针不属于这些函数的有效输入，不能把它们当受检查I/O copy使用。
+
+规范证据已实际取得上述12份Open Group Issue8/IEEE1003.1-2024原文，核对SYNOPSIS、DESCRIPTION、RETURN VALUE与ERRORS，包括Issue8新增的有效输入errno保持要求。web读取被403拒绝后，公开页面经正常浏览器UA直接GET成功；URL/原始HTML SHA256及文本保存在build/host/stage166-string/standards/，没有把2017重印冒充本点2024逐项核对。原文同页的stpcpy/stpncpy等其他符号不因此列为已实现。
+
+新增6项host在O0/O2以符号重命名避免宿主libc替代被测函数，用确定性随机字节参考覆盖无符号顺序、有界/零长、首/末位置、空/重复集合与子串、截断/补零及两侧哨兵。runtimeuser每个普通有效main执行24组断言，两架构各5次、每架构120组，含一页真实映射后紧邻未映射页的边界读写：无NUL的strnlen/strncmp界限、memchr首字节已匹配而n=SIZE_MAX、NUL处停止、精确末页复制/追加与errno保持。私有测试trace扩大到128字节，读取/SDK导出/观测一致更新；受限CREATE/3槽装载孩子只执行不分配部分，原资源槽满的检查保持。
+
+新增测试和函数使ARM runtimeuser需37镜像页，RV为33页。旧ELF成功fixture只给64页且还承担16页栈、Boot与内核元数据，ARM实际返回LIMIT；诊断已保存原loader_error。成功fixture现按plan.pages+64提供明确测试余量，exec上限128和elfcheck最多64镜像页保持，专门的16页不足预算场景不变；修正没有放宽内核预算，也没有吞掉装载错误。最终两架构各2次装载成功和4种失败回滚通过，原失败串口/日志保留。
+
+1095项完整host、格式、28次RV64/ARM64 QEMU通过，其中runtime/elf/heap/normal共8次、启动包布局20次，12份journal核对。实际运行的runtime载荷与当前SDK逐字节一致，string.o无未定义依赖、12符号/头文件导出和原生调用证明已审计。ARM init及两架构serial完整ELF与stage165相同；RV init完整哈希不同，但用上轮保留启动包提取的原ELF核对，入口、PT_LOAD地址/权限/文件与内存大小/全部载荷字节完全一致，差别仅在非装载内容。clangd切回RV64/runtime。证据build/host/stage166-string/的unit、focused-initial、场景-final、elf-arm64-observe/budget-reviewed、standards、原RV init提取件、verify.py和evidence.json。未重跑完整195矩阵（最近stage165），无CI/板端/性能或外部程序兼容结论；文件/终端/公开信号/Fix、sh/net/图形GPU及最终GUI仍待继续。

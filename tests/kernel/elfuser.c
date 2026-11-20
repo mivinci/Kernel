@@ -120,7 +120,9 @@ main(int argc, char **argv)
     REQUIRE(!elfcheck(&source, 64, &plan) && plan.pages > 3 && plan.segments[0].filesz > PAGE_SIZE,
             184);
     memset(&args, 0, sizeof(args));
-    args.memlimit = scenario == 2 ? 16 : 64;
+    /* Success fixtures fund the selected ELF plus stack/Boot/kernel metadata;
+       the explicit underfunded case remains independent of payload growth. */
+    args.memlimit = scenario == 2 ? 16 : plan.pages + 64;
     args.exec_limit = 128;
     args.resources = 3;
     args.pending = 1;
@@ -168,6 +170,7 @@ main(int argc, char **argv)
     if (scenario == 5)
       packet.resources[0].flags = 4;
     error = elfload(&source, &plan, &packet, packet.header.bytes, &work, &config);
+    elf_trace[15] = (u64) error;
     REQUIRE(!work.memory && !work.mapped, 193);
     elf_trace[6]++;
     if (scenario <= 1) {

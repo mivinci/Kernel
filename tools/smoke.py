@@ -1602,8 +1602,8 @@ def exercise(args, run_dir, record):
                     record['mapping_salvage']=salvage[0]
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
-                            {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "formats", "groups", "queues", "rings", "fd_tables", "file_slots", "charged", "allocated")} !=
-                            {"cases": 10, "main": 5, "rejected": 5, "callbacks": 38, "finalizers": 8, "numbers": 275, "formats": 120, "groups": 105, "queues": 15, "rings": 15, "fd_tables": 5, "file_slots": 5, "charged": 0, "allocated": transition["tables"]}):
+                            {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "formats", "groups", "queues", "rings", "fd_tables", "file_slots", "string_groups", "charged", "allocated")} !=
+                            {"cases": 10, "main": 5, "rejected": 5, "callbacks": 38, "finalizers": 8, "numbers": 275, "formats": 120, "groups": 105, "queues": 15, "rings": 15, "fd_tables": 5, "file_slots": 5, "string_groups": 120, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("runtime environment/initialization/exit mismatch")
                     record["runtime"] = checks[0]
                 if args.case == "libsys":

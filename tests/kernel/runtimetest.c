@@ -118,9 +118,10 @@ runtimetest(void)
   Life       life;
   Liferesult result;
   Pgstat     before, after;
-  u64        trace[15], bytes;
+  u64        trace[16], bytes;
   u32        mode, i, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0,
-                     formats = 0, groups = 0, queues = 0, rings = 0, fds = 0, filepages = 0;
+                     formats = 0, groups = 0, queues = 0, rings = 0, fds = 0, filepages = 0,
+                     strings = 0;
   int error;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
@@ -151,7 +152,8 @@ runtimetest(void)
     } else {
       REQUIRE(trace[0] == 1 && trace[1] == 123 && trace[4] == mode && trace[5] == 1 &&
               trace[6] == 42 && trace[8] == 55 && trace[9] == 24 && trace[10] == 21 &&
-              trace[11] == 3 && trace[12] == 3 && trace[13] == 1 && trace[14] == 1);
+              trace[11] == 3 && trace[12] == 3 && trace[13] == 1 && trace[14] == 1 &&
+              trace[15] == 24);
       REQUIRE(trace[2] == (mode == 3 ? 0 : 21) && trace[3] == (mode == 3 ? 0 : 12));
       REQUIRE(trace[7] == (mode == 1 ? 30 : 0));
       mains++;
@@ -162,6 +164,7 @@ runtimetest(void)
       rings += (u32) trace[12];
       fds += (u32) trace[13];
       filepages += (u32) trace[14];
+      strings += (u32) trace[15];
       REQUIRE(!groupnames(life.group, &pgid, &sid) && pgid == pid && sid == pid);
       if (mode != 3) {
         callbacks += 2 + (u32) trace[7];
@@ -203,6 +206,8 @@ runtimetest(void)
   puthex(fds);
   putstr(" file_slots=");
   puthex(filepages);
+  putstr(" string_groups=");
+  puthex(strings);
   putstr(" charged=");
   puthex(account.charged);
   putstr(" allocated=");
