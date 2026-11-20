@@ -546,3 +546,19 @@ tools/sdkheaders.py先计算完整映射，再重建生成的SDK private目录�
 7项host专项与两架构实际新增/删除/额外头探针通过，临时源头及额外SDK文件均已移除；最终十份私有头完全同源。两架构库归档/csu/代表用户ELF哈希均与改动前相同，本点不改变运行路径。完整host回归及证据归build/host/stage107-sdk-headers/，不以构建检查代替新的QEMU/CI/板端验收。
 
 最终完整722项host与fmt-check通过，新增/删除探针共四次两架构SDK构建通过，独立检查在失败/成功时均保留导出及原last-run状态；源码与精确导出manifest、运行产物不变的证据见evidence.json。未改内核运行代码，未重跑QEMU；issue010本地修复完成，非CI/板端验收。
+
+### Rctx 原生返回窗口接续（2026-11-20）
+
+libsys 新增私有 context 模块：调用方为当前 PID/image 预付一个50712字节 Rbank，包含三层各512字节 Rctx 和各16KiB快照空间。全银行共用不回绕的序号，层号加序号识别一次调用；不全局分配，也不能重新初始化仍有责任的银行。本点仅保存七个标量参数，快照空间尚未接参数专用复制。
+
+状态为 FREE→PREPARED→WAITING→DONE→CLEANING→FREE。prepare/result/finish/capture 由调用者短暂屏蔽可捕获信号；invoke 只保护激活和完成记账，实际原生调用前恢复 mask。活动记录不能 finish，原生状态与完整 Sysret 只能移出一次，移出后才允许收尾复用；SIGRETURN 保留专用不返回桩，不经此记录。
+
+独立汇编在 ECALL/SVC 后保留完整原生返回寄存器，逐项保存后提交 DONE。RV64 返回窗口44字节、ARM64为32字节，固定链接符号界定范围与安全恢复点；架构解码器只接受该窗口及保存的 Rctx 寄存器匹配，不扫描 C 栈。捕获保存 status、七个结果和 image 元数据，改信号帧 PC 为汇编恢复点；不取消、不ACK、不安装 fd 或资源。共享 TF 布局及断言原样移至 include/abi/{riscv,arm64}/trap.h，内核包装头单独保留 arch_trap 声明；SDK递归导出ABI头，用户库不依赖内核HAL。
+
+例：外层GETID返回后、第一条结果存储前收到USR1，trampoline从实际信号帧捕获外层完整tuple；handler用第二层GETPG，移出并结束内层记录，外层值保持。sigreturn恢复到安全标签，外层invoke完成后移出tuple并finish，FP与errno恢复。测试专用内核入口wrapper只注入这一个真实边界；其他逐条部分存储位置由host模型覆盖，不能称为QEMU逐指令矩阵。
+
+六项host专项覆盖两架构解码器的层与序号、溢出、忙/过期记录、未屏蔽实际调用、部分保存与INTERRUPTED结果、错误PC/指针及完整TF/FP保持。两架构sigframe均通过新增的真实窗口捕获/内层调用/返回恢复，案例由12增至13。最终930项host、格式及195个双架构QEMU结果已验：make test-all在前159项后因主机磁盘耗尽写result.json失败，用户释放空间后，代码不变，单独补跑剩余36项成功；这是分段完成全部既定矩阵，不是单次make test-all成功。更早一轮因运行期间修改SDK私有头而被一致性检查拒绝，两次中断的原日志与失败现场均保留。
+
+最终审计核对168份journal、全部结果的源码/头哈希、SDK导出与依赖、实际链接frame_image及原生陷阱指令/窗口标签/银行大小。默认init/serial与stage143逐字节相同，生产镜像无测试wrapper，clangd数据库切回RV64/sigframe并包含SDK上下文源码。证据为build/host/stage144-runtime-window/{test-all.log,test-remaining.log,verify.py,evidence.json}；清理仅删除成功且未引用的生成目录，312份中间固定结果保持完整，最终结果亦由evidence固定引用。无CI、板端或性能结果。
+
+后续仍须把 Rctx 与原始 Op/Bootstrap 的RPC及资源责任绑定，接实际参数快照、嵌套帧链策略、POSIX trampoline/SA_RESTART 和 fork/Fix修复。本点不代表标准fd、生产tty/fs/blk、sh/net/GUI完成，无CI、板端或性能结果。

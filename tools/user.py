@@ -41,7 +41,7 @@ def build(args):
         tools[name] = dict(path=str(Path(executable).absolute()), version=invoke(name + '-version', [executable, '--version']))
     if 'clang' not in tools['cc']['version'].lower():
         raise BuildError('this profile requires Clang')
-    exported = [ROOT / 'include/types.h', *sorted((ROOT / 'include/abi').glob('*.h')),
+    exported = [ROOT / 'include/types.h', *sorted((ROOT / 'include/abi').rglob('*.h')),
                 *sorted((ROOT / 'include/proto').glob('*.h')),
                 *sorted((ROOT / 'include/abi').glob('*.inc')),
                 *sorted((ROOT / 'lib/libsys/include/sys').glob('*.h')),
@@ -55,7 +55,7 @@ def build(args):
     private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'close.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/syscall.S', args.arch + '/io.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'close.c', 'context.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/context.c', args.arch + '/ctxcall.S', args.arch + '/syscall.S', args.arch + '/io.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -384,7 +384,7 @@ def build(args):
     kernel = json.loads(previous.read_text()) if previous.exists() else []
     kernel = [x for x in kernel if '/sdk/' not in x['output']]
     compilation_database(directory, kernel + entries)
-    headers = list((ROOT / 'include/abi').glob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
+    headers = list((ROOT / 'include/abi').rglob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
     headers += list((ROOT / 'include/abi').glob('*.inc'))
     headers += list((ROOT / 'include/proto').glob('*.h'))
     headers += [ROOT / 'sbin/serial/uart.h']

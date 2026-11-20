@@ -1,0 +1,173 @@
+#include "private/context.h"
+#include <abi/syscall.h>
+static int
+identity(Connpeer self)
+{
+  return handlekind(self.pid) == HANDLE_PROCESS && self.image;
+}
+static int
+separate(const void *a, u64 bytes, const void *b, u64 length)
+{
+  u64 x = (u64) (uintptr_t) a, y = (u64) (uintptr_t) b;
+  return a && b && bytes <= UINT64_MAX - x && length <= UINT64_MAX - y &&
+         (x + bytes <= y || y + length <= x);
+}
+static void
+clear(Rctx *context)
+{
+  u32          i;
+  volatile u8 *bytes = (volatile u8 *) context;
+  for (i = 0; i < sizeof(*context); i++)
+    bytes[i] = 0;
+}
+static isize
+source(Rbank *bank, Connpeer self)
+{
+  if (!bank || !identity(self))
+    return -ERR_INVALID;
+  return bank->self.pid == self.pid && bank->self.image == self.image ? 0 : -ERR_STALE;
+}
+static isize
+find(Rbank *bank, Connpeer self, Rkey key, Rctx **out)
+{
+  Rctx *context;
+  isize error = source(bank, self);
+  if (error)
+    return error;
+  if (key.reserved || key.layer >= RCTX_LAYERS || !key.sequence)
+    return -ERR_INVALID;
+  context = &bank->contexts[key.layer];
+  if (context->sequence != key.sequence || context->phase == RCTX_FREE)
+    return -ERR_STALE;
+  if (context->phase > RCTX_CLEANING || context->active > 1)
+    return -ERR_STATE;
+  if (context->sequence > bank->sequence)
+    return -ERR_STATE;
+  *out = context;
+  return 0;
+}
+isize
+sysctxinit(Rbank *bank, Connpeer self)
+{
+  u32 i;
+  if (!bank || !identity(self))
+    return -ERR_INVALID;
+  bank->self.pid = self.pid;
+  bank->self.image = self.image;
+  bank->sequence = 0;
+  for (i = 0; i < RCTX_LAYERS; i++)
+    clear(&bank->contexts[i]);
+  /* Snapshot arrays are private input workspaces, not initialized ownership. */
+  return 0;
+}
+isize
+sysctxprepare(Rbank *bank, Connpeer self, u32 layer, u64 number, const u64 args[7], Rkey *out)
+{
+  Rctx *context;
+  u64   sequence;
+  u64   saved[7];
+  u32   i;
+  isize error = source(bank, self);
+  if (error)
+    return error;
+  if (layer >= RCTX_LAYERS || number == SYS_SIGRETURN ||
+      !separate(bank, sizeof(*bank), out, sizeof(*out)))
+    return -ERR_INVALID;
+  context = &bank->contexts[layer];
+  if (context->phase != RCTX_FREE || context->active)
+    return -ERR_BUSY;
+  if (bank->sequence == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  for (i = 0; i < 7; i++)
+    saved[i] = args ? args[i] : 0;
+  sequence = ++bank->sequence;
+  clear(context);
+  context->sequence = sequence;
+  context->number = number;
+  for (i = 0; i < 7; i++)
+    context->args[i] = saved[i];
+  context->phase = RCTX_PREPARED;
+  out->sequence = sequence;
+  out->layer = layer;
+  out->reserved = 0;
+  return 0;
+}
+isize
+sysctxinvoke(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx *context;
+  u64   old, ignored;
+  isize status, error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &old);
+  if (error)
+    return error;
+  error = find(bank, self, key, &context);
+  if (!error && (context->phase != RCTX_PREPARED || context->active))
+    error = -ERR_STATE;
+  if (!error)
+    context->active = 1;
+  if (__sys_sigmask(SIGNAL_SETMASK, old, &ignored))
+    return -ERR_STATE;
+  if (error)
+    return error;
+  __sys_ctxenter(context);
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &old);
+  if (error)
+    return error;
+  if (context->phase != RCTX_DONE && context->phase != RCTX_CLEANING) {
+    __sys_sigmask(SIGNAL_SETMASK, old, &ignored);
+    return -ERR_STATE;
+  }
+  status = context->status;
+  /* After unmask, a handler can consume/finish the now inactive record. The
+     native status is already in this C continuation, never reloaded from it. */
+  context->active = 0;
+  error = __sys_sigmask(SIGNAL_SETMASK, old, &ignored);
+  return error ? error : status;
+}
+isize
+sysctxcapture(Rbank *bank, Connpeer self, Rkey key, void *trap)
+{
+  Rctx *context;
+  isize error = find(bank, self, key, &context);
+  if (error)
+    return error;
+  return sysctxdecode(context, trap, (u64) (uintptr_t) __sys_ctxreturn_begin,
+                      (u64) (uintptr_t) __sys_ctxreturn_end, (u64) (uintptr_t) __sys_ctxresume);
+}
+isize
+sysctxresult(Rbank *bank, Connpeer self, Rkey key, isize *status, Sysret *out)
+{
+  Rctx *context;
+  u32   i;
+  isize error = find(bank, self, key, &context);
+  if (error)
+    return error;
+  if (!separate(bank, sizeof(*bank), status, sizeof(*status)) ||
+      !separate(bank, sizeof(*bank), out, sizeof(*out)) ||
+      !separate(status, sizeof(*status), out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (context->phase != RCTX_DONE)
+    return -ERR_STATE;
+  *status = context->status;
+  for (i = 0; i < sizeof(*out); i++)
+    ((u8 *) out)[i] = ((const u8 *) &context->result)[i];
+  context->phase = RCTX_CLEANING;
+  return 0;
+}
+isize
+sysctxfinish(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx *context;
+  u64   sequence;
+  isize error = find(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->active)
+    return -ERR_BUSY;
+  if (context->phase != RCTX_CLEANING)
+    return -ERR_STATE;
+  sequence = context->sequence;
+  clear(context);
+  context->sequence = sequence;
+  return 0;
+}

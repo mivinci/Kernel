@@ -777,3 +777,5 @@ CASE=sigframe新增一个真实用户运输模型：仅测试链接的入口wrap
 最终完整make test-all通过855项host、格式检查及195次双架构QEMU；6项host专项、168份journal及最终源码/头/SDK/包哈希另核对。两架构sigframe由11增至12项，正常5/非法帧6/默认终止1；从实际QEMU内核ELF提取的frame_image与当前SDK打包用户ELF逐字节一致。默认init/serial ELF与stage132逐字节相同，clangd数据库已更新，证据build/host/stage133-sync-frames/；无CI/板端/性能结果。正常内核不链接wrapper或测试载荷，实际硬件故障当前仍走默认终止边界，尚未接到此直接帧原语。
 
 开放问题：FAULT reason候选MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12，以及初次故障递送失败按原故障终止并保留原始诊断，已向用户提问，尚未冻结或加入abi/signal.h。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则，不因本候选改变。另一个GROUP target=0问题仍独立待回复；实际FAULT生产与libc kill/raise按确认结果接续。
+
+Rctx原生返回窗口的用户态接续见[08末尾](08-runtime.md#rctx-原生返回窗口接续2026-11-20)：两架构真实sigframe新增外层GETID第一条存储前捕获、独立内层GETPG和sigreturn安全恢复。仅测试wrapper注入信号，生产内核不含此入口；尚未接POSIX trampoline/SA_RESTART或原RPC责任交接，不改变上述两项待确认边界。

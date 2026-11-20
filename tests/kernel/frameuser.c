@@ -5,10 +5,15 @@
 #include <errno.h>
 #include "private/syscall.h"
 #include "private/start.h"
-volatile u64 frame_trace[32];
-static u8    saved[1024];
-extern u64   frame_fp(u64 mode);
-extern u64   frame_wait(void);
+#include "private/context.h"
+#include <abi/syscall.h>
+volatile u64    frame_trace[32];
+static u8       saved[1024];
+static Rbank    runtime_contexts;
+static Rkey     runtime_key;
+static Connpeer context_self;
+extern u64      frame_fp(u64 mode);
+extern u64      frame_wait(void);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -257,15 +262,104 @@ forceduser(void)
   frame_trace[0] = 99;
   return 42;
 }
+static void
+contexthandler(u64 signum)
+{
+  Rkey   nested;
+  Sysret result;
+  isize  status;
+  REQUIRE(signum == SIGNAL_USR1 && runtime_contexts.contexts[0].phase == RCTX_DONE &&
+              runtime_contexts.contexts[0].active == 1 &&
+              runtime_contexts.contexts[0].result.values[0] == (u64) context_self.pid,
+          213);
+  REQUIRE(!sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETPG, NULL, &nested) &&
+              !sysctxinvoke(&runtime_contexts, context_self, nested) &&
+              !sysctxresult(&runtime_contexts, context_self, nested, &status, &result) && !status &&
+              result.values[0] == 1 && result.values[1] == 1 &&
+              !sysctxfinish(&runtime_contexts, context_self, nested),
+          214);
+  REQUIRE(runtime_contexts.contexts[0].result.values[0] == (u64) context_self.pid &&
+              frame_fp(2) == 1,
+          215);
+  frame_trace[20] = nested.sequence;
+  frame_trace[21] = runtime_key.sequence;
+  frame_trace[19] = 1;
+  frame_trace[12]++;
+  errno = ENOENT;
+}
+static NORETURN void
+contexttrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address,
+                  u64 flags)
+{
+  u64 mask, ignored;
+  int saved_errno = errno;
+  REQUIRE(signum == SIGNAL_USR1 && info->signum == signum && !info->code &&
+              function == (u64) contexthandler && !flags &&
+              runtime_contexts.contexts[0].phase == RCTX_WAITING,
+          216);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              sysctxcapture(&runtime_contexts, context_self, runtime_key, context) == 1 &&
+              runtime_contexts.contexts[0].phase == RCTX_DONE &&
+              !runtime_contexts.contexts[0].status &&
+              sysctxfinish(&runtime_contexts, context_self, runtime_key) == -ERR_BUSY,
+          217);
+  frame_trace[18] = 1;
+  contexthandler(signum);
+  errno = saved_errno;
+  REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 218);
+  __sys_sigreturn((void *) address);
+}
+static int
+contextuser(void)
+{
+  Handle parent;
+  Sigact action;
+  Sysret result;
+  isize  status;
+  u64    mask, ignored;
+  REQUIRE(!__sys_getid(&context_self.pid, &context_self.image, &parent) && parent == 1 &&
+              !sysctxinit(&runtime_contexts, context_self),
+          219);
+  action.kind = SIGNAL_HANDLER;
+  action.handler = (u64) contexthandler;
+  action.trampoline = (u64) contexttrampoline;
+  action.mask = action.flags = action.reserved = 0;
+  REQUIRE(!__sys_sigaction(SIGNAL_USR1, &action, NULL) && frame_fp(1) == 0, 220);
+  frame_trace[16] = (u64) (uintptr_t) __sys_ctxreturn_begin;
+  frame_trace[17] = (u64) (uintptr_t) __sys_ctxresume;
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          221);
+  errno = EDOM;
+  frame_trace[0] = 1;
+  REQUIRE(!sysctxinvoke(&runtime_contexts, context_self, runtime_key) &&
+              runtime_contexts.contexts[0].phase == RCTX_DONE &&
+              !runtime_contexts.contexts[0].active && frame_trace[12] == 1 &&
+              frame_trace[18] == 1 && frame_trace[19] == 1 && errno == EDOM && frame_fp(0) == 1,
+          222);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxresult(&runtime_contexts, context_self, runtime_key, &status, &result) &&
+              !status && result.values[0] == (u64) context_self.pid &&
+              result.values[1] == context_self.image && result.values[2] == 1 &&
+              !result.values[3] && !result.values[4] && !result.values[5] && !result.values[6] &&
+              !result.image && !sysctxfinish(&runtime_contexts, context_self, runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          223);
+  frame_trace[0] = 99;
+  return 42;
+}
 int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= ';', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '<', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
   if (mode == 11)
     return forceduser();
+  if (mode == 12)
+    return contextuser();
   frame_trace[2] = (u64) (uintptr_t) handler;
   frame_trace[3] = (u64) (uintptr_t) trampoline;
   install(mode);

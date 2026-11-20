@@ -18,6 +18,8 @@ extern const u8  frame_image[], frame_image_end[];
 extern const u64 frame_trace_address;
 static Handle    forcedpid;
 static u32       forcedarmed, forcedcount;
+static Handle    contextpid;
+static u32       contextarmed, contextcount;
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -63,6 +65,28 @@ faultframeenter(Hctx *context)
   forcedcount++;
 }
 void
+runtimeframeenter(Hctx *context)
+{
+  Rtable  *table = proccurrent(context);
+  Procinfo process;
+  Siginfo  info;
+  u64      trace[32];
+  u32      i;
+  if (!contextarmed || !table || table->owner != contextpid)
+    return;
+  REQUIRE(!procinfo(contextpid, &process) &&
+          !spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
+  if (trace[0] != 1 || trace[1] != 12 || context->tf.pc != trace[16])
+    return;
+  contextarmed = 0;
+  contextcount++;
+  for (i = 0; i < sizeof(info); i++)
+    ((u8 *) &info)[i] = 0;
+  info.signum = SIGNAL_USR1;
+  REQUIRE(!procsigqueue(contextpid, &info));
+  procuserreturn(context);
+}
+void
 sigframetest(void)
 {
   Setid               set;
@@ -87,7 +111,7 @@ sigframetest(void)
   int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 12; mode++) {
+  for (mode = 0; mode < 13; mode++) {
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     for (i = 0; i < sizeof(packet); i++)
       ((u8 *) &packet)[i] = 0;
@@ -127,6 +151,10 @@ sigframetest(void)
     if (mode == 11) {
       forcedpid = pid;
       forcedarmed = 1;
+    }
+    if (mode == 12) {
+      contextpid = pid;
+      contextarmed = 1;
     }
     if (!mode) {
       /* Freeze a published but not yet dispatched process. This does not relax
@@ -178,11 +206,14 @@ sigframetest(void)
     putstr(" code=");
     puthex(life.code);
     putstr("\n");
-    if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11) {
+    if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && (mode == 7 || trace[0] == 99));
       REQUIRE(trace[12] == (mode == 1 || mode == 9 || mode == 11 ? 2U : 1U));
       if (mode == 11)
         REQUIRE(!forcedarmed && forcedcount == 1 && trace[7] > trace[6]);
+      if (mode == 12)
+        REQUIRE(!contextarmed && contextcount == 1 && trace[18] == 1 && trace[19] == 1 &&
+                trace[20] > trace[21]);
     } else if (mode == 8) {
       REQUIRE(life.reason == LIFE_SIGNAL && life.code == SIGNAL_USR1 && trace[12] == 1);
     } else {
@@ -222,9 +253,9 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(12);
+  puthex(13);
   putstr(" normal=");
-  puthex(5);
+  puthex(6);
   putstr(" invalid=");
   puthex(6);
   putstr(" terminated=");
@@ -233,6 +264,8 @@ sigframetest(void)
   puthex(1);
   putstr(" forced=");
   puthex(forcedcount);
+  putstr(" rctx_window=");
+  puthex(contextcount);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

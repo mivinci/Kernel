@@ -108,6 +108,7 @@ __wrap_hal_user_enter(Hctx *context)
 {
   Rtable *table = proccurrent(context);
   faultframeenter(context);
+  runtimeframeenter(context);
   if (armed && table) {
     if (table->owner == parentpid)
       builder();

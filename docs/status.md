@@ -15,21 +15,21 @@
 - [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
 - [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
 - [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD来源与原生 sigsend、普通等待中断、ttycreate/ttybind/getfg；可信同步帧与同号 pending 隔离已接。同步硬件 FAULT handler/公开原因编码、setfg/ttysignal、完整终端关联/挂断/孤儿策略及 POSIX trampoline/SA_RESTART 仍待接。
-- [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立 libsys/csu、基础 libc/身份/wait/堆/数值/格式化、静态 ELF 装载；本地 fd 表、File alias/pin/关闭锚、稳定连接 MEM/VA、bootstrap 与原槽 RPC/后台记录已接。真实 HELLO/普通 ATTACH/共享 READ/控制 CLOSE 只在独立 fixture 验证；生产 FS/TTY/File 权限/观察、标准 fd API、Rctx/Boot/Fix 尚未完成。
+- [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立 libsys/csu、基础 libc/身份/wait/堆/数值/格式化、静态 ELF 装载；本地 fd 表、File alias/pin/关闭锚、稳定连接 MEM/VA、bootstrap 与原槽 RPC/后台记录已接。真实 HELLO/普通 ATTACH/共享 READ/控制 CLOSE 只在独立 fixture 验证；三层私有Rctx及原生返回窗口已局部验证。生产 FS/TTY/File 权限/观察、标准 fd API、Rctx责任绑定/Boot/Fix 尚未完成。
 - 用户态 tty 行规程、输出转换与 VMIN/VTIME 等有界核心已验，尚非默认包里的 tty 服务。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
 
 ## 最新完成点与证据
 
-- stage143：工作区接管真实目标匹配的自持 CALL，同后端第二份入口显式返还给调用者；File/原RPC/页责任结清后按unmap→MEM→CALL清理。实际自持入口释放后STALE/BAD_HANDLE，外层独立Boot入口仍能继续通信；共享READ/普通ATTACH及普通Rq满额下的控制CLOSE继续通过。
-- File 记录显式区分 session/reference_id/prepare_token，私有记录72字节，256项加元数据共18456字节；fd表4096字节，连接工作页各4096字节，首工作页内嵌目录，总连接预算仍32 KiB。实际关闭后才拆连接，不将未确认锚或共享 DONE 当作可回收证明。
-- 最终 `make test-all`：924项host、格式、195次双架构QEMU；14项连接及15项观测专项、168份journal、最终源码/头/SDK/包哈希、实际链接载荷与独立ELF打包一致。init/serial ELF与stage142逐字节相同，默认包无测试模块；`build/compile_commands.json`已切回RV64/libsys。
-- 证据：`build/host/stage143-owned-call/{test-all.log,verify.py,evidence.json}`。首次ARM64 8GiB观测曾在INITRETAIN半行提前probe，已修为完整记录门槛并针对性复验、从头全量重跑，失败记录保留；未改guest状态机。历史证据见各主题末尾；生产启动/失败清理的逐页、Acct/物理owner审计仍在全量运行。没有CI、实板或性能结果。
+- stage144：私有三层Rctx及原生返回窗口，捕获完整status/七结果/image并恢复到安全标签；真实信号在外层GETID第一条存储前打断，独立内层GETPG不覆盖外层值，FP/errno恢复。仅原始tuple运输，尚未绑定Op/Bootstrap或POSIX trampoline/SA_RESTART。
+- 每层512字节元数据与16KiB预付快照，银行共50712字节，全银行序号不回绕；快照尚未接参数专用复制。共享陷阱帧布局原样移入ABI架构头，用户库不依赖内核HAL。
+- 验收：930项host、格式、195次双架构QEMU及168份journal。make test-all通过前159项后因磁盘耗尽中断；用户释放空间后代码不变，剩余36项单独补跑成功，不称单次全量命令成功。源码/头/SDK/包哈希、实际链接载荷及汇编窗口均核对；init/serial与stage143逐字节相同，默认包无测试模块，clangd数据库已切回RV64/sigframe并含SDK源码。
+- 证据：`build/host/stage144-runtime-window/{test-all.log,test-remaining.log,verify.py,evidence.json}`。更早一轮因构建期间改头被SDK一致性检查拒绝；两次中断日志保留。安全清理完成，312份中间固定结果完整；磁盘空间现已恢复。历史执行见各主题末尾，没有CI、实板或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
 - 两项已向用户提问，尚未收到回复，不提前实现：① Sigsel GROUP target=0 在内核受理时固定当前组，供 libc kill(0) 使用；② 同步 FAULT 的12项归一化原因及初次递送失败保留原故障终止策略。候选与边界见11末尾；原生正PGID/PID/CONTROL/ALL已实现，实际硬件故障当前仍默认受控终止。
-- 下一步接 Rctx/信号返回窗口、关闭中断/1秒控制故障与后台补偿、服务私有 in-flight/生命周期观察；再接 VA 分配、Boot/Fix、标准 fd API及生产tty/fs/blk。保留完整 fork/exec、管道/作业控制与 sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
+- 下一步接Rctx→Op/Bootstrap原RPC/资源唯一交接、关闭中断/1秒控制故障与后台补偿、服务私有in-flight/生命周期观察；再接VA分配、Boot/Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 
 ## 硬件与问题登记

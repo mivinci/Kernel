@@ -5,6 +5,7 @@
 #include <dtb.h>
 struct Hctx;
 void faultframeenter(struct Hctx *context);
+void runtimeframeenter(struct Hctx *context);
 void testmain(Hvs *space, const Dtinfo *hardware, u64 cpu);
 void sigsendtest(void);
 void cputest(const Dtinfo *hardware, u64 current);
