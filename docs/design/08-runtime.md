@@ -614,3 +614,19 @@ APP_ENDED仅占原128字节槽记录的私有flags位，原预算/布局不变�
 证据build/host/stage147-expired-responsibility/的unit/场景日志、verify.py和evidence.json。首次新场景在接收只读MEM时被旧helper固定RW权限的断言拒绝，现按各次声明校验权限；原失败现场保留，未修改授权或请求状态机。未重跑195场景完整矩阵，最近完整矩阵仍为stage144；无CI、板端或性能验收。公开POSIX返回/SA_RESTART、关闭worker、创建类补偿、参数快照/Boot/Fix、标准fd及生产服务继续待接，不称完整sh/net/GUI交付。
 
 stage148的类型化关闭watch/interrupt/work见[10末尾](10-filesystem.md#关闭裁决与类型化后台-worker2026-11-20)：CLOSE不走可中断IO取消/自动drain，固定逻辑成功先保留，未知中断/故障分开移交原关闭锚。两架构实际USER信号及一秒alarm/idle后保留原RPC，普通8槽满额时第二控制槽仍推进纯测试协调门，迟到原确认后才释放锚；公开POSIX返回及服务死亡恢复仍待接。
+
+### 一次接受的输入与原 RPC 继续等待（2026-11-20）
+
+新增私有sysctxinput/inputview：仅在未激活的PREPARED阶段，以受检查copy一次接受有界连续字节，输入元数据不保留原应用指针。NULL正长度、地址回绕、超过16KiB、与整个银行重叠均拒绝；部分FAULT不发布，调用者可完整重试，接受后再捕获拒绝，不因handler改写原缓冲换成另一份输入。借用const视图只在本次代次存活期间有效。原生七字参数不会自动改写或重定位；高层必须在外部副作用前接受需要保留的输入，不能把复制指针表当作路径/字符串/argv深快照。
+
+16字节输入长度/发布元数据使用原Rctx保留区，元数据仍512字节，银行仍50712字节。每层16KiB不增加：输入占前缀，完成输出从输入长度按8字节向上取整的位置开始，二者共用总预算。snapshotview给出准确输出视图，不允许继续假设其总在字节0；合计超限在复制/发布前返回CAPACITY，输入不被覆盖，部分失败不发布输出，finish/abort后旧视图失效。
+
+sysctxrearm仅对上一tuple已移出且未激活的无绑定上下文继续另一原生步骤，保持输入/代次，SIGRETURN仍拒绝。绑定服务上下文使用sysctxrewait：只借用原Bootstrap/Op仍WAITING的同一个RPC，先验证原claim/key，再重登记RQWAIT；保留输入、代次及取消策略/首次截止，不发新业务，已固定结果或活动调用不能重登记。内核信号帧cookie和原始返回窗口规则不变。
+
+sysctxabort只撤销未激活PREPARED的原始准备并保留代次墓碑，不接受WAITING/DONE等已拥有输出的状态。它不释放外部Op/Bootstrap或取消其中RPC；未提交页/File责任仍须调用者按原准备撤销，已提交的原RPC继续留在原记录。所有短修改由调用者排除可捕获信号，不持保护跨外部等待，不动态分配快照页。
+
+真实libsys场景先以未映射源触发copy FAULT，视图未发布，abort后Bootstrap仍PREPARED/无RPC，再重新登记并接受32字节IO参数。HELLO提交的handler把原应用length从4改成99，内层GETID经raw rearm再次查询；HELLO等待沿同一Rctx/key和原RPC继续，后续handler仍看到原4。消费该视图后才finish，READ描述符实际从保存的参数生成，后端验证length=4。READ等待同时保留32字节输入前缀及其后的4字节输出；handler覆盖原共享页后，输入和输出视图均保持原值。既有取消/一秒IO与关闭worker继续经过真实运行，不将这份32字节输入当作完整exec向量构建。
+
+新增10项host覆盖一次接受/原源变化、部分复制失败及重试、限额/NULL/回绕/银行重叠、准备撤销与外部责任、raw重登记的参数别名/状态保护、同一RPC中断后继续及固定取消截止、输入输出对齐共存/总预算、层隔离及视图/旧镜像保护。最终982项完整host、格式、两架构各libsys/sigframe/normal共6次QEMU与6份journal通过；真实libsys/frame载荷、源码/头/SDK/无libc依赖及银行/汇编布局审计通过。init/serial与stage148逐字节相同，clangd切回RV64/libsys。
+
+证据build/host/stage149-input-snapshot/的unit/场景日志、verify.py和evidence.json。未重跑195场景矩阵，最近完整矩阵为stage144；无CI、板端或性能结果。完整path/argv/envp安全读取与偏移构建、Fix/fork修复、公开POSIX及生产服务继续待接，创建类reference_id布局仍待用户确认。

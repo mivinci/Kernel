@@ -17,13 +17,14 @@ static volatile u64       initialized = UINT64_C(0x123456789abcdef0);
 static const volatile u64 readonly = UINT64_C(0xfedcba9876543210);
 static Connwork           connection_work;
 #define connection_directory (*(Conncache *) (void *) connection_work.reserved)
-static Conntag   connection_tag;
-static Connpeer  connection_peer;
-static Bootstrap bootstrap_record;
-static Filepool  file_registry;
-static Fdtable   file_descriptors;
-static Rbank     runtime_contexts;
-static Rkey      runtime_key;
+static Conntag      connection_tag;
+static Connpeer     connection_peer;
+static Bootstrap    bootstrap_record;
+static Filepool     file_registry;
+static Fdtable      file_descriptors;
+static Rbank        runtime_contexts;
+static Rkey         runtime_key;
+static volatile u64 input_source[4] = {0, 4, 0, 0};
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -295,7 +296,7 @@ receiveserver(const Bootview *view)
   words.words[0] = 113;
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
-volatile u64 resource_trace[40];
+volatile u64 resource_trace[48];
 static u64
 runtimenow(void)
 {
@@ -323,7 +324,19 @@ runtimehandler(u64 signum)
     REQUIRE(outer->route.bootstrap->state == (stage == 1 ? SYSBOOT_WAITING : SYSBOOT_RESULT) &&
                 outer->route.bootstrap->rpc && (stage == 1 || outer->route.bootstrap->resource),
             107);
-  else {
+  if (stage <= 2) {
+    const void *input;
+    u64         bytes, length;
+    REQUIRE(!sysctxinputview(&runtime_contexts, connection_work.state.self, runtime_key, &input,
+                             &bytes) &&
+                bytes == sizeof(input_source) &&
+                !__sys_copy(&length, (const u8 *) input + sizeof(u64), sizeof(length)) &&
+                length == 4,
+            43);
+    input_source[1] = 99;
+    resource_trace[42] = 1;
+  }
+  if (stage > 2) {
     Slotop *op = &outer->route.work->state.operations[outer->route.operation.lease.slot];
     REQUIRE(op->phase == (stage == 4 ? SYSOP_RESULT : SYSOP_WAITING) && op->rpc && op->file, 106);
     if (stage == 3 || stage == 5) {
@@ -335,15 +348,26 @@ runtimehandler(u64 signum)
     }
     if (stage == 4) {
       u32          value;
+      const void  *output, *input;
+      u64          bytes, input_bytes, length;
       volatile u8 *shared =
           (volatile u8 *) (uintptr_t) (outer->route.work->state.map.address + FS_DATA_OFFSET +
                                        outer->route.operation.lease.slot * FS_SLOT_BYTES);
       REQUIRE(outer->route.snapshot_saved && outer->route.snapshot_bytes == 4 &&
-                  !__sys_copy(&value, runtime_contexts.snapshots[0], sizeof(value)) &&
+                  !sysctxsnapshotview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                      &output, &bytes) &&
+                  bytes == sizeof(value) &&
+                  !sysctxinputview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                   &input, &input_bytes) &&
+                  input_bytes == sizeof(input_source) &&
+                  (const u8 *) output == (const u8 *) input + input_bytes &&
+                  !__sys_copy(&length, (const u8 *) input + sizeof(u64), sizeof(length)) &&
+                  length == 4 && !__sys_copy(&value, output, sizeof(value)) &&
                   value == UINT32_C(0x74736574),
               99);
       shared[0] = shared[1] = shared[2] = shared[3] = 'X';
       resource_trace[23] = 1;
+      resource_trace[44] = 1;
     }
     if (stage == 6) {
       REQUIRE(op->opcode == FS_CLOSE && !(op->flags & SYSOP_CANCEL_SENT) &&
@@ -356,6 +380,12 @@ runtimehandler(u64 signum)
       !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
           !sysctxprepare(&runtime_contexts, connection_work.state.self, 1, SYS_GETID, NULL,
                          &inner) &&
+          !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) &&
+          !sysctxinvoke(&runtime_contexts, connection_work.state.self, inner) &&
+          !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+          !sysctxresult(&runtime_contexts, connection_work.state.self, inner, &status, &result) &&
+          !status && result.values[0] == (u64) connection_work.state.self.pid &&
+          !sysctxrearm(&runtime_contexts, connection_work.state.self, inner, SYS_GETID, NULL) &&
           !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) &&
           !sysctxinvoke(&runtime_contexts, connection_work.state.self, inner) &&
           !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
@@ -1074,44 +1104,64 @@ typedclient(const Bootview *view, Handle peer)
               result.words[1] == 57 && result.words[2] == 59 && result.words[3] == 61,
           251);
   {
-    Bootmap    mapped = {0, 0, 0, 0, 0, 0};
-    Bootreply  validated;
-    Connentry  entry;
-    Bootstrap *active = &connection_work.state.bootstrap;
-    Filelease  lease, other;
-    Fileslot   descriptor;
-    Opkey      operation, background, stale, spare, delayed;
-    Handle     pressure[8];
-    u64        file = 99, sparefile = 100;
-    u64        fileid;
-    u64        delayed_file;
-    Fileref    reference;
-    Fileclose  closing;
-    Fdtag      descriptor_tag;
-    Fdview     removed;
-    u32        saved;
-    isize      cancellation;
-    Handle     original;
-    u64        originalva;
+    Bootmap     mapped = {0, 0, 0, 0, 0, 0};
+    Bootreply   validated;
+    Connentry   entry;
+    Bootstrap  *active = &connection_work.state.bootstrap;
+    Filelease   lease, other;
+    Fileslot    descriptor;
+    Opkey       operation, background, stale, spare, delayed;
+    Handle      pressure[8];
+    u64         file = 99, sparefile = 100;
+    u64         fileid;
+    u64         delayed_file;
+    u64         stable_args[4], input_bytes, output_bytes;
+    const void *input, *output;
+    Fileref     reference;
+    Fileclose   closing;
+    Fdtag       descriptor_tag;
+    Fdview      removed;
+    u32         saved;
+    isize       cancellation;
+    Handle      original;
+    u64         originalva;
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
                 !sysconnbegin(&connection_directory, connection_tag, 404, &claim) &&
                 !sysbootprepare(active, claim, FS_HELLO, UINT64_MAX, 0) &&
                 !sysctxbootcall(&runtime_contexts, connection_work.state.self, 0, active, claim,
                                 connection_work.state.call, CALL_RECV_MEM, &runtime_key) &&
+                sysctxinput(&runtime_contexts, connection_work.state.self, runtime_key,
+                            (const void *) 0x1400000, sizeof(input_source)) == -ERR_FAULT &&
+                sysctxinputview(&runtime_contexts, connection_work.state.self, runtime_key, &input,
+                                &input_bytes) == -ERR_STATE &&
+                !sysctxabort(&runtime_contexts, connection_work.state.self, runtime_key) &&
+                active->state == SYSBOOT_PREPARED && !active->rpc &&
+                !sysctxbootcall(&runtime_contexts, connection_work.state.self, 0, active, claim,
+                                connection_work.state.call, CALL_RECV_MEM, &runtime_key) &&
+                !sysctxinput(&runtime_contexts, connection_work.state.self, runtime_key,
+                             (const void *) input_source, sizeof(input_source)) &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             142);
+    resource_trace[40] = resource_trace[41] = 1;
     runtimeinvoke(1);
+    resource_trace[45] = runtime_key.sequence;
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
                 !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
-                !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
-                !sysctxbootwait(&runtime_contexts, connection_work.state.self, 0, active, claim,
-                                &runtime_key) &&
+                !sysctxrewait(&runtime_contexts, connection_work.state.self, runtime_key),
+            141);
+    resource_trace[46] = runtime_contexts.contexts[0].sequence;
+    REQUIRE(resource_trace[45] == resource_trace[46] &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             141);
     runtimeinvoke(2);
     REQUIRE(
         !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
             !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+            !sysctxinputview(&runtime_contexts, connection_work.state.self, runtime_key, &input,
+                             &input_bytes) &&
+            input_bytes == sizeof(stable_args) &&
+            !__sys_copy(stable_args, input, sizeof(stable_args)) && stable_args[1] == 4 &&
+            input_source[1] == 99 &&
             !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
             !sysbootreply(active, claim, 0, &validated) && validated.memory &&
             validated.bytes == FS_CONN_BYTES && !validated.offset &&
@@ -1125,6 +1175,7 @@ typedclient(const Bootview *view, Handle peer)
             !sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_MAIN, 1, &lease) &&
             !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
         140);
+    resource_trace[43] = input_bytes;
     original = connection_work.state.memory;
     originalva = connection_work.state.map.address;
     REQUIRE(((volatile Filehead *) originalva)->connid == validated.connid, 139);
@@ -1170,8 +1221,9 @@ typedclient(const Bootview *view, Handle peer)
     descriptor.state = FS_SLOT_SUBMITTED;
     descriptor.object = 55;
     descriptor.span = 1;
-    descriptor.payload_bytes = 4;
-    descriptor.args[1] = 4;
+    descriptor.payload_bytes = stable_args[1];
+    for (i = 0; i < ARRAY_SIZE(stable_args); i++)
+      descriptor.args[i] = stable_args[i];
     words.words[0] = FS_READ;
     words.words[1] = connection_work.state.map.connid;
     words.words[2] = operation.lease.seq;
@@ -1264,6 +1316,8 @@ typedclient(const Bootview *view, Handle peer)
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
                 !sysctxopwait(&runtime_contexts, connection_work.state.self, 0, &connection_work,
                               &connection_directory, &background, &runtime_key) &&
+                !sysctxinput(&runtime_contexts, connection_work.state.self, runtime_key,
+                             stable_args, sizeof(stable_args)) &&
                 !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             127);
     runtimeinvoke(4);
@@ -1275,7 +1329,9 @@ typedclient(const Bootview *view, Handle peer)
                     background.lease.seq &&
                 connection_work.state.operations[background.lease.slot].words[2] == 4 &&
                 connection_work.state.operations[background.lease.slot].words[3] == 4 &&
-                !__sys_copy(&saved, runtime_contexts.snapshots[0], sizeof(saved)) &&
+                !sysctxsnapshotview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                    &output, &output_bytes) &&
+                output_bytes == sizeof(saved) && !__sys_copy(&saved, output, sizeof(saved)) &&
                 saved == UINT32_C(0x74736574) &&
                 !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
                 sysconnworkrelease(&connection_work, &connection_directory, background.lease) ==

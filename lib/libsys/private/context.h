@@ -15,6 +15,7 @@
 #define RCTX_LAYERS         3
 #define RCTX_BYTES          512
 #define RCTX_SNAPSHOT_BYTES 16384
+#define RCTX_INPUT_ALIGN    8
 #ifndef __ASSEMBLER__
 #include "syscall.h"
 #include "operation.h"
@@ -45,7 +46,8 @@ struct Rctx
   u64          args[7];
   volatile u64 active;
   Rroute       route;
-  u64          reserved[25];
+  u64          input_bytes, input_saved;
+  u64          reserved[23];
 };
 struct Rbank
 {
@@ -79,6 +81,18 @@ STATIC_ASSERT(sizeof(Rbank) == 24 + RCTX_LAYERS * (RCTX_BYTES + RCTX_SNAPSHOT_BY
 isize sysctxinit(Rbank *bank, Connpeer self);
 isize sysctxprepare(Rbank *bank, Connpeer self, u32 layer, u64 number, const u64 args[7],
                     Rkey *out);
+/* Protected, inactive PREPARED only. Checked copy accepts input once; failed
+   copies do not publish bytes. Never retains the original application pointer.
+   Input and rounded output workspace share the existing per-layer 16KiB.
+   Borrowed view is valid for this incarnation until abort/finish. */
+isize sysctxinput(Rbank *bank, Connpeer self, Rkey key, const void *source, u64 bytes);
+isize sysctxinputview(Rbank *bank, Connpeer self, Rkey key, const void **out, u64 *bytes);
+/* Continue an unbound raw context after its previous tuple moved out. Keeps
+   accepted input and incarnation; never replays a bound service operation. */
+isize sysctxrearm(Rbank *bank, Connpeer self, Rkey key, u64 number, const u64 args[7]);
+/* Cancel only inactive raw preparation. External Op/Bootstrap/RPC responsibility
+   remains owned there and must be rolled back or continued separately. */
+isize sysctxabort(Rbank *bank, Connpeer self, Rkey key);
 /* Internally masks only activation/completion changes, restores mask before
    actual syscall, and returns the saved native status. A signal may move raw
    result to existing responsibility records, but cannot finish active Rctx. */

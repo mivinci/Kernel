@@ -37,6 +37,7 @@ void testreset(u64 initial){mask=initial;entered=seen=0;}
 u64 testget(u32 what){return what?entered:mask;}
 isize __sys_sigmask(u64 how,u64 value,u64 *old){*old=mask;if(how==0)mask|=value&~SIGNAL_UNMASKABLE;else if(how==2)mask=value&~SIGNAL_UNMASKABLE;else return -ERR_INVALID;return 0;}
 isize __sys_ctxenter(Rctx *ctx){u32 i;seen=mask;entered++;if(!ctx->active||ctx->phase!=RCTX_PREPARED)return -ERR_STATE;ctx->phase=RCTX_WAITING;ctx->status=0;for(i=0;i<7;i++)ctx->result.values[i]=ctx->args[i]+100;ctx->result.image=0;ctx->phase=RCTX_DONE;return 0;}
+isize __sys_copy(void *out,const void *from,u64 bytes){u64 i;for(i=0;i<bytes;i++)((u8*)out)[i]=((const u8*)from)[i];return 0;}
 u64 testseen(void){return seen;}
 '''
 

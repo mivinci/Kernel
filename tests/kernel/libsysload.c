@@ -124,7 +124,7 @@ libsysload(void)
   Liferesult result;
   Pgstat     before, after;
   u32        i, ended, turns = 0, source_cleaned = 0, resource_commits = 0;
-  u64        handoff[40];
+  u64        handoff[48];
   u64        replayed = 0, timerwaits = 0, elapsed = 0, started, now;
   u64        closetimer = 0, closeelapsed = 0;
   int        error;
@@ -165,7 +165,7 @@ libsysload(void)
         }
         ended++;
         if (!i && !source_cleaned) {
-          u64 client_trace[40];
+          u64 client_trace[48];
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
                   client_trace[9] == 6 && client_trace[19] == 6 && client_trace[20] == 6 &&
@@ -178,7 +178,10 @@ libsysload(void)
                   client_trace[33] == client_trace[39] + UINT64_C(1000000000) &&
                   client_trace[34] >= client_trace[33] &&
                   handlekind((Handle) client_trace[35]) == HANDLE_RPC && client_trace[36] == 1 &&
-                  client_trace[37] == 1 && client_trace[38] <= 1 && contextinjected == 30);
+                  client_trace[37] == 1 && client_trace[38] <= 1 && client_trace[40] == 1 &&
+                  client_trace[41] == 1 && client_trace[42] == 1 && client_trace[43] == 32 &&
+                  client_trace[44] == 1 && client_trace[45] &&
+                  client_trace[45] == client_trace[46] && contextinjected == 30);
           replayed = client_trace[24];
           timerwaits = client_trace[31];
           elapsed = client_trace[28] - client_trace[30];
@@ -270,6 +273,16 @@ libsysload(void)
   puthex(closetimer);
   putstr(" close_elapsed_ns=");
   puthex(closeelapsed);
+  putstr(" input_fault=");
+  puthex(1);
+  putstr(" input_abort=");
+  puthex(1);
+  putstr(" input_held=");
+  puthex(1);
+  putstr(" input_output=");
+  puthex(1);
+  putstr(" rewait_same_key=");
+  puthex(1);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

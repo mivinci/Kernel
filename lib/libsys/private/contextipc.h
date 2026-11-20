@@ -19,6 +19,9 @@ isize sysctxopwait(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Connca
    Native status remains available to the active invocation's continuation.
    Raw sysctxresult is forbidden for a bound route. Finish remains separate. */
 isize sysctxhandoff(Rbank *bank, Connpeer self, Rkey key);
+/* Continue the same bound WAITING RPC after handoff, preserving incarnation,
+   input and cancellation policy. Inactive only; never submits new business. */
+isize sysctxrewait(Rbank *bank, Connpeer self, Rkey key);
 /* Opt in only while PREPARED; raw IPC and mandatory transactions stay outside
    POSIX cancellation. Signal prelude captures/hands off before requesting
    cooperative cancel on the same foreground operation. Never waits for its
@@ -31,4 +34,5 @@ isize sysctxsignal(Rbank *bank, Connpeer self, Rkey key, void *trap, u64 now);
    snapshot bytes remain valid only until sysctxfinish for this incarnation.
    No application copy, ACK, saved marker or page release is implied. */
 isize sysctxsnapshot(Rbank *bank, Connpeer self, Rkey key, u64 offset, u64 bytes);
+isize sysctxsnapshotview(Rbank *bank, Connpeer self, Rkey key, const void **out, u64 *bytes);
 #endif

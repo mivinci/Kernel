@@ -43,6 +43,9 @@ sysctxlookup(Rbank *bank, Connpeer self, Rkey key, Rctx **out)
     return -ERR_STATE;
   if (context->sequence > bank->sequence)
     return -ERR_STATE;
+  if (context->input_saved > 1 || context->input_bytes > RCTX_SNAPSHOT_BYTES ||
+      (!context->input_saved && context->input_bytes))
+    return -ERR_STATE;
   *out = context;
   return 0;
 }
@@ -90,6 +93,92 @@ sysctxprepare(Rbank *bank, Connpeer self, u32 layer, u64 number, const u64 args[
   out->sequence = sequence;
   out->layer = layer;
   out->reserved = 0;
+  return 0;
+}
+isize
+sysctxinput(Rbank *bank, Connpeer self, Rkey key, const void *input, u64 bytes)
+{
+  Rctx *context;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->active)
+    return -ERR_BUSY;
+  if (context->phase != RCTX_PREPARED || context->input_saved)
+    return -ERR_STATE;
+  if (bytes > RCTX_SNAPSHOT_BYTES)
+    return -ERR_LIMIT;
+  if (bytes && (!input || (u64) (uintptr_t) input > UINT64_MAX - bytes))
+    return -ERR_FAULT;
+  if (bytes && !separate(bank, sizeof(*bank), input, bytes))
+    return -ERR_INVALID;
+  if (bytes) {
+    error = __sys_copy(bank->snapshots[key.layer], input, bytes);
+    if (error)
+      return error;
+  }
+  context->input_bytes = bytes;
+  context->input_saved = 1;
+  return 0;
+}
+isize
+sysctxinputview(Rbank *bank, Connpeer self, Rkey key, const void **out, u64 *bytes)
+{
+  Rctx *context;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (!separate(bank, sizeof(*bank), out, sizeof(*out)) ||
+      !separate(bank, sizeof(*bank), bytes, sizeof(*bytes)) ||
+      !separate(out, sizeof(*out), bytes, sizeof(*bytes)))
+    return -ERR_INVALID;
+  if (!context->input_saved)
+    return -ERR_STATE;
+  *out = bank->snapshots[key.layer];
+  *bytes = context->input_bytes;
+  return 0;
+}
+isize
+sysctxrearm(Rbank *bank, Connpeer self, Rkey key, u64 number, const u64 args[7])
+{
+  Rctx *context;
+  u64   saved[7];
+  u32   i;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->active)
+    return -ERR_BUSY;
+  if (number == SYS_SIGRETURN)
+    return -ERR_INVALID;
+  if (context->phase != RCTX_CLEANING || context->route.kind != RCTX_ROUTE_NONE)
+    return -ERR_STATE;
+  for (i = 0; i < 7; i++)
+    saved[i] = args ? args[i] : 0;
+  context->number = number;
+  for (i = 0; i < 7; i++)
+    context->args[i] = saved[i];
+  for (i = 0; i < sizeof(context->result); i++)
+    ((u8 *) &context->result)[i] = 0;
+  context->status = 0;
+  context->phase = RCTX_PREPARED;
+  return 0;
+}
+isize
+sysctxabort(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx *context;
+  u64   sequence;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->active)
+    return -ERR_BUSY;
+  if (context->phase != RCTX_PREPARED)
+    return -ERR_STATE;
+  sequence = context->sequence;
+  clear(context);
+  context->sequence = sequence;
   return 0;
 }
 isize

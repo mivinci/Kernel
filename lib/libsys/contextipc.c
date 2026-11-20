@@ -206,6 +206,40 @@ sysctxhandoff(Rbank *bank, Connpeer self, Rkey key)
   return 0;
 }
 isize
+sysctxrewait(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx  *context;
+  Handle rpc;
+  u32    i;
+  isize  error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->active)
+    return -ERR_BUSY;
+  if (context->phase != RCTX_CLEANING || context->route.delivered != 1 ||
+      context->route.snapshot_saved)
+    return -ERR_STATE;
+  if (context->route.kind == RCTX_ROUTE_BOOT)
+    error = sysbootrpc(context->route.bootstrap, context->route.claim, &rpc);
+  else if (context->route.kind == RCTX_ROUTE_OP)
+    error = sysoprpc(context->route.work, context->route.cache, &context->route.operation, &rpc);
+  else
+    return -ERR_STATE;
+  if (error)
+    return error;
+  for (i = 0; i < 7; i++)
+    context->args[i] = 0;
+  context->args[0] = (u64) rpc;
+  context->number = SYS_RQWAIT;
+  for (i = 0; i < sizeof(context->result); i++)
+    ((u8 *) &context->result)[i] = 0;
+  context->status = 0;
+  context->route.rpc = rpc;
+  context->route.delivered = 0;
+  context->phase = RCTX_PREPARED;
+  return 0;
+}
+isize
 sysctxinterruptible(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx *context;
@@ -247,6 +281,7 @@ isize
 sysctxsnapshot(Rbank *bank, Connpeer self, Rkey key, u64 offset, u64 bytes)
 {
   Rctx *context;
+  u64   base;
   isize error = sysctxlookup(bank, self, key, &context);
   if (error)
     return error;
@@ -257,14 +292,37 @@ sysctxsnapshot(Rbank *bank, Connpeer self, Rkey key, u64 offset, u64 bytes)
     return context->route.snapshot_offset == offset && context->route.snapshot_bytes == bytes
                ? 0
                : -ERR_STATE;
-  if (bytes > RCTX_SNAPSHOT_BYTES)
-    return -ERR_INVALID;
+  base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
+  if (bytes > RCTX_SNAPSHOT_BYTES - base)
+    return -ERR_CAPACITY;
   error = sysopcopy(context->route.work, context->route.cache, &context->route.operation, offset,
-                    bytes, bank->snapshots[key.layer]);
+                    bytes, bank->snapshots[key.layer] + base);
   if (error)
     return error;
   context->route.snapshot_offset = offset;
   context->route.snapshot_bytes = bytes;
   context->route.snapshot_saved = 1;
+  return 0;
+}
+isize
+sysctxsnapshotview(Rbank *bank, Connpeer self, Rkey key, const void **out, u64 *bytes)
+{
+  Rctx *context;
+  u64   base;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (!separate(bank, sizeof(*bank), out, sizeof(*out)) ||
+      !separate(bank, sizeof(*bank), bytes, sizeof(*bytes)) ||
+      !separate(out, sizeof(*out), bytes, sizeof(*bytes)))
+    return -ERR_INVALID;
+  if (context->phase != RCTX_CLEANING || context->route.kind != RCTX_ROUTE_OP ||
+      context->route.delivered != 1 || context->route.snapshot_saved != 1)
+    return -ERR_STATE;
+  base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
+  if (context->route.snapshot_bytes > RCTX_SNAPSHOT_BYTES - base)
+    return -ERR_STATE;
+  *out = bank->snapshots[key.layer] + base;
+  *bytes = context->route.snapshot_bytes;
   return 0;
 }

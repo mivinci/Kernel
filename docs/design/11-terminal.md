@@ -787,3 +787,5 @@ stage146新增[08的前置取消与稳定输出](08-runtime.md#信号前置取�
 stage147已接[08的handler后故障裁决](08-runtime.md#handler-后的故障裁决与迟到-io-收尾2026-11-20)私有原语：原结果先查，超过首次固定取消截止仍未知才转原槽后台；READ/WRITE迟到数据不交付，安装资源经真实排空后drop/ACK，归还File pin。两架构用原生USER信号、alarm和idle实际跨过一秒后再开放迟到回复，旧资源/RPC均在进程退出前失效。ABANDONED只供未来前端映射EIO；公开POSIX返回、完整重启/嵌套/Fix及关闭/创建类补偿仍未完成。
 
 stage148的[关闭worker](10-filesystem.md#关闭裁决与类型化后台-worker2026-11-20)已接私有中断/截止裁决：已确认逻辑成功优先，未知摘除后中断和超时分别保留未来EINPROGRESS/EIO，不rqcancel或重发CLOSE。真实handler返回后沿同一关闭等待到截止并转后台，服务通过原REQUEST确认取消位始终为0；公开POSIX trampoline/SA_RESTART和错误生命周期恢复仍未完成。
+
+stage149的[输入接受与继续等待](08-runtime.md#一次接受的输入与原-rpc-继续等待2026-11-20)已验证：handler改写原长度不改变同代次的已接受输入，原RPC继续等待不重发，完成输出与输入前缀在既有预算内隔离。连续字节原语不替代完整字符串/向量安全构建，也不代表公开POSIX trampoline/SA_RESTART或Fix已完成。
