@@ -57,6 +57,7 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
             'sysfilecreatesettle':[pool,work,cache,key,C.c_uint32],
             'sysfilecreateattachprepare':[pool,work,cache,key,work,C.c_uint64,
                                           C.POINTER(support.Claim),C.POINTER(C.c_int64)],
+            'sysfilecreatekeepcall':[pool,work,cache,key,work,support.Claim],
             'sysfilecreateattached':[pool,work,cache,key,work,support.Claim,C.c_int64,
                                      C.POINTER(support.Mapping),C.c_uint32],
             'sysfilecreaterevokeprepare':[pool,work,cache,key,C.c_int64,C.c_uint64,
@@ -484,3 +485,60 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
         self.cache.entries[self.tag.index].peer.image+=1
         self.assertNotEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),0)
         self.assertEqual((bytes(self.pool),bytes(self.create(key))),before)
+
+    def pending_attachment(self):
+        peer=support.Peer(support.pid(4),29);key=self.resourcekey(peer)
+        backend=support.Work();tag=support.Tag();claim=support.Claim();call=C.c_int64()
+        self.assertEqual(self.lib.sysconnbind(self.c,peer,C.byref(tag)),0)
+        self.assertEqual(self.lib.sysconnworkinit(C.byref(backend),self.c,tag),0)
+        self.assertEqual(self.lib.sysfilecreateattachprepare(self.p,self.w,self.c,C.byref(key),
+            C.byref(backend),0,C.byref(claim),C.byref(call)),0)
+        self.bootresult(backend.state.bootstrap,claim,resource=self.mem,size=36864)
+        return key,backend,claim
+
+    def test_keepcall_preserves_mem_bootstrap_and_prospective_group_before_mapping(self):
+        key,backend,claim=self.pending_attachment()
+        before=bytes(self.pool),bytes(backend.state.bootstrap)
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),
+            C.byref(backend),claim),0)
+        self.assertEqual((backend.state.call,self.create(key).call),(self.resourcecall,0))
+        self.assertEqual((bytes(self.pool),bytes(backend.state.bootstrap)),before)
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),
+            C.byref(backend),claim),0)
+        self.assertEqual(self.lib.testfrees(),0)
+
+    def test_token_abort_after_keepcall_retains_transport_for_later_adoption(self):
+        key,backend,claim=self.pending_attachment()
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),
+            C.byref(backend),claim),0)
+        abort=self.prepare_revoke(key,backend.state.call);self.bootresult(self.record,abort)
+        self.assertEqual(self.lib.sysfilecreaterevoked(self.p,self.w,self.c,C.byref(key),abort),0)
+        files=(C.c_uint64*2)();source=C.c_uint64()
+        self.assertEqual(self.lib.sysfilecreatefinish(self.p,self.w,self.c,C.byref(key),files,C.byref(source)),0)
+        self.assertEqual((tuple(files),backend.state.bootstrap.resource,self.lib.testfrees()),((0,0),self.mem,0))
+        mapped=support.Mapping(0x1300000,36864,self.connid,29,1,1)
+        self.assertEqual(self.lib.sysconnworkadopt(C.byref(backend),self.c,claim,self.space,C.byref(mapped)),0)
+        self.assertEqual(self.lib.sysbootfinish(C.byref(backend.state.bootstrap),claim),0)
+        self.assertEqual((backend.state.memory,backend.state.call),(self.mem,self.resourcecall))
+
+    def test_keepcall_rejects_unknown_or_stale_attach_without_moving_ownership(self):
+        key,backend,claim=self.pending_attachment();wrong=support.Claim.from_buffer_copy(bytes(claim))
+        wrong.seq+=1;before=bytes(self.work),bytes(backend),bytes(self.pool)
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),
+            C.byref(backend),wrong),-4)
+        self.assertEqual((bytes(self.work),bytes(backend),bytes(self.pool)),before)
+        backend.state.bootstrap.status=-14
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),
+            C.byref(backend),claim),-14)
+        self.assertEqual((backend.state.call,self.create(key).call),(0,self.resourcecall))
+
+    def test_keepcall_redundant_free_failure_retains_exact_call_and_reservation(self):
+        key=self.resourcekey();claim=support.Claim();call=C.c_int64()
+        self.lib.sysfilecreateattachprepare(self.p,self.w,self.c,C.byref(key),self.w,0,C.byref(claim),C.byref(call))
+        self.bootresult(self.record,claim,size=36864);self.lib.testfreeon(self.resourcecall,-7)
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),self.w,claim),-7)
+        self.assertEqual((self.create(key).call,self.create(key).stage.count,self.work.state.call),
+                         (self.resourcecall,1,self.call))
+        self.lib.testfreeon(self.resourcecall,0)
+        self.assertEqual(self.lib.sysfilecreatekeepcall(self.p,self.w,self.c,C.byref(key),self.w,claim),0)
+        self.assertEqual(self.create(key).call,0)

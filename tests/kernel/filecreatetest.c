@@ -20,6 +20,7 @@ static u64       injected;
 NORETURN void    __real_hal_user_enter(Hctx *context);
 static void      deadtest(u32 creating);
 static void      resourceendtest(void);
+static void      mapsalvagetest(void);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -203,6 +204,7 @@ filecreatetest(void)
   deadtest(1);
   deadtest(2);
   resourceendtest();
+  mapsalvagetest();
 }
 static void
 deadtest(u32 creating)
@@ -309,6 +311,75 @@ deadtest(u32 creating)
   puthex(1);
   putstr(" trusted_cleanup=");
   puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
+}
+static void
+mapsalvagetest(void)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   info[3];
+  Handle     pids[3];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  u64        trace[16];
+  u32        i, ended, turns = 0;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(4096, 8192, 4, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pids, info, "cde", 3);
+  do {
+    ended = 0;
+    for (i = 0; i < 3; i++) {
+      CHECK(!procinfo(pids[i], &info[i]));
+      if (info[i].state == PROC_EXITING)
+        ended++;
+    }
+    if (ended == 3)
+      break;
+    error = procrunone();
+    CHECK(!error || error == -ERR_WOULD_BLOCK);
+    CHECK(++turns < 256);
+    if (error)
+      CHECK(procidle() >= 0);
+  } while (1);
+  for (i = 0; i < 3; i++) {
+    CHECK(!lifestat(info[i].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+          !spaceread(info[i].space, filecreate_trace_address, trace, sizeof(trace)) &&
+          trace[0] == 2 && !trace[15]);
+    if (!i)
+      CHECK(trace[1] == 2 && trace[2] == 2 && trace[3] == 1);
+    else if (i == 1)
+      CHECK(!trace[1] && !trace[2] && trace[4] == 2);
+    else
+      CHECK(trace[1] == 2 && trace[2] == 2 && trace[3] == 2 && trace[4] == 1);
+    while ((error = procclean(pids[i])) > 0) {
+    }
+    CHECK(!error && !lifecollect(info[i].life, 1, &result));
+  }
+  CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck());
+  putstr("MAPSALVAGECHECK actors=");
+  puthex(3);
+  putstr(" native_map_conflict=");
+  puthex(1);
+  putstr(" aborted=");
+  puthex(1);
+  putstr(" retained_transport=");
+  puthex(1);
+  putstr(" reused=");
+  puthex(1);
+  putstr(" closed=");
+  puthex(2);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

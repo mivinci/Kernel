@@ -1594,6 +1594,11 @@ def exercise(args, run_dir, record):
                             failed_abort=1,source_usable=1,trusted_cleanup=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("actual resource backend end recovery mismatch")
                     record['resource_recovery']=resource_dead[0]
+                    salvage=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MAPSALVAGECHECK ")]
+                    if salvage != [dict(actors=3,native_map_conflict=1,aborted=1,retained_transport=1,
+                            reused=1,closed=2,charged=0,allocated=transition["tables"])]:
+                        raise SmokeError("failed mapping transport retention mismatch")
+                    record['mapping_salvage']=salvage[0]
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
                             {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "formats", "groups", "queues", "rings", "fd_tables", "file_slots", "charged", "allocated")} !=

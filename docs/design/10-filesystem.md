@@ -1111,3 +1111,15 @@ stage162处理资源OPEN已经捕获并ACK、但原token的无目录项ABORT在�
 双架构runtime新增客户端/VFS/实际后端三角色：VFS先完成真实准备及CALL/ref/token交付，后端保持存活直至客户端捕获ACK。目录用1个真实VFS和7个本地占位身份填满，不含该实际后端。之后实际后端在接收VFS控制请求后退出，受信测试管理者清完旧空间并确认本fixture无下游/DMA，显式rqclean结清该控制Rq；VFS继续存活。客户端向已结束实际后端提交token ABORT得到无RPC的原生PEER，经新证明/恢复释放本地责任，目录保持满额，VFS项仍READY且后续STOP调用成功。它不把VFS死亡当作实际后端死亡，也不将该失败ABORT描述为已交付业务；原11引用/信号/ATTACH及CLOSE/OPEN/PIPE死亡场景都继续运行。测试装载循环抽成同一roles helper，生产程序不含这些角色或控制码。
 
 1075项完整host、格式、RV64/ARM64各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过。SDK/目标布局、实际链接载荷、无libc依赖及生产无测试代码均已核对，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage162-resource-peer-end/的unit、context/create-initial、runtime-riscv-initial与其他场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果。已提交ABORT的失败/真实排空、首次映射故障的完整连接恢复、生产受限rqclean授权/枚举及服务/公开前端/Fix、sh/net/最终GUI仍待继续；04管理权限候选仍待确认，本点未实现它。
+
+### 首次映射失败的运输保留与后续复用（2026-11-21）
+
+stage163增加sysfilecreatekeepcall，仅在精确后端、原claim/owner/token和正向ACKED ATTACH回复验证后，把创建者CALL移入后端稳定工作页；尚不提交File，也不消费原MEM/map/bootstrap。首次接入可先固定唯一CALL，普通复用只释放冗余CALL；free失败仍由Createop持有冗余引用及原预留，重试不重发ATTACH。attached共用同一所有权移动逻辑，输入别名/旧claim/失败回复不能移动资源。
+
+本地映射失败后，token ABORT只关闭该File引用；它可以借缓存已持CALL，不连带free连接授权或原MEM。原创建预留可在撤销确认后完成，连接工作页仍持原ATTACH的MEM/正向短结果及owner cookie。这个cookie是完整代次绑定的事务身份，可以晚于File预留结束，不再按当前File表查询，也不恢复已撤销的File权限。地址可用后，可从同一已保存回复继续map/核对头/adopt并结束原bootstrap，无第二次HELLO或ATTACH；后续新File仍须以新token普通确认复用该连接。持久失败、坏头及下游结束条件继续独立处理，不凭映射错误宣称原RPC未执行。
+
+新增4项host，创建专项合计36项，覆盖未映射时只移CALL且MEM/预留不变、重复移动不多free、撤销后保留运输并从原claim接管、旧claim/失败回复不移动，以及冗余free失败重试。字段尺寸保持Createop184、Connstate2880+Conncache472=3352、工作页4096、Rctx512、Rbank50712；未扩宽内核接口或连接数量。
+
+双架构runtime新增客户端/VFS/后端三角色：首次真实ATTACH已经授予MEM，客户端故意把DATA页映射到拟用VA并写哨兵，再执行原生map，得到ERR_STATE且没有新别名，原哨兵/授予MEM保持。keepcall固定入口，借该CALL执行精确token ABORT并释放第一份File预留；目标工作页仍持原MEM/claim/CALL。解除并释放阻挡页后，客户端map并接管同一个MEM，完成原bootstrap，再执行第二次资源OPEN及普通ATTACH复用，核对MEM/CALL整数均未换，最后一份精确CLOSE及前一份ABORT合计关闭两份引用，所有映射/费用/实例回基线。该故障注入是主动VA占用造成的真实系统调用冲突，不能当作OOM、硬件故障、恶意坏头修复或完整VA分配器验收。
+
+1079项完整host、格式、最终两架构各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过；原创建/信号/实际后端死亡与可信代收尾场景继续通过。目标布局、SDK/私有头导出、实际链接载荷和无libc依赖已核对，init/serial与stage155逐字节相同，clangd切回RV64/runtime。接口注释进一步明确运输独立性后，两架构SDK重新构建，载荷与这8次原生执行的嵌入映像逐字节一致；未因注释变化重复执行无行为差异的场景。证据build/host/stage163-mapping-salvage/的unit、focused-initial、场景-reviewed、sdk-*-final/fmt-check-final日志、目标layout对象、verify.py和evidence.json；首次RV原生检查另保留。未重跑195矩阵（最近stage154），无CI/板端或性能结果。已提交ABORT/失败bootstrap的排空、持久映射故障、生产rqclean候选确认/实现、服务与公开前端/Fix、sh/net/最终GUI继续。

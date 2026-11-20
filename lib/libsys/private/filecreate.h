@@ -39,6 +39,13 @@ isize sysfilecreatesettle(Filepool *pool, Connwork *work, Conncache *cache, cons
    No remote call or mapping occurs here. */
 isize sysfilecreateattachprepare(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                                  Connwork *backend, u64 deadline, Connclaim *claim, Handle *call);
+/* Positive ACKED ATTACH transport, before mapping/publication. Moves the
+   creator CALL to the exact backend's stable work page without committing
+   the prospective File or consuming MEM/RPC bootstrap ownership. Useful when
+   mapping failed: token ABORT may then borrow the retained backend CALL.
+   A redundant CALL free failure remains owned by Createop for retry. */
+isize sysfilecreatekeepcall(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                            Connwork *backend, Connclaim claim);
 /* Original ATTACH must be ACKED; first MEM has an external verified map,
    reuse has an empty map. Moves CALL/MEM/map ownership into backend, commits
    the reserved reference and finishes only this ATTACH. A failed redundant
@@ -50,7 +57,8 @@ isize sysfilecreateattached(Filepool *pool, Connwork *work, Conncache *cache, co
    borrows the creator's still-owned CALL; otherwise it must cold-resolve to
    the original peer and remain externally owned through transport. This also
    handles a CALL already transferred to backend before a later local failure.
-   Original ATTACH transport/MEM/map must be settled separately first. */
+   Previous ATTACH RPC/MEM/map keeps its independent stable responsibility;
+   this token cleanup does not consume or release that transport. */
 isize sysfilecreaterevokeprepare(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                                  Handle call, u64 deadline, Connclaim *claim,
                                  Handle *borrowed_call);

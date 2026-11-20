@@ -503,6 +503,55 @@ sysfilecreateattachprepare(Filepool *pool, Connwork *work, Conncache *cache, con
   *call = create->call;
   return 0;
 }
+static isize
+keepcall(Createop *create, Connwork *backend, Conncache *cache)
+{
+  Handle   owned, redundant = 0;
+  Connpeer peer;
+  isize    error;
+  if (!create->call) {
+    error = sysconnpeer(backend->state.call, &peer);
+    return error ? error : samepeer(peer, create->peer) ? 0 : -ERR_DENIED;
+  }
+  owned = create->call;
+  error = sysconnworktakecall(backend, cache, &owned, &redundant);
+  if (error)
+    return error;
+  create->call = redundant;
+  if (redundant) {
+    error = __sys_free(redundant);
+    if (error)
+      return error;
+    create->call = 0;
+  }
+  return 0;
+}
+isize
+sysfilecreatekeepcall(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                      Connwork *backend, Connclaim claim)
+{
+  Createop *create;
+  Connentry entry;
+  Bootreply reply;
+  isize     error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (!backend || !separate(backend, sizeof(*backend), key, sizeof(*key)))
+    return -ERR_INVALID;
+  error = resource(create, &work->state.operations[key->lease.slot]);
+  if (!error)
+    error = backendview(pool, work, cache, create, backend, &entry);
+  if (error)
+    return error;
+  if (!bootmatches(&backend->state.bootstrap, claim, create, FS_ATTACH) ||
+      claim.tag.generation != backend->state.tag.generation ||
+      claim.tag.index != backend->state.tag.index || entry.sequence != claim.seq ||
+      entry.owner != claim.owner)
+    return -ERR_STALE;
+  error = sysbootreply(&backend->state.bootstrap, claim,
+                       entry.state == SYSCONN_READY ? entry.connid : 0, &reply);
+  return error ? error : keepcall(create, backend, cache);
+}
 isize
 sysfilecreateattached(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                       Connwork *backend, Connclaim claim, Handle space, Bootmap *map, u32 closing)
@@ -511,7 +560,6 @@ sysfilecreateattached(Filepool *pool, Connwork *work, Conncache *cache, const Op
   Connentry  entry;
   Bootstrap *boot;
   Bootreply  reply;
-  Handle     owned, redundant = 0;
   u32        i;
   isize      error = target(pool, work, cache, key, &create);
   if (error)
@@ -557,19 +605,9 @@ sysfilecreateattached(Filepool *pool, Connwork *work, Conncache *cache, const Op
         held->reference == create->values[0].reference)
       return -ERR_INVALID;
   }
-  if (create->call) {
-    owned = create->call;
-    error = sysconnworktakecall(backend, cache, &owned, &redundant);
-    if (error)
-      return error;
-    create->call = redundant;
-    if (redundant) {
-      error = __sys_free(redundant);
-      if (error)
-        return error;
-      create->call = 0;
-    }
-  }
+  error = keepcall(create, backend, cache);
+  if (error)
+    return error;
   if (entry.owner) {
     error = entry.state == SYSCONN_READY ? sysconnworkreuse(backend, cache, claim)
                                          : sysconnworkadopt(backend, cache, claim, space, map);
