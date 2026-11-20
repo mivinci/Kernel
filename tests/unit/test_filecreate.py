@@ -52,6 +52,8 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
             'sysfilecreateprepare':[pool,work,cache,C.c_uint32,C.c_uint64,C.c_uint64,C.c_uint64,
                                     C.POINTER(C.c_uint64),C.POINTER(C.c_uint64),C.c_void_p,C.c_uint64,key,C.POINTER(Words)],
             'sysfilecreateresult':[pool,work,cache,key], 'sysfilecreateack':[pool,work,cache,key],
+            'sysfilecreatefailed':[pool,work,cache,key],
+            'sysoppeerended':[work,cache,key],
             'sysfilecreatesettle':[pool,work,cache,key,C.c_uint32],
             'sysfilecreateattachprepare':[pool,work,cache,key,work,C.c_uint64,
                                           C.POINTER(support.Claim),C.POINTER(C.c_int64)],
@@ -414,3 +416,70 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
         self.assertEqual(self.lib.sysfilecreateattached(self.p,self.w,self.c,C.byref(key),self.w,
             claim,self.space,C.byref(mapped),0),-1)
         self.assertEqual((bytes(self.work),bytes(self.pool)),before)
+
+    def fail(self,key):
+        self.submit(key);self.lib.testresult(-14,0,0,0,0,0)
+        self.assertEqual(self.lib.sysoppeerended(self.w,self.c,C.byref(key)),0)
+
+    def test_failed_create_requires_end_proof_and_actual_drain_before_ack(self):
+        key=self.prepare();self.submit(key);self.lib.testresult(-14,0,0,0,0,0)
+        before=bytes(self.pool),bytes(self.create(key))
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),-6)
+        self.assertEqual((bytes(self.pool),bytes(self.create(key))),before)
+        self.assertEqual(self.lib.sysoppeerended(self.w,self.c,C.byref(key)),0)
+        self.lib.testfinish(1)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),-11)
+        self.assertEqual((self.pool.entries[0].state,self.create(key).phase),(4,1))
+        self.lib.testfinish(0)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),0)
+        self.assertEqual(self.lib.sysfilecreateack(self.p,self.w,self.c,C.byref(key)),0)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),0)
+        files,source=self.complete(key)
+        self.assertEqual((files,source),((0,0),0))
+        self.assertEqual((self.pool.entries[0].state,self.pool.entries[0].generation),(0,1))
+
+    def test_failed_pipe_releases_both_reserved_ids_as_one_group(self):
+        key=self.prepare(24);ids=tuple(self.create(key).files);self.fail(key)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),0)
+        self.assertEqual(self.complete(key),((0,0),0))
+        self.assertEqual([self.pool.entries[f&255].state for f in ids],[0,0])
+
+    def test_failed_dupref_returns_old_source_pin_without_releasing_its_live_alias(self):
+        file=C.c_uint64()
+        self.assertEqual(self.lib.sysfilerefnew(self.p,self.self,self.tag,55,77,0,C.byref(file)),0)
+        self.assertEqual(self.lib.sysfilerefpin(self.p,self.self,file.value),0)
+        key=self.prepare(7,file.value);self.fail(key)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),0)
+        self.assertEqual(self.complete(key),((0,0),file.value))
+        held=self.pool.entries[file.value&255]
+        self.assertEqual((held.state,held.aliases,held.pins),(1,1,1))
+        self.assertEqual(self.lib.sysfilerefunpin(self.p,self.self,file.value),0)
+
+    def test_business_error_number_does_not_count_as_native_peer_end(self):
+        key=self.prepare();self.submit(key);self.reply(key,error=-14);self.capture(key)
+        self.assertEqual(self.lib.sysconninvalidate(self.c,self.tag),0)
+        self.work.state.ended=1  # Independent old-Image proof model.
+        before=bytes(self.work),bytes(self.pool)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),-6)
+        self.assertEqual((bytes(self.work),bytes(self.pool)),before)
+
+    def test_vfs_end_cannot_discard_a_captured_resource_from_another_backend(self):
+        peer=support.Peer(support.pid(4),29);key=self.resourcekey(peer)
+        self.assertEqual(self.lib.sysconninvalidate(self.c,self.tag),0)
+        self.work.state.ended=1  # Ended VFS, actual resource backend still active.
+        before=bytes(self.work),bytes(self.pool)
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),-6)
+        self.assertEqual((bytes(self.work),bytes(self.pool)),before)
+        claim=self.prepare_revoke(key);self.bootresult(self.record,claim)
+        self.assertEqual(self.lib.sysfilecreaterevoked(self.p,self.w,self.c,C.byref(key),claim),0)
+
+    def test_successful_captured_reference_and_changed_image_are_not_failed_creator_proof(self):
+        key=self.prepare();self.submit(key);self.reply(key);self.capture(key)
+        self.assertEqual(self.lib.sysconninvalidate(self.c,self.tag),0)
+        self.work.state.ended=1
+        before=bytes(self.pool),bytes(self.create(key))
+        self.assertEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),-6)
+        self.assertEqual((bytes(self.pool),bytes(self.create(key))),before)
+        self.cache.entries[self.tag.index].peer.image+=1
+        self.assertNotEqual(self.lib.sysfilecreatefailed(self.p,self.w,self.c,C.byref(key)),0)
+        self.assertEqual((bytes(self.pool),bytes(self.create(key))),before)

@@ -331,6 +331,46 @@ sysfilecreateresult(Filepool *pool, Connwork *work, Conncache *cache, const Opke
   return 0;
 }
 isize
+sysfilecreatefailed(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Createop *create;
+  Slotop   *op;
+  Connentry entry;
+  u32       i;
+  isize     error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (work->state.ended != 1)
+    return -ERR_STATE;
+  error = sysconnview(cache, work->state.tag, &entry);
+  if (error)
+    return error;
+  if (entry.state != SYSCONN_DRAINING || entry.peer.pid != work->state.peer.pid ||
+      entry.peer.image != work->state.peer.image)
+    return -ERR_STALE;
+  error = sysoppoll(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if ((op->phase != SYSOP_RESULT && op->phase != SYSOP_ACKED) || op->status != -ERR_PEER ||
+      op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT || create->call ||
+      create->token)
+    return -ERR_STATE;
+  for (i = 0; i < 4; i++)
+    if (op->words[i])
+      return -ERR_STATE;
+  if (create->phase >= SYSFILE_CREATE_CAPTURED)
+    return create->error == -ERR_PEER ? 0 : -ERR_STATE;
+  if (op->phase != SYSOP_RESULT)
+    return -ERR_STATE;
+  error = sysopfinished(work, cache, key);
+  if (error)
+    return error;
+  create->error = -ERR_PEER;
+  create->phase = SYSFILE_CREATE_CAPTURED;
+  return 0;
+}
+isize
 sysfilecreateack(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
 {
   isize error = sysfilecreateresult(pool, work, cache, key);

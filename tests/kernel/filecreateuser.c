@@ -726,7 +726,55 @@ deadclient(const Bootview *boot)
   filecreatetrace[0] = 2;
 }
 static void
-deadserver(const Bootview *boot)
+createdeadclient(const Bootview *boot, u64 opcode)
+{
+  Opkey key, retry;
+  Msg   message;
+  u64   args[8], files[2], source = 0;
+  u32   steps = 0, i;
+  isize status, error;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(opcode, opcode == FS_OPEN ? "/a" : NULL, 0);
+  CHECK(!sysctxcreatewait(&contexts, work.state.self, 0, &pool, &work, &cache, &key, &active_key));
+  status = sysctxinvoke(&contexts, work.state.self, active_key);
+  CHECK(status == -ERR_PEER && !sysctxhandoff(&contexts, work.state.self, active_key) &&
+        !sysctxfinish(&contexts, work.state.self, active_key));
+  zero(args, sizeof(args));
+  args[3] = 3;
+  CHECK(
+      !sysfilecreateprepare(&pool, &work, &cache, SYSFILE_MAIN, 900, FS_OPEN, 0, &source, args,
+                            "/q", 3, &retry, &message) &&
+      !sysctxcreatecall(&contexts, work.state.self, 0, &pool, &work, &cache, &retry, &active_key) &&
+      sysctxinvoke(&contexts, work.state.self, active_key) == -ERR_PEER &&
+      !sysctxhandoff(&contexts, work.state.self, active_key) &&
+      !sysctxpeerended(&contexts, work.state.self, active_key) &&
+      !sysctxfinish(&contexts, work.state.self, active_key) &&
+      !sysfilecreateabort(&pool, &work, &cache, &retry, &source) && !source &&
+      sysfilecreatefailed(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK);
+  filecreatetrace[7] = 1;
+  filecreatetrace[8] = (u64) status;
+  filecreatetrace[5] = (u64) work.state.operations[key.lease.slot].rpc;
+  filecreatetrace[6] = 6;
+  do {
+    CHECK(++steps < 64 && !__sys_yield());
+    error = sysfilecreatefailed(&pool, &work, &cache, &key);
+  } while (error == -ERR_WOULD_BLOCK);
+  CHECK(!error && work.state.creators[key.lease.slot].error == status);
+  zero(files, sizeof(files));
+  complete(&key, 0, files, &source);
+  CHECK(!files[0] && !files[1] && !source);
+  for (i = 0; i < SYSFILE_REFS; i++)
+    CHECK(pool.entries[i].state == SYSFILE_REF_FREE ||
+          pool.entries[i].state == SYSFILE_REF_RETIRED);
+  CHECK(!sysconnworkclean(&work, &cache) && !sysconnforget(&cache, work.state.tag));
+  filecreatetrace[2] = opcode == FS_PIPE ? 3 : 2;
+  filecreatetrace[3] = 1;
+  filecreatetrace[4] = steps;
+  filecreatetrace[0] = 2;
+}
+static void
+deadserver(const Bootview *boot, u64 creating)
 {
   Connpeer  peer;
   Allocarg  alloc;
@@ -767,6 +815,14 @@ deadserver(const Bootview *boot)
   transfer.business[1] = CONNID;
   transfer.business[2] = FS_CONN_BYTES;
   CHECK(!ipc_reply_resource(input.request, &transfer));
+  if (creating) {
+    CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == peer.pid &&
+          input.image == peer.image && input.words[0] == creating && input.words[1] == CONNID &&
+          !sysfilerequest(head, FS_CONN_BYTES, (u32) input.words[3], input.words[2], &descriptor));
+    filecreatetrace[1] = 1;
+    filecreatetrace[0] = 2;
+    return;
+  }
   for (i = 0; i < 2; i++) {
     CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == peer.pid &&
           input.image == peer.image && input.words[0] == FS_OPEN && input.words[1] == CONNID &&
@@ -790,7 +846,7 @@ deadserver(const Bootview *boot)
 int
 main(int argc, char **argv)
 {
-  CHECK(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '4' && !argv[0][1]);
+  CHECK(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '8' && !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
     client(sysboot());
@@ -800,7 +856,11 @@ main(int argc, char **argv)
     backend(sysboot());
   else if (argv[0][0] == '3')
     deadclient(sysboot());
+  else if (argv[0][0] == '4')
+    deadserver(sysboot(), 0);
+  else if (argv[0][0] == '5' || argv[0][0] == '7')
+    createdeadclient(sysboot(), argv[0][0] == '5' ? FS_OPEN : FS_PIPE);
   else
-    deadserver(sysboot());
+    deadserver(sysboot(), argv[0][0] == '6' ? FS_OPEN : FS_PIPE);
   return 42;
 }

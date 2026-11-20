@@ -343,6 +343,8 @@ rqclean(owner, request) 仅由持有专门清理授权的 init 使用；owner �
 成功发布 server_finished 并释放对应服务持有引用，不改变客户端已确定失败结果，不代表 init 执行业务或重放操作；陈旧/其他归属/仍运行服务请求拒绝。重复完成原身份返回终态/陈旧错误，不影响复用请求。
 管理授权及孤立请求枚举在退出清理完成前保留，独立于可复用进程槽；枚举具体分页/结果布局在管理查询 ABI 冻结。无法证明 DMA 安全则保留/隔离，不调用成功确认来伪造收尾。
 
+具体编码候选待用户确认（2026-11-21）：保留0x1b，CONTROL增加专用CLEAN=0x80，仅精确初始init镜像创建服务时取得，其他SERVICE创建保留原0x7f；CLEAN位不转授、不继承。第二参数采用完整REQUEST Handle，由已有QUERY_RQ的stamp按既定类别/代次/索引编码取得；查询不自动获得清理权。内核须核对CONTROL绑定旧Life、请求原接收PID/image、旧镜像结束及CPU/空间清理阶段，init另确认下游/DMA；原失败结果保持。06旧表目前写control,rpc，与本节request尚未收口；该候选尚非冻结ABI，CONTROL_RIGHTS仍为0x7f，未据此实现原生管理入口。
+
 #### 示例：fs 死亡但 blk 仍工作
 
 fs 持 READ 等待 blk 时崩溃，内核冻结原归属并向客户端发布失败；init 查询旧 fs 尚未收尾请求，协调 blk 排空旧连接/区域后 rqclean(owner, request)。客户端再观察 RQ_FINISH，按协议归还槽并释放跟踪。

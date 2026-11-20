@@ -19,6 +19,12 @@ isize sysfilecreateprepare(Filepool *pool, Connwork *work, Conncache *cache, u32
    business result is captured in error and creates no reference. Native or
    protocol failure keeps every original responsibility; never reissues. */
 isize sysfilecreateresult(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
+/* Explicit recovery of an uncaptured creator whose original RPC fixed native
+   ERR_PEER. The exact source backend must already be marked ended and actual
+   RQ_FINISH must hold. Records the native error without inventing a reference;
+   existing ack/settle/finish then release the prospective group and old pin.
+   A captured successful/resource result stays owned and is refused here. */
+isize sysfilecreatefailed(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 isize sysfilecreateack(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 /* Ordinary success only, or a known no-reference error. closing selects
    unpublished-reference compensation through existing close anchors.

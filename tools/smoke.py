@@ -1582,6 +1582,13 @@ def exercise(args, run_dir, record):
                             trusted_cleanup=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("ended backend close recovery mismatch")
                     record['file_recovery']=dead[0]
+                    createdead=[fields(line) for line in serial.read_text().splitlines() if line.startswith("CREATEDEADCHECK ")]
+                    expected_dead=[dict(actors=2,opcode=opcode,attempts=2,submitted=1,slots=count,
+                        call_failed=1,recovered=count,quarantined=1,trusted_cleanup=1,charged=0,
+                        allocated=transition["tables"]) for opcode,count in ((2,2),(24,3))]
+                    if createdead != expected_dead:
+                        raise SmokeError("ended backend creator reservation recovery mismatch")
+                    record['creator_recovery']=createdead
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("RUNTIMECHECK ")]
                     if (len(checks) != 1 or
                             {k: checks[0].get(k) for k in ("cases", "main", "rejected", "callbacks", "finalizers", "numbers", "formats", "groups", "queues", "rings", "fd_tables", "file_slots", "charged", "allocated")} !=

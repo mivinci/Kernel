@@ -1087,3 +1087,15 @@ ended占Connstate新增8字节，Connstate=2880、Conncache=472、合计3352，�
 新增7项关闭恢复与2项Rctx证明host测试，关闭/上下文/工作页专项合计44项，覆盖原内核PEER重查、撤权/取消/普通错误不算结束、DRAINING无证明拒绝、未排空及ACK失败保持、占槽不能走无RPC捷径、另一LIVE别名保留及新镜像不继承证明。原生runtime另运行死亡客户端/服务两角色：先持两份Filepool直接引用，服务接收第一份CLOSE后无reply退出；客户端仍取得原ERR_PEER，首次恢复明确WOULD_BLOCK并保持隔离。受信测试管理者在清理旧服务完整地址空间、确认本fixture无下游/DMA后，校验原RQ归属并显式rqclean；Rq状态仍ERR_PEER，仅FINISHED改变。客户端随后通过真实RQ_FINISH/ACK回收该锚，再关闭另一份本地alias，未发送第二笔CLOSE，映射/费用/实例回基线。这里不是公开fd/生产FS或用户态init的rqclean授权实现。
 
 初次原生场景只清了旧进程，未安排可信代收尾，因而正确持续WOULD_BLOCK；直接观测查回04的隔离约束后，按既有可信IPC fixture方式补入管理动作。未在内核自动调用rqclean，未放宽客户端排空判断，原失败日志/串口现场保留。最终1064项完整host、格式及RV64/ARM64各runtime/libsys/sigframe/normal共8次QEMU、8份journal通过，原11引用/真实创建信号/ATTACH-ABORT场景继续通过。SDK、实际载荷、目标布局及无libc依赖审计通过，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage160-peer-recovery/的unit、close/context/work-initial、场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果；创建及接入失败恢复、生产受限rqclean授权/枚举、服务/公开前端/Fix、sh/net/最终GUI继续。
+
+### 未回复创建与提交前失败的预留恢复（2026-11-21）
+
+stage161增加sysfilecreatefailed，显式处理尚未捕获结果的创建事务。必须有精确原后端的ended/DRAINING证明，原Op固定内核ERR_PEER、空普通元组且无已安装资源，确认真实RQ_FINISH后才把原错误捕获到Createop。之后沿已有ACK/settle/finish整组释放原预留、独立归还DUPREF源pin，不返回可发布的新File ID。原RPC保持其错误结果，不补造成功引用、不重发副作用，也不撤销或推断O_CREAT/O_TRUNC等可能已经发生的持久效果。原错误及引用预留在未排空时都保留。
+
+幂等检查仍核对内核status及原键/旧镜像，业务错误数字恰好等于ERR_PEER也不能充当该证明。已捕获普通成功、资源回复或其他实际后端的CALL/token均拒绝套用此失败路径；例如VFS结束后已交付的后端CALL仍由Createop持有，可凭原token向实际后端ABORT，不因VFS死亡就free为“已补偿”。捕获成功后的未发布引用、已接入File、接入bootstrap各走原接管/关闭/恢复规则，不以本点代替其生命周期责任。
+
+新增6项host，创建专项合计32项，覆盖无结束证明/未排空拒绝、确认后ACK及幂等、PIPE整组释放、DUPREF源pin与LIVE alias保留、业务errno与原生status区别、VFS结束仍持另一后端CALL/token，以及成功引用/新镜像不能误归类。工作页/字段尺寸不变：Connstate2880+Conncache472=3352，Createop184、工作页4096、Rctx512、Rbank50712及快照预算保持。
+
+原生runtime在旧场景后分别增加OPEN、PIPE死亡双角色。服务接收原创建后无reply退出；客户端保存原ERR_PEER/RPC，另一个不同序号和路径的新OPEN在提交前返回原生PEER且未产生RPC。此新调用验证sysctxpeerended的真实Rctx证明，立即回滚其预付ID；它不重放原请求。原OPEN的一份/PIPE的两份预留继续隔离，受信测试管理者在清完旧空间、确认本fixture无下游/DMA后显式rqclean，原结果仍PEER。客户端待真实RQ_FINISH后捕获失败并ACK，最终两组场景分别回收2/3份本地预留（均含1份未提交新调用的回滚），返回新File ID全0，全部本地表/映射/费用/实例归零。这里不声称已实现生产管理授权、实际PIPE语义或公开POSIX创建前端。
+
+1070项完整host、格式、RV64/ARM64各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过；旧CLOSE隔离/可信代收尾、11份引用/创建信号/资源ATTACH-ABORT继续通过。目标布局、SDK源码/头/库、实际链接载荷和无libc依赖审计通过，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage161-creator-recovery/的unit、focused、runtime-riscv-initial及其余场景-reviewed日志、目标layout对象、verify.py和evidence.json。未重跑195矩阵（最近stage154），无CI/板端/性能结果。生产rqclean的专用权限及04/06参数类型差异已提出候选询问，未获确认前不实现；已捕获资源与接入失败、生产服务/公开前端/Fix、sh/net/最终GUI继续。

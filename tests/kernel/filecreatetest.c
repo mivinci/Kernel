@@ -18,7 +18,7 @@ extern const u64 filecreate_trace_address;
 static Handle    creatorclient;
 static u64       injected;
 NORETURN void    __real_hal_user_enter(Hctx *context);
-static void      deadtest(void);
+static void      deadtest(u32 creating);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -189,10 +189,12 @@ filecreatetest(void)
   putstr(" allocated=");
   puthex(after.allocated);
   putstr("\n");
-  deadtest();
+  deadtest(0);
+  deadtest(1);
+  deadtest(2);
 }
 static void
-deadtest(void)
+deadtest(u32 creating)
 {
   Setid      set;
   Set        budget;
@@ -230,7 +232,7 @@ deadtest(void)
     packet.header.user_hi = BOOT_USER_HI;
     packet.arg.offset = offsetof(Packet, role);
     packet.arg.length = 2;
-    packet.role[0] = (char) ('3' + i);
+    packet.role[0] = (char) ('3' + creating * 2 + i);
     packet.resources[0].tag = BOOT_SELF_SPACE;
     packet.resources[0].handle = testresource(table, LOCAL_SPACE);
     packet.resources[1].tag = BOOT_SELF_ALLOC;
@@ -252,7 +254,8 @@ deadtest(void)
       if (info[1].state == PROC_EXITING) {
         CHECK(!lifestat(info[1].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
               !spaceread(info[1].space, filecreate_trace_address, trace, sizeof(trace)) &&
-              trace[0] == 2 && trace[1] == 2 && trace[2] == 1 && !trace[15]);
+              trace[0] == 2 && trace[1] == (creating ? 1 : 2) && trace[2] == (creating ? 0 : 1) &&
+              !trace[15]);
         while ((error = procclean(pids[1])) > 0) {
         }
         CHECK(!error && !lifecollect(info[1].life, 1, &result));
@@ -292,7 +295,9 @@ deadtest(void)
     putstr("\n");
   }
   CHECK(cleaned && rqcleaned && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 2 &&
-        trace[1] == 2 && trace[2] == 2 && trace[3] == 1 && trace[4] < 64 && !trace[15]);
+        trace[1] == (creating ? 1 : 2) && trace[2] == (creating == 2 ? 3 : 2) && trace[3] == 1 &&
+        trace[4] < 64 && !trace[15] &&
+        (!creating || (trace[7] == 1 && trace[8] == (u64) -ERR_PEER)));
   while ((error = procclean(pids[0])) > 0) {
   }
   CHECK(!error && !lifecollect(info[0].life, 1, &result) && !setstat(set, &budget) &&
@@ -300,14 +305,27 @@ deadtest(void)
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck());
-  putstr("FILEDEADCHECK actors=");
+  putstr(creating ? "CREATEDEADCHECK actors=" : "FILEDEADCHECK actors=");
   puthex(2);
-  putstr(" references=");
-  puthex(2);
-  putstr(" accepted_close=");
-  puthex(1);
+  if (creating) {
+    putstr(" opcode=");
+    puthex(creating == 1 ? 2 : 24);
+    putstr(" attempts=");
+    puthex(2);
+    putstr(" submitted=");
+    puthex(1);
+    putstr(" slots=");
+    puthex(creating == 1 ? 2 : 3);
+    putstr(" call_failed=");
+    puthex(1);
+  } else {
+    putstr(" references=");
+    puthex(2);
+    putstr(" accepted_close=");
+    puthex(1);
+  }
   putstr(" recovered=");
-  puthex(2);
+  puthex(creating == 2 ? 3 : 2);
   putstr(" quarantined=");
   puthex(1);
   putstr(" trusted_cleanup=");
