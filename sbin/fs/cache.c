@@ -33,12 +33,13 @@ valid(const Cacheblock *entry)
            !entry->io_version && !entry->references && !entry->valid && !entry->dirty &&
            !entry->metadata && !entry->io;
   return entry->bound == 1 && entry->generation && entry->valid <= 1 && entry->dirty <= 1 &&
-         entry->metadata <= 1 && entry->io <= CACHE_WRITE && entry->authorized <= entry->version &&
+         entry->metadata <= 1 && entry->io <= CACHE_CAPTURE &&
+         entry->authorized <= entry->version &&
          (entry->valid ? entry->version != 0
                        : !entry->version && !entry->dirty && !entry->authorized) &&
          (entry->io ? entry->serial != 0 : entry->io_version == 0) &&
          (entry->io != CACHE_READ || !entry->valid) &&
-         (entry->io != CACHE_WRITE ||
+         ((entry->io != CACHE_WRITE && entry->io != CACHE_CAPTURE) ||
           (entry->valid && entry->io_version && entry->io_version <= entry->version));
 }
 static isize
@@ -249,20 +250,30 @@ cachewritebegin(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out)
     to[i] = entry->data[i];
   return 0;
 }
+static isize
+ticketentry(Cache *cache, const Cacheio *ticket, Cacheblock **entry, u32 success)
+{
+  isize error;
+  if (!external(cache, ticket, sizeof(*ticket)) || ticket->reserved || success > 1)
+    return -ERR_INVALID;
+  /* find requires an external key; the ticket's embedded key is external too. */
+  error = find(cache, &ticket->key, entry, 0);
+  if (error)
+    return error;
+  if (!ticket->serial || ticket->serial != (*entry)->serial || ticket->kind != (*entry)->io ||
+      ticket->version != (*entry)->io_version || !(*entry)->io)
+    return -ERR_STALE;
+  return 0;
+}
 isize
 cachecomplete(Cache *cache, const Cacheio *ticket, u32 success)
 {
   Cacheblock *entry;
-  isize       error;
-  if (!external(cache, ticket, sizeof(*ticket)) || ticket->reserved || success > 1)
-    return -ERR_INVALID;
-  /* find requires an external key; the ticket's embedded key is external too. */
-  error = find(cache, &ticket->key, &entry, 0);
+  isize       error = ticketentry(cache, ticket, &entry, success);
   if (error)
     return error;
-  if (!ticket->serial || ticket->serial != entry->serial || ticket->kind != entry->io ||
-      ticket->version != entry->io_version || !entry->io)
-    return -ERR_STALE;
+  if (entry->io == CACHE_CAPTURE)
+    return -ERR_STATE;
   if (entry->io == CACHE_READ) {
     if (success) {
       entry->valid = 1;
@@ -272,6 +283,46 @@ cachecomplete(Cache *cache, const Cacheio *ticket, u32 success)
     entry->dirty = 0;
   entry->io = 0;
   entry->io_version = 0;
+  return 0;
+}
+isize
+cachecapture(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out)
+{
+  Cacheblock  *entry;
+  volatile u8 *to = snapshot;
+  u32          i;
+  isize        error = find(cache, key, &entry, 1);
+  if (error)
+    return error;
+  if (!external(cache, snapshot, CACHE_BYTES) ||
+      !separate(key, sizeof(*key), snapshot, CACHE_BYTES) ||
+      !separate(out, sizeof(*out), snapshot, CACHE_BYTES))
+    return -ERR_INVALID;
+  if (!entry->valid || !entry->dirty)
+    return -ERR_STATE;
+  error = begin(cache, key, out, CACHE_CAPTURE, &entry);
+  if (error)
+    return error;
+  for (i = 0; i < CACHE_BYTES; i++)
+    to[i] = entry->data[i];
+  return 0;
+}
+isize
+cachecapturefinish(Cache *cache, Cacheio *owned, u32 success)
+{
+  Cacheblock *entry;
+  isize       error = ticketentry(cache, owned, &entry, success);
+  if (error)
+    return error;
+  if (entry->io != CACHE_CAPTURE)
+    return -ERR_STATE;
+  if (success && entry->version == owned->version)
+    entry->dirty = 0;
+  entry->io = 0;
+  entry->io_version = 0;
+  keyclear(&owned->key);
+  owned->serial = owned->version = 0;
+  owned->kind = owned->reserved = 0;
   return 0;
 }
 isize

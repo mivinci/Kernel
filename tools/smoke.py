@@ -1579,6 +1579,10 @@ def exercise(args, run_dir, record):
                     if journal != [dict(operations=14,failures=14,timeouts=14,state_bytes=2432)]:
                         raise SmokeError("filesystem journal sequencing/drain gate mismatch")
                     record['fs_journal']=journal[0]
+                    txns=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FSTXNCHECK ")]
+                    if txns != [dict(operations=11,failures=11,timeouts=11,newer=1,state_bytes=9888)]:
+                        raise SmokeError("filesystem captured cache transaction mismatch")
+                    record['fs_txn']=txns[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,

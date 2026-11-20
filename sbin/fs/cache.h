@@ -2,12 +2,13 @@
 #define _FS_CACHE_H
 #include <types.h>
 #include <abi/base.h>
-#define CACHE_BYTES 4096
-#define CACHE_MAX   128
-#define CACHE_DATA  0
-#define CACHE_META  1
-#define CACHE_READ  1
-#define CACHE_WRITE 2
+#define CACHE_BYTES   4096
+#define CACHE_MAX     128
+#define CACHE_DATA    0
+#define CACHE_META    1
+#define CACHE_READ    1
+#define CACHE_WRITE   2
+#define CACHE_CAPTURE 3
 typedef struct Cache      Cache;
 typedef struct Cacheblock Cacheblock;
 typedef struct Cachekey   Cachekey;
@@ -60,4 +61,11 @@ isize cachecomplete(Cache *cache, const Cacheio *ticket, u32 success);
    COMMITTED for this exact version. No public request may supply this proof.
    Does not itself write/flush/retire a transaction or authorize another edit. */
 isize cacheauthorize(Cache *cache, const Cachekey *key, u64 version);
+/* Trusted journal owner only: capture an immutable dirty version and hold an
+   IO anchor through the whole transaction. This grants no home-write right.
+   Generic cachecomplete rejects capture tickets. Finish success only after
+   the journal's EMPTY flush; failure keeps dirty, and either finish requires
+   all lower access to the snapshot drained. Consumes the capture ticket. */
+isize cachecapture(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out);
+isize cachecapturefinish(Cache *cache, Cacheio *owned, u32 success);
 #endif

@@ -45,6 +45,7 @@ void runtimetest(void);
 void filecreatetest(void);
 void fscachetest(void);
 void fsjournaltest(void);
+void fstxntest(void);
 void ttytest(void);
 void jobtest(void);
 void elftest(void);
