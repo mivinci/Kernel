@@ -341,6 +341,48 @@ partial(u32 all)
   closed(set);
 }
 static void
+currentgroup(void)
+{
+  Setid set;
+  Actor sender, allowed, denied, outside;
+  CHECK(!setcreate(2048, 4096, 4, &set));
+  create(set, 10, 20, &sender);
+  isolate(&sender, 0);
+  create(set, 88, 10, &allowed);
+  create(set, 55, 66, &denied);
+  create(set, 10, 20, &outside);
+  join(&allowed, &sender);
+  join(&denied, &sender);
+  load(&sender, 1, 0);
+  load(&allowed, 0, 1);
+  load(&denied, 0, 1);
+  load(&outside, 0, 1);
+  started(&sender);
+  started(&allowed);
+  started(&denied);
+  started(&outside);
+  command(&sender, SIGNAL_SELECT_GROUP, 0, 0, 0, 0);
+  pending(&sender, 0);
+  pending(&allowed, 0);
+  pending(&denied, 0);
+  pending(&outside, 0);
+  command(&sender, SIGNAL_SELECT_GROUP, 0, SIGNAL_USR1, 0, 0);
+  metadata(&sender, &sender, 20, SIGNAL_USR1);
+  pending(&allowed, (u64) 1 << (SIGNAL_USR1 - 1));
+  pending(&denied, 0);
+  pending(&outside, 0);
+  finish(&allowed, 0);
+  metadata(&allowed, &sender, 20, SIGNAL_USR1);
+  finish(&denied, 0);
+  finish(&outside, 0);
+  finish(&sender, 1);
+  clean(&allowed, LIFE_EXIT, 42);
+  clean(&denied, LIFE_EXIT, 42);
+  clean(&outside, LIFE_EXIT, 42);
+  clean(&sender, LIFE_EXIT, 42);
+  closed(set);
+}
+static void
 controls(u32 separate)
 {
   Setid  set;
@@ -396,7 +438,8 @@ malformed(void)
   command(&sender, 5, 0, 0, 0, -ERR_INVALID);
   command(&sender, SIGNAL_SELECT_ALL, 1, 0, 0, -ERR_INVALID);
   command(&sender, SIGNAL_SELECT_PID, -1, 0, 0, -ERR_BAD_HANDLE);
-  command(&sender, SIGNAL_SELECT_GROUP, 0, 0, 0, -ERR_BAD_HANDLE);
+  command(&sender, SIGNAL_SELECT_GROUP, 0, 0, 0, 0);
+  command(&sender, SIGNAL_SELECT_GROUP, -1, 0, 0, -ERR_BAD_HANDLE);
   command(&sender, SIGNAL_SELECT_GROUP, stale, 0, 0, -ERR_STALE);
   command(&sender, SIGNAL_SELECT_PID, stale, 0, 0, -ERR_STALE);
   command(&sender, SIGNAL_SELECT_PID, 0, 0, 2, -ERR_FAULT);
@@ -428,7 +471,7 @@ killing(u32 self)
   started(&sender);
   started(&receiver);
   if (self) {
-    begin(&sender, SIGNAL_SELECT_GROUP, sender.pid, SIGNAL_KILL, 0);
+    begin(&sender, SIGNAL_SELECT_GROUP, self == 2 ? 0 : sender.pid, SIGNAL_KILL, 0);
     state(&sender, PROC_EXITING);
   } else {
     command(&sender, SIGNAL_SELECT_ALL, 0, SIGNAL_KILL, 0, 0);
@@ -440,10 +483,10 @@ killing(u32 self)
   closed(set);
 }
 static void
-snapshot(void)
+snapshot(u32 zero)
 {
   static Actor receivers[32];
-  Actor        sender, replacement, late;
+  Actor        sender, replacement, late, other;
   Setid        set;
   Handle       old;
   Sigstat      signal;
@@ -461,7 +504,14 @@ snapshot(void)
     started(&receivers[i]);
     CHECK(!procstop(receivers[i].pid, SIGNAL_STOP));
   }
-  sequence = begin(&sender, SIGNAL_SELECT_GROUP, sender.pid, SIGNAL_USR1, 0);
+  if (zero) {
+    create(set, 10, 50, &other);
+    isolate(&other, 0);
+    load(&other, 0, 1);
+    started(&other);
+    CHECK(!procstop(other.pid, SIGNAL_STOP));
+  }
+  sequence = begin(&sender, SIGNAL_SELECT_GROUP, zero ? 0 : sender.pid, SIGNAL_USR1, 0);
   CHECK(!clockmono(&start));
   do {
     step();
@@ -474,15 +524,17 @@ snapshot(void)
   pending(&receivers[8], 0);
   word(&sender, 2, 99);
   word(&sender, 3, 0);
+  if (zero)
+    join(&sender, &other);
   old = receivers[31].pid;
   kill(&receivers[31]);
   create(set, 10, 50, &replacement);
   CHECK(replacement.pid != old && handleindex(replacement.pid) == handleindex(old));
-  join(&replacement, &sender);
+  join(&replacement, &receivers[0]);
   load(&replacement, 0, 1);
   CHECK(!procstop(replacement.pid, SIGNAL_STOP));
   create(set, 10, 50, &late);
-  join(&late, &sender);
+  join(&late, &receivers[0]);
   load(&late, 0, 1);
   CHECK(!procstop(late.pid, SIGNAL_STOP));
   completed(&sender, sequence, 0);
@@ -493,6 +545,10 @@ snapshot(void)
   }
   pending(&replacement, 0);
   pending(&late, 0);
+  if (zero) {
+    pending(&other, 0);
+    kill(&other);
+  }
   kill(&replacement);
   kill(&late);
   finish(&sender, 1);
@@ -539,12 +595,15 @@ sigsendtest(void)
   rootdenied();
   partial(0);
   partial(1);
+  currentgroup();
   controls(0);
   controls(1);
   malformed();
   killing(0);
   killing(1);
-  snapshot();
+  killing(2);
+  snapshot(0);
+  snapshot(1);
   pgstat(&after);
   pending(&init, 0);
   CHECK(!procinfo(init.pid, &init.info) && init.info.state == PROC_BLOCKED &&
@@ -562,13 +621,19 @@ sigsendtest(void)
   putstr(" control=");
   puthex(2);
   putstr(" self_kill=");
+  puthex(2);
+  putstr(" current_group=");
+  puthex(1);
+  putstr(" zero_snapshot=");
+  puthex(32);
+  putstr(" group_switch=");
   puthex(1);
   putstr(" snapshot=");
   puthex(32);
   putstr(" reused=");
-  puthex(1);
+  puthex(2);
   putstr(" late=");
-  puthex(1);
+  puthex(2);
   putstr(" init=");
   puthex(1);
   putstr(" init_charge=");

@@ -1550,7 +1550,7 @@ def exercise(args, run_dir, record):
                 if args.case == "sigsend":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('SIGSENDCHECK ')]
                     if (len(checks)!=1 or {k:v for k,v in checks[0].items() if k not in ('allocated','baseline','init_charge')} !=
-                            dict(calls=54,credentials=4,partial=2,root_denied=1,control=2,self_kill=1,snapshot=32,reused=1,late=1,init=1,charged=0) or
+                            dict(calls=59,credentials=4,partial=2,root_denied=1,control=2,self_kill=2,current_group=1,zero_snapshot=32,group_switch=1,snapshot=32,reused=2,late=2,init=1,charged=0) or
                             checks[0].get('allocated')!=checks[0].get('baseline') or checks[0].get('init_charge',0)<=0 or
                             checks[0].get('init_charge')!=record['retained_init']['charged'] or
                             checks[0].get('baseline',0)!=transition['tables']+checks[0].get('init_charge',0)):

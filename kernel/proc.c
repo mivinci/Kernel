@@ -2127,11 +2127,17 @@ procsigsend(u64 address, u64 signum)
     members[count++] = pidof(p);
   } else {
     if (selector.kind == SIGNAL_SELECT_GROUP) {
-      if (handletype(selector.target) != HANDLE_PROCESS)
-        return -ERR_BAD_HANDLE;
-      error = groupmatch(selector.target, &group);
-      if (error)
-        return error;
+      /* Resolve zero from the accepted sender snapshot, before any batch
+         checkpoint can let the caller move to another group. */
+      if (!selector.target)
+        group = sender.group;
+      else {
+        if (handletype(selector.target) != HANDLE_PROCESS)
+          return -ERR_BAD_HANDLE;
+        error = groupmatch(selector.target, &group);
+        if (error)
+          return error;
+      }
     } else if (selector.kind != SIGNAL_SELECT_ALL || selector.target)
       return -ERR_INVALID;
     /* Snapshot complete PIDs, never borrowed Proc/Local/Group pointers. The

@@ -782,7 +782,7 @@ CASE=sigframe新增一个真实用户运输模型：仅测试链接的入口wrap
 
 2026-11-20用户确认：FAULT reason冻结为MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12。无关字段清零，非法指令/算术故障地址取PC；首次无法递送时按原故障终止并保留原始诊断。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则。以上为已确认设计，尚未加入abi/signal.h或接入实际硬件FAULT生产。
 
-同日用户确认kill(0)的原子选择：Sigsel GROUP的target=0表示调用者当前组，由内核在受理sigsend时固定；正PGID及既有逐成员授权规则不变。此补充取代前述历史记录中的待回复状态，代码与运行验收仍待接续，不将设计确认视为已实现libc kill/raise。
+同日用户确认kill(0)的原子选择：Sigsel GROUP的target=0表示调用者当前组，由内核在受理sigsend时固定；正PGID及既有逐成员授权规则不变。此补充取代前述历史记录中的待回复状态；实现与原生运行验收见文末当前组选择，不将原生接口当作已实现libc kill/raise。
 
 Rctx原生返回窗口的用户态接续见[08末尾](08-runtime.md#rctx-原生返回窗口接续2026-11-20)：两架构真实sigframe新增外层GETID第一条存储前捕获、独立内层GETPG和sigreturn安全恢复。仅测试wrapper注入信号，生产内核不含此入口；尚未接POSIX trampoline/SA_RESTART或原RPC责任交接，不改变上述两项待确认边界。
 
@@ -797,3 +797,11 @@ stage148的[关闭worker](10-filesystem.md#关闭裁决与类型化后台-worker
 stage149的[输入接受与继续等待](08-runtime.md#一次接受的输入与原-rpc-继续等待2026-11-20)已验证：handler改写原长度不改变同代次的已接受输入，原RPC继续等待不重发，完成输出与输入前缀在既有预算内隔离。连续字节原语不替代完整字符串/向量安全构建，也不代表公开POSIX trampoline/SA_RESTART或Fix已完成。
 
 stage150已接[字符串/向量构建](08-runtime.md#字符串与参数向量安全构建2026-11-20)：按源页边界及真实终止符捕获，接受后只保留偏移/内容。两架构handler修改并unmap原字符串/指针表后，保存参数及raw rearm后的视图仍有效；完整目标Boot/exec与公开信号前端仍未完成。
+
+### 原生当前组信号选择（2026-11-20）
+
+procsigsend现接受GROUP target=0，从受理时的sender Life快照取得内部组身份，在首次分批让出之前固定全部完整PID。正PGID仍走原公开身份解析；PID/CONTROL/ALL的0及错误选择器规则保持。没有把0变成通用Handle，也没有增加凭据豁免；逐成员凭据/CONT会话授权、signum=0不排队、自身最后投递和有界预付数组继续复用原路径。没有持有用户选择器或借用Group/Local指针跨检查点。
+
+原生sigsend场景每架构从54增至59次请求：新增零选择器纯授权检查、同组允许/拒绝与同凭据组外隔离，以及零选择器KILL在发送者退出前处理其他组员；正PGID自身KILL仍保留。正PGID和零选择器各执行一套32接收者快照：首8项投递后暂停真实内核续点、修改原用户选择器、复用尚未投递的PID槽并新增同组成员。零选择器还把发送者移到另一个已有组；原其余目标及自身继续收到原信号，新组成员、复用槽和迟到成员均无pending。换组由仅测试CPU fixture执行明确Life组变更，不为应用增加管理权限或假称公开POSIX setpgid竞态验收。
+
+最终1003项完整host、格式、两架构各sigsend/groups/creds/jobs/sigframe/normal共12次QEMU及12份journal通过。两份真实发信载荷与当前SDK逐字节一致，59请求的完整身份/来源和页/费用/实例基线、保留PID1状态与真实页表/栈继续核验；源码/头/SDK/内嵌载荷审计通过。生产init/serial与stage152逐字节相同，正常UART/参数观测保持，clangd切回RV64/sigsend。证据build/host/stage153-current-group/的unit、场景日志、verify.py和evidence.json；本轮未重跑195场景矩阵，最近完整矩阵为stage152。无CI、板端或性能结果；libc kill/raise、同步硬件FAULT及完整公开信号前端仍待接。

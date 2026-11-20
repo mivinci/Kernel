@@ -20,16 +20,16 @@
 
 ## 最新完成点与证据
 
-- stage152：生产init复用参数快照/Boot打包器，保留七个串口参数、资源授权与清理顺序，elfload使用实际发布bytes；通用参数捕获与Rctx封装拆开，未为每个服务增加上下文银行。
-- O0/O2管理专项新增捕获失败后恢复mask与未发布资源清理；真实孩子Boot的七项参数、资源和NULL预算由主机逐项读回核验。两架构init已更新，serial与stage151逐字节相同，实际载荷与SDK一致。
-- 验收：1003项完整host、格式、195次双架构QEMU、168份journal，含16次生产启动和10条失败清理；最终源码/SDK/依赖/实际载荷审计通过，clangd切回RV64/libsys。
-- 证据：`build/host/stage152-init-arguments/`。初次test-all在host/格式通过后遇新增主机观测NameError，修正并保留失败日志，再完整通过test-qemu；不称一次完整test-all成功。无CI、板端或性能结果。
+- stage153：原生sigsend接入GROUP target=0，受理时固定当前组与完整PID快照；保留逐成员授权、纯检查和自身最后投递，不重读用户选择器或换组后的成员。
+- 两架构各59次原生请求，零选择器新增同组授权/组外隔离和自身KILL；两套32接收者快照核对选择器修改、PID复用与迟到成员，零选择器另核对发送者中途换组仍按原快照投递。
+- 验收：1003项完整host、格式、12次双架构QEMU与12份journal（sigsend/groups/creds/jobs/sigframe/normal）；源码/SDK/实际载荷审计通过，init/serial与stage152相同，clangd切回RV64/sigsend。
+- 证据：`build/host/stage153-current-group/`。本轮未重跑195场景矩阵，最近完整矩阵为stage152（1003 host、195 QEMU、168 journal）；无CI、板端或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
-- 三项已于2026-11-20获用户确认：① Sigsel GROUP target=0 在内核受理时固定当前组；② 同步FAULT归一化原因/首次递送失败策略，见11末尾；③创建类reference_id返回位置，普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref，见10末尾。三项代码与验收仍待接；原生正PGID/PID/CONTROL/ALL已实现，硬件FAULT仍默认受控终止。
-- 接已确认的GROUP target=0与硬件FAULT生产、创建类引用接管/补偿，继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
+- 已确认但待代码/验收：同步FAULT归一化原因/首次递送失败策略见11末尾；创建类reference_id返回位置（普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref）见10末尾。GROUP target=0已交付；硬件FAULT仍默认受控终止，公开libc kill/raise未接。
+- 接硬件FAULT生产、创建类引用接管/补偿，继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 
 ## 硬件与问题登记
