@@ -67,6 +67,12 @@ target(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key, Creat
   return 0;
 }
 isize
+sysfilecreatecheck(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Createop *create;
+  return target(pool, work, cache, key, &create);
+}
+isize
 sysfilecreateabort(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key, u64 *source)
 {
   Createop *create;

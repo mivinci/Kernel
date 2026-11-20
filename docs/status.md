@@ -20,16 +20,16 @@
 
 ## 最新完成点与证据
 
-- stage158：资源OPEN的类型化ATTACH接管与token ABORT补偿已接。首次移动CALL/MEM/已验证映射，复用只释放冗余CALL；精确原token清理确认后才释放预留，free失败可重试。Createop/工作页预算保持，状态及嵌入目录仍共3344字节。
-- 26项专项；两架构三进程fixture各4次资源OPEN，覆盖首次接管、普通复用、接入前撤销及ATTACH后本地验证失败补偿；重复ABORT不多关引用，两个存活File随后精确CLOSE。含普通创建共9份引用，最终页/费用/实例归零；不是生产VFS/后端或正式信号前置。
-- 验收：1047项完整host、格式、最终输入下8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
-- 证据：`build/host/stage158-resource-open/`。未重跑195矩阵，最近完整矩阵为stage154。无CI、板端或性能结果。stage157及后续本地提交暂未推送，自动审批要求直接确认公开发布，问题已提出。
+- stage159：创建类Rctx绑定实际Filepool，类型化捕获进入共用信号前置；原结果在handler前保存，未排空/非法回复保持RPC/槽/预留并记录捕获状态，不用服务错误吞掉信号。Rctx仍512字节、银行50712字节，连接预算保持。
+- 39项上下文专项（含8项新创建前置）；两架构在异步提交/业务返回窗口各实际注入一次信号，handler独立OPEN/CLOSE，主层预留/结果不变。含资源ATTACH/ABORT场景共11份引用，最终页/费用/实例归零；资源CALL的信号前置捕获另有host覆盖。
+- 验收：1055项完整host、格式、最终输入下8次双架构QEMU与8份journal；源码/SDK/实际载荷和目标布局审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
+- 证据：`build/host/stage159-creator-prelude/`。未重跑195矩阵，最近完整矩阵为stage154。无CI、板端或性能结果。stage157及后续本地提交暂未推送，自动审批要求直接确认公开发布，问题已提出。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
 - 已确认的token定点ABORT、Image统一序号及创建记录与清理运输的类型化衔接已接。生产token授权/撤销、准备观察与服务私有in-flight仍待接；不把三角色fixture当成真实VFS/后端服务，规则见10篇。
-- 接创建结果在trampoline中的前置及生命周期恢复，再继续完整创建/装载与公开前端。首次映射故障的完整连接恢复仍待接；本点原生失败用例是已有连接ATTACH确认后的本地验证拒绝。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise与完整信号前端未接。
+- 创建结果的共用信号前置已接，继续生命周期恢复、完整创建/装载及公开前端/Fix；公开POSIX trampoline/errno/SA_RESTART仍待接。首次映射故障的完整连接恢复仍未完成；资源OPEN原生失败用例是已有连接ATTACH确认后的本地验证拒绝。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise未接。
 - 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 

@@ -5,6 +5,7 @@
 #include "private/filecreate.h"
 #include "private/close.h"
 #include "private/fd.h"
+#include "private/contextipc.h"
 #include <abi/resource.h>
 
 #define ADDRESS 0x1600000UL
@@ -16,6 +17,8 @@ static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
 static Filepool pool;
 static Fdtable  fds;
+static Rbank    contexts;
+static Rkey     active_key;
 volatile u64    filecreatetrace[16];
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
@@ -71,7 +74,6 @@ begin(u64 opcode, const char *path, u64 source)
 {
   Opkey   key;
   Msg     message;
-  Ipcmsg  result;
   Fileref ref;
   u64     args[8], bytes = 0, object = 0;
   zero(args, sizeof(args));
@@ -91,20 +93,25 @@ begin(u64 opcode, const char *path, u64 source)
   CHECK(!sysfilecreateprepare(&pool, &work, &cache, 0, 100 + filecreatetrace[1], opcode, object,
                               &source, args, path, bytes, &key, &message) &&
         !source &&
-        !ipc_call(work.state.call, &message, CALL_ASYNC | (opcode == FS_OPEN ? CALL_RECV_CALL : 0),
-                  &result) &&
-        !sysopsubmitted(&work, &cache, &key, &result.request));
+        !sysctxcreatecall(&contexts, work.state.self, 0, &pool, &work, &cache, &key, &active_key));
+  filecreatetrace[6] = !filecreatetrace[1] ? 1 : 0;
+  CHECK(!sysctxinvoke(&contexts, work.state.self, active_key) &&
+        !sysctxhandoff(&contexts, work.state.self, active_key) &&
+        !sysctxfinish(&contexts, work.state.self, active_key));
+  filecreatetrace[6] = 0;
   filecreatetrace[1]++;
   return key;
 }
 static void
 collect(Opkey *key)
 {
-  Ipcmsg result;
-  Handle rpc;
-  CHECK(!sysoprpc(&work, &cache, key, &rpc) && !ipc_rqwait(rpc, 0, &result) &&
-        !sysopcapture(&work, &cache, key, 0, &result) &&
-        !sysfilecreateresult(&pool, &work, &cache, key));
+  CHECK(!sysctxcreatewait(&contexts, work.state.self, 0, &pool, &work, &cache, key, &active_key));
+  filecreatetrace[6] = filecreatetrace[10] == 1 ? 2 : 0;
+  CHECK(!sysctxinvoke(&contexts, work.state.self, active_key) &&
+        !sysctxhandoff(&contexts, work.state.self, active_key) &&
+        !sysctxcreateresult(&contexts, work.state.self, active_key) &&
+        !sysctxfinish(&contexts, work.state.self, active_key));
+  filecreatetrace[6] = 0;
 }
 static void
 complete(Opkey *key, u32 closing, u64 files[2], u64 *source)
@@ -243,6 +250,76 @@ resourceopens(const Bootview *boot)
   filecreatetrace[5] = 1;
 }
 static void
+creatorhandler(u64 signum)
+{
+  Rctx        *outer = &contexts.contexts[0];
+  const Opkey *mainkey = &outer->route.operation;
+  Createop    *maincreate = &work.state.creators[mainkey->lease.slot];
+  Opkey        key;
+  Rkey         invocation;
+  Msg          message;
+  u64          args[8], source = 0, files[2], id, reference;
+  CHECK(signum == SIGNAL_USR1 && outer->active && outer->phase == RCTX_CLEANING &&
+        outer->route.delivered && outer->route.pool == &pool && mainkey->lease.slot == 0 &&
+        sysctxfinish(&contexts, work.state.self, active_key) == -ERR_BUSY);
+  reference = maincreate->values[0].reference;
+  if (filecreatetrace[6] == 1) {
+    CHECK(maincreate->phase == SYSFILE_CREATE_PREPARED &&
+          work.state.operations[0].phase == SYSOP_WAITING);
+    filecreatetrace[12]++;
+  } else {
+    CHECK(filecreatetrace[6] == 2 && !outer->route.capture_status &&
+          maincreate->phase == SYSFILE_CREATE_CAPTURED && reference &&
+          !sysfilerefstaged(&pool, work.state.self, &maincreate->stage));
+    filecreatetrace[11]++;
+  }
+  zero(args, sizeof(args));
+  args[3] = 8;
+  CHECK(!sysfilecreateprepare(&pool, &work, &cache, SYSFILE_SIGNAL1, 700 + filecreatetrace[10],
+                              FS_OPEN, 0, &source, args, "/signal", 8, &key, &message) &&
+        key.lease.slot == 2 &&
+        !sysctxcreatecall(&contexts, work.state.self, 1, &pool, &work, &cache, &key, &invocation) &&
+        !sysctxinvoke(&contexts, work.state.self, invocation) &&
+        !sysctxhandoff(&contexts, work.state.self, invocation) &&
+        !sysctxfinish(&contexts, work.state.self, invocation) &&
+        !sysctxcreatewait(&contexts, work.state.self, 1, &pool, &work, &cache, &key, &invocation) &&
+        !sysctxinvoke(&contexts, work.state.self, invocation) &&
+        !sysctxhandoff(&contexts, work.state.self, invocation) &&
+        !sysctxcreateresult(&contexts, work.state.self, invocation) &&
+        !sysctxfinish(&contexts, work.state.self, invocation));
+  filecreatetrace[1]++;
+  id = work.state.creators[key.lease.slot].files[0];
+  zero(files, sizeof(files));
+  complete(&key, 1, files, &source);
+  CHECK(!files[0] && !source && maincreate->values[0].reference == reference);
+  closefile(id, 0);
+  filecreatetrace[10]++;
+}
+static NORETURN void
+creatortrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64 address, u64 flags)
+{
+  u64 mask, ignored;
+  CHECK(signum == SIGNAL_USR1 && !info->code && !flags && function == (u64) creatorhandler &&
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        !sysctxsignal(&contexts, work.state.self, active_key, trap, 0) &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  creatorhandler(signum);
+  __sys_sigreturn((void *) address);
+}
+static void
+creatorsignals(void)
+{
+  Sigact action;
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  zero(&action, sizeof(action));
+  action.kind = SIGNAL_HANDLER;
+  action.handler = (u64) creatorhandler;
+  action.trampoline = (u64) creatortrampoline;
+  CHECK(!__sys_sigaction(SIGNAL_USR1, &action, NULL));
+  filecreatetrace[7] = (u64) (uintptr_t) __sys_ctxreturn_begin;
+  filecreatetrace[8] = (u64) (uintptr_t) __sys_ctxresume;
+}
+static void
 client(const Bootview *boot)
 {
   Opkey  key, background;
@@ -253,6 +330,7 @@ client(const Bootview *boot)
   Ipcmsg result;
   Handle rpc;
   setup(boot);
+  creatorsignals();
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
   zero(files, sizeof(files));
@@ -309,7 +387,7 @@ client(const Bootview *boot)
   gate.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
   rpc = result.request;
-  CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[0] == 5 && result.words[1] == 5 &&
+  CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[0] == 7 && result.words[1] == 7 &&
         !result.words[2] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
         !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
         !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
@@ -373,7 +451,7 @@ server(const Bootview *boot)
     opcode = input.words[0];
     zero(&reply, sizeof(reply));
     if (opcode == STOP) {
-      CHECK(!pending && created == 5 && closed == 5);
+      CHECK(!pending && created == 7 && closed == 7);
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;

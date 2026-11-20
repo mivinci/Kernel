@@ -37,6 +37,8 @@ struct Rroute
   Opkey      operation;
   Handle     rpc;
   u64        interruptible, snapshot_offset, snapshot_bytes, snapshot_saved;
+  Filepool  *pool;
+  isize      capture_status;
 };
 struct Rctx
 {
@@ -49,7 +51,7 @@ struct Rctx
   Rroute       route;
   u64          input_bytes, input_saved;
   u32          input_kind, input_argc, input_envc, input_reserved;
-  u64          reserved[21];
+  u64          reserved[19];
 };
 struct Rbank
 {

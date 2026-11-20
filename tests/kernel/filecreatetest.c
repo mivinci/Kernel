@@ -3,6 +3,7 @@
 #include <abi/boot.h>
 #include <bootimage.h>
 #include <diag.h>
+#include <signal.h>
 typedef struct Packet Packet;
 struct Packet
 {
@@ -13,6 +14,9 @@ struct Packet
 };
 extern const u8  filecreate_image[], filecreate_image_end[];
 extern const u64 filecreate_trace_address;
+static Handle    creatorclient;
+static u64       injected;
+NORETURN void    __real_hal_user_enter(Hctx *context);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -22,6 +26,29 @@ extern const u64 filecreate_trace_address;
       panic("file creator RPC");                                                                   \
     }                                                                                              \
   } while (0)
+NORETURN void
+__wrap_hal_user_enter(Hctx *context)
+{
+  Rtable  *table = proccurrent(context);
+  Procinfo process;
+  Siginfo  info;
+  u64      trace[16], stage;
+  u32      i;
+  if (table && table->owner == creatorclient) {
+    CHECK(!procinfo(creatorclient, &process) &&
+          !spaceread(process.space, filecreate_trace_address, trace, sizeof(trace)));
+    stage = trace[6];
+    if ((stage == 1 || stage == 2) && context->tf.pc == trace[7] && !(injected & (1UL << stage))) {
+      injected |= 1UL << stage;
+      for (i = 0; i < sizeof(info); i++)
+        ((u8 *) &info)[i] = 0;
+      info.signum = SIGNAL_USR1;
+      CHECK(!procsigqueue(creatorclient, &info));
+      procuserreturn(context);
+    }
+  }
+  __real_hal_user_enter(context);
+}
 void
 filecreatetest(void)
 {
@@ -43,6 +70,8 @@ filecreatetest(void)
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
   for (i = 0; i < 3; i++)
     CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
+  creatorclient = pids[0];
+  injected = 0;
   for (i = 0; i < 3; i++) {
     Rtable *table = proctable(pids[i]);
     for (j = 0; j < sizeof(packet); j++)
@@ -111,9 +140,10 @@ filecreatetest(void)
     }
     CHECK(trace[0] == 2);
     if (!i)
-      CHECK(trace[1] == 9 && trace[2] == 7 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1);
+      CHECK(trace[1] == 11 && trace[2] == 9 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1 &&
+            trace[10] == 2 && trace[11] == 1 && trace[12] == 1 && injected == 6);
     else if (i == 1)
-      CHECK(trace[1] == 5 && trace[2] == 5 && trace[4] == 4);
+      CHECK(trace[1] == 7 && trace[2] == 7 && trace[4] == 4);
     else
       CHECK(trace[1] == 4 && trace[2] == 4 && trace[3] == 3 && trace[4] == 3);
     while ((error = procclean(pids[i])) > 0) {
@@ -129,11 +159,17 @@ filecreatetest(void)
   putstr("FILECREATECHECK actors=");
   puthex(3);
   putstr(" requests=");
-  puthex(9);
+  puthex(11);
   putstr(" references=");
-  puthex(9);
+  puthex(11);
   putstr(" closed=");
-  puthex(9);
+  puthex(11);
+  putstr(" creator_signals=");
+  puthex(2);
+  putstr(" creator_captured=");
+  puthex(1);
+  putstr(" creator_waiting=");
+  puthex(1);
   putstr(" resource_opens=");
   puthex(4);
   putstr(" attached=");

@@ -1572,7 +1572,8 @@ def exercise(args, run_dir, record):
                     record['tty']=checks[0]
                 if args.case == "runtime":
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
-                    if creators != [dict(actors=3,requests=9,references=9,closed=9,resource_opens=4,
+                    if creators != [dict(actors=3,requests=11,references=11,closed=11,
+                            creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,
                             attached=3,revoked=2,abort_requests=3,abandoned=1,errors=1,charged=0,allocated=transition["tables"])]:
                         raise SmokeError("file creator ownership/attach/token compensation mismatch")
                     record['file_creators']=creators[0]

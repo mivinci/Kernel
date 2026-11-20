@@ -1,4 +1,5 @@
 #include "private/contextipc.h"
+#include "private/filecreate.h"
 #include <abi/syscall.h>
 #include <proto/file.h>
 static int
@@ -97,8 +98,8 @@ sysctxbootwait(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Conncla
   return prepare(bank, self, layer, SYS_RQWAIT, route.rpc, NULL, 0, &route, out);
 }
 static isize
-operation(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache, const Opkey *key,
-          u64 options, u64 number, Rkey *out)
+operation(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+          const Opkey *key, u64 options, u64 number, Rkey *out)
 {
   Rroute route;
   Msg    request;
@@ -121,6 +122,18 @@ operation(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cach
   }
   if (error)
     return error;
+  if (pool) {
+    if (!separate(bank, sizeof(*bank), pool, sizeof(*pool)) ||
+        !separate(pool, sizeof(*pool), out, sizeof(*out)))
+      return -ERR_INVALID;
+    error = sysfilecreatecheck(pool, work, cache, key);
+    if (error)
+      return error;
+    if (number == SYS_CALL && work->state.operations[key->lease.slot].opcode == FS_OPEN)
+      options |= CALL_RECV_CALL;
+    route.pool = pool;
+  } else if (work->state.operations[key->lease.slot].flags & SYSOP_CREATOR)
+    return -ERR_STATE;
   route.kind = RCTX_ROUTE_OP;
   route.work = work;
   route.cache = cache;
@@ -137,13 +150,45 @@ isize
 sysctxopcall(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache,
              const Opkey *key, u64 options, Rkey *out)
 {
-  return operation(bank, self, layer, work, cache, key, options, SYS_CALL, out);
+  return operation(bank, self, layer, NULL, work, cache, key, options, SYS_CALL, out);
 }
 isize
 sysctxopwait(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache,
              const Opkey *key, Rkey *out)
 {
-  return operation(bank, self, layer, work, cache, key, 0, SYS_RQWAIT, out);
+  return operation(bank, self, layer, NULL, work, cache, key, 0, SYS_RQWAIT, out);
+}
+isize
+sysctxcreatecall(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                 Conncache *cache, const Opkey *key, Rkey *out)
+{
+  if (!pool)
+    return -ERR_INVALID;
+  return operation(bank, self, layer, pool, work, cache, key, 0, SYS_CALL, out);
+}
+isize
+sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                 Conncache *cache, const Opkey *key, Rkey *out)
+{
+  if (!pool)
+    return -ERR_INVALID;
+  return operation(bank, self, layer, pool, work, cache, key, 0, SYS_RQWAIT, out);
+}
+isize
+sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx   *context;
+  Rroute *route;
+  isize   error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  route = &context->route;
+  if (context->phase != RCTX_CLEANING || route->kind != RCTX_ROUTE_OP || !route->pool ||
+      route->delivered != 1)
+    return -ERR_STATE;
+  error = sysfilecreateresult(route->pool, route->work, route->cache, &route->operation);
+  route->capture_status = error;
+  return error;
 }
 isize
 sysctxhandoff(Rbank *bank, Connpeer self, Rkey key)
@@ -277,6 +322,13 @@ sysctxsignal(Rbank *bank, Connpeer self, Rkey key, void *trap, u64 now)
     if (error)
       return error;
   }
+  if (context->route.pool && context->route.kind == RCTX_ROUTE_OP &&
+      context->number == SYS_RQWAIT && context->phase == RCTX_CLEANING &&
+      context->route.delivered == 1)
+    /* Even when typed capture must defer, the raw tuple and prospective
+       references are already owned by the exact Op/Createop. Never wait for
+       drainage here or let a service error suppress an application signal. */
+    sysctxcreateresult(bank, self, key);
   if (!context->route.interruptible)
     return 0;
   if (context->route.kind != RCTX_ROUTE_OP)

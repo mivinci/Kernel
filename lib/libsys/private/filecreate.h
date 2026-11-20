@@ -1,6 +1,8 @@
 #ifndef _LIBSYS_FILECREATE_H
 #define _LIBSYS_FILECREATE_H
 #include "operation.h"
+/* Protected read-only validation of the exact creator/pool responsibility. */
+isize sysfilecreatecheck(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 /* Private per-slot creator responsibility in the existing connection page.
    Caller excludes caught signals. Inputs are private accepted snapshots.
    owner is the Rctx incarnation; context is MAIN/SIGNAL1/SIGNAL2. Source is

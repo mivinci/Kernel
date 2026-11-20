@@ -14,6 +14,20 @@ isize sysctxopcall(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Connca
                    const Opkey *operation, u64 options, Rkey *out);
 isize sysctxopwait(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache,
                    const Opkey *operation, Rkey *out);
+/* Creators bind their actual prepaid pool before native submission/wait.
+   Ordinary op routes reject a creator without this binding. OPEN consents
+   only to CALL resource delivery; other creation operations have no consent. */
+isize sysctxcreatecall(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                       Conncache *cache, const Opkey *operation, Rkey *out);
+isize sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                       Conncache *cache, const Opkey *operation, Rkey *out);
+/* Protected nonblocking typed capture after raw handoff. Records the outcome
+   in route.capture_status, preserving the native status separately. Failure
+   keeps the original Op/Createop and every reservation/resource; no ACK or fd
+   publication. The signal prelude attempts this for a handed-off creator
+   RQWAIT before entering a handler. A deferred/invalid service result does not
+   suppress the signal: raw responsibility remains stable for continuation. */
+isize sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key);
 /* After return-window capture or normal return, under caught-signal exclusion.
    Moves raw ownership once, is idempotent after that move, and keeps DONE on
    failure. Transient wait errors keep the original RPC in its destination.
