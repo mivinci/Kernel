@@ -93,6 +93,12 @@ isize sysconnworkreuse(Connwork *work, Conncache *cache, Connclaim claim);
    Caller excludes caught signals. This does not validate a successful reply
    or authorize publishing the failed reference. */
 isize sysconnworkreuseabort(Connwork *work, Conncache *cache, Connclaim claim);
+/* Existing mapping, exact old backend independently marked ended. Finish
+   only its held bootstrap after caller's logical/Rctx settlement; unknown
+   original IO retains owner. Drains/ACKs and drops reply-owned extra resource,
+   never unmaps or releases old MEM/CALL/other File/slot responsibility. Keeps
+   DRAINING; ordinary workclean remains gated on all remaining references. */
+isize sysconnworkbootended(Connwork *work, Conncache *cache, Connclaim claim);
 isize sysconnworkreserve(Connwork *work, Conncache *cache, u32 context, u32 span, Filelease *out);
 isize sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected);
 /* Abandon one never-published CONNECTING transport after settling logical

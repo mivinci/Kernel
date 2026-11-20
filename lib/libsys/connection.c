@@ -247,6 +247,36 @@ sysconnworkreuseabort(Connwork *work, Conncache *cache, Connclaim claim)
   return error ? error : sysconnready(cache, claim, entry.connid);
 }
 isize
+sysconnworkbootended(Connwork *work, Conncache *cache, Connclaim claim)
+{
+  Connentry  entry;
+  Connstate *s;
+  Bootstrap *boot;
+  isize      error = view(work, cache, &entry);
+  if (error)
+    return error;
+  s = &work->state;
+  boot = &s->bootstrap;
+  if (claim.tag.reserved || claim.tag.generation != s->tag.generation ||
+      claim.tag.index != s->tag.index || claim.seq != entry.sequence || !claim.owner ||
+      claim.owner != entry.owner)
+    return -ERR_STALE;
+  if (s->ended != 1 || entry.state != SYSCONN_DRAINING || !mapped(s, &entry))
+    return -ERR_STATE;
+  if (sysbootcheck(boot) || boot->state == SYSBOOT_FREE ||
+      (boot->opcode != FS_ATTACH && boot->opcode != FS_EXEC_CLAIM) ||
+      boot->flags & SYSBOOT_RESOURCE_MOVED ||
+      (boot->resource &&
+       (boot->resource == s->memory || boot->resource == s->call || boot->resource == s->space)))
+    return -ERR_STATE;
+  if (boot->claim.tag.generation != claim.tag.generation ||
+      boot->claim.tag.index != claim.tag.index || boot->claim.seq != claim.seq ||
+      boot->claim.owner != claim.owner)
+    return -ERR_STALE;
+  error = bootcleanup(boot, claim, 0, NULL);
+  return error ? error : sysconncleaned(cache, claim);
+}
+isize
 sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle space, Bootmap *map)
 {
   Connentry  entry;

@@ -217,6 +217,78 @@ sysctxpeerended(Rbank *bank, Connpeer self, Rkey key)
   return error;
 }
 isize
+sysctxbootpeerended(Rbank *bank, Connpeer self, Rkey key, Connwork *work, Conncache *cache)
+{
+  Rctx      *context;
+  Rroute    *route;
+  Bootstrap *boot;
+  Connentry  entry;
+  Connpeer   peer;
+  u32        i;
+  isize      error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (!separate(bank, sizeof(*bank), work, sizeof(*work)) ||
+      !separate(bank, sizeof(*bank), cache, sizeof(*cache)) ||
+      !separate(work, sizeof(work->state), cache, sizeof(*cache)))
+    return -ERR_INVALID;
+  if (work->state.self.pid != self.pid || work->state.self.image != self.image)
+    return -ERR_STALE;
+  error = sysconncheck(cache, self);
+  if (!error)
+    error = sysconnview(cache, work->state.tag, &entry);
+  if (error)
+    return error;
+  if (work->state.ended > 1 || (work->state.ended && entry.state != SYSCONN_DRAINING))
+    return -ERR_STATE;
+  route = &context->route;
+  boot = &work->state.bootstrap;
+  if (context->phase != RCTX_CLEANING || context->status != -ERR_PEER ||
+      route->kind != RCTX_ROUTE_BOOT || route->delivered != 1 || route->bootstrap != boot ||
+      sysbootcheck(boot) ||
+      (boot->opcode != FS_HELLO && boot->opcode != FS_ATTACH && boot->opcode != FS_EXEC_CLAIM))
+    return -ERR_STATE;
+  if (!route->target.pid || !route->target.image || route->target.pid != work->state.peer.pid ||
+      route->target.image != work->state.peer.image || entry.peer.pid != route->target.pid ||
+      entry.peer.image != route->target.image || route->claim.tag.reserved ||
+      route->claim.tag.generation != work->state.tag.generation ||
+      route->claim.tag.index != work->state.tag.index || route->claim.seq != entry.sequence ||
+      route->claim.owner != entry.owner ||
+      route->claim.tag.generation != boot->claim.tag.generation ||
+      route->claim.tag.index != boot->claim.tag.index || route->claim.seq != boot->claim.seq ||
+      route->claim.owner != boot->claim.owner)
+    return -ERR_STALE;
+  if (context->number == SYS_CALL) {
+    if (boot->state != SYSBOOT_PREPARED || context->args[1] != boot->opcode || context->args[2] ||
+        context->args[3] != boot->claim.seq || context->args[4] != boot->token ||
+        !(context->args[5] & CALL_ASYNC) ||
+        context->args[5] & ~((u64) (CALL_ASYNC | CALL_RECV_MEM | CALL_RECV_CALL)) ||
+        context->args[6])
+      return -ERR_STATE;
+    error = sysconnpeer((Handle) context->args[0], &peer);
+    if (error)
+      return error;
+    if (peer.pid != route->target.pid || peer.image != route->target.image)
+      return -ERR_DENIED;
+  } else if (context->number == SYS_RQWAIT) {
+    if (boot->state != SYSBOOT_RESULT || boot->status != -ERR_PEER || boot->kind != IPC_NONE ||
+        boot->flags || boot->resource || boot->rpc != route->rpc ||
+        context->args[0] != (u64) route->rpc)
+      return -ERR_STATE;
+    for (i = 1; i < 7; i++)
+      if (context->args[i])
+        return -ERR_STATE;
+    for (i = 0; i < 4; i++)
+      if (boot->words[i])
+        return -ERR_STATE;
+  } else
+    return -ERR_STATE;
+  error = sysconninvalidate(cache, work->state.tag);
+  if (!error)
+    work->state.ended = 1;
+  return error;
+}
+isize
 sysctxcreatepeerended(Rbank *bank, Connpeer self, Rkey key, Filepool *pool, Connwork *work,
                       Conncache *cache, const Opkey *operation)
 {

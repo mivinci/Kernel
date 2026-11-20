@@ -840,6 +840,11 @@ deadserver(const Bootview *boot, u64 creating)
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
         input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
         input.words[0] == FS_HELLO && !input.words[1]);
+  if (creating == FS_HELLO) {
+    filecreatetrace[1] = 1;
+    filecreatetrace[0] = 2;
+    return;
+  }
   zero(&alloc, sizeof(alloc));
   alloc.bytes = FS_CONN_BYTES;
   alloc.kind = ALLOC_SHARED;
@@ -868,8 +873,12 @@ deadserver(const Bootview *boot, u64 creating)
   CHECK(!ipc_reply_resource(input.request, &transfer));
   if (creating) {
     CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == peer.pid &&
-          input.image == peer.image && input.words[0] == creating && input.words[1] == CONNID &&
-          !sysfilerequest(head, FS_CONN_BYTES, (u32) input.words[3], input.words[2], &descriptor));
+          input.image == peer.image && input.words[0] == creating);
+    if (creating == FS_ATTACH)
+      CHECK(!input.words[1] && input.words[2] && input.words[3] == 1);
+    else
+      CHECK(input.words[1] == CONNID && !sysfilerequest(head, FS_CONN_BYTES, (u32) input.words[3],
+                                                        input.words[2], &descriptor));
     filecreatetrace[1] = 1;
     filecreatetrace[0] = 2;
     return;
@@ -962,6 +971,77 @@ resourceendclient(const Bootview *boot, u32 submitted)
         !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
   filecreatetrace[2] = 1;
   filecreatetrace[3] = 1;
+  filecreatetrace[4] = steps;
+  filecreatetrace[0] = 2;
+}
+static void
+bootpeerclient(const Bootview *boot, u32 mode)
+{
+  Connpeer  peer;
+  Conntag   tag;
+  Connclaim claim;
+  Connentry entry;
+  Bootmap   map;
+  Handle    owned, redundant = 0, self, parent, memory = 0;
+  Handle    space = bootresource(boot, BOOT_SELF_SPACE);
+  u64       image, steps = 0;
+  Rkey      invocation;
+  isize     error;
+  if (mode == 2) {
+    setup(boot);
+    tag = work.state.tag;
+    memory = work.state.memory;
+    CHECK(!sysconnreusebegin(&cache, tag, 202, &claim) &&
+          !sysbootprepare(&work.state.bootstrap, claim, FS_ATTACH, 1, 0));
+  } else {
+    CHECK(!__sys_getid(&self, &image, &parent));
+    peer.pid = self;
+    peer.image = image;
+    CHECK(!sysconninit(&cache, peer));
+    owned = bootresource(boot, 256);
+    CHECK(!sysconnpeer(owned, &peer) && !sysconnbind(&cache, peer, &tag) &&
+          !sysconnworkinit(&work, &cache, tag) &&
+          !sysconnworktakecall(&work, &cache, &owned, &redundant) && !owned && !redundant &&
+          !sysconnbegin(&cache, tag, 1, &claim) &&
+          !sysbootprepare(&work.state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0));
+  }
+  CHECK(!sysctxinit(&contexts, work.state.self) &&
+        !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim,
+                        work.state.call, CALL_RECV_MEM, &invocation));
+  if (!mode)
+    while (!filecreatetrace[7])
+      CHECK(!__sys_yield());
+  else
+    CHECK(!sysctxinvoke(&contexts, work.state.self, invocation) &&
+          !sysctxhandoff(&contexts, work.state.self, invocation) &&
+          !sysctxrewait(&contexts, work.state.self, invocation));
+  CHECK(sysctxinvoke(&contexts, work.state.self, invocation) == -ERR_PEER &&
+        !sysctxhandoff(&contexts, work.state.self, invocation) &&
+        !sysctxbootpeerended(&contexts, work.state.self, invocation, &work, &cache) &&
+        !sysctxfinish(&contexts, work.state.self, invocation) && work.state.ended == 1 &&
+        !sysconnview(&cache, tag, &entry) && entry.state == SYSCONN_DRAINING);
+  zero(&map, sizeof(map));
+  if (mode) {
+    error = mode == 2 ? sysconnworkbootended(&work, &cache, claim)
+                      : sysconnworkdiscard(&work, &cache, claim, space, &map);
+    CHECK(error == -ERR_WOULD_BLOCK && work.state.bootstrap.rpc && work.state.call &&
+          (!memory || (work.state.memory == memory && work.state.map.mapped)));
+    filecreatetrace[5] = (u64) work.state.bootstrap.rpc;
+    filecreatetrace[6] = 9;
+  }
+  do {
+    if (mode)
+      CHECK(++steps < 64 && !__sys_yield());
+    error = mode == 2 ? sysconnworkbootended(&work, &cache, claim)
+                      : sysconnworkdiscard(&work, &cache, claim, space, &map);
+  } while (error == -ERR_WOULD_BLOCK);
+  CHECK(!error && !work.state.bootstrap.state && !sysconnview(&cache, tag, &entry) &&
+        entry.state == SYSCONN_DRAINING && !entry.owner &&
+        (!memory || (work.state.memory == memory && work.state.map.mapped &&
+                     *(const volatile u64 *) ADDRESS == FS_CONN_MAGIC)) &&
+        !sysconnworkclean(&work, &cache));
+  filecreatetrace[1] = mode;
+  filecreatetrace[2] = filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
   filecreatetrace[0] = 2;
 }
@@ -1170,7 +1250,7 @@ int
 main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
-        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'n')) &&
+        ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 't')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1215,7 +1295,13 @@ main(int argc, char **argv)
     reuseabortclient(sysboot());
   else if (argv[0][0] == 'm')
     server(sysboot(), 5);
-  else
+  else if (argv[0][0] == 'n')
     backend(sysboot(), 5);
+  else if (argv[0][0] >= 'o' && argv[0][0] <= 'q')
+    bootpeerclient(sysboot(), (u32) (argv[0][0] - 'o'));
+  else if (argv[0][0] == 'r')
+    filecreatetrace[0] = 2;
+  else
+    deadserver(sysboot(), argv[0][0] == 's' ? FS_HELLO : FS_ATTACH);
   return 42;
 }

@@ -33,6 +33,12 @@ isize sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key);
    No probe or new message is sent; the prospective Op stays PREPARED for
    explicit pre-submission rollback. Native wait errors use sysoppeerended. */
 isize sysctxpeerended(Rbank *bank, Connpeer self, Rkey key);
+/* Exact HELLO/ATTACH/EXEC_CLAIM route only. After native PEER handoff, match
+   its submitted target, bootstrap claim and work peer before fixing ended.
+   A continued wait keeps the original target; a fresh wait-only route cannot
+   supply this proof. Failed CALL without an RPC rechecks the held CALL.
+   Only marks this work DRAINING/ended; no FINISH, ACK or resource release. */
+isize sysctxbootpeerended(Rbank *bank, Connpeer self, Rkey key, Connwork *work, Conncache *cache);
 /* A detached token ABORT failed with native ERR_PEER.
    Validates the exact bound bootstrap/token/prospective ID and cold-queries
    the CALL's real PID/image before submission. A continued RQWAIT keeps that
