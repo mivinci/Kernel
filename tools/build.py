@@ -190,6 +190,8 @@ def build(args, directory, run_dir):
     if "clang" not in tools["cc"]["version"].lower():
         raise BuildError("this profile requires Clang; GCC/CROSS is not implemented")
     include_files = list((ROOT / "include").rglob("*.h")) + list((ROOT / "include").rglob("*.inc"))
+    if args.case == "runtime":
+        include_files += list((ROOT / "sbin/fs").rglob("*.h"))
     if args.kind == "kernel" and args.case != "normal":
         include_files += list((ROOT / "tests/kernel").rglob("*.h"))
     include_files.sort()
@@ -237,6 +239,7 @@ def build(args, directory, run_dir):
             if args.case == "libsys":
                 sources += [ROOT / "tests/kernel/libsysload.c", directory / "sdk/libsysimage.S"]
             elif args.case == "runtime":
+                sources += [ROOT / "sbin/fs/cache.c", ROOT / "tests/kernel/fscachetest.c"]
                 sources += [ROOT / "tests/kernel/filecreatetest.c", directory / "sdk/filecreateimage.S"]
                 sources += [ROOT / "tests/kernel/runtimetest.c", directory / "sdk/runtimeimage.S"]
             elif args.case == "tty":

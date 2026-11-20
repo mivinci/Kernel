@@ -1571,6 +1571,10 @@ def exercise(args, run_dir, record):
                         raise SmokeError('tty native input/output/timer outcome or resource mismatch')
                     record['tty']=checks[0]
                 if args.case == "runtime":
+                    cache=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FSCACHECHECK ")]
+                    if cache != [dict(groups=14,bytes=12456)]:
+                        raise SmokeError("filesystem cache authority/version gate mismatch")
+                    record['fs_cache']=cache[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,

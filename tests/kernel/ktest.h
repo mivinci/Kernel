@@ -43,6 +43,7 @@ void spawntest(void);
 void libsysload(void);
 void runtimetest(void);
 void filecreatetest(void);
+void fscachetest(void);
 void ttytest(void);
 void jobtest(void);
 void elftest(void);
