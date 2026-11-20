@@ -1,4 +1,5 @@
 #include "private/operation.h"
+#include "private/syscall.h"
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -52,10 +53,13 @@ match(Connwork *work, Conncache *cache, const Opkey *key, Slotop **out)
       op->lease.span != key->lease.span || op->owner != key->owner)
     return -ERR_STALE;
   if (op->phase > SYSOP_ACKED || !op->file ||
-      op->flags & ~(SYSOP_BACKGROUND | SYSOP_SAVED | SYSOP_RESOURCE_MOVED | SYSOP_BAD_RESULT) ||
+      op->flags & ~(SYSOP_BACKGROUND | SYSOP_SAVED | SYSOP_RESOURCE_MOVED | SYSOP_BAD_RESULT |
+                    SYSOP_CANCEL_SENT) ||
       ((op->flags & SYSOP_BACKGROUND) ? op->owner != 0 : op->owner == 0) ||
       ((op->phase == SYSOP_WAITING || op->phase == SYSOP_RESULT) ? handlekind(op->rpc) != HANDLE_RPC
                                                                  : op->rpc != 0))
+    return -ERR_STATE;
+  if (op->flags & SYSOP_CANCEL_SENT && (!op->deadline || op->phase == SYSOP_PREPARED))
     return -ERR_STATE;
   for (i = 0; i < key->lease.span; i++) {
     const Filelease *page;
@@ -211,6 +215,79 @@ sysopcancel(Connwork *work, Conncache *cache, const Opkey *key)
   if (error)
     return error;
   return op->phase == SYSOP_WAITING ? ipc_rqcancel(op->rpc) : -ERR_STATE;
+}
+static isize
+interruptible(const Slotop *op)
+{
+  if (op->flags & SYSOP_BACKGROUND ||
+      (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_OPEN &&
+       op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
+    return -ERR_NOTSUP;
+  if (!(op->flags & SYSOP_CANCEL_SENT) && op->deadline)
+    return -ERR_STATE;
+  return 0;
+}
+isize
+sysopinterruptcheck(Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Slotop *op;
+  isize   error = match(work, cache, key, &op);
+  return error ? error : interruptible(op);
+}
+isize
+sysopinterrupt(Connwork *work, Conncache *cache, const Opkey *key, u64 now)
+{
+  Slotop *op;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  error = interruptible(op);
+  if (error)
+    return error;
+  if (op->phase != SYSOP_WAITING || op->flags & SYSOP_CANCEL_SENT)
+    return 0;
+  if (now > UINT64_MAX - SYSOP_CONTROL_NS)
+    return -ERR_OVERFLOW;
+  error = ipc_rqcancel(op->rpc);
+  if (error)
+    return error;
+  op->deadline = now + SYSOP_CONTROL_NS;
+  op->flags |= SYSOP_CANCEL_SENT;
+  return 0;
+}
+isize
+sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 bytes, void *out)
+{
+  Slotop *op;
+  Ipcmsg  result;
+  u64     limit;
+  u32     i;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (op->phase != SYSOP_RESULT || op->status || op->kind != IPC_NONE || op->resource ||
+      op->words[0] || op->words[1] != key->lease.seq || op->flags & SYSOP_BAD_RESULT)
+    return -ERR_STATE;
+  limit = (u64) key->lease.span * FS_SLOT_BYTES;
+  if (!work->state.map.mapped || !work->state.map.verified ||
+      work->state.map.bytes != FS_CONN_BYTES ||
+      work->state.map.address > UINT64_MAX - FS_CONN_BYTES || offset > limit ||
+      bytes > limit - offset || bytes > op->words[3] || !output(work, cache, out, bytes) ||
+      !separate(key, sizeof(*key), out, bytes) ||
+      !separate((void *) (uintptr_t) work->state.map.address, FS_CONN_BYTES, out, bytes))
+    return -ERR_INVALID;
+  error = ipc_rqpoll(op->rpc, RQ_FINISH, &result);
+  if (error)
+    return error;
+  if (result.kind || result.source || result.request || result.image)
+    return -ERR_STATE;
+  for (i = 0; i < 4; i++)
+    if (result.words[i])
+      return -ERR_STATE;
+  return __sys_copy(out,
+                    (const void *) (uintptr_t) (work->state.map.address + FS_DATA_OFFSET +
+                                                key->lease.slot * FS_SLOT_BYTES + offset),
+                    bytes);
 }
 isize
 sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)

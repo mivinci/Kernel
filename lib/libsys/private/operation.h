@@ -10,6 +10,8 @@
 #define SYSOP_SAVED          2
 #define SYSOP_RESOURCE_MOVED 4
 #define SYSOP_BAD_RESULT     8
+#define SYSOP_CANCEL_SENT    16
+#define SYSOP_CONTROL_NS     UINT64_C(1000000000)
 typedef struct Opkey Opkey;
 struct Opkey
 {
@@ -34,6 +36,17 @@ isize sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize sta
                    const Ipcmsg *result);
 isize sysoppoll(Connwork *work, Conncache *cache, const Opkey *key);
 isize sysopcancel(Connwork *work, Conncache *cache, const Opkey *key);
+/* Explicit foreground POSIX policy only: READ/WRITE/OPEN/POLL. Fresh policy
+   requires deadline=0; first successful cancel stores now+CONTROL_NS, never
+   resets it. Completed results win and background/transactional work refuses
+   this policy. now is the runtime's monotonic nanosecond sample. */
+isize sysopinterruptcheck(Connwork *work, Conncache *cache, const Opkey *key);
+isize sysopinterrupt(Connwork *work, Conncache *cache, const Opkey *key, u64 now);
+/* Known successful ordinary result only. Nonblocking RQ_FINISH confirms real
+   access ended, then copy a privately bounded part of the held span. Caller
+   validates business counts/descriptor semantics. No ACK/SAVED/release. */
+isize sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 bytes,
+                void *out);
 /* Rctx-to-background unique move. Returns same connection/lease, owner=0,
    clears input key and makes old foreground keys stale. */
 isize sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out);

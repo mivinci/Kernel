@@ -34,6 +34,7 @@ struct Rroute
   Connclaim  claim;
   Opkey      operation;
   Handle     rpc;
+  u64        interruptible, snapshot_offset, snapshot_bytes, snapshot_saved;
 };
 struct Rctx
 {
@@ -44,7 +45,7 @@ struct Rctx
   u64          args[7];
   volatile u64 active;
   Rroute       route;
-  u64          reserved[29];
+  u64          reserved[25];
 };
 struct Rbank
 {

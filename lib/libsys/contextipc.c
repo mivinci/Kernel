@@ -205,3 +205,66 @@ sysctxhandoff(Rbank *bank, Connpeer self, Rkey key)
   context->phase = RCTX_CLEANING;
   return 0;
 }
+isize
+sysctxinterruptible(Rbank *bank, Connpeer self, Rkey key)
+{
+  Rctx *context;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->phase != RCTX_PREPARED || context->active || context->route.kind != RCTX_ROUTE_OP)
+    return -ERR_STATE;
+  error = sysopinterruptcheck(context->route.work, context->route.cache, &context->route.operation);
+  if (error)
+    return error;
+  context->route.interruptible = 1;
+  return 0;
+}
+isize
+sysctxsignal(Rbank *bank, Connpeer self, Rkey key, void *trap, u64 now)
+{
+  Rctx *context;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->route.kind > RCTX_ROUTE_OP || context->route.interruptible > 1)
+    return -ERR_STATE;
+  error = sysctxcapture(bank, self, key, trap);
+  if (error < 0)
+    return error;
+  if (context->phase == RCTX_DONE && context->route.kind) {
+    error = sysctxhandoff(bank, self, key);
+    if (error)
+      return error;
+  }
+  if (!context->route.interruptible)
+    return 0;
+  if (context->route.kind != RCTX_ROUTE_OP)
+    return -ERR_STATE;
+  return sysopinterrupt(context->route.work, context->route.cache, &context->route.operation, now);
+}
+isize
+sysctxsnapshot(Rbank *bank, Connpeer self, Rkey key, u64 offset, u64 bytes)
+{
+  Rctx *context;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (context->phase != RCTX_CLEANING || context->route.kind != RCTX_ROUTE_OP ||
+      context->route.delivered != 1 || context->route.snapshot_saved > 1)
+    return -ERR_STATE;
+  if (context->route.snapshot_saved)
+    return context->route.snapshot_offset == offset && context->route.snapshot_bytes == bytes
+               ? 0
+               : -ERR_STATE;
+  if (bytes > RCTX_SNAPSHOT_BYTES)
+    return -ERR_INVALID;
+  error = sysopcopy(context->route.work, context->route.cache, &context->route.operation, offset,
+                    bytes, bank->snapshots[key.layer]);
+  if (error)
+    return error;
+  context->route.snapshot_offset = offset;
+  context->route.snapshot_bytes = bytes;
+  context->route.snapshot_saved = 1;
+  return 0;
+}

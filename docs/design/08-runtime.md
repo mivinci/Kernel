@@ -578,3 +578,21 @@ wait登记借用原记录的同一个RPC，返回时再次核对精确原RPC与�
 最终审计核对源码/头/SDK、无libc依赖、实际链接用户载荷、返回窗口、银行/trace大小和无测试代码的生产内核；默认init/serial与stage144逐字节相同，clangd切回RV64/libsys。证据build/host/stage145-context-handoff/{unit.log,fmt-check.log,libsys-riscv.log,libsys-arm64.log,sigframe.log,normal.log,verify.py,evidence.json}。初次SDK检查分别拒绝隐式memset/memcpy，已改显式清零/字段复制；测试初始化曾早于Connwork身份建立，已按直接退出码观测修正。失败现场和脚本入口误用记录保留。本轮未重跑195场景完整矩阵，最近完整矩阵仍见stage144，不将旧结果写作本轮验证。
 
 共享数据/参数专用快照、正式信号前置取消、嵌套链/SA_RESTART、fork/Fix修复和标准fd/生产服务仍待接；本点不代表完整POSIX/sh/net/GUI，无CI、板端或性能验收。
+
+### 信号前置取消与稳定输出快照（2026-11-20）
+
+contextipc新增显式interruptible登记、signal前置及snapshot原语。登记仅在Rctx PREPARED且尚未激活时允许，限前台READ/WRITE/OPEN/POLL_QUERY/POLL_WAIT；CLOSE、fork/exec事务和后台收尾拒绝，原生IPC/未登记路由不自动取消。调用者仍须短暂屏蔽可捕获信号来修改元数据，前置先按准确返回窗口capture/handoff，再对原Op的同一RPC请求协作取消；不等待服务、不发新Rq，不以信号本身终结业务。
+
+首次成功rqcancel后，Op保存CANCEL_SENT和运行时单调时间采样值加CONTROL_NS=1秒；后续信号/重查不重置，未提交或已固定完成的记录不请求取消。溢出或原生取消失败不发布截止；未登记此策略的旧非零deadline不会被覆盖，登记拒绝该组合。取消标记和绝对截止随原槽责任保持，不随Rctx结束丢失。此处只实现前置及截止记录，handler后到期EIO/转后台、完整重启裁决仍待前端接入。
+
+稳定输出使用每层既有16KiB预付区；Rroute元数据现152字节，仍装入原512字节Rctx，银行仍50712字节。handoff后先核验普通成功结果、业务status=0、原seq、返回bytes上限和私有页租约/映射范围，再非阻塞poll同一RPC的RQ_FINISH。这个选项只返回空的访问结束证明，不重新领取业务tuple；证明未到则WOULD_BLOCK，不能仅凭共享DONE复制/释放。随后受检查copy到私有区，完整成功才发布snapshot_offset/bytes/saved；部分FAULT不发布，可按原责任重试。同一区间重复调用不重读共享页，换区间拒绝，快照仅对本次Rctx代次有效，须在finish前保存/交付。参数语义/数据偏移仍由具体适配器按私有输入核对；本原语不自动SAVED、ACK或释放页/File，也不证明DMA停止。
+
+真实libsys测试仍在HELLO/READ四处首存储窗口注入私有信号。HELLO不登记取消；前台READ在handler前已把RPC移入原记录并提交取消，handler用独立层。两架构本次均实际走到QUEUED取消：handler返回后从原RPC确认CANCELLED，先ACK/释放旧请求、返还原File pin与页，再仅因已证明零效果提交一次新请求；若原结果尚未知或已完成，代码继续同一RPC，不重发。后端仍只处理一次READ，不重新按fd整数定位。
+
+完成READ的窗口在handler前确认RQ_FINISH并取得私有4字节快照；handler刻意把原SHARED字节改成XXXX，再发独立GETID，主层恢复后仍得到原test内容。移入后台的原槽继续承担RPC/页/File责任，快照不使其提前归还；显式保存结果及数据后才ACK、finish并关闭连接。CLOSE不登记取消，八个普通Rq满额下的控制关闭回归继续通过；本轮未注入关闭中断或验收一秒故障退出。
+
+新增12项host覆盖显式/原生策略分离、前置先转交再取消、固定首次截止/失败与溢出、完成结果优先、关闭/后台拒绝、旧镜像、快照不重读、未排空拒绝、双页/溢出/返回长度界限、部分复制失败、资源/原生或业务错误/旧seq拒绝及代次结束。最终950项完整host、格式、两架构各libsys/sigframe/normal共6次QEMU与6份journal通过；实际链接libsys与frame载荷、源码/头/SDK/无libc依赖、银行/汇编窗口和生产无测试代码均审计。init/serial与stage145逐字节相同，clangd切回RV64/libsys；本轮未重跑195场景矩阵，最近完整矩阵仍为stage144。
+
+证据build/host/stage146-signal-snapshot/的unit/场景日志、verify.py及evidence.json。首次QEMU因把RQ_FINISH误解为重复业务回复而在快照检查退出98；直接核对rqresult的空证明契约后同时修正生产检查与host模型，原现场保留。补齐业务成功/seq/长度保护后重新执行最终host及六场景，前序结果另保留，未将其充作最终源码证据。
+
+当前只是可被libc/自定义运行时复用的私有前置原语；公开POSIX trampoline/errno、完整嵌套/Fix、输入参数快照、到期后台补偿/SA_RESTART及标准fd/生产tty/fs/blk继续待接，无CI、板端、性能或完整sh/net/GUI验收。

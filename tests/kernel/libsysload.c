@@ -124,6 +124,7 @@ libsysload(void)
   Pgstat     before, after;
   u32        i, ended, turns = 0, source_cleaned = 0, resource_commits = 0;
   u64        handoff[16];
+  u64        replayed = 0;
   int        error;
   pgstat(&before);
   for (i = 0; i < 2; i++) {
@@ -160,7 +161,9 @@ libsysload(void)
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
                   client_trace[9] == 6 && client_trace[19] == 4 && client_trace[20] == 4 &&
-                  client_trace[21] == 30 && contextinjected == 30);
+                  client_trace[21] == 30 && client_trace[22] == 1 && client_trace[23] == 1 &&
+                  client_trace[24] <= 1 && contextinjected == 30);
+          replayed = client_trace[24];
           while ((error = procclean(pids[0])) > 0) {
           }
           REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
@@ -216,6 +219,12 @@ libsysload(void)
   puthex(1);
   putstr(" rctx_handoffs=");
   puthex(4);
+  putstr(" cancel_before_handler=");
+  puthex(1);
+  putstr(" stable_snapshot=");
+  puthex(1);
+  putstr(" queued_retries=");
+  puthex(replayed);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");
