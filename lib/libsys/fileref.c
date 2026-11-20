@@ -21,8 +21,12 @@ output(const Filepool *pool, const void *out, u64 bytes)
 static int
 valid(const Fileref *entry)
 {
-  if (entry->reserved || entry->generation > SYSFILE_GEN_MAX || entry->state > SYSFILE_REF_RETIRED)
+  if (entry->reserved || entry->generation > SYSFILE_GEN_MAX || entry->state > SYSFILE_REF_RESERVED)
     return 0;
+  if (entry->state == SYSFILE_REF_RESERVED)
+    return entry->generation && !entry->connection.generation && !entry->connection.index &&
+           !entry->connection.reserved && !entry->session && !entry->reference && !entry->token &&
+           !entry->aliases && !entry->pins && !entry->close_sequence;
   if (entry->state == SYSFILE_REF_FREE || entry->state == SYSFILE_REF_RETIRED)
     return !entry->connection.generation && !entry->connection.index &&
            !entry->connection.reserved && !entry->session && !entry->reference && !entry->token &&
@@ -85,6 +89,112 @@ sysfilerefcheck(const Filepool *pool, Connpeer self)
   for (i = 0; i < SYSFILE_REFS; i++)
     if (!valid(&pool->entries[i]) || pool->entries[i].close_sequence > pool->sequence)
       return -ERR_STATE;
+  return 0;
+}
+isize
+sysfilerefreserve(Filepool *pool, Connpeer self, u32 count, Filestage *stage)
+{
+  u32   slots[2], found = 0, i;
+  isize error;
+  if (!output(pool, stage, sizeof(*stage)) || !count || count > 2 || stage->count ||
+      stage->reserved || stage->files[0] || stage->files[1])
+    return -ERR_INVALID;
+  error = sysfilerefcheck(pool, self);
+  if (error)
+    return error;
+  for (i = 0; i < SYSFILE_REFS && found < count; i++)
+    if (pool->entries[i].state == SYSFILE_REF_FREE)
+      slots[found++] = i;
+  if (found != count)
+    return -ERR_CAPACITY;
+  for (i = 0; i < count; i++) {
+    Fileref *entry = &pool->entries[slots[i]];
+    entry->generation++;
+    entry->state = SYSFILE_REF_RESERVED;
+    stage->files[i] = (entry->generation << 8) | slots[i];
+  }
+  stage->count = count;
+  return 0;
+}
+static isize
+stagecheck(Filepool *pool, Connpeer self, const Filestage *stage, Fileref *entries[2])
+{
+  u32   i;
+  isize error;
+  if (!output(pool, stage, sizeof(*stage)) || !stage->count || stage->count > 2 ||
+      stage->reserved || (stage->count == 1 && stage->files[1]) ||
+      (stage->count == 2 && stage->files[0] == stage->files[1]))
+    return -ERR_INVALID;
+  error = sysfilerefcheck(pool, self);
+  if (error)
+    return error;
+  for (i = 0; i < stage->count; i++) {
+    u64      file = stage->files[i];
+    Fileref *entry = &pool->entries[file & 255];
+    if (!(file >> 8) || entry->generation != file >> 8 || entry->state != SYSFILE_REF_RESERVED)
+      return -ERR_STALE;
+    entries[i] = entry;
+  }
+  return 0;
+}
+isize
+sysfilerefcommit(Filepool *pool, Connpeer self, Filestage *owned_stage, const Filevalue *values,
+                 u32 closing)
+{
+  Fileref *entries[2];
+  u32      i;
+  u64      address = (u64) (uintptr_t) values, bytes;
+  isize    error = stagecheck(pool, self, owned_stage, entries);
+  if (error)
+    return error;
+  bytes = owned_stage->count * sizeof(*values);
+  if (closing > 1 || !output(pool, values, bytes) || bytes > UINT64_MAX - address ||
+      !((u64) (uintptr_t) owned_stage + sizeof(*owned_stage) <= address ||
+        address + bytes <= (u64) (uintptr_t) owned_stage))
+    return -ERR_INVALID;
+  for (i = 0; i < owned_stage->count; i++) {
+    const Filevalue *value = &values[i];
+    if (!value->connection.generation || value->connection.index >= SYSCONN_COUNT ||
+        value->connection.reserved || !value->session || !value->reference)
+      return -ERR_INVALID;
+  }
+  if (owned_stage->count == 2 &&
+      values[0].connection.generation == values[1].connection.generation &&
+      values[0].connection.index == values[1].connection.index &&
+      values[0].session == values[1].session && values[0].reference == values[1].reference)
+    return -ERR_INVALID;
+  for (i = 0; i < owned_stage->count; i++) {
+    Fileref *entry = entries[i];
+    entry->connection.generation = values[i].connection.generation;
+    entry->connection.index = values[i].connection.index;
+    entry->connection.reserved = 0;
+    entry->session = values[i].session;
+    entry->reference = values[i].reference;
+    entry->token = values[i].token;
+    entry->aliases = closing ? 0 : 1;
+    entry->state = closing ? SYSFILE_REF_CLOSING : SYSFILE_REF_LIVE;
+  }
+  for (i = 0; i < sizeof(*owned_stage); i++)
+    ((u8 *) owned_stage)[i] = 0;
+  return 0;
+}
+isize
+sysfilerefabort(Filepool *pool, Connpeer self, Filestage *owned_stage)
+{
+  Fileref *entries[2];
+  u32      i;
+  isize    error = stagecheck(pool, self, owned_stage, entries);
+  if (error)
+    return error;
+  for (i = 0; i < owned_stage->count; i++) {
+    u64 generation = entries[i]->generation;
+    clear(entries[i]);
+    entries[i]->generation = generation;
+    if (generation == SYSFILE_GEN_MAX)
+      entries[i]->state = SYSFILE_REF_RETIRED;
+  }
+  for (i = 0; i < sizeof(*owned_stage); i++)
+    ((u8 *) owned_stage)[i] = 0;
   return 0;
 }
 isize

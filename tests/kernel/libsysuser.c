@@ -302,6 +302,43 @@ receiveserver(const Bootview *view)
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
 volatile u64 resource_trace[56];
+static void
+referenceprepare(Connpeer self, Conntag connection, u64 *file)
+{
+  Filestage stages[128], extra, stale;
+  Filevalue value;
+  Fileref   view;
+  u64       unused = 0;
+  u32       i;
+  for (i = 0; i < sizeof(stages); i++)
+    ((u8 *) stages)[i] = 0;
+  for (i = 0; i < sizeof(extra); i++)
+    ((u8 *) &extra)[i] = 0;
+  for (i = 0; i < ARRAY_SIZE(stages); i++)
+    REQUIRE(!sysfilerefreserve(&file_registry, self, 2, &stages[i]), 27);
+  stale = stages[0];
+  REQUIRE(sysfilerefreserve(&file_registry, self, 1, &extra) == -ERR_CAPACITY && !extra.count &&
+              sysfilerefview(&file_registry, self, stale.files[0], &view) == -ERR_STALE &&
+              sysfilerefnew(&file_registry, self, connection, 55, 77, 0, &unused) ==
+                  -ERR_CAPACITY &&
+              !unused,
+          28);
+  for (i = 0; i < ARRAY_SIZE(stages); i++)
+    REQUIRE(!sysfilerefabort(&file_registry, self, &stages[i]) && !stages[i].count, 29);
+  REQUIRE(!sysfilerefreserve(&file_registry, self, 1, &extra) &&
+              sysfilerefabort(&file_registry, self, &stale) == -ERR_STALE,
+          30);
+  *file = extra.files[0];
+  value.connection = connection;
+  value.session = 55;
+  value.reference = 77;
+  value.token = 0;
+  REQUIRE(!sysfilerefcommit(&file_registry, self, &extra, &value, 0) && !extra.count &&
+              !sysfilerefview(&file_registry, self, *file, &view) && view.aliases == 1 &&
+              !view.pins && view.state == SYSFILE_REF_LIVE &&
+              !sysfilerefcheck(&file_registry, self),
+          31);
+}
 static int
 argumenttext(const Argsnap *snapshot, u32 environment, u64 index, const char *expected, u64 bytes)
 {
@@ -1314,10 +1351,8 @@ typedclient(const Bootview *view, Handle peer)
     for (i = 0; i < sizeof(descriptor); i++)
       ((u8 *) &descriptor)[i] = 0;
     sysfdinit(&file_descriptors);
-    REQUIRE(!sysfilerefinit(&file_registry, connection_work.state.self) &&
-                !sysfilerefnew(&file_registry, connection_work.state.self, connection_tag, 55, 77,
-                               0, &file),
-            125);
+    REQUIRE(!sysfilerefinit(&file_registry, connection_work.state.self), 125);
+    referenceprepare(connection_work.state.self, connection_tag, &file);
     fileid = file;
     REQUIRE(!sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 0 &&
                 !sysfdpublish(&file_descriptors, descriptor_tag, file, 0) &&

@@ -20,15 +20,15 @@
 
 ## 最新完成点与证据
 
-- stage154：同步硬件FAULT接生产直接帧，COW仍优先；规范原因/地址与原始Life诊断分开。首次递送失败按原故障终止，非法sigreturn仍走原BAD_SIGNAL_FRAME。
-- 两架构各11条真实异常/失败路径，handler合法修改PC并恢复，默认/忽略/屏蔽/栈不足/嵌套耗尽保留原诊断。12项HAL专项含FP标志、FnV/SP地址；外部总线/FPE/SP对齐仍无实际硬件触发证明。
-- 验收：完整make test-all通过1006项host、格式、195次双架构QEMU、168份journal，含16次生产启动和10条失败清理；源码/SDK/实际载荷审计通过，init/serial与stage153相同，clangd切回RV64/sigframe。
-- 证据：`build/host/stage154-hardware-fault/`。早期fixture缺头和NX页内分类失败、补地址规则前停止的旧验证均保留；最终从头完整通过，未拼接不同源码结果。无CI、板端或性能结果。
+- stage155：创建前本地引用可原子预留一个或两个位置，接受结果后整组转LIVE或直接交给CLOSING锚；旧键、容量/第二值错误和别名保持整组不变，代次不回退。
+- 14项专项；两架构实际占满256个预留位置、撤销及旧键拒绝，再接原fixture的READ/关闭链。没有执行远端OPEN/DUPREF/PIPE或创建补偿；引用表、连接工作页和Rctx预算保持。
+- 验收：1014项完整host、格式、6次双架构QEMU与6份journal；源码/SDK/实际载荷审计通过，init/serial与stage154相同，clangd切回RV64/libsys。
+- 证据：`build/host/stage155-reference-reserve/`。初次原生fixture失败输出初值错误已修正并保留日志；未重跑195矩阵，最近完整矩阵为stage154（1006 host、195 QEMU、168 journal）。无CI、板端或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
-- 已确认但待代码/验收：创建类reference_id返回位置（普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref）见10末尾。GROUP target=0及同步FAULT生产已交付，公开libc kill/raise与完整信号前端未接。
+- 已确认但待类型化回复适配/验收：创建类reference_id返回位置（普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref）见10末尾；本地位置预留已接。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise与完整信号前端未接。
 - 接创建类引用接管/补偿，继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 

@@ -1019,3 +1019,13 @@ libsys新增私有closewatch、closeinterrupt及closework。先核验原File关�
 ### 创建类 reference_id 返回位置（2026-11-20用户确认）
 
 普通OPEN保持value=session、bytes=8，原槽输出u64 reference_id；VFS交付CALL的业务三字仍[seq,session,prepare_token]，原槽同样输出8字节reference_id。DUPREF保持session，value=新reference_id、bytes=0；PIPE的value=2、bytes=32，原槽按读端/写端顺序输出两条{session:u64,reference_id:u64}。回复及槽数据须在原RPC排空后保存、ACK前接管，未发布fd才能依据原引用做补偿；不能把free CALL等同close远端引用。此项已冻结，创建类适配及运行验收仍待实现。
+
+### 创建前的本地引用预留（2026-11-20）
+
+Filepool新增私有RESERVED状态，sysfilerefreserve在提交远端创建前原子预留一个位置或PIPE的两个位置，Filestage保存完整代次ID。先找到全部空位才改变代次/状态；只剩一个空位时申请两个返回CAPACITY，池和输出不变。预留阶段不保存未知后端身份、session/ref/token，没有别名和pin，普通view/alias/pin拒绝；普通new也不能占用预留位置。256项及72字节Fileref、18456字节Filepool保持，无新增全局清理表或资源额度。
+
+sysfilerefcommit先核对整组键和已接受的Filevalue，再一起转LIVE（各含一份尚未发布的本地引用），或以closing=1直接转CLOSING供原关闭锚/worker接管；第二项格式错误、重复引用、陈旧ID或输入别名不先提交第一项。提交后清空调用者持有的stage。sysfilerefabort仅释放仍为RESERVED的整组ID，代次不回退，最终代次撤销后退休；调用者须已证明未提交、明确没有产生引用或补偿完成，不能因超时/未知结果就调用本地abort。后端身份、原RPC真实结束和接管/补偿证明由后续类型化适配提供，本层不解析服务结果、发送ABORT/CLOSE或发布fd。
+
+8项新增host加原6项共14项专项覆盖双位置容量、完整提交/关闭锚、第二键/第二值错误无部分变化、重复及别名拒绝、源镜像/旧代次/最终代次和持有键覆盖。原生libsys载荷先以128次双预留占满256项，核对普通分配和另一预留都CAPACITY、预留ID不可查看；全部在尚无远端操作时撤销，再核对旧键STALE。随后单预留接管fixture原有55/77引用，继续实际READ、fd别名/pin及唯一CLOSE/worker路径，不把它描述为已执行OPEN或PIPE。
+
+最终1014项完整host、格式及RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过。两架构实际调用新预留/提交/撤销函数，用户载荷与当前SDK逐字节一致；fileref.o无未定义依赖，表/连接工作页/Rctx预算不变，init/serial与stage154逐字节相同，clangd切回RV64/libsys。证据build/host/stage155-reference-reserve/的unit、focused、场景日志、verify.py和evidence.json。首次原生fixture误把失败输出当作初值0，已改为使用独立初始化的失败输出，失败日志保留，未放宽实现。未重跑195矩阵（最近stage154），无CI/板端/性能结果；创建类回复解析、ACK前原结果接管、实际补偿/ATTACH、公开fd及生产服务仍须继续。

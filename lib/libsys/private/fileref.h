@@ -1,15 +1,28 @@
 #ifndef _LIBSYS_FILEREF_H
 #define _LIBSYS_FILEREF_H
 #include "conn.h"
-#define SYSFILE_REFS        256
-#define SYSFILE_GEN_MAX     (UINT64_MAX >> 8)
-#define SYSFILE_REF_FREE    0
-#define SYSFILE_REF_LIVE    1
-#define SYSFILE_REF_CLOSING 2
-#define SYSFILE_REF_RETIRED 3
+#define SYSFILE_REFS         256
+#define SYSFILE_GEN_MAX      (UINT64_MAX >> 8)
+#define SYSFILE_REF_FREE     0
+#define SYSFILE_REF_LIVE     1
+#define SYSFILE_REF_CLOSING  2
+#define SYSFILE_REF_RETIRED  3
+#define SYSFILE_REF_RESERVED 4
 typedef struct Fileref   Fileref;
 typedef struct Filepool  Filepool;
 typedef struct Fileclose Fileclose;
+typedef struct Filestage Filestage;
+typedef struct Filevalue Filevalue;
+struct Filestage
+{
+  u64 files[2];
+  u32 count, reserved;
+};
+struct Filevalue
+{
+  Conntag connection;
+  u64     session, reference, token;
+};
 struct Fileref
 {
   u64     generation;
@@ -30,6 +43,7 @@ struct Fileclose
 };
 STATIC_ASSERT(sizeof(Fileref) == 72, local_file_reference_size);
 STATIC_ASSERT(sizeof(Fileclose) == 16, local_file_close_key);
+STATIC_ASSERT(sizeof(Filestage) == 24 && sizeof(Filevalue) == 40, prospective_file_reference);
 /* Private client-Image registry and prepaid last-close anchor. No backend
    permissions, offset or mutable File status is cached as authority here.
    Fresh preallocated storage only; caller excludes caught signals. self is
@@ -37,6 +51,21 @@ STATIC_ASSERT(sizeof(Fileclose) == 16, local_file_close_key);
    file IDs are private generation[55:0]/index[7:0], not kernel Handles. */
 isize sysfilerefinit(Filepool *pool, Connpeer self);
 isize sysfilerefcheck(const Filepool *pool, Connpeer self);
+/* Reserve one creator result or both PIPE ends before remote submission.
+   stage is initially zero; reserved IDs cannot be viewed/pinned/published as
+   live references. Capacity failure changes neither generations nor outputs.
+   commit validates the whole batch before consuming stage. closing=1 moves
+   unpublished successful results directly to existing close responsibility,
+   without ever making them live descriptors. Caller owns stable independent
+   value storage, excludes caught signals, and has saved/proved original RPC
+   finish plus exact backend identities. No IPC or fd publication here. */
+isize sysfilerefreserve(Filepool *pool, Connpeer self, u32 count, Filestage *stage);
+isize sysfilerefcommit(Filepool *pool, Connpeer self, Filestage *owned_stage,
+                       const Filevalue *values, u32 closing);
+/* Only before submission, after a known no-reference result, or after proven
+   compensation. Unknown remote results never authorize releasing the reserve.
+   Both IDs are validated before either is returned; generations never rewind. */
+isize sysfilerefabort(Filepool *pool, Connpeer self, Filestage *owned_stage);
 /* Before connection teardown: 1 while any live/pending-close reference still
    uses this exact directory incarnation, 0 only when none remain. */
 isize sysfilerefconnection(const Filepool *pool, Connpeer self, Conntag connection);
