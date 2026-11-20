@@ -264,17 +264,32 @@ def audit_child(qmp, directory, args, record, kernel_root, parent_leaves, data, 
     if not incoming or state[6] != incoming['bytes'] or not state[5] or state[7]:
         raise ValueError('production UART input did not pass through the real IRQ-driven serial process')
     boot = struct.unpack('<18Q', memory.read(child['root'], 0x3fff000000, 144))
-    if boot[0:5] != (0x4b424f4f54303031, 2, 552, 0, 7) or boot[8:10] != (7, 200) or any(boot[10:14]) or any(boot[16:]):
+    if (boot[0:2] != (0x4b424f4f54303031, 2) or not 144 <= boot[2] <= 4096 or
+            boot[3:8] != (0, 7, 368, 0, 0) or boot[8:10] != (7, 144) or
+            any(boot[10:14]) or boot[14:16] != (0x10000, 0x4000000000) or any(boot[16:])):
         raise ValueError('serial Boot differs from the native private resource contract')
-    startup = memory.read(child['root'], 0x3fff000000, 552)
+    startup = memory.read(child['root'], 0x3fff000000, boot[2])
     for i, tag in enumerate((1, 2, 0x100, 0x101, 0x102, 0x103, 0x104)):
-        resource = struct.unpack_from('<4Q', startup, 200 + i * 32)
+        resource = struct.unpack_from('<4Q', startup, boot[9] + i * 32)
         if resource[0] != tag or resource[1] >> 59 != 2 or any(resource[2:]):
             raise ValueError('serial Boot did not receive real least-rights resources')
+    expected_args = ('sbin/serial', 'ns16550' if args.arch == 'riscv' else 'pl011',
+                     str(uart['base'] - base), str(uart['size']), str(production['service'][0]),
+                     '0', '1' if args.arch == 'riscv' else '4')
+    end = boot[5] + 7 * 8
+    for i, text in enumerate(expected_args):
+        offset, length = struct.unpack_from('<2I', startup, boot[5] + i * 8)
+        encoded = text.encode() + b'\0'
+        if offset != end or length != len(encoded) or startup[offset:offset + length] != encoded:
+            raise ValueError('serial Boot arguments differ from the accepted device/service configuration')
+        end += length
+    if boot[2] != end + 16 or startup[end:] != bytes(16):
+        raise ValueError('serial Boot did not retain the argument NULL-vector budget')
     production['serial'] = dict(pid=state[1], image=state[2], ready=True, phase=state[0],
                                 received=state[6], transmitted=state[7], irq_events=state[5],
                                 table_pages=len(tables), private_pages=len(private),
                                 charged=len(owned), complete_pte_audit=True,
                                 shared_aliases_checked=True, physical_owner_audit=True,
-                                boot_checked=True, immutable_bytes_checked=True,
+                                boot_checked=True, arguments_checked=True,
+                                argument_bytes=boot[2], immutable_bytes_checked=True,
                                 elf_sha256=digest(artifact))

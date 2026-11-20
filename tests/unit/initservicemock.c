@@ -28,6 +28,7 @@ static u32         observed, dropped, replied, finished, rqstate = RQ_CHECK_LIVE
 static u64         image = 1;
 static Msg         result;
 static u64         timestamp;
+static u64         signalmask;
 
 isize
 __sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanos)
@@ -119,8 +120,19 @@ __sys_create(Handle handle, const Createarg *args, Handle *view, Handle *pid, Ha
 isize
 __sys_sigmask(u64 how, u64 mask, u64 *old)
 {
-  CHECK(how == SIGNAL_BLOCK && !mask);
-  *old = 0;
+  u64 saved = signalmask;
+  CHECK(how == SIGNAL_BLOCK || how == SIGNAL_SETMASK);
+  signalmask = how == SIGNAL_BLOCK ? signalmask | mask : mask;
+  *old = saved;
+  return 0;
+}
+isize
+__sys_copy(void *out, const void *in, u64 bytes)
+{
+  CHECK(signalmask == SIGNAL_SUPPORTED);
+  if (!strcmp(scenario, "args"))
+    return -ERR_FAULT;
+  memcpy(out, in, bytes);
   return 0;
 }
 isize
@@ -192,8 +204,18 @@ isize
 elfload(const Elfsource *source, const Elfplan *plan, const void *data, u64 bytes, Elfwork *work,
         Config *out)
 {
-  const Boot *boot = data;
-  CHECK(source->bytes >= 64 && plan->entry == 0x10000 && bytes == 552 && boot->argc == 7 &&
+  const Boot   *boot = data;
+  const Strref *argv = (const Strref *) ((const u8 *) data + boot->argv_off);
+  const char   *expected[7] = {"sbin/serial", "ns16550", "0", "8", "1", "0", "1"};
+  u32           i;
+  CHECK(!signalmask && bytes == boot->bytes && bytes < 568 && !boot->envc && !boot->env_off);
+  CHECK(boot->argv_off >= sizeof(*boot) && boot->argv_off + 7 * sizeof(Strref) <= bytes);
+  for (i = 0; i < 7; i++) {
+    CHECK(argv[i].offset <= bytes && argv[i].length <= bytes - argv[i].offset);
+    CHECK(argv[i].length == strlen(expected[i]) + 1);
+    CHECK(!memcmp((const u8 *) data + argv[i].offset, expected[i], argv[i].length));
+  }
+  CHECK(source->bytes >= 64 && plan->entry == 0x10000 && boot->argc == 7 &&
         boot->resource_count == 7 && work->view == H(23) && work->parent_space == H(1) &&
         !work->memory && !work->mapped);
   if (!strcmp(scenario, "load"))
@@ -389,7 +411,8 @@ main(int argc, char **argv)
       now = next;
   }
   if (!strcmp(scenario, "missing") || !strcmp(scenario, "create") || !strcmp(scenario, "map") ||
-      !strcmp(scenario, "grant") || !strcmp(scenario, "load")) {
+      !strcmp(scenario, "grant") || !strcmp(scenario, "load") || !strcmp(scenario, "args")) {
+    CHECK(!signalmask);
     CHECK(servicephase() == 3 && servicestate[0].reclaimed && !published && !maps);
     CHECK(freed == allocated + (created ? 1 : 0) && destroyed == created);
     return 0;

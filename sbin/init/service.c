@@ -1,4 +1,5 @@
 #include "service.h"
+#include "private/argument.h"
 #include "private/elf.h"
 #include "private/serial.h"
 #include "private/syscall.h"
@@ -14,11 +15,10 @@ typedef struct Work   Work;
 struct Packet
 {
   Boot     header;
-  Strref   args[7];
   Resentry resources[7];
-  char     strings[128];
+  u64      arguments[25];
 };
-STATIC_ASSERT(sizeof(Packet) == 552, serial_startup_packet);
+STATIC_ASSERT(sizeof(Packet) == 568, serial_startup_packet);
 struct Work
 {
   const Bootitem *item;
@@ -89,30 +89,42 @@ readimage(void *context, u64 offset, void *out, u64 bytes)
   return 0;
 }
 
-static isize
-argument(Packet *packet, u32 index, const char *text, u32 *used)
+static const char *
+number(char text[21], u64 value)
 {
-  usize bytes = strlen(text) + 1;
-  if (index >= ARRAY_SIZE(packet->args) || bytes > sizeof(packet->strings) - *used)
-    return -ERR_LIMIT;
-  packet->args[index].offset = (u32) offsetof(Packet, strings) + *used;
-  packet->args[index].length = (u32) bytes;
-  memcpy(packet->strings + *used, text, bytes);
-  *used += (u32) bytes;
-  return 0;
-}
-
-static isize
-number(Packet *packet, u32 index, u64 value, u32 *used)
-{
-  char text[21];
-  u32  position = 20;
+  u32 position = 20;
   text[position] = 0;
   do {
     text[--position] = (char) ('0' + value % 10);
     value /= 10;
   } while (value);
-  return argument(packet, index, text + position, used);
+  return text + position;
+}
+
+static isize
+arguments(Packet *packet, u32 index)
+{
+  u64         data[25], mask;
+  char        numbers[5][21];
+  const char *argv[8];
+  Argsnap     snapshot;
+  isize       error, restore;
+  argv[0] = (const char *) policy->service[index].image;
+  argv[1] = uartkind == BOOT_UART_NS16550 ? "ns16550" : "pl011";
+  argv[2] = number(numbers[0], uartoffset);
+  argv[3] = number(numbers[1], uartbytes);
+  argv[4] = number(numbers[2], servicestate[index].number);
+  argv[5] = number(numbers[3], uartshift);
+  argv[6] = number(numbers[4], uartwidth);
+  argv[7] = 0;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysargcopy(data, sizeof(data), argv, 0, &snapshot);
+  if (!error)
+    error = sysargboot(&snapshot, &packet->header, sizeof(*packet));
+  restore = __sys_sigmask(SIGNAL_SETMASK, mask, &mask);
+  return restore ? restore : error;
 }
 
 static void
@@ -219,7 +231,7 @@ resources(u32 index)
   Allocarg      alloc;
   Handle        handles[5];
   u64           address = SERVICE_RING_LO + (u64) index * SERVICE_STRIDE;
-  u32           i, used = 0;
+  u32           i;
   isize         error;
   memset(&alloc, 0, sizeof(alloc));
   alloc.bytes = SERIAL_RING_BYTES;
@@ -248,9 +260,7 @@ resources(u32 index)
   memset(packet, 0, sizeof(*packet));
   packet->header.magic = BOOT_MAGIC;
   packet->header.format = BOOT_FORMAT;
-  packet->header.bytes = sizeof(*packet);
-  packet->header.argc = ARRAY_SIZE(packet->args);
-  packet->header.argv_off = offsetof(Packet, args);
+  packet->header.bytes = offsetof(Packet, arguments);
   packet->header.resource_count = ARRAY_SIZE(packet->resources);
   packet->header.resources_off = offsetof(Packet, resources);
   packet->header.user_lo = BOOT_USER_LO;
@@ -261,20 +271,7 @@ resources(u32 index)
     packet->resources[2 + i].tag = SERIAL_INIT_CALL + i;
     packet->resources[2 + i].handle = handles[i];
   }
-  error = argument(packet, 0, (const char *) policy->service[index].image, &used);
-  if (!error)
-    error = argument(packet, 1, uartkind == BOOT_UART_NS16550 ? "ns16550" : "pl011", &used);
-  if (!error)
-    error = number(packet, 2, uartoffset, &used);
-  if (!error)
-    error = number(packet, 3, uartbytes, &used);
-  if (!error)
-    error = number(packet, 4, state->number, &used);
-  if (!error)
-    error = number(packet, 5, uartshift, &used);
-  if (!error)
-    error = number(packet, 6, uartwidth, &used);
-  return error;
+  return arguments(packet, index);
 }
 
 isize
@@ -450,7 +447,7 @@ servicestep(u64 now, u32 *work, u64 *next)
         break;
       case StageLoad:
         error = elfload(&operation->source, &operation->plan, &operation->packet,
-                        sizeof(operation->packet), &operation->load, &operation->config);
+                        operation->packet.header.bytes, &operation->load, &operation->config);
         if (!error)
           error = __sys_configure(state->view, &operation->config, 0);
         if (!error)

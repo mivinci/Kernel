@@ -656,3 +656,9 @@ sysctxarguments直接使用当前PREPARED层既有16KiB；input_kind/argc/envc�
 新增10项host覆盖Bootcheck及目标内指针、源快照不变/不重读、资源/fd/Fix/包元数据保留、追加对齐、容量失败全目标不变、旧参数不覆盖、错误既有区间、畸形快照/终止预算、源目标别名以及完整16KiB参数。最终1002项完整host、格式、两架构各elf/libsys/sigframe/normal共8次QEMU与8份journal通过；QEMU实际链接的父载荷及其子ELF与当前SDK逐字节一致，原输入/IO/关闭worker和正常启动继续通过。
 
 证据build/host/stage151-boot-arguments/的unit/场景日志、verify.py和evidence.json；源码/头/SDK/无libc依赖与生产无测试模块审计通过，init/serial与stage150逐字节相同，clangd切回RV64/libsys。本轮未重跑195场景矩阵，最近完整矩阵为stage144；无CI、板端或性能结果。生产init仍使用旧的专用参数拼装，下一步迁移；公开exec/spawn、准备/Fix/继承及生产服务未完成，创建类reference_id布局仍待确认。
+
+### 参数捕获与Rctx存储解耦（2026-11-20）
+
+生产init开始复用通用sysargcopy/sysargboot。argument.c只依赖私有argument/syscall头和__sys_copy；按Rctx层捕获/借用的sysctxarguments/sysctxargumentview移到contextarg.c，保持原层状态、存储、别名检查及接口。SDK同时包含两模块，Rctx测试仍执行真实封装；使用独立预付缓冲的启动加载器无需因参数捕获而链接上下文银行和架构返回窗口。此拆分不增加公开POSIX入口、不改变Argsnap/Boot或ARG_MAX；生产迁移与验收见07末尾。
+
+两架构SDK源码/头/库、实际链接载荷与模块依赖已审计：argument.o仅__sys_copy，contextarg.o仅sysargcopy/sysctxlookup，libsys整体无未定义依赖；生产init调用通用两函数且不含Rctx封装/测试handler。1003项host、格式、195次双架构QEMU及168份journal通过，证据build/host/stage152-init-arguments/，完整运行和初次主机观测修正记录见07末尾。公开exec/spawn/Fix、创建类引用补偿及生产服务仍待接；创建类reference_id返回布局已获用户确认，见10末尾，不再作为待回复项。

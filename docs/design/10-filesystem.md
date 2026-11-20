@@ -605,6 +605,8 @@ bootstrap_seq由运行库在当前客户端实例/镜像对该服务实例/镜�
 
 VFS OPEN交付后端CALL时，资源reply业务三字固定为[seq,session,prepare_token]。客户端持该session和token，向后端发送无槽ATTACH；首次MEM交付得到connid/region_bytes后才map；普通复用确认仅核对已经持有的同一映射，不执行第二次安装/map，随后才能使用该会话。连接头connid/bytes必须与本次资源回复匹配；不能把旧镜像connid或token当新连接connid。普通FS OPEN已经有HELLO连接，不需要再建立一次共享区，成功普通reply中的value为新session。
 
+创建类新引用返回格式已于2026-11-20确认：普通OPEN的value=session、bytes=8，VFS资源OPEN保留上述三字，两者均在原槽输出u64 reference_id；DUPREF的value=新reference_id、bytes=0且session不变；PIPE的value=2、bytes=32，原槽依读端/写端顺序输出两条{session:u64,reference_id:u64}。原RPC排空后保存、ACK前接管；free CALL不能代替关闭远端引用。实现与验收边界见文末。
+
 业务取消通过原RPC的rqcancel，结果通过同一RPC的rqpoll/rqwait/rqack处理，不发送文件层控制查询或确认。槽/活动操作键含服务PID/image、客户端PID/image、connid、seq及原REQUEST；seq匹配原槽和返回，不是跨新Rq恢复业务的凭证。ABORT只撤销明确token对应的准备对象，不取消或查询已提交I/O。
 
 #### 示例：不同客户端连接使用相同序号和槽
@@ -1014,6 +1016,6 @@ libsys新增私有closewatch、closeinterrupt及closework。先核验原File关�
 
 最终972项完整host、格式、RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过；实际用户载荷、源码/头/SDK/依赖及生产无测试代码审计通过，init/serial与stage147逐字节相同，clangd切回RV64/libsys。证据build/host/stage148-close-worker/的unit/场景日志、verify.py和evidence.json。EINPROGRESS及“已确认但运输待清理”的裁决由host执行真实生产模块核验，尚非公开POSIX返回的端到端验证。本轮未重跑195场景矩阵，最近完整矩阵仍为stage144；无CI、板端或性能结果。
 
-### 开放问题：创建类 reference_id 返回位置（2026-11-20）
+### 创建类 reference_id 返回位置（2026-11-20用户确认）
 
-现有正文给出了CLOSE/DUPREF的reference_id输入及普通OPEN的新session，却未明确新引用返回位置；已向用户提问，以下仅为候选，未冻结、未实现：普通OPEN保持value=session、bytes=8，原槽输出u64 reference_id；VFS交付CALL的业务三字仍[seq,session,prepare_token]，原槽同样输出8字节reference_id。DUPREF保持session，value=新reference_id、bytes=0；PIPE的value=2、bytes=32，原槽按读端/写端顺序输出两条{session:u64,reference_id:u64}。回复及槽数据须在原RPC排空后保存、ACK前接管，未发布fd才能依据原引用做补偿。确认前不实现此创建类适配，不把free CALL等同close远端引用。
+普通OPEN保持value=session、bytes=8，原槽输出u64 reference_id；VFS交付CALL的业务三字仍[seq,session,prepare_token]，原槽同样输出8字节reference_id。DUPREF保持session，value=新reference_id、bytes=0；PIPE的value=2、bytes=32，原槽按读端/写端顺序输出两条{session:u64,reference_id:u64}。回复及槽数据须在原RPC排空后保存、ACK前接管，未发布fd才能依据原引用做补偿；不能把free CALL等同close远端引用。此项已冻结，创建类适配及运行验收仍待实现。

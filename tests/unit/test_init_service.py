@@ -28,6 +28,7 @@ class InitServiceTests(unittest.TestCase):
                             str(ROOT / 'sbin/init/service.c'), str(ROOT / 'sbin/init/manifest.c'),
                             str(ROOT / 'sbin/init/package.c'), str(ROOT / 'lib/libsys/elf.c'),
                             str(ROOT / 'lib/libsys/boot.c'), str(ROOT / 'lib/libsys/serial.c'),
+                            str(ROOT / 'lib/libsys/argument.c'),
                             str(ROOT / 'tests/unit/initservicemock.c'), '-o', str(path)]
             subprocess.run(command, check=True)
             cls.runners.append(path)
@@ -72,6 +73,9 @@ class InitServiceTests(unittest.TestCase):
 
     def test_load_failure_cleans_preparation_and_never_starts(self):
         self.run_case('load')
+
+    def test_argument_capture_failure_restores_mask_and_reclaims_resources(self):
+        self.run_case('args')
 
     def test_ready_timeout_keeps_resources_until_wait_and_retirement(self):
         self.run_case('timeout')

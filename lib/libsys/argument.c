@@ -1,4 +1,5 @@
-#include "private/context.h"
+#include "private/argument.h"
+#include "private/syscall.h"
 typedef struct Argdest Argdest;
 struct Argdest
 {
@@ -190,49 +191,6 @@ sysargat(const Argsnap *snapshot, u32 environment, u64 index, const char **text,
       return -ERR_INVALID;
   *text = (const char *) snapshot->data + ref.offset;
   *bytes = ref.length;
-  return 0;
-}
-isize
-sysctxarguments(Rbank *bank, Connpeer self, Rkey key, const char *const *argv,
-                const char *const *envp, Argsnap *out)
-{
-  Rctx *context;
-  isize error = sysctxlookup(bank, self, key, &context);
-  if (error)
-    return error;
-  if (context->active)
-    return -ERR_BUSY;
-  if (context->phase != RCTX_PREPARED || context->input_saved)
-    return -ERR_STATE;
-  if (!separate(bank, sizeof(*bank), out, sizeof(*out)))
-    return -ERR_INVALID;
-  error = sysargcopy(bank->snapshots[key.layer], RCTX_SNAPSHOT_BYTES, argv, envp, out);
-  if (error)
-    return error;
-  context->input_bytes = out->bytes;
-  context->input_kind = 1;
-  context->input_argc = out->argc;
-  context->input_envc = out->envc;
-  context->input_saved = 1;
-  return 0;
-}
-isize
-sysctxargumentview(Rbank *bank, Connpeer self, Rkey key, Argsnap *out)
-{
-  Rctx *context;
-  isize error = sysctxlookup(bank, self, key, &context);
-  if (error)
-    return error;
-  if (!separate(bank, sizeof(*bank), out, sizeof(*out)))
-    return -ERR_INVALID;
-  if (!context->input_saved || context->input_kind != 1)
-    return -ERR_STATE;
-  out->data = bank->snapshots[key.layer];
-  out->bytes = context->input_bytes;
-  out->argc = context->input_argc;
-  out->envc = context->input_envc;
-  out->argv_off = 0;
-  out->env_off = out->envc ? out->argc * sizeof(Strref) : 0;
   return 0;
 }
 isize

@@ -42,6 +42,8 @@ tty 通过获授权终端句柄请求 INT，内核在投递点解析前台组，
 实现接续：Life持久报告、可信Run停放/恢复、默认停止/继续选择、CHLD停止/继续、普通等待中断及原生sigsend/USER来源的实际用户验收见03/本篇末尾；ttysignal、FAULT、完整前台/终端关联及POSIX中断/重启适配仍待接，不能称为完整用户作业控制。
 
 原生sigsend（2026-11-19用户确认，实际接入与验收边界见文末）：selector指向一次快照的16字节结构{kind:u64,target:s64}，PID=1用完整PID，GROUP=2用公开PGID，CONTROL=3用本地固定CONTROL并要求TERMINATE，ALL=4要求target=0并排除PID1/调用者，对应kill(-1)；调用号0x64和两参数形式不变。普通授权为sender ruid/euid任一匹配target ruid/euid，CONT另允许同会话，uid0无额外豁免；只选择存活Run（含停止），组/ALL固定最多64成员后逐个授权，仅向有权者投递，至少一个成功则成功，无匹配目标STALE、全部无权DENIED，signum=0只检查不排队。CONTROL按显式TERMINATE权授权，不附加普通凭据匹配要求。完整选择器快照、陈旧身份、部分授权及signum=0无状态变化的实际验证见文末，不将原生入口称为完整POSIX发信层。
+2026-11-20补充确认：GROUP target=0对应kill(0)，由内核在受理sigsend时原子固定调用者当前组；正PGID及逐成员授权规则不变。代码接续状态见文末。
+
 WINCH 纳入首轮，默认忽略，表示终端尺寸变化；实际尺寸从终端状态查询，通知可合并。
 KILL/STOP 不可捕获、忽略或屏蔽；KILL 对停止中的进程也立即进入内核退出处理，不等待 CONT。
 每进程保存 pending/mask 和有上限的 action 表，普通信号可合并、不按次数排队；数据消息仍走 IPC。
@@ -278,6 +280,8 @@ fork 的准备中断、发布后成功结果、STOP/CONT/KILL 与超时排序见
 Sigact见06。flags RESTART=1、NODEFER=2、RESETHAND=4、SIGINFO=8、NOCLDSTOP=16、NOCLDWAIT=32；后两位只允许CHLD，未知位拒绝，ONSTACK/sigaltstack首版不支持。DEFAULT/IGNORE的handler/trampoline必须0，HANDLER两入口合法且EXEC映射；注册和递送时都校验。handler可重入的标准接口按08预付上下文执行；普通fork钩子不声明异步安全，_Fork没有钩子。
 
 Sigframe前缀64字节：magic、bytes、depth、previous_user_frame、restore_mask、flags、cookie、reserved八u64；magic=0x4b53494730303031、flags=0，cookie在offset48、reserved在56且必须0。cookie由内核单调分配，用户不能用其他值替代；sigreturn须同时匹配当前最上层帧地址、深度、完整PID/image归属与内核保存的cookie。Siginfo在64处占64字节：signum(u32)、code(u32)、pid(u64)、uid(u32)、reserved0(u32)、address(u64)、reason(u64)、status(u64)、reserved[2] (u64)。TF在128，FP在416；RV64总688、ARM64总944，均16字节对齐。previous仅用户帧地址，无内核指针；原用户现场仍保存在TF，不以信号入口当前寄存器覆盖它；具体trampoline六参数入口见下文，公共handler仍为一参数或SA_SIGINFO三参数。
+
+FAULT归一化reason已于2026-11-20确认：MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12。无关字段清零，非法指令/算术故障地址取PC。同步故障首次无法递送时按原故障终止并保留原始诊断，不改用递送故障覆盖来源；非法sigreturn仍按BAD_SIGNAL_FRAME规则。实际生产接入状态见文末。
 
 每进程预付2层Sigctx，普通帧位于当前用户栈下方、检查完整可写/普通内存和16字节对齐，不能向guard/MMIO写帧。栈不足/非法帧以BAD_SIGNAL_FRAME→SIGSEGV不可恢复退出；不靠递归SIGSEGV掩盖。用户可修改可合法恢复的PC/SP/GPR/FP及mask，但恢复时重新检查用户范围、执行映射、EL0/U态、允许特权位、FP控制合法值；不能修改内核保存的Rq终态/已经消费结果或重启责任。只能最上层当前帧，重复/旧image/其他PID拒绝并终止，sigreturn不回已退栈C续点。
 
@@ -776,7 +780,9 @@ CASE=sigframe新增一个真实用户运输模型：仅测试链接的入口wrap
 
 最终完整make test-all通过855项host、格式检查及195次双架构QEMU；6项host专项、168份journal及最终源码/头/SDK/包哈希另核对。两架构sigframe由11增至12项，正常5/非法帧6/默认终止1；从实际QEMU内核ELF提取的frame_image与当前SDK打包用户ELF逐字节一致。默认init/serial ELF与stage132逐字节相同，clangd数据库已更新，证据build/host/stage133-sync-frames/；无CI/板端/性能结果。正常内核不链接wrapper或测试载荷，实际硬件故障当前仍走默认终止边界，尚未接到此直接帧原语。
 
-开放问题：FAULT reason候选MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12，以及初次故障递送失败按原故障终止并保留原始诊断，已向用户提问，尚未冻结或加入abi/signal.h。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则，不因本候选改变。另一个GROUP target=0问题仍独立待回复；实际FAULT生产与libc kill/raise按确认结果接续。
+2026-11-20用户确认：FAULT reason冻结为MAPERR=1、ACCERR=2、ALIGN=3、BUSERR=4、ILLEGAL=5、FP_INVALID=6、FP_DIVZERO=7、FP_OVERFLOW=8、FP_UNDERFLOW=9、FP_INEXACT=10、FP_OTHER=11、UNKNOWN=12。无关字段清零，非法指令/算术故障地址取PC；首次无法递送时按原故障终止并保留原始诊断。非法sigreturn继续按既有BAD_SIGNAL_FRAME/SIGSEGV规则。以上为已确认设计，尚未加入abi/signal.h或接入实际硬件FAULT生产。
+
+同日用户确认kill(0)的原子选择：Sigsel GROUP的target=0表示调用者当前组，由内核在受理sigsend时固定；正PGID及既有逐成员授权规则不变。此补充取代前述历史记录中的待回复状态，代码与运行验收仍待接续，不将设计确认视为已实现libc kill/raise。
 
 Rctx原生返回窗口的用户态接续见[08末尾](08-runtime.md#rctx-原生返回窗口接续2026-11-20)：两架构真实sigframe新增外层GETID第一条存储前捕获、独立内层GETPG和sigreturn安全恢复。仅测试wrapper注入信号，生产内核不含此入口；尚未接POSIX trampoline/SA_RESTART或原RPC责任交接，不改变上述两项待确认边界。
 

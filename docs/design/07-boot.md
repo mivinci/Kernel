@@ -637,3 +637,13 @@ tools/initinspect.py在停止guest后读取私有Space/Acct/Kstack数组，先�
 tests/packageboot.py追加生产缺serial、未READY、真实装载预算失败、坏配置四种包；另在两个生产进程READY并idle后，由QEMU调试器故意破坏活RX环epoch并注入一字节IRQ，真实serial因坏协议退出121，init监督/收取/回收后退出110。该注入只在主机反例，不在生产代码加入故障开关或把活环重置定义成恢复协议。全部失败逐页复核仅余PID1、费用回初始基线、无孩子Space/Acct/栈及父环映射；超时/已上线退出同时验证恢复串口的实际PANIC和真实halt。
 
 最终完整make test-all通过792项host、格式检查及189次双架构QEMU；162份journal、最终源码/头/SDK/配置哈希与默认包两个实际ELF另核对。16次生产启动含128 MiB/512 MiB/2 GiB/8 GiB及四核/非零RV启动hart，均验证READY/实际外部UART输入；10次生产失败覆盖上述五类，两架构费用和实际halt通过。14项init主循环专项验证每轮16次收取上限/让出、消息分发/绝对期限和清理完成后才退出。旧主循环mock及反例复用失效输入管道均已修正，失败日志保留；未改变内核状态机迁就检查。证据build/host/stage117-default-init/，无CI/板端结果，不称TTY/fd/Fix、M3、net或GUI完成。
+
+### 生产init复用参数快照与Boot打包（2026-11-20）
+
+serial启动参数改由sysargcopy接受到有界私有快照，再用sysargboot追加到新Boot；删除专用Strref/字符串拼装。七个argv、空env、七项资源的真实授权及SELF占位解析规则保持。预付缓冲200字节包含七个Strref、原128字节字符串预算和两个NULL预算字；不为每个服务增加16KiB上下文银行。持久Packet从552增至568字节，elfload使用发布的实际header.bytes，不把预付容量当作有效元数据长度。
+
+数值转换只写调用者私有栈缓冲；捕获/打包期间短暂屏蔽可捕获信号，结束或捕获失败均恢复原mask，不跨装载/RPC等待持有保护。参数捕获失败沿原STOPPING路径销毁未发布孩子、解除父环映射并归还资源。O0/O2管理专项从9增至10项，直接核对七个参数文本，新增copy失败时mask恢复与清理反例。生产观测工具从真实孩子页表读回Boot，核对资源、七个规范Strref/文本及两个NULL预算字，不沿用旧固定552字节和200资源偏移。
+
+最终1003项完整host、格式及195次双架构QEMU通过，168份journal、16次生产启动和10条生产失败清理均另核对；覆盖不同内存容量、四核/非零RV启动hart、真实UART输入、READY/监督、失败实际halt及完整PTE/Acct/物理owner。两架构新init实际链接并调用通用捕获/打包器，生产serial与stage151逐字节相同；真实孩子Boot分别为RV64的472字节和ARM64的471字节，参数/资源按新布局逐项核验。原生ELF测试的6份参数包与两成功/四回滚、libsys输入/信号窗口/关闭worker继续通过，实际嵌入载荷与当前SDK一致，clangd切回RV64/libsys。
+
+证据build/host/stage152-init-arguments/的test-all.log、test-qemu.log、host-focused.log、verify.py和evidence.json。初次test-all完成host/格式后，新增主机观测误用另一函数局部registry而NameError中断，已改为读取当前production记录；失败日志保留，正常启动复验后完整重跑test-qemu并成功退出。不是一次完整make test-all成功，也没有修改guest状态机迁就观测。无CI、板端或性能结果；此点不代表生产tty/fs/blk、公开exec/Fix、sh/net或GUI完成。

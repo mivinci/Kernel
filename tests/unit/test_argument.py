@@ -43,7 +43,8 @@ class ArgumentTests(unittest.TestCase):
         command = ['clang', '-std=c89', '-O2', '-ffreestanding', '-fno-builtin', '-Wall', '-Wextra',
                    '-Werror', '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
                    '-I' + str(ROOT / 'lib/libsys'), '-I' + str(ROOT / 'lib/libsys/include'),
-                   str(ROOT / 'lib/libsys/argument.c'), str(ROOT / 'lib/libsys/context.c'), str(stub),
+                   str(ROOT / 'lib/libsys/argument.c'), str(ROOT / 'lib/libsys/context.c'),
+                   str(ROOT / 'lib/libsys/contextarg.c'), str(stub),
                    *[str(ROOT / 'lib/libsys' / name) for name in getattr(cls, 'extra_sources', ())],
                    '-o', str(artifact)]
         if sys.platform == 'darwin':
