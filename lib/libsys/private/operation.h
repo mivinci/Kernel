@@ -11,6 +11,8 @@
 #define SYSOP_RESOURCE_MOVED 4
 #define SYSOP_BAD_RESULT     8
 #define SYSOP_CANCEL_SENT    16
+#define SYSOP_APP_ENDED      32
+#define SYSOP_ABANDONED      1
 #define SYSOP_CONTROL_NS     UINT64_C(1000000000)
 typedef struct Opkey Opkey;
 struct Opkey
@@ -42,6 +44,17 @@ isize sysopcancel(Connwork *work, Conncache *cache, const Opkey *key);
    this policy. now is the runtime's monotonic nanosecond sample. */
 isize sysopinterruptcheck(Connwork *work, Conncache *cache, const Opkey *key);
 isize sysopinterrupt(Connwork *work, Conncache *cache, const Opkey *key, u64 now);
+/* After the handler and Rctx handoff/finish, while signals are excluded:
+   poll the original RPC first. 0 keeps its fixed result, WOULD_BLOCK keeps
+   waiting, ABANDONED uniquely moves an expired cancelled operation into out
+   and clears owned_key. The frontend maps ABANDONED to EIO, never EINTR or
+   zero progress; this native helper does not write errno or app memory. */
+isize sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, Opkey *out);
+/* Explicitly abandoned READ/WRITE only. Nonblocking late-result/real-finish
+   collection, drop any installed MEM/CALL reply, then ACK and return the
+   pinned File once. file must initially be zero. Never copies payload or
+   compensates OPEN/PIPE/reference-creating transactions by guessing. */
+isize sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file);
 /* Known successful ordinary result only. Nonblocking RQ_FINISH confirms real
    access ended, then copy a privately bounded part of the held span. Caller
    validates business counts/descriptor semantics. No ACK/SAVED/release. */

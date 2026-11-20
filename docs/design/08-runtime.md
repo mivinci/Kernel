@@ -596,3 +596,19 @@ contextipc新增显式interruptible登记、signal前置及snapshot原语。登�
 证据build/host/stage146-signal-snapshot/的unit/场景日志、verify.py及evidence.json。首次QEMU因把RQ_FINISH误解为重复业务回复而在快照检查退出98；直接核对rqresult的空证明契约后同时修正生产检查与host模型，原现场保留。补齐业务成功/seq/长度保护后重新执行最终host及六场景，前序结果另保留，未将其充作最终源码证据。
 
 当前只是可被libc/自定义运行时复用的私有前置原语；公开POSIX trampoline/errno、完整嵌套/Fix、输入参数快照、到期后台补偿/SA_RESTART及标准fd/生产tty/fs/blk继续待接，无CI、板端、性能或完整sh/net/GUI验收。
+
+### handler 后的故障裁决与迟到 IO 收尾（2026-11-20）
+
+新增私有sysopresume：调用者在handler返回、原Rctx完成handoff/finish后，短暂排除可捕获信号再推进原Op。它先poll同一RPC；任何已固定结果均优先保留，未知原生错误也不丢记录。仍WOULD_BLOCK且没有成功取消标记或未到原绝对截止时继续等待；到期则把唯一key移入原槽BACKGROUND记录、标APP_ENDED并清空前台key，返回独立ABANDONED裁决。未来POSIX前端据此返回EIO，不得解释为EINTR、零进展或重发许可；此原语不写errno/应用缓冲，不新建业务查询、内核deadline或后台对象。
+
+新增sysopdrain仅处理显式APP_ENDED的后台READ/WRITE，普通手工background或OPEN/PIPE等创建引用的事务拒绝自动丢弃。收取原RPC的迟到结果后，非阻塞确认空RQ_FINISH证明，再free已安装的MEM/CALL回复资源，记录SAVED、ACK_RESULT|ACK_RELEASE并归还一次File pin。未终结/未排空时页、RPC、资源和File仍占用；free失败保留原资源，free成功而ACK失败时保留剩余步骤，重试不再次free。返回File的输出必须原为空，调用者再unpin/推进既有最后关闭锚。整个流程没有应用输出指针，不复制迟到payload，也不凭超时释放共享页。
+
+APP_ENDED仅占原128字节槽记录的私有flags位，原预算/布局不变；旧前台key在移交后失效。原生资源free不是远端File/准备token的补偿证明，OPEN及其他创建类仍由未来类型化补偿处理，不能为尽快收尾把记录丢掉。CLOSE仍走其既定不可盲目取消/关闭锚路径，关闭中断及超时worker尚未接。
+
+真实libsys场景新增第二个预先持File pin的READ：服务先接收并defer，向客户端发送凭据授权的原生USER/USR1，保留原REQUEST等待测试门。handler先提出同一RPC的取消并执行独立层GETID；返回后客户端确认截止前仍等待，以原生alarm/EVENT_TIMER和CPU idle等到一秒绝对截止，再裁决ABANDONED。旧key、页释放及最后close仍被拒绝，File pin和同一RPC留在原槽，不从新fd或连接重做业务。
+
+仅在后台移交后客户端才打开测试门，服务向原RPC迟到交付只读SHARED MEM，释放自己的管理引用。该READ显式允许原生MEM接收，故意使用不符合普通FS READ回复形状的resource结果来检验迟到授权清理，不是新增正式READ业务协议。后台先保存真实授权、确认排空，drop资源并ACK；随后对旧资源Handle/free及旧RPC/poll均得到失效错误，证明在进程退出前已实际释放。归还并unpin原File后，原关闭锚与普通8槽满额的控制CLOSE才继续。两个架构都实际经过alarm/idle等待，观测到的控制时间不小于1秒，不将其作为硬件延迟保证或性能基准。
+
+新增10项host覆盖固定结果优先、截止前/恰好到期、唯一key转交/页背压、原生错误/输出别名、未取消/强制事务及普通background排除、迟到payload不复制、资源drop、未排空保持、free失败以及ACK失败不重复free。最终960项完整host、格式及RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过；实际链接载荷/源码/头/SDK/依赖/窗口审计通过，init/serial与stage146逐字节相同，clangd切回RV64/libsys。
+
+证据build/host/stage147-expired-responsibility/的unit/场景日志、verify.py和evidence.json。首次新场景在接收只读MEM时被旧helper固定RW权限的断言拒绝，现按各次声明校验权限；原失败现场保留，未修改授权或请求状态机。未重跑195场景完整矩阵，最近完整矩阵仍为stage144；无CI、板端或性能验收。公开POSIX返回/SA_RESTART、关闭worker、创建类补偿、参数快照/Boot/Fix、标准fd及生产服务继续待接，不称完整sh/net/GUI交付。

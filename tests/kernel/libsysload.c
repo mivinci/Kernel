@@ -4,6 +4,7 @@
 #include "load.h"
 #include <diag.h>
 #include <signal.h>
+#include <clock.h>
 extern const u8       libsys_image[], libsys_image_end[];
 extern const u64      libsys_resource_address;
 static Handle         contextpid;
@@ -123,8 +124,8 @@ libsysload(void)
   Liferesult result;
   Pgstat     before, after;
   u32        i, ended, turns = 0, source_cleaned = 0, resource_commits = 0;
-  u64        handoff[16];
-  u64        replayed = 0;
+  u64        handoff[32];
+  u64        replayed = 0, timerwaits = 0, elapsed = 0, started, now;
   int        error;
   pgstat(&before);
   for (i = 0; i < 2; i++) {
@@ -135,9 +136,15 @@ libsysload(void)
   load(pids[1], &info[0], 0);
   contextpid = pids[0];
   contextinjected = 0;
-  REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]));
+  REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]) && !proctimerstart() &&
+          !clockmono(&started));
   do {
-    REQUIRE(!procrunone() && ++turns < 64);
+    error = procrunone();
+    if (!error)
+      REQUIRE(++turns < 256);
+    else
+      REQUIRE(error == -ERR_WOULD_BLOCK && procidle() >= 0);
+    REQUIRE(!clockmono(&now) && now - started < UINT64_C(10000000000));
     REQUIRE(!spaceread(info[1].space, libsys_resource_address, handoff, sizeof(handoff)));
     REQUIRE(handoff[10] >= resource_commits && handoff[10] <= 2);
     resource_commits = (u32) handoff[10];
@@ -160,10 +167,16 @@ libsysload(void)
           u64 client_trace[32];
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
-                  client_trace[9] == 6 && client_trace[19] == 4 && client_trace[20] == 4 &&
-                  client_trace[21] == 30 && client_trace[22] == 1 && client_trace[23] == 1 &&
-                  client_trace[24] <= 1 && contextinjected == 30);
+                  client_trace[9] == 6 && client_trace[19] == 5 && client_trace[20] == 5 &&
+                  client_trace[21] == 62 && client_trace[22] == 1 && client_trace[23] == 1 &&
+                  client_trace[24] <= 1 && client_trace[25] == 1 && client_trace[26] == 1 &&
+                  client_trace[27] == client_trace[30] + UINT64_C(1000000000) &&
+                  client_trace[28] >= client_trace[27] &&
+                  handlekind((Handle) client_trace[29]) == HANDLE_RPC && client_trace[31] <= 1 &&
+                  contextinjected == 30);
           replayed = client_trace[24];
+          timerwaits = client_trace[31];
+          elapsed = client_trace[28] - client_trace[30];
           while ((error = procclean(pids[0])) > 0) {
           }
           REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
@@ -182,7 +195,7 @@ libsysload(void)
   }
   REQUIRE(resource_commits == 2);
   REQUIRE(handoff[11] == 25 && handoff[12] == 1 && handoff[13] == 1 && handoff[14] == 1 &&
-          handoff[15] == 1 && handoff[9] == 4);
+          handoff[15] == 1 && handoff[9] == 4 && handoff[16] == 1 && handoff[17] == 1);
   REQUIRE(source_cleaned && acctstat(info[0].acct, &payer) == AC_BAD);
   for (i = 0; i < 2; i++)
     REQUIRE(!setstat(sets[i], &group) && !group.charged && !group.instances && !setclose(sets[i]));
@@ -225,6 +238,16 @@ libsysload(void)
   puthex(1);
   putstr(" queued_retries=");
   puthex(replayed);
+  putstr(" deadline_fault=");
+  puthex(1);
+  putstr(" late_resource_drop=");
+  puthex(1);
+  putstr(" real_signal=");
+  puthex(1);
+  putstr(" timer_waits=");
+  puthex(timerwaits);
+  putstr(" control_elapsed_ns=");
+  puthex(elapsed);
   putstr(" receive=");
   puthex(1);
   putstr(" shared=");

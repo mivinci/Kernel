@@ -783,3 +783,5 @@ Rctx原生返回窗口的用户态接续见[08末尾](08-runtime.md#rctx-原生�
 stage145已接[08的原RPC责任交接](08-runtime.md#rctx-与原-rpc-责任交接2026-11-20)：两架构实际HELLO/READ的异步提交与等待返回各在首存储前捕获并移交原RPC/资源，handler用独立层，正常恢复幂等收尾。仅私有测试trampoline调用这些原语；正式POSIX取消前置、共享数据快照与重启策略仍未完成，不能把该运输测试当作公开sigaction/SA_RESTART验收。
 
 stage146新增[08的前置取消与稳定输出](08-runtime.md#信号前置取消与稳定输出快照2026-11-20)私有原语：显式前台IO策略在handler前请求原RPC取消，首次成功记录一秒绝对截止；CLOSE/后台/原生未登记路径不盲目取消。真实handler改写原共享READ字节后，外层仍从已确认排空的预付私有快照读取原内容。公开POSIX trampoline、handler后超时EIO/后台收尾、重启和Fix仍未完成，不将前置原语当作完整sigaction/SA_RESTART交付。
+
+stage147已接[08的handler后故障裁决](08-runtime.md#handler-后的故障裁决与迟到-io-收尾2026-11-20)私有原语：原结果先查，超过首次固定取消截止仍未知才转原槽后台；READ/WRITE迟到数据不交付，安装资源经真实排空后drop/ACK，归还File pin。两架构用原生USER信号、alarm和idle实际跨过一秒后再开放迟到回复，旧资源/RPC均在进程退出前失效。ABANDONED只供未来前端映射EIO；公开POSIX返回、完整重启/嵌套/Fix及关闭/创建类补偿仍未完成。

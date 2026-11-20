@@ -54,12 +54,14 @@ match(Connwork *work, Conncache *cache, const Opkey *key, Slotop **out)
     return -ERR_STALE;
   if (op->phase > SYSOP_ACKED || !op->file ||
       op->flags & ~(SYSOP_BACKGROUND | SYSOP_SAVED | SYSOP_RESOURCE_MOVED | SYSOP_BAD_RESULT |
-                    SYSOP_CANCEL_SENT) ||
+                    SYSOP_CANCEL_SENT | SYSOP_APP_ENDED) ||
       ((op->flags & SYSOP_BACKGROUND) ? op->owner != 0 : op->owner == 0) ||
       ((op->phase == SYSOP_WAITING || op->phase == SYSOP_RESULT) ? handlekind(op->rpc) != HANDLE_RPC
                                                                  : op->rpc != 0))
     return -ERR_STATE;
   if (op->flags & SYSOP_CANCEL_SENT && (!op->deadline || op->phase == SYSOP_PREPARED))
+    return -ERR_STATE;
+  if (op->flags & SYSOP_APP_ENDED && !(op->flags & SYSOP_BACKGROUND))
     return -ERR_STATE;
   for (i = 0; i < key->lease.span; i++) {
     const Filelease *page;
@@ -255,13 +257,26 @@ sysopinterrupt(Connwork *work, Conncache *cache, const Opkey *key, u64 now)
   op->flags |= SYSOP_CANCEL_SENT;
   return 0;
 }
+static isize
+ended(const Slotop *op)
+{
+  Ipcmsg result;
+  u32    i;
+  isize  error = ipc_rqpoll(op->rpc, RQ_FINISH, &result);
+  if (error)
+    return error;
+  if (result.kind || result.source || result.request || result.image)
+    return -ERR_STATE;
+  for (i = 0; i < 4; i++)
+    if (result.words[i])
+      return -ERR_STATE;
+  return 0;
+}
 isize
 sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 bytes, void *out)
 {
   Slotop *op;
-  Ipcmsg  result;
   u64     limit;
-  u32     i;
   isize   error = match(work, cache, key, &op);
   if (error)
     return error;
@@ -276,18 +291,76 @@ sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 by
       !separate(key, sizeof(*key), out, bytes) ||
       !separate((void *) (uintptr_t) work->state.map.address, FS_CONN_BYTES, out, bytes))
     return -ERR_INVALID;
-  error = ipc_rqpoll(op->rpc, RQ_FINISH, &result);
+  error = ended(op);
   if (error)
     return error;
-  if (result.kind || result.source || result.request || result.image)
-    return -ERR_STATE;
-  for (i = 0; i < 4; i++)
-    if (result.words[i])
-      return -ERR_STATE;
   return __sys_copy(out,
                     (const void *) (uintptr_t) (work->state.map.address + FS_DATA_OFFSET +
                                                 key->lease.slot * FS_SLOT_BYTES + offset),
                     bytes);
+}
+isize
+sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, Opkey *out)
+{
+  Slotop *op;
+  isize   error;
+  if (!output(work, cache, owned_key, sizeof(*owned_key)) ||
+      !output(work, cache, out, sizeof(*out)) ||
+      !separate(owned_key, sizeof(*owned_key), out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = match(work, cache, owned_key, &op);
+  if (!error)
+    error = interruptible(op);
+  if (error)
+    return error;
+  error = sysoppoll(work, cache, owned_key);
+  if (error != -ERR_WOULD_BLOCK)
+    return error;
+  if (!(op->flags & SYSOP_CANCEL_SENT) || now < op->deadline)
+    return -ERR_WOULD_BLOCK;
+  error = sysopbackground(work, cache, owned_key, out);
+  if (error)
+    return error;
+  op->flags |= SYSOP_APP_ENDED;
+  return SYSOP_ABANDONED;
+}
+isize
+sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
+{
+  Slotop *op;
+  isize   error;
+  if (!output(work, cache, file, sizeof(*file)) || !file || *file ||
+      !separate(key, sizeof(*key), file, sizeof(*file)))
+    return -ERR_INVALID;
+  error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (!(op->flags & SYSOP_APP_ENDED) || !(op->flags & SYSOP_BACKGROUND) ||
+      (op->opcode != FS_READ && op->opcode != FS_WRITE))
+    return -ERR_NOTSUP;
+  if (op->phase == SYSOP_WAITING) {
+    error = sysoppoll(work, cache, key);
+    if (error)
+      return error;
+  }
+  if (op->phase == SYSOP_RESULT) {
+    error = ended(op);
+    if (error)
+      return error;
+    if (op->resource) {
+      error = __sys_free(op->resource);
+      if (error)
+        return error;
+      op->resource = 0;
+      op->flags |= SYSOP_RESOURCE_MOVED;
+    }
+    error = sysopsaved(work, cache, key);
+    if (!error)
+      error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  return sysopfinish(work, cache, key, file);
 }
 isize
 sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)
