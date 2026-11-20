@@ -591,6 +591,8 @@ payload_bytes<=span*4096，所有字符串/数组offset均相对本请求首数�
 
 bootstrap原生PEER的终结证明必须绑定已提交的真实目标：Rctx注册CALL时保存的PID/image、原bootstrap地址及完整claim均与该工作页匹配。未产生RPC的失败CALL还核验仍持有CALL的真实目标；已提交RPC只接受同一Rctx经rewait保留的原目标、原RPC及空原生PEER元组，fresh wait-only不能补造提交目标。证明只标记这个旧peer的DRAINING/ended，不改变原错误或释放资源。尚未安装的运输仍按上述discard处理；已有映射的bootstrap收尾须有独立ended标记，待原FINISH/ACK后只解除该bootstrap和意外资源，旧MEM/CALL/map及其他File/操作各自排空后再清。业务负值、撤权、超时或原RQ尚未结束均不替代这一证明，kernel也不因服务退出自动代收尾。
 
+资源OPEN的实际后端已独立终结时，创建者须先匹配该后端完整PID/image、原ATTACH token、完整claim及准备File ID，再结束本次逻辑预留。未提交ATTACH无RPC；已提交则固定结果且实际FINISH/ACK之前保持CALL与预留，WAITING不能直接丢弃。只释放创建者仍自持的CALL，不动已转入缓存的CALL、MEM/map或其他File；ENDED不是ABORT成功，不产生新撤销消息，也不标记源VFS结束。源bootstrap若仍持同File/token的独立ABORT，先BUSY，不能使它借用的CALL失效；不相关bootstrap不因owner数字相同而阻止清理。创建者结束后原bootstrap owner仍是其运输cookie，由后续运输收尾独立归还，不重新查询已经释放的File ID。
+
 普通close即使连接仍未接入也须保留原引用的关闭责任；可以推进其唯一接入后关闭。若在handler内遇接入由被打断外层持有而无法独立推进，不能等外层或返回EAGAIN：摘除后明确EIO并把关闭责任交给已预付记录，后续接入/生命周期清理继续处理，fd不恢复；不声称已经后端关闭成功。_exit依旧无需接入，目标ENDED独立收尾。自定义原生入口主动重复HELLO或破坏库表不能取得第二份授权或绕过总容量。
 
 #### 四字请求头与连接选择（审查修订）
@@ -1213,3 +1215,15 @@ sysconnworkbootended只在旧映射仍已安装且同peer已独立标记ended时
 两架构runtime各增加3个真实双进程运输场景：服务先退出后HELLO提交失败；HELLO已接收但未回复时服务退出；已有HELLO共享区后ATTACH已接收未回复时服务退出。后二者客户端真实看到WOULD_BLOCK且保留原RPC/旧映射；测试管理者确认目标Proc/Space已清理、本fixture没有下游请求或设备/DMA责任，再校验原RPC双方/目标Image/PEER/未FINISHED并显式rqclean。客户端随后才FINISH/ACK并结束bootstrap；已有映射在这之后仍可读，最后独立workclean归还，页/费用/实例回基线。ATTACH使用服务fixture私有token1，不是真实VFS发权或File创建；可信管理动作不代表生产rqclean权限或任意驱动停机已实现。
 
 最终1159项完整host、8项专项、格式、双架构runtime/libsys/sigframe/normal共8次QEMU及8份内核诊断journal通过；SDK私有头/源/库、实际filecreate ELF打包/内嵌载荷、contextipc/connection对象内部依赖及两函数实际调用均核对。旧map/复用失败、资源ABORT/排空、File引用、缓存/日志和环境路径继续通过；init装载段与serial ELF保持，生产镜像无测试载荷，所有构建后clangd切回RV64/runtime。证据build/host/stage174-bootstrap-peer/含unit/focused-final、场景日志、verify.py与evidence.json，初始测试命名失败保留。Rctx512/Rroute184/Rbank50712、Connstate2880与工作页4096保持，无新内核ABI/权限或自动退出清理。最近完整195矩阵为stage165，无CI/板端/性能、完整公开fd/Fix、生产服务或sh/net/最终GUI结果。
+
+### 创建者与ATTACH后端终结的衔接（2026-11-21）
+
+stage175新增私有sysfilecreatebackendended，源OPEN须CAPTURED/ACKED且仍持原资源交付的token/单File预留；实际后端须独立标记ended并处于精确DRAINING项，原ATTACH的peer、token、tag/seq/owner及准备File ID逐项匹配。按原RPC实际排空/ACK再free独立创建者CALL、撤销本地预留并固定ENDED。已转入缓存的CALL不再free，bootstrap及其中MEM/外部map不由此消费；原源VFS结果和独立源pin保持，后续finish返回零新File IDs，不伪造成功ABORT。
+
+8项host专项覆盖未提交、WAITING/FINISH/ACK/free失败、缓存CALL与bootstrap资源分离、源VFS死亡不能代替实际后端、错peer/claim/token、源未ACK/借用资源别名及幂等/过期键。初次断言误用RETIRED=3作为RESERVED，按原常量4修正测试并保留失败。复核另实际复现：同一File已有独立ABORT准备时，新路径曾提前消耗它借用的CALL。已增加同File/token ABORT的BUSY门禁；原责任完成或未提交准备明确撤销后才继续。门禁不以owner数字单独判断，不相关的bootstrap保留且可并行收尾。回归前后日志owned-abort-before及最终专项保留，修正后的完整回归重新执行。
+
+真实三角色fixture使用原VFS发出的CALL/token及完整源OPEN捕获：实际后端在ATTACH提交前退出、接收ATTACH后退出，以及已有File R1后接收新R2 ATTACH再退出。客户端沿原Rctx固定后端证明，后两者先观察WOULD_BLOCK并保留准备与CALL，测试管理者清理目标Proc/Space并校验原RQ后显式rqclean，才可FINISH/ACK并释放本次预留。第一例另有VFS ENDPEER控制请求需同样代收尾；其ATTACH自身没有RPC。每例均只有这个已知未完成请求，本fixture无设备/DMA或其他下游责任，不代表生产管理者可据死亡直接推断排空。
+
+三例源VFS继续正常处理STOP；新File均不发布。已有R1的场景中，创建者清理后旧共享头/MEM/CALL仍保留，先独立结束原bootstrap，再用既有ended规则单独关闭旧R1，确认该连接已无File引用后才workclean归还映射与授权。全部页/费用/实例回基线；这是原生IPC下的服务fixture，不是默认启动包已含生产VFS/后端。
+
+最终C源码通过1167项完整host、8项专项、格式及双架构runtime/libsys/sigframe/normal共8次QEMU、8份内核诊断journal；专项加强业务负值输入后另复验8项。SDK私有头/源/库、实际filecreate ELF打包/内嵌载荷、filecreate对象仅预期内部依赖及新函数真实调用均审计通过；旧bootstrap终结、map/复用失败、资源ABORT、File引用及缓存/日志/环境路径保持。init装载段与serial ELF保持，生产镜像无测试载荷，所有构建后clangd切回RV64/runtime。证据build/host/stage175-creator-backend-end/含unit-final/focused-final、最终场景日志、fmt-check-final、owned-abort-before、verify.py与evidence.json；修正前结果独立保留不计最终验收。无新ABI、权限或固定池，尚无生产rqclean、公开fd/Fix、生产服务或完整sh/net/最终GUI结果；最近完整195矩阵仍为stage165，无CI/板端/性能结论。

@@ -74,6 +74,17 @@ isize sysfilecreaterevoked(Filepool *pool, Connwork *work, Conncache *cache, con
    ACK or free failure preserves the remaining proof/responsibility. Cached
    connections, prior ATTACH/MEM and unrelated references are independent. */
 isize sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
+/* Exact ATTACH backend independently fixed as ended, source OPEN already
+   captured/ACKed, bound Rctx finished. Match peer, token, claim and prospective
+   File ID before retiring only this reserve and creator-owned CALL. Original
+   ATTACH must actually FINISH/ACK; failure keeps remaining ownership. No new
+   ABORT, no success/revocation fiction, and no source-VFS end mark. Leaves
+   bootstrap/MEM/map/cached CALL for separate transport cleanup, including its
+   original owner cookie after this File reserve has gone. A source ABORT
+   still owned by this same File/token is BUSY and
+   must first finish or be explicitly unprepared. */
+isize sysfilecreatebackendended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                                Connwork *backend, Connclaim claim);
 /* ACKED + RESOLVED only. Moves result IDs and the old source pin once; caller
    publishes/drops those IDs and returns the source pin separately. closing=1
    leaves ownership in the pool's close anchors and returns zero result IDs. */

@@ -22,6 +22,7 @@ static void      deadtest(u32 creating);
 static void      resourceendtest(u32 submitted);
 static void      bootstraptest(u32 variant);
 static void      bootpeertest(u32 mode);
+static void      creatorbackendtest(u32 mode);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -212,6 +213,101 @@ filecreatetest(void)
   bootpeertest(0);
   bootpeertest(1);
   bootpeertest(2);
+  creatorbackendtest(0);
+  creatorbackendtest(1);
+  creatorbackendtest(2);
+}
+static void
+creatorbackendtest(u32 mode)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   info[3];
+  Handle     pids[3];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  Rqid       request;
+  Rqinfo     pending;
+  u64        trace[16];
+  u32        i, cleaned = 0, rqcleaned = 0, turns = 0, caller = mode ? 0 : 1;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(4096, 8192, 4, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pids, info, mode == 2 ? "ABC" : mode ? "xyz" : "uvw", 3);
+  for (;;) {
+    if (!cleaned) {
+      CHECK(!procinfo(pids[2], &info[2]));
+      if (info[2].state == PROC_EXITING) {
+        CHECK(!lifestat(info[2].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+              !spaceread(info[2].space, filecreate_trace_address, trace, sizeof(trace)) &&
+              trace[0] == 2 && trace[1] == (mode == 2 ? 2U : 1U) && !trace[2] &&
+              trace[3] == (mode == 2 ? 2U
+                           : mode    ? 1U
+                                     : 0U) &&
+              trace[4] == 1 && !trace[15]);
+        while ((error = procclean(pids[2])) > 0) {
+        }
+        CHECK(!error && !lifecollect(info[2].life, 1, &result));
+        cleaned = 1;
+      }
+    }
+    if (cleaned && !rqcleaned) {
+      CHECK(!spaceread(info[caller].space, filecreate_trace_address, trace, sizeof(trace)));
+      if (trace[5] && (!mode || trace[6] == 10)) {
+        CHECK(!rqlookup((Handle) trace[5], info[caller].identity, &request) &&
+              !rqstat(request, &pending) && pending.caller == pids[caller] &&
+              pending.server == pids[2] && pending.status == -ERR_PEER &&
+              !(pending.flags & RQ_FINISHED) && !rqclean(request, info[2].identity));
+        rqcleaned = 1;
+      }
+    }
+    CHECK(!procinfo(pids[0], &info[0]) && !procinfo(pids[1], &info[1]));
+    if (info[0].state == PROC_EXITING && info[1].state == PROC_EXITING)
+      break;
+    error = procrunone();
+    CHECK(!error || error == -ERR_WOULD_BLOCK);
+    CHECK(++turns < 256);
+    if (error)
+      CHECK(procidle() >= 0);
+  }
+  CHECK(cleaned && rqcleaned);
+  for (i = 0; i < 2; i++) {
+    CHECK(!lifestat(info[i].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+          !spaceread(info[i].space, filecreate_trace_address, trace, sizeof(trace)) &&
+          trace[0] == 2 && !trace[15]);
+    if (!i)
+      CHECK(trace[1] == (mode == 2 ? 2U : 1U) && trace[2] == 1 && trace[3] == 1 &&
+            trace[4] == (u64) (mode == 2) && (mode ? trace[8] && trace[8] < 64 : !trace[8]));
+    else
+      CHECK(!trace[1] && !trace[2] && trace[4] == (mode == 2 ? 2U : 1U));
+    while ((error = procclean(pids[i])) > 0) {
+    }
+    CHECK(!error && !lifecollect(info[i].life, 1, &result));
+  }
+  CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck());
+  putstr("CREATEBACKENDCHECK mode=");
+  puthex(mode);
+  putstr(" reference_ended=");
+  puthex(1);
+  putstr(" attach_quarantined=");
+  puthex(mode != 0);
+  putstr(" trusted_cleanup=");
+  puthex(rqcleaned);
+  putstr(" old_file_ended=");
+  puthex(mode == 2);
+  putstr(" vfs_usable=");
+  puthex(1);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
 }
 static void
 bootpeertest(u32 mode)

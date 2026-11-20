@@ -433,8 +433,8 @@ resource(Createop *create, Slotop *op)
   return 0;
 }
 static isize
-backendview(Filepool *pool, Connwork *work, Conncache *cache, Createop *create, Connwork *backend,
-            Connentry *entry)
+backendentry(Filepool *pool, Connwork *work, Conncache *cache, Createop *create, Connwork *backend,
+             Connentry *entry)
 {
   isize error;
   if (!backend || (backend != work && !separate(work, sizeof(*work), backend, sizeof(*backend))) ||
@@ -449,7 +449,14 @@ backendview(Filepool *pool, Connwork *work, Conncache *cache, Createop *create, 
     return error;
   if (!samepeer(entry->peer, create->peer))
     return -ERR_STALE;
-  return entry->state == SYSCONN_DRAINING ? -ERR_PEER : 0;
+  return 0;
+}
+static isize
+backendview(Filepool *pool, Connwork *work, Conncache *cache, Createop *create, Connwork *backend,
+            Connentry *entry)
+{
+  isize error = backendentry(pool, work, cache, create, backend, entry);
+  return error ? error : entry->state == SYSCONN_DRAINING ? -ERR_PEER : 0;
 }
 static int
 bootmatches(Bootstrap *boot, Connclaim claim, Createop *create, u32 opcode)
@@ -761,6 +768,73 @@ sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey
   if (!error)
     error = boot->state == SYSBOOT_PREPARED ? sysbootunprepare(boot, claim)
                                             : sysbootfinish(boot, claim);
+  if (error)
+    return error;
+  create->files[0] = create->files[1] = 0;
+  create->token = 0;
+  create->disposition = SYSFILE_RESULT_ENDED;
+  create->phase = SYSFILE_CREATE_RESOLVED;
+  return 0;
+}
+isize
+sysfilecreatebackendended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                          Connwork *backend, Connclaim claim)
+{
+  Createop  *create;
+  Slotop    *op;
+  Bootstrap *boot;
+  Connentry  entry;
+  isize      error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (create->phase == SYSFILE_CREATE_RESOLVED)
+    return create->flags & SYSFILE_CREATE_PEER_ENDED && create->disposition == SYSFILE_RESULT_ENDED
+               ? 0
+               : -ERR_STATE;
+  op = &work->state.operations[key->lease.slot];
+  if (create->phase != SYSFILE_CREATE_CAPTURED || create->error || create->count != 1 ||
+      !create->token || op->phase != SYSOP_ACKED || op->opcode != FS_OPEN ||
+      op->kind != IPC_RESOURCE_REPLY)
+    return -ERR_STATE;
+  if (!backend || !separate(backend, sizeof(*backend), key, sizeof(*key)))
+    return -ERR_INVALID;
+  error = backendentry(pool, work, cache, create, backend, &entry);
+  if (error)
+    return error;
+  boot = &backend->state.bootstrap;
+  if (backend->state.ended != 1 || entry.state != SYSCONN_DRAINING || sysbootcheck(boot) ||
+      boot->state == SYSBOOT_FREE || boot->opcode != FS_ATTACH)
+    return -ERR_STATE;
+  if (claim.tag.reserved || claim.tag.generation != backend->state.tag.generation ||
+      claim.tag.index != backend->state.tag.index || claim.seq != entry.sequence ||
+      claim.owner != entry.owner || claim.owner != create->files[0] ||
+      !sameclaim(boot->claim, claim) || boot->token != create->token)
+    return -ERR_STALE;
+  if (create->call && (create->call == backend->state.call || create->call == work->state.call))
+    return -ERR_STATE;
+  if (backend != work && work->state.bootstrap.state != SYSBOOT_FREE &&
+      work->state.bootstrap.opcode == FS_ABORT && work->state.bootstrap.token == create->token &&
+      work->state.bootstrap.claim.owner == create->files[0])
+    return -ERR_BUSY;
+  /* The exact old backend ended, so this reference cannot be published or
+     retried. Its ATTACH IO must nevertheless drain before local retirement. */
+  create->flags |= SYSFILE_CREATE_PEER_ENDED;
+  if (boot->state == SYSBOOT_WAITING)
+    return -ERR_WOULD_BLOCK;
+  if (boot->state != SYSBOOT_PREPARED) {
+    error = sysbootfinished(boot, claim);
+    if (!error && boot->state == SYSBOOT_RESULT)
+      error = sysbootack(boot, claim);
+    if (error)
+      return error;
+  }
+  if (create->call) {
+    error = __sys_free(create->call);
+    if (error)
+      return error;
+    create->call = 0;
+  }
+  error = sysfilerefabort(pool, work->state.self, &create->stage);
   if (error)
     return error;
   create->files[0] = create->files[1] = 0;
