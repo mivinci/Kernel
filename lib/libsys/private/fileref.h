@@ -66,6 +66,7 @@ isize sysfilerefcommit(Filepool *pool, Connpeer self, Filestage *owned_stage,
    compensation. Unknown remote results never authorize releasing the reserve.
    Both IDs are validated before either is returned; generations never rewind. */
 isize sysfilerefabort(Filepool *pool, Connpeer self, Filestage *owned_stage);
+isize sysfilerefstaged(Filepool *pool, Connpeer self, const Filestage *stage);
 /* Before connection teardown: 1 while any live/pending-close reference still
    uses this exact directory incarnation, 0 only when none remain. */
 isize sysfilerefconnection(const Filepool *pool, Connpeer self, Conntag connection);

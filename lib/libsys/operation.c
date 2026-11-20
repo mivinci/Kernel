@@ -54,7 +54,7 @@ match(Connwork *work, Conncache *cache, const Opkey *key, Slotop **out)
     return -ERR_STALE;
   if (op->phase > SYSOP_ACKED || !op->file ||
       op->flags & ~(SYSOP_BACKGROUND | SYSOP_SAVED | SYSOP_RESOURCE_MOVED | SYSOP_BAD_RESULT |
-                    SYSOP_CANCEL_SENT | SYSOP_APP_ENDED) ||
+                    SYSOP_CANCEL_SENT | SYSOP_APP_ENDED | SYSOP_CREATOR) ||
       ((op->flags & SYSOP_BACKGROUND) ? op->owner != 0 : op->owner == 0) ||
       ((op->phase == SYSOP_WAITING || op->phase == SYSOP_RESULT) ? handlekind(op->rpc) != HANDLE_RPC
                                                                  : op->rpc != 0))
@@ -100,7 +100,7 @@ sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner,
   if (error)
     return error;
   op = &work->state.operations[lease.slot];
-  if (op->phase) {
+  if (op->phase || work->state.creators[lease.slot].phase) {
     if (sysfilerelease(&work->state.pages, lease))
       return -ERR_STATE;
     return -ERR_STATE;
@@ -297,15 +297,21 @@ sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 by
   isize   error = match(work, cache, key, &op);
   if (error)
     return error;
-  if (op->phase != SYSOP_RESULT || op->status || op->kind != IPC_NONE || op->resource ||
-      op->words[0] || op->words[1] != key->lease.seq || op->flags & SYSOP_BAD_RESULT)
+  if (op->phase != SYSOP_RESULT || op->status || op->words[1] != key->lease.seq ||
+      op->flags & SYSOP_BAD_RESULT)
+    return -ERR_STATE;
+  if (op->kind == IPC_NONE) {
+    if (op->resource || op->words[0])
+      return -ERR_STATE;
+  } else if (op->kind != IPC_RESOURCE_REPLY || op->opcode != FS_OPEN || !op->resource ||
+             !op->words[2] || !op->words[3] || offset || bytes > 8)
     return -ERR_STATE;
   limit = (u64) key->lease.span * FS_SLOT_BYTES;
   if (!work->state.map.mapped || !work->state.map.verified ||
       work->state.map.bytes != FS_CONN_BYTES ||
       work->state.map.address > UINT64_MAX - FS_CONN_BYTES || offset > limit ||
-      bytes > limit - offset || bytes > op->words[3] || !output(work, cache, out, bytes) ||
-      !separate(key, sizeof(*key), out, bytes) ||
+      bytes > limit - offset || (op->kind == IPC_NONE && bytes > op->words[3]) ||
+      !output(work, cache, out, bytes) || !separate(key, sizeof(*key), out, bytes) ||
       !separate((void *) (uintptr_t) work->state.map.address, FS_CONN_BYTES, out, bytes))
     return -ERR_INVALID;
   error = ended(op);
@@ -404,7 +410,20 @@ sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)
 isize
 sysopabandon(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)
 {
-  isize error = sysopbackground(work, cache, owned_key, out);
+  Slotop *op;
+  isize   error;
+  if (!output(work, cache, owned_key, sizeof(*owned_key)) ||
+      !output(work, cache, out, sizeof(*out)) ||
+      !separate(owned_key, sizeof(*owned_key), out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = match(work, cache, owned_key, &op);
+  if (error)
+    return error;
+  if (op->flags & SYSOP_CREATOR &&
+      work->state.creators[owned_key->lease.slot].phase == SYSFILE_CREATE_RESOLVED &&
+      !work->state.creators[owned_key->lease.slot].disposition)
+    return -ERR_STATE;
+  error = sysopbackground(work, cache, owned_key, out);
   if (error)
     return error;
   work->state.operations[out->lease.slot].flags |= SYSOP_APP_ENDED;
@@ -417,7 +436,9 @@ sysopsaved(Connwork *work, Conncache *cache, const Opkey *key)
   isize   error = match(work, cache, key, &op);
   if (error)
     return error;
-  if (op->phase != SYSOP_RESULT)
+  if (op->phase != SYSOP_RESULT ||
+      (op->flags & SYSOP_CREATOR &&
+       work->state.creators[key->lease.slot].phase < SYSFILE_CREATE_CAPTURED))
     return -ERR_STATE;
   op->flags |= SYSOP_SAVED;
   return 0;
@@ -463,7 +484,7 @@ finish(Connwork *work, Conncache *cache, const Opkey *key, u64 *file, u32 phase)
     return error;
   if (!output(work, cache, file, sizeof(*file)))
     return -ERR_INVALID;
-  if (op->phase != phase || op->rpc || op->resource ||
+  if (op->phase != phase || op->rpc || op->resource || op->flags & SYSOP_CREATOR ||
       (phase == SYSOP_ACKED && !(op->flags & SYSOP_SAVED)))
     return -ERR_BUSY;
   error = sysfilerelease(&work->state.pages, key->lease);

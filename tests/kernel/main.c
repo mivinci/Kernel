@@ -74,6 +74,7 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
   putstr("READY elf-restored\n");
 #elif BOOT_CASE == 40
   runtimetest();
+  filecreatetest();
   putstr("READY runtime-restored\n");
 #elif BOOT_CASE == 39
   libsysload();

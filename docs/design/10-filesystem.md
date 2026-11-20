@@ -1018,7 +1018,7 @@ libsys新增私有closewatch、closeinterrupt及closework。先核验原File关�
 
 ### 创建类 reference_id 返回位置（2026-11-20用户确认）
 
-普通OPEN保持value=session、bytes=8，原槽输出u64 reference_id；VFS交付CALL的业务三字仍[seq,session,prepare_token]，原槽同样输出8字节reference_id。DUPREF保持session，value=新reference_id、bytes=0；PIPE的value=2、bytes=32，原槽按读端/写端顺序输出两条{session:u64,reference_id:u64}。回复及槽数据须在原RPC排空后保存、ACK前接管，未发布fd才能依据原引用做补偿；不能把free CALL等同close远端引用。此项已冻结，创建类适配及运行验收仍待实现。
+普通OPEN保持value=session、bytes=8，原槽输出u64 reference_id；VFS交付CALL的业务三字仍[seq,session,prepare_token]，原槽同样输出8字节reference_id。DUPREF保持session，value=新reference_id、bytes=0；PIPE的value=2、bytes=32，原槽按读端/写端顺序输出两条{session:u64,reference_id:u64}。回复及槽数据须在原RPC排空后保存、ACK前接管，未发布fd才能依据原引用做补偿；不能把free CALL等同close远端引用。普通接管/补偿及资源OPEN捕获的实现边界见文末，后端ATTACH/ABORT等仍待接。
 
 ### 创建前的本地引用预留（2026-11-20）
 
@@ -1029,3 +1029,17 @@ sysfilerefcommit先核对整组键和已接受的Filevalue，再一起转LIVE（
 8项新增host加原6项共14项专项覆盖双位置容量、完整提交/关闭锚、第二键/第二值错误无部分变化、重复及别名拒绝、源镜像/旧代次/最终代次和持有键覆盖。原生libsys载荷先以128次双预留占满256项，核对普通分配和另一预留都CAPACITY、预留ID不可查看；全部在尚无远端操作时撤销，再核对旧键STALE。随后单预留接管fixture原有55/77引用，继续实际READ、fd别名/pin及唯一CLOSE/worker路径，不把它描述为已执行OPEN或PIPE。
 
 最终1014项完整host、格式及RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过。两架构实际调用新预留/提交/撤销函数，用户载荷与当前SDK逐字节一致；fileref.o无未定义依赖，表/连接工作页/Rctx预算不变，init/serial与stage154逐字节相同，clangd切回RV64/libsys。证据build/host/stage155-reference-reserve/的unit、focused、场景日志、verify.py和evidence.json。首次原生fixture误把失败输出当作初值0，已改为使用独立初始化的失败输出，失败日志保留，未放宽实现。未重跑195矩阵（最近stage154），无CI/板端/性能结果；创建类回复解析、ACK前原结果接管、实际补偿/ATTACH、公开fd及生产服务仍须继续。
+
+### 原创建回复的接管与普通补偿（2026-11-20）
+
+每连接工作页内新增8份184字节Createop，保存预留组、新引用、源pin、精确CALL目标/token和处理阶段；Connstate及嵌入目录合计3336字节，仍是一页4096字节、8连接32KiB。原Slotop仍128字节，Rctx/快照预算保持。sysfilecreateprepare先预留引用，再建立原Op及一页描述符/已接受payload；OPEN可不持旧File，DUPREF只移动已固定的源pin，预留carrier不会被当作普通pin归还。提交前copy失败撤销预留并归还源pin；提交后的原RPC不重新创建。
+
+result先固定原寄存器回复，核对opcode/seq/状态及冻结的value/bytes，非阻塞RQ_FINISH证明实际访问结束后只复制一次8/32字节；RQ_FINISH返回空元组，不用它覆盖原业务字。DUPREF保留原session并核对新ref；PIPE整组验证后才接受。已持有LIVE/CLOSING或另一未提交捕获中存在的同后端引用不能当新引用接管，避免错误补偿关闭旧File。明确的负业务结果只释放没有产生引用的本地预留，不回滚O_CREAT/O_TRUNC等文件系统效果；原生/协议/复制错误保持原RPC、页、预留和授权责任。
+
+普通成功可整组转LIVE，或在未发布/已结束应用交付时直接转CLOSING；后者由Filepool持有精确关闭锚，finish不返回可发布fd的新ID。APP_ENDED不得再转LIVE，已经提交的LIVE结局也不能被迟到abandon改成中断；改变已选处分返回STATE。原pin与新结果在ACK且逻辑接管完成后分开、各移动一次。SYSOP_CREATOR阻止未捕获就SAVED、普通abort/finish释放carrier、未结束准备责任时清连接；handler/后台可继续持原Op及Createop，整份记录不随单次原生调用返回而丢失。
+
+资源OPEN按固定8字节读取reference_id，不把寄存器中的prepare_token当输出长度；先用本地RESOURCE查询取得CALL真实PID/image，再把CALL移入Createop，ACK前已有持久原结果/引用预留/授权责任。此路径目前只完成捕获：普通settle拒绝丢弃未完成ATTACH/ABORT的CALL/token，保持预留和页。后端绑定、准备撤销、故障生命周期恢复及正式trampoline按类型执行创建前置仍待接；当前没有公开POSIX open/pipe前端。
+
+14项host专项覆盖排空前不SAVED、捕获后不重读、源pin与新DUPREF分开、PIPE整组/错误第二项、负业务无引用、原生/格式/资源子类型错误保持、已提交LIVE优先和重复已持/待提交引用拒绝。独立filecreateuser双角色fixture从真实HELLO取得共享MEM，实际处理5个创建请求：普通OPEN、DUPREF、PIPE、显式结束交付的迟到OPEN和负业务OPEN。累计产生5份后端引用，PIPE两端及迟到OPEN先补偿，两个已发布本地fd随后关闭；服务逐个核对真实source/image、connid/seq/session/reference_id，5份精确CLOSE均确认后才退出。迟到协调GATE仅为测试消息，不是新增文件查询或重发创建；这是协议fixture，尚非生产FS/TTY、权限或完整管道语义。
+
+最终1028项完整host、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过。实际filecreateuser载荷与SDK逐字节一致，5份引用的创建/关闭及页/费用/实例归零，原信号/关闭worker及硬件FAULT继续通过；新模块仅依赖原生copy和既有私有接口，无libc未定义依赖，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage156-file-creator/的unit-reviewed、focused-reviewed、场景-reviewed日志、verify.py和evidence.json。ARM最初把结构体赋值降为memcpy，已改显式有界复制并重验；旧容量测试重复加算已存入Connstate的Slotop，现按实际全部数组/目录检查一页预算，失败日志保留。未重跑195矩阵（最近stage154），无CI/板端/性能结果，完整创建/装载/Fix及sh/net/GUI目标继续。

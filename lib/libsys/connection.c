@@ -203,7 +203,7 @@ sysconnworkclean(Connwork *work, Conncache *cache)
       !empty(&s->pages))
     return -ERR_BUSY;
   for (i = 0; i < FS_CONN_SLOTS; i++)
-    if (s->operations[i].phase)
+    if (s->operations[i].phase || s->creators[i].phase)
       return -ERR_BUSY;
   if (s->map.mapped) {
     error = sysbootunmap(s->space, &s->map);

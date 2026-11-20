@@ -2,9 +2,26 @@
 #define _LIBSYS_CONNECTION_H
 #include "bootstrap.h"
 #include "file.h"
+#include "fileref.h"
+#define SYSFILE_CREATE_PREPARED 1
+#define SYSFILE_CREATE_CAPTURED 2
+#define SYSFILE_CREATE_RESOLVED 3
 typedef struct Connstate Connstate;
 typedef struct Connwork  Connwork;
 typedef struct Slotop    Slotop;
+typedef struct Createop  Createop;
+struct Createop
+{
+  Filestage stage;
+  Filevalue values[2];
+  u64       files[2];
+  Connpeer  peer;
+  Handle    call;
+  u64       token, source;
+  isize     error;
+  u32       phase, count, disposition, reserved;
+};
+STATIC_ASSERT(sizeof(Createop) == 184, creator_responsibility_size);
 struct Slotop
 {
   Filelease lease;
@@ -27,6 +44,7 @@ struct Connstate
   Filepages pages;
   Bootstrap bootstrap;
   Slotop    operations[FS_CONN_SLOTS];
+  Createop  creators[FS_CONN_SLOTS];
 };
 struct Connwork
 {

@@ -8,7 +8,8 @@ from test_filepages import Pages,Lease
 
 class State(C.Structure):
     _fields_=[('self',Peer),('peer',Peer),('tag',Tag),('space',C.c_int64),('memory',C.c_int64),('call',C.c_int64),
-              ('map',Mapping),('pages',Pages),('bootstrap',support.Record),('operations',(C.c_uint8*128)*8)]
+              ('map',Mapping),('pages',Pages),('bootstrap',support.Record),('operations',(C.c_uint8*128)*8),
+              ('creators',(C.c_uint8*184)*8)]
 
 
 class Work(C.Structure):
@@ -163,4 +164,6 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual((work.state.self.pid,work.state.peer.pid),(self.self.pid,self.peer.pid))
         self.assertEqual(self.lib.sysconnbegin(cache,tag,202,C.byref(claim)),0)
         self.assertEqual(cache.contents.entries[tag.index].owner,202)
-        self.assertLess(C.sizeof(State)+C.sizeof(Cache)+8*128,4096)
+        self.assertEqual(State.creators.offset,State.operations.offset+8*128)
+        self.assertEqual(C.sizeof(State)-State.creators.offset,8*184)
+        self.assertLess(C.sizeof(State)+C.sizeof(Cache),4096)

@@ -237,6 +237,7 @@ def build(args, directory, run_dir):
             if args.case == "libsys":
                 sources += [ROOT / "tests/kernel/libsysload.c", directory / "sdk/libsysimage.S"]
             elif args.case == "runtime":
+                sources += [ROOT / "tests/kernel/filecreatetest.c", directory / "sdk/filecreateimage.S"]
                 sources += [ROOT / "tests/kernel/runtimetest.c", directory / "sdk/runtimeimage.S"]
             elif args.case == "tty":
                 sources += [ROOT / "tests/kernel/ttytest.c", directory / "sdk/ttyimage.S"]

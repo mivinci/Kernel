@@ -138,6 +138,12 @@ stagecheck(Filepool *pool, Connpeer self, const Filestage *stage, Fileref *entri
   return 0;
 }
 isize
+sysfilerefstaged(Filepool *pool, Connpeer self, const Filestage *stage)
+{
+  Fileref *entries[2];
+  return stagecheck(pool, self, stage, entries);
+}
+isize
 sysfilerefcommit(Filepool *pool, Connpeer self, Filestage *owned_stage, const Filevalue *values,
                  u32 closing)
 {

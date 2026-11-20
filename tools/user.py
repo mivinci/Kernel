@@ -55,7 +55,7 @@ def build(args):
     private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'close.c', 'context.c', 'contextipc.c', 'contextarg.c', 'argument.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/context.c', args.arch + '/ctxcall.S', args.arch + '/syscall.S', args.arch + '/io.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'filecreate.c', 'close.c', 'context.c', 'contextipc.c', 'contextarg.c', 'argument.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/context.c', args.arch + '/ctxcall.S', args.arch + '/syscall.S', args.arch + '/io.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -272,6 +272,13 @@ def build(args):
     tty_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='ttytrace']
     if len(tty_rows)!=1 or int(tty_rows[0][2])!=64:raise BuildError('missing tty trace')
     (sdk/'ttyimage.S').write_text('/* image sha256: '+digest(tty_image)+' */\n.section .rodata\n.balign 8\n.global tty_image,tty_image_end,tty_trace_address\ntty_image:\n.incbin '+json.dumps(str(tty_image))+'\ntty_image_end:\n.balign 8\ntty_trace_address:\n.quad '+str(int(tty_rows[0][1],16))+'\n')
+    filecreate_elf=link_adoption('filecreateuser',[compile_adoption(ROOT/'tests/kernel/filecreateuser.c','filecreateuser')])
+    filecreate_image=sdk/'filecreateuser.img'
+    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],128))
+    filecreate_inspect=invoke('inspect-filecreate',[tools['readelf']['path'],'-s',str(filecreate_elf)])
+    filecreate_rows=[line.split() for line in filecreate_inspect.splitlines() if line.split() and line.split()[-1]=='filecreatetrace']
+    if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')
+    (sdk/'filecreateimage.S').write_text('/* image sha256: '+digest(filecreate_image)+' */\n.section .rodata\n.balign 8\n.global filecreate_image,filecreate_image_end,filecreate_trace_address\nfilecreate_image:\n.incbin '+json.dumps(str(filecreate_image))+'\nfilecreate_image_end:\n.balign 8\nfilecreate_trace_address:\n.quad '+str(int(filecreate_rows[0][1],16))+'\n')
     job_elf=link_adoption('jobuser',[compile_adoption(ROOT/'tests/kernel/jobuser.c','jobuser')])
     job_image=sdk/'jobuser.img'
     job_image.write_bytes(pack(job_elf.read_bytes(),profile['machine'],128))

@@ -12,6 +12,7 @@
 #define SYSOP_BAD_RESULT     8
 #define SYSOP_CANCEL_SENT    16
 #define SYSOP_APP_ENDED      32
+#define SYSOP_CREATOR        64
 #define SYSOP_ABANDONED      1
 #define SYSOP_CONTROL_NS     UINT64_C(1000000000)
 typedef struct Opkey Opkey;
@@ -27,7 +28,9 @@ STATIC_ASSERT(sizeof(Opkey) == 40, slot_operation_key_size);
    File is a single already-pinned local reference, not a service authority.
    prepare moves it into the starting slot with the full page span. Caller
    builds/validates the actual shared descriptor/payload and submits its Rq
-   before moving the returned RPC. No app pointer or restart lives here. */
+   before moving the returned RPC. Typed creators instead hold a reserved
+   carrier with SYSOP_CREATOR; generic abort/finish cannot return it as a pin.
+   No app pointer or restart lives here. */
 isize sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner,
                    u64 *owned_file, u64 object, u64 opcode, u64 deadline, Opkey *out);
 isize sysopsubmitted(Connwork *work, Conncache *cache, const Opkey *key, Handle *owned_rpc);
@@ -59,7 +62,10 @@ isize sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, O
    pinned File once. file must initially be zero. Never copies payload or
    compensates OPEN/PIPE/reference-creating transactions by guessing. */
 isize sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file);
-/* Known successful ordinary result only. Nonblocking RQ_FINISH confirms real
+/* Known successful ordinary result, or the frozen 8-byte reference output
+   of resource OPEN. Resource OPEN permits only offset=0 and at most 8 bytes;
+   its token register is not a byte count. The resource stays owned here.
+   Nonblocking RQ_FINISH confirms real
    access ended, then copy a privately bounded part of the held span. Caller
    validates business counts/descriptor semantics. No ACK/SAVED/release. */
 isize sysopcopy(Connwork *work, Conncache *cache, const Opkey *key, u64 offset, u64 bytes,

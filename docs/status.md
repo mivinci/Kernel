@@ -20,16 +20,16 @@
 
 ## 最新完成点与证据
 
-- stage155：创建前本地引用可原子预留一个或两个位置，接受结果后整组转LIVE或直接交给CLOSING锚；旧键、容量/第二值错误和别名保持整组不变，代次不回退。
-- 14项专项；两架构实际占满256个预留位置、撤销及旧键拒绝，再接原fixture的READ/关闭链。没有执行远端OPEN/DUPREF/PIPE或创建补偿；引用表、连接工作页和Rctx预算保持。
-- 验收：1014项完整host、格式、6次双架构QEMU与6份journal；源码/SDK/实际载荷审计通过，init/serial与stage154相同，clangd切回RV64/libsys。
-- 证据：`build/host/stage155-reference-reserve/`。初次原生fixture失败输出初值错误已修正并保留日志；未重跑195矩阵，最近完整矩阵为stage154（1006 host、195 QEMU、168 journal）。无CI、板端或性能结果。
+- stage156：原OPEN/DUPREF/PIPE回复经真实排空后捕获一次，ACK前持久保存引用/预留；整组LIVE或CLOSING，源pin单独归还，已提交LIVE与重复旧引用有约束。Createop及目录共3336字节，仍在原4KiB工作页内。
+- 14项专项；两架构真实fixture各5个创建请求产生5份引用，PIPE/迟到OPEN补偿及普通关闭后全部归零。资源OPEN的CALL/真实目标/token/8字节ref已主机验证捕获，后端ATTACH/ABORT及正式信号前置未完成。
+- 验收：1028项完整host、格式、8次双架构QEMU与8份journal；源码/SDK/实际载荷审计通过，init/serial与stage155相同，clangd切回RV64/runtime。
+- 证据：`build/host/stage156-file-creator/`。ARM隐式memcpy和旧容量测试重复加算Slotop已修正并重验，失败日志保留；未重跑195矩阵，最近完整矩阵为stage154。无CI、板端或性能结果。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
-- 已确认但待类型化回复适配/验收：创建类reference_id返回位置（普通/资源OPEN槽输出8字节、DUPREF回新ref、PIPE回两组session/ref）见10末尾；本地位置预留已接。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise与完整信号前端未接。
-- 接创建类引用接管/补偿，继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
+- 创建类返回布局已确认并接入捕获；接资源OPEN后端ATTACH/ABORT、创建结果在trampoline中的前置及生命周期恢复。GROUP target=0及同步FAULT生产已交付，外部总线/FPE/SP对齐仍仅主机分类检查，公开libc kill/raise与完整信号前端未接。
+- 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 
 ## 硬件与问题登记
