@@ -19,6 +19,7 @@
 #ifndef __ASSEMBLER__
 #include "syscall.h"
 #include "operation.h"
+#include "argument.h"
 #define RCTX_ROUTE_NONE 0
 #define RCTX_ROUTE_BOOT 1
 #define RCTX_ROUTE_OP   2
@@ -47,7 +48,8 @@ struct Rctx
   volatile u64 active;
   Rroute       route;
   u64          input_bytes, input_saved;
-  u64          reserved[23];
+  u32          input_kind, input_argc, input_envc, input_reserved;
+  u64          reserved[21];
 };
 struct Rbank
 {
@@ -87,6 +89,11 @@ isize sysctxprepare(Rbank *bank, Connpeer self, u32 layer, u64 number, const u64
    Borrowed view is valid for this incarnation until abort/finish. */
 isize sysctxinput(Rbank *bank, Connpeer self, Rkey key, const void *source, u64 bytes);
 isize sysctxinputview(Rbank *bank, Connpeer self, Rkey key, const void **out, u64 *bytes);
+/* One complete argv/env capture directly into this layer's existing prefix.
+   Argsnap borrows that prefix and expires with the context incarnation. */
+isize sysctxarguments(Rbank *bank, Connpeer self, Rkey key, const char *const *argv,
+                      const char *const *envp, Argsnap *out);
+isize sysctxargumentview(Rbank *bank, Connpeer self, Rkey key, Argsnap *out);
 /* Continue an unbound raw context after its previous tuple moved out. Keeps
    accepted input and incarnation; never replays a bound service operation. */
 isize sysctxrearm(Rbank *bank, Connpeer self, Rkey key, u64 number, const u64 args[7]);

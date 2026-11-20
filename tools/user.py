@@ -55,7 +55,7 @@ def build(args):
     private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
-    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'close.c', 'context.c', 'contextipc.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/context.c', args.arch + '/ctxcall.S', args.arch + '/syscall.S', args.arch + '/io.S')]
+    sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'file.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'close.c', 'context.c', 'contextipc.c', 'argument.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'serial.c', args.arch + '/elf.c', args.arch + '/context.c', args.arch + '/ctxcall.S', args.arch + '/syscall.S', args.arch + '/io.S')]
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
     user = ROOT / 'tests/kernel/libsysuser.c'
     units.append((user, sdk / 'obj/libsysuser.o'))
@@ -107,7 +107,7 @@ def build(args):
     image.write_bytes(content)
     assembly = sdk / 'libsysimage.S'
     resource_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='resource_trace']
-    if len(resource_rows)!=1 or int(resource_rows[0][2])!=384:raise BuildError('resource core trace missing')
+    if len(resource_rows)!=1 or int(resource_rows[0][2])!=448:raise BuildError('resource core trace missing')
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.

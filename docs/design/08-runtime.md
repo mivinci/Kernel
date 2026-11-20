@@ -630,3 +630,17 @@ sysctxabort只撤销未激活PREPARED的原始准备并保留代次墓碑，不�
 新增10项host覆盖一次接受/原源变化、部分复制失败及重试、限额/NULL/回绕/银行重叠、准备撤销与外部责任、raw重登记的参数别名/状态保护、同一RPC中断后继续及固定取消截止、输入输出对齐共存/总预算、层隔离及视图/旧镜像保护。最终982项完整host、格式、两架构各libsys/sigframe/normal共6次QEMU与6份journal通过；真实libsys/frame载荷、源码/头/SDK/无libc依赖及银行/汇编布局审计通过。init/serial与stage148逐字节相同，clangd切回RV64/libsys。
 
 证据build/host/stage149-input-snapshot/的unit/场景日志、verify.py和evidence.json。未重跑195场景矩阵，最近完整矩阵为stage144；无CI、板端或性能结果。完整path/argv/envp安全读取与偏移构建、Fix/fork修复、公开POSIX及生产服务继续待接，创建类reference_id布局仍待用户确认。
+
+### 字符串与参数向量安全构建（2026-11-20）
+
+私有argument模块提供受检查的有界字符串复制、argv/envp捕获及只读条目访问。字符串每次最多64字节且不跨源页，发现NUL立即结束，不要求下一页可读；长度包含NUL，不做UTF-8/locale解释。指针表逐项copy并检查实际NULL终止，各最多256条，第257个非NULL为LIMIT，非法/回绕或缺失映射为FAULT。NULL向量在此私有构建接口表示空向量，不据此宣称公开execve的全部兼容行为。
+
+构建在调用者预付、独占且与输入/输出元数据分离的私有缓冲中完成。先取得有界指针表到未发布scratch，再逐项保存字符串并以8字节Strref(offset,length)替换指针；最后补两个零指针预算字，才发布Argsnap。bytes包含表、字符串和这16字节预算占位，合计不超过BOOT_ARG_BYTES=16384，与bootcheck的两个NULL开销一致；不把每个字符串都允许16KiB误作总量限制。Argsnap偏移相对自身data，不是目标Boot基址，后续打包必须重定位。失败可弄脏未发布scratch，但不会更改已发布视图；接受后只读偏移/内容，不再查询原指针表。
+
+sysctxarguments直接使用当前PREPARED层既有16KiB；input_kind/argc/envc等元数据放原保留区，Rctx仍512字节、银行50712字节。sysctxargumentview按本次代次重建借用视图，可跨raw rearm/原RPC继续等待，abort/finish后拒绝旧key。只捕获一次，活动上下文拒绝捕获，失败不发布输入。路径仍按独立限额经sysargstring写入调用者提供的独立准备空间，不挤占argv/env预算，也没有新增库全局工作区或malloc；生产准备空间的归属/Boot拼装随装载前端接入。
+
+10项新增host核验页末NUL、页末NULL指针、未映射续页与无终止/限额的区别、非UTF8字节、原源修改、argv/env各256条、两个向量总预算、恰好16KiB/多1字节、空向量、容量/元数据别名、非法地址/回绕/未终止表及Rctx状态/代次。真实两架构将abc/NUL放在页末，将argv最后一个NULL放另一页末，后继页均未映射；路径及2个argv/1个env成功捕获。首存储窗口的handler修改原字符串、解除这两页映射并free来源，原源重读实际FAULT，而保存内容及再次raw rearm后的视图仍正确，finish后旧视图失效。
+
+最终992项完整host、格式、RV64/ARM64各libsys/sigframe/normal共6次QEMU与6份journal通过；前序输入/输出、IO取消与一秒迟到资源、不可取消CLOSE worker仍经过运行。真实libsys/frame载荷、源码/头/SDK/无libc依赖及银行/汇编窗口审计通过；init/serial与stage149逐字节相同，clangd切回RV64/libsys。审计不假定静态测试helper保留符号，按实际库调用指令和载荷验证。
+
+证据build/host/stage150-argument-capture/的unit/场景日志、verify.py和evidence.json。本轮未重跑195场景矩阵，最近完整矩阵为stage144，无CI、板端或性能验收。构建器不等于目标Boot拼装、完整execve/spawn/Fix或公开POSIX；路径空间资金、目标资源/继承/准备及生产服务仍须继续接，创建类reference_id布局仍待确认。

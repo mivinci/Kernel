@@ -789,3 +789,5 @@ stage147已接[08的handler后故障裁决](08-runtime.md#handler-后的故障�
 stage148的[关闭worker](10-filesystem.md#关闭裁决与类型化后台-worker2026-11-20)已接私有中断/截止裁决：已确认逻辑成功优先，未知摘除后中断和超时分别保留未来EINPROGRESS/EIO，不rqcancel或重发CLOSE。真实handler返回后沿同一关闭等待到截止并转后台，服务通过原REQUEST确认取消位始终为0；公开POSIX trampoline/SA_RESTART和错误生命周期恢复仍未完成。
 
 stage149的[输入接受与继续等待](08-runtime.md#一次接受的输入与原-rpc-继续等待2026-11-20)已验证：handler改写原长度不改变同代次的已接受输入，原RPC继续等待不重发，完成输出与输入前缀在既有预算内隔离。连续字节原语不替代完整字符串/向量安全构建，也不代表公开POSIX trampoline/SA_RESTART或Fix已完成。
+
+stage150已接[字符串/向量构建](08-runtime.md#字符串与参数向量安全构建2026-11-20)：按源页边界及真实终止符捕获，接受后只保留偏移/内容。两架构handler修改并unmap原字符串/指针表后，保存参数及raw rearm后的视图仍有效；完整目标Boot/exec与公开信号前端仍未完成。

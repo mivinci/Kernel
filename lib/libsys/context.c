@@ -46,6 +46,14 @@ sysctxlookup(Rbank *bank, Connpeer self, Rkey key, Rctx **out)
   if (context->input_saved > 1 || context->input_bytes > RCTX_SNAPSHOT_BYTES ||
       (!context->input_saved && context->input_bytes))
     return -ERR_STATE;
+  if (context->input_kind > 1 || context->input_reserved ||
+      (context->input_kind == 0 && (context->input_argc || context->input_envc)) ||
+      (context->input_kind == 1 &&
+       (!context->input_saved || context->input_argc > BOOT_ARG_COUNT ||
+        context->input_envc > BOOT_ARG_COUNT ||
+        context->input_bytes <
+            (u64) (context->input_argc + context->input_envc + 2) * sizeof(char *))))
+    return -ERR_STATE;
   *out = context;
   return 0;
 }

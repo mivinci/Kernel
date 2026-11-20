@@ -25,6 +25,11 @@ static Fdtable      file_descriptors;
 static Rbank        runtime_contexts;
 static Rkey         runtime_key;
 static volatile u64 input_source[4] = {0, 4, 0, 0};
+static char         argument_word[] = "original";
+static char         argument_env[] = "K=one";
+static const char  *argument_envp[] = {argument_env, NULL};
+static Handle       argument_space, argument_memory;
+static u64          argument_vector;
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -296,7 +301,19 @@ receiveserver(const Bootview *view)
   words.words[0] = 113;
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
-volatile u64 resource_trace[48];
+volatile u64 resource_trace[56];
+static int
+argumenttext(const Argsnap *snapshot, u32 environment, u64 index, const char *expected, u64 bytes)
+{
+  const char *text;
+  u64         length, i;
+  if (sysargat(snapshot, environment, index, &text, &length) || length != bytes)
+    return 0;
+  for (i = 0; i < bytes; i++)
+    if (text[i] != expected[i])
+      return 0;
+  return 1;
+}
 static u64
 runtimenow(void)
 {
@@ -316,8 +333,27 @@ runtimehandler(u64 signum)
   u64    mask, ignored;
   Rctx  *outer = &runtime_contexts.contexts[0];
   u64    stage = resource_trace[16];
-  REQUIRE(signum == SIGNAL_USR1 && outer->phase == RCTX_CLEANING && outer->route.delivered, 108);
-  if (stage <= 4)
+  REQUIRE(signum == SIGNAL_USR1, 108);
+  if (stage == 7) {
+    Argsnap snapshot;
+    REQUIRE(outer->phase == RCTX_DONE && outer->route.kind == RCTX_ROUTE_NONE &&
+                !sysctxargumentview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                    &snapshot) &&
+                snapshot.argc == 2 && snapshot.envc == 1 &&
+                argumenttext(&snapshot, 0, 0, "original", 9) &&
+                argumenttext(&snapshot, 0, 1, "abc", 4) &&
+                argumenttext(&snapshot, 1, 0, "K=one", 6),
+            42);
+    argument_word[0] = 'X';
+    argument_env[2] = 'X';
+    REQUIRE(!__sys_unmap(argument_space, 0x1700000) && !__sys_unmap(argument_space, 0x1800000) &&
+                !__sys_free(argument_memory),
+            41);
+    argument_memory = 0;
+    resource_trace[47] = 1;
+  } else
+    REQUIRE(outer->phase == RCTX_CLEANING && outer->route.delivered, 108);
+  if (stage <= 4 || stage == 7)
     REQUIRE(sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) == -ERR_BUSY,
             108);
   if (stage <= 2)
@@ -336,7 +372,7 @@ runtimehandler(u64 signum)
     input_source[1] = 99;
     resource_trace[42] = 1;
   }
-  if (stage > 2) {
+  if (stage > 2 && stage != 7) {
     Slotop *op = &outer->route.work->state.operations[outer->route.operation.lease.slot];
     REQUIRE(op->phase == (stage == 4 ? SYSOP_RESULT : SYSOP_WAITING) && op->rpc && op->file, 106);
     if (stage == 3 || stage == 5) {
@@ -402,7 +438,7 @@ runtimetrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64
 {
   u64 mask, ignored, now;
   REQUIRE(signum == SIGNAL_USR1 &&
-              ((!info->code && resource_trace[16] <= 4) ||
+              ((!info->code && (resource_trace[16] <= 4 || resource_trace[16] == 7)) ||
                ((resource_trace[16] == 5 || resource_trace[16] == 6) &&
                 info->code == SIGNAL_SOURCE_USER && info->pid == (u64) connection_peer.pid)) &&
               function == (u64) runtimehandler && !flags &&
@@ -999,6 +1035,82 @@ closeclient(const Fileclose *anchor)
   REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 44);
 }
 static void
+argumentcheck(const Bootview *view)
+{
+  Allocarg alloc;
+  Maparg   map;
+  Argsnap  snapshot;
+  Sysret   result;
+  u64      pointers[3], mask, ignored, length, probe;
+  char     path[8];
+  isize    status;
+  argument_space = bootresource(view, BOOT_SELF_SPACE);
+  alloc.kind = ALLOC_DATA;
+  alloc.bytes = 2 * PAGE_SIZE;
+  alloc.align = alloc.minaddr = alloc.maxaddr = alloc.reserved = 0;
+  REQUIRE(!__sys_alloc(bootresource(view, BOOT_SELF_ALLOC), &alloc, &argument_memory), 40);
+  map.mem = argument_memory;
+  map.address = 0x1700000;
+  map.offset = 0;
+  map.length = PAGE_SIZE;
+  map.prot = MAP_READ | MAP_WRITE;
+  map.reserved = 0;
+  REQUIRE(!__sys_map(argument_space, &map), 39);
+  map.address = 0x1800000;
+  map.offset = PAGE_SIZE;
+  REQUIRE(!__sys_map(argument_space, &map), 38);
+  argument_vector = map.address + PAGE_SIZE - sizeof(pointers);
+  pointers[0] = (u64) (uintptr_t) argument_word;
+  pointers[1] = 0x1700000 + PAGE_SIZE - 4;
+  pointers[2] = 0;
+  REQUIRE(!__sys_copy((void *) (uintptr_t) pointers[1], "abc", 4) &&
+              !__sys_copy((void *) (uintptr_t) argument_vector, pointers, sizeof(pointers)) &&
+              !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysargstring(path, sizeof(path), (const char *) (uintptr_t) pointers[1], &length) &&
+              length == 4 && path[0] == 'a' && path[1] == 'b' && path[2] == 'c' && !path[3] &&
+              !sysctxprepare(&runtime_contexts, connection_work.state.self, 0, SYS_GETID, NULL,
+                             &runtime_key) &&
+              !sysctxarguments(&runtime_contexts, connection_work.state.self, runtime_key,
+                               (const char *const *) (uintptr_t) argument_vector, argument_envp,
+                               &snapshot) &&
+              snapshot.argc == 2 && snapshot.envc == 1 &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          37);
+  resource_trace[48] = resource_trace[49] = 1;
+  runtimeinvoke(7);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxargumentview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                  &snapshot) &&
+              argumenttext(&snapshot, 0, 0, "original", 9) &&
+              argumenttext(&snapshot, 0, 1, "abc", 4) &&
+              argumenttext(&snapshot, 1, 0, "K=one", 6) && argument_word[0] == 'X' &&
+              argument_env[2] == 'X' && !argument_memory &&
+              __sys_copy(&probe, (const void *) (uintptr_t) argument_vector, sizeof(probe)) ==
+                  -ERR_FAULT &&
+              !sysctxresult(&runtime_contexts, connection_work.state.self, runtime_key, &status,
+                            &result) &&
+              !status &&
+              !sysctxrearm(&runtime_contexts, connection_work.state.self, runtime_key, SYS_GETID,
+                           NULL) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          36);
+  resource_trace[50] = resource_trace[52] = 1;
+  runtimeinvoke(0);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxargumentview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                  &snapshot) &&
+              argumenttext(&snapshot, 0, 1, "abc", 4) &&
+              !sysctxresult(&runtime_contexts, connection_work.state.self, runtime_key, &status,
+                            &result) &&
+              !status &&
+              !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              sysctxargumentview(&runtime_contexts, connection_work.state.self, runtime_key,
+                                 &snapshot) == -ERR_STALE &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          35);
+  resource_trace[51] = 1;
+}
+static void
 typedclient(const Bootview *view, Handle peer)
 {
   Msg       words;
@@ -1088,6 +1200,7 @@ typedclient(const Bootview *view, Handle peer)
               !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
           237);
   runtimeinit();
+  argumentcheck(view);
   words.words[0] = 201;
   REQUIRE(!ipc_call(peer, &words, CALL_RECV_CALL, &result) && result.kind == IPC_RESOURCE_REPLY,
           108);

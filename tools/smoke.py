@@ -1590,6 +1590,8 @@ def exercise(args, run_dir, record):
                             checks[0].get("close_elapsed_ns", 0) < 1000000000 or
                             any(checks[0].get(k) != 1 for k in ("input_fault", "input_abort",
                                 "input_held", "input_output", "rewait_same_key")) or
+                            any(checks[0].get(k) != 1 for k in ("argument_guard", "argument_snapshot",
+                                "argument_rearm", "argument_sources_gone")) or
                             {k: checks[0].get(k) for k in ("actors", "resource", "native", "late", "consent", "accepted", "peer_lookup", "hello", "reuse", "slot_ops", "file_refs", "control_close", "ordinary_full", "owned_call", "receive", "shared", "payer_exit", "charged", "allocated")} !=
                             {"actors": 2, "resource": 2, "native": 25, "late": 1, "consent": 1, "accepted": 1, "peer_lookup": 1, "hello": 1, "reuse": 1, "slot_ops": 1, "file_refs": 1, "control_close": 1, "ordinary_full": 8, "owned_call": 1, "receive": 1, "shared": 1, "payer_exit": 1, "charged": 0, "allocated": transition["tables"]}):
                         raise SmokeError("standalone libsys user ELF/reference mismatch")

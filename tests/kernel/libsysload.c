@@ -39,7 +39,7 @@ __wrap_hal_user_enter(Hctx *context)
     REQUIRE(!procinfo(contextpid, &process) &&
             !spaceread(process.space, libsys_resource_address, trace, sizeof(trace)));
     stage = trace[16];
-    if (stage >= 1 && stage <= 4 && context->tf.pc == trace[17] &&
+    if (((stage >= 1 && stage <= 4) || stage == 7) && context->tf.pc == trace[17] &&
         !(contextinjected & (1UL << stage))) {
       contextinjected |= 1UL << stage;
       for (i = 0; i < sizeof(info); i++)
@@ -124,7 +124,7 @@ libsysload(void)
   Liferesult result;
   Pgstat     before, after;
   u32        i, ended, turns = 0, source_cleaned = 0, resource_commits = 0;
-  u64        handoff[48];
+  u64        handoff[56];
   u64        replayed = 0, timerwaits = 0, elapsed = 0, started, now;
   u64        closetimer = 0, closeelapsed = 0;
   int        error;
@@ -165,11 +165,11 @@ libsysload(void)
         }
         ended++;
         if (!i && !source_cleaned) {
-          u64 client_trace[48];
+          u64 client_trace[56];
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
-                  client_trace[9] == 6 && client_trace[19] == 6 && client_trace[20] == 6 &&
-                  client_trace[21] == 126 && client_trace[22] == 1 && client_trace[23] == 1 &&
+                  client_trace[9] == 6 && client_trace[19] == 7 && client_trace[20] == 7 &&
+                  client_trace[21] == 254 && client_trace[22] == 1 && client_trace[23] == 1 &&
                   client_trace[24] <= 1 && client_trace[25] == 1 && client_trace[26] == 1 &&
                   client_trace[27] == client_trace[30] + UINT64_C(1000000000) &&
                   client_trace[28] >= client_trace[27] &&
@@ -181,7 +181,9 @@ libsysload(void)
                   client_trace[37] == 1 && client_trace[38] <= 1 && client_trace[40] == 1 &&
                   client_trace[41] == 1 && client_trace[42] == 1 && client_trace[43] == 32 &&
                   client_trace[44] == 1 && client_trace[45] &&
-                  client_trace[45] == client_trace[46] && contextinjected == 30);
+                  client_trace[45] == client_trace[46] && client_trace[47] == 1 &&
+                  client_trace[48] == 1 && client_trace[49] == 1 && client_trace[50] == 1 &&
+                  client_trace[51] == 1 && client_trace[52] == 1 && contextinjected == 158);
           replayed = client_trace[24];
           timerwaits = client_trace[31];
           elapsed = client_trace[28] - client_trace[30];
@@ -282,6 +284,14 @@ libsysload(void)
   putstr(" input_output=");
   puthex(1);
   putstr(" rewait_same_key=");
+  puthex(1);
+  putstr(" argument_guard=");
+  puthex(1);
+  putstr(" argument_snapshot=");
+  puthex(1);
+  putstr(" argument_rearm=");
+  puthex(1);
+  putstr(" argument_sources_gone=");
   puthex(1);
   putstr(" receive=");
   puthex(1);
