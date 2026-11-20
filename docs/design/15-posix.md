@@ -64,6 +64,8 @@ libc 导出标准 API，libsys 实现 fd/连接/服务适配和负错误码协�
 | `char *strncpy(char *, const char *, size_t)` | 写满n字节，不足补NUL；截断时不保证NUL，返回原基址 | [strncpy](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncpy.html) |
 | `char *strcat(char *, const char *)` | 从目标NUL追加含NUL源串，返回原基址 | [strcat](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcat.html) |
 | `char *strncat(char *, const char *, size_t)` | 最多追加n个源字节，另写NUL，返回原基址 | [strncat](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncat.html) |
+
+环境修改接口登记（2026-11-21，libc/envset.c，stdlib.h；实现/验收见文末）：`int setenv(const char *name,const char *value,int overwrite)`复制参数，非零overwrite替换、零overwrite且已存在时保持环境和指针不变；无名/含`=`为EINVAL，分配失败ENOMEM且环境不变。`int unsetenv(const char *name)`删除匹配，未找到成功且环境不变，非法名称EINVAL；实现不分配，不产生额外ENOMEM路径。二者会更新environ并可能使先前getenv结果失效，属于单线程、非异步信号安全接口；有效输入成功时本实现保持errno。直接NULL名称/值额外拒绝为EINVAL，不把这些无效C输入当作规范有效用例。原文：[setenv](https://pubs.opengroup.org/onlinepubs/9799919799/functions/setenv.html)、[unsetenv](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unsetenv.html)。
 新增硬链接、追加原子性、PID 选择器与组号协议、实时时钟与标准属性等是待补齐设计，不因本表存在而视为原状态机已覆盖；阶段 00 冻结具体契约后进入对应实现阶段。
 
 验收分三层：host 测试检查纯库逻辑/布局/错误转换；RV64 与 ARM64 QEMU 测试真实服务和故障路径；选取有明确版本的外部单线程静态程序重新编译运行，登记补丁与缺失接口。三层结果分别记入 status.md，不以自编小程序替代外部软件兼容结论。
@@ -181,3 +183,15 @@ stage166按正文逐符号登记接入memchr、strnlen、strncmp、strrchr、str
 新增测试和函数使ARM runtimeuser需37镜像页，RV为33页。旧ELF成功fixture只给64页且还承担16页栈、Boot与内核元数据，ARM实际返回LIMIT；诊断已保存原loader_error。成功fixture现按plan.pages+64提供明确测试余量，exec上限128和elfcheck最多64镜像页保持，专门的16页不足预算场景不变；修正没有放宽内核预算，也没有吞掉装载错误。最终两架构各2次装载成功和4种失败回滚通过，原失败串口/日志保留。
 
 1095项完整host、格式、28次RV64/ARM64 QEMU通过，其中runtime/elf/heap/normal共8次、启动包布局20次，12份journal核对。实际运行的runtime载荷与当前SDK逐字节一致，string.o无未定义依赖、12符号/头文件导出和原生调用证明已审计。ARM init及两架构serial完整ELF与stage165相同；RV init完整哈希不同，但用上轮保留启动包提取的原ELF核对，入口、PT_LOAD地址/权限/文件与内存大小/全部载荷字节完全一致，差别仅在非装载内容。clangd切回RV64/runtime。证据build/host/stage166-string/的unit、focused-initial、场景-final、elf-arm64-observe/budget-reviewed、standards、原RV init提取件、verify.py和evidence.json。未重跑完整195矩阵（最近stage165），无CI/板端/性能或外部程序兼容结论；文件/终端/公开信号/Fix、sh/net/图形GPU及最终GUI仍待继续。
+
+### 环境变量修改与快照所有权（2026-11-21）
+
+stage167在独立envset.c接setenv/unsetenv，未调用的程序不因CSU/getenv绑定而被拉入环境分配路径。setenv先校验名称，再为完整新指针表/字符串快照计算有溢出检查的空间；复制全部保留条目及name/value后才发布environ，再释放上一份自有快照。输入可借旧getenv值，应用直接改写environ也可借先前自有字符串，不在复制前free。overwrite=0且存在时不分配、环境指针不变，失败ENOMEM不改指针/值。人为重复名称在覆盖时保留首出现位置并合为一条；不引入新的环境总长/条数限制，受实际内存容量约束。
+
+unsetenv不分配，从首个匹配洞向前压缩可写指针表，移除全部同名项，缺失时原指针不变；不free借用字符串。自有快照可包含被删字符串，剩余值继续有效，下一次setenv复制后整体替换，环境全空时释放自有块。malloc/free失败语义沿既有分配器，不通过I/O、RPC或新的内核接口修改环境。接口非异步信号安全、不承诺线程安全或旧getenv指针跨修改继续可用；NULL名/值的EINVAL是额外无效输入拒绝，有效输入的标准错误与行为仍按已登记原文。
+
+实际取得setenv/unsetenv两份POSIX.1-2024原文并核对参数复制、覆盖0、无匹配删除、错误和环境保持。8项host用受控真实宿主分配包装验证调用参数副本、ENOMEM时精确旧环境不变、旧块参数别名、外部environ借旧块值、删除不分配、非法名/重复及1024次覆盖仅一份当前块（构建时峰值两份），最后空环境归零。首次shim缺宿主abort声明导致0测试编译失败，补声明后专项及完整host通过，未放宽被测实现，原失败日志保留。
+
+两架构各5次runtime main执行20组、每架构100组环境断言，实际malloc/free支持覆盖/删除/空值/非零overwrite/旧值别名/借用environ/64次覆盖和恢复启动环境。3槽CREATE孩子先由原资源检查证明无可用MEM管理槽，再调用setenv实际取得ENOMEM且环境保持，未为测试补发授权或改资源上限。原文本120组/页边界、ELF两次成功/四种失败、堆/启动包和文件创建死亡恢复都继续通过；这里没有实际fork继承环境或外部shell兼容结论。
+
+1103项完整host、格式、28次双架构QEMU通过：runtime/elf/heap/normal共8次、启动包布局20次，12份journal已核对。SDK/头/库/实际嵌入载荷、setenv/unsetenv原生调用及envset.o仅errno/environ/malloc/free和纯文本依赖已审计；默认程序入口/所有装载段与stage166一致，两架构serial完整ELF保持。clangd切回RV64/runtime。证据build/host/stage167-environment/的unit、focused-reviewed、场景-final、standards及sources.json、上轮init提取件、verify.py和evidence.json。最近完整195矩阵仍为stage165，无CI、板端或性能结果；getopt、文件/终端/公开信号/Fix及sh/net/图形GPU/最终GUI目标继续。

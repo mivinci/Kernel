@@ -12,7 +12,8 @@
 #include "fdtableuser.h"
 #include "fileuser.h"
 #include "stringuser.h"
-volatile u64        runtime_trace[16];
+#include "envuser.h"
+volatile u64        runtime_trace[17];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -385,6 +386,7 @@ main(int argc, char **argv)
   runtime_trace[13] = fdtableusercheck();
   runtime_trace[14] = fileusercheck();
   runtime_trace[15] = stringusercheck(&view);
+  runtime_trace[16] = envusercheck(&view);
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)

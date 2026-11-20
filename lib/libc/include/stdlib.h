@@ -10,6 +10,8 @@ void          free(void *pointer);
 int           atexit(void (*function)(void));
 NORETURN void exit(int status);
 char         *getenv(const char *name);
+int           setenv(const char *name, const char *value, int overwrite);
+int           unsetenv(const char *name);
 long          strtol(const char *string, char **end, int base);
 unsigned long strtoul(const char *string, char **end, int base);
 #endif
