@@ -23,6 +23,7 @@ static void      resourceendtest(u32 submitted);
 static void      bootstraptest(u32 variant);
 static void      bootpeertest(u32 mode);
 static void      creatorbackendtest(u32 mode);
+static void      datarecoverytest(u32 mode);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -216,6 +217,92 @@ filecreatetest(void)
   creatorbackendtest(0);
   creatorbackendtest(1);
   creatorbackendtest(2);
+  datarecoverytest(0);
+  datarecoverytest(1);
+  datarecoverytest(2);
+}
+static void
+datarecoverytest(u32 mode)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   info[2];
+  Handle     pids[2];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  Rqid       request;
+  Rqinfo     pending;
+  u64        trace[16];
+  u32        cleaned = 0, rqcleaned = 0, turns = 0;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(2048, 4096, 2, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pids, info, mode == 2 ? "HI" : mode ? "FG" : "DE", 2);
+  for (;;) {
+    if (!cleaned) {
+      CHECK(!procinfo(pids[1], &info[1]));
+      if (info[1].state == PROC_EXITING) {
+        CHECK(!lifestat(info[1].life, &life) && life.reason == LIFE_EXIT && life.code == 42 &&
+              !spaceread(info[1].space, filecreate_trace_address, trace, sizeof(trace)) &&
+              trace[0] == 2 && trace[1] == 1 && !trace[2] && trace[8] == (mode == 2 ? 2U : 1U) &&
+              !trace[15]);
+        while ((error = procclean(pids[1])) > 0) {
+        }
+        CHECK(!error && !lifecollect(info[1].life, 1, &result));
+        cleaned = 1;
+      }
+    }
+    if (cleaned && !rqcleaned) {
+      CHECK(!spaceread(info[0].space, filecreate_trace_address, trace, sizeof(trace)));
+      if (trace[5] && trace[6] == 11) {
+        CHECK(!rqlookup((Handle) trace[5], info[0].identity, &request) &&
+              !rqstat(request, &pending) && pending.caller == pids[0] &&
+              pending.server == pids[1] && pending.status == -ERR_PEER &&
+              !(pending.flags & RQ_FINISHED) && !rqclean(request, info[1].identity));
+        rqcleaned = 1;
+      }
+    }
+    CHECK(!procinfo(pids[0], &info[0]));
+    if (info[0].state == PROC_EXITING)
+      break;
+    error = procrunone();
+    CHECK(!error || error == -ERR_WOULD_BLOCK);
+    CHECK(++turns < 256);
+    if (error)
+      CHECK(procidle() >= 0);
+  }
+  CHECK(cleaned && rqcleaned && !lifestat(info[0].life, &life) && life.reason == LIFE_EXIT &&
+        life.code == 42 &&
+        !spaceread(info[0].space, filecreate_trace_address, trace, sizeof(trace)) &&
+        trace[0] == 2 && trace[1] == 1 && trace[2] == 1 && trace[3] == 1 &&
+        trace[4] == (u64) (mode == 2) && trace[8] && trace[8] < 64 && !trace[15]);
+  while ((error = procclean(pids[0])) > 0) {
+  }
+  CHECK(!error && !lifecollect(info[0].life, 1, &result) && !setstat(set, &budget) &&
+        !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck());
+  putstr("DATARECOVERCHECK mode=");
+  puthex(mode);
+  putstr(" fake_done_ignored=");
+  puthex(1);
+  putstr(" quarantined=");
+  puthex(1);
+  putstr(" trusted_cleanup=");
+  puthex(rqcleaned);
+  putstr(" pins_returned=");
+  puthex(mode == 2 ? 2 : 1);
+  putstr(" success_preserved=");
+  puthex(mode == 2);
+  putstr(" charged=");
+  puthex(0);
+  putstr(" allocated=");
+  puthex(after.allocated);
+  putstr("\n");
 }
 static void
 creatorbackendtest(u32 mode)

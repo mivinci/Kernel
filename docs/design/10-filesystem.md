@@ -164,6 +164,8 @@ close 释放本进程会话引用，不隐含 fsync；延迟写回错误须通�
 崩溃后未同步数据可按磁盘协议部分保留，但目录/分配结构必须一致，不出现重复分配、悬空引用或释放块仍可达。
 同一Rq只执行并回复一次，不承诺跨新Rq或跨服务崩溃exactly-once；未取得原结果的写遇服务崩溃可能已执行，报告EIO且不自动重放。
 
+旧后端独立确认终结后，READ/WRITE的原生PEER空失败结果仍须等原RQ实际FINISH/ACK，才归还该操作的页与仍被pin的File；未提交的准备可直接撤销。共享DONE、已写入的槽字节和退出通知均不能替代排空或确认字节数。另一操作的失败不覆盖这个请求已经固定的成功，成功数据仍沿原槽保存/复制再ACK。私有收尾返回0只表示责任已经转移，不是read的EOF或write的零进展；不改原失败、不重发I/O、不替调用者unpin或关闭别名，创建/CLOSE/命名等事务保留各自的收尾规则。
+
 - [ ] 验证短读写、EOF、共享偏移顺序和 pread/pwrite 不改变会话偏移。
 - [ ] 注入执行后信号/完成提示丢失，rqpoll/rqwait原RPC返回同一结果，原read槽数据不重读，不再次推进偏移或写入；服务失效不伪造可恢复业务结果。
 - [ ] 覆盖有界缓存满、批量回写、回写错误和 fsync 覆盖边界；不以普通 write 成功冒充持久化。
@@ -1227,3 +1229,15 @@ stage175新增私有sysfilecreatebackendended，源OPEN须CAPTURED/ACKED且仍�
 三例源VFS继续正常处理STOP；新File均不发布。已有R1的场景中，创建者清理后旧共享头/MEM/CALL仍保留，先独立结束原bootstrap，再用既有ended规则单独关闭旧R1，确认该连接已无File引用后才workclean归还映射与授权。全部页/费用/实例回基线；这是原生IPC下的服务fixture，不是默认启动包已含生产VFS/后端。
 
 最终C源码通过1167项完整host、8项专项、格式及双架构runtime/libsys/sigframe/normal共8次QEMU、8份内核诊断journal；专项加强业务负值输入后另复验8项。SDK私有头/源/库、实际filecreate ELF打包/内嵌载荷、filecreate对象仅预期内部依赖及新函数真实调用均审计通过；旧bootstrap终结、map/复用失败、资源ABORT、File引用及缓存/日志/环境路径保持。init装载段与serial ELF保持，生产镜像无测试载荷，所有构建后clangd切回RV64/runtime。证据build/host/stage175-creator-backend-end/含unit-final/focused-final、最终场景日志、fmt-check-final、owned-abort-before、verify.py与evidence.json；修正前结果独立保留不计最终验收。无新ABI、权限或固定池，尚无生产rqclean、公开fd/Fix、生产服务或完整sh/net/最终GUI结果；最近完整195矩阵仍为stage165，无CI/板端/性能结论。
+
+### 读写操作在后端终结后的独立收尾（2026-11-21）
+
+stage176新增私有sysoprecover。要求原Rctx责任已结束、精确旧peer已标记ended/DRAINING；仅普通READ/WRITE，创建、CLOSE及命名事务不由此丢弃。PREPARED按无提交撤销；WAITING只poll原RPC，已固定结果必须是空原生PEER，实际FINISH后才SAVED/ACK/释放页并归还一次原File pin。输出须初始0，后续unpin与最后别名关闭仍由调用者完成；前台或已唯一移交的后台key均可使用，不强加应用放弃/取消策略。
+
+固定成功、其他原生错误、业务负值、资源或非空失败元组保留原结果路径，不因全连接终结而清成零字节或猜测写入未执行。原sysopdrain仍仅处理已明确APP_ENDED的后台数据操作，二者的结果/策略门禁不混用。新函数无应用数据指针、errno、资源转授或新请求；共享DONE不参与其完成判断。
+
+8项host专项覆盖未提交读/写、独立终结及实际FINISH门禁、ACK失败保持、成功与其他错误不改、无放弃策略的后台key、创建/CLOSE/命名拒绝、错误输出/别名/peer以及一失败一成功的独立页与pin。初始fixture helper名与Peer属性相撞，改测试名后通过，生产逻辑未放宽，原失败日志保留。
+
+双架构runtime各3个真实双进程场景：READ在共享槽写入未报告字节、WRITE核验已捕获输入，二者均写共享DONE却不reply即退出；以及同连接先完成一个成功READ，再在第二个READ写DONE后退出。客户端收到原生PEER，确认其数据不能复制、最后关闭因pin仍忙，先看到WOULD_BLOCK并保留页/pin。服务Proc/Space清理后，可信测试管理者按本fixture无下游/设备/DMA的代码与发权前提，校验原RPC双方/PEER/未FINISHED并显式rqclean；随后才ACK/归还pin。混合场景的早先成功没有代收尾，原8字节仍从原槽复制并按原RPC确认。原File最后按ended规则关闭，全部页/费用/实例回基线。
+
+本fixture提供固定读写File，只验证真实IPC下的运输/结果/pin生命周期，不冻结生产OPEN访问标志或完整访问策略，也不是公开POSIX read/write前端。最终1175项完整host、8项专项、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU与8份内核诊断journal通过；SDK私有头/源/库、实际用户ELF打包/内嵌载荷、operation对象仅预期内部依赖及真实recover调用均审计通过。旧创建/ABORT/bootstrap/map/复用失败、缓存/日志与环境场景保持；init装载段与serial ELF保持，生产镜像无测试载荷，全部构建后clangd切回RV64/runtime。证据build/host/stage176-data-recovery/含unit/focused-reviewed、场景日志、verify.py/evidence.json。无新内核ABI、权限或固定池；最近完整195矩阵仍为stage165，无CI/板端/性能、生产服务、公开fd/Fix或完整sh/net/最终GUI结论。

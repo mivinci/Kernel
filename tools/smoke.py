@@ -1603,6 +1603,10 @@ def exercise(args, run_dir, record):
                     if ended != [dict(mode=i,reference_ended=1,attach_quarantined=int(i!=0),trusted_cleanup=1,old_file_ended=int(i==2),vfs_usable=1,charged=0,allocated=transition['tables']) for i in range(3)]:
                         raise SmokeError("creator/backend termination or reservation drainage mismatch")
                     record['creator_backend_end']=ended
+                    data=[fields(line) for line in serial.read_text().splitlines() if line.startswith("DATARECOVERCHECK ")]
+                    if data != [dict(mode=i,fake_done_ignored=1,quarantined=1,trusted_cleanup=1,pins_returned=2 if i==2 else 1,success_preserved=int(i==2),charged=0,allocated=transition['tables']) for i in range(3)]:
+                        raise SmokeError("data IO end recovery released an unfinished or successful operation")
+                    record['data_recovery']=data
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,

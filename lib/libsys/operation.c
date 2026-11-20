@@ -409,6 +409,51 @@ sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
   return sysopfinish(work, cache, key, file);
 }
 isize
+sysoprecover(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
+{
+  Slotop   *op;
+  Connentry entry;
+  u32       i;
+  isize     error;
+  if (!output(work, cache, file, sizeof(*file)) || *file ||
+      !separate(key, sizeof(*key), file, sizeof(*file)))
+    return -ERR_INVALID;
+  error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  error = sysconnview(cache, work->state.tag, &entry);
+  if (error)
+    return error;
+  if (work->state.ended != 1 || entry.state != SYSCONN_DRAINING ||
+      entry.peer.pid != work->state.peer.pid || entry.peer.image != work->state.peer.image)
+    return -ERR_STATE;
+  if ((op->opcode != FS_READ && op->opcode != FS_WRITE) || op->flags & SYSOP_CREATOR)
+    return -ERR_NOTSUP;
+  if (op->phase == SYSOP_PREPARED)
+    return sysopabort(work, cache, key, file);
+  if (op->phase == SYSOP_WAITING) {
+    error = sysoppoll(work, cache, key);
+    if (error)
+      return error;
+  }
+  if ((op->phase != SYSOP_RESULT && op->phase != SYSOP_ACKED) || op->status != -ERR_PEER ||
+      op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT)
+    return -ERR_STATE;
+  for (i = 0; i < 4; i++)
+    if (op->words[i])
+      return -ERR_STATE;
+  if (op->phase == SYSOP_RESULT) {
+    error = sysopfinished(work, cache, key);
+    if (!error)
+      error = sysopsaved(work, cache, key);
+    if (!error)
+      error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  return sysopfinish(work, cache, key, file);
+}
+isize
 sysopbackground(Connwork *work, Conncache *cache, Opkey *owned_key, Opkey *out)
 {
   Slotop *op;

@@ -67,6 +67,14 @@ isize sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, O
    pinned File once. file must initially be zero. Never copies payload or
    compensates OPEN/PIPE/reference-creating transactions by guessing. */
 isize sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file);
+/* Exact old backend independently ended/DRAINING, bound Rctx finished.
+   READ/WRITE only, never a creator or CLOSE. Unsubmitted work can abort;
+   submitted work must retain an empty native PEER result and actually FINISH
+   before SAVED/ACK/page release. A fixed success or different error stays
+   owned for its original result path, not rewritten or replayed. Foreground
+   or background keys allowed; file starts zero and receives the still-pinned
+   File once, for explicit unpin. No application copy, errno or alias close. */
+isize sysoprecover(Connwork *work, Conncache *cache, const Opkey *key, u64 *file);
 /* Known successful ordinary result, or the frozen 8-byte reference output
    of resource OPEN. Resource OPEN permits only offset=0 and at most 8 bytes;
    its token register is not a byte count. The resource stays owned here.

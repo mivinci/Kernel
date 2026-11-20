@@ -8,12 +8,16 @@
 #include "private/contextipc.h"
 #include <abi/resource.h>
 
-#define ADDRESS 0x1600000UL
-#define STOP    0xf001
-#define GATE    0xf002
-#define PREPARE 0xf003
-#define ENDPEER 0xf004
-#define CONNID  0x10001
+#define ADDRESS  0x1600000UL
+#define STOP     0xf001
+#define GATE     0xf002
+#define PREPARE  0xf003
+#define ENDPEER  0xf004
+#define CONNID   0x10001
+#define IO_VALUE UINT64_C(0x1122334455667788)
+#define IO_WRITE UINT64_C(0x8877665544332211)
+#define IO_GHOST UINT64_C(0xdeadbeef5a5a5a5a)
+#define IO_GUARD UINT64_C(0x2468ace013579bdf)
 static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
 static Filepool pool;
@@ -490,6 +494,32 @@ server(const Bootview *boot, u32 recover)
           descriptor.span == 1);
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
     reply.words[1] = seq;
+    if ((opcode == FS_READ || opcode == FS_WRITE) && recover >= 9 && recover <= 11) {
+      CHECK(created == 1 && references[0] && sessions[0] == descriptor.object && slot < 2 &&
+            descriptor.payload_bytes == 8 && !descriptor.args[0] && descriptor.args[1] == 8 &&
+            !descriptor.args[2] && !descriptor.args[3]);
+      for (i = 4; i < 8; i++)
+        CHECK(!descriptor.args[i]);
+      filecreatetrace[8]++;
+      if (recover == 11 && filecreatetrace[8] == 1) {
+        CHECK(opcode == FS_READ);
+        data[0] = IO_VALUE;
+        reply.words[2] = reply.words[3] = 8;
+        CHECK(!ipc_reply(input.request, &reply));
+        continue;
+      }
+      CHECK(opcode == (recover == 10 ? FS_WRITE : FS_READ));
+      if (opcode == FS_WRITE)
+        CHECK(data[0] == IO_WRITE);
+      else
+        data[0] = IO_GHOST;
+      ((volatile Fileslot *) ((u8 *) head + FS_DESC_OFFSET + slot * FS_DESC_BYTES))->state =
+          FS_SLOT_DONE;
+      filecreatetrace[1] = created;
+      filecreatetrace[2] = closed;
+      filecreatetrace[0] = 2;
+      return; /* Shared DONE without a reply cannot fix this I/O's result. */
+    }
     if (opcode == FS_CLOSE) {
       CHECK(slot == 6 && !descriptor.payload_bytes && descriptor.args[0]);
       found = 0;
@@ -981,6 +1011,98 @@ resourceendclient(const Bootview *boot, u32 submitted)
   filecreatetrace[0] = 2;
 }
 static void
+iodraft(u64 file, u64 opcode, u64 owner, Opkey *key)
+{
+  Fileref  reference;
+  Fileslot descriptor;
+  u64      pin = file, value = IO_WRITE;
+  Rkey     invocation;
+  CHECK(!sysfilerefview(&pool, work.state.self, file, &reference) &&
+        !sysfilerefpin(&pool, work.state.self, file) &&
+        !sysopprepare(&work, &cache, SYSFILE_MAIN, 1, owner, &pin, reference.session, opcode, 0,
+                      key));
+  zero(&descriptor, sizeof(descriptor));
+  descriptor.seq = key->lease.seq;
+  descriptor.state = FS_SLOT_SUBMITTED;
+  descriptor.payload_bytes = 8;
+  descriptor.object = reference.session;
+  descriptor.span = 1;
+  descriptor.args[1] = 8;
+  CHECK(!__sys_copy((void *) (uintptr_t) (work.state.map.address + FS_DESC_OFFSET +
+                                          key->lease.slot * FS_DESC_BYTES),
+                    &descriptor, sizeof(descriptor)));
+  if (opcode == FS_WRITE)
+    CHECK(!__sys_copy((void *) (uintptr_t) (work.state.map.address + FS_DATA_OFFSET +
+                                            key->lease.slot * FS_SLOT_BYTES),
+                      &value, 8));
+  CHECK(!sysctxopcall(&contexts, work.state.self, 0, &work, &cache, key, 0, &invocation) &&
+        !sysctxinvoke(&contexts, work.state.self, invocation) &&
+        !sysctxhandoff(&contexts, work.state.self, invocation) &&
+        !sysctxfinish(&contexts, work.state.self, invocation));
+}
+static void
+iorecoverclient(const Bootview *boot, u32 mode)
+{
+  Opkey     open, failed, success;
+  Fileclose anchor;
+  Fileref   held;
+  Rkey      invocation;
+  u64       files[2], source = 0, file, pin = 0, copied = IO_GUARD, steps = 0;
+  isize     outcome, error;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  open = begin(FS_OPEN, "/a", 0);
+  collect(&open);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &open) &&
+        !sysfilecreatesettle(&pool, &work, &cache, &open, 0));
+  zero(files, sizeof(files));
+  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &open, files, &source) && files[0] && !source);
+  file = files[0];
+  if (mode == 2)
+    iodraft(file, FS_READ, 801, &success);
+  iodraft(file, mode == 1 ? FS_WRITE : FS_READ, 802, &failed);
+  CHECK(!sysctxopwait(&contexts, work.state.self, 0, &work, &cache, &failed, &invocation));
+  outcome = sysctxinvoke(&contexts, work.state.self, invocation);
+  CHECK(outcome == -ERR_PEER && !sysctxhandoff(&contexts, work.state.self, invocation) &&
+        !sysctxfinish(&contexts, work.state.self, invocation) &&
+        !sysoppeerended(&work, &cache, &failed) &&
+        ((const volatile Fileslot *) (uintptr_t) (work.state.map.address + FS_DESC_OFFSET +
+                                                  failed.lease.slot * FS_DESC_BYTES))
+                ->state == FS_SLOT_DONE &&
+        sysopcopy(&work, &cache, &failed, 0, 8, &copied) == -ERR_STATE && copied == IO_GUARD &&
+        !sysfilerefdrop(&pool, work.state.self, file) &&
+        sysfilerefclose(&pool, work.state.self, file, &anchor) == -ERR_BUSY &&
+        sysoprecover(&work, &cache, &failed, &pin) == -ERR_WOULD_BLOCK && !pin &&
+        !sysfilerefview(&pool, work.state.self, file, &held) && held.pins == (mode == 2 ? 2U : 1U));
+  filecreatetrace[5] = (u64) work.state.operations[failed.lease.slot].rpc;
+  filecreatetrace[6] = 11;
+  do {
+    CHECK(++steps < 64 && !__sys_yield());
+    error = sysoprecover(&work, &cache, &failed, &pin);
+  } while (error == -ERR_WOULD_BLOCK);
+  CHECK(!error && pin == file && copied == IO_GUARD && outcome == -ERR_PEER &&
+        !sysfilerefunpin(&pool, work.state.self, pin));
+  pin = 0;
+  if (mode == 2) {
+    CHECK(sysoprecover(&work, &cache, &success, &pin) == -ERR_STATE && !pin &&
+          !work.state.operations[success.lease.slot].status &&
+          work.state.operations[success.lease.slot].words[2] == 8 &&
+          !sysopcopy(&work, &cache, &success, 0, 8, &copied) && copied == IO_VALUE &&
+          !sysopsaved(&work, &cache, &success) && !sysopack(&work, &cache, &success) &&
+          !sysopfinish(&work, &cache, &success, &pin) && pin == file &&
+          !sysfilerefunpin(&pool, work.state.self, pin));
+  }
+  CHECK(!sysfilerefclose(&pool, work.state.self, file, &anchor) &&
+        !sysfilecloseended(&pool, &work, &cache, &anchor) &&
+        !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
+        !sysconnworkclean(&work, &cache));
+  filecreatetrace[2] = 1;
+  filecreatetrace[3] = copied == (mode == 2 ? IO_VALUE : IO_GUARD);
+  filecreatetrace[4] = mode == 2;
+  filecreatetrace[8] = steps;
+  filecreatetrace[0] = 2;
+}
+static void
 creatorbackendclient(const Bootview *boot, u32 mode)
 {
   Opkey     key;
@@ -1354,7 +1476,7 @@ main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
         ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'z') ||
-         (argv[0][0] >= 'A' && argv[0][0] <= 'C')) &&
+         (argv[0][0] >= 'A' && argv[0][0] <= 'I')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1411,6 +1533,10 @@ main(int argc, char **argv)
     creatorbackendclient(sysboot(), argv[0][0] == 'u' ? 0 : argv[0][0] == 'x' ? 1 : 2);
   else if (argv[0][0] == 'v' || argv[0][0] == 'y' || argv[0][0] == 'B')
     server(sysboot(), argv[0][0] == 'v' ? 6 : argv[0][0] == 'y' ? 7 : 8);
+  else if (argv[0][0] == 'D' || argv[0][0] == 'F' || argv[0][0] == 'H')
+    iorecoverclient(sysboot(), argv[0][0] == 'D' ? 0 : argv[0][0] == 'F' ? 1 : 2);
+  else if (argv[0][0] == 'E' || argv[0][0] == 'G' || argv[0][0] == 'I')
+    server(sysboot(), argv[0][0] == 'E' ? 9 : argv[0][0] == 'G' ? 10 : 11);
   else
     backend(sysboot(), argv[0][0] == 'w' ? 6 : argv[0][0] == 'z' ? 7 : 8);
   return 42;
