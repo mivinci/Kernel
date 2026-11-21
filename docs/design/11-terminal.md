@@ -873,4 +873,6 @@ stage275：`ttyserialread` 验证 READ 槽快照后，可向共享响应页的 `
 
 stage276：`ttyfileio` 按私有槽账本核对原 REQUEST，在提交读写前检查取消或强制终结。取消回复业务 EINTR；终结请求只收尾；未就绪的阻塞请求保留槽，非阻塞请求回复 EAGAIN。成功结果通过原 REQUEST 回复。ARM64/RV64 runtime 实测已接收的 READ 等待后被取消，随后到达的输入和响应页均不被旧请求修改，下一笔 READ 收取该行。96 项主机测试和格式检查通过。生产分派、计时读调度及 WRITE 的真实 IPC 回归仍待接入。
 
+stage277：ARM64/RV64 runtime 使用原 REQUEST 验证 WRITE 在 TX 暂存忙时推迟。释放旧暂存后，已取消的 WRITE 以 EINTR 完成，TX 只保留先前写入；下一笔两字节 WRITE 返回两字节进展、零响应数据，环中实际产生 `b\r\n`。格式检查通过；此处使用测试环，生产 TTY 分派仍待接入。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

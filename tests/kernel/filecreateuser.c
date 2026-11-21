@@ -10,6 +10,7 @@
 #include "private/fd.h"
 #include "private/contextipc.h"
 #include "private/sigentry.h"
+#include "private/serial.h"
 #include <abi/resource.h>
 #include <abi/observe.h>
 #include "../../sbin/tty/serial.h"
@@ -27,12 +28,13 @@
 #define IO_GUARD UINT64_C(0x2468ace013579bdf)
 static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
-static Filepool pool;
-static Fdtable  fds;
-static Rbank    contexts;
-static Rkey     active_key;
-static Ttyinput ttyline;
-volatile u64    filecreatetrace[16];
+static Filepool   pool;
+static Fdtable    fds;
+static Rbank      contexts;
+static Rkey       active_key;
+static Ttyinput   ttyline;
+static Serialring ttyrx, ttytx;
+volatile u64      filecreatetrace[16];
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -337,13 +339,13 @@ creatorsignals(void)
   filecreatetrace[8] = (u64) (uintptr_t) __sys_ctxresume;
 }
 static void
-ttyreadcall(u64 file, u32 cancel)
+ttyiocall(u64 file, u64 opcode, u32 cancel)
 {
   Ipcmsg       result;
   Filelease    lease;
   Fileslot     slot = {0};
   Fileref      ref;
-  Msg          call = {{FS_READ, work.state.map.connid, 0, 0}}, seen = {{SEEN, 0, 0, 0}};
+  Msg          call = {{opcode, work.state.map.connid, 0, 0}}, seen = {{SEEN, 0, 0, 0}};
   Handle       rpc;
   volatile u8 *page;
   CHECK(!sysfilerefview(&pool, work.state.self, file, &ref) &&
@@ -357,6 +359,10 @@ ttyreadcall(u64 file, u32 cancel)
   page = (volatile u8 *) (uintptr_t) (work.state.map.address + FS_DATA_OFFSET +
                                       lease.slot * FS_SLOT_BYTES);
   page[0] = page[1] = 0xa5;
+  if (opcode == FS_WRITE) {
+    page[0] = cancel ? 'x' : 'b';
+    page[1] = '\n';
+  }
   CHECK(!__sys_copy((void *) (uintptr_t) (work.state.map.address + FS_DESC_OFFSET +
                                           lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)) &&
@@ -370,10 +376,13 @@ ttyreadcall(u64 file, u32 cancel)
   CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq);
   if (cancel)
     CHECK((isize) result.words[0] == -EINTR && !result.words[2] && !result.words[3] &&
-          page[0] == 0xa5 && page[1] == 0xa5);
-  else
+          page[0] == (opcode == FS_WRITE ? 'x' : 0xa5) &&
+          page[1] == (opcode == FS_WRITE ? '\n' : 0xa5));
+  else if (opcode == FS_READ)
     CHECK(!result.words[0] && result.words[2] == 2 && result.words[3] == 2 && page[0] == 'b' &&
           page[1] == '\n');
+  else
+    CHECK(!result.words[0] && result.words[2] == 2 && !result.words[3]);
   CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
         !sysconnworkrelease(&work, &cache, lease));
 }
@@ -417,8 +426,10 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   first = files[0];
-  ttyreadcall(first, 1);
-  ttyreadcall(first, 0);
+  ttyiocall(first, FS_READ, 1);
+  ttyiocall(first, FS_READ, 0);
+  ttyiocall(first, FS_WRITE, 1);
+  ttyiocall(first, FS_WRITE, 0);
   CHECK(first && !files[1] && !source && !sysfdreserve(&fds, 0, &fd) &&
         !sysfdpublish(&fds, fd, first, 0) && !sysfilerefpin(&pool, work.state.self, first));
   key = begin(FS_DUPREF, 0, first);
@@ -542,17 +553,21 @@ server(const Bootview *boot, u32 recover)
   Filewatch *watch = &link->watch;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
-  volatile u64 *data;
-  isize         status;
-  Fileslot      ttyslot;
-  Ipcmsg        ttycall;
-  Handle        ttypending = 0;
-  volatile u8  *ttypage = NULL;
-  const Termarg ttymode = {0, 0, TTY_CS8, TTY_ICANON, 0, 0, {0}};
-  Ttyeffect     effect;
-  u32           ttyseen = 0;
+  volatile u64   *data;
+  isize           status;
+  Fileslot        ttyslot;
+  Ipcmsg          ttycall;
+  Handle          ttypending = 0;
+  volatile u8    *ttypage = NULL;
+  const Termarg   ttymode = {0, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON, 0, 0, {0}};
+  Ttyeffect       effect;
+  Ttyserial       ttyio;
+  Ttyserialresult ttyresult;
+  u8              output[3];
+  u32             ttyseen = 0;
   if (!recover)
-    CHECK(!ttyinputinit(&ttyline, 1));
+    CHECK(!ttyinputinit(&ttyline, 1) && !serialinit(&ttyrx, 1) && !serialinit(&ttytx, 1) &&
+          !ttyserialinit(&ttyio, &ttyrx, &ttytx, 1) && ttyserialoutput(&ttyio, 0, "a", 1) == 1);
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
         input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
         input.words[0] == FS_HELLO && !input.words[1] && input.words[2] &&
@@ -640,12 +655,20 @@ server(const Bootview *boot, u32 recover)
     }
     if (opcode == SEEN) {
       if (!recover) {
-        CHECK(ttypending && ttyseen < 2);
+        CHECK(ttypending && ttyseen < 4);
         if (++ttyseen == 2) {
           CHECK(!ttyinputbyte(&ttyline, &ttymode, 'b', &effect) &&
                 !ttyinputbyte(&ttyline, &ttymode, '\n', &effect) && ttyline.ready == 2 &&
                 !ttyfileio(NULL, &ttyline, 0, &watch->active, &ttycall, &ttyslot, ttypage, 0) &&
                 ttyline.ready == 2);
+          ttypending = 0;
+        }
+        if (ttyseen == 4) {
+          CHECK(!ttyserialstep(&ttyio, &ttyline, &ttymode, 0, &ttyresult) && !ttyio.queued &&
+                !ttyfileio(&ttyio, &ttyline, ttymode.oflag, &watch->active, &ttycall, &ttyslot,
+                           ttypage, 0) &&
+                !ttyio.queued && serialread(&ttytx, 1, output, sizeof(output)) == 1 &&
+                output[0] == 'a');
           ttypending = 0;
         }
         CHECK(!ipc_reply(input.request, &reply));
@@ -674,22 +697,27 @@ server(const Bootview *boot, u32 recover)
     if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
-    if (!recover && opcode == FS_READ) {
+    if (!recover && (opcode == FS_READ || opcode == FS_WRITE)) {
       found = 0;
       for (i = 0; i < created; i++)
         if (references[i] && sessions[i] == descriptor.object)
           found++;
       CHECK(found == 1 && !ttypending);
-      status = ttyfileio(NULL, &ttyline, 0, &watch->active, &input, &descriptor,
+      status = ttyfileio(&ttyio, &ttyline, ttymode.oflag, &watch->active, &input, &descriptor,
                          (volatile u8 *) data, 0);
       if (status == -ERR_WOULD_BLOCK) {
-        CHECK(!ttyseen && !ipc_defer(input.request));
+        CHECK(ttyseen == (opcode == FS_READ ? 0 : 2) && !ipc_defer(input.request));
         ttypending = input.request;
         ttycall = input;
         ttyslot = descriptor;
         ttypage = (volatile u8 *) data;
-      } else
-        CHECK(!status && ttyseen == 2 && !ttyline.ready);
+      } else {
+        CHECK(!status && ttyseen == (opcode == FS_READ ? 2 : 4) && !ttyline.ready);
+        if (opcode == FS_WRITE)
+          CHECK(!ttyserialstep(&ttyio, &ttyline, &ttymode, 0, &ttyresult) && !ttyio.queued &&
+                serialread(&ttytx, 1, output, sizeof(output)) == 3 && output[0] == 'b' &&
+                output[1] == '\r' && output[2] == '\n');
+      }
       continue;
     }
     if ((opcode == FS_READ || opcode == FS_WRITE) && recover >= 9 && recover <= 11) {
