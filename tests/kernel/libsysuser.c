@@ -9,6 +9,7 @@
 #include "private/fd.h"
 #include "private/close.h"
 #include "private/contextipc.h"
+#include "private/elf.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 #include <abi/time.h>
@@ -301,7 +302,70 @@ receiveserver(const Bootview *view)
   words.words[0] = 113;
   REQUIRE(!ipc_reply(received.request, &words), 209);
 }
-volatile u64 resource_trace[56];
+volatile u64  resource_trace[58];
+static u32    readforkchild;
+static Handle readforkrpc;
+static void
+readfork(void)
+{
+  struct
+  {
+    Fix      header;
+    Fixlayer layers[FIX_LAYER_COUNT];
+    u64      count;
+  } fix;
+  Forkret         forked;
+  Elfwork         work;
+  Fixview         view;
+  const Fixlayer *layers;
+  Connpeer        parent = runtime_contexts.self, child;
+  Handle          ppid, published;
+  Sysret          result;
+  u64             args[7] = {0}, mask, ignored;
+  u32             i;
+  readforkrpc = runtime_contexts.contexts[0].route.rpc;
+  REQUIRE(handlekind(readforkrpc) == HANDLE_RPC &&
+              !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !__sys_forkprep((Handle) resource_trace[56], 0, &forked),
+          32);
+  if (!forked.construct) {
+    REQUIRE(!__sys_getid(&child.pid, &child.image, &ppid) && ppid == parent.pid &&
+                !sysfixchild(&forked, sizeof(fix), parent.pid, parent.image, &view) &&
+                !sysfixlayers(&view, &layers) &&
+                !sysctxfixwait(&runtime_contexts, parent, child, layers),
+            33);
+    readforkchild = 1;
+  } else {
+    for (i = 0; i < sizeof(fix); i++)
+      ((u8 *) &fix)[i] = 0;
+    fix.header.format = FIX_FORMAT;
+    fix.header.bytes = sizeof(fix);
+    fix.header.source_pid = parent.pid;
+    fix.header.source_image = parent.image;
+    fix.header.target_pid = forked.pid;
+    fix.header.contexts_off = sizeof(Fix);
+    fix.layers[0].sequence = runtime_key.sequence;
+    fix.layers[0].action = FIX_LAYER_COMPLETE;
+    for (i = 0; i < sizeof(work); i++)
+      ((u8 *) &work)[i] = 0;
+    work.view = forked.construct;
+    work.pid = forked.pid;
+    work.parent_space = connection_work.state.space;
+    work.scratch = 0x31000000;
+    work.scratch_bytes = PAGE_SIZE;
+    REQUIRE(!sysfixload(&work, 0x32000000, &fix, sizeof(fix)) &&
+                !__sys_forkcommit(forked.construct, (const void *) 0x32000000, sizeof(fix),
+                                  &published) &&
+                published == forked.pid,
+            34);
+    args[0] = (u64) published;
+    REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == (u64) published &&
+                result.values[1] == WAIT_EXITED && result.values[2] == 43,
+            35);
+    resource_trace[57] = 1;
+  }
+  REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 36);
+}
 static void
 referenceprepare(Connpeer self, Conntag connection, u64 *file)
 {
@@ -441,6 +505,12 @@ runtimehandler(u64 signum)
       shared[0] = shared[1] = shared[2] = shared[3] = 'X';
       resource_trace[23] = 1;
       resource_trace[44] = 1;
+      readfork();
+      if (readforkchild) {
+        resource_trace[20]++;
+        resource_trace[21] |= 1UL << stage;
+        return;
+      }
     }
     if (stage == 6) {
       REQUIRE(op->opcode == FS_CLOSE && !(op->flags & SYSOP_CANCEL_SENT) &&
@@ -511,6 +581,25 @@ runtimeinvoke(u64 stage)
 {
   resource_trace[16] = stage;
   REQUIRE(!sysctxinvoke(&runtime_contexts, connection_work.state.self, runtime_key), 101);
+  if (readforkchild) {
+    Ipcmsg      reply, ignored;
+    const void *output;
+    u64         bytes;
+    u32         value;
+    REQUIRE(stage == 4 && runtime_contexts.contexts[0].active == 0 &&
+                sysctxforkreply(&runtime_contexts, runtime_contexts.self, runtime_key, &reply) ==
+                    1 &&
+                !reply.kind && !reply.source && !reply.request && !reply.image && !reply.words[0] &&
+                reply.words[2] == 4 && reply.words[3] == 4 &&
+                !sysctxsnapshotview(&runtime_contexts, runtime_contexts.self, runtime_key, &output,
+                                    &bytes) &&
+                bytes == 4 && !__sys_copy(&value, output, sizeof(value)) &&
+                value == UINT32_C(0x74736574) &&
+                ipc_rqpoll(readforkrpc, 0, &ignored) == -ERR_BAD_HANDLE &&
+                !sysctxfinish(&runtime_contexts, runtime_contexts.self, runtime_key),
+            37);
+    __sys_exit(43);
+  }
   if (stage != 5 && stage != 6)
     resource_trace[16] = 0;
 }

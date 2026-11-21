@@ -1649,6 +1649,7 @@ def exercise(args, run_dir, record):
                             checks[0].get("detached_aborts") != 2 or
                             checks[0].get("cancel_before_handler") != 1 or
                             checks[0].get("stable_snapshot") != 1 or
+                            checks[0].get("snapshot_fork") != 1 or
                             checks[0].get("queued_retries") not in (0, 1) or
                             checks[0].get("deadline_fault") != 1 or
                             checks[0].get("late_resource_drop") != 1 or

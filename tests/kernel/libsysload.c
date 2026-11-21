@@ -5,6 +5,7 @@
 #include <diag.h>
 #include <signal.h>
 #include <clock.h>
+#include <rq.h>
 extern const u8       libsys_image[], libsys_image_end[];
 extern const u64      libsys_resource_address;
 static Handle         contextpid;
@@ -136,6 +137,19 @@ libsysload(void)
   }
   load(pids[0], &info[1], 1);
   load(pids[1], &info[0], 0);
+  {
+    Createpolicy policy;
+    Handle       authority;
+    policy.set = sets[0];
+    policy.memlimit = 256;
+    policy.exec_limit = 512;
+    policy.resources = LOCALS;
+    policy.pending = PENDING_CALLS;
+    policy.rights = CREATE_USE;
+    REQUIRE(!localcreate(proctable(pids[0]), &policy, &authority) &&
+            !spacewrite(info[0].space, libsys_resource_address + 56 * sizeof(u64), &authority,
+                        sizeof(authority)));
+  }
   contextpid = pids[0];
   contextinjected = 0;
   REQUIRE(!procpublish(pids[0]) && !procpublish(pids[1]) && !proctimerstart() &&
@@ -166,7 +180,8 @@ libsysload(void)
         }
         ended++;
         if (!i && !source_cleaned) {
-          u64 client_trace[56];
+          u64 client_trace[58];
+          u32 sweep;
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
                   client_trace[9] == 6 && client_trace[19] == 7 && client_trace[20] == 7 &&
@@ -186,7 +201,7 @@ libsysload(void)
                   client_trace[48] == 1 && client_trace[49] == 1 && client_trace[50] == 1 &&
                   client_trace[51] == 1 && client_trace[52] == 1 && contextinjected == 158 &&
                   client_trace[53] > 8 && client_trace[54] > client_trace[53] &&
-                  client_trace[55] == 1);
+                  client_trace[55] == 1 && client_trace[57] == 1);
           aborts = 2;
           replayed = client_trace[24];
           timerwaits = client_trace[31];
@@ -196,6 +211,8 @@ libsysload(void)
           while ((error = procclean(pids[0])) > 0) {
           }
           REQUIRE(!error && !lifecollect(info[0].life, 1, &result) && result.code == 42);
+          for (sweep = 0; sweep < 128; sweep++)
+            REQUIRE(procwork(32) >= 0);
           REQUIRE(!acctstat(info[0].acct, &payer) && payer.state == AC_CLOSING && payer.used == 3 &&
                   !payer.bound);
           REQUIRE(!setstat(sets[0], &group) && !group.instances && group.charged == 3);
@@ -254,6 +271,8 @@ libsysload(void)
   putstr(" cancel_before_handler=");
   puthex(1);
   putstr(" stable_snapshot=");
+  puthex(1);
+  putstr(" snapshot_fork=");
   puthex(1);
   putstr(" queued_retries=");
   puthex(replayed);
