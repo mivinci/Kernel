@@ -393,6 +393,12 @@ class SpaceSnapshotTests(unittest.TestCase):
             self.assertEqual(self.lib.spacesnapshotclone(parent,child,foreign,C.byref(rejected)),-1)
             self.assertEqual((rejected.generation,rejected.index,rejected.reserved),(77,77,77))
             self.assertEqual((bytes(self.mstat(foreign)),bytes(self.pstat())),before)
+            self.assertEqual(self.lib.memretain(data),0)
+            try:
+                self.assertEqual(self.lib.spacesnapshotclone(parent,child,data,C.byref(rejected)),-4)
+                self.assertEqual((rejected.generation,rejected.index,rejected.reserved),(77,77,77))
+                self.assertEqual((self.stat(peer).frozen,self.lookup(peer,0x10000)[1]),(0,11))
+            finally:self.assertEqual(self.lib.memrelease(data),0)
             view=Memid();self.assertEqual(self.lib.spacesnapshotclone(parent,child,data,C.byref(view)),0)
             self.assertEqual((self.stat(peer).frozen,self.stat(peer).refs),(1,2))
             self.assertEqual(self.lib.spaceactivate(peer),-4)
