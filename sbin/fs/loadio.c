@@ -100,3 +100,89 @@ loadioreply(Loadio *io, const void *data, u64 bytes, u64 now)
     io->request = 0;
   return error;
 }
+
+isize
+loadcachebegin(Loadcache *work, Loadio *io, Cache *cache, const Loadspan *span)
+{
+  isize error;
+  if (!work || !io || !io->request || !span || io->bytes > CACHE_BYTES ||
+      io->offset % CACHE_BYTES != span->offset)
+    return -ERR_INVALID;
+  if (work->request)
+    return -ERR_BUSY;
+  error =
+      cachespanbegin(cache, span->first, span->next, span->offset, (u32) io->bytes, &work->span);
+  if (error)
+    return error;
+  work->blocks[0] = span->first;
+  work->blocks[1] = span->next;
+  work->next = work->inflight = work->failed = 0;
+  work->request = io->request;
+  return 0;
+}
+
+isize
+loadcachecomplete(Loadcache *work, const Cacheio *ticket, u32 success)
+{
+  const Cacheio *owned;
+  isize          error;
+  if (!work || !ticket || !work->inflight)
+    return -ERR_STALE;
+  owned = &work->ticket;
+  if (ticket->key.index != owned->key.index || ticket->key.generation != owned->key.generation ||
+      ticket->serial != owned->serial || ticket->version != owned->version ||
+      ticket->kind != owned->kind)
+    return -ERR_STALE;
+  error = cachecomplete(work->span.cache, ticket, success);
+  if (!error) {
+    work->inflight = 0;
+    work->failed = !success;
+    work->next++;
+  }
+  return error;
+}
+
+isize
+loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 now)
+{
+  isize error;
+  u64   state, bytes = 0;
+  if (!work || !io || !out || !scratch || !work->request || work->request != io->request)
+    return -ERR_INVALID;
+  if (work->inflight)
+    return -ERR_WOULD_BLOCK;
+  if (work->span.cache) {
+    error = ipc_rqcheck(io->request, &state);
+    if (error)
+      return error;
+    if (!work->failed && state == RQ_CHECK_LIVE &&
+        !loadstatus(io->table, io->session, io->ticket, now)) {
+      while (work->next < ARRAY_SIZE(work->blocks)) {
+        if (work->blocks[work->next]) {
+          error = cachefetch(work->span.cache, work->blocks[work->next], CACHE_DATA, &out->ticket,
+                             &out->destination);
+          if (error == 1) {
+            out->block = work->blocks[work->next];
+            work->ticket = out->ticket;
+            work->inflight = 1;
+            return 1;
+          }
+          if (error)
+            return error;
+        }
+        work->next++;
+      }
+      error = cachespancopy(&work->span, scratch);
+      if (error)
+        return error;
+      bytes = io->bytes;
+    }
+    error = cachespanend(&work->span);
+    if (error)
+      return error;
+  }
+  error = loadioreply(io, scratch, bytes, now);
+  if (!error)
+    work->request = 0;
+  return error;
+}

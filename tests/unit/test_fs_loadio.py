@@ -18,7 +18,7 @@ class FsLoadioTests(unittest.TestCase):
                    '-Wall', '-Wextra', '-Werror', '-shared', '-fPIC']
         for folder in ('include', 'sbin/fs', 'lib/libsys', 'lib/libsys/include', 'lib/libc/include'):
             command += ['-I', str(ROOT / folder)]
-        for path in ('sbin/fs/load.c', 'sbin/fs/loadio.c', 'lib/libsys/file.c',
+        for path in ('sbin/fs/load.c', 'sbin/fs/loadio.c', 'sbin/fs/cache.c', 'lib/libsys/file.c',
                      'tests/unit/fsloadiomock.c'):
             command.append(str(ROOT / path))
         if sys.platform == 'darwin':

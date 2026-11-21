@@ -1046,9 +1046,10 @@ server(const Bootview *boot, u32 recover)
   Loadio          loadio = {0};
   Cache           loadcache = {0};
   Loadspan        loadspan;
-  Cachespan       pinned = {0};
+  Loadcache       loadwork = {0};
+  Loadfetch       fetch;
   Cachekey        competing = {0};
-  Cacheio         loadticket, duplicate;
+  Cacheio         duplicate;
   u8             *loadtarget = NULL, *unused = NULL;
   u8              loadbytes[4];
   u64             loadsession = 0, guard;
@@ -1193,20 +1194,21 @@ server(const Bootview *boot, u32 recover)
         zero(loadtarget, CACHE_BYTES);
         loadtarget[CACHE_BYTES - 2] = 'E';
         loadtarget[CACHE_BYTES - 1] = 'L';
-        CHECK(!cachecomplete(&loadcache, &loadticket, 1) &&
+        CHECK(!loadcachecomplete(&loadwork, &fetch.ticket, 1) &&
               cacheget(&loadcache, 110, CACHE_DATA, &competing) == -ERR_CAPACITY &&
               cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) == 0 &&
-              !unused &&
-              cachefetch(&loadcache, loadspan.next, CACHE_DATA, &loadticket, &loadtarget) == 1);
+              !unused && loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) == 1 &&
+              fetch.block == loadspan.next);
+        loadtarget = fetch.destination;
       } else if (input.words[1] == 5) {
         CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
         zero(loadtarget, CACHE_BYTES);
         loadtarget[0] = 'F';
         loadtarget[1] = '!';
-        CHECK(!cachecomplete(&loadcache, &loadticket, 1) && !cachespancopy(&pinned, loadbytes) &&
-              !cachespanend(&pinned) && !cacheget(&loadcache, 110, CACHE_DATA, &competing) &&
-              !cacheput(&loadcache, &competing) &&
-              !loadioreply(&loadio, loadbytes, sizeof(loadbytes), 3));
+        CHECK(!loadcachecomplete(&loadwork, &fetch.ticket, 1) &&
+              !loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) &&
+              !cacheget(&loadcache, 110, CACHE_DATA, &competing) &&
+              !cacheput(&loadcache, &competing));
         loadtarget = NULL;
       } else {
         CHECK(input.words[1] == 3 && input.words[2] == loadsession && !loadio.request &&
@@ -1329,12 +1331,14 @@ server(const Bootview *boot, u32 recover)
           CHECK(loadio.bytes == sizeof(loadbytes) &&
                 !loadmapspan(&loadio.file, &loadmap, &loadindex, 99, 128, loadio.offset,
                              loadio.bytes, &loadspan) &&
-                !cachespanbegin(&loadcache, loadspan.first, loadspan.next, loadspan.offset,
-                                sizeof(loadbytes), &pinned) &&
-                cachefetch(&loadcache, loadspan.first, CACHE_DATA, &loadticket, &loadtarget) == 1 &&
+                !loadcachebegin(&loadwork, &loadio, &loadcache, &loadspan) &&
+                loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 2) == 1 &&
+                fetch.block == loadspan.first &&
+                loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 2) == -ERR_WOULD_BLOCK &&
                 cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) ==
                     -ERR_WOULD_BLOCK &&
                 !unused && !ipc_defer(input.request));
+          loadtarget = fetch.destination;
         }
       }
       continue;
