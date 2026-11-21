@@ -71,6 +71,11 @@ class View(C.Structure):
 class FixView(C.Structure):
     _fields_=[(x,C.c_void_p) for x in ('header','resources','contexts')]+[('contexts_limit',C.c_uint64)]
 
+class FixSpec(C.Structure):
+    _fields_=[('source',C.c_int64),('target',C.c_int64),('image',C.c_uint64),
+              ('layers',C.c_void_p),('connections',C.c_void_p),('connection_count',C.c_uint64),
+              ('resources',C.c_void_p),('resource_count',C.c_uint64)]
+
 class Image(C.Structure):
     _fields_=[(x,C.c_uint64) for x in ('magic','format','bytes','entry','segment_count','segments_off','boot_off','boot_bytes')]
 
@@ -94,6 +99,8 @@ class UserBootTests(unittest.TestCase):
         cls.lib.bootcheck.restype=C.c_int64
         cls.lib.sysfixview.argtypes=[C.c_void_p,C.c_uint64,C.c_int64,C.c_uint64,C.c_int64,C.POINTER(FixView)]
         cls.lib.sysfixview.restype=C.c_int64
+        cls.lib.sysfixpack.argtypes=[C.POINTER(FixSpec),C.c_void_p,C.c_uint64]
+        cls.lib.sysfixpack.restype=C.c_int64
         cls.lib.sysfixlayers.argtypes=[C.POINTER(FixView),C.POINTER(C.c_void_p)]
         cls.lib.sysfixlayers.restype=C.c_int64
         cls.lib.sysfixconnections.argtypes=[C.POINTER(FixView),C.POINTER(C.c_void_p),C.POINTER(C.c_uint64)]
@@ -104,6 +111,39 @@ class UserBootTests(unittest.TestCase):
         cls.lib.bootimagesegment.argtypes=[C.c_void_p,C.POINTER(Image),C.c_uint64,C.POINTER(Segment)]
         cls.lib.bootresource.argtypes=[C.POINTER(View),C.c_uint64];cls.lib.bootresource.restype=C.c_int64
         cls.lib.bootarg.argtypes=[C.POINTER(View),C.c_uint64,C.c_uint32];cls.lib.bootarg.restype=C.c_void_p
+
+    def test_fix_pack_roundtrip_has_exact_regions_and_leaves_failed_destination_untouched(self):
+        source=(1<<59)|(7<<16)|2
+        target=(1<<59)|(8<<16)|3
+        resource=(2<<59)|(4<<16)|5
+        layers=(C.c_uint64*6)(1,1,7,2,0,0)
+        connections=(C.c_uint64*6)(source,9,101,source,10,102)
+        resources=(C.c_uint64*4)(1,resource,0,0)
+        spec=FixSpec(source,target,9,C.addressof(layers),C.addressof(connections),2,
+                     C.addressof(resources),1)
+        data=(C.c_uint64*26)(*([42]*26))
+        before=bytes(data)
+        self.assertLess(self.lib.sysfixpack(C.byref(spec),data,199),0)
+        self.assertEqual(bytes(data),before)
+        for field,invalid in (('target',source),('layers',C.addressof(data)+8),
+                              ('connections',0),('resource_count',129)):
+            saved=getattr(spec,field);setattr(spec,field,invalid)
+            self.assertEqual(self.lib.sysfixpack(C.byref(spec),data,200),-1)
+            self.assertEqual(bytes(data),before)
+            setattr(spec,field,saved)
+        connections[4]=9
+        self.assertEqual(self.lib.sysfixpack(C.byref(spec),data,200),-1)
+        self.assertEqual(bytes(data),before)
+        connections[4]=10
+        self.assertEqual(self.lib.sysfixpack(C.byref(spec),data,200),200)
+        self.assertEqual(data[25],42)
+        view=FixView();entry=C.c_void_p();count=C.c_uint64()
+        self.assertEqual(self.lib.sysfixview(data,200,source,9,target,C.byref(view)),0)
+        self.assertEqual(C.string_at(view.resources,32),bytes(resources))
+        self.assertEqual(self.lib.sysfixlayers(C.byref(view),C.byref(entry)),0)
+        self.assertEqual(C.string_at(entry,48),bytes(layers))
+        self.assertEqual(self.lib.sysfixconnections(C.byref(view),C.byref(entry),C.byref(count)),0)
+        self.assertEqual((count.value,C.string_at(entry,48)),(2,bytes(connections)))
 
     def test_fix_envelope_bounds_contexts_and_checks_exact_identities(self):
         source=(1<<59)|(7<<16)|2

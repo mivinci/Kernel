@@ -167,11 +167,90 @@ sysfixview(const void *data, u64 available, Handle source, u64 image, Handle tar
   *out = view;
   return 0;
 }
+static int
+fixlayers(const Fixlayer *layers)
+{
+  u32 i, j;
+  for (i = 0; i < FIX_LAYER_COUNT; i++) {
+    if (layers[i].action > FIX_LAYER_INTERRUPT ||
+        ((layers[i].sequence == 0) != (layers[i].action == FIX_LAYER_EMPTY)))
+      return 0;
+    for (j = 0; j < i; j++)
+      if (layers[i].sequence && layers[i].sequence == layers[j].sequence)
+        return 0;
+  }
+  return 1;
+}
+static int
+fixconnections(const Fixconn *entries, u64 count)
+{
+  u64 i, j;
+  for (i = 0; i < count; i++) {
+    if (handlekind(entries[i].pid) != HANDLE_PROCESS || !entries[i].image || !entries[i].token)
+      return 0;
+    for (j = 0; j < i; j++)
+      if (entries[i].pid == entries[j].pid && entries[i].image == entries[j].image)
+        return 0;
+  }
+  return 1;
+}
+static int
+fixinput(const void *input, u64 length, const void *data, u64 bytes)
+{
+  u64 from = (u64) (uintptr_t) input, to = (u64) (uintptr_t) data;
+  return !length || (from && !(from & 7) && length <= UINT64_MAX - from &&
+                     (from + length <= to || to + bytes <= from));
+}
+isize
+sysfixpack(const Fixspec *spec, void *data, u64 capacity)
+{
+  Fix      *header = data;
+  Fixlayer *layers;
+  Fixconn  *connections;
+  Resentry *entries;
+  u64      *count, bytes, connbytes, resbytes, i;
+  if (!spec || !data || (((uintptr_t) spec | (uintptr_t) data) & 7) ||
+      spec->resource_count > BOOT_RESOURCE_COUNT || spec->connection_count > FIX_CONN_COUNT ||
+      !spec->image || spec->source == spec->target || spec->target == 1 ||
+      handlekind(spec->source) != HANDLE_PROCESS || handlekind(spec->target) != HANDLE_PROCESS)
+    return -ERR_INVALID;
+  connbytes = spec->connection_count * sizeof(*connections);
+  resbytes = spec->resource_count * sizeof(*entries);
+  bytes = FIX_BASE_BYTES + connbytes + resbytes;
+  if (bytes > capacity)
+    return -ERR_CAPACITY;
+  if (bytes > UINT64_MAX - (uintptr_t) data || !fixinput(spec, sizeof(*spec), data, bytes) ||
+      !fixinput(spec->layers, FIX_LAYER_COUNT * sizeof(*layers), data, bytes) ||
+      !fixinput(spec->connections, connbytes, data, bytes) ||
+      !fixinput(spec->resources, resbytes, data, bytes) || !fixlayers(spec->layers) ||
+      !fixconnections(spec->connections, spec->connection_count) ||
+      !resources(spec->resources, spec->resource_count))
+    return -ERR_INVALID;
+  header->format = FIX_FORMAT;
+  header->bytes = bytes;
+  header->source_pid = spec->source;
+  header->source_image = spec->image;
+  header->target_pid = spec->target;
+  header->resource_count = spec->resource_count;
+  header->resources_off = resbytes ? FIX_BASE_BYTES + connbytes : 0;
+  header->contexts_off = sizeof(*header);
+  layers = (Fixlayer *) (header + 1);
+  for (i = 0; i < FIX_LAYER_COUNT; i++)
+    layers[i] = spec->layers[i];
+  count = (u64 *) (layers + FIX_LAYER_COUNT);
+  *count = spec->connection_count;
+  connections = (Fixconn *) (count + 1);
+  for (i = 0; i < spec->connection_count; i++)
+    connections[i] = spec->connections[i];
+  entries = (Resentry *) ((u8 *) data + FIX_BASE_BYTES + connbytes);
+  for (i = 0; i < spec->resource_count; i++)
+    entries[i] = spec->resources[i];
+  return (isize) bytes;
+}
 isize
 sysfixlayers(const Fixview *view, const Fixlayer **out)
 {
   const Fixlayer *layers;
-  u32             i, j;
   if (!out)
     return -ERR_INVALID;
   *out = NULL;
@@ -179,14 +258,8 @@ sysfixlayers(const Fixview *view, const Fixlayer **out)
       view->contexts_limit < FIX_LAYER_COUNT * sizeof(*layers) || ((u64) view->contexts & 7))
     return -ERR_INVALID;
   layers = view->contexts;
-  for (i = 0; i < FIX_LAYER_COUNT; i++) {
-    if (layers[i].action > FIX_LAYER_INTERRUPT ||
-        ((layers[i].sequence == 0) != (layers[i].action == FIX_LAYER_EMPTY)))
-      return -ERR_INVALID;
-    for (j = 0; j < i; j++)
-      if (layers[i].sequence && layers[i].sequence == layers[j].sequence)
-        return -ERR_INVALID;
-  }
+  if (!fixlayers(layers))
+    return -ERR_INVALID;
   *out = layers;
   return 0;
 }
@@ -195,7 +268,7 @@ sysfixconnections(const Fixview *view, const Fixconn **out, u64 *count)
 {
   const u64     *header;
   const Fixconn *entries;
-  u64            prefix = FIX_LAYER_COUNT * sizeof(Fixlayer), n, i, j;
+  u64            prefix = FIX_LAYER_COUNT * sizeof(Fixlayer), n;
   if (!out || !count)
     return -ERR_INVALID;
   *out = NULL;
@@ -208,13 +281,8 @@ sysfixconnections(const Fixview *view, const Fixconn **out, u64 *count)
   if (n > FIX_CONN_COUNT || n > (view->contexts_limit - prefix - sizeof(u64)) / sizeof(Fixconn))
     return -ERR_INVALID;
   entries = (const Fixconn *) (header + 1);
-  for (i = 0; i < n; i++) {
-    if (handlekind(entries[i].pid) != HANDLE_PROCESS || !entries[i].image || !entries[i].token)
-      return -ERR_INVALID;
-    for (j = 0; j < i; j++)
-      if (entries[i].pid == entries[j].pid && entries[i].image == entries[j].image)
-        return -ERR_INVALID;
-  }
+  if (!fixconnections(entries, n))
+    return -ERR_INVALID;
   *out = n ? entries : NULL;
   *count = n;
   return 0;

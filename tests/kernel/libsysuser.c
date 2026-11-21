@@ -308,12 +308,10 @@ static Handle readforkrpc;
 static void
 readfork(void)
 {
-  struct
-  {
-    Fix      header;
-    Fixlayer layers[FIX_LAYER_COUNT];
-    u64      count;
-  } fix;
+  u64             fix[FIX_BASE_BYTES / sizeof(u64)];
+  Fixlayer        plan[FIX_LAYER_COUNT];
+  Fixspec         spec = {0};
+  isize           bytes;
   Forkret         forked;
   Elfwork         work;
   Fixview         view;
@@ -336,15 +334,13 @@ readfork(void)
             33);
     readforkchild = 1;
   } else {
-    for (i = 0; i < sizeof(fix); i++)
-      ((u8 *) &fix)[i] = 0;
-    fix.header.format = FIX_FORMAT;
-    fix.header.bytes = sizeof(fix);
-    fix.header.source_pid = parent.pid;
-    fix.header.source_image = parent.image;
-    fix.header.target_pid = forked.pid;
-    fix.header.contexts_off = sizeof(Fix);
-    REQUIRE(!sysctxfixplan(&runtime_contexts, parent, fix.layers), 34);
+    spec.source = parent.pid;
+    spec.image = parent.image;
+    spec.target = forked.pid;
+    spec.layers = plan;
+    REQUIRE(!sysctxfixplan(&runtime_contexts, parent, plan), 34);
+    bytes = sysfixpack(&spec, fix, sizeof(fix));
+    REQUIRE(bytes == FIX_BASE_BYTES, 34);
     for (i = 0; i < sizeof(work); i++)
       ((u8 *) &work)[i] = 0;
     work.view = forked.construct;
@@ -352,8 +348,8 @@ readfork(void)
     work.parent_space = connection_work.state.space;
     work.scratch = 0x31000000;
     work.scratch_bytes = PAGE_SIZE;
-    REQUIRE(!sysfixload(&work, 0x32000000, &fix, sizeof(fix)) &&
-                !__sys_forkcommit(forked.construct, (const void *) 0x32000000, sizeof(fix),
+    REQUIRE(!sysfixload(&work, 0x32000000, fix, (u64) bytes) &&
+                !__sys_forkcommit(forked.construct, (const void *) 0x32000000, (u64) bytes,
                                   &published) &&
                 published == forked.pid,
             34);

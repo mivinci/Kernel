@@ -367,7 +367,6 @@ static Filepool  forkfiles;
 static Fdtag     forkreserved;
 static Filestage forkstage;
 static int       forkfixed;
-static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64);
 static void
 forkrepair(const Forkret *result)
 {
@@ -386,7 +385,7 @@ forkrepair(const Forkret *result)
   state.contexts = &runtime_contexts;
   REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
               !__sys_getid(&child.pid, &child.image, &parent) &&
-              !sysfixchild(result, forkbytes, forksource, forkimage, &view) &&
+              !sysfixchild(result, FIX_BASE_BYTES, forksource, forkimage, &view) &&
               !sysfixlayers(&view, &layers) && !sysfixconnections(&view, &connections, &count) &&
               !count && !connections,
           244);
@@ -449,12 +448,10 @@ forkprepuser(void)
   u64       image;
   Elfwork   work;
   Sigact    action;
-  struct
-  {
-    Fix      header;
-    Fixlayer contexts[FIX_LAYER_COUNT];
-    u64      connection_count;
-  } fix;
+  u64       fix[FIX_BASE_BYTES / sizeof(u64)];
+  Fixlayer  layers[FIX_LAYER_COUNT];
+  Fixspec   spec;
+  isize     bytes;
   REQUIRE(__sys_forkprep(0, 0, &forked) == -ERR_BAD_HANDLE, 224);
   REQUIRE(__sys_forkprep(authority, 9, &forked) == -ERR_INVALID, 225);
   REQUIRE(!__sys_forkprep(authority, 2, &forked) && forked.construct && forked.pid && !forked.fix,
@@ -529,22 +526,22 @@ forkprepuser(void)
   args[0] = construct;
   REQUIRE(__sys_forkcommit(construct, (const void *) frame_trace, 64, &published) == -ERR_FAULT,
           235);
-  memset(&fix, 0, sizeof(fix));
-  fix.header.format = FIX_FORMAT;
-  fix.header.bytes = sizeof(fix);
-  fix.header.source_pid = source;
-  fix.header.source_image = image;
-  fix.header.target_pid = child;
-  fix.header.contexts_off = sizeof(Fix);
-  REQUIRE(!sysctxfixplan(&runtime_contexts, context_self, fix.contexts), 237);
+  memset(&spec, 0, sizeof(spec));
+  spec.source = source;
+  spec.image = image;
+  spec.target = child;
+  spec.layers = layers;
+  REQUIRE(!sysctxfixplan(&runtime_contexts, context_self, layers), 237);
+  bytes = sysfixpack(&spec, fix, sizeof(fix));
+  REQUIRE(bytes == FIX_BASE_BYTES, 237);
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;
   work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
   work.scratch = address;
   work.scratch_bytes = 4096;
-  REQUIRE(!sysfixload(&work, address, &fix, sizeof(fix)) && !work.memory && !work.mapped, 237);
-  REQUIRE(!__sys_forkcommit(construct, (const void *) address, sizeof(fix), &published) &&
+  REQUIRE(!sysfixload(&work, address, fix, (u64) bytes) && !work.memory && !work.mapped, 237);
+  REQUIRE(!__sys_forkcommit(construct, (const void *) address, (u64) bytes, &published) &&
               published == child,
           238);
   args[1] = args[2] = 0;

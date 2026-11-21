@@ -4,6 +4,7 @@
 typedef struct Fixview  Fixview;
 typedef struct Fixlayer Fixlayer;
 typedef struct Fixconn  Fixconn;
+typedef struct Fixspec  Fixspec;
 struct Forkret;
 #define FIX_LAYER_COUNT     3
 #define FIX_LAYER_EMPTY     0
@@ -22,6 +23,20 @@ struct Fixconn
   u64    image, token;
 };
 STATIC_ASSERT(sizeof(Fixconn) == 24, fix_connection_size);
+#define FIX_BASE_BYTES (sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64))
+struct Fixspec
+{
+  Handle          source, target;
+  u64             image;
+  const Fixlayer *layers;
+  const Fixconn  *connections;
+  u64             connection_count;
+  const Resentry *resources;
+  u64             resource_count;
+};
+/* Returns the encoded length or a negative status; errors leave data unchanged.
+   All input tables must be stable until the pack completes. */
+isize sysfixpack(const Fixspec *spec, void *data, u64 capacity);
 struct Fixview
 {
   const Fix      *header;
