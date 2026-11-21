@@ -175,6 +175,7 @@ discard(Execreserve *record, Execdrop drop, void *context)
   }
   record->source = record->target = 0;
   record->token = 0;
+  record->activated = record->retired = 0;
   return 0;
 }
 
@@ -226,6 +227,38 @@ sysexecreserve(Execreserve *out, const Execmanifest *plan, Fileowner *source, Fi
 }
 
 isize
+sysexecadvance(Execreserve *record, Fileowner *source, Fileowner *target, Execactivate activate,
+               Execretire retire, void *context)
+{
+  isize state, error;
+  u64   hold;
+  if (!record || !source || !target || !activate || !retire || record->count > BOOT_FD_COUNT ||
+      record->activated > record->count || record->retired > record->count)
+    return -ERR_INVALID;
+  if (!record->ready || record->source != source->cookie || record->target != target->cookie)
+    return -ERR_STALE;
+  state = sysexecstate(source, target);
+  if (state != SYSEXEC_ACTIVE && state != SYSEXEC_ENDED)
+    return state < 0 ? state : state == SYSEXEC_PENDING ? -ERR_BUSY : -ERR_STALE;
+  while (state == SYSEXEC_ACTIVE && record->activated < record->count) {
+    hold = record->entries[record->activated].hold;
+    if (hold) {
+      error = activate(context, target, hold);
+      if (error)
+        return error;
+    }
+    record->activated++;
+  }
+  while (record->retired < record->count) {
+    error = retire(context, source, &record->entries[record->retired].group);
+    if (error)
+      return error;
+    record->retired++;
+  }
+  return 0;
+}
+
+isize
 sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdrop drop,
                void *context)
 {
@@ -240,6 +273,8 @@ sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdr
     state = sysexecstate(source, target);
     if (state != SYSEXEC_ABORTED && state != SYSEXEC_ENDED)
       return state < 0 ? state : -ERR_BUSY;
+    if (state == SYSEXEC_ENDED && record->retired != record->count)
+      return -ERR_BUSY;
     record->ready = 0;
   }
   return discard(record, drop, context);
@@ -306,6 +341,8 @@ sysexecclaim(Execreserve *record, Fileowner *source, Filelink *link, const Ipcms
   error = sysexecstate(source, &link->watch.owner);
   if (error != SYSEXEC_ACTIVE)
     return error < 0 ? error : -ERR_STALE;
+  if (record->activated != record->count || record->retired != record->count)
+    return -ERR_BUSY;
   error = ipc_rqcheck(call->request, &state);
   if (error)
     return error;

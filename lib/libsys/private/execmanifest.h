@@ -16,6 +16,8 @@ typedef isize (*Execsource)(void *context, Handle pid, u64 image, u64 session, u
 typedef isize (*Exectake)(void *context, const Fileowner *source, const Fileowner *target,
                           const Execgroup *group, u64 *hold);
 typedef isize (*Execdrop)(void *context, u64 hold);
+typedef isize (*Execactivate)(void *context, const Fileowner *target, u64 hold);
+typedef isize (*Execretire)(void *context, const Fileowner *source, const Execgroup *group);
 struct Execgroup
 {
   u64 session, reference;
@@ -42,7 +44,7 @@ struct Execreserve
   u64      source, target;
   Handle   request;
   u64      connid, seq, slot, deadline, token;
-  u32      count, ready;
+  u32      count, ready, activated, retired;
 };
 
 /* Private serialized receiver. The admitted descriptor and data page are
@@ -69,8 +71,14 @@ isize sysexecstate(Fileowner *source, Fileowner *target);
    private to the backend, not target reference_id or wire tokens. */
 isize sysexecreserve(Execreserve *out, const Execmanifest *plan, Fileowner *source,
                      Fileowner *target, Exectake take, Execdrop drop, void *context);
+/* After verified publication, activate target holds (which remain owned by
+   the record) before retiring each old source reference. An already ended
+   target needs no further activation. Zero commits one step; on error the
+   same step is retried. Both observations remain owned by the dispatcher. */
+isize sysexecadvance(Execreserve *record, Fileowner *source, Fileowner *target,
+                     Execactivate activate, Execretire retire, void *context);
 /* Retry partial reservation rollback, or discard verified ended targets.
-   Does not touch source File references or release observation cookies. */
+   A published target requires source retirement first. */
 isize sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdrop drop,
                      void *context);
 /* Caller has prepaid connection and token storage. Preserve the record and
@@ -79,7 +87,8 @@ isize sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, 
 isize sysexecreply(Execreserve *record, Filewatch *watch, Filelink *link, const Ipcmsg *call,
                    u64 token, u64 now);
 /* The serialized backend supplies the exact target's prepaid, initialized
-   connection. Its watch owns the observation used to reserve the token.
+   connection after sysexecadvance completes. Its watch owns the observation
+   used to reserve the token.
    A successful reply consumes the token and marks the connection delivered;
    the backend still owns the target holds and source retirement. */
 isize sysexecclaim(Execreserve *record, Fileowner *source, Filelink *link, const Ipcmsg *call);

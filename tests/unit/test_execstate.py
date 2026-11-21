@@ -30,11 +30,14 @@ class Hold(C.Structure):
 class Reserve(C.Structure):
     _fields_ = [('entries', Hold * 128), ('source', U), ('target', U), ('request', C.c_int64),
                 ('connid', U), ('seq', U), ('slot', U), ('deadline', U), ('token', U),
-                ('count', C.c_uint32), ('ready', C.c_uint32)]
+                ('count', C.c_uint32), ('ready', C.c_uint32),
+                ('activated', C.c_uint32), ('retired', C.c_uint32)]
 
 
 TAKE = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.POINTER(Owner), C.POINTER(Owner), C.POINTER(Group), C.POINTER(U))
 DROP = C.CFUNCTYPE(C.c_int64, C.c_void_p, U)
+ACTIVATE = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.POINTER(Owner), U)
+RETIRE = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.POINTER(Owner), C.POINTER(Group))
 
 
 STUB = '''
@@ -129,8 +132,48 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.sysexecdiscard.argtypes = [C.POINTER(Reserve), C.POINTER(Owner), C.POINTER(Owner),
                                           DROP, C.c_void_p]
         cls.lib.sysexecdiscard.restype = C.c_int64
+        cls.lib.sysexecadvance.argtypes = [C.POINTER(Reserve), C.POINTER(Owner), C.POINTER(Owner),
+                                          ACTIVATE, RETIRE, C.c_void_p]
+        cls.lib.sysexecadvance.restype = C.c_int64
         cls.lib.claim.argtypes = [U, U, U, U, U, C.c_int64, C.POINTER(U)]
         cls.lib.claim.restype = C.c_int64
+
+    def test_retire_even_if_target_exited_without_claiming_but_not_after_abort(self):
+        for reason in (1, 2):
+            with self.subTest(reason=reason):
+                source, target = Owner(1, 6, 1, 0), Owner(1, 8, 2, 0)
+                record = Reserve()
+                record.source, record.target, record.ready, record.count = 1, 2, 1, 1
+                record.entries[0] = Hold(Group(10, 20, 1, 0), 21)
+                self.lib.sample(0, 3, 3, 6)
+                self.lib.sample(1, 3, reason, 8)
+                actions = []
+
+                @ACTIVATE
+                def activate(_ctx, _target, hold):
+                    actions.append(('activate', hold))
+                    return 0
+
+                @RETIRE
+                def retire(_ctx, old, group):
+                    actions.append(('retire', old.contents.image, group.contents.reference))
+                    return 0
+
+                @DROP
+                def drop(_ctx, hold):
+                    actions.append(('drop', hold))
+                    return 0
+
+                args = (C.byref(record), C.byref(source), C.byref(target))
+                if reason == 1:
+                    self.assertEqual(self.lib.sysexecdiscard(*args, drop, None), -7)
+                    self.assertEqual(self.lib.sysexecadvance(*args, activate, retire, None), 0)
+                    self.assertEqual(actions, [('retire', 6, 20)])
+                else:
+                    self.assertEqual(self.lib.sysexecadvance(*args, activate, retire, None), -4)
+                    self.assertEqual(actions, [])
+                self.assertEqual(self.lib.sysexecdiscard(*args, drop, None), 0)
+                self.assertEqual(actions[-1], ('drop', 21))
 
     def test_claim_requires_exact_published_image_and_live_request(self):
         self.lib.sample(0, 3, 3, 6)

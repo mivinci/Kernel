@@ -820,7 +820,9 @@ claimsource(const Bootview *boot)
   setup(boot);
   CHECK(!sysfilerefnew(&pool, work.state.self, work.state.tag, 100, 1000, 0, &file) &&
         !sysfdreserve(&fds, 0, &fd) && !sysfdpublish(&fds, fd, file, 0) &&
-        !sysfilerefpin(&pool, work.state.self, file) &&
+        !sysfilerefpin(&pool, work.state.self, file));
+  CHECK(!sysfilerefnew(&pool, work.state.self, work.state.tag, 100, 1001, 0, &pin) &&
+        !sysfdreserve(&fds, 1, &fd) && !sysfdpublish(&fds, fd, pin, BOOT_FD_CLOEXEC) &&
         !sysexecfds(&execfds, &fds, &pool, &cache, work.state.self));
   next.elf.parent_space = bootresource(boot, BOOT_SELF_SPACE);
   next.elf.scratch = 0x2000000;
@@ -856,6 +858,39 @@ claimsource(const Bootview *boot)
   CHECK(0);
 }
 
+static isize
+claimlookup(void *context, Handle pid, u64 image, u64 session, u64 reference)
+{
+  u64 *key = context;
+  if (reference == key[3] + 1)
+    reference--;
+  return execreference(context, pid, image, session, reference);
+}
+
+static isize
+claimactivate(void *context, const Fileowner *target, u64 hold)
+{
+  u32 *steps = context;
+  CHECK(!*steps && target->image == 2 && !target->reason && hold == 1);
+  *steps = 1;
+  return 0;
+}
+
+static isize
+claimretire(void *context, const Fileowner *source, const Execgroup *group)
+{
+  u32 *steps = context;
+  CHECK(source->image == 1 && source->reason == OBS_EXEC && group->session == 100);
+  if (group->reference == 1000) {
+    CHECK(*steps == 1 && group->retained == 1 && !group->closed);
+    *steps = 2;
+    return 0;
+  }
+  CHECK(group->reference == 1001 && !group->retained && group->closed == 1 &&
+        (*steps == 2 || *steps == 3));
+  return ++*steps == 3 ? -ERR_WOULD_BLOCK : 0;
+}
+
 static void
 claimbackend(const Bootview *boot)
 {
@@ -868,6 +903,7 @@ claimbackend(const Bootview *boot)
   Ipcmsg     input;
   Fileslot   slot;
   u64        key[5], held = 0;
+  u32        steps = 0;
   volatile u64 *marker;
   Msg           stale = {{(u64) -ESTALE, 2, 0, 0}};
   CHECK(!__sys_getid(&self.pid, &self.image, &parent) && !ipc_recv(0, 0, &input) &&
@@ -880,15 +916,24 @@ claimbackend(const Bootview *boot)
   key[4] = 0;
   CHECK(!sysexecmanifest(&execplan, old, &input, &slot,
                          (const void *) (ADDRESS + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
-                         self, 0, execreference, key) &&
-        key[4] == 1 && !sysexecobserve(target, permit, &input, slot.args[1]) &&
+                         self, 0, claimlookup, key) &&
+        key[4] == 2 && !sysexecobserve(target, permit, &input, slot.args[1]) &&
         !sysexecreserve(&execreserve, &execplan, &old->owner, target, exectake, execdrop, &held) &&
         !sysfileprepay(links, ARRAY_SIZE(links), 1, alloc, space, ADDRESS) &&
         links[1].watch.connid == EXEC_CLAIM_CONNID);
   marker = (volatile u64 *) (links[1].address + FS_DATA_OFFSET);
   *marker = EXEC_CLAIM_MARKER;
-  CHECK(!sysexecreply(&execreserve, old, &links[1], &input, EXEC_CLAIM_TOKEN, 0) &&
-        !ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
+  CHECK(sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &steps) ==
+            -ERR_BUSY &&
+        !steps && !sysexecreply(&execreserve, old, &links[1], &input, EXEC_CLAIM_TOKEN, 0));
+  CHECK(!ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input) && input.kind == IPC_EVENT &&
+        input.words[0] == EVENT_LIFE &&
+        sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &steps) ==
+            -ERR_WOULD_BLOCK &&
+        steps == 3 && links[1].prepaid && !links[1].ready &&
+        !sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &steps) &&
+        steps == 4);
+  CHECK(!ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
         old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held &&
         !ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
         sysexecclaim(&execreserve, &old->owner, &links[1], &input) == -ERR_STALE &&
