@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage267：普通 OPEN 准备池同时检查后端总容量、客户端和 VFS 的独立配额。ARM64/RV64 runtime、64 项文件主机回归和格式通过。
+
 - stage266：普通 OPEN 准备池由后端分配带代次 token，ARM64/RV64 runtime 验证池满、旧 token 与代次耗尽及真实 IPC 交付；64 项文件主机回归和格式通过。
 
 - stage265：普通资源 OPEN 的共享后端状态机已在双架构真实 IPC 夹具接入，验证原 VFS 对已移交 token 的 ABORT 被拒、客户仍可 CLOSE。64 项文件主机回归及格式检查通过。

@@ -4,28 +4,39 @@
 #include <abi/time.h>
 
 isize
-sysopenreserve(Openprep *pool, u32 count, const Fileowner *owner, Handle client, u64 image,
-               u64 session, u64 reference, u64 deadline, u64 *token)
+sysopenreserve(Openprep *pool, u32 count, Openlimit limit, const Fileowner *owner, Handle client,
+               u64 image, u64 session, u64 reference, u64 deadline, u64 *token)
 {
   Openprep *prep;
   u64       generation;
-  u32       i;
+  u32       i, slot = count, clients = 0, preparers = 0;
   if (!pool || !count || count > SYSOPEN_POOL_MAX || !owner || !owner->cookie || owner->reason ||
+      !limit.client || limit.client > count || !limit.preparer || limit.preparer > count ||
       handlekind(client) != HANDLE_PROCESS || !image || !token || !session || !reference ||
       !deadline || (owner->pid == client && owner->image == image))
     return -ERR_INVALID;
-  for (i = 0; i < count; i++)
-    if (pool[i].state == Openempty && (pool[i].token >> 16) != (UINT64_MAX >> 16))
-      break;
-  if (i == count)
+  for (i = 0; i < count; i++) {
+    prep = &pool[i];
+    if (prep->state == Openempty) {
+      if (slot == count && (prep->token >> 16) != (UINT64_MAX >> 16))
+        slot = i;
+      continue;
+    }
+    if (prep->client == client && prep->client_image == image)
+      clients++;
+    if ((prep->state == Openpending || prep->state == Opencancelled) &&
+        prep->preparer == owner->pid && prep->preparer_image == owner->image)
+      preparers++;
+  }
+  if (slot == count || clients >= limit.client || preparers >= limit.preparer)
     return -ERR_CAPACITY;
-  prep = &pool[i];
+  prep = &pool[slot];
   generation = (prep->token >> 16) + 1;
   prep->preparer = owner->pid;
   prep->preparer_image = owner->image;
   prep->client = client;
   prep->client_image = image;
-  prep->token = (generation << 16) | i;
+  prep->token = (generation << 16) | slot;
   prep->session = session;
   prep->reference = reference;
   prep->deadline = deadline;

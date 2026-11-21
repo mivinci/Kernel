@@ -12,17 +12,18 @@ static Filepages pages;
 static void
 openpoolcheck(void)
 {
-  Fileowner owner = {1, 1, 1, 0};
-  Openprep  pool[1] = {{0}};
-  Openprep *prep;
-  Handle    client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
-  Ipcmsg    call = {0};
-  u64       old, current = 0;
+  Fileowner       owner = {1, 1, 1, 0};
+  const Openlimit limit = {1, 1};
+  Openprep        pool[1] = {{0}};
+  Openprep       *prep;
+  Handle          client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  Ipcmsg          call = {0};
+  u64             old, current = 0;
 
-  CHECK(!sysopenreserve(pool, 1, &owner, client, 1, 7, 8, 10, &old));
+  CHECK(!sysopenreserve(pool, 1, limit, &owner, client, 1, 7, 8, 10, &old));
   prep = sysopenlookup(pool, 1, old);
   CHECK(prep && sysopenrelease(pool, 1, old) == -ERR_BUSY &&
-        sysopenreserve(pool, 1, &owner, client, 1, 9, 10, 20, &current) == -ERR_CAPACITY &&
+        sysopenreserve(pool, 1, limit, &owner, client, 1, 9, 10, 20, &current) == -ERR_CAPACITY &&
         !current);
   call.kind = IPC_CALL;
   call.source = client;
@@ -33,7 +34,7 @@ openpoolcheck(void)
   CHECK(sysopenabort(prep, &call) == 1);
   sysopenretire(prep);
   CHECK(!sysopenabort(prep, &call) && !sysopenrelease(pool, 1, old));
-  CHECK(!sysopenreserve(pool, 1, &owner, client, 1, 9, 10, 20, &current) && current > old &&
+  CHECK(!sysopenreserve(pool, 1, limit, &owner, client, 1, 9, 10, 20, &current) && current > old &&
         !sysopenlookup(pool, 1, old) && sysopenrelease(pool, 1, old) == -ERR_STALE);
   prep = sysopenlookup(pool, 1, current);
   CHECK(prep && prep->reference == 10 && sysopenabort(prep, &call) == -ERR_STALE);
@@ -43,7 +44,27 @@ openpoolcheck(void)
   sysopenretire(prep);
   CHECK(!sysopenrelease(pool, 1, current));
   pool[0].token = UINT64_MAX & ~UINT64_C(65535);
-  CHECK(sysopenreserve(pool, 1, &owner, client, 1, 9, 10, 20, &current) == -ERR_CAPACITY);
+  CHECK(sysopenreserve(pool, 1, limit, &owner, client, 1, 9, 10, 20, &current) == -ERR_CAPACITY);
+}
+static void
+openlimitcheck(void)
+{
+  Fileowner       vfs = {1, 1, 1, 0}, newer = {1, 2, 2, 0};
+  const Openlimit limit = {1, 1};
+  Openprep        pool[3] = {{0}};
+  Handle          client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  u64             first, second, untouched = 0;
+  CHECK(!sysopenreserve(pool, 3, limit, &vfs, client, 1, 7, 8, 10, &first));
+  CHECK(sysopenreserve(pool, 3, limit, &vfs, client, 2, 9, 10, 20, &untouched) == -ERR_CAPACITY);
+  CHECK(sysopenreserve(pool, 3, limit, &newer, client, 1, 9, 10, 20, &untouched) == -ERR_CAPACITY &&
+        !untouched);
+  CHECK(!sysopenreserve(pool, 3, limit, &newer, client, 2, 9, 10, 20, &second));
+  sysopenretire(sysopenlookup(pool, 3, second));
+  CHECK(sysopenreserve(pool, 3, limit, &newer, client, 3, 11, 12, 30, &untouched) == -ERR_CAPACITY);
+  CHECK(!sysopenrelease(pool, 3, second));
+  sysopencommit(sysopenlookup(pool, 3, first));
+  CHECK(!sysopenreserve(pool, 3, limit, &vfs, client, 2, 9, 10, 20, &second));
+  CHECK(sysopenreserve(pool, 3, limit, &newer, client, 1, 11, 12, 30, &untouched) == -ERR_CAPACITY);
 }
 u32
 fileusercheck(void)
@@ -53,6 +74,7 @@ fileusercheck(void)
   Filelease active[6], extra, stale;
   u32       i;
   openpoolcheck();
+  openlimitcheck();
   for (i = 0; i < ARRAY_SIZE(area); i++)
     area[i] = 0;
   head->magic = FS_CONN_MAGIC;

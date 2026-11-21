@@ -739,23 +739,24 @@ vfsdeathclient(const Bootview *boot, u32 timeout)
 static void
 backend(const Bootview *boot, u32 recover)
 {
-  Connpeer  clientpeer, vfspeer;
-  Ipcmsg    input;
-  Msg       reply;
-  Resreply  transfer;
-  Allocarg  alloc;
-  Maparg    mapping;
-  Fileslot  descriptor;
-  Fileowner preparer = {0};
-  Filewatch watch = {0};
-  Handle    memory = 0, space = bootresource(boot, BOOT_SELF_SPACE), waiter = 0;
-  Filehead *head = (Filehead *) ADDRESS;
-  Openprep  preps[4] = {{0}};
-  Openprep *prep;
-  u64       created = 0, closed = 0, token, i;
-  u64       wanted, attached, aborted, cancelled = 0;
-  u64       armed = 0, next, now, generation;
-  isize     status;
+  Connpeer        clientpeer, vfspeer;
+  Ipcmsg          input;
+  Msg             reply;
+  Resreply        transfer;
+  Allocarg        alloc;
+  Maparg          mapping;
+  Fileslot        descriptor;
+  Fileowner       preparer = {0};
+  Filewatch       watch = {0};
+  Handle          memory = 0, space = bootresource(boot, BOOT_SELF_SPACE), waiter = 0;
+  Filehead       *head = (Filehead *) ADDRESS;
+  Openprep        preps[4] = {{0}};
+  const Openlimit limit = {4, 4};
+  Openprep       *prep;
+  u64             created = 0, closed = 0, token, i;
+  u64             wanted, attached, aborted, cancelled = 0;
+  u64             armed = 0, next, now, generation;
+  isize           status;
   wanted = recover == 4 ? 1 : recover == 2 ? 2 : recover == 5 ? 3 : 4;
   attached = recover == 4 ? 1 : recover == 2 ? 2 : 3;
   aborted = recover == 4 || recover == 2 ? 1 : recover == 5 ? 2 : 3;
@@ -816,8 +817,8 @@ backend(const Bootview *boot, u32 recover)
             input.words[3] == created + 1 && input.words[1] && input.words[2]);
       CHECK(!sysfileowner(&preparer, bootresource(boot, 258), &input));
       CHECK(!sysfileopendeadline(&next) &&
-            !sysopenreserve(preps, ARRAY_SIZE(preps), &preparer, clientpeer.pid, clientpeer.image,
-                            input.words[1], input.words[2], next, &token));
+            !sysopenreserve(preps, ARRAY_SIZE(preps), limit, &preparer, clientpeer.pid,
+                            clientpeer.image, input.words[1], input.words[2], next, &token));
       created++;
       reply.words[1] = token;
       CHECK(!ipc_reply(input.request, &reply));

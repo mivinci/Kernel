@@ -8,6 +8,7 @@
 typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
 typedef struct Openprep  Openprep;
+typedef struct Openlimit Openlimit;
 enum
 {
   Openempty,
@@ -22,13 +23,20 @@ struct Openprep
   u64    preparer_image, client_image, token, session, reference, deadline;
   u32    state;
 };
+struct Openlimit
+{
+  u32 client, preparer;
+};
 
 /* Start with a zeroed service-owned array; its address and count stay fixed.
    Keep the output token separate from the array.
    Once a token is published, keep the tombstone for valid retries and release
    it only when those dependencies and all cleanup have been discharged. */
-isize sysopenreserve(Openprep *pool, u32 count, const Fileowner *owner, Handle client, u64 image,
-                     u64 session, u64 reference, u64 deadline, u64 *token);
+/* Client quota covers all of its records; preparer quota covers pending
+   records and cancellations before transfer, including retained tombstones. */
+isize     sysopenreserve(Openprep *pool, u32 count, Openlimit limit, const Fileowner *owner,
+                         Handle client, u64 image, u64 session, u64 reference, u64 deadline,
+                         u64 *token);
 Openprep *sysopenlookup(Openprep *pool, u32 count, u64 token);
 isize     sysopenrelease(Openprep *pool, u32 count, u64 token);
 /* Serialize the check, resource reply and commit in the service loop. */
