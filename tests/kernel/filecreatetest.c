@@ -128,6 +128,7 @@ filecreatetest(void)
   u32        i, turns = 0, ended;
   int        error;
   pgstat(&before);
+  CHECK(!proctimerstart());
   CHECK(!setcreate(4096, 8192, 4, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
   loadroles(set, &image, pids, processes, "012", 3);
@@ -229,7 +230,6 @@ filecreatetest(void)
   datarecoverytest(2);
   filewatchexittest(0);
   filewatchexittest(1);
-  CHECK(!proctimerstart());
   filewatchexittest(2);
 }
 static void

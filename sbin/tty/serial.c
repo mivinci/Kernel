@@ -74,9 +74,9 @@ ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page)
   return ttyinputcopy(input, page + slot->args[2], (u32) slot->args[1], &ended);
 }
 
-isize
-ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
-          const Fileslot *slot, volatile u8 *page, u32 nonblock)
+static isize
+fileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
+       const Fileslot *slot, volatile u8 *page, u32 nonblock, Ttywait *wait, u64 now, u64 *next)
 {
   Msg   reply = {{0, 0, 0, 0}};
   u64   state, opcode;
@@ -88,6 +88,8 @@ ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const
   opcode = call->words[0];
   if (opcode != FS_READ && opcode != FS_WRITE)
     return -ERR_INVALID;
+  if (next)
+    *next = 0;
   error = ipc_rqcheck(call->request, &state);
   if (error)
     return error;
@@ -99,8 +101,22 @@ ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const
   if (state & RQ_CHECK_CANCEL)
     reply.words[0] = (u64) -EINTR;
   else {
-    result = opcode == FS_READ ? ttyserialread(input, slot, page)
-                               : ttyserialwrite(io, oflag, slot, page);
+    if (wait) {
+      result = sysfileargs(FS_READ, slot);
+      if (!result && slot->args[3] & FS_IO_POSITIONAL)
+        result = -ERR_NOTSUP;
+      if (!result) {
+        if (!input || wait->length != slot->args[1] || wait->canonical != input->canonical)
+          return -ERR_STATE;
+        result = ttywaitcheck(wait, input->ready, now, next);
+        if (!result)
+          return -ERR_WOULD_BLOCK;
+        if (result == 1)
+          result = (!input->ready && !wait->canonical) ? 0 : ttyserialread(input, slot, page);
+      }
+    } else
+      result = opcode == FS_READ ? ttyserialread(input, slot, page)
+                                 : ttyserialwrite(io, oflag, slot, page);
     if (result == -ERR_WOULD_BLOCK && !nonblock)
       return result;
     if (result < 0)
@@ -116,6 +132,22 @@ ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const
   }
   error = ipc_reply(call->request, &reply);
   return error ? error : sysfilefinish(active, call->request);
+}
+
+isize
+ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
+          const Fileslot *slot, volatile u8 *page, u32 nonblock)
+{
+  return fileio(io, input, oflag, active, call, slot, page, nonblock, NULL, 0, NULL);
+}
+
+isize
+ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call, const Fileslot *slot,
+                volatile u8 *page, Ttywait *wait, u64 now, u64 *next)
+{
+  if (!call || call->words[0] != FS_READ || !wait || !next)
+    return -ERR_INVALID;
+  return fileio(NULL, input, 0, active, call, slot, page, wait->nonblock, wait, now, next);
 }
 
 isize

@@ -177,8 +177,8 @@ def build(args):
     serial_sources = [ROOT/'sbin/serial'/name for name in ('main.c','start.c','uart.c','io.c','control.c')]
     serial_headers = [ROOT/'sbin/serial'/name for name in ('start.h','uart.h','io.h','control.h')]
     serial_elf = program('serial',serial_sources,serial_headers)
-    tty_service_sources = [ROOT/'sbin/tty'/name for name in ('main.c','term.c','input.c','serial.c')]
-    tty_service_headers = [ROOT/'sbin/tty'/name for name in ('start.h','term.h','input.h','serial.h')]
+    tty_service_sources = [ROOT/'sbin/tty'/name for name in ('main.c','term.c','input.c','serial.c','wait.c')]
+    tty_service_headers = [ROOT/'sbin/tty'/name for name in ('start.h','term.h','input.h','serial.h','wait.h')]
     tty_service = program('tty',tty_service_sources,tty_service_headers)
     init_configuration = ROOT/'config/boot.json'
     init_config = sdk/'init.cfg'
@@ -277,7 +277,7 @@ def build(args):
     if len(tty_rows)!=1 or int(tty_rows[0][2])!=64:raise BuildError('missing tty trace')
     (sdk/'ttyimage.S').write_text('/* image sha256: '+digest(tty_image)+' */\n.section .rodata\n.balign 8\n.global tty_image,tty_image_end,tty_trace_address\ntty_image:\n.incbin '+json.dumps(str(tty_image))+'\ntty_image_end:\n.balign 8\ntty_trace_address:\n.quad '+str(int(tty_rows[0][1],16))+'\n')
     filecreate_elf=link_adoption('filecreateuser',[compile_adoption(ROOT/'tests/kernel/filecreateuser.c','filecreateuser'),
-        *[obj for source,obj in zip(tty_sources,tty_objects) if source.name in ('term.c','input.c','serial.c')]])
+        *[obj for source,obj in zip(tty_sources,tty_objects) if source.name in ('term.c','input.c','serial.c','wait.c')]])
     filecreate_image=sdk/'filecreateuser.img'
     filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],128))
     filecreate_inspect=invoke('inspect-filecreate',[tools['readelf']['path'],'-s',str(filecreate_elf)])

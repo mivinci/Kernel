@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage278：双架构 runtime 验证计时 READ 保留原 REQUEST，VMIN=0/VTIME>0 无输入到期返回零并保留响应页；31 项 TTY 主机测试和格式通过。
+
 - stage277：ARM64/RV64 runtime 验证 TTY WRITE 在暂存忙时等待、取消后不提交字节，后续正常写按原输入计数；格式检查通过。
 
 - stage276：TTY 文件读写共用原 REQUEST 的取消和回复；双架构 runtime 实测已接收的 READ 被取消且下一笔可读到未消费输入。96 项主机测试及格式通过，生产分派待接。

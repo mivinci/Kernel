@@ -875,4 +875,6 @@ stage276：`ttyfileio` 按私有槽账本核对原 REQUEST，在提交读写前�
 
 stage277：ARM64/RV64 runtime 使用原 REQUEST 验证 WRITE 在 TX 暂存忙时推迟。释放旧暂存后，已取消的 WRITE 以 EINTR 完成，TX 只保留先前写入；下一笔两字节 WRITE 返回两字节进展、零响应数据，环中实际产生 `b\r\n`。格式检查通过；此处使用测试环，生产 TTY 分派仍待接入。
 
+stage278：`ttyfilereadwait` 用接收时的 VMIN/VTIME 状态和当前可读量决定何时提交原 READ，等待时向调用者返回绝对期限；取消及强制终结仍优先处理。ARM64/RV64 runtime 以实际单调闹钟验证 VMIN=0、VTIME=1、无输入的请求到期返回零字节，响应页保持。31 项 TTY 主机测试和格式通过。生产事件循环仍须合并期限并在字节进入前检查已到期的间隔读。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

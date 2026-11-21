@@ -363,18 +363,23 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
     page[0] = cancel ? 'x' : 'b';
     page[1] = '\n';
   }
+  if (cancel == 2)
+    CHECK(!ipc_call(work.state.call, &seen, CALL_CONTROL, &result) && !result.words[0]);
   CHECK(!__sys_copy((void *) (uintptr_t) (work.state.map.address + FS_DESC_OFFSET +
                                           lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)) &&
         !ipc_call(work.state.call, &call, CALL_ASYNC, &result));
   rpc = result.request;
-  if (cancel) {
+  if (cancel == 1) {
     CHECK(!ipc_call(work.state.call, &seen, CALL_CONTROL, &result) && !result.words[0] &&
           !ipc_rqcancel(rpc));
     CHECK(!ipc_call(work.state.call, &seen, CALL_CONTROL, &result) && !result.words[0]);
   }
   CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq);
-  if (cancel)
+  if (cancel == 2)
+    CHECK(!result.words[0] && !result.words[2] && !result.words[3] && page[0] == 0xa5 &&
+          page[1] == 0xa5);
+  else if (cancel)
     CHECK((isize) result.words[0] == -EINTR && !result.words[2] && !result.words[3] &&
           page[0] == (opcode == FS_WRITE ? 'x' : 0xa5) &&
           page[1] == (opcode == FS_WRITE ? '\n' : 0xa5));
@@ -430,6 +435,7 @@ client(const Bootview *boot)
   ttyiocall(first, FS_READ, 0);
   ttyiocall(first, FS_WRITE, 1);
   ttyiocall(first, FS_WRITE, 0);
+  ttyiocall(first, FS_READ, 2);
   CHECK(first && !files[1] && !source && !sysfdreserve(&fds, 0, &fd) &&
         !sysfdpublish(&fds, fd, first, 0) && !sysfilerefpin(&pool, work.state.self, first));
   key = begin(FS_DUPREF, 0, first);
@@ -563,6 +569,8 @@ server(const Bootview *boot, u32 recover)
   Ttyeffect       effect;
   Ttyserial       ttyio;
   Ttyserialresult ttyresult;
+  Ttywait         ttywait;
+  u64             ttynow, ttyalarm = 0, generation;
   u8              output[3];
   u32             ttyseen = 0;
   if (!recover)
@@ -588,7 +596,15 @@ server(const Bootview *boot, u32 recover)
   zero(sessions, sizeof(sessions));
   zero(references, sizeof(references));
   for (;;) {
-    CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : 0, 0, &input));
+    CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : ttyalarm ? EVENT_TIMER : 0, 0, &input));
+    if (input.kind == IPC_EVENT && input.words[0] == EVENT_TIMER) {
+      CHECK(ttypending && ttyalarm && !sysfilenow(&ttynow) && ttynow >= ttyalarm &&
+            !ttyfilereadwait(&ttyline, &watch->active, &ttycall, &ttyslot, ttypage, &ttywait,
+                             ttynow, &ttyalarm) &&
+            !ttyalarm);
+      ttypending = 0;
+      continue;
+    }
     if (input.kind == IPC_EVENT) {
       Exitdrain drain = {pending, references, 0};
       Handle    pid;
@@ -655,6 +671,11 @@ server(const Bootview *boot, u32 recover)
     }
     if (opcode == SEEN) {
       if (!recover) {
+        if (ttyseen == 4 && !ttypending) {
+          CHECK(!ttyinputinit(&ttyline, 0) && !ipc_reply(input.request, &reply));
+          ttyseen++;
+          continue;
+        }
         CHECK(ttypending && ttyseen < 4);
         if (++ttyseen == 2) {
           CHECK(!ttyinputbyte(&ttyline, &ttymode, 'b', &effect) &&
@@ -703,6 +724,22 @@ server(const Bootview *boot, u32 recover)
         if (references[i] && sessions[i] == descriptor.object)
           found++;
       CHECK(found == 1 && !ttypending);
+      if (ttyseen == 5) {
+        Termarg raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
+        raw.cc[TTY_VTIME] = 1;
+        CHECK(opcode == FS_READ && !sysfilenow(&ttynow) &&
+              !ttywaitinit(&ttywait, &raw, (u32) descriptor.args[1], 0, 0, ttynow) &&
+              ttyfilereadwait(&ttyline, &watch->active, &input, &descriptor, (volatile u8 *) data,
+                              &ttywait, ttynow, &ttyalarm) == -ERR_WOULD_BLOCK &&
+              ttyalarm > ttynow && !ipc_defer(input.request) &&
+              !__sys_alarmset(ttyalarm, &generation));
+        ttypending = input.request;
+        ttycall = input;
+        ttyslot = descriptor;
+        ttypage = (volatile u8 *) data;
+        ttyseen++;
+        continue;
+      }
       status = ttyfileio(&ttyio, &ttyline, ttymode.oflag, &watch->active, &input, &descriptor,
                          (volatile u8 *) data, 0);
       if (status == -ERR_WOULD_BLOCK) {

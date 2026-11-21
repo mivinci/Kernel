@@ -1,6 +1,7 @@
 #ifndef _TTY_SERIAL_H
 #define _TTY_SERIAL_H
 #include "input.h"
+#include "wait.h"
 #include <proto/serial.h>
 #include <proto/file.h>
 #include "private/file.h"
@@ -35,6 +36,10 @@ isize ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page);
    WOULD_BLOCK it retains that ownership for a later readiness check. */
 isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
                 const Fileslot *slot, volatile u8 *page, u32 nonblock);
+/* Use the wait snapshot taken at admission. While blocked, next is the
+   absolute alarm deadline, or zero for an untimed wait. */
+isize ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call,
+                      const Fileslot *slot, volatile u8 *page, Ttywait *wait, u64 now, u64 *next);
 /* Process up to rxlimit RX bytes and one TX batch. A timed reader can check
    its deadline and retention after each byte by passing rxlimit=1.
    Notify with hints even after partial progress followed by failure.
