@@ -6,6 +6,7 @@
 #include "private/connection.h"
 #include "private/contextipc.h"
 #include "private/filecreate.h"
+#include "private/fileimage.h"
 #include "private/filewatch.h"
 #include "private/sigentry.h"
 #include "private/start.h"
@@ -269,22 +270,30 @@ serviceloop(const Bootview *boot, u32 interrupt)
 }
 
 static volatile int caught;
+static Fileimage   *interruptedimage;
+static Connwork    *interruptedwork;
 
 static void
 oninterrupt(int signal)
 {
-  if (signal == SIGUSR1)
+  Fileimage *image;
+  Connwork  *work;
+  Fdview     readend, writeend;
+  if (signal == SIGUSR1) {
+    CHECK(!sysfileimage(&image) && image == interruptedimage && !sysfileimagefs(1, 0, &work) &&
+          work == interruptedwork && !sysfdobserve(&image->fds, 0, &readend) &&
+          readend.tag.state == SYSFD_RESERVED && !sysfdobserve(&image->fds, 1, &writeend) &&
+          writeend.tag.state == SYSFD_RESERVED);
     caught++;
+  }
 }
 
 static void
-interruptclient(const Bootview *boot)
+interruptclient(void)
 {
-  static Connwork  work;
-  static Conncache cache;
-  static Fdtable   table;
-  static Filepool  pool;
-  static Rbank     bank;
+  Fileimage       *image;
+  Connwork        *work = NULL;
+  Conncache       *cache;
   struct sigaction action = {0};
   Pipecreate       pipe = {0};
   Rkey             active = {0};
@@ -293,18 +302,23 @@ interruptclient(const Bootview *boot)
   Handle           rpc;
   isize            business;
   int              fds[2] = {-1, -1};
-  Connpeer         self;
-  setup(boot, &work, &cache, &bank);
-  self = work.state.self;
+  CHECK(!sysfileimage(&image));
+  cache = sysfileimagecache(image);
+  CHECK(sysfileimagefs(0, (uintptr_t) pipeiotrace & ~PAGE_MASK, &work) < 0 && !work &&
+        image->connections[0].state.bootstrap.state == SYSBOOT_RESULT &&
+        image->connections[0].state.bootstrap.resource && !sysfileimagefs(0, ADDRESS, &work) &&
+        work == &image->connections[0]);
+  interruptedimage = image;
+  interruptedwork = work;
   action.sa_handler = oninterrupt;
-  CHECK(!sysctxsigbind(&bank) && !sigaction(SIGUSR1, &action, NULL) &&
-        !sysfilerefinit(&pool, self));
-  CHECK(sysctxpipecreate(&bank, 0, &pool, &work, &cache, &table, &pipe, &active, fds, &business) ==
-            -ERR_INTERRUPTED &&
-        caught == 1 && !active.sequence && !sysoprpc(&work, &cache, &pipe.operation, &rpc) && rpc &&
-        !sysfdcheckpair(&table, pipe.tags) && fds[0] == -1 && fds[1] == -1 &&
-        !ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
-  CHECK(!sysctxpipecreate(&bank, 0, &pool, &work, &cache, &table, &pipe, &active, fds, &business) &&
+  CHECK(!sigaction(SIGUSR1, &action, NULL));
+  CHECK(sysctxpipecreate(&image->contexts, 0, &image->files, work, cache, &image->fds, &pipe,
+                         &active, fds, &business) == -ERR_INTERRUPTED &&
+        caught == 1 && !active.sequence && !sysoprpc(work, cache, &pipe.operation, &rpc) && rpc &&
+        !sysfdcheckpair(&image->fds, pipe.tags) && fds[0] == -1 && fds[1] == -1 &&
+        !ipc_call(work->state.call, &gate, CALL_CONTROL, &result));
+  CHECK(!sysctxpipecreate(&image->contexts, 0, &image->files, work, cache, &image->fds, &pipe,
+                          &active, fds, &business) &&
         !pipe.operation.lease.seq && !active.sequence && !business && fds[0] == 0 && fds[1] == 1 &&
         caught == 1);
   pipeiotrace[0] = 7;
@@ -502,7 +516,7 @@ main(int argc, char **argv)
   else if (argv[0][0] == 'I')
     serviceloop(boot, 1);
   else if (argv[0][0] == 'i')
-    interruptclient(boot);
+    interruptclient();
   else if (argv[0][0] == 'C')
     serviceclient(boot);
   else

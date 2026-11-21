@@ -1,0 +1,24 @@
+#ifndef _LIBSYS_FILEIMAGE_H
+#define _LIBSYS_FILEIMAGE_H
+#include "contextipc.h"
+#include "fd.h"
+
+typedef struct Fileimage Fileimage;
+struct Fileimage
+{
+  Connwork connections[SYSCONN_COUNT];
+  Fdtable  fds;
+  Filepool files;
+  Rbank    contexts;
+};
+
+/* One shared file state per image, initialized on demand. Inherited image
+   repair must be wired before these records can be used by a fork child. */
+isize      sysfileimage(Fileimage **out);
+Conncache *sysfileimagecache(Fileimage *image);
+/* Resolve the fixed Boot FS endpoint and continue its initial HELLO. The
+   caller provides a reserved mapping address for the cold path. A failed
+   map with no alias permits retry at another address. A ready connection
+   ignores the proposed address; all callers use the same table and backend. */
+isize sysfileimagefs(u32 layer, u64 address, Connwork **out);
+#endif
