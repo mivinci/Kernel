@@ -3,6 +3,7 @@
 #include "private/sigentry.h"
 #include "private/start.h"
 #include "private/syscall.h"
+#include "private/timer.h"
 #include <abi/signal.h>
 #include <proto/file.h>
 
@@ -149,6 +150,31 @@ restore:
   if (!error && !restored)
     *out = work;
   return error ? error : restored;
+}
+
+isize
+sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                 Opkey *key, Opkey *background, u64 mask)
+{
+  u64   now, deadline;
+  isize error = sysopcheck(work, cache, key);
+  if (error)
+    return error;
+  deadline = work->state.operations[key->lease.slot].deadline;
+  if (!deadline)
+    return -ERR_STATE;
+  for (;;) {
+    error = systimernow(&now);
+    /* A fixed confirmation wins even if timing failed. */
+    error = sysfileclosewatch(pool, work, cache, anchor, key, error ? deadline : now, background);
+    if (error != -ERR_WOULD_BLOCK)
+      return error;
+    error = systimerwait(deadline, EVENT_RQ_DONE, mask);
+    if (error == -ERR_INTERRUPTED)
+      return sysfilecloseinterrupt(pool, work, cache, anchor, key, background);
+    if (error)
+      return sysfileclosewatch(pool, work, cache, anchor, key, deadline, background);
+  }
 }
 
 static isize

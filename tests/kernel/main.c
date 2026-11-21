@@ -12,6 +12,8 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
   chipcpu(hardware, cpu);
 #endif
 #if BOOT_CASE == 58
+  if (proctimerstart())
+    panic("pipeio timer");
   pipeiotest();
   putstr("READY pipeio-restored\n");
 #elif BOOT_CASE == 57

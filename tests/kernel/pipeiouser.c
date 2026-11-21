@@ -12,6 +12,7 @@
 #include "private/sigentry.h"
 #include "private/start.h"
 #include "private/syscall.h"
+#include "private/timer.h"
 #include "../../sbin/fs/pipefile.h"
 #include "../../sbin/fs/serve.h"
 
@@ -409,6 +410,7 @@ serviceclient(const Bootview *boot)
   Handle           call = bootresource(boot, BOOT_FS_CALL);
   Handle           rpc;
   Fileclose        anchor = {0}, retry = {0};
+  u64              deadline, mask, ignored;
   Opkey            foreground = {0}, background = {0};
   Fileref          reference;
   Msg              invalid = {{FS_HELLO, 0, 23, 0}};
@@ -451,14 +453,17 @@ serviceclient(const Bootview *boot)
         !sysfdobserve(&table, fd[0], &view) && view.tag.state == SYSFD_LIVE && !view.flags &&
         !sysfdobserve(&table, fd[1], &view) && view.tag.state == SYSFD_LIVE && !view.flags &&
         !sysfdclose(&table, &pool, work.state.self, view.tag, &closing) && closing == view.file);
-  CHECK(!sysfileclosesubmit(&pool, &work, &cache, closing, UINT64_MAX, &anchor, &foreground) &&
+  CHECK(!systimernow(&deadline) && !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask));
+  deadline += UINT64_C(1000000000);
+  CHECK(!sysfileclosesubmit(&pool, &work, &cache, closing, deadline, &anchor, &foreground) &&
         anchor.file == closing && foreground.lease.slot == 6 &&
         !sysoprpc(&work, &cache, &foreground, &rpc) &&
-        sysfileclosesubmit(&pool, &work, &cache, closing, UINT64_MAX, &retry, &background) ==
+        sysfileclosesubmit(&pool, &work, &cache, closing, deadline, &retry, &background) ==
             -ERR_BUSY &&
-        !retry.sequence && !background.lease.seq && !ipc_rqwait(rpc, 0, &result) &&
-        !sysfileclosewatch(&pool, &work, &cache, &anchor, &foreground, 1, &background) &&
-        !foreground.lease.seq && !background.lease.seq &&
+        !retry.sequence && !background.lease.seq &&
+        !sysfileclosewait(&pool, &work, &cache, &anchor, &foreground, &background, mask) &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) && !foreground.lease.seq &&
+        !background.lease.seq &&
         sysfilerefview(&pool, work.state.self, closing, &reference) == -ERR_STALE);
   /* Leave the read reference to the service's LIFE path. */
   pipeiotrace[0] = 7;

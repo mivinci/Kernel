@@ -52,7 +52,6 @@ __sys_sleepwait:
 __sys_sleepwait_checked:
  beqz t1,__sys_sleepwait_skip
  li a0,0
- li a1,1
  li a2,0
  li a3,0
  li a4,0

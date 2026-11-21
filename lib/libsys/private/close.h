@@ -47,6 +47,11 @@ isize sysfileclosewatch(Filepool *pool, Connwork *work, Conncache *cache, const 
                         Opkey *owned_key, u64 now, Opkey *out);
 isize sysfilecloseinterrupt(Filepool *pool, Connwork *work, Conncache *cache,
                             const Fileclose *anchor, Opkey *owned_key, Opkey *out);
+/* Wait for the original CLOSE result or deadline with caught signals blocked
+   except during the event wait. A captured signal hands off to background;
+   the public wrapper's restart policy is separate. */
+isize sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
+                       Opkey *key, Opkey *background, u64 mask);
 /* Original background CLOSE only. Unknown/error results keep anchor and all
    remaining responsibility for lifecycle recovery; no duplicate submission. */
 isize sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,

@@ -2,6 +2,7 @@
 #include "private/syscall.h"
 #include <abi/time.h>
 #include <abi/signal.h>
+#include <abi/event.h>
 
 isize
 systimernow(u64 *out)
@@ -154,10 +155,17 @@ struct Sleepwait
   isize        result;
   u32          used;
 };
-static Timerheap sleepheap;
-static Sleepwait waits[SIGNAL_DEPTH + 1], *pending;
-static isize     sleepfault;
-extern const u8  __sys_sleepwait_checked[], __sys_sleepwait_return[], __sys_sleepwait_skip[];
+static Timerheap         sleepheap;
+static Sleepwait         waits[SIGNAL_DEPTH + 1], *pending;
+typedef struct Eventwait Eventwait;
+struct Eventwait
+{
+  volatile u64 ticket;
+  isize        result;
+};
+static Eventwait *eventwait;
+static isize      sleepfault;
+extern const u8   __sys_sleepwait_checked[], __sys_sleepwait_return[], __sys_sleepwait_skip[];
 
 static void
 settle(Sleepwait *wait, isize result, u64 remaining)
@@ -176,7 +184,7 @@ settle(Sleepwait *wait, isize result, u64 remaining)
 int
 syssleepwaiting(void)
 {
-  return pending != NULL;
+  return pending != NULL || eventwait != NULL;
 }
 
 void
@@ -187,6 +195,16 @@ syssleepinterrupt(void *trap, void *outer)
   u64        resume = (u64) __sys_sleepwait_skip;
   u64        now;
   isize      error;
+  if (eventwait) {
+    error = systimercancel(&sleepheap, eventwait->ticket);
+    if (error)
+      sleepfault = error;
+    eventwait->result = error ? error : -ERR_INTERRUPTED;
+    eventwait->ticket = 0;
+    eventwait = NULL;
+    syssleepskip(trap, begin, end, resume);
+    return;
+  }
   if (!wait)
     return;
   error = systimernow(&now);
@@ -199,6 +217,34 @@ syssleepinterrupt(void *trap, void *outer)
   syssleepskip(trap, begin, end, resume);
   if (outer)
     syssleepskip(outer, begin, end, resume);
+}
+
+isize
+systimerwait(u64 deadline, u64 events, u64 mask)
+{
+  Eventwait wait = {0};
+  u64       ticket, ignored;
+  isize     error, blocked, cancelled;
+  if (eventwait || pending)
+    return -ERR_BUSY;
+  if (sleepfault)
+    return sleepfault;
+  error = systimeradd(&sleepheap, deadline, &ticket);
+  if (error)
+    return error;
+  wait.ticket = ticket;
+  eventwait = &wait;
+  error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (!error)
+    error = __sys_sleepwait(&wait.ticket, events | EVENT_TIMER);
+  blocked = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored);
+  eventwait = NULL;
+  cancelled = wait.ticket ? systimercancel(&sleepheap, ticket) : 0;
+  if (cancelled)
+    sleepfault = cancelled;
+  if (blocked || cancelled)
+    return blocked ? blocked : cancelled;
+  return wait.result ? wait.result : error;
 }
 
 isize
@@ -247,7 +293,7 @@ sysnanosleep(u64 duration, u64 *remaining)
     error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
     if (error)
       break;
-    received = __sys_sleepwait(&wait->ticket);
+    received = __sys_sleepwait(&wait->ticket, EVENT_TIMER);
     error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored);
   }
   if (wait && wait->used) {

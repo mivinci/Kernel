@@ -31,7 +31,11 @@ isize systimerdue(Timerheap *heap, u64 now, Timerjob *out);
 isize sysnanosleep(u64 duration, u64 *remaining);
 int   syssleepwaiting(void);
 void  syssleepinterrupt(void *trap, void *outer);
+/* Wait once on the shared alarm or specified events. Called with caught
+   signals blocked; returns with them blocked and uses mask while sleeping.
+   A notification is a hint: caller must recheck its condition and deadline. */
+isize systimerwait(u64 deadline, u64 events, u64 mask);
 /* Architecture guard between the last ticket load and the blocking recv. */
-isize __sys_sleepwait(const volatile u64 *ticket);
+isize __sys_sleepwait(const volatile u64 *ticket, u64 events);
 void  syssleepskip(void *trap, u64 begin, u64 end, u64 resume);
 #endif

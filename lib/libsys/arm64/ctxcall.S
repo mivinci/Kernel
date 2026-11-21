@@ -44,7 +44,6 @@ __sys_sleepwait:
 __sys_sleepwait_checked:
  cbz x10,__sys_sleepwait_skip
  mov x0,xzr
- mov x1,#1
  mov x2,xzr
  mov x3,xzr
  mov x4,xzr
