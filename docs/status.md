@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage233：Rctx完整路由只读准入与实际子修复共用核验，便于协调器在改变File/连接前拒绝未支持续点；64项上下文主机测试、格式及双架构libsys/sigframe回归通过。生产整体协调器/后端准备仍待接，子reference_id候选仍未确认。
+
 - stage232：stage231 最终源码完整1228项主机回归通过，双架构默认 init/serial 生产启动包各一次通过；未改运行代码，File/fork 实际场景证据仍为stage231，未重跑全QEMU矩阵。子 reference_id 规则仍等确认，不能把自动接续当作采用候选。
 
 - stage231：File 子转换的完整只读准入与提交共用核验，支持协调器先组合 fd/File/连接检查；30项相关主机测试、格式及双架构 libsys/sigframe 回归通过。新准入仍仅主机调用；FORK_PREPARE 只回 token 后如何取得子 reference_id 的规则待确认（10篇候选），真实后端准备与整体协调器未完成。

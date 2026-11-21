@@ -1,6 +1,11 @@
 #ifndef _LIBSYS_CONTEXTIPC_H
 #define _LIBSYS_CONTEXTIPC_H
 #include "context.h"
+/* Read-only full route admission before the coordinator changes any child
+   tables. Requires inherited parent identity; no idempotent child shortcut.
+   Keep the bank and transport records stable until local repair completes. */
+isize sysctxfixwaitcheck(Rbank *bank, Connpeer parent, Connpeer child,
+                         const Fixlayer layers[FIX_LAYER_COUNT]);
 /* Child-local repair of pending IPC waits mixed with admitted raw layers.
    Validate every route against the still inherited parent records
    before modifying any layer. No poll/cancel/ACK or transport record mutation.

@@ -428,6 +428,8 @@ stage231：File 子转换的完整只读准入 `sysfilerefforkcheck` 与实际�
 
 stage232 组合回归：stage231 最终源码完整 `make unit` 1228项通过（175.893秒），补充 ARM64/RV64 默认 normal 生产启动包各一次通过，包均只含独立 `sbin/init` 与 `sbin/serial`。这些生产启动结果不验证 File/fork 子引用，相关双架构 libsys/sigframe 证据仍为 stage231；未跑完整 QEMU 矩阵、CI 或板端。日志 `/private/tmp/kernel-stage232-{unit,arm64-normal,riscv-normal,compdb}.log`。最后运行 RV64/sigframe compdb，保持编辑器架构一致；未修改运行代码。子 reference_id 规则仍待用户确认，未将自动接续视为确认。
 
+stage233：`sysctxfixwaitcheck` 提供完整 Rctx 路由的只读准入，实际 `sysctxfixwait` 共用同一路径后才转换。协调器可在修改 File/连接之前核验三层 raw、等待 IPC、已固定本地结果及有排空证明的 READ/WRITE；不支持的创建/未提交 IPC 仍明确拒绝。预检只接受继承父身份，已转换子不走幂等捷径，不 poll/cancel/ACK 或复制共享 payload。64项上下文主机测试验证等待/完成 READ 的预检不改 bank/运输、不增内核调用/数据复制，错误 RPC、缺快照/不完整快照、后层不支持时无变化；格式及 ARM64/RV64 libsys/sigframe 四次运行回归通过，真实修复也调用共用预检。日志 `/private/tmp/kernel-stage233-{context-final,fmt,arm64-libsys,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。整体生产协调器、后端准备和公开 fork 仍待接，未跑完整矩阵、CI 或板端；子 reference_id 候选未获确认，未实施。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

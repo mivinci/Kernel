@@ -137,16 +137,15 @@ forkwait(Rctx *context, Connpeer parent)
   return rpc == route->rpc && (u64) rpc == context->args[0] ? 0 : -ERR_STALE;
 }
 isize
-sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers[FIX_LAYER_COUNT])
+sysctxfixwaitcheck(Rbank *bank, Connpeer parent, Connpeer child,
+                   const Fixlayer layers[FIX_LAYER_COUNT])
 {
-  u32   i, j;
+  u32   i;
   isize error;
   if (!bank || !layers || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
       handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || child.pid == parent.pid ||
       !separate(bank, sizeof(*bank), layers, sizeof(*layers) * FIX_LAYER_COUNT))
     return -ERR_INVALID;
-  if (bank->self.pid == child.pid && bank->self.image == child.image)
-    return 0;
   error = sysctxfixcheck(bank, parent, layers);
   if (error)
     return error;
@@ -185,6 +184,22 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
     if (error)
       return error;
   }
+  return 0;
+}
+isize
+sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers[FIX_LAYER_COUNT])
+{
+  u32   i, j;
+  isize error;
+  if (!bank || !layers || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
+      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || child.pid == parent.pid ||
+      !separate(bank, sizeof(*bank), layers, sizeof(*layers) * FIX_LAYER_COUNT))
+    return -ERR_INVALID;
+  if (bank->self.pid == child.pid && bank->self.image == child.image)
+    return 0;
+  error = sysctxfixwaitcheck(bank, parent, child, layers);
+  if (error)
+    return error;
   for (i = 0; i < RCTX_LAYERS; i++) {
     Rctx *context = &bank->contexts[i];
     if (layers[i].action == FIX_LAYER_COMPLETE && context->route.kind == RCTX_ROUTE_OP) {
