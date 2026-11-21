@@ -255,6 +255,8 @@ sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclo
     return -ERR_STATE;
   return progress(pool, work, cache, anchor, key, &confirmed);
 }
+static isize peerended(Connwork *work, Conncache *cache);
+
 isize
 sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline)
 {
@@ -281,7 +283,24 @@ sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u6
     key.connection = work->state.tag;
     key.lease = op->lease;
     key.owner = 0;
+    if (work->state.ended) {
+      error = sysfilecloserecover(pool, work, cache, &anchor, &key);
+      return error ? error : SYSFILE_CLOSE_RECOVERED;
+    }
     return sysfileclosework(pool, work, cache, &anchor, &key);
+  }
+  if (work->state.ended) {
+    error = peerended(work, cache);
+    if (!error)
+      error = sysfilerefnextclose(pool, work->state.self, work->state.tag, 0, &file);
+    if (!error)
+      error = sysfilerefclose(pool, work->state.self, file, &anchor);
+    if (error)
+      return error;
+    error = sysfilecloseended(pool, work, cache, &anchor);
+    if (error && sysfilerefunclaimclose(pool, work->state.self, &anchor))
+      return -ERR_STATE;
+    return error ? error : SYSFILE_CLOSE_RECOVERED;
   }
   error = sysfileclosepick(pool, work, cache, owner, deadline, &anchor, &key, &message);
   if (error)

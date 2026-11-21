@@ -1246,15 +1246,13 @@ backend(const Bootview *boot, u32 recover)
 static void
 deadclient(const Bootview *boot)
 {
-  Opkey     key;
-  Fileclose anchor;
-  Fileref   reference;
-  Msg       message;
-  Ipcmsg    result;
-  Handle    rpc;
-  u64       files[2], source = 0, first, second;
-  u32       steps = 0;
-  isize     error;
+  Opkey   key;
+  Fileref reference;
+  Ipcmsg  result;
+  Handle  rpc;
+  u64     files[2], source = 0, first, second;
+  u32     steps = 0;
+  isize   error;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
   key = begin(FS_OPEN, "/a", 0);
@@ -1268,28 +1266,28 @@ deadclient(const Bootview *boot)
   complete(&key, 0, files, &source);
   second = files[0];
   CHECK(first && second && first != second && !sysfilerefdrop(&pool, work.state.self, first) &&
-        !sysfilerefclose(&pool, work.state.self, first, &anchor) &&
-        !sysfilecloseprepare(&pool, &work, &cache, &anchor, 800, 0, &key, &message) &&
-        !ipc_call(work.state.call, &message, CALL_ASYNC | CALL_CONTROL, &result));
-  rpc = result.request;
-  CHECK(!sysopsubmitted(&work, &cache, &key, &result.request) &&
-        ipc_rqwait(rpc, 0, &result) == -ERR_PEER &&
-        !sysopcapture(&work, &cache, &key, -ERR_PEER, &result) &&
-        sysfilecloseresult(&pool, &work, &cache, &anchor, &key) == -ERR_PEER &&
+        sysfileclosepump(&pool, &work, &cache, 800, 0) == SYSFILE_CLOSE_SUBMITTED);
+  rpc = work.state.operations[6].rpc;
+  key.connection = work.state.tag;
+  key.lease = work.state.operations[6].lease;
+  key.owner = 0;
+  CHECK(ipc_rqwait(rpc, 0, &result) == -ERR_PEER &&
+        sysfileclosepump(&pool, &work, &cache, 800, 0) == -ERR_PEER &&
         !sysoppeerended(&work, &cache, &key) && work.state.ended == 1);
-  CHECK(sysfilecloserecover(&pool, &work, &cache, &anchor, &key) == -ERR_WOULD_BLOCK);
+  CHECK(sysfileclosepump(&pool, &work, &cache, 800, 0) == -ERR_WOULD_BLOCK &&
+        work.state.operations[6].rpc == rpc);
   filecreatetrace[5] = (u64) rpc;
   filecreatetrace[6] = 6;
   do {
     CHECK(++steps < 64 && !__sys_yield());
-    error = sysfilecloserecover(&pool, &work, &cache, &anchor, &key);
+    error = sysfileclosepump(&pool, &work, &cache, 800, 0);
   } while (error == -ERR_WOULD_BLOCK);
-  CHECK(!error && sysfilerefview(&pool, work.state.self, first, &reference) == -ERR_STALE &&
+  CHECK(error == SYSFILE_CLOSE_RECOVERED &&
+        sysfilerefview(&pool, work.state.self, first, &reference) == -ERR_STALE &&
         !sysfilerefview(&pool, work.state.self, second, &reference) &&
         reference.state == SYSFILE_REF_LIVE && reference.aliases == 1 &&
         !sysfilerefdrop(&pool, work.state.self, second) &&
-        !sysfilerefclose(&pool, work.state.self, second, &anchor) &&
-        !sysfilecloseended(&pool, &work, &cache, &anchor) &&
+        sysfileclosepump(&pool, &work, &cache, 800, 0) == SYSFILE_CLOSE_RECOVERED &&
         !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
         !sysconnworkclean(&work, &cache) && !sysconnforget(&cache, work.state.tag));
   filecreatetrace[2] = 2;

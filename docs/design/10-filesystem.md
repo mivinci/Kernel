@@ -140,6 +140,8 @@ stage293：`sysfileclosepick` 在同一信号保护段内发现、领取并准�
 
 stage294：`sysfileclosepump` 按连接提交一笔后台 CLOSE，或非阻塞推进控制槽已有的后台请求。提交前被拒时归还槽和 File 领取记录；提交后由槽保留原 RPC，后续按原 File 代次和关闭序号核对结果、排空并 ACK，不重发。RV64、ARM64 QEMU `runtime` 以此路径完成 `dup2` 替换掉的后端引用关闭，源引用与替换后的 fd 保持有效；65 项文件主机测试和格式检查通过。生产事件循环和公开 `close()` 待接。
 
+stage295：确认原后端镜像终结后，后台 CLOSE 推进器仍等待原 RPC 实际排空，然后独立回收其控制槽和 File。尚未提交 CLOSE 的 File 在最后别名和在途操作均消失后可直接本地回收。两条路径均返回 RECOVERED，区别于服务确认成功。RV64、ARM64 的 QEMU `runtime` 验证原 RPC 在等待期间保持、仍有别名的 File 不被回收；65 项文件主机测试及格式检查通过。
+
 ### open/close 的信号重启边界（已冻结）
 
 read/write 已讨论语义见 [信号中断与重启](11-terminal.md#readwrite-的中断与重启已冻结)。
