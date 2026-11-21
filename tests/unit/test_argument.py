@@ -45,7 +45,7 @@ class ArgumentTests(unittest.TestCase):
                    '-I' + str(ROOT / 'lib/libsys'), '-I' + str(ROOT / 'lib/libsys/include'),
                    str(ROOT / 'lib/libsys/argument.c'), str(ROOT / 'lib/libsys/context.c'),
                    str(ROOT / 'lib/libsys/contextarg.c'), str(stub),
-                   *[str(ROOT / 'lib/libsys' / name) for name in getattr(cls, 'extra_sources', ())],
+                   str(ROOT / 'lib/libsys/boot.c'),
                    '-o', str(artifact)]
         if sys.platform == 'darwin':
             sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()

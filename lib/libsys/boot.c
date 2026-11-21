@@ -1,4 +1,5 @@
 #include <sys/boot.h>
+#include "private/boot.h"
 #include "private/fix.h"
 typedef struct Region Region;
 struct Region
@@ -54,6 +55,26 @@ strings(const u8 *data, const Strref *refs, u64 count, const Region regions[6], 
       if (overlap(string, regions[j]))
         return 0;
     *used += string.bytes;
+  }
+  return 1;
+}
+int
+sysbootfds(const Bootfd *fds, u64 count)
+{
+  u64 seen[(BOOT_FD_COUNT + 63) / 64] = {0};
+  u64 i, word, bit;
+  if (count > BOOT_FD_COUNT || (count && !fds))
+    return 0;
+  for (i = 0; i < count; i++) {
+    const Bootfd *fd = &fds[i];
+    if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~((u64) BOOT_FD_CLOEXEC) || fd->reserved ||
+        !resource(fd->backend_call) || !fd->session || !fd->prepare_token)
+      return 0;
+    word = fd->fd / 64;
+    bit = UINT64_C(1) << (fd->fd % 64);
+    if (seen[word] & bit)
+      return 0;
+    seen[word] |= bit;
   }
   return 1;
 }
@@ -114,17 +135,8 @@ bootcheck(const void *data, u64 available, Bootview *out)
   if (!strings(base, view.argv, header->argc, regions, header->bytes, &used) ||
       !strings(base, view.env, header->envc, regions, header->bytes, &used))
     return -ERR_INVALID;
-  if (!resources(view.resources, header->resource_count))
+  if (!resources(view.resources, header->resource_count) || !sysbootfds(view.fds, header->fd_count))
     return -ERR_INVALID;
-  for (i = 0; i < header->fd_count; i++) {
-    const Bootfd *fd = &view.fds[i];
-    if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~((u64) BOOT_FD_CLOEXEC) || fd->reserved ||
-        !resource(fd->backend_call))
-      return -ERR_INVALID;
-    for (j = 0; j < i; j++)
-      if (view.fds[j].fd == fd->fd)
-        return -ERR_INVALID;
-  }
   *out = view;
   return 0;
 }

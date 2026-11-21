@@ -1,4 +1,5 @@
 #include "private/argument.h"
+#include "private/boot.h"
 #include "private/syscall.h"
 typedef struct Argdest Argdest;
 struct Argdest
@@ -240,6 +241,9 @@ sysargboot(const Argsnap *snapshot, Boot *boot, u64 capacity)
           offset[j] < offset[i] + length[i])
         return -ERR_INVALID;
   }
+  if (boot->fd_count &&
+      !sysbootfds((const Bootfd *) ((const u8 *) boot + boot->fds_off), boot->fd_count))
+    return -ERR_INVALID;
   used = (u64) (snapshot->argc + snapshot->envc) * sizeof(Strref);
   for (i = 0; i < snapshot->argc + snapshot->envc; i++) {
     error = sysargat(snapshot, i >= snapshot->argc, i < snapshot->argc ? i : i - snapshot->argc,

@@ -298,7 +298,7 @@ host新增旧格式拒绝、窗口边界/溢出/单边字段、模板禁止包�
 
 argv/env条目Strref=(u32 offset,u32 length)，8字节；总参数/环境字节与指针数换算开销合计<=16384，argc/envc各<=256。资源条目Resentry=32字节，tag/handle/flags/reserved四u64；tag SELF_SPACE=1、SELF_ALLOC=2、CREATE=3、FS_CALL=4、TTY_CALL=5、TERMINAL=6、SYSTEM=7、BOOT_IMAGE=8、其余受信设备tag从256起，重复必需tag拒绝，flags继承位按03，不凭tag造权。
 
-启动fd条目48字节，六u64=[fd,flags,backend_call,session,prepare_token,reserved]，数量<=128、fd不重复，flags只FD_CLOEXEC=1（普通exec结果不含该项）。prepare_token在字节32，绑定目标image的服务准备；不是旧connid。共享Mem由新source用无槽[EXEC_CLAIM或ATTACH,0,bootstrap_seq,prepare_token]首次领取，MEM回复给出本次connid/bytes；若本镜像对该后端已有可用连接，则同次token普通确认复用，不重复交付MEM。fd先建立为待接入记录，首次需要后端时map校验后才发布该连接为可传输；新启动代码不能直接复用旧镜像VA或共享槽。资源表里必要CALL通过显式EXEC继承、构造grant或运行中resource reply获得；所有底层权仍限定对端PID/image。
+启动fd条目48字节，六u64=[fd,flags,backend_call,session,prepare_token,reserved]，数量<=128、fd不重复，flags只FD_CLOEXEC=1（普通exec结果不含该项），session和prepare_token均须非零。prepare_token在字节32，绑定目标image的服务准备；不是旧connid。共享Mem由新source用无槽[EXEC_CLAIM或ATTACH,0,bootstrap_seq,prepare_token]首次领取，MEM回复给出本次connid/bytes；若本镜像对该后端已有可用连接，则同次token普通确认复用，不重复交付MEM。fd先建立为待接入记录，首次需要后端时map校验后才发布该连接为可传输；新启动代码不能直接复用旧镜像VA或共享槽。资源表里必要CALL通过显式EXEC继承、构造grant或运行中resource reply获得；所有底层权仍限定对端PID/image。
 
 ELF只接受ELF64/little-endian/ET_EXEC、EM_AARCH64=183或EM_RISCV=243，版本1，静态无PT_INTERP/PT_DYNAMIC，程序头<=32、e_phentsize=56，入口及PT_LOAD检查越界、文件/内存长度、对齐和权限合并。PT_GNU_STACK若要求执行拒绝；不支持脚本#!或动态重定位，ENOEXEC。不沿用旧镜像格式。init装载描述固定外头64字节[magic,format,bytes,entry,segment_count,segments_off,boot_off,boot_bytes]，段表48字节[file_off,file_bytes,va,mem_bytes,prot,reserved]，只允许与本架构页/权限匹配的预校验静态映像；内核不解析全部普通ELF。启动包目录由init解释，路径和段引用只限该包内。
 
@@ -841,7 +841,9 @@ sysctxarguments直接使用当前PREPARED层既有16KiB；input_kind/argc/envc�
 
 ### 参数捕获与Rctx存储解耦（2026-11-20）
 
-生产init开始复用通用sysargcopy/sysargboot。argument.c只依赖私有argument/syscall头和__sys_copy；按Rctx层捕获/借用的sysctxarguments/sysctxargumentview移到contextarg.c，保持原层状态、存储、别名检查及接口。SDK同时包含两模块，Rctx测试仍执行真实封装；使用独立预付缓冲的启动加载器无需因参数捕获而链接上下文银行和架构返回窗口。此拆分不增加公开POSIX入口、不改变Argsnap/Boot或ARG_MAX；生产迁移与验收见07末尾。
+生产init开始复用通用sysargcopy/sysargboot。按Rctx层捕获/借用的sysctxarguments/sysctxargumentview移到contextarg.c，保持原层状态、存储、别名检查及接口。SDK同时包含两模块，Rctx测试仍执行真实封装；使用独立预付缓冲的启动加载器无需因参数捕获而链接上下文银行和架构返回窗口。此拆分不增加公开POSIX入口、不改变Argsnap/Boot或ARG_MAX；生产迁移与验收见07末尾。
+
+stage296：目标Boot追加参数前，与启动解析共用 `sysbootfds` 校验继承记录。重复fd、无效Handle编码、零session/token或保留位错误时，打包保持目标缓冲不变，解析不发布Bootview。此处仅核对记录结构；没有查询CALL权限、接入后端或初始化继承文件表，准备中的资源占位也不受此校验影响。RV64、ARM64 QEMU `runtime`、52 项主机测试及格式通过。两架构 `elf` 场景在子进程退出断言 197 失败，未改动的 `4e9bfff` 基线也复现，未计为通过。
 
 两架构SDK源码/头/库、实际链接载荷与模块依赖已审计：argument.o仅__sys_copy，contextarg.o仅sysargcopy/sysctxlookup，libsys整体无未定义依赖；生产init调用通用两函数且不含Rctx封装/测试handler。1003项host、格式、195次双架构QEMU及168份journal通过，证据build/host/stage152-init-arguments/，完整运行和初次主机观测修正记录见07末尾。公开exec/spawn/Fix、创建类引用补偿及生产服务仍待接；创建类reference_id返回布局已获用户确认，见10末尾，不再作为待回复项。
 

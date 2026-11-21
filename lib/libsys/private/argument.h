@@ -24,8 +24,9 @@ isize sysargcopy(void *data, u64 capacity, const char *const *argv, const char *
 isize sysargat(const Argsnap *snapshot, u32 environment, u64 index, const char **text, u64 *bytes);
 /* Append canonical accepted arguments to a private fresh Boot template with
    argc/envc/offsets zero. Existing metadata stays within header->bytes; sources
-   and the whole destination capacity are separate. Validate before writing,
-   rebase Strref offsets, publish header last. SELF placeholders stay unchanged
-   for the preparing-image loader; this never grants or relabels resources. */
+   and the whole destination capacity are separate. Validate the fd records
+   before writing, rebase Strref offsets, publish header last. SELF placeholders
+   stay unchanged for the preparing-image loader; this never grants or relabels
+   resources. */
 isize sysargboot(const Argsnap *snapshot, Boot *boot, u64 capacity);
 #endif

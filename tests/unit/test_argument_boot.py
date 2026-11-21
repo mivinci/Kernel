@@ -6,7 +6,6 @@ from test_userboot import View
 
 
 class ArgumentBootTests(unittest.TestCase):
-    extra_sources = ('boot.c',)
     tearDownClass = classmethod(support.ArgumentTests.tearDownClass.__func__)
     mapped = support.ArgumentTests.mapped
     vector = support.ArgumentTests.vector
@@ -69,7 +68,7 @@ class ArgumentBootTests(unittest.TestCase):
     def test_resource_fd_fix_and_package_metadata_are_preserved(self):
         self.header[10], self.header[11] = 1, 208
         fd = (C.c_uint64 * 6).from_buffer(self.destination, 208)
-        fd[:] = [7, 1, (2 << 59) | (1 << 16) | 5, 55, 0, 0]
+        fd[:] = [7, 1, (2 << 59) | (1 << 16) | 5, 55, 31, 0]
         self.header[12], self.header[13], self.header[2] = 256, 64, 320
         C.memset(C.addressof(self.destination) + 256, 0x5a, 64)
         self.header[16], self.header[17] = 0x3ffe000000, 4096
@@ -80,6 +79,25 @@ class ArgumentBootTests(unittest.TestCase):
                           self.header[12], self.header[13], self.header[16], self.header[17]),
                           (2, 144, 1, 208, 256, 64, 0x3ffe000000, 4096))
         self.checked()  # representation/ranges only, not semantic Fix validation
+
+    def test_invalid_inherited_fd_cannot_be_packed_or_published(self):
+        self.header[10], self.header[11], self.header[2] = 2, 208, 304
+        entries = (C.c_uint64 * 12).from_buffer(self.destination, 208)
+        call = (2 << 59) | (1 << 16) | 5
+        valid = [63, 0, call, 55, 31, 0, 127, 1, call, 55, 31, 0]
+        for field, value in ((6, 63), (6, 128), (7, 2), (8, 1), (9, 0), (10, 0), (11, 1)):
+            with self.subTest(field=field, value=value):
+                entries[:] = valid
+                entries[field] = value
+                before = bytes(self.destination)
+                self.assertEqual(self.pack(), -1)
+                self.assertEqual(bytes(self.destination), before)
+                view = View()
+                self.assertEqual(self.lib.bootcheck(self.destination, 304, C.byref(view)), -1)
+                self.assertIsNone(view.header)
+        entries[:] = valid
+        self.assertEqual(self.pack(), 0)
+        self.assertEqual(C.string_at(self.checked().fds, 96), bytes(entries))
 
     def test_append_alignment_zeroes_only_the_gap_and_keeps_existing_prefix(self):
         self.header[2] = 209
