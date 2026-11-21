@@ -708,6 +708,8 @@ FORK_SNAPSHOT/FORK_PREPARE/EXEC_PREPARE固定参数占args的64字节[pid,image,
 
 TTYCTL子码GETATTR=1、SETATTR=2、DRAIN=3、FLUSH=4、GETSIZE=5、SETSIZE=6；Termarg=80字节[iflag,oflag,cflag,lflag,ispeed,ospeed,cc[32]]，前6个u64，cc字节数组32；只接受11列出的位与控制字符，cflag首版8位/无奇偶/1停止位，未知组合ENOTSUP，速度只支持启动设备既定速率。尺寸四u32 rows/cols/xpixel/ypixel，总16；PTY后续扩展沿此TTY接口，不让term持设备权限。
 
+GETATTR 的 arg0/arg1 为零，data_bytes 为 80，data_off 指向一页内预留的输出。成功回复 `[0,seq,0,80]`，原数据页只改写这 80 字节。
+
 磁盘格式1只支持4 KiB块、最大128 MiB、1024个128字节inode：block0超级块，1日志头，2..17最多16个日志镜像，18提交块，19..64保留；65 inode位图，66块位图，67..98 inode表，99起数据。inode0无效、inode1根目录。超级块首128字节：magic(u64)、format(u32)=1、blocksize(u32)=4096、blocks(u64)、inodes(u32)=1024、root(u32)=1、log_start(u64)=1、log_blocks(u64)=64、inode_bitmap(u64)=65、block_bitmap(u64)=66、inode_start(u64)=67、data_start(u64)=99、uuid[16]、crc32c(u32)@96、reserved[28]；CRC32C覆盖首128字节并将crc字段置0，余块必须0。
 
 inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、flags(u32)@20、size(u64)@24、atime/mtime/ctime(s64秒)@32/40/48、三个nsec(u32)@56/60/64、indirect(u32)@68、direct[12] (u32)@72..119、reserved(u64)@120。文件块号u32，0为空洞；一级间接1024个u32，文件上限4 MiB。目录记录按8字节对齐且不跨块，头16字节[ino(u32),generation(u32),reclen(u16),namelen(u16),type(u32)]加含NUL名字，namelen<=255、不含NUL长度；空洞ino=0，未知/跨界记录损坏报EIO不越界继续。
@@ -1305,3 +1307,5 @@ stage176新增私有sysoprecover。要求原Rctx责任已结束、精确旧peer�
 双架构runtime各3个真实双进程场景：READ在共享槽写入未报告字节、WRITE核验已捕获输入，二者均写共享DONE却不reply即退出；以及同连接先完成一个成功READ，再在第二个READ写DONE后退出。客户端收到原生PEER，确认其数据不能复制、最后关闭因pin仍忙，先看到WOULD_BLOCK并保留页/pin。服务Proc/Space清理后，可信测试管理者按本fixture无下游/设备/DMA的代码与发权前提，校验原RPC双方/PEER/未FINISHED并显式rqclean；随后才ACK/归还pin。混合场景的早先成功没有代收尾，原8字节仍从原槽复制并按原RPC确认。原File最后按ended规则关闭，全部页/费用/实例回基线。
 
 本fixture提供固定读写File，只验证真实IPC下的运输/结果/pin生命周期，不冻结生产OPEN访问标志或完整访问策略，也不是公开POSIX read/write前端。最终1175项完整host、8项专项、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU与8份内核诊断journal通过；SDK私有头/源/库、实际用户ELF打包/内嵌载荷、operation对象仅预期内部依赖及真实recover调用均审计通过。旧创建/ABORT/bootstrap/map/复用失败、缓存/日志与环境场景保持；init装载段与serial ELF保持，生产镜像无测试载荷，全部构建后clangd切回RV64/runtime。证据build/host/stage176-data-recovery/含unit/focused-reviewed、场景日志、verify.py/evidence.json。无新内核ABI、权限或固定池；最近完整195矩阵仍为stage165，无CI/板端/性能、生产服务、公开fd/Fix或完整sh/net/最终GUI结论。
+
+stage305：TTY 的 `ttyfilectl` 核对私有账本中的原 REQUEST 与槽，按 GETATTR 输出当前行规程属性；已取消请求不改写页，已终结请求只收尾。RV64、ARM64 QEMU `runtime` 用真实 IPC 验证越界一字节时业务 EINVAL 且输出区不变，下一次复用该槽在页末返回完整 Termarg。31 项 TTY 主机测试和格式通过。生产连接分派和公开 `tcgetattr` 尚未接入。

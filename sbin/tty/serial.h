@@ -45,6 +45,10 @@ isize ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page);
    WOULD_BLOCK it retains that ownership for a later readiness check. */
 isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
                 const Fileslot *slot, volatile u8 *page, u32 nonblock);
+/* Reply to an authorized TTYCTL using the exact admitted REQUEST and slot.
+   GETATTR publishes the current private mode in the original data page. */
+isize ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call,
+                 const Fileslot *slot, volatile u8 *page);
 /* After blocking I/O returned WOULD_BLOCK, snapshot the original request
    and optional READ wait state. Initialize pending to zero and keep the
    ledger and mapping alive until resume settles it. For a timed READ pass

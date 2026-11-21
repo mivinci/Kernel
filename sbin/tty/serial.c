@@ -74,6 +74,14 @@ ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page)
   return ttyinputcopy(input, page + slot->args[2], (u32) slot->args[1], &ended);
 }
 
+static int
+fileowns(const Fileinflight *active, const Ipcmsg *call, const Fileslot *slot)
+{
+  return active && call && call->kind == IPC_CALL && call->request && slot && slot->seq &&
+         slot->seq == call->words[2] && call->words[3] < FS_CONN_SLOTS &&
+         active->requests[call->words[3]] == call->request;
+}
+
 static isize
 fileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
        const Fileslot *slot, volatile u8 *page, u32 nonblock, Ttywait *wait, u64 now, u64 *next)
@@ -81,9 +89,7 @@ fileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ip
   Msg   reply = {{0, 0, 0, 0}};
   u64   state, opcode;
   isize result, error;
-  if (!active || !call || call->kind != IPC_CALL || !slot || nonblock > 1 ||
-      call->words[3] >= FS_CONN_SLOTS || active->requests[call->words[3]] != call->request ||
-      !call->request || !slot->seq || slot->seq != call->words[2])
+  if (!fileowns(active, call, slot) || nonblock > 1)
     return -ERR_INVALID;
   opcode = call->words[0];
   if (opcode != FS_READ && opcode != FS_WRITE)
@@ -139,6 +145,44 @@ ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const
           const Fileslot *slot, volatile u8 *page, u32 nonblock)
 {
   return fileio(io, input, oflag, active, call, slot, page, nonblock, NULL, 0, NULL);
+}
+
+isize
+ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call, const Fileslot *slot,
+           volatile u8 *page)
+{
+  Msg       reply = {{0, 0, 0, 0}};
+  const u8 *bytes = (const u8 *) mode;
+  u64       state, offset;
+  u32       i;
+  isize     error;
+  if (!fileowns(active, call, slot) || call->words[0] != FS_TTYCTL || !mode || !page)
+    return -ERR_INVALID;
+  error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_DRAINING) {
+    error = ipc_rqfinish(call->request);
+    return error ? error : sysfilefinish(active, call->request);
+  }
+  reply.words[1] = slot->seq;
+  offset = slot->args[3];
+  if (state & RQ_CHECK_CANCEL)
+    reply.words[0] = (u64) -EINTR;
+  else if (slot->args[0] != TTY_GETATTR)
+    reply.words[0] = (u64) -ENOTSUP;
+  else if (slot->span != 1 || !slot->object || slot->payload_bytes > FS_SLOT_BYTES ||
+           slot->args[1] || slot->args[2] || slot->args[4] != sizeof(*mode) || slot->args[5] ||
+           slot->args[6] || slot->args[7] || offset > slot->payload_bytes ||
+           sizeof(*mode) > slot->payload_bytes - offset)
+    reply.words[0] = (u64) -EINVAL;
+  else {
+    for (i = 0; i < sizeof(*mode); i++)
+      page[offset + i] = bytes[i];
+    reply.words[3] = sizeof(*mode);
+  }
+  error = ipc_reply(call->request, &reply);
+  return error ? error : sysfilefinish(active, call->request);
 }
 
 isize

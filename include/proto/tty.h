@@ -2,6 +2,8 @@
 #define _PROTO_TTY_H
 #include <types.h>
 
+#define TTY_GETATTR 1
+
 #define TTY_ICRNL  1
 #define TTY_OPOST  1
 #define TTY_ONLCR  2

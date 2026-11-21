@@ -396,6 +396,47 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
 }
 
 static void
+ttygetattr(u64 file)
+{
+  const Termarg expected = {0, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON, 0, 0, {0}};
+  const u8     *bytes = (const u8 *) &expected;
+  Ipcmsg        result;
+  Filelease     lease;
+  Fileref       ref;
+  Fileslot      slot = {0};
+  Msg           call = {{FS_TTYCTL, work.state.map.connid, 0, 0}};
+  volatile u8  *page;
+  u32           attempt, i;
+  CHECK(!sysfilerefview(&pool, work.state.self, file, &ref));
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = ref.session;
+  slot.payload_bytes = FS_SLOT_BYTES;
+  slot.args[0] = TTY_GETATTR;
+  slot.args[4] = sizeof(expected);
+  for (attempt = 0; attempt < 2; attempt++) {
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    slot.seq = call.words[2] = lease.seq;
+    call.words[3] = lease.slot;
+    slot.args[3] = FS_SLOT_BYTES - sizeof(expected) + (attempt == 0);
+    page = (volatile u8 *) (uintptr_t) (work.state.map.address + FS_DATA_OFFSET +
+                                        lease.slot * FS_SLOT_BYTES);
+    for (i = FS_SLOT_BYTES - sizeof(expected) - 1; i < FS_SLOT_BYTES; i++)
+      page[i] = 0xa5;
+    CHECK(!__sys_copy((void *) (uintptr_t) (work.state.map.address + FS_DESC_OFFSET +
+                                            lease.slot * FS_DESC_BYTES),
+                      &slot, sizeof(slot)) &&
+          !ipc_call(work.state.call, &call, 0, &result) && result.words[1] == lease.seq &&
+          !result.words[2] && page[FS_SLOT_BYTES - sizeof(expected) - 1] == 0xa5);
+    CHECK((isize) result.words[0] == (attempt ? 0 : -EINVAL) &&
+          result.words[3] == (attempt ? sizeof(expected) : 0));
+    for (i = 0; i < sizeof(expected); i++)
+      CHECK(page[FS_SLOT_BYTES - sizeof(expected) + i] == (attempt ? bytes[i] : 0xa5));
+    CHECK(!sysconnworkrelease(&work, &cache, lease));
+  }
+}
+
+static void
 client(const Bootview *boot)
 {
   Opkey              key, background;
@@ -436,6 +477,7 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   first = files[0];
+  ttygetattr(first);
   ttyiocall(first, FS_READ, 1);
   ttyiocall(first, FS_READ, 0);
   ttyiocall(first, FS_WRITE, 1);
@@ -741,6 +783,15 @@ server(const Bootview *boot, u32 recover)
     if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
+    if (!recover && opcode == FS_TTYCTL) {
+      found = 0;
+      for (i = 0; i < created; i++)
+        if (references[i] && sessions[i] == descriptor.object)
+          found++;
+      CHECK(found == 1 &&
+            !ttyfilectl(&ttymode, &watch->active, &input, &descriptor, (volatile u8 *) data));
+      continue;
+    }
     if (!recover && (opcode == FS_READ || opcode == FS_WRITE)) {
       found = 0;
       for (i = 0; i < created; i++)
