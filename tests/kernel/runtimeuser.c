@@ -18,6 +18,7 @@
 #include "fileuser.h"
 #include "stringuser.h"
 #include "envuser.h"
+#include "../../sbin/fs/pipe.h"
 volatile u64        runtime_trace[18];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
@@ -601,6 +602,40 @@ sleepcheck(void)
           125);
 }
 
+static void
+pipecheck(void)
+{
+  static Pipe pipe;
+  static u8   first[PIPE_CAPACITY], second[PIPE_ATOMIC], output[PIPE_CAPACITY];
+  u32         i;
+  for (i = 0; i < sizeof(first); i++)
+    first[i] = (u8) (i * 17 + (i >> 8));
+  memset(second, 0x9e, sizeof(second));
+  pipeinit(&pipe);
+  REQUIRE(!pipehold(&pipe, PIPE_WRITE) && !pipedrop(&pipe, PIPE_WRITE) &&
+              piperead(&pipe, output, sizeof(output)) == -ERR_WOULD_BLOCK,
+          126);
+  REQUIRE(pipewrite(&pipe, first, PIPE_ATOMIC + 1) == PIPE_ATOMIC + 1 &&
+              pipewrite(&pipe, second, sizeof(second)) == -ERR_WOULD_BLOCK &&
+              piperead(&pipe, output, 2) == 2 && !memcmp(output, first, 2) &&
+              pipewrite(&pipe, second, sizeof(second)) == sizeof(second),
+          127);
+  REQUIRE(pipewrite(&pipe, first, sizeof(first)) == 1 && !pipedrop(&pipe, PIPE_WRITE) &&
+              pipehold(&pipe, PIPE_WRITE) == -ERR_STALE &&
+              piperead(&pipe, output, sizeof(output)) == sizeof(output) &&
+              !memcmp(output, first + 2, PIPE_ATOMIC - 1) &&
+              !memcmp(output + PIPE_ATOMIC - 1, second, sizeof(second)) &&
+              output[PIPE_CAPACITY - 1] == first[0] && !piperead(&pipe, output, sizeof(output)),
+          128);
+  REQUIRE(!pipedrop(&pipe, PIPE_READ), 129);
+  pipeinit(&pipe);
+  REQUIRE(!pipehold(&pipe, PIPE_READ) && !pipedrop(&pipe, PIPE_READ) &&
+              pipewrite(&pipe, first, sizeof(first)) == sizeof(first) &&
+              !pipedrop(&pipe, PIPE_READ) && pipehold(&pipe, PIPE_READ) == -ERR_STALE &&
+              pipewrite(&pipe, second, sizeof(second)) == -ERR_PEER && !pipedrop(&pipe, PIPE_WRITE),
+          130);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -709,6 +744,7 @@ main(int argc, char **argv)
   if (runtime_trace[4] == 1) {
     timercheck();
     sleepcheck();
+    pipecheck();
   }
   errno = EDOM;
   REQUIRE(sysconf(_SC_PAGESIZE) == PAGE_SIZE && sysconf(_SC_PAGE_SIZE) == PAGE_SIZE &&
