@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include "chip.h"
 #include <diag.h>
+#include <proc.h>
 void
 testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
 {
@@ -73,6 +74,8 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
   elftest();
   putstr("READY elf-restored\n");
 #elif BOOT_CASE == 40
+  if (proctimerstart())
+    panic("runtime timer");
   runtimetest();
   filecreatetest();
   fscachetest();

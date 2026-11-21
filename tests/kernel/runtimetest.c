@@ -119,9 +119,9 @@ runtimetest(void)
   Liferesult result;
   Pgstat     before, after;
   u64        trace[18], bytes;
-  u32        mode, i, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0,
-                     formats = 0, groups = 0, queues = 0, rings = 0, fds = 0, filepages = 0,
-                     strings = 0, environments = 0, times = 0;
+  u32 mode, i, turns, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0,
+                            formats = 0, groups = 0, queues = 0, rings = 0, fds = 0, filepages = 0,
+                            strings = 0, environments = 0, times = 0;
   int error;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
@@ -131,8 +131,15 @@ runtimetest(void)
     realm = life.group;
     bytes = startup(pid, mode);
     testload(pid, runtime_image, (u64) (runtime_image_end - runtime_image), packet, bytes);
-    REQUIRE(!procpublish(pid) && !procrunone());
-    REQUIRE(!lifestat(info.life, &life));
+    REQUIRE(!procpublish(pid));
+    for (turns = 0; turns < 2048; turns++) {
+      error = procrunone();
+      REQUIRE(!lifestat(info.life, &life));
+      if (life.state == LIFE_ENDED)
+        break;
+      if (error)
+        REQUIRE(error == -ERR_WOULD_BLOCK && mode == 1 && procidle() == 1);
+    }
     good = mode <= 3 || mode == 6;
     if (life.state != LIFE_ENDED || life.reason != LIFE_EXIT || life.code != (good ? 42 : 127)) {
       putstr("RUNTIMERESULT mode=");

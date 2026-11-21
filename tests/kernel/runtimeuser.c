@@ -10,6 +10,7 @@
 #include <time.h>
 #include "private/libc.h"
 #include "private/syscall.h"
+#include "private/timer.h"
 #include "private/virtio/ring.h"
 #include "ringuser.h"
 #include "fdtableuser.h"
@@ -483,6 +484,57 @@ queuecheck(void)
           228);
   return 3;
 }
+static void
+timercheck(void)
+{
+  Timerheap heap = {0};
+  Timerjob  due = {0, 0};
+  Ipcmsg    event;
+  u64       now, deadline, old, next, equal, late, generation;
+  u64       tickets[SYSTIMER_LIMIT];
+  u32       i;
+
+  REQUIRE(!systimernow(&now) && now < UINT64_MAX - UINT64_C(2000000000), 101);
+  deadline = now + UINT64_C(25000000);
+  REQUIRE(!systimeradd(&heap, now, &old) && heap.generation, 102);
+  generation = heap.generation;
+  REQUIRE(!ipc_recv(EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
+              event.words[0] == EVENT_TIMER && event.words[1] == generation,
+          103);
+  REQUIRE(!systimeradd(&heap, deadline + UINT64_C(1000000000), &late) &&
+              !systimeradd(&heap, deadline, &next) && !systimeradd(&heap, deadline, &equal) &&
+              heap.generation == generation && !systimercancel(&heap, old) &&
+              heap.generation != event.words[1] && systimercancel(&heap, old) == -ERR_STALE,
+          104);
+  REQUIRE(systimerdue(&heap, deadline - 1, &due) == -ERR_WOULD_BLOCK && !due.ticket, 105);
+  generation = heap.generation;
+  REQUIRE(!ipc_recv(EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
+              event.words[0] == EVENT_TIMER && event.words[1] == generation && !systimernow(&now) &&
+              now >= deadline,
+          106);
+  REQUIRE(!systimerdue(&heap, now, &due) && due.ticket == next && due.deadline == deadline &&
+              heap.generation == generation && !systimerdue(&heap, now, &due) &&
+              due.ticket == equal && due.deadline == deadline && heap.generation != generation &&
+              !systimercancel(&heap, late),
+          107);
+
+  REQUIRE(now < UINT64_MAX - UINT64_C(10000000000) - SYSTIMER_LIMIT, 108);
+  deadline = now + UINT64_C(10000000000);
+  for (i = 0; i < SYSTIMER_LIMIT; i++)
+    REQUIRE(!systimeradd(&heap, deadline + SYSTIMER_LIMIT - i, &tickets[i]), 109);
+  generation = heap.generation;
+  REQUIRE(systimeradd(&heap, now, &old) == -ERR_CAPACITY && heap.generation == generation &&
+              !systimercancel(&heap, tickets[5]) && heap.generation == generation,
+          110);
+  for (i = SYSTIMER_LIMIT; i > 0; i--)
+    if (i - 1 != 5)
+      REQUIRE(!systimerdue(&heap, deadline + SYSTIMER_LIMIT, &due) && due.ticket == tickets[i - 1],
+              111);
+  REQUIRE(!heap.count && systimerdue(&heap, deadline, &due) == -ERR_WOULD_BLOCK &&
+              ipc_recv(EVENT_TIMER, RECV_EVENTS_ONLY | RECV_NONBLOCK, &event) == -ERR_WOULD_BLOCK,
+          112);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -588,6 +640,8 @@ main(int argc, char **argv)
   runtime_trace[15] = stringusercheck(&view);
   runtime_trace[16] = envusercheck(&view);
   runtime_trace[17] = timecheck();
+  if (runtime_trace[4] == 1)
+    timercheck();
   errno = EDOM;
   REQUIRE(sysconf(_SC_PAGESIZE) == PAGE_SIZE && sysconf(_SC_PAGE_SIZE) == PAGE_SIZE &&
               errno == EDOM,
