@@ -18,6 +18,7 @@
 #include <abi/observe.h>
 #include "../../sbin/tty/serial.h"
 #include "../../sbin/fs/loadio.h"
+#include "../../sbin/fs/cache.h"
 #include "execclaimuser.h"
 
 #define ADDRESS   0x1600000UL
@@ -46,7 +47,8 @@ static Rkey           active_key;
 static Ttyinput       ttyline;
 static Serialring     ttyrx, ttytx;
 static Loadtable      loadtable;
-static const Loadfile loadfile = {7, 2, 3, 8};
+static const Loadfile loadfile = {7, 2, 3, 2 * CACHE_BYTES};
+static Cacheblock     loadblocks[2];
 volatile u64          filecreatetrace[16];
 extern const u8       execclaim_elf[], execclaim_elf_end[];
 #define CHECK(c)                                                                                   \
@@ -492,7 +494,7 @@ loadreads(void)
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
     slot.seq = call.words[2] = lease.seq;
     call.words[3] = lease.slot;
-    slot.args[4] = attempt == 1 ? 4 : 0;
+    slot.args[4] = attempt == 1 ? 4 : CACHE_BYTES - 2;
     slot.args[6] = FS_SLOT_BYTES - (attempt == 2 ? 3 : 4);
     page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
     for (i = 0; i < 5; i++)
@@ -1008,6 +1010,29 @@ claimbackend(const Bootview *boot)
 }
 
 static void
+loadfixturecache(Cache *backing)
+{
+  Cachekey key = {0};
+  Cacheio  ticket;
+  u8      *bytes;
+  u32      i;
+  CHECK(!cacheinit(backing, loadblocks, ARRAY_SIZE(loadblocks), 128));
+  for (i = 0; i < 2; i++) {
+    CHECK(!cacheget(backing, 100 + i, CACHE_DATA, &key) &&
+          !cachereadbegin(backing, &key, &ticket, &bytes));
+    zero(bytes, CACHE_BYTES);
+    if (i) {
+      bytes[0] = 'F';
+      bytes[1] = '!';
+    } else {
+      bytes[CACHE_BYTES - 2] = 'E';
+      bytes[CACHE_BYTES - 1] = 'L';
+    }
+    CHECK(!cachecomplete(backing, &ticket, 1) && !cacheput(backing, &key));
+  }
+}
+
+static void
 server(const Bootview *boot, u32 recover)
 {
   Connpeer   peer;
@@ -1033,6 +1058,8 @@ server(const Bootview *boot, u32 recover)
   Ttywait         ttywait;
   Ttypending      ttydeferred = {0};
   Loadio          loadio = {0};
+  Cache           loadcache = {0};
+  u8              loadbytes[4];
   u64             loadsession = 0, guard;
   u64             ttynow, ttyalarm = 0, generation;
   u8              output[3];
@@ -1162,13 +1189,14 @@ server(const Bootview *boot, u32 recover)
     if (opcode == LOADTEST) {
       CHECK(!recover);
       if (!input.words[1]) {
+        loadfixturecache(&loadcache);
         CHECK(!loadsession &&
               !loadopen(&loadtable, &loadfile, input.source, input.image, 0, 100, &loadsession));
         reply.words[2] = loadsession;
       } else if (input.words[1] == 1) {
         CHECK(loadio.request && loadwrite(&loadtable, loadfile.inode, &guard) == -ERR_BUSY);
       } else if (input.words[1] == 2) {
-        CHECK(loadio.request && !loadioreply(&loadio, "ELF!", 4, 3));
+        CHECK(loadio.request && !loadioreply(&loadio, NULL, 0, 3));
       } else {
         CHECK(input.words[1] == 3 && input.words[2] == loadsession && !loadio.request &&
               !loadclose(&loadtable, loadsession, input.source, input.image) &&
@@ -1284,10 +1312,13 @@ server(const Bootview *boot, u32 recover)
         CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
       } else {
         CHECK(!status);
-        if (loadio.offset)
+        if (loadio.offset == 4)
           CHECK(!ipc_defer(input.request));
         else
-          CHECK(!loadioreply(&loadio, "ELF!", 4, 3));
+          CHECK(loadio.offset == CACHE_BYTES - 2 && loadio.bytes == sizeof(loadbytes) &&
+                !cachecopydata(&loadcache, 100, 101, (u32) loadio.offset, loadbytes,
+                               sizeof(loadbytes)) &&
+                !loadioreply(&loadio, loadbytes, sizeof(loadbytes), 3));
       }
       continue;
     }

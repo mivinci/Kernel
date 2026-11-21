@@ -47,6 +47,10 @@ isize cacheget(Cache *cache, u64 block, u32 metadata, Cachekey *out);
 isize cacheput(Cache *cache, Cachekey *owned);
 isize cacheinvalidate(Cache *cache, Cachekey *owned);
 isize cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version);
+/* Snapshot at most one page of file data, possibly spanning two blocks.
+   The caller resolves blocks from the pinned file version; zero is a hole.
+   A miss leaves the independent output buffer unchanged. */
+isize cachecopydata(Cache *cache, u64 first, u64 next, u32 offset, void *out, u32 bytes);
 isize cacheedit(Cache *cache, const Cachekey *key, u32 offset, const void *data, u32 bytes);
 /* IO tickets are separate eviction anchors. Caller may put its key while IO
    remains. Read destination is private until successful completion. Write

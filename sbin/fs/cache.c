@@ -164,6 +164,46 @@ cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version)
   return 0;
 }
 isize
+cachecopydata(Cache *cache, u64 first, u64 next, u32 offset, void *out, u32 bytes)
+{
+  Cachekey  key[2] = {{0}, {0}};
+  const u8 *data[2] = {NULL, NULL};
+  u8       *destination = out;
+  u64       number[2], version;
+  u32       length, i, j, count;
+  isize     error = 0, cleanup;
+  if (offset >= CACHE_BYTES || !bytes || bytes > CACHE_BYTES || !external(cache, out, bytes))
+    return -ERR_INVALID;
+  length = MIN(bytes, CACHE_BYTES - offset);
+  count = length == bytes ? 1 : 2;
+  if ((count == 1 && next) || first >= cache->blocks || next >= cache->blocks)
+    return -ERR_INVALID;
+  number[0] = first;
+  number[1] = next;
+  for (i = 0; i < count; i++) {
+    if (!number[i])
+      continue;
+    error = cacheget(cache, number[i], CACHE_DATA, &key[i]);
+    if (!error)
+      error = cacheview(cache, &key[i], &data[i], &version);
+    if (error)
+      break;
+  }
+  if (!error)
+    for (i = 0; i < bytes; i++) {
+      j = i < length ? 0 : 1;
+      destination[i] = data[j] ? data[j][j ? i - length : offset + i] : 0;
+    }
+  for (i = 0; i < count; i++)
+    if (key[i].generation) {
+      cleanup = cacheput(cache, &key[i]);
+      if (!error)
+        error = cleanup;
+    }
+  return error;
+}
+
+isize
 cacheedit(Cache *cache, const Cachekey *key, u32 offset, const void *data, u32 bytes)
 {
   Cacheblock        *entry;

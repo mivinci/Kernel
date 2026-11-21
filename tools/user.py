@@ -277,7 +277,7 @@ def build(args):
     tty_rows=[line.split() for line in inspection.splitlines() if line.split() and line.split()[-1]=='ttytrace']
     if len(tty_rows)!=1 or int(tty_rows[0][2])!=64:raise BuildError('missing tty trace')
     (sdk/'ttyimage.S').write_text('/* image sha256: '+digest(tty_image)+' */\n.section .rodata\n.balign 8\n.global tty_image,tty_image_end,tty_trace_address\ntty_image:\n.incbin '+json.dumps(str(tty_image))+'\ntty_image_end:\n.balign 8\ntty_trace_address:\n.quad '+str(int(tty_rows[0][1],16))+'\n')
-    fs_load_sources = [ROOT/'sbin/fs'/name for name in ('load.c', 'loadio.c')]
+    fs_load_sources = [ROOT/'sbin/fs'/name for name in ('load.c', 'loadio.c', 'cache.c')]
     claim_payload = link_adoption('execclaimuser', [compile_adoption(
         ROOT/'tests/kernel/execclaimuser.c', 'execclaimuser')])
     filecreate_elf=link_adoption('filecreateuser',[compile_adoption(ROOT/'tests/kernel/filecreateuser.c','filecreateuser'),

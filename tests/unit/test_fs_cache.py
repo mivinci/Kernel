@@ -42,6 +42,7 @@ class FsCacheTests(unittest.TestCase):
                 'cacheinit':[cache,C.POINTER(Block),C.c_uint32,C.c_uint64],
                 'cacheget':[cache,C.c_uint64,C.c_uint32,key],'cacheput':[cache,key],'cacheinvalidate':[cache,key],
                 'cacheview':[cache,key,C.POINTER(C.c_void_p),C.POINTER(C.c_uint64)],
+                'cachecopydata':[cache,C.c_uint64,C.c_uint64,C.c_uint32,C.c_void_p,C.c_uint32],
                 'cacheedit':[cache,key,C.c_uint32,C.c_void_p,C.c_uint32],
                 'cachereadbegin':[cache,key,ticket,C.POINTER(C.c_void_p)],
                 'cachewritebegin':[cache,key,C.c_void_p,ticket],
@@ -75,6 +76,18 @@ class FsCacheTests(unittest.TestCase):
         ticket=Ticket();snapshot=(C.c_uint8*4096)()
         self.assertEqual(self.lib.cachewritebegin(self.c,C.byref(key),snapshot,C.byref(ticket)),0)
         return ticket,snapshot
+
+    def test_file_snapshot_keeps_output_intact_on_second_block_miss(self):
+        for lib in self.libs:
+            self.init(lib)
+            first=self.loaded(7);out=(C.c_uint8*4)(1,2,3,4)
+            self.assertEqual(lib.cachecopydata(self.c,7,8,4094,out,4),-11)
+            self.assertEqual((list(out),self.storage[first.index].references),([1,2,3,4],1))
+            second=self.loaded(8);self.assertEqual(self.edit(second,65),0)
+            self.assertEqual(lib.cachecopydata(self.c,7,8,4094,out,4),0)
+            self.assertEqual(list(out),[17,17,65,17])
+            self.assertEqual(lib.cachecopydata(self.c,0,8,4094,out,4),0)
+            self.assertEqual(list(out),[0,0,65,17])
 
     def test_unique_binding_and_read_anchor_survive_all_caller_puts(self):
         for lib in self.libs:
