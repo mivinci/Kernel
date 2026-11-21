@@ -738,21 +738,48 @@ rqstat(Rqid id, Rqinfo *out)
   return 0;
 }
 
-int
-rqimageend(Rquota *quota, Imageid caller)
+static void
+takechain(List *to, List *from)
 {
-  Image image;
+  listinit(to);
+  if (!listempty(from)) {
+    to->next = from->next;
+    to->prev = from->prev;
+    to->next->prev = to;
+    to->prev->next = to;
+    listinit(from);
+  }
+}
+
+int
+rqexec(Rquota *quota, Rmail *mail, Rmail *retiring, Imageid next)
+{
+  Image old, target;
   u32   i;
-  if (!quota || quota->state != RQUOTA_OPEN)
+  if (!quota || quota->state != RQUOTA_OPEN || !mail || mail->state != RMAIL_OPEN || !retiring ||
+      retiring == mail || (retiring->state && retiring->state != RMAIL_DRAINED))
     return -ERR_STATE;
-  if (imagestat(caller, &image) || image.state != IMAGE_ENDED ||
-      image.life.generation != quota->owner.generation || image.life.index != quota->owner.index)
+  if (imagestat(mail->image, &old) || old.state != IMAGE_ENDED || old.reason != IMAGE_EXEC ||
+      imagestat(next, &target) || target.state != IMAGE_PREPARING ||
+      old.life.generation != quota->owner.generation || old.life.index != quota->owner.index ||
+      target.life.generation != old.life.generation || target.life.index != old.life.index ||
+      target.sourceimage != old.number)
     return -ERR_STATE;
   for (i = 0; i < OUT_REQUESTS; i++) {
     Rq *r = &requests[quota->slots[i]];
-    if (r->state && same(r->callerid, caller) && rqabandon(identity(r), caller))
+    if (r->state && same(r->callerid, mail->image) && rqabandon(identity(r), mail->image))
       panic("image request abandonment");
   }
+  retiring->image = mail->image;
+  retiring->immediate = mail->immediate;
+  retiring->deferred = mail->deferred;
+  retiring->limit = mail->limit;
+  retiring->state = RMAIL_CLOSING;
+  takechain(&retiring->queue, &mail->queue);
+  takechain(&retiring->owned, &mail->owned);
+  mail->image = next;
+  mail->immediate = PG_NONE;
+  mail->deferred = 0;
   return 0;
 }
 

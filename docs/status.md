@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage326（2026-11-22）：可信 exec IPC 移交隔离新旧收件箱，已接收的旧出站请求仍等服务收尾。RV64/ARM64 QEMU `requests`、`ipc`、46 项主机回归和格式检查通过；尚未接入原生提交。
 - stage325（2026-11-22）：可信 exec 资源继承保留索引、句柄及对象引用，检查并拒绝迟到冲突。RV64/ARM64 QEMU `prep`、`locals`、32 项主机回归和格式检查通过；尚未接入原生提交。
 - stage324（2026-11-22）：可信 exec 信号移交保留有效掩码、pending 和显式 IGNORE，丢弃旧活动帧。RV64/ARM64 QEMU `sigframe`、`sigconfig`、59 项主机回归和格式检查通过；尚未接入原生提交。
 - stage323（2026-11-22）：可信 exec 提交预算清点已接，抵扣仅限确定随旧镜像释放的费用。RV64/ARM64 QEMU `prep`、`budget`、1259 项主机测试和格式检查通过；原生 `execcommit` 仍待接。

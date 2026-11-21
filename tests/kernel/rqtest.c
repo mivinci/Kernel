@@ -57,6 +57,76 @@ submit(Actor *a, Actor *b, u32 kind, u64 value)
                     kind, &message, kind == IPC_SEND ? 0 : CALL_ASYNC, &id));
   return id;
 }
+static void
+execmailtest(Setid set)
+{
+  static Actor  runner, peer;
+  static Rmail  retiring;
+  static Rtable resources;
+  static Local  slots[4];
+  Acctid        acct;
+  Spaceid       space;
+  Rqid          outgoing, ownqueued, incoming, queued, fresh, self, lookup;
+  Rqrecv        received;
+  Rqinfo        info;
+  Rqresult      result;
+  Imageid       old, next;
+  Handle        authority = handlepack(HANDLE_RESOURCE, 1, 7), request, oldrpc;
+  Msg           message = {{41, 0, 0, 0}};
+  actor(&runner, set, handlepack(HANDLE_PROCESS, 707, 1));
+  actor(&peer, set, handlepack(HANDLE_PROCESS, 707, 2));
+  old = runner.image;
+  REQUIRE(!acctcreate(set, 32, 32, &acct) && !spacecreate(acct, &space) &&
+          !localinit(&resources, slots, 4, acct, space));
+  resources.owner = runner.pid;
+  resources.image = 1;
+  REQUIRE(!rqsubmitto(&runner.quota, &peer.mail, old, authority, RQ_SIGNAL1, IPC_CALL, &message,
+                      CALL_ASYNC | CALL_RECV_MEM, &outgoing, &resources) &&
+          slots[0].subtype == LOCAL_RECEIVE && !rqrecv(&peer.mail, &received) &&
+          !rqdefer(&peer.mail, received.request));
+  request = received.request;
+  oldrpc = rqhandle(outgoing, HANDLE_RPC);
+  ownqueued = submit(&runner, &peer, IPC_CALL, 42);
+  incoming = submit(&peer, &runner, IPC_CALL, 43);
+  REQUIRE(!rqrecv(&runner.mail, &received) &&
+          received.request == rqhandle(incoming, HANDLE_REQUEST));
+  self = submit(&runner, &runner, IPC_CALL, 44);
+  queued = submit(&peer, &runner, IPC_CALL, 45);
+  REQUIRE(!imagecreate(runner.life, 1, &next) &&
+          rqexec(&runner.quota, &runner.mail, &retiring, next) == -ERR_STATE && !retiring.state &&
+          slots[0].subtype == LOCAL_RECEIVE && !imageend(old, IMAGE_EXEC) &&
+          !rqexec(&runner.quota, &runner.mail, &retiring, next) && !imageactivate(next));
+  runner.image = next;
+  REQUIRE(!slots[0].subtype && rqlookup(oldrpc, next, &lookup) == -ERR_BAD_HANDLE &&
+          rqstat(ownqueued, &info) == -ERR_STALE && rqstat(self, &info) == -ERR_STALE &&
+          !rqstat(outgoing, &info) && info.status == -ERR_PEER && !(info.flags & RQ_FINISHED) &&
+          rqcheck(&peer.mail, request) == 4 &&
+          rqreply(&runner.mail, received.request, &message) == -ERR_BAD_HANDLE &&
+          rqrecv(&runner.mail, &received) == -ERR_WOULD_BLOCK &&
+          !rqsignals(&runner.quota, &runner.mail));
+  REQUIRE(rqsubmit(&runner.quota, &peer.mail, next, authority, RQ_SIGNAL1, IPC_CALL, &message,
+                   CALL_ASYNC, &fresh) == -ERR_CAPACITY);
+  fresh = submit(&peer, &runner, IPC_CALL, 46);
+  REQUIRE(!rqrecv(&runner.mail, &received) && received.message.words[0] == 46 &&
+          !rqreply(&runner.mail, received.request, &message) && !rqack(fresh, peer.image, 3));
+  REQUIRE(rqmailclose(&retiring, 1) == 1 && !rqresult(queued, peer.image, 0, &result) &&
+          result.status == -ERR_PEER && !rqack(queued, peer.image, 3) &&
+          rqresult(incoming, peer.image, 0, &result) == -ERR_WOULD_BLOCK &&
+          rqmailclose(&retiring, 1) == 1 && !rqmailclose(&retiring, 1) &&
+          !rqresult(incoming, peer.image, 0, &result) && result.status == -ERR_PEER &&
+          rqclean(incoming, next) == -ERR_BAD_HANDLE && !rqclean(incoming, old) &&
+          !rqack(incoming, peer.image, 3));
+  REQUIRE(!rqreply(&peer.mail, request, &message) && !rqsignals(&runner.quota, &runner.mail) &&
+          !rqsubmit(&runner.quota, &peer.mail, next, authority, RQ_SIGNAL1, IPC_CALL, &message,
+                    CALL_ASYNC, &fresh) &&
+          fresh.index == outgoing.index && fresh.generation > outgoing.generation &&
+          !rqrecv(&peer.mail, &received) && received.image == 2 && received.source == runner.pid &&
+          !rqreply(&peer.mail, received.request, &message) && !rqack(fresh, next, 3));
+  REQUIRE(!imagedetach(old) && !localclose(&resources) && !localdrain(&resources, 4) &&
+          !spacedestroy(space) && !acctclose(acct) && !acctunbind(acct));
+  endactor(&runner);
+  endactor(&peer);
+}
 void
 rqtest(void)
 {
@@ -105,6 +175,7 @@ rqtest(void)
     REQUIRE(listempty(&nodes[i]) && nodes[i].prev == &nodes[i]);
   REQUIRE(!setcreate(4096, 8192, 4, &set));
   pgstat(&before);
+  execmailtest(set);
   byte = (u8 *) &a;
   for (i = 0; i < sizeof(a); i++)
     byte[i] = 0;

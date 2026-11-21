@@ -81,6 +81,9 @@ int rqmailinit(Rmail *mail, Imageid image);
 /* Before publication only, preserves one immediate dispatch slot. */
 int rqmailconfigure(Rmail *mail, u32 pending);
 int rqmailclose(Rmail *mail, u32 batch);
+/* After ending the old image and before activating its replacement, abandon
+   the old caller's results and hand its inbox to bounded CPU cleanup. */
+int rqexec(Rquota *quota, Rmail *mail, Rmail *retiring, Imageid next);
 int rqsubmit(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context, u32 kind,
              const Msg *message, u32 options, Rqid *out);
 int rqsubmitto(Rquota *quota, Rmail *server, Imageid caller, Handle authority, u32 context,
