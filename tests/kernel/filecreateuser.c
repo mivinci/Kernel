@@ -10,6 +10,7 @@
 #include "private/fd.h"
 #include "private/execsend.h"
 #include "private/execmanifest.h"
+#include "private/elf.h"
 #include "private/contextipc.h"
 #include "private/sigentry.h"
 #include "private/serial.h"
@@ -17,6 +18,7 @@
 #include <abi/observe.h>
 #include "../../sbin/tty/serial.h"
 #include "../../sbin/fs/loadio.h"
+#include "execclaimuser.h"
 
 #define ADDRESS   0x1600000UL
 #define STOP      0xf001
@@ -46,6 +48,7 @@ static Serialring     ttyrx, ttytx;
 static Loadtable      loadtable;
 static const Loadfile loadfile = {7, 2, 3, 8};
 volatile u64          filecreatetrace[16];
+extern const u8       execclaim_elf[], execclaim_elf_end[];
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -787,6 +790,117 @@ execdrain(void *context, Filelink *link)
   Filelink *target = context;
   CHECK(link == target && link->watch.owner.reason == OBS_ABORT);
   return execreserve.count ? -ERR_BUSY : 0;
+}
+
+static isize
+claimelfread(void *context, u64 offset, void *data, u64 bytes)
+{
+  (void) context;
+  return __sys_copy(data, execclaim_elf + offset, bytes);
+}
+
+static void
+claimsource(const Bootview *boot)
+{
+  typedef struct Claimboot Claimboot;
+  struct Claimboot
+  {
+    Boot     header;
+    Resentry resources[3];
+  };
+  Claimboot packet = {0};
+  Execwork  next = {0};
+  Elfsource source = {0, (u64) (execclaim_elf_end - execclaim_elf), claimelfread};
+  Elfplan   plan;
+  Ipcmsg    result;
+  Msg       call;
+  Fdtag     fd;
+  Handle    rpc;
+  u64       file, pin;
+  setup(boot);
+  CHECK(!sysfilerefnew(&pool, work.state.self, work.state.tag, 100, 1000, 0, &file) &&
+        !sysfdreserve(&fds, 0, &fd) && !sysfdpublish(&fds, fd, file, 0) &&
+        !sysfilerefpin(&pool, work.state.self, file) &&
+        !sysexecfds(&execfds, &fds, &pool, &cache, work.state.self));
+  next.elf.parent_space = bootresource(boot, BOOT_SELF_SPACE);
+  next.elf.scratch = 0x2000000;
+  next.elf.scratch_bytes = BOOT_MAX_BYTES;
+  CHECK(!elfcheck(&source, 128, &plan) && !sysexecprepare(&next, 0));
+  pin = file;
+  CHECK(!sysexecfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, next.elf.image, 100, &pin,
+                        &execsend) &&
+        !pin && !sysoprequest(&work, &cache, &execsend.key, &call) &&
+        !ipc_call(work.state.call, &call, CALL_ASYNC, &result));
+  rpc = result.request;
+  CHECK(!sysopsubmitted(&work, &cache, &execsend.key, &result.request) &&
+        !ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] == call.words[2] &&
+        result.words[2] == EXEC_CLAIM_TOKEN && !result.words[3] &&
+        !sysopcapture(&work, &cache, &execsend.key, 0, &result) &&
+        !sysopfinished(&work, &cache, &execsend.key) && !sysopsaved(&work, &cache, &execsend.key) &&
+        !sysopack(&work, &cache, &execsend.key) &&
+        !sysopfinish(&work, &cache, &execsend.key, &pin) && pin == file &&
+        !sysfilerefunpin(&pool, work.state.self, pin) && !sysexecfdrelease(&execfds));
+  packet.header.magic = BOOT_MAGIC;
+  packet.header.format = BOOT_FORMAT;
+  packet.header.bytes = sizeof(packet);
+  packet.header.resource_count = ARRAY_SIZE(packet.resources);
+  packet.header.resources_off = offsetof(Claimboot, resources);
+  packet.header.user_lo = BOOT_USER_LO;
+  packet.header.user_hi = BOOT_USER_HI;
+  packet.resources[0].tag = BOOT_SELF_SPACE;
+  packet.resources[1].tag = BOOT_SELF_ALLOC;
+  packet.resources[2].tag = EXEC_CLAIM_CALL;
+  packet.resources[2].handle = work.state.call;
+  CHECK(!sysexecfill(&next, &source, &plan, &packet, sizeof(packet)));
+  (void) sysexecpublish(&next);
+  CHECK(0);
+}
+
+static void
+claimbackend(const Bootview *boot)
+{
+  Filelink   links[2] = {0};
+  Filewatch *old = &links[0].watch;
+  Fileowner *target = &links[1].watch.owner;
+  Handle     parent, permit = bootresource(boot, 258), space = bootresource(boot, BOOT_SELF_SPACE);
+  Handle     alloc = bootresource(boot, BOOT_SELF_ALLOC);
+  Connpeer   self;
+  Ipcmsg     input;
+  Fileslot   slot;
+  u64        key[5], held = 0;
+  volatile u64 *marker;
+  Msg           stale = {{(u64) -ESTALE, 2, 0, 0}};
+  CHECK(!__sys_getid(&self.pid, &self.image, &parent) && !ipc_recv(0, 0, &input) &&
+        !sysfilehello(links, ARRAY_SIZE(links), permit, alloc, space, ADDRESS, &input) &&
+        !ipc_recv(0, 0, &input) && !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot));
+  key[0] = (u64) old->owner.pid;
+  key[1] = old->owner.image;
+  key[2] = 100;
+  key[3] = 1000;
+  key[4] = 0;
+  CHECK(!sysexecmanifest(&execplan, old, &input, &slot,
+                         (const void *) (ADDRESS + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
+                         self, 0, execreference, key) &&
+        key[4] == 1 && !sysexecobserve(target, permit, &input, slot.args[1]) &&
+        !sysexecreserve(&execreserve, &execplan, &old->owner, target, exectake, execdrop, &held) &&
+        !sysfileprepay(links, ARRAY_SIZE(links), 1, alloc, space, ADDRESS) &&
+        links[1].watch.connid == EXEC_CLAIM_CONNID);
+  marker = (volatile u64 *) (links[1].address + FS_DATA_OFFSET);
+  *marker = EXEC_CLAIM_MARKER;
+  CHECK(!sysexecreply(&execreserve, old, &links[1], &input, EXEC_CLAIM_TOKEN, 0) &&
+        !ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
+        old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held &&
+        !ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
+        sysexecclaim(&execreserve, &old->owner, &links[1], &input) == -ERR_STALE &&
+        !ipc_reply(input.request, &stale));
+  do {
+    CHECK(!ipc_recv(EVENT_LIFE, 0, &input) && input.kind == IPC_EVENT &&
+          input.words[0] == EVENT_LIFE && !sysfileownerread(target));
+  } while (!target->reason);
+  CHECK(target->reason == OBS_EXIT &&
+        !sysexecdiscard(&execreserve, &old->owner, target, execdrop, &held) && !held &&
+        !sysfilelinkclose(&links[1]) && !sysfilelinkclose(&links[0]));
+  filecreatetrace[0] = 2;
 }
 
 static void
@@ -2331,7 +2445,7 @@ main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
         ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'z') ||
-         (argv[0][0] >= 'A' && argv[0][0] <= 'Q')) &&
+         (argv[0][0] >= 'A' && argv[0][0] <= 'S')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -2408,6 +2522,10 @@ main(int argc, char **argv)
     server(sysboot(), 14);
   else if (argv[0][0] == 'Q')
     backend(sysboot(), 10);
+  else if (argv[0][0] == 'R')
+    claimsource(sysboot());
+  else if (argv[0][0] == 'S')
+    claimbackend(sysboot());
   else
     backend(sysboot(), argv[0][0] == 'w' ? 6 : argv[0][0] == 'z' ? 7 : 8);
   return 42;

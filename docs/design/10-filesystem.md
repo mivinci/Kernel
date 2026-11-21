@@ -1332,4 +1332,6 @@ stage343：`sysexecclaim` 核对无槽 `EXEC_CLAIM` 的原 REQUEST、token、真
 
 stage344：`sysfileprepay` 在目标观察所在的连接槽分配并初始化真实共享区，目标同代次不能重复占槽。`sysexecreply` 要求该连接已预付，`sysexecclaim` 成功后才把它标记为已交付。普通清理扫描保留未结束目标的预付连接；目标结束后必须先通过后端清理回调，再解除映射、释放 MEM 和确认观察。RV64/ARM64 QEMU `runtime` 验证无预付不能回 token、拒绝重复预付、准备期间扫描保留共享区、撤销后 hold 未清时不回收以及最终页账守恒。13 项主机回归和格式通过；实际新镜像领取及生产事件分派仍待接。
 
+stage345：RV64/ARM64 QEMU `runtime` 以独立的小 ELF 验证新镜像首次领取。旧镜像通过原 EXEC_PREPARE RPC 获得 token 并排空，原生 exec 发布同 PID 新镜像；新镜像异步发送 EXEC_CLAIM，收到预付 MEM 后映射、核对连接头、与后端读写同一数据页并 ACK 原 RPC。重复领取返回 ESTALE；退出后后端归还 hold，两边页与费用回到基线。13 项 exec 主机回归和格式通过。夹具用私有 Boot 资源标签传 CALL、固定 token，未定义 Bootfd 格式；旧引用自动退役、生产 fd 安装和复用既有连接的真实 IPC 验证仍待接。
+
 stage332：RV64、ARM64 QEMU `runtime` 用真实 CALL/REQUEST、已观察的连接和共享页运行相同的 FS 读块适配器。客户端核对页末四字节成功回复；服务端 defer 第二次读取，客户端在确认它已受理后取消，服务从原请求回复 EINTR；第三次输出跨页一字节被拒。取消和越界不写输出，三个原 RPC 均确认 FINISH/ACK 后才归还槽。服务端另核对在途读阻止同 inode 改写，关闭会话后可取得写票；该场景的最终页和账户费用守恒。35 项 FS 主机测试及格式检查通过。会话建立/关闭使用测试私有控制消息，读取数据来自测试缓冲；尚未接生产路径、权限或磁盘。

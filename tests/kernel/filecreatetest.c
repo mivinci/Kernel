@@ -26,6 +26,7 @@ static void      bootpeertest(u32 mode);
 static void      creatorbackendtest(u32 mode);
 static void      datarecoverytest(u32 mode);
 static void      filewatchexittest(u32 vfs);
+static void      execclaimtest(void);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -73,7 +74,8 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     peer = count == 2 ? 1 - i : (i ? 0 : 1);
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
-    CHECK(!localendpoint(table, processes[peer].identity, LOCAL_CALL, LOCAL_USE, 0, 0, &call));
+    CHECK(!localendpoint(table, processes[peer].identity, LOCAL_CALL, LOCAL_USE, 0,
+                         roles[i] == 'R' ? LOCAL_EXEC : 0, &call));
     packet.header.magic = BOOT_MAGIC;
     packet.header.format = BOOT_FORMAT;
     packet.header.bytes = sizeof(packet);
@@ -99,7 +101,9 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
       packet.resources[3].handle = call;
     }
     if (i) {
-      CHECK(!localobserve(table, OBSERVE_SOURCE | (roles[i] == '1' ? OBSERVE_FUTURE : 0), &call));
+      CHECK(!localobserve(
+          table, OBSERVE_SOURCE | (roles[i] == '1' || roles[i] == 'S' ? OBSERVE_FUTURE : 0),
+          &call));
       packet.resources[packet.header.resource_count].tag = 258;
       packet.resources[packet.header.resource_count++].handle = call;
     }
@@ -232,6 +236,66 @@ filecreatetest(void)
   filewatchexittest(0);
   filewatchexittest(1);
   filewatchexittest(2);
+  execclaimtest();
+}
+
+static void
+execclaimtest(void)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   proc[2];
+  Handle     pid[2];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  u64        trace[16];
+  u32        i, turns = 0;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(2048, 4096, 2, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pid, proc, "RS", 2);
+  for (i = 0; i < 2; i++) {
+    CHECK(!procinfo(pid[i], &proc[i]));
+    while (proc[i].state != PROC_EXITING) {
+      error = procrunone();
+      CHECK((!error || error == -ERR_WOULD_BLOCK) && ++turns < 512);
+      if (error)
+        CHECK(procidle() >= 0);
+      CHECK(!procinfo(pid[i], &proc[i]));
+    }
+    CHECK(!lifestat(proc[i].life, &life));
+    if (life.reason != LIFE_EXIT || life.code != 42) {
+      putstr("EXECCLAIM actor=");
+      puthex(i);
+      putstr(" image=");
+      puthex(proc[i].image);
+      putstr(" code=");
+      puthex(life.code);
+      if (proc[i].image == 1 &&
+          !spaceread(proc[i].space, filecreate_trace_address, trace, sizeof(trace))) {
+        putstr(" line=");
+        puthex(trace[15]);
+      }
+      putstr("\n");
+      panic("exec claim result");
+    }
+    CHECK(i ? proc[i].image == 1 : proc[i].image == 2);
+  }
+  for (i = 0; i < 2; i++) {
+    while ((error = procclean(pid[i])) > 0) {
+    }
+    CHECK(!error && !lifecollect(proc[i].life, 1, &result));
+  }
+  for (i = 0; i < 256; i++)
+    CHECK(procwork(32) >= 0);
+  CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck() && !lifecheck());
+  putstr("EXECCLAIMCHECK mapped=1 duplicate_rejected=1 charged=0\n");
 }
 static void
 filewatchexittest(u32 vfs)
