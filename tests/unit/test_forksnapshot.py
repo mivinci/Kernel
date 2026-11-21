@@ -179,6 +179,36 @@ class ForkSnapshotTests(unittest.TestCase):
             self.assertEqual(self.pstat().allocated,allocated)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_mem_binding_checkpoint_rechecks_expiry_and_releases_draft(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            mid,handle=self.addmem()
+            draft=self.tables[1][1][handle&65535]
+            before=Memory()
+            self.assertEqual(lib.memstat(mid,C.byref(before)),0)
+            pte,allocated=self.leaf(self.mapped,0x20000),self.pstat().allocated
+            deadline=Prepinfo()
+            self.assertEqual(lib.prepstat(prep,C.byref(deadline)),0)
+            lib.test_now.argtypes=[C.c_uint64]
+            callbacks=[]
+            callback_type=C.CFUNCTYPE(C.c_int,Prepid)
+            @callback_type
+            def checkpoint(identity):
+                if draft.subtype:
+                    callbacks.append((identity.generation,draft.subtype))
+                    lib.test_now(deadline.deadline)
+                return 0
+            lib.forksnapshotchecked.argtypes=[*lib.forksnapshot.argtypes,callback_type]
+            self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
+                C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),-21)
+            self.assertEqual(callbacks,[(prep.generation,0xfffd)])
+            after=Memory()
+            self.assertEqual(lib.memstat(mid,C.byref(after)),0)
+            self.assertEqual(bytes(after),bytes(before))
+            self.assertEqual((self.leaf(self.mapped,0x20000),self.pstat().allocated),(pte,allocated))
+            self.assertFalse(any(slot.subtype for slot in self.tables[1][1]))
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_existing_cow_branch_and_parent_protection_survive_late_failure_unchanged(self):
         def body():
             sibling=self.child(parent=self.parent.owner,copy=True,slot=3)

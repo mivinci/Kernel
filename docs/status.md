@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage185：fork 的 Mem 绑定扫描每至多八个源槽开放检查点，恢复后重验准备期限。23 项主机专项覆盖超期后草稿引用及父 PTE 回滚，双架构 QEMU sigframe 通过。
+
 - stage184：当前 Run 的可信 fork 构造在映射批次之间接入内核根续点；双架构 sigframe 验证实际构造器 STOP/CONT 后完成构造并清理。未映射 Mem、Local、Signal 的检查点仍待接。
 
 - stage183：快照从 READY 转入提交时重新检查准备期限，超期仍可回滚；组合构造在发布子信号状态及提交 Local/Mem 前通过此检查。22 项主机专项及双架构 QEMU sigframe 通过。
