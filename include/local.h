@@ -152,6 +152,8 @@ int localconnect(Rtable *table, Handle authority, u64 kind, u64 rights, u64 bits
 int localchannel(Rtable *table, Handle handle, u32 kind, Imageid *target, u64 *bits);
 int localconstruct(Rtable *source, Prepid prep, u64 rights, Handle *out);
 int localtarget(Rtable *source, Handle target, u64 rights, Prepid *prep, Handle *pid);
+int localexecview(Rtable *source, Handle view, u64 rights, Prepid *prep);
+int localselfspace(Rtable *source, Handle space);
 int localprepared(Rtable *source, Prepid prep, Memid memory, u64 rights, Handle *out);
 int localconfigure(Rtable *source, Handle target, const Config *config, u32 reserve);
 int localstart(Rtable *source, Handle target);

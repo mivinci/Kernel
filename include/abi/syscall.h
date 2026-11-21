@@ -30,10 +30,15 @@
 #define SYS_CONFIGURE     0x41
 #define SYS_START         0x42
 #define SYS_DESTROY       0x43
-/* Frozen numbers; native dispatch remains NOTSUP until the fork transaction. */
-#define SYS_FORKPREP     0x49
-#define SYS_FORKCOMMIT   0x4a
-#define SYS_FORKABORT    0x4b
+
+#define SYS_FORKPREP   0x49
+#define SYS_FORKCOMMIT 0x4a
+#define SYS_FORKABORT  0x4b
+
+#define SYS_EXECPREP   0x4c
+#define SYS_EXECCOMMIT 0x4d
+#define SYS_EXECABORT  0x4e
+
 #define SYS_GETPG        0x66
 #define SYS_SETPG        0x67
 #define SYS_SETSID       0x68

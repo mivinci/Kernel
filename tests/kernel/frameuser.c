@@ -11,6 +11,7 @@
 #include "private/forkstate.h"
 #include "private/fix.h"
 #include "private/fork.h"
+#include <abi/resource.h>
 #include <abi/syscall.h>
 volatile u64    frame_trace[32];
 static u8       saved[1024];
@@ -446,6 +447,49 @@ forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64
   forkrepair(&forkcapture);
   __sys_sigreturn((void *) address);
 }
+static void
+execprepuser(void)
+{
+  Handle   space = bootresource(sysboot(), BOOT_SELF_SPACE), view, rejected, data, self, parent;
+  u64      number, oldimage, ignored, written, next;
+  Allocarg alloc = {4096, ALLOC_DATA, 0, 0, 0, 0};
+  Maparg   map = {0, 0, 0x30000000, 4096, MAP_READ | MAP_WRITE, 0};
+  Queryrec records[2];
+  isize    status;
+  u32      i;
+  REQUIRE(!__sys_getid(&self, &oldimage, &parent) &&
+              __sys_execprep(0, 0, &rejected, &ignored) == -ERR_BAD_HANDLE && !rejected &&
+              !ignored && __sys_execprep(space, 9, &rejected, &ignored) == -ERR_INVALID,
+          191);
+  REQUIRE(!__sys_execprep(space, 2, &view, &number) && view && number > oldimage &&
+              __sys_execprep(space, 0, &rejected, &ignored) == -ERR_BUSY && !rejected && !ignored,
+          192);
+  REQUIRE(!__sys_query(view, QUERY_RESOURCE, 0, records, 2, &written, &next) && written == 2 &&
+              records[0].image == number && records[1].image == number &&
+              records[0].data[1] == RESOURCE_SPACE && records[1].data[1] == RESOURCE_ALLOC &&
+              __sys_start(view) == -ERR_BAD_HANDLE && __sys_execabort(space) == -ERR_BAD_HANDLE,
+          193);
+  REQUIRE(!__sys_alloc(view, &alloc, &data), 194);
+  map.mem = data;
+  REQUIRE(!__sys_map(space, &map), 195);
+  *(volatile u64 *) map.address = 0x31415926;
+  map.address = 0x10000;
+  REQUIRE(!__sys_map(view, &map) && !__sys_execabort(view) &&
+              __sys_execabort(view) == -ERR_BAD_HANDLE &&
+              __sys_query(view, QUERY_RESOURCE, 0, records, 2, &written, &next) ==
+                  -ERR_BAD_HANDLE &&
+              !__sys_unmap(space, 0x30000000),
+          196);
+  for (i = 0; i < 96; i++) {
+    status = __sys_execprep(space, 0, &rejected, &ignored);
+    if (status != -ERR_BUSY)
+      break;
+    REQUIRE(!__sys_yield(), 197);
+  }
+  REQUIRE(i < 96 && !status && rejected != view && ignored > number && !__sys_execabort(rejected) &&
+              !__sys_getid(&self, &number, &parent) && number == oldimage,
+          198);
+}
 static int
 forkprepuser(void)
 {
@@ -757,8 +801,17 @@ main(int argc, char **argv)
     return forceduser();
   if (mode == 12)
     return contextuser();
-  if (mode == 13)
-    return forkprepuser();
+  if (mode == 13) {
+    Handle view;
+    u64    image;
+    int    result;
+    execprepuser();
+    result = forkprepuser();
+    REQUIRE(!__sys_execprep(bootresource(sysboot(), BOOT_SELF_SPACE), 0, &view, &image) && view &&
+                image > 1,
+            199);
+    return result;
+  }
   if (mode == 14 || mode == 15) {
     Sigact action;
     Handle self, parent;

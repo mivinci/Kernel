@@ -69,6 +69,8 @@ isize __sys_destroy(Handle view);
 isize __sys_forkprep(Handle authority, u64 reserve, Forkret *out);
 isize __sys_forkcommit(Handle construct, const void *fix, u64 bytes, Handle *pid);
 isize __sys_forkabort(Handle construct);
+isize __sys_execprep(Handle space, u64 reserve, Handle *view, u64 *image);
+isize __sys_execabort(Handle view);
 isize __sys_getcred(Handle authority, Handle pid, u64 image, u32 ids[4]);
 isize __sys_sigaction(u64 signum, const Sigact *action, Sigact *old);
 isize __sys_sigmask(u64 how, u64 mask, u64 *old);

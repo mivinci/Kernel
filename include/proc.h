@@ -49,6 +49,8 @@ int procforkprep(Rtable *source, const struct Hctx *parent, Handle authority, u3
                  Handle *construct, Handle *pid);
 int procforkabort(Rtable *source, Handle construct);
 int procforkcommit(Rtable *source, Handle construct, u64 address, u64 bytes, Handle *pid);
+int procexecprep(Rtable *source, Handle selfspace, u32 reserve, Handle *view, u64 *image);
+int procexecabort(Rtable *source, Handle view);
 int procdestroyview(Rtable *source, Handle construct);
 /* Native fixed-Life CONTROL operations. */
 int  procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,

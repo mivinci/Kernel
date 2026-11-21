@@ -19,9 +19,10 @@
 #define CONFIG_FORK   2
 #define CONFIG_KERNEL 0x80
 
-typedef struct Proc     Proc;
-typedef union Procstage Procstage;
-typedef union Procphase Procphase;
+typedef struct Proc      Proc;
+typedef struct Execimage Execimage;
+typedef union Procstage  Procstage;
+typedef union Procphase  Procphase;
 union Procphase
 {
   /* EXITING uses cleanup. STOPPED uses its resumable scheduling state; RUNNING
@@ -94,16 +95,24 @@ STATIC_ASSERT(sizeof(Proc) <= 512, proc_budget);
 STATIC_ASSERT(sizeof(Procphase) == 1, proc_phase_size);
 STATIC_ASSERT(offsetof(Proc, phase) == offsetof(Proc, state) + 2, proc_phase_offset);
 STATIC_ASSERT(offsetof(Proc, wait_cursor) == offsetof(Proc, phase) + 1, proc_cursor_offset);
-static Proc  processes[PROCS];
-static Local entries[PROCS][LOCALS];
-static Proc *current;
-static Hkctx cpu;
-static u32   vm_paused, timer_enabled;
-static u64   cow_faults;
-static u64   timer_interval, timer_ticks, kernel_ticks;
-static u64   dispatched;
-static u32   reschedule_requested;
-static u32   readyhead = PG_NONE, readytail = PG_NONE;
+struct Execimage
+{
+  Rtable  table;
+  Local   slots[LOCALS];
+  Imageid identity;
+  Prepid  prep;
+};
+static Proc      processes[PROCS];
+static Local     entries[PROCS][LOCALS];
+static Execimage execimages[PROCS];
+static Proc     *current;
+static Hkctx     cpu;
+static u32       vm_paused, timer_enabled;
+static u64       cow_faults;
+static u64       timer_interval, timer_ticks, kernel_ticks;
+static u64       dispatched;
+static u32       reschedule_requested;
+static u32       readyhead = PG_NONE, readytail = PG_NONE;
 
 static Handle
 pidof(const Proc *p)
@@ -150,6 +159,137 @@ convert(int error)
   if (error == AC_NOMEM)
     return -ERR_NOMEM;
   return -ERR_INVALID;
+}
+static Execimage *
+execimage(const Proc *p)
+{
+  return &execimages[p - processes];
+}
+
+/* A Proc slot may be reused only after its inactive target has drained. */
+static int
+execclean(Execimage *target)
+{
+  int more;
+  if (localclose(&target->table))
+    panic("exec target table close");
+  if (target->table.state != LOCAL_DEAD) {
+    more = localdrain(&target->table, 32);
+    if (more < 0)
+      panic("exec target table drain");
+    return 1;
+  }
+  more = spaceclear(target->table.space, 1);
+  if (more == SP_BUSY)
+    return 1;
+  if (more < 0)
+    panic("exec target space clear");
+  if (more)
+    return 1;
+  if (spacedestroy(target->table.space) || imagedetach(target->identity))
+    panic("exec target ownership release");
+  if (target->prep.generation && prepdrop(target->prep))
+    panic("exec preparation ownership release");
+  target->prep.generation = 0;
+  target->identity.generation = 0;
+  return 0;
+}
+
+int
+procexecprep(Rtable *source, Handle selfspace, u32 reserve, Handle *view, u64 *number)
+{
+  Execimage *target;
+  Spaceid    space;
+  Image      image;
+  Handle     ignored;
+  u64        ticket;
+  u32        i;
+  int        error;
+  if (!view || !number)
+    return -ERR_INVALID;
+  *view = 0;
+  *number = 0;
+  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+    return -ERR_STATE;
+  if (reserve > 8)
+    return -ERR_INVALID;
+  error = localselfspace(source, selfspace);
+  if (error)
+    return error;
+  target = execimage(current);
+  if (target->identity.generation)
+    return -ERR_BUSY;
+  error = localroom(source);
+  if (error)
+    return error;
+  error = acctexecbegin(current->acct, &ticket);
+  if (error)
+    return convert(error);
+  error = imagecreate(current->life, source->image, &target->identity);
+  if (error)
+    goto ticketfail;
+  error = convert(spaceexeccreate(current->acct, ticket, &space));
+  if (error)
+    goto imagefail;
+  error = localinit(&target->table, target->slots, source->count, current->acct, space);
+  if (error)
+    goto spacefail;
+  if (imagestat(target->identity, &image))
+    panic("exec target image identity");
+  target->table.owner = source->owner;
+  target->table.image = image.number;
+  for (i = 0; i < source->count; i++)
+    target->slots[i].generation = MAX(target->slots[i].generation, source->slots[i].generation);
+  error = localspace(&target->table, 3, &ignored);
+  if (!error)
+    error = localallocator(&target->table, 7, &ignored);
+  if (!error)
+    error = localreserve(&target->table, target->identity, reserve);
+  if (!error)
+    error = prepexecopen(source, &target->table, current->life, target->identity, ticket,
+                         &target->prep);
+  if (!error) {
+    error = localconstruct(source, target->prep, 31, view);
+    if (!error) {
+      *number = image.number;
+      return 0;
+    }
+    if (prepcancel(target->prep))
+      panic("exec preparation rollback");
+  } else if (imageend(target->identity, IMAGE_ABORT) || acctexecend(current->acct, ticket))
+    panic("exec target rollback");
+  while (execclean(target)) {
+  }
+  return error;
+spacefail:
+  if (spacedestroy(space))
+    panic("exec root rollback");
+imagefail:
+  if (imageend(target->identity, IMAGE_ABORT) || imagedetach(target->identity))
+    panic("exec image rollback");
+  target->identity.generation = 0;
+ticketfail:
+  if (acctexecend(current->acct, ticket))
+    panic("exec ticket rollback");
+  return error;
+}
+
+int
+procexecabort(Rtable *source, Handle view)
+{
+  Execimage *target;
+  Prepid     id;
+  int        error;
+  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+    return -ERR_STATE;
+  error = localexecview(source, view, PREP_ABORT, &id);
+  if (error)
+    return error;
+  target = execimage(current);
+  if (!target->identity.generation || target->prep.index != id.index ||
+      target->prep.generation != id.generation)
+    return -ERR_BAD_HANDLE;
+  return prepcancel(id);
 }
 static NORETURN void
 enter(void)
@@ -907,10 +1047,11 @@ procexit(u32 reason, u32 code, const Lifefault *fault)
 int
 procclean(Handle pid)
 {
-  Proc *p = find(pid);
-  u32   i;
-  Acct  account;
-  int   error;
+  Proc      *p = find(pid);
+  Execimage *target;
+  u32        i;
+  Acct       account;
+  int        error;
   if (!p)
     return -ERR_STALE;
   if (p->prep.generation) {
@@ -927,6 +1068,13 @@ procclean(Handle pid)
   }
   if (p == current || p->state != PROC_EXITING)
     return -ERR_STATE;
+  target = execimage(p);
+  if (target->identity.generation) {
+    if (prepcancel(target->prep))
+      panic("exiting exec preparation cancellation");
+    execclean(target);
+    return 1;
+  }
   /* Exit revoked publication already. A fork transaction still borrowing this
      layout must finish/hand off before Local references or root pages drain. */
   if (p->phase.cleanup <= 3) {
@@ -1093,10 +1241,21 @@ procwork(u32 scans)
     return -ERR_INVALID;
   lifework(scans < 8 ? scans : 8);
   for (i = 0; i < scans; i++) {
+    Execimage *target = &execimages[cursor];
     p = &processes[cursor];
     cursor = (cursor + 1) % PROCS;
     if (p == current)
       continue;
+    if (target->identity.generation && p->state != PROC_EXITING) {
+      Prepinfo prep;
+      if (prepstat(target->prep, &prep))
+        panic("exec preparation work lifetime");
+      if (prep.state == PREP_ABORTED) {
+        execclean(target);
+        worked++;
+        continue;
+      }
+    }
     if (p->prep.generation) {
       Prepinfo prep;
       if (prepstat(p->prep, &prep))

@@ -43,6 +43,26 @@ __sys_destroy(Handle view)
   return __sys_enter(SYS_DESTROY, args, &result);
 }
 isize
+__sys_execprep(Handle space, u64 reserve, Handle *view, u64 *image)
+{
+  const u64 args[7] = {(u64) space, reserve, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!view || !image)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_EXECPREP, args, &result);
+  *view = (Handle) result.values[0];
+  *image = result.values[1];
+  return error;
+}
+isize
+__sys_execabort(Handle view)
+{
+  const u64 args[7] = {(u64) view, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_EXECABORT, args, &result);
+}
+isize
 __sys_forkcommit(Handle construct, const void *fix, u64 bytes, Handle *pid)
 {
   const u64 args[7] = {(u64) construct, (u64) fix, bytes, 0, 0, 0, 0};

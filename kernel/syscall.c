@@ -79,6 +79,7 @@ syscall(Hctx *context)
   case SYS_WAIT:
   case SYS_CREATE:
   case SYS_FORKPREP:
+  case SYS_EXECPREP:
   case SYS_SETPG:
   case SYS_INHERIT:
   case SYS_BUDGET:
@@ -127,6 +128,7 @@ syscall(Hctx *context)
   case SYS_START:
   case SYS_DESTROY:
   case SYS_FORKABORT:
+  case SYS_EXECABORT:
   case SYS_GETPG:
   case SYS_GETFG:
   case SYS_TERMINATE:
@@ -265,6 +267,17 @@ syscall(Hctx *context)
     break;
   case SYS_FORKABORT:
     status = procforkabort(table, (Handle) args[0]);
+    break;
+  case SYS_EXECPREP:
+    status = args[1] > 8 ? -ERR_INVALID
+                         : procexecprep(table, (Handle) args[0], (u32) args[1], &handle, &image);
+    if (!status) {
+      outputs[0] = (u64) handle;
+      outputs[1] = image;
+    }
+    break;
+  case SYS_EXECABORT:
+    status = procexecabort(table, (Handle) args[0]);
     break;
   case SYS_FORKCOMMIT:
     status = procforkcommit(table, (Handle) args[0], args[1], args[2], &pid);

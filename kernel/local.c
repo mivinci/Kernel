@@ -531,6 +531,13 @@ localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
   return 0;
 }
 int
+localexecview(Rtable *t, Handle h, u64 rights, Prepid *id)
+{
+  if (!find(t, h, LOCAL_EXEC_VIEW))
+    return -ERR_BAD_HANDLE;
+  return prepared(t, h, rights, id, NULL);
+}
+int
 localqueryprep(Rtable *t, Handle h, Rtable **out)
 {
   Prepid   id;
@@ -545,6 +552,14 @@ localqueryprep(Rtable *t, Handle h, Rtable **out)
   /* Borrow only for the caller's masked-IRQ, non-scheduling snapshot. */
   *out = info.target;
   return 0;
+}
+int
+localselfspace(Rtable *t, Handle h)
+{
+  Local *l = find(t, h, LOCAL_SPACE);
+  if (!l || l->object != t->space.index || l->objectgen != t->space.generation)
+    return -ERR_BAD_HANDLE;
+  return l->rights & 1 ? 0 : -ERR_DENIED;
 }
 int
 localspace(Rtable *t, u64 rights, Handle *out)

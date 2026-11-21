@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage321：原生 `execprep`/`execabort` 接通，Proc 持有并分批清理待发布目标。RV64/ARM64 QEMU `sigframe`、`prep`、73 项主机测试及格式检查通过；`execcommit` 仍待实现。
 - stage320：可信 `EXEC_VIEW` 接通同一 Life/Acct 的准备装载和票据撤销。RV64/ARM64 QEMU `prep`、`sigframe`、73 项主机测试及格式检查通过；原生 exec 和目标所有权接入 Proc 仍待实现。
 - stage319：exec 峰值票据可用于可信目标根、私有页和映射表页分配。RV64/ARM64 QEMU `spaces`、`sigframe`、64 项主机回归及格式检查通过；Prep 和镜像切换仍待接。
 - stage318：内核账目接入按准备票据授权的 exec 峰值分配。RV64/ARM64 QEMU `budget`、26 项主机账目回归及格式检查通过；Prep、装载及镜像切换尚未接入。
