@@ -27,6 +27,7 @@ memory(Handle handle)
 void
 localforktest(void)
 {
+  static u64   generations[2][LOCALS];
   Setid        set;
   Set          group;
   Acctid       a, b;
@@ -64,6 +65,7 @@ localforktest(void)
   for (i = 0; i < 2; i++) {
     tables[i].owner = pids[i];
     tables[i].image = 1;
+    tables[i].generations = generations[i];
   }
   REQUIRE(!localspace(&tables[0], 3, &space) && !localallocator(&tables[0], 7, &allocator));
   request.bytes = PAGE_SIZE;
@@ -114,10 +116,14 @@ localforktest(void)
   limits.pending = 1;
   limits.ruid = limits.euid = limits.rgid = limits.egid = 0;
   limits.reserved = 0;
+  generations[0][handleindex(omitted)] += 4;
+  generations[0][handleindex(private)] += 4;
   REQUIRE(!localfork(&tables[0], &tables[1], bindings, 4, &limits));
   REQUIRE(!memfree(bindings[3].target));
   for (i = 0; i < LOCALS; i++)
-    REQUIRE(entries[1][i].generation == entries[0][i].generation);
+    REQUIRE(generations[1][i] == generations[0][i] &&
+            entries[1][i].generation ==
+                (entries[1][i].subtype ? entries[0][i].generation : generations[0][i]));
   REQUIRE(!localnative(&tables[1], space) && !localnative(&tables[1], allocator) &&
           !localnative(&tables[1], private) && !localnative(&tables[1], alias) &&
           !localnative(&tables[1], code) && !localnative(&tables[1], shared) &&
@@ -153,10 +159,13 @@ localforktest(void)
   REQUIRE(!localwrite(&tables[1], unmapped, 0, &value, 8));
   REQUIRE(!mempage(bindings[3].source, 0, &bits) && *(const u64 *) kaddr(bits) == 0);
   REQUIRE(!localalloc(&tables[1], allocator, &request, &newcap) && newcap != omitted &&
-          handlegen(newcap) > handlegen(omitted) &&
+          handlegen(newcap) > generations[0][handleindex(omitted)] &&
           localnative(&tables[1], omitted) == -ERR_BAD_HANDLE);
   REQUIRE(!localfree(&tables[1], private) && !localnative(&tables[0], private) &&
-          !spacelookup(sb, 0x60000, &leaf));
+          !spacelookup(sb, 0x60000, &leaf) &&
+          !localalloc(&tables[1], allocator, &request, &newcap) &&
+          handleindex(newcap) == handleindex(private) &&
+          handlegen(newcap) > generations[0][handleindex(private)]);
   for (i = 0; i < 2; i++) {
     REQUIRE(!localclose(&tables[i]));
     while (localdrain(&tables[i], 32) > 0) {

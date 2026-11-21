@@ -70,6 +70,10 @@ struct Rtable
   u32     count, cursor, state;
   Handle  owner;
   u64     image, epoch;
+  /* Both images of a Run draw new generations from the same history.
+     An installed Local keeps its issued generation until removal. */
+  u64    *generations;
+  Rtable *parallel;
 };
 struct Forkbinding
 {

@@ -71,6 +71,7 @@ execpreptest(void)
 {
   static Rtable source, target;
   static Local  oldslots[16], newslots[16];
+  static u64    generations[16];
   Setid         set;
   Set           group;
   Acctid        acct;
@@ -87,18 +88,22 @@ execpreptest(void)
   Pgstat        before, after;
   Hpte          alias;
   Handle        pid = handlepack(HANDLE_PROCESS, 1, PROCS - 1);
-  Handle        oldcap, futurecap, view, data, ignored;
+  Handle        oldcap, futurecap, previous = 0, view, data, ignored, futurealloc;
   u64           ticket, duplicate, marker = 0x31415926, value;
   u32           mode, i;
   u64           va = 0x10000;
   pgstat(&before);
   REQUIRE(!setcreate(5, 10, 1, &set) && !acctcreate(set, 5, 10, &acct) &&
           !lifecreate(set, pid, 1, &life) && !lifebindacct(life, acct) &&
-          !imagecreate(life, 0, &running) && !lifepublish(life) && !imageactivate(running));
+          !imagecreate(life, 0, &running) && !lifepublish(life));
   REQUIRE(!spacecreate(acct, &oldspace) && !localinit(&source, oldslots, 16, acct, oldspace));
   source.owner = pid;
   source.image = 1;
-  REQUIRE(!localspace(&source, 3, &oldcap) && !memcreate(acct, PAGE_SIZE, &original) &&
+  source.generations = generations;
+  generations[1] = HANDLE_GENERATION_MAX - 1;
+  REQUIRE(!localspace(&source, 3, &oldcap) && !localreserve(&source, running, 1) &&
+          source.slots[1].subtype == LOCAL_FLOOR && !imageactivate(running) &&
+          !memcreate(acct, PAGE_SIZE, &original) &&
           !spacemap(oldspace, original, 0, va, PAGE_SIZE, VM_READ | VM_WRITE) &&
           !spacewrite(oldspace, va, &marker, sizeof(marker)));
   for (mode = 0; mode < 3; mode++) {
@@ -107,12 +112,24 @@ execpreptest(void)
             !imagecreate(life, source.image, &future) && !imagestat(future, &image));
     target.owner = pid;
     target.image = image.number;
-    REQUIRE(!localspace(&target, 3, &futurecap) &&
+    target.generations = generations;
+    source.parallel = &target;
+    target.parallel = &source;
+    REQUIRE(!localspace(&target, 3, &futurecap) && handleindex(futurecap) == handleindex(oldcap) &&
+            handlegen(futurecap) > handlegen(previous) && futurecap != oldcap &&
+            !localnative(&source, oldcap) && localnative(&source, futurecap) == -ERR_BAD_HANDLE &&
+            localnative(&target, oldcap) == -ERR_BAD_HANDLE &&
+            !localallocator(&target, 7, &futurealloc) && handleindex(futurealloc) == 2 &&
+            generations[1] == HANDLE_GENERATION_MAX - 1 &&
             prepexecopen(&source, &source, life, future, ticket, &rejected) == -ERR_INVALID &&
             !prepexecopen(&source, &target, life, future, ticket, &prep) &&
             acctexecbegin(acct, &duplicate) == AC_BUSY &&
             prepexecopen(&source, &target, life, future, ticket, &rejected) == -ERR_BUSY);
     REQUIRE(!localconstruct(&source, prep, 31, &view) &&
+            handleindex(view) == handleindex(futurealloc) &&
+            handlegen(view) > handlegen(futurealloc) &&
+            localnative(&source, futurealloc) == -ERR_BAD_HANDLE &&
+            localnative(&target, view) == -ERR_BAD_HANDLE &&
             source.slots[handleindex(view)].subtype == LOCAL_EXEC_VIEW &&
             !localqueryprep(&source, view, &queried) && queried == &target &&
             localtarget(&source, view, PREP_PUBLISH, &rejected, &ignored) == -ERR_BAD_HANDLE);
@@ -141,6 +158,8 @@ execpreptest(void)
             !imagestat(running, &image) && image.state == IMAGE_ACTIVE &&
             !lifestat(life, &instance) && instance.state == LIFE_LIVE);
     sweep(prep);
+    previous = futurecap;
+    source.parallel = target.parallel = NULL;
     REQUIRE(!localclose(&target) && !localdrain(&target, 32) && !spaceclear(newspace, 32) &&
             !spacedestroy(newspace) && !imagedetach(future) && !prepdrop(prep));
     REQUIRE(spacelookup(oldspace, va + PAGE_SIZE, &alias) && !setstat(set, &group) &&

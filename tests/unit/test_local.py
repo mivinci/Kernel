@@ -11,7 +11,8 @@ class Local(C.Structure):
         ('object',C.c_uint32),('subtype',C.c_uint16),('inherit',C.c_uint8),('source',C.c_uint8)]
 class Table(C.Structure):
     _fields_ = [('slots',C.POINTER(Local)),('acct',Acctid),('space',support.Spaceid)]+[
-        (x,C.c_uint32) for x in ('count','cursor','state')]+[('owner',C.c_int64),('image',C.c_uint64),('epoch',C.c_uint64)]
+        (x,C.c_uint32) for x in ('count','cursor','state')]+[('owner',C.c_int64),('image',C.c_uint64),('epoch',C.c_uint64),
+        ('generations',C.POINTER(C.c_uint64)),('parallel',C.c_void_p)]
 class Allocarg(C.Structure):
     _fields_ = [(x,C.c_uint64) for x in ('bytes','kind','align','minaddr','maxaddr','reserved')]
 

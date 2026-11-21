@@ -48,6 +48,26 @@ localnative(Rtable *t, Handle h)
 {
   return find(t, h, 0) ? 0 : -ERR_BAD_HANDLE;
 }
+static u64
+generation(const Rtable *t, u32 index)
+{
+  return t->generations ? t->generations[index] : t->slots[index].generation;
+}
+
+static int
+canissue(const Rtable *t, u32 index)
+{
+  u64 last = generation(t, index);
+  u32 reserved;
+  if (last >= HANDLE_GENERATION_MAX)
+    return 0;
+  if (last + 1 != HANDLE_GENERATION_MAX || !t->parallel)
+    return 1;
+  /* Preserve the final number for a slot already set aside in the other table. */
+  reserved = t->parallel->slots[index].subtype;
+  return reserved != LOCAL_FLOOR && reserved != LOCAL_RECEIVE;
+}
+
 static Local *
 empty(Rtable *t)
 {
@@ -55,7 +75,7 @@ empty(Rtable *t)
   if (!t || t->state != LOCAL_OPEN || spacesnapshotroot(t->space))
     return NULL;
   for (i = 0; i < t->count; i++)
-    if (!t->slots[i].subtype && t->slots[i].generation < HANDLE_GENERATION_MAX)
+    if (!t->slots[i].subtype && canissue(t, i))
       return &t->slots[i];
   return NULL;
 }
@@ -66,7 +86,7 @@ sloterror(Rtable *t)
   if (spacesnapshotroot(t->space))
     return -ERR_BUSY;
   for (i = 0; i < t->count; i++)
-    if (!t->slots[i].subtype && t->slots[i].generation == HANDLE_GENERATION_MAX)
+    if (!t->slots[i].subtype && generation(t, i) == HANDLE_GENERATION_MAX)
       return -ERR_OVERFLOW;
   return -ERR_CAPACITY;
 }
@@ -88,7 +108,7 @@ localrooms(Rtable *t, u32 count)
   if (spacesnapshotroot(t->space))
     return -ERR_BUSY;
   for (i = 0; i < t->count; i++)
-    if (!t->slots[i].subtype && t->slots[i].generation < HANDLE_GENERATION_MAX)
+    if (!t->slots[i].subtype && canissue(t, i))
       available++;
   return available >= count ? 0 : sloterror(t);
 }
@@ -124,7 +144,7 @@ reserve(Rtable *table, Imageid id, u32 count, Rtable *lineage)
     if (slot->subtype == LOCAL_FLOOR)
       floors++;
     if ((!slot->subtype || slot->subtype == LOCAL_FLOOR) &&
-        (lineage ? lineage->slots[i].generation : slot->generation) < HANDLE_GENERATION_MAX)
+        (lineage ? generation(lineage, i) < HANDLE_GENERATION_MAX : canissue(table, i)))
       available++;
   }
   if (floors != image.reserve)
@@ -133,7 +153,7 @@ reserve(Rtable *table, Imageid id, u32 count, Rtable *lineage)
     if (lineage) {
       for (i = 0; i < table->count; i++)
         if ((!table->slots[i].subtype || table->slots[i].subtype == LOCAL_FLOOR) &&
-            lineage->slots[i].generation == HANDLE_GENERATION_MAX)
+            generation(lineage, i) == HANDLE_GENERATION_MAX)
           return -ERR_OVERFLOW;
       return -ERR_CAPACITY;
     }
@@ -147,7 +167,7 @@ reserve(Rtable *table, Imageid id, u32 count, Rtable *lineage)
   for (i = 0; i < table->count && count; i++) {
     Local *slot = &table->slots[i];
     if (!slot->subtype &&
-        (lineage ? lineage->slots[i].generation : slot->generation) < HANDLE_GENERATION_MAX) {
+        (lineage ? generation(lineage, i) < HANDLE_GENERATION_MAX : canissue(table, i))) {
       slot->subtype = LOCAL_FLOOR;
       slot->source = lineage ? LOCAL_STAGED : 0;
       count--;
@@ -184,7 +204,7 @@ localreceive(Rtable *table, Imageid id, Handle rpc, u16 *out)
   if (spacesnapshotroot(table->space))
     return -ERR_BUSY;
   for (i = 0; i < table->count; i++)
-    if (table->slots[i].subtype == LOCAL_FLOOR) {
+    if (table->slots[i].subtype == LOCAL_FLOOR && canissue(table, i)) {
       slot = &table->slots[i];
       floor = 1;
       break;
@@ -263,11 +283,17 @@ allowed(Rtable *t, const Local *l, u64 offset, u64 bytes)
   return bytes && offset <= m.bytes && bytes <= m.bytes - offset ? 0 : -ERR_DENIED;
 }
 static void
-publish(Rtable *t, Local *l, u32 subtype, u64 generation, u32 index, u64 rights, u64 offset,
+publish(Rtable *t, Local *l, u32 subtype, u64 objectgen, u32 index, u64 rights, u64 offset,
         u64 length, u32 inherit, u32 source, Handle *out)
 {
-  l->generation++;
-  l->objectgen = generation;
+  u32 slot = (u32) (l - t->slots);
+  u64 last = generation(t, slot);
+  if (!canissue(t, slot))
+    panic("local generation exhausted after admission");
+  l->generation = last + 1;
+  if (t->generations)
+    t->generations[slot] = l->generation;
+  l->objectgen = objectgen;
   l->object = index;
   l->rights = rights;
   l->offset = offset;
@@ -275,7 +301,7 @@ publish(Rtable *t, Local *l, u32 subtype, u64 generation, u32 index, u64 rights,
   l->inherit = (u8) inherit;
   l->source = (u8) source;
   l->subtype = (u16) subtype;
-  *out = handlepack(HANDLE_RESOURCE, l->generation, (u32) (l - t->slots));
+  *out = handlepack(HANDLE_RESOURCE, l->generation, slot);
 }
 int
 localinit(Rtable *t, Local *storage, u32 count, Acctid acct, Spaceid space)
@@ -296,6 +322,8 @@ localinit(Rtable *t, Local *storage, u32 count, Acctid acct, Spaceid space)
   t->owner = 0;
   t->image = 0;
   t->slots = storage;
+  t->generations = NULL;
+  t->parallel = NULL;
   t->acct = acct;
   t->space = space;
   t->count = count;
@@ -1107,7 +1135,7 @@ localdeliver(Rtable *source, u32 kind, const Resreply *reply, Rtable *target, Im
     return -ERR_STATE;
   if (spacesnapshotroot(target->space))
     return -ERR_BUSY;
-  if (slot->generation == HANDLE_GENERATION_MAX)
+  if (!canissue(target, index))
     return -ERR_OVERFLOW;
   floor = slot->source;
   if (floor && !image.reserve)
@@ -2004,22 +2032,27 @@ localforkfinish(Rtable *source, Rtable *target)
   if (!source || !target || source == target || source->state != LOCAL_OPEN ||
       target->state != LOCAL_OPEN || !source->slots || !target->slots ||
       source->count != target->count || source->count > LOCALS ||
+      (source->generations &&
+       (!target->generations || source->generations == target->generations)) ||
       imagefind(source->owner, source->image, &identity) || imagestat(identity, &image) ||
       image.state != IMAGE_ACTIVE || imagefind(target->owner, target->image, &identity) ||
       imagestat(identity, &image) || image.state != IMAGE_PREPARING)
     return -ERR_STATE;
   for (i = 0; i < target->count; i++) {
     slot = &target->slots[i];
-    if (source->slots[i].generation > HANDLE_GENERATION_MAX || slot->subtype == LOCAL_DRAFT ||
+    if (generation(source, i) > HANDLE_GENERATION_MAX || slot->subtype == LOCAL_DRAFT ||
         (slot->subtype && !(slot->source & LOCAL_STAGED)) ||
-        (slot->subtype == LOCAL_FLOOR && source->slots[i].generation == HANDLE_GENERATION_MAX))
+        (slot->subtype == LOCAL_FLOOR && generation(source, i) == HANDLE_GENERATION_MAX))
       return -ERR_STATE;
   }
   for (i = 0; i < target->count; i++) {
     slot = &target->slots[i];
     if (!slot->subtype)
       clearforkslot(slot);
-    slot->generation = source->slots[i].generation;
+    slot->generation = slot->subtype && slot->subtype != LOCAL_FLOOR ? source->slots[i].generation
+                                                                     : generation(source, i);
+    if (target->generations)
+      target->generations[i] = generation(source, i);
     slot->source &= ~LOCAL_STAGED;
   }
   return 0;

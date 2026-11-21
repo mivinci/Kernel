@@ -79,7 +79,7 @@ struct Proc
   Acctid    acct;
   Spaceid   space;
   Kstackid  stack;
-  Rtable    resources;
+  Rtable   *resources;
   Hctx     *user;
   Procstage stage;
   u64       cpu_ns;
@@ -99,11 +99,13 @@ struct Execimage
 {
   Rtable  table;
   Local   slots[LOCALS];
+  u64     generations[LOCALS];
   Imageid identity;
   Prepid  prep;
 };
 static Proc      processes[PROCS];
 static Local     entries[PROCS][LOCALS];
+static Rtable    tables[PROCS];
 static Execimage execimages[PROCS];
 static Proc     *current;
 static Hkctx     cpu;
@@ -171,6 +173,10 @@ static int
 execclean(Execimage *target)
 {
   int more;
+  if (target->table.parallel) {
+    target->table.parallel->parallel = NULL;
+    target->table.parallel = NULL;
+  }
   if (localclose(&target->table))
     panic("exec target table close");
   if (target->table.state != LOCAL_DEAD) {
@@ -203,13 +209,12 @@ procexecprep(Rtable *source, Handle selfspace, u32 reserve, Handle *view, u64 *n
   Image      image;
   Handle     ignored;
   u64        ticket;
-  u32        i;
   int        error;
   if (!view || !number)
     return -ERR_INVALID;
   *view = 0;
   *number = 0;
-  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+  if (!current || current->state != PROC_RUNNING || source != current->resources || vm_paused)
     return -ERR_STATE;
   if (reserve > 8)
     return -ERR_INVALID;
@@ -238,8 +243,9 @@ procexecprep(Rtable *source, Handle selfspace, u32 reserve, Handle *view, u64 *n
     panic("exec target image identity");
   target->table.owner = source->owner;
   target->table.image = image.number;
-  for (i = 0; i < source->count; i++)
-    target->slots[i].generation = MAX(target->slots[i].generation, source->slots[i].generation);
+  target->table.generations = source->generations;
+  target->table.parallel = source;
+  source->parallel = &target->table;
   error = localspace(&target->table, 3, &ignored);
   if (!error)
     error = localallocator(&target->table, 7, &ignored);
@@ -280,7 +286,7 @@ procexecabort(Rtable *source, Handle view)
   Execimage *target;
   Prepid     id;
   int        error;
-  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+  if (!current || current->state != PROC_RUNNING || source != current->resources || vm_paused)
     return -ERR_STATE;
   error = localexecview(source, view, PREP_ABORT, &id);
   if (error)
@@ -305,7 +311,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   Hinit  initial;
   Handle handle, pid;
   u64    top;
-  u32    slot;
+  u32    slot, i;
   int    error;
   if (!out)
     return -ERR_INVALID;
@@ -374,18 +380,22 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
     error = convert(error);
     goto failedspace;
   }
-  error = localinit(&p->resources, entries[slot], resources, p->acct, p->space);
+  p->resources = &tables[slot];
+  error = localinit(p->resources, entries[slot], resources, p->acct, p->space);
   if (error)
     goto failedstack;
-  p->resources.owner = pid;
-  p->resources.image = 1;
-  error = localspace(&p->resources, 3, &handle);
+  p->resources->owner = pid;
+  p->resources->image = 1;
+  p->resources->generations = execimage(p)->generations;
+  for (i = 0; i < resources; i++)
+    p->resources->generations[i] = p->resources->slots[i].generation;
+  error = localspace(p->resources, 3, &handle);
   if (!error)
-    error = localallocator(&p->resources, 7, &handle);
+    error = localallocator(p->resources, 7, &handle);
   if (error) {
-    if (localclose(&p->resources))
+    if (localclose(p->resources))
       panic("process local rollback");
-    while (localdrain(&p->resources, 32) > 0) {
+    while (localdrain(p->resources, 32) > 0) {
     }
     goto failedstack;
   }
@@ -444,7 +454,7 @@ procprepare(Rtable *source, Handle target, u64 rights, Handle *out)
   error = localroom(source);
   if (error)
     return error;
-  error = prepcreate(source, &p->resources, p->life, p->identity, &id);
+  error = prepcreate(source, p->resources, p->life, p->identity, &id);
   if (error)
     return error;
   p->prep = id;
@@ -492,7 +502,7 @@ proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *cons
   if (!construct || !pid || !control)
     return -ERR_INVALID;
   *construct = *pid = *control = 0;
-  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+  if (!current || current->state != PROC_RUNNING || source != current->resources || vm_paused)
     return -ERR_STATE;
   error = localcreatecheck(source, authority, args, &policy);
   if (error)
@@ -525,7 +535,7 @@ proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *cons
   if (!error)
     error = rqmailconfigure(&child->incoming, args->pending);
   if (!error)
-    error = localchildcreate(source, authority, &child->resources, args, &inherited);
+    error = localchildcreate(source, authority, child->resources, args, &inherited);
   if (!error)
     error = procprepare(source, target, 31, &view);
   if (!error && policy.rights & CREATE_SERVICE)
@@ -599,7 +609,7 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
   error = localroom(source);
   if (error)
     return error;
-  running = current && source == &current->resources && !vm_paused;
+  running = current && source == current->resources && !vm_paused;
   limits.memlimit = account.limit;
   limits.exec_limit = account.exec_limit;
   limits.resources = source->count;
@@ -619,23 +629,23 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
   if (!error)
     error = rqmailconfigure(&child->incoming, pending);
   if (!error)
-    error = prepforkcreate(source, &child->resources, child->life, child->identity, &prep);
+    error = prepforkcreate(source, child->resources, child->life, child->identity, &prep);
   if (!error) {
     child->prep = prep;
     child->configured = CONFIG_FORK;
     /* Replace bootstrap SELF entries with the parent lineage, never rebind the
        table or reset its epoch. Proc and Prep keep their independent root holds. */
-    for (i = 0; i < child->resources.count; i++) {
-      slot = &child->resources.slots[i];
+    for (i = 0; i < child->resources->count; i++) {
+      slot = &child->resources->slots[i];
       if (!slot->subtype)
         continue;
       if ((slot->subtype != LOCAL_SPACE && slot->subtype != LOCAL_ALLOC) ||
-          localrevoke(&child->resources, handlepack(HANDLE_RESOURCE, slot->generation, i)))
+          localrevoke(child->resources, handlepack(HANDLE_RESOURCE, slot->generation, i)))
         panic("fork bootstrap replacement");
     }
     if (running)
       procpausevm();
-    error = forksnapshotchecked(source, &child->resources, &limits, reserve, parent, child->user,
+    error = forksnapshotchecked(source, child->resources, &limits, reserve, parent, child->user,
                                 prep, running ? forkcheck : NULL);
     if (running) {
       if ((current->configured & CONFIG_KERNEL) && procforkleave())
@@ -672,7 +682,7 @@ procforkprep(Rtable *source, const Hctx *parent, Handle authority, u32 reserve, 
   Acct         account;
   int          error;
   if (!current || current->state != PROC_RUNNING || current->user != parent ||
-      source != &current->resources || vm_paused)
+      source != current->resources || vm_paused)
     return -ERR_STATE;
   if (reserve > 8)
     return -ERR_INVALID;
@@ -703,11 +713,11 @@ procinfo(Handle pid, Procinfo *out)
   out->acct = p->acct;
   out->space = p->space;
   out->stack = p->stack;
-  out->image = p->resources.image;
+  out->image = p->resources->image;
   out->state = p->state;
   out->configured = p->configured != 0;
   out->phase = p->state == PROC_EXITING ? p->phase.cleanup : 0;
-  out->resources = p->resources.count;
+  out->resources = p->resources->count;
   return 0;
 }
 Rtable *
@@ -716,7 +726,7 @@ proctable(Handle pid)
   Proc *p = find(pid);
   Life  l;
   return p && p->state == PROC_CONSTRUCT && !lifestat(p->life, &l) && l.state == LIFE_CONSTRUCT
-             ? &p->resources
+             ? p->resources
              : NULL;
 }
 static int
@@ -791,7 +801,7 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   error = siginitialcheck(p->identity, snapshot.sigmask, snapshot.sigdefault);
   if (error)
     return error;
-  error = localreserve(&p->resources, p->identity, reserve);
+  error = localreserve(p->resources, p->identity, reserve);
   if (error)
     return error;
   if (siginitial(p->identity, snapshot.sigmask, snapshot.sigdefault))
@@ -861,7 +871,7 @@ procforkcommit(Rtable *source, Handle construct, u64 address, u64 bytes, Handle 
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+  if (!current || current->state != PROC_RUNNING || source != current->resources || vm_paused)
     return -ERR_STATE;
   error = localtarget(source, construct, PREP_PUBLISH, &prep, &pid);
   if (error)
@@ -1013,7 +1023,7 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
   if (imageend(p->identity, IMAGE_EXIT) || rqquotaend(&p->outgoing) || sigdiscard(p->identity))
     panic("process image/request exit");
   /* Withdraw every unpublished child before deferred Local/VM teardown. */
-  prepownerclose(&p->resources);
+  prepownerclose(p->resources);
   if (p->configured & CONFIG_KERNEL) {
     Prepid prep = p->stage.fork.prep;
     if (prepforkabandon(prep))
@@ -1101,10 +1111,10 @@ procclean(Handle pid)
     error = obsclose(p->identity, 32);
     if (error)
       return error;
-    error = localclose(&p->resources);
+    error = localclose(p->resources);
     if (error)
       return error;
-    error = localdrain(&p->resources, 32);
+    error = localdrain(p->resources, 32);
     if (error < 0)
       return error;
     if (!error)
@@ -1182,7 +1192,7 @@ destroyview(Rtable *source, Handle view, u32 fork)
   Prepinfo info;
   Handle   pid;
   int      error;
-  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+  if (!current || current->state != PROC_RUNNING || source != current->resources || vm_paused)
     return -ERR_STATE;
   error = localtarget(source, view, PREP_ABORT, &prep, &pid);
   if (error)
@@ -1277,7 +1287,7 @@ procwork(u32 scans)
 Rtable *
 proccurrent(Hctx *frame)
 {
-  return current && current->state == PROC_RUNNING && current->user == frame ? &current->resources
+  return current && current->state == PROC_RUNNING && current->user == frame ? current->resources
                                                                              : NULL;
 }
 int
@@ -1287,7 +1297,7 @@ procidentity(Handle *pid, u64 *image, Handle *parent)
   if (!current || current->state != PROC_RUNNING || lifestat(current->life, &l))
     return -ERR_STATE;
   *pid = pidof(current);
-  *image = current->resources.image;
+  *image = current->resources->image;
   *parent = l.parent;
   return 0;
 }
@@ -1318,7 +1328,7 @@ procforkenter(Prepid prep)
     return -ERR_STATE;
   if (prepstat(prep, &info) || !info.target)
     return -ERR_REVOKED;
-  error = prepsnapshotcheck(prep, &current->resources, info.target);
+  error = prepsnapshotcheck(prep, current->resources, info.target);
   if (error)
     return error;
   if (spacesnapshotabortcheck(current->space, info.space))
@@ -1635,7 +1645,7 @@ requestcaller(Handle handle)
   if (rqstat(id, &info))
     return NULL;
   p = find(info.caller);
-  return p && p->resources.image == info.callerimage ? p : NULL;
+  return p && p->resources->image == info.callerimage ? p : NULL;
 }
 static int
 waitedge(Imageid target, Handle *peer)
@@ -1806,7 +1816,7 @@ waitresult(Rqid id, u32 options, u32 block, Rqresult *out)
     /* The Rq retains the exact target Image; resolve only its original mail. */
     {
       Proc *p = find(info.server);
-      if (p && p->resources.image == info.serverimage) {
+      if (p && p->resources->image == info.serverimage) {
         target.generation = p->identity.generation;
         target.index = p->identity.index;
         target.reserved = 0;
@@ -1916,7 +1926,7 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   case SYS_NOTIFY:
     if (!args[1])
       return -ERR_INVALID;
-    error = localchannel(&current->resources, (Handle) args[0], LOCAL_NOTIFY, &target, &bits);
+    error = localchannel(current->resources, (Handle) args[0], LOCAL_NOTIFY, &target, &bits);
     if (error)
       return error;
     if (args[1] & ~bits || args[1] & ~EVENT_USER)
@@ -1942,7 +1952,7 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
   case SYS_CALL:
   case SYS_SEND:
     kind = nr == SYS_CALL ? IPC_CALL : IPC_SEND;
-    error = localchannel(&current->resources, (Handle) args[0],
+    error = localchannel(current->resources, (Handle) args[0],
                          kind == IPC_CALL ? LOCAL_CALL : LOCAL_SEND, &target, &bits);
     if (error)
       return error;
@@ -1961,7 +1971,7 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
     }
     context = signal.depth == 0 ? RQ_NORMAL : signal.depth == 1 ? RQ_SIGNAL1 : RQ_SIGNAL2;
     error = rqsubmitto(&current->outgoing, &server->incoming, current->identity, (Handle) args[0],
-                       context, kind, &message, (u32) args[5], &id, &current->resources);
+                       context, kind, &message, (u32) args[5], &id, current->resources);
     if (error)
       return error;
     wakeone(server);
@@ -2015,7 +2025,7 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
         return error == SP_BUSY ? -ERR_BUSY : -ERR_FAULT;
       caller = requestcaller((Handle) args[0]);
       error =
-          rqreplyresource(&current->incoming, &current->resources, (Handle) args[0], &descriptor);
+          rqreplyresource(&current->incoming, current->resources, (Handle) args[0], &descriptor);
       if (!error)
         wakeone(caller);
       return error;
@@ -2056,7 +2066,7 @@ procipc(u64 nr, const u64 args[7], u64 outputs[8])
       if (!error) {
         wakeone(current);
         server = find(info.server);
-        if (server && server->resources.image == info.serverimage)
+        if (server && server->resources->image == info.serverimage)
           wakeone(server);
       }
       return error;
@@ -2095,7 +2105,7 @@ mmiobacking(Proc *target, u32 window, u64 rights, Handle *out)
     return convert(error);
   if (memstat(memory, &info))
     panic("MMIO installation backing");
-  error = localmem(&target->resources, memory, rights, 0, info.bytes, 0, out);
+  error = localmem(target->resources, memory, rights, 0, info.bytes, 0, out);
   if (memfree(memory))
     panic("MMIO installation reference");
   return error;
@@ -2117,7 +2127,7 @@ procmmioinstallgroup(Handle pid, u64 page, u64 members, u64 rights, Handle *out)
     return -ERR_STATE;
   if (!(rights & VM_READ) || rights & ~(VM_READ | VM_WRITE | LOCAL_GRANT))
     return -ERR_DENIED;
-  error = localroom(&target->resources);
+  error = localroom(target->resources);
   if (error)
     return error;
   error = devgroup(page, members, &window);
@@ -2141,7 +2151,7 @@ procmmioinstall(Handle pid, u32 device, u32 region, u64 rights, Handle *out)
     return -ERR_STATE;
   if (!(rights & VM_READ) || rights & ~(VM_READ | VM_WRITE | LOCAL_GRANT))
     return -ERR_DENIED;
-  error = localroom(&target->resources);
+  error = localroom(target->resources);
   if (error)
     return error;
   error = devwindow(device, region, &window);
@@ -2165,16 +2175,16 @@ procirqinstall(Handle pid, u32 number, u32 bit, Handle *out)
       target->state != PROC_STOPPED)
     return -ERR_STATE;
   error = irqsource(number, &source);
-  return error ? error
-               : localirqbind(&target->resources, target->identity, &target->events, source, bit,
-                              out);
+  return error
+             ? error
+             : localirqbind(target->resources, target->identity, &target->events, source, bit, out);
 }
 int
 procirqack(Handle binding)
 {
   if (!current || current->state != PROC_RUNNING)
     return -ERR_STATE;
-  return localirqack(&current->resources, binding, current->identity);
+  return localirqack(current->resources, binding, current->identity);
 }
 int
 procsiginstall(Handle pid, u32 signum, const Sigact *action)
@@ -2434,7 +2444,7 @@ controlproc(Rtable *source, Handle authority, u64 rights, Proc **out, u64 *grant
     return -ERR_STALE;
   p = find(life.pid);
   if (!p || p->life.generation != identity.generation || p->life.index != identity.index ||
-      p->state == PROC_EXITING || p->resources.state != LOCAL_OPEN)
+      p->state == PROC_EXITING || p->resources->state != LOCAL_OPEN)
     return -ERR_STALE;
   *out = p;
   if (granted)
@@ -2473,7 +2483,7 @@ procsigsend(u64 address, u64 signum)
     return -ERR_STATE;
   if (selector.kind == SIGNAL_SELECT_PID || selector.kind == SIGNAL_SELECT_CONTROL) {
     if (selector.kind == SIGNAL_SELECT_CONTROL) {
-      error = controlproc(&current->resources, selector.target, CONTROL_TERMINATE, &p, NULL);
+      error = controlproc(current->resources, selector.target, CONTROL_TERMINATE, &p, NULL);
       if (error)
         return error;
       control = 1;
@@ -2646,14 +2656,14 @@ procirqbind(Rtable *source, Handle authority, Handle irq, u32 bit, Handle *out)
   error = localirqresolve(source, irq, &index);
   return error
              ? error
-             : localirqbind(&target->resources, target->identity, &target->events, index, bit, out);
+             : localirqbind(target->resources, target->identity, &target->events, index, bit, out);
 }
 int
 procirqunbind(Rtable *source, Handle authority, Handle binding)
 {
   Proc *target;
   int   error = controlproc(source, authority, CONTROL_IRQ, &target, NULL);
-  return error ? error : localirqunbind(&target->resources, binding, target->identity);
+  return error ? error : localirqunbind(target->resources, binding, target->identity);
 }
 static int
 prepareproc(Rtable *source, Handle authority, u64 rights, Proc **out)
@@ -2666,7 +2676,7 @@ prepareproc(Rtable *source, Handle authority, u64 rights, Proc **out)
     return error;
   p = find(pid);
   if (!p || p->state != PROC_CONSTRUCT || p->prep.generation != prep.generation ||
-      p->prep.index != prep.index || p->resources.state != LOCAL_OPEN)
+      p->prep.index != prep.index || p->resources->state != LOCAL_OPEN)
     return -ERR_STALE;
   *out = p;
   return 0;
@@ -2728,7 +2738,7 @@ procgrant(Rtable *source, Handle authority, Handle resource, u64 rights, u64 off
     if (error)
       return error;
   }
-  return localcopy(source, resource, &p->resources, rights, offset, length, (u32) inherit, out);
+  return localcopy(source, resource, p->resources, rights, offset, length, (u32) inherit, out);
 }
 int
 procrevoke(Rtable *source, Handle authority, Handle resource)
@@ -2738,10 +2748,10 @@ procrevoke(Rtable *source, Handle authority, Handle resource)
   error = targetproc(source, authority, CONTROL_REVOKE, &p);
   if (error)
     return error;
-  error = localnative(&p->resources, resource);
+  error = localnative(p->resources, resource);
   if (error)
     return error;
-  error = localrevoke(&p->resources, resource);
+  error = localrevoke(p->resources, resource);
   if (error)
     return error;
   /* Twelve prepaid slots bound this scan; ACCEPTED requests keep their reply
@@ -2936,7 +2946,7 @@ proccred(Rtable *source, Handle subject, Handle pid, u64 number, Cred *out)
   Image   image;
   u64     rights;
   int     error;
-  if (!out || !current || source != &current->resources || current->state != PROC_RUNNING)
+  if (!out || !current || source != current->resources || current->state != PROC_RUNNING)
     return -ERR_STATE;
   if (!subject) {
     if (pid || number)
@@ -2991,7 +3001,7 @@ procobserve(Rtable *source, Handle permit, Handle basis, u64 relation, Handle pi
   Life    record;
   u64     rights;
   int     error;
-  if (!out || !current || source != &current->resources || current->state != PROC_RUNNING)
+  if (!out || !current || source != current->resources || current->state != PROC_RUNNING)
     return -ERR_STATE;
   if (relation > OBS_MONITOR)
     return -ERR_INVALID;
@@ -3098,7 +3108,7 @@ querystat(Proc *p, const Life *life, Queryrec *record)
   if (life->group && groupnames(life->group, &pgid, &sid))
     return -ERR_STATE;
   querybase(record, QUERY_PROC, life->pid, p->generation);
-  record->image = p->resources.image;
+  record->image = p->resources->image;
   record->data[0] = (u64) life->parent;
   record->data[1] = (u64) pgid;
   record->data[2] = (u64) sid;
@@ -3111,13 +3121,13 @@ querystat(Proc *p, const Life *life, Queryrec *record)
     record->data[6] = account.used;
     record->data[7] = account.reserved;
   }
-  if (p->resources.state != LOCAL_DEAD)
-    for (i = 0; i < p->resources.count; i++)
-      if (p->resources.slots[i].subtype && p->resources.slots[i].subtype < LOCAL_FLOOR)
+  if (p->resources->state != LOCAL_DEAD)
+    for (i = 0; i < p->resources->count; i++)
+      if (p->resources->slots[i].subtype && p->resources->slots[i].subtype < LOCAL_FLOOR)
         record->data[8]++;
   if (!spacestat(p->space, &space))
     record->data[9] = space.mapcount;
-  error = rqcount(life->pid, p->resources.image, &requests);
+  error = rqcount(life->pid, p->resources->image, &requests);
   if (error)
     return error;
   record->data[10] = requests;
@@ -3153,7 +3163,7 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
   if (!written || !next)
     return -ERR_INVALID;
   *written = *next = 0;
-  if (!current || source != &current->resources || current->state != PROC_RUNNING || vm_paused)
+  if (!current || source != current->resources || current->state != PROC_RUNNING || vm_paused)
     return -ERR_STATE;
   if (!count || count > QUERY_RECORDS || kind < QUERY_PROC || kind > QUERY_BOOT_RESOURCE ||
       cursor >> 59 || (cursor && !(cursor >> 16)))
@@ -3190,7 +3200,7 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
         return -ERR_STALE;
       p = find(life.pid);
       if (p && p->life.generation == identity.generation && p->life.index == identity.index)
-        target = p->resources.state == LOCAL_DEAD ? NULL : &p->resources;
+        target = p->resources->state == LOCAL_DEAD ? NULL : p->resources;
       else if (life.state == LIFE_ENDED || life.state == LIFE_ABORTED)
         target = NULL;
       else
@@ -3334,7 +3344,7 @@ procsetpg(Handle pid, Handle pgid)
     p = find(pid);
     if (!p || p->state == PROC_BUILDING || p->state == PROC_EXITING)
       return -ERR_STALE;
-    if (p->resources.image != 1)
+    if (p->resources->image != 1)
       return -ERR_STATE;
   }
   if (lifestat(current->life, &source) || groupstat(source.group, &own) ||
