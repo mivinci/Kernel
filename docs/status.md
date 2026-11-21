@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage312：RV64/ARM64 QEMU `sigframe` 验证硬件 timer IRQ 在可信 fork 构造检查点触发让出、就绪进程先运行和父续点恢复；费用与页回到基线，格式通过。
 - stage311：未映射 DATA 的别名登记与根冻结可按 32 项开放 fork 检查点；70 项主机专项、双架构 QEMU `sigframe` 和格式检查通过。
 - stage310：fork 快照期间禁止激活与冻结根共用可写私有 DATA 的用户根；双架构 QEMU `sigframe`、`jobs`、54 项主机专项及格式检查通过。
 - stage309：fork 快照期间，内核写入及复制在改动任何字节前检查整个目标区间；双架构 QEMU `sigframe`、54 项主机专项及格式检查通过。
@@ -35,7 +36,7 @@
 
 - 待确认：生产 TTY/VFS 首次发放 `OBSERVE_SOURCE` 的方式，见[文件连接观察](design/10-filesystem.md)；目前仅夹具接通。
 - 待确认：后端继承引用的 `reference_id` 命名空间及 Bootfd 交付格式，见[文件继承](design/10-filesystem.md)和[Boot](design/07-boot.md)；实际启动文件表仍未接通。
-- fork接续：新DATA别名准入已闭合；Source Local/Mem引用变化、未映射/Local/Signal完整长循环与自动IRQ/检查点、原生准入/Fix/专用发布仍须接通，不把可信续点/快照验收当作已实现fork。
+- fork接续：新 DATA 别名准入及检查点的 timer 调度已验证；继续核对 Source Local/Mem 引用变化和剩余长循环及提交阶段，再接原生准入、Fix、专用发布。
 - 待确认：生产rqclean的CONTROL_CLEAN=0x80、仅初始init持有及完整REQUEST参数方案已单独提问，尚未修改CONTROL/0x1b实现；候选及04/06旧表差异见04管理代收尾节。
 - 待确认：堆/连接共用VA登记、保留128堆区域及8份连接预付责任、短屏蔽信号更新范围的方向已提问，见08；当前vm.c仍不承诺信号安全，未新增映射查询或内核保留区。
 - 待确认：setfg/ttysignal的修正版后台/错误规则见11；旧“屏蔽/忽略TTOU也EIO”候选已撤回，修正版允许该情形继续切换。尚未新增ERR_IO=23或开放原生终端调用。

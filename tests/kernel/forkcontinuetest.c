@@ -4,6 +4,7 @@
 #include <abi/boot.h>
 #include <diag.h>
 #include <cow.h>
+#include <hal/clock.h>
 #include <signal.h>
 #include <vm.h>
 static Handle   parentpid, peerpid, killer;
@@ -117,10 +118,13 @@ __wrap_hal_user_enter(Hctx *context)
   faultframeenter(context);
   runtimeframeenter(context);
   if (armed && table) {
-    if (mode == 3 && table->owner == parentpid) {
+    if (mode >= 3 && table->owner == parentpid) {
       Handle construct;
       arch_forktrap(context);
-      REQUIRE(!procstop(parentpid, SIGNAL_STOP));
+      if (mode == 3)
+        REQUIRE(!procstop(parentpid, SIGNAL_STOP));
+      else
+        hal_timer_set(hal_clock_read());
       REQUIRE(!procforkbuild(buildset, table, context, 1, 0, &construct, &buildchild) &&
               construct && buildchild && !spacefrozen(parentinfo.space) &&
               !localdestroy(table, construct));
@@ -133,6 +137,12 @@ __wrap_hal_user_enter(Hctx *context)
       Handle   allocator = 0, space = 0, memory;
       u32      i;
       u64      value = 0x5151;
+      if (mode == 4) {
+        REQUIRE(!buildchild && !peerprogress && prockernelticks() &&
+                spacefrozen(parentinfo.space) == 1);
+        peerprogress++;
+        procexit(LIFE_EXIT, 42, NULL);
+      }
       REQUIRE(reached == 1 && !resumed && spacefrozen(parentinfo.space) == 1);
       for (i = 0; i < table->count; i++) {
         if (table->slots[i].subtype == LOCAL_ALLOC)
@@ -285,47 +295,66 @@ forkcontinuetest(void)
     if (mode)
       REQUIRE(work > 2);
   }
-  buildchild = 0;
-  REQUIRE(!setcreate(1024, 1024, 8, &buildset) && !procnew(buildset, 1, 128, 128, 64, &parentpid) &&
-          !procinfo(parentpid, &parentinfo));
-  bootstrap(parentpid);
-  REQUIRE(!procpublish(parentpid));
-  {
-    Acctid  account;
-    Spaceid target;
-    Prepid  none = {0};
-    REQUIRE(!acctcreate(buildset, 128, 128, &account) && !spacecreate(account, &target) &&
-            !spacesnapshotopen(parentinfo.space, target, none));
-    REQUIRE(procrunone() == -ERR_WOULD_BLOCK && !procinfo(parentpid, &stale) &&
-            stale.state == PROC_READY);
-    REQUIRE(!spacesnapshotend(parentinfo.space, target, 0) && !spacedestroy(target) &&
-            !acctclose(account) && !acctunbind(account));
-  }
-  armed = 1;
-  REQUIRE(!procrunone() && !procinfo(parentpid, &stale) && stale.state == PROC_STOPPED &&
-          !buildchild && spacefrozen(parentinfo.space) == 1 && procrunone() == -ERR_WOULD_BLOCK);
-  REQUIRE(!proccontinue(parentpid) && !procrunone() && buildchild && !procinfo(parentpid, &stale) &&
-          stale.state == PROC_EXITING);
-  armed = 0;
-  for (j = 0; j < 2; j++) {
-    Handle pid = j ? buildchild : parentpid;
-    for (i = 0; i < 64; i++) {
-      error = procclean(pid);
-      REQUIRE(error >= 0);
-      if (!error)
-        break;
+  for (mode = 3; mode <= 4; mode++) {
+    buildchild = peerprogress = 0;
+    REQUIRE(!setcreate(1024, 1024, 8, &buildset) &&
+            !procnew(buildset, 1, 128, 128, 64, &parentpid) && !procinfo(parentpid, &parentinfo));
+    bootstrap(parentpid);
+    REQUIRE(!procpublish(parentpid));
+    if (mode == 3) {
+      Acctid  account;
+      Spaceid target;
+      Prepid  none = {0};
+      REQUIRE(!acctcreate(buildset, 128, 128, &account) && !spacecreate(account, &target) &&
+              !spacesnapshotopen(parentinfo.space, target, none));
+      REQUIRE(procrunone() == -ERR_WOULD_BLOCK && !procinfo(parentpid, &stale) &&
+              stale.state == PROC_READY);
+      REQUIRE(!spacesnapshotend(parentinfo.space, target, 0) && !spacedestroy(target) &&
+              !acctclose(account) && !acctunbind(account));
+    } else {
+      REQUIRE(!procnew(buildset, 1, 128, 128, 16, &peerpid) && !procinfo(peerpid, &peer));
+      bootstrap(peerpid);
+      REQUIRE(!procpublish(peerpid) && !proctimerstart() && !prockernelticks());
     }
-    REQUIRE(i < 64 && procinfo(pid, &stale) == -ERR_STALE);
+    armed = 1;
+    REQUIRE(!procrunone() && !procinfo(parentpid, &stale) && !buildchild && !peerprogress &&
+            spacefrozen(parentinfo.space) == 1);
+    if (mode == 3) {
+      REQUIRE(stale.state == PROC_STOPPED && procrunone() == -ERR_WOULD_BLOCK &&
+              !proccontinue(parentpid));
+    } else {
+      REQUIRE(stale.state == PROC_READY && prockernelticks() && !procrunone() &&
+              peerprogress == 1 && !buildchild);
+    }
+    for (i = 0; i < 64 && !buildchild; i++)
+      REQUIRE(!procrunone());
+    REQUIRE(buildchild && !procinfo(parentpid, &stale) && stale.state == PROC_EXITING);
+    armed = 0;
+    for (j = 0; j < (mode == 3 ? 2U : 3U); j++) {
+      Handle pid = j == 0 ? parentpid : (j == 1 ? buildchild : peerpid);
+      for (i = 0; i < 64; i++) {
+        error = procclean(pid);
+        REQUIRE(error >= 0);
+        if (!error)
+          break;
+      }
+      REQUIRE(i < 64 && procinfo(pid, &stale) == -ERR_STALE);
+    }
+    if (mode == 4)
+      REQUIRE(!lifecollect(peer.life, 1, &result) && result.reason == LIFE_EXIT &&
+              result.code == 42);
+    REQUIRE(!lifecollect(parentinfo.life, 1, &result) && result.reason == LIFE_EXIT &&
+            result.code == 42 && !setstat(buildset, &group) && !group.charged && !group.instances &&
+            !setclose(buildset));
   }
-  REQUIRE(!lifecollect(parentinfo.life, 1, &result) && result.reason == LIFE_EXIT &&
-          result.code == 42 && !setstat(buildset, &group) && !group.charged && !group.instances &&
-          !setclose(buildset));
   pgstat(&after);
   REQUIRE(before.free == after.free && before.allocated == after.allocated);
   putstr("FORKCONTCHECK cases=");
-  puthex(4);
+  puthex(5);
   putstr(" builder_resumed=");
   puthex(1);
+  putstr(" timer_peer=");
+  puthex(peerprogress);
   putstr(" resumed=");
   puthex(continued);
   putstr(" killed=");
