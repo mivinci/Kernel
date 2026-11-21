@@ -327,7 +327,7 @@ transfer(Fileimage *image, Connwork *work, int fd, u64 opcode, u8 *bytes, u64 co
   CHECK(!sysfileiostage(image, 0, fd, opcode, bytes, count, &peer, &key) && peer == work);
   if (opcode == FS_WRITE)
     bytes[0] = 0;
-  CHECK(!sysfileiowait(image, 0, &key, mask));
+  CHECK(!sysfileiowait(image, 0, &key, mask, NULL));
   CHECK(!sysfileiofinish(image, &key, bytes, count, &completed) && completed.native == native &&
         !completed.business && completed.count == expected &&
         sysopcheck(work, cache, &key) == -ERR_STALE &&
@@ -356,7 +356,7 @@ interruptclient(void)
   Opkey                 draft = {0};
   Fileioresult          completed;
   u64                   mask, ignored;
-  u32                   slot;
+  u32                   slot, restart = 2;
   u8                    data[3] = {'p', 'q', 0xa5};
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
@@ -388,19 +388,21 @@ interruptclient(void)
         !draftpeer && !draft.lease.seq && !sysfdobserve(&image->fds, fds[1], &original) &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) && !ref.pins &&
         !sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
-        draftpeer == work && sysfileiowait(image, 0, &draft, mask) == -ERR_INTERRUPTED &&
-        caught == 2 && !sysoprpc(work, cache, &draft, &rpc) &&
+        draftpeer == work && sysfileiowait(image, 0, &draft, mask, &restart) == -ERR_INTERRUPTED &&
+        !restart && caught == 2 && !sysoprpc(work, cache, &draft, &rpc) &&
         (work->state.operations[draft.lease.slot].flags & SYSOP_CANCEL_SENT) &&
         !ipc_call(work->state.call, &gate, CALL_CONTROL, &result) &&
-        !sysfileiowait(image, 0, &draft, mask) &&
+        !sysfileiowait(image, 0, &draft, mask, &restart) &&
         !sysfileiofinish(image, &draft, data, 1, &completed) && !completed.native &&
         completed.business == -EINTR && !completed.count && data[0] == 'p' &&
         ipc_rqpoll(rpc, 0, &result) < 0);
-  CHECK(!sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
-        sysfileiowait(image, 0, &draft, mask) == -ERR_INTERRUPTED && caught == 3 &&
-        sysfileioresume(image, &draft) == -ERR_WOULD_BLOCK &&
+  action.sa_flags = SA_RESTART;
+  CHECK(!sigaction(SIGUSR1, &action, NULL) &&
+        !sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
+        sysfileiowait(image, 0, &draft, mask, &restart) == -ERR_INTERRUPTED && restart == 1 &&
+        caught == 3 && sysfileioresume(image, &draft) == -ERR_WOULD_BLOCK &&
         !sysoprpc(work, cache, &draft, &rpc) &&
-        sysfileiowait(image, 0, &draft, mask) == -ERR_TIMEDOUT);
+        sysfileiowait(image, 0, &draft, mask, &restart) == -ERR_TIMEDOUT);
   slot = draft.lease.slot;
   CHECK(sysfileioresume(image, &draft) == SYSOP_ABANDONED && !draft.lease.seq &&
         work->state.operations[slot].rpc == rpc && !work->state.operations[slot].owner &&

@@ -36,6 +36,9 @@ void  syssleepinterrupt(void *trap, void *outer, u64 flags);
    A zero deadline waits on events alone. A notification is a hint: caller
    must recheck its condition and deadline. */
 isize systimerwait(u64 deadline, u64 events, u64 mask);
+/* When restart is supplied, report the captured handler's policy on
+   ERR_INTERRUPTED instead of silently continuing a restartable wait. */
+isize systimerwaitsignal(u64 deadline, u64 events, u64 mask, u32 *restart);
 /* Optional file-runtime hook. Runs under caught-signal exclusion and returns
    nonzero while original request completions can advance pending cleanup. */
 void systimerbindrq(int (*progress)(void));

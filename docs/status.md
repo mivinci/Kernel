@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage414（2026-11-22）：双架构 QEMU `pipeio` 验证读写等待交付本次 handler 的 `SA_RESTART` 标志，同时保留原 RPC 和超时规则。
 - stage413（2026-11-22）：双架构 QEMU `pipeio` 验证读写取消到期后后台保留原 RPC，并在睡眠期间收尾、归还 File pin。
 - stage412（2026-11-22）：双架构 QEMU `pipeio` 验证读写等待、信号取消和续做原 RPC；双架构 `runtime` 回归通过。
 - stage411（2026-11-22）：双架构 QEMU `pipeio` 验证私有读写结果交付、短读及坏目标后的原请求收尾。

@@ -253,7 +253,7 @@ sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *inpu
 }
 
 isize
-sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask)
+sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32 *restart)
 {
   Conncache *cache;
   Connwork  *work;
@@ -307,12 +307,12 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask)
         return error;
       status = sysctxinterruptible(&state->contexts, self, context);
       if (!status)
-        status = systimerwait(op->deadline, EVENT_RQ_DONE, mask);
+        status = systimerwaitsignal(op->deadline, EVENT_RQ_DONE, mask, restart);
       error = sysctxabort(&state->contexts, self, context);
       if (error)
         return error;
     } else
-      status = systimerwait(op->deadline, EVENT_RQ_DONE, mask);
+      status = systimerwaitsignal(op->deadline, EVENT_RQ_DONE, mask, restart);
     if (status)
       return status;
   }

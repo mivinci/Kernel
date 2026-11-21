@@ -38,8 +38,9 @@ isize sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void
                      Connwork **out, Opkey *key);
 /* Submit once and wait for the original RPC's result and FINISH proof.
    Caller holds caught signals blocked except while waiting with mask.
-   Interruption or timeout leaves the original key and its obligation live. */
-isize sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask);
+   Interruption or timeout leaves the original key and its obligation live.
+   On interruption, restart receives the handler's captured SA_RESTART bit. */
+isize sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32 *restart);
 /* After interruption, check the original result before the cancellation
    deadline. SYSOP_ABANDONED consumes key and schedules background cleanup. */
 isize sysfileioresume(Fileimage *state, Opkey *key);
