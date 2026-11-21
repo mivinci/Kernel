@@ -99,6 +99,8 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 ## 执行与验收
 
+stage358：RV64/ARM64 QEMU `virtiodev` 为可写和只读盘各配置一条真实 split ring，通过 DRIVER_OK 和 MMIO 门铃提交 READ，核对原 cookie、513 字节完成长度（含状态）、状态 OK 及各盘独立的完整 512 字节图案，再复位回收。仅测试载荷使用可信加载器提供的 QEMU 一致 RAM 设备地址；加载器保留六页的管理引用直到客体确认复位，失败时停机并保留这些页。两架构的设备引用及页账回归基线，30 项 virtio 主机测试和格式通过。尚无生产 DMA 授权、IRQ 交付、WRITE/FLUSH 或实板验收。
+
 stage357：现代 MMIO 公共层可登记已由调用者初始化并同步的 128 项 split ring，写入三个 64 位设备地址并确认 QueueReady，再单独提交和读回 DRIVER_OK。门铃只接受已启动设备上登记的队列。部分 MMIO 故障使实例进入 FAILED，只有确认复位才清除队列登记；这不代替 DMA 同步或解除固定。30 项 virtio 主机测试和格式通过；RV64/ARM64 QEMU `virtiodev` 配置回归通过，队列寄存器与门铃仍仅由主机模型验证。
 
 stage356：RV64/ARM64 QEMU `virtiodev` 经过真实用户态 Device 映射协商两个现代 virtio-blk 设备。在设备树窗口和映射页边界内读取容量，核对可写盘为 256 扇区并协商 FLUSH，只读盘为 128 扇区并协商 RO；保留原 RNG 协商覆盖。三个设备均核对状态并复位，回收后设备引用、映射与页账回归基线。26 项 virtio 主机测试和格式通过。本点只验收配置路径，未配置队列或发出 DMA 请求。

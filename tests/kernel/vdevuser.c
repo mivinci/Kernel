@@ -6,7 +6,7 @@
 #include "private/start.h"
 #include "private/virtio/block.h"
 #include "virtiouser.h"
-volatile u64 vdev_trace[32];
+volatile u64 vdev_trace[VTEST_TRACE];
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -34,6 +34,64 @@ reset(Vdev *device)
     error = vresetpoll(device, now());
   REQUIRE(!error && device->state == VDEV_RESET && !device->status, 162);
   vdev_trace[16]++;
+}
+static int
+coherentsync(void *context, u32 region, u32 phase, u64 offset, u64 length)
+{
+  UNUSED(region);
+  UNUSED(offset);
+  UNUSED(length);
+  /* This fixture only runs on QEMU virt's coherent guest RAM. */
+  virtiofence(context, phase);
+  return 0;
+}
+static int
+notify(void *context)
+{
+  return vnotify(context, 0);
+}
+static void
+readblock(Vdev *device, const Vblkconfig *config)
+{
+  Vring        ring;
+  Vringops     ops;
+  Vbuf         buffers[3];
+  Vdone        done[VQ_BATCH];
+  u8          *desc = (void *) VTEST_DMA_BASE;
+  Vblkhead    *header = (void *) (desc + 3 * PAGE_SIZE);
+  volatile u8 *data = desc + 4 * PAGE_SIZE, *status = desc + 5 * PAGE_SIZE;
+  u32          count, more, published, i;
+  u64          start;
+  int          size;
+  u8           seed = config->readonly ? 0xa7 : 0x51;
+
+  ops.context = device;
+  ops.sync = coherentsync;
+  ops.fence = virtiofence;
+  ops.notify = notify;
+  REQUIRE(!vrinit(&ring, 1, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
+  REQUIRE(!vqueue(device, 0, vdev_trace[32], vdev_trace[33], vdev_trace[34]), 171);
+  REQUIRE(!vstart(device), 172);
+  size = vblkprepare(VBLK_READ, 1, config->sectors, vdev_trace[35], vdev_trace[36], VBLK_SECTOR,
+                     vdev_trace[37], header, buffers);
+  REQUIRE(size == 3, 173);
+  *status = VBLK_PENDING;
+  for (i = 0; i < VBLK_SECTOR; i++)
+    data[i] = 0;
+  virtiofence(device, VR_RELEASE);
+  REQUIRE(!vrsubmit(&ring, buffers, (u32) size, 1, &published) && published, 174);
+  start = now();
+  do {
+    REQUIRE(!vrpoll(&ring, 1, done, &count, &more), 175);
+    REQUIRE(count || now() - start < VDEV_RESET_NS, 176);
+  } while (!count);
+  virtiofence(device, VR_ACQUIRE);
+  REQUIRE(count == 1 && !more && done[0].cookie == 1 && ring.queue.free == VQ_SIZE &&
+              vblkresult(VBLK_READ, VBLK_SECTOR, done[0].length, *status) == VBLK_OK,
+          177);
+  for (i = 0; i < VBLK_SECTOR; i++)
+    REQUIRE(data[i] == (u8) (seed + i * 37), 178);
+  vdev_trace[22]++;
 }
 int
 main(int argc, char **argv)
@@ -93,6 +151,8 @@ main(int argc, char **argv)
             167);
     REQUIRE(!virtioread(&base, 0x70, &status) && status == 11, 158);
     vdev_trace[15]++;
+    if (device.device == VBLK_DEVICE)
+      readblock(&device, &config);
     reset(&device);
     REQUIRE(!virtioread(&base, 0x70, &status) && !status, 159);
   }

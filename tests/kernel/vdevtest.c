@@ -1,5 +1,6 @@
 #include "ktest.h"
 #include "load.h"
+#include "virtiouser.h"
 #include <device.h>
 #include <proc.h>
 #include <abi/boot.h>
@@ -16,14 +17,15 @@ extern const u64 vdev_trace_address;
     }                                                                                              \
   } while (0)
 static void
-load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengths[8])
+load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengths[8],
+     Memid dma[VTEST_PAGES])
 {
   struct
   {
     Boot     header;
     Resentry resources[3];
   } packet;
-  u64      trace[32];
+  u64      trace[VTEST_TRACE];
   u32      i;
   Procinfo process;
   Rtable  *table = proctable(pid);
@@ -44,12 +46,21 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
   packet.resources[2].handle = memory;
   testload(pid, vdev_image, (u64) (vdev_image_end - vdev_image), &packet, sizeof(packet));
   REQUIRE(!procinfo(pid, &process));
-  for (i = 0; i < 32; i++)
+  for (i = 0; i < VTEST_TRACE; i++)
     trace[i] = 0;
   trace[1] = count;
   for (i = 0; i < count; i++) {
     trace[4 + i] = offsets[i];
     trace[23 + i] = lengths[i];
+  }
+  /* QEMU virt uses identity DMA and coherent RAM. Only this trusted test
+     loader passes these addresses; retain the Mem managers until the guest
+     proves reset, even if its process exits on a failed transfer. */
+  for (i = 0; i < VTEST_PAGES; i++) {
+    REQUIRE(!memcreate(process.acct, PAGE_SIZE, &dma[i]));
+    REQUIRE(!spacemap(process.space, dma[i], 0, VTEST_DMA_BASE + i * PAGE_SIZE, PAGE_SIZE,
+                      VM_READ | VM_WRITE));
+    REQUIRE(!mempage(dma[i], 0, &trace[32 + i]));
   }
   REQUIRE(!spacewrite(process.space, vdev_trace_address, trace, sizeof(trace)));
 }
@@ -64,9 +75,10 @@ vdevtest(const Dtinfo *info)
   Pgstat     before, after;
   Device     window;
   Handle     pid, memory;
-  u64        page, members, offsets[8], lengths[8], trace[32];
+  Memid      dma[VTEST_PAGES];
+  u64        page, members, offsets[8], lengths[8], trace[VTEST_TRACE];
   u32 i, j, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
-  u32 rng = 0, writable = 0, readonly = 0;
+  u32 rng = 0, writable = 0, readonly = 0, reads = 0;
   u64 rwsectors = 0, rosectors = 0;
   int error;
   pgstat(&before);
@@ -93,8 +105,11 @@ vdevtest(const Dtinfo *info)
     REQUIRE(count && !devgroup(page, members, &id));
     REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pid) && !procinfo(pid, &process));
     REQUIRE(!procmmioinstallgroup(pid, page, members, 3, &memory));
-    load(pid, memory, count, offsets, lengths);
-    REQUIRE(!procpublish(pid) && !procrunone());
+    load(pid, memory, count, offsets, lengths, dma);
+    REQUIRE(!procpublish(pid));
+    do {
+      REQUIRE(!procrunone() && !lifestat(process.life, &life));
+    } while (life.state != LIFE_ENDED);
     REQUIRE(!spaceread(process.space, vdev_trace_address, trace, sizeof(trace)));
     if (trace[31]) {
       putstr("VDEVUSER fail=");
@@ -105,7 +120,7 @@ vdevtest(const Dtinfo *info)
     }
     REQUIRE(trace[0] == 99 && !trace[31] && trace[12] == count && trace[13] + trace[14] == count &&
             trace[14] == trace[17] + trace[18] + trace[19] && trace[15] == trace[14] &&
-            trace[16] == 2 * trace[14]);
+            trace[16] == 2 * trace[14] && trace[22] == trace[18] + trace[19]);
     probes += (u32) trace[12];
     empty += (u32) trace[13];
     found += (u32) trace[14];
@@ -116,9 +131,11 @@ vdevtest(const Dtinfo *info)
     readonly += (u32) trace[19];
     rwsectors += trace[20];
     rosectors += trace[21];
+    reads += (u32) trace[22];
     pages++;
-    REQUIRE(!lifestat(process.life, &life) && life.state == LIFE_ENDED &&
-            life.reason == LIFE_EXIT && life.code == 42);
+    REQUIRE(life.reason == LIFE_EXIT && life.code == 42);
+    for (j = 0; j < VTEST_PAGES; j++)
+      REQUIRE(!memfree(dma[j]));
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
@@ -148,6 +165,8 @@ vdevtest(const Dtinfo *info)
   puthex(rwsectors);
   putstr(" rosectors=");
   puthex(rosectors);
+  putstr(" reads=");
+  puthex(reads);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

@@ -5,6 +5,13 @@ barrier(void)
 {
   __asm__ __volatile__("dsb sy" ::: "memory");
 }
+void
+virtiofence(void *context, u32 phase)
+{
+  UNUSED(context);
+  UNUSED(phase);
+  barrier();
+}
 int
 virtioread(void *context, u32 offset, u32 *out)
 {

@@ -1224,6 +1224,9 @@ def exercise(args, run_dir, record):
                 disk = Path(temporary) / (name + ".raw")
                 with disk.open("wb") as image:
                     image.truncate(sectors * 512)
+                    image.seek(512)
+                    seed = 0x51 if name == "rw" else 0xa7
+                    image.write(bytes((seed + i * 37) & 0xff for i in range(512)))
                 command += ["-drive", f"if=none,format=raw,id={name},file={disk},readonly={readonly}",
                             "-device", f"virtio-blk-device,drive={name}"]
         if args.trace:
@@ -1546,7 +1549,7 @@ def exercise(args, run_dir, record):
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
                                   negotiated=3,resets=6,rng=1,rwsectors=256,rosectors=128,
-                                  charged=0,allocated=transition["tables"])
+                                  reads=2,charged=0,allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery/negotiation/reset mismatch")
                     record["virtio_device"]=checks[0]
