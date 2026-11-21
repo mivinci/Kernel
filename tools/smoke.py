@@ -887,7 +887,8 @@ def audit_package_init(qmp, run_dir, args, record, transition):
         record['serial_service']=dict(pid=proof[1],mode='live' if proof[2]==1 else 'ready-timeout',
                                       peer=proof[3] if proof[2]==1 else None,rx_bytes=proof[4],
                                       tx_bytes=proof[5],retired=True,uart_kind=proof[7],
-                                      actual_service=True,production_init_launch=False)
+                                      actual_service=True,tty_transport=proof[2]==1,
+                                      production_init_launch=False)
     if 'initserviceproof' in user_symbols:
         proof=struct.unpack('<16Q',read(user_symbols['initserviceproof'],128))
         error=struct.unpack('<q',struct.pack('<Q',proof[5]))[0]
@@ -1212,7 +1213,8 @@ def exercise(args, run_dir, record):
                                 payload=(b'uar',b't-rx')[index]
                                 sent=os.write(input_fd,payload)
                                 if sent!=len(payload):raise SmokeError('short external UART input injection')
-                                gates.append(dict(proof=snapshot,bytes=sent,driver_blocked=True))
+                                gates.append(dict(proof=snapshot,bytes=sent,driver_blocked=True,
+                                                  tty_blocked=True))
                                 record['serial_input']=dict(sent=sum(x['bytes'] for x in gates),
                                                             hex=(b'uar' if index==0 else b'uart-rx').hex())
                             qmp.command('cont')

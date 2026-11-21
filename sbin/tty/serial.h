@@ -30,4 +30,7 @@ isize ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size);
    Yield and recheck when again is set, without waiting for another hint. */
 isize ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
                     Ttyserialresult *out);
+/* Run a step and publish its hints on the exact serial peer's NOTIFY handle. */
+isize ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
+                    Ttyserialresult *out);
 #endif

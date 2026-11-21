@@ -265,7 +265,8 @@ def build(args):
         return artifact
     tty_sources=[ROOT/name for name in ('tests/kernel/ttywaituser.c','tests/kernel/ttyuser.c',
         'tests/kernel/ttyinputuser.c','sbin/tty/term.c','sbin/tty/input.c','sbin/tty/wait.c','sbin/tty/serial.c')]
-    tty_elf=link_adoption('ttyuser',[compile_adoption(source,'tty-'+source.stem) for source in tty_sources])
+    tty_objects=[compile_adoption(source,'tty-'+source.stem) for source in tty_sources]
+    tty_elf=link_adoption('ttyuser',tty_objects)
     tty_image=sdk/'ttyuser.img'
     tty_image.write_bytes(pack(tty_elf.read_bytes(),profile['machine'],128))
     inspection=invoke('inspect-tty',[tools['readelf']['path'],'-s',str(tty_elf)])
@@ -299,7 +300,8 @@ def build(args):
     uart_source=ROOT/'sbin/serial/uart.c'
     serial_verify=link_adoption('serialverify',[compile_adoption(ROOT/'tests/kernel/serialverify.c','serialverify'),compile_adoption(serial_start_source,'serial-start'),compile_adoption(serial_io_source,'serial-io'),compile_adoption(uart_source,'serial-verify-uart')])
     service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth'),compile_adoption(ROOT/'tests/kernel/serialparent.c','serialparent'),embedded_elf(serial_verify,'serial_verify')])
-    serial_peer=link_adoption('serialpeer',[compile_adoption(ROOT/'tests/kernel/serialpeer.c','serialpeer')])
+    serial_peer=link_adoption('serialpeer',[compile_adoption(ROOT/'tests/kernel/serialpeer.c','serialpeer'),
+        *[obj for source,obj in zip(tty_sources,tty_objects) if source.parent == ROOT/'sbin/tty']])
     serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer')])
     init_service_sources=[ROOT/'sbin/init'/name for name in ('service.c','manifest.c','package.c')]
     init_service_test=link_adoption('initservices',[compile_adoption(ROOT/'tests/kernel/initservices.c','initservices'),

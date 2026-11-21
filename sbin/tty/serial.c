@@ -1,5 +1,6 @@
 #include "serial.h"
 #include "private/serial.h"
+#include <sys/channel.h>
 
 isize
 ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch)
@@ -109,4 +110,18 @@ ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
   }
   out->again = (rxlimit && received == rxlimit) || (count && (full || io->queued));
   return 0;
+}
+
+isize
+ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
+              Ttyserialresult *out)
+{
+  isize error, notified = 0;
+  if (!out || notify <= 0)
+    return -ERR_INVALID;
+  *out = (Ttyserialresult){0};
+  error = ttyserialstep(io, input, mode, rxlimit, out);
+  if (out->hints)
+    notified = ipc_notify(notify, out->hints);
+  return error ? error : notified;
 }

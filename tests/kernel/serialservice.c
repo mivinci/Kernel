@@ -267,7 +267,7 @@ retired(Child *child)
 static void
 idle(u64 consumed, u32 flag)
 {
-  Queryrec row;
+  Queryrec row, peer;
   u64      written, next;
   u32      attempts;
   for (attempts = 0; attempts < 4096; attempts++) {
@@ -275,8 +275,12 @@ idle(u64 consumed, u32 flag)
               !next && row.pid == driver.pid && row.image == 1 && row.data[3] != PROCESS_EXITING &&
               row.data[1] == (u64) driver.pid && row.data[2] == (u64) driver.pid,
           146);
+    CHECK(!__sys_query(client.control, QUERY_PROC, 0, &peer, 1, &written, &next) && written == 1 &&
+              !next && peer.pid == client.pid && peer.image == 1 && peer.data[3] != PROCESS_EXITING,
+          150);
     if (__atomic_load_n(&((Serialring *) 0x3010000)->consumer, __ATOMIC_ACQUIRE) == consumed &&
-        row.data[3] == PROCESS_BLOCKED && !row.data[4])
+        row.data[3] == PROCESS_BLOCKED && !row.data[4] && peer.data[3] == PROCESS_BLOCKED &&
+        !peer.data[4])
       break;
     CHECK(!__sys_yield(), 147);
   }
@@ -385,8 +389,8 @@ main(int argc, char **argv)
     idle(12, 8);
     receive(client.pid, UINT64_C(0x53525003), &message);
     CHECK(message.words[1] == 2 && message.words[2] == 3 && message.words[3] == 24, 149);
-    idle(24, 9);
     reply(message.request, 2, 0, 0);
+    idle(24, 9);
     receive(client.pid, UINT64_C(0x53525002), &message);
     CHECK(message.words[1] == 3 && message.words[2] == 7 && message.words[3] == 24, 141);
     controlcall(SERIAL_STATUS, 4, 0, 0, 0, &response);
