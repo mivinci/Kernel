@@ -51,33 +51,36 @@ notify(void *context)
 {
   return vnotify(context, 0);
 }
-static void
-transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, u64 capacity, u32 type,
-         u64 sector, u64 cookie, u8 seed)
+static int
+blksync(void *context, u32 phase, const Vbuf *buffer)
 {
-  Vbuf         buffers[3];
+  UNUSED(buffer);
+  virtiofence(context, phase == VR_BEFORE ? VR_RELEASE : VR_ACQUIRE);
+  return 0;
+}
+static void
+transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
+         u32 type, u64 sector, u64 cookie, u8 seed)
+{
+  Vblkreq      request = {0};
   Vdone        done[VQ_BATCH];
   Ipcmsg       event;
   Vblkhead    *header = (void *) (VTEST_DMA_BASE + 3 * PAGE_SIZE);
   volatile u8 *data = (void *) (VTEST_DMA_BASE + 4 * PAGE_SIZE);
   volatile u8 *status = (void *) (VTEST_DMA_BASE + 5 * PAGE_SIZE);
   u32          bytes = type == VBLK_FLUSH ? 0 : VBLK_SECTOR;
-  u32          count, more, published, i, causes;
+  u32          count, more, i, causes;
   u64          generation, started;
-  int          size;
-
-  size = vblkprepare(type, sector, capacity, vdev_trace[35], bytes ? vdev_trace[36] : 0, bytes,
-                     vdev_trace[37], header, buffers);
-  REQUIRE(size == (bytes ? 3 : 2), 173);
-  *status = VBLK_PENDING;
   for (i = 0; i < bytes; i++)
     data[i] = type == VBLK_WRITE ? (u8) (seed + i * 37) : 0;
-  virtiofence(device, VR_RELEASE);
   started = now();
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           179);
-  REQUIRE(!vrsubmit(ring, buffers, (u32) size, cookie, &published) && published, 174);
+  REQUIRE(!vblksubmit(&request, ring, config, type, sector, cookie, vdev_trace[35],
+                      bytes ? vdev_trace[36] : 0, bytes, vdev_trace[37], header, status, blksync,
+                      device),
+          174);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent,
           176);
@@ -88,9 +91,8 @@ transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, u64 capacity, 
               !virtioread(device->ops.context, 0x60, &causes) && !causes,
           181);
   REQUIRE(!vrpoll(ring, 1, done, &count, &more), 175);
-  virtiofence(device, VR_ACQUIRE);
   REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE &&
-              vblkresult(type, bytes, done[0].length, *status) == VBLK_OK,
+              vblkfinish(&request, &done[0]) == VBLK_OK && !request.held,
           177);
   vdev_trace[38]++;
   if (type == VBLK_READ) {
@@ -119,12 +121,12 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   REQUIRE(!vrinit(&ring, 1, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
   REQUIRE(!vqueue(device, 0, vdev_trace[32], vdev_trace[33], vdev_trace[34]), 171);
   REQUIRE(!vstart(device), 172);
-  transfer(device, &ring, binding, irqevent, config->sectors, VBLK_READ, 1, 1,
+  transfer(device, &ring, binding, irqevent, config, VBLK_READ, 1, 1,
            config->readonly ? 0xa7 : 0x51);
   if (!config->readonly) {
-    transfer(device, &ring, binding, irqevent, config->sectors, VBLK_WRITE, 2, 2, 0x37);
-    transfer(device, &ring, binding, irqevent, config->sectors, VBLK_FLUSH, 0, 3, 0);
-    transfer(device, &ring, binding, irqevent, config->sectors, VBLK_READ, 2, 4, 0x37);
+    transfer(device, &ring, binding, irqevent, config, VBLK_WRITE, 2, 2, 0x37);
+    transfer(device, &ring, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0);
+    transfer(device, &ring, binding, irqevent, config, VBLK_READ, 2, 4, 0x37);
   }
 }
 int

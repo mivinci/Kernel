@@ -25,6 +25,19 @@ class Blockconfig(C.Structure):
     _fields_ = [('sectors', C.c_uint64), ('readonly', C.c_uint32), ('flush', C.c_uint32)]
 
 
+class Blockbuf(C.Structure):
+    _fields_ = [('address', C.c_uint64), ('length', C.c_uint32), ('writable', C.c_uint32)]
+
+
+Blocksynchronize = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.POINTER(Blockbuf))
+
+
+class Blockrequest(C.Structure):
+    _fields_ = [('buffers', Blockbuf * 3), ('status', C.c_void_p), ('sync', Blocksynchronize),
+                ('context', C.c_void_p), ('cookie', C.c_uint64)] + [
+        (field, C.c_uint32) for field in ('type', 'bytes', 'held', 'active')]
+
+
 class Mmio:
     def __init__(self):
         self.magic = 0x74726976
@@ -127,6 +140,7 @@ class VirtioDeviceTests(unittest.TestCase):
         command = ['clang', '-std=c89', '-O2', '-ffreestanding', '-fno-builtin',
                    '-Wall', '-Wextra', '-Werror', '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
                    str(ROOT / 'lib/libvirtio/device.c'), str(ROOT / 'lib/libvirtio/block.c'),
+                   str(ROOT / 'lib/libvirtio/ring.c'), str(ROOT / 'lib/libvirtio/queue.c'),
                    '-o', str(path)]
         if sys.platform == 'darwin':
             sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
@@ -139,6 +153,10 @@ class VirtioDeviceTests(unittest.TestCase):
         cls.lib.vfeatures.argtypes = [C.POINTER(Vdev), C.c_uint64, C.c_uint64]
         cls.lib.vblkfeatures.argtypes = [C.POINTER(Vdev)]
         cls.lib.vblkconfig.argtypes = [C.POINTER(Vdev), C.POINTER(Blockconfig)]
+        cls.lib.vblksubmit.argtypes = [C.POINTER(Blockrequest), C.c_void_p, C.POINTER(Blockconfig),
+            C.c_uint32, C.c_uint64, C.c_uint64, C.c_uint64, C.c_uint64, C.c_uint32, C.c_uint64,
+            C.c_void_p, C.c_void_p, Blocksynchronize, C.c_void_p]
+        cls.lib.vblkreclaim.argtypes = [C.POINTER(Blockrequest)]
         cls.lib.vqueue.argtypes = [C.POINTER(Vdev), C.c_uint32] + [C.c_uint64] * 3
         cls.lib.vstart.argtypes = [C.POINTER(Vdev)]
         cls.lib.vnotify.argtypes = [C.POINTER(Vdev), C.c_uint32]
@@ -154,6 +172,30 @@ class VirtioDeviceTests(unittest.TestCase):
 
     def probe(self):
         return self.lib.vprobe(C.byref(self.device), C.byref(self.mmio.ops))
+
+    def test_block_sync_failure_retains_exact_windows_until_reclaimed(self):
+        request = Blockrequest()
+        config = Blockconfig(16, 0, 1)
+        header, status = (C.c_uint64 * 2)(), C.c_uint8()
+        # BEFORE fails before the queue can be touched; the ring argument
+        # is a sentinel to make any premature access fail the test.
+        seen = []
+
+        @Blocksynchronize
+        def sync(context, phase, buffer):
+            buf = buffer.contents
+            seen.append((phase, buf.address, buf.length, buf.writable))
+            if phase == 0 and buf.address == 0x2000:
+                return -2
+            return 0
+
+        args = (C.byref(request), 1, C.byref(config), 0, 1, 2, 0x1000, 0x2000, 512,
+                0x3000, C.byref(header), C.byref(status), sync, None)
+        self.assertEqual(self.lib.vblksubmit(*args), -2)
+        self.assertEqual(self.lib.vblksubmit(*args), -7)
+        self.assertEqual(self.lib.vblkreclaim(C.byref(request)), 0)
+        self.assertEqual(seen, [(0, 0x1000, 16, 0), (0, 0x2000, 512, 1),
+                                (1, 0x1000, 16, 0), (1, 0x2000, 512, 1)])
 
     def reset(self, now=100):
         return self.lib.vresetbegin(C.byref(self.device), now)

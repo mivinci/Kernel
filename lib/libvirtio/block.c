@@ -103,3 +103,84 @@ vblkresult(u32 type, u32 bytes, u32 written, u8 status)
     return -ERR_PEER;
   return status;
 }
+
+static int
+buffersync(Vblkreq *r, u32 phase, u32 index)
+{
+  int error = r->sync(r->context, phase, &r->buffers[index]);
+  return error > 0 ? -ERR_STATE : error;
+}
+static int restorebuffers(Vblkreq *r);
+
+int
+vblksubmit(Vblkreq *r, Vring *ring, const Vblkconfig *config, u32 type, u64 sector, u64 cookie,
+           u64 header, u64 data, u32 bytes, u64 status, Vblkhead *wire, volatile u8 *flag,
+           Vblksync sync, void *context)
+{
+  u32 i, published;
+  int count, error;
+  if (!r || !ring || !config || !flag || !sync || !cookie)
+    return -ERR_INVALID;
+  if (r->held || r->active)
+    return -ERR_BUSY;
+  if ((type == VBLK_WRITE && config->readonly) || (type == VBLK_FLUSH && !config->flush))
+    return -ERR_NOTSUP;
+  count = vblkprepare(type, sector, config->sectors, header, data, bytes, status, wire, r->buffers);
+  if (count < 0)
+    return count;
+  *flag = VBLK_PENDING;
+  r->status = flag;
+  r->sync = sync;
+  r->context = context;
+  r->cookie = cookie;
+  r->type = type;
+  r->bytes = bytes;
+  for (i = 0; i < (u32) count; i++) {
+    /* A failing synchronization can have had a partial effect. */
+    r->held |= 1U << i;
+    error = buffersync(r, VR_BEFORE, i);
+    if (error)
+      return error;
+  }
+  error = vrsubmit(ring, r->buffers, (u32) count, cookie, &published);
+  if (!published) {
+    int restore = restorebuffers(r);
+    return restore ? restore : error;
+  }
+  r->active = 1;
+  return error;
+}
+
+static int
+restorebuffers(Vblkreq *r)
+{
+  u32 i;
+  int error;
+  r->active = 0;
+  for (i = 0; i < 3; i++) {
+    if (!(r->held & (1U << i)))
+      continue;
+    error = buffersync(r, VR_AFTER, i);
+    if (error)
+      return error;
+    r->held &= ~(1U << i);
+  }
+  return 0;
+}
+int
+vblkreclaim(Vblkreq *r)
+{
+  return r ? restorebuffers(r) : -ERR_INVALID;
+}
+
+int
+vblkfinish(Vblkreq *r, const Vdone *done)
+{
+  int error;
+  if (!r || !done || !r->active)
+    return -ERR_STATE;
+  if (done->cookie != r->cookie)
+    return -ERR_STALE;
+  error = restorebuffers(r);
+  return error ? error : vblkresult(r->type, r->bytes, done->length, *r->status);
+}

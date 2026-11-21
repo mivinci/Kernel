@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage362（2026-11-22）：块请求公共层在提交和完成时交接 DMA 窗口，部分同步失败保留未归还窗口。双架构 QEMU `virtiodev`、33 项主机测试及格式通过；生产 DMA 待接。
 - stage361（2026-11-22）：virtio 公共层读取并确认实际 MMIO 中断原因；双架构 QEMU `virtiodev` 的五次 IRQ 均走该入口。32 项 virtio 主机测试及格式通过；生产 blk/DMA 待接。
 - stage360（2026-11-22）：双架构 QEMU `virtiodev` 验证五次块请求经实际 IRQ 交付、清中断及完成环排空；保留镜像和资源验收。30 项 virtio 主机测试及格式通过；生产 blk/DMA 待接。
 - stage359（2026-11-22）：双架构 QEMU `virtiodev` 验证真实 WRITE/FLUSH/读回；宿主在退出前核对后端计数与两个完整镜像。30 项 virtio 主机测试及格式通过；生产 DMA 和 IRQ 待接。
