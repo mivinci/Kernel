@@ -43,6 +43,39 @@ __sys_destroy(Handle view)
   return __sys_enter(SYS_DESTROY, args, &result);
 }
 isize
+__sys_forkprep(Handle authority, u64 reserve, Forkret *out)
+{
+  const u64 args[7] = {(u64) authority, reserve, 0, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!out)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_FORKPREP, args, &result);
+  out->construct = (Handle) result.values[0];
+  out->pid = (Handle) result.values[1];
+  out->fix = (const void *) result.values[2];
+  return error;
+}
+isize
+__sys_forkcommit(Handle construct, const void *fix, u64 bytes, Handle *pid)
+{
+  const u64 args[7] = {(u64) construct, (u64) fix, bytes, 0, 0, 0, 0};
+  Sysret    result;
+  isize     error;
+  if (!pid)
+    return -ERR_INVALID;
+  error = __sys_enter(SYS_FORKCOMMIT, args, &result);
+  *pid = (Handle) result.values[0];
+  return error;
+}
+isize
+__sys_forkabort(Handle construct)
+{
+  const u64 args[7] = {(u64) construct, 0, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_FORKABORT, args, &result);
+}
+isize
 __sys_getcred(Handle authority, Handle pid, u64 image, u32 ids[4])
 {
   const u64 args[7] = {(u64) authority, (u64) pid, image, 0, 0, 0, 0};

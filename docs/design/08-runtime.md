@@ -306,6 +306,8 @@ fork子修复区Fix的头64字节：format=1、bytes、source_pid、source_image
 
 stage192：`sysfixview` 检查固定头、父 PID/Image 和子 PID 的精确匹配，并复用 Boot 的资源表校验。上下文视图只覆盖从 contexts_off 到下一段或区间结尾，供后续解码。三层记录的字节布局、各记录字段及接入描述仍需冻结。
 
+stage193：libsys 私有 fork 桩保存原生结果到本次调用的私有输出。父得到 CONSTRUCT/PID，子得到零 CONSTRUCT、自身 PID 和 Fix 地址；调用者先据 CONSTRUCT 区分分支。提交返回 PID，撤销沿用原生状态。应用可见的子端修复和信号前置协作仍待接入。
+
 fork/exec/spawn目标共享区由服务预付，绑定目标会话及观察/清理容量；父只取得目标token/描述，不取得可冒充孩子使用的Mem Handle。目标表保底接收槽、按需领取、镜像生命周期及重复交付按上述第5项修订执行。子本地Fix修复后返回0，新csu本地Boot初始化后进入应用，二者均不以远端批量接入为返回条件。每次接入只在当前镜像内安装一次资源，不将父收到的Mem Handle整数拷到子。
 
 第6项修订：同步call的INTERRUPTED及返回RPC先登记到原Rctx，原请求可能仍QUEUED/ACCEPTED，不标为已完成EINTR或仅清理。POSIX信号入口按11在调用handler前仅提出协作取消；handler后从同一RPC读取结果、保存原槽数据/资源再rqack，不另发业务查询。明确错误/期限结束应用等待时，原RPC及缓冲/未交付资源责任转预付后台记录直到实际收尾；迟到资源安装亦由该记录接管/释放，已返回应用后不再复制迟到数据到原应用指针。仅内核原始等待被打断，不构成业务可重发证据。

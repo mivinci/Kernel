@@ -354,28 +354,25 @@ static int
 forkprepuser(void)
 {
   Sysret    result;
+  Forkret   forked;
   Createarg create = {128, 128, 16, 1, 0, 0, 0, 0, 0};
   Allocarg  allocate = {4096, ALLOC_DATA, 0, 0, 0, 0};
   Maparg    map = {0, 0, 0x30000000, 4096, 1, 0};
   u64       args[7] = {0};
-  u64       authority = frame_trace[18], child, construct;
-  Handle    source, parent, selfspace;
+  Handle    authority = (Handle) frame_trace[18], child, construct;
+  Handle    source, parent, selfspace, published;
   u64       image;
   Fix      *fix;
-  REQUIRE(__sys_enter(SYS_FORKPREP, args, &result) == -ERR_BAD_HANDLE, 224);
-  args[0] = authority;
-  args[1] = 9;
-  REQUIRE(__sys_enter(SYS_FORKPREP, args, &result) == -ERR_INVALID, 225);
-  args[1] = 2;
-  REQUIRE(!__sys_enter(SYS_FORKPREP, args, &result) && result.values[0] && result.values[1] &&
-              !result.values[2],
+  REQUIRE(__sys_forkprep(0, 0, &forked) == -ERR_BAD_HANDLE, 224);
+  REQUIRE(__sys_forkprep(authority, 9, &forked) == -ERR_INVALID, 225);
+  REQUIRE(!__sys_forkprep(authority, 2, &forked) && forked.construct && forked.pid && !forked.fix,
           226);
-  construct = result.values[0];
-  child = result.values[1];
+  construct = forked.construct;
+  child = forked.pid;
   args[0] = construct;
   args[1] = 0;
   REQUIRE(__sys_enter(SYS_START, args, &result) == -ERR_STATE, 227);
-  REQUIRE(!__sys_enter(SYS_FORKABORT, args, &result), 228);
+  REQUIRE(!__sys_forkabort(construct), 228);
   args[0] = child;
   args[1] = 1;
   REQUIRE(__sys_enter(SYS_WAIT, args, &result) == -ERR_CHILD, 229);
@@ -384,28 +381,26 @@ forkprepuser(void)
   REQUIRE(!__sys_enter(SYS_CREATE, args, &result) && result.values[0], 230);
   args[0] = result.values[0];
   args[1] = 0;
-  REQUIRE(__sys_enter(SYS_FORKABORT, args, &result) == -ERR_STATE, 231);
+  REQUIRE(__sys_forkabort((Handle) args[0]) == -ERR_STATE, 231);
   REQUIRE(!__sys_enter(SYS_DESTROY, args, &result), 232);
   REQUIRE(!__sys_getid(&source, &image, &parent), 241);
-  args[0] = authority;
-  REQUIRE(!__sys_enter(SYS_FORKPREP, args, &result), 233);
-  if (!result.values[0]) {
+  REQUIRE(!__sys_forkprep(authority, 0, &forked), 233);
+  if (!forked.construct) {
     Handle  self, ppid;
     u64     childimage;
     Fixview view;
-    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && result.values[1] == (u64) self &&
-                result.values[2] == map.address && ppid == source &&
-                !sysfixview((const void *) map.address, 88, source, image, self, &view) &&
+    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
+                (u64) forked.fix == map.address && ppid == source &&
+                !sysfixview(forked.fix, 88, source, image, self, &view) &&
                 view.contexts_limit == 24,
             234);
     return 43;
   }
-  construct = result.values[0];
-  child = result.values[1];
+  construct = forked.construct;
+  child = forked.pid;
   args[0] = construct;
-  args[1] = (u64) frame_trace;
-  args[2] = 64;
-  REQUIRE(__sys_enter(SYS_FORKCOMMIT, args, &result) == -ERR_FAULT, 235);
+  REQUIRE(__sys_forkcommit(construct, (const void *) frame_trace, 64, &published) == -ERR_FAULT,
+          235);
   args[1] = (u64) &allocate;
   args[2] = 0;
   REQUIRE(!__sys_enter(SYS_ALLOC, args, &result), 236);
@@ -428,16 +423,16 @@ forkprepuser(void)
   args[1] = (u64) &map;
   map.prot = 1;
   REQUIRE(!__sys_enter(SYS_MAP, args, &result), 237);
-  args[1] = map.address;
-  args[2] = 88;
-  REQUIRE(!__sys_enter(SYS_FORKCOMMIT, args, &result) && result.values[0] == child, 238);
+  REQUIRE(!__sys_forkcommit(construct, (const void *) map.address, 88, &published) &&
+              published == child,
+          238);
   args[1] = args[2] = 0;
   {
-    isize status = __sys_enter(SYS_FORKABORT, args, &result);
+    isize status = __sys_forkabort(construct);
     REQUIRE(status == -ERR_REVOKED || status == -ERR_BAD_HANDLE, 239);
   }
   args[0] = child;
-  REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == child &&
+  REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && (Handle) result.values[0] == child &&
               result.values[1] == WAIT_EXITED && result.values[2] == 43,
           240);
   frame_trace[0] = 99;

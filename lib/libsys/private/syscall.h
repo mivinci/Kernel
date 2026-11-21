@@ -5,10 +5,16 @@
 #include <abi/mem.h>
 #include <abi/proc.h>
 #include <abi/signal.h>
-typedef struct Sysret Sysret;
+typedef struct Sysret  Sysret;
+typedef struct Forkret Forkret;
 struct Sysret
 {
   u64 values[7], image;
+};
+struct Forkret
+{
+  Handle      construct, pid;
+  const void *fix;
 };
 STATIC_ASSERT(sizeof(Sysret) == 64, syscall_return_size);
 STATIC_ASSERT(offsetof(Sysret, values) == 0, syscall_return_values);
@@ -52,6 +58,9 @@ isize __sys_start(Handle view);
 isize __sys_revoke(Handle target, Handle resource);
 isize __sys_terminate(Handle control);
 isize __sys_destroy(Handle view);
+isize __sys_forkprep(Handle authority, u64 reserve, Forkret *out);
+isize __sys_forkcommit(Handle construct, const void *fix, u64 bytes, Handle *pid);
+isize __sys_forkabort(Handle construct);
 isize __sys_getcred(Handle authority, Handle pid, u64 image, u32 ids[4]);
 isize __sys_sigaction(u64 signum, const Sigact *action, Sigact *old);
 isize __sys_sigmask(u64 how, u64 mask, u64 *old);

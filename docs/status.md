@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage193：libsys 私有 forkprep/forkcommit/forkabort 桩已接，双架构 QEMU sigframe 覆盖父子返回及撤销，6 项主机回归和格式检查通过。公开 fork 和上下文修复待接。
+
 - stage192：运行库验证 Fix 头、精确身份和资源表。18 项主机测试、格式检查及双架构 QEMU sigframe 的真实子返回解析通过。三层上下文记录编码和修复仍待接。
 
 - stage191：原生 forkcommit 校验 Fix 权限与本次构造归属，双架构 QEMU sigframe 验证子真实返回及父 wait，格式检查通过。运行库 Fix 解析、修复和公开 fork 仍待接。
