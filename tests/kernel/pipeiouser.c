@@ -251,7 +251,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         &link,
                         1,
                         {&table, &wait, 1}};
-  if (interrupt) {
+  if (interrupt == 1) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
     Msg    reply = {{0, 0, 0, 0}};
@@ -262,6 +262,17 @@ serviceloop(const Bootview *boot, u32 interrupt)
           gate.source == target.target && gate.words[0] == PIPETEST && !table.serial &&
           !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request) &&
           table.serial == 4);
+  } else if (interrupt) {
+    Ipcmsg request, gate;
+    Sigsel target = {SIGNAL_SELECT_PID, 0};
+    Msg    reply = {{0, 0, 0, 0}};
+    CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && table.serial == 4 &&
+          !ipc_recv(0, 0, &request) && request.kind == IPC_CALL && request.words[0] == FS_CLOSE &&
+          !ipc_defer(request.request));
+    target.target = request.source;
+    CHECK((interrupt != 3 || !__sys_sigsend(&target, SIGNAL_USR1)) && !ipc_recv(0, 0, &gate) &&
+          gate.kind == IPC_CALL && gate.source == target.target && gate.words[0] == PIPETEST &&
+          !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request));
   }
   do {
     CHECK(!fsstep(&fs));
@@ -393,28 +404,31 @@ closepending(Connwork *work, Conncache *cache, Filepool *pool, u64 owner)
   CHECK(!error);
 }
 
+/* These fixture roles run in different images. Share their storage so the
+   trusted loader does not need separate page handles for both workspaces. */
+static Connwork  work;
+static Conncache cache;
+static Fdtable   table;
+static Filepool  pool;
+static Rbank     bank;
+
 static void
 serviceclient(const Bootview *boot)
 {
-  static Connwork  work;
-  static Conncache cache;
-  static Fdtable   table;
-  static Filepool  pool;
-  static Rbank     bank;
-  Fdtag            held;
-  Pipecreate       pipe = {0};
-  Fdview           view;
-  u64              closing;
-  isize            business;
-  int              fd[2] = {-1, -1};
-  Handle           call = bootresource(boot, BOOT_FS_CALL);
-  Handle           rpc;
-  Fileclose        anchor = {0}, retry = {0};
-  u64              deadline, mask, ignored;
-  Opkey            foreground = {0}, background = {0};
-  Fileref          reference;
-  Msg              invalid = {{FS_HELLO, 0, 23, 0}};
-  Ipcmsg           result;
+  Fdtag      held;
+  Pipecreate pipe = {0};
+  Fdview     view;
+  u64        closing;
+  isize      business;
+  int        fd[2] = {-1, -1};
+  Handle     call = bootresource(boot, BOOT_FS_CALL);
+  Handle     rpc;
+  Fileclose  anchor = {0}, retry = {0};
+  u64        deadline, mask, ignored;
+  Opkey      foreground = {0}, background = {0};
+  Fileref    reference;
+  Msg        invalid = {{FS_HELLO, 0, 23, 0}};
+  Ipcmsg     result;
   CHECK(!ipc_call(call, &invalid, 0, &result) && (isize) result.words[0] == -EINVAL &&
         result.words[1] == 23);
   setup(boot, &work, &cache, &bank);
@@ -466,6 +480,54 @@ serviceclient(const Bootview *boot)
         !background.lease.seq &&
         sysfilerefview(&pool, work.state.self, closing, &reference) == -ERR_STALE);
   /* Leave the read reference to the service's LIFE path. */
+  pipeiotrace[0] = 7;
+}
+
+static void
+closecaught(int signum)
+{
+  if (signum == SIGUSR1)
+    caught++;
+}
+
+static void
+closeclient(const Bootview *boot, u32 signal)
+{
+  Pipecreate       pipe = {0};
+  Fileclose        anchor;
+  Opkey            key, background = {0};
+  Fdview           view;
+  Fileref          ref;
+  Msg              gate = {{PIPETEST, 0, 0, 0}};
+  Ipcmsg           result;
+  struct sigaction action = {0};
+  Handle           rpc;
+  int              fds[2];
+  u64              now, deadline, mask, ignored, closing;
+  isize            business;
+  setup(boot, &work, &cache, &bank);
+  action.sa_handler = closecaught;
+  CHECK(!sigaction(SIGUSR1, &action, NULL) && !sysfilerefinit(&pool, work.state.self));
+  submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 1);
+  CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fds, &business) && !business &&
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        !sysfdobserve(&table, fds[1], &view) &&
+        !sysfdclose(&table, &pool, work.state.self, view.tag, &closing) && closing &&
+        !systimernow(&now));
+  deadline = now + (signal ? UINT64_C(1000000000) : UINT64_C(30000000));
+  CHECK(!sysfileclosesubmit(&pool, &work, &cache, closing, deadline, &anchor, &key) &&
+        !sysoprpc(&work, &cache, &key, &rpc) &&
+        sysfileclosewait(&pool, &work, &cache, &anchor, &key, &background, mask) ==
+            (signal ? SYSFILE_CLOSE_SIGNAL : SYSFILE_CLOSE_FAULT) &&
+        !systimernow(&now) && (signal ? now < deadline : now >= deadline) && caught == !!signal &&
+        !key.lease.seq && background.lease.seq && work.state.operations[6].rpc == rpc &&
+        !sysfdobserve(&table, fds[1], &view) && view.tag.state == SYSFD_FREE &&
+        !sysfilerefview(&pool, work.state.self, closing, &ref) &&
+        ref.state == SYSFILE_REF_CLOSING && !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result) &&
+        !ipc_rqwait(rpc, RQ_FINISH, &result) &&
+        !sysfileclosework(&pool, &work, &cache, &anchor, &background) &&
+        sysfilerefview(&pool, work.state.self, closing, &ref) == -ERR_STALE);
   pipeiotrace[0] = 7;
 }
 
@@ -571,6 +633,10 @@ main(int argc, char **argv)
     interruptclient();
   else if (argv[0][0] == 'C')
     serviceclient(boot);
+  else if (argv[0][0] == 'T' || argv[0][0] == 'U')
+    serviceloop(boot, argv[0][0] == 'T' ? 2 : 3);
+  else if (argv[0][0] == 't' || argv[0][0] == 'u')
+    closeclient(boot, argv[0][0] == 'u');
   else
     run(boot);
   return 42;

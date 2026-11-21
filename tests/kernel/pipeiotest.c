@@ -92,7 +92,12 @@ testpair(const char *roles)
     }
     if (ended == 2)
       break;
-    CHECK(++turns < 256 && !procrunone());
+    CHECK(++turns < 256);
+    error = procrunone();
+    if (error == -ERR_WOULD_BLOCK)
+      CHECK(procidle() >= 0);
+    else
+      CHECK(!error);
   }
   for (i = 0; i < 2; i++) {
     while ((error = procclean(pids[i])) > 0) {
@@ -111,4 +116,6 @@ pipeiotest(void)
   testpair("sc");
   testpair("SC");
   testpair("Ii");
+  testpair("Tt");
+  testpair("Uu");
 }

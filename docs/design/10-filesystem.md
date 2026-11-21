@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage405：ARM64/RV64 QEMU `pipeio` 让服务接收并延迟前台 CLOSE。客户端分别等到真实计时器截止和收到 SIGUSR1，核对 fd 已摘除，旧 File 和同一 RPC 转入后台。服务随后确认原请求，后台才回收旧引用。这里验证交接；公开 `close()` 和 `SA_RESTART` 仍待接入。
+
 stage404：前台 CLOSE 使用 Image 现有的逻辑计时器和仅事件等待；每次唤醒先核对原 RPC，保留提交时的绝对期限。两个架构的 QEMU `pipeio` 均验证从原 CLOSE 回复完成写端收尾。计时器到期和信号交接的 CLOSE 场景仍待专项验收；公开 `close()` 和 SA_RESTART 未接入。
 
 stage403：`sysfileclosesubmit` 按已摘除的 File ID 领取并提交前台 CLOSE，保留调用者给出的绝对期限，和后台路径共用提交与提交前回滚。ARM64/RV64 QEMU `pipeio` 验证重复领取被拒，且从原 RPC 的确认回收旧写端引用。此项仍由夹具等待；公开 `close()` 的限时等待和信号重启尚未接入。

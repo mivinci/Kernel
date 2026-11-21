@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage405（2026-11-22）：双架构 QEMU `pipeio` 验证前台 CLOSE 到期或遇信号后，把同一 RPC 交给后台；服务确认后才回收旧引用。
 - stage404（2026-11-22）：双架构 QEMU `pipeio` 验证前台 CLOSE 使用共享计时器和完成事件等待原 RPC；公开 `close()` 和 SA_RESTART 尚未接入。
 - stage403（2026-11-22）：双架构 QEMU `pipeio` 验证前台 CLOSE 按已摘除的 File 提交、拒绝重复领取并从原 RPC 收尾。公开 `close()` 的限时等待和信号重启仍待接入。
 - stage402（2026-11-22）：公开 `dup2()` 接入原子替换和后台 CLOSE。双架构 QEMU `pipeio` 验证满表替换及旧写端收尾；后台确认仍由夹具主动推进。
