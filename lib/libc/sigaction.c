@@ -7,6 +7,14 @@
 #define ACTION_FLAGS                                                                               \
   (SA_NODEFER | SA_RESETHAND | SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_RESTART)
 
+static volatile u32 depth;
+
+u32
+__libc_sigdepth(void)
+{
+  return depth;
+}
+
 static int
 faultcode(int signum, u64 reason)
 {
@@ -62,9 +70,13 @@ childcode(u64 reason, u64 status)
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 frame, u64 flags)
 {
-  int saved = errno;
-  if (sysctxsigentry((const Sighead *) (uintptr_t) frame, flags))
+  const Sighead *head = (const Sighead *) (uintptr_t) frame;
+  u32            layer = (u32) head->depth;
+  u64            ignored;
+  int            saved = errno;
+  if (sysctxsigentry(head, flags))
     __sys_exit(128 + SIGSEGV);
+  depth = layer;
   if (flags & SIGNAL_SIGINFO) {
     void (*handler)(int, siginfo_t *, void *) =
         (void (*)(int, siginfo_t *, void *))(uintptr_t) function;
@@ -89,6 +101,9 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 fra
     void (*handler)(int) = (void (*)(int))(uintptr_t) function;
     handler((int) signum);
   }
+  if (__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored))
+    __sys_exit(128 + SIGSEGV);
+  depth = layer - 1;
   errno = saved;
   __sys_sigreturn((void *) frame);
 }

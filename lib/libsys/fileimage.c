@@ -302,15 +302,19 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32 *rest
       return error ? error : status;
   }
   for (;;) {
+    u64 deadline;
     fileprogress(state);
     error = sysoppoll(work, cache, key);
     if (!error)
       error = sysopfinished(work, cache, key);
     if (error != -ERR_WOULD_BLOCK)
       return error;
-    if (op->deadline) {
+    if (op->phase == SYSOP_RESULT && op->status == -ERR_PEER)
+      return -ERR_PEER;
+    deadline = op->phase == SYSOP_WAITING ? op->deadline : 0;
+    if (deadline) {
       error = systimernow(&now);
-      if (error || now >= op->deadline)
+      if (error || now >= deadline)
         return error ? error : -ERR_TIMEDOUT;
     }
     if (op->phase == SYSOP_WAITING) {
@@ -321,12 +325,12 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32 *rest
         return error;
       status = sysctxinterruptible(&state->contexts, self, context);
       if (!status)
-        status = systimerwaitsignal(op->deadline, EVENT_RQ_DONE, mask, restart);
+        status = systimerwaitsignal(deadline, EVENT_RQ_DONE, mask, restart);
       error = sysctxabort(&state->contexts, self, context);
       if (error)
         return error;
     } else
-      status = systimerwaitsignal(op->deadline, EVENT_RQ_DONE, mask, restart);
+      status = systimerwaitsignal(deadline, EVENT_RQ_DONE, mask, restart);
     if (status)
       return status;
   }
@@ -499,6 +503,81 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (!error)
     fileprogress(state);
   return error;
+}
+
+isize
+sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
+               Fileioresult *result)
+{
+  Fileimage *state;
+  Connwork  *work;
+  Conncache *cache;
+  Slotop    *op;
+  Opkey      key, background;
+  u64        mask, ignored, file;
+  u32        restart, interrupted = 0, retry = 1;
+  isize      error, discard;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  fileprogress(state);
+  bytes = MIN(bytes, FS_SLOT_BYTES);
+  error = sysfileiostage(state, layer, fd, opcode, input, bytes, &work, &key);
+  if (error)
+    goto restore;
+  cache = sysfileimagecache(state);
+  for (;;) {
+    restart = 0;
+    error = sysfileiowait(state, layer, &key, mask, &restart);
+    if (error == -ERR_INTERRUPTED) {
+      interrupted = 1;
+      retry &= restart;
+      continue;
+    }
+    if (!error && interrupted && retry) {
+      error = sysfileiorestart(state, &key, bytes);
+      if (!error) {
+        interrupted = 0;
+        continue;
+      }
+      if (error == -ERR_STATE && key.lease.seq)
+        error = 0; /* Fixed result takes precedence over restart. */
+    }
+    if (!error) {
+      error = sysfileiofinish(state, &key, output, bytes, result);
+      if (!error)
+        break;
+    }
+    if (!key.lease.seq || sysopcheck(work, cache, &key))
+      break;
+    op = &work->state.operations[key.lease.slot];
+    if (op->phase == SYSOP_PREPARED) {
+      discard = sysopabort(work, cache, &key, &file);
+      if (!discard)
+        discard = sysfilerefunpin(&state->files, work->state.self, file);
+      if (discard)
+        error = discard;
+      break;
+    }
+    if (error == -ERR_TIMEDOUT) {
+      discard = sysfileioresume(state, &key);
+      if (!discard)
+        continue;
+      if (discard == SYSOP_ABANDONED)
+        break;
+    }
+    if (op->phase == SYSOP_RESULT && op->status == -ERR_PEER && !work->state.ended)
+      (void) sysoppeerended(work, cache, &key);
+    if (!sysopabandon(work, cache, &key, &background))
+      draining |= 1U << background.connection.index;
+    break;
+  }
+restore:
+  discard = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : discard;
 }
 
 isize

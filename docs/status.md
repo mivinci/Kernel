@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage416（2026-11-22）：公开 `read()` / `write()` 接入；双架构 QEMU `pipeio` 验证短读、EINTR 和自动重启，仍使用管道夹具。
 - stage415（2026-11-22）：双架构 QEMU `pipeio` 验证确认零进展后以原 File 和写入快照重启，fd 复用不改变目标。
 - stage414（2026-11-22）：双架构 QEMU `pipeio` 验证读写等待交付本次 handler 的 `SA_RESTART` 标志，同时保留原 RPC 和超时规则。
 - stage413（2026-11-22）：双架构 QEMU `pipeio` 验证读写取消到期后后台保留原 RPC，并在睡眠期间收尾、归还 File pin。

@@ -54,6 +54,8 @@ isize sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes);
    Zero means the operation was released; inspect result for its outcome. */
 isize sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes,
                       Fileioresult *result);
+isize sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
+                     Fileioresult *result);
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
 isize sysfileimagedup2(int fd, int target);

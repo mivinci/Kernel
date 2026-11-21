@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <signal.h>
 #include <unistd.h>
 #include "private/fileimage.h"
 
@@ -47,4 +48,62 @@ close(int fd)
     return 0;
   errno = result == -ERR_BAD_HANDLE ? EBADF : result == -ERR_INTERRUPTED ? EINPROGRESS : EIO;
   return -1;
+}
+
+u32 __libc_sigdepth(void);
+
+static ssize_t
+transfer(int fd, u64 opcode, const void *input, void *output, size_t count)
+{
+  Fileioresult completed;
+  isize status = sysfileimageio(__libc_sigdepth(), fd, opcode, input, output, count, &completed);
+  int   error;
+  if (!status) {
+    status = completed.native;
+    if (!status) {
+      if (!completed.business)
+        return (ssize_t) completed.count;
+      error = completed.business >= -INT32_MAX ? (int) -completed.business : EIO;
+      if (opcode == FS_WRITE && error == EPIPE)
+        (void) raise(SIGPIPE);
+      errno = error;
+      return -1;
+    }
+  }
+  switch (status) {
+  case -ERR_BAD_HANDLE:
+    error = EBADF;
+    break;
+  case -ERR_FAULT:
+    error = EFAULT;
+    break;
+  case -ERR_CANCELLED:
+    error = EINTR;
+    break;
+  case -ERR_BUSY:
+  case -ERR_CAPACITY:
+  case -ERR_LIMIT:
+    error = EAGAIN;
+    break;
+  case -ERR_NOMEM:
+    error = ENOMEM;
+    break;
+  default:
+    error = EIO;
+    break;
+  }
+  errno = error;
+  return -1;
+}
+
+ssize_t
+read(int fd, void *buffer, size_t count)
+{
+  return transfer(fd, FS_READ, NULL, buffer, count);
+}
+
+ssize_t
+write(int fd, const void *buffer, size_t count)
+{
+  return transfer(fd, FS_WRITE, buffer, NULL, count);
 }

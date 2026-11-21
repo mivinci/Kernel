@@ -271,14 +271,21 @@ serviceloop(const Bootview *boot, u32 interrupt)
             !__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
             gate.source == target.target && gate.words[0] == PIPETEST &&
             !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !wait.io.request);
-    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_WRITE &&
-          !ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1) &&
-          !ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST);
-    {
+    for (i = 0; i < 2; i++) {
       u64 flags;
-      Msg cancelled = {{(u64) -EINTR, request.words[2], 0, 0}};
+      Msg cancelled = {{(u64) -EINTR, 0, 0, 0}};
+      CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_WRITE &&
+            !ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1) &&
+            !ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST);
+      cancelled.words[1] = request.words[2];
       CHECK(!ipc_rqcheck(request.request, &flags) && flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
             !ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &cancelled));
+      do {
+        CHECK(!fsstep(&fs));
+      } while (!file.stream.bytes);
+      do {
+        CHECK(!fsstep(&fs));
+      } while (file.stream.bytes);
     }
   } else if (interrupt) {
     Ipcmsg request, gate;
@@ -303,6 +310,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
 static volatile int caught;
 static Fileimage   *interruptedimage;
 static Connwork    *interruptedwork;
+static volatile int release_read;
 
 static void
 oninterrupt(int signal)
@@ -313,6 +321,11 @@ oninterrupt(int signal)
   if (signal == SIGUSR1) {
     if (caught) {
       caught++;
+      if (release_read) {
+        Msg    gate = {{PIPETEST, 0, 0, 0}};
+        Ipcmsg reply;
+        CHECK(!ipc_call(interruptedwork->state.call, &gate, CALL_CONTROL, &reply));
+      }
       return;
     }
     CHECK(!sysfileimage(&image) && image == interruptedimage && !sysfileimagefs(1, 0, &work) &&
@@ -397,17 +410,14 @@ interruptclient(void)
             -ERR_FAULT &&
         !draftpeer && !draft.lease.seq && !sysfdobserve(&image->fds, fds[1], &original) &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) && !ref.pins &&
-        !sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
-        draftpeer == work && sysfileiowait(image, 0, &draft, mask, &restart) == -ERR_INTERRUPTED &&
-        !restart && caught == 2 && !sysoprpc(work, cache, &draft, &rpc) &&
-        (work->state.operations[draft.lease.slot].flags & SYSOP_CANCEL_SENT) &&
-        !ipc_call(work->state.call, &gate, CALL_CONTROL, &result) &&
-        !sysfileiowait(image, 0, &draft, mask, &restart) &&
-        !sysfileiofinish(image, &draft, data, 1, &completed) && !completed.native &&
-        completed.business == -EINTR && !completed.count && data[0] == 'p' &&
-        ipc_rqpoll(rpc, 0, &result) < 0);
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  release_read = 1;
+  CHECK(read(fds[0], data, 1) == -1 && errno == EINTR && caught == 2 && data[0] == 'p');
+  release_read = 0;
+  errno = EBUSY;
   action.sa_flags = SA_RESTART;
   CHECK(!sigaction(SIGUSR1, &action, NULL) &&
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
         !sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
         sysfileiowait(image, 0, &draft, mask, &restart) == -ERR_INTERRUPTED && restart == 1 &&
         caught == 3 && sysfileioresume(image, &draft) == -ERR_WOULD_BLOCK &&
@@ -444,6 +454,10 @@ interruptclient(void)
         !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
   transfer(image, work, fds[0], FS_READ, data, 1, 1, 0);
   CHECK(data[0] == 'p');
+  release_read = 1;
+  CHECK(write(fds[1], "pq", 2) == 2 && read(fds[0], data, sizeof(data)) == 2 && data[0] == 'p' &&
+        data[1] == 'q' && data[2] == 0xa5 && errno == EBUSY && caught == 5);
+  release_read = 0;
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
   data[0] = 'p';
