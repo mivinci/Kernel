@@ -36,6 +36,8 @@ class ConnectionWorkTests(unittest.TestCase):
             'sysconnworkrelease':[C.POINTER(Work),C.POINTER(Cache),Lease],
             'sysconnworkclean':[C.POINTER(Work),C.POINTER(Cache)],
             'sysconnforkunmap':[C.POINTER(Work),Peer,Peer,C.c_int64],
+            'sysconnworkfork':[C.POINTER(Work),C.POINTER(Cache),Peer,Tag],
+            'sysconnfork':[C.POINTER(Cache),Peer,Peer,C.c_void_p,C.c_uint64],
             'testmemory':[C.c_int64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64],
             'testmaperror':[C.c_int64,C.c_int64,C.c_int64,C.c_int64],
             'testfreeerror':[C.c_int64],'testfrees':[]}
@@ -89,6 +91,25 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual(self.lib.testfrees(),frees)
         self.assertEqual(bytes(self.work.state.map),bytes(C.sizeof(Mapping)))
         self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),0)
+
+    def test_child_work_rebind_requires_unmap_and_discards_only_local_parent_copies(self):
+        self.adopt()
+        child=Peer(pid(3),20);newtag=Tag()
+        entries=(C.c_uint64*3)(self.peer.pid,self.peer.image,101)
+        self.assertEqual(self.lib.sysconnfork(C.byref(self.cache),self.self,child,entries,1),0)
+        self.assertEqual(self.lib.sysconnbind(C.byref(self.cache),self.peer,C.byref(newtag)),0)
+        before=bytes(self.work)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag),-7)
+        self.assertEqual(bytes(self.work),before)
+        self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),0)
+        frees=self.lib.testfrees()
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag),0)
+        self.assertEqual((self.work.state.self.pid,self.work.state.memory,self.work.state.call),(child.pid,0,0))
+        self.assertEqual(self.work.state.bootstrap.rpc,0)
+        self.assertEqual(self.lib.testfrees(),frees)
+        after=bytes(self.work)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag),0)
+        self.assertEqual(bytes(self.work),after)
 
     def adopt(self):
         self.result();mapped=Mapping(0x1200000,36864,self.connid,19,1,1)
