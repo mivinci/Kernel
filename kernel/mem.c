@@ -5,11 +5,23 @@
 #include <diag.h>
 #include <vm.h>
 #include <bootstore.h>
+#include <dma.h>
+#include <abi/base.h>
 
-static Mem      memories[MEMS];
-static Blockref blocks[BREFS];
-static u32      initialized, freehead, freemem;
-static int      undoclone(Memid source, u32 adopted);
+typedef struct Dmadomain Dmadomain;
+struct Dmadomain
+{
+  u64    generation;
+  Acctid acct;
+  Memid  first;
+  u32    live, closing, pages;
+};
+
+static Mem       memories[MEMS];
+static Blockref  blocks[BREFS];
+static Dmadomain domains[DT_DEVICES];
+static u32       initialized, freehead, freemem;
+static int       undoclone(Memid source, u32 adopted);
 
 void
 meminit(void)
@@ -246,6 +258,96 @@ int
 memcreate(Acctid acct, u64 bytes, Memid *out)
 {
   return create(acct, 0, bytes, out, MEM_DATA);
+}
+
+static Dmadomain *
+dmadomain(Dmaid id)
+{
+  Dmadomain *d;
+  if (id.device >= DT_DEVICES || id.reserved)
+    return NULL;
+  d = &domains[id.device];
+  return d->live && d->generation == id.generation ? d : NULL;
+}
+
+int
+dmaopen(u32 device, Acctid acct, Dmaid *out)
+{
+  Device     window;
+  Acct       account;
+  Dmadomain *d;
+  if (!out || device >= DT_DEVICES || devstat(device * DT_REGS, &window) ||
+      acctstat(acct, &account) || account.state != AC_ACTIVE)
+    return -ERR_INVALID;
+  d = &domains[device];
+  if (d->live)
+    return -ERR_BUSY;
+  if (d->generation == UINT64_MAX)
+    return -ERR_LIMIT;
+  if (accthold(acct))
+    return -ERR_LIMIT;
+  d->generation++;
+  d->acct = acct;
+  d->live = 1;
+  out->device = device;
+  out->generation = d->generation;
+  out->reserved = 0;
+  return 0;
+}
+
+int
+dmaallocpage(Dmaid id, Memid *out)
+{
+  Dmadomain *d = dmadomain(id);
+  Acct       account;
+  Mem       *m;
+  int        error;
+  if (!d || d->closing)
+    return -ERR_STALE;
+  if (!out)
+    return -ERR_INVALID;
+  if (acctstat(d->acct, &account) || account.state != AC_ACTIVE)
+    return -ERR_STATE;
+  if (d->pages == DMA_MAX_PAGES)
+    return -ERR_LIMIT;
+  error = memcreate(d->acct, PAGE_SIZE, out);
+  if (error)
+    return error == AC_LIMIT ? -ERR_LIMIT : -ERR_NOMEM;
+  m = find(*out);
+  m->kind = MEM_DMA;
+  /* backing links only the pinned objects of this generation. */
+  m->backing = d->first;
+  m->refs++;
+  d->first = *out;
+  d->pages++;
+  return 0;
+}
+
+int
+dmaend(Dmaid id)
+{
+  Dmadomain *d = dmadomain(id);
+  u32        count;
+  if (!d)
+    return -ERR_STALE;
+  d->closing = 1;
+  for (count = 0; count < 32 && d->pages; count++) {
+    Memid pin = d->first;
+    Mem  *m = find(pin);
+    if (!m || m->kind != MEM_DMA)
+      panic("DMA domain pin");
+    d->first = m->backing;
+    clearbacking(m);
+    if (memrelease(pin))
+      panic("DMA pin reference");
+    d->pages--;
+  }
+  if (d->pages)
+    return 1;
+  if (d->first.generation || acctdrop(d->acct))
+    panic("DMA domain cleanup");
+  d->live = d->closing = 0;
+  return 0;
 }
 
 int

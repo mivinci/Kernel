@@ -8,6 +8,7 @@
 #include <irq.h>
 #include <clock.h>
 #include <hal/dma.h>
+#include <dma.h>
 #include <vm.h>
 extern const u8  vdev_image[], vdev_image_end[];
 extern const u64 vdev_trace_address;
@@ -73,6 +74,44 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
   }
   REQUIRE(!spacewrite(process.space, vdev_trace_address, trace, sizeof(trace)));
 }
+static void
+testpins(Setid set, u32 device)
+{
+  Dmaid  domain, other;
+  Acctid payer, next;
+  Memid  page, oldest;
+  Mem    held;
+  Set    account;
+  u32    i;
+  int    error;
+  REQUIRE(!acctcreate(set, DMA_MAX_PAGES, DMA_MAX_PAGES, &payer));
+  REQUIRE(!acctcreate(set, 2, 2, &next));
+  REQUIRE(!dmaopen(device, payer, &domain) && dmaopen(device, next, &other) == -ERR_BUSY);
+  for (i = 0; i < DMA_MAX_PAGES; i++) {
+    REQUIRE(!dmaallocpage(domain, &page) && !memfree(page));
+    if (!i)
+      oldest = page;
+  }
+  REQUIRE(dmaallocpage(domain, &page) == -ERR_LIMIT && !acctclose(payer) && !acctunbind(payer));
+  REQUIRE(!memstat(oldest, &held) && held.kind == MEM_DMA && held.refs == 1 && !held.managers &&
+          !setstat(set, &account) && account.charged == DMA_MAX_PAGES);
+  /* No DMA is submitted in this census. The real I/O cases below separately
+     verify device reset before releasing their test buffers. */
+  REQUIRE(dmaend(domain) == 1 && dmaallocpage(domain, &page) == -ERR_STALE &&
+          dmaopen(device, next, &other) == -ERR_BUSY && !memstat(oldest, &held));
+  do {
+    error = dmaend(domain);
+  } while (error > 0);
+  REQUIRE(!error && memstat(oldest, &held) == MEM_BAD && !setstat(set, &account) &&
+          !account.charged);
+  REQUIRE(!dmaopen(device, next, &other) && other.generation > domain.generation &&
+          dmaend(domain) == -ERR_STALE && dmaallocpage(domain, &page) == -ERR_STALE);
+  REQUIRE(!dmaallocpage(other, &page) && !dmaend(other) && !memfree(page));
+  REQUIRE(!acctclose(next) && !acctunbind(next));
+  putstr("DMAPINCHECK pages=");
+  puthex(DMA_MAX_PAGES);
+  putstr("\n");
+}
 void
 vdevtest(const Dtinfo *info)
 {
@@ -98,6 +137,8 @@ vdevtest(const Dtinfo *info)
   for (i = 0; i < info->ndev; i++) {
     if (info->dev[i].kind != DT_VIRTIO)
       continue;
+    if (!pages)
+      testpins(set, i);
     page = ALIGN_DOWN(info->dev[i].reg[0].base, PAGE_SIZE);
     for (j = 0; j < i; j++)
       if (info->dev[j].kind == DT_VIRTIO && ALIGN_DOWN(info->dev[j].reg[0].base, PAGE_SIZE) == page)

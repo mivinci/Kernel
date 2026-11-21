@@ -17,6 +17,7 @@
 #define MEM_MMIO        1
 #define MEM_IMMUTABLE   2
 #define MEM_BOOT        3
+#define MEM_DMA         4
 #define MEM_FORK_SOURCE 1
 #define MEM_FORK_VIEW   2
 #define MEM_DENIED      -7

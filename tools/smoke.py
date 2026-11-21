@@ -1544,6 +1544,11 @@ def exercise(args, run_dir, record):
                         raise SmokeError("libc heap payload/rollback/reclamation mismatch")
                     record["heap"]=checks[0]
                 if args.case == "virtiodev":
+                    pins = [fields(line) for line in serial.read_text().splitlines()
+                            if line.startswith("DMAPINCHECK ")]
+                    if pins != [dict(pages=1024)]:
+                        raise SmokeError("DMA generation pin and accounting check missing")
+                    record["dma_pins"] = pins[0]
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("VIRTIOCHECK ")]
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
