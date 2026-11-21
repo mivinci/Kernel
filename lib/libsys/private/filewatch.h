@@ -2,6 +2,7 @@
 #define _LIBSYS_FILEWATCH_H
 #include "file.h"
 #include <sys/channel.h>
+#define SYSFILE_OPEN_TTL_NS UINT64_C(10000000000)
 
 typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
@@ -22,6 +23,11 @@ struct Filewatch
 isize sysfileowner(Fileowner *owner, Handle permit, const Ipcmsg *source);
 isize sysfileownerread(Fileowner *owner);
 isize sysfileownerclose(Fileowner *owner);
+/* Monotonic nanoseconds for ordinary OPEN preparation. A zero deadline
+   means no pending preparation; clear it only after ATTACH commits or the
+   reference is revoked. Inheritance has a separate lifetime rule. */
+isize sysfilenow(u64 *now);
+isize sysfileopendeadline(u64 *deadline);
 
 /* Use a zero-initialized watch in private storage separate from the region
    and descriptor output. The serialized service loop supplies a received

@@ -229,6 +229,8 @@ filecreatetest(void)
   datarecoverytest(2);
   filewatchexittest(0);
   filewatchexittest(1);
+  CHECK(!proctimerstart());
+  filewatchexittest(2);
 }
 static void
 filewatchexittest(u32 vfs)
@@ -247,12 +249,12 @@ filewatchexittest(u32 vfs)
   pgstat(&before);
   CHECK(!setcreate(2048, 4096, count, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  loadroles(set, &image, pid, process, vfs ? "LMN" : "JK", count);
+  loadroles(set, &image, pid, process, vfs == 2 ? "OPQ" : vfs ? "LMN" : "JK", count);
   for (i = 0; i < count; i++) {
     CHECK(!procinfo(pid[i], &process[i]));
     while (process[i].state != PROC_EXITING) {
       error = procrunone();
-      CHECK((!error || error == -ERR_WOULD_BLOCK) && ++turns < 256);
+      CHECK((!error || error == -ERR_WOULD_BLOCK) && ++turns < (vfs == 2 ? 4096U : 256U));
       if (error)
         CHECK(procidle() >= 0);
       CHECK(!procinfo(pid[i], &process[i]));
@@ -273,7 +275,8 @@ filewatchexittest(u32 vfs)
     if (!vfs && i)
       CHECK(trace[2] == 2 && trace[3] == 1);
     if (vfs && i == 2)
-      CHECK(trace[1] == 2 && trace[2] == 2 && trace[3] == 1 && trace[5] == 1);
+      CHECK(trace[1] == 2 && trace[2] == 2 && trace[3] == 1 && trace[5] == 1 &&
+            trace[6] == (vfs == 2));
     while ((error = procclean(pid[i])) > 0) {
     }
     CHECK(!error && !lifecollect(process[i].life, 1, &result));
@@ -283,7 +286,7 @@ filewatchexittest(u32 vfs)
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck());
   if (vfs) {
-    putstr("FILEPREPDEATHCHECK cancelled=");
+    putstr(vfs == 2 ? "FILEPREPTIMECHECK cancelled=" : "FILEPREPDEATHCHECK cancelled=");
     puthex(trace[5]);
     putstr(" attached=");
     puthex(trace[3]);

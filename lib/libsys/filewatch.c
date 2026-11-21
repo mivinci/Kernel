@@ -1,6 +1,41 @@
 #include "private/filewatch.h"
 #include "private/syscall.h"
 #include <abi/observe.h>
+#include <abi/time.h>
+
+isize
+sysfilenow(u64 *now)
+{
+  int64_t seconds;
+  u64     ns;
+  isize   status;
+  if (!now)
+    return -ERR_INVALID;
+  status = __sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &ns);
+  if (status)
+    return status;
+  if (seconds < 0 || ns >= UINT64_C(1000000000) ||
+      (u64) seconds > (UINT64_MAX - ns) / UINT64_C(1000000000))
+    return -ERR_OVERFLOW;
+  *now = (u64) seconds * UINT64_C(1000000000) + ns;
+  return 0;
+}
+
+isize
+sysfileopendeadline(u64 *deadline)
+{
+  u64   now;
+  isize status;
+  if (!deadline)
+    return -ERR_INVALID;
+  status = sysfilenow(&now);
+  if (status)
+    return status;
+  if (now > UINT64_MAX - SYSFILE_OPEN_TTL_NS)
+    return -ERR_OVERFLOW;
+  *deadline = now + SYSFILE_OPEN_TTL_NS;
+  return 0;
+}
 
 isize
 sysfileowner(Fileowner *owner, Handle permit, const Ipcmsg *source)

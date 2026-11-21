@@ -1627,6 +1627,11 @@ def exercise(args, run_dir, record):
                     if prep_death != [dict(cancelled=1, attached=1, closed=2)]:
                         raise SmokeError("file prepare ownership after VFS exit mismatch")
                     record['file_prepare_death'] = prep_death[0]
+                    prep_time = [fields(line) for line in serial.read_text().splitlines()
+                                 if line.startswith("FILEPREPTIMECHECK ")]
+                    if prep_time != [dict(cancelled=1, attached=1, closed=2)]:
+                        raise SmokeError("file preparation deadline or attached reference mismatch")
+                    record['file_prepare_time'] = prep_time[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,
@@ -1928,7 +1933,7 @@ def main():
     if args.case == "virtiodev":
         args.virtio = True
     if args.timeout is None:
-        args.timeout = max(25 if args.case in ("timer", "irq") else 10, args.ram / 32)
+        args.timeout = max(25 if args.case in ("timer", "irq", "runtime") else 10, args.ram / 32)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     run_dir = ROOT / "build" / args.arch / "smoke" / uuid.uuid4().hex
