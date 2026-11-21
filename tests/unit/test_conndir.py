@@ -60,6 +60,7 @@ class ConnectionDirectoryTests(unittest.TestCase):
             'sysconnpeer':[C.c_int64,C.POINTER(Peer)],'sysconninit':[C.POINTER(Cache),Peer],
             'sysconncheck':[C.POINTER(Cache),Peer],'sysconnbind':[C.POINTER(Cache),Peer,C.POINTER(Tag)],
             'sysconnforkcheck':[C.POINTER(Cache),Peer,C.c_void_p,C.c_uint64],
+            'sysconnfork':[C.POINTER(Cache),Peer,Peer,C.c_void_p,C.c_uint64],
             'sysconnview':[C.POINTER(Cache),Tag,C.POINTER(Entry)],
             'sysconnbegin':[C.POINTER(Cache),Tag,C.c_uint64,C.POINTER(Claim)],
             'sysconnreusebegin':[C.POINTER(Cache),Tag,C.c_uint64,C.POINTER(Claim)],
@@ -89,6 +90,22 @@ class ConnectionDirectoryTests(unittest.TestCase):
         entries[1]-=1;entries[2]=0
         self.assertEqual(self.lib.sysconnforkcheck(C.byref(cache),owner,entries,1),-1)
         self.assertEqual(bytes(cache),before)
+
+    def test_fork_directory_invalidates_parent_tags_and_connection_ownership(self):
+        cache=Cache();owner=Peer(pid(1),9);child=Peer(pid(3),11);backend=Peer(pid(2),10)
+        tag=Tag();claim=Claim();out=Entry()
+        self.lib.sysconninit(C.byref(cache),owner)
+        self.lib.sysconnbind(C.byref(cache),backend,C.byref(tag))
+        self.lib.sysconnbegin(C.byref(cache),tag,123,C.byref(claim))
+        entries=(C.c_uint64*3)(backend.pid,backend.image,101)
+        self.assertEqual(self.lib.sysconnfork(C.byref(cache),owner,child,entries,1),0)
+        self.assertEqual(self.lib.sysconncheck(C.byref(cache),child),0)
+        self.assertEqual(self.lib.sysconnview(C.byref(cache),tag,C.byref(out)),-4)
+        entry=cache.entries[tag.index]
+        self.assertEqual((entry.state,entry.owner,entry.sequence,entry.connid),(1,0,0,0))
+        after=bytes(cache)
+        self.assertEqual(self.lib.sysconnfork(C.byref(cache),owner,child,entries,1),0)
+        self.assertEqual(bytes(cache),after)
 
     def setUp(self):
         self.cache=Cache();self.self=Peer(pid(1),4)

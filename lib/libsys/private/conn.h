@@ -55,6 +55,10 @@ isize sysconnpeer(Handle call, Connpeer *out);
 isize sysconninit(Conncache *cache, Connpeer self);
 /* Read-only admission of child tokens against the inherited directory. */
 isize sysconnforkcheck(Conncache *cache, Connpeer parent, const Fixconn *entries, u64 count);
+/* Directory only. Caller excludes caught signals and separately repairs all
+   inherited Connwork/File/Rctx state and removes private staging aliases. */
+isize sysconnfork(Conncache *cache, Connpeer parent, Connpeer child, const Fixconn *entries,
+                  u64 count);
 isize sysconncheck(const Conncache *cache, Connpeer self);
 isize sysconnbind(Conncache *cache, Connpeer peer, Conntag *out);
 isize sysconnview(Conncache *cache, Conntag tag, Connentry *out);

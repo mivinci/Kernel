@@ -142,6 +142,44 @@ sysconnpeer(Handle call, Connpeer *out)
   return -ERR_STATE;
 }
 isize
+sysconnfork(Conncache *cache, Connpeer parent, Connpeer child, const Fixconn *entries, u64 count)
+{
+  u64   i, j;
+  isize error;
+  if (!cache || !peerok(parent) || !peerok(child) || parent.pid == child.pid ||
+      count > SYSCONN_COUNT || (count && !output(cache, entries, count * sizeof(*entries))))
+    return -ERR_INVALID;
+  if (same(cache->self, child))
+    return sysconncheck(cache, child);
+  error = sysconnforkcheck(cache, parent, entries, count);
+  if (error)
+    return error;
+  for (i = 0; i < SYSCONN_COUNT; i++)
+    for (j = 0; j < count; j++)
+      if (cache->entries[i].peer.pid == entries[j].pid &&
+          cache->entries[i].peer.image == entries[j].image &&
+          cache->entries[i].generation == UINT64_MAX)
+        return -ERR_OVERFLOW;
+  for (i = 0; i < SYSCONN_COUNT; i++) {
+    Connentry *entry = &cache->entries[i];
+    int        keep = 0;
+    for (j = 0; j < count; j++)
+      if (entry->peer.pid == entries[j].pid && entry->peer.image == entries[j].image)
+        keep = 1;
+    entry->sequence = entry->owner = entry->connid = 0;
+    if (entry->generation != UINT64_MAX)
+      entry->generation++;
+    entry->state = keep                              ? SYSCONN_UNCLAIMED
+                   : entry->generation == UINT64_MAX ? SYSCONN_RETIRED
+                                                     : SYSCONN_FREE;
+    if (!keep)
+      entry->peer.pid = entry->peer.image = 0;
+  }
+  cache->sequence = 0;
+  cache->self = child;
+  return 0;
+}
+isize
 sysconninit(Conncache *cache, Connpeer self)
 {
   u32 i;
