@@ -548,6 +548,106 @@ sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *
   }
 }
 isize
+sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
+            Bootmap *map, Rkey *active)
+{
+  Bootstrap *boot;
+  Connclaim  claim;
+  Connentry  entry;
+  Connpeer   self;
+  Rctx      *context;
+  u64        mask, ignored;
+  isize      error, status = 0;
+  if (layer >= RCTX_LAYERS || handlekind(space) != HANDLE_RESOURCE || (address & PAGE_MASK) ||
+      address < BOOT_USER_LO || address >= BOOT_USER_HI || FS_CONN_BYTES > BOOT_USER_HI - address ||
+      !separate(bank, sizeof(*bank), work, sizeof(*work)) ||
+      !separate(bank, sizeof(*bank), cache, sizeof(*cache)) ||
+      !separate(work, sizeof(work->state), cache, sizeof(*cache)) ||
+      !separate(active, sizeof(*active), bank, sizeof(*bank)) ||
+      !separate(active, sizeof(*active), work, sizeof(*work)) ||
+      !separate(active, sizeof(*active), cache, sizeof(*cache)) ||
+      !separate(map, sizeof(*map), bank, sizeof(*bank)) ||
+      !separate(map, sizeof(*map), work, sizeof(*work)) ||
+      !separate(map, sizeof(*map), cache, sizeof(*cache)) ||
+      !separate(map, sizeof(*map), active, sizeof(*active)))
+    return -ERR_INVALID;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  boot = &work->state.bootstrap;
+  claim = boot->claim;
+  self = work->state.self;
+  error = sysconncheck(cache, self);
+  if (!error)
+    error = sysconnview(cache, work->state.tag, &entry);
+  if (error)
+    goto restore;
+  if (entry.state != SYSCONN_CONNECTING || entry.owner != claim.owner ||
+      entry.sequence != claim.seq || claim.tag.generation != work->state.tag.generation ||
+      claim.tag.index != work->state.tag.index || entry.peer.pid != work->state.peer.pid ||
+      entry.peer.image != work->state.peer.image || boot->opcode != FS_HELLO) {
+    error = -ERR_STALE;
+    goto restore;
+  }
+  while (active->sequence || boot->state == SYSBOOT_PREPARED || boot->state == SYSBOOT_WAITING) {
+    if (!active->sequence) {
+      if (boot->state == SYSBOOT_PREPARED)
+        error =
+            sysctxbootcall(bank, self, layer, boot, claim, work->state.call, CALL_RECV_MEM, active);
+      else
+        error = sysctxbootwait(bank, self, layer, boot, claim, active);
+      if (error)
+        goto restore;
+    }
+    error = sysctxlookup(bank, self, *active, &context);
+    if (error)
+      goto restore;
+    if (active->layer != layer || context->route.kind != RCTX_ROUTE_BOOT ||
+        context->route.bootstrap != boot || context->route.claim.seq != claim.seq ||
+        context->route.claim.owner != claim.owner ||
+        context->route.claim.tag.index != claim.tag.index ||
+        context->route.claim.tag.generation != claim.tag.generation) {
+      error = -ERR_STALE;
+      goto restore;
+    }
+    if (context->phase == RCTX_PREPARED) {
+      error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+      if (error)
+        return error;
+      status = sysctxinvoke(bank, self, *active);
+      error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+      if (error)
+        return error;
+    } else
+      status = context->status;
+    error = sysctxhandoff(bank, self, *active);
+    if (!error)
+      error = sysctxfinish(bank, self, *active);
+    if (error)
+      goto restore;
+    active->sequence = 0;
+    if (status) {
+      error = status;
+      goto restore;
+    }
+  }
+  error = sysbootfinished(boot, claim);
+  if (!error && !map->mapped)
+    error = sysbootmap(boot, claim, space, address, work->state.peer.image, map);
+  if (!error && (map->address != address || map->verified != 1))
+    error = -ERR_INVALID;
+  if (!error && boot->state == SYSBOOT_RESULT)
+    error = sysbootack(boot, claim);
+  if (!error)
+    error = sysconnworkadopt(work, cache, claim, space, map);
+  if (!error)
+    error = sysbootfinish(boot, claim);
+restore:
+  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : status;
+}
+
+isize
 sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
              Conncache *cache, const Opkey *key, Rkey *active)
 {

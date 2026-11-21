@@ -63,7 +63,7 @@ testpair(const char *roles)
     packet.resources[0].handle = testresource(table, LOCAL_SPACE);
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
-    packet.resources[2].tag = 256;
+    packet.resources[2].tag = i ? BOOT_FS_CALL : 256;
     if (i)
       CHECK(!localendpoint(table, processes[0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[2].handle));

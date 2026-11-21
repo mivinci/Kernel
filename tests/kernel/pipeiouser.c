@@ -27,42 +27,32 @@ volatile u64 pipeiotrace[2];
   } while (0)
 
 static void
-zero(void *data, u64 bytes)
-{
-  u64 i;
-  for (i = 0; i < bytes; i++)
-    ((u8 *) data)[i] = 0;
-}
-
-static void
-setup(const Bootview *boot, Connwork *work, Conncache *cache)
+setup(const Bootview *boot, Connwork *work, Conncache *cache, Rbank *bank)
 {
   Connpeer  peer;
   Conntag   tag;
   Connclaim claim;
-  Bootmap   map;
-  Msg       message;
-  Ipcmsg    result;
-  Handle    call, parent, redundant = 0, rpc;
+  Bootmap   map = {0};
+  Rkey      active = {0};
+  Handle    call, parent, space, redundant = 0;
   CHECK(!__sys_getid(&cache->self.pid, &cache->self.image, &parent));
   CHECK(!sysconninit(cache, cache->self));
-  call = bootresource(boot, 256);
+  call = bootresource(boot, BOOT_FS_CALL);
   CHECK(!sysconnpeer(call, &peer) && !sysconnbind(cache, peer, &tag) &&
         !sysconnworkinit(work, cache, tag) &&
         !sysconnworktakecall(work, cache, &call, &redundant) && !call && !redundant &&
         !sysconnbegin(cache, tag, 1, &claim) &&
         !sysbootprepare(&work->state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0) &&
-        !sysbootrequest(&work->state.bootstrap, claim, &message) &&
-        !ipc_call(work->state.call, &message, CALL_ASYNC | CALL_RECV_MEM, &result));
-  rpc = result.request;
-  CHECK(!sysbootsubmitted(&work->state.bootstrap, claim, &result.request) &&
-        !ipc_rqwait(rpc, 0, &result) && !sysbootcapture(&work->state.bootstrap, claim, 0, &result));
-  zero(&map, sizeof(map));
-  CHECK(!sysbootmap(&work->state.bootstrap, claim, bootresource(boot, BOOT_SELF_SPACE), ADDRESS,
-                    peer.image, &map) &&
-        !sysconnworkadopt(work, cache, claim, bootresource(boot, BOOT_SELF_SPACE), &map) &&
-        !sysbootack(&work->state.bootstrap, claim) &&
-        !sysbootfinish(&work->state.bootstrap, claim));
+        !sysctxinit(bank, work->state.self));
+  space = bootresource(boot, BOOT_SELF_SPACE);
+  /* A conflicting image page leaves the already delivered HELLO retryable. */
+  CHECK(sysctxhello(bank, 0, work, cache, space, (uintptr_t) pipeiotrace & ~PAGE_MASK, &map,
+                    &active) < 0 &&
+        !active.sequence && !map.mapped && !work->state.memory &&
+        work->state.bootstrap.state == SYSBOOT_RESULT && work->state.bootstrap.resource);
+  CHECK(!sysctxhello(bank, 0, work, cache, space, ADDRESS, &map, &active) && !map.mapped &&
+        !active.sequence && work->state.map.verified &&
+        work->state.bootstrap.state == SYSBOOT_FREE);
 }
 
 static void
@@ -304,10 +294,10 @@ interruptclient(const Bootview *boot)
   isize            business;
   int              fds[2] = {-1, -1};
   Connpeer         self;
-  setup(boot, &work, &cache);
+  setup(boot, &work, &cache, &bank);
   self = work.state.self;
   action.sa_handler = oninterrupt;
-  CHECK(!sysctxinit(&bank, self) && !sysctxsigbind(&bank) && !sigaction(SIGUSR1, &action, NULL) &&
+  CHECK(!sysctxsigbind(&bank) && !sigaction(SIGUSR1, &action, NULL) &&
         !sysfilerefinit(&pool, self));
   CHECK(sysctxpipecreate(&bank, 0, &pool, &work, &cache, &table, &pipe, &active, fds, &business) ==
             -ERR_INTERRUPTED &&
@@ -366,20 +356,19 @@ serviceclient(const Bootview *boot)
   u64              closing;
   isize            business;
   int              fd[2] = {-1, -1};
-  Handle           call = bootresource(boot, 256);
+  Handle           call = bootresource(boot, BOOT_FS_CALL);
   Handle           rpc;
   Msg              invalid = {{FS_HELLO, 0, 23, 0}};
   Ipcmsg           result;
   CHECK(!ipc_call(call, &invalid, 0, &result) && (isize) result.words[0] == -EINVAL &&
         result.words[1] == 23);
-  setup(boot, &work, &cache);
+  setup(boot, &work, &cache, &bank);
   invalid.words[3] = UINT64_MAX;
   CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -EBUSY &&
         result.words[1] == 23);
   invalid.words[0] = FS_ATTACH;
   CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ENOSYS);
-  CHECK(!sysctxinit(&bank, work.state.self) && !sysfilerefinit(&pool, work.state.self) &&
-        !sysfdreserve(&table, 1, &held) &&
+  CHECK(!sysfilerefinit(&pool, work.state.self) && !sysfdreserve(&table, 1, &held) &&
         !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 99, &pipe, &invalid) &&
         !sysfilepipeabort(&pool, &work, &cache, &table, &pipe) && !pipe.operation.lease.seq);
   CHECK(!sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 98, &pipe, &invalid) &&
@@ -420,6 +409,7 @@ run(const Bootview *boot)
   const isize      status[] = {-EINTR, -EAGAIN, -ESPIPE, 0, 0, 0, -EPIPE};
   static Connwork  work;
   static Conncache cache;
+  static Rbank     bank;
   Fileslot         slot = {0};
   Filelease        lease;
   Ipcmsg           result;
@@ -428,7 +418,7 @@ run(const Bootview *boot)
   Handle           rpc;
   u32              attempt;
   Pipekey          keys[2], dup;
-  setup(boot, &work, &cache);
+  setup(boot, &work, &cache, &bank);
   createpipe(&work, &cache, keys);
   slot.state = FS_SLOT_SUBMITTED;
   slot.span = 1;

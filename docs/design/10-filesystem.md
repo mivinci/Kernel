@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage399：`sysctxhello` 用 Rctx 提交和领取原 HELLO，在实际排空后受检映射、ACK 并发布 READY。ARM64/RV64 QEMU `pipeio` 从 Boot 的 FILE 服务入口 `BOOT_FS_CALL` 发起真实 HELLO；先在已占用地址映射失败，保留原 MEM/RPC，再换地址从同一结果建连并继续 PIPE。连接地址和工作区仍由调用者提供；默认启动和公开 `pipe()` 尚未接入。
+
 stage398：`sysctxpipecreate` 对已提交 PIPE 的原生 PEER 核对原 RPC 并停止使用该连接；原请求未排空时返回 WOULD_BLOCK，保留两端 fd 和 File 预留。ARM64/RV64 QEMU `runtime` 验证服务接收后退出、同一记录续做、确认 RQ_FINISH 后才 ACK 并一起回收两端，输出 fd 未改动。排空仍由可信测试管理者完成，未引入生产 rqclean 权限；公开 `pipe()` 尚未接入。
 
 stage397：`sysctxpipecreate` 在调用者已建立 FS 连接后，串接管道预留、提交、原 RPC 等待和成对发布。ARM64/RV64 QEMU `pipeio` 用 SIGUSR1 中断这个入口，核对输出未变、预留仍在，随后重入同一记录领取唯一一次创建的两个 fd。接口保留原生中断，不自行决定公开 `pipe()` 的重启策略。
