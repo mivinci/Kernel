@@ -29,6 +29,7 @@ syscall(Hctx *context)
   Rtable    *table = proccurrent(context);
   Htrap      trap;
   Liferesult child;
+  Childsel   waitchoice;
   Obsresult  observation;
   u64        next = 0;
   Arguments  snapshot;
@@ -275,23 +276,13 @@ syscall(Hctx *context)
       status = -ERR_INVALID;
       break;
     }
-    status = procwait((Handle) args[0], (u32) args[1], &child);
-    if (!status && child.pid) {
-      outputs[0] = (u64) child.pid;
-      outputs[1] = WAIT_EXITED;
-      outputs[2] = child.code;
-      if (child.reason == LIFE_STOPPED)
-        outputs[1] = WAIT_STOPPED;
-      else if (child.reason == LIFE_CONTINUED)
-        outputs[1] = WAIT_CONTINUED;
-      else {
-        if (child.reason != LIFE_EXIT)
-          outputs[2] |= WAIT_SIGNALLED;
-        if (child.reason == LIFE_FAULT)
-          outputs[2] |= WAIT_FAULT;
-      }
-      outputs[3] = child.sequence;
+    status = procwait((Handle) args[0], (u32) args[1], &child, &waitchoice);
+    if (status == -ERR_INTERRUPTED) {
+      hal_syscall_finish(context, status, outputs);
+      procwaitreturn(context, &waitchoice, (u32) args[1]);
     }
+    if (!status)
+      procwaitresult(&child, outputs);
     break;
   case SYS_IRQBIND:
     if (args[2] > IRQ_BIT_MAX)

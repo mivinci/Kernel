@@ -166,12 +166,11 @@ install(u64 mode)
       if (i == 5)
         bad.flags = 64;
       if (i == 6)
-        bad.flags = SIGNAL_RESTART;
+        bad.flags = 128;
       if (i == 7)
         bad.reserved = 1;
-      REQUIRE(__sys_sigaction(SIGNAL_USR1, &bad, NULL) == (i >= 2 && i <= 4 ? -ERR_FAULT
-                                                           : i == 6         ? -ERR_NOTSUP
-                                                                            : -ERR_INVALID),
+      REQUIRE(__sys_sigaction(SIGNAL_USR1, &bad, NULL) ==
+                  (i >= 2 && i <= 4 ? -ERR_FAULT : -ERR_INVALID),
               187);
       REQUIRE(!__sys_sigaction(SIGNAL_USR1, NULL, &old) && old.kind == SIGNAL_DEFAULT, 188);
     }

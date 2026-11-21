@@ -1566,7 +1566,7 @@ def exercise(args, run_dir, record):
                     record['raise']=raised[0]
                 if args.case == "jobs":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith('JOBSCHECK ')]
-                    if checks != [dict(cases=46,self=1,self_cancel=1,busy=1,notify=1,alarm=1,suspend=1,rpc=5,wait=1,group=1,killed=3,signals=9,child_jobs=2,recv_signal=3,request_signal=10,reply_signal=1,wait_signal=9,charged=0,allocated=transition['tables'])]:
+                    if checks != [dict(cases=48,self=1,self_cancel=1,busy=1,notify=1,alarm=1,suspend=1,rpc=5,wait=1,group=1,killed=3,signals=9,child_jobs=2,recv_signal=3,request_signal=10,reply_signal=1,wait_signal=11,charged=0,allocated=transition['tables'])]:
                         raise SmokeError('Run stop/continue and retained-wait responsibility mismatch')
                     record['jobs']=checks[0]
                 if args.case == "tty":

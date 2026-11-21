@@ -850,3 +850,5 @@ stage248：libc `sigaction` 接入单参数 handler、SIG_DFL、SIG_IGN 和既�
 stage249：`SA_SIGINFO` 使用同次快照的三参数原型。libc 将 USER 转换为 SI_USER 并保留完整 PID/UID，将 CHILD 的 wait 原因转换为 CLD_* 并保留状态，将 FAULT 转换为对应信号的原因和地址。无法细分的内核来源使用 SI_KERNEL，其余字段清零。第三参数沿用架构保存现场，修改仍由 sigreturn 校验。ARM64/RV64 的 sigsend、sigframe 和格式检查通过，覆盖实际 USER 递送、三参数动作查询、errno 恢复、SEGV_MAPERR/ACCERR 和修改现场后继续执行。公开 CHILD 转换、通用 ucontext 接口、SA_RESTART 及 Rctx/Fix 前置仍待接或验证。
 
 stage250：`SIGCHLD` 的信号终止标志取自原生 status。libc 以该字段区分 CLD_EXITED、CLD_KILLED、CLD_DUMPED，并仅将退出码或信号号交给 `si_status`；收到 CLD_CONTINUED 时报告 SIGCONT。ARM64/RV64 的 sigconfig 以公开 `sigaction` 实际验证退出 31 与自发 SIGKILL，分别核对 handler 的 PID、UID、原因与状态，以及同一个孩子的 `waitpid` 结果。原自动收取与资源回收断言继续通过；CLD_STOPPED、CLD_CONTINUED 与 CLD_DUMPED 尚无本次公开递送证据。
+
+stage251：按 03 的等待规则实现 `SA_RESTART`。阻塞 wait 尚未收取结果而被中断时，仅为带 `SA_RESTART` 的实际递送帧保存内部选择器和选项；校验 sigreturn 后重新检查孩子，结果写回原调用现场。`waitpid(0)` 保存带代次的组标识，handler 换组不改选；改写返回 PC 跳过重启，fork 子帧不继承父的重启责任。ARM64/RV64 的 jobs 实测换组后连续两次中断仍收取原组孩子，以及 handler 先收取后原等待得到 ECHILD；原有已提交结果与 EINTR 用例同时通过。双架构 sigconfig/sigframe 和格式检查通过；没有增加 IPC 重启或 Rctx/Fix 前置。

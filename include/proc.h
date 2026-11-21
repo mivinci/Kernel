@@ -51,20 +51,21 @@ int procforkabort(Rtable *source, Handle construct);
 int procforkcommit(Rtable *source, Handle construct, u64 address, u64 bytes, Handle *pid);
 int procdestroyview(Rtable *source, Handle construct);
 /* Native fixed-Life CONTROL operations. */
-int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,
-              u64 inherit, Handle *out);
-int procrevoke(Rtable *source, Handle target, Handle resource);
-int procbudget(Rtable *source, Handle target, const Budgetarg *args);
-int procterminate(Rtable *source, Handle target);
-int procttycreate(Rtable *source, Handle system, Handle control, Handle *resource, Handle *id);
-int procttybind(Rtable *source, Handle authority, Handle sid);
-int procgetfg(Rtable *source, Handle authority, Handle *pgid, Handle *sid, u64 *epoch);
-int proccred(Rtable *source, Handle subject, Handle pid, u64 image, Cred *out);
-int procgetpg(Handle pid, Handle *pgid, Handle *sid);
-int procsetpg(Handle pid, Handle pgid);
-int procsetsid(Handle *sid);
-int procwait(Handle selector, u32 options, Liferesult *out);
-int procsigsend(u64 selector, u64 signum);
+int  procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,
+               u64 inherit, Handle *out);
+int  procrevoke(Rtable *source, Handle target, Handle resource);
+int  procbudget(Rtable *source, Handle target, const Budgetarg *args);
+int  procterminate(Rtable *source, Handle target);
+int  procttycreate(Rtable *source, Handle system, Handle control, Handle *resource, Handle *id);
+int  procttybind(Rtable *source, Handle authority, Handle sid);
+int  procgetfg(Rtable *source, Handle authority, Handle *pgid, Handle *sid, u64 *epoch);
+int  proccred(Rtable *source, Handle subject, Handle pid, u64 image, Cred *out);
+int  procgetpg(Handle pid, Handle *pgid, Handle *sid);
+int  procsetpg(Handle pid, Handle pgid);
+int  procsetsid(Handle *sid);
+int  procwait(Handle selector, u32 options, Liferesult *out, Childsel *retry);
+void procwaitresult(const Liferesult *child, u64 outputs[7]);
+int  procsigsend(u64 selector, u64 signum);
 /* Trusted normalized job transitions, not native signal authorization.
    Stop parks the Run with its prior READY/BLOCKED continuation intact. A
    current Run parks at its next safe checkpoint before returning to userspace. */
@@ -101,6 +102,7 @@ NORETURN void procsigreturn(u64 frame);
 NORETURN void procbadsignal(u64 frame);
 NORETURN void procfault(struct Hctx *context, const struct Htrap *trap);
 NORETURN void procuserreturn(struct Hctx *context);
+NORETURN void procwaitreturn(struct Hctx *context, const Childsel *selector, u32 options);
 int           procsigaction(u64 signum, u64 input, u64 output);
 int           procsigsuspend(u64 mask);
 int           procsigmask(u64 how, u64 mask, u64 *old);

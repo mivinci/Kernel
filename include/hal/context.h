@@ -50,6 +50,7 @@ int  hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate);
 u64  hal_syscall_arg(const Hctx *context, u32 slot);
 void hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8]);
 void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);
+void hal_syscall_result(Hctx *context, isize status, const u64 outputs[7]);
 /* Derive a disjoint child user frame from a fully saved raw forkprep trap.
    Child returns status=0, first result=0, PID in second, Fix in third; other
    outputs/image metadata are zero. RV advances PC once; ARM retains ELR.

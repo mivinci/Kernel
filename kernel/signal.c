@@ -154,8 +154,6 @@ actionvalid(u32 signum, const Sigact *action)
     return -ERR_INVALID;
   if (action->kind != SIGNAL_HANDLER && (action->handler || action->trampoline))
     return -ERR_INVALID;
-  if (action->flags & SIGNAL_RESTART)
-    return -ERR_NOTSUP;
   if (action->kind == SIGNAL_HANDLER &&
       (!action->handler || !action->trampoline ||
        (action->handler | action->trampoline) & (HAL_ENTRY_ALIGN - 1)))
@@ -664,8 +662,8 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
   for (i = 0; i < source->depth; i++) {
     from = &source->contexts[i];
     if (!from->state || !from->cookie || (from->frame & 15) || !from->signum ||
-        from->request.generation || from->target.generation || from->wait_subject ||
-        from->wait_options || from->restart ||
+        from->request.generation || from->target.generation ||
+        (!from->restart && (from->wait_subject || from->wait_options)) ||
         (from->wait_kind && from->wait_kind != PROCESS_WAIT_SIGNAL))
       return -ERR_NOTSUP;
     if (spaceread(source_space, from->frame, &packet, sizeof(packet)))
@@ -827,12 +825,13 @@ deliverframe(Signal *s, Spaceid space, Hctx *context, u32 signum, const Siginfo 
   }
   return 0;
 }
-int
-sigdeliver(Imageid id, Spaceid space, Hctx *context)
+static int
+deliver(Imageid id, Spaceid space, Hctx *context, const Childsel *choice, u32 options)
 {
   Signal *s = find(id);
   Image   image;
   u32     signum;
+  int     error;
   if (!s || !context || imagestat(id, &image) || image.state != IMAGE_ACTIVE)
     return -ERR_STATE;
   signum = nextsignal(s);
@@ -845,7 +844,26 @@ sigdeliver(Imageid id, Spaceid space, Hctx *context)
   }
   if (s->depth == SIGNAL_DEPTH)
     return 0;
-  return deliverframe(s, space, context, signum, &s->info[signum - 1], 1);
+  error = deliverframe(s, space, context, signum, &s->info[signum - 1], 1);
+  if (!error && choice) {
+    Sigctx *layer = &s->contexts[s->depth - 1];
+    if (layer->action.flags & SIGNAL_RESTART) {
+      layer->wait_subject = (u64) choice->value;
+      layer->wait_options = options;
+      layer->restart = (u8) (choice->kind + 1);
+    }
+  }
+  return error;
+}
+int
+sigdeliver(Imageid id, Spaceid space, Hctx *context)
+{
+  return deliver(id, space, context, NULL, 0);
+}
+int
+sigdeliverwait(Imageid id, Spaceid space, Hctx *context, const Childsel *choice, u32 options)
+{
+  return deliver(id, space, context, choice, options);
 }
 int
 sigfault(Imageid id, Spaceid space, Hctx *context, const Siginfo *info)
@@ -868,12 +886,13 @@ sigfault(Imageid id, Spaceid space, Hctx *context, const Siginfo *info)
   return deliverframe(s, space, context, info->signum, info, 0);
 }
 int
-sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)
+sigrestorewait(Imageid id, Spaceid space, Hctx *context, u64 frame, Childsel *choice, u32 *options)
 {
   Signal  *s = find(id);
   Image    image;
   Sigctx  *layer;
   Sigframe packet;
+  int      restart = 0;
   if (!s || !context || !s->depth || (frame & 15))
     return -ERR_STATE;
   if (imagestat(id, &image) || image.state != IMAGE_ACTIVE)
@@ -891,9 +910,22 @@ sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)
       return error;
   }
   s->mask = packet.head.restore_mask & ~SIGNAL_UNMASKABLE;
+  /* Forked frames carry no parent wait. An alternate PC bypasses restart. */
+  if (choice && options && layer->restart && context->tf.pc == layer->user.tf.pc) {
+    choice->value = (Handle) layer->wait_subject;
+    choice->kind = layer->restart - 1;
+    choice->reserved = 0;
+    *options = layer->wait_options;
+    restart = 1;
+  }
   s->depth--;
   clearcontext(layer);
-  return 0;
+  return restart;
+}
+int
+sigrestore(Imageid id, Spaceid space, Hctx *context, u64 frame)
+{
+  return sigrestorewait(id, space, context, frame, NULL, NULL);
 }
 int
 sigdiscard(Imageid id)

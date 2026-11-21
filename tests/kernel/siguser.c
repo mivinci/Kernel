@@ -167,7 +167,7 @@ main(int argc, char **argv)
   action.flags = 64;
   REQUIRE(__sys_sigaction(SIGNAL_TERM, &action, NULL) == -ERR_INVALID, 187);
   action.flags = SIGNAL_RESTART;
-  REQUIRE(__sys_sigaction(SIGNAL_TERM, &action, NULL) == -ERR_NOTSUP, 188);
+  REQUIRE(!__sys_sigaction(SIGNAL_TERM, &action, NULL), 188);
   action.flags = 0;
   action.kind = SIGNAL_HANDLER;
   REQUIRE(__sys_sigaction(SIGNAL_TERM, &action, NULL) == -ERR_INVALID, 189);

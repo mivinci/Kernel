@@ -1508,43 +1508,20 @@ sleepcurrent(void)
   p->stage.wait.kind = 0;
   p->stage.wait.subject.peer = 0;
 }
-int
-procwait(Handle selector, u32 options, Liferesult *out)
+static int
+waitchildren(Childsel choice, u32 options, Liferesult *out)
 {
-  Childsel choice;
-  Lifeid   child;
-  u32      matched;
-  int      error;
-  if (!current || !out || (options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED)))
-    return -ERR_INVALID;
+  Lifeid child;
+  u32    matched;
+  int    error;
   out->pid = 0;
   out->sequence = 0;
   out->reason = out->code = 0;
-  choice.value = 0;
-  choice.kind = WAIT_SELECT_ANY;
-  choice.reserved = 0;
-  if (selector == 0) {
-    choice.kind = WAIT_SELECT_GROUP;
-    error = lifegroup(current->life, &choice.value);
+  if (choice.kind == WAIT_SELECT_GROUP) {
+    error = grouphold(choice.value);
     if (error)
-      return error;
-  } else if (selector > 0) {
-    if (handletype(selector) != HANDLE_PROCESS)
-      return -ERR_BAD_HANDLE;
-    choice.kind = WAIT_SELECT_PID;
-    choice.value = selector;
-  } else if (selector < -1) {
-    if ((u64) selector == ((u64) 1 << 63))
-      return -ERR_INVALID;
-    if (handletype(-selector) != HANDLE_PROCESS)
-      return -ERR_BAD_HANDLE;
-    choice.kind = WAIT_SELECT_GROUP;
-    error = groupmatch(-selector, &choice.value);
-    if (error)
-      return error == -ERR_STALE ? -ERR_CHILD : error;
+      return error == -ERR_STALE || error == -ERR_BAD_HANDLE ? -ERR_CHILD : error;
   }
-  if (choice.kind == WAIT_SELECT_GROUP && grouphold(choice.value))
-    return -ERR_STATE;
   for (;;) {
     error = lifeselect(pidof(current), &choice, current->wait_cursor, options, &child, &matched);
     if (error)
@@ -1581,6 +1558,59 @@ procwait(Handle selector, u32 options, Liferesult *out)
   if (choice.kind == WAIT_SELECT_GROUP && groupdrop(choice.value))
     panic("child wait group reference");
   return error;
+}
+int
+procwait(Handle selector, u32 options, Liferesult *out, Childsel *retry)
+{
+  Childsel choice;
+  int      error;
+  if (!current || !out || !retry || (options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED)))
+    return -ERR_INVALID;
+  choice.value = 0;
+  choice.kind = WAIT_SELECT_ANY;
+  choice.reserved = 0;
+  if (!selector) {
+    choice.kind = WAIT_SELECT_GROUP;
+    error = lifegroup(current->life, &choice.value);
+    if (error)
+      return error;
+  } else if (selector > 0) {
+    if (handletype(selector) != HANDLE_PROCESS)
+      return -ERR_BAD_HANDLE;
+    choice.kind = WAIT_SELECT_PID;
+    choice.value = selector;
+  } else if (selector < -1) {
+    if ((u64) selector == ((u64) 1 << 63))
+      return -ERR_INVALID;
+    if (handletype(-selector) != HANDLE_PROCESS)
+      return -ERR_BAD_HANDLE;
+    choice.kind = WAIT_SELECT_GROUP;
+    error = groupmatch(-selector, &choice.value);
+    if (error)
+      return error == -ERR_STALE ? -ERR_CHILD : error;
+  }
+  *retry = choice;
+  return waitchildren(choice, options, out);
+}
+void
+procwaitresult(const Liferesult *child, u64 outputs[7])
+{
+  if (!child->pid)
+    return;
+  outputs[0] = (u64) child->pid;
+  outputs[1] = WAIT_EXITED;
+  outputs[2] = child->code;
+  if (child->reason == LIFE_STOPPED)
+    outputs[1] = WAIT_STOPPED;
+  else if (child->reason == LIFE_CONTINUED)
+    outputs[1] = WAIT_CONTINUED;
+  else {
+    if (child->reason != LIFE_EXIT)
+      outputs[2] |= WAIT_SIGNALLED;
+    if (child->reason == LIFE_FAULT)
+      outputs[2] |= WAIT_FAULT;
+  }
+  outputs[3] = child->sequence;
 }
 static int
 waitresult(Rqid id, u32 options, u32 block, Rqresult *out)
@@ -2072,15 +2102,17 @@ procbadsignal(u64 frame)
   fault.cause = SIGNAL_BAD_FRAME_CAUSE;
   procexit(LIFE_FAULT, SIGNAL_SEGV, &fault);
 }
-NORETURN void
-procuserreturn(Hctx *context)
+static NORETURN void
+userreturn(Hctx *context, const Childsel *selector, u32 options)
 {
   int signal;
   if (!proccurrent(context) || vm_paused || current->stage.wait.kind)
     panic("user return boundary");
   for (;;) {
     proccheckpoint();
-    signal = sigdeliver(current->identity, current->space, context);
+    signal = selector
+                 ? sigdeliverwait(current->identity, current->space, context, selector, options)
+                 : sigdeliver(current->identity, current->space, context);
     if (signal < 0)
       procbadsignal(hal_user_sp(context));
     if (signal & SIG_DELIVER_STOP) {
@@ -2095,12 +2127,37 @@ procuserreturn(Hctx *context)
   hal_user_enter(context);
 }
 NORETURN void
+procuserreturn(Hctx *context)
+{
+  userreturn(context, NULL, 0);
+}
+NORETURN void
+procwaitreturn(Hctx *context, const Childsel *selector, u32 options)
+{
+  userreturn(context, selector, options);
+}
+NORETURN void
 procsigreturn(u64 frame)
 {
+  Childsel   choice;
+  Liferesult result;
+  u64        outputs[7] = {0};
+  u32        options;
+  int        error;
   if (!current || current->state != PROC_RUNNING)
     panic("signal return source");
-  if (sigrestore(current->identity, current->space, current->user, frame))
+  error =
+      sigrestorewait(current->identity, current->space, current->user, frame, &choice, &options);
+  if (error < 0)
     procbadsignal(frame);
+  if (error) {
+    error = waitchildren(choice, options, &result);
+    if (!error)
+      procwaitresult(&result, outputs);
+    hal_syscall_result(current->user, error, outputs);
+    if (error == -ERR_INTERRUPTED)
+      procwaitreturn(current->user, &choice, options);
+  }
   procuserreturn(current->user);
 }
 int

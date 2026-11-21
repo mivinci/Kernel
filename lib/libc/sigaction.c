@@ -3,7 +3,8 @@
 #include <abi/proc.h>
 #include "private/syscall.h"
 
-#define ACTION_FLAGS (SA_NODEFER | SA_RESETHAND | SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO)
+#define ACTION_FLAGS                                                                               \
+  (SA_NODEFER | SA_RESETHAND | SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_RESTART)
 
 static int
 faultcode(int signum, u64 reason)

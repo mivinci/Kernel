@@ -3,6 +3,8 @@
 #include <sys/channel.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <signal.h>
+#include <unistd.h>
 #include <abi/proc.h>
 #include <abi/time.h>
 #include "private/start.h"
@@ -36,6 +38,19 @@ handler(u64 signum)
       __sys_exit(203);
     jobtrace[1] = 1;
   }
+}
+static void
+restartwait(int signum)
+{
+  if (signum != SIGUSR1)
+    __sys_exit(204);
+  if (jobtrace[1] == 11) {
+    int status;
+    if (waitpid(-1, &status, 0) <= 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 42)
+      __sys_exit(205);
+  } else if ((!jobtrace[5] && setpgid(0, 0)) || getpgrp() != getpid())
+    __sys_exit(204);
+  jobtrace[5]++;
 }
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
@@ -274,13 +289,19 @@ main(int argc, char **argv)
     if (child && jobtrace[1]) {
       variant = jobtrace[1];
       selector = variant == 3 || variant == 4 || variant >= 7 ? 0 : child;
-      CHECK(!install(SIGNAL_USR1, variant == 7 ? SIGNAL_IGNORE : SIGNAL_HANDLER));
+      if (variant >= 10) {
+        struct sigaction restart = {0};
+        restart.sa_handler = restartwait;
+        restart.sa_flags = SA_RESTART;
+        CHECK(!sigaction(SIGUSR1, &restart, NULL) && getpgrp() != getpid());
+      } else
+        CHECK(!install(SIGNAL_USR1, variant == 7 ? SIGNAL_IGNORE : SIGNAL_HANDLER));
       if (variant == 5)
         CHECK(!install(SIGNAL_CHLD, SIGNAL_HANDLER));
       if (variant == 8)
         CHECK(!__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_USR1 - 1), &state));
       jobtrace[0] = 1;
-      if (variant == 4 || variant == 6) {
+      if (variant == 4 || variant == 6 || variant >= 10) {
         status = 0x1234;
         errno = 0;
         result = waitpid(selector, &status, 0);
@@ -289,7 +310,10 @@ main(int argc, char **argv)
           jobtrace[6] = 1;
           result = waitpid(selector, &status, 0);
         }
-        CHECK(result == child && WIFEXITED(status) && WEXITSTATUS(status) == 42);
+        if (variant == 11)
+          CHECK(result == -1 && errno == ECHILD && status == 0x1234);
+        else
+          CHECK(result == child && WIFEXITED(status) && WEXITSTATUS(status) == 42);
       } else {
         error = __sys_wait(selector, 0, &result, &kind, &code, &sequence);
         if (variant == 1 || variant == 3 || variant == 5 || variant == 9) {
@@ -314,7 +338,7 @@ main(int argc, char **argv)
           CHECK(!__sys_sigmask(SIGNAL_UNBLOCK, state, &state));
         }
       }
-      CHECK(jobtrace[5] == (variant == 7 ? 0U : 1U));
+      CHECK(jobtrace[5] == (variant == 7 ? 0U : variant == 10 ? 2U : 1U));
       jobtrace[6] = 2;
       jobtrace[0] = 2;
       jobtrace[7] = 42;

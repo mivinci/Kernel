@@ -31,6 +31,7 @@
 #define SA_NOCLDSTOP  SIGNAL_NOCLDSTOP
 #define SA_NOCLDWAIT  SIGNAL_NOCLDWAIT
 #define SA_SIGINFO    SIGNAL_SIGINFO
+#define SA_RESTART    SIGNAL_RESTART
 #define SIG_DFL       ((void (*)(int)) 0)
 #define SIG_IGN       ((void (*)(int)) 1)
 #define SI_USER       0

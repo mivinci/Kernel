@@ -89,13 +89,19 @@ hal_syscall_arg(const Hctx *context, u32 slot)
   return slot < HAL_SYSCALL_ARGS ? context->tf.x[10 + slot] : 0;
 }
 void
-hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7])
+hal_syscall_result(Hctx *context, isize status, const u64 outputs[7])
 {
   u32 i;
   context->tf.x[10] = (u64) status;
   for (i = 0; i < 7; i++)
     context->tf.x[11 + i] = status < 0 ? 0 : outputs[i];
   context->tf.x[5] = 0;
+}
+
+void
+hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7])
+{
+  hal_syscall_result(context, status, outputs);
   context->tf.pc += 4;
 }
 

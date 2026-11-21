@@ -678,12 +678,13 @@ replysignal(void)
 static void
 waitsignal(u32 variant)
 {
-  Setid set;
-  Actor parent, child;
-  Life  life;
-  Group before, after;
-  u64   words[8], configuration = variant;
-  u32   group = variant == 3 || variant == 4 || variant >= 7;
+  Setid  set;
+  Actor  parent, child;
+  Life   life;
+  Group  before, after;
+  u64    words[8], configuration = variant;
+  Handle original_group;
+  u32    group = variant == 3 || variant == 4 || variant >= 7;
   CHECK(!setcreate(1024, 2048, 2, &set));
   create(set, 1, &parent);
   create(set, parent.pid, &child);
@@ -693,6 +694,10 @@ waitsignal(u32 variant)
   load(&child, 0, 0, 0);
   state(&parent, PROC_BLOCKED);
   CHECK(!lifestat(parent.info.life, &life) && !groupstat(life.group, &before));
+  original_group = life.group;
+  /* The original group can disappear once the waiter leaves and the child exits. */
+  if (variant == 10)
+    CHECK(!grouphold(original_group));
   if (variant == 5) {
     send(&child, SIGNAL_STOP);
     CHECK(!procstop(parent.pid, SIGNAL_STOP));
@@ -703,11 +708,19 @@ waitsignal(u32 variant)
     CHECK(words[3] == SIGNAL_CHLD && words[4] == 2 && words[5] == 1 && words[6] == 1);
     CHECK(!lifestat(child.info.life, &life) && life.stopped && !life.reason && life.sequence == 2);
     send(&child, SIGNAL_CONT);
-  } else if (variant == 7 || variant == 8) {
+  } else if (variant == 7 || variant == 8 || variant >= 10) {
     send(&parent, SIGNAL_USR1);
     step();
     step();
     CHECK(!procinfo(parent.pid, &parent.info) && parent.info.state == PROC_BLOCKED);
+    if (variant == 10) {
+      trace(&parent, words);
+      CHECK(words[5] == 1);
+      send(&parent, SIGNAL_USR1);
+      state(&parent, PROC_BLOCKED);
+      trace(&parent, words);
+      CHECK(words[5] == 2);
+    }
   } else {
     CHECK(!procstop(parent.pid, SIGNAL_STOP));
     if (variant != 2 && variant != 6)
@@ -724,19 +737,21 @@ waitsignal(u32 variant)
     clean(&parent, LIFE_SIGNAL, SIGNAL_KILL, 1);
     clean(&child, LIFE_EXIT, 42, 1);
   } else {
-    if (variant != 5 && variant != 7 && variant != 8) {
+    if (variant < 10 && variant != 5 && variant != 7 && variant != 8) {
       stopped(&parent, 2);
       CHECK(!proccontinue(parent.pid));
     }
     finish(&parent);
     trace(&parent, words);
-    CHECK(words[5] == (variant == 7 ? 0U : 1U) && words[6] == 2);
-    CHECK(!lifestat(parent.info.life, &life) && !groupstat(life.group, &after) &&
-          before.refs == after.refs + 1 + group);
+    CHECK(words[5] == (variant == 7 ? 0U : variant == 10 ? 2U : 1U) && words[6] == 2);
+    CHECK(!groupstat(original_group, &after));
+    CHECK(before.refs == after.refs + 1 + group);
     CHECK(!lifestat(child.info.life, &life) && !life.waitref);
     clean(&child, LIFE_EXIT, 42, 0);
     clean(&parent, LIFE_EXIT, 42, 1);
   }
+  if (variant == 10)
+    CHECK(!groupdrop(original_group));
   closed(set);
 }
 void
@@ -791,11 +806,13 @@ jobtest(void)
   waitsignal(7);
   waitsignal(8);
   waitsignal(9);
+  waitsignal(10);
+  waitsignal(11);
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck() && !groupcheck());
   putstr("JOBSCHECK cases=");
-  puthex(46);
+  puthex(48);
   putstr(" self=");
   puthex(selfseen);
   putstr(" self_cancel=");
@@ -827,7 +844,7 @@ jobtest(void)
   putstr(" reply_signal=");
   puthex(1);
   putstr(" wait_signal=");
-  puthex(9);
+  puthex(11);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

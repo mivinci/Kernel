@@ -69,7 +69,7 @@ class SignalConfigTests(unittest.TestCase):
             out=Action();self.assertEqual(self.lib.siggetaction(image,15,C.byref(out)),0)
             self.assertEqual((out.kind,out.mask),(1,1<<11))
             for number,action,error in ((9,Action(1),-1),(19,Action(1),-1),(5,Action(1),-1),
-                (15,Action(2),-1),(15,Action(1,0,0,0,1,0),-18),(15,Action(0,0,0,0,16,0),-1),
+                (15,Action(2),-1),(15,Action(0,0,0,0,16,0),-1),
                 (15,Action(1,0,0,0,32,0),-1),(15,Action(1,1),-1),(15,Action(1,0,0,0,64,0),-1)):
                 self.assertEqual(self.lib.sigsetaction(image,number,C.byref(action)),error)
                 self.assertEqual(self.lib.siggetaction(image,15,C.byref(out)),0);self.assertEqual(out.kind,1)
@@ -83,13 +83,13 @@ class SignalConfigTests(unittest.TestCase):
     def test_native_handler_flags_and_queries_share_the_typed_action_state(self):
         def body():
             life,image=self.active(1040)
-            action=Action(2,0x10000,0x10010,(1<<9)|(1<<8)|(1<<18),2|4|8,0)
+            action=Action(2,0x10000,0x10010,(1<<9)|(1<<8)|(1<<18),1|2|4|8,0)
             self.assertEqual(self.lib.sigsetaction(image,10,C.byref(action)),0)
             out=Action();self.assertEqual(self.lib.siggetaction(image,10,C.byref(out)),0)
-            self.assertEqual((out.kind,out.handler,out.trampoline,out.mask,out.flags),(2,0x10000,0x10010,1<<9,14))
+            self.assertEqual((out.kind,out.handler,out.trampoline,out.mask,out.flags),(2,0x10000,0x10010,1<<9,15))
             snapshot=bytes(out)
             for invalid,error in ((Action(2,0,0x10010),-1),(Action(2,0x10000,1),-1),
-                    (Action(2,0x10000,0x10010,0,1),-18),(Action(2,0x10000,0x10010,0,64),-1)):
+                    (Action(2,0x10000,0x10010,0,64),-1)):
                 self.assertEqual(self.lib.sigsetaction(image,10,C.byref(invalid)),error)
                 self.assertEqual(self.lib.siggetaction(image,10,C.byref(out)),0)
                 self.assertEqual(bytes(out),snapshot)

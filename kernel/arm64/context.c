@@ -137,6 +137,12 @@ hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7])
 }
 
 void
+hal_syscall_result(Hctx *context, isize status, const u64 outputs[7])
+{
+  hal_syscall_finish(context, status, outputs);
+}
+
+void
 hal_user_irq(Hctx *context, u32 enabled)
 {
   context->tf.status = (context->tf.status & ~128UL) | (enabled ? 0 : 128UL);
