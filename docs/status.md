@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage208：双架构验证 handler 内原生 fork、子嵌套信号及父子各自 sigreturn；修复撤销未发布孩子时遗漏活动信号层的清理。格式与双架构 sigframe 通过。外层活动 Rctx 与 IPC 修复待接。
+
 - stage207：完整 make unit 1198 项通过；最近双架构 sigframe 为 stage206，未重跑完整 QEMU 矩阵。继续活动信号层 fork 与 IPC 修复。
 
 - stage206：RV64 普通 Rctx 返回窗口允许合法半字起点，11 项主机测试、格式及双架构 sigframe 回归通过。handler 内 fork 的真实恢复与 IPC 修复仍待接。

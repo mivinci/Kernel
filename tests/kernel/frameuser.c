@@ -505,11 +505,24 @@ forkprepuser(void)
   frame_trace[0] = 99;
   return 42;
 }
+static int handlerforkresult;
+static NORETURN void
+handlerforktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address,
+                      u64 flags)
+{
+  UNUSED(info);
+  UNUSED(context);
+  UNUSED(function);
+  UNUSED(flags);
+  REQUIRE(signum == SIGNAL_USR2, 248);
+  handlerforkresult = forkprepuser();
+  __sys_sigreturn((void *) address);
+}
 int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '=', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '>', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
   if (mode == 11)
@@ -518,6 +531,23 @@ main(int argc, char **argv)
     return contextuser();
   if (mode == 13)
     return forkprepuser();
+  if (mode == 14) {
+    Sigact action;
+    Sigsel selector;
+    Handle self, parent;
+    u64    image;
+    REQUIRE(!__sys_getid(&self, &image, &parent), 249);
+    action.kind = SIGNAL_HANDLER;
+    action.handler = action.trampoline = (u64) handlerforktrampoline;
+    action.mask = action.flags = action.reserved = 0;
+    selector.kind = SIGNAL_SELECT_PID;
+    selector.target = self;
+    REQUIRE(!__sys_sigaction(SIGNAL_USR2, &action, NULL) &&
+                !__sys_sigsend(&selector, SIGNAL_USR2) &&
+                (handlerforkresult == 42 || handlerforkresult == 43),
+            250);
+    return handlerforkresult;
+  }
   frame_trace[2] = (u64) (uintptr_t) handler;
   frame_trace[3] = (u64) (uintptr_t) trampoline;
   install(mode);

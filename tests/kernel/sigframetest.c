@@ -82,7 +82,7 @@ runtimeframeenter(Hctx *context)
           !spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
   if (trace[0] != 1 || context->tf.pc != trace[16])
     return;
-  if (trace[1] == 13 && table->owner != contextpid)
+  if ((trace[1] == 13 || trace[1] == 14) && table->owner != contextpid)
     forkarmed = 0;
   else if (trace[1] == 12 && table->owner == contextpid) {
     contextarmed = 0;
@@ -120,7 +120,7 @@ sigframetest(void)
   int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 14; mode++) {
+  for (mode = 0; mode < 15; mode++) {
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     for (i = 0; i < sizeof(packet); i++)
       ((u8 *) &packet)[i] = 0;
@@ -141,7 +141,7 @@ sigframetest(void)
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(proctable(pid), LOCAL_ALLOC);
     testload(pid, frame_image, (u64) (frame_image_end - frame_image), &packet, sizeof(packet));
-    if (mode == 13) {
+    if (mode >= 13) {
       Createpolicy policy;
       Handle       authority;
       policy.set = set;
@@ -178,7 +178,7 @@ sigframetest(void)
       contextpid = pid;
       contextarmed = 1;
     }
-    if (mode == 13) {
+    if (mode >= 13) {
       contextpid = pid;
       forkarmed = 1;
     }
@@ -238,7 +238,7 @@ sigframetest(void)
     putstr(" code=");
     puthex(life.code);
     putstr("\n");
-    if (mode == 13) {
+    if (mode >= 13) {
       REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
     } else if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && (mode == 7 || trace[0] == 99));

@@ -926,6 +926,10 @@ procclean(Handle pid)
       panic("process account closing");
     if (imageend(p->identity, IMAGE_ABORT))
       panic("process closing image");
+    /* An unpublished fork may already own copied active signal frames.
+       It never takes the ordinary exit path that discards those frames. */
+    if (sigdiscard(p->identity))
+      panic("process closing signals");
     error = rqmailclose(&p->incoming, 32);
     if (error)
       return error;
