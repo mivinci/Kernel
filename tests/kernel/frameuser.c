@@ -364,6 +364,8 @@ static Conncache forkdirectory;
 static Conntag   forkoldtag;
 static Fdtable   forkfds;
 static Filepool  forkfiles;
+static Fdtag     forkreserved;
+static Filestage forkstage;
 static int       forkfixed;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64);
 static void
@@ -389,6 +391,25 @@ forkrepair(const Forkret *result)
               !count && !connections,
           244);
   if (!forkfixed) {
+    Fdview reserved;
+    REQUIRE(
+        sysforkstateapply(&state, context_self, child, layers, NULL, 0, connections, count) ==
+                -ERR_NOTSUP &&
+            !sysforkstatecheck(&state, context_self, child, layers, NULL, 0, connections, count) &&
+            !sysfdobserve(&forkfds, forkreserved.index, &reserved) &&
+            reserved.tag.state == SYSFD_RESERVED &&
+            reserved.tag.generation == forkreserved.generation &&
+            !sysfilerefstaged(&forkfiles, context_self, &forkstage),
+        254);
+    /* These fixture reserves have never been submitted to a service. */
+    REQUIRE(
+        !sysfdcancel(&forkfds, forkreserved) &&
+            sysforkstateapply(&state, context_self, child, layers, NULL, 0, connections, count) ==
+                -ERR_NOTSUP &&
+            !sysforkstatecheck(&state, context_self, child, layers, NULL, 0, connections, count) &&
+            !sysfilerefstaged(&forkfiles, context_self, &forkstage) &&
+            !sysfilerefabort(&forkfiles, context_self, &forkstage),
+        254);
     REQUIRE(!sysforkstateapply(&state, context_self, child, layers, NULL, 0, connections, count),
             244);
     forkfixed = 1;
@@ -463,7 +484,9 @@ forkprepuser(void)
   sysfdinit(&forkfds);
   REQUIRE(!sysconninit(&forkdirectory, context_self) &&
               !sysconnbind(&forkdirectory, context_self, &forkoldtag) &&
-              !sysfilerefinit(&forkfiles, context_self) && !forkfixed,
+              !sysfilerefinit(&forkfiles, context_self) && !forkfixed &&
+              !sysfdreserve(&forkfds, 3, &forkreserved) &&
+              !sysfilerefreserve(&forkfiles, context_self, 1, &forkstage),
           252);
   REQUIRE((frame_trace[1] >= 14 || !sysctxinit(&runtime_contexts, context_self)) &&
               !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
@@ -540,10 +563,18 @@ forkprepuser(void)
   REQUIRE(!__sys_enter(SYS_WAIT, args, &result), 240);
   {
     Connentry entry;
+    Fdview    reserved;
     REQUIRE(!sysconnview(&forkdirectory, forkoldtag, &entry) && entry.state == SYSCONN_UNCLAIMED &&
                 !sysconncheck(&forkdirectory, context_self) &&
-                !sysfilerefcheck(&forkfiles, context_self) && !forkfixed,
+                !sysfilerefcheck(&forkfiles, context_self) && !forkfixed &&
+                !sysfdobserve(&forkfds, forkreserved.index, &reserved) &&
+                reserved.tag.state == SYSFD_RESERVED &&
+                reserved.tag.generation == forkreserved.generation &&
+                !sysfilerefstaged(&forkfiles, context_self, &forkstage),
             253);
+    REQUIRE(!sysfdcancel(&forkfds, forkreserved) &&
+                !sysfilerefabort(&forkfiles, context_self, &forkstage),
+            254);
   }
   frame_trace[20] = result.values[1];
   frame_trace[21] = result.values[2];
@@ -551,6 +582,7 @@ forkprepuser(void)
               result.values[2] == 43,
           240);
   frame_trace[28] = 1;
+  frame_trace[29] = 1;
   frame_trace[0] = 99;
   return 42;
 }

@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage238：真实子返回中fd/File两类未提交创建预留分别导致apply拒绝且源状态保留，子明确本地撤销后可继续转换，父预留仍独立完整；双架构sigframe、10项组合测试及格式通过。只改测试，非已提交创建续点支持；机制失败真实fork/后端子引用/整体入口仍待接。
+
 - stage237：已排空普通READ/WRITE的PEER/CANCELLED/REVOKED可在子保留原生状态，不重发或夺父收尾责任；75项相关主机测试、格式及双架构libsys/sigframe通过。新机制失败路径仅主机调用，真实场景/整体fork与后端准备仍待接，子reference_id规则仍待确认。
 
 - stage236：组合apply已在双架构真实fork返回窗口及handler/raw/IPC场景执行，子完成标记避免重复转换，父身份/运输和最终资源守恒保持；10项组合主机测试、格式及sigframe/libsys四次QEMU通过。夹具无继承fd/后端子引用，非空File与生产整体协调器仍待接，子reference_id仍待确认。

@@ -446,6 +446,10 @@ stage237：已终结普通READ/WRITE的原生PEER/CANCELLED/REVOKED可在fork子
 
 65项上下文与10项组合主机测试、格式及ARM64/RV64 libsys/sigframe四次回归通过；新增测试覆盖READ/WRITE各三种终结状态、未排空拒绝、错误状态/资源/业务字拒绝且不改bank、后续fork/finish与父运输不变。新终结机制路径仍仅主机调用，QEMU覆盖既有真实fork/业务结果/本地协调转换，不称已验真实机制失败fork。日志 `/private/tmp/kernel-stage237-{context-final,forkstate,fmt,arm64-libsys,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。未跑完整矩阵、CI或板端；生产整体协调器、后端准备及子reference_id规则继续待接/确认。
 
+stage238：双架构真实子返回的创建预留拒绝边界已验。sigframe mode13..15在fork前预留一项fd和一项File（从未提交任何创建请求）；子在返回窗口先apply得到NOTSUP，完整源身份准入仍通过且两项预留可核验。子仅撤销自己的未提交fd副本，再apply仍因File预留NOTSUP，重新核验源状态及精确Filestage后本地abort，最后正常完成组合转换/信号返回。父wait到孩子43后仍核验并自行撤销原预留，子操作未消耗父责任。新增trace[29]及reserve_fork=1由内核/smoke强制检查，费用0和页数守恒保持。
+
+ARM64/RV64 sigframe、10项组合主机测试和格式通过，日志 `/private/tmp/kernel-stage238-{arm64,riscv,forkstate,fmt}.log`，现场 `build/arm64/smoke/0d5c6bba47ac4c54b03a781c55af386e/`、`build/riscv/smoke/b76a8ff8176b4d52bccc831ff832a066/`。本次只改测试夹具与机器记录核验，非真实已提交OPEN/PIPE续点修复；没有未知远端引用可据此释放。机制失败真实fork、非空File继承/后端准备及生产整体入口仍待接，子reference_id候选仍未确认；未跑完整矩阵、CI或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
