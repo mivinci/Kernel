@@ -14,6 +14,8 @@
 #define REG_QUEUENUM       0x38
 #define REG_QUEUEREADY     0x44
 #define REG_QUEUENOTIFY    0x50
+#define REG_INTERRUPT      0x60
+#define REG_INTERRUPT_ACK  0x64
 #define REG_STATUS         0x70
 #define REG_QUEUEDESC      0x80
 #define REG_QUEUEAVAIL     0x90
@@ -293,4 +295,29 @@ vnotify(Vdev *d, u32 index)
     return -ERR_INVALID;
   error = writereg(d, REG_QUEUENOTIFY, index);
   return error ? fail(d, error) : 0;
+}
+int
+vinterrupt(Vdev *d, u32 *causes)
+{
+  u32 pending;
+  int error;
+  if (!causes)
+    return -ERR_INVALID;
+  if (!d || d->state != VDEV_LIVE)
+    return -ERR_STATE;
+  error = checkstatus(d);
+  if (error)
+    return error;
+  error = readreg(d, REG_INTERRUPT, &pending);
+  if (error)
+    return fail(d, error);
+  if (pending & ~(VDEV_IRQ_USED | VDEV_IRQ_CONFIG))
+    return fail(d, -ERR_PEER);
+  if (pending) {
+    error = writereg(d, REG_INTERRUPT_ACK, pending);
+    if (error)
+      return fail(d, error);
+  }
+  *causes = pending;
+  return 0;
 }

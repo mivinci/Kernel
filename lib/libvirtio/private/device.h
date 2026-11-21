@@ -11,6 +11,8 @@
 #define VDEV_FAILED      6
 #define VDEV_LIVE        7
 #define VDEV_QUEUES      32
+#define VDEV_IRQ_USED    1U
+#define VDEV_IRQ_CONFIG  2U
 #define VDEV_VERSION1    ((u64) 1 << 32)
 #define VDEV_RESET_NS    UINT64_C(3000000000)
 #define VDEV_RESET_TRIES 3
@@ -53,4 +55,8 @@ int vstart(Vdev *device);
 /* Ring the doorbell after vrsubmit has made avail.idx visible. An error
    does not undo publication or permit DMA buffer reuse. */
 int vnotify(Vdev *device, u32 index);
+/* With the platform IRQ masked, sample and acknowledge device causes once.
+   Zero means no current cause. Drain indicated work before rearming the
+   platform IRQ. The snapshot is a hint, never proof of DMA completion. */
+int vinterrupt(Vdev *device, u32 *causes);
 #endif

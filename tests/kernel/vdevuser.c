@@ -84,8 +84,7 @@ transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, u64 capacity, 
   REQUIRE(!__sys_alarmcancel(&generation), 180);
   /* The binding masks the line on delivery. Clear the device cause before
      consuming used entries; the next request rearms only after this drains. */
-  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && causes == 1 &&
-              !virtiowrite(device->ops.context, 0x64, causes) &&
+  REQUIRE(!vinterrupt(device, &causes) && causes == VDEV_IRQ_USED &&
               !virtioread(device->ops.context, 0x60, &causes) && !causes,
           181);
   REQUIRE(!vrpoll(ring, 1, done, &count, &more), 175);

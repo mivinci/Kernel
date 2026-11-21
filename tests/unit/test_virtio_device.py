@@ -51,6 +51,8 @@ class Mmio:
         self.queue_max = {0: 256, 1: 128}
         self.queue_regs = {}
         self.reject_queue = False
+        self.interrupt = 0
+        self.interrupt_during_ack = 0
         self.read_callback = Read(self.read)
         self.write_callback = Write(self.write)
         self.ops = Ops(None, self.read_callback, self.write_callback)
@@ -66,7 +68,7 @@ class Mmio:
         values = {0: self.magic, 4: self.version, 8: self.device, 12: self.vendor,
                   0x10: (self.features >> (32 * self.feature_sel)) & 0xffffffff, 0x70: self.status,
                   0x34: self.queue_max.get(self.queue_sel, 0),
-                  0x44: self.queue_regs.get((self.queue_sel, 0x44), 0),
+                  0x44: self.queue_regs.get((self.queue_sel, 0x44), 0), 0x60: self.interrupt,
                   0xfc: self.generation, 0x100: 64, 0x104: 1}
         if offset not in values:
             return -1
@@ -109,6 +111,9 @@ class Mmio:
         elif offset == 0x50:
             if not self.status & 4 or self.queue_regs.get((value, 0x44)) != 1:
                 return -14
+        elif offset == 0x64:
+            self.interrupt = (self.interrupt | self.interrupt_during_ack) & ~value
+            self.interrupt_during_ack = 0
         else:
             return -1
         return self.error_value if error else 0
@@ -137,6 +142,7 @@ class VirtioDeviceTests(unittest.TestCase):
         cls.lib.vqueue.argtypes = [C.POINTER(Vdev), C.c_uint32] + [C.c_uint64] * 3
         cls.lib.vstart.argtypes = [C.POINTER(Vdev)]
         cls.lib.vnotify.argtypes = [C.POINTER(Vdev), C.c_uint32]
+        cls.lib.vinterrupt.argtypes = [C.POINTER(Vdev), C.POINTER(C.c_uint32)]
 
     @classmethod
     def tearDownClass(cls):
@@ -171,6 +177,46 @@ class VirtioDeviceTests(unittest.TestCase):
 
     def notify(self, index):
         return self.lib.vnotify(C.byref(self.device), index)
+
+    def interrupt(self, out):
+        return self.lib.vinterrupt(C.byref(self.device), C.byref(out))
+
+    def test_interrupt_clears_only_observed_causes_and_accepts_empty_delivery(self):
+        self.features()
+        self.assertEqual(self.queue(), 0)
+        self.assertEqual(self.start(), 0)
+        out = C.c_uint32(99)
+        self.mmio.interrupt = 1
+        self.mmio.interrupt_during_ack = 2
+        self.assertEqual(self.interrupt(out), 0)
+        self.assertEqual((out.value, self.mmio.interrupt), (1, 2))
+        self.assertEqual(self.interrupt(out), 0)
+        self.assertEqual((out.value, self.mmio.interrupt), (2, 0))
+        self.assertEqual(self.interrupt(out), 0)
+        self.assertEqual(out.value, 0)
+        self.assertEqual(self.mmio.events[-2:], [('read', 0x70), ('read', 0x60)])
+
+    def test_interrupt_faults_do_not_publish_a_snapshot(self):
+        for case in ('reserved', 'needs_reset', 'ambiguous_ack'):
+            with self.subTest(case=case):
+                self.setUp()
+                self.features()
+                self.assertEqual(self.queue(), 0)
+                self.assertEqual(self.start(), 0)
+                self.mmio.interrupt = 1
+                if case == 'reserved':
+                    self.mmio.interrupt |= 4
+                elif case == 'needs_reset':
+                    self.mmio.status |= 64
+                else:
+                    self.mmio.error_at = len(self.mmio.events) + 3
+                    self.mmio.mutated_error = True
+                out = C.c_uint32(99)
+                self.assertEqual(self.interrupt(out), -2 if case == 'ambiguous_ack' else -14)
+                self.assertEqual(out.value, 99)
+                self.assertEqual(self.notify(0), -6)
+                if case != 'ambiguous_ack':
+                    self.assertNotIn(('write', 0x64, 1), self.mmio.events)
 
     def test_split_queue_setup_start_notify_and_reset(self):
         self.features()
