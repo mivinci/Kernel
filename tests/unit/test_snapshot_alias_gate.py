@@ -139,3 +139,32 @@ class SnapshotAliasGateTests(unittest.TestCase):
                 self.assertEqual([self.lookup(peer,0x10000) for peer in peers],before)
             finally:self.assertEqual(self.lib.spacesnapshotend(parent,child,0),0)
         for lib in self.libs:self.exercise(lib,body)
+
+    def test_unmap_cannot_remove_an_alias_before_its_root_is_frozen(self):
+        def body():
+            self.building()
+            parent, peer = self.create(), self.create()
+            data, other = self.memory_create(), self.memory_create()
+            self.assertEqual(self.map(parent, data), 0)
+            self.assertEqual(self.map(peer, data, prot=1), 0)
+            self.assertEqual(self.map(peer, other, address=0x20000), 0)
+            _, child = self.destination()
+            self.assertEqual(self.lib.spacesnapshotopen(parent, child, Prepid()), 0)
+            try:
+                self.assertFalse(self.stat(peer).frozen)
+                before = bytes(self.mstat(data)), self.lookup(peer, 0x10000)
+                error = self.lib.spaceunmap(peer, 0x10000)
+                if error == 0:
+                    self.maps.remove((peer, 0x10000))
+                self.assertEqual(error, -4)
+                self.assertEqual((bytes(self.mstat(data)), self.lookup(peer, 0x10000)), before)
+                self.assertEqual(self.lib.spaceunmap(peer, 0x20000), 0)
+                self.maps.pop()
+                self.ready(parent, child)
+                self.assertTrue(self.stat(peer).frozen)
+            finally:
+                self.assertEqual(self.lib.spacesnapshotend(parent, child, 0), 0)
+            self.assertEqual(self.lib.spaceunmap(peer, 0x10000), 0)
+            self.maps.remove((peer, 0x10000))
+        for lib in self.libs:
+            self.exercise(lib, body)

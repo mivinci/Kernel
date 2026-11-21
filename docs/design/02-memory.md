@@ -892,6 +892,8 @@ pgplan从全部已核验usable区间中选最大且足够容纳元数据的连�
 
 ### 快照期间的新DATA别名准入（2026-11-21）
 
+stage308：同一私有 DATA 已有冻结别名时，尚未被冻结的其他地址空间也不能移除其映射。普通 `unmap` 在修改 PTE、映射链和引用前复用阶段 177 的检查，保护分批扫描持有的别名游标。事务自身可按内部回滚路径移除子映射；进程退出清理遇到 `SP_BUSY` 保留当前阶段并重试。RV64、ARM64 QEMU `sigframe` 在扫描别名之前用真实页表验证 `unmap` 和 `spaceclear` 均返回 BUSY、原数据仍可读，并执行后续解冻与回收。53 项主机专项和格式检查通过。新主机回归在修复前复现 `unmap` 错误返回成功，修复后同时验证不相关 DATA 可解除映射，以及事务结束后原别名可移除。
+
 stage177复现普通map只看目标root冻结状态的缺口：源root已被快照持有时，另一未冻结且同Acct的root仍可成功添加同一DATA的RO/RW/COW别名，改变当前别名链，RW尤其可能成为未保护入口。新增aliasmapcheck在普通map获取引用/页表之前检查该Mem完整现有别名；遇任何冻结root返回BUSY，非法节点/代次/循环/root拒绝。仅私有RAM DATA且仍有manager参与；退役对象不由此获得新管理权，普通memcanmap/Acct/窗口授权仍照常执行。
 
 6项host在RV/ARM真实页表模型下调用生产Space/Mem/Acct实现，覆盖open立即拒绝且元数据/页/费用不变、分批build间拒绝但子重叠视图去重/内部安装成功、commit/abort后恢复并保持COW分离、SHARED/SEALED例外、不相关DATA可映射及冻结alias位于链尾。修复前3项得到成功0而非BUSY的反例日志before.log保留；另从修复前HEAD提取准确Space源码编译两架构模型，分别观察RO/RW/COW全部成功，PTE为9/11/25且源frozen、目标未frozen，before-evidence.json记录源码提交/哈希。这是前版源码的主机复测，不称修复前QEMU。修复后6项通过，没有通过放宽断言或忽略分配费用解决。

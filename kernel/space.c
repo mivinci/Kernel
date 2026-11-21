@@ -137,7 +137,7 @@ samemem(Memid a, Memid b)
   return a.generation == b.generation && a.index == b.index;
 }
 static int
-aliasmapcheck(Memid memory)
+aliaschangecheck(Memid memory)
 {
   u32 node, scanned = 0, space;
   if (!snapshot)
@@ -544,7 +544,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
      Mem already retained by a frozen root. Internal snapshot installation
      alone may extend the exact child prefix admitted by the transaction. */
   if (mode != MAP_SNAPSHOT && mem.managers && mem.kind == MEM_RAM && mem.state == MEM_DATA) {
-    error = aliasmapcheck(memory);
+    error = aliaschangecheck(memory);
     if (error)
       return error;
   }
@@ -937,6 +937,7 @@ unmap(Spaceid id, u64 address, u32 ending)
   Prepid    prep;
   u32       node, previous = PG_NONE, i, pages;
   u64       pa;
+  int       error;
   if (!s)
     return SP_BAD;
   if (s->busy || s == active ||
@@ -951,6 +952,13 @@ unmap(Spaceid id, u64 address, u32 ending)
   m = &mappings[node];
   if (memstat(m->mem, &backing))
     return SP_BAD;
+  /* The snapshot may hold a cursor to this alias even if its root has
+     not been visited yet. Its own rollback may remove the child prefix. */
+  if (!ending && backing.kind == MEM_RAM && backing.state == MEM_DATA) {
+    error = aliaschangecheck(m->mem);
+    if (error)
+      return error;
+  }
   pages = (u32) (m->length / PAGE_SIZE);
   view(s, &vs, &context);
   /* Check the entire record before the irreversible first removal. */

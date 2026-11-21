@@ -332,7 +332,9 @@ forkfreezetest(void)
           !spacemap(alias, memory, 0, 0x10000, 2 * PAGE_SIZE, VM_READ | VM_WRITE) &&
           !acctcreate(set, 128, 128, &targetacct) && !spacecreate(targetacct, &target));
   none.generation = none.index = none.reserved = 0;
-  REQUIRE(!spacesnapshotopen(process.space, target, none));
+  REQUIRE(!spacesnapshotopen(process.space, target, none) && !spacefrozen(alias) &&
+          spaceunmap(alias, 0x10000) == SP_BUSY && spaceclear(alias, 1) == SP_BUSY &&
+          !spaceread(alias, 0x10000, &observed, sizeof(observed)) && observed == value);
   do {
     error = spacesnapshotbuild(process.space, target);
     REQUIRE(error == 0 || error == 1);

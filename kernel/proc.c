@@ -948,6 +948,8 @@ procclean(Handle pid)
       p->phase.cleanup++;
   } else if (p->phase.cleanup == 1) {
     error = spaceclear(p->space, 1);
+    if (error == SP_BUSY)
+      return 1;
     if (error < 0)
       return convert(error);
     if (!error)

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage308：fork 快照保护已有私有 DATA 别名免于提前解除映射；双架构 QEMU `sigframe`、53 项主机专项及格式检查通过。
 - stage307：libc 提供 C locale 的 `fnmatch`；双架构 QEMU `runtime`、主机匹配比对和格式检查通过。目录枚举及 `sh` 接入仍待实现。
 - stage306：libc 提供 C locale 的 `strcoll`、`strxfrm`；双架构 QEMU `runtime` 和格式检查通过。
 - stage305：TTY `GETATTR` 可沿原 REQUEST 返回 Termarg；双架构 QEMU `runtime` 验证页末输出及越界拒绝，31 项主机测试和格式通过。生产分派仍待接入。
