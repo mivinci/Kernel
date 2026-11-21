@@ -266,7 +266,7 @@ nanosleep固定D，进入捕获信号裁决时I<D固定EINTR/rem=D-I；I>=D或�
 
 已接HAL计数读取/频率：RV64使用DTB timebase-frequency及rdtime，ARM64使用CNTFRQ_EL0/CNTVCT_EL0。公共clock模块在高半区初始化时固定起点，按商/余数转换；余数乘十亿用有界二进制运算避免u64溢出，不假定频率小于1GHz。单调绝对纳秒超出u64返回OVERFLOW，不改输出；秒超出s64同样拒绝。计数按u64模差处理一次回绕，超过完整计数周期不在支持范围。
 
-0x21/0x22已接原生time/getres，两种clockid和非法编号在真实U/EL0验证；分辨率为ceil(1e9/frequency)。REALTIME当前无校准入口，与MONOTONIC同起点推进，不能据此推断真实日期。clock_settime、校准状态query、用户态time.h/errno适配仍未实现。SYS_CLOCK_*及clockid定义在include/abi中。
+0x21/0x22已接原生time/getres，两种clockid和非法编号在真实U/EL0验证；分辨率为ceil(1e9/frequency)。REALTIME当前无校准入口，与MONOTONIC同起点推进，不能据此推断真实日期。clock_settime与校准状态query仍未实现；用户态time.h/errno适配已由stage281补齐。SYS_CLOCK_*及clockid定义在include/abi中。
 
 host测试以可注入HAL对照Python大整数，覆盖极端/随机频率、回绕、输出不变及纳秒溢出。syscalls场景检查真实计数推进、分辨率与频率一致，用户程序检查秒非负、纳秒规范化、非法编号及其他输出清零。该查询切片自身不包含定时中断验收；后续用户态timer IRQ及准备期限实现见下节，alarm仍未实现。
 
@@ -344,3 +344,9 @@ SOURCE free/revoke/表关闭仅删本地授权，不mask、不清事件、不撤
 本点完整make test-all通过641项host、格式与144次两架构QEMU；全部成功结果核对当前源码/共享头哈希，normal及生产init链接无fixture。最终两架构IRQ场景包含新增保留参数/高位bit拒绝、SOURCE删除后真实递送及既有退出/强杀/取消清理；证据build/host/stage94-native-irq-source/evidence.json与test-all.log。无CI/板端/性能验收；下一步优先按issues登记处理早期UART地址来源，再接生产SYSTEM设备库存。
 
 MMIO升级后的最终完整回归为334项host、格式和102个两架构QEMU，通过；普通驱动案例由用户清UART使能并读回，忙伙伴的窗口map被DENIED，证据build/host/stage52-mmio/。源权限/原生bind仍未采用未确认规则。
+
+### 公开时钟查询运行库接续（2026-11-21）
+
+stage281补齐`time.h`的`clock_gettime`与`clock_getres`、`sys/types.h`的64位`time_t`及私有`__sys_clock_getres`。两者共用定宽查询与公开`timespec`转换：成功返回0并保留errno，INVALID映射EINVAL、OVERFLOW映射EOVERFLOW、NOTSUP/NOSYS映射ENOSYS，输出复制故障映射EFAULT；非法内核纳秒结果按EIO拒绝且不写调用者结构。`clock_getres(clock,NULL)`只验证时钟并成功，`clock_gettime(clock,NULL)`经受检查复制返回EFAULT。
+
+5项时间接口主机测试覆盖16字节布局、两种syscall编号与完整clockid转发、成功保持errno、错误映射、NULL分辨率输出、复制故障及非规范结果；完整主机回归1252项通过。RV64及ARM64 QEMU的runtime场景在5个成功启动模式中各执行10项公开接口检查，包括MONOTONIC/REALTIME、连续MONOTONIC不倒退、实际非零分辨率、非法时钟、NULL输出和errno。

@@ -111,7 +111,7 @@ def build(args):
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.
-    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'ctype.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'credential.c', 'group.c', 'wait.c', 'signal.c', 'sigaction.c', 'raise.c')]
+    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'ctype.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'credential.c', 'group.c', 'wait.c', 'signal.c', 'sigaction.c', 'raise.c', 'time.c')]
     csu_sources = [ROOT / 'lib/csu/start.c', ROOT / 'lib/csu' / args.arch / 'start.S']
     runtime_source = ROOT / 'tests/kernel/runtimeuser.c'
     extra_units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o'))
@@ -206,7 +206,7 @@ def build(args):
     os.replace(temporary_runtime, runtime)
     runtime_inspect = invoke('inspect-runtime', [tools['readelf']['path'], '-h','-l','-s',str(runtime)])
     trace_rows = [line.split() for line in runtime_inspect.splitlines() if line.split() and line.split()[-1] == 'runtime_trace']
-    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 136:
+    if len(trace_rows) != 1 or int(trace_rows[0][2]) != 144:
         raise BuildError('runtime trace symbol is missing or has wrong size')
     trace_address = int(trace_rows[0][1],16)
     runtime_image = sdk / 'runtimeuser.img'

@@ -44,18 +44,28 @@ __sys_obsdrop(u64 cookie)
   Sysret    result;
   return __sys_enter(SYS_OBSDROP, args, &result);
 }
-isize
-__sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds)
+static isize
+clockquery(u64 number, u64 clock, int64_t *seconds, u64 *nanoseconds)
 {
   const u64 args[7] = {clock, 0, 0, 0, 0, 0, 0};
   Sysret    result;
   isize     error;
   if (!seconds || !nanoseconds)
     return -ERR_INVALID;
-  error = __sys_enter(SYS_CLOCK_GETTIME, args, &result);
+  error = __sys_enter(number, args, &result);
   *seconds = (int64_t) result.values[0];
   *nanoseconds = result.values[1];
   return error;
+}
+isize
+__sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds)
+{
+  return clockquery(SYS_CLOCK_GETTIME, clock, seconds, nanoseconds);
+}
+isize
+__sys_clock_getres(u64 clock, int64_t *seconds, u64 *nanoseconds)
+{
+  return clockquery(SYS_CLOCK_GETRES, clock, seconds, nanoseconds);
 }
 isize
 __sys_alarmset(u64 deadline, u64 *generation)

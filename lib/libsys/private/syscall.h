@@ -42,6 +42,7 @@ isize         __sys_ttycreate(Handle system, Handle control, Handle *resource, H
 isize         __sys_ttybind(Handle terminal, Handle sid);
 isize         __sys_getfg(Handle terminal, Handle *pgid, Handle *sid, u64 *epoch);
 isize         __sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanoseconds);
+isize         __sys_clock_getres(u64 clock, int64_t *seconds, u64 *nanoseconds);
 isize         __sys_alarmset(u64 deadline, u64 *generation);
 isize         __sys_alarmcancel(u64 *generation);
 isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 image, u64 *cookie,

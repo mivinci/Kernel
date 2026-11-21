@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage281：libc 公开 `clock_gettime` 和 `clock_getres`。双架构 runtime 验证两种时钟、单调性、实际分辨率、非法时钟、NULL 输出和 errno；5 项时间接口主机测试、1252 项完整主机回归及格式检查通过。REALTIME 尚未校准，`clock_settime` 和校准状态查询待接。
+
 - stage280：生产 TTY 对尚未支持的文件请求按文件协议回送原序号和 ENOTSUP；双架构 `serial-tty` 验证拒绝后仍正常回显。
 
 - stage279：TTY 字节间计时只在保留新字节时续期，到期先结旧读；双架构 tty 验证到期边界的字节保留给下一次读，31 项主机测试及格式通过。

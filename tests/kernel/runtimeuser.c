@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/channel.h>
+#include <time.h>
 #include "private/libc.h"
 #include "private/syscall.h"
 #include "private/virtio/ring.h"
@@ -14,7 +15,7 @@
 #include "fileuser.h"
 #include "stringuser.h"
 #include "envuser.h"
-volatile u64        runtime_trace[17];
+volatile u64        runtime_trace[18];
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -59,6 +60,10 @@ static const Numbercase numbers[] = {
      10, 12, 12, 2, EDOM, EDOM},
     {"-101q", 2, -5, ULONG_MAX - 4, 4, EDOM, EDOM}};
 STATIC_ASSERT(sizeof(long) == 8, runtime_integer_lp64);
+STATIC_ASSERT(sizeof(time_t) == 8, runtime_time_t);
+STATIC_ASSERT(sizeof(struct timespec) == 16, runtime_timespec_size);
+STATIC_ASSERT(offsetof(struct timespec, tv_sec) == 0, runtime_timespec_seconds);
+STATIC_ASSERT(offsetof(struct timespec, tv_nsec) == 8, runtime_timespec_nanoseconds);
 static int
 comparebyte(const void *a, const void *b)
 {
@@ -311,6 +316,46 @@ groupcheck(void)
 #undef GCHECK
   return checks;
 }
+static u32
+timecheck(void)
+{
+  struct timespec monotonic, later, realtime, resolution, rt_resolution, before, invalid;
+  u32             checks = 0;
+#define TCHECK(c, n)                                                                               \
+  do {                                                                                             \
+    REQUIRE(c, n);                                                                                 \
+    checks++;                                                                                      \
+  } while (0)
+  errno = EDOM;
+  TCHECK(!clock_gettime(CLOCK_MONOTONIC, &monotonic) && monotonic.tv_sec >= 0 &&
+             monotonic.tv_nsec >= 0 && monotonic.tv_nsec < 1000000000 && errno == EDOM,
+         256);
+  TCHECK(!clock_gettime(CLOCK_MONOTONIC, &later) &&
+             (later.tv_sec > monotonic.tv_sec ||
+              (later.tv_sec == monotonic.tv_sec && later.tv_nsec >= monotonic.tv_nsec)) &&
+             errno == EDOM,
+         257);
+  TCHECK(!clock_gettime(CLOCK_REALTIME, &realtime) && realtime.tv_sec >= 0 &&
+             realtime.tv_nsec >= 0 && realtime.tv_nsec < 1000000000 && errno == EDOM,
+         258);
+  TCHECK(!clock_getres(CLOCK_MONOTONIC, &resolution) && resolution.tv_sec >= 0 &&
+             resolution.tv_nsec >= 0 && (resolution.tv_sec || resolution.tv_nsec) && errno == EDOM,
+         259);
+  TCHECK(!clock_getres(CLOCK_REALTIME, &rt_resolution) &&
+             rt_resolution.tv_sec == resolution.tv_sec &&
+             rt_resolution.tv_nsec == resolution.tv_nsec && errno == EDOM,
+         260);
+  TCHECK(clock_getres(CLOCK_MONOTONIC, NULL) == 0 && errno == EDOM, 261);
+  TCHECK(clock_gettime(0, &invalid) == -1 && errno == EINVAL, 262);
+  before.tv_sec = before.tv_nsec = 77;
+  TCHECK(clock_gettime(CLOCK_MONOTONIC, NULL) == -1 && errno == EFAULT, 263);
+  TCHECK(clock_getres(0, NULL) == -1 && errno == EINVAL, 264);
+  errno = EDOM;
+  TCHECK(!clock_gettime(CLOCK_REALTIME, &before) && errno == EDOM && before.tv_nsec < 1000000000,
+         265);
+#undef TCHECK
+  return checks;
+}
 static void
 preinit(void)
 {
@@ -479,6 +524,7 @@ main(int argc, char **argv)
   runtime_trace[14] = fileusercheck();
   runtime_trace[15] = stringusercheck(&view);
   runtime_trace[16] = envusercheck(&view);
+  runtime_trace[17] = timecheck();
   errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)
