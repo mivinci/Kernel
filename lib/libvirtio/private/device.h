@@ -9,6 +9,8 @@
 #define VDEV_RESET       4
 #define VDEV_FEATURES    5
 #define VDEV_FAILED      6
+#define VDEV_LIVE        7
+#define VDEV_QUEUES      32
 #define VDEV_VERSION1    ((u64) 1 << 32)
 #define VDEV_RESET_NS    UINT64_C(3000000000)
 #define VDEV_RESET_TRIES 3
@@ -26,7 +28,7 @@ struct Vdevops
 struct Vdev
 {
   u64     offered, features, deadline, lasttime;
-  u32     device, vendor, state, status, attempts, reserved;
+  u32     device, vendor, state, status, attempts, queues;
   Vdevops ops;
 };
 /* Fresh private storage. A valid empty transport succeeds with state EMPTY;
@@ -43,4 +45,12 @@ int vresetpoll(Vdev *device, u64 now);
    be selected; unsupported common optimizations are never negotiated.
    Does not configure queues or set DRIVER_OK. */
 int vfeatures(Vdev *device, u64 wanted, u64 required);
+/* Install a fixed-size split ring before DRIVER_OK. The caller provides
+   three exclusive DMA pages from this device's domain, already initialized
+   and synchronized by vrinit. Keep them pinned through a confirmed stop. */
+int vqueue(Vdev *device, u32 index, u64 desc, u64 avail, u64 used);
+int vstart(Vdev *device);
+/* Ring the doorbell after vrsubmit has made avail.idx visible. An error
+   does not undo publication or permit DMA buffer reuse. */
+int vnotify(Vdev *device, u32 index);
 #endif

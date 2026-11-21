@@ -1,4 +1,5 @@
 #include "private/device.h"
+#include "private/queue.h"
 #define DEVICE_MAGIC       0x74726976U
 #define REG_MAGIC          0x00
 #define REG_VERSION        0x04
@@ -8,9 +9,18 @@
 #define REG_FEATURESEL     0x14
 #define REG_DRIVERFEATURES 0x20
 #define REG_DRIVERSEL      0x24
+#define REG_QUEUESEL       0x30
+#define REG_QUEUEMAX       0x34
+#define REG_QUEUENUM       0x38
+#define REG_QUEUEREADY     0x44
+#define REG_QUEUENOTIFY    0x50
 #define REG_STATUS         0x70
+#define REG_QUEUEDESC      0x80
+#define REG_QUEUEAVAIL     0x90
+#define REG_QUEUEUSED      0xa0
 #define STATUS_ACK         1
 #define STATUS_DRIVER      2
+#define STATUS_DRIVER_OK   4
 #define STATUS_FEATURES    8
 #define STATUS_NEEDS_RESET 64
 #define STATUS_FAILED      128
@@ -52,18 +62,25 @@ reject(Vdev *d, int error)
   return fail(d, error);
 }
 static int
-addstatus(Vdev *d, u32 bits)
+checkstatus(Vdev *d)
 {
   u32 value, expected = d->status;
+  u32 allowed = STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES | STATUS_FAILED | STATUS_NEEDS_RESET;
   int error = readreg(d, REG_STATUS, &value);
   if (error)
     return fail(d, error);
   d->status = value;
-  if (value & ~(STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES | STATUS_FAILED | STATUS_NEEDS_RESET))
+  if (value & ~(allowed | (expected & STATUS_DRIVER_OK)))
     return fail(d, -ERR_PEER);
   if (value != expected || (value & (STATUS_FAILED | STATUS_NEEDS_RESET)))
     return reject(d, -ERR_PEER);
-  return status(d, value | bits);
+  return 0;
+}
+static int
+addstatus(Vdev *d, u32 bits)
+{
+  int error = checkstatus(d);
+  return error ? error : status(d, d->status | bits);
 }
 int
 vprobe(Vdev *d, const Vdevops *ops)
@@ -73,7 +90,7 @@ vprobe(Vdev *d, const Vdevops *ops)
   if (!d || !ops || !ops->read || !ops->write)
     return -ERR_INVALID;
   d->offered = d->features = d->deadline = d->lasttime = 0;
-  d->device = d->vendor = d->status = d->attempts = d->reserved = 0;
+  d->device = d->vendor = d->status = d->attempts = d->queues = 0;
   d->state = VDEV_FAILED;
   d->ops.context = ops->context;
   d->ops.read = ops->read;
@@ -118,7 +135,7 @@ vresetpoll(Vdev *d, u64 now)
   if (value)
     return -ERR_WOULD_BLOCK;
   d->offered = d->features = 0;
-  d->attempts = 0;
+  d->attempts = d->queues = 0;
   d->state = VDEV_RESET;
   return 0;
 }
@@ -126,7 +143,7 @@ int
 vresetbegin(Vdev *d, u64 now)
 {
   int error;
-  if (!d || !d->ops.read || !d->ops.write || d->state < VDEV_FOUND || d->state > VDEV_FAILED ||
+  if (!d || !d->ops.read || !d->ops.write || d->state < VDEV_FOUND || d->state > VDEV_LIVE ||
       d->state == VDEV_RESETTING || !d->device)
     return -ERR_STATE;
   if (d->attempts >= VDEV_RESET_TRIES)
@@ -199,4 +216,81 @@ vfeatures(Vdev *d, u64 wanted, u64 required)
   d->features = wanted;
   d->state = VDEV_FEATURES;
   return 0;
+}
+static int
+writeaddress(Vdev *d, u32 reg, u64 address)
+{
+  int error = writereg(d, reg, (u32) address);
+  return error ? error : writereg(d, reg + 4, (u32) (address >> 32));
+}
+int
+vqueue(Vdev *d, u32 index, u64 desc, u64 avail, u64 used)
+{
+  u32 value, bit;
+  int error;
+  if (!d || d->state != VDEV_FEATURES)
+    return -ERR_STATE;
+  if (index >= VDEV_QUEUES || ((desc | avail | used) & (PAGE_SIZE - 1)) || desc == avail ||
+      desc == used || avail == used)
+    return -ERR_INVALID;
+  bit = 1U << index;
+  if (d->queues & bit)
+    return -ERR_BUSY;
+  error = checkstatus(d);
+  if (error)
+    return error;
+  error = writereg(d, REG_QUEUESEL, index);
+  if (!error)
+    error = readreg(d, REG_QUEUEREADY, &value);
+  if (error)
+    return fail(d, error);
+  if (value)
+    return reject(d, -ERR_PEER);
+  error = readreg(d, REG_QUEUEMAX, &value);
+  if (error)
+    return fail(d, error);
+  if (value < VQ_SIZE)
+    return -ERR_NOTSUP;
+  error = writereg(d, REG_QUEUENUM, VQ_SIZE);
+  if (!error)
+    error = writeaddress(d, REG_QUEUEDESC, desc);
+  if (!error)
+    error = writeaddress(d, REG_QUEUEAVAIL, avail);
+  if (!error)
+    error = writeaddress(d, REG_QUEUEUSED, used);
+  if (!error)
+    error = writereg(d, REG_QUEUEREADY, 1);
+  if (!error)
+    error = readreg(d, REG_QUEUEREADY, &value);
+  if (error)
+    return fail(d, error);
+  if (value != 1)
+    return reject(d, -ERR_PEER);
+  d->queues |= bit;
+  return 0;
+}
+int
+vstart(Vdev *d)
+{
+  int error;
+  if (!d || d->state != VDEV_FEATURES || !d->queues)
+    return -ERR_STATE;
+  error = addstatus(d, STATUS_DRIVER_OK);
+  if (!error)
+    error = checkstatus(d);
+  if (error)
+    return error;
+  d->state = VDEV_LIVE;
+  return 0;
+}
+int
+vnotify(Vdev *d, u32 index)
+{
+  int error;
+  if (!d || d->state != VDEV_LIVE)
+    return -ERR_STATE;
+  if (index >= VDEV_QUEUES || !(d->queues & (1U << index)))
+    return -ERR_INVALID;
+  error = writereg(d, REG_QUEUENOTIFY, index);
+  return error ? fail(d, error) : 0;
 }

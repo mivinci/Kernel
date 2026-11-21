@@ -18,7 +18,7 @@ class Ops(C.Structure):
 
 class Vdev(C.Structure):
     _fields_ = [(name, C.c_uint64) for name in ('offered', 'features', 'deadline', 'lasttime')] + [
-        (name, C.c_uint32) for name in ('device', 'vendor', 'state', 'status', 'attempts', 'reserved')] + [('ops', Ops)]
+        (name, C.c_uint32) for name in ('device', 'vendor', 'state', 'status', 'attempts', 'queues')] + [('ops', Ops)]
 
 
 class Blockconfig(C.Structure):
@@ -47,6 +47,10 @@ class Mmio:
         self.mutated_error = False
         self.generation = 0
         self.change_capacity = False
+        self.queue_sel = 0
+        self.queue_max = {0: 256, 1: 128}
+        self.queue_regs = {}
+        self.reject_queue = False
         self.read_callback = Read(self.read)
         self.write_callback = Write(self.write)
         self.ops = Ops(None, self.read_callback, self.write_callback)
@@ -61,6 +65,8 @@ class Mmio:
                 self.status = 0
         values = {0: self.magic, 4: self.version, 8: self.device, 12: self.vendor,
                   0x10: (self.features >> (32 * self.feature_sel)) & 0xffffffff, 0x70: self.status,
+                  0x34: self.queue_max.get(self.queue_sel, 0),
+                  0x44: self.queue_regs.get((self.queue_sel, 0x44), 0),
                   0xfc: self.generation, 0x100: 64, 0x104: 1}
         if offset not in values:
             return -1
@@ -79,6 +85,7 @@ class Mmio:
                 self.pending = self.reset_delay
                 self.status = 1 if self.stuck or self.pending else 0
                 self.driver = 0
+                self.queue_regs.clear()
             else:
                 self.status = value
                 if value & 8:
@@ -94,6 +101,14 @@ class Mmio:
             self.driver = (self.driver & ~(0xffffffff << shift)) | (value << shift)
             if self.need_reset_on_driver_features:
                 self.status |= 64
+        elif offset == 0x30:
+            self.queue_sel = value
+        elif offset in (0x38, 0x44, 0x80, 0x84, 0x90, 0x94, 0xa0, 0xa4):
+            if not (offset == 0x44 and self.reject_queue):
+                self.queue_regs[self.queue_sel, offset] = value
+        elif offset == 0x50:
+            if not self.status & 4 or self.queue_regs.get((value, 0x44)) != 1:
+                return -14
         else:
             return -1
         return self.error_value if error else 0
@@ -119,6 +134,9 @@ class VirtioDeviceTests(unittest.TestCase):
         cls.lib.vfeatures.argtypes = [C.POINTER(Vdev), C.c_uint64, C.c_uint64]
         cls.lib.vblkfeatures.argtypes = [C.POINTER(Vdev)]
         cls.lib.vblkconfig.argtypes = [C.POINTER(Vdev), C.POINTER(Blockconfig)]
+        cls.lib.vqueue.argtypes = [C.POINTER(Vdev), C.c_uint32] + [C.c_uint64] * 3
+        cls.lib.vstart.argtypes = [C.POINTER(Vdev)]
+        cls.lib.vnotify.argtypes = [C.POINTER(Vdev), C.c_uint32]
 
     @classmethod
     def tearDownClass(cls):
@@ -139,6 +157,84 @@ class VirtioDeviceTests(unittest.TestCase):
 
     def negotiate(self, wanted=1 << 9, required=1 << 9):
         return self.lib.vfeatures(C.byref(self.device), wanted, required)
+
+    def features(self):
+        self.assertEqual(self.probe(), 0)
+        self.assertEqual(self.reset(), 0)
+        self.assertEqual(self.negotiate(), 0)
+
+    def queue(self, index=0, desc=0x100001000, avail=0x200002000, used=0x300003000):
+        return self.lib.vqueue(C.byref(self.device), index, desc, avail, used)
+
+    def start(self):
+        return self.lib.vstart(C.byref(self.device))
+
+    def notify(self, index):
+        return self.lib.vnotify(C.byref(self.device), index)
+
+    def test_split_queue_setup_start_notify_and_reset(self):
+        self.features()
+        self.assertEqual(self.start(), -6)
+        self.assertEqual(self.notify(0), -6)
+        self.mmio.events.clear()
+        self.assertEqual(self.queue(), 0)
+        self.assertEqual(self.mmio.events, [
+            ('read', 0x70), ('write', 0x30, 0), ('read', 0x44), ('read', 0x34),
+            ('write', 0x38, 128), ('write', 0x80, 0x1000), ('write', 0x84, 1),
+            ('write', 0x90, 0x2000), ('write', 0x94, 2), ('write', 0xa0, 0x3000),
+            ('write', 0xa4, 3), ('write', 0x44, 1), ('read', 0x44)])
+        self.assertEqual(self.mmio.status, 11)
+        self.assertEqual(self.queue(1, 0x4000, 0x5000, 0x6000), 0)
+        self.assertEqual(self.start(), 0)
+        self.assertEqual((self.device.state, self.mmio.status), (7, 15))
+        self.assertEqual(self.notify(0), 0)
+        self.assertEqual(self.notify(1), 0)
+        self.assertEqual(self.mmio.events[-2:], [('write', 0x50, 0), ('write', 0x50, 1)])
+        self.assertEqual(self.notify(2), -1)
+        self.assertEqual(self.queue(2), -6)
+        self.assertEqual(self.reset(101), 0)
+        self.assertEqual((self.device.queues, self.mmio.queue_regs), (0, {}))
+
+    def test_queue_rejects_invalid_alignment_alias_duplicate_and_small_device(self):
+        self.features()
+        before = self.mmio.events[:]
+        self.assertEqual(self.queue(32), -1)
+        self.assertEqual(self.queue(desc=3), -1)
+        self.assertEqual(self.queue(desc=0x200002000), -1)
+        self.assertEqual(self.mmio.events, before)
+        self.mmio.queue_max[0] = 64
+        self.assertEqual(self.queue(), -18)
+        self.assertEqual(self.mmio.queue_regs, {})
+        self.assertEqual(self.start(), -6)
+        self.mmio.queue_max[0] = 128
+        self.assertEqual(self.queue(), 0)
+        before = self.mmio.events[:]
+        self.assertEqual(self.queue(), -7)
+        self.assertEqual(self.mmio.events, before)
+
+    def test_queue_partial_mmio_failure_requires_confirmed_reset(self):
+        for step in range(1, 14):
+            self.setUp()
+            self.features()
+            self.mmio.mutated_error = True
+            self.mmio.error_at = len(self.mmio.events) + step
+            self.assertEqual(self.queue(), -2, step)
+            self.assertEqual((self.device.state, self.device.queues), (6, 0), step)
+            self.assertEqual(self.start(), -6)
+            self.assertEqual(self.queue(), -6)
+            self.assertEqual(self.reset(101), 0)
+
+    def test_queue_and_driver_ok_require_device_acceptance(self):
+        self.features()
+        self.mmio.reject_queue = True
+        self.assertEqual(self.queue(), -14)
+        self.assertEqual(self.start(), -6)
+        self.setUp()
+        self.features()
+        self.assertEqual(self.queue(), 0)
+        self.mmio.bad_status = 64
+        self.assertEqual(self.start(), -14)
+        self.assertEqual(self.notify(0), -6)
 
     def test_block_capacity_snapshot_and_readonly_policy(self):
         for features, readonly, flush in ((0, 1, 0), (1 << 9, 0, 1), ((1 << 5) | (1 << 9), 1, 1)):
