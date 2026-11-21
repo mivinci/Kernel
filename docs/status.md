@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage241：父侧 `sysctxfixplan` 从稳定 Rbank 导出三层记录并复用子侧路由准入。65 项上下文主机测试、格式、双架构 sigframe/libsys 通过；完整父侧协调器与后端准备仍待接。
+
 - stage240：公开 `qsort`、`bsearch` 已纳入 libc SDK；双架构 runtime QEMU 实际验证排序、重复键、记录完整性和查找边界，格式通过。
 
 - stage239：libc公开getuid/geteuid/getgid/getegid及32位uid_t/gid_t已接SDK，每次读取真实自身凭据并保持errno；8项相关主机测试、格式与双架构elf/runtime四次QEMU通过。凭据修改/附加组未接，fork机制错误真实场景、后端子引用和整体入口仍待接。

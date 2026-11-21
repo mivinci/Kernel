@@ -344,8 +344,7 @@ readfork(void)
     fix.header.source_image = parent.image;
     fix.header.target_pid = forked.pid;
     fix.header.contexts_off = sizeof(Fix);
-    fix.layers[0].sequence = runtime_key.sequence;
-    fix.layers[0].action = FIX_LAYER_COMPLETE;
+    REQUIRE(!sysctxfixplan(&runtime_contexts, parent, fix.layers), 34);
     for (i = 0; i < sizeof(work); i++)
       ((u8 *) &work)[i] = 0;
     work.view = forked.construct;

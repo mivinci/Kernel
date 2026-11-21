@@ -1,6 +1,10 @@
 #ifndef _LIBSYS_CONTEXTIPC_H
 #define _LIBSYS_CONTEXTIPC_H
 #include "context.h"
+/* Derive the three Fix layers from the stable parent snapshot and admit every
+   route before publishing any output. Output must be private and disjoint from
+   the bank and transport records. No target identity or backend preparation. */
+isize sysctxfixplan(Rbank *bank, Connpeer parent, Fixlayer out[FIX_LAYER_COUNT]);
 /* Read-only full route admission before the coordinator changes any child
    tables. Requires inherited parent identity; no idempotent child shortcut.
    Keep the bank and transport records stable until local repair completes. */

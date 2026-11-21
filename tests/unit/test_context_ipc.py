@@ -43,6 +43,7 @@ class ContextIpcTests(unittest.TestCase):
             'sysctxhandoff': [bank, Peer, Key], 'sysctxfinish': [bank, Peer, Key],
             'sysctxfixwait': [bank, Peer, Peer, C.c_void_p],
             'sysctxfixwaitcheck': [bank, Peer, Peer, C.c_void_p],
+            'sysctxfixplan': [bank, Peer, C.c_void_p],
             'sysctxprepare': [bank,Peer,C.c_uint32,C.c_uint64,C.c_void_p,key],
             'sysctxforkresult': [bank, Peer, Key, C.POINTER(C.c_int64)],
             'sysctxpeerended': [bank, Peer, Key],
@@ -95,7 +96,9 @@ class ContextIpcTests(unittest.TestCase):
         key=self.waiting_boot()
         parent=bytes(self.bank);records=(bytes(self.boot),bytes(self.work),bytes(self.cache))
         calls=[self.lib.testget(i) for i in range(3)]
-        layers=(C.c_uint64*6)(key.sequence,3,0,0,0,0)
+        layers=(C.c_uint64*6)()
+        self.assertEqual(self.lib.sysctxfixplan(self.b,self.self,layers),0)
+        self.assertEqual(list(layers),[key.sequence,3,0,0,0,0])
         child=Peer(pid(3),20)
         self.assertEqual(self.lib.sysctxfixwaitcheck(self.b,self.self,child,layers),0)
         self.assertEqual(bytes(self.bank),parent)
@@ -147,6 +150,9 @@ class ContextIpcTests(unittest.TestCase):
         self.bank.contexts[1].phase=3
         layers=(C.c_uint64*6)(key.sequence,3,other.sequence,2,0,0)
         before=bytes(self.bank)
+        output=(C.c_uint64*6)(1,2,3,4,5,6)
+        self.assertEqual(self.lib.sysctxfixplan(self.b,self.self,output),-18)
+        self.assertEqual(list(output),[1,2,3,4,5,6])
         self.assertEqual(self.lib.sysctxfixwaitcheck(self.b,self.self,Peer(pid(3),20),layers),-18)
         self.assertEqual(bytes(self.bank),before)
         self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,Peer(pid(3),20),layers),-18)

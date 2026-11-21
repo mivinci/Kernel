@@ -536,14 +536,7 @@ forkprepuser(void)
   fix.header.source_image = image;
   fix.header.target_pid = child;
   fix.header.contexts_off = sizeof(Fix);
-  fix.contexts[0].sequence = runtime_key.sequence;
-  fix.contexts[0].action = FIX_LAYER_UNSENT;
-  fix.contexts[1].sequence = forkcompleted.sequence;
-  fix.contexts[1].action = FIX_LAYER_COMPLETE;
-  if (frame_trace[1] >= 14) {
-    fix.contexts[2].sequence = forkouter.sequence;
-    fix.contexts[2].action = FIX_LAYER_INTERRUPT;
-  }
+  REQUIRE(!sysctxfixplan(&runtime_contexts, context_self, fix.contexts), 237);
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;
