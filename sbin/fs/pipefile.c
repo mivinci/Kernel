@@ -129,16 +129,37 @@ pipefileretire(Pipetable *table, Handle pid, u64 image)
   return 0;
 }
 
+static Pipefile *
+ownedfile(Pipetable *table, Handle pid, u64 image, u64 session, u32 *end)
+{
+  u32 i;
+  for (i = 0; i < table->nrefs; i++)
+    if (table->refs[i].pid && owner(&table->refs[i], pid, image, session))
+      return lookup(table, session, end);
+  return NULL;
+}
+
+isize
+pipefileready(Pipetable *table, Handle pid, u64 image, u64 session, Pipeready *out)
+{
+  u32       end;
+  Pipefile *file = ownedfile(table, pid, image, session, &end);
+  if (!file)
+    return -ERR_STALE;
+  out->readable = end == PIPE_READ ? file->stream.bytes : 0;
+  out->hup = end == PIPE_READ && !file->stream.refs[PIPE_WRITE];
+  out->error = end == PIPE_WRITE && !file->stream.refs[PIPE_READ];
+  out->room = end == PIPE_WRITE && !out->error ? PIPE_CAPACITY - file->stream.bytes : 0;
+  return 0;
+}
+
 isize
 pipefilepin(Pipetable *table, Handle pid, u64 image, u64 session, u32 end, Pipefile **out)
 {
-  Pipefile *file;
-  u32       actual, i;
+  u32       actual;
+  Pipefile *file = ownedfile(table, pid, image, session, &actual);
   isize     error;
-  for (i = 0; i < table->nrefs; i++)
-    if (table->refs[i].pid && owner(&table->refs[i], pid, image, session))
-      break;
-  if (i == table->nrefs || !(file = lookup(table, session, &actual)))
+  if (!file)
     return -ERR_STALE;
   if (end != actual)
     return -ERR_DENIED;

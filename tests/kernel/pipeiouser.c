@@ -67,12 +67,22 @@ filelifetime(Handle pid, u64 image)
   Pipetable       table = {files, refs, ARRAY_SIZE(files), ARRAY_SIZE(refs), 0};
   Pipekey         keys[2], later[2], duplicate;
   Pipefile       *pinned;
+  Pipeready       ready;
   u8              byte = 'z';
   CHECK(!pipefilecreate(&table, pid, image, 1, keys) && keys[0].session != keys[1].session &&
         keys[0].reference != keys[1].reference &&
         pipefilepin(&table, pid, image + 1, keys[0].session, PIPE_READ, &pinned) == -ERR_STALE &&
         pipefilepin(&table, pid, image, keys[0].session, PIPE_WRITE, &pinned) == -ERR_DENIED &&
-        !pipefileclose(&table, pid, image, keys[PIPE_WRITE]));
+        !pipefileready(&table, pid, image, keys[PIPE_WRITE].session, &ready) &&
+        ready.room == PIPE_CAPACITY && !ready.error && !ready.hup &&
+        pipefileready(&table, pid, image + 1, keys[PIPE_WRITE].session, &ready) == -ERR_STALE &&
+        ready.room == PIPE_CAPACITY && pipewrite(&files[0].stream, &byte, 1) == 1 &&
+        !pipefileclose(&table, pid, image, keys[PIPE_WRITE]) &&
+        !pipefileready(&table, pid, image, keys[PIPE_READ].session, &ready) &&
+        ready.readable == 1 && ready.hup && !ready.error && !ready.room &&
+        piperead(&files[0].stream, &byte, 1) == 1 &&
+        !pipefileready(&table, pid, image, keys[PIPE_READ].session, &ready) && !ready.readable &&
+        ready.hup);
   /* Reuse the only stream, then keep the writer alive with an admitted I/O. */
   CHECK(!pipefileclose(&table, pid, image, keys[PIPE_READ]) &&
         !pipefilecreate(&table, pid, image, 0, later) && later[0].session > keys[1].session &&
@@ -90,7 +100,9 @@ filelifetime(Handle pid, u64 image)
         !pipefilepin(&table, pid, image, later[PIPE_READ].session, PIPE_READ, &pinned) &&
         !pipedrop(&pinned->stream, PIPE_READ));
   CHECK(!pipefileretire(&table, pid, image) && !pipefilecreate(&table, pid, image, 0, keys) &&
-        !pipefileretire(&table, pid, image));
+        !pipefileclose(&table, pid, image, keys[PIPE_READ]) &&
+        !pipefileready(&table, pid, image, keys[PIPE_WRITE].session, &ready) && ready.error &&
+        !ready.room && !ready.hup && !ready.readable && !pipefileretire(&table, pid, image));
 }
 
 static void
