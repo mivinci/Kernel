@@ -269,6 +269,28 @@ cachereadbegin(Cache *cache, const Cachekey *key, Cacheio *out, u8 **destination
   return error;
 }
 isize
+cachefetch(Cache *cache, u64 block, u32 metadata, Cacheio *out, u8 **destination)
+{
+  Cachekey  key = {0};
+  const u8 *data;
+  u64       version;
+  isize     error, cleanup;
+  if (!external(cache, out, sizeof(*out)) || !external(cache, destination, sizeof(*destination)) ||
+      !separate(out, sizeof(*out), destination, sizeof(*destination)))
+    return -ERR_INVALID;
+  error = cacheget(cache, block, metadata, &key);
+  if (error)
+    return error;
+  error = cacheview(cache, &key, &data, &version);
+  if (error == -ERR_WOULD_BLOCK) {
+    error = cachereadbegin(cache, &key, out, destination);
+    error = !error ? 1 : error == -ERR_BUSY ? -ERR_WOULD_BLOCK : error;
+  }
+  cleanup = cacheput(cache, &key);
+  return cleanup ? cleanup : error;
+}
+
+isize
 cachewritebegin(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out)
 {
   Cacheblock  *entry;

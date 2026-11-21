@@ -507,6 +507,12 @@ loadreads(void)
                     &slot, sizeof(slot)) &&
         !ipc_call(work.state.call, &call, CALL_ASYNC, &result));
     rpc = result.request;
+    if (!attempt) {
+      control.words[1] = 4;
+      CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result));
+      control.words[1] = 5;
+      CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result));
+    }
     if (attempt == 1) {
       control.words[1] = 1;
       CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result) && !ipc_rqcancel(rpc));
@@ -1013,29 +1019,6 @@ claimbackend(const Bootview *boot)
 }
 
 static void
-loadfixturecache(Cache *backing)
-{
-  Cachekey key = {0};
-  Cacheio  ticket;
-  u8      *bytes;
-  u32      i;
-  CHECK(!cacheinit(backing, loadblocks, ARRAY_SIZE(loadblocks), 128));
-  for (i = 0; i < 2; i++) {
-    CHECK(!cacheget(backing, 100 + i, CACHE_DATA, &key) &&
-          !cachereadbegin(backing, &key, &ticket, &bytes));
-    zero(bytes, CACHE_BYTES);
-    if (i) {
-      bytes[0] = 'F';
-      bytes[1] = '!';
-    } else {
-      bytes[CACHE_BYTES - 2] = 'E';
-      bytes[CACHE_BYTES - 1] = 'L';
-    }
-    CHECK(!cachecomplete(backing, &ticket, 1) && !cacheput(backing, &key));
-  }
-}
-
-static void
 server(const Bootview *boot, u32 recover)
 {
   Connpeer   peer;
@@ -1063,6 +1046,8 @@ server(const Bootview *boot, u32 recover)
   Loadio          loadio = {0};
   Cache           loadcache = {0};
   Loadspan        loadspan;
+  Cacheio         loadticket, duplicate;
+  u8             *loadtarget = NULL, *unused = NULL;
   u8              loadbytes[4];
   u64             loadsession = 0, guard;
   u64             ttynow, ttyalarm = 0, generation;
@@ -1193,7 +1178,7 @@ server(const Bootview *boot, u32 recover)
     if (opcode == LOADTEST) {
       CHECK(!recover);
       if (!input.words[1]) {
-        loadfixturecache(&loadcache);
+        CHECK(!cacheinit(&loadcache, loadblocks, ARRAY_SIZE(loadblocks), 128));
         CHECK(!loadsession &&
               !loadopen(&loadtable, &loadfile, input.source, input.image, 0, 100, &loadsession));
         reply.words[2] = loadsession;
@@ -1201,6 +1186,25 @@ server(const Bootview *boot, u32 recover)
         CHECK(loadio.request && loadwrite(&loadtable, loadfile.inode, &guard) == -ERR_BUSY);
       } else if (input.words[1] == 2) {
         CHECK(loadio.request && !loadioreply(&loadio, NULL, 0, 3));
+      } else if (input.words[1] == 4) {
+        CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
+        zero(loadtarget, CACHE_BYTES);
+        loadtarget[CACHE_BYTES - 2] = 'E';
+        loadtarget[CACHE_BYTES - 1] = 'L';
+        CHECK(!cachecomplete(&loadcache, &loadticket, 1) &&
+              cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) == 0 &&
+              !unused &&
+              cachefetch(&loadcache, loadspan.next, CACHE_DATA, &loadticket, &loadtarget) == 1);
+      } else if (input.words[1] == 5) {
+        CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
+        zero(loadtarget, CACHE_BYTES);
+        loadtarget[0] = 'F';
+        loadtarget[1] = '!';
+        CHECK(!cachecomplete(&loadcache, &loadticket, 1) &&
+              !cachecopydata(&loadcache, loadspan.first, loadspan.next, loadspan.offset, loadbytes,
+                             sizeof(loadbytes)) &&
+              !loadioreply(&loadio, loadbytes, sizeof(loadbytes), 3));
+        loadtarget = NULL;
       } else {
         CHECK(input.words[1] == 3 && input.words[2] == loadsession && !loadio.request &&
               !loadclose(&loadtable, loadsession, input.source, input.image) &&
@@ -1318,13 +1322,15 @@ server(const Bootview *boot, u32 recover)
         CHECK(!status);
         if (loadio.offset == 4)
           CHECK(!ipc_defer(input.request));
-        else
+        else {
           CHECK(loadio.bytes == sizeof(loadbytes) &&
                 !loadmapspan(&loadio.file, &loadmap, &loadindex, 99, 128, loadio.offset,
                              loadio.bytes, &loadspan) &&
-                !cachecopydata(&loadcache, loadspan.first, loadspan.next, loadspan.offset,
-                               loadbytes, sizeof(loadbytes)) &&
-                !loadioreply(&loadio, loadbytes, sizeof(loadbytes), 3));
+                cachefetch(&loadcache, loadspan.first, CACHE_DATA, &loadticket, &loadtarget) == 1 &&
+                cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) ==
+                    -ERR_WOULD_BLOCK &&
+                !unused && !ipc_defer(input.request));
+        }
       }
       continue;
     }

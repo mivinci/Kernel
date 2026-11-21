@@ -57,6 +57,10 @@ isize cacheedit(Cache *cache, const Cachekey *key, u32 offset, const void *data,
    snapshot/ticket outputs are independent stable preallocated storage, kept
    until actual lower-layer access drains; edits may then advance authority. */
 isize cachereadbegin(Cache *cache, const Cachekey *key, Cacheio *out, u8 **destination);
+/* Probe a block for the device dispatcher. Zero means a cache hit; one
+   transfers a new read ticket and destination. WOULD_BLOCK means an existing
+   read owns the destination. Only the ticket owner completes the read. */
+isize cachefetch(Cache *cache, u64 block, u32 metadata, Cacheio *out, u8 **destination);
 isize cachewritebegin(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out);
 /* success means a known finished IO, never cancellation/result-only/timeout.
    Unknown IO keeps its ticket active. This does not prove flush or DMA stop. */
