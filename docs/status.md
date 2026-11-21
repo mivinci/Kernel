@@ -22,6 +22,8 @@
 
 - stage194：libsys 安装子只读 Fix 并清理父临时映射。7 项主机测试、格式检查和双架构 QEMU sigframe 通过。上下文修复仍待接。
 
+- fork 接续已明确专用 FORKPREP 返回窗口及信号注入验收点，见 08；汇编入口与上下文修复仍待实现。
+
 - stage193：libsys 私有 forkprep/forkcommit/forkabort 桩已接，双架构 QEMU sigframe 覆盖父子返回及撤销，6 项主机回归和格式检查通过。公开 fork 和上下文修复待接。
 
 - stage192：运行库验证 Fix 头、精确身份和资源表。18 项主机测试、格式检查及双架构 QEMU sigframe 的真实子返回解析通过。三层上下文记录编码和修复仍待接。
