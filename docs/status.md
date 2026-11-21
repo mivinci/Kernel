@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage286：libc 提供 `strdup`、`strndup`。RV64、ARM64 QEMU runtime 验证独立副本、无 NUL 的有界输入和零长度，格式检查通过。
+
 - stage285：`checkuart.py` 离线校验 `pages`、`ipc`、`cow` 的串口日志。两架构六份 QEMU 日志重放与实时摘要一致，16 项 smoke 主机检查通过；真实板卡待验。
 
 - stage284：`ipc`、`cow` 接入纯串口验收。RV64、ARM64 的 `pages`、`ipc`、`cow` 各通过纯串口和普通 QMP，12 次摘要按架构和场景成对一致；16 项 smoke 主机检查通过，板端待验。

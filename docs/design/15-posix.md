@@ -50,6 +50,8 @@
 `unistd.h` 的 `long sysconf(int name)` 首先支持 `_SC_PAGESIZE` 与同义 `_SC_PAGE_SIZE`。返回目标内核构建采用的基础虚拟内存页字节数（RV64、ARM64 均为 4096），成功保留 `errno`。未知选择器返回 `-1/EINVAL`；其他配置名暂不导出，不报告尚未交付的功能。`pathconf` 和 `fpathconf` 待接。
 
 stage282：两架构 QEMU `runtime` 的五个正常启动用例均验证两个名称的返回值、成功时 `errno` 保持不变以及未知选择器的 `EINVAL`；格式检查通过。
+
+stage286：`string.h` 提供 `strdup` 和 `strndup`。返回可独立修改、由 `free` 释放的 NUL 结尾副本；`strndup` 最多读取指定字节数，长度为零时返回空字符串的副本。无法分配时返回 `NULL` 并设置 `ENOMEM`。两架构 QEMU `runtime` 验证原串修改不影响副本、复制无 NUL 的有界输入和零长度，格式检查通过。
 libc 导出标准 API，libsys 实现 fd/连接/服务适配和负错误码协议；POSIX 层按每个接口转换错误，原生 UNKNOWN 等结果必须定义 POSIX 可表达的失败映射，不能泄漏私有返回值。共享缓冲仍待真实完成后复用。
 
 基础文本补充登记（2026-11-21，责任模块均为libc/string.c、公开于string.h；代码已接入，验收见文末）。以下原型采用项目C89声明形式；复制/拼接的非重叠、有效存储及容量前提仍按规范，不因省略restrict拼写变成重叠复制接口。所有函数在有效输入上保持errno，无分配、I/O或库全局状态；不是检查任意应用指针并返回EFAULT的系统接口。
