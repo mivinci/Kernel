@@ -874,20 +874,25 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                                        repeat_after_mutation=True,fatal_restored_output=True)
     if 'serialserviceproof' in user_symbols:
         proof=struct.unpack('<16Q',read(user_symbols['serialserviceproof'],128))
-        if (proof[0]!=1 or proof[1]>>59!=1 or proof[2] not in (1,2) or proof[6]!=1 or
-                proof[7] not in (1,2) or any(proof[10:])):
+        if (proof[0]!=1 or proof[1]>>59!=1 or proof[2] not in (1,2,3) or proof[6]!=1 or
+                proof[7] not in (1,2) or any(proof[10:13]+proof[14:])):
             raise SmokeError('actual serial service READY/retirement proof mismatch')
-        if proof[2]==1:
-            if (proof[3]>>59!=1 or proof[4:6]!=(7,24) or proof[8:10]!=(1,1) or
-                    record.get('serial_input',{}).get('sent')!=7 or
+        tty = proof[2]==3
+        if proof[13]!=int(tty):raise SmokeError('tty did not return to idle after echo')
+        if proof[2] in (1,3):
+            counts = (8,9) if tty else (7,24)
+            if (proof[3]>>59!=1 or proof[4:6]!=counts or proof[8:10]!=(1,1) or
+                    record.get('serial_input',{}).get('sent')!=counts[0] or
                     len(record.get('serial_injection_gates',[]))!=2):
                 raise SmokeError('actual serial service late-binding/external byte exchange mismatch')
+            if tty and b'uart-rx\r\n' not in (run_dir/'serial.log').read_bytes():
+                raise SmokeError('tty did not echo the actual UART input with CRLF conversion')
         elif proof[3:6]!=(106,0,0) or any(proof[8:10]):
             raise SmokeError('actual serial READY timeout did not stop and retire the service')
-        record['serial_service']=dict(pid=proof[1],mode='live' if proof[2]==1 else 'ready-timeout',
-                                      peer=proof[3] if proof[2]==1 else None,rx_bytes=proof[4],
+        record['serial_service']=dict(pid=proof[1],mode='ready-timeout' if proof[2]==2 else 'live',
+                                      peer=proof[3] if proof[2]!=2 else None,rx_bytes=proof[4],
                                       tx_bytes=proof[5],retired=True,uart_kind=proof[7],
-                                      actual_service=True,tty_transport=proof[2]==1,
+                                      actual_service=True,tty_transport=proof[2]!=2,tty_service=tty,
                                       production_init_launch=False)
     if 'initserviceproof' in user_symbols:
         proof=struct.unpack('<16Q',read(user_symbols['initserviceproof'],128))
@@ -1202,21 +1207,24 @@ def exercise(args, run_dir, record):
                     if proc.poll() is not None or time.monotonic() >= deadline:
                         raise SmokeError("QEMU exited/timed out before expected diagnostic")
                     text = serial.read_text(errors="replace").replace("\r", "") if serial.exists() else ""
-                    if input_fd is not None:
+                    if getattr(args,'serial_input',False):
                         gates=record.setdefault('serial_injection_gates',[])
                         markers=('serial-live\n','serial-next\n')
-                        if len(gates)<2 and markers[len(gates)] in text:
+                        tty=getattr(args,'tty_input',False)
+                        payloads=(b'uar',b't-rx\r' if tty else b't-rx')
+                        if len(gates)<2 and (markers[len(gates)] in text or
+                                (tty and retained_probe_record(text) is not None)):
                             index=len(gates)
                             qmp.command('stop')
                             snapshot=probe_package_init(qmp,run_dir,args,record,'serial-service-gate%d'%index)
                             if snapshot[8+index]==1:
-                                payload=(b'uar',b't-rx')[index]
+                                payload=payloads[index]
                                 sent=os.write(input_fd,payload)
                                 if sent!=len(payload):raise SmokeError('short external UART input injection')
                                 gates.append(dict(proof=snapshot,bytes=sent,driver_blocked=True,
                                                   tty_blocked=True))
                                 record['serial_input']=dict(sent=sum(x['bytes'] for x in gates),
-                                                            hex=(b'uar' if index==0 else b'uart-rx').hex())
+                                                            hex=b''.join(payloads[:index+1]).hex())
                             qmp.command('cont')
                     if normal_live and not args.bootpkg_error:
                         if retained_probe_record(text) is not None:

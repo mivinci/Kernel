@@ -864,3 +864,7 @@ ARM64/RV64 的 tty 场景实际运行该模块，覆盖规范行编辑、CRLF、
 stage255：`ttyserialpump` 在发布环位置后向已绑定的 serial NOTIFY 发送 RX_ROOM/TX_READY。若本步部分推进后才失败，已产生的提示仍尝试发送，返回优先保留数据路径错误。调用方继续按持久状态决定是否重查和阻塞。
 
 ARM64 PL011 和 RV64 NS16550 的 `serial-service` 启动包场景把实际 serial ELF 和链接 tty 数据模块的测试客户端放入不同进程。PID1 夹具分授两只 SHARED 环和双向 NOTIFY，完成 serial 晚绑定。两次外部 UART 注入都在双方已阻塞且无未处理提示时进行。tty 经 RX_READY 唤醒，分别收到 3 与 4 字节，经行规程取得 `uart-rx`，并通过反向提示推动 24 字节输出到真实 UART 模型。两进程及共享资源按既有流程退出、回收。双架构 tty 回归和格式检查通过。默认 init 启动 tty、终端授权投递与客户端文件协议仍待接。
+
+stage256：构建独立静态 `sbin/tty`，按 07 的私有 Boot 合约验证资源和进入独立会话，异步 READY 收尾后执行有界的 RX、回显和 TX 步骤，已知仍有进展时让出 CPU 再重查。当前启用规范输入、编辑和 CRLF 回显，输入留在有界缓冲；在终端 Local 和前台投递接通前未启用 ISIG，未发布客户端文件连接。默认 init 仍只启动 serial。
+
+ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

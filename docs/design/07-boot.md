@@ -250,6 +250,8 @@ init控制协议words=[(version<<32)|opcode,seq,arg0,arg1]：word0高32位为协
 
 READY接收结果使用普通四字reply=[s64原生业务状态,原seq,服务编号,服务image]；成功状态0仅表示init接受该精确实例的就绪，不代替tty晚绑定或授予资源。错误后两字0。服务以CALL_ASYNC|CALL_CONTROL提交唯一READY请求，保存RPC，不同步等待init；在设备/管理事件循环中rqpoll重查，成功保存回复并ACK_RESULT|ACK_RELEASE。错误、10秒期限或init失效停止正常设备操作，未完成请求按原RPC取消/退出收尾，不重发新READY来猜原结果。这里复用既有错误号及控制出站预算，不增加内核权限；实现验收仍按本篇执行项。
 
+tty 的私有 Boot 输入是 `argv=[路径,十进制非零服务编号]` 和四个资源 tag：`0x110=INIT_CALL`、`0x111=RX_RING`、`0x112=TX_RING`、`0x113=SERIAL_NOTIFY`。资源值是真实 Handle，flags 和 reserved 为 0；init 将为 serial 分配的 SHARED 双环减权授给 tty，仅允许读写映射。INIT_CALL 只指向固定 PID1 镜像，SERIAL_NOTIFY 只指向本次 serial 镜像且限定反向两位。tty 进入独立会话，映射并检查初始 epoch 1 的环后发送异步 READY，并在接受 READY 回复后处理环；init 仍须等 serial 的 BIND 成功才可对外发布 tty 连接。
+
 初始STATUS只允许注册实例查询自身：参数为服务编号/自身image，init同时核对内核source/image及注册记录，普通reply=[s64状态,seq,服务状态,原生失败码]；不提供任意PID全局查询。READY与STATUS在每实例共用单调非0seq，缓存最近一次请求/回复，完全相同的最近seq返回原结果、同seq异内容STATE、更旧seq STALE；未知版本/操作和未授权来源不推进序号。LOOKUP/SHUTDOWN在相应资源交付/系统策略实现前明确NOTSUP，不返回init本地Handle冒充转授。机制已终结的REQUEST只finish，不执行迟到READY；已取消的新READY不发布并进入停止，STATUS取消不改变服务运行状态。
 
 共享定义位于include/proto/init.h，SDK导出同一文件并记录头文件哈希。2026-11-18本地两架构SDK构建、导出文件逐字节比较及目标编译期编码/拆分检查通过，fmt-check通过；编译检查产物在build/host/stage102-init-protocol/。本点仅落定协议编码，不改变内核或init运行路径，未重跑QEMU，不以此前stage101结果代替实际READY验收。

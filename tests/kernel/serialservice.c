@@ -12,8 +12,10 @@
 #include "private/syscall.h"
 #include "private/serial.h"
 #include "private/elf.h"
+#include "../../sbin/tty/start.h"
 
 extern const u8 serial_service[], serial_service_end[], serial_peer[], serial_peer_end[];
+extern const u8 tty_service[], tty_service_end[];
 volatile u64    serialserviceproof[16];
 
 typedef struct Packet Packet;
@@ -265,12 +267,13 @@ retired(Child *child)
 }
 
 static void
-idle(u64 consumed, u32 flag)
+idle(u64 received, u64 transmitted, u32 flag)
 {
   Queryrec row, peer;
-  u64      written, next;
-  u32      attempts;
-  for (attempts = 0; attempts < 4096; attempts++) {
+  u64      written, next, nanos;
+  int64_t  seconds, start;
+  CHECK(!__sys_clock_gettime(CLOCK_MONOTONIC, &start, &nanos), 148);
+  for (;;) {
     CHECK(!__sys_query(driver.control, QUERY_PROC, 0, &row, 1, &written, &next) && written == 1 &&
               !next && row.pid == driver.pid && row.image == 1 && row.data[3] != PROCESS_EXITING &&
               row.data[1] == (u64) driver.pid && row.data[2] == (u64) driver.pid,
@@ -278,13 +281,15 @@ idle(u64 consumed, u32 flag)
     CHECK(!__sys_query(client.control, QUERY_PROC, 0, &peer, 1, &written, &next) && written == 1 &&
               !next && peer.pid == client.pid && peer.image == 1 && peer.data[3] != PROCESS_EXITING,
           150);
-    if (__atomic_load_n(&((Serialring *) 0x3010000)->consumer, __ATOMIC_ACQUIRE) == consumed &&
+    if (__atomic_load_n(&((Serialring *) 0x3000000)->consumer, __ATOMIC_ACQUIRE) == received &&
+        __atomic_load_n(&((Serialring *) 0x3010000)->consumer, __ATOMIC_ACQUIRE) == transmitted &&
         row.data[3] == PROCESS_BLOCKED && !row.data[4] && peer.data[3] == PROCESS_BLOCKED &&
         !peer.data[4])
       break;
-    CHECK(!__sys_yield(), 147);
+    CHECK(!__sys_yield() && !__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos) &&
+              seconds - start < 10,
+          147);
   }
-  CHECK(attempts < 4096, 148);
   serialserviceproof[flag] = 1;
 }
 
@@ -298,9 +303,10 @@ main(int argc, char **argv)
   int64_t  seconds;
   u32      i, used = 0, tries;
   isize    error;
-  int      timeout;
+  int      timeout, tty;
   CHECK(argc == 1, 122);
   timeout = !strcmp(argv[0], "tests/serial-timeout");
+  tty = !strcmp(argv[0], "tests/serial-tty");
   inventory();
   CHECK(!__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &seconds_ns) && seconds >= 0 &&
             (u64) seconds < (UINT64_MAX - seconds_ns) / UINT64_C(1000000000),
@@ -357,22 +363,31 @@ main(int argc, char **argv)
     serialserviceproof[3] = 106;
   } else {
     reply(message.request, 1, 7, 1);
-    newchild(&client, serial_peer, (u64) (serial_peer_end - serial_peer), 1, 7);
+    if (tty)
+      newchild(&client, tty_service, (u64) (tty_service_end - tty_service), 2, 6);
+    else
+      newchild(&client, serial_peer, (u64) (serial_peer_end - serial_peer), 1, 7);
     used = 0;
-    stringarg(&client.packet, 0, "serial-test-peer", &used);
-    grant(&client, 2, 0x200, listener, RESOURCE_USE, 0);
-    grant(&client, 3, 0x201, rings[0], MAP_READ | MAP_WRITE, SERIAL_RING_BYTES);
-    grant(&client, 4, 0x202, rings[1], MAP_READ | MAP_WRITE, SERIAL_RING_BYTES);
+    stringarg(&client.packet, 0, tty ? "sbin/tty" : "serial-test-peer", &used);
+    if (tty)
+      numberarg(&client.packet, 1, 8, &used);
+    grant(&client, 2, tty ? TTY_INIT_CALL : 0x200, listener, RESOURCE_USE, 0);
+    grant(&client, 3, tty ? TTY_RX_RING : 0x201, rings[0], MAP_READ | MAP_WRITE, SERIAL_RING_BYTES);
+    grant(&client, 4, tty ? TTY_TX_RING : 0x202, rings[1], MAP_READ | MAP_WRITE, SERIAL_RING_BYTES);
     CHECK(!__sys_connect(driver.control, CONNECT_NOTIFY, RESOURCE_USE | RESOURCE_GRANT,
                          SERIAL_RX_ROOM | SERIAL_TX_READY, &notify),
           135);
-    grant(&client, 5, 0x203, notify, RESOURCE_USE, 0);
+    grant(&client, 5, tty ? TTY_SERIAL_NOTIFY : 0x203, notify, RESOURCE_USE, 0);
     CHECK(!__sys_free(notify), 136);
-    grant(&client, 6, 0x204, drivercall, RESOURCE_USE, 0);
+    if (!tty)
+      grant(&client, 6, 0x204, drivercall, RESOURCE_USE, 0);
     start(&client);
-    receive(client.pid, UINT64_C(0x53525001), &message);
-    CHECK(message.words[1] == 1 && message.words[2] == 1 && message.words[3] == (u64) client.pid,
+    receive(client.pid, tty ? INIT_WORD(INIT_READY) : UINT64_C(0x53525001), &message);
+    CHECK(message.words[1] == 1 && message.words[2] == (tty ? 8 : 1) &&
+              message.words[3] == (tty ? 1 : (u64) client.pid),
           137);
+    if (tty)
+      reply(message.request, 1, 8, 1);
     CHECK(!__sys_connect(client.control, CONNECT_NOTIFY, RESOURCE_USE | RESOURCE_GRANT,
                          SERIAL_RX_READY | SERIAL_TX_ROOM, &notify) &&
               !__sys_grant(driver.control, notify, RESOURCE_USE, 0, 0, 0, &installed),
@@ -383,24 +398,35 @@ main(int argc, char **argv)
     CHECK(response.words[2] == (u64) client.pid && response.words[3] == 1, 140);
     controlcall(SERIAL_BIND, 2, (u64) installed, 1, 0, &response);
     controlcall(SERIAL_BIND, 3, (u64) installed, 1, -ERR_BUSY, &response);
-    serialserviceproof[2] = 1;
+    serialserviceproof[2] = tty ? 3 : 1;
     serialserviceproof[3] = (u64) client.pid;
-    reply(message.request, 1, 0, 0);
-    idle(12, 8);
-    receive(client.pid, UINT64_C(0x53525003), &message);
-    CHECK(message.words[1] == 2 && message.words[2] == 3 && message.words[3] == 24, 149);
-    reply(message.request, 2, 0, 0);
-    idle(24, 9);
-    receive(client.pid, UINT64_C(0x53525002), &message);
-    CHECK(message.words[1] == 3 && message.words[2] == 7 && message.words[3] == 24, 141);
+    if (tty) {
+      idle(0, 0, 8);
+      idle(3, 3, 9);
+      idle(8, 9, 13);
+    } else {
+      reply(message.request, 1, 0, 0);
+      idle(0, 12, 8);
+      receive(client.pid, UINT64_C(0x53525003), &message);
+      CHECK(message.words[1] == 2 && message.words[2] == 3 && message.words[3] == 24, 149);
+      reply(message.request, 2, 0, 0);
+      idle(3, 24, 9);
+      receive(client.pid, UINT64_C(0x53525002), &message);
+      CHECK(message.words[1] == 3 && message.words[2] == 7 && message.words[3] == 24, 141);
+    }
     controlcall(SERIAL_STATUS, 4, 0, 0, 0, &response);
-    CHECK(response.words[2] == 7 && response.words[3] == 24, 142);
+    CHECK(response.words[2] == (tty ? 8 : 7) && response.words[3] == (tty ? 9 : 24), 142);
     serialserviceproof[4] = response.words[2];
     serialserviceproof[5] = response.words[3];
     CHECK(!__sys_free(drivercall) && !__sys_terminate(driver.control), 143);
     waitchild(&driver, WAIT_EXITED, WAIT_SIGNALLED | 9);
-    reply(message.request, 3, 0, 0);
-    waitchild(&client, WAIT_EXITED, 42);
+    if (tty) {
+      CHECK(!__sys_terminate(client.control), 151);
+      waitchild(&client, WAIT_EXITED, WAIT_SIGNALLED | 9);
+    } else {
+      reply(message.request, 3, 0, 0);
+      waitchild(&client, WAIT_EXITED, 42);
+    }
     retired(&client);
     retired(&driver);
   }

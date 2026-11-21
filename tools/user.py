@@ -177,6 +177,9 @@ def build(args):
     serial_sources = [ROOT/'sbin/serial'/name for name in ('main.c','start.c','uart.c','io.c','control.c')]
     serial_headers = [ROOT/'sbin/serial'/name for name in ('start.h','uart.h','io.h','control.h')]
     serial_elf = program('serial',serial_sources,serial_headers)
+    tty_service_sources = [ROOT/'sbin/tty'/name for name in ('main.c','term.c','input.c','serial.c')]
+    tty_service_headers = [ROOT/'sbin/tty'/name for name in ('start.h','term.h','input.h','serial.h')]
+    tty_service = program('tty',tty_service_sources,tty_service_headers)
     init_configuration = ROOT/'config/boot.json'
     init_config = sdk/'init.cfg'
     init_config.write_bytes(initcfg.generate(json.loads(init_configuration.read_text()),
@@ -302,7 +305,7 @@ def build(args):
     service_auth=link_adoption('serviceauth',[compile_adoption(ROOT/'tests/kernel/serviceauth.c','serviceauth'),compile_adoption(ROOT/'tests/kernel/serialparent.c','serialparent'),embedded_elf(serial_verify,'serial_verify')])
     serial_peer=link_adoption('serialpeer',[compile_adoption(ROOT/'tests/kernel/serialpeer.c','serialpeer'),
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.parent == ROOT/'sbin/tty']])
-    serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer')])
+    serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer'),embedded_elf(tty_service,'tty_service')])
     init_service_sources=[ROOT/'sbin/init'/name for name in ('service.c','manifest.c','package.c')]
     init_service_test=link_adoption('initservices',[compile_adoption(ROOT/'tests/kernel/initservices.c','initservices'),
         *[compile_adoption(source,'init-manager-'+source.stem) for source in init_service_sources],embedded_config(init_config)])
@@ -411,6 +414,7 @@ def build(args):
     headers += [ROOT / 'sbin/tty/term.h', ROOT / 'tests/kernel/ttyuser.h']
     headers += [ROOT / 'sbin/tty/input.h']
     headers += [ROOT / 'sbin/tty/wait.h']
+    headers += tty_service_headers
     headers += [ROOT / 'tests/kernel/fdtableuser.h']
     headers += [ROOT / 'tests/kernel/fileuser.h']
     headers += list((ROOT / 'include/proto').glob('*.h'))
@@ -425,6 +429,7 @@ def build(args):
                     private_headers=final_private_headers,
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     serial_artifact=str(serial_elf.relative_to(ROOT)),serial_artifact_sha256=digest(serial_elf),
+                    tty_service_artifact=str(tty_service.relative_to(ROOT)),tty_service_sha256=digest(tty_service),
                     serial_service_test=str(serial_service_test.relative_to(ROOT)),serial_peer_artifact=str(serial_peer.relative_to(ROOT)),
                     init_service_test=str(init_service_test.relative_to(ROOT)),no_ready_artifact=str(no_ready.relative_to(ROOT)),
                     init_config_artifact=str(init_config.relative_to(ROOT)),init_config_sha256=digest(init_config),
@@ -440,7 +445,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + tty_service_sources + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),

@@ -40,6 +40,7 @@ def cases(arch,directory):
     yield 'service-authority',bootpkg.pack([('sbin/init',authority.read_bytes())],machine),authority,None,42
     serial=ROOT/'build'/arch/'sdk/serialservice.elf'
     yield 'serial-service',bootpkg.pack([('sbin/init',serial.read_bytes())],machine),serial,None,42
+    yield 'serial-tty',bootpkg.pack([('tests/serial-tty',serial.read_bytes())],machine,init='tests/serial-tty'),serial,None,42
     yield 'serial-timeout',bootpkg.pack([('tests/serial-timeout',serial.read_bytes())],machine,init='tests/serial-timeout'),serial,None,42
     manager=ROOT/'build'/arch/'sdk/initservices.elf'
     no_ready=ROOT/'build'/arch/'sdk/noready.elf'
@@ -88,7 +89,8 @@ def main():
         options=argparse.Namespace(arch=args.arch,case='normal',ram=256,qemu=args.qemu,
             firmware=args.firmware,trace=False,timeout=30 if name.startswith(('serial-','manager-','production-')) else 15,virtio=False,initrd=path if data is not None else None,
             bootpkg_error=error,init_elf=artifact,init_exit=exitcode)
-        options.serial_input = name=='serial-service'
+        options.serial_input = name in ('serial-service','serial-tty')
+        options.tty_input = name=='serial-tty'
         options.serial_probe = name.startswith('serial-')
         options.manager_probe = name.startswith('manager-')
         options.production_init = name.startswith('production-')
