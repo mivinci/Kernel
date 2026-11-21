@@ -271,6 +271,15 @@ sysfileconnclean(const Filepool *pool, Connwork *work, Conncache *cache)
 }
 
 isize
+sysfileconnreap(const Filepool *pool, Connwork *work, Conncache *cache)
+{
+  isize error = peerended(work, cache);
+  if (!error)
+    error = sysfileconnclean(pool, work, cache);
+  return error ? error : sysconnforget(cache, work->state.tag);
+}
+
+isize
 sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline)
 {
   Fileclose anchor;

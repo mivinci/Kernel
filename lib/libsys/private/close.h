@@ -58,6 +58,11 @@ isize sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 own
    Live and closing references to the exact connection generation block all
    native cleanup; the transport's own outstanding work gates still apply. */
 isize sysfileconnclean(const Filepool *pool, Connwork *work, Conncache *cache);
+/* Exact backend already proved ended. Under the same signal exclusion,
+   clean File/transport ownership before retiring the directory generation.
+   Errors preserve the directory entry for retry. After success the work
+   storage can be initialized for another connection. */
+isize sysfileconnreap(const Filepool *pool, Connwork *work, Conncache *cache);
 /* Exact old backend has independently been marked ended. These perform local
    recovery, never claim a successful service CLOSE. Caller has finished bound
    Rctx handoff/continuations; last fd alias is detached, pins=0. recover keeps

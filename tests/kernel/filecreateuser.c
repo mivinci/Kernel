@@ -1245,13 +1245,15 @@ backend(const Bootview *boot, u32 recover)
 static void
 deadclient(const Bootview *boot)
 {
-  Opkey   key;
-  Fileref reference;
-  Ipcmsg  result;
-  Handle  rpc;
-  u64     files[2], source = 0, first, second;
-  u32     steps = 0;
-  isize   error;
+  Opkey     key;
+  Fileref   reference;
+  Conntag   next;
+  Connentry entry;
+  Ipcmsg    result;
+  Handle    rpc;
+  u64       files[2], source = 0, first, second;
+  u32       steps = 0;
+  isize     error;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
   key = begin(FS_OPEN, "/a", 0);
@@ -1264,7 +1266,8 @@ deadclient(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   second = files[0];
-  CHECK(first && second && first != second && !sysfilerefdrop(&pool, work.state.self, first) &&
+  CHECK(first && second && first != second && sysfileconnreap(&pool, &work, &cache) == -ERR_STATE &&
+        !sysfilerefdrop(&pool, work.state.self, first) &&
         sysfileclosepump(&pool, &work, &cache, 800, 0) == SYSFILE_CLOSE_SUBMITTED);
   rpc = work.state.operations[6].rpc;
   key.connection = work.state.tag;
@@ -1285,12 +1288,16 @@ deadclient(const Bootview *boot)
         sysfilerefview(&pool, work.state.self, first, &reference) == -ERR_STALE &&
         !sysfilerefview(&pool, work.state.self, second, &reference) &&
         reference.state == SYSFILE_REF_LIVE && reference.aliases == 1 &&
-        sysfileconnclean(&pool, &work, &cache) == -ERR_BUSY && work.state.map.mapped &&
+        sysfileconnreap(&pool, &work, &cache) == -ERR_BUSY && work.state.map.mapped &&
         work.state.memory && work.state.call && !sysfilerefdrop(&pool, work.state.self, second) &&
-        sysfileconnclean(&pool, &work, &cache) == -ERR_BUSY && work.state.map.mapped &&
+        sysfileconnreap(&pool, &work, &cache) == -ERR_BUSY && work.state.map.mapped &&
         work.state.memory && work.state.call &&
         sysfileclosepump(&pool, &work, &cache, 800, 0) == SYSFILE_CLOSE_RECOVERED &&
-        !sysfileconnclean(&pool, &work, &cache) && !sysconnforget(&cache, work.state.tag));
+        !sysfileconnreap(&pool, &work, &cache) && !work.state.map.mapped && !work.state.memory &&
+        !work.state.call && !sysconnbind(&cache, work.state.self, &next) &&
+        next.index == key.connection.index && next.generation > key.connection.generation &&
+        sysfileconnreap(&pool, &work, &cache) == -ERR_STALE && !sysconnview(&cache, next, &entry) &&
+        entry.state == SYSCONN_UNCLAIMED && !sysconnworkinit(&work, &cache, next));
   filecreatetrace[2] = 2;
   filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
@@ -1338,7 +1345,7 @@ createdeadclient(const Bootview *boot, u64 opcode)
   for (i = 0; i < SYSFILE_REFS; i++)
     CHECK(pool.entries[i].state == SYSFILE_REF_FREE ||
           pool.entries[i].state == SYSFILE_REF_RETIRED);
-  CHECK(!sysfileconnclean(&pool, &work, &cache) && !sysconnforget(&cache, work.state.tag));
+  CHECK(!sysfileconnreap(&pool, &work, &cache));
   filecreatetrace[2] = opcode == FS_PIPE ? 3 : 2;
   filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
