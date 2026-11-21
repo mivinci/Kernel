@@ -1,4 +1,5 @@
 #include "serial.h"
+#include "private/file.h"
 #include "private/serial.h"
 #include <sys/channel.h>
 
@@ -34,6 +35,28 @@ ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size)
     return encoded;
   io->queued = (u32) encoded;
   return accepted;
+}
+
+isize
+ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8 *page)
+{
+  u8    snapshot[TTY_BATCH];
+  u32   count, i;
+  isize status = sysfileargs(FS_WRITE, slot);
+  if (status)
+    return status;
+  if (!io || !io->tx || (slot->args[1] && !page))
+    return -ERR_INVALID;
+  if (slot->args[3] & FS_IO_POSITIONAL)
+    return -ERR_NOTSUP;
+  count = (u32) MIN(slot->args[1], TTY_BATCH);
+  if (!count)
+    return 0;
+  if (io->queued)
+    return -ERR_WOULD_BLOCK;
+  for (i = 0; i < count; i++)
+    snapshot[i] = page[slot->args[2] + i];
+  return ttyserialoutput(io, oflag, snapshot, count);
 }
 
 isize

@@ -21,7 +21,9 @@ ttyserialcheck(void)
 {
   Ttyserial       io;
   Ttyserialresult result;
+  Fileslot        write = {0};
   u8              readback[SERIAL_BATCH], filler[SERIAL_BATCH];
+  u8              page[] = {'x', '\n', '\n'};
   const u8        edit[] = {'a', 'b', 127, '\r'};
   const u8        echo[] = {'a', 'b', '\b', ' ', '\b', '\r', '\n'};
   const u8        intr[] = {3, 'z', '\n'};
@@ -43,9 +45,20 @@ ttyserialcheck(void)
     filler[i] = 'x';
   for (i = 0; i < SERIAL_CAPACITY / SERIAL_BATCH; i++)
     CHECK(serialwrite(&tx, 1, filler, sizeof(filler)) == sizeof(filler));
-  CHECK(ttyserialoutput(&io, attr.oflag, "\n\n", 2) == 2 &&
+  write.object = write.span = 1;
+  write.payload_bytes = sizeof(page);
+  write.args[1] = 2;
+  write.args[2] = 2;
+  CHECK(ttyserialwrite(&io, attr.oflag, &write, page) == -ERR_INVALID && !io.queued);
+  write.args[2] = 1;
+  write.args[3] = FS_IO_POSITIONAL;
+  CHECK(ttyserialwrite(&io, attr.oflag, &write, page) == -ERR_NOTSUP && !io.queued);
+  write.args[3] = 0;
+  CHECK(ttyserialwrite(&io, attr.oflag, &write, page) == 2 &&
+        ttyserialwrite(&io, attr.oflag, &write, page) == -ERR_WOULD_BLOCK &&
         !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && !result.hints &&
         !result.again && io.queued == 4);
+  page[1] = page[2] = 'y';
   CHECK(serialread(&tx, 1, readback, 1) == 1 && readback[0] == 'x' &&
         !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) &&
         result.hints == SERIAL_TX_READY && io.queued == 3);

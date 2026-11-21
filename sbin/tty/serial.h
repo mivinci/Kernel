@@ -2,6 +2,7 @@
 #define _TTY_SERIAL_H
 #include "input.h"
 #include <proto/serial.h>
+#include <proto/file.h>
 
 typedef struct Ttyserial       Ttyserial;
 typedef struct Ttyserialresult Ttyserialresult;
@@ -22,6 +23,10 @@ isize ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch);
 /* Accept a bounded logical output prefix into private staging. Returns the
    logical bytes accepted, or zero if the previous batch still owns staging. */
 isize ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size);
+/* Commit one prefix of an authorized WRITE from its submitted data page.
+   The service checks reference, foreground and request cancellation first.
+   A positive result counts input bytes; WOULD_BLOCK commits nothing. */
+isize ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8 *page);
 /* Process up to rxlimit RX bytes and one TX batch. A timed reader can check
    its deadline and retention after each byte by passing rxlimit=1.
    Notify with hints even after partial progress followed by failure.
