@@ -1555,3 +1555,5 @@ RV64/ARM64 QEMU `requests` 验证新镜像不接收旧消息、不认领旧 RPC/
 stage327：原生 execcommit 在提交前核验目标入口、栈、Boot、继承槽和稳态预算；仍有源临时加载映射、MMIO 或活跃 IRQ 绑定时拒绝切换。提交在屏蔽 IRQ 下结束旧 Image、移交信号与 IPC、激活目标 Image 和页表，保持 PID、Life 和 Acct。清除旧事件和原生闹钟，保留闹钟发号上界。成功沿用户返回入口进入新现场，不回旧调用者；CPU 分批排空旧邮箱、观察、资源表与页表。两张稳定资源表轮换，前一张尚未排空时下一份准备返回 BUSY。
 
 RV64/ARM64 QEMU `sigframe` 从真实用户态准备并装载独立入口，检查非法指针、缺映射及尚有加载别名时失败，随后成功跳转。测试核对入口 Boot 参数、同一 PID/Life、新根、旧 Image 的 EXEC 原因及最终页和账目守恒。两架构 `prep`、59 项主机回归及格式检查通过。连续原生替换、带外部持有的组合场景、公开 execve 和服务 fd 交接仍待验收或实现。
+
+stage328：RV64/ARM64 QEMU `sigframe` 的新镜像从 Boot 取得实际 SELF_SPACE，通过原生 `execprep` 发起下一次准备。遇旧表尚未回收的 BUSY 时让出，回收后成功创建第三个 Image，再用原生 `execabort` 撤销。CPU 侧核对同一 Life、原 Image 的 EXEC 原因、后续 Image 的 ABORT 原因和最终页账归零。此项覆盖提交后再准备与资源表复用；第二次成功提交仍待验收。

@@ -495,11 +495,16 @@ static int
 execcommituser(void)
 {
   Handle   space = bootresource(sysboot(), BOOT_SELF_SPACE), view, memory;
-  u64      next;
+  u64      next, written, cursor;
+  Queryrec resource;
   Allocarg alloc = {4096, ALLOC_CODE, 0, 0, 0, 0};
   Maparg   map = {0, 0, 0x30000000, 4096, MAP_READ | MAP_WRITE, 0};
-  Config   config = {0x10000, 0x20010000, 0x30000000, sizeof(Boot), 0, 0};
-  Boot     boot = {0};
+  struct
+  {
+    Boot     header;
+    Resentry space;
+  } boot = {0};
+  Config config = {0x10000, 0x20010000, 0x30000000, sizeof(boot), 0, 0};
   REQUIRE(!__sys_execprep(space, 1, &view, &next) && next > 1 &&
               __sys_execcommit(view, (const Config *) 1) == -ERR_FAULT &&
               __sys_execcommit(view, &config) == -ERR_FAULT,
@@ -524,11 +529,18 @@ execcommituser(void)
   alloc.bytes = map.length = 4096;
   map.address = config.boot;
   REQUIRE(!__sys_alloc(view, &alloc, &map.mem) && !__sys_map(space, &map), 278);
-  boot.magic = BOOT_MAGIC;
-  boot.format = BOOT_FORMAT;
-  boot.bytes = sizeof(boot);
-  boot.user_lo = BOOT_USER_LO;
-  boot.user_hi = BOOT_USER_HI;
+  REQUIRE(!__sys_query(view, QUERY_RESOURCE, 0, &resource, 1, &written, &cursor) && written == 1 &&
+              resource.data[1] == RESOURCE_SPACE && resource.data[0] != (u64) space,
+          281);
+  boot.header.magic = BOOT_MAGIC;
+  boot.header.format = BOOT_FORMAT;
+  boot.header.bytes = sizeof(boot);
+  boot.header.user_lo = BOOT_USER_LO;
+  boot.header.user_hi = BOOT_USER_HI;
+  boot.header.resource_count = 1;
+  boot.header.resources_off = sizeof(Boot);
+  boot.space.tag = BOOT_SELF_SPACE;
+  boot.space.handle = (Handle) resource.data[0];
   memcpy((void *) map.address, &boot, sizeof(boot));
   REQUIRE(!__sys_unmap(space, map.address), 279);
   map.prot = MAP_READ;

@@ -230,6 +230,8 @@ sigframetest(void)
       REQUIRE(stack.generation);
     }
     REQUIRE(!procpublish(pid));
+    if (mode == 19)
+      REQUIRE(!imagehold(process.identity, IMAGE_CLEANUP));
     if (mode == 11) {
       forcedpid = pid;
       forcedarmed = 1;
@@ -252,7 +254,10 @@ sigframetest(void)
     first = nested = second = turns = 0;
     for (;;) {
       REQUIRE(!procrunone() && ++turns < 256);
-      REQUIRE(!spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
+      if (mode != 19 || !first)
+        REQUIRE(!spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
+      if (mode == 19 && !first && trace[0] == 99)
+        first = 1;
       if (trace[31]) {
         putstr("SIGFRAMEUSER mode=");
         puthex(mode);
@@ -314,7 +319,7 @@ sigframetest(void)
         REQUIRE(!procsigqueue(pid, &info));
         second = 1;
       }
-      REQUIRE(procwork(8) >= 0 && prepwork(8) >= 0);
+      REQUIRE(procwork(mode == 19 ? 32 : 8) >= 0 && prepwork(8) >= 0);
     }
     putstr("SIGFRAMECASE mode=");
     puthex(mode);
@@ -325,12 +330,17 @@ sigframetest(void)
     putstr("\n");
     if (mode == 19) {
       Procinfo switched;
-      Image    old;
+      Image    old, cancelled;
+      Imageid  pending;
+      Life     survivor;
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&
               !procinfo(pid, &switched) && switched.life.generation == process.life.generation &&
               switched.life.index == process.life.index &&
               switched.space.index != process.space.index && !imagestat(process.identity, &old) &&
-              old.reason == IMAGE_EXEC);
+              old.reason == IMAGE_EXEC && !imagedrop(process.identity, IMAGE_CLEANUP) &&
+              !lifestat(process.life, &survivor) && survivor.imagegen == 3 &&
+              !imagelookup(process.life, 3, &pending) && !imagestat(pending, &cancelled) &&
+              cancelled.reason == IMAGE_ABORT);
       REQUIRE(!procinfo(pid, &process));
     } else if (mode >= 17) {
       REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&

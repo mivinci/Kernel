@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage328：RV64/ARM64 QEMU `sigframe` 验证原生 exec 成功后可再次准备、撤销，旧表回收及页账守恒；第二次成功提交仍待验收。
 - stage327（2026-11-22）：原生 `execcommit` 已进入同 PID 新镜像。RV64/ARM64 QEMU `sigframe`、`prep`、59 项主机回归与格式通过；公开 `execve` 和 fd 交接仍待接。
 - stage326（2026-11-22）：可信 exec IPC 移交隔离新旧收件箱，已接收的旧出站请求仍等服务收尾。RV64/ARM64 QEMU `requests`、`ipc`、46 项主机回归和格式检查通过；尚未接入原生提交。
 - stage325（2026-11-22）：可信 exec 资源继承保留索引、句柄及对象引用，检查并拒绝迟到冲突。RV64/ARM64 QEMU `prep`、`locals`、32 项主机回归和格式检查通过；尚未接入原生提交。

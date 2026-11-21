@@ -13,16 +13,40 @@ frame_fp:
 .size frame_fp,.-frame_fp
 .section .note.GNU-stack,"",%progbits
 #include <abi/syscall.h>
+#include <abi/base.h>
+#include <abi/boot.inc>
 .section .text
 .balign 4
 .global exec_entry, exec_end
 exec_entry:
  mov x1,#0x30000000
  cmp x0,x1
- mov x0,#42
- mov x1,#93
- csel x0,x0,x1,eq
+ b.ne 3f
+ ldr x19,[x0,#BOOT_HEADER_BYTES+8]
  mov x1,xzr
+1:
+ mov x0,x19
+ mov x8,#SYS_EXECPREP
+ svc #0
+ cbz x0,2f
+ cmn x0,#ERR_BUSY
+ b.ne 3f
+ mov x0,xzr
+ mov x8,#SYS_YIELD
+ svc #0
+ b 1b
+2:
+ mov x0,x1
+ mov x1,xzr
+ mov x2,xzr
+ mov x8,#SYS_EXECABORT
+ svc #0
+ cbnz x0,3f
+ mov x0,#42
+ b 4f
+3:
+ mov x0,#93
+4:
  mov x8,#SYS_EXIT
  svc #0
  brk #0

@@ -9,17 +9,38 @@ frame_fp:
 .size frame_fp,.-frame_fp
 .section .note.GNU-stack,"",@progbits
 #include <abi/syscall.h>
+#include <abi/base.h>
+#include <abi/boot.inc>
 .section .text
 .balign 4
 .global exec_entry, exec_end
 exec_entry:
  li t1,0x30000000
- bne a0,t1,1f
- li a0,42
- j 2f
+ bne a0,t1,3f
+ ld s1,BOOT_HEADER_BYTES+8(a0)
 1:
- li a0,93
+ mv a0,s1
+ li a7,SYS_EXECPREP
+ ecall
+ beqz a0,2f
+ li t1,-ERR_BUSY
+ bne a0,t1,3f
+ li a0,0
+ li a7,SYS_YIELD
+ ecall
+ j 1b
 2:
+ mv a0,a1
+ li a1,0
+ li a2,0
+ li a7,SYS_EXECABORT
+ ecall
+ bnez a0,3f
+ li a0,42
+ j 4f
+3:
+ li a0,93
+4:
  li a7,SYS_EXIT
  ecall
  ebreak
