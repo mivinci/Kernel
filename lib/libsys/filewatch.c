@@ -4,24 +4,58 @@
 #include <abi/time.h>
 
 isize
-sysopenprepare(Openprep *prep, const Fileowner *owner, Handle client, u64 image, u64 token,
-               u64 session, u64 reference, u64 deadline)
+sysopenreserve(Openprep *pool, u32 count, const Fileowner *owner, Handle client, u64 image,
+               u64 session, u64 reference, u64 deadline, u64 *token)
 {
-  if (!prep || !owner || !owner->cookie || owner->reason || handlekind(client) != HANDLE_PROCESS ||
-      !image || !token || !session || !reference || !deadline ||
-      (owner->pid == client && owner->image == image))
+  Openprep *prep;
+  u64       generation;
+  u32       i;
+  if (!pool || !count || count > SYSOPEN_POOL_MAX || !owner || !owner->cookie || owner->reason ||
+      handlekind(client) != HANDLE_PROCESS || !image || !token || !session || !reference ||
+      !deadline || (owner->pid == client && owner->image == image))
     return -ERR_INVALID;
-  if (prep->state != Openempty)
-    return -ERR_BUSY;
+  for (i = 0; i < count; i++)
+    if (pool[i].state == Openempty && (pool[i].token >> 16) != (UINT64_MAX >> 16))
+      break;
+  if (i == count)
+    return -ERR_CAPACITY;
+  prep = &pool[i];
+  generation = (prep->token >> 16) + 1;
   prep->preparer = owner->pid;
   prep->preparer_image = owner->image;
   prep->client = client;
   prep->client_image = image;
-  prep->token = token;
+  prep->token = (generation << 16) | i;
   prep->session = session;
   prep->reference = reference;
   prep->deadline = deadline;
   prep->state = Openpending;
+  *token = prep->token;
+  return 0;
+}
+
+Openprep *
+sysopenlookup(Openprep *pool, u32 count, u64 token)
+{
+  u32 i = (u32) (token & 65535);
+  if (!pool || count > SYSOPEN_POOL_MAX || i >= count || !(token >> 16) ||
+      pool[i].state == Openempty || pool[i].token != token)
+    return NULL;
+  return &pool[i];
+}
+
+isize
+sysopenrelease(Openprep *pool, u32 count, u64 token)
+{
+  Openprep *prep = sysopenlookup(pool, count, token);
+  if (!prep)
+    return -ERR_STALE;
+  if (prep->state != Openclosed && prep->state != Opencancelled)
+    return -ERR_BUSY;
+  prep->preparer = prep->client = 0;
+  prep->preparer_image = prep->client_image = 0;
+  prep->session = prep->reference = prep->deadline = 0;
+  prep->state = Openempty;
   return 0;
 }
 

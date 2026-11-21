@@ -3,6 +3,7 @@
 #include "file.h"
 #include <sys/channel.h>
 #define SYSFILE_OPEN_TTL_NS UINT64_C(10000000000)
+#define SYSOPEN_POOL_MAX    256
 
 typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
@@ -22,11 +23,15 @@ struct Openprep
   u32    state;
 };
 
-/* One record per ordinary OPEN; the service supplies reserved storage and an
-   unrepeated token. Keep tombstones until the service retires the token.
-   Serialize the check, resource reply and commit in the service loop. */
-isize sysopenprepare(Openprep *prep, const Fileowner *owner, Handle client, u64 image, u64 token,
-                     u64 session, u64 reference, u64 deadline);
+/* Start with a zeroed service-owned array; its address and count stay fixed.
+   Keep the output token separate from the array.
+   Once a token is published, keep the tombstone for valid retries and release
+   it only when those dependencies and all cleanup have been discharged. */
+isize sysopenreserve(Openprep *pool, u32 count, const Fileowner *owner, Handle client, u64 image,
+                     u64 session, u64 reference, u64 deadline, u64 *token);
+Openprep *sysopenlookup(Openprep *pool, u32 count, u64 token);
+isize     sysopenrelease(Openprep *pool, u32 count, u64 token);
+/* Serialize the check, resource reply and commit in the service loop. */
 isize sysopenattach(const Openprep *prep, const Ipcmsg *call, u64 now);
 void  sysopencommit(Openprep *prep);
 /* Validate any nonzero connid against the caller's connection first. Return

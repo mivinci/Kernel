@@ -447,7 +447,7 @@ server(const Bootview *boot, u32 recover)
   Fileslot  descriptor;
   Filewatch watch = {0};
   u64       sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
-  u64       slot, seq, opcode, i, found, number, resourcepath;
+  u64       slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   volatile u64 *data;
   isize         status;
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
@@ -607,23 +607,26 @@ server(const Bootview *boot, u32 recover)
         Msg    prepare;
         Ipcmsg result;
         Handle rpc;
-        u64    token = ++filecreatetrace[4];
-        if (recover == 14 && token == 2) {
+        u64    ordinal = ++filecreatetrace[4], token;
+        if (recover == 14 && ordinal == 2) {
           prepare.words[0] = FS_ABORT;
           prepare.words[1] = 0;
           prepare.words[2] = 1;
-          prepare.words[3] = 1;
+          prepare.words[3] = firsttoken;
           CHECK(!ipc_call(bootresource(boot, 257), &prepare, CALL_CONTROL, &result) &&
                 (isize) result.words[0] == -EACCES && result.words[1] == 1);
         }
         prepare.words[0] = PREPARE;
-        prepare.words[1] = 200 + token;
-        prepare.words[2] = 2000 + token;
-        prepare.words[3] = token;
+        prepare.words[1] = 200 + ordinal;
+        prepare.words[2] = 2000 + ordinal;
+        prepare.words[3] = ordinal;
         CHECK(!ipc_call(bootresource(boot, 257), &prepare, CALL_ASYNC | CALL_CONTROL, &result));
         rpc = result.request;
-        CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] == token &&
+        CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] &&
               !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+        token = result.words[1];
+        if (ordinal == 1)
+          firsttoken = token;
         data[0] = prepare.words[2];
         zero(&transfer, sizeof(transfer));
         transfer.source = bootresource(boot, 257);
@@ -633,7 +636,7 @@ server(const Bootview *boot, u32 recover)
         transfer.business[2] = token;
         CHECK(!ipc_reply_resource(input.request, &transfer) &&
               !sysfilefinish(&watch.active, input.request));
-        if (recover == 13 && token == 2) {
+        if (recover == 13 && ordinal == 2) {
           filecreatetrace[0] = 2;
           return;
         }
@@ -813,10 +816,10 @@ backend(const Bootview *boot, u32 recover)
             input.words[3] == created + 1 && input.words[1] && input.words[2]);
       CHECK(!sysfileowner(&preparer, bootresource(boot, 258), &input));
       CHECK(!sysfileopendeadline(&next) &&
-            !sysopenprepare(&preps[created], &preparer, clientpeer.pid, clientpeer.image,
-                            input.words[3], input.words[1], input.words[2], next));
+            !sysopenreserve(preps, ARRAY_SIZE(preps), &preparer, clientpeer.pid, clientpeer.image,
+                            input.words[1], input.words[2], next, &token));
       created++;
-      reply.words[1] = input.words[3];
+      reply.words[1] = token;
       CHECK(!ipc_reply(input.request, &reply));
       continue;
     }
@@ -865,8 +868,14 @@ backend(const Bootview *boot, u32 recover)
     }
     if (input.words[0] == FS_ABORT || input.words[0] == FS_ATTACH) {
       token = input.words[3];
-      CHECK(!input.words[1] && input.words[2] && token && token <= created);
-      prep = &preps[token - 1];
+      CHECK(!input.words[1] && input.words[2] && token);
+      prep = sysopenlookup(preps, ARRAY_SIZE(preps), token);
+      reply.words[1] = input.words[2];
+      if (!prep) {
+        reply.words[0] = (u64) -ESTALE;
+        CHECK(!ipc_reply(input.request, &reply));
+        continue;
+      }
       if (recover == 3 && input.words[0] == FS_ABORT) {
         CHECK(created == 1 && prep->state == Openpending && sysopenabort(prep, &input) == 1 &&
               !memory);
@@ -875,7 +884,6 @@ backend(const Bootview *boot, u32 recover)
         filecreatetrace[0] = 2;
         return;
       }
-      reply.words[1] = input.words[2];
       if (input.words[0] == FS_ABORT) {
         status = sysopenabort(prep, &input);
         if (status == 1) {
@@ -897,13 +905,13 @@ backend(const Bootview *boot, u32 recover)
         continue;
       }
       filecreatetrace[3]++;
-      if (recover == 7 || (recover == 8 && token == 2)) {
+      if (recover == 7 || (recover == 8 && prep->session == 202)) {
         filecreatetrace[1] = created;
         filecreatetrace[4] = 1;
         filecreatetrace[0] = 2;
         return;
       }
-      if (recover == 5 && token == 2) {
+      if (recover == 5 && prep->session == 202) {
         reply.words[0] = (u64) -ERR_DENIED;
         CHECK(!ipc_reply(input.request, &reply));
         continue;
@@ -940,7 +948,7 @@ backend(const Bootview *boot, u32 recover)
         transfer.business[2] = FS_CONN_BYTES;
         CHECK(!ipc_reply_resource(input.request, &transfer));
       } else if (recover == 5) {
-        CHECK(token == 3);
+        CHECK(prep->session == 203);
         zero(&transfer, sizeof(transfer));
         transfer.source = memory;
         transfer.rights = 3;

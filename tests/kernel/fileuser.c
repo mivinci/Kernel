@@ -1,5 +1,6 @@
 #include "fileuser.h"
 #include "private/file.h"
+#include "private/filewatch.h"
 #include <unistd.h>
 static u64       area[FS_CONN_BYTES / sizeof(u64)];
 static Filepages pages;
@@ -8,6 +9,42 @@ static Filepages pages;
     if (!(c))                                                                                      \
       _exit(221);                                                                                  \
   } while (0)
+static void
+openpoolcheck(void)
+{
+  Fileowner owner = {1, 1, 1, 0};
+  Openprep  pool[1] = {{0}};
+  Openprep *prep;
+  Handle    client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  Ipcmsg    call = {0};
+  u64       old, current = 0;
+
+  CHECK(!sysopenreserve(pool, 1, &owner, client, 1, 7, 8, 10, &old));
+  prep = sysopenlookup(pool, 1, old);
+  CHECK(prep && sysopenrelease(pool, 1, old) == -ERR_BUSY &&
+        sysopenreserve(pool, 1, &owner, client, 1, 9, 10, 20, &current) == -ERR_CAPACITY &&
+        !current);
+  call.kind = IPC_CALL;
+  call.source = client;
+  call.image = 1;
+  call.words[0] = FS_ABORT;
+  call.words[2] = 1;
+  call.words[3] = old;
+  CHECK(sysopenabort(prep, &call) == 1);
+  sysopenretire(prep);
+  CHECK(!sysopenabort(prep, &call) && !sysopenrelease(pool, 1, old));
+  CHECK(!sysopenreserve(pool, 1, &owner, client, 1, 9, 10, 20, &current) && current > old &&
+        !sysopenlookup(pool, 1, old) && sysopenrelease(pool, 1, old) == -ERR_STALE);
+  prep = sysopenlookup(pool, 1, current);
+  CHECK(prep && prep->reference == 10 && sysopenabort(prep, &call) == -ERR_STALE);
+  call.words[0] = FS_ATTACH;
+  call.words[3] = current;
+  CHECK(!sysopenattach(prep, &call, 19) && sysopenattach(prep, &call, 20) == -ERR_STALE);
+  sysopenretire(prep);
+  CHECK(!sysopenrelease(pool, 1, current));
+  pool[0].token = UINT64_MAX & ~UINT64_C(65535);
+  CHECK(sysopenreserve(pool, 1, &owner, client, 1, 9, 10, 20, &current) == -ERR_CAPACITY);
+}
 u32
 fileusercheck(void)
 {
@@ -15,6 +52,7 @@ fileusercheck(void)
   Fileslot *slot = (Fileslot *) ((u8 *) area + FS_DESC_OFFSET), descriptor;
   Filelease active[6], extra, stale;
   u32       i;
+  openpoolcheck();
   for (i = 0; i < ARRAY_SIZE(area); i++)
     area[i] = 0;
   head->magic = FS_CONN_MAGIC;
