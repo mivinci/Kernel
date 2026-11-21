@@ -51,4 +51,5 @@ isize elfcheck(const Elfsource *source, u64 max_pages, Elfplan *out);
 isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
               Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
+isize sysfixload(Elfwork *work, u64 address, const void *data, u64 bytes);
 #endif

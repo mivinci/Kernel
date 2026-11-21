@@ -1,4 +1,5 @@
 #include "private/elf.h"
+#include "private/fix.h"
 static isize
 mapping(Elfwork *work, Handle space, u64 address, u64 bytes, u64 prot)
 {
@@ -58,6 +59,44 @@ elfclean(Elfwork *work)
     return 0;
   }
   return error;
+}
+isize
+sysfixload(Elfwork *work, u64 address, const void *data, u64 bytes)
+{
+  Fixview view;
+  Handle  source, parent;
+  u64     image, length, input = (u64) data;
+  isize   error, cleanup;
+  if (!work || work->reserved || work->mapped || work->memory || work->view <= 0 ||
+      work->parent_space <= 0 || bytes < sizeof(Fix) || bytes > BOOT_MAX_BYTES ||
+      input < BOOT_USER_LO || input >= BOOT_USER_HI || bytes > BOOT_USER_HI - input)
+    return -ERR_INVALID;
+  length = ALIGN_UP(bytes, PAGE_SIZE);
+  if ((work->scratch | address) & PAGE_MASK || work->scratch < BOOT_USER_LO ||
+      work->scratch >= BOOT_USER_HI || length > BOOT_USER_HI - work->scratch ||
+      work->scratch_bytes < length || address < BOOT_USER_LO || address >= BOOT_USER_HI ||
+      length > BOOT_USER_HI - address ||
+      (input < work->scratch + length && work->scratch < input + bytes))
+    return -ERR_INVALID;
+  work->failure = 0;
+  error = __sys_getid(&source, &image, &parent);
+  if (!error)
+    error = allocate(work, length, ALLOC_DATA);
+  if (!error)
+    error = alias(work, length);
+  if (!error)
+    error = __sys_copy((void *) work->scratch, data, bytes);
+  if (!error)
+    error = sysfixview((const void *) work->scratch, bytes, source, image, work->pid, &view);
+  if (!error && view.header->bytes != bytes)
+    error = -ERR_INVALID;
+  if (!error)
+    error = unalias(work);
+  if (!error)
+    error = mapping(work, work->view, address, length, MAP_READ);
+  work->failure = error;
+  cleanup = elfclean(work);
+  return cleanup ? cleanup : error;
 }
 static isize
 resources(Elfwork *work, Handle handles[3])

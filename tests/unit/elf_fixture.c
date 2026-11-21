@@ -6,6 +6,14 @@
 #define VIEW    101
 #define SPACE   102
 #define PID     103
+isize
+__sys_getid(Handle *pid, u64 *image, Handle *parent)
+{
+  *pid = 1;
+  *image = 1;
+  *parent = 0;
+  return 0;
+}
 typedef struct Memory  Memory;
 typedef struct Mapping Mapping;
 struct Memory
@@ -27,6 +35,14 @@ static int
 fault(void)
 {
   return ++step == fail_step;
+}
+isize
+__sys_copy(void *destination, const void *source, u64 bytes)
+{
+  if (fault())
+    return -ERR_FAULT;
+  memcpy(destination, source, bytes);
+  return 0;
 }
 void
 mock_reset(u64 window)

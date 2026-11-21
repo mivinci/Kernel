@@ -7,6 +7,7 @@
 #include "private/start.h"
 #include "private/context.h"
 #include "private/fix.h"
+#include "private/elf.h"
 #include <abi/syscall.h>
 volatile u64    frame_trace[32];
 static u8       saved[1024];
@@ -356,13 +357,17 @@ forkprepuser(void)
   Sysret    result;
   Forkret   forked;
   Createarg create = {128, 128, 16, 1, 0, 0, 0, 0, 0};
-  Allocarg  allocate = {4096, ALLOC_DATA, 0, 0, 0, 0};
-  Maparg    map = {0, 0, 0x30000000, 4096, 1, 0};
+  const u64 address = 0x30000000;
   u64       args[7] = {0};
   Handle    authority = (Handle) frame_trace[18], child, construct;
-  Handle    source, parent, selfspace, published;
+  Handle    source, parent, published;
   u64       image;
-  Fix      *fix;
+  Elfwork   work;
+  struct
+  {
+    Fix header;
+    u64 contexts[3];
+  } fix;
   REQUIRE(__sys_forkprep(0, 0, &forked) == -ERR_BAD_HANDLE, 224);
   REQUIRE(__sys_forkprep(authority, 9, &forked) == -ERR_INVALID, 225);
   REQUIRE(!__sys_forkprep(authority, 2, &forked) && forked.construct && forked.pid && !forked.fix,
@@ -390,7 +395,7 @@ forkprepuser(void)
     u64     childimage;
     Fixview view;
     REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
-                (u64) forked.fix == map.address && ppid == source &&
+                (u64) forked.fix == address && ppid == source &&
                 !sysfixview(forked.fix, 88, source, image, self, &view) &&
                 view.contexts_limit == 24,
             234);
@@ -401,29 +406,21 @@ forkprepuser(void)
   args[0] = construct;
   REQUIRE(__sys_forkcommit(construct, (const void *) frame_trace, 64, &published) == -ERR_FAULT,
           235);
-  args[1] = (u64) &allocate;
-  args[2] = 0;
-  REQUIRE(!__sys_enter(SYS_ALLOC, args, &result), 236);
-  map.mem = (Handle) result.values[0];
-  selfspace = bootresource(sysboot(), BOOT_SELF_SPACE);
-  args[0] = selfspace;
-  args[1] = (u64) &map;
-  map.prot = 3;
-  REQUIRE(!__sys_enter(SYS_MAP, args, &result), 242);
-  fix = (Fix *) map.address;
-  fix->format = FIX_FORMAT;
-  fix->bytes = 88;
-  fix->source_pid = source;
-  fix->source_image = image;
-  fix->target_pid = (Handle) child;
-  fix->contexts_off = sizeof(Fix);
-  args[1] = map.address;
-  REQUIRE(!__sys_enter(SYS_UNMAP, args, &result), 243);
-  args[0] = construct;
-  args[1] = (u64) &map;
-  map.prot = 1;
-  REQUIRE(!__sys_enter(SYS_MAP, args, &result), 237);
-  REQUIRE(!__sys_forkcommit(construct, (const void *) map.address, 88, &published) &&
+  memset(&fix, 0, sizeof(fix));
+  fix.header.format = FIX_FORMAT;
+  fix.header.bytes = sizeof(fix);
+  fix.header.source_pid = source;
+  fix.header.source_image = image;
+  fix.header.target_pid = child;
+  fix.header.contexts_off = sizeof(Fix);
+  memset(&work, 0, sizeof(work));
+  work.view = construct;
+  work.pid = child;
+  work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
+  work.scratch = address;
+  work.scratch_bytes = 4096;
+  REQUIRE(!sysfixload(&work, address, &fix, sizeof(fix)) && !work.memory && !work.mapped, 237);
+  REQUIRE(!__sys_forkcommit(construct, (const void *) address, sizeof(fix), &published) &&
               published == child,
           238);
   args[1] = args[2] = 0;

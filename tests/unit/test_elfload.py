@@ -48,6 +48,7 @@ class ElfLoaderTests(unittest.TestCase):
             for name,args,returns in (
                 ('elfcheck',[C.POINTER(Source),C.c_uint64,C.POINTER(Plan)],C.c_int64),
                 ('elfload',[C.POINTER(Source),C.POINTER(Plan),C.c_void_p,C.c_uint64,C.POINTER(Work),C.POINTER(Config)],C.c_int64),
+                ('sysfixload',[C.POINTER(Work),C.c_uint64,C.c_void_p,C.c_uint64],C.c_int64),
                 ('elfclean',[C.POINTER(Work)],C.c_int64),('mock_reset',[C.c_uint64],None),
                 ('mock_fail',[C.c_uint32],None),('mock_cleanup_fail',[C.c_uint32,C.c_uint32],None),
                 ('mock_peek',[C.c_uint64,C.c_void_p,C.c_uint64,C.POINTER(C.c_uint64)],C.c_int)):
@@ -68,6 +69,29 @@ class ElfLoaderTests(unittest.TestCase):
             return 0
         self.reader=READ(read)
         return Source(None,len(data),self.reader)
+
+    def test_fix_load_releases_parent_alias_and_maps_read_only_child_bytes(self):
+        target=(1<<59)|(4<<16)|3
+        payload=struct.pack('<11Q',1,88,1,1,target,0,0,64,0,0,0)
+        source=self.window+PAGE
+        destination=0x50000
+        C.memmove(source,payload,len(payload))
+        for _,lib in self.libs:
+            for failure in (3,5,0):
+                with self.subTest(failure=failure):
+                    lib.mock_reset(self.window)
+                    lib.mock_fail(failure)
+                    work=Work(101,target,102,0,1,self.window,PAGE,0,0,0)
+                    status=lib.sysfixload(C.byref(work),destination,source,len(payload))
+                    self.assertEqual((work.memory,work.mapped),(0,0))
+                    out=C.create_string_buffer(len(payload));prot=C.c_uint64()
+                    found=lib.mock_peek(destination,out,len(payload),C.byref(prot))
+                    if failure:
+                        self.assertLess(status,0)
+                        self.assertEqual(found,-1)
+                    else:
+                        self.assertEqual((status,found,prot.value,out.raw),(0,0,1,payload))
+                    lib.mock_abort()
 
     def packet(self):
         data=bytearray(BOOT_HEADER_BYTES+3*32)
