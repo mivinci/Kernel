@@ -337,20 +337,36 @@ creatorsignals(void)
 static void
 client(const Bootview *boot)
 {
-  Opkey  key, background;
-  Fdtag  fd;
-  Fdview detached;
-  u64    files[2], source = 0, first, second, ids[2];
-  Msg    gate;
-  Ipcmsg result;
-  Handle rpc;
-  Msg    hello = {{FS_HELLO, 0, 1, UINT64_MAX}};
+  Opkey              key, background;
+  Fdtag              fd;
+  Fdview             detached;
+  u64                files[2], source = 0, first, second, ids[2];
+  Msg                gate;
+  Ipcmsg             result;
+  Handle             rpc;
+  Msg                hello = {{FS_HELLO, 0, 1, UINT64_MAX}};
+  Msg                stale = {{FS_READ, 0x10000, 1, 0}};
+  volatile Filehead *head;
+  volatile Fileslot *slot;
   CHECK(!ipc_call(bootresource(boot, 256), &hello, 0, &result) &&
         (isize) result.words[0] == -EACCES && result.words[1] == 1);
   setupwithhello(boot, 2);
   hello.words[2] = 3;
   CHECK(!ipc_call(work.state.call, &hello, CALL_RECV_MEM, &result) &&
         (isize) result.words[0] == -EBUSY && result.words[1] == 3);
+  CHECK(work.state.map.connid == 0x20000 && !ipc_call(work.state.call, &stale, 0, &result) &&
+        (isize) result.words[0] == -ESTALE && result.words[1] == 1);
+  head = (volatile Filehead *) (uintptr_t) work.state.map.address;
+  slot = (volatile Fileslot *) ((volatile u8 *) head + FS_DESC_OFFSET);
+  slot->seq = stale.words[2];
+  slot->state = FS_SLOT_SUBMITTED;
+  slot->span = 1;
+  slot->object = 1;
+  head->connid = stale.words[1];
+  stale.words[1] = work.state.map.connid;
+  CHECK(!ipc_call(work.state.call, &stale, 0, &result) && (isize) result.words[0] == -ESTALE &&
+        result.words[1] == 1);
+  head->connid = work.state.map.connid;
   creatorsignals();
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
@@ -381,7 +397,7 @@ client(const Bootview *boot)
   CHECK(!sysopabandon(&work, &cache, &key, &background));
   /* A distinct request tries to reuse the exact deferred OPEN's slot. */
   gate.words[0] = FS_OPEN;
-  gate.words[1] = CONNID;
+  gate.words[1] = work.state.map.connid;
   gate.words[2] = background.lease.seq;
   gate.words[3] = background.lease.slot;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
@@ -454,8 +470,9 @@ server(const Bootview *boot, u32 recover)
   Handle     space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
   Filehead  *head = (Filehead *) ADDRESS;
   Fileslot   descriptor;
-  Filelink   link = {0};
-  Filewatch *watch = &link.watch;
+  Filelink   links[2] = {0};
+  Filelink  *link = &links[0];
+  Filewatch *watch = &link->watch;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   volatile u64 *data;
@@ -465,17 +482,18 @@ server(const Bootview *boot, u32 recover)
         input.words[0] == FS_HELLO && !input.words[1] && input.words[2] &&
         input.words[3] == UINT64_MAX);
   if (!recover) {
-    CHECK(sysfilehello(&link, bootresource(boot, 258), bootresource(boot, BOOT_SELF_ALLOC), space,
-                       ADDRESS, CONNID, &input) == -ERR_DENIED &&
-          !link.memory && !link.address && !watch->owner.cookie && !link.ready);
+    CHECK(sysfilehello(links, ARRAY_SIZE(links), bootresource(boot, 258),
+                       bootresource(boot, BOOT_SELF_ALLOC), space, ADDRESS,
+                       &input) == -ERR_DENIED &&
+          !link->memory && !link->address && !watch->owner.cookie && !link->ready);
     zero(&reply, sizeof(reply));
     reply.words[0] = (u64) -EACCES;
     reply.words[1] = input.words[2];
     CHECK(!ipc_reply(input.request, &reply) && !ipc_recv(0, 0, &input) &&
           input.source == peer.pid && input.image == peer.image);
   }
-  CHECK(!sysfilehello(&link, bootresource(boot, 258), bootresource(boot, BOOT_SELF_ALLOC), space,
-                      ADDRESS, CONNID, &input));
+  CHECK(!sysfilehello(links, ARRAY_SIZE(links), bootresource(boot, 258),
+                      bootresource(boot, BOOT_SELF_ALLOC), space, ADDRESS, &input));
   zero(sessions, sizeof(sessions));
   zero(references, sizeof(references));
   for (;;) {
@@ -484,8 +502,8 @@ server(const Bootview *boot, u32 recover)
       CHECK(recover == 12 && input.words[0] == EVENT_LIFE && !sysfilewatchread(watch) &&
             watch->owner.reason == OBS_EXIT && pending && created == 2 && !closed &&
             references[0] && references[1]);
-      CHECK(sysfilelinkaccept(&link, &deferred, &descriptor) == -ERR_PEER &&
-            sysfilelinkclose(&link) == -ERR_BUSY);
+      CHECK(sysfilelinkaccept(links, ARRAY_SIZE(links), &deferred, &descriptor) == -ERR_PEER &&
+            sysfilelinkclose(link) == -ERR_BUSY);
       CHECK(!ipc_rqfinish(pending) && !sysfilefinish(&watch->active, pending));
       references[0] = references[1] = 0;
       closed = 2;
@@ -495,8 +513,10 @@ server(const Bootview *boot, u32 recover)
     opcode = input.words[0];
     zero(&reply, sizeof(reply));
     if (opcode == FS_HELLO) {
-      CHECK(sysfilehello(&link, bootresource(boot, 258), bootresource(boot, BOOT_SELF_ALLOC), space,
-                         ADDRESS, CONNID, &input) == -ERR_BUSY);
+      CHECK(sysfilehello(links, ARRAY_SIZE(links), bootresource(boot, 258),
+                         bootresource(boot, BOOT_SELF_ALLOC), space, ADDRESS,
+                         &input) == -ERR_BUSY &&
+            !links[1].generation);
       reply.words[0] = (u64) -EBUSY;
       reply.words[1] = input.words[2];
       CHECK(!ipc_reply(input.request, &reply));
@@ -540,11 +560,16 @@ server(const Bootview *boot, u32 recover)
       CHECK(recover == 12 && pending && created == 2 && !ipc_reply(input.request, &reply));
       continue;
     }
-    CHECK(input.words[1] == CONNID);
     seq = input.words[2];
     slot = input.words[3];
     reply.words[1] = seq;
-    status = sysfilelinkaccept(&link, &input, &descriptor);
+    status = sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &descriptor);
+    if (status == -ERR_STALE) {
+      CHECK(!recover && opcode == FS_READ && !created && !watch->active.requests[0]);
+      reply.words[0] = (u64) -ESTALE;
+      CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
     if (status == -ERR_BUSY) {
       CHECK(pending && opcode == FS_OPEN && watch->active.requests[slot] == pending);
       reply.words[0] = (u64) -EBUSY;
@@ -681,11 +706,11 @@ server(const Bootview *boot, u32 recover)
   if (recover == 12) {
     Handle pid;
     u64    state, reason, image, cookie = watch->owner.cookie;
-    CHECK(!sysfilelinkclose(&link) && !watch->owner.cookie &&
+    CHECK(!sysfilelinkclose(link) && !watch->owner.cookie &&
           __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
     filecreatetrace[3] = 1;
   } else
-    CHECK(!sysfilelinkclose(&link));
+    CHECK(!sysfilelinkclose(link));
   filecreatetrace[1] = created;
   filecreatetrace[2] = closed;
   filecreatetrace[0] = 2;

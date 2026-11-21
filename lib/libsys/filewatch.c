@@ -356,12 +356,15 @@ sysfilelinkclose(Filelink *link)
       return status;
     link->memory = 0;
   }
-  return link->watch.owner.cookie ? sysfilewatchclose(&link->watch) : 0;
+  status = link->watch.owner.cookie ? sysfilewatchclose(&link->watch) : 0;
+  if (!status)
+    link->serverimage = 0;
+  return status;
 }
 
-isize
-sysfilehello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address, u64 connid,
-             const Ipcmsg *call)
+static isize
+linkhello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address, u64 connid,
+          const Ipcmsg *call)
 {
   Allocarg alloc = {FS_CONN_BYTES, ALLOC_SHARED, 0, 0, 0, 0};
   Maparg   map = {0, 0, address, FS_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
@@ -369,12 +372,6 @@ sysfilehello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 
   Resreply reply = {0, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES, {0, connid, FS_CONN_BYTES}};
   Handle   self, parent;
   isize    status;
-  if (!link || !call || call->kind != IPC_CALL || call->words[0] != FS_HELLO || call->words[1] ||
-      !call->words[2] || call->words[3] != UINT64_MAX || !address || (address & PAGE_MASK) ||
-      address > UINT64_MAX - FS_CONN_BYTES)
-    return -ERR_INVALID;
-  if (link->ready || link->memory || link->address || link->watch.owner.cookie)
-    return -ERR_BUSY;
   status = __sys_getid(&self, &head.serverimage, &parent);
   if (!status)
     status = sysfilewatch(&link->watch, permit, call, connid);
@@ -395,18 +392,65 @@ sysfilehello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 
     reply.business[0] = call->words[2];
     status = ipc_reply_resource(call->request, &reply);
   }
-  if (!status)
+  if (!status) {
+    link->serverimage = head.serverimage;
     link->ready = 1;
-  else
+  } else
     (void) sysfilelinkclose(link);
   return status;
 }
 
 isize
-sysfilelinkaccept(Filelink *link, const Ipcmsg *call, Fileslot *out)
+sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
+             const Ipcmsg *call)
 {
-  if (!link || !link->ready)
+  Filelink *link;
+  u32       i, slot = count;
+  if (!pool || !count || count > FS_CONN_COUNT || !base || (base & PAGE_MASK) ||
+      (u64) count * FS_CONN_BYTES > UINT64_MAX - base || !call || call->kind != IPC_CALL ||
+      call->words[0] != FS_HELLO || call->words[1] || !call->words[2] ||
+      call->words[3] != UINT64_MAX)
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    link = &pool[i];
+    if (link->watch.owner.cookie && link->watch.owner.pid == call->source &&
+        link->watch.owner.image == call->image)
+      return -ERR_BUSY;
+    if (slot == count && !link->ready && !link->memory && !link->address &&
+        !link->watch.owner.cookie && link->generation < (UINT64_MAX >> 16))
+      slot = i;
+  }
+  if (slot == count)
+    return -ERR_CAPACITY;
+  link = &pool[slot];
+  link->generation++;
+  return linkhello(link, permit, allocator, space, base + (u64) slot * FS_CONN_BYTES,
+                   (link->generation << 16) | slot, call);
+}
+
+isize
+sysfilelinkaccept(Filelink *pool, u32 count, const Ipcmsg *call, Fileslot *out)
+{
+  Filelink            *link;
+  Filehead             head;
+  const volatile void *region;
+  u32                  slot;
+  isize                status;
+  if (!pool || count > FS_CONN_COUNT || !call || call->kind != IPC_CALL)
+    return -ERR_INVALID;
+  slot = (u32) (call->words[1] & 65535);
+  if (slot >= count)
     return -ERR_STALE;
-  return sysfilewatchaccept(&link->watch, (const void *) (uintptr_t) link->address, FS_CONN_BYTES,
-                            call, out);
+  link = &pool[slot];
+  if (!link->ready || call->words[1] != link->watch.connid ||
+      call->source != link->watch.owner.pid || call->image != link->watch.owner.image)
+    return -ERR_STALE;
+  if (link->watch.owner.reason)
+    return -ERR_PEER;
+  region = (const volatile void *) (uintptr_t) link->address;
+  status = sysfilehead(region, FS_CONN_BYTES, link->watch.connid, link->serverimage, &head);
+  if (status)
+    return status;
+  return sysfileaccept(&link->watch.active, region, FS_CONN_BYTES, call->words[3], call->words[2],
+                       call->request, out);
 }

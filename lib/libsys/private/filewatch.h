@@ -101,16 +101,17 @@ struct Filelink
 {
   Filewatch watch;
   Handle    memory, space;
-  u64       address;
+  u64       address, serverimage, generation;
   u32       ready;
 };
 
-/* Start with an empty record. The service serializes admission and supplies
-   a reserved connid and vacant VA, with no other observation dependency on
-   the source. On failure, retry close if any local ownership remains. */
-isize sysfilehello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address,
-                   u64 connid, const Ipcmsg *call);
-isize sysfilelinkaccept(Filelink *link, const Ipcmsg *call, Fileslot *out);
+/* Use a fixed zeroed pool and an exclusive VA arena in the service's own
+   Space. Serialize requests and keep other observation dependencies separate
+   until they can share ownership of the source cookie. */
+isize sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space,
+                   u64 base, const Ipcmsg *call);
+/* Route by full connid and source before reading the shared head or slot. */
+isize sysfilelinkaccept(Filelink *pool, u32 count, const Ipcmsg *call, Fileslot *out);
 /* Call only once all business references and downstream accesses are settled.
    A failed cleanup retains its remaining obligations and blocks admission. */
 isize sysfilelinkclose(Filelink *link);
