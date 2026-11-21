@@ -1,8 +1,7 @@
 #ifndef _FS_JOURNAL_H
 #define _FS_JOURNAL_H
-#include <types.h>
-#include <abi/base.h>
-#define JOURNAL_BYTES       4096
+#include "geometry.h"
+#define JOURNAL_BYTES       FS_BLOCK_BYTES
 #define JOURNAL_META        16
 #define JOURNAL_DATA        128
 #define JOURNAL_WRITE       1

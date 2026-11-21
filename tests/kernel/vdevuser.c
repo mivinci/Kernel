@@ -126,9 +126,34 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   static u8      images[3][JOURNAL_BYTES];
   Journalblock   metadata[2];
   Journalio      io;
+  Fsgeometry     geometry;
   u32            i, j, count = 0;
   u64            stride = JOURNAL_BYTES / VBLK_SECTOR;
+  u64            blocks = config->sectors / stride;
   REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
+  geometry.bytes = config->sectors * VBLK_SECTOR;
+  geometry.logical = config->blocksize;
+  geometry.physical = config->physical;
+  geometry.alignment = config->alignment;
+  geometry.readonly = config->readonly;
+  geometry.flush = config->flush;
+  geometry.faultbytes = geometry.faultoffset = 0;
+  REQUIRE(!fsgeometry(&geometry, blocks, 0) && fsgeometry(&geometry, blocks, 1) == -ERR_NOTSUP &&
+              fsgeometry(&geometry, blocks + 1, 0) == -ERR_STATE,
+          199);
+  geometry.faultbytes = 2 * FS_BLOCK_BYTES;
+  REQUIRE(fsgeometry(&geometry, blocks, 1) == -ERR_NOTSUP, 200);
+  /* This harness provisions an aligned 4 KiB boundary. It does not
+     derive the failure model from the topology advertised by virtio. */
+  geometry.faultbytes = FS_BLOCK_BYTES;
+  geometry.faultoffset = VBLK_SECTOR;
+  REQUIRE(fsgeometry(&geometry, blocks, 1) == -ERR_NOTSUP, 201);
+  geometry.faultoffset = 0;
+  geometry.flush = 0;
+  REQUIRE(!fsgeometry(&geometry, blocks, 0) && fsgeometry(&geometry, blocks, 1) == -ERR_NOTSUP,
+          203);
+  geometry.flush = config->flush;
+  REQUIRE(!fsgeometry(&geometry, blocks, 1), 202);
   for (i = 0; i < ARRAY_SIZE(images); i++)
     for (j = 0; j < JOURNAL_BYTES; j++)
       images[i][j] = (u8) (0x92 + i * 31 + j * 37);
@@ -138,7 +163,7 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   metadata[1].bytes = images[1];
   /* Synthetic snapshots exercise transport and ordering before a disk
      codec exists. The independent host census checks the written bytes. */
-  REQUIRE(!journalredo(&journal, config->sectors / stride, 47, metadata, 2, images[2]), 194);
+  REQUIRE(!journalredo(&journal, blocks, 47, metadata, 2, images[2]), 194);
   while (journal.phase != JOURNAL_DONE) {
     REQUIRE(count < 5 && !journalnext(&journal, &io) && io.txid == 47, 195);
     transfer(device, ring, 2, binding, irqevent, config, dma,

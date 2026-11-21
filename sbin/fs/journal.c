@@ -62,7 +62,7 @@ clear(Journal *journal)
 isize
 journalinit(Journal *journal, u64 blocks, u64 last)
 {
-  if (!journal || blocks <= 99 || blocks > 32768)
+  if (!journal || blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS)
     return -ERR_INVALID;
   journal->blocks = blocks;
   journal->last = last;
@@ -100,8 +100,8 @@ isize
 journalbegin(Journal *journal, const Journalplan *plan)
 {
   u32 i, j, count;
-  if (!journal || journal->blocks <= 99 || journal->blocks > 32768 || journal->reserved[0] ||
-      journal->reserved[1])
+  if (!journal || journal->blocks <= FS_DATA_START || journal->blocks > FS_MAX_BLOCKS ||
+      journal->reserved[0] || journal->reserved[1])
     return -ERR_INVALID;
   if (journal->phase != JOURNAL_IDLE || journal->active || journal->txid)
     return -ERR_STATE;
@@ -121,7 +121,7 @@ journalbegin(Journal *journal, const Journalplan *plan)
   if (!hometargets(plan->metadata, plan->metadata_count, journal->blocks))
     return -ERR_INVALID;
   for (i = 0; i < plan->data_count; i++) {
-    if (plan->data[i].block < 99 || plan->data[i].block >= journal->blocks)
+    if (plan->data[i].block < FS_DATA_START || plan->data[i].block >= journal->blocks)
       return -ERR_INVALID;
     for (j = 0; j < i; j++)
       if (plan->data[i].block == plan->data[j].block)
@@ -159,8 +159,9 @@ journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata
 {
   u32 i, j;
   u64 descriptors = (u64) count * sizeof(*metadata);
-  if (blocks <= 99 || blocks > 32768 || !txid || !count || count > JOURNAL_META ||
-      !external(journal, metadata, descriptors) || !external(journal, empty, JOURNAL_BYTES) ||
+  if (blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || !txid || !count ||
+      count > JOURNAL_META || !external(journal, metadata, descriptors) ||
+      !external(journal, empty, JOURNAL_BYTES) ||
       !separate(metadata, descriptors, empty, JOURNAL_BYTES) ||
       !hometargets(metadata, count, blocks))
     return -ERR_INVALID;
