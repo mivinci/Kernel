@@ -78,4 +78,9 @@ isize sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, 
    token and its holds stay owned by the backend. */
 isize sysexecreply(Execreserve *record, Filewatch *watch, Fileowner *target, const Ipcmsg *call,
                    u64 token, u64 now);
+/* The serialized backend supplies the exact target's prepaid, initialized
+   connection. Its watch owns the observation used to reserve the token.
+   A successful reply consumes the token and marks the connection delivered;
+   the backend still owns the target holds and source retirement. */
+isize sysexecclaim(Execreserve *record, Fileowner *source, Filelink *link, const Ipcmsg *call);
 #endif

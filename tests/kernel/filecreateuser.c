@@ -455,6 +455,9 @@ execmanifest(const Bootview *boot, u64 file, u32 count)
   execsend.key.lease.seq = 0;
   if (view) {
     Msg check = {{EXECWATCH, 0, 0, 0}};
+    Msg claim = {{FS_EXEC_CLAIM, 0, 1, 41}};
+    CHECK(!ipc_call(work.state.call, &claim, CALL_RECV_MEM, &result) &&
+          (isize) result.words[0] == -ESTALE && result.words[1] == claim.words[2]);
     CHECK(!__sys_execabort(view) && !ipc_call(work.state.call, &check, CALL_CONTROL, &result) &&
           !result.words[0]);
   }
@@ -791,7 +794,7 @@ server(const Bootview *boot, u32 recover)
   Filelink   links[2] = {0};
   Filelink  *link = &links[0];
   Filewatch *watch = &link->watch;
-  Fileowner  target = {0};
+  Fileowner *target = &links[1].watch.owner;
   u64        held = 0;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
@@ -949,11 +952,20 @@ server(const Bootview *boot, u32 recover)
       CHECK(!ipc_reply(input.request, &reply));
       continue;
     }
+    if (opcode == FS_EXEC_CLAIM) {
+      CHECK(!recover && target->cookie && held &&
+            sysexecclaim(&execreserve, &watch->owner, &links[1], &input) == -ERR_STALE &&
+            execreserve.token == 41 && !links[1].ready);
+      reply.words[0] = (u64) -ESTALE;
+      reply.words[1] = input.words[2];
+      CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
     if (opcode == EXECWATCH) {
-      CHECK(!recover && target.cookie && held &&
-            !sysexecdiscard(&execreserve, &watch->owner, &target, execdrop, &held) && !held &&
-            !execreserve.count && target.reason == OBS_ABORT && !watch->owner.reason &&
-            !sysfileownerclose(&target) && !ipc_reply(input.request, &reply));
+      CHECK(!recover && target->cookie && held &&
+            !sysexecdiscard(&execreserve, &watch->owner, target, execdrop, &held) && !held &&
+            !execreserve.count && target->reason == OBS_ABORT && !watch->owner.reason &&
+            !sysfileownerclose(target) && !ipc_reply(input.request, &reply));
       continue;
     }
     seq = input.words[2];
@@ -998,16 +1010,17 @@ server(const Bootview *boot, u32 recover)
             execplan.groups[0].retained == count / 2 &&
             execplan.groups[0].closed == (count + 1) / 2);
       if (count == 1)
-        CHECK(sysexecobserve(&target, bootresource(boot, 258), &input, descriptor.args[1]) ==
+        CHECK(sysexecobserve(target, bootresource(boot, 258), &input, descriptor.args[1]) ==
                   -ERR_STALE &&
-              !target.cookie);
+              !target->cookie);
       else
-        CHECK(!sysexecobserve(&target, bootresource(boot, 258), &input, descriptor.args[1]) &&
-              target.cookie && target.pid == input.source && target.image == descriptor.args[1] &&
-              !sysexecreserve(&execreserve, &execplan, &watch->owner, &target, exectake, execdrop,
+        CHECK(!sysexecobserve(target, bootresource(boot, 258), &input, descriptor.args[1]) &&
+              target->cookie && target->pid == input.source &&
+              target->image == descriptor.args[1] &&
+              !sysexecreserve(&execreserve, &execplan, &watch->owner, target, exectake, execdrop,
                               &held) &&
               held == 1 && execreserve.count == 1 &&
-              sysexecdiscard(&execreserve, &watch->owner, &target, execdrop, &held) == -ERR_BUSY);
+              sysexecdiscard(&execreserve, &watch->owner, target, execdrop, &held) == -ERR_BUSY);
       for (i = 0; i < count; i++)
         CHECK(execplan.rows[i].fd == i && execplan.rows[i].flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC));
       execplan.count = 0;
@@ -1017,9 +1030,9 @@ server(const Bootview *boot, u32 recover)
       } else {
         Ipcmsg wrong = input;
         wrong.words[2]++;
-        CHECK(sysexecreply(&execreserve, watch, &target, &wrong, 41, 0) == -ERR_STALE &&
+        CHECK(sysexecreply(&execreserve, watch, target, &wrong, 41, 0) == -ERR_STALE &&
               !execreserve.token && watch->active.requests[slot] == input.request &&
-              !sysexecreply(&execreserve, watch, &target, &input, 41, 0) &&
+              !sysexecreply(&execreserve, watch, target, &input, 41, 0) &&
               execreserve.token == 41 && !watch->active.requests[slot] &&
               !watch->active.requests[slot + 1]);
       }

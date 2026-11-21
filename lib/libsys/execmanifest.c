@@ -282,3 +282,47 @@ sysexecreply(Execreserve *record, Filewatch *watch, Fileowner *target, const Ipc
   record->token = token;
   return sysfilefinish(&watch->active, record->request);
 }
+
+isize
+sysexecclaim(Execreserve *record, Fileowner *source, Filelink *link, const Ipcmsg *call)
+{
+  Resreply delivery = {0, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES, {0, 0, FS_CONN_BYTES}};
+  Msg      reply;
+  u64      state;
+  isize    error;
+  if (!record || !source || !link || !call || call->kind != IPC_CALL ||
+      handlekind(call->request) != HANDLE_REQUEST || call->words[0] != FS_EXEC_CLAIM ||
+      call->words[1] || !call->words[2] || !call->words[3])
+    return -ERR_INVALID;
+  if (!record->ready || record->token != call->words[3] || record->source != source->cookie ||
+      record->target != link->watch.owner.cookie || call->source != link->watch.owner.pid ||
+      call->image != link->watch.owner.image)
+    return -ERR_STALE;
+  if (!link->watch.connid || !link->memory || !link->space || !link->address || !link->serverimage)
+    return -ERR_STATE;
+  error = sysexecstate(source, &link->watch.owner);
+  if (error != SYSEXEC_ACTIVE)
+    return error < 0 ? error : -ERR_STALE;
+  error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state != RQ_CHECK_LIVE)
+    return -ERR_CANCELLED;
+  if (link->ready) {
+    reply.words[0] = 0;
+    reply.words[1] = call->words[2];
+    reply.words[2] = link->watch.connid;
+    reply.words[3] = FS_CONN_BYTES;
+    error = ipc_reply(call->request, &reply);
+  } else {
+    delivery.source = link->memory;
+    delivery.business[0] = call->words[2];
+    delivery.business[1] = link->watch.connid;
+    error = ipc_reply_resource(call->request, &delivery);
+  }
+  if (error)
+    return error;
+  record->token = 0;
+  link->ready = 1;
+  return 0;
+}
