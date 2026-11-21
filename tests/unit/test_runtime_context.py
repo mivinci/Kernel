@@ -89,6 +89,21 @@ class RuntimeContextTests(unittest.TestCase):
             self.assertEqual(lib.sysctxfixcheck(C.byref(bank),owner,layers),-4)
             self.assertEqual(bytes(bank),before)
 
+    def test_fix_raw_interrupt_discards_parent_tuple_and_retains_private_input(self):
+        for _,_,lib in self.libs:
+            bank=Bank();owner=Peer(pid(1),9);child=Peer(pid(2),10);key=Key()
+            lib.sysctxinit(C.byref(bank),owner)
+            lib.sysctxprepare(C.byref(bank),owner,0,0x12,None,C.byref(key))
+            ctx=bank.contexts[0];ctx.phase=2;ctx.active=1
+            ctx.result.values[0]=123;ctx.args[0]=456
+            bank.snapshots[0][0]=77
+            layers=(C.c_uint64*6)(key.sequence,3,0,0,0,0)
+            self.assertEqual(lib.sysctxfixraw(C.byref(bank),owner,child,layers),0)
+            self.assertEqual((ctx.phase,ctx.status,ctx.number,ctx.active),(3,-12,0,1))
+            self.assertEqual(list(ctx.result.values),[0]*7)
+            self.assertEqual(list(ctx.args),[0]*7)
+            self.assertEqual(bank.snapshots[0][0],77)
+
     def test_fix_raw_checks_last_layer_before_rebinding_and_preserves_completed_tuple(self):
         for _,_,lib in self.libs:
             bank=Bank();owner=Peer(pid(1),9);child=Peer(pid(2),10)
@@ -98,9 +113,10 @@ class RuntimeContextTests(unittest.TestCase):
                 self.assertEqual(lib.sysctxprepare(C.byref(bank),owner,layer,0x4f,None,C.byref(key)),0)
             bank.contexts[1].phase=3
             bank.contexts[1].result.values[0]=0x12345678
-            bank.contexts[2].phase=2
+            bank.contexts[2].phase=3
+            bank.contexts[2].number=0x40
             bank.snapshots[0][0]=91
-            layers=(C.c_uint64*6)(keys[0].sequence,1,keys[1].sequence,2,keys[2].sequence,3)
+            layers=(C.c_uint64*6)(keys[0].sequence,1,keys[1].sequence,2,keys[2].sequence,2)
             before=bytes(bank)
             self.assertEqual(lib.sysctxfixraw(C.byref(bank),owner,child,layers),-18)
             self.assertEqual(bytes(bank),before)

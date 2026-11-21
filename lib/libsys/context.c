@@ -120,7 +120,11 @@ sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers
     Rctx *context = &bank->contexts[i];
     if (layers[i].action == FIX_LAYER_EMPTY)
       continue;
-    if (context->active || context->route.kind != RCTX_ROUTE_NONE)
+    if (context->route.kind != RCTX_ROUTE_NONE)
+      return -ERR_NOTSUP;
+    if (layers[i].action == FIX_LAYER_INTERRUPT && context->phase == RCTX_WAITING)
+      continue;
+    if (context->active)
       return -ERR_NOTSUP;
     if (layers[i].action == FIX_LAYER_UNSENT)
       continue;
@@ -130,6 +134,19 @@ sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers
         (context->number != SYS_GETID && context->number != SYS_GETPG &&
          context->number != SYS_CLOCK_GETTIME && context->number != SYS_CLOCK_GETRES))
       return -ERR_NOTSUP;
+  }
+  for (i = 0; i < RCTX_LAYERS; i++) {
+    Rctx *context = &bank->contexts[i];
+    u32   j;
+    if (layers[i].action != FIX_LAYER_INTERRUPT)
+      continue;
+    context->status = -ERR_INTERRUPTED;
+    for (j = 0; j < sizeof(context->result); j++)
+      ((u8 *) &context->result)[j] = 0;
+    for (j = 0; j < ARRAY_SIZE(context->args); j++)
+      context->args[j] = 0;
+    context->number = 0;
+    context->phase = RCTX_DONE;
   }
   bank->self = child;
   return 0;
