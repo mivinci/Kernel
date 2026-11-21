@@ -5,17 +5,20 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "private/filecreate.h"
+#include "private/filewatch.h"
 #include "private/close.h"
 #include "private/fd.h"
 #include "private/contextipc.h"
 #include "private/sigentry.h"
 #include <abi/resource.h>
+#include <abi/observe.h>
 
 #define ADDRESS  0x1600000UL
 #define STOP     0xf001
 #define GATE     0xf002
 #define PREPARE  0xf003
 #define ENDPEER  0xf004
+#define SEEN     0xf005
 #define CONNID   0x10001
 #define IO_VALUE UINT64_C(0x1122334455667788)
 #define IO_WRITE UINT64_C(0x8877665544332211)
@@ -399,26 +402,46 @@ client(const Bootview *boot)
 }
 
 static void
+exitclient(const Bootview *boot)
+{
+  Opkey  key;
+  Msg    message;
+  Ipcmsg result;
+  u64    files[2] = {0, 0}, source = 0;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(FS_OPEN, "/a", 0);
+  collect(&key);
+  complete(&key, 0, files, &source);
+  CHECK(files[0] && !files[1] && !source);
+  (void) begin(FS_OPEN, "/late", 0);
+  message.words[0] = SEEN;
+  message.words[1] = message.words[2] = message.words[3] = 0;
+  CHECK(!ipc_call(work.state.call, &message, CALL_CONTROL, &result) && !result.words[0]);
+  filecreatetrace[0] = 2;
+}
+static void
 server(const Bootview *boot, u32 recover)
 {
-  Connpeer     peer;
-  Allocarg     alloc;
-  Maparg       map;
-  Resreply     transfer;
-  Ipcmsg       input;
-  Msg          reply;
-  Handle       memory, space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
-  Filehead    *head = (Filehead *) ADDRESS;
-  Fileslot     descriptor;
-  Fileinflight active = {{0}};
-  u64 sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
-  u64 slot, seq, opcode, i, found, number, resourcepath;
+  Connpeer  peer;
+  Allocarg  alloc;
+  Maparg    map;
+  Resreply  transfer;
+  Ipcmsg    input, deferred;
+  Msg       reply;
+  Handle    memory, space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
+  Filehead *head = (Filehead *) ADDRESS;
+  Fileslot  descriptor;
+  Filewatch watch = {0};
+  u64       sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
+  u64       slot, seq, opcode, i, found, number, resourcepath;
   volatile u64 *data;
   isize         status;
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
         input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
         input.words[0] == FS_HELLO && !input.words[1] && input.words[2] &&
         input.words[3] == UINT64_MAX);
+  CHECK(!sysfilewatch(&watch, bootresource(boot, 258), &input, CONNID));
   zero(&alloc, sizeof(alloc));
   alloc.bytes = FS_CONN_BYTES;
   alloc.kind = ALLOC_SHARED;
@@ -452,14 +475,25 @@ server(const Bootview *boot, u32 recover)
   zero(sessions, sizeof(sessions));
   zero(references, sizeof(references));
   for (;;) {
-    CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == peer.pid &&
-          input.image == peer.image);
+    CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : 0, 0, &input));
+    if (input.kind == IPC_EVENT) {
+      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && !sysfilewatchread(&watch) &&
+            watch.reason == OBS_EXIT && pending && created == 2 && !closed && references[0] &&
+            references[1]);
+      CHECK(sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &deferred, &descriptor) == -ERR_PEER &&
+            sysfilewatchclose(&watch) == -ERR_BUSY);
+      CHECK(!ipc_rqfinish(pending) && !sysfilefinish(&watch.active, pending));
+      references[0] = references[1] = 0;
+      closed = 2;
+      break;
+    }
+    CHECK(input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image);
     opcode = input.words[0];
     zero(&reply, sizeof(reply));
     if (opcode == STOP) {
       CHECK(!pending && created == (recover ? 0 : 7) && closed == (recover ? 0 : 7));
       for (i = 0; i < FS_CONN_SLOTS; i++)
-        CHECK(!active.requests[i]);
+        CHECK(!watch.active.requests[i]);
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;
@@ -486,17 +520,21 @@ server(const Bootview *boot, u32 recover)
       reply.words[1] = filecreatetrace[7];
       reply.words[2] = filecreatetrace[8];
       reply.words[3] = 8;
-      CHECK(!ipc_reply(pending, &reply) && !sysfilefinish(&active, pending));
+      CHECK(!ipc_reply(pending, &reply) && !sysfilefinish(&watch.active, pending));
       pending = 0;
+      continue;
+    }
+    if (opcode == SEEN) {
+      CHECK(recover == 12 && pending && created == 2 && !ipc_reply(input.request, &reply));
       continue;
     }
     CHECK(input.words[1] == CONNID);
     seq = input.words[2];
     slot = input.words[3];
     reply.words[1] = seq;
-    status = sysfileaccept(&active, head, FS_CONN_BYTES, slot, seq, input.request, &descriptor);
+    status = sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &input, &descriptor);
     if (status == -ERR_BUSY) {
-      CHECK(pending && opcode == FS_OPEN && active.requests[slot] == pending);
+      CHECK(pending && opcode == FS_OPEN && watch.active.requests[slot] == pending);
       reply.words[0] = (u64) -EBUSY;
       CHECK(!ipc_reply(input.request, &reply));
       continue;
@@ -514,7 +552,7 @@ server(const Bootview *boot, u32 recover)
         CHECK(opcode == FS_READ);
         data[0] = IO_VALUE;
         reply.words[2] = reply.words[3] = 8;
-        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&active, input.request));
+        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch.active, input.request));
         continue;
       }
       CHECK(opcode == (recover == 10 ? FS_WRITE : FS_READ));
@@ -547,7 +585,7 @@ server(const Bootview *boot, u32 recover)
               descriptor.args[3] == descriptor.payload_bytes && path[0] == '/');
         if (path[1] == 'm') {
           reply.words[0] = (u64) -2;
-          CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&active, input.request));
+          CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch.active, input.request));
           continue;
         }
         resourcepath = path[1] == 'b' || path[1] == 'c' || path[1] == 'f' || path[1] == 'r';
@@ -573,7 +611,7 @@ server(const Bootview *boot, u32 recover)
         transfer.business[1] = prepare.words[1];
         transfer.business[2] = token;
         CHECK(!ipc_reply_resource(input.request, &transfer) &&
-              !sysfilefinish(&active, input.request));
+              !sysfilefinish(&watch.active, input.request));
         continue;
       }
       number = opcode == FS_PIPE ? 2 : 1;
@@ -603,16 +641,25 @@ server(const Bootview *boot, u32 recover)
       if (opcode == FS_OPEN && descriptor.payload_bytes == 6) {
         CHECK(!pending && !ipc_defer(input.request));
         pending = input.request;
+        deferred = input;
         filecreatetrace[7] = seq;
         filecreatetrace[8] = reply.words[2];
         continue;
       }
     } else
       CHECK(0);
-    CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&active, input.request));
+    CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch.active, input.request));
   }
   CHECK(!__sys_unmap(space, ADDRESS) && !__sys_free(memory) &&
         !__sys_free(bootresource(boot, 256)));
+  if (recover == 12) {
+    Handle pid;
+    u64    state, reason, image, cookie = watch.cookie;
+    CHECK(!sysfilewatchclose(&watch) && !watch.cookie &&
+          __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
+    filecreatetrace[3] = 1;
+  } else
+    CHECK(!sysfilewatchclose(&watch));
   filecreatetrace[1] = created;
   filecreatetrace[2] = closed;
   filecreatetrace[0] = 2;
@@ -1486,7 +1533,7 @@ main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
         ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'z') ||
-         (argv[0][0] >= 'A' && argv[0][0] <= 'I')) &&
+         (argv[0][0] >= 'A' && argv[0][0] <= 'K')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1547,6 +1594,10 @@ main(int argc, char **argv)
     iorecoverclient(sysboot(), argv[0][0] == 'D' ? 0 : argv[0][0] == 'F' ? 1 : 2);
   else if (argv[0][0] == 'E' || argv[0][0] == 'G' || argv[0][0] == 'I')
     server(sysboot(), argv[0][0] == 'E' ? 9 : argv[0][0] == 'G' ? 10 : 11);
+  else if (argv[0][0] == 'J')
+    exitclient(sysboot());
+  else if (argv[0][0] == 'K')
+    server(sysboot(), 12);
   else
     backend(sysboot(), argv[0][0] == 'w' ? 6 : argv[0][0] == 'z' ? 7 : 8);
   return 42;

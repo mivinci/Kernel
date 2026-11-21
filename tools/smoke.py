@@ -1617,6 +1617,11 @@ def exercise(args, run_dir, record):
                     if data != [dict(mode=i,fake_done_ignored=1,quarantined=1,trusted_cleanup=1,pins_returned=2 if i==2 else 1,success_preserved=int(i==2),charged=0,allocated=transition['tables']) for i in range(3)]:
                         raise SmokeError("data IO end recovery released an unfinished or successful operation")
                     record['data_recovery']=data
+                    file_watch = [fields(line) for line in serial.read_text().splitlines()
+                                  if line.startswith("FILEWATCHCHECK ")]
+                    if file_watch != [dict(references=2, drained=1, acked=1)]:
+                        raise SmokeError("file connection exit observation or cleanup mismatch")
+                    record['file_watch'] = file_watch[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,

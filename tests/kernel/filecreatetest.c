@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include "load.h"
 #include <abi/boot.h>
+#include <abi/observe.h>
 #include <bootimage.h>
 #include <diag.h>
 #include <signal.h>
@@ -10,7 +11,7 @@ struct Packet
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[4];
+  Resentry resources[5];
   char     role[2];
 };
 extern const u8  filecreate_image[], filecreate_image_end[];
@@ -24,6 +25,7 @@ static void      bootstraptest(u32 variant);
 static void      bootpeertest(u32 mode);
 static void      creatorbackendtest(u32 mode);
 static void      datarecoverytest(u32 mode);
+static void      clientexittest(void);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -95,6 +97,11 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
                            LOCAL_USE | LOCAL_GRANT, 0, 0, &call));
       packet.resources[3].tag = 257;
       packet.resources[3].handle = call;
+    }
+    if (i == 1) {
+      CHECK(!localobserve(table, OBSERVE_SOURCE, &call));
+      packet.resources[packet.header.resource_count].tag = 258;
+      packet.resources[packet.header.resource_count++].handle = call;
     }
     testload(pids[i], filecreate_image, (u64) (filecreate_image_end - filecreate_image), &packet,
              sizeof(packet));
@@ -220,6 +227,65 @@ filecreatetest(void)
   datarecoverytest(0);
   datarecoverytest(1);
   datarecoverytest(2);
+  clientexittest();
+}
+static void
+clientexittest(void)
+{
+  Setid      set;
+  Set        budget;
+  Procinfo   process[2];
+  Handle     pid[2];
+  Bootimage  image;
+  Life       life;
+  Liferesult result;
+  Pgstat     before, after;
+  u64        trace[16];
+  u32        i, turns = 0;
+  int        error;
+  pgstat(&before);
+  CHECK(!setcreate(2048, 4096, 2, &set) &&
+        !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
+  loadroles(set, &image, pid, process, "JK", 2);
+  for (i = 0; i < ARRAY_SIZE(pid); i++) {
+    CHECK(!procinfo(pid[i], &process[i]));
+    while (process[i].state != PROC_EXITING) {
+      error = procrunone();
+      CHECK((!error || error == -ERR_WOULD_BLOCK) && ++turns < 256);
+      if (error)
+        CHECK(procidle() >= 0);
+      CHECK(!procinfo(pid[i], &process[i]));
+    }
+    CHECK(!lifestat(process[i].life, &life) &&
+          !spaceread(process[i].space, filecreate_trace_address, trace, sizeof(trace)));
+    if (life.reason != LIFE_EXIT || life.code != 42 || trace[15]) {
+      putstr("FILEWATCHRESULT actor=");
+      puthex(i);
+      putstr(" code=");
+      puthex(life.code);
+      putstr(" line=");
+      puthex(trace[15]);
+      putstr("\n");
+      panic("file connection observation");
+    }
+    CHECK(trace[0] == 2 && trace[1] == 2);
+    if (i)
+      CHECK(trace[2] == 2 && trace[3] == 1);
+    while ((error = procclean(pid[i])) > 0) {
+    }
+    CHECK(!error && !lifecollect(process[i].life, 1, &result));
+  }
+  CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
+  pgstat(&after);
+  CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
+        !acctcheck() && !lifecheck());
+  putstr("FILEWATCHCHECK references=");
+  puthex(trace[2]);
+  putstr(" drained=");
+  puthex(1);
+  putstr(" acked=");
+  puthex(trace[3]);
+  putstr("\n");
 }
 static void
 datarecoverytest(u32 mode)
