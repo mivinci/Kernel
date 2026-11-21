@@ -1,6 +1,7 @@
 /* CPU-backed device fixture only: these pages are not native DMA grants. */
 #include "ringuser.h"
 #include "private/virtio/ring.h"
+#include "private/virtio/block.h"
 #include "private/serial.h"
 #include <unistd.h>
 static u8         pages[3][PAGE_SIZE] ALIGNED(PAGE_SIZE);
@@ -80,7 +81,8 @@ ringusercheck(void)
 {
   Vring    r;
   Vringops ops;
-  Vbuf     buffers[2];
+  Vbuf     buffers[3];
+  Vblkhead request;
   Vdone    done[VQ_BATCH];
   u64      counts[3];
   u32      published, count, more, head;
@@ -92,20 +94,18 @@ ringusercheck(void)
   ops.notify = ringnotify;
   CHECK(!vrinit(&r, 11, pages[0], pages[1], pages[2], &ops));
   CHECK(counts[0] == 3 && counts[1] == 1 && !counts[2]);
-  buffers[0].address = 0x10000;
-  buffers[0].length = 16;
-  buffers[0].writable = 0;
-  buffers[1].address = 0x20000;
-  buffers[1].length = 32;
-  buffers[1].writable = 1;
-  CHECK(!vrsubmit(&r, buffers, 2, 77, &published) && published && counts[2] == 1);
+  CHECK(vblkprepare(VBLK_READ, 8, 16, 0x10000, 0x20000, 4096, 0x30000, &request, buffers) == 3 &&
+        request.type == VBLK_READ && !request.reserved && request.sector == 8 &&
+        !vrsubmit(&r, buffers, 3, 77, &published) && published && counts[2] == 1);
   head = r.avail->ring[0];
-  CHECK(r.avail->index == 1 && r.desc[head].flags == 1 && r.desc[r.desc[head].next].flags == 2);
+  CHECK(r.avail->index == 1 && r.desc[head].flags == 1 && r.desc[r.desc[head].next].flags == 3);
   r.used->ring[0].id = head;
-  r.used->ring[0].length = 32;
+  r.used->ring[0].length = 4097;
   r.used->index = 1;
   CHECK(!vrpoll(&r, 11, done, &count, &more) && count == 1 && !more && done[0].cookie == 77 &&
-        done[0].length == 32 && r.queue.free == VQ_SIZE);
+        !vblkresult(VBLK_READ, 4096, done[0].length, VBLK_OK) && r.queue.free == VQ_SIZE &&
+        vblkresult(VBLK_READ, 4096, 1, VBLK_OK) == -ERR_PEER &&
+        vblkresult(VBLK_READ, 4096, 1, VBLK_IOERR) == VBLK_IOERR);
   r.nextavail = r.nextused = 65535;
   r.avail->index = r.used->index = 65535;
   CHECK(!vrsubmit(&r, &buffers[1], 1, 88, &published) && published && !r.nextavail);

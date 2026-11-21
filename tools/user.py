@@ -76,7 +76,7 @@ def build(args):
     if temporary.exists():temporary.unlink()
     invoke('archive', [tools['ar']['path'], 'rcs', str(temporary), *[str(obj) for _, obj in units[:-1]]])
     os.replace(temporary, archive)
-    virtio_sources = [ROOT / 'lib/libvirtio' / name for name in ('queue.c', 'ring.c', 'device.c')]
+    virtio_sources = [ROOT / 'lib/libvirtio' / name for name in ('queue.c', 'ring.c', 'device.c', 'block.c')]
     virtio_objects = []
     for source in virtio_sources:
         obj = sdk / 'obj/libvirtio' / source.with_suffix('.o').name

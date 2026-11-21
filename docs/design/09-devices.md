@@ -99,6 +99,8 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 ## 执行与验收
 
+stage354：libvirtio 的块请求适配器构造 READ/WRITE/FLUSH 请求头及 split-ring 描述符，校验扇区范围、设备地址范围及完成长度；短成功读和未知状态视为损坏，设备明确失败与损坏分开报告。RV64/ARM64 QEMU `runtime` 用 CPU 模拟设备验证 READ 描述符、原 cookie 回收及短读拒绝；25 项 virtio 主机回归和格式通过。未接真实 DMA、块设备读写或 FLUSH 验收。
+
 ### serial的PIO寄存器后端（2026-11-18接续）
 
 实现位于sbin/serial/uart.c/.h；用户态MMIO指令及顺序封装位于lib/libsys/private/io.h及其arm64/riscv/io.S，不依赖内核HAL，不新增syscall或DMA能力。寄存器依据TI PC16550D SNLS378C的FIFO/状态/寄存器章节与Arm PL011 DDI0183G第2/3章核对；后端接受已授Device映射的VA、精确窗口、种类、步长及访问宽度，不按架构/板名猜物理地址。
