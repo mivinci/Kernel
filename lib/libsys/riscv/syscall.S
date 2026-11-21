@@ -1,3 +1,5 @@
+#include <abi/base.h>
+#include <abi/syscall.h>
 .section .text
 .balign 4
 .global __sys_enter
@@ -28,4 +30,34 @@ __sys_enter:
     addi sp, sp, 16
     ret
 .size __sys_enter, .-__sys_enter
+
+.balign 4
+.global __sys_forkprep
+.type __sys_forkprep, @function
+__sys_forkprep:
+    beqz a2, 1f
+    addi sp, sp, -16
+    sd s0, 0(sp)
+    mv s0, a2
+    li a2, 0
+    li a3, 0
+    li a4, 0
+    li a5, 0
+    li a6, 0
+    li a7, SYS_FORKPREP
+    ecall
+.global __sys_forkreturn_begin
+__sys_forkreturn_begin:
+    sd a1, 0(s0)
+    sd a2, 8(s0)
+    sd a3, 16(s0)
+.global __sys_forkreturn_end
+__sys_forkreturn_end:
+    ld s0, 0(sp)
+    addi sp, sp, 16
+    ret
+1:
+    li a0, -ERR_INVALID
+    ret
+.size __sys_forkprep, .-__sys_forkprep
 .section .note.GNU-stack,"",@progbits

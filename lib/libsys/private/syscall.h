@@ -19,6 +19,10 @@ struct Forkret
 STATIC_ASSERT(sizeof(Sysret) == 64, syscall_return_size);
 STATIC_ASSERT(offsetof(Sysret, values) == 0, syscall_return_values);
 STATIC_ASSERT(offsetof(Sysret, image) == 56, syscall_return_image);
+STATIC_ASSERT(offsetof(Forkret, construct) == 0, fork_return_construct);
+STATIC_ASSERT(offsetof(Forkret, pid) == 8, fork_return_pid);
+STATIC_ASSERT(offsetof(Forkret, fix) == 16, fork_return_fix);
+extern const u8 __sys_forkreturn_begin[], __sys_forkreturn_end[];
 /* Architecture-only marshaling. The argument array has exactly seven words. */
 isize         __sys_enter(u64 number, const u64 args[7], void *out);
 NORETURN void __sys_exit(u64 code);

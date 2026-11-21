@@ -1,7 +1,5 @@
 #ifndef _ABI_BASE_H
 #define _ABI_BASE_H
-#include <stdint.h>
-typedef int64_t Handle;
 #define HANDLE_PROCESS        1
 #define HANDLE_RESOURCE       2
 #define HANDLE_REQUEST        3
@@ -32,6 +30,9 @@ typedef int64_t Handle;
 #define ERR_OVERFLOW          20
 #define ERR_TIMEDOUT          21
 #define ERR_CHILD             22
+#ifndef __ASSEMBLER__
+#include <stdint.h>
+typedef int64_t Handle;
 /* Syntax only, not lifetime or authority. PID 1 is the sole encoding exception. */
 static __inline__ uint32_t
 handlekind(Handle handle)
@@ -45,4 +46,5 @@ handlekind(Handle handle)
   kind = (uint32_t) (word >> 59);
   return kind >= HANDLE_PROCESS && kind <= HANDLE_TERMINAL ? kind : 0;
 }
+#endif
 #endif
