@@ -287,6 +287,12 @@ serviceloop(const Bootview *boot, u32 interrupt)
         CHECK(!fsstep(&fs));
       } while (file.stream.bytes);
     }
+  } else if (interrupt == 5) {
+    CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
+          wait.io.end == PIPE_READ && !file.stream.bytes);
+    CHECK(!fsstep(&fs) && wait.io.request && !file.stream.bytes);
+    CHECK(!fsstep(&fs) && file.stream.bytes == 1 && !pipepump(&fs.pipes) && !wait.io.request &&
+          !file.stream.bytes);
   } else if (interrupt) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -665,6 +671,37 @@ closeclient(u32 mode)
   pipeiotrace[0] = 7;
 }
 
+static void
+saturatedclient(void)
+{
+  Fileimage   *image;
+  Connwork    *peer;
+  Conncache   *cache;
+  Pipecreate   pipe = {0};
+  Rkey         active = {0};
+  Opkey        key;
+  Fileioresult completed;
+  u64          mask, ignored;
+  isize        business;
+  int          fds[2];
+  char         byte = 0;
+  CHECK(!sysfileimage(&image) && !sysfileimagefs(0, ADDRESS, &peer) &&
+        !sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
+  cache = sysfileimagecache(image);
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        !sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &peer, &key) &&
+        !sysctxopcall(&image->contexts, peer->state.self, 0, peer, cache, &key, 0, &active) &&
+        !sysctxinvoke(&image->contexts, peer->state.self, active) &&
+        !sysctxhandoff(&image->contexts, peer->state.self, active) &&
+        !sysctxfinish(&image->contexts, peer->state.self, active));
+  CHECK(read(fds[0], &byte, 1) == -1 && errno == EAGAIN && !byte && write(fds[1], "w", 1) == 1 &&
+        !sysfileiowait(image, 0, &key, mask, NULL) &&
+        !sysfileiofinish(image, &key, &byte, 1, &completed) && !completed.native &&
+        !completed.business && completed.count == 1 && byte == 'w' &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  pipeiotrace[0] = 7;
+}
+
 static volatile int brokenwrites;
 static int          brokenfd;
 
@@ -814,6 +851,10 @@ main(int argc, char **argv)
     serviceloop(boot, 0);
   else if (argv[0][0] == 'b')
     brokenclient();
+  else if (argv[0][0] == 'D')
+    serviceloop(boot, 5);
+  else if (argv[0][0] == 'd')
+    saturatedclient();
   else if (argv[0][0] == 'I')
     serviceloop(boot, 1);
   else if (argv[0][0] == 'i')

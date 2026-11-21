@@ -90,6 +90,7 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
   Fileslot     slot;
   Filelink    *link;
   volatile u8 *page;
+  Pipewait     scratch;
   Pipewait    *wait;
   Pipekey      keys[2], key;
   u64          state, opcode = call->words[0];
@@ -154,11 +155,10 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     end = opcode == FS_READ ? PIPE_READ : PIPE_WRITE;
     for (i = 0; i < dispatch->count && dispatch->waits[i].io.request; i++) {
     }
-    if (i == dispatch->count) {
-      reply.words[0] = (u64) -EAGAIN;
-      return respond(link, call->request, &reply);
-    }
-    wait = &dispatch->waits[i];
+    /* A ready operation can unblock a parked peer even when all defer
+       records are occupied. The scratch record never outlives dispatch. */
+    scratch.io.request = 0;
+    wait = i < dispatch->count ? &dispatch->waits[i] : &scratch;
     error = pipefilepin(dispatch->table, call->source, call->image, slot.object, end, &wait->file);
     if (error)
       break;
@@ -172,7 +172,7 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     error = advance(wait);
     if (error != -ERR_WOULD_BLOCK)
       return error;
-    error = ipc_defer(call->request);
+    error = wait == &scratch ? -ERR_BUSY : ipc_defer(call->request);
     if (error != -ERR_BUSY)
       return error;
     wait->io.fixed = 1;
