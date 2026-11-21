@@ -38,3 +38,17 @@ blkiofinish(Vblkreq *request, const Vdone *done, const Blkdma *dma, void *destin
       output[i] = dma->data[i];
   return result;
 }
+
+int
+blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u32 *more,
+           u32 *causes)
+{
+  int error;
+  if (!ring || !ring->initialized || !done || !count || !more || !causes)
+    return -ERR_INVALID;
+  *count = *more = *causes = 0;
+  if (generation != ring->queue.generation)
+    return -ERR_STALE;
+  error = vinterrupt(device, causes);
+  return error ? error : vrpoll(ring, generation, done, count, more);
+}

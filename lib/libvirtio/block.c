@@ -33,7 +33,7 @@ vblkconfig(const Vdev *device, Vblkconfig *out)
   int error;
   if (!device || !out || device->device != VBLK_DEVICE || !device->ops.read)
     return -ERR_INVALID;
-  if (device->state != VDEV_FEATURES ||
+  if ((device->state != VDEV_FEATURES && device->state != VDEV_LIVE) ||
       ((device->offered & VBLK_F_RO) && !(device->features & VBLK_F_RO)))
     return -ERR_STATE;
   error = device->ops.read(device->ops.context, REG_CONFIG_GENERATION, &before);

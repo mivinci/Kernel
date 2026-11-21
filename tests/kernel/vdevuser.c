@@ -109,15 +109,14 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   REQUIRE(!__sys_alarmcancel(&generation), 180);
   /* The binding masks the line on delivery. Clear the device cause before
      consuming used entries; the next request rearms only after this drains. */
-  REQUIRE(!vinterrupt(device, &causes) && causes == VDEV_IRQ_USED &&
-              !virtioread(device->ops.context, 0x60, &causes) && !causes,
-          181);
   if (prior && prior->generation)
     REQUIRE(prior->cookie == cookie &&
                 blkiofinish(&request, prior, &buffer, destination, bytes) == -ERR_STALE &&
                 request.active && request.held == 7,
             190);
-  REQUIRE(!vrpoll(ring, epoch, done, &count, &more), 175);
+  REQUIRE(!blkirqpoll(device, ring, epoch, done, &count, &more, &causes) &&
+              causes == VDEV_IRQ_USED && !virtioread(device->ops.context, 0x60, &causes) && !causes,
+          181);
   REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE, 207);
   if (destination) {
     REQUIRE(blkiofinish(&request, &done[0], &buffer, destination, bytes - 1) == -ERR_INVALID &&
@@ -244,6 +243,36 @@ resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
   vdev_trace[39]++;
 }
 static void
+testresize(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *old)
+{
+  Vblkconfig refreshed;
+  Ipcmsg     event;
+  Vdone      done[VQ_BATCH];
+  u32        count, more, causes;
+  u64        alarm, started = now();
+  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+              !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
+          208);
+  vdev_trace[VTEST_RESIZE] = 1;
+  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
+              event.words[0] == irqevent && !__sys_alarmcancel(&alarm),
+          209);
+  REQUIRE(blkirqpoll(device, ring, 1, done, &count, &more, &causes) == -ERR_STALE && !causes &&
+              !count && !more,
+          210);
+  REQUIRE(!blkirqpoll(device, ring, 2, done, &count, &more, &causes) &&
+              (causes & VDEV_IRQ_CONFIG) && !count && !more,
+          211);
+  REQUIRE(!vblkconfig(device, &refreshed) && refreshed.sectors == 2 * old->sectors &&
+              refreshed.blocksize == old->blocksize && refreshed.physical == old->physical &&
+              refreshed.alignment == old->alignment && refreshed.flush == old->flush &&
+              refreshed.readonly == old->readonly,
+          212);
+  REQUIRE(!blkirqpoll(device, ring, 2, done, &count, &more, &causes) && !count && !more && !causes,
+          213);
+  vdev_trace[VTEST_CAPACITY] = refreshed.sectors;
+}
+static void
 testblock(Vdev *device, const Vblkconfig *config, u32 member)
 {
   Vring      ring;
@@ -281,8 +310,10 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ,
            config->readonly ? stride : 2 * stride, 1, config->readonly ? 0xa7 : 0x37, &prior, NULL);
   REQUIRE(prior.generation == 2, 192);
-  if (!config->readonly)
+  if (!config->readonly) {
     testredo(device, &ring, binding, irqevent, &fresh, &dma);
+    testresize(device, &ring, binding, irqevent, &fresh);
+  }
 }
 int
 main(int argc, char **argv)

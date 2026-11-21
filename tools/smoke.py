@@ -1316,6 +1316,9 @@ def exercise(args, run_dir, record):
                     if proc.poll() is not None or time.monotonic() >= deadline:
                         raise SmokeError("QEMU exited/timed out before expected diagnostic")
                     text = serial.read_text(errors="replace").replace("\r", "") if serial.exists() else ""
+                    if args.case == "virtiodev" and "VDEVRESIZE ready\n" in text and "virtio_resize" not in record:
+                        qmp.command("block_resize", {"device": "rw", "size": 2048 * 512})
+                        record["virtio_resize"] = 2048
                     if getattr(args,'serial_input',False):
                         gates=record.setdefault('serial_injection_gates',[])
                         markers=('serial-live\n','serial-next\n')
@@ -1567,7 +1570,7 @@ def exercise(args, run_dir, record):
                         counters = stats.get(name, {})
                         if counters.get("rd_bytes") != reads * blocksize:
                             raise SmokeError(f"virtio backing reads mismatch: {name}: {counters}")
-                        expected_image = bytearray(sectors * 512)
+                        expected_image = bytearray((2048 if name == "rw" else sectors) * 512)
                         expected_image[blocksize:2 * blocksize] = bytes((seed + i * 37) & 0xff for i in range(blocksize))
                         if name == "rw":
                             expected_image[2 * blocksize:3 * blocksize] = bytes((0x37 + i * 37) & 0xff for i in range(blocksize))

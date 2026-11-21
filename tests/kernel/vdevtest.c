@@ -223,7 +223,7 @@ vdevtest(const Dtinfo *info)
   Handle     pid, memory;
   Testdma    dma[VTEST_MEMBERS];
   u64        page, members, trace[VTEST_TRACE];
-  u64        started, current;
+  u64        started, current, resize;
   u32        devices[VTEST_MEMBERS], interrupts = 0, retired = 0, reclaimed = 0;
   u32 i, j, k, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
   u32 rng = 0, writable = 0, readonly = 0, reads = 0, writes = 0, flushes = 0;
@@ -258,12 +258,20 @@ vdevtest(const Dtinfo *info)
     REQUIRE(!procmmioinstallgroup(pid, page, members, 3, &memory));
     load(pid, memory, info, count, devices, page, dma);
     REQUIRE(!procpublish(pid) && !clockmono(&started));
+    resize = 0;
     do {
       error = procrunone();
       REQUIRE((!error || error == -ERR_WOULD_BLOCK) && !lifestat(process.life, &life));
       REQUIRE(!clockmono(&current) && current - started < UINT64_C(4000000000));
-      if (error == -ERR_WOULD_BLOCK)
+      if (error == -ERR_WOULD_BLOCK) {
+        if (!resize) {
+          REQUIRE(!spaceread(process.space, vdev_trace_address + VTEST_RESIZE * sizeof(u64),
+                             &resize, sizeof(resize)));
+          if (resize)
+            putstr("VDEVRESIZE ready\n");
+        }
         REQUIRE(procidle() >= 0);
+      }
     } while (life.state != LIFE_ENDED);
     REQUIRE(!spaceread(process.space, vdev_trace_address, trace, sizeof(trace)));
     if (trace[31]) {
@@ -278,7 +286,8 @@ vdevtest(const Dtinfo *info)
             trace[16] == 2 * trace[14] + trace[18] + trace[19] &&
             trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 4 * trace[18] &&
             trace[3] == 3 * trace[18] && trace[38] == trace[2] + trace[3] + trace[22] &&
-            trace[39] == trace[18] + trace[19]);
+            trace[39] == trace[18] + trace[19] && resize == trace[18] &&
+            trace[VTEST_CAPACITY] == 2 * trace[20]);
     interrupts += (u32) trace[38];
     retired += (u32) trace[39];
     probes += (u32) trace[12];

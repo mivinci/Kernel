@@ -46,8 +46,9 @@ struct Vblkreq
 };
 
 int vblkfeatures(Vdev *device);
-/* Take one generation-checked capacity and block size snapshot. A moving configuration
-   returns WOULD_BLOCK without touching out. No FLUSH means read-only policy. */
+/* Take one generation-checked configuration snapshot before start or while
+   live. A moving configuration returns WOULD_BLOCK without touching out.
+   No FLUSH means read-only policy. */
 int vblkconfig(const Vdev *device, Vblkconfig *out);
 
 /* DMA address/domain and synchronization remain the transport owner's
