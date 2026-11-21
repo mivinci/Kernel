@@ -4,6 +4,9 @@
 #include <sys/types.h>
 #define _SC_PAGESIZE  1
 #define _SC_PAGE_SIZE _SC_PAGESIZE
+#define SEEK_SET      0
+#define SEEK_CUR      1
+#define SEEK_END      2
 extern char **environ;
 pid_t         getpid(void);
 pid_t         getppid(void);
@@ -23,6 +26,7 @@ ssize_t       read(int fd, void *buffer, size_t count);
 ssize_t       write(int fd, const void *buffer, size_t count);
 ssize_t       pread(int fd, void *buffer, size_t count, off_t offset);
 ssize_t       pwrite(int fd, const void *buffer, size_t count, off_t offset);
+off_t         lseek(int fd, off_t offset, int whence);
 long          sysconf(int name);
 NORETURN void _exit(int status);
 #endif

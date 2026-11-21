@@ -317,6 +317,22 @@ serviceloop(const Bootview *boot, u32 interrupt)
       } else
         CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && !file.stream.bytes);
     }
+    {
+      Fileslot row;
+      u64      state;
+      CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_SEEK &&
+            !sysfilerequest((const volatile void *) link.address, FS_CONN_BYTES, request.words[3],
+                            request.words[2], &row) &&
+            (int64_t) row.args[0] == -3 && row.args[1] == FS_SEEK_CUR && !row.payload_bytes &&
+            !ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1) &&
+            !ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST &&
+            !ipc_rqcheck(request.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
+            !ipc_reply(gate.request, &reply));
+      /* Model a File whose relative seek was committed before cancellation. */
+      reply.words[1] = request.words[2];
+      reply.words[2] = TEST_OFFSET;
+      CHECK(!ipc_reply(request.request, &reply));
+    }
   } else if (interrupt == 5) {
     CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
           wait.io.end == PIPE_READ && !file.stream.bytes);
@@ -527,6 +543,7 @@ interruptclient(void)
   CHECK(write(fds[1], "pq", 2) == 2 && read(fds[0], data, sizeof(data)) == 2 && data[0] == 'p' &&
         data[1] == 'q' && data[2] == 0xa5 && errno == EBUSY && caught == 5);
   CHECK(pwrite(fds[1], "z", 1, TEST_OFFSET) == -1 && errno == ESPIPE && caught == 6);
+  CHECK(lseek(fds[0], -3, SEEK_CUR) == TEST_OFFSET && caught == 7);
   release_read = 0;
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
@@ -539,6 +556,9 @@ interruptclient(void)
         pread(fds[0], data + 2, 1, TEST_OFFSET) == -1 && errno == ESPIPE && data[2] == 0xa5);
   seekpipes(image, work, fds[0]);
   seekpipes(image, work, fds[1]);
+  CHECK(lseek(fds[0], 0, SEEK_SET) == -1 && errno == ESPIPE && lseek(fds[1], 0, SEEK_END) == -1 &&
+        errno == ESPIPE && lseek(fds[0], 0, -1) == -1 && errno == EINVAL &&
+        lseek(-1, 0, SEEK_SET) == -1 && errno == EBADF);
   CHECK(read(fds[0], data, 1) == 1 && data[0] == 'p');
   CHECK(!sysfdobserve(&image->fds, fds[0], &original) && !fcntl(fds[0], F_SETFD, FD_CLOEXEC) &&
         fcntl(fds[0], F_GETFD) == FD_CLOEXEC && fcntl(fds[0], F_DUPFD, 4) == 4 &&

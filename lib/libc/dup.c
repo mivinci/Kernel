@@ -80,21 +80,15 @@ close(int fd)
 u32 __libc_sigdepth(void);
 
 static ssize_t
-transfer(int fd, u64 opcode, const void *input, void *output, size_t count, off_t offset,
-         u32 positional)
+ioresult(u64 opcode, isize status, const Fileioresult *completed)
 {
-  Fileioresult completed;
-  u32          layer = __libc_sigdepth();
-  isize        status =
-      positional ? sysfileimageposio(layer, fd, opcode, input, output, count, offset, &completed)
-                        : sysfileimageio(layer, fd, opcode, input, output, count, &completed);
   int error;
   if (!status) {
-    status = completed.native;
+    status = completed->native;
     if (!status) {
-      if (!completed.business)
-        return (ssize_t) completed.count;
-      error = completed.business >= -INT32_MAX ? (int) -completed.business : EIO;
+      if (!completed->business)
+        return (ssize_t) completed->count;
+      error = completed->business >= -INT32_MAX ? (int) -completed->business : EIO;
       if (opcode == FS_WRITE && error == EPIPE)
         (void) raise(SIGPIPE);
       errno = error;
@@ -130,6 +124,18 @@ transfer(int fd, u64 opcode, const void *input, void *output, size_t count, off_
   return -1;
 }
 
+static ssize_t
+transfer(int fd, u64 opcode, const void *input, void *output, size_t count, off_t offset,
+         u32 positional)
+{
+  Fileioresult completed;
+  u32          layer = __libc_sigdepth();
+  isize        status =
+      positional ? sysfileimageposio(layer, fd, opcode, input, output, count, offset, &completed)
+                        : sysfileimageio(layer, fd, opcode, input, output, count, &completed);
+  return ioresult(opcode, status, &completed);
+}
+
 ssize_t
 read(int fd, void *buffer, size_t count)
 {
@@ -152,4 +158,12 @@ ssize_t
 pwrite(int fd, const void *buffer, size_t count, off_t offset)
 {
   return transfer(fd, FS_WRITE, buffer, NULL, count, offset, 1);
+}
+
+off_t
+lseek(int fd, off_t offset, int whence)
+{
+  Fileioresult completed;
+  isize        status = sysfileimageseek(__libc_sigdepth(), fd, offset, whence, &completed);
+  return ioresult(FS_SEEK, status, &completed);
 }

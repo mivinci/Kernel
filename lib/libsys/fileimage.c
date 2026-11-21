@@ -212,9 +212,10 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
         ((volatile u8 *) &descriptor)[i] = 0;
       descriptor.seq = draft.lease.seq;
       descriptor.state = FS_SLOT_SUBMITTED;
-      descriptor.payload_bytes = descriptor.args[1] = bytes;
+      descriptor.payload_bytes = bytes;
       descriptor.args[0] = offset;
-      descriptor.args[3] = positional ? FS_IO_POSITIONAL : 0;
+      descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
+      descriptor.args[3] = opcode != FS_SEEK && positional ? FS_IO_POSITIONAL : 0;
       descriptor.object = session;
       descriptor.span = 1;
       error = __sys_copy((void *) (base + FS_DESC_OFFSET + draft.lease.slot * FS_DESC_BYTES),
@@ -240,7 +241,7 @@ stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 
   Connwork *work;
   isize     error;
   if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
-      (opcode != FS_READ && opcode != FS_WRITE))
+      (opcode != FS_READ && opcode != FS_WRITE && opcode != FS_SEEK))
     return -ERR_INVALID;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
     return -ERR_BAD_HANDLE;
@@ -296,7 +297,7 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32 *rest
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_READ && op->opcode != FS_WRITE)
+  if (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK)
     return -ERR_INVALID;
   if (op->phase == SYSOP_PREPARED) {
     error = sysctxopcall(&state->contexts, self, layer, work, cache, key, 0, &context);
@@ -360,7 +361,8 @@ sysfileioresume(Fileimage *state, Opkey *key)
   if (error)
     return error;
   if (work->state.operations[key->lease.slot].opcode != FS_READ &&
-      work->state.operations[key->lease.slot].opcode != FS_WRITE)
+      work->state.operations[key->lease.slot].opcode != FS_WRITE &&
+      work->state.operations[key->lease.slot].opcode != FS_SEEK)
     return -ERR_INVALID;
   error = systimernow(&now);
   if (!error)
@@ -393,7 +395,7 @@ restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_READ && op->opcode != FS_WRITE)
+  if (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK)
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (error)
@@ -447,7 +449,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_READ && op->opcode != FS_WRITE)
+  if (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK)
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (!error)
@@ -471,7 +473,8 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
         result->native = op->status;
       }
     } else if (op->words[1] != key->lease.seq || (isize) op->words[0] > 0 ||
-               (op->words[0] && (op->words[2] || op->words[3])) || op->words[2] > bytes ||
+               (op->words[0] && (op->words[2] || op->words[3])) ||
+               op->words[2] > (op->opcode == FS_SEEK ? (u64) INT64_MAX : bytes) ||
                op->words[3] != (op->opcode == FS_READ ? op->words[2] : 0))
       result->native = -ERR_STATE;
     else {
@@ -614,6 +617,14 @@ sysfileimageposio(u32 layer, int fd, u64 opcode, const void *input, void *output
 }
 
 isize
+sysfileimageseek(u32 layer, int fd, int64_t offset, int whence, Fileioresult *result)
+{
+  if ((u32) whence > FS_SEEK_END)
+    return -ERR_INVALID;
+  return imageio(layer, fd, FS_SEEK, NULL, NULL, 0, (u64) offset, (u32) whence, result);
+}
+
+isize
 sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                  Opkey *key, Opkey *background, u64 mask)
 {
@@ -705,7 +716,7 @@ fileprogress(Fileimage *state)
       u64     file = 0;
       if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) !=
               (SYSOP_BACKGROUND | SYSOP_APP_ENDED) ||
-          (op->opcode != FS_READ && op->opcode != FS_WRITE))
+          (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK))
         continue;
       key.connection = work->state.tag;
       key.lease = op->lease;

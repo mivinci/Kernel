@@ -252,8 +252,8 @@ static isize
 interruptible(const Slotop *op)
 {
   if (op->flags & SYSOP_BACKGROUND ||
-      (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_OPEN &&
-       op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
+      (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
+       op->opcode != FS_OPEN && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
     return -ERR_NOTSUP;
   if (!(op->flags & SYSOP_CANCEL_SENT) && op->deadline)
     return -ERR_STATE;
@@ -382,7 +382,7 @@ sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
   if (error)
     return error;
   if (!(op->flags & SYSOP_APP_ENDED) || !(op->flags & SYSOP_BACKGROUND) ||
-      (op->opcode != FS_READ && op->opcode != FS_WRITE))
+      (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK))
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_WAITING) {
     error = sysoppoll(work, cache, key);
@@ -427,7 +427,8 @@ sysoprecover(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
   if (work->state.ended != 1 || entry.state != SYSCONN_DRAINING ||
       entry.peer.pid != work->state.peer.pid || entry.peer.image != work->state.peer.image)
     return -ERR_STATE;
-  if ((op->opcode != FS_READ && op->opcode != FS_WRITE) || op->flags & SYSOP_CREATOR)
+  if ((op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK) ||
+      op->flags & SYSOP_CREATOR)
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_PREPARED)
     return sysopabort(work, cache, key, file);

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage426（2026-11-22）：公开 `lseek` 接入 SEEK；双架构 QEMU `pipeio` 验证管道拒绝定位，以及信号后领取已提交的模拟结果而不重做。普通文件后端仍待接。
 - stage425（2026-11-22）：FS 校验 `SEEK` 参数和调用者会话；双架构 QEMU `pipeio` 验证管道两端返回 ESPIPE。公开 `lseek` 未接。
 - stage424（2026-11-22）：公开 `pread` / `pwrite` 接入定位请求；双架构 QEMU `pipeio` 验证重启保留偏移、管道返回 ESPIPE。可定位后端仍待接。
 - stage423（2026-11-22）：公开 `fcntl` 支持 `F_DUPFD`、`F_GETFD`、`F_SETFD`；双架构 QEMU `pipeio` 验证复制下限和每个 fd 独立的 CLOEXEC。

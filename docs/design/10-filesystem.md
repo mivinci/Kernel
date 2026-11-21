@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage426：公开 `lseek` 通过原 SEEK 请求提交有符号 64 位偏移；成功回复为 `[0,seq,新偏移,0]`，新偏移须在 `off_t` 非负范围内。信号后只有确认无效果才可重启，已提交的位置直接返回。ARM64/RV64 QEMU `pipeio` 验证参数错误、管道 ESPIPE，以及模拟已提交的相对定位遇到信号后返回原 64 位结果、不重复提交。17 项操作账本主机测试及格式通过；普通文件偏移更新仍待接。
+
 stage425：`SEEK` 的 `whence` 固定为 SET=0、CUR=1、END=2。服务校验无 payload、其余参数清零及调用者会话，管道两端对有效请求回复 ESPIPE。ARM64/RV64 QEMU `pipeio` 验证无效 `whence` 和多余 payload 返回 EINVAL、未知会话返回 ESTALE、原请求与槽可复用，且 SEEK 不影响已有管道数据。10 项文件页主机测试及格式通过；公开 `lseek` 和普通文件的偏移更新仍待接。
 
 stage424：公开 `pread` / `pwrite` 通过 READ/WRITE 传递 `FS_IO_POSITIONAL` 和 64 位偏移，负偏移在提交前返回 EINVAL。ARM64/RV64 QEMU `pipeio` 验证无进展的 `pwrite` 被信号打断后用同一偏移和定位标志重启，两种定位操作在管道上返回 ESPIPE，缓冲数据不变。格式检查通过；可定位后端及共享偏移验收仍待接。
