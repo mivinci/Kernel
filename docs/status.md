@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage232：stage231 最终源码完整1228项主机回归通过，双架构默认 init/serial 生产启动包各一次通过；未改运行代码，File/fork 实际场景证据仍为stage231，未重跑全QEMU矩阵。子 reference_id 规则仍等确认，不能把自动接续当作采用候选。
+
 - stage231：File 子转换的完整只读准入与提交共用核验，支持协调器先组合 fd/File/连接检查；30项相关主机测试、格式及双架构 libsys/sigframe 回归通过。新准入仍仅主机调用；FORK_PREPARE 只回 token 后如何取得子 reference_id 的规则待确认（10篇候选），真实后端准备与整体协调器未完成。
 
 - stage230：fd/File 子保留清单的只读一致性准入已接，精确核对全部 LIVE fd 的本地 ID/alias，保留 CLOEXEC 与创建中的预留责任；29项相关主机测试、格式及双架构 libsys/sigframe 回归通过。新检查仍仅主机调用，真实后端准备/重绑及生产协调器待接。

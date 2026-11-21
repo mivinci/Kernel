@@ -426,6 +426,8 @@ stage230：新增只读 `sysfdforkcheck`，把 fd 表与保留 Filefork 清单�
 
 stage231：File 子转换的完整只读准入 `sysfilerefforkcheck` 与实际转换共用同一核验路径，供协调器在修改任何子本地状态前组合 fd、File 与连接检查。预检拒绝已转换的子身份，不将重复转换的幂等成功当作源状态有效；转换仍重新核验，预检后最后 alias 被关闭则拒绝，不写入子引用。调用者须在整段本地准入/提交中排除捕获信号；预检不冻结表，也不证明远端引用授权。20项 File 与10项 fd 主机测试、格式及 ARM64/RV64 libsys/sigframe 四次最终 QEMU 回归通过；新准入仅主机调用。日志 `/private/tmp/kernel-stage231-{fileref-final,fd-final,fmt-final,arm64-libsys-final,arm64-sigframe-final,riscv-libsys-final,riscv-sigframe-final}.log`。首次格式检查与构建期间头更新导致的 SDK 不一致明确失败，最终源码重验通过。未跑全矩阵、CI 或板端；生产子 reference_id 的取得规则待确认，见10篇候选，未提前实现。
 
+stage232 组合回归：stage231 最终源码完整 `make unit` 1228项通过（175.893秒），补充 ARM64/RV64 默认 normal 生产启动包各一次通过，包均只含独立 `sbin/init` 与 `sbin/serial`。这些生产启动结果不验证 File/fork 子引用，相关双架构 libsys/sigframe 证据仍为 stage231；未跑完整 QEMU 矩阵、CI 或板端。日志 `/private/tmp/kernel-stage232-{unit,arm64-normal,riscv-normal,compdb}.log`。最后运行 RV64/sigframe compdb，保持编辑器架构一致；未修改运行代码。子 reference_id 规则仍待用户确认，未将自动接续视为确认。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
