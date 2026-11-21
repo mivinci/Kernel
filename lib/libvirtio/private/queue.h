@@ -33,7 +33,7 @@ struct Vused
 };
 struct Vdone
 {
-  u64 cookie;
+  u64 cookie, generation;
   u32 length, reserved;
 };
 STATIC_ASSERT(sizeof(Vslot) == 16, vslot_layout);

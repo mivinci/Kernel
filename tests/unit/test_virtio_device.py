@@ -34,7 +34,7 @@ Blocksynchronize = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.POINTER(Blockb
 
 class Blockrequest(C.Structure):
     _fields_ = [('buffers', Blockbuf * 3), ('status', C.c_void_p), ('sync', Blocksynchronize),
-                ('context', C.c_void_p), ('cookie', C.c_uint64)] + [
+                ('context', C.c_void_p), ('cookie', C.c_uint64), ('generation', C.c_uint64)] + [
         (field, C.c_uint32) for field in ('type', 'bytes', 'held', 'active')]
 
 
@@ -177,8 +177,8 @@ class VirtioDeviceTests(unittest.TestCase):
         request = Blockrequest()
         config = Blockconfig(16, 0, 1)
         header, status = (C.c_uint64 * 2)(), C.c_uint8()
-        # BEFORE fails before the queue can be touched; the ring argument
-        # is a sentinel to make any premature access fail the test.
+        # BEFORE fails before any submission to the uninitialized ring.
+        ring = (C.c_uint64 * 512)()
         seen = []
 
         @Blocksynchronize
@@ -189,7 +189,7 @@ class VirtioDeviceTests(unittest.TestCase):
                 return -2
             return 0
 
-        args = (C.byref(request), 1, C.byref(config), 0, 1, 2, 0x1000, 0x2000, 512,
+        args = (C.byref(request), C.byref(ring), C.byref(config), 0, 1, 2, 0x1000, 0x2000, 512,
                 0x3000, C.byref(header), C.byref(status), sync, None)
         self.assertEqual(self.lib.vblksubmit(*args), -2)
         self.assertEqual(self.lib.vblksubmit(*args), -7)

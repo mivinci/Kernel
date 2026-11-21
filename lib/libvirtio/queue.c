@@ -121,6 +121,7 @@ vqcomplete(Vq *q, u64 generation, const Vused *used, u32 count, Vdone *out)
   for (i = 0; i < count; i++) {
     head = used[i].id;
     out[i].cookie = q->slots[head].cookie;
+    out[i].generation = generation;
     out[i].length = used[i].length;
     out[i].reserved = 0;
     release(q, head);

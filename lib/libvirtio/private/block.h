@@ -36,7 +36,7 @@ struct Vblkreq
   volatile u8 *status;
   Vblksync     sync;
   void        *context;
-  u64          cookie;
+  u64          cookie, generation;
   u32          type, bytes, held, active;
 };
 
@@ -60,7 +60,8 @@ int vblkresult(u32 type, u32 bytes, u32 written, u8 status);
 int vblksubmit(Vblkreq *request, Vring *ring, const Vblkconfig *config, u32 type, u64 sector,
                u64 cookie, u64 header, u64 data, u32 bytes, u64 status, Vblkhead *wire,
                volatile u8 *flag, Vblksync sync, void *context);
-/* Pass only a completion accepted by vrpoll for this ring. Returns a device
+/* Pass only a completion accepted by vrpoll for this ring. The cookie must
+   be unique within the ring generation. Returns a device
    status or native error. Do not expose failed read data. */
 int vblkfinish(Vblkreq *request, const Vdone *done);
 /* Recovery only: caller already confirmed the device stopped. Take back

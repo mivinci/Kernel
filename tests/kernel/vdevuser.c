@@ -60,7 +60,7 @@ blksync(void *context, u32 phase, const Vbuf *buffer)
 }
 static void
 transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
-         const Vblkconfig *config, u32 type, u64 sector, u64 cookie, u8 seed)
+         const Vblkconfig *config, u32 type, u64 sector, u64 cookie, u8 seed, Vdone *prior)
 {
   Vblkreq      request = {0};
   Vdone        done[VQ_BATCH];
@@ -90,10 +90,16 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   REQUIRE(!vinterrupt(device, &causes) && causes == VDEV_IRQ_USED &&
               !virtioread(device->ops.context, 0x60, &causes) && !causes,
           181);
+  if (prior && prior->generation)
+    REQUIRE(prior->cookie == cookie && vblkfinish(&request, prior) == -ERR_STALE &&
+                request.active && request.held == 7,
+            190);
   REQUIRE(!vrpoll(ring, epoch, done, &count, &more), 175);
   REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE &&
               vblkfinish(&request, &done[0]) == VBLK_OK && !request.held,
           177);
+  if (prior)
+    *prior = done[0];
   vdev_trace[38]++;
   if (type == VBLK_READ) {
     for (i = 0; i < bytes; i++)
@@ -152,6 +158,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
 {
   Vring      ring;
   Vdone      stale[VQ_BATCH];
+  Vdone      prior = {0};
   Vblkconfig fresh;
   u32        count, more;
   Handle     binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
@@ -160,11 +167,11 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   REQUIRE(binding > 0, 182);
   startqueue(device, &ring, 1);
   transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 1, 1,
-           config->readonly ? 0xa7 : 0x51);
+           config->readonly ? 0xa7 : 0x51, &prior);
   if (!config->readonly) {
-    transfer(device, &ring, 1, binding, irqevent, config, VBLK_WRITE, 2, 2, 0x37);
-    transfer(device, &ring, 1, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0);
-    transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 2, 4, 0x37);
+    transfer(device, &ring, 1, binding, irqevent, config, VBLK_WRITE, 2, 2, 0x37, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 2, 4, 0x37, NULL);
   }
   resetpending(device, &ring, binding, irqevent, config);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
@@ -173,8 +180,10 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
           183);
   startqueue(device, &ring, 2);
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
-  transfer(device, &ring, 2, binding, irqevent, &fresh, VBLK_READ, config->readonly ? 1 : 2, 5,
-           config->readonly ? 0xa7 : 0x37);
+  REQUIRE(prior.generation == 1, 191);
+  transfer(device, &ring, 2, binding, irqevent, &fresh, VBLK_READ, config->readonly ? 1 : 2, 1,
+           config->readonly ? 0xa7 : 0x37, &prior);
+  REQUIRE(prior.generation == 2, 192);
 }
 int
 main(int argc, char **argv)

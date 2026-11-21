@@ -133,6 +133,7 @@ vblksubmit(Vblkreq *r, Vring *ring, const Vblkconfig *config, u32 type, u64 sect
   r->sync = sync;
   r->context = context;
   r->cookie = cookie;
+  r->generation = ring->queue.generation;
   r->type = type;
   r->bytes = bytes;
   for (i = 0; i < (u32) count; i++) {
@@ -179,7 +180,7 @@ vblkfinish(Vblkreq *r, const Vdone *done)
   int error;
   if (!r || !done || !r->active)
     return -ERR_STATE;
-  if (done->cookie != r->cookie)
+  if (done->cookie != r->cookie || done->generation != r->generation)
     return -ERR_STALE;
   error = restorebuffers(r);
   return error ? error : vblkresult(r->type, r->bytes, done->length, *r->status);

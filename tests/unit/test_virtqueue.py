@@ -26,7 +26,7 @@ class Used(C.Structure):
 
 
 class Done(C.Structure):
-    _fields_ = [('cookie', C.c_uint64), ('length', C.c_uint32),
+    _fields_ = [('cookie', C.c_uint64), ('generation', C.c_uint64), ('length', C.c_uint32),
                 ('reserved', C.c_uint32)]
 
 
@@ -109,7 +109,8 @@ class VirtqueueTests(unittest.TestCase):
         self.assertEqual(bytes(self.queue), previous)
         result, done = self.complete([(head, 512)])
         self.assertEqual(result, 0)
-        self.assertEqual((done[0].cookie, done[0].length, done[0].reserved), (0x1234, 512, 0))
+        self.assertEqual((done[0].cookie, done[0].generation, done[0].length, done[0].reserved),
+                         (0x1234, 7, 512, 0))
         self.check_partition()
         self.reserve(128)
         self.check_partition()
