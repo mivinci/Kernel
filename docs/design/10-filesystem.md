@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage396：双架构 QEMU `pipeio` 用实际 SIGUSR1 打断已被服务接收但尚未回复的 PIPE 等待。客户端执行 libc handler 后取得原生 INTERRUPTED，两个 fd 仍预留，RPC 身份不变；随后继续同一 RPC，服务只创建一次，客户端成对发布两个 fd，退出后资源回到基线。测试显式继续等待，不代表公开 `pipe()` 已确定重启或中断返回策略。
+
 stage395：`sysctxpipeio` 驱动一轮 PIPE 原生提交或等待。登记与原结果交接期间排除捕获信号，调用期间恢复调用者掩码；未完成交接时保留原 Rctx 键。双架构 QEMU `pipeio` 以此路径实际提交、等待同一 RPC 并处理 fd 安装和已固定错误结果。此项没有注入信号，也未接公开 `pipe()` 或其中断策略。
 
 stage394：`sysctxpipestep` 按管道创建记录的阶段绑定当前 Rctx：未提交才能注册 CALL，已提交只等待原 RPC，结果已固定则不用新调用；同一创建不得绑定其他信号层。双架构 QEMU `pipeio` 经实际 Rctx 提交、等待、交接并安装 fd，同时覆盖受检输出失败和后端满额。此项未验证公开入口的信号中断及重启策略。

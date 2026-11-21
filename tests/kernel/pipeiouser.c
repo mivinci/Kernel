@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
 #include "private/close.h"
@@ -6,6 +7,7 @@
 #include "private/contextipc.h"
 #include "private/filecreate.h"
 #include "private/filewatch.h"
+#include "private/sigentry.h"
 #include "private/start.h"
 #include "private/syscall.h"
 #include "../../sbin/fs/pipefile.h"
@@ -242,7 +244,7 @@ createpipe(Connwork *work, Conncache *cache, Pipekey keys[2])
 }
 
 static void
-serviceloop(const Bootview *boot)
+serviceloop(const Bootview *boot, u32 interrupt)
 {
   static Filelink link;
   static Pipefile file;
@@ -256,11 +258,69 @@ serviceloop(const Bootview *boot)
                         &link,
                         1,
                         {&table, &wait, 1}};
+  if (interrupt) {
+    Ipcmsg request, gate;
+    Sigsel target = {SIGNAL_SELECT_PID, 0};
+    Msg    reply = {{0, 0, 0, 0}};
+    CHECK(!fsstep(&fs) && link.ready && !ipc_recv(0, 0, &request) && request.kind == IPC_CALL &&
+          request.words[0] == FS_PIPE && !ipc_defer(request.request));
+    target.target = request.source;
+    CHECK(!__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL &&
+          gate.source == target.target && gate.words[0] == PIPETEST && !table.serial &&
+          !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request) &&
+          table.serial == 4);
+  }
   do {
     CHECK(!fsstep(&fs));
   } while (!table.serial || link.ready);
   CHECK(!link.memory && !link.address && !link.watch.owner.cookie && !wait.io.request &&
         !file.stream.refs[0] && !file.stream.refs[1]);
+  pipeiotrace[0] = 7;
+}
+
+static volatile int caught;
+
+static void
+oninterrupt(int signal)
+{
+  if (signal == SIGUSR1)
+    caught++;
+}
+
+static void
+interruptclient(const Bootview *boot)
+{
+  static Connwork  work;
+  static Conncache cache;
+  static Fdtable   table;
+  static Filepool  pool;
+  static Rbank     bank;
+  struct sigaction action = {0};
+  Pipecreate       pipe = {0};
+  Rkey             active = {0};
+  Msg              message, gate = {{PIPETEST, 0, 0, 0}};
+  Ipcmsg           result;
+  Handle           rpc, retained;
+  isize            business;
+  int              fds[2] = {-1, -1};
+  Connpeer         self;
+  setup(boot, &work, &cache);
+  self = work.state.self;
+  action.sa_handler = oninterrupt;
+  CHECK(!sysctxinit(&bank, self) && !sysctxsigbind(&bank) && !sigaction(SIGUSR1, &action, NULL) &&
+        !sysfilerefinit(&pool, self) &&
+        !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 1, &pipe, &message) &&
+        !sysctxpipeio(&bank, self, 0, &pool, &work, &cache, &pipe.operation, &active) &&
+        !sysoprpc(&work, &cache, &pipe.operation, &rpc));
+  CHECK(sysctxpipeio(&bank, self, 0, &pool, &work, &cache, &pipe.operation, &active) ==
+            -ERR_INTERRUPTED &&
+        caught == 1 && !active.sequence && !sysoprpc(&work, &cache, &pipe.operation, &retained) &&
+        retained == rpc && !sysfdcheckpair(&table, pipe.tags) &&
+        !ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
+  CHECK(!sysctxpipeio(&bank, self, 0, &pool, &work, &cache, &pipe.operation, &active) &&
+        work.state.operations[pipe.operation.lease.slot].rpc == rpc &&
+        !sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fds, &business) && !business &&
+        fds[0] == 0 && fds[1] == 1 && caught == 1);
   pipeiotrace[0] = 7;
 }
 
@@ -452,7 +512,11 @@ main(int argc, char **argv)
   if (argv[0][0] == 's')
     server(boot);
   else if (argv[0][0] == 'S')
-    serviceloop(boot);
+    serviceloop(boot, 0);
+  else if (argv[0][0] == 'I')
+    serviceloop(boot, 1);
+  else if (argv[0][0] == 'i')
+    interruptclient(boot);
   else if (argv[0][0] == 'C')
     serviceclient(boot);
   else
