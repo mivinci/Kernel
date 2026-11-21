@@ -43,6 +43,7 @@ void spawntest(void);
 void libsysload(void);
 void runtimetest(void);
 void filecreatetest(void);
+void pipeiotest(void);
 void fscachetest(void);
 void fsjournaltest(void);
 void fstxntest(void);

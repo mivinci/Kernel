@@ -309,6 +309,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
     elif case == "elf":
         if ready != ["READY elf-restored"] or panics or traps:
             raise SmokeError("native user ELF loader did not finish")
+    elif case == "pipeio":
+        if ready != ["READY pipeio-restored"] or panics or traps:
+            raise SmokeError("pipe I/O test did not finish")
     elif case == "sigsend":
         if ready != ["READY sigsend-restored"] or panics or traps:
             raise SmokeError("native signal selector/authorization scenario did not finish")
@@ -1284,6 +1287,7 @@ def exercise(args, run_dir, record):
                     "READY runtime-restored\n" if args.case == "runtime" else
                     "READY jobs-restored\n" if args.case == "jobs" else
                     "READY sigsend-restored\n" if args.case == "sigsend" else
+                    "READY pipeio-restored\n" if args.case == "pipeio" else
                     "READY tty-restored\n" if args.case == "tty" else
                     "READY libsys-restored\n" if args.case == "libsys" else
                     "READY spawn-restored\n" if args.case == "spawn" else

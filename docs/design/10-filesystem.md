@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage387：`sbin/fs/pipeio.c` 将获准的 READ/WRITE 原 REQUEST 和共享槽快照接到管道。阻塞时由分派者保留原 REQUEST 并 defer，恢复时核对取消；已提交的结果保留用于回复，重试不再消耗或写入字节。ARM64/RV64 QEMU `pipeio` 通过真实 IPC 和共享页验证空读取消、非阻塞 EAGAIN、定位 ESPIPE、满管道写等待和恢复（提交后修改共享页仍读取原字节）、EOF 与 EPIPE；客户端确认原 Rq 已收尾再回收槽，服务端在途表和系统页账回到基线。端点与唤醒由夹具提供，生产 File 分派、公开 `pipe()`、poll 和 SIGPIPE 仍待接。
+
 stage386：`sbin/fs/pipe.c` 实现 8192 字节管道缓冲及读写端引用计数。ARM64/RV64 QEMU `runtime` 验证 4096 字节写在只差一字节空间时整笔拒绝，腾出空间后按序完整提交；大写返回实际字节数，跨缓冲末端读取保持顺序。重复端点引用释放后仍可用，最后写端关闭后读尽再返回 EOF，最后读端关闭后写入报告断管。格式检查通过。Pipe 记录由夹具提供，尚未接生产 File 引用、IPC 等待、poll 或 SIGPIPE 投递。
 
 - [ ] 格式仅直接/一级间接指针及目录记录，无未定义extent/孤儿表；nlink=0仍打开时不回收，恢复扫描及截短尾部按盘上剩余指针幂等继续。

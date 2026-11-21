@@ -294,6 +294,14 @@ def build(args):
     if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')
     (sdk/'filecreateimage.S').write_text('/* image sha256: '+digest(filecreate_image)+' */\n.section .rodata\n.balign 8\n.global filecreate_image,filecreate_image_end,filecreate_trace_address\nfilecreate_image:\n.incbin '+json.dumps(str(filecreate_image))+'\nfilecreate_image_end:\n.balign 8\nfilecreate_trace_address:\n.quad '+str(int(filecreate_rows[0][1],16))+'\n')
     job_elf=link_adoption('jobuser',[compile_adoption(ROOT/'tests/kernel/jobuser.c','jobuser')])
+    pipeio_elf=link_adoption('pipeiouser',[compile_adoption(ROOT/'tests/kernel/pipeiouser.c','pipeiouser'),
+        compile_adoption(ROOT/'sbin/fs/pipe.c','pipe'), compile_adoption(ROOT/'sbin/fs/pipeio.c','pipeio')])
+    pipeio_image=sdk/'pipeiouser.img'
+    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],128))
+    pipeio_inspect=invoke('inspect-pipeio',[tools['readelf']['path'],'-s',str(pipeio_elf)])
+    pipeio_rows=[line.split() for line in pipeio_inspect.splitlines() if line.split() and line.split()[-1]=='pipeiotrace']
+    if len(pipeio_rows)!=1 or int(pipeio_rows[0][2])!=16:raise BuildError('pipe I/O trace missing')
+    (sdk/'pipeioimage.S').write_text('/* image sha256: '+digest(pipeio_image)+' */\n.section .rodata\n.balign 8\n.global pipeio_image,pipeio_image_end,pipeio_trace_address\npipeio_image:\n.incbin '+json.dumps(str(pipeio_image))+'\npipeio_image_end:\n.balign 8\npipeio_trace_address:\n.quad '+str(int(pipeio_rows[0][1],16))+'\n')
     job_image=sdk/'jobuser.img'
     job_image.write_bytes(pack(job_elf.read_bytes(),profile['machine'],128))
     inspection=invoke('inspect-jobs',[tools['readelf']['path'],'-s',str(job_elf)])
