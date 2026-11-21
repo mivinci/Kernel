@@ -82,7 +82,7 @@ runtimeframeenter(Hctx *context)
           !spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
   if (trace[0] != 1 || context->tf.pc != trace[16])
     return;
-  if ((trace[1] == 13 || trace[1] == 14) && table->owner != contextpid)
+  if (trace[1] >= 13 && table->owner != contextpid)
     forkarmed = 0;
   else if ((trace[1] == 12 || trace[1] == 14) && table->owner == contextpid) {
     contextarmed = 0;
@@ -101,7 +101,9 @@ sigframetest(void)
   Setid               set;
   Set                 account;
   Handle              pid;
+  Handle              peerpid;
   Procinfo            process;
+  Procinfo            peer;
   Framepacket         packet;
   Siginfo             info;
   Sigstat             signal;
@@ -120,7 +122,8 @@ sigframetest(void)
   int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 15; mode++) {
+  for (mode = 0; mode < 16; mode++) {
+    peerpid = 0;
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     for (i = 0; i < sizeof(packet); i++)
       ((u8 *) &packet)[i] = 0;
@@ -153,6 +156,23 @@ sigframetest(void)
       REQUIRE(!localcreate(proctable(pid), &policy, &authority) &&
               !spacewrite(process.space, frame_trace_address + 18 * sizeof(u64), &authority,
                           sizeof(authority)));
+      if (mode == 15) {
+        REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &peerpid) && !procinfo(peerpid, &peer));
+        packet.name[0] = '@';
+        packet.resources[0].handle = testresource(proctable(peerpid), LOCAL_SPACE);
+        packet.resources[1].handle = testresource(proctable(peerpid), LOCAL_ALLOC);
+        testload(peerpid, frame_image, (u64) (frame_image_end - frame_image), &packet,
+                 sizeof(packet));
+        REQUIRE(!localendpoint(proctable(pid), peer.identity, LOCAL_CALL, LOCAL_USE, 0, LOCAL_FORK,
+                               &authority) &&
+                !spacewrite(process.space, frame_trace_address + 22 * sizeof(u64), &authority,
+                            sizeof(authority)) &&
+                !localendpoint(proctable(pid), peer.identity, LOCAL_NOTIFY, LOCAL_USE,
+                               (u64) 1 << 32, 0, &authority) &&
+                !spacewrite(process.space, frame_trace_address + 26 * sizeof(u64), &authority,
+                            sizeof(authority)) &&
+                !procpublish(peerpid));
+      }
     }
     shadow.generation = 0;
     stack.generation = 0;
@@ -197,11 +217,25 @@ sigframetest(void)
         puthex(mode);
         putstr(" code=");
         puthex(trace[31]);
-        if (mode == 13) {
+        if (mode == 13 || mode == 15) {
           putstr(" child_kind=");
           puthex(trace[20]);
           putstr(" child_code=");
           puthex(trace[21]);
+          if (mode == 15) {
+            u64 peertrace[32];
+            putstr(" invoked=");
+            puthex(trace[23]);
+            putstr(" boot_state=");
+            puthex(trace[24]);
+            putstr(" rpc=");
+            puthex(trace[25]);
+            putstr(" wait_status=");
+            puthex(trace[27]);
+            REQUIRE(!spaceread(peer.space, frame_trace_address, peertrace, sizeof(peertrace)));
+            putstr(" peer_error=");
+            puthex(peertrace[31]);
+          }
         }
         putstr("\n");
       }
@@ -212,6 +246,15 @@ sigframetest(void)
       for (i = 0; i < sizeof(info); i++)
         ((u8 *) &info)[i] = 0;
       info.status = 0x12345678;
+      if (mode == 15 && trace[0] == 4 && !first) {
+        Procinfo waiting;
+        REQUIRE(!procinfo(pid, &waiting));
+        if (waiting.state == PROC_BLOCKED) {
+          info.signum = SIGNAL_USR2;
+          REQUIRE(!procsigqueue(pid, &info));
+          first = 1;
+        }
+      }
       if (mode < 11 && trace[0] == 1 && !first) {
         if (!mode)
           REQUIRE(spacelookup(process.space, 0x3ffffee000UL, &cowentry) &&
@@ -243,6 +286,8 @@ sigframetest(void)
       REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
       if (mode == 14)
         REQUIRE(!contextarmed && contextcount == 2);
+      if (mode == 15)
+        REQUIRE(first);
     } else if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && (mode == 7 || trace[0] == 99));
       REQUIRE(trace[12] == (mode == 1 || mode == 9 || mode == 11 ? 2U : 1U));
@@ -279,6 +324,13 @@ sigframetest(void)
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
+    if (peerpid) {
+      REQUIRE(!lifestat(peer.life, &life) && life.state == LIFE_ENDED && life.reason == LIFE_EXIT &&
+              life.code == 44);
+      while ((error = procclean(peerpid)) > 0) {
+      }
+      REQUIRE(!error && !lifecollect(peer.life, 1, &result));
+    }
     if (shadow.generation)
       REQUIRE(!memfree(shadowmem) && !acctclose(shadow) && !acctunbind(shadow));
     for (i = 0; i < 128; i++)
@@ -290,10 +342,12 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(15);
+  puthex(16);
   putstr(" forkprep=");
   puthex(1);
   putstr(" handler_fork=");
+  puthex(1);
+  putstr(" ipc_fork=");
   puthex(1);
   putstr(" normal=");
   puthex(6);

@@ -384,6 +384,10 @@ stage221：子 Rbank 的 WAITING/RQWAIT IPC 层可用 `sysctxfixwait` 修复：�
 
 stage221 主机证据补充：中间版本完整 `make unit` 1212 项通过（171 秒，`/private/tmp/kernel-stage221-unit.log`）；最后的混合层准入及新增断言后，重跑上下文系列 57 项及双架构原始上下文主机测试 11 项全部通过，未将中间版本全量结果称为最终源码全量验收。
 
+stage222：双架构 sigframe 新增真实 IPC 等待中的 handler fork。独立用户对端接收并 defer 原 CALL 后等待显式通知，父阻塞在其 RQWAIT；可信测试在父确实 BLOCKED 时递送 USR2。handler 内原生 fork，子首次返回及嵌套 USR1 使用 `sysctxfixwait` 修复混合的未提交原始层、纯值完成层和 IPC 等待层，随后正常 sigreturn/汇编恢复。子取得本地 ERR_INTERRUPTED，查询复制来的原 RPC 返回 BAD_HANDLE，完成自己的 Rctx；父仍保留原 WAITING Bootstrap，子退出后才通知对端回复，继续同一 RPC、保存结果并 ACK。父/子/对端分别退出 42/43/44，末尾核对全部进程费用及物理页守恒，机器记录新增 ipc_fork=1、cases=16。
+
+ARM64/RV64 sigframe、18 项 IPC 主机测试和格式通过；最终日志 `/private/tmp/kernel-stage222-{arm64-final,riscv-final,context,fmt}.log`。最初自 CALL 被既有 DEADLOCK 拒绝；改为独立对端后，遗漏 defer 的对端被既有接收门禁拒绝，修正测试协议后通过，失败现场保留于各架构 smoke 目录。本例是真实 IPC/信号/fork 的运行库夹具，未实现 FS/TTY ATTACH 业务、已完成 IPC 结果修复或生产整体 fork 协调器；未执行全量主机/场景矩阵、CI 或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

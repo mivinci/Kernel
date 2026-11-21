@@ -6,6 +6,7 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "private/context.h"
+#include "private/contextipc.h"
 #include "private/fix.h"
 #include "private/elf.h"
 #include <abi/syscall.h>
@@ -356,6 +357,8 @@ static Handle    forksource;
 static u64       forkimage;
 static Rkey      forkcompleted;
 static Rkey      forkouter;
+static Bootstrap forkboot;
+static Connclaim forkclaim;
 static Conncache forkdirectory;
 static Conntag   forkoldtag;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64);
@@ -377,7 +380,9 @@ forkrepair(const Forkret *result)
               !count && !connections &&
               !sysconnfork(&forkdirectory, context_self, child, connections, count) &&
               sysconnview(&forkdirectory, forkoldtag, &entry) == -ERR_STALE &&
-              !sysctxfixraw(&runtime_contexts, context_self, child, layers) &&
+              !(frame_trace[1] == 15
+                    ? sysctxfixwait(&runtime_contexts, context_self, child, layers)
+                    : sysctxfixraw(&runtime_contexts, context_self, child, layers)) &&
               !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
           244);
 }
@@ -442,7 +447,7 @@ forkprepuser(void)
   REQUIRE(!sysconninit(&forkdirectory, context_self) &&
               !sysconnbind(&forkdirectory, context_self, &forkoldtag),
           252);
-  REQUIRE((frame_trace[1] == 14 || !sysctxinit(&runtime_contexts, context_self)) &&
+  REQUIRE((frame_trace[1] >= 14 || !sysctxinit(&runtime_contexts, context_self)) &&
               !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
               !sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETID, NULL, &forkcompleted) &&
               !sysctxinvoke(&runtime_contexts, context_self, forkcompleted),
@@ -494,7 +499,7 @@ forkprepuser(void)
   fix.contexts[0].action = FIX_LAYER_UNSENT;
   fix.contexts[1].sequence = forkcompleted.sequence;
   fix.contexts[1].action = FIX_LAYER_COMPLETE;
-  if (frame_trace[1] == 14) {
+  if (frame_trace[1] >= 14) {
     fix.contexts[2].sequence = forkouter.sequence;
     fix.contexts[2].action = FIX_LAYER_INTERRUPT;
   }
@@ -546,16 +551,25 @@ int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '>', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '@', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
+  if (mode == 16) {
+    Ipcmsg request, event;
+    Msg    reply = {{77, 1, 0, 0}};
+    REQUIRE(!ipc_recv(0, 0, &request) && request.kind == IPC_CALL && request.words[3] == 701 &&
+                !ipc_defer(request.request) && !ipc_recv((u64) 1 << 32, RECV_EVENTS_ONLY, &event) &&
+                event.kind == IPC_EVENT && !ipc_reply(request.request, &reply),
+            259);
+    return 44;
+  }
   if (mode == 11)
     return forceduser();
   if (mode == 12)
     return contextuser();
   if (mode == 13)
     return forkprepuser();
-  if (mode == 14) {
+  if (mode == 14 || mode == 15) {
     Sigact action;
     Handle self, parent;
     u64    image;
@@ -568,12 +582,58 @@ main(int argc, char **argv)
     context_self.pid = self;
     context_self.image = image;
     REQUIRE(!sysctxinit(&runtime_contexts, context_self) &&
-                !sysctxprepare(&runtime_contexts, context_self, 2, SYS_GETID, NULL, &forkouter) &&
                 !__sys_sigaction(SIGNAL_USR2, &action, NULL),
             250);
+    if (mode == 15) {
+      Ipcmsg message;
+      Msg    request = {{FS_ATTACH, 0, 1, 701}};
+      Handle rpc;
+      forkclaim.tag.generation = 1;
+      forkclaim.tag.index = forkclaim.tag.reserved = 0;
+      forkclaim.seq = 1;
+      forkclaim.owner = 901;
+      sysbootinit(&forkboot);
+      REQUIRE(
+          !sysbootprepare(&forkboot, forkclaim, FS_ATTACH, 701, 0) &&
+              !ipc_call((Handle) frame_trace[22], &request, CALL_ASYNC, &message) &&
+              (rpc = message.request) > 0 && !sysbootsubmitted(&forkboot, forkclaim, &rpc) &&
+              !sysctxbootwait(&runtime_contexts, context_self, 2, &forkboot, forkclaim, &forkouter),
+          254);
+    } else
+      REQUIRE(!sysctxprepare(&runtime_contexts, context_self, 2, SYS_GETID, NULL, &forkouter), 250);
     frame_trace[16] = (u64) __sys_ctxreturn_begin;
-    frame_trace[0] = 1;
+    frame_trace[0] = mode == 15 ? 4 : 1;
     invoked = sysctxinvoke(&runtime_contexts, context_self, forkouter);
+    if (mode == 15) {
+      Ipcmsg message;
+      frame_trace[23] = (u64) invoked;
+      frame_trace[24] = forkboot.state;
+      frame_trace[25] = (u64) forkboot.rpc;
+      REQUIRE(invoked == -ERR_INTERRUPTED && forkboot.state == SYSBOOT_WAITING && forkboot.rpc,
+              255);
+      if (handlerforkresult == 43) {
+        REQUIRE(sysctxforkresult(&runtime_contexts, runtime_contexts.self, forkouter, &status) ==
+                        1 &&
+                    status == -ERR_INTERRUPTED &&
+                    ipc_rqpoll(forkboot.rpc, 0, &message) == -ERR_BAD_HANDLE,
+                256);
+      } else {
+        REQUIRE(handlerforkresult == 42, 257);
+        REQUIRE(!sysctxhandoff(&runtime_contexts, runtime_contexts.self, forkouter), 260);
+        status = ipc_notify((Handle) frame_trace[26], (u64) 1 << 32);
+        frame_trace[27] = (u64) status;
+        REQUIRE(!status, 261);
+        status = ipc_rqwait(forkboot.rpc, 0, &message);
+        frame_trace[27] = (u64) status;
+        REQUIRE(!status, 262);
+        REQUIRE(!sysbootcapture(&forkboot, forkclaim, 0, &message), 263);
+        REQUIRE(forkboot.words[0] == 77, 264);
+        REQUIRE(!sysbootack(&forkboot, forkclaim) && !sysbootfinish(&forkboot, forkclaim), 265);
+      }
+      REQUIRE(!sysctxfinish(&runtime_contexts, runtime_contexts.self, forkouter), 258);
+      frame_trace[0] = 99;
+      return handlerforkresult;
+    }
     REQUIRE(!sysctxresult(&runtime_contexts, runtime_contexts.self, forkouter, &status, &result) &&
                 invoked == status &&
                 (handlerforkresult == 43 ? status == -ERR_INTERRUPTED && !result.values[0]

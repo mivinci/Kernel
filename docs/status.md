@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage222：双架构真实 IPC 等待中 handler fork 已验：子本地中断且旧 RPC 无权，父保留原请求并在子退出后收回复/ACK；格式、18 项 IPC 主机测试及 sigframe 通过。完成结果修复与生产整体 fork 协调器待接。
+
 - stage221：等待 IPC 的子 Rctx 可固定本地中断并移除父运输路由，支持后续 fork 与原始层混合；18 项 IPC 上下文主机测试、格式及双架构 libsys/sigframe 四次回归通过。新路径仍仅主机调用；完成结果、真实 IPC fork 与整体协调器待接。
 
 - stage220：子准备 token 已接按需 ATTACH 的本地准备与既有 Bootstrap 路径；完整 1206 项主机测试、格式和双架构 sigframe 回归通过。真实后端、IPC Rctx/File 修复与整体 fork 协调器待接。
