@@ -460,6 +460,27 @@ exitclient(const Bootview *boot)
   CHECK(!ipc_call(work.state.call, &message, CALL_CONTROL, &result) && !result.words[0]);
   filecreatetrace[0] = 2;
 }
+typedef struct Exitdrain Exitdrain;
+struct Exitdrain
+{
+  Handle request;
+  u64   *references;
+  u32    attempts;
+};
+
+static isize
+drainexit(void *context, Filelink *link)
+{
+  Exitdrain *drain = context;
+  CHECK(link->watch.owner.reason == OBS_EXIT && drain->request && drain->references[0] &&
+        drain->references[1]);
+  if (++drain->attempts == 1)
+    return -ERR_WOULD_BLOCK;
+  CHECK(!ipc_rqfinish(drain->request) && !sysfilefinish(&link->watch.active, drain->request));
+  drain->references[0] = drain->references[1] = 0;
+  return 0;
+}
+
 static void
 server(const Bootview *boot, u32 recover)
 {
@@ -499,13 +520,19 @@ server(const Bootview *boot, u32 recover)
   for (;;) {
     CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : 0, 0, &input));
     if (input.kind == IPC_EVENT) {
-      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && !sysfilewatchread(watch) &&
-            watch->owner.reason == OBS_EXIT && pending && created == 2 && !closed &&
-            references[0] && references[1]);
+      Exitdrain drain = {pending, references, 0};
+      Handle    pid;
+      u64       state, reason, image, cookie = watch->owner.cookie;
+      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && pending && created == 2 && !closed &&
+            sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) == -ERR_WOULD_BLOCK &&
+            watch->owner.cookie == cookie && link->memory && link->address);
       CHECK(sysfilelinkaccept(links, ARRAY_SIZE(links), &deferred, &descriptor) == -ERR_PEER &&
             sysfilelinkclose(link) == -ERR_BUSY);
-      CHECK(!ipc_rqfinish(pending) && !sysfilefinish(&watch->active, pending));
-      references[0] = references[1] = 0;
+      CHECK(!sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) && drain.attempts == 2 &&
+            !references[0] && !references[1] && !link->memory && !link->address &&
+            !watch->owner.cookie &&
+            __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
+      CHECK(!sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) && drain.attempts == 2);
       closed = 2;
       break;
     }
@@ -703,13 +730,9 @@ server(const Bootview *boot, u32 recover)
     CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
   }
   CHECK(!__sys_free(bootresource(boot, 256)));
-  if (recover == 12) {
-    Handle pid;
-    u64    state, reason, image, cookie = watch->owner.cookie;
-    CHECK(!sysfilelinkclose(link) && !watch->owner.cookie &&
-          __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
+  if (recover == 12)
     filecreatetrace[3] = 1;
-  } else
+  else
     CHECK(!sysfilelinkclose(link));
   filecreatetrace[1] = created;
   filecreatetrace[2] = closed;

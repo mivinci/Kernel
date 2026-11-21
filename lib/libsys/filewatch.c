@@ -454,3 +454,31 @@ sysfilelinkaccept(Filelink *pool, u32 count, const Ipcmsg *call, Fileslot *out)
   return sysfileaccept(&link->watch.active, region, FS_CONN_BYTES, call->words[3], call->words[2],
                        call->request, out);
 }
+
+isize
+sysfilelinksweep(Filelink *pool, u32 count, Filedrain drain, void *context)
+{
+  isize first = 0, status;
+  u32   i;
+  if (!pool || !count || count > FS_CONN_COUNT || !drain)
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    Filelink *link = &pool[i];
+    if (link->ready) {
+      status = link->watch.owner.reason ? 0 : sysfilewatchread(&link->watch);
+      if (!status && !link->watch.owner.reason)
+        continue;
+      if (!status)
+        status = drain(context, link);
+    } else {
+      if (!link->address && !link->memory && !link->watch.owner.cookie)
+        continue;
+      status = 0;
+    }
+    if (!status)
+      status = sysfilelinkclose(link);
+    if (status && !first)
+      first = status;
+  }
+  return first;
+}

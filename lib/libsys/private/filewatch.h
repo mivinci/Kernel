@@ -11,6 +11,7 @@ typedef struct Filelink  Filelink;
 typedef struct Openprep  Openprep;
 typedef struct Openlimit Openlimit;
 typedef isize (*Openrevoke)(void *context, const Openprep *prep);
+typedef isize (*Filedrain)(void *context, Filelink *link);
 enum
 {
   Openempty,
@@ -115,4 +116,8 @@ isize sysfilelinkaccept(Filelink *pool, u32 count, const Ipcmsg *call, Fileslot 
 /* Call only once all business references and downstream accesses are settled.
    A failed cleanup retains its remaining obligations and blocks admission. */
 isize sysfilelinkclose(Filelink *link);
+/* On a LIFE hint, refresh every live observation. Drain must settle business
+   references and outstanding requests before returning success. Failed entries
+   remain for retry; the scan still progresses on other entries. */
+isize sysfilelinksweep(Filelink *pool, u32 count, Filedrain drain, void *context);
 #endif
