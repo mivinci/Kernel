@@ -601,6 +601,94 @@ forkprepuser(void)
   return 42;
 }
 static int handlerforkresult;
+static void
+publicforkhandler(int signum)
+{
+  Connpeer self;
+  Handle   parent;
+  REQUIRE(!__sys_getid(&self.pid, &self.image, &parent) && runtime_contexts.self.pid == self.pid &&
+              runtime_contexts.self.image == self.image && !sysfilerefcheck(&forkfiles, self) &&
+              !sysconncheck(&forkdirectory, self),
+          266);
+  if (self.pid == context_self.pid) {
+    REQUIRE(signum == SIGUSR1 && parent == 1, 267);
+    frame_trace[23]++;
+  } else {
+    REQUIRE(parent == context_self.pid && self.pid != context_self.pid && !sysfdcheck(&forkfds) &&
+                signum == (frame_trace[1] == 17 && !frame_trace[24] ? SIGUSR2 : SIGUSR1),
+            268);
+    frame_trace[24]++;
+  }
+}
+static int
+publicforkuser(void)
+{
+  const u64  address = 0x30000000;
+  u64        fix[FIX_BASE_BYTES / sizeof(u64)];
+  Forkresume plan = {
+      {&forkfds, &forkfiles, &forkdirectory, &runtime_contexts}, sizeof(fix), NULL, 0, NULL};
+  Forkfix          finish = {0};
+  struct sigaction action = {0};
+  Forkret          result;
+  Sysret           tuple;
+  Elfwork          work = {0};
+  Handle           parent;
+  isize            status;
+  Sigact           native;
+  u64              args[7] = {0}, mask, old;
+  REQUIRE(!__sys_getid(&context_self.pid, &context_self.image, &parent) && parent == 1 &&
+              !sysctxinit(&runtime_contexts, context_self) &&
+              !sysfilerefinit(&forkfiles, context_self) &&
+              !sysconninit(&forkdirectory, context_self),
+          269);
+  sysfdinit(&forkfds);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &old),
+          270);
+  action.sa_handler = publicforkhandler;
+  REQUIRE(!sigaction(SIGUSR1, &action, NULL) && !sigaction(SIGUSR2, &action, NULL) &&
+              !__sys_sigaction(SIGUSR1, NULL, &native),
+          271);
+  frame_trace[16] = (u64) __sys_forkreturn_begin;
+  frame_trace[17] = (u64) __sys_forkreturn_end;
+  frame_trace[22] = native.trampoline;
+  frame_trace[26] = 1;
+  frame_trace[0] = 1;
+  REQUIRE(sysforkresume(0, 0, &plan, &result) == -ERR_BAD_HANDLE && frame_trace[23] == 1 &&
+              !result.construct && !result.pid && !result.fix,
+          272);
+  frame_trace[26] = 2;
+  REQUIRE(!sysforkresume((Handle) frame_trace[18], 0, &plan, &result), 273);
+  if (!result.construct) {
+    Connpeer self = runtime_contexts.self;
+    REQUIRE(frame_trace[24] == (frame_trace[1] == 17 ? 2U : 1U) && result.pid == self.pid &&
+                result.pid != context_self.pid && (u64) result.fix == address &&
+                !sysctxinvoke(&runtime_contexts, self, runtime_key) &&
+                !sysctxresult(&runtime_contexts, self, runtime_key, &status, &tuple) && !status &&
+                tuple.values[0] == (u64) self.pid && tuple.values[1] == self.image &&
+                !sysctxfinish(&runtime_contexts, self, runtime_key),
+            274);
+    return 43;
+  }
+  REQUIRE(frame_trace[23] == 2 && !frame_trace[24] && !result.fix &&
+              runtime_contexts.self.pid == context_self.pid,
+          275);
+  work.view = result.construct;
+  work.pid = result.pid;
+  work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
+  work.scratch = finish.address = address;
+  work.scratch_bytes = 4096;
+  finish.buffer = fix;
+  finish.capacity = sizeof(fix);
+  REQUIRE(sysforkfinish(&work, &runtime_contexts, context_self, &finish) == result.pid, 276);
+  args[0] = (u64) result.pid;
+  REQUIRE(!__sys_enter(SYS_WAIT, args, &tuple) && tuple.values[0] == (u64) result.pid &&
+              tuple.values[1] == WAIT_EXITED && tuple.values[2] == 43,
+          277);
+  frame_trace[0] = 99;
+  return 42;
+}
 static NORETURN void
 handlerforktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address,
                       u64 flags)
@@ -617,9 +705,11 @@ int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '@', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= 'B', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
+  if (mode >= 17)
+    return publicforkuser();
   if (mode == 16) {
     Ipcmsg request, event;
     Msg    reply = {{77, 1, 0, 0}};

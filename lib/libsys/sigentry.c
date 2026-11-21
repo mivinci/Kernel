@@ -1,10 +1,12 @@
 #include "private/contextipc.h"
+#include "private/fork.h"
 #include "private/sigentry.h"
 #include <abi/syscall.h>
 #include <abi/time.h>
 
-static Rbank *signalbank;
-static u64    prepared[SIGNAL_DEPTH];
+static Rbank   *signalbank;
+static Connpeer prepared_self;
+static u64      prepared[SIGNAL_DEPTH];
 
 /* The bank belongs to the current image and lives until image replacement. */
 isize
@@ -76,13 +78,14 @@ static isize
 preparesignal(Rbank *bank, const Sighead *frame)
 {
   Sighead  outer;
+  void    *trap = (u8 *) frame + SIGNAL_FRAME_TF;
+  void    *outer_trap = NULL;
   Connpeer self;
   Handle   parent;
+  u32      i;
   isize    error = __sys_getid(&self.pid, &self.image, &parent);
   if (error)
     return error;
-  if (bank->self.pid != self.pid || bank->self.image != self.image)
-    return -ERR_STALE;
   if (!validhead(frame))
     return -ERR_INVALID;
   if (frame->previous) {
@@ -96,9 +99,21 @@ preparesignal(Rbank *bank, const Sighead *frame)
     if (!validhead(&outer) || outer.depth != frame->depth - 1 || outer.bytes != frame->bytes ||
         outer.cookie >= frame->cookie || outer.bytes > BOOT_USER_HI - previous)
       return -ERR_INVALID;
-    prepareframe(bank, self, &outer, (void *) (uintptr_t) (previous + SIGNAL_FRAME_TF));
+    outer_trap = (void *) (uintptr_t) (previous + SIGNAL_FRAME_TF);
   }
-  prepareframe(bank, self, frame, (u8 *) frame + SIGNAL_FRAME_TF);
+  if (bank->self.pid != self.pid || bank->self.image != self.image) {
+    error = sysforksignal(bank, trap, outer_trap);
+    if (error)
+      return error;
+  }
+  if (prepared_self.pid != self.pid || prepared_self.image != self.image) {
+    for (i = 0; i < SIGNAL_DEPTH; i++)
+      prepared[i] = 0;
+    prepared_self = self;
+  }
+  if (outer_trap)
+    prepareframe(bank, self, &outer, outer_trap);
+  prepareframe(bank, self, frame, trap);
   return 0;
 }
 

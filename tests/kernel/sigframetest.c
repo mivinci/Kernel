@@ -23,6 +23,7 @@ static Handle    contextpid;
 static u32       contextarmed, contextcount;
 static u32       preludearmed, preludecount;
 static u32       forkarmed;
+static u32       forkphase, parentreturns, childreturns, childnested;
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -77,11 +78,36 @@ runtimeframeenter(Hctx *context)
   u32      i;
   if (!table || (!contextarmed && !forkarmed && !preludearmed))
     return;
-  if (table->owner == contextpid ? !(contextarmed || preludearmed) : !forkarmed)
-    return;
   REQUIRE(!procinfo(table->owner, &process) &&
           !spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
   if (trace[0] != 1)
+    return;
+  if (trace[1] >= 17) {
+    u64 pc = context->tf.pc;
+    info = (Siginfo){0};
+    info.signum = SIGNAL_USR1;
+    if (table->owner == contextpid) {
+      if (pc != trace[16] || trace[26] != parentreturns + 1)
+        return;
+      parentreturns++;
+    } else if (trace[1] == 18 && forkphase && (pc < trace[16] || pc >= trace[17])) {
+      forkarmed = 0;
+      childreturns++;
+    } else if (trace[1] == 17 && forkphase && pc == trace[22]) {
+      forkarmed = 0;
+      childnested++;
+      info.signum = SIGNAL_USR2;
+    } else if (pc == trace[16] && !forkphase) {
+      forkphase = 1;
+      if (trace[1] == 18)
+        return;
+      childreturns++;
+    } else
+      return;
+    REQUIRE(!procsigqueue(table->owner, &info));
+    procuserreturn(context);
+  }
+  if (table->owner == contextpid ? !(contextarmed || preludearmed) : !forkarmed)
     return;
   if (preludearmed && table->owner == contextpid && context->tf.pc == trace[22]) {
     preludearmed = 0;
@@ -134,7 +160,9 @@ sigframetest(void)
   int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 16; mode++) {
+  for (mode = 0; mode < 19; mode++) {
+    if (mode == 16)
+      continue;
     peerpid = 0;
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     for (i = 0; i < sizeof(packet); i++)
@@ -214,6 +242,7 @@ sigframetest(void)
       contextpid = pid;
       forkarmed = 1;
       contextarmed = mode == 14;
+      forkphase = parentreturns = 0;
     }
     if (!mode) {
       /* Freeze a published but not yet dispatched process. This does not relax
@@ -294,7 +323,10 @@ sigframetest(void)
     putstr(" code=");
     puthex(life.code);
     putstr("\n");
-    if (mode >= 13) {
+    if (mode >= 17) {
+      REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&
+              parentreturns == 2 && trace[23] == 2 && !trace[24]);
+    } else if (mode >= 13) {
       REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&
               trace[28] == 1 && trace[29] == 1);
       if (mode == 14)
@@ -355,7 +387,7 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(16);
+  puthex(18);
   putstr(" forkprep=");
   puthex(1);
   putstr(" handler_fork=");
@@ -380,6 +412,10 @@ sigframetest(void)
   puthex(contextcount);
   putstr(" nested_prelude=");
   puthex(preludecount);
+  putstr(" child_returns=");
+  puthex(childreturns);
+  putstr(" child_nested=");
+  puthex(childnested);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

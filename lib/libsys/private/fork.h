@@ -6,6 +6,7 @@
 typedef struct Forkfix    Forkfix;
 typedef struct Forkdone   Forkdone;
 typedef struct Forkdetach Forkdetach;
+typedef struct Forkresume Forkresume;
 struct Forkdetach
 {
   Connwork *const *works;
@@ -26,6 +27,14 @@ struct Forkfix
   const Resentry *resources;
   u64             resource_count;
 };
+struct Forkresume
+{
+  Forkstate         state;
+  u64               available;
+  const Filefork   *files;
+  u64               file_count;
+  const Forkdetach *detach;
+};
 /* Complete the local side of an already prepared fork. Caller owns the exact
    preparation and any backend tokens. Keep the bank/transport at the snapshot
    boundary and buffer disjoint from live state and the scratch mapping.
@@ -38,4 +47,8 @@ isize sysforkfinish(Elfwork *work, Rbank *bank, Connpeer parent, const Forkfix *
    Marker and inputs must be disjoint from the mutable tables. */
 isize sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const Forkret *result,
                     u64 available, const Filefork *files, u64 file_count, const Forkdetach *detach);
+/* Keep the plan and its referenced storage stable through the child return. */
+isize sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *out);
+/* Called with caught signals masked when a bound bank still names the parent. */
+isize sysforksignal(Rbank *bank, const void *trap, const void *outer);
 #endif
