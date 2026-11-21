@@ -48,7 +48,8 @@ isize sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const F
 /* Under caught-signal exclusion, submit one pending background CLOSE or
    advance the existing background CLOSE in slot 6. SUBMITTED means an RPC
    is retained; zero means it was confirmed and drained. WOULD_BLOCK means
-   no eligible File or the retained RPC has not finished. RECOVERED means
+   no eligible File or the retained RPC has not finished. A valid original
+   reply keeps its confirmation even if the peer has since ended. RECOVERED means
    the exact peer was already marked ended and local cleanup completed;
    it does not confirm a service CLOSE. Never waits. */
 isize sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline);

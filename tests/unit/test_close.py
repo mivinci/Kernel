@@ -1,5 +1,7 @@
 import ctypes as C
 import unittest
+from unittest.mock import patch
+import test_bootstrap as bootstrap
 import test_connection_work as support
 from test_fileref import Pool,Ref,Close
 from test_operation import Key,Op
@@ -14,7 +16,10 @@ class CloseAdapterTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        support.ConnectionWorkTests.setUpClass.__func__(cls)
+        unexpected_call = ('\nisize ipc_call(Handle target,const Msg *message,u64 options,Ipcmsg *out)'
+                           '{(void)target;(void)message;(void)options;(void)out;__builtin_trap();}\n')
+        with patch.object(bootstrap, 'STUB', bootstrap.STUB + unexpected_call):
+            support.ConnectionWorkTests.setUpClass.__func__(cls)
         pool=C.POINTER(Pool);work=C.POINTER(support.Work);cache=C.POINTER(support.Cache)
         signatures={
             'sysfilerefinit':[pool,support.Peer],

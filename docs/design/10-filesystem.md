@@ -142,6 +142,8 @@ stage294：`sysfileclosepump` 按连接提交一笔后台 CLOSE，或非阻塞�
 
 stage295：确认原后端镜像终结后，后台 CLOSE 推进器仍等待原 RPC 实际排空，然后独立回收其控制槽和 File。尚未提交 CLOSE 的 File 在最后别名和在途操作均消失后可直接本地回收。两条路径均返回 RECOVERED，区别于服务确认成功。RV64、ARM64 的 QEMU `runtime` 验证原 RPC 在等待期间保持、仍有别名的 File 不被回收；65 项文件主机测试及格式检查通过。
 
+stage299：若原 CLOSE 已有有效成功回复，后端随后退出也保留原确认。后台推进仍等待原 RPC 排空并 ACK，成功后返回 0；只有缺少服务确认、依赖后端终结清理时才返回 RECOVERED。主机测试覆盖退出后首次读到原确认、排空等待和 ACK 重试共用同一 RPC；34 项专项主机测试、双架构 QEMU `runtime` 回归及格式通过。
+
 ### open/close 的信号重启边界（已冻结）
 
 read/write 已讨论语义见 [信号中断与重启](11-terminal.md#readwrite-的中断与重启已冻结)。

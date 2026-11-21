@@ -267,6 +267,7 @@ sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u6
   Msg       message;
   Ipcmsg    result;
   u64       file = 0;
+  u32       confirmed;
   isize     error;
   if (!pool || !work || !cache)
     return -ERR_INVALID;
@@ -284,6 +285,13 @@ sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u6
     key.lease = op->lease;
     key.owner = 0;
     if (work->state.ended) {
+      error = peerended(work, cache);
+      if (error)
+        return error;
+      /* A reply fixed before exit remains the result of the original CLOSE. */
+      error = progress(pool, work, cache, &anchor, &key, &confirmed);
+      if (confirmed || op->phase == SYSOP_WAITING)
+        return error;
       error = sysfilecloserecover(pool, work, cache, &anchor, &key);
       return error ? error : SYSFILE_CLOSE_RECOVERED;
     }

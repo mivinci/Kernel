@@ -32,7 +32,8 @@ class CloseWorkerTests(unittest.TestCase):
         signatures = {
             'sysfileclosewatch': prefix + [C.POINTER(Key), C.c_uint64, C.POINTER(Key)],
             'sysfilecloseinterrupt': prefix + [C.POINTER(Key), C.POINTER(Key)],
-            'sysfileclosework': prefix + [C.POINTER(Key)], 'testfinish': [C.c_uint64]}
+            'sysfileclosework': prefix + [C.POINTER(Key)], 'testfinish': [C.c_uint64],
+            'sysfileclosepump': prefix[:3] + [C.c_uint64, C.c_uint64]}
         for name, args in signatures.items():
             getattr(cls.lib, name).argtypes = args
             getattr(cls.lib, name).restype = C.c_int64
@@ -106,6 +107,23 @@ class CloseWorkerTests(unittest.TestCase):
         self.assertEqual(self.lib.testget(2), 0)
         self.lib.testfinish(0)
         self.assertEqual(self.worker(), 0)
+
+    def test_peer_exit_keeps_original_close_confirmation_across_finish_and_ack_retry(self):
+        self.pending()
+        self.assertEqual(self.interrupt(), 2)
+        self.assertEqual(self.lib.sysconninvalidate(self.c, self.tag), 0)
+        self.work.state.ended = 1
+        self.lib.testresult(0, 0, 0, self.background.lease.seq, 0, 0)
+        self.lib.testfinish(1)
+        self.assertEqual(self.lib.sysfileclosepump(*self.args[:3], 501, 999), -11)
+        self.assertEqual(self.op().rpc, self.rpc)
+        self.lib.testfinish(0)
+        self.lib.testerrors(-7, 0)
+        self.assertEqual(self.lib.sysfileclosepump(*self.args[:3], 501, 999), -7)
+        self.assertEqual(self.op().rpc, self.rpc)
+        self.lib.testerrors(0, 0)
+        self.assertEqual(self.lib.sysfileclosepump(*self.args[:3], 501, 999), 0)
+        self.assertEqual(self.pool.entries[self.file.value & 255].state, 0)
 
     def test_transport_failure_keeps_unknown_anchor_for_lifecycle_recovery(self):
         self.lib.testresult(-14, 0, 0, 0, 0, 0)
