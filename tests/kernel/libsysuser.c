@@ -1480,7 +1480,8 @@ typedclient(const Bootview *view, Handle peer)
     Fdtag       descriptor_tag, last;
     Fdview      sourcefd, duplicatefd;
     Fileref     duplicatefile;
-    Fdview      removed, replacement;
+    Fdview      removed;
+    u64         displaced, old_generation;
     u32         saved;
     isize       cancellation;
     Handle      original;
@@ -1626,31 +1627,29 @@ typedclient(const Bootview *view, Handle peer)
             !sysfdsetflags(&file_descriptors, duplicatefd.tag, BOOT_FD_CLOEXEC) &&
             !sysfilerefpin(&file_registry, connection_work.state.self, fileid),
         124);
-    replacement.file = 0;
+    displaced = 99;
     REQUIRE(
         sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 1, 1,
-                  &replacement) == 1 &&
-            !replacement.file && !sysfdobserve(&file_descriptors, 1, &duplicatefd) &&
+                  &displaced) == 1 &&
+            !displaced && !sysfdobserve(&file_descriptors, 1, &duplicatefd) &&
             duplicatefd.flags == BOOT_FD_CLOEXEC &&
             sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 2, 1,
-                      &replacement) == -ERR_BAD_HANDLE &&
-            !replacement.file && !sysfdreserve(&file_descriptors, 2, &last) &&
+                      &displaced) == -ERR_BAD_HANDLE &&
+            !displaced && !sysfdreserve(&file_descriptors, 2, &last) &&
             sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 0, 2,
-                      &replacement) == -ERR_BUSY &&
-            !replacement.file && !sysfdcancel(&file_descriptors, last) &&
+                      &displaced) == -ERR_BUSY &&
+            !displaced && !sysfdcancel(&file_descriptors, last) &&
             !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
             duplicatefile.aliases == 2,
         124);
+    old_generation = duplicatefd.tag.generation;
     REQUIRE(
         sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 0, 1,
-                  &replacement) == 1 &&
-            replacement.tag.generation == duplicatefd.tag.generation &&
-            replacement.file == fileid && replacement.flags == BOOT_FD_CLOEXEC &&
-            !sysfdobserve(&file_descriptors, 1, &duplicatefd) && !duplicatefd.flags &&
-            duplicatefd.tag.generation != replacement.tag.generation &&
+                  &displaced) == 1 &&
+            !displaced && !sysfdobserve(&file_descriptors, 1, &duplicatefd) && !duplicatefd.flags &&
+            duplicatefd.file == fileid && duplicatefd.tag.generation != old_generation &&
             !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
-            duplicatefile.aliases == 3 &&
-            !sysfilerefdrop(&file_registry, connection_work.state.self, replacement.file) &&
+            duplicatefile.aliases == 2 &&
             !sysfdsetflags(&file_descriptors, duplicatefd.tag, BOOT_FD_CLOEXEC),
         124);
     writeforkclient(fileid, oldmask, 8);

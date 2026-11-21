@@ -399,7 +399,7 @@ client(const Bootview *boot)
   Fdtag              fd;
   Fdview             detached, replaced;
   Fileref            reference;
-  u64                files[2], source = 0, first, second, ids[2], mask, ignored;
+  u64                files[2], source = 0, first, second, ids[2], mask, ignored, displaced;
   Msg                gate;
   Ipcmsg             result;
   Handle             rpc;
@@ -489,15 +489,14 @@ client(const Bootview *boot)
   complete(&key, 0, files, &source);
   CHECK(!files[0] && !files[1] && !source);
   CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
-        sysfddup2(&fds, &pool, work.state.self, 0, 1, &detached) == 1 &&
-        detached.tag.state == SYSFD_LIVE && detached.file == second &&
-        !sysfilerefdrop(&pool, work.state.self, detached.file) &&
+        !sysfdobserve(&fds, 1, &detached) && detached.file == second &&
+        sysfddup2(&fds, &pool, work.state.self, 0, 1, &displaced) == 1 && displaced == second &&
         !sysfilerefview(&pool, work.state.self, second, &reference) &&
         reference.state == SYSFILE_REF_CLOSING && !reference.aliases &&
         !sysfdobserve(&fds, 1, &replaced) && replaced.file == first &&
         replaced.tag.generation != detached.tag.generation &&
         !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
-  closefile(detached.file, 0);
+  closefile(displaced, 0);
   CHECK(sysfilerefview(&pool, work.state.self, second, &reference) == -ERR_STALE &&
         !sysfilerefview(&pool, work.state.self, first, &reference) && reference.aliases == 2 &&
         !sysfdobserve(&fds, 1, &detached) && detached.file == first &&
