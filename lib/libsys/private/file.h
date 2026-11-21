@@ -36,6 +36,9 @@ STATIC_ASSERT(sizeof(Filepages) <= PAGE_SIZE, file_page_bookkeeping);
 isize sysfilehead(const volatile void *region, u64 bytes, u64 connid, u64 serverimage,
                   Filehead *out);
 isize sysfilerequest(const volatile void *region, u64 bytes, u32 slot, u64 seq, Fileslot *out);
+/* Validate a privately captured READ/WRITE/CLOSE/DUPREF descriptor before
+   touching payload. File mode, offset and reference authority are separate. */
+isize sysfileargs(u64 opcode, const Fileslot *slot);
 /* Zero-initialized private ledger for one exact service connection. The
    serialized service loop verifies source and connid before admission.
    Keep the full REQUEST reserved through defer, cancellation and downstream

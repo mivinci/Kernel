@@ -64,6 +64,28 @@ sysfilerequest(const volatile void *region, u64 bytes, u32 slot, u64 seq, Filesl
   return 0;
 }
 isize
+sysfileargs(u64 opcode, const Fileslot *slot)
+{
+  u32 used, i;
+  if (opcode == FS_READ || opcode == FS_WRITE)
+    used = 4;
+  else if (opcode == FS_CLOSE || opcode == FS_DUPREF)
+    used = 1;
+  else
+    return -ERR_NOTSUP;
+  if (!slot || slot->span != 1 || slot->payload_bytes > FS_SLOT_BYTES || !slot->object)
+    return -ERR_INVALID;
+  for (i = used; i < ARRAY_SIZE(slot->args); i++)
+    if (slot->args[i])
+      return -ERR_INVALID;
+  if (used == 1)
+    return slot->args[0] && !slot->payload_bytes ? 0 : -ERR_INVALID;
+  if (slot->args[2] > slot->payload_bytes || slot->args[1] > slot->payload_bytes - slot->args[2] ||
+      (slot->args[3] & ~(u64) (FS_IO_POSITIONAL | (opcode == FS_WRITE ? FS_IO_APPEND : 0))))
+    return -ERR_INVALID;
+  return 0;
+}
+isize
 sysfileaccept(Fileinflight *active, const volatile void *region, u64 bytes, u64 slot, u64 seq,
               Handle request, Fileslot *out)
 {

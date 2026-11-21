@@ -45,6 +45,7 @@ class FilePageTests(unittest.TestCase):
         declarations={
             'sysfilehead':[C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64,C.POINTER(Head)],
             'sysfilerequest':[C.c_void_p,C.c_uint64,C.c_uint32,C.c_uint64,C.POINTER(Slot)],
+            'sysfileargs':[C.c_uint64,C.POINTER(Slot)],
             'sysfileaccept':[C.POINTER(Inflight), C.c_void_p, C.c_uint64, C.c_uint64,
                              C.c_uint64, C.c_int64, C.POINTER(Slot)],
             'sysfilefinish':[C.POINTER(Inflight), C.c_int64],
@@ -54,6 +55,25 @@ class FilePageTests(unittest.TestCase):
         for name,args in declarations.items():
             getattr(cls.lib,name).argtypes=args;getattr(cls.lib,name).restype=C.c_int64
         cls.lib.sysfilepagesinit.restype=None
+
+    def test_service_io_and_reference_descriptor_validation(self):
+        slot = Slot()
+        slot.object, slot.span, slot.payload_bytes = 7, 1, 4096
+        slot.args[1], slot.args[2], slot.args[3] = 4095, 1, 2
+        check = lambda opcode: self.lib.sysfileargs(opcode, C.byref(slot))
+        self.assertEqual(check(5), 0)
+        self.assertEqual(check(4), -1)
+        slot.args[3] = 1
+        self.assertEqual(check(4), 0)
+        slot.args[1] += 1
+        self.assertEqual(check(4), -1)
+        slot.args[1], slot.args[2] = 0, MAX
+        self.assertEqual(check(4), -1)
+        slot.payload_bytes = 0
+        slot.args[:] = [9, 0, 0, 0, 0, 0, 0, 0]
+        self.assertEqual((check(6), check(7)), (0, 0))
+        slot.args[7] = 1
+        self.assertEqual((check(6), check(7)), (-1, -1))
 
     @classmethod
     def tearDownClass(cls):

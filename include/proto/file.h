@@ -34,6 +34,8 @@
 #define FS_LOAD             22
 #define FS_TTYCTL           23
 #define FS_PIPE             24
+#define FS_IO_POSITIONAL    1
+#define FS_IO_APPEND        2
 #define FS_PATH_LOOKUP      1
 #define FS_PATH_CREATE      2
 #define FS_PATH_MKDIR       3

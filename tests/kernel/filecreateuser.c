@@ -553,13 +553,13 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     CHECK(!status && descriptor.span == 1);
+    if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
+      CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
     if ((opcode == FS_READ || opcode == FS_WRITE) && recover >= 9 && recover <= 11) {
       CHECK(created == 1 && references[0] && sessions[0] == descriptor.object && slot < 2 &&
             descriptor.payload_bytes == 8 && !descriptor.args[0] && descriptor.args[1] == 8 &&
             !descriptor.args[2] && !descriptor.args[3]);
-      for (i = 4; i < 8; i++)
-        CHECK(!descriptor.args[i]);
       filecreatetrace[8]++;
       if (recover == 11 && filecreatetrace[8] == 1) {
         CHECK(opcode == FS_READ);
@@ -971,7 +971,7 @@ backend(const Bootview *boot, u32 recover)
       CHECK(!sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &input, &descriptor));
     else
       CHECK(!sysfilerequest(head, FS_CONN_BYTES, 6, input.words[2], &descriptor));
-    CHECK(descriptor.span == 1 && !descriptor.payload_bytes);
+    CHECK(!sysfileargs(FS_CLOSE, &descriptor));
     i = 0;
     while (i < created &&
            (preps[i].session != descriptor.object || preps[i].reference != descriptor.args[0]))
