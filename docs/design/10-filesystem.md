@@ -1309,3 +1309,7 @@ stage176新增私有sysoprecover。要求原Rctx责任已结束、精确旧peer�
 本fixture提供固定读写File，只验证真实IPC下的运输/结果/pin生命周期，不冻结生产OPEN访问标志或完整访问策略，也不是公开POSIX read/write前端。最终1175项完整host、8项专项、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU与8份内核诊断journal通过；SDK私有头/源/库、实际用户ELF打包/内嵌载荷、operation对象仅预期内部依赖及真实recover调用均审计通过。旧创建/ABORT/bootstrap/map/复用失败、缓存/日志与环境场景保持；init装载段与serial ELF保持，生产镜像无测试载荷，全部构建后clangd切回RV64/runtime。证据build/host/stage176-data-recovery/含unit/focused-reviewed、场景日志、verify.py/evidence.json。无新内核ABI、权限或固定池；最近完整195矩阵仍为stage165，无CI/板端/性能、生产服务、公开fd/Fix或完整sh/net/最终GUI结论。
 
 stage305：TTY 的 `ttyfilectl` 核对私有账本中的原 REQUEST 与槽，按 GETATTR 输出当前行规程属性；已取消请求不改写页，已终结请求只收尾。RV64、ARM64 QEMU `runtime` 用真实 IPC 验证越界一字节时业务 EINVAL 且输出区不变，下一次复用该槽在页末返回完整 Termarg。31 项 TTY 主机测试和格式通过。生产连接分派和公开 `tcgetattr` 尚未接入。
+
+stage330：`sbin/fs/load.c` 提供 FS 串行事件循环使用的私有装载会话。会话记录固定的 inode、代次、内容版本和长度，并要求每次读匹配真实源 PID/image。对同一 inode 可并存多个读会话；写入、截断及回收须以同一表取得互斥票据。纯路径替换不依赖该票据，因此装载不重新解析路径。会话与写票共用 32 项有界存储，读取、会话和写票编号在当前服务镜像内不回绕。
+
+取消、到期或源镜像结束即拒绝后续读取。仍有在途读时保留节点保护，精确读票排空后才解除；迟到数据不可发布。34 项 FS 主机测试（含 6 项会话专项）、新源码格式检查及 RV64/ARM64 交叉编译通过。该层依赖未来服务传入已经授权的解析结果、经过核实的身份和实际访问排空；尚无生产 LOAD 运输、执行权限检查或 QEMU 端到端验收。LOAD 已冻结读参数，建立/释放装载会话的消息形状仍未写定。
