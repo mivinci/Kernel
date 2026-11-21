@@ -430,6 +430,10 @@ stage232 组合回归：stage231 最终源码完整 `make unit` 1228项通过（
 
 stage233：`sysctxfixwaitcheck` 提供完整 Rctx 路由的只读准入，实际 `sysctxfixwait` 共用同一路径后才转换。协调器可在修改 File/连接之前核验三层 raw、等待 IPC、已固定本地结果及有排空证明的 READ/WRITE；不支持的创建/未提交 IPC 仍明确拒绝。预检只接受继承父身份，已转换子不走幂等捷径，不 poll/cancel/ACK 或复制共享 payload。64项上下文主机测试验证等待/完成 READ 的预检不改 bank/运输、不增内核调用/数据复制，错误 RPC、缺快照/不完整快照、后层不支持时无变化；格式及 ARM64/RV64 libsys/sigframe 四次运行回归通过，真实修复也调用共用预检。日志 `/private/tmp/kernel-stage233-{context-final,fmt,arm64-libsys,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。整体生产协调器、后端准备和公开 fork 仍待接，未跑完整矩阵、CI 或板端；子 reference_id 候选未获确认，未实施。
 
+stage234：新增私有 `Forkstate` 与 `sysforkstatecheck`，统一只读核验 fd/File/连接/Rctx，并检查它们的交叉关系。保留 File 的源连接代次须等于同索引父目录项，目标 token 须匹配该后端精确 PID/image 的 Fixconn；活动 Op 须指向这份目录存储，不能替换成同身份/同内容的另一副本。即使未保留 File，保留后端的目录代次耗尽也在此拒绝。全部检查无分配、IPC、ACK或状态修改；不能替代远端授权、typed pin 推导、创建保留项修复、别名解除及实际提交，子 reference_id 规则仍待确认。新增模块已纳入 SDK 构建和私有头自动导出。
+
+6项组合主机测试覆盖真实局部模块联动、CLOEXEC/双alias/预留保持、单表各自合法但跨表代次错误、token/后端不符、alias/上下文错误、活动Op指向另一目录及无File时目录耗尽；64项上下文与7项SDK导出测试、格式和ARM64/RV64 libsys/sigframe四次回归通过。组合入口仍仅主机直接调用，QEMU验证既有真实修复路径与SDK链接，不代表生产整体协调器或后端准备已接。日志 `/private/tmp/kernel-stage234-{forkstate-final,context,sdkheaders,fmt-final,arm64-libsys-final,arm64-sigframe-final,riscv-libsys-final,riscv-sigframe-final}.log`。未跑完整矩阵、CI或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
