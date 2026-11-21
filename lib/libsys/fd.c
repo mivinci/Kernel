@@ -88,6 +88,40 @@ sysfdobserve(const Fdtable *table, u32 fd, Fdview *out)
   return 0;
 }
 isize
+sysfdforkcheck(const Fdtable *table, const Filefork *entries, u64 count)
+{
+  u32   aliases[SYSFILE_REFS];
+  u64   i, j;
+  isize error;
+  if (count > SYSFILE_REFS || (count && !output(table, entries, count * sizeof(*entries))))
+    return -ERR_INVALID;
+  error = sysfdcheck(table);
+  if (error)
+    return error;
+  for (i = 0; i < count; i++) {
+    aliases[i] = 0;
+    if (!entries[i].file || (!entries[i].aliases && !entries[i].pins))
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (entries[j].file == entries[i].file)
+        return -ERR_INVALID;
+  }
+  for (i = 0; i < BOOT_FD_COUNT; i++) {
+    if (table->entries[i].state != SYSFD_LIVE)
+      continue;
+    for (j = 0; j < count; j++)
+      if (entries[j].file == table->entries[i].file)
+        break;
+    if (j == count)
+      return -ERR_STATE;
+    aliases[j]++;
+  }
+  for (i = 0; i < count; i++)
+    if (entries[i].aliases != aliases[i])
+      return -ERR_STATE;
+  return 0;
+}
+isize
 sysfdreserve(Fdtable *table, u32 minimum, Fdtag *out)
 {
   u32      i;

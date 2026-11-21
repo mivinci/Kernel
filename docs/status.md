@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage230：fd/File 子保留清单的只读一致性准入已接，精确核对全部 LIVE fd 的本地 ID/alias，保留 CLOEXEC 与创建中的预留责任；29项相关主机测试、格式及双架构 libsys/sigframe 回归通过。新检查仍仅主机调用，真实后端准备/重绑及生产协调器待接。
+
 - stage229：File 注册表可依子准备清单保留本地 ID、重绑后端引用并减权 alias/pin，父清理副本不发 CLOSE/ACK；完整1225项主机测试、格式及双架构 libsys/sigframe 回归通过。新原语仍仅主机调用，远端准备/真实重绑与生产协调器待接。
 
 - stage228：双架构真实负业务回复中 handler fork 已验，父子保留 DENIED/零进展、后端无重复 WRITE，原成功 READ/WRITE fork 和资源守恒仍通过；格式与19项相关主机测试通过。机制失败、创建结果/File子引用及生产协调器待接。

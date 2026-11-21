@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from test_fileref import Fork
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX = (1 << 64) - 1
@@ -41,6 +42,7 @@ class FdTableTests(unittest.TestCase):
         cls.lib = C.CDLL(str(library))
         declarations = {
             'sysfdinit': [C.POINTER(Table)], 'sysfdcheck': [C.POINTER(Table)],
+            'sysfdforkcheck': [C.POINTER(Table), C.POINTER(Fork), C.c_uint64],
             'sysfdobserve': [C.POINTER(Table), C.c_uint32, C.POINTER(View)],
             'sysfdreserve': [C.POINTER(Table), C.c_uint32, C.POINTER(Tag)],
             'sysfdpublish': [C.POINTER(Table), Tag, C.c_uint64, C.c_uint64],
@@ -95,6 +97,45 @@ class FdTableTests(unittest.TestCase):
         self.assertEqual(again.index, 0)
         self.assertGreater(again.generation, tags[0].generation)
         self.assertEqual(self.lib.sysfdcheck(C.byref(self.table)), 0)
+
+    def test_fork_plan_counts_all_aliases_and_preserves_reserved_creators(self):
+        self.publish(257, 1)
+        self.publish(257, 0)
+        self.publish(514, 1)
+        self.reserve(17)
+        plan = (Fork * 3)()
+        for item, file, aliases, pins in zip(plan, (257, 514, 771), (2, 1, 0), (0, 1, 1)):
+            item.file, item.aliases, item.pins = file, aliases, pins
+        before = bytes(self.table), bytes(plan)
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 3), 0)
+        self.assertEqual((bytes(self.table), bytes(plan)), before)
+        for index, aliases in ((0, 1), (0, 3), (1, 0), (2, 1)):
+            saved = plan[index].aliases
+            plan[index].aliases = aliases
+            self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 3), -6)
+            self.assertEqual(bytes(self.table), before[0])
+            plan[index].aliases = saved
+        plan[2].file = 257
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 3), -1)
+        self.assertEqual(bytes(self.table), before[0])
+
+    def test_fork_plan_missing_stale_and_malformed_inputs_are_read_only(self):
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), None, 0), 0)
+        self.publish(257)
+        baseline = bytes(self.table)
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), None, 0), -6)
+        plan = (Fork * 1)()
+        plan[0].file, plan[0].aliases = 513, 1
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 1), -6)
+        plan[0].file = 257
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 1), 0)
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), None, 1), -1)
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 257), -1)
+        overlap = C.cast(C.byref(self.table), C.POINTER(Fork))
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), overlap, 1), -1)
+        self.assertEqual(bytes(self.table), baseline)
+        self.table.entries[127].reserved = 1
+        self.assertEqual(self.lib.sysfdforkcheck(C.byref(self.table), plan, 1), -6)
 
     def test_cancel_publish_and_reuse_invalidate_old_tags_including_their_state(self):
         reserved = self.reserve(7)

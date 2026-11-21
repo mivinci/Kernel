@@ -1,6 +1,7 @@
 #ifndef _LIBSYS_FD_H
 #define _LIBSYS_FD_H
 #include <abi/boot.h>
+#include "fileref.h"
 #define SYSFD_FREE     0
 #define SYSFD_RESERVED 1
 #define SYSFD_LIVE     2
@@ -37,6 +38,12 @@ STATIC_ASSERT(sizeof(Fdtag) == 16, fd_tag_size);
    file is a nonzero opaque local File identity, never authority by itself. */
 void  sysfdinit(Fdtable *table);
 isize sysfdcheck(const Fdtable *table);
+/* Read-only fork admission: every live fd must name exactly one retained
+   File, whose alias count equals its descriptor count (including CLOEXEC).
+   Pin-only Files are allowed. Reserved descriptors remain owned by their
+   typed creator continuation; this check neither repairs nor drops them.
+   Caller keeps both inputs stable under caught-signal exclusion. */
+isize sysfdforkcheck(const Fdtable *table, const Filefork *entries, u64 count);
 /* Observation borrows the live File reference only within caller protection.
    State is part of the tag: a reserved tag cannot later name a published fd. */
 isize sysfdobserve(const Fdtable *table, u32 fd, Fdview *out);

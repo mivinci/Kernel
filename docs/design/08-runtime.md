@@ -420,6 +420,10 @@ stage229：新增私有 `sysfilereffork`，供整体协调器在固定 Rctx/File
 
 stage229 最终完整 `make unit` 1225 项通过（207 秒），未重跑全 QEMU 场景矩阵。
 
+stage230：新增只读 `sysfdforkcheck`，把 fd 表与保留 Filefork 清单关联准入：每个 LIVE fd 的完整本地 File ID 须在清单唯一出现，清单 alias 数须精确等于实际描述符数，CLOEXEC 同样继承并计数；允许零 alias 的活动 pin 引用。缺项、过期 ID、重复 ID、虚增/遗漏 alias、损坏表及清单重叠均拒绝，不修改任一输入。RESERVED fd 保持原样，由创建类续点单独修复，不把此检查当作创建责任已接通。它不验证远端权限、pin 来源或 Filepool，整体协调器仍须结合注册表准入与服务准备结果。
+
+10 项 fd 和19项 File 注册表主机测试、格式及 ARM64/RV64 libsys/sigframe 四次 QEMU 回归通过。新增清单检查仍仅主机调用，未称真实 File 子重绑或生产 fork 已完成；未跑完整矩阵、CI 或板端。首次目标链接发现数组聚合清零引入未解析 memset，改逐项初始化后审计和运行通过。日志 `/private/tmp/kernel-stage230-{fd,fileref,fmt-final,arm64-libsys-final,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
