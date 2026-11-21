@@ -1055,6 +1055,55 @@ def accepted_package(args, qmp, run_dir, names, discovery):
                 retained_unchanged=True, read_only=True, isolated_edges=len(partial),retained_pages=pages+len(partial))
 
 
+def validate_serial_pages(text):
+    lines = text.replace('\r', '').split('\n')[:-1]
+    if any(line.startswith(('PANIC ', 'TRAP ')) for line in lines):
+        raise SmokeError('page self-test reported a panic or trap')
+    summaries = [line for line in lines if line.startswith('PAGECHECK ')]
+    ready = [line for line in lines if line.startswith('READY ')]
+    if (len(summaries) != 1 or ready != ['READY pages-restored'] or
+            lines.index(summaries[0]) >= lines.index(ready[0])):
+        raise SmokeError('missing, duplicate or out-of-order page self-test summary')
+    names = ('orders exhausted committed redeemed cancelled checksum managed protected '
+             'free_before free_after allocated_before allocated_after reserved_after').split()
+    fields = summaries[0].split(' ')[1:]
+    if len(fields) != len(names) or any(not re.fullmatch(key + r'=[0-9a-f]{16}', field)
+                                       for key, field in zip(names, fields)):
+        raise SmokeError('invalid page self-test summary fields')
+    values = dict(zip(names, (int(field.split('=')[1], 16) for field in fields)))
+    if (not 1 <= values['orders'] <= 17 or not values['exhausted'] or
+            (values['committed'], values['redeemed'], values['cancelled']) != (8, 8, 9) or
+            values['protected'] != 256 or values['reserved_after'] or
+            values['free_before'] != values['free_after'] or
+            values['allocated_before'] != values['allocated_after'] or
+            values['free_after'] + values['allocated_after'] != values['managed'] or
+            values['exhausted'] + values['protected'] != values['free_before']):
+        raise SmokeError('page self-test accounting mismatch')
+    return values
+
+
+def serial_pages(command, serial, run_dir, record, timeout):
+    record['observation'] = 'serial-only'
+    record['argv'] = command
+    (run_dir / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
+    deadline = time.monotonic() + timeout
+    with (run_dir / 'qemu.log').open('wb') as output:
+        proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            while True:
+                text = serial.read_bytes().decode('ascii', errors='replace') if serial.is_file() else ''
+                if diagnostic_ready(text.replace('\r', ''), '\nREADY pages-restored\n'):
+                    record['pages'] = validate_serial_pages(text)
+                    record['guest_executed'] = True
+                    return
+                if proc.poll() is not None or time.monotonic() >= deadline:
+                    raise SmokeError('QEMU exited/timed out before the page self-test completed')
+                time.sleep(0.02)
+        finally:
+            _stop_group(proc)
+
+
 def exercise(args, run_dir, record):
     args.init_exit=getattr(args,'init_exit',None)
     args.init_elf=getattr(args,'init_elf',None)
@@ -1075,11 +1124,6 @@ def exercise(args, run_dir, record):
         if image.get('protocol') != 'arm64-image' or digest(boot_artifact) != image.get('sha256'):
             raise SmokeError('ARM64 boot Image/manifest mismatch')
     record["build"] = manifest
-    inspect = run_command([manifest["tools"]["readelf"]["path"], "-s", str(artifact)],
-                          run_dir / "symbols.log", args.timeout)
-    if not inspect.ok:
-        raise SmokeError("could not read bootstrap symbols")
-    names = symbols(Path(inspect.log).read_text())
     qemu = shutil.which(args.qemu or ("qemu-system-riscv64" if args.arch == "riscv" else "qemu-system-aarch64"))
     if qemu is None:
         raise SmokeError("QEMU not found")
@@ -1097,6 +1141,17 @@ def exercise(args, run_dir, record):
         record["firmware"] = None
         machine = ["-machine", "virt-11.1,gic-version=2,secure=off,virtualization=off", "-cpu", "cortex-a53"]
     serial = run_dir / "serial.log"
+    command = [qemu, *machine, '-accel', 'tcg', '-smp', str(getattr(args, 'cpus', 1)),
+               '-m', str(args.ram) + 'M', '-nodefaults', '-display', 'none', '-monitor', 'none',
+               '-no-reboot', '-global', 'virtio-mmio.force-legacy=false', '-kernel', str(boot_artifact)]
+    if getattr(args, 'serial_only', False):
+        return serial_pages(command + ['-serial', 'file:' + str(serial)], serial, run_dir,
+                            record, args.timeout)
+    inspect = run_command([manifest["tools"]["readelf"]["path"], "-s", str(artifact)],
+                          run_dir / "symbols.log", args.timeout)
+    if not inspect.ok:
+        raise SmokeError("could not read bootstrap symbols")
+    names = symbols(Path(inspect.log).read_text())
     pipe_qmp = getattr(args,'qmp_stdio',False) or os.environ.get('QMP_STDIO') == '1'
     record['qmp_transport'] = 'stdio' if pipe_qmp else 'unix'
     with tempfile.TemporaryDirectory(prefix="kernel-qmp-") as temporary:
@@ -1111,10 +1166,8 @@ def exercise(args, run_dir, record):
             input_fd=os.open(input_path,os.O_RDWR|os.O_NONBLOCK)
             serial_options=['-chardev','file,id=uart,path='+str(serial)+',input-path='+str(input_path),
                             '-serial','chardev:uart']
-        command = [qemu, *machine, "-accel", "tcg", "-smp", str(getattr(args,'cpus',1)), "-m", str(args.ram) + "M", "-nodefaults",
-                   "-display", "none", "-monitor", "none", *serial_options,
-                   "-qmp", 'stdio' if pipe_qmp else "unix:" + str(path) + ",server=on,wait=off", "-S", "-no-reboot",
-                   "-global", "virtio-mmio.force-legacy=false", "-kernel", str(boot_artifact)]
+        command += [*serial_options, '-qmp', 'stdio' if pipe_qmp else
+                    'unix:' + str(path) + ',server=on,wait=off', '-S']
         if args.initrd:
             command += ['-initrd', str(args.initrd)]
             record['initrd'] = dict(path=str(args.initrd), bytes=args.initrd.stat().st_size, sha256=digest(args.initrd))
@@ -1915,6 +1968,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument('--qmp-stdio', action='store_true', help='use QMP pipes without a socket listener')
+    parser.add_argument('--serial-only', action='store_true', help='validate the pages pilot from UART only')
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--ram", type=int, choices=(128, 256, 512, 2048, KMAP_BYTES // (1024 * 1024)), default=256)
@@ -1922,6 +1976,9 @@ def main():
     parser.add_argument('--cpus',type=int,choices=(1,4),default=1)
     parser.add_argument('--boot-hart',type=int,help='explicit OpenSBI cold-boot-harts policy for RISC-V fixtures')
     args = parser.parse_args()
+    if args.serial_only and (args.case != 'pages' or args.qmp_stdio or args.trace or args.initrd or
+                             args.virtio or args.boot_hart is not None):
+        parser.error('--serial-only requires pages without QMP, trace, initrd, virtio or boot-hart options')
     if args.case=='cpus' and args.cpus!=4:parser.error('cpus fixture requires --cpus 4')
     if args.boot_hart is not None and (args.arch!='riscv' or args.boot_hart not in range(args.cpus)):
         parser.error('preferred boot hart requires RISC-V and an enabled CPU index')

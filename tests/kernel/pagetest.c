@@ -133,6 +133,7 @@ pgtest(void)
       pgcancel(&credit, 6) != PG_BAD || pgcancel(&credit, 5) || pgreserved() || pgcheck())
     panic("page COW cancellation");
   same(&initial);
+  pgstat(&current);
   putstr("PAGECHECK orders=");
   puthex(success);
   putstr(" exhausted=");
@@ -145,5 +146,19 @@ pgtest(void)
   puthex(9);
   putstr(" checksum=");
   puthex(checksum);
+  putstr(" managed=");
+  puthex(initial.managed);
+  putstr(" protected=");
+  puthex(initial.protected);
+  putstr(" free_before=");
+  puthex(initial.free);
+  putstr(" free_after=");
+  puthex(current.free);
+  putstr(" allocated_before=");
+  puthex(initial.allocated);
+  putstr(" allocated_after=");
+  puthex(current.allocated);
+  putstr(" reserved_after=");
+  puthex(pgreserved());
   putstr("\n");
 }
