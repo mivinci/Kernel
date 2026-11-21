@@ -665,6 +665,57 @@ closeclient(u32 mode)
   pipeiotrace[0] = 7;
 }
 
+static volatile int brokenwrites;
+static int          brokenfd;
+
+static void
+brokenpipe(int signal)
+{
+  CHECK(signal == SIGPIPE && write(brokenfd, NULL, 0) == 0);
+  brokenwrites++;
+  errno = EDOM;
+}
+
+static void
+brokenclient(void)
+{
+  Connwork        *peer;
+  Pipecreate       pipe = {0};
+  Rkey             active = {0};
+  struct sigaction action = {0};
+  sigset_t         blocked, pending, mask;
+  isize            business;
+  int              fds[2], alias;
+  char             byte = 0;
+  CHECK(!sysfileimagefs(0, ADDRESS, &peer) &&
+        !sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
+  alias = dup(fds[1]);
+  CHECK(alias >= 0 && !close(fds[1]) && write(alias, "e", 1) == 1 && !close(alias) &&
+        read(fds[0], &byte, 1) == 1 && byte == 'e' && read(fds[0], &byte, 1) == 0 &&
+        !close(fds[0]));
+  CHECK(!sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
+  alias = dup(fds[0]);
+  CHECK(alias >= 0 && !close(fds[0]) && write(fds[1], "r", 1) == 1 && read(alias, &byte, 1) == 1 &&
+        byte == 'r' && !close(alias));
+  brokenfd = fds[1];
+  action.sa_handler = brokenpipe;
+  CHECK(!sigaction(SIGPIPE, &action, NULL) && write(brokenfd, "x", 1) == -1 && errno == EPIPE &&
+        brokenwrites == 1);
+  CHECK(!sigemptyset(&blocked) && !sigaddset(&blocked, SIGPIPE) &&
+        !sigprocmask(SIG_BLOCK, &blocked, &mask) && write(brokenfd, "x", 1) == -1 &&
+        errno == EPIPE && brokenwrites == 1 && !sigpending(&pending) &&
+        sigismember(&pending, SIGPIPE) == 1 && !sigprocmask(SIG_SETMASK, &mask, NULL) &&
+        brokenwrites == 2);
+  action.sa_handler = SIG_IGN;
+  CHECK(!sigaction(SIGPIPE, &action, NULL) && write(brokenfd, "x", 1) == -1 && errno == EPIPE &&
+        brokenwrites == 2 && !sigpending(&pending) && !sigismember(&pending, SIGPIPE));
+  action.sa_handler = SIG_DFL;
+  CHECK(!sigaction(SIGPIPE, &action, NULL));
+  pipeiotrace[0] = 7;
+  write(brokenfd, "x", 1);
+  CHECK(0);
+}
+
 static void
 run(const Bootview *boot)
 {
@@ -759,8 +810,10 @@ main(int argc, char **argv)
   CHECK(boot && argc == 1);
   if (argv[0][0] == 's')
     server(boot);
-  else if (argv[0][0] == 'S')
+  else if (argv[0][0] == 'S' || argv[0][0] == 'B')
     serviceloop(boot, 0);
+  else if (argv[0][0] == 'b')
+    brokenclient();
   else if (argv[0][0] == 'I')
     serviceloop(boot, 1);
   else if (argv[0][0] == 'i')

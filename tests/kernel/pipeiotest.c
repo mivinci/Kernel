@@ -76,18 +76,20 @@ testpair(const char *roles)
   for (;;) {
     ended = 0;
     for (i = 0; i < 2; i++) {
+      u32 reason = i && roles[i] == 'b' ? LIFE_SIGNAL : LIFE_EXIT;
+      u32 code = reason == LIFE_SIGNAL ? SIGNAL_PIPE : 42;
       CHECK(!lifestat(processes[i].life, &life));
       if (life.state != LIFE_ENDED)
         continue;
       CHECK(!spaceread(processes[i].space, pipeio_trace_address, trace, sizeof(trace)));
-      if (life.reason != LIFE_EXIT || life.code != 42 || trace[1]) {
+      if (life.reason != reason || life.code != code || trace[1]) {
         putstr(i ? "PIPEIOCLIENT line=" : "PIPEIOSERVER line=");
         puthex(trace[1]);
         putstr(" code=");
         puthex(life.code);
         putstr("\n");
       }
-      CHECK(life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 7 && !trace[1]);
+      CHECK(life.reason == reason && life.code == code && trace[0] == 7 && !trace[1]);
       ended++;
     }
     if (ended == 2)
@@ -119,4 +121,5 @@ pipeiotest(void)
   testpair("Tt");
   testpair("Uu");
   testpair("Rr");
+  testpair("Bb");
 }

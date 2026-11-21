@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage417：ARM64/RV64 QEMU `pipeio` 验证公开 `read()` / `write()` 的 EOF 和断管行为。最后一个写端别名关闭后，读端先收到缓冲数据再返回 EOF；存在读端别名时写入仍成功，最后一个别名关闭后触发 SIGPIPE。验证捕获（handler 内再次调用 write）、屏蔽后挂起、忽略及默认终止，并核对进程清理后页和费用回到基线。格式通过；管道仍由私有入口创建，未验继承引用。
+
 stage416：libc 对已发布的 fd 提供 `read()` / `write()`，单次提交至多一页并允许短返回。信号后先等待原请求裁决，确认无副作用才按实际 `SA_RESTART` 策略重启；未收尾的故障请求交给后台。写入业务返回 EPIPE 时发 SIGPIPE；本点未单独验收公开断管路径。ARM64/RV64 QEMU `pipeio` 验证公开 EINTR、零进展后的自动重启、短读和成功保持 errno。公开 `pipe()`、Bootfd 和生产服务仍待接。
 
 stage415：私有读写重启仅接受已请求取消且已排空的原生 CANCELLED 或业务零进展 EINTR。确认并释放旧 RPC 后，把原 File pin 移到新请求；WRITE 从原层私有快照重新填充共享页。ARM64/RV64 QEMU `pipeio` 验证未回复时拒绝重启、同号 fd 被替换及原应用缓冲和旧共享页被改写后仍向原管道写入原字节、成功请求不能再次重启。格式检查通过；公开读写尚待接入。
