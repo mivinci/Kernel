@@ -3,6 +3,7 @@
 #define _SIGNAL_H
 #include <image.h>
 #include <space.h>
+#include <local.h>
 #include <hal/context.h>
 #include <abi/signal.h>
 #define SIGNAL_BAD_FRAME_CAUSE UINT64_C(0x8000000000000065)
@@ -65,7 +66,8 @@ int sigbaseline(Imageid target, Imageid source);
    continuation, Rctx/Fix or native fork publication is provided. On failure
    the caller must cancel the unexposed child; cookie sequence never rolls back. */
 int sigfork(Imageid source, Spaceid source_space, Imageid target, Spaceid target_space);
-int sigforksnapshot(Imageid source, Spaceid source_space, Imageid target, Spaceid target_space);
+int sigforksnapshot(Imageid source, Rtable *source_table, Imageid target, Rtable *target_table,
+                    Prepid prep, Forkcheck checkpoint);
 int siginitialcheck(Imageid image, u64 mask, u64 defaults);
 int siginitial(Imageid image, u64 mask, u64 defaults);
 int sigstat(Imageid image, Sigstat *out);

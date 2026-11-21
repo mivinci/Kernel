@@ -1063,6 +1063,32 @@ preparewrite(Space *s, Hvs *vs, u64 address, u64 bytes)
   return 0;
 }
 int
+spaceprivate(Spaceid id, u64 address, u64 bytes)
+{
+  Space *s = find(id);
+  Mmap  *m;
+  Mem    backing;
+  u32    node;
+  u64    end;
+  if (!s || !bytes || bytes > COPY_BYTES || address < 0x10000 || address >= (1UL << 38) ||
+      bytes > (1UL << 38) - address)
+    return SP_BAD;
+  end = address + bytes;
+  while (address < end) {
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      m = &mappings[node];
+      if (address >= m->address && address - m->address < m->length)
+        break;
+    }
+    if (node == PG_NONE || memstat(m->mem, &backing) || backing.kind != MEM_RAM ||
+        backing.state != MEM_DATA || backing.acct.index != s->acct.index ||
+        backing.acct.generation != s->acct.generation)
+      return SP_BAD;
+    address = m->address + m->length;
+  }
+  return 0;
+}
+int
 spacewritable(Spaceid id, u64 address, u64 bytes)
 {
   Space    *s = find(id);

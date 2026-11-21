@@ -111,6 +111,25 @@ class SignalForkTests(unittest.TestCase):
             self.assertEqual(self.lib.siggetaction(image,10,C.byref(result)),0);self.assertEqual(result.kind,2)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_shared_signal_frame_is_rejected_before_rewriting_parent_cookie(self):
+        def body():
+            lib=self.lib
+            lib.spaceunmap.argtypes=[Spaceid,C.c_uint64]
+            lib.memshared.argtypes=[Acctid,C.c_uint64,C.POINTER(Memid)]
+            shared=Memid()
+            self.assertEqual(lib.spaceunmap(self.mapped,0x20000),0)
+            self.assertEqual(lib.memshared(self.aid,65536,C.byref(shared)),0)
+            self.mems.append(shared)
+            self.assertEqual(lib.spacemap(self.mapped,shared,0,0x20000,65536,3),0)
+            frame=self.push()
+            packet=self.packet(frame).raw
+            child=self.child()
+            self.fork(child,-18)
+            self.assertEqual(self.packet(frame).raw,packet)
+            self.assertEqual(self.childpacket(child[2],frame).raw,packet)
+            self.assertEqual(self.snapshot(child[1]).depth,0)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_two_active_layers_get_child_cookies_without_mutating_parent_frames(self):
         def body():
             outer=self.push();inner=self.push();parent=[self.packet(outer).raw,self.packet(inner).raw]

@@ -179,7 +179,7 @@ class ForkSnapshotTests(unittest.TestCase):
             self.assertEqual(self.pstat().allocated,allocated)
         for lib in self.libs:self.exercise(lib,body)
 
-    def check_checkpoint_expiry(self, staged):
+    def check_checkpoint_expiry(self, draft_type, space_type):
         def body():
             prep=self.owner();lib=self.lib
             mid,handle=self.addmem()
@@ -195,14 +195,14 @@ class ForkSnapshotTests(unittest.TestCase):
             callback_type=C.CFUNCTYPE(C.c_int,Prepid)
             @callback_type
             def checkpoint(identity):
-                if draft.subtype and bool(selfspace.subtype)==staged:
+                if (draft.subtype,selfspace.subtype)==(draft_type,space_type):
                     callbacks.append((identity.generation,draft.subtype,selfspace.subtype))
                     lib.test_now(deadline.deadline)
                 return 0
             lib.forksnapshotchecked.argtypes=[*lib.forksnapshot.argtypes,callback_type]
             self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
                 C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),-21)
-            self.assertEqual(callbacks,[(prep.generation,0xfffd,2 if staged else 0)])
+            self.assertEqual(callbacks,[(prep.generation,draft_type,space_type)])
             after=Memory()
             self.assertEqual(lib.memstat(mid,C.byref(after)),0)
             self.assertEqual(bytes(after),bytes(before))
@@ -211,10 +211,13 @@ class ForkSnapshotTests(unittest.TestCase):
         for lib in self.libs:self.exercise(lib,body)
 
     def test_mem_binding_checkpoint_rechecks_expiry_and_releases_draft(self):
-        self.check_checkpoint_expiry(False)
+        self.check_checkpoint_expiry(0xfffd,0)
 
     def test_local_load_checkpoint_rolls_back_partial_table_on_expiry(self):
-        self.check_checkpoint_expiry(True)
+        self.check_checkpoint_expiry(0xfffd,2)
+
+    def test_signal_checkpoint_expiry_rolls_back_loaded_resources(self):
+        self.check_checkpoint_expiry(4,2)
 
     def test_existing_cow_branch_and_parent_protection_survive_late_failure_unchanged(self):
         def body():

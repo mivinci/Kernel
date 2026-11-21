@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage187：fork 的 Signal 动作检查分批，活动帧写入前检查子映射私有性，防止共享栈改写父 cookie。36 项主机专项、格式检查及双架构 QEMU sigframe 通过。单个 Mem 的别名扫描仍待拆分。
+
 - stage186：fork 的 Local 装载分批检查 Prep，部分装载超期可撤销资源引用。1187 项主机测试、格式检查和双架构 QEMU sigframe 通过。单个 Mem 的别名扫描和 Signal 阶段仍待拆分。
 
 - stage185：fork 的 Mem 绑定扫描每至多八个源槽开放检查点，恢复后重验准备期限。23 项主机专项覆盖超期后草稿引用及父 PTE 回滚，双架构 QEMU sigframe 通过。

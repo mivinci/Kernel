@@ -3,6 +3,7 @@
 #include <rq.h>
 #include <diag.h>
 #include <abi/boot.h>
+#include <prep.h>
 typedef struct Sigctx   Sigctx;
 typedef struct Signal   Signal;
 typedef struct Sigframe Sigframe;
@@ -592,7 +593,7 @@ restorable(Spaceid space, const Sigctx *layer, const Hctx *candidate, Hctx *out)
 }
 static int
 forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space,
-           u32 snapshot)
+           Rtable *source_table, Rtable *target_table, Prepid prep, Forkcheck checkpoint)
 {
   Signal  *source = find(sourceid), *target = find(targetid);
   Image    parentimage, childimage;
@@ -639,6 +640,11 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
       return -ERR_NOTSUP;
   for (i = 0; i < SIGNAL_COUNT; i++) {
     const Sigact *action = &source->actions[i];
+    if (checkpoint && i % 8 == 0) {
+      error = prepforkcheckpoint(checkpoint, prep, source_table, target_table);
+      if (error)
+        return error;
+    }
     if (validnumber(i + 1) && i + 1 != SIGNAL_KILL && i + 1 != SIGNAL_STOP) {
       error = actionvalid(i + 1, action);
       if (error)
@@ -649,6 +655,11 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
       return -ERR_FAULT;
     if (action->kind == SIGNAL_IGNORE)
       ignore |= 1U << i;
+  }
+  if (checkpoint) {
+    error = prepforkcheckpoint(checkpoint, prep, source_table, target_table);
+    if (error)
+      return error;
   }
   for (i = 0; i < source->depth; i++) {
     from = &source->contexts[i];
@@ -674,6 +685,8 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
     error = restorable(target_space, from, &packet.user, &candidate);
     if (error)
       return error;
+    if (spaceprivate(target_space, from->frame, sizeof(packet)))
+      return -ERR_NOTSUP;
     if (spacewritable(target_space, from->frame, sizeof(packet)))
       return -ERR_FAULT;
     for (j = 0; j < i; j++)
@@ -690,7 +703,7 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
                    sizeof(cookies[i])))
       return -ERR_FAULT;
   }
-  if (snapshot && spacesnapshotcommit(source_space, target_space))
+  if (source_table && spacesnapshotcommit(source_space, target_space))
     return -ERR_BUSY;
   if (policy(targetid, &source->actions[SIGNAL_CHLD - 1]))
     panic("fork child signal policy");
@@ -724,12 +737,16 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
 int
 sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space)
 {
-  return forksignal(sourceid, source_space, targetid, target_space, 0);
+  Prepid none;
+  none.generation = none.index = none.reserved = 0;
+  return forksignal(sourceid, source_space, targetid, target_space, NULL, NULL, none, NULL);
 }
 int
-sigforksnapshot(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space)
+sigforksnapshot(Imageid sourceid, Rtable *source, Imageid targetid, Rtable *target, Prepid prep,
+                Forkcheck checkpoint)
 {
-  return forksignal(sourceid, source_space, targetid, target_space, 1);
+  return forksignal(sourceid, source->space, targetid, target->space, source, target, prep,
+                    checkpoint);
 }
 static int
 deliverframe(Signal *s, Spaceid space, Hctx *context, u32 signum, const Siginfo *info, u32 pending)

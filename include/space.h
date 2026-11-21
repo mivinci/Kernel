@@ -146,6 +146,7 @@ int spaceread(Spaceid id, u64 address, void *target, u64 bytes);
 /* Read-only preflight for a logically writable ordinary user range, including
    all COW aliases. Does not redeem credit, change PTEs or copy user data. */
 int spacewritable(Spaceid id, u64 address, u64 bytes);
+int spaceprivate(Spaceid id, u64 address, u64 bytes);
 int spacewrite(Spaceid id, u64 address, const void *data, u64 bytes);
 /* Full input/output/physical-overlap preflight before COW. Reacquire both
    PA snapshots after separation; SP_CONFLICT means physical overlap. */

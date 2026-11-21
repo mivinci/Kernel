@@ -16,8 +16,8 @@ struct Hctx;
    grant authority, install Fix, or publish/run it. */
 int forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
                  const struct Hctx *parent, struct Hctx *child, Prepid prep);
-/* A checkpoint runs between mapping, Mem binding and Local load batches. It
-   returns with IRQs masked and both roots inactive, or hands off the Prep. */
+/* A checkpoint runs between preparation batches. It returns with IRQs masked
+   and both roots inactive, or hands off the Prep. */
 int forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
                         const struct Hctx *parent, struct Hctx *child, Prepid prep,
                         Forkcheck checkpoint);
