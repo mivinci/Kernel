@@ -20,6 +20,7 @@
 #include "syscall.h"
 #include "operation.h"
 #include "argument.h"
+#include "fix.h"
 #define RCTX_ROUTE_NONE 0
 #define RCTX_ROUTE_BOOT 1
 #define RCTX_ROUTE_OP   2
@@ -84,6 +85,8 @@ STATIC_ASSERT(sizeof(Rbank) == 24 + RCTX_LAYERS * (RCTX_BYTES + RCTX_SNAPSHOT_BY
    Prepare/capture/result/finish require caller caught-signal exclusion. */
 /* SIGRETURN keeps its own NORETURN stub, never leaves a live Rctx behind. */
 isize sysctxinit(Rbank *bank, Connpeer self);
+/* Check all decoded Fix layers against the inherited bank before repair. */
+isize sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COUNT]);
 isize sysctxprepare(Rbank *bank, Connpeer self, u32 layer, u64 number, const u64 args[7],
                     Rkey *out);
 /* Protected, inactive PREPARED only. Checked copy accepts input once; failed

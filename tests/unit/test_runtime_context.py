@@ -62,6 +62,7 @@ class RuntimeContextTests(unittest.TestCase):
                 'sysctxresult':[C.POINTER(Bank),Peer,Key,C.POINTER(C.c_int64),C.POINTER(Result)],
                 'sysctxfinish':[C.POINTER(Bank),Peer,Key],
                 'sysctxdecode':[C.POINTER(Context),C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64],
+                'sysctxfixcheck':[C.POINTER(Bank),Peer,C.c_void_p],
                 'sysforkdecode':[C.c_void_p,C.c_uint64,C.c_uint64,C.c_void_p],
                 'testreset':[C.c_uint64],'testget':[C.c_uint32],'testseen':[]}
             for name,args in signatures.items():getattr(lib,name).argtypes=args;getattr(lib,name).restype=C.c_int64
@@ -69,6 +70,23 @@ class RuntimeContextTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
+
+    def test_fix_context_check_preserves_bank_and_verifies_all_layers(self):
+        for _,_,lib in self.libs:
+            bank=Bank()
+            owner=Peer(pid(1),9)
+            key=Key()
+            self.assertEqual(lib.sysctxinit(C.byref(bank),owner),0)
+            self.assertEqual(lib.sysctxprepare(C.byref(bank),owner,0,0x4f,None,C.byref(key)),0)
+            layers=(C.c_uint64*6)(key.sequence,1,0,0,0,0)
+            before=bytes(bank)
+            self.assertEqual(lib.sysctxfixcheck(C.byref(bank),owner,layers),0)
+            layers[1]=2
+            self.assertEqual(lib.sysctxfixcheck(C.byref(bank),owner,layers),-6)
+            layers[1]=1
+            layers[4],layers[5]=key.sequence,3
+            self.assertEqual(lib.sysctxfixcheck(C.byref(bank),owner,layers),-4)
+            self.assertEqual(bytes(bank),before)
 
     def test_fork_decoder_reads_only_successful_child_returns_inside_window(self):
         for arch,kind,lib in self.libs:

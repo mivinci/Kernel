@@ -368,7 +368,9 @@ forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64
                             &forkcapture) == 1,
           242);
   REQUIRE(!sysfixchild(&forkcapture, forkbytes, forksource, forkimage, &view) &&
-              !sysfixlayers(&view, &layers) && layers[0].action == FIX_LAYER_COMPLETE,
+              !sysfixlayers(&view, &layers) &&
+              !sysctxfixcheck(&runtime_contexts, context_self, layers) &&
+              layers[0].action == FIX_LAYER_UNSENT,
           244);
   __sys_sigreturn((void *) address);
 }
@@ -413,6 +415,11 @@ forkprepuser(void)
   REQUIRE(!__sys_getid(&source, &image, &parent), 241);
   forksource = source;
   forkimage = image;
+  context_self.pid = source;
+  context_self.image = image;
+  REQUIRE(!sysctxinit(&runtime_contexts, context_self) &&
+              !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key),
+          245);
   action.kind = SIGNAL_HANDLER;
   action.handler = (u64) forktrampoline;
   action.trampoline = (u64) forktrampoline;
@@ -445,8 +452,8 @@ forkprepuser(void)
   fix.header.source_image = image;
   fix.header.target_pid = child;
   fix.header.contexts_off = sizeof(Fix);
-  fix.contexts[0].sequence = 1;
-  fix.contexts[0].action = FIX_LAYER_COMPLETE;
+  fix.contexts[0].sequence = runtime_key.sequence;
+  fix.contexts[0].action = FIX_LAYER_UNSENT;
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;

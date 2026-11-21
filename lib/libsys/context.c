@@ -1,5 +1,6 @@
 #include "private/context.h"
 #include <abi/syscall.h>
+STATIC_ASSERT(FIX_LAYER_COUNT == RCTX_LAYERS, fix_context_layer_count);
 static int
 identity(Connpeer self)
 {
@@ -55,6 +56,52 @@ sysctxlookup(Rbank *bank, Connpeer self, Rkey key, Rctx **out)
             (u64) (context->input_argc + context->input_envc + 2) * sizeof(char *))))
     return -ERR_STATE;
   *out = context;
+  return 0;
+}
+isize
+sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COUNT])
+{
+  u32   i;
+  isize error = source(bank, parent);
+  if (error)
+    return error;
+  if (!layers)
+    return -ERR_INVALID;
+  for (i = 0; i < RCTX_LAYERS; i++) {
+    Rctx *context = &bank->contexts[i];
+    Rkey  key;
+    u64   action = layers[i].action;
+    if (action == FIX_LAYER_EMPTY) {
+      if (layers[i].sequence || context->phase != RCTX_FREE || context->active ||
+          context->route.kind != RCTX_ROUTE_NONE)
+        return -ERR_STATE;
+      continue;
+    }
+    key.sequence = layers[i].sequence;
+    key.layer = i;
+    key.reserved = 0;
+    error = sysctxlookup(bank, parent, key, &context);
+    if (error)
+      return error;
+    if (context->route.kind > RCTX_ROUTE_OP)
+      return -ERR_STATE;
+    switch (action) {
+    case FIX_LAYER_UNSENT:
+      if (context->phase != RCTX_PREPARED)
+        return -ERR_STATE;
+      break;
+    case FIX_LAYER_COMPLETE:
+      if (context->phase != RCTX_DONE && context->phase != RCTX_CLEANING)
+        return -ERR_STATE;
+      break;
+    case FIX_LAYER_INTERRUPT:
+      if (context->phase < RCTX_WAITING)
+        return -ERR_STATE;
+      break;
+    default:
+      return -ERR_INVALID;
+    }
+  }
   return 0;
 }
 isize
