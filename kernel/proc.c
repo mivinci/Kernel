@@ -669,19 +669,10 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   p->configured = CONFIG_IMAGE;
   return 0;
 }
-int
-procpublish(Handle pid)
+static int
+publishproc(Proc *p, u64 fixva)
 {
-  Proc *p = find(pid);
-  u32   slot;
-  int   error;
-  if (!p)
-    return -ERR_STALE;
-  if (p->state != PROC_CONSTRUCT || p->configured != CONFIG_IMAGE)
-    return -ERR_STATE;
-  error = validate(p, &p->stage.config);
-  if (error)
-    return error;
+  int error;
   if (p->prep.generation) {
     error = preppublishcheck(p->prep);
     if (error)
@@ -690,6 +681,10 @@ procpublish(Handle pid)
   error = lifepublish(p->life);
   if (error)
     return error;
+  if (fixva) {
+    spaceforkpublish(p->space);
+    hal_user_forkfix(p->user, fixva);
+  }
   if (imageactivate(p->identity))
     panic("process image publication");
   if (p->prep.generation) {
@@ -701,14 +696,50 @@ procpublish(Handle pid)
   }
   p->stage.wait.kind = 0;
   p->stage.wait.subject.peer = 0;
-  slot = handleindex(pid);
-  p->state = PROC_READY;
-  if (readytail == PG_NONE)
-    readyhead = slot;
-  else
-    processes[readytail].next = slot;
-  readytail = slot;
+  ready(p);
   return 0;
+}
+int
+procpublish(Handle pid)
+{
+  Proc *p = find(pid);
+  int   error;
+  if (!p)
+    return -ERR_STALE;
+  if (p->state != PROC_CONSTRUCT || p->configured != CONFIG_IMAGE)
+    return -ERR_STATE;
+  error = validate(p, &p->stage.config);
+  return error ? error : publishproc(p, 0);
+}
+int
+procforkcommit(Rtable *source, Handle construct, u64 address, u64 bytes, Handle *out)
+{
+  Prepid prep;
+  Handle pid;
+  Proc  *p;
+  int    error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = 0;
+  if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
+    return -ERR_STATE;
+  error = localtarget(source, construct, PREP_PUBLISH, &prep, &pid);
+  if (error)
+    return error;
+  p = find(pid);
+  if (!p || p->state != PROC_CONSTRUCT || p->configured != CONFIG_FORK ||
+      p->prep.index != prep.index || p->prep.generation != prep.generation)
+    return -ERR_STATE;
+  if (bytes < 64 || bytes > 65536 || address & 7 || address < BOOT_USER_LO ||
+      address >= BOOT_USER_HI || bytes > BOOT_USER_HI - address)
+    return -ERR_INVALID;
+  error = spaceforkfix(p->space, address, bytes);
+  if (error)
+    return error == SP_BUSY ? -ERR_BUSY : -ERR_FAULT;
+  error = publishproc(p, address);
+  if (!error)
+    *out = pid;
+  return error;
 }
 int
 procdestroy(Handle pid)

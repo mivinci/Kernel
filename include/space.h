@@ -86,6 +86,9 @@ int spacefrozen(Spaceid id);
 int spacesnapshotroot(Spaceid id);
 u32 spacelookup(Spaceid id, u64 va, Hpte *out);
 int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep);
+int spaceforkmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
+int spaceforkfix(Spaceid id, u64 address, u64 bytes);
+void spaceforkpublish(Spaceid id);
 /* Ordinary DATA alias admission also refuses a Mem with any frozen alias
    root, even when id itself is not frozen. No new mapping/ref is acquired. */
 int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);

@@ -11,6 +11,9 @@
 #define MAP_NEW_MASK       0x00ffff00U
 #define MAP_SNAPSHOT_OWNER 0x20000000U
 #define MAP_JOURNALED      0x10000000U
+#define MAP_FORK_LOAD      0x08000000U
+#define MAP_SNAPSHOT       1
+#define MAP_CONSTRUCT      2
 STATIC_ASSERT(MEM_PAGES <= 16, protection_mask_capacity);
 STATIC_ASSERT((BOOT_PACKAGE_HI - BOOT_PACKAGE_LO) % (MEM_PAGES * PAGE_SIZE) == 0,
               boot_slice_window);
@@ -514,7 +517,7 @@ spacelookup(Spaceid id, u64 va, Hpte *out)
 
 static int
 map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Prepid prep, u32 cow,
-    u32 building)
+    u32 mode)
 {
   Space    *s = find(id);
   Mem       mem;
@@ -528,7 +531,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
     return SP_BAD;
   if (s->busy || s == active ||
       (insnapshot(s) &&
-       !(building && snapshot && s == find(snapshot->target) &&
+       !(mode == MAP_SNAPSHOT && snapshot && s == find(snapshot->target) &&
          (snapshot->phase == SNAP_MAP_FRESH || snapshot->phase == SNAP_MAP_REUSE))))
     return SP_BUSY;
   if (!length || length > (u64) MEM_PAGES * PAGE_SIZE || (address | offset | length) & PAGE_MASK ||
@@ -540,7 +543,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   /* A different, still-unfrozen root must not prepend an alias to a private
      Mem already retained by a frozen root. Internal snapshot installation
      alone may extend the exact child prefix admitted by the transaction. */
-  if (!building && mem.managers && mem.kind == MEM_RAM && mem.state == MEM_DATA) {
+  if (mode != MAP_SNAPSHOT && mem.managers && mem.kind == MEM_RAM && mem.state == MEM_DATA) {
     error = aliasmapcheck(memory);
     if (error)
       return error;
@@ -565,7 +568,8 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   /* Snapshot installs the next exact source record into its frozen prefix.
      Source mappings were admitted before construction; their nonoverlap is
      already enforced by ordinary map. No repeated target-prefix scan. */
-  for (node = building ? PG_NONE : s->maps; node != PG_NONE; node = mappings[node].next) {
+  for (node = mode == MAP_SNAPSHOT ? PG_NONE : s->maps; node != PG_NONE;
+       node = mappings[node].next) {
     Mmap *m = &mappings[node];
     if (address < m->address + m->length && m->address < address + length)
       return SP_CONFLICT;
@@ -626,6 +630,8 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   mappings[node].offset = offset;
   mappings[node].mem = memory;
   mappings[node].prot = (u32) prot | (cow ? MAP_PROTECTED : 0);
+  if (mode == MAP_CONSTRUCT)
+    mappings[node].prot |= MAP_FORK_LOAD;
   mappings[node].owner.load = prep;
   mappings[node].next = s->maps;
   linkmem(node, s);
@@ -1288,6 +1294,61 @@ spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 pro
 }
 
 int
+spaceforkmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot)
+{
+  Prepid none;
+  none.generation = none.index = none.reserved = 0;
+  return map(id, mem, offset, address, length, prot, none, 0, MAP_CONSTRUCT);
+}
+int
+spaceforkfix(Spaceid id, u64 address, u64 bytes)
+{
+  Space    *s = find(id);
+  Mmap     *m;
+  Mem       backing;
+  Hpte      entry;
+  Hvs       vs;
+  Sourcectx context;
+  u64       end, page, pa;
+  u32       node;
+  if (!s || bytes < 64 || bytes > 65536 || address & 7 || address < BOOT_USER_LO ||
+      address >= BOOT_USER_HI || bytes > BOOT_USER_HI - address)
+    return SP_BAD;
+  if (s->busy || s->frozen || s == active)
+    return SP_BUSY;
+  view(s, &vs, &context);
+  end = address + bytes;
+  for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end;) {
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      m = &mappings[node];
+      if (page >= m->address && page - m->address < m->length)
+        break;
+    }
+    if (node == PG_NONE || m->prot != (MAP_FORK_LOAD | VM_READ) || memstat(m->mem, &backing) ||
+        backing.kind != MEM_RAM || backing.state != MEM_DATA || backing.writes ||
+        backing.acct.index != s->acct.index || backing.acct.generation != s->acct.generation)
+      return SP_BAD;
+    do {
+      if (mempage(m->mem, (u32) ((m->offset + page - m->address) / PAGE_SIZE), &pa) ||
+          !hal_vm_lookup(&vs, page, &entry) || entry.pa != pa ||
+          entry.prot != (VM_READ | VM_USER) || entry.attr != VM_NORMAL)
+        return SP_BAD;
+      page += PAGE_SIZE;
+    } while (page < end && page < m->address + m->length);
+  }
+  return 0;
+}
+void
+spaceforkpublish(Spaceid id)
+{
+  Space *s = find(id);
+  u32    node;
+  if (!s || s->busy || s->frozen || s == active)
+    panic("fork publication space");
+  for (node = s->maps; node != PG_NONE; node = mappings[node].next)
+    mappings[node].prot &= ~MAP_FORK_LOAD;
+}
+int
 spacecowmap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length)
 {
   Prepid none;
@@ -1599,7 +1660,7 @@ spacesnapshotbuild(Spaceid sourceid, Spaceid targetid)
           return snapshotfail(tree, error);
       }
       error = map(targetid, memory, m->offset, m->address, m->length, logicalprot(m), none,
-                  backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE), 1);
+                  backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE), MAP_SNAPSHOT);
       if (error) {
         if (fresh && memfree(memory))
           panic("snapshot unmapped Mem rollback");

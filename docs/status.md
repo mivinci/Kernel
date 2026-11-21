@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage191：原生 forkcommit 校验 Fix 权限与本次构造归属，双架构 QEMU sigframe 验证子真实返回及父 wait，格式检查通过。运行库 Fix 解析、修复和公开 fork 仍待接。
+
 - stage190：原生 forkprep/forkabort 已接，按当前 CREATE 和父实际规格准入。双架构 QEMU sigframe 验证真实陷阱、未发布孩子撤销和账目回收。Fix 校验、forkcommit 与运行库接续仍待实现。
 
 - stage189：未映射 DATA 别名的 PTE 核验和写保护每批最多 32 页，超期回滚已覆盖。76 项主机专项、格式检查及双架构 QEMU sigframe 通过。别名登记与根冻结仍在一次临界区。

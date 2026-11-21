@@ -1210,6 +1210,8 @@ localmap(Rtable *t, Handle space, Handle mem, u64 offset, u64 address, u64 lengt
     return -ERR_DENIED;
   if (s->subtype == LOCAL_SPACE && scope.generation)
     error = spaceloadmap(target, memory(m), offset, address, length, prot, scope);
+  else if (s->subtype == LOCAL_CONSTRUCT && info.origin == PREP_FORK)
+    error = spaceforkmap(target, memory(m), offset, address, length, prot);
   else
     error = spacemap(target, memory(m), offset, address, length, prot);
   if (error == SP_CONFLICT)

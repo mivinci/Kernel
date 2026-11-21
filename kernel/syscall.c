@@ -63,6 +63,7 @@ syscall(Hctx *context)
   case SYS_SIGACTION:
   case SYS_COPY:
   case SYS_CONFIGURE:
+  case SYS_FORKCOMMIT:
   case SYS_GETCRED:
   case SYS_IRQBIND:
     used = 7;
@@ -263,6 +264,11 @@ syscall(Hctx *context)
     break;
   case SYS_FORKABORT:
     status = procforkabort(table, (Handle) args[0]);
+    break;
+  case SYS_FORKCOMMIT:
+    status = procforkcommit(table, (Handle) args[0], args[1], args[2], &pid);
+    if (!status)
+      outputs[0] = (u64) pid;
     break;
   case SYS_WAIT:
     if (args[1] > 7) {

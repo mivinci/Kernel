@@ -57,6 +57,7 @@ void hal_syscall_finish(Hctx *context, isize status, const u64 outputs[7]);
    mapped permissions. fixva=0 is allowed for an unpublished preparation.
    Parent and output stay unchanged on error; buffers must be disjoint. */
 int  hal_user_fork(Hctx *out, const Hctx *parent, u64 pid, u64 fixva);
+void hal_user_forkfix(Hctx *child, u64 fixva);
 void hal_trap_decode(const Hctx *context, Htrap *trap);
 /* Normalized abi/signal.h FAULT reason. PAGEFAULT initially returns MAPERR;
    the core distinguishes a present denied mapping after COW handling.

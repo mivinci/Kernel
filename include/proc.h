@@ -48,6 +48,7 @@ int procforkbuild(Setid set, Rtable *source, const struct Hctx *parent, u32 pend
 int procforkprep(Rtable *source, const struct Hctx *parent, Handle authority, u32 reserve,
                  Handle *construct, Handle *pid);
 int procforkabort(Rtable *source, Handle construct);
+int procforkcommit(Rtable *source, Handle construct, u64 address, u64 bytes, Handle *pid);
 int procdestroyview(Rtable *source, Handle construct);
 /* Native fixed-Life CONTROL operations. */
 int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,

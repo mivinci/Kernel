@@ -354,6 +354,8 @@ forkprepuser(void)
 {
   Sysret    result;
   Createarg create = {128, 128, 16, 1, 0, 0, 0, 0, 0};
+  Allocarg  allocate = {4096, ALLOC_DATA, 0, 0, 0, 0};
+  Maparg    map = {0, 0, 0x30000000, 4096, 1, 0};
   u64       args[7] = {0};
   u64       authority = frame_trace[18], child, construct;
   REQUIRE(__sys_enter(SYS_FORKPREP, args, &result) == -ERR_BAD_HANDLE, 224);
@@ -380,6 +382,40 @@ forkprepuser(void)
   args[1] = 0;
   REQUIRE(__sys_enter(SYS_FORKABORT, args, &result) == -ERR_STATE, 231);
   REQUIRE(!__sys_enter(SYS_DESTROY, args, &result), 232);
+  args[0] = authority;
+  REQUIRE(!__sys_enter(SYS_FORKPREP, args, &result), 233);
+  if (!result.values[0]) {
+    Handle self, parent;
+    u64    image;
+    REQUIRE(!__sys_getid(&self, &image, &parent) && result.values[1] == (u64) self &&
+                result.values[2] == map.address && !*(const volatile u64 *) map.address,
+            234);
+    return 43;
+  }
+  construct = result.values[0];
+  child = result.values[1];
+  args[0] = construct;
+  args[1] = (u64) frame_trace;
+  args[2] = 64;
+  REQUIRE(__sys_enter(SYS_FORKCOMMIT, args, &result) == -ERR_FAULT, 235);
+  args[1] = (u64) &allocate;
+  args[2] = 0;
+  REQUIRE(!__sys_enter(SYS_ALLOC, args, &result), 236);
+  map.mem = (Handle) result.values[0];
+  args[1] = (u64) &map;
+  REQUIRE(!__sys_enter(SYS_MAP, args, &result), 237);
+  args[1] = map.address;
+  args[2] = 64;
+  REQUIRE(!__sys_enter(SYS_FORKCOMMIT, args, &result) && result.values[0] == child, 238);
+  args[1] = args[2] = 0;
+  {
+    isize status = __sys_enter(SYS_FORKABORT, args, &result);
+    REQUIRE(status == -ERR_REVOKED || status == -ERR_BAD_HANDLE, 239);
+  }
+  args[0] = child;
+  REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == child &&
+              result.values[1] == WAIT_EXITED && result.values[2] == 43,
+          240);
   frame_trace[0] = 99;
   return 42;
 }

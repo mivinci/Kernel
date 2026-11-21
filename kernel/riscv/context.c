@@ -194,3 +194,8 @@ hal_user_fork(Hctx *out, const Hctx *parent, u64 pid, u64 fixva)
   out->tf.pc += 4;
   return 0;
 }
+void
+hal_user_forkfix(Hctx *child, u64 fixva)
+{
+  child->tf.x[13] = fixva;
+}
