@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage245：子侧信号入口与普通返回共用 `sysforkrepair`，成功后记下精确身份和 Fix 地址，重复进入不再转换。双架构 sigframe、10 项主机回归和格式通过。
+
 - stage244：父侧 `sysforkfinish` 串起上下文准入、Fix 组装、发布和失败撤销。18 项主机回归、格式及双架构 sigframe/libsys 通过；后端继承与公开 `fork` 仍待接。
 
 - stage243：父侧 Fix 装载、提交和失败撤销已串联，未完成清理可重试。8 项主机测试、格式与双架构 sigframe/libsys 通过；后端准备与公开入口仍待接。

@@ -366,7 +366,7 @@ static Fdtable   forkfds;
 static Filepool  forkfiles;
 static Fdtag     forkreserved;
 static Filestage forkstage;
-static int       forkfixed;
+static Forkdone  forkdone;
 static void
 forkrepair(const Forkret *result)
 {
@@ -389,11 +389,12 @@ forkrepair(const Forkret *result)
               !sysfixlayers(&view, &layers) && !sysfixconnections(&view, &connections, &count) &&
               !count && !connections,
           244);
-  if (!forkfixed) {
+  if (!forkdone.child.pid) {
     Fdview reserved;
     REQUIRE(
-        sysforkstateapply(&state, context_self, child, layers, NULL, 0, connections, count) ==
+        sysforkrepair(&forkdone, &state, context_self, result, FIX_BASE_BYTES, NULL, 0) ==
                 -ERR_NOTSUP &&
+            !forkdone.child.pid &&
             !sysforkstatecheck(&state, context_self, child, layers, NULL, 0, connections, count) &&
             !sysfdobserve(&forkfds, forkreserved.index, &reserved) &&
             reserved.tag.state == SYSFD_RESERVED &&
@@ -409,11 +410,15 @@ forkrepair(const Forkret *result)
             !sysfilerefstaged(&forkfiles, context_self, &forkstage) &&
             !sysfilerefabort(&forkfiles, context_self, &forkstage),
         254);
-    REQUIRE(!sysforkstateapply(&state, context_self, child, layers, NULL, 0, connections, count),
+  } else {
+    Forkret wrong = *result;
+    wrong.fix = (const void *) ((u64) result->fix + 8);
+    REQUIRE(sysforkrepair(&forkdone, &state, context_self, &wrong, FIX_BASE_BYTES, NULL, 0) ==
+                -ERR_STALE,
             244);
-    forkfixed = 1;
   }
-  REQUIRE(forkdirectory.self.pid == child.pid && forkfiles.self.pid == child.pid &&
+  REQUIRE(!sysforkrepair(&forkdone, &state, context_self, result, FIX_BASE_BYTES, NULL, 0) &&
+              forkdirectory.self.pid == child.pid && forkfiles.self.pid == child.pid &&
               runtime_contexts.self.pid == child.pid && forkdirectory.self.image == child.image &&
               forkfiles.self.image == child.image && runtime_contexts.self.image == child.image &&
               !sysfdcheck(&forkfds) && !sysfilerefcheck(&forkfiles, child) &&
@@ -488,7 +493,7 @@ forkprepuser(void)
   sysfdinit(&forkfds);
   REQUIRE(!sysconninit(&forkdirectory, context_self) &&
               !sysconnbind(&forkdirectory, context_self, &forkoldtag) &&
-              !sysfilerefinit(&forkfiles, context_self) && !forkfixed &&
+              !sysfilerefinit(&forkfiles, context_self) && !forkdone.child.pid &&
               !sysfdreserve(&forkfds, 3, &forkreserved) &&
               !sysfilerefreserve(&forkfiles, context_self, 1, &forkstage),
           252);
@@ -524,7 +529,8 @@ forkprepuser(void)
     isize    status;
     Connpeer peer;
     forkrepair(&forked);
-    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self && forkfixed == 1 &&
+    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
+                forkdone.child.pid == self && forkdone.child.image == childimage &&
                 (u64) forked.fix == address && ppid == source && forkcapture.pid == self &&
                 forkcapture.fix == forked.fix && !forkcapture.construct,
             234);
@@ -568,7 +574,7 @@ forkprepuser(void)
     Fdview    reserved;
     REQUIRE(!sysconnview(&forkdirectory, forkoldtag, &entry) && entry.state == SYSCONN_UNCLAIMED &&
                 !sysconncheck(&forkdirectory, context_self) &&
-                !sysfilerefcheck(&forkfiles, context_self) && !forkfixed &&
+                !sysfilerefcheck(&forkfiles, context_self) && !forkdone.child.pid &&
                 !sysfdobserve(&forkfds, forkreserved.index, &reserved) &&
                 reserved.tag.state == SYSFD_RESERVED &&
                 reserved.tag.generation == forkreserved.generation &&
