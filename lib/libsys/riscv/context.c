@@ -20,7 +20,7 @@ sysctxdecode(Rctx *context, void *raw, u64 begin, u64 end, u64 resume)
 {
   Trapframe *trap = raw;
   u32        i;
-  if (!context || !trap || begin >= end || (begin & 3) || (end & 3) || resume != end)
+  if (!context || !trap || begin >= end || (begin & 1) || ((end - begin) & 3) || resume != end)
     return -ERR_INVALID;
   if (trap->pc < begin || trap->pc >= end || (trap->pc - begin) & 3 ||
       trap->x[8] != (u64) (uintptr_t) context)

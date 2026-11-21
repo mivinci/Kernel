@@ -121,6 +121,17 @@ class RuntimeContextTests(unittest.TestCase):
             self.assertEqual(bytes(result),bytes(C.sizeof(result)))
             self.assertEqual(lib.sysctxfinish(C.byref(bank),child,key),0)
 
+    def test_riscv_context_window_can_start_on_halfword_boundary(self):
+        for arch,kind,lib in self.libs:
+            if arch!='riscv':continue
+            for pc in range(0x10002,0x10042,4):
+                ctx=Context();ctx.phase=2;ctx.active=1
+                frame=frames.Context(kind);frame.value.tf.pc=pc
+                frame.value.tf.x[8]=C.addressof(ctx)
+                frame.value.tf.x[11]=0x1234
+                self.assertEqual(lib.sysctxdecode(C.byref(ctx),frame.pointer,0x10002,0x10042,0x10042),1)
+                self.assertEqual((ctx.phase,ctx.result.values[0],frame.value.tf.pc),(3,0x1234,0x10042))
+
     def test_fix_raw_checks_last_layer_before_rebinding_and_preserves_completed_tuple(self):
         for _,_,lib in self.libs:
             bank=Bank();owner=Peer(pid(1),9);child=Peer(pid(2),10)
