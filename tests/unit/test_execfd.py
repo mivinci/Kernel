@@ -23,6 +23,11 @@ class Capture(C.Structure):
                 ('count', C.c_uint32), ('ready', C.c_uint32)]
 
 
+class WireRow(C.Structure):
+    _fields_ = [(name, U) for name in ('fd', 'flags', 'backend_pid', 'backend_image',
+                                        'session', 'reference')]
+
+
 class ExecFdTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -57,6 +62,8 @@ class ExecFdTests(unittest.TestCase):
             'sysconninvalidate': [cp, Tag],
             'sysexecfds': [C.POINTER(Capture), fp, pp, cp, Peer],
             'sysexecfdrelease': [C.POINTER(Capture)],
+            'sysexecfdmanifest': [C.POINTER(Capture), Peer, U, U, C.POINTER(U),
+                                  C.POINTER(WireRow), U],
         }
         for name, args in calls.items():
             fn = getattr(cls.lib, name)
@@ -137,3 +144,53 @@ class ExecFdTests(unittest.TestCase):
         self.assertEqual(self.lib.sysconninvalidate(self.cp, self.tag), 0)
         self.assertEqual(self.snapshot(), -14)
         self.assertEqual(self.ref(file).pins, 0)
+
+    def test_manifest_filters_exact_backend_and_preserves_per_descriptor_flags(self):
+        first = self.new(80, 81)
+        self.put(0, first)
+        self.assertEqual(self.lib.sysfilerefalias(self.pp, self.self, first), 0)
+        self.put(1, first, 1)
+        restarted = Peer(self.peer.pid, 8)
+        self.assertEqual(self.lib.sysconnbind(self.cp, restarted, C.byref(self.tag)), 0)
+        self.put(2, self.new(90, 91), 1)
+        self.assertEqual(self.snapshot(), 0)
+        args, rows = (U * 8)(), (WireRow * 2)()
+        pack = self.lib.sysexecfdmanifest
+        self.assertEqual(pack(C.byref(self.out), self.peer, 11, 123, args, rows, 2), 2)
+        self.assertEqual(list(args), [self.self.pid, 11, 3, 123, 2, 0, 0, 0])
+        self.assertEqual([(r.fd, r.flags, r.backend_pid, r.backend_image, r.session, r.reference)
+                          for r in rows], [(0, 0, self.peer.pid, 7, 80, 81),
+                                           (1, 1, self.peer.pid, 7, 80, 81)])
+        self.assertEqual(pack(C.byref(self.out), restarted, 11, 123, args, rows, 2), 1)
+        self.assertEqual((rows[0].fd, rows[0].flags, rows[0].backend_image, rows[0].reference),
+                         (2, 1, 8, 91))
+        self.assertEqual(pack(C.byref(self.out), Peer(pid(3), 1), 11, 123, args, None, 0), 0)
+        self.assertEqual(args[4], 0)
+
+    def test_manifest_capacity_failure_does_not_touch_output(self):
+        first = self.new(80, 81)
+        self.put(0, first)
+        self.assertEqual(self.lib.sysfilerefalias(self.pp, self.self, first), 0)
+        self.put(1, first)
+        self.assertEqual(self.snapshot(), 0)
+        args, rows = (U * 8)(*range(8)), (WireRow * 1)(WireRow(9, 8, 7, 6, 5, 4))
+        pack = self.lib.sysexecfdmanifest
+        before = bytes(args) + bytes(rows)
+        self.assertEqual(pack(C.byref(self.out), self.peer, 11, 123, args, rows, 1), -9)
+        self.assertEqual(pack(C.byref(self.out), self.peer, 3, 123, args, rows, 1), -1)
+        self.assertEqual(bytes(args) + bytes(rows), before)
+
+    def test_full_manifest_uses_the_frozen_two_page_payload(self):
+        file = self.new(80, 81)
+        for slot in range(128):
+            if slot:
+                self.assertEqual(self.lib.sysfilerefalias(self.pp, self.self, file), 0)
+            self.put(slot, file, slot & 1)
+        self.assertEqual(self.snapshot(), 0)
+        args, rows = (U * 8)(), (WireRow * 128)()
+        self.assertEqual(C.sizeof(rows), 6144)
+        self.assertEqual(self.lib.sysexecfdmanifest(C.byref(self.out), self.peer, 11, 123,
+                                                  args, rows, 128), 128)
+        self.assertEqual(args[4], 128)
+        self.assertEqual([(r.fd, r.flags, r.reference) for r in rows],
+                         [(i, i & 1, 81) for i in range(128)])

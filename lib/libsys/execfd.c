@@ -76,3 +76,54 @@ sysexecfds(Execfds *out, const Fdtable *fds, Filepool *pool, Conncache *connecti
   out->ready = 1;
   return 0;
 }
+
+static int
+samepeer(Connpeer a, Connpeer b)
+{
+  return a.pid == b.pid && a.image == b.image;
+}
+
+isize
+sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u64 deadline,
+                  u64 args[8], Fileinherit *rows, u64 capacity)
+{
+  const Execfd *fd;
+  u64           bytes, i, count = 0;
+  if (!capture || !capture->pool || capture->ready != 1 || capture->count > BOOT_FD_COUNT)
+    return -ERR_STATE;
+  if (handlekind(backend.pid) != HANDLE_PROCESS || !backend.image ||
+      target_image <= capture->self.image || !deadline || capacity > BOOT_FD_COUNT ||
+      !separate(args, 8 * sizeof(*args), capture, sizeof(*capture)) ||
+      !separate(args, 8 * sizeof(*args), capture->pool, sizeof(*capture->pool)))
+    return -ERR_INVALID;
+  bytes = capacity * sizeof(*rows);
+  if (capacity && (!separate(rows, bytes, capture, sizeof(*capture)) ||
+                   !separate(rows, bytes, capture->pool, sizeof(*capture->pool)) ||
+                   !separate(rows, bytes, args, 8 * sizeof(*args))))
+    return -ERR_INVALID;
+  for (i = 0; i < capture->count; i++)
+    if (samepeer(capture->entries[i].backend, backend))
+      count++;
+  if (count > capacity)
+    return -ERR_CAPACITY;
+  count = 0;
+  for (i = 0; i < capture->count; i++) {
+    fd = &capture->entries[i];
+    if (!samepeer(fd->backend, backend))
+      continue;
+    rows[count].fd = fd->fd;
+    rows[count].flags = fd->flags;
+    rows[count].backend_pid = (u64) backend.pid;
+    rows[count].backend_image = backend.image;
+    rows[count].session = fd->session;
+    rows[count].reference_id = fd->reference;
+    count++;
+  }
+  args[0] = (u64) capture->self.pid;
+  args[1] = target_image;
+  args[2] = capture->self.image;
+  args[3] = deadline;
+  args[4] = count;
+  args[5] = args[6] = args[7] = 0;
+  return (isize) count;
+}

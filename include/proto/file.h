@@ -50,8 +50,9 @@
 #define FS_PATH_UTIMENS     12
 #define FS_PATH_GETCWD      13
 #define FS_PATH_CHDIR       14
-typedef struct Filehead Filehead;
-typedef struct Fileslot Fileslot;
+typedef struct Filehead    Filehead;
+typedef struct Fileslot    Fileslot;
+typedef struct Fileinherit Fileinherit;
 struct Filehead
 {
   u64 magic, bytes, connid, serverimage, slots, slotbytes, reserved[2];
@@ -60,6 +61,12 @@ struct Fileslot
 {
   u64 seq, state, payload_bytes, object, span, reserved[3], args[8];
 };
+/* One descriptor row of a FORK/EXEC preparation snapshot. */
+struct Fileinherit
+{
+  u64 fd, flags, backend_pid, backend_image, session, reference_id;
+};
+STATIC_ASSERT(sizeof(Fileinherit) == 48, file_inherit_record);
 STATIC_ASSERT(sizeof(Filehead) == 64, file_connection_header);
 STATIC_ASSERT(sizeof(Fileslot) == FS_DESC_BYTES, file_slot_descriptor);
 STATIC_ASSERT(offsetof(Fileslot, span) == 32, file_slot_span);
