@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage285：`checkuart.py` 离线校验 `pages`、`ipc`、`cow` 的串口日志。两架构六份 QEMU 日志重放与实时摘要一致，16 项 smoke 主机检查通过；真实板卡待验。
+
 - stage284：`ipc`、`cow` 接入纯串口验收。RV64、ARM64 的 `pages`、`ipc`、`cow` 各通过纯串口和普通 QMP，12 次摘要按架构和场景成对一致；16 项 smoke 主机检查通过，板端待验。
 
 - stage283：`pages` 纯串口试点在 RV64、ARM64 QEMU 验证页数回基线和 COW 预留归零；各架构摘要与普通 QMP 路径一致。`ipc`、`cow` 及上板验证待接。
