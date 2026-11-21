@@ -16,6 +16,7 @@
 #include "private/syscall.h"
 #include "private/timer.h"
 #include "../../sbin/fs/pipefile.h"
+#include "../../sbin/fs/read.h"
 #include "../../sbin/fs/seek.h"
 #include "../../sbin/fs/serve.h"
 
@@ -345,6 +346,40 @@ serviceloop(const Bootview *boot, u32 interrupt)
               !fileseek(&link.watch.active, &request, &row, 20, &position) &&
               position == expected[i] && !link.watch.active.requests[request.words[3]]);
       }
+      {
+        static Cacheblock blocks[2];
+        static u8         scratch[CACHE_BYTES];
+        const Loadmap     map = {{7, 1, 1, CACHE_BYTES + 2}, {5}, 0};
+        const u64         cursors[] = {2, 2, 3, CACHE_BYTES + 1, CACHE_BYTES + 2, CACHE_BYTES + 2};
+        Cache             cache = {0};
+        Cacheio           ticket;
+        u8               *dest;
+        volatile u8      *page;
+        CHECK(!cacheinit(&cache, blocks, ARRAY_SIZE(blocks), 16));
+        for (i = 0; i < ARRAY_SIZE(cursors); i++) {
+          CHECK(!ipc_recv(0, 0, &request) && !sysfilelinkaccept(&link, 1, &request, &row) &&
+                row.object == file.session[PIPE_READ]);
+          page = (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
+          if (!i) {
+            page[0] = 0xa5;
+            CHECK(fileread(&link.watch.active, &request, &row, &map, NULL, &cache, 4, &position,
+                           scratch, page) == -ERR_WOULD_BLOCK &&
+                  !position && page[0] == 0xa5 &&
+                  cachefetch(&cache, 5, CACHE_DATA, &ticket, &dest) == 1);
+            dest[0] = 'A';
+            dest[1] = 'B';
+            dest[2] = 'C';
+            dest[CACHE_BYTES - 1] = 'Z';
+            CHECK(!cachecomplete(&cache, &ticket, 1));
+          }
+          if (i == 3)
+            CHECK(!fileseek(&link.watch.active, &request, &row, map.file.length, &position));
+          else
+            CHECK(!fileread(&link.watch.active, &request, &row, &map, NULL, &cache, 4, &position,
+                            scratch, page));
+          CHECK(position == cursors[i] && !link.watch.active.requests[request.words[3]]);
+        }
+      }
     }
   } else if (interrupt == 5) {
     CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
@@ -562,8 +597,15 @@ interruptclient(void)
   CHECK(fd == 2 && lseek(fds[0], -3, SEEK_END) == 17 &&
         lseek(fd, INT64_MAX, SEEK_SET) == INT64_MAX && lseek(fds[0], 1, SEEK_CUR) == -1 &&
         errno == EOVERFLOW && lseek(fd, INT64_MIN, SEEK_CUR) == -1 && errno == EINVAL &&
-        lseek(fds[0], 0, SEEK_CUR) == INT64_MAX && lseek(fd, -INT64_MAX, SEEK_CUR) == 0 &&
-        !close(fd));
+        lseek(fds[0], 0, SEEK_CUR) == INT64_MAX && lseek(fd, -INT64_MAX, SEEK_CUR) == 0);
+  CHECK(read(fd, data, 2) == 2 && data[0] == 'A' && data[1] == 'B' &&
+        pread(fds[0], data, sizeof(data), CACHE_BYTES - 1) == 3 && data[0] == 'Z' && !data[1] &&
+        !data[2] && read(fds[0], data, 1) == 1 && data[0] == 'C' &&
+        lseek(fd, -1, SEEK_END) == CACHE_BYTES + 1 && read(fd, data, sizeof(data)) == 1 &&
+        !data[0] && !read(fds[0], data, sizeof(data)) && !close(fd));
+  data[0] = 'p';
+  data[1] = 'q';
+  data[2] = 0xa5;
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
   data[0] = 'p';

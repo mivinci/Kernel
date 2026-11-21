@@ -94,7 +94,7 @@ testpair(const char *roles)
     }
     if (ended == 2)
       break;
-    CHECK(++turns < 256);
+    CHECK(++turns < 320);
     error = procrunone();
     if (error == -ERR_WOULD_BLOCK)
       CHECK(procidle() >= 0);
