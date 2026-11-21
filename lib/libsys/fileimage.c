@@ -157,6 +157,33 @@ restore:
 }
 
 isize
+sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int *fds,
+                 isize *business)
+{
+  Fileimage *state;
+  u64        mask, ignored;
+  isize      error, restored;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  if (!fstag.generation || work != &state->connections[fstag.index])
+    return -ERR_INVALID;
+  error = sysctxpipecreate(&state->contexts, layer, &state->files, work, sysfileimagecache(state),
+                           &state->fds, pipe, active, fds, business);
+  if (error != -ERR_FAULT)
+    return error;
+  /* Failed descriptor copyout leaves both remote references on the close queue. */
+  if (!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask)) {
+    closing = 1;
+    closeprogress(state);
+    restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+    if (restored)
+      return restored;
+  }
+  return error;
+}
+
+isize
 sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                  Opkey *key, Opkey *background, u64 mask)
 {
@@ -204,7 +231,7 @@ closework(Fileimage *state, Conntag tag)
   return sysfileclosepump(&state->files, work, cache, file, 0);
 }
 
-/* At most one nonblocking step per backend at each library safe point.
+/* After retiring a CLOSE, try the next one before waiting for another event.
    Keep pinned or in-flight Files discoverable for the next safe point. */
 static void
 closeprogress(Fileimage *state)
@@ -224,8 +251,11 @@ closeprogress(Fileimage *state)
   }
   closing = pending;
   for (i = 0; pending; i++, pending >>= 1)
-    if (pending & 1)
-      (void) closework(state, state->connections[i].state.tag);
+    if (pending & 1) {
+      Conntag tag = state->connections[i].state.tag;
+      if (!closework(state, tag))
+        (void) closework(state, tag);
+    }
 }
 
 static int

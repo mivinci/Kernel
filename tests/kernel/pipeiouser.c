@@ -305,20 +305,21 @@ oninterrupt(int signal)
 static void
 interruptclient(void)
 {
-  Fileimage       *image;
-  Connwork        *work = NULL;
-  Conncache       *cache;
-  struct sigaction action = {0};
-  Pipecreate       pipe = {0};
-  Rkey             active = {0};
-  Msg              gate = {{PIPETEST, 0, 0, 0}};
-  Ipcmsg           result;
-  Handle           rpc;
-  isize            business;
-  int              fds[2] = {-1, -1};
-  int              fd;
-  Fdview           original, alias, displaced;
-  Fileref          ref;
+  Fileimage            *image;
+  Connwork             *work = NULL;
+  Conncache            *cache;
+  struct sigaction      action = {0};
+  const struct timespec pause = {0, 30000000};
+  Pipecreate            pipe = {0};
+  Rkey                  active = {0};
+  Msg                   gate = {{PIPETEST, 0, 0, 0}};
+  Ipcmsg                result;
+  Handle                rpc;
+  isize                 business;
+  int                   fds[2] = {-1, -1};
+  int                   fd;
+  Fdview                original, alias, displaced;
+  Fileref               ref;
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
   CHECK(sysfileimagefs(0, (uintptr_t) pipeiotrace & ~PAGE_MASK, &work) < 0 && !work &&
@@ -330,16 +331,18 @@ interruptclient(void)
   action.sa_handler = oninterrupt;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
   errno = EBUSY;
-  CHECK(sysctxpipecreate(&image->contexts, 0, &image->files, work, cache, &image->fds, &pipe,
-                         &active, fds, &business) == -ERR_INTERRUPTED &&
+  CHECK(sysfileimagepipe(0, work, &pipe, &active, fds, &business) == -ERR_INTERRUPTED &&
         caught == 1 && errno == EBUSY && !active.sequence &&
         !sysoprpc(work, cache, &pipe.operation, &rpc) && rpc &&
         !sysfdcheckpair(&image->fds, pipe.tags) && fds[0] == -1 && fds[1] == -1 &&
         !ipc_call(work->state.call, &gate, CALL_CONTROL, &result));
-  CHECK(!sysctxpipecreate(&image->contexts, 0, &image->files, work, cache, &image->fds, &pipe,
-                          &active, fds, &business) &&
-        !pipe.operation.lease.seq && !active.sequence && !business && fds[0] == 0 && fds[1] == 1 &&
-        caught == 1);
+  CHECK(sysfileimagepipe(0, work, &pipe, &active, (int *) 1, &business) == -ERR_FAULT &&
+        !pipe.operation.lease.seq && !business && !sysfdobserve(&image->fds, 0, &original) &&
+        original.tag.state == SYSFD_FREE && !sysfdobserve(&image->fds, 1, &alias) &&
+        alias.tag.state == SYSFD_FREE && !nanosleep(&pause, NULL) &&
+        !sysfilerefconnection(&image->files, work->state.self, work->state.tag));
+  CHECK(!sysfileimagepipe(0, work, &pipe, &active, fds, &business) && !pipe.operation.lease.seq &&
+        !active.sequence && !business && fds[0] == 0 && fds[1] == 1 && caught == 1);
   CHECK(!sysfdobserve(&image->fds, fds[0], &original) &&
         !sysfdsetflags(&image->fds, original.tag, BOOT_FD_CLOEXEC));
   for (fd = 2; fd < BOOT_FD_COUNT; fd++)
