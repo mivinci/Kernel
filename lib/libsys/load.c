@@ -1,5 +1,31 @@
 #include "private/elf.h"
 #include "private/fix.h"
+isize
+sysfixchild(const Forkret *result, u64 available, Handle source, u64 source_image, Fixview *out)
+{
+  Handle self, parent;
+  u64    image, address;
+  isize  error;
+  if (!out)
+    return -ERR_INVALID;
+  out->header = NULL;
+  out->resources = NULL;
+  out->contexts = NULL;
+  out->contexts_limit = 0;
+  if (!result || result->construct || available < sizeof(Fix) || available > BOOT_MAX_BYTES)
+    return -ERR_INVALID;
+  address = (u64) result->fix;
+  if (address < BOOT_USER_LO || address >= BOOT_USER_HI || available > BOOT_USER_HI - address ||
+      (address & 7))
+    return -ERR_INVALID;
+  error = __sys_getid(&self, &image, &parent);
+  if (error)
+    return error;
+  if (self != result->pid)
+    return -ERR_STALE;
+  /* The current parent may have changed since the snapshot. */
+  return sysfixview(result->fix, available, source, source_image, self, out);
+}
 static isize
 mapping(Elfwork *work, Handle space, u64 address, u64 bytes, u64 prot)
 {

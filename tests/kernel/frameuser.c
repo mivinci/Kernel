@@ -352,9 +352,12 @@ contextuser(void)
   return 42;
 }
 static Forkret forkcapture;
+static Handle  forksource;
+static u64     forkimage;
 static NORETURN void
 forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
 {
+  Fixview view;
   UNUSED(info);
   UNUSED(function);
   UNUSED(flags);
@@ -362,6 +365,8 @@ forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64
               sysforkdecode(context, (u64) __sys_forkreturn_begin, (u64) __sys_forkreturn_end,
                             &forkcapture) == 1,
           242);
+  REQUIRE(!sysfixchild(&forkcapture, 88, forksource, forkimage, &view) && view.contexts_limit == 24,
+          244);
   __sys_sigreturn((void *) address);
 }
 static int
@@ -403,6 +408,8 @@ forkprepuser(void)
   REQUIRE(__sys_forkabort((Handle) args[0]) == -ERR_STATE, 231);
   REQUIRE(!__sys_enter(SYS_DESTROY, args, &result), 232);
   REQUIRE(!__sys_getid(&source, &image, &parent), 241);
+  forksource = source;
+  forkimage = image;
   action.kind = SIGNAL_HANDLER;
   action.handler = (u64) forktrampoline;
   action.trampoline = (u64) forktrampoline;
@@ -417,9 +424,8 @@ forkprepuser(void)
     Fixview view;
     REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
                 (u64) forked.fix == address && ppid == source &&
-                !sysfixview(forked.fix, 88, source, image, self, &view) &&
-                view.contexts_limit == 24 && forkcapture.pid == self &&
-                forkcapture.fix == forked.fix && !forkcapture.construct,
+                !sysfixchild(&forked, 88, source, image, &view) && view.contexts_limit == 24 &&
+                forkcapture.pid == self && forkcapture.fix == forked.fix && !forkcapture.construct,
             234);
     return 43;
   }
