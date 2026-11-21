@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage235：组合准入后可单次本地转换Rctx/File/目录，保持fd和父运输责任；未支持的创建预留在写入前NOTSUP。74项相关主机测试、格式及双架构libsys/sigframe通过，新增apply仍仅主机调用；真实非空File子修复/整体协调器及后端准备未接，子reference_id仍待确认。
+
 - stage234：fd/File/连接/Rctx已接组合只读准入，核对精确目录存储、File代次与Fix后端/token，并拒绝保留目录代次耗尽；77项相关主机测试、格式及双架构libsys/sigframe通过。组合入口仅主机调用，生产协调器与真实后端准备仍待接，子reference_id规则仍待确认。
 
 - stage233：Rctx完整路由只读准入与实际子修复共用核验，便于协调器在改变File/连接前拒绝未支持续点；64项上下文主机测试、格式及双架构libsys/sigframe回归通过。生产整体协调器/后端准备仍待接，子reference_id候选仍未确认。

@@ -4,7 +4,7 @@ import test_context_ipc as support
 from test_conndir import Peer, Tag, Cache, pid
 import test_fdtable as fd
 from test_fdtable import Table
-from test_fileref import Pool, Fork, Value
+from test_fileref import Pool, Fork, Value, Stage
 from test_runtime_context import Bank
 
 
@@ -39,12 +39,15 @@ class ForkStateTests(unittest.TestCase):
             'sysfilerefinit': [C.POINTER(Pool), Peer],
             'sysfilerefnew': [C.POINTER(Pool), Peer, Tag, C.c_uint64, C.c_uint64, C.c_uint64, C.POINTER(C.c_uint64)],
             'sysfilerefalias': [C.POINTER(Pool), Peer, C.c_uint64],
+            'sysfilerefreserve': [C.POINTER(Pool), Peer, C.c_uint32, C.POINTER(Stage)],
             'sysfilerefforkcheck': [C.POINTER(Pool), Peer, Peer, C.POINTER(Fork), C.c_uint64],
             'sysforkstatecheck': [C.POINTER(State), Peer, Peer, C.c_void_p, C.POINTER(Fork),
                                   C.c_uint64, C.POINTER(Connection), C.c_uint64]}
         for name, args in signatures.items():
             getattr(cls.lib, name).argtypes = args
             getattr(cls.lib, name).restype = C.c_int64
+        cls.lib.sysforkstateapply.argtypes = signatures['sysforkstatecheck']
+        cls.lib.sysforkstateapply.restype = C.c_int64
 
     def setUp(self):
         support.ContextIpcTests.setUp(self)
@@ -118,6 +121,11 @@ class ForkStateTests(unittest.TestCase):
         other = Cache.from_buffer_copy(self.cache)
         self.state.connections = C.pointer(other)
         self.check(-4)
+        self.state.connections = C.pointer(self.cache)
+        transport = bytes(self.work)
+        self.apply()
+        self.assertEqual(self.bank.contexts[0].status, -12)
+        self.assertEqual(bytes(self.work), transport)
 
     def test_retained_connection_exhaustion_is_rejected_even_without_files(self):
         self.lib.sysfdinit(C.byref(self.table))
@@ -127,6 +135,55 @@ class ForkStateTests(unittest.TestCase):
         self.assertEqual(self.lib.sysforkstatecheck(C.byref(self.state), self.self, self.child,
                                                    self.layers, None, 0, self.connections, 1), -20)
         self.assertEqual(self.snapshot(), before)
+
+    def apply(self, expected=0):
+        return self.assertEqual(self.lib.sysforkstateapply(C.byref(self.state), self.self, self.child,
+                                                          self.layers, self.plan, 1,
+                                                          self.connections, 1), expected)
+
+    def test_apply_converts_all_identities_and_preserves_descriptors_and_transport(self):
+        fds, work, plan = bytes(self.table), bytes(self.work), bytes(self.plan)
+        calls = [self.lib.testget(i) for i in range(3)]
+        self.apply()
+        for owner in (self.pool.self, self.cache.self, self.bank.self):
+            self.assertEqual((owner.pid, owner.image), (self.child.pid, self.child.image))
+        entry = self.pool.entries[self.file & 255]
+        self.assertEqual((entry.aliases, entry.reference, entry.token,
+                          entry.connection.generation), (2, 177, 701, self.tag.generation + 1))
+        self.assertEqual((self.cache.entries[self.tag.index].state, self.cache.sequence), (1, 0))
+        self.assertEqual((bytes(self.table), bytes(self.work), bytes(self.plan)), (fds, work, plan))
+        self.assertEqual([self.lib.testget(i) for i in range(3)], calls)
+        converted = self.snapshot()
+        self.apply(-4)
+        self.assertEqual(self.snapshot(), converted)
+
+    def test_apply_refuses_reserved_creators_and_bad_token_before_writes(self):
+        self.reserve(17)
+        before = self.snapshot()
+        self.apply(-18)
+        self.assertEqual(self.snapshot(), before)
+        self.lib.sysfdinit(C.byref(self.table))
+        self.publish(self.file, 1)
+        self.publish(self.file)
+        self.plan[0].value.token += 1
+        before = self.snapshot()
+        self.apply(-4)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_apply_rejects_plan_inside_a_table_before_mutation(self):
+        before = self.snapshot()
+        overlap = C.cast(C.byref(self.bank), C.POINTER(Fork))
+        self.assertEqual(self.lib.sysforkstateapply(C.byref(self.state), self.self, self.child,
+                                                   self.layers, overlap, 1, self.connections, 1), -1)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_apply_preserves_a_file_creator_reserve_without_a_reserved_fd(self):
+        stage = Stage()
+        self.assertEqual(self.lib.sysfilerefreserve(C.byref(self.pool), self.self, 1,
+                                                   C.byref(stage)), 0)
+        before, reserved = self.snapshot(), bytes(stage)
+        self.apply(-18)
+        self.assertEqual((self.snapshot(), bytes(stage)), (before, reserved))
 
 
 if __name__ == '__main__':

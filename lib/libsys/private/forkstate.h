@@ -19,4 +19,14 @@ struct Forkstate
 isize sysforkstatecheck(const Forkstate *state, Connpeer parent, Connpeer child,
                         const Fixlayer layers[FIX_LAYER_COUNT], const Filefork *files,
                         u64 file_count, const Fixconn *connections, u64 connection_count);
+/* Single protected child-local conversion, after removing inherited shared
+   mappings separately. No signal delivery between admission and commit.
+   Inputs and mutable tables must occupy disjoint storage. Creator reserves
+   are not supported yet and reject before writes. Preserve fd contents and
+   all parent transport records; convert Rctx before File/directory identity.
+   This helper is single-use: a later entry needs the coordinator's completed
+   marker, not another apply against already converted child state. */
+isize sysforkstateapply(const Forkstate *state, Connpeer parent, Connpeer child,
+                        const Fixlayer layers[FIX_LAYER_COUNT], const Filefork *files,
+                        u64 file_count, const Fixconn *connections, u64 connection_count);
 #endif

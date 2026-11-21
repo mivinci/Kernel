@@ -434,6 +434,10 @@ stage234：新增私有 `Forkstate` 与 `sysforkstatecheck`，统一只读核验
 
 6项组合主机测试覆盖真实局部模块联动、CLOEXEC/双alias/预留保持、单表各自合法但跨表代次错误、token/后端不符、alias/上下文错误、活动Op指向另一目录及无File时目录耗尽；64项上下文与7项SDK导出测试、格式和ARM64/RV64 libsys/sigframe四次回归通过。组合入口仍仅主机直接调用，QEMU验证既有真实修复路径与SDK链接，不代表生产整体协调器或后端准备已接。日志 `/private/tmp/kernel-stage234-{forkstate-final,context,sdkheaders,fmt-final,arm64-libsys-final,arm64-sigframe-final,riscv-libsys-final,riscv-sigframe-final}.log`。未跑完整矩阵、CI或板端。
 
+stage235：`sysforkstateapply` 接入单次受保护的本地子转换，统一预检后依次修复 Rctx、File、连接目录；Rctx 必须先保存本地结果/解除父运输路由，再切换目录身份。检查状态入口/四张表/层动作/引用与连接清单的完整范围互不重叠，且活动运输记录不与将转换的表重叠；整段由调用者排除捕获信号并保持输入稳定，不分配或发IPC。fd内容不变，父运输记录不CLOSE/unpin/ACK；fd及File的创建预留暂未接入typed修复，统一在写入前NOTSUP，不能随注册表转换丢失。此原语为单次转换，已转换子再次apply返回STALE不改状态；未来整体入口须在完成标记后跳过它。共享别名解除、Connwork重建及服务授权仍由协调器另行完成，不以此原语代替整份Fix完成。
+
+10项组合主机测试及64项上下文回归通过，新增覆盖三表实际子身份/引用/代次切换、fd/运输/清单保持、等待Op转本地中断、重复调用不改状态、重叠清单及坏token/两种创建预留失败不变。格式和ARM64/RV64 libsys/sigframe四次QEMU通过；新增apply仍仅主机调用，未在真实非空File的子返回执行。日志 `/private/tmp/kernel-stage235-{forkstate-final,context,fmt,arm64-libsys,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。生产协调器/后端准备、未支持续点与子reference_id规则仍待接或确认，未跑完整矩阵、CI或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
