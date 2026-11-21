@@ -1480,7 +1480,7 @@ typedclient(const Bootview *view, Handle peer)
     Fdtag       descriptor_tag, last;
     Fdview      sourcefd, duplicatefd;
     Fileref     duplicatefile;
-    Fdview      removed;
+    Fdview      removed, replacement;
     u32         saved;
     isize       cancellation;
     Handle      original;
@@ -1625,6 +1625,33 @@ typedclient(const Bootview *view, Handle peer)
             duplicatefile.aliases == 2 && !sysfdsetflags(&file_descriptors, sourcefd.tag, 0) &&
             !sysfdsetflags(&file_descriptors, duplicatefd.tag, BOOT_FD_CLOEXEC) &&
             !sysfilerefpin(&file_registry, connection_work.state.self, fileid),
+        124);
+    replacement.file = 0;
+    REQUIRE(
+        sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 1, 1,
+                  &replacement) == 1 &&
+            !replacement.file && !sysfdobserve(&file_descriptors, 1, &duplicatefd) &&
+            duplicatefd.flags == BOOT_FD_CLOEXEC &&
+            sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 2, 1,
+                      &replacement) == -ERR_BAD_HANDLE &&
+            !replacement.file && !sysfdreserve(&file_descriptors, 2, &last) &&
+            sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 0, 2,
+                      &replacement) == -ERR_BUSY &&
+            !replacement.file && !sysfdcancel(&file_descriptors, last) &&
+            !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
+            duplicatefile.aliases == 2,
+        124);
+    REQUIRE(
+        sysfddup2(&file_descriptors, &file_registry, connection_work.state.self, 0, 1,
+                  &replacement) == 1 &&
+            replacement.tag.generation == duplicatefd.tag.generation &&
+            replacement.file == fileid && replacement.flags == BOOT_FD_CLOEXEC &&
+            !sysfdobserve(&file_descriptors, 1, &duplicatefd) && !duplicatefd.flags &&
+            duplicatefd.tag.generation != replacement.tag.generation &&
+            !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
+            duplicatefile.aliases == 3 &&
+            !sysfilerefdrop(&file_registry, connection_work.state.self, replacement.file) &&
+            !sysfdsetflags(&file_descriptors, duplicatefd.tag, BOOT_FD_CLOEXEC),
         124);
     writeforkclient(fileid, oldmask, 8);
     writeforkclient(fileid, oldmask, 9);

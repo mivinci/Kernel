@@ -63,4 +63,10 @@ isize sysfdsetflags(Fdtable *table, Fdtag expected, u64 flags);
    Caller excludes caught signals across both disjoint tables. The source's
    File and prepaid close anchor are shared; the new fd starts without CLOEXEC. */
 isize sysfddup(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 minimum);
+/* Same protection as sysfddup. Storage for removed must be reserved before
+   entry. On a distinct-target success, a LIVE view transfers the old alias
+   to that storage for close processing by File identity. Same-fd success and
+   failure leave removed untouched. */
+isize sysfddup2(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 target,
+                Fdview *removed);
 #endif

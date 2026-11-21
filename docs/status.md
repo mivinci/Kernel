@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage288：libsys 接入私有 `dup2` 原子替换和旧目标别名移交。双架构 QEMU libsys、13 项 fd 主机检查及格式通过；公开接口和生产关闭调度待接。
+
 - stage287：libsys 接入受保护的本地 fd 复制，复用原 File 的预付关闭责任。双架构 QEMU libsys、13 项 fd 主机检查及格式通过；公开 dup 和 dup2 待接。
 
 - stage286：libc 提供 `strdup`、`strndup`。RV64、ARM64 QEMU runtime 验证独立副本、无 NUL 的有界输入和零长度，格式检查通过。
