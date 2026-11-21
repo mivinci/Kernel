@@ -7,8 +7,9 @@
 #define SYSFILE_SIGNAL2 2
 #define SYSFILE_CONTROL 3
 #define SYSFILE_CLEANUP 4
-typedef struct Filelease Filelease;
-typedef struct Filepages Filepages;
+typedef struct Filelease    Filelease;
+typedef struct Filepages    Filepages;
+typedef struct Fileinflight Fileinflight;
 struct Filelease
 {
   u64 seq;
@@ -18,6 +19,10 @@ struct Filepages
 {
   u64       sequence;
   Filelease pages[FS_CONN_SLOTS];
+};
+struct Fileinflight
+{
+  Handle requests[FS_CONN_SLOTS];
 };
 STATIC_ASSERT(sizeof(Filelease) == 16, file_page_lease);
 STATIC_ASSERT(sizeof(Filepages) <= PAGE_SIZE, file_page_bookkeeping);
@@ -31,6 +36,14 @@ STATIC_ASSERT(sizeof(Filepages) <= PAGE_SIZE, file_page_bookkeeping);
 isize sysfilehead(const volatile void *region, u64 bytes, u64 connid, u64 serverimage,
                   Filehead *out);
 isize sysfilerequest(const volatile void *region, u64 bytes, u32 slot, u64 seq, Fileslot *out);
+/* Zero-initialized private ledger for one exact service connection. The
+   serialized service loop verifies source and connid before admission.
+   Keep the full REQUEST reserved through defer, cancellation and downstream
+   access. Finish only after access has ended and the original reply or
+   other actual request completion has been established. */
+isize sysfileaccept(Fileinflight *active, const volatile void *region, u64 bytes, u64 slot, u64 seq,
+                    Handle request, Fileslot *out);
+isize sysfilefinish(Fileinflight *active, Handle request);
 /* Per-connection client page ledger, separate from writable shared state.
    Callers exclude caught signals for each short operation. Init is fresh
    unowned storage only. No RPC, File reference or completion proof lives here.

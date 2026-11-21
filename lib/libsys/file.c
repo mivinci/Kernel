@@ -63,6 +63,48 @@ sysfilerequest(const volatile void *region, u64 bytes, u32 slot, u64 seq, Filesl
   snapshot(out, &descriptor, sizeof(descriptor));
   return 0;
 }
+isize
+sysfileaccept(Fileinflight *active, const volatile void *region, u64 bytes, u64 slot, u64 seq,
+              Handle request, Fileslot *out)
+{
+  Fileslot descriptor;
+  isize    status;
+  u32      i;
+  if (slot >= FS_CONN_SLOTS || handlekind(request) != HANDLE_REQUEST ||
+      !separate(region, bytes, active, sizeof(*active)) ||
+      !separate(region, bytes, out, sizeof(*out)) ||
+      !separate(active, sizeof(*active), out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (active->requests[slot])
+    return -ERR_BUSY;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (active->requests[i] == request)
+      return -ERR_BUSY;
+  status = sysfilerequest(region, bytes, (u32) slot, seq, &descriptor);
+  if (status)
+    return status;
+  for (i = 0; i < descriptor.span; i++)
+    if (active->requests[slot + i])
+      return -ERR_BUSY;
+  for (i = 0; i < descriptor.span; i++)
+    active->requests[slot + i] = request;
+  snapshot(out, &descriptor, sizeof(descriptor));
+  return 0;
+}
+isize
+sysfilefinish(Fileinflight *active, Handle request)
+{
+  u32 i;
+  int found = 0;
+  if (!active || handlekind(request) != HANDLE_REQUEST)
+    return -ERR_INVALID;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (active->requests[i] == request) {
+      active->requests[i] = 0;
+      found = 1;
+    }
+  return found ? 0 : -ERR_STALE;
+}
 void
 sysfilepagesinit(Filepages *pages)
 {

@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
@@ -351,6 +352,16 @@ client(const Bootview *boot)
   key = begin(FS_OPEN, "/late", 0);
   ids[0] = work.state.creators[key.lease.slot].files[0];
   CHECK(!sysopabandon(&work, &cache, &key, &background));
+  /* A distinct request tries to reuse the exact deferred OPEN's slot. */
+  gate.words[0] = FS_OPEN;
+  gate.words[1] = CONNID;
+  gate.words[2] = background.lease.seq;
+  gate.words[3] = background.lease.slot;
+  CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
+  rpc = result.request;
+  CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqwait(rpc, 0, &result) &&
+        (isize) result.words[0] == -EBUSY && result.words[1] == background.lease.seq &&
+        !result.words[2] && !result.words[3] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
   gate.words[0] = GATE;
   gate.words[1] = gate.words[2] = gate.words[3] = 0;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC | CALL_CONTROL, &result));
@@ -390,18 +401,20 @@ client(const Bootview *boot)
 static void
 server(const Bootview *boot, u32 recover)
 {
-  Connpeer  peer;
-  Allocarg  alloc;
-  Maparg    map;
-  Resreply  transfer;
-  Ipcmsg    input;
-  Msg       reply;
-  Handle    memory, space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
-  Filehead *head = (Filehead *) ADDRESS;
-  Fileslot  descriptor;
-  u64       sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
-  u64       slot, seq, opcode, i, found, number, resourcepath;
+  Connpeer     peer;
+  Allocarg     alloc;
+  Maparg       map;
+  Resreply     transfer;
+  Ipcmsg       input;
+  Msg          reply;
+  Handle       memory, space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
+  Filehead    *head = (Filehead *) ADDRESS;
+  Fileslot     descriptor;
+  Fileinflight active = {{0}};
+  u64 sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
+  u64 slot, seq, opcode, i, found, number, resourcepath;
   volatile u64 *data;
+  isize         status;
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
         input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
         input.words[0] == FS_HELLO && !input.words[1] && input.words[2] &&
@@ -445,6 +458,8 @@ server(const Bootview *boot, u32 recover)
     zero(&reply, sizeof(reply));
     if (opcode == STOP) {
       CHECK(!pending && created == (recover ? 0 : 7) && closed == (recover ? 0 : 7));
+      for (i = 0; i < FS_CONN_SLOTS; i++)
+        CHECK(!active.requests[i]);
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;
@@ -471,17 +486,23 @@ server(const Bootview *boot, u32 recover)
       reply.words[1] = filecreatetrace[7];
       reply.words[2] = filecreatetrace[8];
       reply.words[3] = 8;
-      CHECK(!ipc_reply(pending, &reply));
+      CHECK(!ipc_reply(pending, &reply) && !sysfilefinish(&active, pending));
       pending = 0;
       continue;
     }
     CHECK(input.words[1] == CONNID);
     seq = input.words[2];
     slot = input.words[3];
-    CHECK(!sysfilerequest(head, FS_CONN_BYTES, (u32) slot, seq, &descriptor) &&
-          descriptor.span == 1);
-    data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
     reply.words[1] = seq;
+    status = sysfileaccept(&active, head, FS_CONN_BYTES, slot, seq, input.request, &descriptor);
+    if (status == -ERR_BUSY) {
+      CHECK(pending && opcode == FS_OPEN && active.requests[slot] == pending);
+      reply.words[0] = (u64) -EBUSY;
+      CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
+    CHECK(!status && descriptor.span == 1);
+    data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
     if ((opcode == FS_READ || opcode == FS_WRITE) && recover >= 9 && recover <= 11) {
       CHECK(created == 1 && references[0] && sessions[0] == descriptor.object && slot < 2 &&
             descriptor.payload_bytes == 8 && !descriptor.args[0] && descriptor.args[1] == 8 &&
@@ -493,7 +514,7 @@ server(const Bootview *boot, u32 recover)
         CHECK(opcode == FS_READ);
         data[0] = IO_VALUE;
         reply.words[2] = reply.words[3] = 8;
-        CHECK(!ipc_reply(input.request, &reply));
+        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&active, input.request));
         continue;
       }
       CHECK(opcode == (recover == 10 ? FS_WRITE : FS_READ));
@@ -526,7 +547,7 @@ server(const Bootview *boot, u32 recover)
               descriptor.args[3] == descriptor.payload_bytes && path[0] == '/');
         if (path[1] == 'm') {
           reply.words[0] = (u64) -2;
-          CHECK(!ipc_reply(input.request, &reply));
+          CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&active, input.request));
           continue;
         }
         resourcepath = path[1] == 'b' || path[1] == 'c' || path[1] == 'f' || path[1] == 'r';
@@ -551,7 +572,8 @@ server(const Bootview *boot, u32 recover)
         transfer.business[0] = seq;
         transfer.business[1] = prepare.words[1];
         transfer.business[2] = token;
-        CHECK(!ipc_reply_resource(input.request, &transfer));
+        CHECK(!ipc_reply_resource(input.request, &transfer) &&
+              !sysfilefinish(&active, input.request));
         continue;
       }
       number = opcode == FS_PIPE ? 2 : 1;
@@ -587,7 +609,7 @@ server(const Bootview *boot, u32 recover)
       }
     } else
       CHECK(0);
-    CHECK(!ipc_reply(input.request, &reply));
+    CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&active, input.request));
   }
   CHECK(!__sys_unmap(space, ADDRESS) && !__sys_free(memory) &&
         !__sys_free(bootresource(boot, 256)));

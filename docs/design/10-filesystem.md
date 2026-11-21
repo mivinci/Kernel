@@ -916,6 +916,10 @@ Filepages是每连接独立的私有占用账本，Filelease=(seq:u64,slot:u32,s
 
 接续：真实后端身份/唯一连接缓存、MEM领取/映射、bootstrap原RPC持有、Rctx转后台唯一责任和服务端私有in-flight登记，再接逐操作语义与File/Boot/Fix。现有sysstart仍拒绝非零fd/Fix，标准fd API未启用；GROUP target=0与公开FAULT原因/失败策略两项仍待用户回复，不因本组件落地而改变其状态。
 
+stage260：服务循环在核对真实 source PID/image 和 connid 后，可用 `sysfileaccept` 将一个描述符快照与完整 REQUEST 句柄绑定。每连接 `Fileinflight` 占 64 字节，每页记录拥有者。双页在读 payload 前验证并整体登记，拒绝重叠请求和重复句柄；失败保留账本及输出。`sysfilefinish` 按完整句柄归还所有页，与共享状态和请求序号无关。服务在推迟回复、协作取消或下游尚未停止访问时继续持有占用，实际停止访问并完成原请求后才能归还。
+
+ARM64/RV64 runtime 的真实 IPC 场景中，服务推迟一笔 OPEN 的回复，同一客户端发送另一笔指向同槽的请求，后者收到 EBUSY，原请求继续按原 RPC 成功返回并精确关闭其引用。夹具同时检查普通回复、资源回复及正常退出时的账本清空。64 项文件主机回归和格式检查通过，双页冲突、共享 DONE 与旧句柄在主机覆盖。生产 VFS/TTY 接入、按连接观察与下游排空仍待实现。
+
 ### 后端冷路识别与唯一接入门闩（2026-11-20）
 
 私有sysconnpeer从本主体QUERY_RESOURCE枚举中定位完整本地CALL Handle，核对RESOURCE_CALL及USE，再取得内核记录的固定目标PID/image；不按Handle整数或共享头猜后端。不匹配/已释放返回STALE，错误子类型拒绝，失败不覆盖旧输出。查询按128项本地上限及16项原生批次有界推进，仅用于新授权冷路径，热I/O不追加查询。该结果识别固定授权目标，不证明目标此后仍ACTIVE，也不授予File/session权。

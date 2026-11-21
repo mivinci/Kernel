@@ -28,6 +28,10 @@ class Pages(C.Structure):
     _fields_ = [('sequence',C.c_uint64),('pages',Lease*8)]
 
 
+class Inflight(C.Structure):
+    _fields_ = [('requests', C.c_int64 * 8)]
+
+
 class FilePageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -41,6 +45,9 @@ class FilePageTests(unittest.TestCase):
         declarations={
             'sysfilehead':[C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64,C.POINTER(Head)],
             'sysfilerequest':[C.c_void_p,C.c_uint64,C.c_uint32,C.c_uint64,C.POINTER(Slot)],
+            'sysfileaccept':[C.POINTER(Inflight), C.c_void_p, C.c_uint64, C.c_uint64,
+                             C.c_uint64, C.c_int64, C.POINTER(Slot)],
+            'sysfilefinish':[C.POINTER(Inflight), C.c_int64],
             'sysfilepagesinit':[C.POINTER(Pages)],'sysfilepagescheck':[C.POINTER(Pages)],
             'sysfilereserve':[C.POINTER(Pages),C.c_uint32,C.c_uint32,C.POINTER(Lease)],
             'sysfilerelease':[C.POINTER(Pages),Lease]}
@@ -65,6 +72,49 @@ class FilePageTests(unittest.TestCase):
     def reserve(self,context,span=1):
         out=Lease();self.assertEqual(self.lib.sysfilereserve(C.byref(self.pages),context,span,C.byref(out)),0)
         return out
+
+    def test_service_span_remains_owned_until_exact_request_finishes(self):
+        active, out = Inflight(), Slot()
+        first = (3 << 59) | (1 << 16) | 7
+        later = first + (1 << 16)
+        head, continuation, other = (self.slot(index) for index in (0, 1, 6))
+        head.seq, head.state, head.span = 1, 1, 2
+        args = (C.byref(active), self.memory, BYTES)
+        self.assertEqual(self.lib.sysfileaccept(*args, 0, 1, first, C.byref(out)), 0)
+        self.assertEqual(list(active.requests), [first, first, 0, 0, 0, 0, 0, 0])
+        saved = bytes(out)
+        head.state = 2
+        continuation.seq, continuation.state, continuation.span = 2, 1, 1
+        self.assertEqual(self.lib.sysfileaccept(*args, 1, 2, later, C.byref(out)), -7)
+        other.seq, other.state, other.span = 3, 1, 1
+        self.assertEqual(self.lib.sysfileaccept(*args, 6, 3, first, C.byref(out)), -7)
+        self.assertEqual(self.lib.sysfileaccept(*args, 1 << 32, 1, later, C.byref(out)), -1)
+        self.assertEqual(self.lib.sysfilefinish(C.byref(active), later), -4)
+        self.assertEqual(bytes(out), saved)
+        self.assertEqual(self.lib.sysfileaccept(*args, 6, 3, later, C.byref(out)), 0)
+        self.assertEqual(self.lib.sysfilefinish(C.byref(active), first), 0)
+        self.assertEqual(list(active.requests), [0, 0, 0, 0, 0, 0, later, 0])
+        replacement = later + (1 << 16)
+        self.assertEqual(self.lib.sysfileaccept(*args, 1, 2, replacement, C.byref(out)), 0)
+        self.assertEqual(self.lib.sysfilefinish(C.byref(active), first), -4)
+        self.assertEqual(active.requests[1], replacement)
+
+    def test_service_admission_of_pair_preserves_ledger_on_conflict(self):
+        active, out = Inflight(), Slot()
+        first = (3 << 59) | (1 << 16) | 7
+        second = first + 1
+        head, continuation = self.slot(0), self.slot(1)
+        continuation.seq, continuation.state, continuation.span = 1, 1, 1
+        args = (C.byref(active), self.memory, BYTES)
+        self.assertEqual(self.lib.sysfileaccept(*args, 1, 1, first, C.byref(out)), 0)
+        C.memset(C.byref(continuation), 0, C.sizeof(continuation))
+        head.seq, head.state, head.span = 2, 1, 2
+        before = bytes(active), bytes(out)
+        self.assertEqual(self.lib.sysfileaccept(*args, 0, 2, second, C.byref(out)), -7)
+        self.assertEqual((bytes(active), bytes(out)), before)
+        self.assertEqual(self.lib.sysfilefinish(C.byref(active), first), 0)
+        self.assertEqual(self.lib.sysfileaccept(*args, 0, 2, second, C.byref(out)), 0)
+        self.assertEqual(list(active.requests), [second, second, 0, 0, 0, 0, 0, 0])
 
     def test_header_uses_private_extent_identity_and_preserves_output_on_rejection(self):
         out=Head();self.assertEqual(self.lib.sysfilehead(self.memory,BYTES,(9<<16)|7,17,C.byref(out)),0)
