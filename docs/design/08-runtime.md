@@ -454,6 +454,10 @@ stage239：补齐公开POSIX凭据查询 `getuid/geteuid/getgid/getegid`，unist
 
 1项主机测试覆盖四字段顺序、动态读取及完整无符号32位边界/errno，7项SDK导出测试、格式与ARM64/RV64 elf/runtime四次QEMU通过。elf用户载荷实际调用四接口并对照自身原生getcred，确认errno保持；QEMU自身凭据为夹具配置值，非凭据变更接口或授权扩展。日志 `/private/tmp/kernel-stage239-{credential,sdkheaders,fmt,arm64-elf,arm64-runtime,riscv-elf,riscv-runtime}.log`。未实现setuid/setgid/getgroups等接口，不代表完整POSIX/sh就绪；fork机制错误真实运行场景及子引用编号选择继续待接/确认，未跑全矩阵、CI或板端。
 
+stage240：`stdlib.h` 与 SDK 静态 libc 新增 `qsort`、`bsearch`。排序使用原地非递归堆排序，只按字节交换完整元素，无堆分配，不保证相等元素的相对顺序；查找在已排序数组中二分，重复键可返回任一匹配元素，未找到返回空指针。两者无系统调用或服务依赖。
+
+ARM64/RV64 的 runtime 载荷实际链接并调用两接口，核对三字节记录排序、重复键、元素内容和身份保存，以及首尾命中、查找未命中与空数组。两架构 QEMU 和格式检查通过；未跑全矩阵、CI 或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

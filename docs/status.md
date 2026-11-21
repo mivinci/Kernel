@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage240：公开 `qsort`、`bsearch` 已纳入 libc SDK；双架构 runtime QEMU 实际验证排序、重复键、记录完整性和查找边界，格式通过。
+
 - stage239：libc公开getuid/geteuid/getgid/getegid及32位uid_t/gid_t已接SDK，每次读取真实自身凭据并保持errno；8项相关主机测试、格式与双架构elf/runtime四次QEMU通过。凭据修改/附加组未接，fork机制错误真实场景、后端子引用和整体入口仍待接。
 
 - stage238：真实子返回中fd/File两类未提交创建预留分别导致apply拒绝且源状态保留，子明确本地撤销后可继续转换，父预留仍独立完整；双架构sigframe、10项组合测试及格式通过。只改测试，非已提交创建续点支持；机制失败真实fork/后端子引用/整体入口仍待接。

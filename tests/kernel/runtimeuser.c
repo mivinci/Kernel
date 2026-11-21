@@ -58,6 +58,39 @@ static const Numbercase numbers[] = {
      10, 12, 12, 2, EDOM, EDOM},
     {"-101q", 2, -5, ULONG_MAX - 4, 4, EDOM, EDOM}};
 STATIC_ASSERT(sizeof(long) == 8, runtime_integer_lp64);
+static int
+comparebyte(const void *a, const void *b)
+{
+  return *(const u8 *) a - *(const u8 *) b;
+}
+
+static void
+sortcheck(void)
+{
+  u8       records[][3] = {{9, 0, 20}, {4, 1, 21}, {4, 2, 22}, {1, 3, 23}, {0, 4, 24}, {7, 5, 25}};
+  const u8 original[] = {9, 4, 4, 1, 0, 7};
+  const u8 sorted[] = {0, 1, 4, 4, 7, 9};
+  u8       key, *match;
+  u32      i, seen = 0;
+
+  qsort(records, ARRAY_SIZE(records), sizeof(records[0]), comparebyte);
+  for (i = 0; i < ARRAY_SIZE(records); i++) {
+    u8 id = records[i][1];
+    REQUIRE(records[i][0] == sorted[i] && id < ARRAY_SIZE(original) &&
+                records[i][0] == original[id] && records[i][2] == id + 20,
+            240);
+    seen |= 1U << id;
+  }
+  REQUIRE(seen == 0x3f, 241);
+  for (key = 0; key <= 10; key++) {
+    match = bsearch(&key, records, ARRAY_SIZE(records), sizeof(records[0]), comparebyte);
+    for (i = 0; i < ARRAY_SIZE(records) && sorted[i] != key; i++)
+      ;
+    REQUIRE(i == ARRAY_SIZE(records) ? !match : match && *match == key, 242);
+  }
+  REQUIRE(!bsearch(&key, records, 0, sizeof(records[0]), comparebyte), 243);
+}
+
 static u32
 numbercheck(void)
 {
@@ -378,6 +411,7 @@ main(int argc, char **argv)
   REQUIRE(!memcmp(scratch, "abcdef", 6) && strchr("abc", 'b')[0] == 'b' &&
               strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
           176);
+  sortcheck();
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
   runtime_trace[10] = groupcheck();
