@@ -257,9 +257,13 @@ class ForkSnapshotTests(unittest.TestCase):
             prep=self.owner();lib=self.lib
             mid,_=self.addmem()
             peer=local.support.Spaceid()
+            tail=local.support.Spaceid()
             self.assertEqual(lib.spacecreate(self.aid,C.byref(peer)),0)
-            self.ids.append(peer)
-            addresses=[0x50000+4096*index for index in range(33)]
+            self.assertEqual(lib.spacecreate(self.aid,C.byref(tail)),0)
+            self.ids.extend((peer,tail))
+            self.assertEqual(lib.spacemap(tail,mid,0,0x50000,4096,3),0)
+            tail_leaf=self.leaf(tail,0x50000)
+            addresses=[0x50000+4096*index for index in range(32)]
             for address in addresses:
                 self.assertEqual(lib.spacemap(peer,mid,0,address,4096,3),0)
             leaves=[self.leaf(peer,address) for address in addresses]
@@ -268,9 +272,14 @@ class ForkSnapshotTests(unittest.TestCase):
             lib.test_now.argtypes=[C.c_uint64]
             callback_type=C.CFUNCTYPE(C.c_int,Prepid)
             observed=[]
+            admission=[]
             @callback_type
             def checkpoint(identity):
                 backing=Memory()
+                if self.tree(peer).frozen and not self.tree(tail).frozen:
+                    admission.append((identity.generation,lib.spaceactivate(tail)))
+                    if admission[-1][1] == 0:
+                        lib.spacedeactivate()
                 if not lib.memstat(mid,C.byref(backing)) and backing.cowmaps:
                     observed.append((identity.generation,backing.cowmaps,self.tree(peer).frozen))
                     lib.test_now(deadline.deadline)
@@ -279,12 +288,16 @@ class ForkSnapshotTests(unittest.TestCase):
             try:
                 self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
                     C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),-7)
+                self.assertEqual(admission,[(prep.generation,-4)])
                 self.assertEqual(observed,[(prep.generation,32,1)])
                 self.assertEqual([self.leaf(peer,address) for address in addresses],leaves)
-                self.assertEqual((self.tree(peer).frozen,self.pstat().allocated),(0,allocated))
+                self.assertEqual(self.leaf(tail,0x50000),tail_leaf)
+                self.assertEqual((self.tree(peer).frozen,self.tree(tail).frozen,
+                                  self.pstat().allocated),(0,0,allocated))
             finally:
                 while (status:=lib.spaceclear(peer,32))>0:pass
                 self.assertEqual(status,0)
+                self.assertEqual(lib.spaceclear(tail,32),0)
         for lib in self.libs:self.exercise(lib,body)
 
     def test_real_endpoint_reference_overflow_after_other_child_references_rolls_back_every_layer(self):

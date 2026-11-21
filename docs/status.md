@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage311：未映射 DATA 的别名登记与根冻结可按 32 项开放 fork 检查点；70 项主机专项、双架构 QEMU `sigframe` 和格式检查通过。
 - stage310：fork 快照期间禁止激活与冻结根共用可写私有 DATA 的用户根；双架构 QEMU `sigframe`、`jobs`、54 项主机专项及格式检查通过。
 - stage309：fork 快照期间，内核写入及复制在改动任何字节前检查整个目标区间；双架构 QEMU `sigframe`、54 项主机专项及格式检查通过。
 - stage308：fork 快照保护已有私有 DATA 别名免于提前解除映射；双架构 QEMU `sigframe`、53 项主机专项及格式检查通过。

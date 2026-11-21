@@ -736,13 +736,22 @@ clone(Memid memory, Acctid target, Memid *out, Space *unmapped, Forkcheck checkp
       return SP_BUSY;
     writes += (logicalprot(m) & VM_WRITE) != 0;
     protected += (m->prot & MAP_PROTECTED) != 0;
+    if (checkpoint) {
+      /* The first frozen alias prevents changes to this entire chain.
+         Every lease goes straight into the transaction's thaw set. */
+      error = snapshotfreeze(s);
+      if (error)
+        return error;
+      if (count % 32 == 0 && maplinks[node].next != PG_NONE && clonecheckpoint(checkpoint))
+        return SP_BUSY;
+    }
   }
+  if (checkpoint && memstat(memory, &backing))
+    return SP_BAD;
   if (writes != backing.writes || protected != backing.cowmaps)
     return SP_BAD;
   if (unmapped && (backing.refs < backing.managers || count != backing.refs - backing.managers))
     return SP_BUSY;
-  if (checkpoint && (error = freezealiases(memory)))
-    return error;
   for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
     m = &mappings[node];
     pages = (u32) (m->length / PAGE_SIZE);
