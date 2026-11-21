@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage268：普通 OPEN 准备的超时与 VFS 退出共用可重试的清理扫描。ARM64/RV64 runtime、64 项文件主机回归及格式检查通过。
+
 - stage267：普通 OPEN 准备池同时检查后端总容量、客户端和 VFS 的独立配额。ARM64/RV64 runtime、64 项文件主机回归和格式通过。
 
 - stage266：普通 OPEN 准备池由后端分配带代次 token，ARM64/RV64 runtime 验证池满、旧 token 与代次耗尽及真实 IPC 交付；64 项文件主机回归和格式通过。

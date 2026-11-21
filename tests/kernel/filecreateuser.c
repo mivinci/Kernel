@@ -736,6 +736,14 @@ vfsdeathclient(const Bootview *boot, u32 timeout)
     CHECK(!ipc_call(work.state.call, &query, CALL_CONTROL, &result) && !result.words[0]);
   filecreatetrace[0] = 2;
 }
+static isize
+revokepreparation(void *context, const Openprep *prep)
+{
+  u64 *closed = context;
+  CHECK(prep->state == Openpending && prep->session && prep->reference);
+  (*closed)++;
+  return 0;
+}
 static void
 backend(const Bootview *boot, u32 recover)
 {
@@ -757,6 +765,7 @@ backend(const Bootview *boot, u32 recover)
   u64             wanted, attached, aborted, cancelled = 0;
   u64             armed = 0, next, now, generation;
   isize           status;
+  u32             retired;
   wanted = recover == 4 ? 1 : recover == 2 ? 2 : recover == 5 ? 3 : 4;
   attached = recover == 4 ? 1 : recover == 2 ? 2 : 3;
   aborted = recover == 4 || recover == 2 ? 1 : recover == 5 ? 2 : 3;
@@ -764,10 +773,7 @@ backend(const Bootview *boot, u32 recover)
         !sysconnpeer(bootresource(boot, 257), &vfspeer));
   for (;;) {
     if (recover == 10) {
-      next = 0;
-      for (i = 0; i < created; i++)
-        if (preps[i].deadline && (!next || preps[i].deadline < next))
-          next = preps[i].deadline;
+      next = sysopennext(preps, ARRAY_SIZE(preps));
       if (next != armed) {
         CHECK(!(next ? __sys_alarmset(next, &generation) : __sys_alarmcancel(&generation)));
         armed = next;
@@ -776,12 +782,9 @@ backend(const Bootview *boot, u32 recover)
     CHECK(!ipc_recv(recover == 9 ? EVENT_LIFE : recover == 10 ? EVENT_TIMER : 0, 0, &input));
     if (recover == 10) {
       CHECK(!sysfilenow(&now));
-      for (i = 0; i < created; i++)
-        if (sysopenexpired(&preps[i], now)) {
-          sysopenretire(&preps[i]);
-          closed++;
-          cancelled++;
-        }
+      CHECK(
+          !sysopensweep(preps, ARRAY_SIZE(preps), now, NULL, revokepreparation, &closed, &retired));
+      cancelled += retired;
       if (input.kind == IPC_EVENT) {
         CHECK(input.words[0] == EVENT_TIMER && cancelled == 1);
         filecreatetrace[6]++;
@@ -797,12 +800,9 @@ backend(const Bootview *boot, u32 recover)
       CHECK(!sysfileownerread(&preparer));
       if (preparer.reason) {
         CHECK(preparer.reason == OBS_EXIT);
-        for (i = 0; i < created; i++)
-          if (sysopenorphan(&preps[i], &preparer)) {
-            sysopenretire(&preps[i]);
-            closed++;
-            cancelled++;
-          }
+        CHECK(!sysfilenow(&now) && !sysopensweep(preps, ARRAY_SIZE(preps), now, &preparer,
+                                                 revokepreparation, &closed, &retired));
+        cancelled += retired;
         CHECK(!sysfileownerclose(&preparer));
       }
     }

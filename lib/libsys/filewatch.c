@@ -134,6 +134,41 @@ sysopenretire(Openprep *prep)
   }
 }
 
+u64
+sysopennext(const Openprep *pool, u32 count)
+{
+  u64 next = 0;
+  u32 i;
+  if (!pool || count > SYSOPEN_POOL_MAX)
+    return 0;
+  for (i = 0; i < count; i++)
+    if (pool[i].state == Openpending && (!next || pool[i].deadline < next))
+      next = pool[i].deadline;
+  return next;
+}
+
+isize
+sysopensweep(Openprep *pool, u32 count, u64 now, const Fileowner *ended, Openrevoke revoke,
+             void *context, u32 *retired)
+{
+  u32   i;
+  isize status;
+  if (!pool || !count || count > SYSOPEN_POOL_MAX || !revoke || !retired)
+    return -ERR_INVALID;
+  *retired = 0;
+  for (i = 0; i < count; i++) {
+    Openprep *prep = &pool[i];
+    if (!sysopenexpired(prep, now) && !(ended && sysopenorphan(prep, ended)))
+      continue;
+    status = revoke(context, prep);
+    if (status)
+      return status;
+    sysopenretire(prep);
+    (*retired)++;
+  }
+  return 0;
+}
+
 isize
 sysfilenow(u64 *now)
 {

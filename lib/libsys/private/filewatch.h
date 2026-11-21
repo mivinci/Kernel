@@ -9,6 +9,7 @@ typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
 typedef struct Openprep  Openprep;
 typedef struct Openlimit Openlimit;
+typedef isize (*Openrevoke)(void *context, const Openprep *prep);
 enum
 {
   Openempty,
@@ -49,6 +50,13 @@ isize sysopenabort(const Openprep *prep, const Ipcmsg *call);
 int   sysopenexpired(const Openprep *prep, u64 now);
 int   sysopenorphan(const Openprep *prep, const Fileowner *owner);
 void  sysopenretire(Openprep *prep);
+/* Event loop helpers. Use the earliest nonzero deadline when arming the
+   shared service alarm. Sweep before dispatch and after a LIFE/TIMER hint.
+   Revoke must close the reference or record its cleanup before returning 0;
+   a failure leaves that entry pending and preserves earlier progress. */
+u64   sysopennext(const Openprep *pool, u32 count);
+isize sysopensweep(Openprep *pool, u32 count, u64 now, const Fileowner *ended, Openrevoke revoke,
+                   void *context, u32 *retired);
 struct Fileowner
 {
   Handle pid;

@@ -66,6 +66,34 @@ openlimitcheck(void)
   CHECK(!sysopenreserve(pool, 3, limit, &vfs, client, 2, 9, 10, 20, &second));
   CHECK(sysopenreserve(pool, 3, limit, &newer, client, 1, 11, 12, 30, &untouched) == -ERR_CAPACITY);
 }
+static isize
+sweeprevoke(void *context, const Openprep *prep)
+{
+  int *fail = context;
+  return *fail && prep->reference == 2 ? -ERR_BUSY : 0;
+}
+static void
+opensweepcheck(void)
+{
+  Fileowner       owner = {1, 1, 1, 0};
+  const Openlimit limit = {3, 3};
+  Openprep        pool[3] = {{0}};
+  Handle          client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  u64             one, two, three;
+  u32             retired;
+  int             fail = 1;
+  CHECK(!sysopenreserve(pool, 3, limit, &owner, client, 1, 1, 1, 8, &one) &&
+        !sysopenreserve(pool, 3, limit, &owner, client, 1, 2, 2, 9, &two) &&
+        !sysopenreserve(pool, 3, limit, &owner, client, 1, 3, 3, 7, &three));
+  sysopencommit(sysopenlookup(pool, 3, three));
+  CHECK(sysopennext(pool, 3) == 8 &&
+        sysopensweep(pool, 3, 9, NULL, sweeprevoke, &fail, &retired) == -ERR_BUSY && retired == 1 &&
+        sysopenlookup(pool, 3, one)->state == Opencancelled && sysopennext(pool, 3) == 9);
+  fail = 0;
+  CHECK(!sysopensweep(pool, 3, 9, NULL, sweeprevoke, &fail, &retired) && retired == 1 &&
+        sysopenlookup(pool, 3, two)->state == Opencancelled &&
+        sysopenlookup(pool, 3, three)->state == Openattached && !sysopennext(pool, 3));
+}
 u32
 fileusercheck(void)
 {
@@ -75,6 +103,7 @@ fileusercheck(void)
   u32       i;
   openpoolcheck();
   openlimitcheck();
+  opensweepcheck();
   for (i = 0; i < ARRAY_SIZE(area); i++)
     area[i] = 0;
   head->magic = FS_CONN_MAGIC;
