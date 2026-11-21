@@ -601,11 +601,13 @@ forkprepuser(void)
   return 42;
 }
 static int handlerforkresult;
+#define FORK_FIX_ADDRESS 0x30000000UL
 static void
 publicforkhandler(int signum)
 {
   Connpeer self;
   Handle   parent;
+  u64      probe;
   REQUIRE(!__sys_getid(&self.pid, &self.image, &parent) && runtime_contexts.self.pid == self.pid &&
               runtime_contexts.self.image == self.image && !sysfilerefcheck(&forkfiles, self) &&
               !sysconncheck(&forkdirectory, self),
@@ -615,6 +617,7 @@ publicforkhandler(int signum)
     frame_trace[23]++;
   } else {
     REQUIRE(parent == context_self.pid && self.pid != context_self.pid && !sysfdcheck(&forkfds) &&
+                __sys_copy(&probe, (const void *) FORK_FIX_ADDRESS, sizeof(probe)) == -ERR_FAULT &&
                 signum == (frame_trace[1] == 17 && !frame_trace[24] ? SIGUSR2 : SIGUSR1),
             268);
     frame_trace[24]++;
@@ -623,10 +626,10 @@ publicforkhandler(int signum)
 static int
 publicforkuser(void)
 {
-  const u64  address = 0x30000000;
+  const u64  address = FORK_FIX_ADDRESS;
   u64        fix[FIX_BASE_BYTES / sizeof(u64)];
   Forkresume plan = {
-      {&forkfds, &forkfiles, &forkdirectory, &runtime_contexts}, sizeof(fix), NULL, 0, NULL};
+      {&forkfds, &forkfiles, &forkdirectory, &runtime_contexts}, sizeof(fix), NULL, 0, NULL, 0};
   Forkfix          finish = {0};
   struct sigaction action = {0};
   Forkret          result;
@@ -655,6 +658,7 @@ publicforkuser(void)
   frame_trace[22] = native.trampoline;
   frame_trace[26] = 1;
   frame_trace[0] = 1;
+  plan.space = bootresource(sysboot(), BOOT_SELF_SPACE);
   REQUIRE(sysforkresume(0, 0, &plan, &result) == -ERR_BAD_HANDLE && frame_trace[23] == 1 &&
               !result.construct && !result.pid && !result.fix,
           272);
@@ -662,8 +666,10 @@ publicforkuser(void)
   REQUIRE(!sysforkresume((Handle) frame_trace[18], 0, &plan, &result), 273);
   if (!result.construct) {
     Connpeer self = runtime_contexts.self;
+    u64      probe;
     REQUIRE(frame_trace[24] == (frame_trace[1] == 17 ? 2U : 1U) && result.pid == self.pid &&
-                result.pid != context_self.pid && (u64) result.fix == address &&
+                result.pid != context_self.pid && !result.fix &&
+                __sys_copy(&probe, (const void *) address, sizeof(probe)) == -ERR_FAULT &&
                 !sysctxinvoke(&runtime_contexts, self, runtime_key) &&
                 !sysctxresult(&runtime_contexts, self, runtime_key, &status, &tuple) && !status &&
                 tuple.values[0] == (u64) self.pid && tuple.values[1] == self.image &&

@@ -8,6 +8,7 @@ struct Forkflight
   Connpeer          parent;
   Forkret           result;
   Forkdone          done;
+  u32               released;
 };
 
 static Forkflight flights[RCTX_LAYERS];
@@ -17,8 +18,22 @@ static isize
 repair(Forkflight *flight, const Forkret *result)
 {
   const Forkresume *plan = flight->plan;
-  return sysforkrepair(&flight->done, &plan->state, flight->parent, result, plan->available,
-                       plan->files, plan->file_count, plan->detach);
+  u64               mask, ignored;
+  isize             status, restore;
+  if ((u64) result->fix & PAGE_MASK)
+    return -ERR_INVALID;
+  status = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (status)
+    return status;
+  status = sysforkrepair(&flight->done, &plan->state, flight->parent, result, plan->available,
+                         plan->files, plan->file_count, plan->detach);
+  if (!status && !flight->released) {
+    status = __sys_unmap(plan->space, (u64) result->fix);
+    if (!status)
+      flight->released = 1;
+  }
+  restore = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return status ? status : restore;
 }
 
 isize
@@ -28,7 +43,7 @@ sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *ou
   u64         mask, ignored;
   isize       error;
   if (!plan || !out || !plan->state.contexts || !plan->state.fds || !plan->state.files ||
-      !plan->state.connections || plan->available < FIX_BASE_BYTES ||
+      !plan->state.connections || plan->space <= 0 || plan->available < FIX_BASE_BYTES ||
       plan->available > BOOT_MAX_BYTES || (plan->file_count && !plan->files))
     return -ERR_INVALID;
   error = sysctxsigbind(plan->state.contexts);
@@ -46,6 +61,7 @@ sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *ou
   flight->parent = plan->state.contexts->self;
   flight->result = (Forkret){0, 0, NULL};
   flight->done.child.pid = 0;
+  flight->released = 0;
   depth++;
   if (__sys_sigmask(SIGNAL_SETMASK, mask, &ignored))
     __sys_exit(128 + SIGNAL_SEGV);
@@ -55,6 +71,7 @@ sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *ou
   if (__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask))
     __sys_exit(128 + SIGNAL_SEGV);
   *out = flight->result;
+  out->fix = NULL;
   depth--;
   if (__sys_sigmask(SIGNAL_SETMASK, mask, &ignored))
     __sys_exit(128 + SIGNAL_SEGV);

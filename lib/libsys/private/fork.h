@@ -34,6 +34,7 @@ struct Forkresume
   const Filefork   *files;
   u64               file_count;
   const Forkdetach *detach;
+  Handle            space;
 };
 /* Complete the local side of an already prepared fork. Caller owns the exact
    preparation and any backend tokens. Keep the bank/transport at the snapshot
@@ -47,7 +48,9 @@ isize sysforkfinish(Elfwork *work, Rbank *bank, Connpeer parent, const Forkfix *
    Marker and inputs must be disjoint from the mutable tables. */
 isize sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const Forkret *result,
                     u64 available, const Filefork *files, u64 file_count, const Forkdetach *detach);
-/* Keep the plan and its referenced storage stable through the child return. */
+/* Keep the plan and its referenced storage stable through the child return.
+   Space is the inherited SELF_SPACE; Fix starts at its own mapping base.
+   The runtime consumes Fix before exposing the child PID, so out->fix is null. */
 isize sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *out);
 /* Called with caught signals masked when a bound bank still names the parent. */
 isize sysforksignal(Rbank *bank, const void *trap, const void *outer);
