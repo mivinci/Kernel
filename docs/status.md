@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage196：ARM64/RV64 已能从保存的陷阱现场解码 FORKPREP 子返回。主机上下文测试 7 项、格式检查和双架构 QEMU sigframe 通过；窗口内信号注入及修复待接。
+
 - stage195：ARM64/RV64 专用 FORKPREP 汇编桩已标记返回寄存器保留窗口。格式检查与双架构 QEMU sigframe 通过；信号入口消费与上下文修复待接。
 
 - stage194：libsys 安装子只读 Fix 并清理父临时映射。7 项主机测试、格式检查和双架构 QEMU sigframe 通过。上下文修复仍待接。

@@ -23,6 +23,9 @@ STATIC_ASSERT(offsetof(Forkret, construct) == 0, fork_return_construct);
 STATIC_ASSERT(offsetof(Forkret, pid) == 8, fork_return_pid);
 STATIC_ASSERT(offsetof(Forkret, fix) == 16, fork_return_fix);
 extern const u8 __sys_forkreturn_begin[], __sys_forkreturn_end[];
+/* Decode only a successful child return within the dedicated window.
+   Returns 1 on capture, 0 for unrelated frames, or a negative native error. */
+isize sysforkdecode(const void *frame, u64 begin, u64 end, Forkret *out);
 /* Architecture-only marshaling. The argument array has exactly seven words. */
 isize         __sys_enter(u64 number, const u64 args[7], void *out);
 NORETURN void __sys_exit(u64 code);

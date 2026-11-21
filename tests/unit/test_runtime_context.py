@@ -62,12 +62,35 @@ class RuntimeContextTests(unittest.TestCase):
                 'sysctxresult':[C.POINTER(Bank),Peer,Key,C.POINTER(C.c_int64),C.POINTER(Result)],
                 'sysctxfinish':[C.POINTER(Bank),Peer,Key],
                 'sysctxdecode':[C.POINTER(Context),C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64],
+                'sysforkdecode':[C.c_void_p,C.c_uint64,C.c_uint64,C.c_void_p],
                 'testreset':[C.c_uint64],'testget':[C.c_uint32],'testseen':[]}
             for name,args in signatures.items():getattr(lib,name).argtypes=args;getattr(lib,name).restype=C.c_int64
             cls.libs.append((arch,kind,lib))
 
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
+
+    def test_fork_decoder_reads_only_successful_child_returns_inside_window(self):
+        begin=0x10000
+        for arch,kind,lib in self.libs:
+            frame=frames.Context(kind)
+            start=10 if arch=='riscv' else 0
+            end=begin+(12 if arch=='riscv' else 8)
+            regs=frame.value.tf.x
+            regs[start+2],regs[start+3]=pid(2),0x30000000
+            out=(C.c_uint64*3)()
+            for pc in range(begin,end,4):
+                frame.value.tf.pc=pc
+                self.assertEqual(lib.sysforkdecode(frame.pointer,begin,end,out),1)
+                self.assertEqual(list(out),[0,pid(2),0x30000000])
+                self.assertEqual(frame.value.tf.pc,pc)
+            for pc,status,construct in ((begin-4,0,0),(begin+2,0,0),(end,0,0),
+                                        (begin,0,1),(begin,(1<<64)-1,0)):
+                frame.value.tf.pc=pc
+                regs[start],regs[start+1]=status,construct
+                out[0]=1
+                self.assertEqual(lib.sysforkdecode(frame.pointer,begin,end,out),0)
+                self.assertEqual(out[0],1)
 
     def test_bank_bounds_unique_incarnations_and_busy_layers_preserve_snapshot_storage(self):
         for arch,kind,lib in self.libs:

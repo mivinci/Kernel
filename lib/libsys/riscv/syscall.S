@@ -31,6 +31,8 @@ __sys_enter:
     ret
 .size __sys_enter, .-__sys_enter
 
+.option push
+.option norvc
 .balign 4
 .global __sys_forkprep
 .type __sys_forkprep, @function
@@ -60,4 +62,5 @@ __sys_forkreturn_end:
     li a0, -ERR_INVALID
     ret
 .size __sys_forkprep, .-__sys_forkprep
+.option pop
 .section .note.GNU-stack,"",@progbits

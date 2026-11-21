@@ -3,6 +3,19 @@
 #include <abi/signal.h>
 STATIC_ASSERT(sizeof(Trapframe) == SIGNAL_FRAME_FP - SIGNAL_FRAME_TF, runtime_signal_trap_size);
 isize
+sysforkdecode(const void *raw, u64 begin, u64 end, Forkret *out)
+{
+  const Trapframe *trap = raw;
+  if (!trap || !out || begin >= end || (begin | end) & 3)
+    return -ERR_INVALID;
+  if (trap->pc < begin || trap->pc >= end || trap->pc & 3 || trap->x[10] || trap->x[11])
+    return 0;
+  out->construct = 0;
+  out->pid = (Handle) trap->x[12];
+  out->fix = (const void *) trap->x[13];
+  return 1;
+}
+isize
 sysctxdecode(Rctx *context, void *raw, u64 begin, u64 end, u64 resume)
 {
   Trapframe *trap = raw;
