@@ -397,8 +397,9 @@ client(const Bootview *boot)
 {
   Opkey              key, background;
   Fdtag              fd;
-  Fdview             detached;
-  u64                files[2], source = 0, first, second, ids[2];
+  Fdview             detached, replaced;
+  Fileref            reference;
+  u64                files[2], source = 0, first, second, ids[2], mask, ignored;
   Msg                gate;
   Ipcmsg             result;
   Handle             rpc;
@@ -487,12 +488,26 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   CHECK(!files[0] && !files[1] && !source);
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        sysfddup2(&fds, &pool, work.state.self, 0, 1, &detached) == 1 &&
+        detached.tag.state == SYSFD_LIVE && detached.file == second &&
+        !sysfilerefdrop(&pool, work.state.self, detached.file) &&
+        !sysfilerefview(&pool, work.state.self, second, &reference) &&
+        reference.state == SYSFILE_REF_CLOSING && !reference.aliases &&
+        !sysfdobserve(&fds, 1, &replaced) && replaced.file == first &&
+        replaced.tag.generation != detached.tag.generation &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  closefile(detached.file, 0);
+  CHECK(sysfilerefview(&pool, work.state.self, second, &reference) == -ERR_STALE &&
+        !sysfilerefview(&pool, work.state.self, first, &reference) && reference.aliases == 2 &&
+        !sysfdobserve(&fds, 1, &detached) && detached.file == first &&
+        detached.tag.generation == replaced.tag.generation);
   CHECK(!sysfdobserve(&fds, 0, &detached) && detached.file == first &&
+        !sysfddetach(&fds, detached.tag, &detached) &&
+        !sysfilerefdrop(&pool, work.state.self, detached.file));
+  CHECK(!sysfdobserve(&fds, 1, &detached) && detached.file == first &&
         !sysfddetach(&fds, detached.tag, &detached));
   closefile(first, 1);
-  CHECK(!sysfdobserve(&fds, 1, &detached) && detached.file == second &&
-        !sysfddetach(&fds, detached.tag, &detached));
-  closefile(second, 1);
   resourceopens(boot);
   gate.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
