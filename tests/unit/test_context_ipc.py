@@ -18,7 +18,7 @@ isize sysctxdecode(Rctx *context,void *trap,u64 begin,u64 end,u64 resume){(void)
 
 
 class ContextIpcTests(unittest.TestCase):
-    extra_sources = ('conn.c', 'file.c', 'connection.c', 'operation.c', 'fileref.c', 'filecreate.c',
+    extra_sources = ('conn.c', 'file.c', 'connection.c', 'operation.c', 'fileref.c', 'filecreate.c', 'fd.c',
                      'context.c', 'contextipc.c')
     tearDownClass = classmethod(ops.SlotOperationTests.tearDownClass.__func__)
     result = work.ConnectionWorkTests.result

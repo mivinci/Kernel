@@ -1,5 +1,7 @@
 #include "private/contextipc.h"
 #include "private/filecreate.h"
+#include "private/syscall.h"
+#include <abi/signal.h>
 #include <abi/syscall.h>
 #include <proto/file.h>
 static int
@@ -545,6 +547,57 @@ sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *
     return -ERR_STATE;
   }
 }
+isize
+sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+             Conncache *cache, const Opkey *key, Rkey *active)
+{
+  Rctx *context;
+  u64   mask, ignored;
+  isize error, status = 0;
+  if (!active || !separate(bank, sizeof(*bank), active, sizeof(*active)) ||
+      !separate(key, sizeof(*key), active, sizeof(*active)))
+    return -ERR_INVALID;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  if (!active->sequence) {
+    error = sysctxpipestep(bank, self, layer, pool, work, cache, key, active);
+    if (error)
+      goto restore;
+  }
+  error = sysctxlookup(bank, self, *active, &context);
+  if (error)
+    goto restore;
+  if (active->layer != layer || context->route.kind != RCTX_ROUTE_OP ||
+      context->route.pool != pool || context->route.work != work || context->route.cache != cache ||
+      context->route.operation.lease.seq != key->lease.seq ||
+      context->route.operation.lease.slot != key->lease.slot ||
+      context->route.operation.owner != key->owner) {
+    error = -ERR_STALE;
+    goto restore;
+  }
+  if (context->phase == RCTX_PREPARED) {
+    error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+    if (error)
+      return error;
+    status = sysctxinvoke(bank, self, *active);
+    error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+    if (error)
+      return error;
+  } else
+    status = context->status;
+  error = sysctxhandoff(bank, self, *active);
+  if (!error)
+    error = sysctxfinish(bank, self, *active);
+  if (!error) {
+    active->sequence = 0;
+    error = status;
+  }
+restore:
+  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return status ? status : error;
+}
+
 isize
 sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
 {

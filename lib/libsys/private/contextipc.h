@@ -57,6 +57,12 @@ isize sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Co
    requires no native action (returns 1). Caller excludes caught signals. */
 isize sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
                      Conncache *cache, const Opkey *operation, Rkey *out);
+/* Drive one PIPE action with native signal masking around registration and
+   result handoff, leaving the original mask in force while waiting. Zeroed
+   active belongs exclusively to this continuation. A handoff failure keeps
+   its key for retry; a native interruption leaves the original Op intact. */
+isize sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                   Conncache *cache, const Opkey *operation, Rkey *active);
 /* Protected nonblocking typed capture after raw handoff. Records the outcome
    in route.capture_status, preserving the native status separately. Failure
    keeps the original Op/Createop and every reservation/resource; no ACK or fd

@@ -269,19 +269,17 @@ submitpipe(Rbank *bank, Connwork *work, Conncache *cache, Filepool *pool, Fdtabl
            Pipecreate *pipe, u64 owner)
 {
   Msg      message;
-  Rkey     key;
+  Rkey     active = {0};
   Handle   rpc;
   Connpeer self = work->state.self;
   CHECK(!sysfilepipeprepare(pool, work, cache, table, SYSFILE_MAIN, owner, pipe, &message) &&
-        sysctxpipestep(bank, self, 1, pool, work, cache, &pipe->operation, &key) == -ERR_INVALID &&
-        !sysctxpipestep(bank, self, 0, pool, work, cache, &pipe->operation, &key) &&
-        !sysctxinvoke(bank, self, key) && !sysctxhandoff(bank, self, key) &&
-        !sysctxfinish(bank, self, key) && !sysoprpc(work, cache, &pipe->operation, &rpc));
-  CHECK(!sysctxpipestep(bank, self, 0, pool, work, cache, &pipe->operation, &key) &&
-        bank->contexts[0].route.rpc == rpc && !sysctxinvoke(bank, self, key) &&
-        !sysctxhandoff(bank, self, key) && !sysctxcreateresult(bank, self, key) &&
-        !sysctxfinish(bank, self, key) &&
-        sysctxpipestep(bank, self, 0, pool, work, cache, &pipe->operation, &key) == 1);
+        sysctxpipeio(bank, self, 1, pool, work, cache, &pipe->operation, &active) == -ERR_INVALID &&
+        !active.sequence &&
+        !sysctxpipeio(bank, self, 0, pool, work, cache, &pipe->operation, &active) &&
+        !active.sequence && !sysoprpc(work, cache, &pipe->operation, &rpc));
+  CHECK(!sysctxpipeio(bank, self, 0, pool, work, cache, &pipe->operation, &active) &&
+        !active.sequence && work->state.operations[pipe->operation.lease.slot].rpc == rpc &&
+        sysctxpipeio(bank, self, 0, pool, work, cache, &pipe->operation, &active) == 1);
 }
 
 static void

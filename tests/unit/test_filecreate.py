@@ -19,7 +19,7 @@ class Words(C.Structure):
 
 
 class FileCreatorTests(unittest.TestCase):
-    extra_sources = ('conn.c','file.c','connection.c','operation.c','fileref.c','filecreate.c')
+    extra_sources = ('conn.c','file.c','connection.c','operation.c','fileref.c','filecreate.c','fd.c')
     tearDownClass = classmethod(support.ConnectionWorkTests.tearDownClass.__func__)
     result = support.ConnectionWorkTests.result
     adopt = support.ConnectionWorkTests.adopt
