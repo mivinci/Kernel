@@ -143,14 +143,15 @@ ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const
 
 isize
 ttyfiledefer(Ttypending *pending, const Fileinflight *active, const Ipcmsg *call,
-             const Fileslot *slot, volatile u8 *page)
+             const Fileslot *slot, volatile u8 *page, const Ttywait *wait)
 {
   isize error;
   if (!pending || !active || !call || call->kind != IPC_CALL || !call->request || !slot ||
       call->words[3] >= FS_CONN_SLOTS || active->requests[call->words[3]] != call->request ||
       slot->seq != call->words[2] || sysfileargs(call->words[0], slot) ||
       (call->words[0] != FS_READ && call->words[0] != FS_WRITE) || !slot->args[1] || !page ||
-      (slot->args[3] & FS_IO_POSITIONAL))
+      (slot->args[3] & FS_IO_POSITIONAL) ||
+      (wait && (call->words[0] != FS_READ || wait->nonblock || wait->length != slot->args[1])))
     return -ERR_INVALID;
   if (pending->call.request)
     return -ERR_BUSY;
@@ -160,19 +161,25 @@ ttyfiledefer(Ttypending *pending, const Fileinflight *active, const Ipcmsg *call
   pending->call = *call;
   pending->slot = *slot;
   pending->page = page;
+  pending->timed = wait != NULL;
+  if (wait)
+    pending->wait = *wait;
   return 0;
 }
 
 isize
-ttyfileresume(Ttypending *pending, Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active)
+ttyfileresume(Ttypending *pending, Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active,
+              u64 now, u64 *next)
 {
   isize error;
-  if (!pending || !pending->call.request)
+  if (!pending || !pending->call.request || (pending->timed && !next))
     return -ERR_INVALID;
-  error = ttyfileio(io, input, oflag, active, &pending->call, &pending->slot, pending->page, 0);
+  error = fileio(io, input, oflag, active, &pending->call, &pending->slot, pending->page, 0,
+                 pending->timed ? &pending->wait : NULL, now, next);
   if (!error) {
     pending->call.request = 0;
     pending->page = NULL;
+    pending->timed = 0;
   }
   return error;
 }

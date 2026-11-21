@@ -587,10 +587,6 @@ server(const Bootview *boot, u32 recover)
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   volatile u64   *data;
   isize           status;
-  Fileslot        ttyslot;
-  Ipcmsg          ttycall;
-  Handle          ttypending = 0;
-  volatile u8    *ttypage = NULL;
   const Termarg   ttymode = {0, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON, 0, 0, {0}};
   Ttyeffect       effect;
   Ttyserial       ttyio;
@@ -625,11 +621,9 @@ server(const Bootview *boot, u32 recover)
   for (;;) {
     CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : ttyalarm ? EVENT_TIMER : 0, 0, &input));
     if (input.kind == IPC_EVENT && input.words[0] == EVENT_TIMER) {
-      CHECK(ttypending && ttyalarm && !sysfilenow(&ttynow) && ttynow >= ttyalarm &&
-            !ttyfilereadwait(&ttyline, &watch->active, &ttycall, &ttyslot, ttypage, &ttywait,
-                             ttynow, &ttyalarm) &&
-            !ttyalarm);
-      ttypending = 0;
+      CHECK(ttydeferred.call.request && ttyalarm && !sysfilenow(&ttynow) && ttynow >= ttyalarm &&
+            !ttyfileresume(&ttydeferred, NULL, &ttyline, 0, &watch->active, ttynow, &ttyalarm) &&
+            !ttyalarm && !ttydeferred.call.request);
       continue;
     }
     if (input.kind == IPC_EVENT) {
@@ -698,25 +692,24 @@ server(const Bootview *boot, u32 recover)
     }
     if (opcode == SEEN) {
       if (!recover) {
-        if (ttyseen == 4 && !ttypending) {
+        if (ttyseen == 4 && !ttydeferred.call.request) {
           CHECK(!ttyinputinit(&ttyline, 0) && !ipc_reply(input.request, &reply));
           ttyseen++;
           continue;
         }
-        CHECK(ttypending && ttyseen < 4);
+        CHECK(ttydeferred.call.request && ttyseen < 4);
         if (++ttyseen == 2) {
           CHECK(!ttyinputbyte(&ttyline, &ttymode, 'b', &effect) &&
                 !ttyinputbyte(&ttyline, &ttymode, '\n', &effect) && ttyline.ready == 2 &&
-                !ttyfileresume(&ttydeferred, NULL, &ttyline, 0, &watch->active) &&
+                !ttyfileresume(&ttydeferred, NULL, &ttyline, 0, &watch->active, 0, NULL) &&
                 !ttydeferred.call.request && ttyline.ready == 2);
-          ttypending = 0;
         }
         if (ttyseen == 4) {
           CHECK(!ttyserialstep(&ttyio, &ttyline, &ttymode, 0, &ttyresult) && !ttyio.queued &&
-                !ttyfileresume(&ttydeferred, &ttyio, &ttyline, ttymode.oflag, &watch->active) &&
+                !ttyfileresume(&ttydeferred, &ttyio, &ttyline, ttymode.oflag, &watch->active, 0,
+                               NULL) &&
                 !ttydeferred.call.request && !ttyio.queued &&
                 serialread(&ttytx, 1, output, sizeof(output)) == 1 && output[0] == 'a');
-          ttypending = 0;
         }
         CHECK(!ipc_reply(input.request, &reply));
         continue;
@@ -749,7 +742,7 @@ server(const Bootview *boot, u32 recover)
       for (i = 0; i < created; i++)
         if (references[i] && sessions[i] == descriptor.object)
           found++;
-      CHECK(found == 1 && !ttypending);
+      CHECK(found == 1 && !ttydeferred.call.request);
       if (ttyseen == 5) {
         Termarg raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
         raw.cc[TTY_VTIME] = 1;
@@ -757,12 +750,13 @@ server(const Bootview *boot, u32 recover)
               !ttywaitinit(&ttywait, &raw, (u32) descriptor.args[1], 0, 0, ttynow) &&
               ttyfilereadwait(&ttyline, &watch->active, &input, &descriptor, (volatile u8 *) data,
                               &ttywait, ttynow, &ttyalarm) == -ERR_WOULD_BLOCK &&
-              ttyalarm > ttynow && !ipc_defer(input.request) &&
-              !__sys_alarmset(ttyalarm, &generation));
-        ttypending = input.request;
-        ttycall = input;
-        ttyslot = descriptor;
-        ttypage = (volatile u8 *) data;
+              ttyalarm > ttynow &&
+              !ttyfiledefer(&ttydeferred, &watch->active, &input, &descriptor, (volatile u8 *) data,
+                            &ttywait));
+        ttywait.deadline = 0;
+        CHECK(ttyfileresume(&ttydeferred, NULL, &ttyline, 0, &watch->active, ttynow, &generation) ==
+                  -ERR_WOULD_BLOCK &&
+              generation == ttyalarm && !__sys_alarmset(ttyalarm, &generation));
         ttyseen++;
         continue;
       }
@@ -770,14 +764,13 @@ server(const Bootview *boot, u32 recover)
                          (volatile u8 *) data, 0);
       if (status == -ERR_WOULD_BLOCK) {
         CHECK(ttyseen == (opcode == FS_READ ? 0 : 2) &&
-              !ttyfiledefer(&ttydeferred, &watch->active, &input, &descriptor,
-                            (volatile u8 *) data) &&
-              ttyfiledefer(&ttydeferred, &watch->active, &input, &descriptor,
-                           (volatile u8 *) data) == -ERR_BUSY &&
-              ttyfileresume(&ttydeferred, &ttyio, &ttyline, ttymode.oflag, &watch->active) ==
-                  -ERR_WOULD_BLOCK &&
+              !ttyfiledefer(&ttydeferred, &watch->active, &input, &descriptor, (volatile u8 *) data,
+                            NULL) &&
+              ttyfiledefer(&ttydeferred, &watch->active, &input, &descriptor, (volatile u8 *) data,
+                           NULL) == -ERR_BUSY &&
+              ttyfileresume(&ttydeferred, &ttyio, &ttyline, ttymode.oflag, &watch->active, 0,
+                            NULL) == -ERR_WOULD_BLOCK &&
               ttydeferred.call.request == input.request);
-        ttypending = input.request;
       } else {
         CHECK(!status && ttyseen == (opcode == FS_READ ? 2 : 4) && !ttyline.ready);
         if (opcode == FS_WRITE)

@@ -883,4 +883,6 @@ stage280：生产 TTY 尚未支持的文件 CALL 使用文件协议回复 `[−E
 
 stage302：阻塞 TTY 读写可用 `ttyfiledefer`/`ttyfileresume` 保留原 REQUEST、本地槽快照和数据页地址。重复暂存返回 BUSY，未就绪保留状态，完成回复或排空后清空待处理记录。双架构 QEMU `runtime` 用真实 IPC 验证阻塞读写重复检查及取消后不消费输入或提交输出；31 项 TTY 主机测试与格式通过。定时 READ 和生产分派仍走各自现有路径。
 
+stage303：同一待处理记录也保存阻塞 READ 的计时快照。重查返回原期限，TIMER 唤醒后沿原 REQUEST 回复；调用方之后改写临时快照不影响待处理请求。RV64、ARM64 QEMU `runtime` 验证 VMIN=0/VTIME>0 的真实闹钟到期、零字节回复和记录释放；31 项 TTY 主机测试和格式通过。生产连接分派仍待接入。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。
