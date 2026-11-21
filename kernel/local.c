@@ -6,6 +6,11 @@
 STATIC_ASSERT(AC_SETS <= 256 && LOCALS <= 255 && PENDING_CALLS <= 255, create_policy_encoding);
 
 static int
+isview(u32 subtype)
+{
+  return subtype == LOCAL_CONSTRUCT || subtype == LOCAL_EXEC_VIEW;
+}
+static int
 convert(int error)
 {
   if (!error)
@@ -335,19 +340,21 @@ localmem(Rtable *t, Memid id, u64 rights, u64 offset, u64 length, u32 inherit, H
 int
 localconstruct(Rtable *t, Prepid id, u64 rights, Handle *out)
 {
-  Local *l;
-  u32    i;
-  int    error;
+  Local   *l;
+  Prepinfo info;
+  u32      i, subtype;
+  int      error;
   if (!out)
     return -ERR_INVALID;
   *out = 0;
   if (!rights || rights & ~31UL)
     return -ERR_INVALID;
-  error = prepcheck(id, t, NULL);
+  error = prepcheck(id, t, &info);
   if (error)
     return error;
+  subtype = info.origin == PREP_EXEC ? LOCAL_EXEC_VIEW : LOCAL_CONSTRUCT;
   for (i = 0; i < t->count; i++)
-    if (t->slots[i].subtype == LOCAL_CONSTRUCT && t->slots[i].objectgen == id.generation &&
+    if (t->slots[i].subtype == subtype && t->slots[i].objectgen == id.generation &&
         t->slots[i].object == id.index)
       return -ERR_STATE;
   l = empty(t);
@@ -356,7 +363,7 @@ localconstruct(Rtable *t, Prepid id, u64 rights, Handle *out)
   error = prephold(id);
   if (error)
     return error;
-  publish(t, l, LOCAL_CONSTRUCT, id.generation, id.index, rights, 0, 0, 0, 1, out);
+  publish(t, l, subtype, id.generation, id.index, rights, 0, 0, 0, 1, out);
   return 0;
 }
 int
@@ -398,9 +405,9 @@ localprepared(Rtable *t, Prepid prep, Memid id, u64 rights, Handle *out)
 static int
 prepared(Rtable *t, Handle h, u64 rights, Prepid *id, Prepinfo *info)
 {
-  Local *l = find(t, h, LOCAL_CONSTRUCT);
+  Local *l = find(t, h, 0);
   int    error;
-  if (!l)
+  if (!l || !isview(l->subtype))
     return -ERR_BAD_HANDLE;
   if ((l->rights & rights) != rights)
     return -ERR_DENIED;
@@ -514,7 +521,10 @@ int
 localtarget(Rtable *t, Handle h, u64 rights, Prepid *id, Handle *pid)
 {
   Prepinfo info;
-  int      error = prepared(t, h, rights, id, &info);
+  int      error;
+  if (!find(t, h, LOCAL_CONSTRUCT))
+    return -ERR_BAD_HANDLE;
+  error = prepared(t, h, rights, id, &info);
   if (error)
     return error;
   *pid = info.pid;
@@ -1107,24 +1117,20 @@ localalloc(Rtable *t, Handle h, const Allocarg *a, Handle *out)
   Prepid   prep;
   Prepinfo info;
   Acctid   payer;
-  Handle   target;
   Memid    id;
   Acct     account;
   int      error;
-  u64      rights;
+  u64      rights, ticket = 0;
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (!l || (l->subtype != LOCAL_ALLOC && l->subtype != LOCAL_CONSTRUCT))
+  if (!l || (l->subtype != LOCAL_ALLOC && !isview(l->subtype)))
     return -ERR_BAD_HANDLE;
   prep.generation = 0;
   prep.index = prep.reserved = 0;
   payer = t->acct;
-  if (l->subtype == LOCAL_CONSTRUCT) {
-    error = localtarget(t, h, PREP_ALLOC, &prep, &target);
-    if (error)
-      return error;
-    error = prepcheck(prep, t, &info);
+  if (isview(l->subtype)) {
+    error = prepared(t, h, PREP_ALLOC, &prep, &info);
     if (error)
       return error;
     payer = info.acct;
@@ -1134,7 +1140,7 @@ localalloc(Rtable *t, Handle h, const Allocarg *a, Handle *out)
     return -ERR_INVALID;
   if (l->subtype == LOCAL_ALLOC && !(l->rights & (1UL << (a->kind - 1))))
     return -ERR_DENIED;
-  if (a->kind == ALLOC_DMA)
+  if (a->kind == ALLOC_DMA || (l->subtype == LOCAL_EXEC_VIEW && a->kind == ALLOC_SHARED))
     return -ERR_NOTSUP;
   if (a->bytes > ~(u64) 0 - PAGE_MASK)
     return -ERR_OVERFLOW;
@@ -1144,7 +1150,12 @@ localalloc(Rtable *t, Handle h, const Allocarg *a, Handle *out)
     return -ERR_NOTSUP;
   if (!empty(t))
     return sloterror(t);
-  if (a->kind == ALLOC_CODE)
+  if (l->subtype == LOCAL_EXEC_VIEW) {
+    error = prepexecticket(prep, t, &ticket);
+    if (error)
+      return error;
+    error = memexeccreate(payer, ticket, a->bytes, a->kind == ALLOC_CODE, &id);
+  } else if (a->kind == ALLOC_CODE)
     error = memcode(payer, a->bytes, &id);
   else if (a->kind == ALLOC_SHARED)
     error = memshared(payer, a->bytes, &id);
@@ -1169,12 +1180,12 @@ localmap(Rtable *t, Handle space, Handle mem, u64 offset, u64 address, u64 lengt
 {
   Local   *s = find(t, space, 0), *m = find(t, mem, LOCAL_MEM);
   Prepid   scope, destination;
-  Handle   pid;
   Prepinfo info;
   Spaceid  target;
   Mem      state;
+  u64      ticket;
   int      error;
-  if (!s || !m || (s->subtype != LOCAL_SPACE && s->subtype != LOCAL_CONSTRUCT))
+  if (!s || !m || (s->subtype != LOCAL_SPACE && !isview(s->subtype)))
     return -ERR_BAD_HANDLE;
   if (!(prot & VM_READ) || prot & ~7UL || ((prot & VM_WRITE) && (prot & VM_EXEC)))
     return -ERR_INVALID;
@@ -1188,16 +1199,13 @@ localmap(Rtable *t, Handle space, Handle mem, u64 offset, u64 address, u64 lengt
   scope.index = scope.reserved = 0;
   if (m->source == LOCAL_LOAD)
     scope = loadscope(m);
-  if (s->subtype == LOCAL_CONSTRUCT) {
-    error = localtarget(t, space, PREP_MAP, &destination, &pid);
+  if (isview(s->subtype)) {
+    error = prepared(t, space, PREP_MAP, &destination, &info);
     if (error)
       return error;
     if (!scope.generation || scope.generation != destination.generation ||
         scope.index != destination.index)
       return -ERR_DENIED;
-    error = prepcheck(destination, t, &info);
-    if (error)
-      return error;
     target = info.space;
   } else if (!(s->rights & 1))
     return -ERR_DENIED;
@@ -1210,7 +1218,12 @@ localmap(Rtable *t, Handle space, Handle mem, u64 offset, u64 address, u64 lengt
     return -ERR_DENIED;
   if (s->subtype == LOCAL_SPACE && scope.generation)
     error = spaceloadmap(target, memory(m), offset, address, length, prot, scope);
-  else if (s->subtype == LOCAL_CONSTRUCT && info.origin == PREP_FORK)
+  else if (s->subtype == LOCAL_EXEC_VIEW) {
+    error = prepexecticket(destination, t, &ticket);
+    if (error)
+      return error;
+    error = spaceexecmap(target, ticket, memory(m), offset, address, length, prot);
+  } else if (s->subtype == LOCAL_CONSTRUCT && info.origin == PREP_FORK)
     error = spaceforkmap(target, memory(m), offset, address, length, prot);
   else
     error = spacemap(target, memory(m), offset, address, length, prot);
@@ -1224,15 +1237,11 @@ localunmap(Rtable *t, Handle space, u64 address)
   Local   *s = find(t, space, 0);
   Prepid   id;
   Prepinfo info;
-  Handle   pid;
   int      error;
   if (!s)
     return -ERR_BAD_HANDLE;
-  if (s->subtype == LOCAL_CONSTRUCT) {
-    error = localtarget(t, space, PREP_MAP, &id, &pid);
-    if (error)
-      return error;
-    error = prepcheck(id, t, &info);
+  if (isview(s->subtype)) {
+    error = prepared(t, space, PREP_MAP, &id, &info);
     if (error)
       return error;
     return convert(spaceunmap(info.space, address));
@@ -1332,7 +1341,7 @@ removeentry(Local *l)
     l->rights = 0;
     return 0;
   }
-  if (l->subtype == LOCAL_CONSTRUCT) {
+  if (isview(l->subtype)) {
     scope.generation = l->objectgen;
     scope.index = l->object;
     l->subtype = 0;
@@ -1487,7 +1496,7 @@ localclearscope(Rtable *t, Prepid id, u32 first, u32 count)
     panic("local scope cleanup bound");
   for (i = first; i < first + count; i++) {
     l = &t->slots[i];
-    if (l->subtype == LOCAL_CONSTRUCT) {
+    if (isview(l->subtype)) {
       scope.generation = l->objectgen;
       scope.index = l->object;
       scope.reserved = 0;
@@ -1539,10 +1548,9 @@ queryrecord(const Rtable *table, u32 index, Queryrec *out)
     out->data[6] = (u64) image.pid;
     out->data[7] = image.number;
   } else if (l->subtype != LOCAL_SPACE && l->subtype != LOCAL_ALLOC &&
-             l->subtype != LOCAL_CONTROL && l->subtype != LOCAL_CONSTRUCT &&
-             l->subtype != LOCAL_CREATE && l->subtype != LOCAL_OBSERVE &&
-             l->subtype != LOCAL_IRQ_SOURCE && l->subtype != LOCAL_IRQ_BIND &&
-             l->subtype != LOCAL_SYSTEM)
+             l->subtype != LOCAL_CONTROL && !isview(l->subtype) && l->subtype != LOCAL_CREATE &&
+             l->subtype != LOCAL_OBSERVE && l->subtype != LOCAL_IRQ_SOURCE &&
+             l->subtype != LOCAL_IRQ_BIND && l->subtype != LOCAL_SYSTEM)
     return -ERR_NOTSUP;
   return 0;
 }
@@ -1877,6 +1885,7 @@ localforkloadchecked(Rtable *source, Rtable *target, const Createarg *limits, Pr
     case LOCAL_SYSTEM:
     case LOCAL_IRQ_BIND:
     case LOCAL_CONSTRUCT:
+    case LOCAL_EXEC_VIEW:
       break;
     default:
       return -ERR_NOTSUP;

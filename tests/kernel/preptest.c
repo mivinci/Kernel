@@ -66,6 +66,98 @@ allocate(Rtable *t, Handle construct, u64 bytes, u64 kind)
   REQUIRE(!localalloc(t, construct, &a, &h));
   return h;
 }
+static void
+execpreptest(void)
+{
+  static Rtable source, target;
+  static Local  oldslots[16], newslots[16];
+  Setid         set;
+  Set           group;
+  Acctid        acct;
+  Spaceid       oldspace, newspace;
+  Lifeid        life;
+  Life          instance;
+  Liferesult    result;
+  Imageid       running, future;
+  Image         image;
+  Prepid        prep, rejected;
+  Prepinfo      info;
+  Rtable       *queried;
+  Memid         original;
+  Pgstat        before, after;
+  Hpte          alias;
+  Handle        pid = handlepack(HANDLE_PROCESS, 1, PROCS - 1);
+  Handle        oldcap, futurecap, view, data, ignored;
+  u64           ticket, duplicate, marker = 0x31415926, value;
+  u32           mode, i;
+  u64           va = 0x10000;
+  pgstat(&before);
+  REQUIRE(!setcreate(5, 10, 1, &set) && !acctcreate(set, 5, 10, &acct) &&
+          !lifecreate(set, pid, 1, &life) && !lifebindacct(life, acct) &&
+          !imagecreate(life, 0, &running) && !lifepublish(life) && !imageactivate(running));
+  REQUIRE(!spacecreate(acct, &oldspace) && !localinit(&source, oldslots, 16, acct, oldspace));
+  source.owner = pid;
+  source.image = 1;
+  REQUIRE(!localspace(&source, 3, &oldcap) && !memcreate(acct, PAGE_SIZE, &original) &&
+          !spacemap(oldspace, original, 0, va, PAGE_SIZE, VM_READ | VM_WRITE) &&
+          !spacewrite(oldspace, va, &marker, sizeof(marker)));
+  for (mode = 0; mode < 3; mode++) {
+    REQUIRE(!acctexecbegin(acct, &ticket) && !spaceexeccreate(acct, ticket, &newspace) &&
+            !localinit(&target, newslots, 16, acct, newspace) &&
+            !imagecreate(life, source.image, &future) && !imagestat(future, &image));
+    target.owner = pid;
+    target.image = image.number;
+    REQUIRE(!localspace(&target, 3, &futurecap) &&
+            prepexecopen(&source, &source, life, future, ticket, &rejected) == -ERR_INVALID &&
+            !prepexecopen(&source, &target, life, future, ticket, &prep) &&
+            acctexecbegin(acct, &duplicate) == AC_BUSY &&
+            prepexecopen(&source, &target, life, future, ticket, &rejected) == -ERR_BUSY);
+    REQUIRE(!localconstruct(&source, prep, 31, &view) &&
+            source.slots[handleindex(view)].subtype == LOCAL_EXEC_VIEW &&
+            !localqueryprep(&source, view, &queried) && queried == &target &&
+            localtarget(&source, view, PREP_PUBLISH, &rejected, &ignored) == -ERR_BAD_HANDLE);
+    REQUIRE(prepexecticket(prep, &target, &duplicate) == -ERR_BAD_HANDLE);
+    data = allocate(&source, view, PAGE_SIZE, ALLOC_DATA);
+    REQUIRE(localmap(&source, oldcap, data, 0, 1UL << 21, PAGE_SIZE, VM_READ) == -ERR_LIMIT &&
+            !localmap(&source, oldcap, data, 0, va + PAGE_SIZE, PAGE_SIZE, VM_READ | VM_WRITE) &&
+            !spacewrite(oldspace, va + PAGE_SIZE, &marker, sizeof(marker)) &&
+            !localmap(&source, view, data, 0, va, PAGE_SIZE, VM_READ) &&
+            !spaceread(newspace, va, &value, sizeof(value)) && value == marker &&
+            preppublishcheck(prep) == -ERR_BUSY && !prepstat(prep, &info) && info.temporary == 1 &&
+            !setstat(set, &group) && group.charged == 8);
+    if (mode == 0)
+      REQUIRE(!prepcancel(prep));
+    else if (mode == 1) {
+      for (i = 0; i < PREPS / 8; i++)
+        REQUIRE(prepexpire(info.deadline, 8) >= 0);
+      REQUIRE(preppublishcheck(prep) == -ERR_TIMEDOUT);
+    } else
+      prepownerclose(&source);
+    REQUIRE(!acctexecvalid(acct, ticket) &&
+            localqueryprep(&source, view, &queried) == -ERR_BAD_HANDLE &&
+            localwrite(&source, data, 0, &marker, sizeof(marker)) == -ERR_REVOKED &&
+            !imagestat(future, &image) && image.state == IMAGE_ENDED &&
+            image.reason == (mode == 1 ? IMAGE_TIMEOUT : IMAGE_ABORT) &&
+            !imagestat(running, &image) && image.state == IMAGE_ACTIVE &&
+            !lifestat(life, &instance) && instance.state == LIFE_LIVE);
+    sweep(prep);
+    REQUIRE(!localclose(&target) && !localdrain(&target, 32) && !spaceclear(newspace, 32) &&
+            !spacedestroy(newspace) && !imagedetach(future) && !prepdrop(prep));
+    REQUIRE(spacelookup(oldspace, va + PAGE_SIZE, &alias) && !setstat(set, &group) &&
+            group.charged == 5 && !localunmap(&source, oldcap, va + PAGE_SIZE) &&
+            prepstat(prep, &info) == -ERR_STALE && !setstat(set, &group) && group.charged == 4 &&
+            !spaceread(oldspace, va, &value, sizeof(value)) && value == marker);
+  }
+  REQUIRE(!localclose(&source) && !localdrain(&source, 32) && !spaceunmap(oldspace, va) &&
+          !memfree(original) && !spacedestroy(oldspace) && !lifeend(life, LIFE_EXIT, 0, NULL) &&
+          !imageend(running, IMAGE_EXIT) && !imagedetach(running) && !lifedetach(life) &&
+          !lifecollect(life, 1, &result) && !acctclose(acct) && !acctunbind(acct) &&
+          !setclose(set));
+  pgstat(&after);
+  REQUIRE(before.allocated == after.allocated && before.free == after.free && !acctcheck() &&
+          !pgcheck());
+}
+
 NORETURN void
 preptesttrap(Hctx *context)
 {
@@ -97,6 +189,7 @@ preptest(void)
   Hpte     alias;
   u64      oldpa;
   u32      i;
+  execpreptest();
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 16, &set));
   REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &parentpid) && !procinfo(parentpid, &parent));

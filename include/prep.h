@@ -19,6 +19,7 @@
 #define PREP_ALLOC     CONSTRUCT_ALLOC
 #define PREP_CREATE    0
 #define PREP_FORK      1
+#define PREP_EXEC      2
 #define PREP_CLONING   1
 #define PREP_DRAIN     2
 #define PREP_ROLLBACK  3
@@ -39,6 +40,11 @@ int prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Pr
 /* Fork holds its ordinary Space lease from acceptance, but no construction
    operations/publication are permitted until the synchronous clone finishes. */
 int prepforkcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out);
+/* On success Prep takes the ticket. Caller retains the target owners and
+   must tear them down after cancellation. On failure caller retains all. */
+int prepexecopen(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u64 ticket,
+                 Prepid *out);
+int prepexecticket(Prepid id, Rtable *source, u64 *out);
 int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
 /* Space borrows stable embedded storage, then retains Prep/root references.
    Cancelled records remain accessible until that ownership is released. */

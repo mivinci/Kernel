@@ -4,17 +4,25 @@
 typedef struct Prep Prep;
 struct Prep
 {
-  u64      generation, deadline;
-  Rtable  *source, *target;
-  u64      sourceepoch, targetepoch;
-  Handle   owner, pid;
-  u64      sourceimage, image;
-  Lifeid   life;
-  Imageid  identity;
-  Acctid   acct;
-  Spaceid  space, sourcespace;
-  u32      state, refs, temporary, cursor, leased, expired, origin, cloning;
-  Spacetxn tree;
+  u64     generation, deadline;
+  Rtable *source, *target;
+  u64     sourceepoch, targetepoch;
+  Handle  owner, pid;
+  u64     sourceimage, image;
+  Lifeid  life;
+  Imageid identity;
+  Acctid  acct;
+  Spaceid space, sourcespace;
+  u32     state, refs, temporary, cursor, leased, expired, origin, cloning;
+  union
+  {
+    Spacetxn tree;
+    struct
+    {
+      Imageid source;
+      u64     ticket;
+    } exec;
+  } work;
 };
 STATIC_ASSERT(PREPS > 0 && PREPS <= 192, prep_capacity);
 STATIC_ASSERT(sizeof(Prep) <= 256, prep_budget);
@@ -48,6 +56,13 @@ expire(Prep *p, u64 now)
   p->expired = 1;
 }
 static int
+imageactive(Prep *p)
+{
+  Image image;
+  return !imagestat(p->work.exec.source, &image) && image.state == IMAGE_ACTIVE &&
+         acctexecvalid(p->acct, p->work.exec.ticket);
+}
+static int
 active(Prep *p)
 {
   Life  l;
@@ -61,8 +76,9 @@ active(Prep *p)
          image.state == IMAGE_PREPARING && sourcevalid(p) && p->target &&
          p->target->state == LOCAL_OPEN && p->target->epoch == p->targetepoch &&
          p->target->owner == p->pid && p->target->image == p->image && !lifestat(p->life, &l) &&
-         l.state == LIFE_CONSTRUCT && l.pid == p->pid && !acctstat(p->acct, &a) &&
-         a.state == AC_ACTIVE;
+         l.pid == p->pid && !acctstat(p->acct, &a) && a.state == AC_ACTIVE &&
+         (p->origin == PREP_EXEC ? l.state == LIFE_LIVE && imageactive(p)
+                                 : l.state == LIFE_CONSTRUCT);
 }
 static void
 fill(const Prep *p, Prepinfo *out)
@@ -84,18 +100,32 @@ fill(const Prep *p, Prepinfo *out)
   out->identity.reserved = 0;
 }
 static int
-create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin, Prepid *out)
+create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin, u64 ticket,
+       Prepid *out)
 {
-  Life  l;
-  Image image;
-  Prep *p;
-  u32   i, count = 0, slot = PG_NONE;
-  u64   now;
-  int   error;
+  Life    l;
+  Image   image, running;
+  Imageid sourceid;
+  Acctid  acct;
+  Prep   *p;
+  u32     i, count = 0, slot = PG_NONE;
+  u64     now;
+  int     error;
   if (!source || !target || !out || source == target || source->state != LOCAL_OPEN ||
       target->state != LOCAL_OPEN || handletype(source->owner) != HANDLE_PROCESS ||
-      !source->image || lifestat(life, &l) || l.state != LIFE_CONSTRUCT || l.pid != target->owner ||
-      l.parent != source->owner || !target->image)
+      !source->image || lifestat(life, &l) || l.pid != target->owner || !target->image)
+    return -ERR_INVALID;
+  if (origin == PREP_EXEC) {
+    if (l.state != LIFE_LIVE || l.pid != source->owner || target->image <= source->image ||
+        source->slots == target->slots ||
+        (source->space.index == target->space.index &&
+         source->space.generation == target->space.generation) ||
+        lifeacct(life, &acct) || accttag(source->acct) != accttag(acct) ||
+        accttag(target->acct) != accttag(acct) || !acctexecvalid(acct, ticket) ||
+        imagelookup(life, source->image, &sourceid) || imagestat(sourceid, &running) ||
+        running.state != IMAGE_ACTIVE)
+      return -ERR_INVALID;
+  } else if (l.state != LIFE_CONSTRUCT || l.parent != source->owner)
     return -ERR_INVALID;
   if (imagestat(identity, &image) || image.life.generation != life.generation ||
       image.life.index != life.index || image.pid != target->owner ||
@@ -113,7 +143,7 @@ create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin
     if (p->state == PREP_ACTIVE && p->source == source && p->sourceepoch == source->epoch)
       count++;
     if (p->state == PREP_ACTIVE && p->pid == l.pid)
-      return -ERR_STATE;
+      return origin == PREP_EXEC ? -ERR_BUSY : -ERR_STATE;
   }
   if (slot == PG_NONE || count >= 3)
     return -ERR_CAPACITY;
@@ -154,7 +184,11 @@ create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin
   p->refs = 1;
   p->temporary = p->cursor = 0;
   p->leased = 1;
-  p->tree.phase = 0;
+  if (origin == PREP_EXEC) {
+    p->work.exec.source = sourceid;
+    p->work.exec.ticket = ticket;
+  } else
+    p->work.tree.phase = 0;
   out->generation = p->generation;
   out->index = slot;
   out->reserved = 0;
@@ -163,12 +197,29 @@ create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin
 int
 prepcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out)
 {
-  return create(source, target, life, identity, PREP_CREATE, out);
+  return create(source, target, life, identity, PREP_CREATE, 0, out);
 }
 int
 prepforkcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity, Prepid *out)
 {
-  return create(source, target, life, identity, PREP_FORK, out);
+  return create(source, target, life, identity, PREP_FORK, 0, out);
+}
+int
+prepexecopen(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u64 ticket, Prepid *out)
+{
+  return create(source, target, life, identity, PREP_EXEC, ticket, out);
+}
+int
+prepexecticket(Prepid id, Rtable *source, u64 *out)
+{
+  Prep *p = find(id);
+  int   error = prepcheck(id, source, NULL);
+  if (error)
+    return error;
+  if (!out || p->origin != PREP_EXEC)
+    return -ERR_STATE;
+  *out = p->work.exec.ticket;
+  return 0;
 }
 int
 prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target)
@@ -194,7 +245,7 @@ prepforktree(Prepid id, Spacetxn **out)
   Prep *p = find(id);
   if (!p || !out || p->origin != PREP_FORK || p->cloning != PREP_CLONING)
     return -ERR_STATE;
-  *out = &p->tree;
+  *out = &p->work.tree;
   return 0;
 }
 int
@@ -206,14 +257,14 @@ prepforkopen(Prepid id, Spaceid source, Spaceid target, Spacetxn **out)
       source.generation != p->sourcespace.generation || target.index != p->space.index ||
       target.generation != p->space.generation || !active(p))
     return -ERR_STATE;
-  *out = &p->tree;
+  *out = &p->work.tree;
   return 0;
 }
 int
 prepforkfinish(Prepid id)
 {
   Prep *p = find(id);
-  if (!p || p->origin != PREP_FORK || p->cloning != PREP_CLONING || p->tree.phase)
+  if (!p || p->origin != PREP_FORK || p->cloning != PREP_CLONING || p->work.tree.phase)
     return -ERR_STATE;
   p->cloning = 0;
   if (p->state != PREP_ACTIVE)
@@ -227,8 +278,8 @@ prepforkabandon(Prepid id)
 {
   Prep *p = find(id);
   int   error;
-  if (!p || p->origin != PREP_FORK || p->cloning != PREP_CLONING || !p->tree.phase || !p->target ||
-      p->target->epoch != p->targetepoch || p->target->owner != p->pid ||
+  if (!p || p->origin != PREP_FORK || p->cloning != PREP_CLONING || !p->work.tree.phase ||
+      !p->target || p->target->epoch != p->targetepoch || p->target->owner != p->pid ||
       p->target->image != p->image || p->target->state != LOCAL_OPEN || p->temporary)
     return -ERR_STATE;
   error = spacesnapshotabortcheck(p->sourcespace, p->space);
@@ -287,7 +338,8 @@ prepdrop(Prepid id)
     return -ERR_STALE;
   p->refs--;
   if (!p->refs) {
-    if (p->state == PREP_ACTIVE || p->temporary || p->leased || p->cloning || p->tree.phase)
+    if (p->state == PREP_ACTIVE || p->temporary || p->leased || p->cloning ||
+        (p->origin == PREP_EXEC ? p->work.exec.ticket != 0 : p->work.tree.phase != 0))
       panic("live preparation without owner");
     if (imagedrop(p->identity, IMAGE_CLEANUP))
       panic("preparation image reference");
@@ -308,6 +360,11 @@ preppublishcheck(Prepid id)
 static void
 releaseview(Prep *p)
 {
+  if (p->origin == PREP_EXEC) {
+    if (acctexecend(p->acct, p->work.exec.ticket))
+      panic("exec preparation ticket release");
+    p->work.exec.ticket = 0;
+  }
   if (p->leased && spacedrop(p->space))
     panic("preparation space lease");
   p->leased = 0;
@@ -334,12 +391,15 @@ prepcancel(Prepid id)
     return -ERR_STALE;
   if (p->state != PREP_ACTIVE)
     return 0;
-  if (lifestat(p->life, &l))
-    panic("preparation target life");
-  if (l.state == LIFE_CONSTRUCT && lifecancel(p->life))
-    panic("preparation cancel");
-  else if (l.state != LIFE_CONSTRUCT && l.state != LIFE_ABORTED)
-    return -ERR_STATE;
+  if (p->origin != PREP_EXEC) {
+    if (lifestat(p->life, &l))
+      panic("preparation target life");
+    if (l.state == LIFE_CONSTRUCT) {
+      if (lifecancel(p->life))
+        panic("preparation cancel");
+    } else if (l.state != LIFE_ABORTED)
+      return -ERR_STATE;
+  }
   if (imageend(p->identity, IMAGE_ABORT))
     panic("preparation image abort");
   p->state = PREP_ABORTED;
