@@ -23,4 +23,7 @@ Conncache *sysfileimagecache(Fileimage *image);
 isize sysfileimagefs(u32 layer, u64 address, Connwork **out);
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
+isize sysfileimagedup2(int fd, int target);
+/* Nonblocking progress on the exact connection generation's pending CLOSE. */
+isize sysfileimageclosework(Conntag tag);
 #endif

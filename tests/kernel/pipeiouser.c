@@ -304,8 +304,10 @@ interruptclient(void)
   isize            business;
   int              fds[2] = {-1, -1};
   int              fd;
-  Fdview           original, alias;
+  Fdview           original, alias, displaced;
   Fileref          ref;
+  u32              turns = 0;
+  isize            progress;
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
   CHECK(sysfileimagefs(0, (uintptr_t) pipeiotrace & ~PAGE_MASK, &work) < 0 && !work &&
@@ -336,6 +338,25 @@ interruptclient(void)
         !sysfdobserve(&image->fds, fds[0], &original) && original.flags == BOOT_FD_CLOEXEC &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) &&
         ref.aliases == BOOT_FD_COUNT - 1);
+  CHECK(dup2(fds[0], fds[0]) == fds[0] && !sysfdobserve(&image->fds, fds[0], &alias) &&
+        alias.flags == original.flags && alias.tag.generation == original.tag.generation &&
+        !sysfdobserve(&image->fds, fds[1], &displaced) &&
+        !sysfdsetflags(&image->fds, displaced.tag, BOOT_FD_CLOEXEC) && dup2(-1, fds[1]) == -1 &&
+        errno == EBADF && !sysfdobserve(&image->fds, fds[1], &alias) &&
+        alias.file == displaced.file && alias.flags == BOOT_FD_CLOEXEC &&
+        dup2(fds[0], fds[1]) == fds[1] && !sysfdobserve(&image->fds, fds[1], &alias) &&
+        alias.file == original.file && !alias.flags &&
+        alias.tag.generation > displaced.tag.generation && work->state.operations[6].rpc &&
+        work->state.operations[6].file == displaced.file);
+  do {
+    progress = sysfileimageclosework(work->state.tag);
+    if (progress == -ERR_WOULD_BLOCK)
+      CHECK(++turns < 64 && !__sys_yield());
+  } while (progress == -ERR_WOULD_BLOCK);
+  CHECK(!progress && !work->state.operations[6].rpc &&
+        sysfilerefview(&image->files, work->state.self, displaced.file, &ref) == -ERR_STALE &&
+        !sysfilerefview(&image->files, work->state.self, original.file, &ref) &&
+        ref.aliases == BOOT_FD_COUNT);
   pipeiotrace[0] = 7;
 }
 

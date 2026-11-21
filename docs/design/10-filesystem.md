@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage402：公开 `dup2()` 在同一镜像 fd 表内原子替换目标；旧 File 的最后一个别名脱离后，运行库尝试通过原连接发出控制 CLOSE，后续由同连接的非阻塞推进入口领取原结果。双架构 QEMU `pipeio` 验证满表替换、同号保留 CLOEXEC、无效源不改目标、替换清除 CLOEXEC，并确认关闭的是旧写端引用。夹具主动推进后台收尾；生产自动调度与公开 `close()` 仍待接入。
+
 stage401：公开 `dup()` 复制当前镜像中有效的 fd，共用原 File 和后端引用，新描述符清除 CLOEXEC。双架构 QEMU `pipeio` 验证最低可用编号、表满 EMFILE 且引用数不变，以及真实信号处理函数中对保留 fd 返回 EBADF、返回后恢复原 errno。未接公开 `dup2()` 或 `close()`。
 
 stage400：libsys 按需为当前 Image 建立一张 fd 表、File 池、Rctx bank 和八页连接工作区，目录仍内嵌于第一页。首个 FS 连接使用 `BOOT_FS_CALL`，由同一工作区保存 HELLO 的原 RPC、回复和映射责任；已就绪时主程序和信号处理函数共用此连接。ARM64/RV64 QEMU `pipeio` 验证真实 SIGUSR1 处理函数取得同一份状态并看到待完成 PIPE 的两端预留，返回后原调用才成对发布。当前冷路径由调用方提供 VA，Bootfd/Fix 修复和公开 `pipe()` 仍待接入。

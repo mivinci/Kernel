@@ -1,4 +1,5 @@
 #include "private/fileimage.h"
+#include "private/close.h"
 #include "private/sigentry.h"
 #include "private/start.h"
 #include "private/syscall.h"
@@ -150,13 +151,55 @@ restore:
   return error ? error : restored;
 }
 
+static isize
+closework(Fileimage *state, Conntag tag)
+{
+  Conncache *cache = sysfileimagecache(state);
+  Connentry  entry;
+  Connwork  *work;
+  u64        file;
+  isize      error = sysconnview(cache, tag, &entry);
+  if (error)
+    return error;
+  work = &state->connections[tag.index];
+  if (work->state.tag.index != tag.index || work->state.tag.generation != tag.generation)
+    return -ERR_STALE;
+  if (work->state.operations[6].phase)
+    file = work->state.operations[6].file;
+  else {
+    error = sysfilerefnextclose(&state->files, state->files.self, tag, 0, &file);
+    if (error)
+      return error;
+  }
+  return sysfileclosepump(&state->files, work, cache, file, 0);
+}
+
 isize
-sysfileimagedup(int fd)
+sysfileimageclosework(Conntag tag)
 {
   Fileimage *state;
   u64        mask, ignored;
   isize      result, restored;
-  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
+  result = sysfileimage(&state);
+  if (result)
+    return result;
+  result = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (result)
+    return result;
+  result = closework(state, tag);
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : result;
+}
+
+static isize
+duplicate(int fd, int target, u32 replace)
+{
+  Fileimage *state;
+  Fileref    old;
+  u64        mask, ignored, closing = 0;
+  isize      result, restored;
+  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT ||
+      (replace && (target < 0 || (u32) target >= BOOT_FD_COUNT)))
     return -ERR_BAD_HANDLE;
   result = sysfileimage(&state);
   if (result)
@@ -164,7 +207,27 @@ sysfileimagedup(int fd)
   result = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (result)
     return result;
-  result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, 0);
+  if (replace) {
+    result =
+        sysfddup2(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target, &closing);
+    /* The replacement has committed. The old reference owns any remaining
+       close work, regardless of whether a control request can advance now. */
+    if (result >= 0 && closing && !sysfilerefview(&state->files, state->files.self, closing, &old))
+      (void) closework(state, old.connection);
+  } else
+    result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, 0);
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return restored ? restored : result;
+}
+
+isize
+sysfileimagedup(int fd)
+{
+  return duplicate(fd, 0, 0);
+}
+
+isize
+sysfileimagedup2(int fd, int target)
+{
+  return duplicate(fd, target, 1);
 }
