@@ -8,6 +8,7 @@
 #include "private/filewatch.h"
 #include "private/close.h"
 #include "private/fd.h"
+#include "private/execsend.h"
 #include "private/contextipc.h"
 #include "private/sigentry.h"
 #include "private/serial.h"
@@ -32,6 +33,8 @@ static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
 static Filepool       pool;
 static Fdtable        fds;
+static Execfds        execfds;
+static Execsend       execsend;
 static Rbank          contexts;
 static Rkey           active_key;
 static Ttyinput       ttyline;
@@ -400,6 +403,37 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
 }
 
 static void
+execmanifest(u64 file)
+{
+  Fdtag  tag;
+  Msg    message;
+  Ipcmsg result;
+  u64    pin = file, closing = 0;
+  Handle rpc, original;
+  CHECK(!sysfilerefalias(&pool, work.state.self, file) && !sysfdreserve(&fds, 0, &tag) &&
+        !sysfdpublish(&fds, tag, file, BOOT_FD_CLOEXEC) &&
+        !sysexecfds(&execfds, &fds, &pool, &cache, work.state.self) &&
+        !sysfilerefpin(&pool, work.state.self, pin) &&
+        !sysexecfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, work.state.self.image + 1, 100,
+                        &pin, &execsend) &&
+        !pin && !sysoprequest(&work, &cache, &execsend.key, &message) &&
+        !ipc_call(work.state.call, &message, CALL_ASYNC, &result));
+  rpc = original = result.request;
+  CHECK(!sysopsubmitted(&work, &cache, &execsend.key, &rpc) && !rpc &&
+        sysoprequest(&work, &cache, &execsend.key, &message) == -ERR_STATE &&
+        !ipc_rqwait(original, 0, &result) && (isize) result.words[0] == -ENOTSUP &&
+        result.words[1] == execsend.key.lease.seq && !result.words[2] && !result.words[3] &&
+        !sysopcapture(&work, &cache, &execsend.key, 0, &result) &&
+        !sysopfinished(&work, &cache, &execsend.key) && !sysopsaved(&work, &cache, &execsend.key) &&
+        !sysopack(&work, &cache, &execsend.key) &&
+        !sysopfinish(&work, &cache, &execsend.key, &pin) && pin == file &&
+        !sysfilerefunpin(&pool, work.state.self, pin) && !sysexecfdrelease(&execfds));
+  tag.state = SYSFD_LIVE;
+  CHECK(!sysfdclose(&fds, &pool, work.state.self, tag, &closing) && !closing);
+  filecreatetrace[14] = 1;
+}
+
+static void
 loadreads(void)
 {
   Msg          control = {{LOADTEST, 0, 0, 0}}, call = {{FS_LOAD, work.state.map.connid, 0, 0}};
@@ -543,6 +577,7 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   first = files[0];
+  execmanifest(first);
   loadreads();
   ttygetattr(first);
   ttyiocall(first, FS_READ, 1);
@@ -872,6 +907,23 @@ server(const Bootview *boot, u32 recover)
     if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
+    if (!recover && opcode == FS_EXEC_PREPARE) {
+      Fileinherit row;
+      Handle      self, parent;
+      u64         image;
+      CHECK(!__sys_getid(&self, &image, &parent) && descriptor.payload_bytes == sizeof(row) &&
+            !descriptor.object && descriptor.args[0] == (u64) input.source &&
+            descriptor.args[1] == input.image + 1 && descriptor.args[2] == input.image &&
+            descriptor.args[3] == 100 && descriptor.args[4] == 1 && !descriptor.args[5] &&
+            !descriptor.args[6] && !descriptor.args[7] &&
+            !__sys_copy(&row, (const void *) data, sizeof(row)) && !row.fd &&
+            row.flags == BOOT_FD_CLOEXEC && row.backend_pid == (u64) self &&
+            row.backend_image == image && row.session == sessions[0] &&
+            row.reference_id == references[0]);
+      reply.words[0] = (u64) -ENOTSUP;
+      CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
+      continue;
+    }
     if (!recover && opcode == FS_LOAD) {
       status = loadiostart(&loadio, &loadtable, &watch->active, &input, &descriptor,
                            (volatile u8 *) data, 2);

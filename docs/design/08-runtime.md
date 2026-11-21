@@ -878,3 +878,5 @@ stage333：私有 `Execwork` 将替换拆成准备、装载、发布和显式撤
 stage334：私有 `Execfds` 在调用者短暂排除捕获信号时，记录全部 live fd 的编号、CLOEXEC、固定后端 PID/image、session 和 reference_id，并逐项固定原 File。之后 close/dup2 可以改变旧表，但不能替换已捕获的引用或提前发出最后一次 CLOSE。失败归还已取得的 pin；释放快照后由已有关闭记录收尾。曾经共用 File 的 fd 保留共同本地 File 身份和各自标志，供后续区分保留引用与 CLOEXEC-only；没有发送 EXEC_PREPARE 或改目标 Boot。49 项主机测试（含 4 项专项）、RV64/ARM64 SDK 构建及格式通过。
 
 stage335：`sysexecfdmanifest` 从固定快照按完整后端 PID/image 打包 EXEC_PREPARE 参数和逐 fd 的 48 字节线记录。各别名仍携自己的 CLOEXEC 标志，同一源引用的 session/reference 不变；已重启的同 PID 后端单独分组。最多 128 条、6144 字节，一次传输可容纳；容量不足时保留原输出。7 项快照与清单主机测试、双架构 SDK 构建和格式通过。此点只打包私有提交缓冲，未发 IPC、未分配后端引用，也未安装 Boot fd。
+
+stage336：`sysexecfdbegin` 将固定清单写入同一后端连接的普通页或页对，独立 File pin 和槽一起登记到原 Op。多页先清续页描述符，再写负载，最后写首槽描述符；提交前复制失败归还槽及原 pin。RV64、ARM64 QEMU `runtime` 用真实 CALL 发送单页 CLOEXEC 清单：服务验证源和文件身份后回复 ENOTSUP，客户端保存原结果、确认 FINISH/ACK 并归还槽和 pin，已提交的 Op 不能再生成 CALL。14 项主机回归及格式通过。双页实传、后端准备成功/token 交付及目标 Boot 尚未接。

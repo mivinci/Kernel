@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage336（2026-11-22）：EXEC_PREPARE 接入原请求账本；双架构 QEMU `runtime` 验证真实单页传输、后端拒绝及原 RPC 收尾。14 项主机回归和格式通过；后端成功准备及 Boot 未接。
 - stage335（2026-11-22）：exec fd 快照可按固定后端打包 EXEC_PREPARE，保留逐 fd 的 CLOEXEC 和源引用。7 项专项、双架构 SDK 构建及格式通过；未接 IPC 或 Boot 安装。
 - stage334（2026-11-22）：私有 exec fd 快照固定原 File、后端及逐 fd 的 CLOEXEC；49 项主机测试、双架构 SDK 构建和格式通过。服务端继承与目标 Boot 尚未接。
 - stage333（2026-11-22）：私有 exec 拆开准备、装载和提交；RV64/ARM64 QEMU `elf` 验证撤销后重试及丢弃装载源和 Boot 缓冲后仍可提交。15 项 ELF 主机回归及格式通过；生产 FS/fd 交接未接。
