@@ -187,3 +187,28 @@ strncat(char *destination, const char *source, size_t bytes)
   destination[end + i] = 0;
   return destination;
 }
+char *
+strtok_r(char *string, const char *delimiters, char **state)
+{
+  char *end;
+  if (!string)
+    string = *state;
+  if (!string)
+    return NULL;
+  string += strspn(string, delimiters);
+  if (!*string) {
+    *state = string;
+    return NULL;
+  }
+  end = string + strcspn(string, delimiters);
+  if (*end)
+    *end++ = 0;
+  *state = end;
+  return string;
+}
+char *
+strtok(char *string, const char *delimiters)
+{
+  static char *state;
+  return strtok_r(string, delimiters, &state);
+}

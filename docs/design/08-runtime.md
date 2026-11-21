@@ -466,6 +466,8 @@ stage258：SDK 导出 `<ctype.h>`，静态 libc 提供 C locale 的字符分类�
 
 从独立暂存快照构建的 ARM64/RV64 runtime 运行覆盖 256 个字节、EOF、分类边界、大小写转换与 errno 保持，并验证整数解析跳过六种空白字符。13 项整数解析与 SDK 主机检查及格式检查通过。
 
+stage259：`<string.h>` 提供 `strtok` 和 `strtok_r`。两者就地切分可写字符串，跳过连续分隔符，不返回空字段；每次调用可更换分隔符。`strtok_r` 使用调用者提供的续点，可交错解析多个字符串；`strtok` 使用镜像内共享续点。ARM64/RV64 runtime 实测两种接口、交错续读、空分隔符、高位字节、耗尽及 errno 保持；16 项 libc/环境主机回归和格式检查通过。
+
 stage241：父侧 `sysctxfixplan` 从稳定的三层 Rbank 导出 Fix 记录：FREE→EMPTY、PREPARED→UNSENT、WAITING→INTERRUPT、DONE/CLEANING→COMPLETE。核对来源镜像与序号，再走与子侧一致的完整路由准入；所有层通过后才写出三项，任何一层不支持时保留原输出。无目标身份依赖，不改变原 Rbank、传输或后端责任。调用方须确保被检查的状态与所继承的快照一致；完整父侧协调器与服务准备仍待接。
 
 65 项上下文主机测试、格式以及 ARM64/RV64 各自的 sigframe 和 libsys 通过。实际父侧生成 Fix 层记录并发布，子侧消费记录完成未发送查询、已完成查询、活动等待中断和稳定 READ 快照的恢复；主机专项核对后层不支持时输出不变。此点不涉及待确认的子文件引用编号。

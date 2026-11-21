@@ -20,5 +20,7 @@ char  *strcpy(char *destination, const char *source);
 char  *strncpy(char *destination, const char *source, size_t bytes);
 char  *strcat(char *destination, const char *source);
 char  *strncat(char *destination, const char *source, size_t bytes);
+char  *strtok(char *string, const char *delimiters);
+char  *strtok_r(char *string, const char *delimiters, char **state);
 char  *strerror(int error);
 #endif

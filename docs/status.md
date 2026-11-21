@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage259：libc 提供 `strtok` 与 `strtok_r`；ARM64/RV64 runtime、16 项 libc/环境主机回归及格式检查通过。
+
 - stage258：SDK 补齐 C locale `<ctype.h>`，整数解析复用 `isspace`。ARM64/RV64 runtime、13 项整数解析及 SDK 主机检查、格式检查通过。
 
 - stage256：ARM64/RV64 的 `serial-tty` 验证实际 tty ELF 的 READY、晚绑定、两次阻塞后唤醒、8 字节输入与 9 字节 CRLF 回显。既有串口场景及格式检查通过；下一步接默认 init 清单和双服务监督。

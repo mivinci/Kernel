@@ -152,6 +152,27 @@ ctypecheck(void)
   }
   REQUIRE(tolower(eof) == eof && toupper(eof) == eof && errno == EDOM, 247);
 }
+static void
+tokencheck(void)
+{
+  char  first[] = ",,one,,two;three;", second[] = "\377a\377b", plain[] = "x:y", empty[] = ";;";
+  char *a, *b;
+
+  errno = EDOM;
+  REQUIRE(strtok_r(first, ",", &a) == first + 2 && !strcmp(first + 2, "one") && first[0] == ',',
+          248);
+  REQUIRE(strtok_r(second, "\377", &b) == second + 1 && !strcmp(second + 1, "a"), 249);
+  REQUIRE(strtok(plain, ":") == plain && !strcmp(plain, "x"), 250);
+  REQUIRE(strtok_r(NULL, ",;", &a) == first + 7 && !strcmp(first + 7, "two"), 251);
+  REQUIRE(strtok_r(NULL, "", &b) == second + 3 && !strcmp(second + 3, "b") &&
+              !strtok_r(NULL, "\377", &b),
+          252);
+  REQUIRE(strtok(NULL, ":") == plain + 2 && !strtok(NULL, ":"), 253);
+  REQUIRE(strtok_r(NULL, ";", &a) == first + 11 && !strcmp(first + 11, "three") &&
+              !strtok_r(NULL, ";", &a) && !strtok_r(NULL, ";", &a),
+          254);
+  REQUIRE(!strtok(empty, ";") && !strtok(NULL, "") && errno == EDOM, 255);
+}
 static int
 formatv(char *buffer, size_t size, const char *format, ...)
 {
@@ -448,6 +469,7 @@ main(int argc, char **argv)
           176);
   sortcheck();
   ctypecheck();
+  tokencheck();
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
   runtime_trace[10] = groupcheck();
