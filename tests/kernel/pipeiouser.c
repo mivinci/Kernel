@@ -256,6 +256,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
     Msg    reply = {{0, 0, 0, 0}};
+    u32    i;
     CHECK(!fsstep(&fs) && link.ready && !ipc_recv(0, 0, &request) && request.kind == IPC_CALL &&
           request.words[0] == FS_PIPE && !ipc_defer(request.request));
     target.target = request.source;
@@ -263,12 +264,13 @@ serviceloop(const Bootview *boot, u32 interrupt)
           gate.source == target.target && gate.words[0] == PIPETEST && !table.serial &&
           !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request) &&
           table.serial == 4);
-    CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && table.serial == 8 &&
-          !ipc_recv(0, 0, &request) && request.words[0] == FS_READ &&
-          !pipedispatch(&fs.pipes, &link, 1, &request) && wait.io.request == request.request &&
-          !__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
-          gate.source == target.target && gate.words[0] == PIPETEST &&
-          !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !wait.io.request);
+    CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && table.serial == 8);
+    for (i = 0; i < 2; i++)
+      CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_READ &&
+            !pipedispatch(&fs.pipes, &link, 1, &request) && wait.io.request == request.request &&
+            !__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
+            gate.source == target.target && gate.words[0] == PIPETEST &&
+            !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !wait.io.request);
   } else if (interrupt) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -354,6 +356,7 @@ interruptclient(void)
   Opkey                 draft = {0};
   Fileioresult          completed;
   u64                   mask, ignored;
+  u32                   slot;
   u8                    data[3] = {'p', 'q', 0xa5};
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
@@ -392,7 +395,21 @@ interruptclient(void)
         !sysfileiowait(image, 0, &draft, mask) &&
         !sysfileiofinish(image, &draft, data, 1, &completed) && !completed.native &&
         completed.business == -EINTR && !completed.count && data[0] == 'p' &&
-        ipc_rqpoll(rpc, 0, &result) < 0 && !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+        ipc_rqpoll(rpc, 0, &result) < 0);
+  CHECK(!sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
+        sysfileiowait(image, 0, &draft, mask) == -ERR_INTERRUPTED && caught == 3 &&
+        sysfileioresume(image, &draft) == -ERR_WOULD_BLOCK &&
+        !sysoprpc(work, cache, &draft, &rpc) &&
+        sysfileiowait(image, 0, &draft, mask) == -ERR_TIMEDOUT);
+  slot = draft.lease.slot;
+  CHECK(sysfileioresume(image, &draft) == SYSOP_ABANDONED && !draft.lease.seq &&
+        work->state.operations[slot].rpc == rpc && !work->state.operations[slot].owner &&
+        !sysfdobserve(&image->fds, fds[0], &original) &&
+        !sysfilerefview(&image->files, work->state.self, original.file, &ref) && ref.pins == 1 &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) &&
+        !ipc_call(work->state.call, &gate, CALL_CONTROL, &result) && !nanosleep(&pause, NULL) &&
+        !work->state.operations[slot].phase && ipc_rqpoll(rpc, 0, &result) < 0 &&
+        !sysfilerefview(&image->files, work->state.self, original.file, &ref) && !ref.pins);
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
   data[0] = 'p';

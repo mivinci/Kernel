@@ -11,9 +11,10 @@ static Fileimage image;
 static Conntag   fstag;
 static Rkey      hello;
 static Bootmap   candidate;
-static u32       initialized, connecting, closing;
+static u32       initialized, connecting, closing, draining;
 static void      closeprogress(Fileimage *state);
-static int       closeevents(void);
+static int       fileprogress(Fileimage *state);
+static int       fileevents(void);
 
 Conncache *
 sysfileimagecache(Fileimage *state)
@@ -47,7 +48,7 @@ sysfileimage(Fileimage **out)
     if (!error) {
       sysfdinit(&image.fds);
       initialized = 1;
-      systimerbindrq(closeevents);
+      systimerbindrq(fileevents);
     }
   }
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
@@ -117,7 +118,7 @@ sysfileimagefs(u32 layer, u64 address, Connwork **out)
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
-  closeprogress(state);
+  fileprogress(state);
   if (connecting) {
     error = -ERR_BUSY;
     goto restore;
@@ -175,7 +176,7 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
   /* Failed descriptor copyout leaves both remote references on the close queue. */
   if (!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask)) {
     closing = 1;
-    closeprogress(state);
+    fileprogress(state);
     restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
     if (restored)
       return restored;
@@ -287,7 +288,7 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask)
       return error ? error : status;
   }
   for (;;) {
-    closeprogress(state);
+    fileprogress(state);
     error = sysoppoll(work, cache, key);
     if (!error)
       error = sysopfinished(work, cache, key);
@@ -315,6 +316,30 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask)
     if (status)
       return status;
   }
+}
+
+isize
+sysfileioresume(Fileimage *state, Opkey *key)
+{
+  Opkey     background;
+  Connwork *work;
+  u64       now;
+  isize     error;
+  if (state != &image || !key || key->connection.index >= SYSCONN_COUNT)
+    return -ERR_INVALID;
+  work = &state->connections[key->connection.index];
+  error = sysopcheck(work, sysfileimagecache(state), key);
+  if (error)
+    return error;
+  if (work->state.operations[key->lease.slot].opcode != FS_READ &&
+      work->state.operations[key->lease.slot].opcode != FS_WRITE)
+    return -ERR_INVALID;
+  error = systimernow(&now);
+  if (!error)
+    error = sysopresume(work, sysfileimagecache(state), key, now, &background);
+  if (error == SYSOP_ABANDONED)
+    draining |= 1U << background.connection.index;
+  return error;
 }
 
 isize
@@ -405,7 +430,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (!error)
     error = sysfilerefunpin(&state->files, work->state.self, file);
   if (!error)
-    closeprogress(state);
+    fileprogress(state);
   return error;
 }
 
@@ -485,11 +510,46 @@ closeprogress(Fileimage *state)
 }
 
 static int
-closeevents(void)
+fileprogress(Fileimage *state)
+{
+  Conncache *cache = sysfileimagecache(state);
+  u32        i, slot, active = 0;
+  for (i = 0; i < SYSCONN_COUNT && draining; i++) {
+    Connwork *work = &state->connections[i];
+    u32       bit = 1U << i;
+    if (!(draining & bit))
+      continue;
+    draining &= ~bit;
+    for (slot = 0; slot < FS_CONN_SLOTS; slot++) {
+      Slotop *op = &work->state.operations[slot];
+      Opkey   key;
+      u64     file = 0;
+      if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) !=
+              (SYSOP_BACKGROUND | SYSOP_APP_ENDED) ||
+          (op->opcode != FS_READ && op->opcode != FS_WRITE))
+        continue;
+      key.connection = work->state.tag;
+      key.lease = op->lease;
+      key.owner = 0;
+      if (sysopdrain(work, cache, &key, &file)) {
+        draining |= bit;
+        if (op->rpc)
+          active = 1;
+      } else
+        (void) sysfilerefunpin(&state->files, work->state.self, file);
+    }
+  }
+  closeprogress(state);
+  return active;
+}
+
+static int
+fileevents(void)
 {
   Conncache *cache = sysfileimagecache(&image);
   u32        i;
-  closeprogress(&image);
+  if (fileprogress(&image))
+    return 1;
   for (i = 0; i < SYSCONN_COUNT && closing; i++) {
     Slotop *op = &image.connections[i].state.operations[6];
     u32     state = cache->entries[i].state;
@@ -553,7 +613,7 @@ sysfileimageclose(int fd)
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
-  closeprogress(state);
+  fileprogress(state);
   error = sysfdobserve(&state->fds, (u32) fd, &view);
   if (!error)
     error = view.tag.state == SYSFD_LIVE
@@ -587,7 +647,7 @@ duplicate(int fd, int target, u32 replace)
     result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, 0);
   if (result >= 0 && displaced)
     closing = 1;
-  closeprogress(state);
+  fileprogress(state);
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return restored ? restored : result;
 }
