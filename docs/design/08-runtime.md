@@ -874,3 +874,5 @@ stage329：`sysexecimage` 对已有稳定 ELF 源、已验证的装载计划及�
 RV64、ARM64 QEMU `elf` 保留原有六项子进程装载场景，并注入一次 exec 装载读取故障。旧镜像收到 `ERR_FAULT` 并清理后重试，新镜像验证 argv/env、构造函数、SELF 句柄与同一 PID；内核核对 Life 不变、新根、镜像号及退出后的页账守恒。15 项 ELF 主机回归及格式检查通过。此点仍使用内嵌稳定源；FS 路径解析和装载会话、服务端 fd 交接及公开 `execve` 未接。
 
 stage333：私有 `Execwork` 将替换拆成准备、装载、发布和显式撤销。准备先交出目标镜像号和受限视图，供调用者构造目标 Boot 和准备继承引用；装载成功后发布只依赖目标镜像及 Config，调用者可在提交之前释放源。装载或提交失败仍持有准备责任，不重做原请求，由调用者撤销并收尾。RV64、ARM64 QEMU `elf` 验证未装载不可发布、装载故障可撤销后重试、旧端禁用源并清空原 Boot 缓冲后仍能发布新镜像，页账守恒；15 项 ELF 主机回归及格式通过。源仍是测试内嵌 ELF，尚无生产 FS 会话或 fd 交接。
+
+stage334：私有 `Execfds` 在调用者短暂排除捕获信号时，记录全部 live fd 的编号、CLOEXEC、固定后端 PID/image、session 和 reference_id，并逐项固定原 File。之后 close/dup2 可以改变旧表，但不能替换已捕获的引用或提前发出最后一次 CLOSE。失败归还已取得的 pin；释放快照后由已有关闭记录收尾。曾经共用 File 的 fd 保留共同本地 File 身份和各自标志，供后续区分保留引用与 CLOEXEC-only；没有发送 EXEC_PREPARE 或改目标 Boot。49 项主机测试（含 4 项专项）、RV64/ARM64 SDK 构建及格式通过。
