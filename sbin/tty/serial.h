@@ -27,6 +27,8 @@ isize ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size);
    The service checks reference, foreground and request cancellation first.
    A positive result counts input bytes; WOULD_BLOCK commits nothing. */
 isize ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8 *page);
+/* Commit a READ after authorization, readiness and cancellation checks. */
+isize ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page);
 /* Process up to rxlimit RX bytes and one TX batch. A timed reader can check
    its deadline and retention after each byte by passing rxlimit=1.
    Notify with hints even after partial progress followed by failure.

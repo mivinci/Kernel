@@ -42,6 +42,8 @@ isize ttyinputbyte(Ttyinput *input, const Termarg *mode, u8 byte, Ttyeffect *eff
    nothing and clears ended. Raw VMIN/VTIME and foreground checks belong to the
    request service before committing this dequeue. Failure changes nothing. */
 isize ttyinputread(Ttyinput *input, void *output, u32 capacity, u32 *ended);
+/* Same dequeue rules, up to a full line into an owned file response page. */
+isize ttyinputcopy(Ttyinput *input, volatile u8 *output, u32 capacity, u32 *ended);
 /* Discard only locally unconsumed input. Preserve mode and saturated loss. */
 isize ttyinputflush(Ttyinput *input);
 #endif

@@ -60,6 +60,22 @@ ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8
 }
 
 isize
+ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page)
+{
+  u32   ended;
+  isize status = sysfileargs(FS_READ, slot);
+  if (status)
+    return status;
+  if (slot->args[3] & FS_IO_POSITIONAL)
+    return -ERR_NOTSUP;
+  if (!slot->args[1])
+    return ttyinputcopy(input, NULL, 0, &ended);
+  if (!page)
+    return -ERR_INVALID;
+  return ttyinputcopy(input, page + slot->args[2], (u32) slot->args[1], &ended);
+}
+
+isize
 ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
               Ttyserialresult *out)
 {

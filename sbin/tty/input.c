@@ -142,12 +142,11 @@ ttyinputbyte(Ttyinput *input, const Termarg *mode, u8 byte, Ttyeffect *effect)
 }
 
 isize
-ttyinputread(Ttyinput *input, void *output, u32 capacity, u32 *ended)
+ttyinputcopy(Ttyinput *input, volatile u8 *output, u32 capacity, u32 *ended)
 {
-  u8 *target = output;
   u32 i, amount, boundary = 0;
   u16 token;
-  if (!ended || !IS_ALIGNED((usize) ended, 4) || capacity > TTY_BATCH || (capacity && !output))
+  if (!ended || !IS_ALIGNED((usize) ended, 4) || capacity > TTY_LINE_BYTES || (capacity && !output))
     return -ERR_INVALID;
   if (!valid(input))
     return -ERR_STATE;
@@ -180,10 +179,18 @@ ttyinputread(Ttyinput *input, void *output, u32 capacity, u32 *ended)
     }
   }
   for (i = 0; i < amount; i++)
-    target[i] = (u8) input->data[(input->head + i) % TTY_INPUT_CAPACITY];
+    output[i] = (u8) input->data[(input->head + i) % TTY_INPUT_CAPACITY];
   input->head = (input->head + amount) % TTY_INPUT_CAPACITY;
   input->used -= amount;
   input->ready -= amount;
   *ended = boundary;
   return (isize) amount;
+}
+
+isize
+ttyinputread(Ttyinput *input, void *output, u32 capacity, u32 *ended)
+{
+  if (capacity > TTY_BATCH)
+    return -ERR_INVALID;
+  return ttyinputcopy(input, output, capacity, ended);
 }

@@ -82,6 +82,44 @@ ttyserialcheck(void)
         readback[5] == '\r' && readback[6] == '\n');
 }
 
+static void
+ttyfilereadcheck(void)
+{
+  Fileslot  read = {0};
+  Ttyeffect effect;
+  u8        page[64];
+  u32       i;
+  CHECK(!ttyinputinit(&line, 1));
+  attr.cc[TTY_VEOF] = 4;
+  read.span = read.object = 1;
+  read.payload_bytes = sizeof(page);
+  read.args[1] = sizeof(page) - 2;
+  read.args[2] = 2;
+  for (i = 0; i < sizeof(page); i++)
+    page[i] = 0xa5;
+  for (i = 0; i < 40; i++)
+    CHECK(!ttyinputbyte(&line, &attr, 'a', &effect));
+  CHECK(ttyserialread(&line, &read, page) == -ERR_WOULD_BLOCK && line.used == 40 &&
+        page[2] == 0xa5);
+  CHECK(!ttyinputbyte(&line, &attr, '\n', &effect) &&
+        !ttyinputbyte(&line, &attr, attr.cc[TTY_VEOF], &effect));
+  read.args[2]++;
+  CHECK(ttyserialread(&line, &read, page) == -ERR_INVALID && line.ready == 42);
+  read.args[2]--;
+  CHECK(ttyserialread(&line, &read, page) == 41 && line.ready == 1 && page[1] == 0xa5 &&
+        page[42] == '\n' && page[43] == 0xa5);
+  for (i = 2; i < 42; i++)
+    CHECK(page[i] == 'a');
+  read.args[1] = 0;
+  CHECK(!ttyserialread(&line, &read, NULL) && line.ready == 1);
+  read.args[1] = 1;
+  CHECK(!ttyserialread(&line, &read, page) && !line.ready && page[2] == 'a' &&
+        ttyserialread(&line, &read, page) == -ERR_WOULD_BLOCK);
+  CHECK(!ttyinputbyte(&line, &attr, 'b', &effect) && !ttyinputbyte(&line, &attr, '\n', &effect) &&
+        ttyserialread(&line, &read, page) == 1 && page[2] == 'b' && line.ready == 1 &&
+        ttyserialread(&line, &read, page) == 1 && page[2] == '\n' && !line.ready);
+}
+
 void
 ttyusercheck(void)
 {
@@ -135,4 +173,5 @@ ttyusercheck(void)
   consumed = 99;
   CHECK(ttyencode(8, input, 1, output, sizeof(output), &consumed) == -ERR_NOTSUP && consumed == 99);
   ttyserialcheck();
+  ttyfilereadcheck();
 }
