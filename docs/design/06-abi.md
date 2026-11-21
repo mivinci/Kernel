@@ -377,4 +377,8 @@ fork现场接续（2026-11-17）：共享syscall头补入已冻结的SYS_FORKPRE
 
 fork生命周期接续（2026-11-17）：Proc/Prep可信构造现可保有FORK来源、克隆阶段和原有固定期限，普通configure/start拒绝FORK来源；来源/阶段只在内部结构中，不增加Queryrec或syscall输入字段。0x49..0x4b仍NOTSUP，尚未开放同步内部构造作为原生forkprep，分批检查点与Fix/专用发布仍待03/08的完整契约。
 
+stage190 接通 `forkprep`（0x49）和 `forkabort`（0x4b）。`forkprep` 用真实陷阱现场，要求当前镜像持有同 Set 的 CREATE，且父的实际内存、峰值、槽数及接收容量均在该授权内。父返回 CONSTRUCT/PID，第三结果为零。`forkabort` 仅接受 FORK 来源的 CONSTRUCT 并走有界清理。`forkcommit`（0x4a）的 Fix 验证和发布仍待接。
+
+ARM64、RV64 的 QEMU `sigframe` 由真实用户载荷发起调用，验证缺少 CREATE、保底超上限、成功准备的返回字、普通 start 拒绝、forkabort 后无 wait 结果，以及 forkabort 拒绝普通 create。最终 Set 费用和物理页恢复。
+
 debughandoff接续（2026-11-18）：原生0x74仅收a0/x0的精确初始SYSTEM CONSOLE句柄，其他参数必须0，无业务输出；普通CONTROL/uid0/PID不补权，错误输出全0。未排空BUSY且不转移所有权，成功后持有效权限重复调用幂等；具体UART/日志/panic语义与733项host/167次双架构QEMU证据见07/14，不表示生产serial已经启动。

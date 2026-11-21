@@ -45,6 +45,9 @@ int proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *
    normal owner-death/timeout/abort cleanup. No C stack is copied. */
 int procforkbuild(Setid set, Rtable *source, const struct Hctx *parent, u32 pending, u32 reserve,
                   Handle *construct, Handle *pid);
+int procforkprep(Rtable *source, const struct Hctx *parent, Handle authority, u32 reserve,
+                 Handle *construct, Handle *pid);
+int procforkabort(Rtable *source, Handle construct);
 int procdestroyview(Rtable *source, Handle construct);
 /* Native fixed-Life CONTROL operations. */
 int procgrant(Rtable *source, Handle target, Handle resource, u64 rights, u64 offset, u64 length,

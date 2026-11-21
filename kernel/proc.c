@@ -525,6 +525,31 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
 }
 
 int
+procforkprep(Rtable *source, const Hctx *parent, Handle authority, u32 reserve, Handle *construct,
+             Handle *pid)
+{
+  Createpolicy policy;
+  Acct         account;
+  int          error;
+  if (!current || current->state != PROC_RUNNING || current->user != parent ||
+      source != &current->resources || vm_paused)
+    return -ERR_STATE;
+  if (reserve > 8)
+    return -ERR_INVALID;
+  error = localcreator(source, authority, &policy);
+  if (error)
+    return error;
+  if (acctstat(source->acct, &account) || account.state != AC_ACTIVE)
+    return -ERR_STATE;
+  if (policy.set.index != account.set || account.limit > policy.memlimit ||
+      account.exec_limit > policy.exec_limit || source->count > policy.resources ||
+      current->incoming.limit > policy.pending)
+    return -ERR_DENIED;
+  return procforkbuild(policy.set, source, parent, current->incoming.limit, reserve, construct,
+                       pid);
+}
+
+int
 procinfo(Handle pid, Procinfo *out)
 {
   Proc *p = find(pid);
@@ -950,17 +975,20 @@ localdestroy(Rtable *source, Handle h)
   int    error = localtarget(source, h, PREP_ABORT, &id, &pid);
   return error ? error : procdestroy(pid);
 }
-int
-procdestroyview(Rtable *source, Handle view)
+static int
+destroyview(Rtable *source, Handle view, u32 fork)
 {
-  Prepid prep;
-  Handle pid;
-  int    error;
+  Prepid   prep;
+  Prepinfo info;
+  Handle   pid;
+  int      error;
   if (!current || current->state != PROC_RUNNING || source != &current->resources || vm_paused)
     return -ERR_STATE;
   error = localtarget(source, view, PREP_ABORT, &prep, &pid);
   if (error)
     return error;
+  if (fork && (prepstat(prep, &info) || info.origin != PREP_FORK))
+    return -ERR_STATE;
   error = prephold(prep);
   if (error)
     return error;
@@ -991,6 +1019,16 @@ procdestroyview(Rtable *source, Handle view)
   if (prepdrop(prep))
     panic("destroy operation reference");
   return error;
+}
+int
+procdestroyview(Rtable *source, Handle view)
+{
+  return destroyview(source, view, 0);
+}
+int
+procforkabort(Rtable *source, Handle view)
+{
+  return destroyview(source, view, 1);
 }
 int
 procwork(u32 scans)

@@ -76,6 +76,7 @@ syscall(Hctx *context)
   case SYS_SIGMASK:
   case SYS_WAIT:
   case SYS_CREATE:
+  case SYS_FORKPREP:
   case SYS_SETPG:
   case SYS_INHERIT:
   case SYS_BUDGET:
@@ -123,6 +124,7 @@ syscall(Hctx *context)
   case SYS_OBSDROP:
   case SYS_START:
   case SYS_DESTROY:
+  case SYS_FORKABORT:
   case SYS_GETPG:
   case SYS_GETFG:
   case SYS_TERMINATE:
@@ -249,6 +251,18 @@ syscall(Hctx *context)
     break;
   case SYS_DESTROY:
     status = procdestroyview(table, (Handle) args[0]);
+    break;
+  case SYS_FORKPREP:
+    status = args[1] > 8
+                 ? -ERR_INVALID
+                 : procforkprep(table, context, (Handle) args[0], (u32) args[1], &handle, &pid);
+    if (!status) {
+      outputs[0] = (u64) handle;
+      outputs[1] = (u64) pid;
+    }
+    break;
+  case SYS_FORKABORT:
+    status = procforkabort(table, (Handle) args[0]);
     break;
   case SYS_WAIT:
     if (args[1] > 7) {

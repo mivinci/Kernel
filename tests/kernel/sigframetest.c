@@ -5,6 +5,7 @@
 #include <cow.h>
 #include <vm.h>
 #include <prep.h>
+#include <rq.h>
 #include <diag.h>
 typedef struct Framepacket Framepacket;
 struct Framepacket
@@ -111,7 +112,7 @@ sigframetest(void)
   int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 13; mode++) {
+  for (mode = 0; mode < 14; mode++) {
     REQUIRE(!procnew(set, 1, 512, 1024, LOCALS, &pid) && !procinfo(pid, &process));
     for (i = 0; i < sizeof(packet); i++)
       ((u8 *) &packet)[i] = 0;
@@ -132,6 +133,19 @@ sigframetest(void)
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(proctable(pid), LOCAL_ALLOC);
     testload(pid, frame_image, (u64) (frame_image_end - frame_image), &packet, sizeof(packet));
+    if (mode == 13) {
+      Createpolicy policy;
+      Handle       authority;
+      policy.set = set;
+      policy.memlimit = 512;
+      policy.exec_limit = 1024;
+      policy.resources = LOCALS;
+      policy.pending = PENDING_CALLS;
+      policy.rights = CREATE_USE;
+      REQUIRE(!localcreate(proctable(pid), &policy, &authority) &&
+              !spacewrite(process.space, frame_trace_address + 18 * sizeof(u64), &authority,
+                          sizeof(authority)));
+    }
     shadow.generation = 0;
     stack.generation = 0;
     if (!mode) {
@@ -206,7 +220,9 @@ sigframetest(void)
     putstr(" code=");
     puthex(life.code);
     putstr("\n");
-    if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
+    if (mode == 13) {
+      REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
+    } else if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && (mode == 7 || trace[0] == 99));
       REQUIRE(trace[12] == (mode == 1 || mode == 9 || mode == 11 ? 2U : 1U));
       if (mode == 11)
@@ -253,7 +269,9 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(13);
+  puthex(14);
+  putstr(" forkprep=");
+  puthex(1);
   putstr(" normal=");
   puthex(6);
   putstr(" invalid=");

@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage190：原生 forkprep/forkabort 已接，按当前 CREATE 和父实际规格准入。双架构 QEMU sigframe 验证真实陷阱、未发布孩子撤销和账目回收。Fix 校验、forkcommit 与运行库接续仍待实现。
+
 - stage189：未映射 DATA 别名的 PTE 核验和写保护每批最多 32 页，超期回滚已覆盖。76 项主机专项、格式检查及双架构 QEMU sigframe 通过。别名登记与根冻结仍在一次临界区。
 
 - stage188：未映射 DATA 的 fork 克隆直接遍历 Mem 别名链，拒绝未登记引用，释放后可重试。75 项主机专项、格式检查和双架构 QEMU sigframe 通过。单条别名链内的检查点仍待接入。

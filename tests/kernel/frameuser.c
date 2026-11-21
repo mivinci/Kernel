@@ -349,17 +349,53 @@ contextuser(void)
   frame_trace[0] = 99;
   return 42;
 }
+static int
+forkprepuser(void)
+{
+  Sysret    result;
+  Createarg create = {128, 128, 16, 1, 0, 0, 0, 0, 0};
+  u64       args[7] = {0};
+  u64       authority = frame_trace[18], child, construct;
+  REQUIRE(__sys_enter(SYS_FORKPREP, args, &result) == -ERR_BAD_HANDLE, 224);
+  args[0] = authority;
+  args[1] = 9;
+  REQUIRE(__sys_enter(SYS_FORKPREP, args, &result) == -ERR_INVALID, 225);
+  args[1] = 2;
+  REQUIRE(!__sys_enter(SYS_FORKPREP, args, &result) && result.values[0] && result.values[1] &&
+              !result.values[2],
+          226);
+  construct = result.values[0];
+  child = result.values[1];
+  args[0] = construct;
+  args[1] = 0;
+  REQUIRE(__sys_enter(SYS_START, args, &result) == -ERR_STATE, 227);
+  REQUIRE(!__sys_enter(SYS_FORKABORT, args, &result), 228);
+  args[0] = child;
+  args[1] = 1;
+  REQUIRE(__sys_enter(SYS_WAIT, args, &result) == -ERR_CHILD, 229);
+  args[0] = authority;
+  args[1] = (u64) &create;
+  REQUIRE(!__sys_enter(SYS_CREATE, args, &result) && result.values[0], 230);
+  args[0] = result.values[0];
+  args[1] = 0;
+  REQUIRE(__sys_enter(SYS_FORKABORT, args, &result) == -ERR_STATE, 231);
+  REQUIRE(!__sys_enter(SYS_DESTROY, args, &result), 232);
+  frame_trace[0] = 99;
+  return 42;
+}
 int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '<', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '=', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
   if (mode == 11)
     return forceduser();
   if (mode == 12)
     return contextuser();
+  if (mode == 13)
+    return forkprepuser();
   frame_trace[2] = (u64) (uintptr_t) handler;
   frame_trace[3] = (u64) (uintptr_t) trampoline;
   install(mode);
