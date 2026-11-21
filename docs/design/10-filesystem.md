@@ -144,6 +144,8 @@ stage295：确认原后端镜像终结后，后台 CLOSE 推进器仍等待原 R
 
 stage299：若原 CLOSE 已有有效成功回复，后端随后退出也保留原确认。后台推进仍等待原 RPC 排空并 ACK，成功后返回 0；只有缺少服务确认、依赖后端终结清理时才返回 RECOVERED。主机测试覆盖退出后首次读到原确认、排空等待和 ACK 重试共用同一 RPC；34 项专项主机测试、双架构 QEMU `runtime` 回归及格式通过。
 
+stage300：文件客户端用 `sysfileconnclean` 收尾连接。在同一信号保护段内先按当前镜像和连接代次查 File 池；仍有活引用或待关闭引用时返回 BUSY，不解除共享映射、不释放 MEM 或 CALL。File 责任结清后仍由运输层核对 bootstrap、槽和创建记录。RV64、ARM64 QEMU `runtime` 验证原后端已终结且原 CLOSE 已排空后，剩余 File 从仍有别名到待关闭均阻止清理，最后回收成功；59 项主机测试及格式通过。纯握手测试仍使用底层运输清理。
+
 ### open/close 的信号重启边界（已冻结）
 
 read/write 已讨论语义见 [信号中断与重启](11-terminal.md#readwrite-的中断与重启已冻结)。

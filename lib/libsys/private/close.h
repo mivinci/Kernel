@@ -53,6 +53,11 @@ isize sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const F
    the exact peer was already marked ended and local cleanup completed;
    it does not confirm a service CLOSE. Never waits. */
 isize sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline);
+/* File clients use this teardown gate with their current Image's File pool.
+   Exclude caught signals from the reference scan through transport cleanup.
+   Live and closing references to the exact connection generation block all
+   native cleanup; the transport's own outstanding work gates still apply. */
+isize sysfileconnclean(const Filepool *pool, Connwork *work, Conncache *cache);
 /* Exact old backend has independently been marked ended. These perform local
    recovery, never claim a successful service CLOSE. Caller has finished bound
    Rctx handoff/continuations; last fd alias is detached, pins=0. recover keeps

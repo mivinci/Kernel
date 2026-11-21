@@ -258,6 +258,19 @@ sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclo
 static isize peerended(Connwork *work, Conncache *cache);
 
 isize
+sysfileconnclean(const Filepool *pool, Connwork *work, Conncache *cache)
+{
+  isize error;
+  if (!separate(pool, sizeof(*pool), work, sizeof(*work)) ||
+      !separate(pool, sizeof(*pool), cache, sizeof(*cache)))
+    return -ERR_INVALID;
+  error = sysfilerefconnection(pool, work->state.self, work->state.tag);
+  if (error)
+    return error < 0 ? error : -ERR_BUSY;
+  return sysconnworkclean(work, cache);
+}
+
+isize
 sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline)
 {
   Fileclose anchor;

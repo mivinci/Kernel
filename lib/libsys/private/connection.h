@@ -129,7 +129,7 @@ isize sysconnworkrelease(Connwork *work, Conncache *cache, Filelease expected);
    The live peer key stays DRAINING even after successful cleanup. */
 isize sysconnworkdiscard(Connwork *work, Conncache *cache, Connclaim claim, Handle space,
                          Bootmap *map);
-/* Caller must first settle all File/close references (sysfilerefconnection=0).
+/* Transport only. File clients use sysfileconnclean from close.h.
    Directory must be DRAINING with no active bootstrap owner, bootstrap record
    FREE and no occupied pages. Unmap, free MEM, then free owned CALL; failures
    retain remaining exact responsibility for retry. Never frees SELF_SPACE or

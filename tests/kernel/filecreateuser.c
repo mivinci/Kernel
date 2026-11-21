@@ -278,7 +278,7 @@ resourceopens(const Bootview *boot)
     message.words[1] = message.words[2] = message.words[3] = 0;
     CHECK(!ipc_call(backend_work.state.call, &message, 0, &result) && result.words[0] == 4 &&
           result.words[1] == 4 && !sysconninvalidate(&cache, backend_work.state.tag) &&
-          !sysconnworkclean(&backend_work, &cache));
+          !sysfileconnclean(&pool, &backend_work, &cache));
   }
   filecreatetrace[5] = 1;
 }
@@ -526,8 +526,7 @@ client(const Bootview *boot)
   rpc = result.request;
   CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[0] == 7 && result.words[1] == 7 &&
         !result.words[2] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
-        !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
-        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+        !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[0] = 2;
 }
 
@@ -980,7 +979,7 @@ vfsdeathclient(const Bootview *boot, u32 timeout)
   query.words[1] = query.words[2] = query.words[3] = 0;
   CHECK(!ipc_call(backend_work.state.call, &query, CALL_CONTROL, &result) && result.words[0] == 2 &&
         result.words[1] == 2 && !sysconninvalidate(&cache, backend_work.state.tag) &&
-        !sysconnworkclean(&backend_work, &cache));
+        !sysfileconnclean(&pool, &backend_work, &cache));
   if (timeout)
     CHECK(!ipc_call(work.state.call, &query, CALL_CONTROL, &result) && !result.words[0]);
   filecreatetrace[0] = 2;
@@ -1286,10 +1285,12 @@ deadclient(const Bootview *boot)
         sysfilerefview(&pool, work.state.self, first, &reference) == -ERR_STALE &&
         !sysfilerefview(&pool, work.state.self, second, &reference) &&
         reference.state == SYSFILE_REF_LIVE && reference.aliases == 1 &&
-        !sysfilerefdrop(&pool, work.state.self, second) &&
+        sysfileconnclean(&pool, &work, &cache) == -ERR_BUSY && work.state.map.mapped &&
+        work.state.memory && work.state.call && !sysfilerefdrop(&pool, work.state.self, second) &&
+        sysfileconnclean(&pool, &work, &cache) == -ERR_BUSY && work.state.map.mapped &&
+        work.state.memory && work.state.call &&
         sysfileclosepump(&pool, &work, &cache, 800, 0) == SYSFILE_CLOSE_RECOVERED &&
-        !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
-        !sysconnworkclean(&work, &cache) && !sysconnforget(&cache, work.state.tag));
+        !sysfileconnclean(&pool, &work, &cache) && !sysconnforget(&cache, work.state.tag));
   filecreatetrace[2] = 2;
   filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
@@ -1337,7 +1338,7 @@ createdeadclient(const Bootview *boot, u64 opcode)
   for (i = 0; i < SYSFILE_REFS; i++)
     CHECK(pool.entries[i].state == SYSFILE_REF_FREE ||
           pool.entries[i].state == SYSFILE_REF_RETIRED);
-  CHECK(!sysconnworkclean(&work, &cache) && !sysconnforget(&cache, work.state.tag));
+  CHECK(!sysfileconnclean(&pool, &work, &cache) && !sysconnforget(&cache, work.state.tag));
   filecreatetrace[2] = opcode == FS_PIPE ? 3 : 2;
   filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
@@ -1487,7 +1488,7 @@ resourceendclient(const Bootview *boot, u32 submitted)
         entry.state == SYSCONN_READY && sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
   message.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
-        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+        !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[2] = 1;
   filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
@@ -1577,8 +1578,7 @@ iorecoverclient(const Bootview *boot, u32 mode)
   }
   CHECK(!sysfilerefclose(&pool, work.state.self, file, &anchor) &&
         !sysfilecloseended(&pool, &work, &cache, &anchor) &&
-        !sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
-        !sysconnworkclean(&work, &cache));
+        !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[2] = 1;
   filecreatetrace[3] = copied == (mode == 2 ? IO_VALUE : IO_GUARD);
   filecreatetrace[4] = mode == 2;
@@ -1670,13 +1670,12 @@ creatorbackendclient(const Bootview *boot, u32 mode)
           !sysfilecloseended(&pool, &backend_work, &cache, &anchor));
   } else
     CHECK(!sysconnworkdiscard(&backend_work, &cache, claim, space, &map));
-  CHECK(!sysfilerefconnection(&pool, work.state.self, tag) &&
-        !sysconnworkclean(&backend_work, &cache) && !sysconnview(&cache, work.state.tag, &entry) &&
-        entry.state == SYSCONN_READY);
+  CHECK(!sysfileconnclean(&pool, &backend_work, &cache) &&
+        !sysconnview(&cache, work.state.tag, &entry) && entry.state == SYSCONN_READY);
   zero(&message, sizeof(message));
   message.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
-        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+        !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[2] = filecreatetrace[3] = 1;
   filecreatetrace[4] = mode == 2;
   filecreatetrace[8] = steps;
@@ -1747,7 +1746,7 @@ bootpeerclient(const Bootview *boot, u32 mode)
         entry.state == SYSCONN_DRAINING && !entry.owner &&
         (!memory || (work.state.memory == memory && work.state.map.mapped &&
                      *(const volatile u64 *) ADDRESS == FS_CONN_MAGIC)) &&
-        !sysconnworkclean(&work, &cache));
+        !(mode == 2 ? sysfileconnclean(&pool, &work, &cache) : sysconnworkclean(&work, &cache)));
   filecreatetrace[1] = mode;
   filecreatetrace[2] = filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
@@ -1815,9 +1814,9 @@ reuseabortclient(const Bootview *boot)
   zero(&message, sizeof(message));
   message.words[0] = STOP;
   CHECK(!ipc_call(retained, &message, 0, &result) && result.words[0] == 3 && result.words[1] == 3 &&
-        !sysconninvalidate(&cache, tag) && !sysconnworkclean(&backend_work, &cache) &&
+        !sysconninvalidate(&cache, tag) && !sysfileconnclean(&pool, &backend_work, &cache) &&
         !ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
-        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+        !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[2] = 2;
   filecreatetrace[3] = filecreatetrace[4] = 1;
   filecreatetrace[0] = 2;
@@ -1869,9 +1868,9 @@ mapdiscardclient(const Bootview *boot)
   zero(&message, sizeof(message));
   message.words[0] = STOP;
   CHECK(!ipc_call(retained, &message, 0, &result) && result.words[0] == 1 && result.words[1] == 1 &&
-        !sysconnworkclean(&backend_work, &cache) &&
+        !sysfileconnclean(&pool, &backend_work, &cache) &&
         !ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
-        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+        !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[2] = filecreatetrace[3] = 1;
   filecreatetrace[0] = 2;
 }
@@ -1947,9 +1946,9 @@ mapsalvageclient(const Bootview *boot)
   message.words[1] = message.words[2] = message.words[3] = 0;
   CHECK(!ipc_call(backend_work.state.call, &message, 0, &result) && result.words[0] == 2 &&
         result.words[1] == 2 && !sysconninvalidate(&cache, backend_work.state.tag) &&
-        !sysconnworkclean(&backend_work, &cache));
+        !sysfileconnclean(&pool, &backend_work, &cache));
   CHECK(!ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
-        !sysconninvalidate(&cache, work.state.tag) && !sysconnworkclean(&work, &cache));
+        !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[2] = 2;
   filecreatetrace[3] = 1;
   filecreatetrace[0] = 2;
