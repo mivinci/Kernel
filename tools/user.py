@@ -114,6 +114,7 @@ def build(args):
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.
     libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'credential.c', 'group.c', 'wait.c', 'signal.c', 'sigaction.c', 'raise.c', 'time.c', 'sysconf.c')]
+    libc_sources.append(ROOT / 'lib/libc/sleep.c')
     csu_sources = [ROOT / 'lib/csu/start.c', ROOT / 'lib/csu' / args.arch / 'start.S']
     runtime_source = ROOT / 'tests/kernel/runtimeuser.c'
     extra_units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o'))

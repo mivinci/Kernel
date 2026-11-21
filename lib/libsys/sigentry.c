@@ -1,6 +1,7 @@
 #include "private/contextipc.h"
 #include "private/fork.h"
 #include "private/sigentry.h"
+#include "private/timer.h"
 #include <abi/syscall.h>
 #include <abi/time.h>
 
@@ -83,9 +84,7 @@ preparesignal(Rbank *bank, const Sighead *frame)
   Connpeer self;
   Handle   parent;
   u32      i;
-  isize    error = __sys_getid(&self.pid, &self.image, &parent);
-  if (error)
-    return error;
+  isize    error;
   if (!validhead(frame))
     return -ERR_INVALID;
   if (frame->previous) {
@@ -101,6 +100,12 @@ preparesignal(Rbank *bank, const Sighead *frame)
       return -ERR_INVALID;
     outer_trap = (void *) (uintptr_t) (previous + SIGNAL_FRAME_TF);
   }
+  syssleepinterrupt(trap, outer_trap);
+  if (!bank)
+    return 0;
+  error = __sys_getid(&self.pid, &self.image, &parent);
+  if (error)
+    return error;
   if (bank->self.pid != self.pid || bank->self.image != self.image) {
     error = sysforksignal(bank, trap, outer_trap);
     if (error)
@@ -122,7 +127,7 @@ sysctxsigentry(const Sighead *frame)
 {
   u64   mask, ignored;
   isize error, restored;
-  if (!signalbank)
+  if (!signalbank && !syssleepwaiting())
     return 0;
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)

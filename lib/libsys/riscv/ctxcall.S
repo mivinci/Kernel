@@ -1,4 +1,6 @@
 #include "private/context.h"
+#include <abi/syscall.h>
+#include <abi/ipc.h>
 .section .text
 .option norvc
 .balign 4
@@ -40,4 +42,29 @@ __sys_ctxresume:
  addi sp,sp,16
  ret
 .size __sys_ctxenter,.-__sys_ctxenter
+.section .text.__sys_sleepwait,"ax",@progbits
+.balign 4
+.global __sys_sleepwait
+.type __sys_sleepwait,@function
+__sys_sleepwait:
+ ld t1,0(a0)
+.global __sys_sleepwait_checked
+__sys_sleepwait_checked:
+ beqz t1,__sys_sleepwait_skip
+ li a0,0
+ li a1,1
+ li a2,0
+ li a3,0
+ li a4,0
+ li a5,RECV_EVENTS_ONLY
+ li a6,0
+ li a7,SYS_RECV
+ ecall
+.global __sys_sleepwait_return,__sys_sleepwait_skip
+__sys_sleepwait_return:
+ ret
+__sys_sleepwait_skip:
+ li a0,0
+ ret
+.size __sys_sleepwait,.-__sys_sleepwait
 .section .note.GNU-stack,"",@progbits

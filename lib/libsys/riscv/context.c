@@ -1,7 +1,15 @@
 #include "private/context.h"
+#include "private/timer.h"
 #include <abi/riscv/trap.h>
 #include <abi/signal.h>
 STATIC_ASSERT(sizeof(Trapframe) == SIGNAL_FRAME_FP - SIGNAL_FRAME_TF, runtime_signal_trap_size);
+void
+syssleepskip(void *raw, u64 begin, u64 end, u64 resume)
+{
+  Trapframe *trap = raw;
+  if (trap->pc >= begin && trap->pc < end)
+    trap->pc = resume;
+}
 isize
 sysforkdecode(const void *raw, u64 begin, u64 end, Forkret *out)
 {

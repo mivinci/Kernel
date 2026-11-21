@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/channel.h>
 #include <time.h>
+#include <signal.h>
 #include "private/libc.h"
 #include "private/syscall.h"
 #include "private/timer.h"
@@ -535,6 +536,48 @@ timercheck(void)
           112);
 }
 
+static volatile u32 slept;
+
+static void
+sleepinterrupt(int signal)
+{
+  const struct timespec nested = {0, 300000000};
+  REQUIRE(signal == SIGUSR1, 113);
+  if (!slept)
+    REQUIRE(!nanosleep(&nested, NULL), 114);
+  slept++;
+}
+
+static void
+sleepcheck(void)
+{
+  const struct timespec brief = {0, 20000000}, invalid = {0, 1000000000};
+  struct timespec       request = {0, 250000000}, remaining = {4, 9};
+  struct sigaction      action = {0};
+  u64                   before, after;
+  errno = EDOM;
+  REQUIRE(!systimernow(&before) && !nanosleep(&brief, &remaining) && !systimernow(&after) &&
+              after - before >= (u64) brief.tv_nsec && remaining.tv_sec == 4 &&
+              remaining.tv_nsec == 9 && errno == EDOM,
+          115);
+  REQUIRE(nanosleep(&invalid, &remaining) == -1 && errno == EINVAL, 116);
+  REQUIRE(nanosleep(NULL, &remaining) == -1 && errno == EFAULT, 117);
+  action.sa_handler = sleepinterrupt;
+  action.sa_flags = SA_RESTART;
+  REQUIRE(!sigaction(SIGUSR1, &action, NULL), 118);
+  runtime_trace[6] = 91;
+  REQUIRE(nanosleep(&request, &request) == -1 && errno == EINTR && slept == 1 && !request.tv_sec &&
+              request.tv_nsec > 0 && request.tv_nsec <= 250000000,
+          119);
+  request.tv_nsec = 250000000;
+  runtime_trace[6] = 92;
+  REQUIRE(nanosleep(&request, (struct timespec *) (uintptr_t) 1) == -1 && errno == EFAULT &&
+              slept == 2,
+          120);
+  runtime_trace[6] = 93;
+  REQUIRE(!nanosleep(&brief, NULL), 121);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -640,8 +683,10 @@ main(int argc, char **argv)
   runtime_trace[15] = stringusercheck(&view);
   runtime_trace[16] = envusercheck(&view);
   runtime_trace[17] = timecheck();
-  if (runtime_trace[4] == 1)
+  if (runtime_trace[4] == 1) {
     timercheck();
+    sleepcheck();
+  }
   errno = EDOM;
   REQUIRE(sysconf(_SC_PAGESIZE) == PAGE_SIZE && sysconf(_SC_PAGE_SIZE) == PAGE_SIZE &&
               errno == EDOM,

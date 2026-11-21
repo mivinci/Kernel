@@ -117,12 +117,14 @@ runtimetest(void)
   Procinfo   info;
   Life       life;
   Liferesult result;
+  Siginfo    interrupt = {0};
   Pgstat     before, after;
-  u64        trace[18], bytes;
+  u64        trace[18], bytes, stage, injected = 90;
   u32 mode, i, turns, good, mains = 0, rejected = 0, callbacks = 0, finalizers = 0, numbers = 0,
                             formats = 0, groups = 0, queues = 0, rings = 0, fds = 0, filepages = 0,
                             strings = 0, environments = 0, times = 0;
   int error;
+  interrupt.signum = SIGNAL_USR1;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
   for (mode = 0; mode < 10; mode++) {
@@ -137,8 +139,16 @@ runtimetest(void)
       REQUIRE(!lifestat(info.life, &life));
       if (life.state == LIFE_ENDED)
         break;
-      if (error)
-        REQUIRE(error == -ERR_WOULD_BLOCK && mode == 1 && procidle() == 1);
+      if (error) {
+        REQUIRE(
+            error == -ERR_WOULD_BLOCK && mode == 1 &&
+            !spaceread(info.space, runtime_trace_address + 6 * sizeof(u64), &stage, sizeof(stage)));
+        if (stage == injected + 1 && stage <= 92) {
+          REQUIRE(!procsigqueue(pid, &interrupt));
+          injected = stage;
+        } else
+          REQUIRE(procidle() == 1);
+      }
     }
     good = mode <= 3 || mode == 6;
     if (life.state != LIFE_ENDED || life.reason != LIFE_EXIT || life.code != (good ? 42 : 127)) {
@@ -188,6 +198,7 @@ runtimetest(void)
             groupstat(ended_group, &relationship) == -ERR_BAD_HANDLE);
   }
   REQUIRE(!setstat(set, &account) && !account.charged && !account.instances && !setclose(set));
+  REQUIRE(injected == 92);
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !lifecheck() && !groupcheck());

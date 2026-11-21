@@ -1,4 +1,6 @@
 #include "private/context.h"
+#include <abi/syscall.h>
+#include <abi/ipc.h>
 .section .text
 .balign 4
 .global __sys_ctxenter
@@ -32,4 +34,30 @@ __sys_ctxresume:
  ldp x19,x30,[sp],#16
  ret
 .size __sys_ctxenter,.-__sys_ctxenter
+.section .text.__sys_sleepwait,"ax",%progbits
+.balign 4
+.global __sys_sleepwait
+.type __sys_sleepwait,%function
+__sys_sleepwait:
+ ldr x10,[x0]
+.global __sys_sleepwait_checked
+__sys_sleepwait_checked:
+ cbz x10,__sys_sleepwait_skip
+ mov x0,xzr
+ mov x1,#1
+ mov x2,xzr
+ mov x3,xzr
+ mov x4,xzr
+ mov x5,#RECV_EVENTS_ONLY
+ mov x6,xzr
+ mov x7,xzr
+ mov x8,#SYS_RECV
+ svc #0
+.global __sys_sleepwait_return,__sys_sleepwait_skip
+__sys_sleepwait_return:
+ ret
+__sys_sleepwait_skip:
+ mov x0,xzr
+ ret
+.size __sys_sleepwait,.-__sys_sleepwait
 .section .note.GNU-stack,"",%progbits

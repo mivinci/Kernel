@@ -1,6 +1,7 @@
 #include "private/timer.h"
 #include "private/syscall.h"
 #include <abi/time.h>
+#include <abi/signal.h>
 
 isize
 systimernow(u64 *out)
@@ -143,4 +144,122 @@ systimerdue(Timerheap *heap, u64 now, Timerjob *out)
     return error;
   *out = job;
   return 0;
+}
+
+typedef struct Sleepwait Sleepwait;
+struct Sleepwait
+{
+  volatile u64 ticket;
+  u64          deadline, remaining;
+  isize        result;
+  u32          used;
+};
+static Timerheap sleepheap;
+static Sleepwait waits[SIGNAL_DEPTH + 1], *pending;
+static isize     sleepfault;
+extern const u8  __sys_sleepwait_checked[], __sys_sleepwait_return[], __sys_sleepwait_skip[];
+
+static void
+settle(Sleepwait *wait, isize result, u64 remaining)
+{
+  isize error = systimercancel(&sleepheap, wait->ticket);
+  /* If the native alarm cannot be changed, retain the heap and stop arming
+     new sleeps. The local continuation still receives the original error. */
+  if (error)
+    sleepfault = error;
+  wait->remaining = remaining;
+  wait->result = error ? error : result;
+  wait->ticket = 0;
+  pending = NULL;
+}
+
+int
+syssleepwaiting(void)
+{
+  return pending != NULL;
+}
+
+void
+syssleepinterrupt(void *trap, void *outer)
+{
+  Sleepwait *wait = pending;
+  u64        begin = (u64) __sys_sleepwait_checked, end = (u64) __sys_sleepwait_return;
+  u64        resume = (u64) __sys_sleepwait_skip;
+  u64        now;
+  isize      error;
+  if (!wait)
+    return;
+  error = systimernow(&now);
+  if (!error && now < wait->deadline)
+    settle(wait, -ERR_INTERRUPTED, wait->deadline - now);
+  else
+    settle(wait, error, 0);
+  /* The interrupted branch may already have loaded a live ticket. Skip
+     its recv so it cannot block after cancellation removed the alarm. */
+  syssleepskip(trap, begin, end, resume);
+  if (outer)
+    syssleepskip(outer, begin, end, resume);
+}
+
+isize
+sysnanosleep(u64 duration, u64 *remaining)
+{
+  Sleepwait *wait = NULL;
+  u64        mask, ignored, now, ticket;
+  isize      error, received = 0, restored;
+  u32        i;
+  if (!remaining)
+    return -ERR_INVALID;
+  if (!duration)
+    return 0;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sleepfault ? sleepfault : systimernow(&now);
+  if (!error && duration > UINT64_MAX - now)
+    error = -ERR_OVERFLOW;
+  if (!error) {
+    for (i = 0; i < ARRAY_SIZE(waits); i++)
+      if (!waits[i].used) {
+        wait = &waits[i];
+        break;
+      }
+    if (!wait || pending)
+      error = -ERR_BUSY;
+  }
+  if (!error) {
+    wait->deadline = now + duration;
+    error = systimeradd(&sleepheap, wait->deadline, &ticket);
+    if (!error) {
+      wait->used = 1;
+      wait->ticket = ticket;
+      pending = wait;
+    }
+  }
+  while (!error && wait->ticket) {
+    error = systimernow(&now);
+    if (!error && now >= wait->deadline)
+      settle(wait, 0, 0);
+    else if (!error && received)
+      settle(wait, received, received == -ERR_INTERRUPTED ? wait->deadline - now : 0);
+    if (error || !wait->ticket)
+      break;
+    error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+    if (error)
+      break;
+    received = __sys_sleepwait(&wait->ticket);
+    error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored);
+  }
+  if (wait && wait->used) {
+    if (error && wait->ticket)
+      settle(wait, error, 0);
+    if (!error) {
+      error = wait->result;
+      if (error == -ERR_INTERRUPTED)
+        *remaining = wait->remaining;
+    }
+    wait->used = 0;
+  }
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : restored;
 }

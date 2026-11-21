@@ -27,4 +27,11 @@ isize systimercancel(Timerheap *heap, u64 ticket);
    Compare TIMER words[1] with generation when dispatching hints. Drain all
    due jobs before waiting again, including jobs with the same deadline. */
 isize systimerdue(Timerheap *heap, u64 now, Timerjob *out);
+
+isize sysnanosleep(u64 duration, u64 *remaining);
+int   syssleepwaiting(void);
+void  syssleepinterrupt(void *trap, void *outer);
+/* Architecture guard between the last ticket load and the blocking recv. */
+isize __sys_sleepwait(const volatile u64 *ticket);
+void  syssleepskip(void *trap, u64 begin, u64 end, u64 resume);
 #endif
