@@ -160,10 +160,14 @@ int localexecview(Rtable *source, Handle view, u64 rights, Prepid *prep);
 int localselfspace(Rtable *source, Handle space);
 /* Read-only budget check, serialized with the eventual commit. */
 int localexecbudget(const Rtable *source, u64 ticket);
-int localprepared(Rtable *source, Prepid prep, Memid memory, u64 rights, Handle *out);
-int localconfigure(Rtable *source, Handle target, const Config *config, u32 reserve);
-int localstart(Rtable *source, Handle target);
-int localdestroy(Rtable *source, Handle target);
+/* Validate inherited slots in this exact preparation, then move their refs
+   at the caller's commit point in the same masked-IRQ transaction. */
+int  localexeccheck(Rtable *source, Prepid id, Rtable **target);
+void localexecmove(Rtable *source, Rtable *target);
+int  localprepared(Rtable *source, Prepid prep, Memid memory, u64 rights, Handle *out);
+int  localconfigure(Rtable *source, Handle target, const Config *config, u32 reserve);
+int  localstart(Rtable *source, Handle target);
+int  localdestroy(Rtable *source, Handle target);
 /* Internal cleanup of one exact scope; caller bounds the scanned slot range. */
 void localclearscope(Rtable *source, Prepid prep, u32 first, u32 count);
 int  localmem(Rtable *table, Memid memory, u64 rights, u64 offset, u64 length, u32 inherit,

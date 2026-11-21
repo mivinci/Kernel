@@ -55,11 +55,31 @@ generation(const Rtable *t, u32 index)
 }
 
 static int
+execinherits(const Local *slot)
+{
+  if (slot->source & LOCAL_STAGED)
+    return 0;
+  if (slot->subtype == LOCAL_CREATE)
+    return 1;
+  if (!(slot->inherit & LOCAL_EXEC))
+    return 0;
+  return (slot->subtype == LOCAL_MEM && slot->source != LOCAL_LOAD) ||
+         slot->subtype == LOCAL_CALL || slot->subtype == LOCAL_SEND ||
+         slot->subtype == LOCAL_NOTIFY || slot->subtype == LOCAL_TERMINAL;
+}
+
+static int
+execreserved(const Rtable *t, u32 index)
+{
+  return t->parallel && t->parallel->image < t->image && execinherits(&t->parallel->slots[index]);
+}
+
+static int
 canissue(const Rtable *t, u32 index)
 {
   u64 last = generation(t, index);
   u32 reserved;
-  if (last >= HANDLE_GENERATION_MAX)
+  if (last >= HANDLE_GENERATION_MAX || execreserved(t, index))
     return 0;
   if (last + 1 != HANDLE_GENERATION_MAX || !t->parallel)
     return 1;
@@ -86,7 +106,7 @@ sloterror(Rtable *t)
   if (spacesnapshotroot(t->space))
     return -ERR_BUSY;
   for (i = 0; i < t->count; i++)
-    if (!t->slots[i].subtype && generation(t, i) == HANDLE_GENERATION_MAX)
+    if (!t->slots[i].subtype && !execreserved(t, i) && generation(t, i) == HANDLE_GENERATION_MAX)
       return -ERR_OVERFLOW;
   return -ERR_CAPACITY;
 }
@@ -1675,13 +1695,13 @@ sameid(Memid a, Memid b)
   return a.index == b.index && a.generation == b.generation && !a.reserved && !b.reserved;
 }
 static void
-clearforkslot(Local *slot)
+clearslot(Local *slot)
 {
   slot->objectgen = slot->rights = slot->offset = slot->length = 0;
   slot->object = slot->subtype = slot->inherit = slot->source = 0;
 }
 static void
-copyforkslot(Local *to, const Local *from)
+copyslot(Local *to, const Local *from)
 {
   to->generation = from->generation;
   to->objectgen = from->objectgen;
@@ -1692,6 +1712,56 @@ copyforkslot(Local *to, const Local *from)
   to->subtype = from->subtype;
   to->inherit = from->inherit;
   to->source = from->source;
+}
+
+int
+localexeccheck(Rtable *source, Prepid id, Rtable **out)
+{
+  Prepinfo prep;
+  Rtable  *target;
+  u32      i;
+  int      error;
+  if (!out)
+    return -ERR_INVALID;
+  *out = NULL;
+  error = prepcheck(id, source, &prep);
+  if (error)
+    return error == -ERR_REVOKED && preppublishcheck(id) == -ERR_TIMEDOUT ? -ERR_TIMEDOUT : error;
+  if (prep.origin != PREP_EXEC)
+    return -ERR_STATE;
+  error = preppublishcheck(id);
+  if (error)
+    return error;
+  target = prep.target;
+  if (source->parallel != target || target->parallel != source || !source->generations ||
+      source->generations != target->generations || source->count != target->count)
+    return -ERR_STATE;
+  if (spacesnapshotroot(source->space) || spacesnapshotroot(target->space))
+    return -ERR_BUSY;
+  for (i = 0; i < source->count; i++)
+    if (execinherits(&source->slots[i]) && target->slots[i].subtype)
+      return -ERR_CAPACITY;
+  *out = target;
+  return 0;
+}
+
+void
+localexecmove(Rtable *source, Rtable *target)
+{
+  u32 i;
+  for (i = 0; i < source->count; i++) {
+    Local *slot = &source->slots[i];
+    Local *dest = &target->slots[i];
+    if (!execinherits(slot))
+      continue;
+    if (dest->subtype)
+      panic("exec inherited slot collision");
+    copyslot(dest, slot);
+    if (dest->subtype == LOCAL_CREATE)
+      dest->rights &= CREATE_USE;
+    clearslot(slot);
+  }
+  source->parallel = target->parallel = NULL;
 }
 static const Forkbinding *
 forkbinding(const Forkbinding *bindings, u32 count, Memid id)
@@ -1815,7 +1885,7 @@ localforkbind(Rtable *source, Rtable *target, u32 index, Memid view)
   error = convert(memforkhold(view, target->acct));
   if (error)
     return error;
-  clearforkslot(draft);
+  clearslot(draft);
   draft->objectgen = view.generation;
   draft->object = view.index;
   draft->rights = binding.source.generation;
@@ -1842,7 +1912,7 @@ localforkdrop(Rtable *target)
       floors++;
     if (slot->subtype && removeentry(slot))
       panic("fork staged reference release");
-    clearforkslot(slot);
+    clearslot(slot);
   }
   if (floors && !imagefind(target->owner, target->image, &image) && !imagestat(image, &state)) {
     if (state.state == IMAGE_PREPARING) {
@@ -1999,7 +2069,7 @@ localforkloadchecked(Rtable *source, Rtable *target, const Createarg *limits, Pr
     if (error)
       goto failed;
     generation = dest->generation;
-    copyforkslot(dest, slot);
+    copyslot(dest, slot);
     dest->generation = generation;
     dest->source |= LOCAL_STAGED;
     if (slot->subtype == LOCAL_SPACE) {
@@ -2033,7 +2103,7 @@ localforkloadchecked(Rtable *source, Rtable *target, const Createarg *limits, Pr
       continue;
     view = memory(dest);
     generation = dest->generation;
-    copyforkslot(dest, &source->slots[i]);
+    copyslot(dest, &source->slots[i]);
     dest->generation = generation;
     dest->objectgen = view.generation;
     dest->object = view.index;
@@ -2078,7 +2148,7 @@ localforkfinish(Rtable *source, Rtable *target)
   for (i = 0; i < target->count; i++) {
     slot = &target->slots[i];
     if (!slot->subtype)
-      clearforkslot(slot);
+      clearslot(slot);
     slot->generation = slot->subtype && slot->subtype != LOCAL_FLOOR ? source->slots[i].generation
                                                                      : generation(source, i);
     if (target->generations)

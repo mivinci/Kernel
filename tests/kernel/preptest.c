@@ -89,6 +89,94 @@ execowtest(void)
           !acctunbind(payer) && !acctclose(peer) && !acctunbind(peer) && !setclose(set));
 }
 static void
+execinherittest(void)
+{
+  static Rtable source, target;
+  static Local  oldslots[8], newslots[8];
+  static u64    generations[8];
+  Setid         set;
+  Acctid        acct;
+  Lifeid        life;
+  Liferesult    result;
+  Imageid       old, next, peer;
+  Image         image;
+  Spaceid       oldspace, newspace;
+  Memid         shared;
+  Mem           backing;
+  Prepid        prep;
+  Rtable       *checked;
+  Handle        create, memory, channel, late, space, allocator, view;
+  Handle        pid = handlepack(HANDLE_PROCESS, 700, PROCS - 1);
+  Createpolicy  policy;
+  Pgstat        before, after;
+  Hpte          entry;
+  u64           ticket, bits, value, marker = 0x31415926;
+  u64           address = 0x10000, notify = (u64) 1 << 32;
+  pgstat(&before);
+  REQUIRE(!setcreate(32, 64, 1, &set) && !acctcreate(set, 32, 64, &acct) &&
+          !lifecreate(set, pid, 1, &life) && !lifebindacct(life, acct) &&
+          !imagecreate(life, 0, &old) && !lifepublish(life) && !imageactivate(old) &&
+          !spacecreate(acct, &oldspace) && !localinit(&source, oldslots, 8, acct, oldspace));
+  source.owner = pid;
+  source.image = 1;
+  source.generations = generations;
+  policy.set = set;
+  policy.memlimit = 32;
+  policy.exec_limit = 64;
+  policy.resources = 8;
+  policy.pending = 4;
+  policy.rights = CREATE_RIGHTS | LOCAL_GRANT;
+  REQUIRE(
+      !localcreate(&source, &policy, &create) && !memshared(acct, 2 * PAGE_SIZE, &shared) &&
+      !localmem(&source, shared, VM_READ | VM_WRITE, PAGE_SIZE, PAGE_SIZE, LOCAL_EXEC, &memory) &&
+      !memfree(shared) &&
+      !spacemap(oldspace, shared, PAGE_SIZE, address, PAGE_SIZE, VM_READ | VM_WRITE) &&
+      !spacewrite(oldspace, address, &marker, sizeof(marker)) &&
+      !localendpoint(&source, old, LOCAL_NOTIFY, LOCAL_USE, notify, LOCAL_EXEC, &channel) &&
+      !localendpoint(&source, old, LOCAL_CALL, LOCAL_USE, 0, 0, &late));
+  REQUIRE(!acctexecbegin(acct, &ticket) && !spaceexeccreate(acct, ticket, &newspace) &&
+          !localinit(&target, newslots, 8, acct, newspace) &&
+          !imagecreate(life, source.image, &next) && !imagestat(next, &image));
+  target.owner = pid;
+  target.image = image.number;
+  target.generations = generations;
+  source.parallel = &target;
+  target.parallel = &source;
+  REQUIRE(!localspace(&target, 3, &space) && handleindex(space) == handleindex(late) &&
+          !localallocator(&target, 7, &allocator) && !localreserve(&target, next, 1) &&
+          target.slots[5].subtype == LOCAL_FLOOR &&
+          !prepexecopen(&source, &target, life, next, ticket, &prep) &&
+          !localconstruct(&source, prep, 31, &view));
+  REQUIRE(!localinherit(&source, late, LOCAL_EXEC) &&
+          localexeccheck(&source, prep, &checked) == -ERR_CAPACITY && !checked &&
+          !localnative(&source, memory) && localnative(&target, memory) == -ERR_BAD_HANDLE &&
+          !localselfspace(&target, space) && !localinherit(&source, late, 0) &&
+          !localexeccheck(&source, prep, &checked) && checked == &target);
+  localexecmove(&source, checked);
+  REQUIRE(!localnative(&target, memory) && localnative(&source, memory) == -ERR_BAD_HANDLE &&
+          !localcreator(&target, create, &policy) && policy.rights == CREATE_USE &&
+          policy.memlimit == 32 && policy.exec_limit == 64 && !memstat(shared, &backing) &&
+          backing.managers == 1 && backing.refs == 2 && !spacelookup(newspace, address, &entry) &&
+          localnative(&target, late) == -ERR_BAD_HANDLE &&
+          !localchannel(&target, channel, LOCAL_NOTIFY, &peer, &bits) &&
+          peer.generation == old.generation && peer.index == old.index && bits == notify);
+  REQUIRE(!imageend(old, IMAGE_EXEC) && !imageactivate(next));
+  prepcomplete(prep);
+  REQUIRE(localchannel(&target, channel, LOCAL_NOTIFY, &peer, &bits) == -ERR_PEER &&
+          !localclose(&source) && !localdrain(&source, 32) && !spaceclear(oldspace, 32) &&
+          !spacedestroy(oldspace) && !imagedetach(old) && !prepdrop(prep) &&
+          localmap(&target, space, memory, 0, address, PAGE_SIZE, VM_READ) == -ERR_DENIED &&
+          !localmap(&target, space, memory, PAGE_SIZE, address, PAGE_SIZE, VM_READ) &&
+          !spaceread(newspace, address, &value, sizeof(value)) && value == marker);
+  REQUIRE(!imageend(next, IMAGE_EXIT) && !localclose(&target) && !localdrain(&target, 32) &&
+          !spaceclear(newspace, 32) && !spacedestroy(newspace) && !imagedetach(next) &&
+          !lifeend(life, LIFE_EXIT, 0, NULL) && !lifedetach(life) &&
+          !lifecollect(life, 1, &result) && !acctclose(acct) && !acctunbind(acct) &&
+          !setclose(set) && !acctcheck() && !pgcheck());
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated);
+}
+static void
 execpreptest(void)
 {
   static Rtable source, target;
@@ -246,6 +334,7 @@ preptest(void)
   u64      oldpa;
   u32      i;
   execowtest();
+  execinherittest();
   execpreptest();
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 16, &set));
