@@ -47,6 +47,25 @@ mapped(const Connstate *s, const Connentry *entry)
          s->map.connid == entry->connid && s->map.serverimage == s->peer.image;
 }
 isize
+sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childspace)
+{
+  Connstate *s;
+  if (!work || handlekind(parent.pid) != HANDLE_PROCESS || !parent.image ||
+      handlekind(child.pid) != HANDLE_PROCESS || !child.image || parent.pid == child.pid ||
+      handlekind(childspace) != HANDLE_RESOURCE)
+    return -ERR_INVALID;
+  s = &work->state;
+  if (s->self.pid != parent.pid || s->self.image != parent.image)
+    return -ERR_STALE;
+  if (!s->map.mapped)
+    return s->map.address || s->map.bytes || s->map.connid || s->map.serverimage || s->map.verified
+               ? -ERR_STATE
+               : 0;
+  if (s->map.mapped != 1 || s->map.verified > 1)
+    return -ERR_STATE;
+  return sysbootunmap(childspace, &s->map);
+}
+isize
 sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag)
 {
   Connentry entry;

@@ -35,6 +35,7 @@ class ConnectionWorkTests(unittest.TestCase):
             'sysconnworkreserve':[C.POINTER(Work),C.POINTER(Cache),C.c_uint32,C.c_uint32,C.POINTER(Lease)],
             'sysconnworkrelease':[C.POINTER(Work),C.POINTER(Cache),Lease],
             'sysconnworkclean':[C.POINTER(Work),C.POINTER(Cache)],
+            'sysconnforkunmap':[C.POINTER(Work),Peer,Peer,C.c_int64],
             'testmemory':[C.c_int64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64],
             'testmaperror':[C.c_int64,C.c_int64,C.c_int64,C.c_int64],
             'testfreeerror':[C.c_int64],'testfrees':[]}
@@ -70,6 +71,24 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual(self.lib.sysbootsubmitted(C.byref(self.record),claim,C.byref(rpc)),0)
         self.lib.testresult(0,0 if ordinary else 4,0 if ordinary else self.mem,claim.seq,self.connid,36864)
         self.assertEqual(self.lib.sysbootpoll(C.byref(self.record),claim),0)
+
+    def test_child_alias_removal_keeps_parent_handles_and_failed_cleanup_record(self):
+        self.adopt()
+        child=Peer(pid(3),20)
+        before=bytes(self.work)
+        self.lib.testmaperror(0,0,0,-7)
+        # A wrong source identity must never issue cleanup.
+        self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),child,self.self,self.space),-4)
+        self.assertEqual(bytes(self.work),before)
+        self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),-7)
+        self.assertEqual(bytes(self.work),before)
+        self.lib.testmaperror(0,0,0,0)
+        frees=self.lib.testfrees()
+        self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),0)
+        self.assertEqual((self.work.state.memory,self.work.state.call),(self.mem,self.call))
+        self.assertEqual(self.lib.testfrees(),frees)
+        self.assertEqual(bytes(self.work.state.map),bytes(C.sizeof(Mapping)))
+        self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),0)
 
     def adopt(self):
         self.result();mapped=Mapping(0x1200000,36864,self.connid,19,1,1)

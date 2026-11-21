@@ -67,6 +67,10 @@ STATIC_ASSERT(sizeof(Connwork) == PAGE_SIZE, connection_private_page);
    workinit clears only Connstate, preserving the embedded directory. Caller excludes caught
    signals, owns valid separate storage and has already resolved the peer. */
 isize sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag);
+/* Child repair only, before publishing new directory/work ownership. Caller
+   supplies the child's validated SELF_SPACE and excludes caught signals.
+   Removes only the inherited alias; never free/ACK a parent Handle. */
+isize sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childspace);
 /* Cold native lookup first. First distinct owned CALL moves into the work
    page; another Handle to the exact same peer moves to initially-zero redundant
    for explicit caller release. Same Handle is not two owned references.
