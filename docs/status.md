@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage314：fork 快照打开、映射构建及未映射 DATA 克隆保留 Prep 的超期和撤销状态。103 项主机专项、RV64/ARM64 QEMU `sigframe` 回归和格式检查通过。
 - stage313：fork 快照提交时到期返回 `ERR_TIMEDOUT`，并完整回滚。94 项主机专项、RV64/ARM64 QEMU `sigframe` 回归和格式检查通过。
 - stage312：RV64/ARM64 QEMU `sigframe` 验证硬件 timer IRQ 在可信 fork 构造检查点触发让出、就绪进程先运行和父续点恢复；费用与页回到基线，格式通过。
 - stage311：未映射 DATA 的别名登记与根冻结可按 32 项开放 fork 检查点；70 项主机专项、双架构 QEMU `sigframe` 和格式检查通过。

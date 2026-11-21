@@ -31,6 +31,14 @@ memory(const Local *slot)
   return id;
 }
 
+static int
+snapshoterror(int error, Prepid prep, Rtable *source, Rtable *target)
+{
+  /* Space reports its own errors even when its Prep check caused the failure. */
+  int status = prep.generation ? prepsnapshotcheck(prep, source, target) : 0;
+  return status ? status : convert(error);
+}
+
 int
 forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
                     const Hctx *parent, Hctx *child, Prepid prep, Forkcheck checkpoint)
@@ -66,9 +74,9 @@ forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32
     if (error)
       return error;
   }
-  error = convert(spacesnapshotopen(source->space, target->space, prep));
+  error = spacesnapshotopen(source->space, target->space, prep);
   if (error)
-    return error;
+    return snapshoterror(error, prep, source, target);
   for (;;) {
     error = spacesnapshotbuild(source->space, target->space);
     if (error <= 0)
@@ -77,7 +85,7 @@ forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32
       goto failed;
   }
   if (error) {
-    error = convert(error);
+    error = snapshoterror(error, prep, source, target);
     goto failed;
   }
   for (i = 0; i < source->count; i++) {
@@ -112,7 +120,10 @@ forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32
       } else
         error = MEM_BAD;
       if (error) {
-        error = convert(error);
+        if (backing.state == MEM_DATA)
+          error = snapshoterror(error, prep, source, target);
+        else
+          error = convert(error);
         goto failed;
       }
     }

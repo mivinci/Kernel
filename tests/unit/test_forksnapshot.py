@@ -219,6 +219,46 @@ class ForkSnapshotTests(unittest.TestCase):
     def test_signal_checkpoint_expiry_rolls_back_loaded_resources(self):
         self.check_checkpoint_expiry(4,2)
 
+    def test_space_phase_returns_precise_preparation_failure(self):
+        def body(phase):
+            lib=self.lib
+            prep=self.owner()
+            source,target=self.parent.space,self.target.space
+            state=Prepinfo()
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            before=(self.pstat().allocated,self.leaf(source,0x20000),self.output.bytes())
+            lib.test_now.argtypes=[C.c_uint64]
+            lib.test_after_clock_read.argtypes=[C.c_uint64]
+            seen=[]
+            callback_type=C.CFUNCTYPE(C.c_int,Prepid)
+
+            @callback_type
+            def checkpoint(identity):
+                seen.append((identity.generation,self.tree(target).mapcount))
+                if phase=='revoke':
+                    return lib.prepcancel(identity)
+                lib.test_now(state.deadline)
+                return 0
+
+            if phase=='open':
+                lib.test_after_clock_read(state.deadline)
+            lib.forksnapshotchecked.argtypes=[*lib.forksnapshot.argtypes,callback_type]
+            self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
+                C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),
+                -15 if phase=='revoke' else -21)
+            self.assertEqual(seen,[] if phase=='open' else [(prep.generation,0)])
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            self.assertEqual((state.state,state.expired),(3,phase!='revoke'))
+            self.assertEqual((self.tree(source).frozen,self.tree(target).frozen,
+                              self.tree(target).mapcount),(0,0,0))
+            self.assertEqual((self.pstat().allocated,self.leaf(source,0x20000),self.output.bytes()),
+                             before)
+
+        for lib in self.libs:
+            for phase in ('open','build','revoke'):
+                with self.subTest(phase=phase):
+                    self.exercise(lib,lambda: body(phase))
+
     def test_deadline_between_final_checkpoint_and_commit_rolls_back(self):
         def body(expire_at=0):
             lib=self.lib
@@ -331,7 +371,7 @@ class ForkSnapshotTests(unittest.TestCase):
             lib.forksnapshotchecked.argtypes=[*lib.forksnapshot.argtypes,callback_type]
             try:
                 self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
-                    C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),-7)
+                    C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),-21)
                 self.assertEqual(admission,[(prep.generation,-4)])
                 self.assertEqual(observed,[(prep.generation,32,1)])
                 self.assertEqual([self.leaf(peer,address) for address in addresses],leaves)
