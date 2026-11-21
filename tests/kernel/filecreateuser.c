@@ -748,7 +748,7 @@ drainexit(void *context, Filelink *link)
         drain->references[1]);
   if (++drain->attempts == 1)
     return -ERR_WOULD_BLOCK;
-  CHECK(!ipc_rqfinish(drain->request) && !sysfilefinish(&link->watch.active, drain->request));
+  CHECK(!sysfilewatchdrain(&link->watch, drain->request));
   drain->references[0] = drain->references[1] = 0;
   return 0;
 }
@@ -814,8 +814,11 @@ claimsource(const Bootview *boot)
   Elfplan   plan;
   Ipcmsg    result;
   Msg       call;
+  Msg       seen = {{SEEN, 0, 0, 0}};
   Fdtag     fd;
   Handle    rpc;
+  Filelease lease;
+  Fileslot  slot = {0};
   u64       file, pin;
   setup(boot);
   CHECK(!sysfilerefnew(&pool, work.state.self, work.state.tag, 100, 1000, 0, &file) &&
@@ -854,6 +857,18 @@ claimsource(const Bootview *boot)
   packet.resources[2].tag = EXEC_CLAIM_CALL;
   packet.resources[2].handle = work.state.call;
   CHECK(!sysexecfill(&next, &source, &plan, &packet, sizeof(packet)));
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  call.words[0] = FS_READ;
+  call.words[2] = slot.seq = lease.seq;
+  call.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = 100;
+  slot.payload_bytes = slot.args[1] = 1;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &call, CALL_ASYNC, &result) && result.request &&
+        !ipc_call(work.state.call, &seen, CALL_CONTROL, &result) && !result.words[0]);
   (void) sysexecpublish(&next);
   CHECK(0);
 }
@@ -870,8 +885,10 @@ claimlookup(void *context, Handle pid, u64 image, u64 session, u64 reference)
 typedef struct Claimrefs Claimrefs;
 struct Claimrefs
 {
-  Openprep refs[3];
-  u32      steps;
+  Openprep   refs[3];
+  Filewatch *old;
+  Handle     pending;
+  u32        steps;
 };
 
 static isize
@@ -894,7 +911,9 @@ claimclose(void *context, const Openprep *prep)
     return 0;
   }
   CHECK(prep->reference == 1001 && (refs->steps == 2 || refs->steps == 3));
-  return ++refs->steps == 3 ? -ERR_WOULD_BLOCK : 0;
+  if (++refs->steps == 3)
+    return -ERR_WOULD_BLOCK;
+  return sysfilewatchdrain(refs->old, refs->pending);
 }
 
 static isize
@@ -921,9 +940,10 @@ claimbackend(const Bootview *boot)
   Fileslot   slot;
   u64        key[5], held = 0;
   Claimrefs  refs = {0};
-  u32        i;
+  u32        i, pending_slot;
   volatile u64 *marker;
   Msg           stale = {{(u64) -ESTALE, 2, 0, 0}};
+  Msg           seen = {{0, 0, 0, 0}};
   CHECK(!__sys_getid(&self.pid, &self.image, &parent) && !ipc_recv(0, 0, &input) &&
         !sysfilehello(links, ARRAY_SIZE(links), permit, alloc, space, ADDRESS, &input) &&
         !ipc_recv(0, 0, &input) && !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot));
@@ -948,17 +968,27 @@ claimbackend(const Bootview *boot)
         links[1].watch.connid == EXEC_CLAIM_CONNID);
   marker = (volatile u64 *) (links[1].address + FS_DATA_OFFSET);
   *marker = EXEC_CLAIM_MARKER;
+  refs.old = old;
   CHECK(sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &refs) ==
             -ERR_BUSY &&
         !refs.steps && !sysexecreply(&execreserve, old, &links[1], &input, EXEC_CLAIM_TOKEN, 0));
+  CHECK(!ipc_recv(0, 0, &input) && input.words[0] == FS_READ &&
+        !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+        !sysfileargs(FS_READ, &slot));
+  pending_slot = (u32) input.words[3];
+  refs.pending = input.request;
+  CHECK(!ipc_defer(refs.pending) && sysfilewatchdrain(old, refs.pending) == -ERR_BUSY &&
+        !ipc_recv(0, 0, &input) && input.words[0] == SEEN && !ipc_reply(input.request, &seen));
   CHECK(!ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input) && input.kind == IPC_EVENT &&
         input.words[0] == EVENT_LIFE &&
         sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &refs) ==
             -ERR_WOULD_BLOCK &&
         refs.steps == 3 && refs.refs[0].state == Openclosed && refs.refs[1].state == Openattached &&
-        links[1].prepaid && !links[1].ready &&
+        links[1].prepaid && !links[1].ready && old->active.requests[pending_slot] == refs.pending &&
+        sysfilelinkclose(&links[0]) == -ERR_BUSY && links[0].memory && links[0].address &&
         !sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &refs) &&
         refs.steps == 4 && refs.refs[1].state == Openclosed && refs.refs[2].state == Openattached &&
+        !old->active.requests[pending_slot] && sysfilewatchdrain(old, refs.pending) == -ERR_STALE &&
         !sysopenclose(refs.refs, ARRAY_SIZE(refs.refs), old->owner.pid, 1, 100, 1000, claimclose,
                       &refs) &&
         refs.steps == 4);

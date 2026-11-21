@@ -345,6 +345,29 @@ sysfilewatchaccept(Filewatch *watch, const volatile void *region, u64 bytes, con
 }
 
 isize
+sysfilewatchdrain(Filewatch *watch, Handle request)
+{
+  u32   i;
+  u64   state;
+  isize error;
+  if (!watch || !watch->owner.cookie || handlekind(request) != HANDLE_REQUEST)
+    return -ERR_INVALID;
+  for (i = 0; i < FS_CONN_SLOTS && watch->active.requests[i] != request; i++) {
+  }
+  if (i == FS_CONN_SLOTS)
+    return -ERR_STALE;
+  if (!watch->owner.reason)
+    return -ERR_BUSY;
+  error = ipc_rqcheck(request, &state);
+  if (error)
+    return error;
+  if (state != RQ_CHECK_DRAINING)
+    return -ERR_WOULD_BLOCK;
+  error = ipc_rqfinish(request);
+  return error ? error : sysfilefinish(&watch->active, request);
+}
+
+isize
 sysfilewatchclose(Filewatch *watch)
 {
   u32   i;

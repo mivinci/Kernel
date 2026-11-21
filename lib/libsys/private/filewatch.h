@@ -100,6 +100,9 @@ isize sysfilewatch(Filewatch *watch, Handle permit, const Ipcmsg *source, u64 co
 isize sysfilewatchread(Filewatch *watch);
 isize sysfilewatchaccept(Filewatch *watch, const volatile void *region, u64 bytes,
                          const Ipcmsg *source, Fileslot *out);
+/* Caller has stopped every downstream access for this request. Finish the
+   original retired REQUEST and only then release its registered slots. */
+isize sysfilewatchdrain(Filewatch *watch, Handle request);
 /* Only after retiring the connection's business references and stopping
    downstream access. A busy ledger prevents both ACK and DROP. */
 isize sysfilewatchclose(Filewatch *watch);
