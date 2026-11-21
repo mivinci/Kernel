@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage337（2026-11-22）：双架构 QEMU `runtime` 验证满 128 条 EXEC_PREPARE 双页实传、原请求占用和整对槽回收；7 项专项和格式通过。成功准备/token 仍未接。
 - stage336（2026-11-22）：EXEC_PREPARE 接入原请求账本；双架构 QEMU `runtime` 验证真实单页传输、后端拒绝及原 RPC 收尾。14 项主机回归和格式通过；后端成功准备及 Boot 未接。
 - stage335（2026-11-22）：exec fd 快照可按固定后端打包 EXEC_PREPARE，保留逐 fd 的 CLOEXEC 和源引用。7 项专项、双架构 SDK 构建及格式通过；未接 IPC 或 Boot 安装。
 - stage334（2026-11-22）：私有 exec fd 快照固定原 File、后端及逐 fd 的 CLOEXEC；49 项主机测试、双架构 SDK 构建和格式通过。服务端继承与目标 Boot 尚未接。

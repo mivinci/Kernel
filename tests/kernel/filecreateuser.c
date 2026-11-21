@@ -403,20 +403,32 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
 }
 
 static void
-execmanifest(u64 file)
+execmanifest(u64 file, u32 count)
 {
-  Fdtag  tag;
-  Msg    message;
-  Ipcmsg result;
-  u64    pin = file, closing = 0;
-  Handle rpc, original;
-  CHECK(!sysfilerefalias(&pool, work.state.self, file) && !sysfdreserve(&fds, 0, &tag) &&
-        !sysfdpublish(&fds, tag, file, BOOT_FD_CLOEXEC) &&
-        !sysexecfds(&execfds, &fds, &pool, &cache, work.state.self) &&
+  Fdtag     tag;
+  Fdview    fd;
+  Filelease spare;
+  Msg       message;
+  Ipcmsg    result;
+  u64       pin = file, closing = 0;
+  Handle    rpc, original;
+  u32       i;
+  for (i = 0; i < count; i++)
+    CHECK(!sysfilerefalias(&pool, work.state.self, file) && !sysfdreserve(&fds, 0, &tag) &&
+          tag.index == i && !sysfdpublish(&fds, tag, file, i & 1 ? 0 : BOOT_FD_CLOEXEC));
+  if (count > 1) {
+    volatile Fileslot *next =
+        (volatile Fileslot *) (work.state.map.address + FS_DESC_OFFSET + FS_DESC_BYTES);
+    next->seq = UINT64_MAX;
+  }
+  CHECK(!sysexecfds(&execfds, &fds, &pool, &cache, work.state.self) &&
         !sysfilerefpin(&pool, work.state.self, pin) &&
         !sysexecfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, work.state.self.image + 1, 100,
                         &pin, &execsend) &&
-        !pin && !sysoprequest(&work, &cache, &execsend.key, &message) &&
+        !pin && execsend.key.lease.span == (count > 1 ? 2U : 1U));
+  if (count > 1)
+    CHECK(sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &spare) == -ERR_BUSY);
+  CHECK(!sysoprequest(&work, &cache, &execsend.key, &message) &&
         !ipc_call(work.state.call, &message, CALL_ASYNC, &result));
   rpc = original = result.request;
   CHECK(!sysopsubmitted(&work, &cache, &execsend.key, &rpc) && !rpc &&
@@ -428,9 +440,14 @@ execmanifest(u64 file)
         !sysopack(&work, &cache, &execsend.key) &&
         !sysopfinish(&work, &cache, &execsend.key, &pin) && pin == file &&
         !sysfilerefunpin(&pool, work.state.self, pin) && !sysexecfdrelease(&execfds));
-  tag.state = SYSFD_LIVE;
-  CHECK(!sysfdclose(&fds, &pool, work.state.self, tag, &closing) && !closing);
-  filecreatetrace[14] = 1;
+  if (count > 1)
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 2, &spare) &&
+          !sysconnworkrelease(&work, &cache, spare));
+  for (i = 0; i < count; i++)
+    CHECK(!sysfdobserve(&fds, i, &fd) &&
+          !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);
+  execsend.key.lease.seq = 0;
+  filecreatetrace[14] += count;
 }
 
 static void
@@ -577,7 +594,8 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   first = files[0];
-  execmanifest(first);
+  execmanifest(first, 1);
+  execmanifest(first, BOOT_FD_COUNT);
   loadreads();
   ttygetattr(first);
   ttyiocall(first, FS_READ, 1);
@@ -903,23 +921,27 @@ server(const Bootview *boot, u32 recover)
       CHECK(!ipc_reply(input.request, &reply));
       continue;
     }
-    CHECK(!status && descriptor.span == 1);
+    CHECK(!status && (descriptor.span == 1 || opcode == FS_EXEC_PREPARE));
     if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
     if (!recover && opcode == FS_EXEC_PREPARE) {
       Fileinherit row;
       Handle      self, parent;
-      u64         image;
-      CHECK(!__sys_getid(&self, &image, &parent) && descriptor.payload_bytes == sizeof(row) &&
-            !descriptor.object && descriptor.args[0] == (u64) input.source &&
+      u64         image, count = descriptor.args[4];
+      CHECK(!__sys_getid(&self, &image, &parent) && (count == 1 || count == BOOT_FD_COUNT) &&
+            descriptor.payload_bytes == count * sizeof(row) && !descriptor.object &&
+            descriptor.span == (count == 1 ? 1U : 2U) && descriptor.args[0] == (u64) input.source &&
             descriptor.args[1] == input.image + 1 && descriptor.args[2] == input.image &&
-            descriptor.args[3] == 100 && descriptor.args[4] == 1 && !descriptor.args[5] &&
-            !descriptor.args[6] && !descriptor.args[7] &&
-            !__sys_copy(&row, (const void *) data, sizeof(row)) && !row.fd &&
-            row.flags == BOOT_FD_CLOEXEC && row.backend_pid == (u64) self &&
-            row.backend_image == image && row.session == sessions[0] &&
-            row.reference_id == references[0]);
+            descriptor.args[3] == 100 && !descriptor.args[5] && !descriptor.args[6] &&
+            !descriptor.args[7]);
+      if (count > 1)
+        CHECK(watch->active.requests[slot + 1] == input.request);
+      for (i = 0; i < count; i++)
+        CHECK(!__sys_copy(&row, (const u8 *) data + i * sizeof(row), sizeof(row)) && row.fd == i &&
+              row.flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC) && row.backend_pid == (u64) self &&
+              row.backend_image == image && row.session == sessions[0] &&
+              row.reference_id == references[0]);
       reply.words[0] = (u64) -ENOTSUP;
       CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
       continue;

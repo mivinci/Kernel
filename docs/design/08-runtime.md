@@ -880,3 +880,5 @@ stage334：私有 `Execfds` 在调用者短暂排除捕获信号时，记录全�
 stage335：`sysexecfdmanifest` 从固定快照按完整后端 PID/image 打包 EXEC_PREPARE 参数和逐 fd 的 48 字节线记录。各别名仍携自己的 CLOEXEC 标志，同一源引用的 session/reference 不变；已重启的同 PID 后端单独分组。最多 128 条、6144 字节，一次传输可容纳；容量不足时保留原输出。7 项快照与清单主机测试、双架构 SDK 构建和格式通过。此点只打包私有提交缓冲，未发 IPC、未分配后端引用，也未安装 Boot fd。
 
 stage336：`sysexecfdbegin` 将固定清单写入同一后端连接的普通页或页对，独立 File pin 和槽一起登记到原 Op。多页先清续页描述符，再写负载，最后写首槽描述符；提交前复制失败归还槽及原 pin。RV64、ARM64 QEMU `runtime` 用真实 CALL 发送单页 CLOEXEC 清单：服务验证源和文件身份后回复 ENOTSUP，客户端保存原结果、确认 FINISH/ACK 并归还槽和 pin，已提交的 Op 不能再生成 CALL。14 项主机回归及格式通过。双页实传、后端准备成功/token 交付及目标 Boot 尚未接。
+
+stage337：RV64、ARM64 QEMU `runtime` 在单页实传之外，用一个原 RPC 发送满 128 条记录的 6144 字节 `EXEC_PREPARE` 清单。服务验证跨页记录和混合 CLOEXEC 标志，续页旧描述符被清除，私有账本把两槽都绑定到原 REQUEST。客户端在该页对占用时不能再借普通槽，原 RPC 收尾后两页可一并复用，最终页和账户费用守恒。7 项专项及格式通过。首轮测试误期待 CAPACITY，已按原槽接口使用 BUSY 并复验；后端仍只验收传输并回复 ENOTSUP。
