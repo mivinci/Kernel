@@ -8,13 +8,15 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 Read = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint32))
 Write = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.c_uint32)
+Readbyte = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint8))
 VERSION1 = 1 << 32
 BLK_SIZE = 1 << 6
+TOPOLOGY = 1 << 10
 TIMEOUT = 3000000000
 
 
 class Ops(C.Structure):
-    _fields_ = [('context', C.c_void_p), ('read', Read), ('write', Write)]
+    _fields_ = [('context', C.c_void_p), ('read', Read), ('write', Write), ('readbyte', Readbyte)]
 
 
 class Vdev(C.Structure):
@@ -24,7 +26,7 @@ class Vdev(C.Structure):
 
 class Blockconfig(C.Structure):
     _fields_ = [('sectors', C.c_uint64), ('readonly', C.c_uint32), ('flush', C.c_uint32),
-                ('blocksize', C.c_uint32)]
+                ('blocksize', C.c_uint32), ('physical', C.c_uint32), ('alignment', C.c_uint32)]
 
 
 class Blockbuf(C.Structure):
@@ -63,6 +65,9 @@ class Mmio:
         self.generation = 0
         self.change_capacity = False
         self.blocksize = 4096
+        self.physical_exp = 3
+        self.alignment_offset = 1
+        self.change_topology = False
         self.queue_sel = 0
         self.queue_max = {0: 256, 1: 128}
         self.queue_regs = {}
@@ -71,7 +76,20 @@ class Mmio:
         self.interrupt_during_ack = 0
         self.read_callback = Read(self.read)
         self.write_callback = Write(self.write)
-        self.ops = Ops(None, self.read_callback, self.write_callback)
+        self.readbyte_callback = Readbyte(self.readbyte)
+        self.ops = Ops(None, self.read_callback, self.write_callback, self.readbyte_callback)
+
+    def readbyte(self, context, offset, output):
+        self.events.append(('readbyte', offset))
+        if offset == 0x118:
+            output[0] = self.physical_exp
+        elif offset == 0x119:
+            output[0] = self.alignment_offset
+            if self.change_topology:
+                self.generation += 1
+        else:
+            return -1
+        return 0
 
     def read(self, context, offset, output):
         self.events.append(('read', offset))
@@ -354,6 +372,31 @@ class VirtioDeviceTests(unittest.TestCase):
                     self.mmio.blocksize = 1536
                     self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), -6)
                     self.assertEqual(config.blocksize, size)
+
+    def test_block_topology_requires_byte_access_and_one_configuration(self):
+        for byte_access in (False, True):
+            self.setUp()
+            self.mmio.features = VERSION1 | BLK_SIZE | TOPOLOGY
+            if not byte_access:
+                self.mmio.ops.readbyte = Readbyte()
+            self.assertEqual(self.probe(), 0)
+            self.assertEqual(self.reset(), 0)
+            self.assertEqual(self.lib.vblkfeatures(C.byref(self.device)), 0)
+            config = Blockconfig()
+            self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), 0)
+            self.assertEqual((config.physical, config.alignment), (32768, 4096) if byte_access else (0, 0))
+            if not byte_access:
+                self.assertFalse(self.device.features & TOPOLOGY)
+                continue
+            before = bytes(config)
+            self.mmio.change_topology = True
+            self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), -11)
+            self.assertEqual(bytes(config), before)
+            self.mmio.change_topology = False
+            for exponent, offset in ((0, 1), (3, 8), (20, 1), (32, 0)):
+                self.mmio.physical_exp, self.mmio.alignment_offset = exponent, offset
+                self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), -6)
+                self.assertEqual(bytes(config), before)
 
     def test_empty_slot_stops_all_access_after_device_id(self):
         self.mmio.device = 0

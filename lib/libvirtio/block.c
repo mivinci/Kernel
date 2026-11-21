@@ -4,6 +4,8 @@
 #define REG_CAPACITY_LO       0x100
 #define REG_CAPACITY_HI       0x104
 #define REG_BLOCK_SIZE        0x114
+#define REG_PHYSICAL_EXP      0x118
+#define REG_ALIGNMENT_OFFSET  0x119
 
 static int
 validblocksize(u32 bytes)
@@ -14,15 +16,20 @@ validblocksize(u32 bytes)
 int
 vblkfeatures(Vdev *device)
 {
+  u64 wanted = VBLK_F_RO | VBLK_F_BLK_SIZE | VBLK_F_FLUSH;
   if (!device || device->device != VBLK_DEVICE)
     return -ERR_INVALID;
-  return vfeatures(device, VBLK_F_RO | VBLK_F_BLK_SIZE | VBLK_F_FLUSH, 0);
+  if (device->ops.readbyte)
+    wanted |= VBLK_F_TOPOLOGY;
+  return vfeatures(device, wanted, 0);
 }
 
 int
 vblkconfig(const Vdev *device, Vblkconfig *out)
 {
   u32 before = 0, low = 0, high = 0, after = 0, blocksize = VBLK_SECTOR;
+  u32 physical = 0, alignment = 0;
+  u8  exponent = 0, offset = 0;
   int error;
   if (!device || !out || device->device != VBLK_DEVICE || !device->ops.read)
     return -ERR_INVALID;
@@ -36,6 +43,13 @@ vblkconfig(const Vdev *device, Vblkconfig *out)
     error = device->ops.read(device->ops.context, REG_CAPACITY_HI, &high);
   if (!error && device->features & VBLK_F_BLK_SIZE)
     error = device->ops.read(device->ops.context, REG_BLOCK_SIZE, &blocksize);
+  if (!error && device->features & VBLK_F_TOPOLOGY) {
+    if (!device->ops.readbyte)
+      return -ERR_STATE;
+    error = device->ops.readbyte(device->ops.context, REG_PHYSICAL_EXP, &exponent);
+    if (!error)
+      error = device->ops.readbyte(device->ops.context, REG_ALIGNMENT_OFFSET, &offset);
+  }
   if (!error)
     error = device->ops.read(device->ops.context, REG_CONFIG_GENERATION, &after);
   if (error)
@@ -44,10 +58,18 @@ vblkconfig(const Vdev *device, Vblkconfig *out)
     return -ERR_WOULD_BLOCK;
   if (!validblocksize(blocksize))
     return -ERR_STATE;
+  if (device->features & VBLK_F_TOPOLOGY) {
+    if (exponent >= 32 || blocksize > (UINT32_MAX >> exponent) || offset >= (1U << exponent))
+      return -ERR_STATE;
+    physical = blocksize << exponent;
+    alignment = blocksize * offset;
+  }
   out->sectors = (u64) high << 32 | low;
   out->flush = !!(device->features & VBLK_F_FLUSH);
   out->readonly = !out->flush || !!(device->features & VBLK_F_RO);
   out->blocksize = blocksize;
+  out->physical = physical;
+  out->alignment = alignment;
   return 0;
 }
 

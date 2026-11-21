@@ -97,6 +97,7 @@ vprobe(Vdev *d, const Vdevops *ops)
   d->ops.context = ops->context;
   d->ops.read = ops->read;
   d->ops.write = ops->write;
+  d->ops.readbyte = ops->readbyte;
   error = readreg(d, REG_MAGIC, &value);
   if (error || value != DEVICE_MAGIC)
     return error ? error : -ERR_INVALID;

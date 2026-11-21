@@ -223,7 +223,8 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   resetpending(device, &ring, binding, irqevent, config, &dma);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
-              fresh.flush == config->flush && fresh.blocksize == config->blocksize,
+              fresh.flush == config->flush && fresh.blocksize == config->blocksize &&
+              fresh.physical == config->physical && fresh.alignment == config->alignment,
           183);
   startqueue(device, &ring, 2, &dma);
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
@@ -257,6 +258,7 @@ main(int argc, char **argv)
   ops.context = &base;
   ops.read = virtioread;
   ops.write = virtiowrite;
+  ops.readbyte = virtioreadbyte;
   for (i = 0; i < vdev_trace[1]; i++) {
     REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x100 && vdev_trace[23 + i] >= 0x100, 153);
     base = mapping.address + vdev_trace[4 + i];
@@ -272,8 +274,11 @@ main(int argc, char **argv)
     vdev_trace[14]++;
     reset(&device);
     if (device.device == VBLK_DEVICE) {
-      REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x118 && vdev_trace[23 + i] >= 0x118, 163);
+      REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x11a && vdev_trace[23 + i] >= 0x11a, 163);
       REQUIRE(!vblkfeatures(&device) && !vblkconfig(&device, &config), 164);
+      REQUIRE((device.features & VBLK_F_TOPOLOGY) && config.physical == PAGE_SIZE &&
+                  !config.alignment,
+              198);
       if (config.readonly) {
         REQUIRE((device.features & VBLK_F_RO) && config.sectors == 128 && config.blocksize == 512,
                 165);

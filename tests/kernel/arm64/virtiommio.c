@@ -24,6 +24,17 @@ virtioread(void *context, u32 offset, u32 *out)
   return 0;
 }
 int
+virtioreadbyte(void *context, u32 offset, u8 *out)
+{
+  u64 base = *(u64 *) context;
+  if (!out || offset < 0x118 || offset > 0x119)
+    return -ERR_INVALID;
+  barrier();
+  *out = *(volatile u8 *) (base + offset);
+  barrier();
+  return 0;
+}
+int
 virtiowrite(void *context, u32 offset, u32 value)
 {
   u64 base = *(u64 *) context;

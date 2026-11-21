@@ -1228,7 +1228,7 @@ def exercise(args, run_dir, record):
                     seed = 0x51 if name == "rw" else 0xa7
                     image.write(bytes((seed + i * 37) & 0xff for i in range(blocksize)))
                 command += ["-drive", f"if=none,format=raw,id={name},file={disk},readonly={readonly},cache=writeback",
-                            "-device", f"virtio-blk-device,drive={name},logical_block_size={blocksize},physical_block_size={blocksize}"]
+                            "-device", f"virtio-blk-device,drive={name},logical_block_size={blocksize},physical_block_size=4096"]
         if args.trace:
             command += ["-d", "int,guest_errors", "-D", str(run_dir / "trace.log")]
         if getattr(args,'uart_trace',False):

@@ -15,6 +15,7 @@
 #define VBLK_F_RO        (UINT64_C(1) << 5)
 #define VBLK_F_BLK_SIZE  (UINT64_C(1) << 6)
 #define VBLK_F_FLUSH     (UINT64_C(1) << 9)
+#define VBLK_F_TOPOLOGY  (UINT64_C(1) << 10)
 
 typedef struct Vblkhead   Vblkhead;
 typedef struct Vblkconfig Vblkconfig;
@@ -30,6 +31,9 @@ struct Vblkconfig
 {
   u64 sectors;
   u32 readonly, flush, blocksize;
+  /* Physical block and alignment offset in bytes. A zero physical size
+     means topology was unavailable. Neither field guarantees fault isolation. */
+  u32 physical, alignment;
 };
 struct Vblkreq
 {

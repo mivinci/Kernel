@@ -26,6 +26,8 @@ struct Vdevops
      Return 0 or negative status. No reentrant access to this device. */
   int (*read)(void *context, u32 offset, u32 *out);
   int (*write)(void *context, u32 offset, u32 value);
+  /* Byte access to device-specific configuration fields. Optional. */
+  int (*readbyte)(void *context, u32 offset, u8 *out);
 };
 struct Vdev
 {
