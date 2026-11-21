@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
+#include <unistd.h>
 #include "private/close.h"
 #include "private/connection.h"
 #include "private/contextipc.h"
@@ -283,7 +284,7 @@ oninterrupt(int signal)
     CHECK(!sysfileimage(&image) && image == interruptedimage && !sysfileimagefs(1, 0, &work) &&
           work == interruptedwork && !sysfdobserve(&image->fds, 0, &readend) &&
           readend.tag.state == SYSFD_RESERVED && !sysfdobserve(&image->fds, 1, &writeend) &&
-          writeend.tag.state == SYSFD_RESERVED);
+          writeend.tag.state == SYSFD_RESERVED && dup(0) == -1 && errno == EBADF);
     caught++;
   }
 }
@@ -302,6 +303,9 @@ interruptclient(void)
   Handle           rpc;
   isize            business;
   int              fds[2] = {-1, -1};
+  int              fd;
+  Fdview           original, alias;
+  Fileref          ref;
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
   CHECK(sysfileimagefs(0, (uintptr_t) pipeiotrace & ~PAGE_MASK, &work) < 0 && !work &&
@@ -312,15 +316,26 @@ interruptclient(void)
   interruptedwork = work;
   action.sa_handler = oninterrupt;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
+  errno = EBUSY;
   CHECK(sysctxpipecreate(&image->contexts, 0, &image->files, work, cache, &image->fds, &pipe,
                          &active, fds, &business) == -ERR_INTERRUPTED &&
-        caught == 1 && !active.sequence && !sysoprpc(work, cache, &pipe.operation, &rpc) && rpc &&
+        caught == 1 && errno == EBUSY && !active.sequence &&
+        !sysoprpc(work, cache, &pipe.operation, &rpc) && rpc &&
         !sysfdcheckpair(&image->fds, pipe.tags) && fds[0] == -1 && fds[1] == -1 &&
         !ipc_call(work->state.call, &gate, CALL_CONTROL, &result));
   CHECK(!sysctxpipecreate(&image->contexts, 0, &image->files, work, cache, &image->fds, &pipe,
                           &active, fds, &business) &&
         !pipe.operation.lease.seq && !active.sequence && !business && fds[0] == 0 && fds[1] == 1 &&
         caught == 1);
+  CHECK(!sysfdobserve(&image->fds, fds[0], &original) &&
+        !sysfdsetflags(&image->fds, original.tag, BOOT_FD_CLOEXEC));
+  for (fd = 2; fd < BOOT_FD_COUNT; fd++)
+    CHECK(dup(fds[0]) == fd && errno == EBUSY && !sysfdobserve(&image->fds, fd, &alias) &&
+          alias.file == original.file && !alias.flags);
+  CHECK(dup(fds[0]) == -1 && errno == EMFILE && dup(-1) == -1 && errno == EBADF &&
+        !sysfdobserve(&image->fds, fds[0], &original) && original.flags == BOOT_FD_CLOEXEC &&
+        !sysfilerefview(&image->files, work->state.self, original.file, &ref) &&
+        ref.aliases == BOOT_FD_COUNT - 1);
   pipeiotrace[0] = 7;
 }
 

@@ -16,6 +16,7 @@ pid_t         getpgid(pid_t pid);
 pid_t         getsid(pid_t pid);
 int           setpgid(pid_t pid, pid_t pgid);
 pid_t         setsid(void);
+int           dup(int fd);
 long          sysconf(int name);
 NORETURN void _exit(int status);
 #endif

@@ -149,3 +149,22 @@ restore:
     *out = work;
   return error ? error : restored;
 }
+
+isize
+sysfileimagedup(int fd)
+{
+  Fileimage *state;
+  u64        mask, ignored;
+  isize      result, restored;
+  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
+    return -ERR_BAD_HANDLE;
+  result = sysfileimage(&state);
+  if (result)
+    return result;
+  result = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (result)
+    return result;
+  result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, 0);
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : result;
+}
