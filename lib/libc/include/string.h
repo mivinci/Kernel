@@ -9,6 +9,8 @@ void  *memchr(const void *memory, int byte, size_t bytes);
 size_t strlen(const char *string);
 size_t strnlen(const char *string, size_t bytes);
 int    strcmp(const char *a, const char *b);
+int    strcoll(const char *a, const char *b);
+size_t strxfrm(char *destination, const char *source, size_t bytes);
 int    strncmp(const char *a, const char *b, size_t bytes);
 char  *strchr(const char *string, int byte);
 char  *strrchr(const char *string, int byte);

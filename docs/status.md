@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage306：libc 提供 C locale 的 `strcoll`、`strxfrm`；双架构 QEMU `runtime` 和格式检查通过。
 - stage305：TTY `GETATTR` 可沿原 REQUEST 返回 Termarg；双架构 QEMU `runtime` 验证页末输出及越界拒绝，31 项主机测试和格式通过。生产分派仍待接入。
 - stage304：TTY 字节间计时已接入待处理 READ；到期先回复旧数据，保留环中下一字节。双架构 QEMU `runtime`、31 项主机测试和格式通过。
 - stage301：已终结的文件连接在引用与运输清理完成后归还目录槽；旧代次不能清理复用槽。双架构 QEMU `runtime`、59 项主机测试和格式通过。

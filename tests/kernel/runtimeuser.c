@@ -158,6 +158,22 @@ ctypecheck(void)
   REQUIRE(tolower(eof) == eof && toupper(eof) == eof && errno == EDOM, 247);
 }
 static void
+collationcheck(void)
+{
+  char key[] = "zzzz", other[] = "zzzz";
+
+  errno = EDOM;
+  REQUIRE(strxfrm(NULL, "\377a", 0) == 2 && strxfrm(key, "\377a", 2) == 2 && !strcmp(key, "zzzz"),
+          248);
+  REQUIRE(strxfrm(key, "\377a", 3) == 2 && !memcmp(key, "\377a\0z", 4) &&
+              strxfrm(other, "a", sizeof(other)) == 1,
+          249);
+  REQUIRE(strcoll("\377a", "a") > 0 && strcmp(key, other) > 0 && !strcoll(key, "\377a") &&
+              strcoll("", "a") < 0,
+          250);
+  REQUIRE(strxfrm(other, "", 1) == 0 && !other[0] && errno == EDOM, 251);
+}
+static void
 tokencheck(void)
 {
   char  first[] = ",,one,,two;three;", second[] = "\377a\377b", plain[] = "x:y", empty[] = ";;";
@@ -514,6 +530,7 @@ main(int argc, char **argv)
           176);
   sortcheck();
   ctypecheck();
+  collationcheck();
   tokencheck();
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();

@@ -61,6 +61,8 @@ libc 导出标准 API，libsys 实现 fd/连接/服务适配和负错误码协�
 | `void *memchr(const void *, int, size_t)` | unsigned char比较；首匹配即停止，可查NUL后的二进制数据 | [memchr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/memchr.html) |
 | `size_t strnlen(const char *, size_t)` | 至多读取maxlen，未见NUL返回maxlen | [strnlen](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strnlen.html) |
 | `int strncmp(const char *, const char *, size_t)` | 最多n字节、NUL处停止；首不同字节按unsigned char决定符号 | [strncmp](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncmp.html) |
+| `int strcoll(const char *, const char *)` | 当前仅支持 C locale，排序与 `strcmp` 一致 | [strcoll](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcoll.html) |
+| `size_t strxfrm(char *, const char *, size_t)` | C locale 的排序键为原串；返回不含 NUL 的长度，有空间容纳完整结果时才写入；容量为零可传 NULL | [strxfrm](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strxfrm.html) |
 | `char *strrchr(const char *, int)` | 最后匹配，可返回结尾NUL，未找到NULL | [strrchr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strrchr.html) |
 | `char *strstr(const char *, const char *)` | 第一个完整子串，空pattern返回原基址 | [strstr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strstr.html) |
 | `size_t strspn(const char *, const char *)` | 初始全在接受字节集合中的长度 | [strspn](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strspn.html) |
@@ -207,3 +209,5 @@ unsetenv不分配，从首个匹配洞向前压缩可写指针表，移除全部
 stage171已接公开raise：当前单线程运行库按完整自身PID发送支持的非零信号；捕获同步返回、屏蔽合并、忽略、两层嵌套、自我KILL及STOP/实际另一进程CONT已在双架构验证。raise(0)选择Issue 8 pthread_kill允许的EINVAL分支，不改变kill的空信号语义。4项O0/O2主机专项、1135项完整host、格式、8次QEMU及8份内核诊断journal、SDK/真实载荷/生产隔离证据见11末尾及build/host/stage171-libc-raise/。
 
 这不是完整公开信号层：原生安装的测试handler/trampoline不替代公开sigaction、标准siginfo转换、Rctx/Fix或SA_RESTART。公开kill未接：原生仅存活Run的范围与POSIX尚未收取僵尸的存在/权限语义冲突，扩大到僵尸Life及256项快照的候选已提出待用户确认，未实现受限临时封装或静默改变既定授权。原文与候选见11基础语义；整体POSIX/sh/net目标未完成。
+
+stage306：`string.h` 与 libc 提供 C locale 的 `strcoll`、`strxfrm`，可用于后续路径展开结果排序。RV64、ARM64 QEMU `runtime` 验证高位字节的比较和排序键结果一致、空串、零容量查询、恰好容纳终止符，以及容量不足时保持缓冲和 errno；格式检查通过。路径通配及其他 locale 仍待实现。

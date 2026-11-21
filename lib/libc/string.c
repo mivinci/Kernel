@@ -58,6 +58,20 @@ strcmp(const char *a, const char *b)
   }
   return (int) (u8) *a - (int) (u8) *b;
 }
+int
+strcoll(const char *a, const char *b)
+{
+  return strcmp(a, b);
+}
+size_t
+strxfrm(char *destination, const char *source, size_t bytes)
+{
+  size_t length = strlen(source);
+  /* The C locale uses the original bytes as the collation key. */
+  if (length < bytes)
+    memcpy(destination, source, length + 1);
+  return length;
+}
 char *
 strchr(const char *string, int byte)
 {
