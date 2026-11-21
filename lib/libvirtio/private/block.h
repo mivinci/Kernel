@@ -1,6 +1,7 @@
 #ifndef _VIRTIO_BLOCK_H
 #define _VIRTIO_BLOCK_H
 #include "ring.h"
+#include "device.h"
 
 #define VBLK_READ        0
 #define VBLK_WRITE       1
@@ -10,14 +11,28 @@
 #define VBLK_UNSUPPORTED 2
 #define VBLK_PENDING     255
 #define VBLK_SECTOR      512
+#define VBLK_DEVICE      2
+#define VBLK_F_RO        (UINT64_C(1) << 5)
+#define VBLK_F_FLUSH     (UINT64_C(1) << 9)
 
-typedef struct Vblkhead Vblkhead;
+typedef struct Vblkhead   Vblkhead;
+typedef struct Vblkconfig Vblkconfig;
 struct Vblkhead
 {
   u32 type, reserved;
   u64 sector;
 };
 STATIC_ASSERT(sizeof(Vblkhead) == 16 && offsetof(Vblkhead, sector) == 8, virtio_blk_header);
+struct Vblkconfig
+{
+  u64 sectors;
+  u32 readonly, flush;
+};
+
+int vblkfeatures(Vdev *device);
+/* Take one generation-checked capacity snapshot. A moving configuration
+   returns WOULD_BLOCK without touching out. No FLUSH means read-only policy. */
+int vblkconfig(const Vdev *device, Vblkconfig *out);
 
 /* DMA address/domain and synchronization remain the transport owner's
    responsibility. The prepared header and status must occupy independent

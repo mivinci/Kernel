@@ -21,6 +21,10 @@ class Vdev(C.Structure):
         (name, C.c_uint32) for name in ('device', 'vendor', 'state', 'status', 'attempts', 'reserved')] + [('ops', Ops)]
 
 
+class Blockconfig(C.Structure):
+    _fields_ = [('sectors', C.c_uint64), ('readonly', C.c_uint32), ('flush', C.c_uint32)]
+
+
 class Mmio:
     def __init__(self):
         self.magic = 0x74726976
@@ -41,6 +45,8 @@ class Mmio:
         self.error_at = None
         self.error_value = -2
         self.mutated_error = False
+        self.generation = 0
+        self.change_capacity = False
         self.read_callback = Read(self.read)
         self.write_callback = Write(self.write)
         self.ops = Ops(None, self.read_callback, self.write_callback)
@@ -54,10 +60,13 @@ class Mmio:
             if not self.pending and not self.stuck:
                 self.status = 0
         values = {0: self.magic, 4: self.version, 8: self.device, 12: self.vendor,
-                  0x10: (self.features >> (32 * self.feature_sel)) & 0xffffffff, 0x70: self.status}
+                  0x10: (self.features >> (32 * self.feature_sel)) & 0xffffffff, 0x70: self.status,
+                  0xfc: self.generation, 0x100: 64, 0x104: 1}
         if offset not in values:
             return -1
         output[0] = values[offset]
+        if offset == 0x100 and self.change_capacity:
+            self.generation += 1
         return 0
 
     def write(self, context, offset, value):
@@ -97,7 +106,8 @@ class VirtioDeviceTests(unittest.TestCase):
         path = Path(cls.temp.name) / 'device.so'
         command = ['clang', '-std=c89', '-O2', '-ffreestanding', '-fno-builtin',
                    '-Wall', '-Wextra', '-Werror', '-shared', '-fPIC', '-I' + str(ROOT / 'include'),
-                   str(ROOT / 'lib/libvirtio/device.c'), '-o', str(path)]
+                   str(ROOT / 'lib/libvirtio/device.c'), str(ROOT / 'lib/libvirtio/block.c'),
+                   '-o', str(path)]
         if sys.platform == 'darwin':
             sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
             command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]
@@ -107,6 +117,8 @@ class VirtioDeviceTests(unittest.TestCase):
         for name in ('vresetbegin', 'vresetpoll'):
             getattr(cls.lib, name).argtypes = [C.POINTER(Vdev), C.c_uint64]
         cls.lib.vfeatures.argtypes = [C.POINTER(Vdev), C.c_uint64, C.c_uint64]
+        cls.lib.vblkfeatures.argtypes = [C.POINTER(Vdev)]
+        cls.lib.vblkconfig.argtypes = [C.POINTER(Vdev), C.POINTER(Blockconfig)]
 
     @classmethod
     def tearDownClass(cls):
@@ -127,6 +139,23 @@ class VirtioDeviceTests(unittest.TestCase):
 
     def negotiate(self, wanted=1 << 9, required=1 << 9):
         return self.lib.vfeatures(C.byref(self.device), wanted, required)
+
+    def test_block_capacity_snapshot_and_readonly_policy(self):
+        for features, readonly, flush in ((0, 1, 0), (1 << 9, 0, 1), ((1 << 5) | (1 << 9), 1, 1)):
+            with self.subTest(features=features):
+                self.setUp()
+                self.mmio.features = VERSION1 | features
+                self.assertEqual(self.probe(), 0)
+                self.assertEqual(self.reset(), 0)
+                self.assertEqual(self.lib.vblkfeatures(C.byref(self.device)), 0)
+                config = Blockconfig(7, 8, 9)
+                self.mmio.change_capacity = True
+                self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), -11)
+                self.assertEqual((config.sectors, config.readonly, config.flush), (7, 8, 9))
+                self.mmio.change_capacity = False
+                self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), 0)
+                self.assertEqual((config.sectors, config.readonly, config.flush),
+                                 ((1 << 32) + 64, readonly, flush))
 
     def test_empty_slot_stops_all_access_after_device_id(self):
         self.mmio.device = 0

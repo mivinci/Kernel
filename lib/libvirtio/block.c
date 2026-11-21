@@ -1,5 +1,44 @@
 #include "private/block.h"
 
+#define REG_CONFIG_GENERATION 0xfc
+#define REG_CAPACITY_LO       0x100
+#define REG_CAPACITY_HI       0x104
+
+int
+vblkfeatures(Vdev *device)
+{
+  if (!device || device->device != VBLK_DEVICE)
+    return -ERR_INVALID;
+  return vfeatures(device, VBLK_F_RO | VBLK_F_FLUSH, 0);
+}
+
+int
+vblkconfig(const Vdev *device, Vblkconfig *out)
+{
+  u32 before = 0, low = 0, high = 0, after = 0;
+  int error;
+  if (!device || !out || device->device != VBLK_DEVICE || !device->ops.read)
+    return -ERR_INVALID;
+  if (device->state != VDEV_FEATURES ||
+      ((device->offered & VBLK_F_RO) && !(device->features & VBLK_F_RO)))
+    return -ERR_STATE;
+  error = device->ops.read(device->ops.context, REG_CONFIG_GENERATION, &before);
+  if (!error)
+    error = device->ops.read(device->ops.context, REG_CAPACITY_LO, &low);
+  if (!error)
+    error = device->ops.read(device->ops.context, REG_CAPACITY_HI, &high);
+  if (!error)
+    error = device->ops.read(device->ops.context, REG_CONFIG_GENERATION, &after);
+  if (error)
+    return error < 0 ? error : -ERR_STATE;
+  if (before != after)
+    return -ERR_WOULD_BLOCK;
+  out->sectors = (u64) high << 32 | low;
+  out->flush = !!(device->features & VBLK_F_FLUSH);
+  out->readonly = !out->flush || !!(device->features & VBLK_F_RO);
+  return 0;
+}
+
 static int
 extent(u64 base, u64 bytes)
 {

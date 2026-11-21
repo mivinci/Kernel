@@ -99,6 +99,8 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 ## 执行与验收
 
+stage355：`vblkfeatures` 在现代 MMIO 协商中选择 RO/FLUSH；`vblkconfig` 用前后相同的 ConfigGeneration 核对两个 32 位容量字，变化时返回 WOULD_BLOCK 并保留原输出。未协商 FLUSH 时按只读处理，不推断未协商写缓存一定关闭。26 项 virtio 主机测试覆盖容量高字、配置变化和只读组合；格式及 RV64/ARM64 QEMU `runtime` 回归通过。配置读取目前仅由 MMIO 主机模型验证，未接实际块设备配置或 I/O。
+
 stage354：libvirtio 的块请求适配器构造 READ/WRITE/FLUSH 请求头及 split-ring 描述符，校验扇区范围、设备地址范围及完成长度；短成功读和未知状态视为损坏，设备明确失败与损坏分开报告。RV64/ARM64 QEMU `runtime` 用 CPU 模拟设备验证 READ 描述符、原 cookie 回收及短读拒绝；25 项 virtio 主机回归和格式通过。未接真实 DMA、块设备读写或 FLUSH 验收。
 
 ### serial的PIO寄存器后端（2026-11-18接续）
