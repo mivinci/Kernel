@@ -637,46 +637,69 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
 }
 
 static void
-protect(Memid memory, u32 rollback)
+protectmap(Memid memory, u32 node, u32 rollback)
 {
-  u32       node, page;
+  u32       page;
   Space    *s;
   Mmap     *m;
   Hvs       vs;
   Hpte      entry;
   Sourcectx context;
   u64       address, prot;
-  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
-    s = &spaces[maplinks[node].space];
-    m = &mappings[node];
-    if (!(logicalprot(m) & VM_WRITE) ||
-        (rollback ? !(m->prot & MAP_NEW_PROTECTION) : (m->prot & MAP_PROTECTED)))
+  s = &spaces[maplinks[node].space];
+  m = &mappings[node];
+  if (!(logicalprot(m) & VM_WRITE) ||
+      (rollback ? !(m->prot & MAP_NEW_PROTECTION) : (m->prot & MAP_PROTECTED)))
+    return;
+  view(s, &vs, &context);
+  if (!rollback)
+    snapshotlog(node);
+  prot = rollback ? logicalprot(m) : (logicalprot(m) & ~VM_WRITE) | VM_COW;
+  for (page = 0; page < m->length / PAGE_SIZE; page++) {
+    if (rollback && !(m->prot & (1U << (MAP_NEW_SHIFT + page))))
       continue;
-    view(s, &vs, &context);
-    if (!rollback)
-      snapshotlog(node);
-    prot = rollback ? logicalprot(m) : (logicalprot(m) & ~VM_WRITE) | VM_COW;
-    for (page = 0; page < m->length / PAGE_SIZE; page++) {
-      if (rollback && !(m->prot & (1U << (MAP_NEW_SHIFT + page))))
-        continue;
-      address = m->address + (u64) page * PAGE_SIZE;
-      if (!hal_vm_lookup(&vs, address, &entry))
-        panic("private map protection lookup");
-      if (!rollback && (entry.prot & VM_WRITE))
-        m->prot |= 1U << (MAP_NEW_SHIFT + page);
-      if (hal_vm_replace(&vs, address, &entry, entry.pa, prot))
-        panic("private map protection commit");
-    }
-    if (memprotectref(memory, rollback ? 0 : 1))
-      panic("private map protection count");
-    if (rollback)
-      m->prot &= ~(MAP_PROTECTED | MAP_NEW_PROTECTION | MAP_NEW_MASK);
-    else
-      m->prot |= MAP_PROTECTED | MAP_NEW_PROTECTION;
+    address = m->address + (u64) page * PAGE_SIZE;
+    if (!hal_vm_lookup(&vs, address, &entry))
+      panic("private map protection lookup");
+    if (!rollback && (entry.prot & VM_WRITE))
+      m->prot |= 1U << (MAP_NEW_SHIFT + page);
+    if (hal_vm_replace(&vs, address, &entry, entry.pa, prot))
+      panic("private map protection commit");
   }
+  if (memprotectref(memory, rollback ? 0 : 1))
+    panic("private map protection count");
+  if (rollback)
+    m->prot &= ~(MAP_PROTECTED | MAP_NEW_PROTECTION | MAP_NEW_MASK);
+  else
+    m->prot |= MAP_PROTECTED | MAP_NEW_PROTECTION;
+}
+static void
+protect(Memid memory, u32 rollback)
+{
+  u32 node;
+  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next)
+    protectmap(memory, node, rollback);
 }
 static int
-clone(Memid memory, Acctid target, Memid *out, Space *unmapped)
+clonecheckpoint(Forkcheck checkpoint)
+{
+  Spacetxn *tree = snapshot, *owned;
+  return checkpoint(tree->owner) || prepforkopen(tree->owner, tree->source, tree->target, &owned);
+}
+static int
+freezealiases(Memid memory)
+{
+  u32 node;
+  int error;
+  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
+    error = snapshotfreeze(&spaces[maplinks[node].space]);
+    if (error)
+      return error;
+  }
+  return 0;
+}
+static int
+clone(Memid memory, Acctid target, Memid *out, Space *unmapped, Forkcheck checkpoint)
 {
   Space    *s;
   Mmap     *m;
@@ -684,7 +707,7 @@ clone(Memid memory, Acctid target, Memid *out, Space *unmapped)
   Hvs       vs;
   Hpte      entry;
   Sourcectx context;
-  u32       node, page, writes = 0, protected = 0, count = 0, previous = PG_NONE;
+  u32       node, page, work = 0, pages, writes = 0, protected = 0, count = 0, previous = PG_NONE;
   u64       address, pa;
   int       error;
   if (!out || memstat(memory, &backing) || backing.kind != MEM_RAM || backing.state != MEM_DATA)
@@ -698,8 +721,8 @@ clone(Memid memory, Acctid target, Memid *out, Space *unmapped)
     previous = node;
     m = &mappings[node];
     s = &spaces[maplinks[node].space];
-    if (s == unmapped || !m->length || !s->state || !samemem(m->mem, memory) ||
-        m->owner.load.generation || m->prot & ~(7U | MAP_PROTECTED) ||
+    if (s == unmapped || !m->length || m->length > MEM_PAGES * PAGE_SIZE || !s->state ||
+        !samemem(m->mem, memory) || m->owner.load.generation || m->prot & ~(7U | MAP_PROTECTED) ||
         (logicalprot(m) != VM_READ && logicalprot(m) != (VM_READ | VM_WRITE)) ||
         ((m->prot & MAP_PROTECTED) && !(logicalprot(m) & VM_WRITE)))
       return SP_BAD;
@@ -707,8 +730,24 @@ clone(Memid memory, Acctid target, Memid *out, Space *unmapped)
       return SP_BUSY;
     writes += (logicalprot(m) & VM_WRITE) != 0;
     protected += (m->prot & MAP_PROTECTED) != 0;
+  }
+  if (writes != backing.writes || protected != backing.cowmaps)
+    return SP_BAD;
+  if (unmapped && (backing.refs < backing.managers || count != backing.refs - backing.managers))
+    return SP_BUSY;
+  if (checkpoint && (error = freezealiases(memory)))
+    return error;
+  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
+    m = &mappings[node];
+    pages = (u32) (m->length / PAGE_SIZE);
+    if (checkpoint && work + pages > 32) {
+      if (clonecheckpoint(checkpoint))
+        return SP_BUSY;
+      work = 0;
+    }
+    s = &spaces[maplinks[node].space];
     view(s, &vs, &context);
-    for (page = 0; page < m->length / PAGE_SIZE; page++) {
+    for (page = 0; page < pages; page++) {
       address = m->address + (u64) page * PAGE_SIZE;
       if (mempage(memory, (u32) (m->offset / PAGE_SIZE) + page, &pa) ||
           !hal_vm_lookup(&vs, address, &entry) || entry.pa != pa || !matchesprot(m, &entry) ||
@@ -716,17 +755,29 @@ clone(Memid memory, Acctid target, Memid *out, Space *unmapped)
           hal_vm_replace(&vs, address, &entry, entry.pa, entry.prot & ~VM_USER))
         return SP_BAD;
     }
+    work += pages;
   }
-  if (writes != backing.writes || protected != backing.cowmaps)
-    return SP_BAD;
-  if (unmapped && (backing.refs < backing.managers || count != backing.refs - backing.managers))
-    return SP_BUSY;
-  if (unmapped)
+  if (checkpoint) {
+    if (work && clonecheckpoint(checkpoint))
+      return SP_BUSY;
+    work = 0;
     for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
-      error = snapshotfreeze(&spaces[maplinks[node].space]);
-      if (error)
-        return error;
+      pages = (u32) (mappings[node].length / PAGE_SIZE);
+      if (work + pages > 32) {
+        if (clonecheckpoint(checkpoint))
+          return SP_BUSY;
+        work = 0;
+      }
+      protectmap(memory, node, 0);
+      work += pages;
     }
+    if (memstat(memory, &backing) || backing.refs < backing.managers ||
+        count != backing.refs - backing.managers)
+      return SP_BUSY;
+    return memforkclone(memory, target, out);
+  }
+  if (unmapped && (error = freezealiases(memory)))
+    return error;
   for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next)
     spaces[maplinks[node].space].busy = 1;
   protect(memory, 0);
@@ -746,7 +797,7 @@ spaceclone(Memid memory, Acctid target, Memid *out)
 {
   if (snapshot)
     return SP_BUSY;
-  return clone(memory, target, out, NULL);
+  return clone(memory, target, out, NULL, NULL);
 }
 
 static u64
@@ -1783,19 +1834,30 @@ spacesnapshotend(Spaceid sourceid, Spaceid targetid, u32 commit)
 }
 
 int
-spacesnapshotclone(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out)
+spacesnapshotclonechecked(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out,
+                          Forkcheck checkpoint)
 {
   Space    *source = find(sourceid), *target = find(targetid);
   Spacetxn *owned;
   Mem       backing;
+  int       error;
   if (!snapshot || snapshot->phase != SNAP_READY || !source || !target ||
       source != find(snapshot->source) || target != find(snapshot->target) ||
       memstat(original, &backing) || backing.acct.index != source->acct.index ||
-      backing.acct.generation != source->acct.generation)
+      backing.acct.generation != source->acct.generation ||
+      (checkpoint && !snapshot->owner.generation))
     return SP_BAD;
   if (snapshot->owner.generation && prepforkopen(snapshot->owner, sourceid, targetid, &owned))
     return SP_BUSY;
-  return clone(original, target->acct, out, source);
+  error = clone(original, target->acct, out, source, checkpoint);
+  if (error && checkpoint)
+    snapshot->phase = SNAP_FAILED;
+  return error;
+}
+int
+spacesnapshotclone(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out)
+{
+  return spacesnapshotclonechecked(sourceid, targetid, original, out, NULL);
 }
 
 int

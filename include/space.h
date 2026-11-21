@@ -129,6 +129,8 @@ int spacesnapshotstep(Spaceid source, Spaceid target, u32 commit);
    journal. Commit it with memforkcommit, or release every child reference before
    aborting the PTE journal. No stack-resident undo mask escapes this call. */
 int spacesnapshotclone(Spaceid source, Spaceid target, Memid original, Memid *view);
+int spacesnapshotclonechecked(Spaceid source, Spaceid target, Memid original, Memid *view,
+                              Forkcheck checkpoint);
 /* Borrow the corresponding prepared target view for an already mapped source
    Mem, checking every source alias correspondence. No reference or grant. */
 int spacesnapshotview(Spaceid source, Spaceid target, Memid original, Memid *view);

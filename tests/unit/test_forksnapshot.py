@@ -252,6 +252,41 @@ class ForkSnapshotTests(unittest.TestCase):
             finally:self.assertEqual(self.lib.spaceclear(sid,32),0)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_unmapped_alias_checkpoint_rolls_back_partial_protection(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            mid,_=self.addmem()
+            peer=local.support.Spaceid()
+            self.assertEqual(lib.spacecreate(self.aid,C.byref(peer)),0)
+            self.ids.append(peer)
+            addresses=[0x50000+4096*index for index in range(33)]
+            for address in addresses:
+                self.assertEqual(lib.spacemap(peer,mid,0,address,4096,3),0)
+            leaves=[self.leaf(peer,address) for address in addresses]
+            allocated=self.pstat().allocated
+            deadline=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(deadline)),0)
+            lib.test_now.argtypes=[C.c_uint64]
+            callback_type=C.CFUNCTYPE(C.c_int,Prepid)
+            observed=[]
+            @callback_type
+            def checkpoint(identity):
+                backing=Memory()
+                if not lib.memstat(mid,C.byref(backing)) and backing.cowmaps:
+                    observed.append((identity.generation,backing.cowmaps,self.tree(peer).frozen))
+                    lib.test_now(deadline.deadline)
+                return 0
+            lib.forksnapshotchecked.argtypes=[*lib.forksnapshot.argtypes,callback_type]
+            try:
+                self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
+                    C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),-7)
+                self.assertEqual(observed,[(prep.generation,32,1)])
+                self.assertEqual([self.leaf(peer,address) for address in addresses],leaves)
+                self.assertEqual((self.tree(peer).frozen,self.pstat().allocated),(0,allocated))
+            finally:
+                while (status:=lib.spaceclear(peer,32))>0:pass
+                self.assertEqual(status,0)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_real_endpoint_reference_overflow_after_other_child_references_rolls_back_every_layer(self):
         def body():
             self.lib.localendpoint.argtypes=[C.POINTER(local.Table),signal.Imageid,C.c_uint32,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)]

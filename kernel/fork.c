@@ -100,7 +100,8 @@ forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32
     error = spacesnapshotview(source->space, target->space, original, &view);
     if (error) {
       if (backing.state == MEM_DATA) {
-        error = spacesnapshotclone(source->space, target->space, original, &view);
+        error =
+            spacesnapshotclonechecked(source->space, target->space, original, &view, checkpoint);
         owned = !error;
       } else if (backing.state == MEM_SEALED) {
         error = memimmutable(original, target->acct, &view);

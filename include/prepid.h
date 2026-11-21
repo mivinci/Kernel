@@ -7,4 +7,5 @@ struct Prepid
   u64 generation;
   u32 index, reserved;
 };
+typedef int (*Forkcheck)(Prepid);
 #endif

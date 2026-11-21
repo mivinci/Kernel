@@ -47,7 +47,6 @@ typedef struct Createpolicy Createpolicy;
 typedef struct Local        Local;
 typedef struct Rtable       Rtable;
 typedef struct Forkbinding  Forkbinding;
-typedef int (*Forkcheck)(Prepid);
 struct Createpolicy
 {
   Setid set;
