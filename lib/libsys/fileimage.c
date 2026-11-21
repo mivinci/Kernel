@@ -780,6 +780,8 @@ duplicate(int fd, int target, u32 replace)
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT ||
       (replace && (target < 0 || (u32) target >= BOOT_FD_COUNT)))
     return -ERR_BAD_HANDLE;
+  if (!replace && (target < 0 || (u32) target >= BOOT_FD_COUNT))
+    return -ERR_INVALID;
   result = sysfileimage(&state);
   if (result)
     return result;
@@ -790,7 +792,7 @@ duplicate(int fd, int target, u32 replace)
     result = sysfddup2(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target,
                        &displaced);
   } else
-    result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, 0);
+    result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target);
   if (result >= 0 && displaced)
     closing = 1;
   fileprogress(state);
@@ -808,4 +810,38 @@ isize
 sysfileimagedup2(int fd, int target)
 {
   return duplicate(fd, target, 1);
+}
+
+isize
+sysfileimagedupfrom(int fd, int minimum)
+{
+  return duplicate(fd, minimum, 0);
+}
+
+isize
+sysfileimageflags(int fd, u32 set, u64 flags)
+{
+  Fileimage *state;
+  Fdview     view;
+  u64        mask, ignored;
+  isize      result, restored;
+  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
+    return -ERR_BAD_HANDLE;
+  result = sysfileimage(&state);
+  if (result)
+    return result;
+  result = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (result)
+    return result;
+  result = sysfdobserve(&state->fds, (u32) fd, &view);
+  if (!result) {
+    if (view.tag.state != SYSFD_LIVE)
+      result = -ERR_BAD_HANDLE;
+    else if (set)
+      result = sysfdsetflags(&state->fds, view.tag, flags);
+    else
+      result = (isize) view.flags;
+  }
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : result;
 }

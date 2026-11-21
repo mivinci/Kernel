@@ -113,6 +113,8 @@ open标志首版采用O_RDONLY=0、O_WRONLY=1、O_RDWR=2、O_CREAT=0x40、O_EXCL
 
 扩展阶段边界：net仍选lwIP NO_SYS raw模型、input/win/dis/PTY仍按12/13分工，串口MVP不需要冻结它们的每个socket选项/窗口消息。首版ABI中已为这些服务保留普通用户态协议演进空间，不提前添加内核网络/窗口对象；其实现前按同一设计验收流程冻结扩展协议，不以占位接口冒充本轮交付。
 
+本地 `fcntl` 命令采用 `F_DUPFD=0`、`F_GETFD=1`、`F_SETFD=2`，只用于 libc 调用，不进入文件协议。`F_DUPFD` 从指定下限选最低可用编号，清除新 fd 的 `FD_CLOEXEC`；下限越界返回 `EINVAL`，范围内无空位返回 `EMFILE`。`F_GETFD` / `F_SETFD` 只操作当前有效的 fd，`F_SETFD` 只保留本 SDK 支持的 `FD_CLOEXEC`。
+
 ## sh 对齐范围与缺口（2026-11-17）
 
 T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与转义、参数/变量展开（含默认值与长度）、算术展开、命令替换、here-doc、函数、`case`/`if`/`while`/`for`、管道、输入输出与 fd 重定向、命令分组与子 shell、背景任务、通配展开、内建命令（`cd`/`echo`/`export`/`set`/`unset`/`read`/`eval`/`exec`/`trap`/`umask`/`type`/`wait`）、`$?`/`$!`/`$$`/`$#`/`$@`/`$*`，以及作业控制（`jobs`/`fg`/`bg`、作业号与进程组）。

@@ -59,6 +59,9 @@ isize sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *out
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
 isize sysfileimagedup2(int fd, int target);
+isize sysfileimagedupfrom(int fd, int minimum);
+/* Read or replace the flags on one live descriptor without changing its File. */
+isize sysfileimageflags(int fd, u32 set, u64 flags);
 /* ERR_INTERRUPTED means the fd was detached and cleanup still owns the File. */
 isize sysfileimageclose(int fd);
 #endif

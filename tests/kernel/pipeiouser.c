@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
@@ -483,12 +484,20 @@ interruptclient(void)
   CHECK(!data[0]);
   transfer(image, work, fds[0], FS_READ, data, sizeof(data), 2, 0);
   CHECK(data[0] == 'p' && data[1] == 'q' && data[2] == 0xa5);
-  CHECK(!sysfdobserve(&image->fds, fds[0], &original) &&
-        !sysfdsetflags(&image->fds, original.tag, BOOT_FD_CLOEXEC));
+  CHECK(!sysfdobserve(&image->fds, fds[0], &original) && !fcntl(fds[0], F_SETFD, FD_CLOEXEC) &&
+        fcntl(fds[0], F_GETFD) == FD_CLOEXEC && fcntl(fds[0], F_DUPFD, 4) == 4 &&
+        fcntl(4, F_DUPFD, 4) == 5 && !fcntl(4, F_GETFD) && !fcntl(4, F_SETFD, FD_CLOEXEC) &&
+        fcntl(4, F_GETFD) == FD_CLOEXEC && !fcntl(5, F_GETFD) && !fcntl(4, F_SETFD, 0) &&
+        !fcntl(4, F_GETFD) && fcntl(fds[0], F_GETFD) == FD_CLOEXEC && !close(4) && !close(5) &&
+        fcntl(4, F_GETFD) == -1 && errno == EBADF && fcntl(4, F_SETFD, 0) == -1 && errno == EBADF &&
+        fcntl(fds[0], F_DUPFD, -1) == -1 && errno == EINVAL &&
+        fcntl(fds[0], F_DUPFD, BOOT_FD_COUNT) == -1 && errno == EINVAL);
+  errno = EBUSY;
   for (fd = 2; fd < BOOT_FD_COUNT; fd++)
     CHECK(dup(fds[0]) == fd && errno == EBUSY && !sysfdobserve(&image->fds, fd, &alias) &&
           alias.file == original.file && !alias.flags);
-  CHECK(dup(fds[0]) == -1 && errno == EMFILE && dup(-1) == -1 && errno == EBADF &&
+  CHECK(fcntl(fds[0], F_DUPFD, 4) == -1 && errno == EMFILE && dup(fds[0]) == -1 &&
+        errno == EMFILE && dup(-1) == -1 && errno == EBADF &&
         !sysfdobserve(&image->fds, fds[0], &original) && original.flags == BOOT_FD_CLOEXEC &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) &&
         ref.aliases == BOOT_FD_COUNT - 1);

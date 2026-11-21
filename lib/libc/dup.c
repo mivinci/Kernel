@@ -1,5 +1,7 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include "private/fileimage.h"
 
@@ -21,6 +23,9 @@ dupresult(isize result)
   case -ERR_BUSY:
     errno = EBUSY;
     break;
+  case -ERR_INVALID:
+    errno = EINVAL;
+    break;
   default:
     errno = EIO;
     break;
@@ -38,6 +43,28 @@ int
 dup2(int fd, int target)
 {
   return dupresult(sysfileimagedup2(fd, target));
+}
+
+int
+fcntl(int fd, int cmd, ...)
+{
+  va_list args;
+  int     value;
+  switch (cmd) {
+  case F_GETFD:
+    return dupresult(sysfileimageflags(fd, 0, 0));
+  case F_DUPFD:
+  case F_SETFD:
+    va_start(args, cmd);
+    value = va_arg(args, int);
+    va_end(args);
+    if (cmd == F_DUPFD)
+      return dupresult(sysfileimagedupfrom(fd, value));
+    return dupresult(sysfileimageflags(fd, 1, (u64) value & FD_CLOEXEC));
+  default:
+    errno = EINVAL;
+    return -1;
+  }
 }
 
 int

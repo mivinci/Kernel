@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage423（2026-11-22）：公开 `fcntl` 支持 `F_DUPFD`、`F_GETFD`、`F_SETFD`；双架构 QEMU `pipeio` 验证复制下限和每个 fd 独立的 CLOEXEC。
 - stage422（2026-11-22）：LOAD 遇到不可继续的缓存取票错误时完成原请求并释放读取责任；双架构 QEMU `runtime` 验证 EIO、输出不变及同会话再次读取。
 - stage421（2026-11-22）：ARM64/RV64 QEMU `virtiodev` 用实际块设备读冷缓存，验证重复缺块合并与跨块读取的完整交付；生产 FS/blk 运输仍待接入。
 - stage420（2026-11-22）：已接 poll 单页条目校验和私有快照；10 项文件页主机测试及双架构 `pipeio` 回归通过，poll 分派尚未接。

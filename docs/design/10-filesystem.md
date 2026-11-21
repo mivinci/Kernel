@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage423：公开 `fcntl` 接入本地 `F_DUPFD`、`F_GETFD`、`F_SETFD`，服务端 File 与共享状态不变。ARM64/RV64 QEMU `pipeio` 验证指定下限、跳过占用槽、表满、关闭后的 EBADF，以及别名独立设置和清除 CLOEXEC；20 项 fd 相关主机测试和格式通过。F_GETFL/F_SETFL 与完整 exec 继承仍待接。
+
 stage420：将已确定的 32 字节 poll 条目集中在 `include/proto/file.h`。服务可在登记原 REQUEST 后校验单页描述符，并把至多 128 项完整复制到私有区；过期请求、超限、长度不匹配、保留字和输出重叠均拒绝。10 项文件页主机测试覆盖快照及失败边界；ARM64/RV64 QEMU `pipeio` 为既有传输回归，格式通过。尚未定义事件位编码或接入 poll 分派。
 
 stage419：管道后端可按原调用者 PID/image 和会话读取端点状态，无需取得额外引用。读端可同时报告缓冲数据和挂断，排空后只剩挂断；断开的写端报告错误，并不报告可用空间。ARM64/RV64 QEMU `pipeio` 验证以上状态及错误镜像拒绝；格式检查通过。尚未接 `POLL_QUERY` / `POLL_WAIT` 的共享槽协议。
