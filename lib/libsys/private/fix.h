@@ -36,4 +36,5 @@ isize sysfixchild(const struct Forkret *result, u64 available, Handle source, u6
                   Fixview *out);
 isize sysfixlayers(const Fixview *view, const Fixlayer **out);
 isize sysfixconnections(const Fixview *view, const Fixconn **out, u64 *count);
+isize sysfixtoken(const Fixview *view, Handle pid, u64 image, u64 *token);
 #endif

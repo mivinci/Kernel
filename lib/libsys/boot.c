@@ -219,6 +219,27 @@ sysfixconnections(const Fixview *view, const Fixconn **out, u64 *count)
   *count = n;
   return 0;
 }
+isize
+sysfixtoken(const Fixview *view, Handle pid, u64 image, u64 *token)
+{
+  const Fixconn *entries;
+  u64            count, i;
+  isize          error;
+  if (!token)
+    return -ERR_INVALID;
+  *token = 0;
+  if (handlekind(pid) != HANDLE_PROCESS || !image)
+    return -ERR_INVALID;
+  error = sysfixconnections(view, &entries, &count);
+  if (error)
+    return error;
+  for (i = 0; i < count; i++)
+    if (entries[i].pid == pid && entries[i].image == image) {
+      *token = entries[i].token;
+      return 0;
+    }
+  return -ERR_STALE;
+}
 Handle
 bootresource(const Bootview *view, u64 tag)
 {

@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage212：Fix 子 token 精确后端查询已接，20 项主机测试、格式及双架构 sigframe 回归通过。Connwork/目录重绑及实际子接入待接。
+
 - stage211：Fix 子连接描述及有界解析已接，20 项主机 Boot/Fix 测试、格式及双架构 sigframe 通过；非空连接仍仅解析验证，Connwork 和 IPC 修复待接。
 
 - stage210：外层真实活动 Rctx 中的 handler fork 已在双架构验证：父保留成功结果、子固定 INTERRUPTED，双方完成汇编恢复和收尾。格式及 sigframe 通过；IPC 路由修复待接。

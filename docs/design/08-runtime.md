@@ -358,6 +358,8 @@ stage210：handler fork 场景改为在外层真实 Rctx GETID 返回窗口注�
 
 stage211：三层动作头之后增加 u64 connection_count，后接最多 8 项私有 `{pid:s64,image:u64,token:u64}` 子连接描述，每项 24 字节。每个精确后端镜像最多一项，镜像代次和子准备 token 非零，不携父 connid、CALL 或 MEM。`sysfixconnections` 校验数量、边界、身份及唯一性；待接入的实际授权仍由真实子 source 领取。20 项 Boot/Fix 主机测试、格式及两架构 sigframe 通过，QEMU 当前为空连接表，非空表只有主机解析验证。Connwork/连接目录及 IPC 路由的修复尚未接入。
 
+stage212：`sysfixtoken` 按精确后端 PID/Image 取得子准备 token，查询前完整验证表；缺失返回 STALE，错误或缺失时输出清零。同 PID 的不同镜像分别匹配，后部畸形记录不能因前部命中而漏检。20 项 Boot/Fix 主机测试、格式及双架构 sigframe 回归通过。尚未修改 Connwork 或实际发起子接入。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
