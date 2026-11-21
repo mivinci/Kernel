@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage183：快照从 READY 转入提交时重新检查准备期限，超期仍可回滚；组合构造在发布子信号状态及提交 Local/Mem 前通过此检查。22 项主机专项及双架构 QEMU sigframe 通过。
+
 - stage182：未映射 DATA 的 fork 克隆核对完整源 Acct，拒绝同 Set 下其他 Acct 的对象。26 项主机 Space 快照专项、格式检查及双架构 QEMU sigframe 通过。
 
 - stage181：带 Prep 的分批构造和未映射 Mem 克隆入口主动检查截止时间。21 项主机 fork 快照专项、格式检查及双架构 QEMU sigframe 通过。

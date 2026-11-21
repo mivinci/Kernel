@@ -371,6 +371,26 @@ class ForkSnapshotTests(unittest.TestCase):
     def test_cpu_handoff_does_not_read_source_table_after_source_closes(self):
         for lib in self.libs:self.exercise(lib,lambda:self.transfer(3))
 
+    def test_ready_snapshot_rejects_expired_commit_and_remains_abortable(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            source,target=self.parent.space,self.target.space
+            lib.test_now.argtypes=[C.c_uint64]
+            lib.spacesnapshotprep.argtypes=[local.support.Spaceid,local.support.Spaceid,Prepid]
+            lib.spacesnapshotend.argtypes=[local.support.Spaceid,local.support.Spaceid,C.c_uint32]
+            before=self.leaf(self.mapped,0x20000),self.pstat().allocated
+            self.assertEqual(lib.spacesnapshotprep(source,target,prep),0)
+            state=Prepinfo()
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            lib.test_now(state.deadline)
+            self.assertEqual(lib.spacesnapshotend(source,target,1),-4)
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            self.assertEqual((state.state,state.expired),(3,1))
+            self.assertEqual(lib.spacesnapshotend(source,target,0),0)
+            self.assertEqual((self.leaf(self.mapped,0x20000),self.pstat().allocated),before)
+            self.assertEqual(self.tree(target).mapcount,0)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_partial_commit_cannot_be_converted_into_cpu_abort(self):
         def body():
             prep=self.owner();lib=self.lib

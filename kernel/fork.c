@@ -116,7 +116,7 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
     goto failed;
   /* Last fallible stage: it may write child COW cookies but never parent data.
      Success owns no parent Rq/wait; the remaining commits cannot allocate. */
-  error = sigfork(sourceimage, source->space, targetimage, target->space);
+  error = sigforksnapshot(sourceimage, source->space, targetimage, target->space);
   if (error)
     goto failed;
   for (i = 0; i < target->count; i++) {

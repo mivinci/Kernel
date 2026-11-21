@@ -123,6 +123,7 @@ int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
 /* End only: at most 32 mapping scans/page edits per call, 1 means more.
    First call fixes commit/abort. Same IRQ-masked/no-checkpoint scope; abort
    requires child Local/unmapped references already dropped. */
+int spacesnapshotcommit(Spaceid source, Spaceid target);
 int spacesnapshotstep(Spaceid source, Spaceid target, u32 commit);
 /* Unmapped DATA owned by the source Acct; child owns its durable original/adoption
    journal. Commit it with memforkcommit, or release every child reference before

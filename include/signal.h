@@ -65,6 +65,7 @@ int sigbaseline(Imageid target, Imageid source);
    continuation, Rctx/Fix or native fork publication is provided. On failure
    the caller must cancel the unexposed child; cookie sequence never rolls back. */
 int sigfork(Imageid source, Spaceid source_space, Imageid target, Spaceid target_space);
+int sigforksnapshot(Imageid source, Spaceid source_space, Imageid target, Spaceid target_space);
 int siginitialcheck(Imageid image, u64 mask, u64 defaults);
 int siginitial(Imageid image, u64 mask, u64 defaults);
 int sigstat(Imageid image, Sigstat *out);

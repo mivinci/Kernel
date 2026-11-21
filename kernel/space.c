@@ -1617,6 +1617,24 @@ spacesnapshotabortcheck(Spaceid sourceid, Spaceid targetid)
 }
 
 int
+spacesnapshotcommit(Spaceid sourceid, Spaceid targetid)
+{
+  Space    *source = find(sourceid), *target = find(targetid);
+  Spacetxn *tree = snapshot, *owned;
+  if (!tree || tree->phase != SNAP_READY || !source || !target || source != find(tree->source) ||
+      target != find(tree->target))
+    return SP_BAD;
+  if (source->busy || target->busy || source == active || target == active ||
+      (tree->owner.generation && prepforkopen(tree->owner, sourceid, targetid, &owned)))
+    return SP_BUSY;
+  tree->phase = SNAP_OWNERS;
+  tree->commit = 1;
+  tree->node = snapshotindex(target->maps);
+  tree->slot = tree->page = 0;
+  return 0;
+}
+
+int
 spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
 {
   Space    *source = find(sourceid), *target = find(targetid);
@@ -1626,21 +1644,21 @@ spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
   Hvs       vs;
   Hpte      entry;
   Sourcectx context;
-  Prepinfo  owner;
   u32       work = 0, pages;
   u64       address;
+  int       error;
   if (!tree || !source || !target || source != find(tree->source) || target != find(tree->target) ||
       commit > 1)
     return SP_BAD;
   if (source->busy || target->busy || source == active || target == active)
     return SP_BUSY;
-  if (commit && tree->phase == SNAP_READY && tree->owner.generation &&
-      (prepstat(tree->owner, &owner) || owner.state != PREP_ACTIVE ||
-       owner.cloning != PREP_CLONING))
-    return SP_BUSY;
   /* Initial admission may retain roots, but has no PTE/backing journal. */
-  if (tree->phase == SNAP_REJECTED ||
-      (tree->phase >= SNAP_CHECK_SOURCE && tree->phase <= SNAP_CHECK_ALIASES)) {
+  if (commit && tree->phase == SNAP_READY) {
+    error = spacesnapshotcommit(sourceid, targetid);
+    if (error)
+      return error;
+  } else if (tree->phase == SNAP_REJECTED ||
+             (tree->phase >= SNAP_CHECK_SOURCE && tree->phase <= SNAP_CHECK_ALIASES)) {
     if (commit)
       return SP_BAD;
     tree->phase = SNAP_THAW;
@@ -1648,7 +1666,7 @@ spacesnapshotstep(Spaceid sourceid, Spaceid targetid, u32 commit)
     tree->slot = 0;
   } else if (tree->phase == SNAP_READY || tree->phase == SNAP_FAILED ||
              (tree->phase >= SNAP_FIND_SOURCE && tree->phase <= SNAP_MAP_REUSE)) {
-    if (tree->phase != SNAP_READY && commit)
+    if (commit)
       return SP_BAD;
     tree->phase = SNAP_OWNERS;
     tree->commit = commit;

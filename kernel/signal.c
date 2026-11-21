@@ -590,8 +590,9 @@ restorable(Spaceid space, const Sigctx *layer, const Hctx *candidate, Hctx *out)
     return -ERR_FAULT;
   return hal_signal_restore(out, &layer->user, candidate) ? -ERR_INVALID : 0;
 }
-int
-sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space)
+static int
+forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space,
+           u32 snapshot)
 {
   Signal  *source = find(sourceid), *target = find(targetid);
   Image    parentimage, childimage;
@@ -689,6 +690,8 @@ sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target
                    sizeof(cookies[i])))
       return -ERR_FAULT;
   }
+  if (snapshot && spacesnapshotcommit(source_space, target_space))
+    return -ERR_BUSY;
   if (policy(targetid, &source->actions[SIGNAL_CHLD - 1]))
     panic("fork child signal policy");
   for (i = 0; i < SIGNAL_COUNT; i++) {
@@ -717,6 +720,16 @@ sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target
   target->depth = source->depth;
   target->forked = 1;
   return 0;
+}
+int
+sigfork(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space)
+{
+  return forksignal(sourceid, source_space, targetid, target_space, 0);
+}
+int
+sigforksnapshot(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid target_space)
+{
+  return forksignal(sourceid, source_space, targetid, target_space, 1);
 }
 static int
 deliverframe(Signal *s, Spaceid space, Hctx *context, u32 signum, const Siginfo *info, u32 pending)

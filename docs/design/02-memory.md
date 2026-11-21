@@ -764,6 +764,8 @@ Local继承接续（2026-11-17）：已增加spacesnapshotview借用准确的父
 
 Space快照日志接续（2026-11-17）：spacesnapshotbegin/end允许将原页接管/PTE新保护日志保留到Local/Signal准备完成，原spacesnapshot仍为立即提交包装。同步期间仅一个源/目标对，无调度或IRQ切出；该阶段的接管mask曾由上层持有，现已按下节独立账本改为随临时DATA视图持有及自动撤回。后段失败先释放Local/临时Mem，再移除孩子映射、撤回接管及新保护，已有COW不撤回；其他Space的同Mem别名也恢复。本轮统一内部组合入口、例子及验证边界见03末尾；它尚不是支持分批检查点的原生fork准备。
 
+提交准入（stage183）：READY 转入提交时用精确根身份重新检查 Prep 和实时期限。组合构造在写完子帧 cookie 后通过该检查，再安装子信号状态并提交 Mem 日志和 Local 谱系。超期保留回滚路径，已进入提交的快照继续排空日志。主机专项将时钟推进到 READY 快照的截止点，验证拒绝提交、恢复父 PTE、清空子映射及恢复页用量。22 项主机专项和 ARM64/RV64 QEMU sigframe 通过。
+
 fork准备租约接续（2026-11-17）：可信Proc构造先登记FORK/CLONING Prep及独立Space持有，再以精确准备归属进入快照。spacesnapshotprep只允许Proc+该Prep两份根持有，额外无关hold拒绝；standalone快照仍要求一份持有。取消释放Prep租约，Proc/SELF和实际映射按各自责任回收；READY父死亡、父先回收但孩子仍保留immutable/COW视图的账目验证见03末尾。同步实现尚无每32页检查点，不将租约接入称为原生fork/COW完整交付。
 
 ### fork 原页接管的独立账本（2026-11-17）
