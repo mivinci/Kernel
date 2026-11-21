@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage271：后端 HELLO 共用连接记录，双架构 runtime 验证资源回复失败回滚、重试成功、拒绝重复建连及原请求排空后清理；65 项文件主机测试和格式检查通过。
+
 - stage270：普通资源 OPEN 的 CLOSE 核对客户端 PID/image 和 session/reference_id；双架构 runtime 实测错号拒绝后可关闭正确引用，65 项文件主机回归及格式检查通过。
 
 - stage269：后端共用 READ/WRITE/CLOSE/DUPREF 槽参数检查；双架构 runtime、65 项文件主机回归及格式检查通过。

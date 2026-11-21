@@ -47,7 +47,7 @@ zero(void *data, u64 bytes)
     ((u8 *) data)[i] = 0;
 }
 static void
-setup(const Bootview *boot)
+setupwithhello(const Bootview *boot, u64 seq)
 {
   Handle    self, parent, owned, redundant = 0, rpc;
   u64       image;
@@ -65,7 +65,7 @@ setup(const Bootview *boot)
   CHECK(!sysconnpeer(owned, &peer) && !sysconnbind(&cache, peer, &tag) &&
         !sysconnworkinit(&work, &cache, tag) &&
         !sysconnworktakecall(&work, &cache, &owned, &redundant) && !owned && !redundant &&
-        !sysconnbegin(&cache, tag, 1, &claim) &&
+        !sysconnbegin(&cache, tag, seq, &claim) &&
         !sysbootprepare(&work.state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0) &&
         !sysbootrequest(&work.state.bootstrap, claim, &message));
   CHECK(!ipc_call(work.state.call, &message, CALL_ASYNC | CALL_RECV_MEM, &result));
@@ -79,6 +79,11 @@ setup(const Bootview *boot)
         !sysbootack(&work.state.bootstrap, claim) && !sysbootfinish(&work.state.bootstrap, claim) &&
         !sysfilerefinit(&pool, work.state.self));
   sysfdinit(&fds);
+}
+static void
+setup(const Bootview *boot)
+{
+  setupwithhello(boot, 1);
 }
 static Opkey
 begin(u64 opcode, const char *path, u64 source)
@@ -339,7 +344,13 @@ client(const Bootview *boot)
   Msg    gate;
   Ipcmsg result;
   Handle rpc;
-  setup(boot);
+  Msg    hello = {{FS_HELLO, 0, 1, UINT64_MAX}};
+  CHECK(!ipc_call(bootresource(boot, 256), &hello, 0, &result) &&
+        (isize) result.words[0] == -EACCES && result.words[1] == 1);
+  setupwithhello(boot, 2);
+  hello.words[2] = 3;
+  CHECK(!ipc_call(work.state.call, &hello, CALL_RECV_MEM, &result) &&
+        (isize) result.words[0] == -EBUSY && result.words[1] == 3);
   creatorsignals();
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
@@ -436,66 +447,46 @@ exitclient(const Bootview *boot)
 static void
 server(const Bootview *boot, u32 recover)
 {
-  Connpeer  peer;
-  Allocarg  alloc;
-  Maparg    map;
-  Resreply  transfer;
-  Ipcmsg    input, deferred;
-  Msg       reply;
-  Handle    memory, space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
-  Filehead *head = (Filehead *) ADDRESS;
-  Fileslot  descriptor;
-  Filewatch watch = {0};
-  u64       sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
-  u64       slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
+  Connpeer   peer;
+  Resreply   transfer;
+  Ipcmsg     input, deferred;
+  Msg        reply;
+  Handle     space = bootresource(boot, BOOT_SELF_SPACE), pending = 0;
+  Filehead  *head = (Filehead *) ADDRESS;
+  Fileslot   descriptor;
+  Filelink   link = {0};
+  Filewatch *watch = &link.watch;
+  u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
+  u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   volatile u64 *data;
   isize         status;
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
         input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image &&
         input.words[0] == FS_HELLO && !input.words[1] && input.words[2] &&
         input.words[3] == UINT64_MAX);
-  CHECK(!sysfilewatch(&watch, bootresource(boot, 258), &input, CONNID));
-  zero(&alloc, sizeof(alloc));
-  alloc.bytes = FS_CONN_BYTES;
-  alloc.kind = ALLOC_SHARED;
-  CHECK(!__sys_alloc(bootresource(boot, BOOT_SELF_ALLOC), &alloc, &memory));
-  zero(&map, sizeof(map));
-  map.mem = memory;
-  map.address = ADDRESS;
-  map.length = FS_CONN_BYTES;
-  map.prot = 3;
-  CHECK(!__sys_map(space, &map));
-  zero(head, FS_CONN_BYTES);
-  head->magic = FS_CONN_MAGIC;
-  head->bytes = FS_CONN_BYTES;
-  head->connid = CONNID;
-  {
-    Handle pid, parent;
-    u64    image;
-    CHECK(!__sys_getid(&pid, &image, &parent));
-    head->serverimage = image;
+  if (!recover) {
+    CHECK(sysfilehello(&link, bootresource(boot, 258), bootresource(boot, BOOT_SELF_ALLOC), space,
+                       ADDRESS, CONNID, &input) == -ERR_DENIED &&
+          !link.memory && !link.address && !watch->owner.cookie && !link.ready);
+    zero(&reply, sizeof(reply));
+    reply.words[0] = (u64) -EACCES;
+    reply.words[1] = input.words[2];
+    CHECK(!ipc_reply(input.request, &reply) && !ipc_recv(0, 0, &input) &&
+          input.source == peer.pid && input.image == peer.image);
   }
-  head->slots = 8;
-  head->slotbytes = 4096;
-  zero(&transfer, sizeof(transfer));
-  transfer.source = memory;
-  transfer.rights = 3;
-  transfer.length = FS_CONN_BYTES;
-  transfer.business[0] = input.words[2];
-  transfer.business[1] = CONNID;
-  transfer.business[2] = FS_CONN_BYTES;
-  CHECK(!ipc_reply_resource(input.request, &transfer));
+  CHECK(!sysfilehello(&link, bootresource(boot, 258), bootresource(boot, BOOT_SELF_ALLOC), space,
+                      ADDRESS, CONNID, &input));
   zero(sessions, sizeof(sessions));
   zero(references, sizeof(references));
   for (;;) {
     CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : 0, 0, &input));
     if (input.kind == IPC_EVENT) {
-      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && !sysfilewatchread(&watch) &&
-            watch.owner.reason == OBS_EXIT && pending && created == 2 && !closed && references[0] &&
-            references[1]);
-      CHECK(sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &deferred, &descriptor) == -ERR_PEER &&
-            sysfilewatchclose(&watch) == -ERR_BUSY);
-      CHECK(!ipc_rqfinish(pending) && !sysfilefinish(&watch.active, pending));
+      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && !sysfilewatchread(watch) &&
+            watch->owner.reason == OBS_EXIT && pending && created == 2 && !closed &&
+            references[0] && references[1]);
+      CHECK(sysfilelinkaccept(&link, &deferred, &descriptor) == -ERR_PEER &&
+            sysfilelinkclose(&link) == -ERR_BUSY);
+      CHECK(!ipc_rqfinish(pending) && !sysfilefinish(&watch->active, pending));
       references[0] = references[1] = 0;
       closed = 2;
       break;
@@ -503,10 +494,18 @@ server(const Bootview *boot, u32 recover)
     CHECK(input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image);
     opcode = input.words[0];
     zero(&reply, sizeof(reply));
+    if (opcode == FS_HELLO) {
+      CHECK(sysfilehello(&link, bootresource(boot, 258), bootresource(boot, BOOT_SELF_ALLOC), space,
+                         ADDRESS, CONNID, &input) == -ERR_BUSY);
+      reply.words[0] = (u64) -EBUSY;
+      reply.words[1] = input.words[2];
+      CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
     if (opcode == STOP) {
       CHECK(!pending && created == (recover ? 0 : 7) && closed == (recover ? 0 : 7));
       for (i = 0; i < FS_CONN_SLOTS; i++)
-        CHECK(!watch.active.requests[i]);
+        CHECK(!watch->active.requests[i]);
       for (i = 0; i < created; i++)
         CHECK(!references[i]);
       reply.words[0] = created;
@@ -533,7 +532,7 @@ server(const Bootview *boot, u32 recover)
       reply.words[1] = filecreatetrace[7];
       reply.words[2] = filecreatetrace[8];
       reply.words[3] = 8;
-      CHECK(!ipc_reply(pending, &reply) && !sysfilefinish(&watch.active, pending));
+      CHECK(!ipc_reply(pending, &reply) && !sysfilefinish(&watch->active, pending));
       pending = 0;
       continue;
     }
@@ -545,9 +544,9 @@ server(const Bootview *boot, u32 recover)
     seq = input.words[2];
     slot = input.words[3];
     reply.words[1] = seq;
-    status = sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &input, &descriptor);
+    status = sysfilelinkaccept(&link, &input, &descriptor);
     if (status == -ERR_BUSY) {
-      CHECK(pending && opcode == FS_OPEN && watch.active.requests[slot] == pending);
+      CHECK(pending && opcode == FS_OPEN && watch->active.requests[slot] == pending);
       reply.words[0] = (u64) -EBUSY;
       CHECK(!ipc_reply(input.request, &reply));
       continue;
@@ -565,7 +564,7 @@ server(const Bootview *boot, u32 recover)
         CHECK(opcode == FS_READ);
         data[0] = IO_VALUE;
         reply.words[2] = reply.words[3] = 8;
-        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch.active, input.request));
+        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
         continue;
       }
       CHECK(opcode == (recover == 10 ? FS_WRITE : FS_READ));
@@ -598,7 +597,7 @@ server(const Bootview *boot, u32 recover)
               descriptor.args[3] == descriptor.payload_bytes && path[0] == '/');
         if (path[1] == 'm') {
           reply.words[0] = (u64) -2;
-          CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch.active, input.request));
+          CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
           continue;
         }
         resourcepath = path[1] == 'b' || path[1] == 'c' || path[1] == 'f' || path[1] == 'r';
@@ -635,7 +634,7 @@ server(const Bootview *boot, u32 recover)
         transfer.business[1] = prepare.words[1];
         transfer.business[2] = token;
         CHECK(!ipc_reply_resource(input.request, &transfer) &&
-              !sysfilefinish(&watch.active, input.request));
+              !sysfilefinish(&watch->active, input.request));
         if (recover == 13 && ordinal == 2) {
           filecreatetrace[0] = 2;
           return;
@@ -676,18 +675,17 @@ server(const Bootview *boot, u32 recover)
       }
     } else
       CHECK(0);
-    CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch.active, input.request));
+    CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
   }
-  CHECK(!__sys_unmap(space, ADDRESS) && !__sys_free(memory) &&
-        !__sys_free(bootresource(boot, 256)));
+  CHECK(!__sys_free(bootresource(boot, 256)));
   if (recover == 12) {
     Handle pid;
-    u64    state, reason, image, cookie = watch.owner.cookie;
-    CHECK(!sysfilewatchclose(&watch) && !watch.owner.cookie &&
+    u64    state, reason, image, cookie = watch->owner.cookie;
+    CHECK(!sysfilelinkclose(&link) && !watch->owner.cookie &&
           __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
     filecreatetrace[3] = 1;
   } else
-    CHECK(!sysfilewatchclose(&watch));
+    CHECK(!sysfilelinkclose(&link));
   filecreatetrace[1] = created;
   filecreatetrace[2] = closed;
   filecreatetrace[0] = 2;

@@ -948,6 +948,8 @@ stage269：后端共用 `sysfileargs` 在接触共享数据前核对 READ、WRIT
 
 stage270：普通资源 OPEN 的后端在验证连接和槽后，用 `sysopenref` 按内核提供的客户端 PID/image 以及私有槽快照的 session/reference_id 查找唯一已接入引用。查找不改变状态；逻辑关闭、下游排空和 token 回收仍由服务分别处理。ARM64/RV64 runtime 在 VFS 退出和准备超时两条路径上，用真实 IPC 验证错误引用返回 ESTALE、正确引用随后可关闭，且关闭总数保持。65 项文件主机回归与格式检查通过；生产服务仍待接入。
 
+stage271：`Filelink` 把后端 HELLO 的 SOURCE 观察、九页 SHARED 区、服务侧映射和 MEM 回复合并为一条连接记录。回复提交前不受理有槽请求；失败按解除映射、释放 MEM、撤销观察的顺序回滚，未完成的步骤保留以便重试。ARM64/RV64 runtime 用真实 IPC 验证客户端未预留 MEM 接收时回滚、下一笔 HELLO 成功、重复 HELLO 被拒，以及客户端退出后须先完成原请求才可清理。65 项文件主机测试和格式检查通过。此记录由服务提供空闲 VA 和 connid，且独占该来源的观察；生产连接池及跨业务共享观察仍待接入。
+
 ### 后端冷路识别与唯一接入门闩（2026-11-20）
 
 私有sysconnpeer从本主体QUERY_RESOURCE枚举中定位完整本地CALL Handle，核对RESOURCE_CALL及USE，再取得内核记录的固定目标PID/image；不按Handle整数或共享头猜后端。不匹配/已释放返回STALE，错误子类型拒绝，失败不覆盖旧输出。查询按128项本地上限及16项原生批次有界推进，仅用于新授权冷路径，热I/O不追加查询。该结果识别固定授权目标，不证明目标此后仍ACTIVE，也不授予File/session权。

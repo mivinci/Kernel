@@ -331,3 +331,82 @@ sysfilewatchclose(Filewatch *watch)
     watch->connid = 0;
   return status;
 }
+
+isize
+sysfilelinkclose(Filelink *link)
+{
+  u32   i;
+  isize status;
+  if (!link)
+    return -ERR_INVALID;
+  for (i = 0; i < FS_CONN_SLOTS; i++)
+    if (link->watch.active.requests[i])
+      return -ERR_BUSY;
+  link->ready = 0;
+  if (link->address) {
+    status = __sys_unmap(link->space, link->address);
+    if (status)
+      return status;
+    link->address = 0;
+    link->space = 0;
+  }
+  if (link->memory) {
+    status = __sys_free(link->memory);
+    if (status)
+      return status;
+    link->memory = 0;
+  }
+  return link->watch.owner.cookie ? sysfilewatchclose(&link->watch) : 0;
+}
+
+isize
+sysfilehello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address, u64 connid,
+             const Ipcmsg *call)
+{
+  Allocarg alloc = {FS_CONN_BYTES, ALLOC_SHARED, 0, 0, 0, 0};
+  Maparg   map = {0, 0, address, FS_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
+  Filehead head = {FS_CONN_MAGIC, FS_CONN_BYTES, connid, 0, FS_CONN_SLOTS, FS_SLOT_BYTES, {0, 0}};
+  Resreply reply = {0, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES, {0, connid, FS_CONN_BYTES}};
+  Handle   self, parent;
+  isize    status;
+  if (!link || !call || call->kind != IPC_CALL || call->words[0] != FS_HELLO || call->words[1] ||
+      !call->words[2] || call->words[3] != UINT64_MAX || !address || (address & PAGE_MASK) ||
+      address > UINT64_MAX - FS_CONN_BYTES)
+    return -ERR_INVALID;
+  if (link->ready || link->memory || link->address || link->watch.owner.cookie)
+    return -ERR_BUSY;
+  status = __sys_getid(&self, &head.serverimage, &parent);
+  if (!status)
+    status = sysfilewatch(&link->watch, permit, call, connid);
+  if (status)
+    return status;
+  status = __sys_alloc(allocator, &alloc, &link->memory);
+  if (!status) {
+    map.mem = link->memory;
+    status = __sys_map(space, &map);
+  }
+  if (!status) {
+    link->space = space;
+    link->address = address;
+    status = __sys_copy((void *) (uintptr_t) address, &head, sizeof(head));
+  }
+  if (!status) {
+    reply.source = link->memory;
+    reply.business[0] = call->words[2];
+    status = ipc_reply_resource(call->request, &reply);
+  }
+  if (!status)
+    link->ready = 1;
+  else
+    (void) sysfilelinkclose(link);
+  return status;
+}
+
+isize
+sysfilelinkaccept(Filelink *link, const Ipcmsg *call, Fileslot *out)
+{
+  if (!link || !link->ready)
+    return -ERR_STALE;
+  return sysfilewatchaccept(&link->watch, (const void *) (uintptr_t) link->address, FS_CONN_BYTES,
+                            call, out);
+}

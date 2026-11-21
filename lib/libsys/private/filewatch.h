@@ -7,6 +7,7 @@
 
 typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
+typedef struct Filelink  Filelink;
 typedef struct Openprep  Openprep;
 typedef struct Openlimit Openlimit;
 typedef isize (*Openrevoke)(void *context, const Openprep *prep);
@@ -95,4 +96,22 @@ isize sysfilewatchaccept(Filewatch *watch, const volatile void *region, u64 byte
 /* Only after retiring the connection's business references and stopping
    downstream access. A busy ledger prevents both ACK and DROP. */
 isize sysfilewatchclose(Filewatch *watch);
+
+struct Filelink
+{
+  Filewatch watch;
+  Handle    memory, space;
+  u64       address;
+  u32       ready;
+};
+
+/* Start with an empty record. The service serializes admission and supplies
+   a reserved connid and vacant VA, with no other observation dependency on
+   the source. On failure, retry close if any local ownership remains. */
+isize sysfilehello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address,
+                   u64 connid, const Ipcmsg *call);
+isize sysfilelinkaccept(Filelink *link, const Ipcmsg *call, Fileslot *out);
+/* Call only once all business references and downstream accesses are settled.
+   A failed cleanup retains its remaining obligations and blocks admission. */
+isize sysfilelinkclose(Filelink *link);
 #endif
