@@ -1758,6 +1758,9 @@ typedclient(const Bootview *view, Handle peer)
     REQUIRE(!sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) &&
                 reference.state == SYSFILE_REF_CLOSING && !reference.aliases &&
                 reference.pins == 2 &&
+                sysfilerefnextclose(&file_registry, connection_work.state.self, connection_tag, 0,
+                                    &displaced) == -ERR_WOULD_BLOCK &&
+                displaced == fileid &&
                 sysfilerefclose(&file_registry, connection_work.state.self, fileid, &closing) ==
                     -ERR_BUSY &&
                 sysconnworkclean(&connection_work, &connection_directory) == -ERR_BUSY &&
@@ -1798,8 +1801,13 @@ typedclient(const Bootview *view, Handle peer)
             126);
     lateclient(view, &delayed);
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
-                !sysfilerefclose(&file_registry, connection_work.state.self, fileid, &closing) &&
-                closing.file == fileid && closing.sequence &&
+                !sysfilerefnextclose(&file_registry, connection_work.state.self, connection_tag, 0,
+                                     &displaced) &&
+                displaced == fileid &&
+                !sysfilerefclose(&file_registry, connection_work.state.self, displaced, &closing) &&
+                sysfilerefnextclose(&file_registry, connection_work.state.self, connection_tag, 0,
+                                    &displaced) == -ERR_WOULD_BLOCK &&
+                displaced == fileid && closing.file == fileid && closing.sequence &&
                 !sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) &&
                 reference.state == SYSFILE_REF_CLOSING && !reference.aliases && !reference.pins &&
                 reference.close_sequence == closing.sequence &&

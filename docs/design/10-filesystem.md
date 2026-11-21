@@ -134,6 +134,8 @@ POSIX 关闭映射采用：摘除前被信号中断可返回 EINTR 且保留 fd�
 
 stage291：私有 `sysfdclose` 在捕获信号被屏蔽期间核对原 LIVE 标签，一次提交摘除 fd 和扣减 File 别名。只有关闭最后一个别名才输出待收尾的 File ID，原在途 pin 仍保留。RV64、ARM64 的 `libsys` 验证旧标签在描述符复用后返回 STALE，新描述符及输出不变；最后一个别名摘除后，旧 File 等两个在途操作排空再完成原后端 CLOSE。13 项 fd 主机检查和格式通过。此接口不等待后端，不作为公开 `close()` 成功的依据。
 
+stage292：`sysfilerefnextclose` 按连接槽及代次查找已无在途引用、尚未领号的 CLOSING File；工作者可直接从 File 池找回待处理项。查找不修改记录，调用者在同一信号保护段用 `sysfilerefclose` 领号。双架构 `libsys` 验证两笔在途操作结束前查不到旧 File、排空后能找到，领号后不再被发现；真实 CLOSE、65 项文件主机测试和格式通过。生产调度及公开 `close()` 待接。
+
 ### open/close 的信号重启边界（已冻结）
 
 read/write 已讨论语义见 [信号中断与重启](11-terminal.md#readwrite-的中断与重启已冻结)。

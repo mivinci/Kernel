@@ -402,6 +402,31 @@ sysfilerefunpin(Filepool *pool, Connpeer self, u64 file)
   return 0;
 }
 isize
+sysfilerefnextclose(const Filepool *pool, Connpeer self, Conntag connection, u32 minimum, u64 *out)
+{
+  const Fileref *entry;
+  u32            i;
+  isize          error = source(pool, self);
+  if (error)
+    return error;
+  if (!output(pool, out, sizeof(*out)) || !connection.generation || connection.reserved ||
+      connection.index >= SYSCONN_COUNT || minimum > SYSFILE_REFS)
+    return -ERR_INVALID;
+  for (i = minimum; i < SYSFILE_REFS; i++) {
+    entry = &pool->entries[i];
+    if (!valid(entry))
+      return -ERR_STATE;
+    if (entry->state != SYSFILE_REF_CLOSING || entry->pins || entry->close_sequence ||
+        entry->connection.index != connection.index ||
+        entry->connection.generation != connection.generation)
+      continue;
+    *out = (entry->generation << 8) | i;
+    return 0;
+  }
+  return -ERR_WOULD_BLOCK;
+}
+
+isize
 sysfilerefclose(Filepool *pool, Connpeer self, u64 file, Fileclose *out)
 {
   Fileref *entry;

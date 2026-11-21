@@ -99,6 +99,11 @@ isize sysfilerefalias(Filepool *pool, Connpeer self, u64 file);
 isize sysfilerefdrop(Filepool *pool, Connpeer self, u64 file);
 isize sysfilerefpin(Filepool *pool, Connpeer self, u64 file);
 isize sysfilerefunpin(Filepool *pool, Connpeer self, u64 file);
+/* Discover an unclaimed close with no pins for this exact connection, starting
+   at the given slot index. No mutation; errors and exhaustion preserve out.
+   Keep signal exclusion across discovery and claiming with sysfilerefclose. */
+isize sysfilerefnextclose(const Filepool *pool, Connpeer self, Conntag connection, u32 minimum,
+                          u64 *out);
 /* Last descriptor is already detached, pins=0. Returns one persistent closing
    anchor exactly once; busy/unknown close keeps the slot, never resubmits.
    confirmed is ONLY after caller matched an actual backend close result or
