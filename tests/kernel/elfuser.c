@@ -15,6 +15,7 @@ struct Packet
 {
   Boot     header;
   Resentry resources[3];
+  Bootfd   fd;
   u8       arguments[BOOT_ARG_BYTES];
 };
 struct Reader
@@ -46,7 +47,7 @@ readpayload(void *context, u64 offset, void *destination, u64 bytes)
   return 0;
 }
 static void
-bootpacket(void)
+bootpacket(Handle fdcall)
 {
   const char *argv[4], *envp[3];
   Argsnap     snapshot;
@@ -76,6 +77,12 @@ bootpacket(void)
   packet.resources[0].tag = BOOT_SELF_SPACE;
   packet.resources[1].tag = BOOT_SELF_ALLOC;
   packet.resources[2].tag = BOOT_CREATE;
+  if (fdcall) {
+    packet.header.fd_count = 1;
+    packet.header.fds_off = offsetof(Packet, fd);
+    packet.fd.backend_call = fdcall;
+    packet.fd.session = packet.fd.prepare_token = 1;
+  }
   REQUIRE(!sysargboot(&snapshot, &packet.header, sizeof(packet)) && packet.header.argc == 3 &&
               packet.header.envc == 2 && packet.header.bytes < PAGE_SIZE &&
               argument_word[0] == 'X' && environment_word[0] == 'Y' &&
@@ -135,7 +142,6 @@ main(int argc, char **argv)
     args.rgid = ids[2];
     args.egid = ids[3];
     memset(&work, 0, sizeof(work));
-    bootpacket();
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, 0, &work.sigmask), 214);
     REQUIRE(!__sys_create(create, &args, &work.view, &pid, &control) && pid > 0 && !control, 185);
     work.pid = pid;
@@ -149,6 +155,7 @@ main(int argc, char **argv)
                 written == 3 && !next,
             187);
     elf_trace[5]++;
+    bootpacket(scenario == 5 ? (Handle) resources[0].data[0] : 0);
     if (scenario == 1) {
       count = 0;
       while (!(error = __sys_alloc(allocator, &alloc, &pressure[count]))) {
@@ -171,8 +178,14 @@ main(int argc, char **argv)
       REQUIRE(!__sys_map(space, &map), 192);
       *(volatile u64 *) work.scratch = UINT64_C(0x123456789abcdef0);
     }
-    if (scenario == 5)
+    if (scenario == 5) {
+      REQUIRE(elfload(&source, &plan, &packet, packet.header.bytes, &work, &config) ==
+                      -ERR_BAD_HANDLE &&
+                  work.failure == -ERR_BAD_HANDLE && !work.memory && !work.mapped && !config.entry,
+              217);
+      packet.header.fd_count = packet.header.fds_off = 0;
       packet.resources[0].flags = 4;
+    }
     error = elfload(&source, &plan, &packet, packet.header.bytes, &work, &config);
     elf_trace[15] = (u64) error;
     REQUIRE(!work.memory && !work.mapped, 193);

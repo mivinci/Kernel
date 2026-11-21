@@ -847,6 +847,8 @@ sysctxarguments直接使用当前PREPARED层既有16KiB；input_kind/argc/envc�
 
 stage296：目标Boot追加参数前，与启动解析共用 `sysbootfds` 校验继承记录。重复fd、无效Handle编码、零session/token或保留位错误时，打包保持目标缓冲不变，解析不发布Bootview。此处仅核对记录结构；没有查询CALL权限、接入后端或初始化继承文件表，准备中的资源占位也不受此校验影响。RV64、ARM64 QEMU `runtime`、52 项主机测试及格式通过。两架构 `elf` 场景在子进程退出断言 197 失败，未改动的 `4e9bfff` 基线也复现，未计为通过。
 
+stage298：`elfload` 在映射 Boot 前，利用既有准备表查询核对每个继承 fd 的完整 Handle 属于目标镜像、类型为 CALL 且有 USE 权。多个 fd 可引用同一个 CALL；缺项或类型错误拒绝，缺 USE 返回 DENIED。验证失败不发布 Config，临时映射与 MEM 按原路径回收。RV64、ARM64 QEMU `elf` 均验证真实 SPACE Handle 被拒；30 项主机测试覆盖分页后的有效 CALL、别名、错代次、缺权和清理，格式通过。此检查不判断后端存活、不领取 token，也不安装本地文件表。
+
 两架构SDK源码/头/库、实际链接载荷与模块依赖已审计：argument.o仅__sys_copy，contextarg.o仅sysargcopy/sysctxlookup，libsys整体无未定义依赖；生产init调用通用两函数且不含Rctx封装/测试handler。1003项host、格式、195次双架构QEMU及168份journal通过，证据build/host/stage152-init-arguments/，完整运行和初次主机观测修正记录见07末尾。公开exec/spawn/Fix、创建类引用补偿及生产服务仍待接；创建类reference_id返回布局已获用户确认，见10末尾，不再作为待回复项。
 
 ### 创建类Rctx绑定与信号前置捕获（2026-11-20）

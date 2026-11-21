@@ -1,5 +1,6 @@
 /* User-library fault-injection backend; guest tests exercise the real kernel. */
 #include "private/elf.h"
+#include <abi/resource.h>
 #include <string.h>
 #define OBJECTS 48
 #define TARGETS 48
@@ -32,6 +33,13 @@ static Mapping targets[TARGETS];
 static u64     scratch;
 static u32     alias_id, step, fail_step, unmap_failures, free_failures, bad_free;
 static isize   commit_error, abort_error;
+static u64     fd_call_rights, fd_call_image;
+void
+mock_fd_call(u64 rights, u64 image)
+{
+  fd_call_rights = rights;
+  fd_call_image = image;
+}
 static int
 fault(void)
 {
@@ -48,6 +56,7 @@ __sys_copy(void *destination, const void *source, u64 bytes)
 void
 mock_reset(u64 window)
 {
+  mock_fd_call(0, 0);
   memset(memories, 0, sizeof(memories));
   memset(targets, 0, sizeof(targets));
   scratch = window;
@@ -155,11 +164,25 @@ __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count
   u32 i;
   if (fault())
     return -ERR_NOMEM;
-  if (authority != VIEW || kind != QUERY_RESOURCE || cursor || count < 3)
+  if (authority != VIEW || kind != QUERY_RESOURCE || count < 3)
     return -ERR_INVALID;
+  if (cursor) {
+    if (cursor != 3 || !fd_call_image)
+      return -ERR_INVALID;
+    memset(records, 0, sizeof(*records));
+    records[0].type = QUERY_RESOURCE;
+    records[0].pid = PID;
+    records[0].image = fd_call_image;
+    records[0].data[0] = (2UL << 59) | (7UL << 16) | 3;
+    records[0].data[1] = RESOURCE_CALL;
+    records[0].data[2] = fd_call_rights;
+    *written = 1;
+    *next = 0;
+    return 0;
+  }
   memset(records, 0, 3 * sizeof(*records));
   *written = 3;
-  *next = 0;
+  *next = fd_call_image ? 3 : 0;
   for (i = 0; i < 3; i++) {
     records[i].type = QUERY_RESOURCE;
     records[i].pid = PID;

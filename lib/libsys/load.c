@@ -1,5 +1,6 @@
 #include "private/elf.h"
 #include "private/fix.h"
+#include <abi/resource.h>
 isize
 sysfixchild(const Forkret *result, u64 available, Handle source, u64 source_image, Fixview *out)
 {
@@ -125,25 +126,39 @@ sysfixload(Elfwork *work, u64 address, const void *data, u64 bytes)
   return cleanup ? cleanup : error;
 }
 static isize
+resourcepage(Elfwork *work, u64 cursor, Queryrec *records, u64 count, u64 *written, u64 *next)
+{
+  u64   i;
+  isize error = __sys_query(work->view, QUERY_RESOURCE, cursor, records, count, written, next);
+  if (error)
+    return error;
+  if (*written > count || (*next && (!*written || *next == cursor)))
+    return -ERR_STATE;
+  for (i = 0; i < *written; i++)
+    if (records[i].type != QUERY_RESOURCE || records[i].pid != work->pid ||
+        records[i].image != work->image)
+      return -ERR_STATE;
+  return 0;
+}
+static isize
 resources(Elfwork *work, Handle handles[3])
 {
   Queryrec records[4];
-  u64      cursor = 0, written, next, i, kind, slot;
+  u64      cursor = 0, written, next, i, kind, slot, total = 0;
   isize    error;
   handles[0] = handles[1] = handles[2] = 0;
   do {
-    error = __sys_query(work->view, QUERY_RESOURCE, cursor, records, ARRAY_SIZE(records), &written,
-                        &next);
+    error = resourcepage(work, cursor, records, ARRAY_SIZE(records), &written, &next);
     if (error)
       return error;
+    total += written;
+    if (total > BOOT_RESOURCE_COUNT)
+      return -ERR_STATE;
     for (i = 0; i < written; i++) {
-      if (records[i].type != QUERY_RESOURCE || records[i].pid != work->pid ||
-          records[i].image != work->image)
-        return -ERR_STATE;
       kind = records[i].data[1];
-      if (kind < 1 || kind > 3)
+      if (kind < RESOURCE_CREATE || kind > RESOURCE_ALLOC)
         continue;
-      slot = kind == 2 ? 0 : kind == 3 ? 1 : 2;
+      slot = kind == RESOURCE_SPACE ? 0 : kind == RESOURCE_ALLOC ? 1 : 2;
       if (handles[slot])
         return -ERR_STATE;
       handles[slot] = (Handle) records[i].data[0];
@@ -151,6 +166,40 @@ resources(Elfwork *work, Handle handles[3])
     cursor = next;
   } while (cursor);
   return handles[0] && handles[1] ? 0 : -ERR_STATE;
+}
+static isize
+fdcalls(Elfwork *work, const Bootview *boot)
+{
+  Queryrec records[4];
+  u64      found[(BOOT_FD_COUNT + 63) / 64] = {0};
+  u64      left = boot->header->fd_count, cursor = 0, written, next, i, j, bit, total = 0;
+  isize    error;
+  if (!left)
+    return 0;
+  do {
+    error = resourcepage(work, cursor, records, ARRAY_SIZE(records), &written, &next);
+    if (error)
+      return error;
+    total += written;
+    if (total > BOOT_RESOURCE_COUNT)
+      return -ERR_STATE;
+    for (i = 0; i < written; i++) {
+      const Queryrec *record = &records[i];
+      for (j = 0; j < boot->header->fd_count; j++) {
+        bit = UINT64_C(1) << (j % 64);
+        if ((found[j / 64] & bit) || (Handle) record->data[0] != boot->fds[j].backend_call)
+          continue;
+        if (record->data[1] != RESOURCE_CALL)
+          return -ERR_BAD_HANDLE;
+        if (!(record->data[2] & RESOURCE_USE))
+          return -ERR_DENIED;
+        found[j / 64] |= bit;
+        left--;
+      }
+    }
+    cursor = next;
+  } while (left && cursor);
+  return left ? -ERR_BAD_HANDLE : 0;
 }
 static isize
 startup(Elfwork *work, const void *data, u64 bytes)
@@ -193,6 +242,8 @@ startup(Elfwork *work, const void *data, u64 bytes)
   if ((seen & 3) != 3)
     return -ERR_INVALID;
   error = bootcheck(destination, bytes, &checked);
+  if (!error)
+    error = fdcalls(work, &checked);
   if (!error)
     error = unalias(work);
   if (!error)
