@@ -51,6 +51,7 @@ class FileReferenceTests(unittest.TestCase):
             'sysfilerefconfirmed':[C.POINTER(Pool),Peer,C.POINTER(Close)]}
         signatures['sysfilerefconnection']=[C.POINTER(Pool),Peer,Tag]
         signatures['sysfilereffork']=[C.POINTER(Pool),Peer,Peer,C.POINTER(Fork),C.c_uint64]
+        signatures['sysfilerefforkcheck']=signatures['sysfilereffork']
         signatures['sysfilerefreserve']=[C.POINTER(Pool),Peer,C.c_uint32,C.POINTER(Stage)]
         signatures['sysfilerefcommit']=[C.POINTER(Pool),Peer,C.POINTER(Stage),C.POINTER(Value),C.c_uint32]
         signatures['sysfilerefabort']=[C.POINTER(Pool),Peer,C.POINTER(Stage)]
@@ -111,15 +112,37 @@ class FileReferenceTests(unittest.TestCase):
         self.assertEqual(self.lib.sysfilerefclose(C.byref(self.pool),child,file,C.byref(close)),0)
         self.assertEqual(close.file,file)
 
+    def test_fork_preflight_is_read_only_and_revalidates_before_commit(self):
+        file=self.new();child=Peer(pid(3),10)
+        plan=(Fork*1)(Fork(file,Value(Tag(9,2,0),55,177,701),1,0))
+        before,wire=bytes(self.pool),bytes(plan)
+        self.assertEqual(self.lib.sysfilerefforkcheck(C.byref(self.pool),self.self,child,plan,1),0)
+        self.assertEqual((bytes(self.pool),bytes(plan)),(before,wire))
+        # A last close between preflight and conversion cannot publish an
+        # inherited alias. The coordinator must exclude signals throughout.
+        self.assertEqual(self.lib.sysfilerefdrop(C.byref(self.pool),self.self,file),0)
+        closed=bytes(self.pool)
+        self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,1),-1)
+        self.assertEqual(bytes(self.pool),closed)
+        self.pool=Pool.from_buffer_copy(before)
+        self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,1),0)
+        converted=bytes(self.pool)
+        self.assertEqual(self.lib.sysfilerefforkcheck(C.byref(self.pool),self.self,child,plan,1),-4)
+        self.assertEqual(bytes(self.pool),converted)
+
     def test_child_fork_invalid_plan_is_atomic_and_cannot_inflate_ownership(self):
         file=self.new();child=Peer(pid(3),10)
         for aliases,pins,session,generation in [(2,0,55,9),(1,1,55,9),(1,0,56,9),(1,0,55,8),(0,0,55,9)]:
             plan=(Fork*1)(Fork(file,Value(Tag(generation,2,0),session,177,701),aliases,pins))
             before=bytes(self.pool)
+            self.assertEqual(self.lib.sysfilerefforkcheck(C.byref(self.pool),self.self,child,plan,1),-1)
+            self.assertEqual(bytes(self.pool),before)
             self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,1),-1)
             self.assertEqual(bytes(self.pool),before)
         plan=(Fork*2)(*[Fork(file,Value(Tag(9,2,0),55,177,701),1,0) for _ in range(2)])
         before=bytes(self.pool)
+        self.assertEqual(self.lib.sysfilerefforkcheck(C.byref(self.pool),self.self,child,plan,2),-1)
+        self.assertEqual(bytes(self.pool),before)
         self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,2),-1)
         self.assertEqual(bytes(self.pool),before)
 
@@ -138,10 +161,13 @@ class FileReferenceTests(unittest.TestCase):
             plan=(Fork*2)(Fork(first,Value(Tag(9,2,0),55,177,701),1,0),
                            Fork(second.value,Value(Tag(9,2,0),56,reference,token),1,0))
             before=bytes(self.pool)
+            self.assertEqual(self.lib.sysfilerefforkcheck(C.byref(self.pool),self.self,child,plan,2),-1)
+            self.assertEqual(bytes(self.pool),before)
             self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,2),-1)
             self.assertEqual(bytes(self.pool),before)
         before=bytes(self.pool)
         alias=C.cast(C.byref(self.pool),C.POINTER(Fork))
+        self.assertEqual(self.lib.sysfilerefforkcheck(C.byref(self.pool),self.self,child,alias,1),-1)
         self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,alias,1),-1)
         self.assertEqual(bytes(self.pool),before)
 

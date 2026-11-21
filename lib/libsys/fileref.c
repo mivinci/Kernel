@@ -91,17 +91,15 @@ sysfilerefcheck(const Filepool *pool, Connpeer self)
       return -ERR_STATE;
   return 0;
 }
-isize
-sysfilereffork(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries, u64 count)
+static isize
+forkcheck(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries, u64 count,
+          u16 selected[SYSFILE_REFS])
 {
-  u16   selected[SYSFILE_REFS];
   u32   i, j;
   isize error;
   if (!pool || !identity(parent) || !identity(child) || parent.pid == child.pid ||
       count > SYSFILE_REFS || (count && !output(pool, entries, count * sizeof(*entries))))
     return -ERR_INVALID;
-  if (!source(pool, child))
-    return 0;
   error = sysfilerefcheck(pool, parent);
   if (error)
     return error;
@@ -130,6 +128,29 @@ sysfilereffork(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *
     }
     selected[plan->file & 255] = (u16) i;
   }
+  return 0;
+}
+isize
+sysfilerefforkcheck(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries,
+                    u64 count)
+{
+  u16 selected[SYSFILE_REFS];
+  return forkcheck(pool, parent, child, entries, count, selected);
+}
+isize
+sysfilereffork(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries, u64 count)
+{
+  u16   selected[SYSFILE_REFS];
+  u32   i;
+  isize error;
+  if (!pool || !identity(parent) || !identity(child) || parent.pid == child.pid ||
+      count > SYSFILE_REFS || (count && !output(pool, entries, count * sizeof(*entries))))
+    return -ERR_INVALID;
+  if (!source(pool, child))
+    return 0;
+  error = forkcheck(pool, parent, child, entries, count, selected);
+  if (error)
+    return error;
   for (i = 0; i < SYSFILE_REFS; i++) {
     Fileref        *entry = &pool->entries[i];
     const Filefork *plan = selected[i] == SYSFILE_REFS ? NULL : &entries[selected[i]];

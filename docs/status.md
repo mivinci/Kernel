@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage231：File 子转换的完整只读准入与提交共用核验，支持协调器先组合 fd/File/连接检查；30项相关主机测试、格式及双架构 libsys/sigframe 回归通过。新准入仍仅主机调用；FORK_PREPARE 只回 token 后如何取得子 reference_id 的规则待确认（10篇候选），真实后端准备与整体协调器未完成。
+
 - stage230：fd/File 子保留清单的只读一致性准入已接，精确核对全部 LIVE fd 的本地 ID/alias，保留 CLOEXEC 与创建中的预留责任；29项相关主机测试、格式及双架构 libsys/sigframe 回归通过。新检查仍仅主机调用，真实后端准备/重绑及生产协调器待接。
 
 - stage229：File 注册表可依子准备清单保留本地 ID、重绑后端引用并减权 alias/pin，父清理副本不发 CLOSE/ACK；完整1225项主机测试、格式及双架构 libsys/sigframe 回归通过。新原语仍仅主机调用，远端准备/真实重绑与生产协调器待接。

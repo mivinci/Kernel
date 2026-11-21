@@ -59,6 +59,11 @@ STATIC_ASSERT(sizeof(Filestage) == 24 && sizeof(Filevalue) == 40, prospective_fi
    file IDs are private generation[55:0]/index[7:0], not kernel Handles. */
 isize sysfilerefinit(Filepool *pool, Connpeer self);
 isize sysfilerefcheck(const Filepool *pool, Connpeer self);
+/* Preflight against the parent before any child conversion. Same plan rules
+   as fork below, no mutation; already converted child state is stale here.
+   Caller holds inputs stable across all admissions and the local commit. */
+isize sysfilerefforkcheck(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries,
+                          u64 count);
 /* Protected child-local conversion after the coordinator fixed all Rctx/File
    results and prepared exact target backend references/tokens. The plan owns
    no authority itself; caller verifies service identities and child claims.
