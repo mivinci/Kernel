@@ -44,6 +44,7 @@ int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
    Cancelled records remain accessible until that ownership is released. */
 int prepforktree(Prepid id, Spacetxn **out);
 int prepforkopen(Prepid id, Spaceid source, Spaceid target, Spacetxn **out);
+int prepforkcheckpoint(Forkcheck checkpoint, Prepid id, Rtable *source, Rtable *target);
 /* Always releases the clone phase, even when already cancelled/expired. */
 int prepforkfinish(Prepid id);
 /* Trusted ownership transfer, not a syscall. Caller has returned every fresh

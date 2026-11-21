@@ -1771,7 +1771,8 @@ localforkdrop(Rtable *target)
   return 0;
 }
 int
-localforkload(Rtable *source, Rtable *target, const Createarg *limits)
+localforkloadchecked(Rtable *source, Rtable *target, const Createarg *limits, Prepid prep,
+                     Forkcheck checkpoint)
 {
   Forkbinding  binding;
   Createpolicy policy;
@@ -1798,6 +1799,11 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
   /* Entire source admission before taking new references. Manager handles
      remain scoped to their child's already prepared logical view. */
   for (i = 0; i < source->count; i++) {
+    if (checkpoint && i && i % 8 == 0) {
+      error = prepforkcheckpoint(checkpoint, prep, source, target);
+      if (error)
+        goto failed;
+    }
     slot = &source->slots[i];
     if (slot->subtype && (slot->source & LOCAL_STAGED || slot->subtype == LOCAL_DRAFT))
       return -ERR_STATE;
@@ -1875,6 +1881,11 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
     }
   }
   for (i = 0; i < source->count; i++) {
+    if (checkpoint && i % 8 == 0) {
+      error = prepforkcheckpoint(checkpoint, prep, source, target);
+      if (error)
+        goto failed;
+    }
     slot = &source->slots[i];
     dest = &target->slots[i];
     if (!slot->subtype || slot->subtype >= LOCAL_FLOOR || dest->subtype == LOCAL_DRAFT)
@@ -1928,6 +1939,11 @@ localforkload(Rtable *source, Rtable *target, const Createarg *limits)
   /* Providers retain their original-ID lookup fields until all other aliases
      have acquired references. Then their existing manager becomes the MEM row. */
   for (i = 0; i < target->count; i++) {
+    if (checkpoint && i % 8 == 0) {
+      error = prepforkcheckpoint(checkpoint, prep, source, target);
+      if (error)
+        goto failed;
+    }
     dest = &target->slots[i];
     if (dest->subtype != LOCAL_DRAFT)
       continue;
@@ -1944,6 +1960,13 @@ failed:
   if (localforkdrop(target))
     panic("fork staged table rollback");
   return error;
+}
+int
+localforkload(Rtable *source, Rtable *target, const Createarg *limits)
+{
+  Prepid none;
+  none.generation = none.index = none.reserved = 0;
+  return localforkloadchecked(source, target, limits, none, NULL);
 }
 int
 localforkfinish(Rtable *source, Rtable *target)

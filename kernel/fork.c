@@ -31,13 +31,6 @@ memory(const Local *slot)
   return id;
 }
 
-static int
-memcheckpoint(Forkcheck checkpoint, Prepid prep, Rtable *source, Rtable *target)
-{
-  int error = checkpoint(prep);
-  return error ? error : prepsnapshotcheck(prep, source, target);
-}
-
 int
 forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
                     const Hctx *parent, Hctx *child, Prepid prep, Forkcheck checkpoint)
@@ -89,7 +82,7 @@ forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32
   }
   for (i = 0; i < source->count; i++) {
     if (checkpoint && i && i % 8 == 0) {
-      error = memcheckpoint(checkpoint, prep, source, target);
+      error = prepforkcheckpoint(checkpoint, prep, source, target);
       if (error)
         goto failed;
     }
@@ -131,11 +124,11 @@ forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32
       goto failed;
   }
   if (checkpoint) {
-    error = memcheckpoint(checkpoint, prep, source, target);
+    error = prepforkcheckpoint(checkpoint, prep, source, target);
     if (error)
       goto failed;
   }
-  error = localforkload(source, target, limits);
+  error = localforkloadchecked(source, target, limits, prep, checkpoint);
   if (error)
     goto failed;
   error = localforkreserve(source, target, targetimage, reserve);

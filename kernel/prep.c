@@ -183,6 +183,12 @@ prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target)
   return p->origin == PREP_FORK && p->cloning == PREP_CLONING ? 0 : -ERR_STATE;
 }
 int
+prepforkcheckpoint(Forkcheck checkpoint, Prepid id, Rtable *source, Rtable *target)
+{
+  int error = checkpoint(id);
+  return error ? error : prepsnapshotcheck(id, source, target);
+}
+int
 prepforktree(Prepid id, Spacetxn **out)
 {
   Prep *p = find(id);

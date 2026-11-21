@@ -47,6 +47,7 @@ typedef struct Createpolicy Createpolicy;
 typedef struct Local        Local;
 typedef struct Rtable       Rtable;
 typedef struct Forkbinding  Forkbinding;
+typedef int (*Forkcheck)(Prepid);
 struct Createpolicy
 {
   Setid set;
@@ -90,6 +91,8 @@ int localfork(Rtable *source, Rtable *target, const Forkbinding *bindings, u32 c
 int localforkview(Rtable *target, Memid original, Memid *out);
 int localforkbind(Rtable *source, Rtable *target, u32 index, Memid view);
 int localforkload(Rtable *source, Rtable *target, const Createarg *limits);
+int localforkloadchecked(Rtable *source, Rtable *target, const Createarg *limits, Prepid prep,
+                         Forkcheck checkpoint);
 /* Floor eligibility follows the future parent lineage, not the old run slot. */
 int localforkreserve(Rtable *source, Rtable *target, Imageid image, u32 count);
 /* Only publishes Handle lineage; backing/PTE commit belongs to the caller. */

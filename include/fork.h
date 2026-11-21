@@ -3,7 +3,6 @@
 #define _FORK_H
 #include <local.h>
 struct Hctx;
-typedef int (*Forkcheck)(Prepid);
 /* Source is a frozen ACTIVE parent, target its fresh PREPARING child with an
    empty Local table/Space and reserved signal bank. Limits are its actual
    Acct/table/mail specification. IRQs masked, both roots inactive, no checkpoint.
@@ -17,9 +16,8 @@ typedef int (*Forkcheck)(Prepid);
    grant authority, install Fix, or publish/run it. */
 int forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
                  const struct Hctx *parent, struct Hctx *child, Prepid prep);
-/* A checkpoint runs between mapping batches and at boundaries in the Mem
-   binding pass. It returns with IRQs masked and both roots inactive, or hands
-   off the entire Prep. */
+/* A checkpoint runs between mapping, Mem binding and Local load batches. It
+   returns with IRQs masked and both roots inactive, or hands off the Prep. */
 int forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
                         const struct Hctx *parent, struct Hctx *child, Prepid prep,
                         Forkcheck checkpoint);
