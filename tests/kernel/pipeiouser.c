@@ -318,8 +318,6 @@ interruptclient(void)
   int              fd;
   Fdview           original, alias, displaced;
   Fileref          ref;
-  u32              turns = 0;
-  isize            progress;
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
   CHECK(sysfileimagefs(0, (uintptr_t) pipeiotrace & ~PAGE_MASK, &work) < 0 && !work &&
@@ -360,12 +358,8 @@ interruptclient(void)
         alias.file == original.file && !alias.flags &&
         alias.tag.generation > displaced.tag.generation && work->state.operations[6].rpc &&
         work->state.operations[6].file == displaced.file);
-  do {
-    progress = sysfileimageclosework(work->state.tag);
-    if (progress == -ERR_WOULD_BLOCK)
-      CHECK(++turns < 64 && !__sys_yield());
-  } while (progress == -ERR_WOULD_BLOCK);
-  CHECK(!progress && !work->state.operations[6].rpc &&
+  CHECK(!ipc_rqwait(work->state.operations[6].rpc, RQ_FINISH, &result) &&
+        dup2(fds[0], fds[0]) == fds[0] && !work->state.operations[6].rpc &&
         sysfilerefview(&image->files, work->state.self, displaced.file, &ref) == -ERR_STALE &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) &&
         ref.aliases == BOOT_FD_COUNT);
@@ -533,7 +527,7 @@ closeclient(u32 mode)
     rpc = peer->state.operations[6].rpc;
     CHECK(rpc && (!mode || rpc == closerpc) && peer->state.operations[6].file == old.file &&
           !ipc_call(peer->state.call, &gate, CALL_CONTROL, &result) &&
-          !ipc_rqwait(rpc, RQ_FINISH, &result) && !sysfileimageclosework(peer->state.tag));
+          !ipc_rqwait(rpc, RQ_FINISH, &result) && dup2(fds[0], fds[0]) == fds[0]);
   }
   CHECK(sysfilerefview(&image->files, peer->state.self, old.file, &ref) == -ERR_STALE &&
         !sysfdobserve(&image->fds, fds[1], &view));

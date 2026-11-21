@@ -11,7 +11,8 @@ static Fileimage image;
 static Conntag   fstag;
 static Rkey      hello;
 static Bootmap   candidate;
-static u32       initialized, connecting;
+static u32       initialized, connecting, closing;
+static void      closeprogress(Fileimage *state);
 
 Conncache *
 sysfileimagecache(Fileimage *state)
@@ -114,6 +115,7 @@ sysfileimagefs(u32 layer, u64 address, Connwork **out)
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
+  closeprogress(state);
   if (connecting) {
     error = -ERR_BUSY;
     goto restore;
@@ -200,6 +202,30 @@ closework(Fileimage *state, Conntag tag)
   return sysfileclosepump(&state->files, work, cache, file, 0);
 }
 
+/* At most one nonblocking step per backend at each library safe point.
+   Keep pinned or in-flight Files discoverable for the next safe point. */
+static void
+closeprogress(Fileimage *state)
+{
+  const Fileref *ref;
+  Connwork      *work;
+  u32            i, pending = 0;
+  if (!closing)
+    return;
+  for (i = 0; i < SYSFILE_REFS; i++) {
+    ref = &state->files.entries[i];
+    if (ref->state != SYSFILE_REF_CLOSING || ref->connection.index >= SYSCONN_COUNT)
+      continue;
+    work = &state->connections[ref->connection.index];
+    if (work->state.tag.generation == ref->connection.generation)
+      pending |= 1U << ref->connection.index;
+  }
+  closing = pending;
+  for (i = 0; pending; i++, pending >>= 1)
+    if (pending & 1)
+      (void) closework(state, state->connections[i].state.tag);
+}
+
 static isize
 closefile(Fileimage *state, u64 file, u64 mask)
 {
@@ -211,6 +237,7 @@ closefile(Fileimage *state, u64 file, u64 mask)
   Connwork  *work;
   u64        now, deadline;
   isize      error;
+  closing = 1;
   if (sysfilerefview(&state->files, state->files.self, file, &ref) ||
       sysconnview(cache, ref.connection, &entry) || systimernow(&now) ||
       now > UINT64_MAX - UINT64_C(1000000000))
@@ -252,6 +279,7 @@ sysfileimageclose(int fd)
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
+  closeprogress(state);
   error = sysfdobserve(&state->fds, (u32) fd, &view);
   if (!error)
     error = view.tag.state == SYSFD_LIVE
@@ -263,29 +291,11 @@ sysfileimageclose(int fd)
   return error ? error : restored;
 }
 
-isize
-sysfileimageclosework(Conntag tag)
-{
-  Fileimage *state;
-  u64        mask, ignored;
-  isize      result, restored;
-  result = sysfileimage(&state);
-  if (result)
-    return result;
-  result = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
-  if (result)
-    return result;
-  result = closework(state, tag);
-  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
-  return restored ? restored : result;
-}
-
 static isize
 duplicate(int fd, int target, u32 replace)
 {
   Fileimage *state;
-  Fileref    old;
-  u64        mask, ignored, closing = 0;
+  u64        mask, ignored, displaced = 0;
   isize      result, restored;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT ||
       (replace && (target < 0 || (u32) target >= BOOT_FD_COUNT)))
@@ -297,14 +307,13 @@ duplicate(int fd, int target, u32 replace)
   if (result)
     return result;
   if (replace) {
-    result =
-        sysfddup2(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target, &closing);
-    /* The replacement has committed. The old reference owns any remaining
-       close work, regardless of whether a control request can advance now. */
-    if (result >= 0 && closing && !sysfilerefview(&state->files, state->files.self, closing, &old))
-      (void) closework(state, old.connection);
+    result = sysfddup2(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target,
+                       &displaced);
   } else
     result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, 0);
+  if (result >= 0 && displaced)
+    closing = 1;
+  closeprogress(state);
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return restored ? restored : result;
 }
