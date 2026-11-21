@@ -71,6 +71,10 @@ isize sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag);
    supplies the child's validated SELF_SPACE and excludes caught signals.
    Removes only the inherited alias; never free/ACK a parent Handle. */
 isize sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childspace);
+/* Admit the whole list before unmapping. If a syscall fails, cleared entries
+   stay cleared and a retry resumes at the first remaining mapping. */
+isize sysconnforkunmaps(Connwork *const *works, u64 count, Connpeer parent, Connpeer child,
+                        Handle childspace);
 /* After all inherited results have been fixed in Rctx/File and aliases removed,
    discard child copies of parent transport obligations without native cleanup.
    Directory already rebound, tag selects the same backend in UNCLAIMED.

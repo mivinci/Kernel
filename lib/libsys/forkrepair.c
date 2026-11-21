@@ -2,7 +2,7 @@
 
 isize
 sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const Forkret *result,
-              u64 available, const Filefork *files, u64 file_count)
+              u64 available, const Filefork *files, u64 file_count, const Forkdetach *detach)
 {
   Fixview         view;
   const Fixlayer *layers;
@@ -29,6 +29,12 @@ sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const For
       status = sysfixlayers(&view, &layers);
     if (!status)
       status = sysfixconnections(&view, &connections, &count);
+    if (!status && detach) {
+      status =
+          sysforkstateadmit(state, parent, child, layers, files, file_count, connections, count);
+      if (!status)
+        status = sysconnforkunmaps(detach->works, detach->count, parent, child, detach->space);
+    }
     if (!status)
       status =
           sysforkstateapply(state, parent, child, layers, files, file_count, connections, count);

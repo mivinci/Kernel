@@ -3,8 +3,15 @@
 #include "forkstate.h"
 #include "elf.h"
 
-typedef struct Forkfix  Forkfix;
-typedef struct Forkdone Forkdone;
+typedef struct Forkfix    Forkfix;
+typedef struct Forkdone   Forkdone;
+typedef struct Forkdetach Forkdetach;
+struct Forkdetach
+{
+  Connwork *const *works;
+  u64              count;
+  Handle           space;
+};
 struct Forkdone
 {
   Connpeer   child, parent;
@@ -26,8 +33,9 @@ struct Forkfix
    canceled. Backend cleanup remains with the caller. */
 isize sysforkfinish(Elfwork *work, Rbank *bank, Connpeer parent, const Forkfix *fix);
 /* Both child entries use the same private, initially zeroed marker. This
-   converts local tables after the caller has detached inherited transport
-   mappings. Marker and inputs must be disjoint from the mutable tables. */
+   detaches all inherited transport aliases listed by the caller, using the
+   validated child SELF_SPACE. Null detach means no inherited aliases.
+   Marker and inputs must be disjoint from the mutable tables. */
 isize sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const Forkret *result,
-                    u64 available, const Filefork *files, u64 file_count);
+                    u64 available, const Filefork *files, u64 file_count, const Forkdetach *detach);
 #endif

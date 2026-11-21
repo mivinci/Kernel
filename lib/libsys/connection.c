@@ -46,13 +46,11 @@ mapped(const Connstate *s, const Connentry *entry)
          !(s->map.address & PAGE_MASK) && s->map.bytes == FS_CONN_BYTES &&
          s->map.connid == entry->connid && s->map.serverimage == s->peer.image;
 }
-isize
-sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childspace)
+static isize
+forkmapcheck(const Connwork *work, Connpeer parent)
 {
-  Connstate *s;
-  if (!work || handlekind(parent.pid) != HANDLE_PROCESS || !parent.image ||
-      handlekind(child.pid) != HANDLE_PROCESS || !child.image || parent.pid == child.pid ||
-      handlekind(childspace) != HANDLE_RESOURCE)
+  const Connstate *s;
+  if (!work)
     return -ERR_INVALID;
   s = &work->state;
   if (s->self.pid != parent.pid || s->self.image != parent.image)
@@ -61,9 +59,50 @@ sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childsp
     return s->map.address || s->map.bytes || s->map.connid || s->map.serverimage || s->map.verified
                ? -ERR_STATE
                : 0;
-  if (s->map.mapped != 1 || s->map.verified > 1)
+  if (s->map.mapped != 1 || s->map.verified > 1 || s->map.bytes != FS_CONN_BYTES ||
+      (s->map.address & PAGE_MASK) || s->map.address < BOOT_USER_LO ||
+      s->map.address > BOOT_USER_HI - FS_CONN_BYTES)
     return -ERR_STATE;
-  return sysbootunmap(childspace, &s->map);
+  return 0;
+}
+isize
+sysconnforkunmaps(Connwork *const *works, u64 count, Connpeer parent, Connpeer child,
+                  Handle childspace)
+{
+  u64   i, j;
+  isize error;
+  if (count > SYSCONN_COUNT || (count && !works) || handlekind(parent.pid) != HANDLE_PROCESS ||
+      !parent.image || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
+      parent.pid == child.pid || handlekind(childspace) != HANDLE_RESOURCE)
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    const Bootmap *map;
+    if (!separate(works[i], sizeof(*works[i]), works, count * sizeof(*works)))
+      return -ERR_INVALID;
+    error = forkmapcheck(works[i], parent);
+    if (error)
+      return error;
+    map = &works[i]->state.map;
+    for (j = 0; j < i; j++) {
+      const Bootmap *other = &works[j]->state.map;
+      if (!separate(works[i], sizeof(*works[i]), works[j], sizeof(*works[j])) ||
+          (map->mapped && other->mapped && map->address < other->address + other->bytes &&
+           other->address < map->address + map->bytes))
+        return -ERR_INVALID;
+    }
+  }
+  for (i = 0; i < count; i++)
+    if (works[i]->state.map.mapped) {
+      error = sysbootunmap(childspace, &works[i]->state.map);
+      if (error)
+        return error;
+    }
+  return 0;
+}
+isize
+sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childspace)
+{
+  return sysconnforkunmaps(&work, 1, parent, child, childspace);
 }
 isize
 sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, u64 token)

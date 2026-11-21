@@ -36,6 +36,7 @@ class ConnectionWorkTests(unittest.TestCase):
             'sysconnworkrelease':[C.POINTER(Work),C.POINTER(Cache),Lease],
             'sysconnworkclean':[C.POINTER(Work),C.POINTER(Cache)],
             'sysconnforkunmap':[C.POINTER(Work),Peer,Peer,C.c_int64],
+            'sysconnforkunmaps':[C.POINTER(C.POINTER(Work)),C.c_uint64,Peer,Peer,C.c_int64],
             'sysconnworkfork':[C.POINTER(Work),C.POINTER(Cache),Peer,Tag,C.c_uint64],
             'sysconnforkprepare':[C.POINTER(Work),C.POINTER(Cache),C.c_uint64,C.c_uint64,C.POINTER(Claim),C.POINTER(C.c_int64)],
             'sysbootrequest':[C.POINTER(support.Record),Claim,C.POINTER(C.c_uint64*4)],
@@ -93,6 +94,24 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual(self.lib.testfrees(),frees)
         self.assertEqual(bytes(self.work.state.map),bytes(C.sizeof(Mapping)))
         self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),0)
+
+    def test_batch_alias_removal_checks_every_record_before_unmapping(self):
+        self.adopt()
+        child=Peer(pid(3),20)
+        second=Work.from_buffer_copy(self.work)
+        works=(C.POINTER(Work)*2)(C.pointer(self.work),C.pointer(second))
+        before=bytes(self.work)
+        unmaps=self.lib.testmapping(1)
+        self.assertEqual(self.lib.sysconnforkunmaps(works,2,self.self,child,self.space),-1)
+        second.state.map.address+=65536
+        second.state.map.bytes-=4096
+        self.assertEqual(self.lib.sysconnforkunmaps(works,2,self.self,child,self.space),-6)
+        self.assertEqual((bytes(self.work),self.lib.testmapping(1)),(before,unmaps))
+        second.state.map.bytes+=4096
+        for expected in (unmaps+2,unmaps+2):
+            self.assertEqual(self.lib.sysconnforkunmaps(works,2,self.self,child,self.space),0)
+            self.assertEqual(self.lib.testmapping(1),expected)
+        self.assertEqual((self.work.state.memory,second.state.memory),(self.mem,self.mem))
 
     def test_child_work_rebind_requires_unmap_and_discards_only_local_parent_copies(self):
         self.adopt()

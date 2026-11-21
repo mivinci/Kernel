@@ -59,7 +59,7 @@ sysforkstatecheck(const Forkstate *state, Connpeer parent, Connpeer child,
   return 0;
 }
 isize
-sysforkstateapply(const Forkstate *state, Connpeer parent, Connpeer child,
+sysforkstateadmit(const Forkstate *state, Connpeer parent, Connpeer child,
                   const Fixlayer layers[FIX_LAYER_COUNT], const Filefork *files, u64 file_count,
                   const Fixconn *connections, u64 connection_count)
 {
@@ -109,6 +109,17 @@ sysforkstateapply(const Forkstate *state, Connpeer parent, Connpeer child,
       if (!separate(transport, regions[j]))
         return -ERR_INVALID;
   }
+  return 0;
+}
+isize
+sysforkstateapply(const Forkstate *state, Connpeer parent, Connpeer child,
+                  const Fixlayer layers[FIX_LAYER_COUNT], const Filefork *files, u64 file_count,
+                  const Fixconn *connections, u64 connection_count)
+{
+  isize error = sysforkstateadmit(state, parent, child, layers, files, file_count, connections,
+                                  connection_count);
+  if (error)
+    return error;
   /* Every fallible admission precedes writes. These three local operations
      recheck the same stable, disjoint inputs and cannot wait or invoke IPC. */
   error = sysctxfixwait(state->contexts, parent, child, layers);

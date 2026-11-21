@@ -392,7 +392,7 @@ forkrepair(const Forkret *result)
   if (!forkdone.child.pid) {
     Fdview reserved;
     REQUIRE(
-        sysforkrepair(&forkdone, &state, context_self, result, FIX_BASE_BYTES, NULL, 0) ==
+        sysforkrepair(&forkdone, &state, context_self, result, FIX_BASE_BYTES, NULL, 0, NULL) ==
                 -ERR_NOTSUP &&
             !forkdone.child.pid &&
             !sysforkstatecheck(&state, context_self, child, layers, NULL, 0, connections, count) &&
@@ -413,11 +413,11 @@ forkrepair(const Forkret *result)
   } else {
     Forkret wrong = *result;
     wrong.fix = (const void *) ((u64) result->fix + 8);
-    REQUIRE(sysforkrepair(&forkdone, &state, context_self, &wrong, FIX_BASE_BYTES, NULL, 0) ==
+    REQUIRE(sysforkrepair(&forkdone, &state, context_self, &wrong, FIX_BASE_BYTES, NULL, 0, NULL) ==
                 -ERR_STALE,
             244);
   }
-  REQUIRE(!sysforkrepair(&forkdone, &state, context_self, result, FIX_BASE_BYTES, NULL, 0) &&
+  REQUIRE(!sysforkrepair(&forkdone, &state, context_self, result, FIX_BASE_BYTES, NULL, 0, NULL) &&
               forkdirectory.self.pid == child.pid && forkfiles.self.pid == child.pid &&
               runtime_contexts.self.pid == child.pid && forkdirectory.self.image == child.image &&
               forkfiles.self.image == child.image && runtime_contexts.self.image == child.image &&
