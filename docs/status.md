@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage360（2026-11-22）：双架构 QEMU `virtiodev` 验证五次块请求经实际 IRQ 交付、清中断及完成环排空；保留镜像和资源验收。30 项 virtio 主机测试及格式通过；生产 blk/DMA 待接。
 - stage359（2026-11-22）：双架构 QEMU `virtiodev` 验证真实 WRITE/FLUSH/读回；宿主在退出前核对后端计数与两个完整镜像。30 项 virtio 主机测试及格式通过；生产 DMA 和 IRQ 待接。
 - stage358（2026-11-22）：双架构 QEMU `virtiodev` 通过真实 virtio 队列从可写盘和只读盘各读取一扇区，核对内容、完成状态、复位和资源回收。30 项 virtio 主机测试及格式通过；生产 DMA、IRQ、WRITE/FLUSH 待接。
 - stage357（2026-11-22）：virtio 现代 MMIO 公共层可配置 split ring、确认 DRIVER_OK 并通知已登记队列。30 项 virtio 主机测试及格式通过，双架构 QEMU `virtiodev` 配置回归通过；实际队列和 DMA 待验。

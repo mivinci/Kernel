@@ -5,6 +5,8 @@
 #include <proc.h>
 #include <abi/boot.h>
 #include <diag.h>
+#include <irq.h>
+#include <clock.h>
 extern const u8  vdev_image[], vdev_image_end[];
 extern const u64 vdev_trace_address;
 #define REQUIRE(c)                                                                                 \
@@ -18,12 +20,12 @@ extern const u64 vdev_trace_address;
   } while (0)
 static void
 load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengths[8],
-     Memid dma[VTEST_PAGES])
+     const u32 irqs[8], Memid dma[VTEST_PAGES])
 {
   struct
   {
     Boot     header;
-    Resentry resources[3];
+    Resentry resources[11];
   } packet;
   u64      trace[VTEST_TRACE];
   u32      i;
@@ -34,7 +36,7 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = sizeof(packet);
-  packet.header.resource_count = 3;
+  packet.header.resource_count = 3 + count;
   packet.header.resources_off = sizeof(Boot);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
@@ -44,6 +46,10 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
   packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
   packet.resources[2].tag = 257;
   packet.resources[2].handle = memory;
+  for (i = 0; i < count; i++) {
+    packet.resources[3 + i].tag = VTEST_IRQ_TAG + i;
+    REQUIRE(!procirqinstall(pid, irqs[i], IRQ_BIT_MIN + i, &packet.resources[3 + i].handle));
+  }
   testload(pid, vdev_image, (u64) (vdev_image_end - vdev_image), &packet, sizeof(packet));
   REQUIRE(!procinfo(pid, &process));
   for (i = 0; i < VTEST_TRACE; i++)
@@ -77,11 +83,14 @@ vdevtest(const Dtinfo *info)
   Handle     pid, memory;
   Memid      dma[VTEST_PAGES];
   u64        page, members, offsets[8], lengths[8], trace[VTEST_TRACE];
+  u64        started, current;
+  u32        irqs[8], interrupts = 0;
   u32 i, j, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
   u32 rng = 0, writable = 0, readonly = 0, reads = 0, writes = 0, flushes = 0;
   u64 rwsectors = 0, rosectors = 0;
   int error;
   pgstat(&before);
+  REQUIRE(!proctimerstart());
   REQUIRE(!setcreate(4096, 8192, 8, &set));
   for (i = 0; i < info->ndev; i++) {
     if (info->dev[i].kind != DT_VIRTIO)
@@ -100,15 +109,21 @@ vdevtest(const Dtinfo *info)
         REQUIRE(count < 8);
         members |= (u64) 1 << j;
         offsets[count] = info->dev[j].reg[0].base - page;
-        lengths[count++] = info->dev[j].reg[0].size;
+        lengths[count] = info->dev[j].reg[0].size;
+        REQUIRE(info->dev[j].nirq == 1);
+        irqs[count++] = info->dev[j].irq[0].number;
       }
     REQUIRE(count && !devgroup(page, members, &id));
     REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pid) && !procinfo(pid, &process));
     REQUIRE(!procmmioinstallgroup(pid, page, members, 3, &memory));
-    load(pid, memory, count, offsets, lengths, dma);
-    REQUIRE(!procpublish(pid));
+    load(pid, memory, count, offsets, lengths, irqs, dma);
+    REQUIRE(!procpublish(pid) && !clockmono(&started));
     do {
-      REQUIRE(!procrunone() && !lifestat(process.life, &life));
+      error = procrunone();
+      REQUIRE((!error || error == -ERR_WOULD_BLOCK) && !lifestat(process.life, &life));
+      REQUIRE(!clockmono(&current) && current - started < UINT64_C(4000000000));
+      if (error == -ERR_WOULD_BLOCK)
+        REQUIRE(procidle() >= 0);
     } while (life.state != LIFE_ENDED);
     REQUIRE(!spaceread(process.space, vdev_trace_address, trace, sizeof(trace)));
     if (trace[31]) {
@@ -121,7 +136,9 @@ vdevtest(const Dtinfo *info)
     REQUIRE(trace[0] == 99 && !trace[31] && trace[12] == count && trace[13] + trace[14] == count &&
             trace[14] == trace[17] + trace[18] + trace[19] && trace[15] == trace[14] &&
             trace[16] == 2 * trace[14] && trace[22] == 2 * trace[18] + trace[19] &&
-            trace[2] == trace[18] && trace[3] == trace[18]);
+            trace[2] == trace[18] && trace[3] == trace[18] &&
+            trace[38] == trace[2] + trace[3] + trace[22]);
+    interrupts += (u32) trace[38];
     probes += (u32) trace[12];
     empty += (u32) trace[13];
     found += (u32) trace[14];
@@ -149,7 +166,7 @@ vdevtest(const Dtinfo *info)
   REQUIRE(!setstat(set, &account) && !account.charged && !account.instances && !setclose(set));
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
-          !acctcheck() && !lifecheck() && !groupcheck());
+          !acctcheck() && !lifecheck() && !groupcheck() && !irqcheck());
   putstr("VIRTIOCHECK pages=");
   puthex(pages);
   putstr(" probes=");
@@ -174,6 +191,8 @@ vdevtest(const Dtinfo *info)
   puthex(writes);
   putstr(" flushes=");
   puthex(flushes);
+  putstr(" interrupts=");
+  puthex(interrupts);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

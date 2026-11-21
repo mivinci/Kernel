@@ -3,7 +3,8 @@
 #include <types.h>
 #define VTEST_DMA_BASE 0x2100000UL
 #define VTEST_PAGES    6
-#define VTEST_TRACE    (32 + VTEST_PAGES)
+#define VTEST_IRQ_TAG  258
+#define VTEST_TRACE    39
 int  virtioread(void *context, u32 offset, u32 *out);
 int  virtiowrite(void *context, u32 offset, u32 value);
 void virtiofence(void *context, u32 phase);

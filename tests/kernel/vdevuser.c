@@ -2,6 +2,7 @@
 #include <sys/channel.h>
 #include <abi/time.h>
 #include <abi/syscall.h>
+#include <abi/irq.h>
 #include "private/syscall.h"
 #include "private/start.h"
 #include "private/virtio/block.h"
@@ -51,16 +52,18 @@ notify(void *context)
   return vnotify(context, 0);
 }
 static void
-transfer(Vdev *device, Vring *ring, u64 capacity, u32 type, u64 sector, u64 cookie, u8 seed)
+transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, u64 capacity, u32 type,
+         u64 sector, u64 cookie, u8 seed)
 {
   Vbuf         buffers[3];
   Vdone        done[VQ_BATCH];
+  Ipcmsg       event;
   Vblkhead    *header = (void *) (VTEST_DMA_BASE + 3 * PAGE_SIZE);
   volatile u8 *data = (void *) (VTEST_DMA_BASE + 4 * PAGE_SIZE);
   volatile u8 *status = (void *) (VTEST_DMA_BASE + 5 * PAGE_SIZE);
   u32          bytes = type == VBLK_FLUSH ? 0 : VBLK_SECTOR;
-  u32          count, more, published, i;
-  u64          start;
+  u32          count, more, published, i, causes;
+  u64          generation, started;
   int          size;
 
   size = vblkprepare(type, sector, capacity, vdev_trace[35], bytes ? vdev_trace[36] : 0, bytes,
@@ -70,16 +73,27 @@ transfer(Vdev *device, Vring *ring, u64 capacity, u32 type, u64 sector, u64 cook
   for (i = 0; i < bytes; i++)
     data[i] = type == VBLK_WRITE ? (u8) (seed + i * 37) : 0;
   virtiofence(device, VR_RELEASE);
+  started = now();
+  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+              !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
+          179);
   REQUIRE(!vrsubmit(ring, buffers, (u32) size, cookie, &published) && published, 174);
-  start = now();
-  do {
-    REQUIRE(!vrpoll(ring, 1, done, &count, &more), 175);
-    REQUIRE(count || now() - start < VDEV_RESET_NS, 176);
-  } while (!count);
+  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
+              event.words[0] == irqevent,
+          176);
+  REQUIRE(!__sys_alarmcancel(&generation), 180);
+  /* The binding masks the line on delivery. Clear the device cause before
+     consuming used entries; the next request rearms only after this drains. */
+  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && causes == 1 &&
+              !virtiowrite(device->ops.context, 0x64, causes) &&
+              !virtioread(device->ops.context, 0x60, &causes) && !causes,
+          181);
+  REQUIRE(!vrpoll(ring, 1, done, &count, &more), 175);
   virtiofence(device, VR_ACQUIRE);
   REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE &&
               vblkresult(type, bytes, done[0].length, *status) == VBLK_OK,
           177);
+  vdev_trace[38]++;
   if (type == VBLK_READ) {
     for (i = 0; i < bytes; i++)
       REQUIRE(data[i] == (u8) (seed + i * 37), 178);
@@ -90,12 +104,15 @@ transfer(Vdev *device, Vring *ring, u64 capacity, u32 type, u64 sector, u64 cook
     vdev_trace[3]++;
 }
 static void
-testblock(Vdev *device, const Vblkconfig *config)
+testblock(Vdev *device, const Vblkconfig *config, u32 member)
 {
   Vring    ring;
   Vringops ops;
   u8      *desc = (void *) VTEST_DMA_BASE;
+  Handle   binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
+  u64      irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
 
+  REQUIRE(binding > 0, 182);
   ops.context = device;
   ops.sync = coherentsync;
   ops.fence = virtiofence;
@@ -103,11 +120,12 @@ testblock(Vdev *device, const Vblkconfig *config)
   REQUIRE(!vrinit(&ring, 1, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
   REQUIRE(!vqueue(device, 0, vdev_trace[32], vdev_trace[33], vdev_trace[34]), 171);
   REQUIRE(!vstart(device), 172);
-  transfer(device, &ring, config->sectors, VBLK_READ, 1, 1, config->readonly ? 0xa7 : 0x51);
+  transfer(device, &ring, binding, irqevent, config->sectors, VBLK_READ, 1, 1,
+           config->readonly ? 0xa7 : 0x51);
   if (!config->readonly) {
-    transfer(device, &ring, config->sectors, VBLK_WRITE, 2, 2, 0x37);
-    transfer(device, &ring, config->sectors, VBLK_FLUSH, 0, 3, 0);
-    transfer(device, &ring, config->sectors, VBLK_READ, 2, 4, 0x37);
+    transfer(device, &ring, binding, irqevent, config->sectors, VBLK_WRITE, 2, 2, 0x37);
+    transfer(device, &ring, binding, irqevent, config->sectors, VBLK_FLUSH, 0, 3, 0);
+    transfer(device, &ring, binding, irqevent, config->sectors, VBLK_READ, 2, 4, 0x37);
   }
 }
 int
@@ -169,7 +187,7 @@ main(int argc, char **argv)
     REQUIRE(!virtioread(&base, 0x70, &status) && status == 11, 158);
     vdev_trace[15]++;
     if (device.device == VBLK_DEVICE)
-      testblock(&device, &config);
+      testblock(&device, &config, i);
     reset(&device);
     REQUIRE(!virtioread(&base, 0x70, &status) && !status, 159);
   }

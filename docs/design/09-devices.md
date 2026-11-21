@@ -99,6 +99,8 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 ## 执行与验收
 
+stage360：RV64/ARM64 QEMU `virtiodev` 按设备树把各块设备的 IRQ 绑定到测试载荷。五次读写及 FLUSH 各等待精确的内核 IRQ 事件，核对并清除 MMIO used-ring 中断原因后才读取完成环；下一笔在上一笔排空后重新启用绑定。定时器只为超时兜底，不能作为完成证据。保留镜像与 QMP 计数检查、复位和回收验收；30 项 virtio 主机测试与格式通过。仅测试载荷接线，尚无生产 blk 事件循环或 DMA 授权。
+
 stage359：RV64/ARM64 QEMU `virtiodev` 在可写盘上依次完成 WRITE、FLUSH、READ，核对各次独立 cookie、完成长度和状态，再逐字节验证读回的 512 字节。宿主在 QEMU 退出前通过 QMP 确认块后端写入 512 字节、处理一次 FLUSH，并核对两个镜像的全部内容，确认只有可写盘的目标扇区改变。保留只读盘读取、复位及资源回收验收；30 项 virtio 主机测试和格式通过。本点验证 QEMU 块后端，不证明真实设备掉电持久性；仍用测试载荷的固定缓冲和轮询。
 
 stage358：RV64/ARM64 QEMU `virtiodev` 为可写和只读盘各配置一条真实 split ring，通过 DRIVER_OK 和 MMIO 门铃提交 READ，核对原 cookie、513 字节完成长度（含状态）、状态 OK 及各盘独立的完整 512 字节图案，再复位回收。仅测试载荷使用可信加载器提供的 QEMU 一致 RAM 设备地址；加载器保留六页的管理引用直到客体确认复位，失败时停机并保留这些页。两架构的设备引用及页账回归基线，30 项 virtio 主机测试和格式通过。尚无生产 DMA 授权、IRQ 交付、WRITE/FLUSH 或实板验收。
