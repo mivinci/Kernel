@@ -110,13 +110,13 @@ testpins(Setid set, const Dtinfo *info, u32 device)
 {
   Dmaid  domain, other;
   Acctid payer, next;
-  Memid  page, oldest, ordinary;
+  Memid  page, oldest, ordinary, cursor = {0};
   Mem    held;
   Set    account;
   Pglim  limits, occupied;
   u64    address, base, second, third;
   u8     sample[2] = {0xa5, 0x5a};
-  u32    i, peer;
+  u32    i, peer, batches;
   int    error;
   limits.minpa = info->ram[0].base;
   limits.maxpa_exclusive = limits.minpa + info->ram[0].size;
@@ -148,6 +148,10 @@ testpins(Setid set, const Dtinfo *info, u32 device)
           *(const u8 *) kaddr(second - 1) == sample[0] && *(const u8 *) kaddr(second) == sample[1]);
   REQUIRE(!dmaaddress(domain, oldest, PAGE_SIZE - 1, 2, &address) &&
           address == base + PAGE_SIZE - 1);
+  cursor = oldest;
+  REQUIRE(dmaafter(other, &cursor) == -ERR_DENIED && cursor.generation == oldest.generation &&
+          cursor.index == oldest.index);
+  cursor.generation = cursor.index = 0;
   testsync(base);
   REQUIRE(dmaaddress(other, oldest, 0, 1, &address) == -ERR_DENIED &&
           dmasync(other, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_DENIED &&
@@ -180,8 +184,18 @@ testpins(Setid set, const Dtinfo *info, u32 device)
           !dmasync(domain, oldest, PAGE_SIZE - 1, 1, HDMA_AFTER, HDMA_DEVICE_WRITE));
   /* No DMA is submitted in this census. The real I/O cases below separately
      verify device reset before releasing their test buffers. */
+  batches = 0;
+  do {
+    error = dmaafter(domain, &cursor);
+    batches++;
+    REQUIRE(error >= 0 && batches <= DMA_MAX_PAGES / 32 && !setstat(set, &account) &&
+            account.charged == DMA_MAX_PAGES);
+  } while (error);
+  REQUIRE(batches == DMA_MAX_PAGES / 32 && !cursor.generation && !memstat(oldest, &held) &&
+          held.refs == 1);
   REQUIRE(dmaend(domain) == 1 && dmaalloc(domain, PAGE_SIZE, NULL, &page) == -ERR_STALE &&
           dmaopen(device, next, &limits, 1, &other) == -ERR_BUSY && !memstat(oldest, &held) &&
+          dmaafter(domain, &cursor) == -ERR_STALE &&
           dmasync(domain, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_STALE);
   do {
     error = dmaend(domain);
@@ -286,13 +300,13 @@ vdevtest(const Dtinfo *info)
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
     for (j = 0; j < count; j++) {
-      Mem held;
+      Mem   held;
+      Memid cursor = {0};
       for (k = 0; k < VTEST_PAGES; k++) {
         REQUIRE(!memstat(dma[j].pages[k], &held) && held.kind == MEM_DMA && held.refs == 1 &&
                 !held.managers);
-        REQUIRE(!dmasync(dma[j].domain, dma[j].pages[k], 0, PAGE_SIZE, HDMA_AFTER,
-                         HDMA_DEVICE_READ | HDMA_DEVICE_WRITE));
       }
+      REQUIRE(!dmaafter(dma[j].domain, &cursor) && !cursor.generation);
       REQUIRE(!dmaend(dma[j].domain));
       for (k = 0; k < VTEST_PAGES; k++)
         REQUIRE(memstat(dma[j].pages[k], &held) == MEM_BAD);

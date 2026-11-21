@@ -361,15 +361,21 @@ dmaalloc(Dmaid id, u64 bytes, const Pglim *request, Memid *out)
   return 0;
 }
 
+static Mem *
+dmapin(Dmaid id, Memid pin)
+{
+  Mem *m = find(pin);
+  return m && m->kind == MEM_DMA && dmaowners[pin.index] == id.device + 1 ? m : NULL;
+}
+
 static int
 dmawindow(Dmaid id, Memid memory, u64 offset, u64 bytes, u32 recovery, u64 *base)
 {
   Dmadomain *d = dmadomain(id);
-  Mem       *m = find(memory);
+  Mem       *m = dmapin(id, memory);
   if (!d || d->closing)
     return -ERR_STALE;
-  if (!m || m->kind != MEM_DMA || dmaowners[memory.index] != id.device + 1 ||
-      (!recovery && !m->managers))
+  if (!m || (!recovery && !m->managers))
     return -ERR_DENIED;
   if (!bytes || offset >= m->bytes || bytes > m->bytes - offset)
     return -ERR_INVALID;
@@ -408,6 +414,38 @@ dmasync(Dmaid id, Memid memory, u64 offset, u64 bytes, u32 phase, u32 direction)
 }
 
 int
+dmaafter(Dmaid id, Memid *cursor)
+{
+  Dmadomain *d = dmadomain(id);
+  Memid      pin;
+  u32        count = 0;
+  if (!d || d->closing)
+    return -ERR_STALE;
+  if (!cursor || cursor->reserved || (!cursor->generation && cursor->index))
+    return -ERR_INVALID;
+  pin = cursor->generation ? *cursor : d->first;
+  if (pin.generation && !dmapin(id, pin))
+    return -ERR_DENIED;
+  while (pin.generation) {
+    Mem *m = dmapin(id, pin);
+    u32  pages;
+    int  error;
+    if (!m)
+      panic("DMA domain pin");
+    pages = 1U << blocks[m->head].order;
+    if (pages > DMA_END_PAGES - count)
+      break;
+    error = dmasync(id, pin, 0, m->bytes, HDMA_AFTER, HDMA_DEVICE_READ | HDMA_DEVICE_WRITE);
+    if (error)
+      return error;
+    pin = m->backing;
+    count += pages;
+  }
+  *cursor = pin;
+  return pin.generation ? 1 : 0;
+}
+
+int
 dmaend(Dmaid id)
 {
   Dmadomain *d = dmadomain(id);
@@ -417,9 +455,9 @@ dmaend(Dmaid id)
   d->closing = 1;
   for (count = 0; d->pages;) {
     Memid pin = d->first;
-    Mem  *m = find(pin);
+    Mem  *m = dmapin(id, pin);
     u32   pages;
-    if (!m || m->kind != MEM_DMA || dmaowners[pin.index] != id.device + 1)
+    if (!m)
       panic("DMA domain pin");
     pages = 1U << blocks[m->head].order;
     if (pages > DMA_END_PAGES - count)
