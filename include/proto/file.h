@@ -21,6 +21,9 @@
 #define FS_CLOSE            6
 #define FS_DUPREF           7
 #define FS_SEEK             8
+#define FS_SEEK_SET         0
+#define FS_SEEK_CUR         1
+#define FS_SEEK_END         2
 #define FS_STAT             9
 #define FS_PATH             10
 #define FS_POLL_QUERY       11

@@ -147,6 +147,12 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     else
       error = pipefiledup(dispatch->table, call->source, call->image, key, &reply.words[2]);
     break;
+  case FS_SEEK:
+    error = sysfileargs(opcode, &slot);
+    if (!error)
+      error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
+    reply.words[0] = (u64) (error ? fileerror(error) : -ESPIPE);
+    return respond(link, call->request, &reply);
   case FS_READ:
   case FS_WRITE:
     error = sysfileargs(opcode, &slot);

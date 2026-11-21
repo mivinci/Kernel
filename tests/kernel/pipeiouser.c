@@ -393,6 +393,39 @@ transfer(Fileimage *image, Connwork *work, int fd, u64 opcode, u8 *bytes, u64 co
 }
 
 static void
+seekpipes(Fileimage *image, Connwork *work, int fd)
+{
+  Conncache  *cache = sysfileimagecache(image);
+  Fdview      view;
+  Fileref     ref;
+  Filelease   lease;
+  Ipcmsg      result;
+  Fileslot    slot = {0};
+  Msg         request = {{FS_SEEK, work->state.map.connid, 0, 0}};
+  u32         i;
+  const isize expected[] = {-ESPIPE, -EINVAL, -EINVAL, -ESTALE};
+  CHECK(!sysfdobserve(&image->fds, fd, &view) &&
+        !sysfilerefview(&image->files, work->state.self, view.file, &ref));
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.args[0] = (u64) -1;
+  for (i = 0; i < ARRAY_SIZE(expected); i++) {
+    CHECK(!sysconnworkreserve(work, cache, SYSFILE_MAIN, 1, &lease));
+    request.words[2] = slot.seq = lease.seq;
+    request.words[3] = lease.slot;
+    slot.object = i == 3 ? UINT64_MAX : ref.session;
+    slot.args[1] = i == 1 ? FS_SEEK_END + 1 : FS_SEEK_CUR;
+    slot.payload_bytes = i == 2 ? 1 : 0;
+    CHECK(!__sys_copy(
+              (void *) (work->state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+              &slot, sizeof(slot)) &&
+          !ipc_call(work->state.call, &request, 0, &result) &&
+          (isize) result.words[0] == expected[i] && result.words[1] == lease.seq &&
+          !result.words[2] && !result.words[3] && !sysconnworkrelease(work, cache, lease));
+  }
+}
+
+static void
 interruptclient(void)
 {
   Fileimage            *image;
@@ -503,8 +536,10 @@ interruptclient(void)
   transfer(image, work, fds[0], FS_READ, data, sizeof(data), 2, 0);
   CHECK(data[0] == 'p' && data[1] == 'q' && data[2] == 0xa5);
   CHECK(write(fds[1], "p", 1) == 1 && pread(fds[0], data, 1, -1) == -1 && errno == EINVAL &&
-        pread(fds[0], data + 2, 1, TEST_OFFSET) == -1 && errno == ESPIPE && data[2] == 0xa5 &&
-        read(fds[0], data, 1) == 1 && data[0] == 'p');
+        pread(fds[0], data + 2, 1, TEST_OFFSET) == -1 && errno == ESPIPE && data[2] == 0xa5);
+  seekpipes(image, work, fds[0]);
+  seekpipes(image, work, fds[1]);
+  CHECK(read(fds[0], data, 1) == 1 && data[0] == 'p');
   CHECK(!sysfdobserve(&image->fds, fds[0], &original) && !fcntl(fds[0], F_SETFD, FD_CLOEXEC) &&
         fcntl(fds[0], F_GETFD) == FD_CLOEXEC && fcntl(fds[0], F_DUPFD, 4) == 4 &&
         fcntl(4, F_DUPFD, 4) == 5 && !fcntl(4, F_GETFD) && !fcntl(4, F_SETFD, FD_CLOEXEC) &&

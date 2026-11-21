@@ -140,6 +140,13 @@ ownedfile(Pipetable *table, Handle pid, u64 image, u64 session, u32 *end)
 }
 
 isize
+pipefilecheck(Pipetable *table, Handle pid, u64 image, u64 session)
+{
+  u32 end;
+  return ownedfile(table, pid, image, session, &end) ? 0 : -ERR_STALE;
+}
+
+isize
 pipefileready(Pipetable *table, Handle pid, u64 image, u64 session, Pipeready *out)
 {
   u32       end;

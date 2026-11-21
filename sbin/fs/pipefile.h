@@ -43,6 +43,7 @@ isize pipefileretire(Pipetable *table, Handle pid, u64 image);
 /* An instantaneous readiness snapshot of the caller's authorized endpoint.
    No durable pin, subscription or reservation is created. */
 isize pipefileready(Pipetable *table, Handle pid, u64 image, u64 session, Pipeready *out);
+isize pipefilecheck(Pipetable *table, Handle pid, u64 image, u64 session);
 /* An admitted I/O holds one endpoint reference through reply/drain, even if
    the client's last business reference disappears meanwhile. */
 isize pipefilepin(Pipetable *table, Handle pid, u64 image, u64 session, u32 end, Pipefile **out);

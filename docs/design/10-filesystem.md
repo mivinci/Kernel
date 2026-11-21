@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage425：`SEEK` 的 `whence` 固定为 SET=0、CUR=1、END=2。服务校验无 payload、其余参数清零及调用者会话，管道两端对有效请求回复 ESPIPE。ARM64/RV64 QEMU `pipeio` 验证无效 `whence` 和多余 payload 返回 EINVAL、未知会话返回 ESTALE、原请求与槽可复用，且 SEEK 不影响已有管道数据。10 项文件页主机测试及格式通过；公开 `lseek` 和普通文件的偏移更新仍待接。
+
 stage424：公开 `pread` / `pwrite` 通过 READ/WRITE 传递 `FS_IO_POSITIONAL` 和 64 位偏移，负偏移在提交前返回 EINVAL。ARM64/RV64 QEMU `pipeio` 验证无进展的 `pwrite` 被信号打断后用同一偏移和定位标志重启，两种定位操作在管道上返回 ESPIPE，缓冲数据不变。格式检查通过；可定位后端及共享偏移验收仍待接。
 
 stage423：公开 `fcntl` 接入本地 `F_DUPFD`、`F_GETFD`、`F_SETFD`，服务端 File 与共享状态不变。ARM64/RV64 QEMU `pipeio` 验证指定下限、跳过占用槽、表满、关闭后的 EBADF，以及别名独立设置和清除 CLOEXEC；20 项 fd 相关主机测试和格式通过。F_GETFL/F_SETFL 与完整 exec 继承仍待接。
