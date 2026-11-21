@@ -70,6 +70,11 @@ isize ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxl
    one byte and restart the deadline only if that byte was retained. */
 isize ttyserialtimedstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, Ttywait *wait,
                          u64 now, u64 *next, Ttyserialresult *out);
+/* Advance a deferred interbyte READ. Settle a ready/cancelled request before
+   consuming RX, otherwise process at most one byte. WOULD_BLOCK preserves
+   the request and returns the next deadline and any ring/signal effects. */
+isize ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
+                       Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out);
 /* Run a step and publish its hints on the exact serial peer's NOTIFY handle. */
 isize ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
                     Ttyserialresult *out);

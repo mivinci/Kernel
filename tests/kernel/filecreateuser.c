@@ -379,6 +379,9 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
   if (cancel == 2)
     CHECK(!result.words[0] && !result.words[2] && !result.words[3] && page[0] == 0xa5 &&
           page[1] == 0xa5);
+  else if (cancel == 3)
+    CHECK(!result.words[0] && result.words[2] == 1 && result.words[3] == 1 && page[0] == 'a' &&
+          page[1] == 0xa5);
   else if (cancel)
     CHECK((isize) result.words[0] == -EINTR && !result.words[2] && !result.words[3] &&
           page[0] == (opcode == FS_WRITE ? 'x' : 0xa5) &&
@@ -438,6 +441,7 @@ client(const Bootview *boot)
   ttyiocall(first, FS_WRITE, 1);
   ttyiocall(first, FS_WRITE, 0);
   ttyiocall(first, FS_READ, 2);
+  ttyiocall(first, FS_READ, 3);
   CHECK(first && !files[1] && !source && !sysfdreserve(&fds, 0, &fd) &&
         !sysfdpublish(&fds, fd, first, 0) && !sysfilerefpin(&pool, work.state.self, first));
   key = begin(FS_DUPREF, 0, first);
@@ -757,6 +761,30 @@ server(const Bootview *boot, u32 recover)
         CHECK(ttyfileresume(&ttydeferred, NULL, &ttyline, 0, &watch->active, ttynow, &generation) ==
                   -ERR_WOULD_BLOCK &&
               generation == ttyalarm && !__sys_alarmset(ttyalarm, &generation));
+        ttyseen++;
+        continue;
+      }
+      if (ttyseen == 6) {
+        Termarg raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
+        raw.cc[TTY_VMIN] = 2;
+        raw.cc[TTY_VTIME] = 1;
+        CHECK(opcode == FS_READ && !sysfilenow(&ttynow) &&
+              !ttywaitinit(&ttywait, &raw, (u32) descriptor.args[1], 0, ttyline.ready, ttynow) &&
+              !ttywait.deadline &&
+              ttyfilereadwait(&ttyline, &watch->active, &input, &descriptor, (volatile u8 *) data,
+                              &ttywait, ttynow, &ttyalarm) == -ERR_WOULD_BLOCK &&
+              !ttyalarm &&
+              !ttyfiledefer(&ttydeferred, &watch->active, &input, &descriptor, (volatile u8 *) data,
+                            &ttywait) &&
+              serialwrite(&ttyrx, 1, "ab", 2) == 2 &&
+              ttyfileinterbyte(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttynow,
+                               &ttyalarm, &ttyresult) == -ERR_WOULD_BLOCK &&
+              ttyalarm == ttynow + UINT64_C(100000000) && ttyline.ready == 1 &&
+              ttyresult.hints == SERIAL_RX_ROOM &&
+              !ttyfileinterbyte(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttyalarm,
+                                &ttyalarm, &ttyresult) &&
+              !ttyalarm && !ttydeferred.call.request && !ttyresult.hints && !ttyline.ready &&
+              serialread(&ttyrx, 1, output, 1) == 1 && output[0] == 'b');
         ttyseen++;
         continue;
       }

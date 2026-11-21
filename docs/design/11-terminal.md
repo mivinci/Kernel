@@ -885,4 +885,6 @@ stage302：阻塞 TTY 读写可用 `ttyfiledefer`/`ttyfileresume` 保留原 REQU
 
 stage303：同一待处理记录也保存阻塞 READ 的计时快照。重查返回原期限，TIMER 唤醒后沿原 REQUEST 回复；调用方之后改写临时快照不影响待处理请求。RV64、ARM64 QEMU `runtime` 验证 VMIN=0/VTIME>0 的真实闹钟到期、零字节回复和记录释放；31 项 TTY 主机测试和格式通过。生产连接分派仍待接入。
 
+stage304：`ttyfileinterbyte` 将串口单字节步进与待处理 READ 的期限接到一起。先处理已就绪、取消或到期的原请求，其余情况最多从 RX 取一个字节，只有保留的输入才续期。RV64、ARM64 QEMU `runtime` 用真实 IPC 和受控时间验证首字节启动期限、到期只返回旧数据而下一字节留在环中；31 项主机测试及格式通过。生产分派仍待接入。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

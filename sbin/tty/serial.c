@@ -297,6 +297,26 @@ ttyserialtimedstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, Ttywait 
 }
 
 isize
+ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
+                 Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out)
+{
+  isize status;
+  if (!pending || !pending->call.request || !pending->timed || pending->wait.canonical ||
+      !pending->wait.minimum || !pending->wait.time || !next || !out)
+    return -ERR_INVALID;
+  *out = (Ttyserialresult){0};
+  status = ttyfileresume(pending, io, input, 0, active, now, next);
+  if (status != -ERR_WOULD_BLOCK)
+    return status;
+  status = ttyserialtimedstep(io, input, mode, &pending->wait, now, next, out);
+  if (status < 0)
+    return status;
+  if (!status || out->signal)
+    return -ERR_WOULD_BLOCK;
+  return ttyfileresume(pending, io, input, 0, active, now, next);
+}
+
+isize
 ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
               Ttyserialresult *out)
 {
