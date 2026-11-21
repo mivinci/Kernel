@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 Read = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint32))
 Write = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_uint32, C.c_uint32)
 VERSION1 = 1 << 32
+BLK_SIZE = 1 << 6
 TIMEOUT = 3000000000
 
 
@@ -22,7 +23,8 @@ class Vdev(C.Structure):
 
 
 class Blockconfig(C.Structure):
-    _fields_ = [('sectors', C.c_uint64), ('readonly', C.c_uint32), ('flush', C.c_uint32)]
+    _fields_ = [('sectors', C.c_uint64), ('readonly', C.c_uint32), ('flush', C.c_uint32),
+                ('blocksize', C.c_uint32)]
 
 
 class Blockbuf(C.Structure):
@@ -60,6 +62,7 @@ class Mmio:
         self.mutated_error = False
         self.generation = 0
         self.change_capacity = False
+        self.blocksize = 4096
         self.queue_sel = 0
         self.queue_max = {0: 256, 1: 128}
         self.queue_regs = {}
@@ -82,7 +85,7 @@ class Mmio:
                   0x10: (self.features >> (32 * self.feature_sel)) & 0xffffffff, 0x70: self.status,
                   0x34: self.queue_max.get(self.queue_sel, 0),
                   0x44: self.queue_regs.get((self.queue_sel, 0x44), 0), 0x60: self.interrupt,
-                  0xfc: self.generation, 0x100: 64, 0x104: 1}
+                  0xfc: self.generation, 0x100: 64, 0x104: 1, 0x114: self.blocksize}
         if offset not in values:
             return -1
         output[0] = values[offset]
@@ -175,7 +178,7 @@ class VirtioDeviceTests(unittest.TestCase):
 
     def test_block_sync_failure_retains_exact_windows_until_reclaimed(self):
         request = Blockrequest()
-        config = Blockconfig(16, 0, 1)
+        config = Blockconfig(16, 0, 1, 4096)
         header, status = (C.c_uint64 * 2)(), C.c_uint8()
         # BEFORE fails before any submission to the uninitialized ring.
         ring = (C.c_uint64 * 512)()
@@ -189,13 +192,18 @@ class VirtioDeviceTests(unittest.TestCase):
                 return -2
             return 0
 
-        args = (C.byref(request), C.byref(ring), C.byref(config), 0, 1, 2, 0x1000, 0x2000, 512,
-                0x3000, C.byref(header), C.byref(status), sync, None)
+        args = [C.byref(request), C.byref(ring), C.byref(config), 0, 1, 2, 0x1000, 0x2000, 4096,
+                0x4000, C.byref(header), C.byref(status), sync, None]
+        self.assertEqual(self.lib.vblksubmit(*args), -1)
+        args[4], args[8] = 8, 512
+        self.assertEqual(self.lib.vblksubmit(*args), -1)
+        self.assertEqual(seen, [])
+        args[8] = 4096
         self.assertEqual(self.lib.vblksubmit(*args), -2)
         self.assertEqual(self.lib.vblksubmit(*args), -7)
         self.assertEqual(self.lib.vblkreclaim(C.byref(request)), 0)
-        self.assertEqual(seen, [(0, 0x1000, 16, 0), (0, 0x2000, 512, 1),
-                                (1, 0x1000, 16, 0), (1, 0x2000, 512, 1)])
+        self.assertEqual(seen, [(0, 0x1000, 16, 0), (0, 0x2000, 4096, 1),
+                                (1, 0x1000, 16, 0), (1, 0x2000, 4096, 1)])
 
     def reset(self, now=100):
         return self.lib.vresetbegin(C.byref(self.device), now)
@@ -325,21 +333,27 @@ class VirtioDeviceTests(unittest.TestCase):
         self.assertEqual(self.notify(0), -6)
 
     def test_block_capacity_snapshot_and_readonly_policy(self):
-        for features, readonly, flush in ((0, 1, 0), (1 << 9, 0, 1), ((1 << 5) | (1 << 9), 1, 1)):
+        for features, readonly, flush, size in ((0, 1, 0, 512), (BLK_SIZE | (1 << 9), 0, 1, 4096),
+                                                 ((1 << 5) | (1 << 9), 1, 1, 512)):
             with self.subTest(features=features):
                 self.setUp()
                 self.mmio.features = VERSION1 | features
                 self.assertEqual(self.probe(), 0)
                 self.assertEqual(self.reset(), 0)
                 self.assertEqual(self.lib.vblkfeatures(C.byref(self.device)), 0)
-                config = Blockconfig(7, 8, 9)
+                config = Blockconfig(7, 8, 9, 10)
                 self.mmio.change_capacity = True
                 self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), -11)
-                self.assertEqual((config.sectors, config.readonly, config.flush), (7, 8, 9))
+                self.assertEqual((config.sectors, config.readonly, config.flush, config.blocksize),
+                                 (7, 8, 9, 10))
                 self.mmio.change_capacity = False
                 self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), 0)
-                self.assertEqual((config.sectors, config.readonly, config.flush),
-                                 ((1 << 32) + 64, readonly, flush))
+                self.assertEqual((config.sectors, config.readonly, config.flush, config.blocksize),
+                                 ((1 << 32) + 64, readonly, flush, size))
+                if features & BLK_SIZE:
+                    self.mmio.blocksize = 1536
+                    self.assertEqual(self.lib.vblkconfig(C.byref(self.device), C.byref(config)), -6)
+                    self.assertEqual(config.blocksize, size)
 
     def test_empty_slot_stops_all_access_after_device_id(self):
         self.mmio.device = 0

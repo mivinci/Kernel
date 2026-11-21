@@ -13,6 +13,7 @@
 #define VBLK_SECTOR      512
 #define VBLK_DEVICE      2
 #define VBLK_F_RO        (UINT64_C(1) << 5)
+#define VBLK_F_BLK_SIZE  (UINT64_C(1) << 6)
 #define VBLK_F_FLUSH     (UINT64_C(1) << 9)
 
 typedef struct Vblkhead   Vblkhead;
@@ -28,7 +29,7 @@ STATIC_ASSERT(sizeof(Vblkhead) == 16 && offsetof(Vblkhead, sector) == 8, virtio_
 struct Vblkconfig
 {
   u64 sectors;
-  u32 readonly, flush;
+  u32 readonly, flush, blocksize;
 };
 struct Vblkreq
 {
@@ -41,7 +42,7 @@ struct Vblkreq
 };
 
 int vblkfeatures(Vdev *device);
-/* Take one generation-checked capacity snapshot. A moving configuration
+/* Take one generation-checked capacity and block size snapshot. A moving configuration
    returns WOULD_BLOCK without touching out. No FLUSH means read-only policy. */
 int vblkconfig(const Vdev *device, Vblkconfig *out);
 

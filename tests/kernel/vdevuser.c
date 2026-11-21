@@ -75,7 +75,7 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   Vblkhead    *header = (void *) (dma->va + 3 * PAGE_SIZE);
   volatile u8 *data = (void *) (dma->va + 4 * PAGE_SIZE);
   volatile u8 *status = (void *) (dma->va + 5 * PAGE_SIZE);
-  u32          bytes = type == VBLK_FLUSH ? 0 : VBLK_SECTOR;
+  u32          bytes = type == VBLK_FLUSH ? 0 : config->blocksize;
   u32          count, more, i, causes;
   u64          generation, started;
   for (i = 0; i < bytes; i++)
@@ -144,8 +144,9 @@ resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           185);
-  REQUIRE(!vblksubmit(&request, ring, config, VBLK_READ, 1, 6, dma->addresses[3], dma->addresses[4],
-                      VBLK_SECTOR, dma->addresses[5], header, status, blksync, device),
+  REQUIRE(!vblksubmit(&request, ring, config, VBLK_READ, config->blocksize / VBLK_SECTOR, 6,
+                      dma->addresses[3], dma->addresses[4], config->blocksize, dma->addresses[5],
+                      header, status, blksync, device),
           186);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent && !__sys_alarmcancel(&generation),
@@ -172,28 +173,31 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   u32        count, more;
   Handle     binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
   u64        irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
+  u64        stride = config->blocksize / VBLK_SECTOR;
 
   REQUIRE(binding > 0, 182);
   dma.va = VTEST_DMA_BASE + member * VTEST_PAGES * PAGE_SIZE;
   dma.addresses = &vdev_trace[VTEST_DMA_TRACE + member * VTEST_PAGES];
   startqueue(device, &ring, 1, &dma);
-  transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 1, 1,
+  transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, stride, 1,
            config->readonly ? 0xa7 : 0x51, &prior);
   if (!config->readonly) {
-    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_WRITE, 2, 2, 0x37, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_WRITE, 2 * stride, 2, 0x37,
+             NULL);
     transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_FLUSH, 0, 3, 0, NULL);
-    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2, 4, 0x37, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
+             NULL);
   }
   resetpending(device, &ring, binding, irqevent, config, &dma);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
-              fresh.flush == config->flush,
+              fresh.flush == config->flush && fresh.blocksize == config->blocksize,
           183);
   startqueue(device, &ring, 2, &dma);
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
   REQUIRE(prior.generation == 1, 191);
-  transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ, config->readonly ? 1 : 2,
-           1, config->readonly ? 0xa7 : 0x37, &prior);
+  transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ,
+           config->readonly ? stride : 2 * stride, 1, config->readonly ? 0xa7 : 0x37, &prior);
   REQUIRE(prior.generation == 2, 192);
 }
 int
@@ -234,14 +238,17 @@ main(int argc, char **argv)
     vdev_trace[14]++;
     reset(&device);
     if (device.device == VBLK_DEVICE) {
-      REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x108 && vdev_trace[23 + i] >= 0x108, 163);
+      REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x118 && vdev_trace[23 + i] >= 0x118, 163);
       REQUIRE(!vblkfeatures(&device) && !vblkconfig(&device, &config), 164);
       if (config.readonly) {
-        REQUIRE((device.features & VBLK_F_RO) && config.sectors == 128, 165);
+        REQUIRE((device.features & VBLK_F_RO) && config.sectors == 128 && config.blocksize == 512,
+                165);
         vdev_trace[19]++;
         vdev_trace[21] = config.sectors;
       } else {
-        REQUIRE(!(device.features & VBLK_F_RO) && config.flush && config.sectors == 256, 166);
+        REQUIRE(!(device.features & VBLK_F_RO) && config.flush && config.sectors == 256 &&
+                    config.blocksize == PAGE_SIZE,
+                166);
         vdev_trace[18]++;
         vdev_trace[20] = config.sectors;
       }

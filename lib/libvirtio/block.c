@@ -3,19 +3,26 @@
 #define REG_CONFIG_GENERATION 0xfc
 #define REG_CAPACITY_LO       0x100
 #define REG_CAPACITY_HI       0x104
+#define REG_BLOCK_SIZE        0x114
+
+static int
+validblocksize(u32 bytes)
+{
+  return bytes >= VBLK_SECTOR && !(bytes & (bytes - 1));
+}
 
 int
 vblkfeatures(Vdev *device)
 {
   if (!device || device->device != VBLK_DEVICE)
     return -ERR_INVALID;
-  return vfeatures(device, VBLK_F_RO | VBLK_F_FLUSH, 0);
+  return vfeatures(device, VBLK_F_RO | VBLK_F_BLK_SIZE | VBLK_F_FLUSH, 0);
 }
 
 int
 vblkconfig(const Vdev *device, Vblkconfig *out)
 {
-  u32 before = 0, low = 0, high = 0, after = 0;
+  u32 before = 0, low = 0, high = 0, after = 0, blocksize = VBLK_SECTOR;
   int error;
   if (!device || !out || device->device != VBLK_DEVICE || !device->ops.read)
     return -ERR_INVALID;
@@ -27,15 +34,20 @@ vblkconfig(const Vdev *device, Vblkconfig *out)
     error = device->ops.read(device->ops.context, REG_CAPACITY_LO, &low);
   if (!error)
     error = device->ops.read(device->ops.context, REG_CAPACITY_HI, &high);
+  if (!error && device->features & VBLK_F_BLK_SIZE)
+    error = device->ops.read(device->ops.context, REG_BLOCK_SIZE, &blocksize);
   if (!error)
     error = device->ops.read(device->ops.context, REG_CONFIG_GENERATION, &after);
   if (error)
     return error < 0 ? error : -ERR_STATE;
   if (before != after)
     return -ERR_WOULD_BLOCK;
+  if (!validblocksize(blocksize))
+    return -ERR_STATE;
   out->sectors = (u64) high << 32 | low;
   out->flush = !!(device->features & VBLK_F_FLUSH);
   out->readonly = !out->flush || !!(device->features & VBLK_F_RO);
+  out->blocksize = blocksize;
   return 0;
 }
 
@@ -125,6 +137,10 @@ vblksubmit(Vblkreq *r, Vring *ring, const Vblkconfig *config, u32 type, u64 sect
     return -ERR_BUSY;
   if ((type == VBLK_WRITE && config->readonly) || (type == VBLK_FLUSH && !config->flush))
     return -ERR_NOTSUP;
+  if ((type == VBLK_READ || type == VBLK_WRITE) &&
+      (!validblocksize(config->blocksize) || bytes % config->blocksize ||
+       sector % (config->blocksize / VBLK_SECTOR)))
+    return -ERR_INVALID;
   count = vblkprepare(type, sector, config->sectors, header, data, bytes, status, wire, r->buffers);
   if (count < 0)
     return count;
