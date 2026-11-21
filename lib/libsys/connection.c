@@ -66,13 +66,14 @@ sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childsp
   return sysbootunmap(childspace, &s->map);
 }
 isize
-sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag)
+sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, u64 token)
 {
   Connentry  entry;
   Connstate *s;
   isize      error;
   if (!separate(work, sizeof(work->state), cache, sizeof(*cache)) ||
-      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || cache->self.pid == parent.pid)
+      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || cache->self.pid == parent.pid ||
+      !token)
     return -ERR_INVALID;
   error = sysconncheck(cache, cache->self);
   if (!error)
@@ -83,13 +84,19 @@ sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag)
   if (s->peer.pid != entry.peer.pid || s->peer.image != entry.peer.image)
     return -ERR_STALE;
   if (s->self.pid == cache->self.pid && s->self.image == cache->self.image)
-    return s->tag.generation == tag.generation && s->tag.index == tag.index ? 0 : -ERR_STALE;
+    return s->tag.generation == tag.generation && s->tag.index == tag.index &&
+                   s->fork_token == token
+               ? 0
+               : -ERR_STALE;
   if (s->self.pid != parent.pid || s->self.image != parent.image)
     return -ERR_STALE;
   if (s->map.mapped || s->map.address || s->map.bytes || s->map.connid || s->map.serverimage ||
       s->map.verified)
     return -ERR_BUSY;
-  return sysconnworkinit(work, cache, tag);
+  error = sysconnworkinit(work, cache, tag);
+  if (!error)
+    s->fork_token = token;
+  return error;
 }
 isize
 sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag)

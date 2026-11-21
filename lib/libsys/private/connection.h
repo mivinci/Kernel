@@ -48,7 +48,7 @@ struct Connstate
   Bootstrap bootstrap;
   Slotop    operations[FS_CONN_SLOTS];
   Createop  creators[FS_CONN_SLOTS];
-  u64       ended;
+  u64       ended, fork_token;
 };
 struct Connwork
 {
@@ -73,8 +73,9 @@ isize sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag);
 isize sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle childspace);
 /* After all inherited results have been fixed in Rctx/File and aliases removed,
    discard child copies of parent transport obligations without native cleanup.
-   Directory already rebound, tag selects the same backend in UNCLAIMED. */
-isize sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag);
+   Directory already rebound, tag selects the same backend in UNCLAIMED.
+   Keep the exact child prepare token; repeated repair must match it. */
+isize sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, u64 token);
 /* Cold native lookup first. First distinct owned CALL moves into the work
    page; another Handle to the exact same peer moves to initially-zero redundant
    for explicit caller release. Same Handle is not two owned references.

@@ -9,7 +9,7 @@ from test_filepages import Pages,Lease
 class State(C.Structure):
     _fields_=[('self',Peer),('peer',Peer),('tag',Tag),('space',C.c_int64),('memory',C.c_int64),('call',C.c_int64),
               ('map',Mapping),('pages',Pages),('bootstrap',support.Record),('operations',(C.c_uint8*128)*8),
-              ('creators',(C.c_uint8*184)*8),('ended',C.c_uint64)]
+              ('creators',(C.c_uint8*184)*8),('ended',C.c_uint64),('fork_token',C.c_uint64)]
 
 
 class Work(C.Structure):
@@ -36,7 +36,7 @@ class ConnectionWorkTests(unittest.TestCase):
             'sysconnworkrelease':[C.POINTER(Work),C.POINTER(Cache),Lease],
             'sysconnworkclean':[C.POINTER(Work),C.POINTER(Cache)],
             'sysconnforkunmap':[C.POINTER(Work),Peer,Peer,C.c_int64],
-            'sysconnworkfork':[C.POINTER(Work),C.POINTER(Cache),Peer,Tag],
+            'sysconnworkfork':[C.POINTER(Work),C.POINTER(Cache),Peer,Tag,C.c_uint64],
             'sysconnfork':[C.POINTER(Cache),Peer,Peer,C.c_void_p,C.c_uint64],
             'testmemory':[C.c_int64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64],
             'testmaperror':[C.c_int64,C.c_int64,C.c_int64,C.c_int64],
@@ -99,16 +99,19 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual(self.lib.sysconnfork(C.byref(self.cache),self.self,child,entries,1),0)
         self.assertEqual(self.lib.sysconnbind(C.byref(self.cache),self.peer,C.byref(newtag)),0)
         before=bytes(self.work)
-        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag),-7)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag,101),-7)
         self.assertEqual(bytes(self.work),before)
         self.assertEqual(self.lib.sysconnforkunmap(C.byref(self.work),self.self,child,self.space),0)
         frees=self.lib.testfrees()
-        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag),0)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag,101),0)
+        self.assertEqual(self.work.state.fork_token,101)
         self.assertEqual((self.work.state.self.pid,self.work.state.memory,self.work.state.call),(child.pid,0,0))
         self.assertEqual(self.work.state.bootstrap.rpc,0)
         self.assertEqual(self.lib.testfrees(),frees)
         after=bytes(self.work)
-        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag),0)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag,102),-4)
+        self.assertEqual(bytes(self.work),after)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(self.work),C.byref(self.cache),self.self,newtag,101),0)
         self.assertEqual(bytes(self.work),after)
 
     def adopt(self):
@@ -206,5 +209,6 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual(cache.contents.entries[tag.index].owner,202)
         self.assertEqual(State.creators.offset,State.operations.offset+8*128)
         self.assertEqual(State.ended.offset-State.creators.offset,8*184)
-        self.assertEqual(C.sizeof(State)-State.ended.offset,8)
+        self.assertEqual(State.fork_token.offset-State.ended.offset,8)
+        self.assertEqual(C.sizeof(State)-State.fork_token.offset,8)
         self.assertLess(C.sizeof(State)+C.sizeof(Cache),4096)
