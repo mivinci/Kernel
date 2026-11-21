@@ -1578,7 +1578,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("hardware FAULT delivery/diagnostics/conservation mismatch")
                     record['hardware_faults']=hardware[0]
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFRAMECHECK ")]
-                    if checks != [dict(cases=18, forkprep=1, handler_fork=1, ipc_fork=1, local_fork=1, reserve_fork=1, normal=6, invalid=6, terminated=1, cow_stack=1, forced=1, rctx_window=2, nested_prelude=1, child_returns=2, child_nested=1, charged=0, allocated=transition["tables"])]:
+                    if checks != [dict(cases=19, forkprep=1, handler_fork=1, ipc_fork=1, local_fork=1, reserve_fork=1, normal=6, invalid=6, terminated=1, cow_stack=1, forced=1, rctx_window=2, nested_prelude=1, child_returns=2, child_nested=1, charged=0, allocated=transition["tables"])]:
                         raise SmokeError("signal frame outcome/resource mismatch")
                     record["signal_frames"]=checks[0]
                     inherited=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGFORKCHECK ")]

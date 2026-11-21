@@ -160,7 +160,7 @@ sigframetest(void)
   int                 error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
-  for (mode = 0; mode < 19; mode++) {
+  for (mode = 0; mode < 20; mode++) {
     if (mode == 16)
       continue;
     peerpid = 0;
@@ -184,7 +184,7 @@ sigframetest(void)
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(proctable(pid), LOCAL_ALLOC);
     testload(pid, frame_image, (u64) (frame_image_end - frame_image), &packet, sizeof(packet));
-    if (mode >= 13) {
+    if (mode >= 13 && mode < 19) {
       Createpolicy policy;
       Handle       authority;
       policy.set = set;
@@ -238,7 +238,7 @@ sigframetest(void)
       contextpid = pid;
       contextarmed = 1;
     }
-    if (mode >= 13) {
+    if (mode >= 13 && mode < 19) {
       contextpid = pid;
       forkarmed = 1;
       contextarmed = mode == 14;
@@ -323,7 +323,16 @@ sigframetest(void)
     putstr(" code=");
     puthex(life.code);
     putstr("\n");
-    if (mode >= 17) {
+    if (mode == 19) {
+      Procinfo switched;
+      Image    old;
+      REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&
+              !procinfo(pid, &switched) && switched.life.generation == process.life.generation &&
+              switched.life.index == process.life.index &&
+              switched.space.index != process.space.index && !imagestat(process.identity, &old) &&
+              old.reason == IMAGE_EXEC);
+      REQUIRE(!procinfo(pid, &process));
+    } else if (mode >= 17) {
       REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&
               parentreturns == 2 && trace[23] == 2 && !trace[24]);
     } else if (mode >= 13) {
@@ -387,7 +396,7 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(18);
+  puthex(19);
   putstr(" forkprep=");
   puthex(1);
   putstr(" handler_fork=");

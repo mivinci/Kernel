@@ -1379,6 +1379,11 @@ spaceexecretire(Spaceid id, u32 locals, Memretire *retire, u64 *pages)
     return SP_BUSY;
   for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
     const Mmap *m = &mappings[node];
+    Mem         backing;
+    if (memstat(m->mem, &backing))
+      return SP_BAD;
+    if (backing.kind == MEM_MMIO)
+      return MEM_DENIED;
     if (!m->owner.load.generation && memretireadd(retire, m->mem))
       return SP_BAD;
   }

@@ -100,6 +100,8 @@ struct Execimage
   Rtable  table;
   Local   slots[LOCALS];
   u64     generations[LOCALS];
+  Rtable *inactive;
+  Rmail   retiring;
   Imageid identity;
   Prepid  prep;
 };
@@ -172,32 +174,45 @@ execimage(const Proc *p)
 static int
 execclean(Execimage *target)
 {
-  int more;
-  if (target->table.parallel) {
-    target->table.parallel->parallel = NULL;
-    target->table.parallel = NULL;
+  Rtable *table = target->inactive;
+  int     more;
+  if (target->retiring.state && target->retiring.state != RMAIL_DRAINED) {
+    more = rqmailclose(&target->retiring, 32);
+    if (more < 0)
+      panic("exec mailbox cleanup");
+    return 1;
   }
-  if (localclose(&target->table))
+  more = obsclose(target->identity, 32);
+  if (more < 0)
+    panic("exec observation cleanup");
+  if (more)
+    return 1;
+  if (table->parallel) {
+    table->parallel->parallel = NULL;
+    table->parallel = NULL;
+  }
+  if (localclose(table))
     panic("exec target table close");
-  if (target->table.state != LOCAL_DEAD) {
-    more = localdrain(&target->table, 32);
+  if (table->state != LOCAL_DEAD) {
+    more = localdrain(table, 32);
     if (more < 0)
       panic("exec target table drain");
     return 1;
   }
-  more = spaceclear(target->table.space, 1);
+  more = spaceclear(table->space, 1);
   if (more == SP_BUSY)
     return 1;
   if (more < 0)
     panic("exec target space clear");
   if (more)
     return 1;
-  if (spacedestroy(target->table.space) || imagedetach(target->identity))
+  if (spacedestroy(table->space) || imagedetach(target->identity))
     panic("exec target ownership release");
   if (target->prep.generation && prepdrop(target->prep))
     panic("exec preparation ownership release");
   target->prep.generation = 0;
   target->identity.generation = 0;
+  target->inactive = NULL;
   return 0;
 }
 
@@ -205,6 +220,7 @@ int
 procexecprep(Rtable *source, Handle selfspace, u32 reserve, Handle *view, u64 *number)
 {
   Execimage *target;
+  Rtable    *table;
   Spaceid    space;
   Image      image;
   Handle     ignored;
@@ -236,24 +252,26 @@ procexecprep(Rtable *source, Handle selfspace, u32 reserve, Handle *view, u64 *n
   error = convert(spaceexeccreate(current->acct, ticket, &space));
   if (error)
     goto imagefail;
-  error = localinit(&target->table, target->slots, source->count, current->acct, space);
+  table = source == &target->table ? &tables[current - processes] : &target->table;
+  error = localinit(table, table == &target->table ? target->slots : entries[current - processes],
+                    source->count, current->acct, space);
   if (error)
     goto spacefail;
   if (imagestat(target->identity, &image))
     panic("exec target image identity");
-  target->table.owner = source->owner;
-  target->table.image = image.number;
-  target->table.generations = source->generations;
-  target->table.parallel = source;
-  source->parallel = &target->table;
-  error = localspace(&target->table, 3, &ignored);
+  target->inactive = table;
+  table->owner = source->owner;
+  table->image = image.number;
+  table->generations = source->generations;
+  table->parallel = source;
+  source->parallel = table;
+  error = localspace(table, 3, &ignored);
   if (!error)
-    error = localallocator(&target->table, 7, &ignored);
+    error = localallocator(table, 7, &ignored);
   if (!error)
-    error = localreserve(&target->table, target->identity, reserve);
+    error = localreserve(table, target->identity, reserve);
   if (!error)
-    error = prepexecopen(source, &target->table, current->life, target->identity, ticket,
-                         &target->prep);
+    error = prepexecopen(source, table, current->life, target->identity, ticket, &target->prep);
   if (!error) {
     error = localconstruct(source, target->prep, 31, view);
     if (!error) {
@@ -730,7 +748,7 @@ proctable(Handle pid)
              : NULL;
 }
 static int
-range(Proc *p, u64 address, u64 bytes, u64 prot)
+spacerange(Spaceid space, u64 address, u64 bytes, u64 prot)
 {
   Hpte entry;
   u64  page, end;
@@ -738,13 +756,18 @@ range(Proc *p, u64 address, u64 bytes, u64 prot)
     return -ERR_INVALID;
   end = address + bytes;
   for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE)
-    if (!spacelookup(p->space, page, &entry) || entry.prot != (prot | VM_USER) ||
+    if (!spacelookup(space, page, &entry) || entry.prot != (prot | VM_USER) ||
         entry.attr != VM_NORMAL)
       return -ERR_FAULT;
   return 0;
 }
 static int
-validate(Proc *p, const Config *c)
+range(Proc *p, u64 address, u64 bytes, u64 prot)
+{
+  return spacerange(p->space, address, bytes, prot);
+}
+static int
+validate(Spaceid space, const Config *c)
 {
   Boot boot;
   Hpte guard;
@@ -754,25 +777,88 @@ validate(Proc *p, const Config *c)
     return -ERR_INVALID;
   if (sigmaskvalid(c->sigmask) || sigmaskvalid(c->sigdefault))
     return -ERR_INVALID;
-  error = range(p, c->entry, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC);
+  error = spacerange(space, c->entry, HAL_ENTRY_ALIGN, VM_READ | VM_EXEC);
   if (error)
     return error;
-  error = range(p, c->stack - 65536, 65536, VM_READ | VM_WRITE);
+  error = spacerange(space, c->stack - 65536, 65536, VM_READ | VM_WRITE);
   if (error)
     return error;
-  if (spacelookup(p->space, ALIGN_DOWN(c->stack - 65536, PAGE_SIZE) - PAGE_SIZE, &guard))
+  if (spacelookup(space, ALIGN_DOWN(c->stack - 65536, PAGE_SIZE) - PAGE_SIZE, &guard))
     return -ERR_FAULT;
-  error = range(p, c->boot, c->bootsz, VM_READ);
+  error = spacerange(space, c->boot, c->bootsz, VM_READ);
   if (error)
     return error;
-  if (spaceread(p->space, c->boot, &boot, sizeof(boot)))
+  if (spaceread(space, c->boot, &boot, sizeof(boot)))
     return -ERR_FAULT;
   if (boot.magic != BOOT_MAGIC || boot.format != BOOT_FORMAT || boot.bytes != c->bootsz ||
       boot.flags || boot.user_lo != 0x10000 || boot.user_hi != (1UL << 38))
     return -ERR_INVALID;
-  if (spacebootcheck(p->space, boot.package_va, boot.package_bytes))
+  if (spacebootcheck(space, boot.package_va, boot.package_bytes))
     return -ERR_INVALID;
   return 0;
+}
+int
+procexeccommit(Rtable *source, Handle view, const Config *config)
+{
+  Proc      *p = current;
+  Execimage *work;
+  Rtable    *target;
+  Prepid     prep;
+  Imageid    old, next;
+  Space      space;
+  Hinit      initial;
+  int        error;
+  if (!p || p->state != PROC_RUNNING || source != p->resources || vm_paused || p->stage.wait.kind)
+    return -ERR_STATE;
+  error = localexecview(source, view, PREP_PUBLISH, &prep);
+  if (error)
+    return error;
+  work = execimage(p);
+  if (!work->identity.generation || work->prep.index != prep.index ||
+      work->prep.generation != prep.generation)
+    return -ERR_BAD_HANDLE;
+  error = localexeccheck(source, prep, &target);
+  if (error)
+    return error;
+  if (target != work->inactive || !config || config->sigmask || config->sigdefault)
+    return -ERR_INVALID;
+  if (spacestat(target->space, &space) || space.busy || space.frozen || space.refs == 0xffffffffU)
+    return -ERR_BUSY;
+  error = validate(target->space, config);
+  if (error)
+    return error;
+  error = prepexecbudget(prep, source);
+  if (error)
+    return error;
+  old = p->identity;
+  next = work->identity;
+  error = sigexec(old, next);
+  if (error)
+    return error;
+  /* All fallible checks are complete. IRQs stay masked through publication. */
+  if (imageend(old, IMAGE_EXEC) || rqexec(&p->outgoing, &p->incoming, &work->retiring, next) ||
+      imageactivate(next))
+    panic("exec image publication");
+  localexecmove(source, target);
+  prepcomplete(prep);
+  if (prepdrop(prep) || localclose(source))
+    panic("exec source ownership");
+  work->prep.generation = 0;
+  work->identity = old;
+  work->inactive = source;
+  p->identity = next;
+  p->space = target->space;
+  p->resources = target;
+  p->configured = CONFIG_IMAGE;
+  p->events.pending = p->events.deadline = 0;
+  p->events.armed = p->events.prefermessage = 0;
+  if (spacedeactivate() || spaceactivate(p->space))
+    panic("exec root switch");
+  initial.entry = config->entry;
+  initial.sp = config->stack;
+  initial.arg = config->boot;
+  hal_user_init(p->user, &initial);
+  procuserreturn(p->user);
 }
 int
 procconfigure(Handle pid, const Config *c, u32 reserve)
@@ -795,7 +881,7 @@ procconfigure(Handle pid, const Config *c, u32 reserve)
   snapshot.bootsz = c->bootsz;
   snapshot.sigmask = c->sigmask;
   snapshot.sigdefault = c->sigdefault;
-  error = validate(p, &snapshot);
+  error = validate(p->space, &snapshot);
   if (error)
     return error;
   error = siginitialcheck(p->identity, snapshot.sigmask, snapshot.sigdefault);
@@ -858,7 +944,7 @@ procpublish(Handle pid)
     return -ERR_STALE;
   if (p->state != PROC_CONSTRUCT || p->configured != CONFIG_IMAGE)
     return -ERR_STATE;
-  error = validate(p, &p->stage.config);
+  error = validate(p->space, &p->stage.config);
   return error ? error : publishproc(p, 0);
 }
 int
@@ -1080,7 +1166,7 @@ procclean(Handle pid)
     return -ERR_STATE;
   target = execimage(p);
   if (target->identity.generation) {
-    if (prepcancel(target->prep))
+    if (target->prep.generation && prepcancel(target->prep))
       panic("exiting exec preparation cancellation");
     execclean(target);
     return 1;
@@ -1258,9 +1344,9 @@ procwork(u32 scans)
       continue;
     if (target->identity.generation && p->state != PROC_EXITING) {
       Prepinfo prep;
-      if (prepstat(target->prep, &prep))
+      if (target->prep.generation && prepstat(target->prep, &prep))
         panic("exec preparation work lifetime");
-      if (prep.state == PREP_ABORTED) {
+      if (!target->prep.generation || prep.state == PREP_ABORTED) {
         execclean(target);
         worked++;
         continue;

@@ -80,6 +80,7 @@ syscall(Hctx *context)
   case SYS_CREATE:
   case SYS_FORKPREP:
   case SYS_EXECPREP:
+  case SYS_EXECCOMMIT:
   case SYS_SETPG:
   case SYS_INHERIT:
   case SYS_BUDGET:
@@ -278,6 +279,12 @@ syscall(Hctx *context)
     break;
   case SYS_EXECABORT:
     status = procexecabort(table, (Handle) args[0]);
+    break;
+  case SYS_EXECCOMMIT:
+    if ((args[1] & 7) || spaceread(table->space, args[1], &snapshot.config, sizeof(Config)))
+      status = -ERR_FAULT;
+    else
+      status = procexeccommit(table, (Handle) args[0], &snapshot.config);
     break;
   case SYS_FORKCOMMIT:
     status = procforkcommit(table, (Handle) args[0], args[1], args[2], &pid);

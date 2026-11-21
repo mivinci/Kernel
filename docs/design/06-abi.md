@@ -388,3 +388,5 @@ ARM64、RV64 QEMU `sigframe` 均由用户载荷先提交继承区间并验证拒
 debughandoff接续（2026-11-18）：原生0x74仅收a0/x0的精确初始SYSTEM CONSOLE句柄，其他参数必须0，无业务输出；普通CONTROL/uid0/PID不补权，错误输出全0。未排空BUSY且不转移所有权，成功后持有效权限重复调用幂等；具体UART/日志/panic语义与733项host/167次双架构QEMU证据见07/14，不表示生产serial已经启动。
 
 stage321 接通 `execprep`（0x4c）与 `execabort`（0x4e）及 libsys 私有桩。准备输入为自己的 SPACE 和 0..8 个保底槽，成功返回精确 `EXEC_VIEW` 和目标镜像号。撤销只接受本次活跃 `EXEC_VIEW`，成功后目标由 CPU 分批回收。未用输入寄存器须为 0，错误时业务返回全 0。`execcommit`（0x4d）仍返回 `NOTSUP`。两架构 QEMU 用户载荷及所有权验收见 03 末尾。
+
+stage327 接通 `execcommit`（0x4d）及 libsys 私有桩。仅用 a0/x0 的 EXEC_VIEW 和 a1/x1 的 8 字节对齐 Config 指针；一次快照完整 Config。exec 的 `sigmask` 与 `sigdefault` 必须为零，既有掩码和动作重置由内核按 11 的 exec 规则处理。失败业务输出全零，成功进入新入口且不返回旧程序。

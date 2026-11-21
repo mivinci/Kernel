@@ -11,6 +11,20 @@ frame_fp:
 #include <abi/syscall.h>
 .section .text
 .balign 4
+.global exec_entry, exec_end
+exec_entry:
+ li t1,0x30000000
+ bne a0,t1,1f
+ li a0,42
+ j 2f
+1:
+ li a0,93
+2:
+ li a7,SYS_EXIT
+ ecall
+ ebreak
+exec_end:
+.balign 4
 .global frame_wait
 .type frame_wait,@function
 frame_wait:

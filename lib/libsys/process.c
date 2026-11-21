@@ -56,6 +56,13 @@ __sys_execprep(Handle space, u64 reserve, Handle *view, u64 *image)
   return error;
 }
 isize
+__sys_execcommit(Handle view, const Config *config)
+{
+  const u64 args[7] = {(u64) view, (u64) config, 0, 0, 0, 0, 0};
+  Sysret    result;
+  return __sys_enter(SYS_EXECCOMMIT, args, &result);
+}
+isize
 __sys_execabort(Handle view)
 {
   const u64 args[7] = {(u64) view, 0, 0, 0, 0, 0, 0};

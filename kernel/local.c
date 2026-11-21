@@ -5,6 +5,8 @@
 #include <observe.h>
 STATIC_ASSERT(AC_SETS <= 256 && LOCALS <= 255 && PENDING_CALLS <= 255, create_policy_encoding);
 
+static Irqid bindingid(const Local *local);
+
 static int
 isview(u32 subtype)
 {
@@ -285,10 +287,23 @@ localexecbudget(const Rtable *source, u64 ticket)
     return -ERR_STATE;
   for (i = 0; i < source->count; i++) {
     const Local *slot = &source->slots[i];
+    if (slot->subtype == LOCAL_IRQ_BIND) {
+      Irqstat irq;
+      if (irqstat(bindingid(slot), &irq) || irq.state != IRQ_REVOKED) {
+        error = MEM_DENIED;
+        break;
+      }
+    }
     if (slot->subtype == LOCAL_SPACE && slot->object == source->space.index &&
         slot->objectgen == source->space.generation)
       spaces++;
     if (slot->subtype == LOCAL_MEM && slot->source != LOCAL_LOAD) {
+      Mem backing;
+      error = memstat(memory(slot), &backing);
+      if (!error && backing.kind == MEM_MMIO)
+        error = MEM_DENIED;
+      if (error)
+        break;
       error = memretireadd(&retire, memory(slot));
       if (error)
         break;

@@ -20,6 +20,7 @@ static Rkey     runtime_key;
 static Connpeer context_self;
 extern u64      frame_fp(u64 mode);
 extern u64      frame_wait(void);
+extern const u8 exec_entry[], exec_end[];
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -491,6 +492,52 @@ execprepuser(void)
           198);
 }
 static int
+execcommituser(void)
+{
+  Handle   space = bootresource(sysboot(), BOOT_SELF_SPACE), view, memory;
+  u64      next;
+  Allocarg alloc = {4096, ALLOC_CODE, 0, 0, 0, 0};
+  Maparg   map = {0, 0, 0x30000000, 4096, MAP_READ | MAP_WRITE, 0};
+  Config   config = {0x10000, 0x20010000, 0x30000000, sizeof(Boot), 0, 0};
+  Boot     boot = {0};
+  REQUIRE(!__sys_execprep(space, 1, &view, &next) && next > 1 &&
+              __sys_execcommit(view, (const Config *) 1) == -ERR_FAULT &&
+              __sys_execcommit(view, &config) == -ERR_FAULT,
+          271);
+  REQUIRE(!__sys_alloc(view, &alloc, &memory), 272);
+  map.mem = memory;
+  REQUIRE(!__sys_map(space, &map), 273);
+  memcpy((void *) map.address, exec_entry, (u64) (exec_end - exec_entry));
+  REQUIRE(__sys_execcommit(view, &config) == -ERR_BUSY && !__sys_unmap(space, map.address) &&
+              !__sys_seal(memory),
+          274);
+  map.address = config.entry;
+  map.prot = MAP_READ | MAP_EXEC;
+  REQUIRE(!__sys_map(view, &map), 275);
+  alloc.kind = ALLOC_DATA;
+  alloc.bytes = 65536;
+  REQUIRE(!__sys_alloc(view, &alloc, &map.mem), 276);
+  map.address = config.stack - alloc.bytes;
+  map.length = alloc.bytes;
+  map.prot = MAP_READ | MAP_WRITE;
+  REQUIRE(!__sys_map(view, &map), 277);
+  alloc.bytes = map.length = 4096;
+  map.address = config.boot;
+  REQUIRE(!__sys_alloc(view, &alloc, &map.mem) && !__sys_map(space, &map), 278);
+  boot.magic = BOOT_MAGIC;
+  boot.format = BOOT_FORMAT;
+  boot.bytes = sizeof(boot);
+  boot.user_lo = BOOT_USER_LO;
+  boot.user_hi = BOOT_USER_HI;
+  memcpy((void *) map.address, &boot, sizeof(boot));
+  REQUIRE(!__sys_unmap(space, map.address), 279);
+  map.prot = MAP_READ;
+  REQUIRE(!__sys_map(view, &map), 280);
+  frame_trace[0] = 99;
+  frame_trace[31] = (u64) __sys_execcommit(view, &config);
+  return 93;
+}
+static int
 forkprepuser(void)
 {
   Sysret    result;
@@ -783,9 +830,11 @@ int
 main(int argc, char **argv)
 {
   u64 mode, old, mask;
-  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= 'B', 164);
+  REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= 'C', 164);
   mode = (u64) (argv[0][0] - '0');
   frame_trace[1] = mode;
+  if (mode == 19)
+    return execcommituser();
   if (mode >= 17)
     return publicforkuser();
   if (mode == 16) {
