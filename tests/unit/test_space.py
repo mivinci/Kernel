@@ -42,6 +42,10 @@ void test_memory(void *p){memory=p;syncs=0;ticks=next_ticks=0;clockinit();}
 void *kaddr(u64 pa){return memory + (pa-0x80000000UL);}
 u64 test_syncs(void){return syncs;}
 void hal_code_sync(u64 pa,u64 n){UNUSED(pa);UNUSED(n);syncs++;}
+u64 hal_dma_granule(void){return 0;}
+int hal_dma_sync(void *p,u64 n,u32 phase,u32 direction,u32 coherent){
+  UNUSED(p);UNUSED(n);UNUSED(phase);UNUSED(direction);UNUSED(coherent);return -18;
+}
 void hal_vm_switch(const Hvs *s){UNUSED(s);}
 void hal_vm_commit(Hvs *s){UNUSED(s);}
 NORETURN void panic(const char *s){UNUSED(s); abort();}

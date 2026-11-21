@@ -75,36 +75,71 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
   REQUIRE(!spacewrite(process.space, vdev_trace_address, trace, sizeof(trace)));
 }
 static void
-testpins(Setid set, u32 device)
+testpins(Setid set, const Dtinfo *info, u32 device)
 {
   Dmaid  domain, other;
   Acctid payer, next;
-  Memid  page, oldest;
+  Memid  page, oldest, ordinary;
   Mem    held;
   Set    account;
-  u32    i;
+  Pglim  limits, occupied;
+  u64    address, base;
+  u32    i, peer;
   int    error;
+  limits.minpa = info->ram[0].base;
+  limits.maxpa_exclusive = limits.minpa + info->ram[0].size;
+  limits.align = PAGE_SIZE;
+  for (peer = device + 1; peer < info->ndev && info->dev[peer].kind != DT_VIRTIO; peer++) {
+  }
+  REQUIRE(peer < info->ndev);
   REQUIRE(!acctcreate(set, DMA_MAX_PAGES, DMA_MAX_PAGES, &payer));
   REQUIRE(!acctcreate(set, 2, 2, &next));
-  REQUIRE(!dmaopen(device, payer, &domain) && dmaopen(device, next, &other) == -ERR_BUSY);
-  for (i = 0; i < DMA_MAX_PAGES; i++) {
+  REQUIRE(!dmaopen(device, payer, &limits, 1, &domain) &&
+          dmaopen(device, next, &limits, 1, &other) == -ERR_BUSY);
+  REQUIRE(!dmaopen(peer, payer, &limits, 1, &other));
+  REQUIRE(!memcreate(payer, PAGE_SIZE, &ordinary));
+  address = UINT64_MAX;
+  REQUIRE(dmaaddress(domain, ordinary, 0, 1, &address) == -ERR_DENIED && address == UINT64_MAX &&
+          dmasync(domain, ordinary, 0, 1, HDMA_BEFORE, HDMA_DEVICE_READ) == -ERR_DENIED &&
+          !memfree(ordinary));
+  REQUIRE(!dmaallocpage(domain, &oldest) && !mempage(oldest, 0, &base) && base >= limits.minpa &&
+          base <= limits.maxpa_exclusive - PAGE_SIZE &&
+          !dmaaddress(domain, oldest, PAGE_SIZE - 1, 1, &address) &&
+          address == base + PAGE_SIZE - 1);
+  REQUIRE(dmaaddress(other, oldest, 0, 1, &address) == -ERR_DENIED &&
+          dmasync(other, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_DENIED &&
+          dmaaddress(domain, oldest, PAGE_SIZE - 1, 2, &address) == -ERR_INVALID &&
+          address == base + PAGE_SIZE - 1 &&
+          !dmasync(domain, oldest, PAGE_SIZE - 1, 1, HDMA_BEFORE, HDMA_DEVICE_WRITE) &&
+          dmasync(domain, oldest, 1, UINT64_MAX, HDMA_BEFORE, HDMA_DEVICE_WRITE) == -ERR_INVALID);
+  REQUIRE(!dmaend(other));
+  occupied.minpa = base;
+  occupied.maxpa_exclusive = base + PAGE_SIZE;
+  occupied.align = PAGE_SIZE;
+  page = oldest;
+  REQUIRE(!dmaopen(peer, payer, &occupied, 1, &other) && dmaallocpage(other, &page) == -ERR_NOMEM &&
+          page.generation == oldest.generation && page.index == oldest.index && !dmaend(other) &&
+          !memfree(oldest));
+  for (i = 1; i < DMA_MAX_PAGES; i++) {
     REQUIRE(!dmaallocpage(domain, &page) && !memfree(page));
-    if (!i)
-      oldest = page;
   }
   REQUIRE(dmaallocpage(domain, &page) == -ERR_LIMIT && !acctclose(payer) && !acctunbind(payer));
   REQUIRE(!memstat(oldest, &held) && held.kind == MEM_DMA && held.refs == 1 && !held.managers &&
           !setstat(set, &account) && account.charged == DMA_MAX_PAGES);
+  REQUIRE(dmaaddress(domain, oldest, 0, 1, &address) == -ERR_DENIED &&
+          dmasync(domain, oldest, 0, 1, HDMA_BEFORE, HDMA_DEVICE_WRITE) == -ERR_DENIED &&
+          !dmasync(domain, oldest, PAGE_SIZE - 1, 1, HDMA_AFTER, HDMA_DEVICE_WRITE));
   /* No DMA is submitted in this census. The real I/O cases below separately
      verify device reset before releasing their test buffers. */
   REQUIRE(dmaend(domain) == 1 && dmaallocpage(domain, &page) == -ERR_STALE &&
-          dmaopen(device, next, &other) == -ERR_BUSY && !memstat(oldest, &held));
+          dmaopen(device, next, &limits, 1, &other) == -ERR_BUSY && !memstat(oldest, &held) &&
+          dmasync(domain, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_STALE);
   do {
     error = dmaend(domain);
   } while (error > 0);
   REQUIRE(!error && memstat(oldest, &held) == MEM_BAD && !setstat(set, &account) &&
           !account.charged);
-  REQUIRE(!dmaopen(device, next, &other) && other.generation > domain.generation &&
+  REQUIRE(!dmaopen(device, next, &limits, 1, &other) && other.generation > domain.generation &&
           dmaend(domain) == -ERR_STALE && dmaallocpage(domain, &page) == -ERR_STALE);
   REQUIRE(!dmaallocpage(other, &page) && !dmaend(other) && !memfree(page));
   REQUIRE(!acctclose(next) && !acctunbind(next));
@@ -138,7 +173,7 @@ vdevtest(const Dtinfo *info)
     if (info->dev[i].kind != DT_VIRTIO)
       continue;
     if (!pages)
-      testpins(set, i);
+      testpins(set, info, i);
     page = ALIGN_DOWN(info->dev[i].reg[0].base, PAGE_SIZE);
     for (j = 0; j < i; j++)
       if (info->dev[j].kind == DT_VIRTIO && ALIGN_DOWN(info->dev[j].reg[0].base, PAGE_SIZE) == page)

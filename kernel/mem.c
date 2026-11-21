@@ -6,6 +6,7 @@
 #include <vm.h>
 #include <bootstore.h>
 #include <dma.h>
+#include <hal/dma.h>
 #include <abi/base.h>
 
 typedef struct Dmadomain Dmadomain;
@@ -14,14 +15,19 @@ struct Dmadomain
   u64    generation;
   Acctid acct;
   Memid  first;
-  u32    live, closing, pages;
+  Pglim  limits;
+  u64    grain;
+  u32    live, closing, pages, coherent;
 };
 
 static Mem       memories[MEMS];
 static Blockref  blocks[BREFS];
 static Dmadomain domains[DT_DEVICES];
-static u32       initialized, freehead, freemem;
-static int       undoclone(Memid source, u32 adopted);
+/* Device index plus one. The pin keeps the Mem live until this is cleared. */
+static u8 dmaowners[MEMS];
+STATIC_ASSERT(DT_DEVICES <= 255, dma_owner_index);
+static u32 initialized, freehead, freemem;
+static int undoclone(Memid source, u32 adopted);
 
 void
 meminit(void)
@@ -194,7 +200,7 @@ reap(Mem *m)
 }
 
 static int
-create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state)
+create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state, const Pglim *limits)
 {
   Mem          *m;
   Acctblk       block;
@@ -217,8 +223,8 @@ create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state)
       error = MEM_FULL;
       break;
     }
-    error =
-        ticket ? acctexecalloc(acct, ticket, 0, NULL, &block) : acctalloc(acct, 0, NULL, &block);
+    error = ticket ? acctexecalloc(acct, ticket, 0, limits, &block)
+                   : acctalloc(acct, 0, limits, &block);
     if (error)
       break;
     node = freehead;
@@ -257,7 +263,7 @@ create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state)
 int
 memcreate(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, 0, bytes, out, MEM_DATA);
+  return create(acct, 0, bytes, out, MEM_DATA, NULL);
 }
 
 static Dmadomain *
@@ -271,23 +277,33 @@ dmadomain(Dmaid id)
 }
 
 int
-dmaopen(u32 device, Acctid acct, Dmaid *out)
+dmaopen(u32 device, Acctid acct, const Pglim *limits, u32 coherent, Dmaid *out)
 {
   Device     window;
   Acct       account;
   Dmadomain *d;
-  if (!out || device >= DT_DEVICES || devstat(device * DT_REGS, &window) ||
-      acctstat(acct, &account) || account.state != AC_ACTIVE)
+  u64        grain;
+  if (!out || !limits || coherent > 1 || limits->maxpa_exclusive <= limits->minpa ||
+      limits->maxpa_exclusive - limits->minpa < PAGE_SIZE || limits->align < PAGE_SIZE ||
+      (limits->align & (limits->align - 1)) ||
+      (limits->minpa | limits->maxpa_exclusive) & PAGE_MASK || device >= DT_DEVICES ||
+      devstat(device * DT_REGS, &window) || acctstat(acct, &account) || account.state != AC_ACTIVE)
     return -ERR_INVALID;
   d = &domains[device];
   if (d->live)
     return -ERR_BUSY;
   if (d->generation == UINT64_MAX)
     return -ERR_LIMIT;
+  grain = coherent ? 1 : hal_dma_granule();
+  if (!grain || grain > PAGE_SIZE || PAGE_SIZE % grain)
+    return -ERR_NOTSUP;
   if (accthold(acct))
     return -ERR_LIMIT;
   d->generation++;
   d->acct = acct;
+  d->limits = *limits;
+  d->grain = grain;
+  d->coherent = coherent;
   d->live = 1;
   out->device = device;
   out->generation = d->generation;
@@ -310,17 +326,64 @@ dmaallocpage(Dmaid id, Memid *out)
     return -ERR_STATE;
   if (d->pages == DMA_MAX_PAGES)
     return -ERR_LIMIT;
-  error = memcreate(d->acct, PAGE_SIZE, out);
+  error = create(d->acct, 0, PAGE_SIZE, out, MEM_DATA, &d->limits);
   if (error)
     return error == AC_LIMIT ? -ERR_LIMIT : -ERR_NOMEM;
   m = find(*out);
   m->kind = MEM_DMA;
+  dmaowners[out->index] = (u8) (id.device + 1);
   /* backing links only the pinned objects of this generation. */
   m->backing = d->first;
   m->refs++;
   d->first = *out;
   d->pages++;
   return 0;
+}
+
+static int
+dmawindow(Dmaid id, Memid memory, u64 offset, u64 bytes, u32 recovery, u64 *base)
+{
+  Dmadomain *d = dmadomain(id);
+  Mem       *m = find(memory);
+  if (!d || d->closing)
+    return -ERR_STALE;
+  if (!m || m->kind != MEM_DMA || dmaowners[memory.index] != id.device + 1 ||
+      (!recovery && !m->managers))
+    return -ERR_DENIED;
+  if (!bytes || offset >= m->bytes || bytes > m->bytes - offset)
+    return -ERR_INVALID;
+  *base = blocks[m->head].pa;
+  return 0;
+}
+
+int
+dmaaddress(Dmaid id, Memid memory, u64 offset, u64 bytes, u64 *out)
+{
+  u64 base;
+  int error;
+  if (!out)
+    return -ERR_INVALID;
+  error = dmawindow(id, memory, offset, bytes, 0, &base);
+  if (!error)
+    *out = base + offset;
+  return error;
+}
+
+int
+dmasync(Dmaid id, Memid memory, u64 offset, u64 bytes, u32 phase, u32 direction)
+{
+  Dmadomain *d;
+  u64        base, first, end;
+  int        error;
+  if (phase > HDMA_AFTER || !direction || direction > (HDMA_DEVICE_READ | HDMA_DEVICE_WRITE))
+    return -ERR_INVALID;
+  error = dmawindow(id, memory, offset, bytes, phase == HDMA_AFTER, &base);
+  if (error)
+    return error;
+  d = dmadomain(id);
+  first = ALIGN_DOWN(offset, d->grain);
+  end = ALIGN_UP(offset + bytes, d->grain);
+  return hal_dma_sync(kaddr(base + first), end - first, phase, direction, d->coherent);
 }
 
 int
@@ -334,8 +397,9 @@ dmaend(Dmaid id)
   for (count = 0; count < 32 && d->pages; count++) {
     Memid pin = d->first;
     Mem  *m = find(pin);
-    if (!m || m->kind != MEM_DMA)
+    if (!m || m->kind != MEM_DMA || dmaowners[pin.index] != id.device + 1)
       panic("DMA domain pin");
+    dmaowners[pin.index] = 0;
     d->first = m->backing;
     clearbacking(m);
     if (memrelease(pin))
@@ -353,7 +417,7 @@ dmaend(Dmaid id)
 int
 memcode(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, 0, bytes, out, MEM_LOADING);
+  return create(acct, 0, bytes, out, MEM_LOADING, NULL);
 }
 
 int
@@ -361,13 +425,13 @@ memexeccreate(Acctid acct, u64 ticket, u64 bytes, u32 code, Memid *out)
 {
   if (!acctexecvalid(acct, ticket) || code > 1)
     return MEM_BAD;
-  return create(acct, ticket, bytes, out, code ? MEM_LOADING : MEM_DATA);
+  return create(acct, ticket, bytes, out, code ? MEM_LOADING : MEM_DATA, NULL);
 }
 
 int
 memshared(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, 0, bytes, out, MEM_SHARED);
+  return create(acct, 0, bytes, out, MEM_SHARED, NULL);
 }
 
 int
