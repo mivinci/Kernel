@@ -80,6 +80,11 @@ sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
   out->pid = call->source;
   out->source_image = call->image;
   out->target_image = slot->args[1];
+  out->request = call->request;
+  out->connid = call->words[1];
+  out->seq = slot->seq;
+  out->slot = index;
+  out->deadline = slot->args[3];
   out->count = groups;
   return 0;
 }
@@ -169,6 +174,7 @@ discard(Execreserve *record, Execdrop drop, void *context)
     record->count--;
   }
   record->source = record->target = 0;
+  record->token = 0;
   return 0;
 }
 
@@ -193,6 +199,11 @@ sysexecreserve(Execreserve *out, const Execmanifest *plan, Fileowner *source, Fi
     return error < 0 ? error : -ERR_STALE;
   out->source = source->cookie;
   out->target = target->cookie;
+  out->request = plan->request;
+  out->connid = plan->connid;
+  out->seq = plan->seq;
+  out->slot = plan->slot;
+  out->deadline = plan->deadline;
   for (i = 0; i < plan->count; i++) {
     entry = &out->entries[i];
     group = &plan->groups[i];
@@ -232,4 +243,42 @@ sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdr
     record->ready = 0;
   }
   return discard(record, drop, context);
+}
+
+isize
+sysexecreply(Execreserve *record, Filewatch *watch, Fileowner *target, const Ipcmsg *call,
+             u64 token, u64 now)
+{
+  Msg   reply;
+  u64   state;
+  isize error;
+  if (!record || !watch || !target || !call || !token)
+    return -ERR_INVALID;
+  if (!record->ready || record->token)
+    return -ERR_STATE;
+  if (record->source != watch->owner.cookie || record->target != target->cookie ||
+      record->request != call->request || record->connid != watch->connid ||
+      record->connid != call->words[1] || record->seq != call->words[2] ||
+      record->slot != call->words[3] || record->slot >= FS_CONN_SLOTS ||
+      watch->active.requests[record->slot] != record->request || watch->owner.pid != call->source ||
+      watch->owner.image != call->image)
+    return -ERR_STALE;
+  if (now >= record->deadline)
+    return -ERR_TIMEDOUT;
+  error = sysexecstate(&watch->owner, target);
+  if (error != SYSEXEC_PENDING)
+    return error < 0 ? error : -ERR_STALE;
+  error = ipc_rqcheck(record->request, &state);
+  if (error)
+    return error;
+  if (state != RQ_CHECK_LIVE)
+    return -ERR_CANCELLED;
+  reply.words[0] = reply.words[3] = 0;
+  reply.words[1] = record->seq;
+  reply.words[2] = token;
+  error = ipc_reply(record->request, &reply);
+  if (error)
+    return error;
+  record->token = token;
+  return sysfilefinish(&watch->active, record->request);
 }

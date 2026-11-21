@@ -437,15 +437,15 @@ execmanifest(const Bootview *boot, u64 file, u32 count)
   CHECK(!sysoprequest(&work, &cache, &execsend.key, &message) &&
         !ipc_call(work.state.call, &message, CALL_ASYNC, &result));
   rpc = original = result.request;
-  CHECK(!sysopsubmitted(&work, &cache, &execsend.key, &rpc) && !rpc &&
-        sysoprequest(&work, &cache, &execsend.key, &message) == -ERR_STATE &&
-        !ipc_rqwait(original, 0, &result) && (isize) result.words[0] == -ENOTSUP &&
-        result.words[1] == execsend.key.lease.seq && !result.words[2] && !result.words[3] &&
-        !sysopcapture(&work, &cache, &execsend.key, 0, &result) &&
-        !sysopfinished(&work, &cache, &execsend.key) && !sysopsaved(&work, &cache, &execsend.key) &&
-        !sysopack(&work, &cache, &execsend.key) &&
-        !sysopfinish(&work, &cache, &execsend.key, &pin) && pin == file &&
-        !sysfilerefunpin(&pool, work.state.self, pin) && !sysexecfdrelease(&execfds));
+  CHECK(
+      !sysopsubmitted(&work, &cache, &execsend.key, &rpc) && !rpc &&
+      sysoprequest(&work, &cache, &execsend.key, &message) == -ERR_STATE &&
+      !ipc_rqwait(original, 0, &result) && (isize) result.words[0] == (count == 1 ? -ENOTSUP : 0) &&
+      result.words[1] == execsend.key.lease.seq && result.words[2] == (count == 1 ? 0U : 41U) &&
+      !result.words[3] && !sysopcapture(&work, &cache, &execsend.key, 0, &result) &&
+      !sysopfinished(&work, &cache, &execsend.key) && !sysopsaved(&work, &cache, &execsend.key) &&
+      !sysopack(&work, &cache, &execsend.key) && !sysopfinish(&work, &cache, &execsend.key, &pin) &&
+      pin == file && !sysfilerefunpin(&pool, work.state.self, pin) && !sysexecfdrelease(&execfds));
   if (count > 1)
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 2, &spare) &&
           !sysconnworkrelease(&work, &cache, spare));
@@ -1011,8 +1011,18 @@ server(const Bootview *boot, u32 recover)
       for (i = 0; i < count; i++)
         CHECK(execplan.rows[i].fd == i && execplan.rows[i].flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC));
       execplan.count = 0;
-      reply.words[0] = (u64) -ENOTSUP;
-      CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
+      if (count == 1) {
+        reply.words[0] = (u64) -ENOTSUP;
+        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
+      } else {
+        Ipcmsg wrong = input;
+        wrong.words[2]++;
+        CHECK(sysexecreply(&execreserve, watch, &target, &wrong, 41, 0) == -ERR_STALE &&
+              !execreserve.token && watch->active.requests[slot] == input.request &&
+              !sysexecreply(&execreserve, watch, &target, &input, 41, 0) &&
+              execreserve.token == 41 && !watch->active.requests[slot] &&
+              !watch->active.requests[slot + 1]);
+      }
       continue;
     }
     if (!recover && opcode == FS_LOAD) {

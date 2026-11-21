@@ -27,6 +27,8 @@ struct Execmanifest
   Execgroup   groups[BOOT_FD_COUNT];
   Handle      pid;
   u64         source_image, target_image;
+  Handle      request;
+  u64         connid, seq, slot, deadline;
   u32         count;
 };
 struct Exechold
@@ -38,6 +40,8 @@ struct Execreserve
 {
   Exechold entries[BOOT_FD_COUNT];
   u64      source, target;
+  Handle   request;
+  u64      connid, seq, slot, deadline, token;
   u32      count, ready;
 };
 
@@ -69,4 +73,9 @@ isize sysexecreserve(Execreserve *out, const Execmanifest *plan, Fileowner *sour
    Does not touch source File references or release observation cookies. */
 isize sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdrop drop,
                      void *context);
+/* Caller has prepaid connection and token storage. Preserve the record and
+   slot on failure. On success only the original request is finished; the
+   token and its holds stay owned by the backend. */
+isize sysexecreply(Execreserve *record, Filewatch *watch, Fileowner *target, const Ipcmsg *call,
+                   u64 token, u64 now);
 #endif

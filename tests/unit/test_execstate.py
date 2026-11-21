@@ -19,7 +19,8 @@ class Group(C.Structure):
 
 class Plan(C.Structure):
     _fields_ = [('rows', (U * 6) * 128), ('groups', Group * 128), ('pid', C.c_int64),
-                ('source_image', U), ('target_image', U), ('count', C.c_uint32)]
+                ('source_image', U), ('target_image', U), ('request', C.c_int64),
+                ('connid', U), ('seq', U), ('slot', U), ('deadline', U), ('count', C.c_uint32)]
 
 
 class Hold(C.Structure):
@@ -27,7 +28,8 @@ class Hold(C.Structure):
 
 
 class Reserve(C.Structure):
-    _fields_ = [('entries', Hold * 128), ('source', U), ('target', U),
+    _fields_ = [('entries', Hold * 128), ('source', U), ('target', U), ('request', C.c_int64),
+                ('connid', U), ('seq', U), ('slot', U), ('deadline', U), ('token', U),
                 ('count', C.c_uint32), ('ready', C.c_uint32)]
 
 
@@ -37,6 +39,8 @@ DROP = C.CFUNCTYPE(C.c_int64, C.c_void_p, U)
 
 STUB = '''
 #include "private/syscall.h"
+#include "private/file.h"
+#include <sys/channel.h>
 static u64 states[2], reasons[2], images[2], reads[2];
 void sample(u64 slot, u64 state, u64 reason, u64 image) {
   states[slot] = state; reasons[slot] = reason; images[slot] = image; reads[slot] = 0;
@@ -56,6 +60,15 @@ isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 i
                     u64 *cookie, u64 *state, u64 *reason) {
   (void) permit; (void) basis; (void) relation; (void) pid; (void) image;
   (void) cookie; (void) state; (void) reason; return -ERR_NOSYS;
+}
+isize ipc_rqcheck(Handle request, u64 *state) {
+  (void) request; (void) state; return -ERR_NOSYS;
+}
+isize ipc_reply(Handle request, const Msg *reply) {
+  (void) request; (void) reply; return -ERR_NOSYS;
+}
+isize sysfilefinish(Fileinflight *active, Handle request) {
+  (void) active; (void) request; return -ERR_NOSYS;
 }
 '''
 
