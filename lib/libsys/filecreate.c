@@ -988,7 +988,14 @@ sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
       !separate(pipe, sizeof(*pipe), userfds, 2 * sizeof(*userfds)) ||
       !separate(business, sizeof(*business), userfds, 2 * sizeof(*userfds)))
     userfds = NULL;
-  error = sysfilecreateack(pool, work, cache, &pipe->operation);
+  if (work->state.operations[pipe->operation.lease.slot].status == -ERR_PEER) {
+    if (!work->state.ended)
+      error = sysoppeerended(work, cache, &pipe->operation);
+    if (!error)
+      error = sysfilecreatefailed(pool, work, cache, &pipe->operation);
+  }
+  if (!error)
+    error = sysfilecreateack(pool, work, cache, &pipe->operation);
   if (!error)
     error = sysfilecreatesettle(pool, work, cache, &pipe->operation, 0);
   if (error)

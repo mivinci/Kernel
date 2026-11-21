@@ -695,9 +695,8 @@ deadtest(u32 creating)
     putstr("\n");
   }
   CHECK(cleaned && rqcleaned && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 2 &&
-        trace[1] == (creating ? 1 : 2) && trace[2] == (creating == 2 ? 3 : 2) && trace[3] == 1 &&
-        trace[4] < 64 && !trace[15] &&
-        (!creating || (trace[7] == 1 && trace[8] == (u64) -ERR_PEER)));
+        trace[1] == (creating ? 1 : 2) && trace[2] == 2 && trace[3] == 1 && trace[4] < 64 &&
+        !trace[15] && (!creating || (trace[7] == 1 && trace[8] == (u64) -ERR_PEER)));
   while ((error = procclean(pids[0])) > 0) {
   }
   CHECK(!error && !lifecollect(info[0].life, 1, &result) && !setstat(set, &budget) &&
@@ -711,13 +710,13 @@ deadtest(u32 creating)
     putstr(" opcode=");
     puthex(creating == 1 ? 2 : 24);
     putstr(" attempts=");
-    puthex(2);
+    puthex(creating == 1 ? 2 : 1);
     putstr(" submitted=");
     puthex(1);
     putstr(" slots=");
-    puthex(creating == 1 ? 2 : 3);
+    puthex(2);
     putstr(" call_failed=");
-    puthex(1);
+    puthex(creating == 1);
   } else {
     putstr(" references=");
     puthex(2);
@@ -725,7 +724,7 @@ deadtest(u32 creating)
     puthex(1);
   }
   putstr(" recovered=");
-  puthex(creating == 2 ? 3 : 2);
+  puthex(2);
   putstr(" quarantined=");
   puthex(1);
   putstr(" trusted_cleanup=");

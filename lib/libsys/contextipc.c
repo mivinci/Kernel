@@ -587,6 +587,8 @@ sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *wo
   } else
     status = context->status;
   error = sysctxhandoff(bank, self, *active);
+  if (!error && status == -ERR_PEER && context->number == SYS_CALL)
+    error = sysctxpeerended(bank, self, *active);
   if (!error)
     error = sysctxfinish(bank, self, *active);
   if (!error) {
@@ -633,13 +635,15 @@ sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
   status = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (status)
     return status;
-  if (error == 1 || error == -ERR_CANCELLED)
-    error = sysfilepipefinish(pool, work, cache, table, pipe, fds, business);
-  else if (!sysfilecreatecheck(pool, work, cache, &pipe->operation) &&
-           work->state.operations[pipe->operation.lease.slot].phase == SYSOP_PREPARED) {
-    status = sysfilepipeabort(pool, work, cache, table, pipe);
-    if (status)
-      error = status;
+  if (!sysfilecreatecheck(pool, work, cache, &pipe->operation)) {
+    u32 phase = work->state.operations[pipe->operation.lease.slot].phase;
+    if (error == 1 || error == -ERR_CANCELLED || (error == -ERR_PEER && phase == SYSOP_RESULT))
+      error = sysfilepipefinish(pool, work, cache, table, pipe, fds, business);
+    else if (phase == SYSOP_PREPARED) {
+      status = sysfilepipeabort(pool, work, cache, table, pipe);
+      if (status)
+        error = status;
+    }
   }
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return error ? error : status;

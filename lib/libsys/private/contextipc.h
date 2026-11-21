@@ -67,7 +67,8 @@ struct Pipecreate;
 struct Fdtable;
 /* Create local descriptors over an established FS connection. Both private
    records start zeroed, and remain caller-owned across interruption or
-   incomplete drain. Re-enter with the same records to continue an operation;
+   incomplete drain (ERR_WOULD_BLOCK after submitted peer death). Re-enter
+   with the same records to continue an operation;
    the output pointer is used only during final publication, never retained. */
 isize sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                        struct Fdtable *table, struct Pipecreate *pipe, Rkey *active, int *fds,

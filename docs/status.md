@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage398（2026-11-22）：双架构 QEMU `runtime` 验证管道创建在服务退出后保留原 RPC 和两端预留，夹具确认排空后才回收。双架构 `pipeio` 回归通过；生产清理授权和公开 `pipe()` 尚待接入。
 - stage397（2026-11-22）：libsys 私有入口串接 PIPE 预留、原 RPC 等待和 fd 发布；ARM64/RV64 QEMU 验证真实信号中断后用原记录继续。公开 `pipe()` 尚未接。
 - stage396（2026-11-22）：双架构 QEMU `pipeio` 验证真实 SIGUSR1 打断 PIPE 等待，handler 返回后继续原 RPC 并安装两个 fd。公开 `pipe()` 的策略仍待接入。
 - stage395（2026-11-22）：PIPE 的 Rctx 驱动统一保护登记和交接，等待沿用调用者信号掩码。双架构 QEMU `pipeio` 验证原 RPC 和 fd 安装；未验公开信号策略。

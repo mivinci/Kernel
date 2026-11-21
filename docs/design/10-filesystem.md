@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage398：`sysctxpipecreate` 对已提交 PIPE 的原生 PEER 核对原 RPC 并停止使用该连接；原请求未排空时返回 WOULD_BLOCK，保留两端 fd 和 File 预留。ARM64/RV64 QEMU `runtime` 验证服务接收后退出、同一记录续做、确认 RQ_FINISH 后才 ACK 并一起回收两端，输出 fd 未改动。排空仍由可信测试管理者完成，未引入生产 rqclean 权限；公开 `pipe()` 尚未接入。
+
 stage397：`sysctxpipecreate` 在调用者已建立 FS 连接后，串接管道预留、提交、原 RPC 等待和成对发布。ARM64/RV64 QEMU `pipeio` 用 SIGUSR1 中断这个入口，核对输出未变、预留仍在，随后重入同一记录领取唯一一次创建的两个 fd。接口保留原生中断，不自行决定公开 `pipe()` 的重启策略。
 
 stage396：双架构 QEMU `pipeio` 用实际 SIGUSR1 打断已被服务接收但尚未回复的 PIPE 等待。客户端执行 libc handler 后取得原生 INTERRUPTED，两个 fd 仍预留，RPC 身份不变；随后继续同一 RPC，服务只创建一次，客户端成对发布两个 fd，退出后资源回到基线。测试显式继续等待，不代表公开 `pipe()` 已确定重启或中断返回策略。

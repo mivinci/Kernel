@@ -1940,6 +1940,45 @@ deadclient(const Bootview *boot)
   filecreatetrace[0] = 2;
 }
 static void
+pipedeadclient(const Bootview *boot)
+{
+  Pipecreate pipe = {0};
+  Fdtag      tags[2];
+  Handle     rpc;
+  isize      business = 123, error;
+  int        pair[2] = {-1, -1};
+  u32        i, steps = 0;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(sysctxpipecreate(&contexts, 0, &pool, &work, &cache, &fds, &pipe, &active_key, pair,
+                         &business) == -ERR_WOULD_BLOCK &&
+        !active_key.sequence && work.state.ended == 1 && !sysfdcheckpair(&fds, pipe.tags) &&
+        pair[0] == -1 && pair[1] == -1 && business == 123);
+  rpc = work.state.operations[pipe.operation.lease.slot].rpc;
+  CHECK(rpc);
+  filecreatetrace[5] = (u64) rpc;
+  filecreatetrace[6] = 6;
+  do {
+    CHECK(++steps < 64 && !__sys_yield());
+    error = sysctxpipecreate(&contexts, 0, &pool, &work, &cache, &fds, &pipe, &active_key, pair,
+                             &business);
+  } while (error == -ERR_WOULD_BLOCK);
+  CHECK(error == -ERR_PEER && !pipe.operation.lease.seq && !active_key.sequence && !business &&
+        pair[0] == -1 && pair[1] == -1 && !sysfdreservepair(&fds, tags) && tags[0].index == 0 &&
+        tags[1].index == 1 && !sysfdcancelpair(&fds, tags));
+  for (i = 0; i < SYSFILE_REFS; i++)
+    CHECK(pool.entries[i].state == SYSFILE_REF_FREE ||
+          pool.entries[i].state == SYSFILE_REF_RETIRED);
+  CHECK(!sysfileconnreap(&pool, &work, &cache));
+  filecreatetrace[1] = 1;
+  filecreatetrace[2] = 2;
+  filecreatetrace[3] = 1;
+  filecreatetrace[4] = steps;
+  filecreatetrace[7] = 1;
+  filecreatetrace[8] = (u64) error;
+  filecreatetrace[0] = 2;
+}
+static void
 createdeadclient(const Bootview *boot, u64 opcode)
 {
   Opkey key, retry;
@@ -1947,6 +1986,10 @@ createdeadclient(const Bootview *boot, u64 opcode)
   u64   args[8], files[2], source = 0;
   u32   steps = 0, i;
   isize status, error;
+  if (opcode == FS_PIPE) {
+    pipedeadclient(boot);
+    return;
+  }
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
   key = begin(opcode, opcode == FS_OPEN ? "/a" : NULL, 0);
@@ -1982,7 +2025,7 @@ createdeadclient(const Bootview *boot, u64 opcode)
     CHECK(pool.entries[i].state == SYSFILE_REF_FREE ||
           pool.entries[i].state == SYSFILE_REF_RETIRED);
   CHECK(!sysfileconnreap(&pool, &work, &cache));
-  filecreatetrace[2] = opcode == FS_PIPE ? 3 : 2;
+  filecreatetrace[2] = 2;
   filecreatetrace[3] = 1;
   filecreatetrace[4] = steps;
   filecreatetrace[0] = 2;

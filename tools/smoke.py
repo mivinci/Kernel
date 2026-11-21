@@ -1789,9 +1789,9 @@ def exercise(args, run_dir, record):
                         raise SmokeError("ended backend close recovery mismatch")
                     record['file_recovery']=dead[0]
                     createdead=[fields(line) for line in serial.read_text().splitlines() if line.startswith("CREATEDEADCHECK ")]
-                    expected_dead=[dict(actors=2,opcode=opcode,attempts=2,submitted=1,slots=count,
-                        call_failed=1,recovered=count,quarantined=1,trusted_cleanup=1,charged=0,
-                        allocated=transition["tables"]) for opcode,count in ((2,2),(24,3))]
+                    expected_dead=[dict(actors=2,opcode=opcode,attempts=1+failed,submitted=1,slots=2,
+                        call_failed=failed,recovered=2,quarantined=1,trusted_cleanup=1,charged=0,
+                        allocated=transition["tables"]) for opcode,failed in ((2,1),(24,0))]
                     if createdead != expected_dead:
                         raise SmokeError("ended backend creator reservation recovery mismatch")
                     record['creator_recovery']=createdead
