@@ -1,6 +1,18 @@
 #ifndef _LIBSYS_CONTEXTIPC_H
 #define _LIBSYS_CONTEXTIPC_H
 #include "context.h"
+/* Child-local repair of pending IPC waits mixed with admitted raw layers.
+   Validate every route against the still inherited parent records
+   before modifying any layer. No poll/cancel/ACK or transport record mutation.
+   Already fixed child interruptions survive another fork. Completed or unsent
+   IPC work requires the separate typed repair path. */
+isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
+                    const Fixlayer layers[FIX_LAYER_COUNT]);
+/* A resumed IPC wrapper checks this before using its copied transport key.
+   Returns 1 for a fixed child interruption, 0 for an ordinary route. On 1,
+   status is saved locally and the layer becomes finishable, without handoff
+   to parent transport. Active invocation must unwind before finish. */
+isize sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status);
 /* Short caller-protected registration before sysctxinvoke. The destination
    and its exact claim/key stay exclusively bound until handoff. No waiting,
    allocation, ACK, cancellation or application output pointer. CALL is always

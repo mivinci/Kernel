@@ -378,6 +378,12 @@ stage220：`sysconnforkprepare` 将子工作区保存的 token 接入按需 ATTA
 
 stage220 完整回归：`make unit` 1206 项通过（172 秒）；追加消息四字断言后单独重跑工作区 12 项通过。日志 `/private/tmp/kernel-stage220-{unit,fmt,arm64,riscv}.log`。QEMU 为既有 sigframe 回归，未运行完整场景矩阵。
 
+stage221：子 Rbank 的 WAITING/RQWAIT IPC 层可用 `sysctxfixwait` 修复：在全部层准入通过前不修改银行，核对 Bootstrap/Op 的原 claim/key/RPC 与父身份，将待中断层转为仅子本地的 FORK 路由和固定 ERR_INTERRUPTED，清除父 RPC 参数、返回元组及运输指针；保留 active、原 key、输入及返回窗口。原运输记录、槽、File pin 和父 RPC 不 poll/cancel/ACK，也不由本操作回收。恢复后的 IPC 包装须先用 `sysctxforkresult` 取本地结果，再在 active 解除后 finish，不能交给原父运输 handoff。重复修复不清结果；再次 fork 可保留已固定的本地中断，夹带原生结果或指针则拒绝。原始未提交及纯值完成层共用原准入规则，允许混合银行；已提交 CALL、已完成 IPC/稳定数据/创建结果与未提交 IPC 仍明确拒绝，待类型化修复后才能纳入整体协调器。
+
+18 项 IPC 上下文主机测试包含 Bootstrap/Op 等待、中断提取/active 门禁、父记录守恒、全层失败原子性、后续 fork、输出别名及混合原始层；新增路径尚未在真实 fork/IPC 中调用。ARM64/RV64 的 libsys、sigframe 四次 QEMU 回归及格式检查通过，日志 `/private/tmp/kernel-stage221-*-final.log`。一次中途构建因编辑期间 SDK 头不一致明确失败，停止修改后四项均重跑通过；不视为运行故障或忽略失败。无 CI、板端或完整场景矩阵验收。
+
+stage221 主机证据补充：中间版本完整 `make unit` 1212 项通过（171 秒，`/private/tmp/kernel-stage221-unit.log`）；最后的混合层准入及新增断言后，重跑上下文系列 57 项及双架构原始上下文主机测试 11 项全部通过，未将中间版本全量结果称为最终源码全量验收。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

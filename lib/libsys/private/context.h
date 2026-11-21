@@ -24,6 +24,7 @@
 #define RCTX_ROUTE_NONE 0
 #define RCTX_ROUTE_BOOT 1
 #define RCTX_ROUTE_OP   2
+#define RCTX_ROUTE_FORK 3
 typedef struct Rctx   Rctx;
 typedef struct Rbank  Rbank;
 typedef struct Rkey   Rkey;
@@ -87,6 +88,9 @@ STATIC_ASSERT(sizeof(Rbank) == 24 + RCTX_LAYERS * (RCTX_BYTES + RCTX_SNAPSHOT_BY
 isize sysctxinit(Rbank *bank, Connpeer self);
 /* Check all decoded Fix layers against the inherited bank before repair. */
 isize sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COUNT]);
+/* Read-only raw-layer admission after sysctxfixcheck; shared by raw and IPC
+   bank repair so mixed banks keep the same value/ownership restrictions. */
+isize sysctxfixrawlayer(const Rctx *context, const Fixlayer *layer);
 /* Apply validated Fix layers with caught signals masked. */
 isize sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child,
                    const Fixlayer layers[FIX_LAYER_COUNT]);

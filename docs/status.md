@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage221：等待 IPC 的子 Rctx 可固定本地中断并移除父运输路由，支持后续 fork 与原始层混合；18 项 IPC 上下文主机测试、格式及双架构 libsys/sigframe 四次回归通过。新路径仍仅主机调用；完成结果、真实 IPC fork 与整体协调器待接。
+
 - stage220：子准备 token 已接按需 ATTACH 的本地准备与既有 Bootstrap 路径；完整 1206 项主机测试、格式和双架构 sigframe 回归通过。真实后端、IPC Rctx/File 修复与整体 fork 协调器待接。
 
 - stage219：子 Connwork 保存准备 token，重复修复拒绝不同 token 且不改工作区；70 项相关主机测试、格式与双架构 sigframe 回归通过。真实后端 ATTACH 与整体 fork 协调器待接。

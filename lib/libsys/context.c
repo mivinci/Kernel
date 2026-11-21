@@ -83,7 +83,7 @@ sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COU
     error = sysctxlookup(bank, parent, key, &context);
     if (error)
       return error;
-    if (context->route.kind > RCTX_ROUTE_OP)
+    if (context->route.kind > RCTX_ROUTE_FORK)
       return -ERR_STATE;
     switch (action) {
     case FIX_LAYER_UNSENT:
@@ -105,6 +105,29 @@ sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COU
   return 0;
 }
 isize
+sysctxfixrawlayer(const Rctx *context, const Fixlayer *layer)
+{
+  if (!context || !layer)
+    return -ERR_INVALID;
+  if (layer->action == FIX_LAYER_EMPTY)
+    return 0;
+  if (context->route.kind != RCTX_ROUTE_NONE)
+    return -ERR_NOTSUP;
+  if (layer->action == FIX_LAYER_INTERRUPT && context->phase == RCTX_WAITING)
+    return 0;
+  if (context->active)
+    return -ERR_NOTSUP;
+  if (layer->action == FIX_LAYER_UNSENT)
+    return 0;
+  /* Only value-only queries have no resource or external cleanup ownership.
+     Other completed syscalls require typed repair before admission. */
+  if (layer->action != FIX_LAYER_COMPLETE ||
+      (context->number != SYS_GETID && context->number != SYS_GETPG &&
+       context->number != SYS_CLOCK_GETTIME && context->number != SYS_CLOCK_GETRES))
+    return -ERR_NOTSUP;
+  return 0;
+}
+isize
 sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers[FIX_LAYER_COUNT])
 {
   u32   i;
@@ -117,23 +140,9 @@ sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers
   if (error)
     return error;
   for (i = 0; i < RCTX_LAYERS; i++) {
-    Rctx *context = &bank->contexts[i];
-    if (layers[i].action == FIX_LAYER_EMPTY)
-      continue;
-    if (context->route.kind != RCTX_ROUTE_NONE)
-      return -ERR_NOTSUP;
-    if (layers[i].action == FIX_LAYER_INTERRUPT && context->phase == RCTX_WAITING)
-      continue;
-    if (context->active)
-      return -ERR_NOTSUP;
-    if (layers[i].action == FIX_LAYER_UNSENT)
-      continue;
-    /* Only value-only queries have no resource or external cleanup ownership.
-       Other completed syscalls require typed repair before admission. */
-    if (layers[i].action != FIX_LAYER_COMPLETE ||
-        (context->number != SYS_GETID && context->number != SYS_GETPG &&
-         context->number != SYS_CLOCK_GETTIME && context->number != SYS_CLOCK_GETRES))
-      return -ERR_NOTSUP;
+    error = sysctxfixrawlayer(&bank->contexts[i], &layers[i]);
+    if (error)
+      return error;
   }
   for (i = 0; i < RCTX_LAYERS; i++) {
     Rctx *context = &bank->contexts[i];

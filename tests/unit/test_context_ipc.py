@@ -4,7 +4,7 @@ from unittest.mock import patch
 import test_bootstrap as bootstrap
 import test_connection_work as work
 import test_operation as ops
-from test_conndir import Claim, Peer
+from test_conndir import Claim, Peer, pid
 from test_runtime_context import Bank, Key, Result
 
 
@@ -41,6 +41,9 @@ class ContextIpcTests(unittest.TestCase):
             'sysctxopcall': [bank, Peer, C.c_uint32, w, cache, operation, C.c_uint64, key],
             'sysctxopwait': [bank, Peer, C.c_uint32, w, cache, operation, key],
             'sysctxhandoff': [bank, Peer, Key], 'sysctxfinish': [bank, Peer, Key],
+            'sysctxfixwait': [bank, Peer, Peer, C.c_void_p],
+            'sysctxprepare': [bank,Peer,C.c_uint32,C.c_uint64,C.c_void_p,key],
+            'sysctxforkresult': [bank, Peer, Key, C.POINTER(C.c_int64)],
             'sysctxpeerended': [bank, Peer, Key],
             'sysctxresult': [bank, Peer, Key, C.POINTER(C.c_int64), C.POINTER(Result)]}
         for name, args in signatures.items():
@@ -77,6 +80,123 @@ class ContextIpcTests(unittest.TestCase):
         self.returned(key, message=message)
         self.assertEqual(self.lib.sysctxhandoff(self.b, self.self, key), 0)
         self.assertEqual(self.lib.sysctxfinish(self.b, self.self, key), 0)
+
+    def waiting_boot(self, layer=0):
+        rpc=C.c_int64(self.rpc)
+        self.assertEqual(self.lib.sysbootsubmitted(C.byref(self.boot),self.claim,C.byref(rpc)),0)
+        key=Key()
+        self.assertEqual(self.lib.sysctxbootwait(self.b,self.self,layer,C.byref(self.boot),self.claim,C.byref(key)),0)
+        self.bank.contexts[layer].phase=2
+        self.bank.contexts[layer].active=1
+        return key
+
+    def test_child_wait_fix_preserves_parent_rpc_and_resumes_local_interruption(self):
+        key=self.waiting_boot()
+        parent=bytes(self.bank);records=(bytes(self.boot),bytes(self.work),bytes(self.cache))
+        calls=[self.lib.testget(i) for i in range(3)]
+        layers=(C.c_uint64*6)(key.sequence,3,0,0,0,0)
+        child=Peer(pid(3),20)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        ctx=self.bank.contexts[0]
+        self.assertEqual((ctx.phase,ctx.status,ctx.active,ctx.sequence),(3,-12,1,key.sequence))
+        self.assertEqual((ctx.reserved[0],list(ctx.args),bytes(ctx.result)),(3,[0]*7,bytes(64)))
+        self.assertEqual(list(ctx.reserved[1:27]),[0]*26)
+        self.assertEqual((bytes(self.boot),bytes(self.work),bytes(self.cache)),records)
+        self.assertNotEqual(bytes(self.bank),parent)
+        fixed=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        self.assertEqual(bytes(self.bank),fixed)
+        status=C.c_int64(123)
+        self.assertEqual(self.lib.sysctxforkresult(self.b,child,key,C.byref(status)),1)
+        self.assertEqual(status.value,-12)
+        self.assertEqual(self.lib.sysctxfinish(self.b,child,key),-7)
+        ctx.active=0
+        self.assertEqual(self.lib.sysctxforkresult(self.b,child,key,C.byref(status)),1)
+        self.assertEqual(self.lib.sysctxfinish(self.b,child,key),0)
+        self.assertEqual((bytes(self.boot),bytes(self.work),bytes(self.cache)),records)
+        self.assertEqual([self.lib.testget(i) for i in range(3)],calls)
+
+    def test_child_wait_fix_rejects_mismatched_or_completed_transport_atomically(self):
+        key=self.waiting_boot()
+        layers=(C.c_uint64*6)(key.sequence,3,0,0,0,0)
+        child=Peer(pid(3),20)
+        self.bank.contexts[0].args[0]+=65536
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-4)
+        self.assertEqual(bytes(self.bank),before)
+        self.bank.contexts[0].args[0]-=65536
+        # A saved result must go through completed-data repair, never be lost.
+        self.boot.state=3
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-6)
+        self.assertEqual(bytes(self.bank),before)
+
+    def test_child_wait_fix_checks_later_layers_before_changing_first(self):
+        key=self.waiting_boot()
+        other=Key()
+        self.assertEqual(self.lib.sysctxbootwait(self.b,self.self,1,C.byref(self.boot),self.claim,C.byref(other)),0)
+        self.bank.contexts[1].phase=3
+        layers=(C.c_uint64*6)(key.sequence,3,other.sequence,2,0,0)
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,Peer(pid(3),20),layers),-18)
+        self.assertEqual(bytes(self.bank),before)
+
+    def test_child_operation_wait_fix_keeps_parent_slot_file_pin_and_rpc(self):
+        operation=self.prepare()
+        rpc=C.c_int64(self.rpc)
+        self.assertEqual(self.lib.sysopsubmitted(self.w,self.c,C.byref(operation),C.byref(rpc)),0)
+        key=Key()
+        self.assertEqual(self.lib.sysctxopwait(self.b,self.self,1,self.w,self.c,C.byref(operation),C.byref(key)),0)
+        ctx=self.bank.contexts[1];ctx.phase=2;ctx.active=1
+        records=(bytes(self.work),bytes(self.cache))
+        layers=(C.c_uint64*6)(0,0,key.sequence,3,0,0)
+        child=Peer(pid(3),20)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        self.assertEqual((bytes(self.work),bytes(self.cache)),records)
+        status=C.c_int64(123)
+        self.assertEqual(self.lib.sysctxforkresult(self.b,child,key,C.byref(status)),1)
+        self.assertEqual(status.value,-12)
+        self.assertEqual(self.lib.sysctxhandoff(self.b,child,key),-6)
+        ctx.active=0
+        self.assertEqual(self.lib.sysctxfinish(self.b,child,key),0)
+        self.assertEqual((bytes(self.work),bytes(self.cache)),records)
+
+    def test_ordinary_route_is_not_a_child_local_result_and_output_alias_is_rejected(self):
+        key=self.bootcall();status=C.c_int64(123)
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxforkresult(self.b,self.self,key,C.byref(status)),0)
+        self.assertEqual((status.value,bytes(self.bank)),(123,before))
+        alias=C.cast(self.b,C.POINTER(C.c_int64))
+        self.assertEqual(self.lib.sysctxforkresult(self.b,self.self,key,alias),-1)
+        self.assertEqual(bytes(self.bank),before)
+
+    def test_already_fixed_interruption_survives_another_fork_without_transport(self):
+        key=self.waiting_boot();child=Peer(pid(3),20);grandchild=Peer(pid(4),21)
+        layers=(C.c_uint64*6)(key.sequence,3,0,0,0,0)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        status=C.c_int64()
+        self.assertEqual(self.lib.sysctxforkresult(self.b,child,key,C.byref(status)),1)
+        layers[1]=2
+        before=bytes(self.bank.contexts[0])
+        self.assertEqual(self.lib.sysctxfixwait(self.b,child,grandchild,layers),0)
+        self.assertEqual(bytes(self.bank.contexts[0]),before)
+        self.assertEqual(self.lib.sysctxforkresult(self.b,grandchild,key,C.byref(status)),1)
+        self.assertEqual(status.value,-12)
+        # A stale native result cannot hide behind the child-local marker.
+        self.bank.contexts[0].result.values[0]=self.rpc
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,grandchild,Peer(pid(5),22),layers),-6)
+        self.assertEqual(bytes(self.bank),before)
+
+    def test_mixed_bank_rebinds_unsent_raw_layer_without_losing_its_arguments(self):
+        key=self.waiting_boot();raw=Key();args=(C.c_uint64*7)(1,2,3,4,5,6,7)
+        self.assertEqual(self.lib.sysctxprepare(self.b,self.self,1,0x70,args,C.byref(raw)),0)
+        before=bytes(self.bank.contexts[1])
+        layers=(C.c_uint64*6)(key.sequence,3,raw.sequence,1,0,0)
+        child=Peer(pid(3),20)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        self.assertEqual(bytes(self.bank.contexts[1]),before)
+        self.assertEqual((self.bank.self.pid,self.bank.self.image),(child.pid,child.image))
 
     def test_async_submission_moves_rpc_once_and_raw_result_cannot_bypass_route(self):
         key = self.bootcall()

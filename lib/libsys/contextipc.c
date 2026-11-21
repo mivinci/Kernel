@@ -17,6 +17,130 @@ clearroute(Rroute *route)
   for (i = 0; i < sizeof(*route); i++)
     bytes[i] = 0;
 }
+static isize
+forkfixed(Rctx *context)
+{
+  Rroute expected;
+  u32    i;
+  if ((context->phase != RCTX_DONE && context->phase != RCTX_CLEANING) ||
+      context->status != -ERR_INTERRUPTED || context->number || context->route.delivered > 1)
+    return -ERR_STATE;
+  clearroute(&expected);
+  expected.kind = RCTX_ROUTE_FORK;
+  expected.delivered = context->route.delivered;
+  for (i = 0; i < sizeof(expected); i++)
+    if (((const u8 *) &expected)[i] != ((const u8 *) &context->route)[i])
+      return -ERR_STATE;
+  for (i = 0; i < ARRAY_SIZE(context->args); i++)
+    if (context->args[i])
+      return -ERR_STATE;
+  for (i = 0; i < sizeof(context->result); i++)
+    if (((const u8 *) &context->result)[i])
+      return -ERR_STATE;
+  return 0;
+}
+static isize
+forkwait(Rctx *context, Connpeer parent)
+{
+  Rroute *route = &context->route;
+  Handle  rpc;
+  isize   error;
+  u32     i;
+  if (context->phase != RCTX_WAITING || context->number != SYS_RQWAIT || route->delivered ||
+      route->snapshot_saved || route->snapshot_bytes || route->snapshot_offset)
+    return -ERR_NOTSUP;
+  for (i = 1; i < ARRAY_SIZE(context->args); i++)
+    if (context->args[i])
+      return -ERR_STATE;
+  if (route->kind == RCTX_ROUTE_BOOT) {
+    if (!route->bootstrap)
+      return -ERR_STATE;
+    error = sysbootrpc(route->bootstrap, route->claim, &rpc);
+  } else if (route->kind == RCTX_ROUTE_OP) {
+    if (!route->work || !route->cache || route->work->state.self.pid != parent.pid ||
+        route->work->state.self.image != parent.image || route->cache->self.pid != parent.pid ||
+        route->cache->self.image != parent.image)
+      return -ERR_STALE;
+    error = sysoprpc(route->work, route->cache, &route->operation, &rpc);
+  } else
+    return -ERR_NOTSUP;
+  if (error)
+    return error;
+  return rpc == route->rpc && (u64) rpc == context->args[0] ? 0 : -ERR_STALE;
+}
+isize
+sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers[FIX_LAYER_COUNT])
+{
+  u32   i, j;
+  isize error;
+  if (!bank || !layers || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
+      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || child.pid == parent.pid ||
+      !separate(bank, sizeof(*bank), layers, sizeof(*layers) * FIX_LAYER_COUNT))
+    return -ERR_INVALID;
+  if (bank->self.pid == child.pid && bank->self.image == child.image)
+    return 0;
+  error = sysctxfixcheck(bank, parent, layers);
+  if (error)
+    return error;
+  for (i = 0; i < RCTX_LAYERS; i++) {
+    if (layers[i].action == FIX_LAYER_EMPTY)
+      continue;
+    if (bank->contexts[i].route.kind == RCTX_ROUTE_NONE) {
+      error = sysctxfixrawlayer(&bank->contexts[i], &layers[i]);
+      if (error)
+        return error;
+      continue;
+    }
+    if (bank->contexts[i].route.kind == RCTX_ROUTE_FORK) {
+      error = forkfixed(&bank->contexts[i]);
+      if (error)
+        return error;
+      continue;
+    }
+    if (layers[i].action != FIX_LAYER_INTERRUPT)
+      return -ERR_NOTSUP;
+    error = forkwait(&bank->contexts[i], parent);
+    if (error)
+      return error;
+  }
+  for (i = 0; i < RCTX_LAYERS; i++) {
+    Rctx *context = &bank->contexts[i];
+    if (layers[i].action != FIX_LAYER_INTERRUPT || context->route.kind == RCTX_ROUTE_FORK)
+      continue;
+    if (context->route.kind != RCTX_ROUTE_NONE) {
+      clearroute(&context->route);
+      context->route.kind = RCTX_ROUTE_FORK;
+    }
+    context->status = -ERR_INTERRUPTED;
+    context->number = 0;
+    for (j = 0; j < ARRAY_SIZE(context->args); j++)
+      context->args[j] = 0;
+    for (j = 0; j < sizeof(context->result); j++)
+      ((u8 *) &context->result)[j] = 0;
+    context->phase = RCTX_DONE;
+  }
+  bank->self = child;
+  return 0;
+}
+isize
+sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status)
+{
+  Rctx *context;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (!separate(bank, sizeof(*bank), status, sizeof(*status)))
+    return -ERR_INVALID;
+  if (context->route.kind != RCTX_ROUTE_FORK)
+    return 0;
+  error = forkfixed(context);
+  if (error)
+    return error;
+  *status = context->status;
+  context->route.delivered = 1;
+  context->phase = RCTX_CLEANING;
+  return 1;
+}
 static int
 storage(Rbank *bank, const void *record, u64 bytes, Rkey *out)
 {
@@ -473,11 +597,13 @@ sysctxsignal(Rbank *bank, Connpeer self, Rkey key, void *trap, u64 now)
   isize error = sysctxlookup(bank, self, key, &context);
   if (error)
     return error;
-  if (context->route.kind > RCTX_ROUTE_OP || context->route.interruptible > 1)
+  if (context->route.kind > RCTX_ROUTE_FORK || context->route.interruptible > 1)
     return -ERR_STATE;
   error = sysctxcapture(bank, self, key, trap);
   if (error < 0)
     return error;
+  if (context->route.kind == RCTX_ROUTE_FORK)
+    return 0;
   if (context->phase == RCTX_DONE && context->route.kind) {
     error = sysctxhandoff(bank, self, key);
     if (error)
