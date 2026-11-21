@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage282：libc 提供 `sysconf(_SC_PAGESIZE)`（同义 `_SC_PAGE_SIZE`）。RV64、ARM64 QEMU runtime 验证实际页大小、成功保留 errno 和无效选项 EINVAL，格式检查通过。
+
 - stage281：libc 公开 `clock_gettime` 和 `clock_getres`。双架构 runtime 验证两种时钟、单调性、实际分辨率、非法时钟、NULL 输出和 errno；5 项时间接口主机测试、1252 项完整主机回归及格式检查通过。REALTIME 尚未校准，`clock_settime` 和校准状态查询待接。
 
 - stage280：生产 TTY 对尚未支持的文件请求按文件协议回送原序号和 ENOTSUP；双架构 `serial-tty` 验证拒绝后仍正常回显。

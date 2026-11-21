@@ -46,6 +46,10 @@
 补充本阶段接口：utimensat/futimens（sys/stat.h），语义与测试见 [文件时间戳](10-filesystem.md)。支持显式 atime/mtime、UTIME_NOW/UTIME_OMIT 和对应权限检查，ctime 不由应用指定；符号链接及 flags 按接口逐项冻结。当前未实现。
 
 补充本阶段接口：clock_settime（time.h），仅支持受明确校时授权限制的 CLOCK_REALTIME；clock_getres 返回实际分辨率。时间来源/可信校准状态属于原生扩展，不因成功设置时间自动成立。具体契约及用例见 [时间接口](05-events.md)，当前未实现。
+
+`unistd.h` 的 `long sysconf(int name)` 首先支持 `_SC_PAGESIZE` 与同义 `_SC_PAGE_SIZE`。返回目标内核构建采用的基础虚拟内存页字节数（RV64、ARM64 均为 4096），成功保留 `errno`。未知选择器返回 `-1/EINVAL`；其他配置名暂不导出，不报告尚未交付的功能。`pathconf` 和 `fpathconf` 待接。
+
+stage282：两架构 QEMU `runtime` 的五个正常启动用例均验证两个名称的返回值、成功时 `errno` 保持不变以及未知选择器的 `EINVAL`；格式检查通过。
 libc 导出标准 API，libsys 实现 fd/连接/服务适配和负错误码协议；POSIX 层按每个接口转换错误，原生 UNKNOWN 等结果必须定义 POSIX 可表达的失败映射，不能泄漏私有返回值。共享缓冲仍待真实完成后复用。
 
 基础文本补充登记（2026-11-21，责任模块均为libc/string.c、公开于string.h；代码已接入，验收见文末）。以下原型采用项目C89声明形式；复制/拼接的非重叠、有效存储及容量前提仍按规范，不因省略restrict拼写变成重叠复制接口。所有函数在有效输入上保持errno，无分配、I/O或库全局状态；不是检查任意应用指针并返回EFAULT的系统接口。

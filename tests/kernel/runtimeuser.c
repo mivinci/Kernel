@@ -526,6 +526,11 @@ main(int argc, char **argv)
   runtime_trace[16] = envusercheck(&view);
   runtime_trace[17] = timecheck();
   errno = EDOM;
+  REQUIRE(sysconf(_SC_PAGESIZE) == PAGE_SIZE && sysconf(_SC_PAGE_SIZE) == PAGE_SIZE &&
+              errno == EDOM,
+          266);
+  REQUIRE(sysconf(-1) == -1 && errno == EINVAL, 267);
+  errno = EDOM;
   runtime_trace[6] = 42;
   if (runtime_trace[4] == 2)
     exit(0x12a);
