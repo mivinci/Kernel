@@ -21,10 +21,11 @@
 #include "operation.h"
 #include "argument.h"
 #include "fix.h"
-#define RCTX_ROUTE_NONE 0
-#define RCTX_ROUTE_BOOT 1
-#define RCTX_ROUTE_OP   2
-#define RCTX_ROUTE_FORK 3
+#define RCTX_ROUTE_NONE  0
+#define RCTX_ROUTE_BOOT  1
+#define RCTX_ROUTE_OP    2
+#define RCTX_ROUTE_FORK  3
+#define RCTX_ROUTE_SAVED 4
 typedef struct Rctx   Rctx;
 typedef struct Rbank  Rbank;
 typedef struct Rkey   Rkey;

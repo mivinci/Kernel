@@ -4,8 +4,9 @@
 /* Child-local repair of pending IPC waits mixed with admitted raw layers.
    Validate every route against the still inherited parent records
    before modifying any layer. No poll/cancel/ACK or transport record mutation.
-   Already fixed child interruptions survive another fork. Completed or unsent
-   IPC work requires the separate typed repair path. */
+   Ordinary completed READ requires a full pre-fork private snapshot. Fixed
+   local results survive another fork. Other completed/unsent IPC work still
+   requires its typed repair path. */
 isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
                     const Fixlayer layers[FIX_LAYER_COUNT]);
 /* A resumed IPC wrapper checks this before using its copied transport key.
@@ -13,6 +14,10 @@ isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
    status is saved locally and the layer becomes finishable, without handoff
    to parent transport. Active invocation must unwind before finish. */
 isize sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status);
+/* Completed ordinary READ whose entire output was snapshotted before fork.
+   Returns 1 and borrowed value-only reply, 0 for other routes. Snapshot view
+   remains valid until finish. Never resumes a parent Op or repeats READ. */
+isize sysctxforkreply(Rbank *bank, Connpeer self, Rkey key, Ipcmsg *out);
 /* Short caller-protected registration before sysctxinvoke. The destination
    and its exact claim/key stay exclusively bound until handoff. No waiting,
    allocation, ACK, cancellation or application output pointer. CALL is always

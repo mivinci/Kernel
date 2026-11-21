@@ -6,7 +6,7 @@ import test_context_ipc as support
 import test_operation as ops
 import test_connection_work as work
 from test_runtime_context import Bank, Key
-from test_conndir import Peer
+from test_conndir import Peer, pid
 
 
 DATA = r'''
@@ -44,6 +44,8 @@ class ContextSignalTests(unittest.TestCase):
             'sysctxsignal': [C.POINTER(Bank), Peer, Key, C.c_void_p, C.c_uint64],
             'sysctxsnapshot': [C.POINTER(Bank), Peer, Key, C.c_uint64, C.c_uint64],
             'testpayload': [C.c_uint64, C.c_int64, C.c_uint64], 'testcopies': []}
+        signatures['sysctxforkreply']=[C.POINTER(Bank),Peer,Key,C.POINTER(bootstrap.Message)]
+        signatures['sysctxsnapshotview']=[C.POINTER(Bank),Peer,Key,C.POINTER(C.c_void_p),C.POINTER(C.c_uint64)]
         for name, args in signatures.items():
             getattr(cls.lib, name).argtypes = args
             getattr(cls.lib, name).restype = C.c_int64
@@ -92,6 +94,55 @@ class ContextSignalTests(unittest.TestCase):
         self.assertEqual(self.signal(key, (1 << 64) - 1), 0)
         self.assertEqual((self.lib.testget(2), self.op(operation).deadline), (1, 1000000077))
         self.assertEqual(self.lib.sysctxfinish(self.b, self.self, key), -7)
+
+    def test_fork_preserves_completed_read_reply_and_full_private_snapshot(self):
+        operation,key=self.complete()
+        self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,4),0)
+        records=(bytes(self.work),bytes(self.cache));snapshot=bytes(self.bank.snapshots)
+        layers=(C.c_uint64*6)(key.sequence,2,0,0,0,0);child=Peer(pid(3),20)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        reply=bootstrap.Message()
+        self.assertEqual(self.lib.sysctxforkreply(self.b,child,key,C.byref(reply)),1)
+        self.assertEqual(list(reply.words),[0,operation.lease.seq,4,4])
+        self.assertEqual((reply.kind,reply.source,reply.request,reply.image),(0,0,0,0))
+        self.assertEqual((bytes(self.work),bytes(self.cache),bytes(self.bank.snapshots)),(*records,snapshot))
+        self.lib.testpayload(90,0,0)
+        self.assertEqual(bytes(self.bank.snapshots[0][:4]),bytes(range(10,14)))
+        address=C.c_void_p();length=C.c_uint64()
+        self.assertEqual(self.lib.sysctxsnapshotview(self.b,child,key,C.byref(address),C.byref(length)),0)
+        self.assertEqual((length.value,C.string_at(address,4)),(4,bytes(range(10,14))))
+        # A second fork copies stable values without needing the old backend.
+        self.assertEqual(self.lib.sysctxfixwait(self.b,child,Peer(pid(4),21),layers),0)
+        self.assertEqual(self.lib.sysctxforkreply(self.b,Peer(pid(4),21),key,C.byref(reply)),1)
+        self.assertEqual(self.lib.sysctxfinish(self.b,Peer(pid(4),21),key),0)
+        self.assertEqual((bytes(self.work),bytes(self.cache)),records)
+
+    def test_fork_does_not_discard_unsaved_or_partial_completed_read(self):
+        operation,key=self.complete();layers=(C.c_uint64*6)(key.sequence,2,0,0,0,0)
+        child=Peer(pid(3),20);before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-18)
+        self.assertEqual(bytes(self.bank),before)
+        self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,2),0)
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-6)
+        self.assertEqual(bytes(self.bank),before)
+
+    def test_completed_read_fork_rejects_changed_counts_or_resource_without_mutation(self):
+        operation,key=self.complete()
+        self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,4),0)
+        layers=(C.c_uint64*6)(key.sequence,2,0,0,0,0);child=Peer(pid(3),20)
+        op=self.op(operation)
+        for field,value in [('resource',self.mem),('opcode',5),('kind',4)]:
+            previous=getattr(op,field);setattr(op,field,value)
+            before=(bytes(self.bank),bytes(self.work),bytes(self.cache))
+            self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-6)
+            self.assertEqual((bytes(self.bank),bytes(self.work),bytes(self.cache)),before)
+            setattr(op,field,previous)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        self.bank.contexts[0].result.image=17
+        before=bytes(self.bank);reply=bootstrap.Message();reply.words[0]=123
+        self.assertEqual(self.lib.sysctxforkreply(self.b,child,key,C.byref(reply)),-6)
+        self.assertEqual((bytes(self.bank),reply.words[0]),(before,123))
 
     def test_raw_route_has_no_posix_cancellation_policy(self):
         operation, key = self.route(interruptible=False)

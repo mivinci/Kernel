@@ -388,6 +388,10 @@ stage222：双架构 sigframe 新增真实 IPC 等待中的 handler fork。独�
 
 ARM64/RV64 sigframe、18 项 IPC 主机测试和格式通过；最终日志 `/private/tmp/kernel-stage222-{arm64-final,riscv-final,context,fmt}.log`。最初自 CALL 被既有 DEADLOCK 拒绝；改为独立对端后，遗漏 defer 的对端被既有接收门禁拒绝，修正测试协议后通过，失败现场保留于各架构 smoke 目录。本例是真实 IPC/信号/fork 的运行库夹具，未实现 FS/TTY ATTACH 业务、已完成 IPC 结果修复或生产整体 fork 协调器；未执行全量主机/场景矩阵、CI 或板端。
 
+stage223：`sysctxfixwait` 扩展为接受已完成且已完整快照的普通 READ。要求原层为 CLEANING/RQWAIT、已 handoff、无创建引用/资源回复，精确 Op/父身份/原 RPC 对应，普通成功回复的 value=bytes 与完整快照字节数一致且从 offset0 开始；快照须在 fork 前通过既有 RQ_FINISH/复制路径发布。全部层核验后，把普通业务四字复制入子 Rctx，清除父 Op/工作区/目录/RPC 指针与原参数，使用 SAVED 本地路由保留快照，`sysctxforkreply` 取得值，`sysctxsnapshotview` 取得数据，最后 finish。父 Op/槽/File pin/RPC 不变化、不 ACK、不重发 READ；该本地结果也可继续 fork。未保存、部分保存、资源/创建型结果、其他业务和非法计数仍拒绝，不能用该子集代替完整类型化修复。
+
+新增主机测试核对完整私有数据、后端内容变化后不重读、业务四字及无原生句柄、后续 fork、finish、部分快照/资源/操作类型拒绝及失败不变性。上下文系列 60 项和两架构原始上下文 11 项主机测试通过，格式及 ARM64/RV64 libsys/sigframe 四次 QEMU 回归通过；日志 `/private/tmp/kernel-stage223-{context,runtime,fmt,arm64-libsys,riscv-libsys,arm64-sigframe,riscv-sigframe}.log`。新完成结果修复路径仍仅主机调用，QEMU 为既有运行回归；真实已完成 READ 中 handler fork、完整 File 修复及生产协调器待接，无全矩阵、CI 或板端结果。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

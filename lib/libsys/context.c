@@ -83,7 +83,7 @@ sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COU
     error = sysctxlookup(bank, parent, key, &context);
     if (error)
       return error;
-    if (context->route.kind > RCTX_ROUTE_FORK)
+    if (context->route.kind > RCTX_ROUTE_SAVED)
       return -ERR_STATE;
     switch (action) {
     case FIX_LAYER_UNSENT:

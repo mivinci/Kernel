@@ -40,6 +40,61 @@ forkfixed(Rctx *context)
   return 0;
 }
 static isize
+savedcheck(Rctx *context)
+{
+  Rroute        expected;
+  Ipcmsg        message;
+  const Ipcmsg *reply = &message;
+  u64 base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
+  u32 i;
+  for (i = 0; i < sizeof(message); i++)
+    ((u8 *) &message)[i] = ((const u8 *) &context->result)[i];
+  if (context->phase != RCTX_CLEANING || context->status || context->number ||
+      context->route.snapshot_bytes > RCTX_SNAPSHOT_BYTES - base || reply->kind || reply->source ||
+      reply->request || reply->image || reply->words[0] || !reply->words[1] ||
+      reply->words[2] != reply->words[3] || reply->words[3] != context->route.snapshot_bytes)
+    return -ERR_STATE;
+  clearroute(&expected);
+  expected.kind = RCTX_ROUTE_SAVED;
+  expected.delivered = expected.snapshot_saved = 1;
+  expected.snapshot_bytes = reply->words[3];
+  for (i = 0; i < sizeof(expected); i++)
+    if (((const u8 *) &expected)[i] != ((const u8 *) &context->route)[i])
+      return -ERR_STATE;
+  for (i = 0; i < ARRAY_SIZE(context->args); i++)
+    if (context->args[i])
+      return -ERR_STATE;
+  return 0;
+}
+static isize
+forkcomplete(Rctx *context, Connpeer parent)
+{
+  Rroute *route = &context->route;
+  Slotop *op;
+  u64     base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
+  isize   error;
+  if (context->phase != RCTX_CLEANING || context->number != SYS_RQWAIT || context->status ||
+      route->kind != RCTX_ROUTE_OP || route->delivered != 1 || route->pool ||
+      route->snapshot_saved != 1 || route->snapshot_offset ||
+      route->snapshot_bytes > RCTX_SNAPSHOT_BYTES - base || !route->work || !route->cache)
+    return -ERR_NOTSUP;
+  if (route->work->state.self.pid != parent.pid || route->work->state.self.image != parent.image ||
+      route->cache->self.pid != parent.pid || route->cache->self.image != parent.image)
+    return -ERR_STALE;
+  error = sysopcheck(route->work, route->cache, &route->operation);
+  if (error)
+    return error;
+  op = &route->work->state.operations[route->operation.lease.slot];
+  if (op->phase != SYSOP_RESULT || op->status || op->opcode != FS_READ || op->kind != IPC_NONE ||
+      op->resource || op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED) ||
+      op->words[0] || op->words[1] != route->operation.lease.seq || op->words[2] != op->words[3] ||
+      op->words[3] != route->snapshot_bytes ||
+      op->words[3] > (u64) route->operation.lease.span * FS_SLOT_BYTES || op->rpc != route->rpc ||
+      (u64) op->rpc != context->args[0])
+    return -ERR_STATE;
+  return 0;
+}
+static isize
 forkwait(Rctx *context, Connpeer parent)
 {
   Rroute *route = &context->route;
@@ -97,6 +152,20 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
         return error;
       continue;
     }
+    if (bank->contexts[i].route.kind == RCTX_ROUTE_SAVED) {
+      if (layers[i].action != FIX_LAYER_COMPLETE)
+        return -ERR_STATE;
+      error = savedcheck(&bank->contexts[i]);
+      if (error)
+        return error;
+      continue;
+    }
+    if (layers[i].action == FIX_LAYER_COMPLETE) {
+      error = forkcomplete(&bank->contexts[i], parent);
+      if (error)
+        return error;
+      continue;
+    }
     if (layers[i].action != FIX_LAYER_INTERRUPT)
       return -ERR_NOTSUP;
     error = forkwait(&bank->contexts[i], parent);
@@ -105,6 +174,25 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
   }
   for (i = 0; i < RCTX_LAYERS; i++) {
     Rctx *context = &bank->contexts[i];
+    if (layers[i].action == FIX_LAYER_COMPLETE && context->route.kind == RCTX_ROUTE_OP) {
+      Slotop *op = &context->route.work->state.operations[context->route.operation.lease.slot];
+      u64     bytes = context->route.snapshot_bytes;
+      Ipcmsg  reply;
+      for (j = 0; j < sizeof(reply); j++)
+        ((u8 *) &reply)[j] = 0;
+      for (j = 0; j < 4; j++)
+        reply.words[j] = op->words[j];
+      for (j = 0; j < sizeof(reply); j++)
+        ((u8 *) &context->result)[j] = ((const u8 *) &reply)[j];
+      clearroute(&context->route);
+      context->route.kind = RCTX_ROUTE_SAVED;
+      context->route.delivered = 1;
+      context->route.snapshot_saved = 1;
+      context->route.snapshot_bytes = bytes;
+      context->number = 0;
+      for (j = 0; j < ARRAY_SIZE(context->args); j++)
+        context->args[j] = 0;
+    }
     if (layers[i].action != FIX_LAYER_INTERRUPT || context->route.kind == RCTX_ROUTE_FORK)
       continue;
     if (context->route.kind != RCTX_ROUTE_NONE) {
@@ -121,6 +209,25 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
   }
   bank->self = child;
   return 0;
+}
+isize
+sysctxforkreply(Rbank *bank, Connpeer self, Rkey key, Ipcmsg *out)
+{
+  Rctx *context;
+  u32   i;
+  isize error = sysctxlookup(bank, self, key, &context);
+  if (error)
+    return error;
+  if (!separate(bank, sizeof(*bank), out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (context->route.kind != RCTX_ROUTE_SAVED)
+    return 0;
+  error = savedcheck(context);
+  if (error)
+    return error;
+  for (i = 0; i < sizeof(*out); i++)
+    ((u8 *) out)[i] = ((const u8 *) &context->result)[i];
+  return 1;
 }
 isize
 sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status)
@@ -597,12 +704,12 @@ sysctxsignal(Rbank *bank, Connpeer self, Rkey key, void *trap, u64 now)
   isize error = sysctxlookup(bank, self, key, &context);
   if (error)
     return error;
-  if (context->route.kind > RCTX_ROUTE_FORK || context->route.interruptible > 1)
+  if (context->route.kind > RCTX_ROUTE_SAVED || context->route.interruptible > 1)
     return -ERR_STATE;
   error = sysctxcapture(bank, self, key, trap);
   if (error < 0)
     return error;
-  if (context->route.kind == RCTX_ROUTE_FORK)
+  if (context->route.kind == RCTX_ROUTE_FORK || context->route.kind == RCTX_ROUTE_SAVED)
     return 0;
   if (context->phase == RCTX_DONE && context->route.kind) {
     error = sysctxhandoff(bank, self, key);
@@ -661,7 +768,8 @@ sysctxsnapshotview(Rbank *bank, Connpeer self, Rkey key, const void **out, u64 *
       !separate(bank, sizeof(*bank), bytes, sizeof(*bytes)) ||
       !separate(out, sizeof(*out), bytes, sizeof(*bytes)))
     return -ERR_INVALID;
-  if (context->phase != RCTX_CLEANING || context->route.kind != RCTX_ROUTE_OP ||
+  if (context->phase != RCTX_CLEANING ||
+      (context->route.kind != RCTX_ROUTE_OP && context->route.kind != RCTX_ROUTE_SAVED) ||
       context->route.delivered != 1 || context->route.snapshot_saved != 1)
     return -ERR_STATE;
   base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
