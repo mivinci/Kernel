@@ -283,7 +283,8 @@ sigframetest(void)
     puthex(life.code);
     putstr("\n");
     if (mode >= 13) {
-      REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
+      REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99 &&
+              trace[28] == 1);
       if (mode == 14)
         REQUIRE(!contextarmed && contextcount == 2);
       if (mode == 15)
@@ -348,6 +349,8 @@ sigframetest(void)
   putstr(" handler_fork=");
   puthex(1);
   putstr(" ipc_fork=");
+  puthex(1);
+  putstr(" local_fork=");
   puthex(1);
   putstr(" normal=");
   puthex(6);

@@ -7,6 +7,7 @@
 #include "private/start.h"
 #include "private/context.h"
 #include "private/contextipc.h"
+#include "private/forkstate.h"
 #include "private/fix.h"
 #include "private/elf.h"
 #include <abi/syscall.h>
@@ -361,6 +362,9 @@ static Bootstrap forkboot;
 static Connclaim forkclaim;
 static Conncache forkdirectory;
 static Conntag   forkoldtag;
+static Fdtable   forkfds;
+static Filepool  forkfiles;
+static int       forkfixed;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64);
 static void
 forkrepair(const Forkret *result)
@@ -373,16 +377,28 @@ forkrepair(const Forkret *result)
   Connentry       entry;
   Handle          parent;
   u64             mask, ignored;
+  Forkstate       state;
+  state.fds = &forkfds;
+  state.files = &forkfiles;
+  state.connections = &forkdirectory;
+  state.contexts = &runtime_contexts;
   REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
               !__sys_getid(&child.pid, &child.image, &parent) &&
               !sysfixchild(result, forkbytes, forksource, forkimage, &view) &&
               !sysfixlayers(&view, &layers) && !sysfixconnections(&view, &connections, &count) &&
-              !count && !connections &&
-              !sysconnfork(&forkdirectory, context_self, child, connections, count) &&
+              !count && !connections,
+          244);
+  if (!forkfixed) {
+    REQUIRE(!sysforkstateapply(&state, context_self, child, layers, NULL, 0, connections, count),
+            244);
+    forkfixed = 1;
+  }
+  REQUIRE(forkdirectory.self.pid == child.pid && forkfiles.self.pid == child.pid &&
+              runtime_contexts.self.pid == child.pid && forkdirectory.self.image == child.image &&
+              forkfiles.self.image == child.image && runtime_contexts.self.image == child.image &&
+              !sysfdcheck(&forkfds) && !sysfilerefcheck(&forkfiles, child) &&
+              !sysconncheck(&forkdirectory, child) &&
               sysconnview(&forkdirectory, forkoldtag, &entry) == -ERR_STALE &&
-              !(frame_trace[1] == 15
-                    ? sysctxfixwait(&runtime_contexts, context_self, child, layers)
-                    : sysctxfixraw(&runtime_contexts, context_self, child, layers)) &&
               !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
           244);
 }
@@ -444,8 +460,10 @@ forkprepuser(void)
   context_self.pid = source;
   context_self.image = image;
   /* Identity-only directory fixture; no transport or service authority. */
+  sysfdinit(&forkfds);
   REQUIRE(!sysconninit(&forkdirectory, context_self) &&
-              !sysconnbind(&forkdirectory, context_self, &forkoldtag),
+              !sysconnbind(&forkdirectory, context_self, &forkoldtag) &&
+              !sysfilerefinit(&forkfiles, context_self) && !forkfixed,
           252);
   REQUIRE((frame_trace[1] >= 14 || !sysctxinit(&runtime_contexts, context_self)) &&
               !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
@@ -466,7 +484,7 @@ forkprepuser(void)
     isize    status;
     Connpeer peer;
     forkrepair(&forked);
-    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
+    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self && forkfixed == 1 &&
                 (u64) forked.fix == address && ppid == source && forkcapture.pid == self &&
                 forkcapture.fix == forked.fix && !forkcapture.construct,
             234);
@@ -523,7 +541,8 @@ forkprepuser(void)
   {
     Connentry entry;
     REQUIRE(!sysconnview(&forkdirectory, forkoldtag, &entry) && entry.state == SYSCONN_UNCLAIMED &&
-                !sysconncheck(&forkdirectory, context_self),
+                !sysconncheck(&forkdirectory, context_self) &&
+                !sysfilerefcheck(&forkfiles, context_self) && !forkfixed,
             253);
   }
   frame_trace[20] = result.values[1];
@@ -531,6 +550,7 @@ forkprepuser(void)
   REQUIRE((Handle) result.values[0] == child && result.values[1] == WAIT_EXITED &&
               result.values[2] == 43,
           240);
+  frame_trace[28] = 1;
   frame_trace[0] = 99;
   return 42;
 }

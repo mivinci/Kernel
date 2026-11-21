@@ -438,6 +438,10 @@ stage235：`sysforkstateapply` 接入单次受保护的本地子转换，统一�
 
 10项组合主机测试及64项上下文回归通过，新增覆盖三表实际子身份/引用/代次切换、fd/运输/清单保持、等待Op转本地中断、重复调用不改状态、重叠清单及坏token/两种创建预留失败不变。格式和ARM64/RV64 libsys/sigframe四次QEMU通过；新增apply仍仅主机调用，未在真实非空File的子返回执行。日志 `/private/tmp/kernel-stage235-{forkstate-final,context,fmt,arm64-libsys,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。生产协调器/后端准备、未支持续点与子reference_id规则仍待接或确认，未跑完整矩阵、CI或板端。
 
+stage236：组合转换已在双架构真实 fork 子返回中执行。sigframe 的 mode13..15 使用独立预付 fd/File表和既有身份目录，子在专用返回窗口先由信号入口统一apply，设置子私有完成标记；从真实fork返回后再次进入修复仅核验已转换身份，不重复apply。孩子检查三表精确PID/image、旧目录tag失效、已完成查询保持父结果、未提交查询按子执行；handler内活动raw层和等待IPC仍完成各自的本地中断/信号返回。父等待孩子退出43后核验自己的File/目录身份与完成标记未变，记录trace[28]；内核逐例核对并输出local_fork=1，smoke强制检查该字段。最终费用0及页数守恒仍通过。
+
+10项组合主机测试、格式及ARM64/RV64 sigframe/libsys四次QEMU通过。sigframe夹具不保留fd或后端连接，未伪造子引用或token；真实非空File保留、服务准备/按需接入和生产整体协调器仍待接，子reference_id仍未确认。日志 `/private/tmp/kernel-stage236-{forkstate,fmt,arm64,arm64-libsys,riscv,riscv-libsys}.log`，sigframe现场为 `build/arm64/smoke/e45974fee7e148c18d5552714560f925/` 与 `build/riscv/smoke/fcfb68b22a384669a659b2931944c233/`。未跑完整主机/QEMU矩阵、CI或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
