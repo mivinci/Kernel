@@ -1227,7 +1227,7 @@ def exercise(args, run_dir, record):
                     image.seek(512)
                     seed = 0x51 if name == "rw" else 0xa7
                     image.write(bytes((seed + i * 37) & 0xff for i in range(512)))
-                command += ["-drive", f"if=none,format=raw,id={name},file={disk},readonly={readonly}",
+                command += ["-drive", f"if=none,format=raw,id={name},file={disk},readonly={readonly},cache=writeback",
                             "-device", f"virtio-blk-device,drive={name}"]
         if args.trace:
             command += ["-d", "int,guest_errors", "-D", str(run_dir / "trace.log")]
@@ -1549,10 +1549,23 @@ def exercise(args, run_dir, record):
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
                                   negotiated=3,resets=6,rng=1,rwsectors=256,rosectors=128,
-                                  reads=2,charged=0,allocated=transition["tables"])
+                                  reads=3,writes=1,flushes=1,charged=0,allocated=transition["tables"])
                     if checks != [expected]:
-                        raise SmokeError("virtio MMIO discovery/negotiation/reset mismatch")
+                        raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
+                    stats = {row.get("device"): row["stats"] for row in qmp.command("query-blockstats")}
+                    for name, sectors, seed in (("rw", 256, 0x51), ("ro", 128, 0xa7)):
+                        disk = Path(temporary) / (name + ".raw")
+                        expected_image = bytearray(sectors * 512)
+                        expected_image[512:1024] = bytes((seed + i * 37) & 0xff for i in range(512))
+                        if name == "rw":
+                            expected_image[1024:1536] = bytes((0x37 + i * 37) & 0xff for i in range(512))
+                            counters = stats.get(name, {})
+                            if counters.get("wr_bytes") != 512 or counters.get("flush_operations") != 1:
+                                raise SmokeError(f"virtio backing write/flush count mismatch: {counters}")
+                        if disk.read_bytes() != expected_image:
+                            raise SmokeError(f"virtio backing image mismatch: {name}")
                     record["virtio_device"]=checks[0]
+                    record["virtio_blockstats"] = {name: stats[name] for name in ("rw", "ro") if name in stats}
                 if args.case == "mmiogroup":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MMIOGROUPCHECK ")]
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
