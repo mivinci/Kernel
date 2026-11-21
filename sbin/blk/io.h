@@ -44,7 +44,8 @@ int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *coun
 int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
              u32 count);
 /* Drain more before rearming IRQ. An observed CONFIG keeps submission
-   blocked until refresh succeeds, even after the IRQ hint is cleared. */
+   blocked until refresh succeeds, even after the IRQ hint is cleared.
+   Transport and buffer ownership faults close the queue until recovery. */
 int blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes);
 int blkqrefresh(Blkqueue *queue, Vblkconfig *config);
 int blkqsubmit(Blkqueue *queue, u32 slot, u32 type, u64 sector, u32 bytes, const void *source,

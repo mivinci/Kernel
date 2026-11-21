@@ -6,6 +6,7 @@ STATIC_ASSERT(VQ_SIZE <= (1U << BLK_SLOT_BITS), blk_cookie_slot);
 enum
 {
   BLK_OPEN = 1,
+  BLK_FAULT,
   BLK_STOPPING,
   BLK_RECLAIM,
   BLK_STOPPED
@@ -110,9 +111,13 @@ blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes)
     return -ERR_STATE;
   }
   error = blkirqpoll(queue->device, queue->ring, queue->generation, done, count, more, causes);
+  if (error) {
+    queue->state = BLK_FAULT;
+    return error;
+  }
   if (*causes & VDEV_IRQ_CONFIG)
     queue->configpending = 1;
-  return error;
+  return 0;
 }
 
 int
@@ -141,6 +146,7 @@ blkqsubmit(Blkqueue *queue, u32 index, u32 type, u64 sector, u32 bytes, const vo
 {
   Vblkreq *slot;
   u64      cookie;
+  int      error;
   if (!queue || index >= queue->count)
     return -ERR_INVALID;
   if (queue->state != BLK_OPEN || queue->device->state != VDEV_LIVE)
@@ -155,8 +161,11 @@ blkqsubmit(Blkqueue *queue, u32 index, u32 type, u64 sector, u32 bytes, const vo
   if (queue->serial == (UINT64_MAX >> BLK_SLOT_BITS))
     return -ERR_OVERFLOW;
   cookie = (++queue->serial << BLK_SLOT_BITS) | index;
-  return blkiosubmit(slot, queue->ring, &queue->config, &queue->buffers[index], type, sector, bytes,
-                     cookie, source, sync, context);
+  error = blkiosubmit(slot, queue->ring, &queue->config, &queue->buffers[index], type, sector,
+                      bytes, cookie, source, sync, context);
+  if (error && (slot->held || queue->ring->queue.broken))
+    queue->state = BLK_FAULT;
+  return error;
 }
 
 int
@@ -181,10 +190,15 @@ blkqmatch(const Blkqueue *queue, const Vdone *done)
 int
 blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity)
 {
-  int index = blkqmatch(queue, done);
+  int      index = blkqmatch(queue, done), result;
+  Vblkreq *slot;
   if (index < 0)
     return index;
-  return blkiofinish(&queue->slots[index], done, &queue->buffers[index], destination, capacity);
+  slot = &queue->slots[index];
+  result = blkiofinish(slot, done, &queue->buffers[index], destination, capacity);
+  if (result == -ERR_PEER || (!slot->active && slot->held))
+    queue->state = BLK_FAULT;
+  return result;
 }
 
 int

@@ -19,7 +19,7 @@ struct Testdma
 struct Resetsync
 {
   Vdev *device;
-  u32   after;
+  u32   after, failbefore;
 };
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -75,6 +75,8 @@ static int
 resetsync(void *context, u32 phase, const Vbuf *buffer)
 {
   Resetsync *sync = context;
+  if (phase == VR_BEFORE && sync->failbefore)
+    return -ERR_FAULT;
   if (phase == VR_AFTER) {
     REQUIRE(sync->device->state == VDEV_RESET && !sync->device->status, 228);
     if (++sync->after == 2)
@@ -238,10 +240,11 @@ resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   Vdev     *device = queue->device;
   Vring    *ring = queue->ring;
   Vblkreq  *request = queue->slots;
-  Resetsync sync = {device, 0};
+  Resetsync sync = {device, 0, 0}, fault = {device, 0, 1};
   Ipcmsg    event;
+  Vdone     done[VQ_BATCH];
   u64       generation, started = now();
-  u32       causes;
+  u32       causes, count, more;
   int       error;
 
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
@@ -258,6 +261,14 @@ resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && causes == VDEV_IRQ_USED &&
               request->active && request->held == 7 && ring->queue.free == VQ_SIZE - 3,
           188);
+  REQUIRE(blkqsubmit(queue, 1, VBLK_READ, 0, config->blocksize, NULL, resetsync, &fault) ==
+                  -ERR_FAULT &&
+              !request[1].active && request[1].held == 1 && !fault.after &&
+              blkqsubmit(queue, 1, VBLK_READ, 0, config->blocksize, NULL, blksync, device) ==
+                  -ERR_STATE &&
+              blkqpoll(queue, done, &count, &more, &causes) == -ERR_STATE && !count && !more &&
+              !causes && !virtioread(device->ops.context, 0x60, &causes) && causes == VDEV_IRQ_USED,
+          236);
   do {
     error = blkqrecover(queue, now());
   } while (error == -ERR_WOULD_BLOCK);
@@ -268,6 +279,7 @@ resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
           229);
   REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes &&
               !blkqrecover(queue, now()) && sync.after == 4 && !request->active && !request->held &&
+              fault.after == 1 && !request[1].held &&
               blkqinit(queue, device, ring, request, queue->buffers, queue->count) == -ERR_STALE,
           189);
   vdev_trace[16]++;
