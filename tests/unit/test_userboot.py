@@ -96,6 +96,8 @@ class UserBootTests(unittest.TestCase):
         cls.lib.sysfixview.restype=C.c_int64
         cls.lib.sysfixlayers.argtypes=[C.POINTER(FixView),C.POINTER(C.c_void_p)]
         cls.lib.sysfixlayers.restype=C.c_int64
+        cls.lib.sysfixconnections.argtypes=[C.POINTER(FixView),C.POINTER(C.c_void_p),C.POINTER(C.c_uint64)]
+        cls.lib.sysfixconnections.restype=C.c_int64
         cls.lib.bootimagecheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(Image)]
         cls.lib.bootimagesegment.argtypes=[C.c_void_p,C.POINTER(Image),C.c_uint64,C.POINTER(Segment)]
         cls.lib.bootresource.argtypes=[C.POINTER(View),C.c_uint64];cls.lib.bootresource.restype=C.c_int64
@@ -134,6 +136,21 @@ class UserBootTests(unittest.TestCase):
             data[field]=saved
         view.contexts_limit-=1
         self.assertEqual(self.lib.sysfixlayers(C.byref(view),C.byref(out)),-1)
+
+    def test_fix_connections_require_unique_backend_images_and_child_tokens(self):
+        backend=(1<<59)|(7<<16)|2
+        data=(C.c_uint64*13)(0,0,0,0,0,0,2,backend,9,101,backend,10,102)
+        view=FixView(1,0,C.addressof(data),C.sizeof(data))
+        out=C.c_void_p();count=C.c_uint64()
+        self.assertEqual(self.lib.sysfixconnections(C.byref(view),C.byref(out),C.byref(count)),0)
+        self.assertEqual((count.value,out.value),(2,C.addressof(data)+56))
+        for field,invalid in ((6,9),(7,0),(8,0),(9,0),(11,9)):
+            saved=data[field];data[field]=invalid
+            self.assertEqual(self.lib.sysfixconnections(C.byref(view),C.byref(out),C.byref(count)),-1)
+            self.assertEqual((out.value,count.value),(None,0))
+            data[field]=saved
+        view.contexts_limit-=1
+        self.assertEqual(self.lib.sysfixconnections(C.byref(view),C.byref(out),C.byref(count)),-1)
 
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()

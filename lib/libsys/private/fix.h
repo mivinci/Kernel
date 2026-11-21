@@ -3,6 +3,7 @@
 #include <abi/boot.h>
 typedef struct Fixview  Fixview;
 typedef struct Fixlayer Fixlayer;
+typedef struct Fixconn  Fixconn;
 struct Forkret;
 #define FIX_LAYER_COUNT     3
 #define FIX_LAYER_EMPTY     0
@@ -14,6 +15,13 @@ struct Fixlayer
   u64 sequence, action;
 };
 STATIC_ASSERT(sizeof(Fixlayer) == 16, fix_layer_size);
+#define FIX_CONN_COUNT 8
+struct Fixconn
+{
+  Handle pid;
+  u64    image, token;
+};
+STATIC_ASSERT(sizeof(Fixconn) == 24, fix_connection_size);
 struct Fixview
 {
   const Fix      *header;
@@ -27,4 +35,5 @@ isize sysfixview(const void *data, u64 available, Handle source, u64 image, Hand
 isize sysfixchild(const struct Forkret *result, u64 available, Handle source, u64 source_image,
                   Fixview *out);
 isize sysfixlayers(const Fixview *view, const Fixlayer **out);
+isize sysfixconnections(const Fixview *view, const Fixconn **out, u64 *count);
 #endif

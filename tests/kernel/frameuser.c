@@ -356,19 +356,22 @@ static Handle    forksource;
 static u64       forkimage;
 static Rkey      forkcompleted;
 static Rkey      forkouter;
-static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer);
+static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64);
 static void
 forkrepair(const Forkret *result)
 {
   Fixview         view;
   const Fixlayer *layers;
+  const Fixconn  *connections;
+  u64             count;
   Connpeer        child;
   Handle          parent;
   u64             mask, ignored;
   REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
               !__sys_getid(&child.pid, &child.image, &parent) &&
               !sysfixchild(result, forkbytes, forksource, forkimage, &view) &&
-              !sysfixlayers(&view, &layers) &&
+              !sysfixlayers(&view, &layers) && !sysfixconnections(&view, &connections, &count) &&
+              !count && !connections &&
               !sysctxfixraw(&runtime_contexts, context_self, child, layers) &&
               !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
           244);
@@ -403,6 +406,7 @@ forkprepuser(void)
   {
     Fix      header;
     Fixlayer contexts[FIX_LAYER_COUNT];
+    u64      connection_count;
   } fix;
   REQUIRE(__sys_forkprep(0, 0, &forked) == -ERR_BAD_HANDLE, 224);
   REQUIRE(__sys_forkprep(authority, 9, &forked) == -ERR_INVALID, 225);

@@ -190,6 +190,35 @@ sysfixlayers(const Fixview *view, const Fixlayer **out)
   *out = layers;
   return 0;
 }
+isize
+sysfixconnections(const Fixview *view, const Fixconn **out, u64 *count)
+{
+  const u64     *header;
+  const Fixconn *entries;
+  u64            prefix = FIX_LAYER_COUNT * sizeof(Fixlayer), n, i, j;
+  if (!out || !count)
+    return -ERR_INVALID;
+  *out = NULL;
+  *count = 0;
+  if (!view || !view->header || !view->contexts || ((u64) view->contexts & 7) ||
+      view->contexts_limit < prefix + sizeof(u64))
+    return -ERR_INVALID;
+  header = (const u64 *) ((const u8 *) view->contexts + prefix);
+  n = *header;
+  if (n > FIX_CONN_COUNT || n > (view->contexts_limit - prefix - sizeof(u64)) / sizeof(Fixconn))
+    return -ERR_INVALID;
+  entries = (const Fixconn *) (header + 1);
+  for (i = 0; i < n; i++) {
+    if (handlekind(entries[i].pid) != HANDLE_PROCESS || !entries[i].image || !entries[i].token)
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (entries[i].pid == entries[j].pid && entries[i].image == entries[j].image)
+        return -ERR_INVALID;
+  }
+  *out = n ? entries : NULL;
+  *count = n;
+  return 0;
+}
 Handle
 bootresource(const Bootview *view, u64 tag)
 {
