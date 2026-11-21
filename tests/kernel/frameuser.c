@@ -355,11 +355,25 @@ static Forkret   forkcapture;
 static Handle    forksource;
 static u64       forkimage;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer);
-static NORETURN void
-forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
+static void
+forkrepair(const Forkret *result)
 {
   Fixview         view;
   const Fixlayer *layers;
+  Connpeer        child;
+  Handle          parent;
+  u64             mask, ignored;
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+              !__sys_getid(&child.pid, &child.image, &parent) &&
+              !sysfixchild(result, forkbytes, forksource, forkimage, &view) &&
+              !sysfixlayers(&view, &layers) &&
+              !sysctxfixraw(&runtime_contexts, context_self, child, layers) &&
+              !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
+          244);
+}
+static NORETURN void
+forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
+{
   UNUSED(info);
   UNUSED(function);
   UNUSED(flags);
@@ -367,11 +381,7 @@ forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64
               sysforkdecode(context, (u64) __sys_forkreturn_begin, (u64) __sys_forkreturn_end,
                             &forkcapture) == 1,
           242);
-  REQUIRE(!sysfixchild(&forkcapture, forkbytes, forksource, forkimage, &view) &&
-              !sysfixlayers(&view, &layers) &&
-              !sysctxfixcheck(&runtime_contexts, context_self, layers) &&
-              layers[0].action == FIX_LAYER_UNSENT,
-          244);
+  forkrepair(&forkcapture);
   __sys_sigreturn((void *) address);
 }
 static int
@@ -429,15 +439,22 @@ forkprepuser(void)
   frame_trace[0] = 1;
   REQUIRE(!__sys_forkprep(authority, 0, &forked), 233);
   if (!forked.construct) {
-    Handle  self, ppid;
-    u64     childimage;
-    Fixview view;
+    Handle   self, ppid;
+    u64      childimage;
+    isize    status;
+    Connpeer peer;
+    forkrepair(&forked);
     REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
-                (u64) forked.fix == address && ppid == source &&
-                !sysfixchild(&forked, forkbytes, source, image, &view) &&
-                view.contexts_limit == FIX_LAYER_COUNT * sizeof(Fixlayer) &&
-                forkcapture.pid == self && forkcapture.fix == forked.fix && !forkcapture.construct,
+                (u64) forked.fix == address && ppid == source && forkcapture.pid == self &&
+                forkcapture.fix == forked.fix && !forkcapture.construct,
             234);
+    peer.pid = self;
+    peer.image = childimage;
+    REQUIRE(!sysctxinvoke(&runtime_contexts, peer, runtime_key) &&
+                !sysctxresult(&runtime_contexts, peer, runtime_key, &status, &result) && !status &&
+                result.values[0] == (u64) self && result.values[1] == childimage &&
+                !sysctxfinish(&runtime_contexts, peer, runtime_key),
+            246);
     return 43;
   }
   construct = forked.construct;

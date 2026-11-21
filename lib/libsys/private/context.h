@@ -87,6 +87,9 @@ STATIC_ASSERT(sizeof(Rbank) == 24 + RCTX_LAYERS * (RCTX_BYTES + RCTX_SNAPSHOT_BY
 isize sysctxinit(Rbank *bank, Connpeer self);
 /* Check all decoded Fix layers against the inherited bank before repair. */
 isize sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COUNT]);
+/* Apply validated Fix layers with caught signals masked. */
+isize sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child,
+                   const Fixlayer layers[FIX_LAYER_COUNT]);
 isize sysctxprepare(Rbank *bank, Connpeer self, u32 layer, u64 number, const u64 args[7],
                     Rkey *out);
 /* Protected, inactive PREPARED only. Checked copy accepts input once; failed

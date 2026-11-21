@@ -105,6 +105,26 @@ sysctxfixcheck(Rbank *bank, Connpeer parent, const Fixlayer layers[FIX_LAYER_COU
   return 0;
 }
 isize
+sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers[FIX_LAYER_COUNT])
+{
+  u32   i;
+  isize error;
+  if (!bank || !identity(parent) || !identity(child) || parent.pid == child.pid || !layers)
+    return -ERR_INVALID;
+  if (!source(bank, child))
+    return 0;
+  error = sysctxfixcheck(bank, parent, layers);
+  if (error)
+    return error;
+  for (i = 0; i < RCTX_LAYERS; i++)
+    if (layers[i].action != FIX_LAYER_EMPTY &&
+        (layers[i].action != FIX_LAYER_UNSENT || bank->contexts[i].active ||
+         bank->contexts[i].route.kind != RCTX_ROUTE_NONE))
+      return -ERR_NOTSUP;
+  bank->self = child;
+  return 0;
+}
+isize
 sysctxinit(Rbank *bank, Connpeer self)
 {
   u32 i;
