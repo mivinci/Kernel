@@ -9,6 +9,7 @@
 #include "private/close.h"
 #include "private/fd.h"
 #include "private/execsend.h"
+#include "private/execmanifest.h"
 #include "private/contextipc.h"
 #include "private/sigentry.h"
 #include "private/serial.h"
@@ -35,6 +36,7 @@ static Filepool       pool;
 static Fdtable        fds;
 static Execfds        execfds;
 static Execsend       execsend;
+static Execmanifest   execplan;
 static Rbank          contexts;
 static Rkey           active_key;
 static Ttyinput       ttyline;
@@ -736,6 +738,16 @@ drainexit(void *context, Filelink *link)
   return 0;
 }
 
+static isize
+execreference(void *context, Handle pid, u64 image, u64 session, u64 reference)
+{
+  u64 *key = context;
+  if ((u64) pid != key[0] || image != key[1] || session != key[2] || reference != key[3])
+    return -ERR_DENIED;
+  key[4]++;
+  return 0;
+}
+
 static void
 server(const Bootview *boot, u32 recover)
 {
@@ -926,22 +938,29 @@ server(const Bootview *boot, u32 recover)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
     if (!recover && opcode == FS_EXEC_PREPARE) {
-      Fileinherit row;
-      Handle      self, parent;
-      u64         image, count = descriptor.args[4];
-      CHECK(!__sys_getid(&self, &image, &parent) && (count == 1 || count == BOOT_FD_COUNT) &&
-            descriptor.payload_bytes == count * sizeof(row) && !descriptor.object &&
-            descriptor.span == (count == 1 ? 1U : 2U) && descriptor.args[0] == (u64) input.source &&
-            descriptor.args[1] == input.image + 1 && descriptor.args[2] == input.image &&
-            descriptor.args[3] == 100 && !descriptor.args[5] && !descriptor.args[6] &&
-            !descriptor.args[7]);
-      if (count > 1)
-        CHECK(watch->active.requests[slot + 1] == input.request);
+      Connpeer backend;
+      Handle   parent;
+      u64      count = descriptor.args[4];
+      u64      key[5] = {(u64) peer.pid, peer.image, sessions[0], references[0], 0};
+      CHECK(!__sys_getid(&backend.pid, &backend.image, &parent) &&
+            (count == 1 || count == BOOT_FD_COUNT));
+      backend.image++;
+      CHECK(sysexecmanifest(&execplan, watch, &input, &descriptor, (const void *) data, backend, 0,
+                            execreference, key) == -ERR_STALE &&
+            !execplan.count && !key[4]);
+      backend.image--;
+      CHECK(sysexecmanifest(&execplan, watch, &input, &descriptor, (const void *) data, backend,
+                            100, execreference, key) == -ERR_TIMEDOUT &&
+            !execplan.count && !key[4]);
+      CHECK(!sysexecmanifest(&execplan, watch, &input, &descriptor, (const void *) data, backend, 0,
+                             execreference, key) &&
+            execplan.count == 1 && key[4] == 1 && execplan.groups[0].session == sessions[0] &&
+            execplan.groups[0].reference == references[0] &&
+            execplan.groups[0].retained == count / 2 &&
+            execplan.groups[0].closed == (count + 1) / 2);
       for (i = 0; i < count; i++)
-        CHECK(!__sys_copy(&row, (const u8 *) data + i * sizeof(row), sizeof(row)) && row.fd == i &&
-              row.flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC) && row.backend_pid == (u64) self &&
-              row.backend_image == image && row.session == sessions[0] &&
-              row.reference_id == references[0]);
+        CHECK(execplan.rows[i].fd == i && execplan.rows[i].flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC));
+      execplan.count = 0;
       reply.words[0] = (u64) -ENOTSUP;
       CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
       continue;
