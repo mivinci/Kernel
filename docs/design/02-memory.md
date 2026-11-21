@@ -860,6 +860,10 @@ Spacetxn仍64字节：node/page改为受检查的u16索引/页游标，0xffff为
 
 仍须处理尚未冻结完成的源Mem别名链及引用变化、未映射/Local/Signal组合长循环、自动IRQ/调度检查点与STOP/CONT；不因本次独立Mem反例通过就开放原生fork或允许任意用户VM工作。用户新增真机可移植性问题登记已读取，本切片收尾后按其优先级推进；启动包已由用户后续commit冻结，T1按07的五步交付，不再以旧008为阻塞。
 
+新DATA别名准入补充（2026-11-21）：普通map/cowmap/loadmap即使目标root尚未冻结，也不能把已有冻结alias root的私有RAM DATA Mem再映射进去，返回SP_BUSY且不获取页表、映射或引用。只在活动快照中按该Mem当前别名链检查，完整代次/节点/root合法性有界校验；快照之外快速返回。精确快照子前缀的内部building安装保留原门禁，不把普通入口当内部构造例外。SHARED、SEALED和仅有未冻结别名的不相关DATA不因此全局冻结，事务结束后仍按普通COW规则映射。
+
+此补充只关闭新映射插入，不是对任意管理引用/已有别名变化的完整隔离，也不开放自动IRQ窗口、调度检查点或原生fork。普通准入扫描上界为MMAPS；现有32页build内部不走该扫描，不能据此声称已测IRQ时延或完成全部长循环。
+
 本轮最终本地572项unit、fmt-check及110个两架构QEMU场景全部通过；evidence.json核对全部结果、当前源码/头哈希、独立Mem变更计数、normal无fixture/wrapper及实际未增长的固定池/静态帧。未执行CI、真实硬件、性能、同一源Mem任意别名变更或原生fork检查点验收。
 
 ### 完整RAM元数据与8 GiB直接映射（2026-11-18，issue 004）
@@ -879,3 +883,13 @@ pgplan从全部已核验usable区间中选最大且足够容纳元数据的连�
 ### 释放合并后的页归属元数据（2026-11-18）
 
 伙伴块释放合并前清除原分配头owner，避免高地址头被合并成INNER后仍残留旧Acct；pgcheck额外拒绝RESERVED/FREE/INNER携owner。真实进程启动/共享环往返后的独立物理审计发现此残留，原费用和释放本身已结清，不能用忽略INNER的统计绕过问题。修复前主机反例保留，修复后专项及715项host/格式/167份最终源码匹配的两架构QEMU结果通过；证据归build/host/stage106-serial-start/，12份旧源码结果排除后已逐项重验。无CI/真机/性能验收。
+
+### 快照期间的新DATA别名准入（2026-11-21）
+
+stage177复现普通map只看目标root冻结状态的缺口：源root已被快照持有时，另一未冻结且同Acct的root仍可成功添加同一DATA的RO/RW/COW别名，改变当前别名链，RW尤其可能成为未保护入口。新增aliasmapcheck在普通map获取引用/页表之前检查该Mem完整现有别名；遇任何冻结root返回BUSY，非法节点/代次/循环/root拒绝。仅私有RAM DATA且仍有manager参与；退役对象不由此获得新管理权，普通memcanmap/Acct/窗口授权仍照常执行。
+
+6项host在RV/ARM真实页表模型下调用生产Space/Mem/Acct实现，覆盖open立即拒绝且元数据/页/费用不变、分批build间拒绝但子重叠视图去重/内部安装成功、commit/abort后恢复并保持COW分离、SHARED/SEALED例外、不相关DATA可映射及冻结alias位于链尾。修复前3项得到成功0而非BUSY的反例日志before.log保留；另从修复前HEAD提取准确Space源码编译两架构模型，分别观察RO/RW/COW全部成功，PTE为9/11/25且源frozen、目标未frozen，before-evidence.json记录源码提交/哈希。这是前版源码的主机复测，不称修复前QEMU。修复后6项通过，没有通过放宽断言或忽略分配费用解决。
+
+sigframe原可信内核root续点场景增加同Acct空scratch root：父快照部分保护后停放，peer用受信VM接口向这个未冻结root尝试新RO/RW/COW源DATA别名，恢复/被CONTROL终止两组共6次均BUSY，Mem全字段、目标映射与物理分配不变。原15次独立Mem VM churn及STOP/CONT/丢栈独立回滚保持，scratch root最终释放后费用/页回基线。该受信测试不授予普通peer跨Acct DATA权，也不冒充真实用户forkprep/子返回。
+
+本点不扩Space64/Mmap64/Spacetxn64/Mem96/Prep256/Local48/Proc512或固定池；新扫描只影响活动快照中的普通DATA准入，未打开一般并发VM。最终完整make test-all退出0：1181项host、格式、195个双架构QEMU结果与168份内核诊断journal通过；逐份源码/头哈希、两份6次拒绝/15次独立VM变更、固定Space/Mmap索引池大小、16次生产启动及10条预期失败清理均核对。累计raise、文件/创建/ABORT/bootstrap/读写终结及缓存/日志场景随矩阵通过，SDK/实际载荷/默认包及无测试代码边界审计通过，init/serial ELF保持。所有构建后clangd切回RV64/sigframe，证据build/host/stage177-snapshot-alias-gate/含test-all/completion、focused-initial、before/probe-before及源码哈希、verify.py/evidence.json。未完成CI、真机、性能、完整Local/Mem引用隔离、未映射/Local/Signal长循环或原生fork发布验收。

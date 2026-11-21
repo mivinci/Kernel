@@ -20,14 +20,15 @@
 
 ## 最新完成点与证据
 
-- stage176：普通READ/WRITE的后端终结收尾已接；原生PEER结果实际FINISH/ACK后才归还页及一次File pin，不复制共享DONE数据、不重发I/O、不改较早成功结果。unpin/最后关闭及其他事务仍独立。
-- 8项host专项覆盖状态/ACK/输出与策略门禁；双架构各3个真实双进程场景覆盖无回复READ/WRITE的假DONE及成功读与失败读并存，pin阻止提前关闭，未知RQ须可信fixture明确代收尾。不是生产rqclean或公开read/write实现。
-- 验收：1175项完整host、格式、双架构runtime/libsys/sigframe/normal共8次QEMU及8份内核诊断journal通过；SDK/载荷/依赖/生产隔离已核对，所有构建后clangd切回RV64/runtime。无新ABI、权限或池。
-- 证据：`build/host/stage176-data-recovery/`。初始测试名冲突已修，失败保留；init装载段与serial ELF保持，最近完整195矩阵为stage165，无CI/板端/性能结果。stage157及后续提交暂未推送，仍待公开发布确认。
+- stage177：快照期间新私有DATA别名准入已补齐；源Mem已有冻结alias root时，向另一未冻结root的普通RO/RW/COW映射返回BUSY，不取PTE/引用/费用。内部子映射、SHARED/SEALED及独立Mem规则保持；未开放原生fork或一般并发VM。
+- 6项host调用真实Space/Mem/Acct及两架构页表模型；旧版源码RO/RW/COW成功及RW可写PTE反例已记录。双架构可信内核root续点各6次拒绝、15次独立VM变更与STOP/CONT/终止回滚保持，固定记录/池不增。
+- 验收：完整test-all退出0，1181项host、格式、195个双架构QEMU及168份内核诊断journal通过；16次生产启动、10条失败清理及累计运行库/文件终结路径、SDK/载荷/生产隔离均审计。所有构建后clangd切回RV64/sigframe。
+- 证据：`build/host/stage177-snapshot-alias-gate/`。修复前3项反例及准确旧源码/哈希保留；init/serial ELF保持，最近完整矩阵为stage177，无CI/板端/性能结论。stage157及后续提交暂未推送，仍待公开发布确认。
 - 工具：LLVM18.1.8、QEMU11.1.3、OpenSBI1.8.1；保留两架构 `.su`/stack-usage.json。编译帧不是完整栈深/IRQ延迟证明，高半区物理ELF仍须禁用跳转表。
 
 ## 待确认与接续
 
+- fork接续：新DATA别名准入已闭合；Source Local/Mem引用变化、未映射/Local/Signal完整长循环与自动IRQ/检查点、原生准入/Fix/专用发布仍须接通，不把可信续点/快照验收当作已实现fork。
 - 待确认：生产rqclean的CONTROL_CLEAN=0x80、仅初始init持有及完整REQUEST参数方案已单独提问，尚未修改CONTROL/0x1b实现；候选及04/06旧表差异见04管理代收尾节。
 - 待确认：堆/连接共用VA登记、保留128堆区域及8份连接预付责任、短屏蔽信号更新范围的方向已提问，见08；当前vm.c仍不承诺信号安全，未新增映射查询或内核保留区。
 - 待确认：setfg/ttysignal的修正版后台/错误规则见11；旧“屏蔽/忽略TTOU也EIO”候选已撤回，修正版允许该情形继续切换。尚未新增ERR_IO=23或开放原生终端调用。

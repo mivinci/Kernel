@@ -10,8 +10,10 @@ static Handle   parentpid, peerpid, killer;
 static Rtable  *parenttable, *peertable, *childtable;
 static Procinfo parentinfo, childinfo;
 static Prepid   preparation;
+static Spaceid  aliasroot;
 static u32      armed, mode, reached, peerprogress, resumed, churn;
 static u32      selfstopped;
+static u32      aliasdenied;
 NORETURN void   __real_hal_user_enter(Hctx *context);
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
@@ -129,6 +131,36 @@ __wrap_hal_user_enter(Hctx *context)
       args.kind = ALLOC_DATA;
       args.align = args.minaddr = args.maxaddr = args.reserved = 0;
       procpausevm();
+      if (mode < 2) {
+        Memid  original;
+        Mem    beforemem, aftermem;
+        Space  beforemap, aftermap;
+        Pgstat beforepages, afterpages;
+        u32    found = 0, byte;
+        for (i = 0; i < parenttable->count; i++)
+          if (parenttable->slots[i].subtype == LOCAL_MEM &&
+              parenttable->slots[i].length == 16 * PAGE_SIZE) {
+            original.generation = parenttable->slots[i].objectgen;
+            original.index = parenttable->slots[i].object;
+            original.reserved = 0;
+            found++;
+          }
+        REQUIRE(found == 1 && !spacefrozen(aliasroot) && !memstat(original, &beforemem) &&
+                !spacestat(aliasroot, &beforemap));
+        pgstat(&beforepages);
+        REQUIRE(spacemap(aliasroot, original, 0, 0x100000, PAGE_SIZE, VM_READ) == SP_BUSY &&
+                spacemap(aliasroot, original, 0, 0x100000, PAGE_SIZE, VM_READ | VM_WRITE) ==
+                    SP_BUSY &&
+                spacecowmap(aliasroot, original, 0, 0x100000, PAGE_SIZE) == SP_BUSY);
+        aliasdenied += 3;
+        pgstat(&afterpages);
+        REQUIRE(!memstat(original, &aftermem) && !spacestat(aliasroot, &aftermap) &&
+                beforemap.pages == aftermap.pages && beforemap.mapcount == aftermap.mapcount &&
+                beforepages.allocated == afterpages.allocated &&
+                beforepages.free == afterpages.free);
+        for (byte = 0; byte < sizeof(beforemem); byte++)
+          REQUIRE(((const u8 *) &beforemem)[byte] == ((const u8 *) &aftermem)[byte]);
+      }
       for (i = 0; i < 5; i++) {
         REQUIRE(!localalloc(table, allocator, &args, &memory) &&
                 !localmap(table, space, memory, 0, 0x100000, PAGE_SIZE, VM_READ | VM_WRITE) &&
@@ -160,14 +192,14 @@ forkcontinuetest(void)
   u32        i, j, work, continued = 0, killed = 0, selfkilled = 0, stopped = 0;
   int        error;
   pgstat(&before);
-  churn = selfstopped = 0;
+  churn = selfstopped = aliasdenied = 0;
   for (mode = 0; mode < 3; mode++) {
     reached = peerprogress = resumed = 0;
     preparation.generation = 0;
     REQUIRE(!setcreate(1024, 1024, 8, &set) && !procnew(set, 1, 128, 128, 64, &parentpid) &&
             !procinfo(parentpid, &parentinfo) && !procnew(set, 1, 128, 128, 16, &peerpid) &&
             !procinfo(peerpid, &peer) && !procnew(set, parentpid, 128, 128, 64, &child) &&
-            !procinfo(child, &childinfo));
+            !procinfo(child, &childinfo) && !spacecreate(parentinfo.acct, &aliasroot));
     parenttable = proctable(parentpid);
     peertable = proctable(peerpid);
     childtable = proctable(child);
@@ -226,6 +258,7 @@ forkcontinuetest(void)
     REQUIRE(!lifecollect(parentinfo.life, 1, &result) &&
             result.reason == (mode ? LIFE_SIGNAL : LIFE_EXIT) && result.code == (mode ? 9U : 42U) &&
             !lifecollect(peer.life, 1, &result) && result.reason == LIFE_EXIT && result.code == 42);
+    REQUIRE(!spacedestroy(aliasroot));
     cowpool(&pool);
     REQUIRE(!pool.groups && !pool.branches && !pool.prepaid && !pgreserved() && !cowcheck() &&
             !acctcheck() && !pgcheck() && !lifecheck() && !groupcheck() && !sigcheck() &&
@@ -251,6 +284,8 @@ forkcontinuetest(void)
   puthex(3);
   putstr(" vm_churn=");
   puthex(churn);
+  putstr(" alias_denied=");
+  puthex(aliasdenied);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

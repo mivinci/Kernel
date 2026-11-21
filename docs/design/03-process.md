@@ -1501,3 +1501,5 @@ RPC反例同时验证：A等待B时STOP，B再call A仍得到DEADLOCK；B先回�
 完整make test-all通过838项host、格式检查和193次双架构QEMU；38项host专项、166份journal、最终源码/头/SDK/包哈希与两份13场景Run证明、两份fork停放/恢复/终止证明另核对，编译数据库含新增kernel/user测试源。默认init/serial ELF与stage124逐字节相同；normal源/符号均无jobtest或hal_user_enter wrapper，启动包仍只有init/serial。首次fixture误用clock id0，已改用既有CLOCK_MONOTONIC；另一处把RPC双向场景的入站QUEUED责任漏计，已按实际queryroles与后续运行核对修正为2；旧失败日志保留，未放宽内核clock或请求计数。证据build/host/stage125-run-stop/，无CI/板端/性能结果。
 
 当前Run注入只在jobs/sigframe测试内核通过既有hal_user_enter链接wrapper触发，normal不链接该wrapper或jobtest；不把它称作原生发信权限验收。sigsend选择器/逐目标授权尚待冻结，原生USER/终端信号生产、默认停止/继续信号选择与相互抵消、CHLD STOP/CONT及完整前台作业控制仍待接。
+
+fork快照接续（2026-11-21，stage177）：普通映射新私有DATA别名时，现检查该Mem是否已有冻结alias root，关闭向另一未冻结root插入新别名的入口；内部精确子前缀、SHARED/SEALED及独立Mem规则保持。原内核root续点/停放/终止移交测试每架构验证6次拒绝及15次独立VM变更，未扩固定记录/池；1181项host与完整195次QEMU/168份journal及边界见[02末尾](02-memory.md#快照期间的新data别名准入2026-11-21)。这不是原生forkprep或子返回验收；Source Local/Mem引用稳定、未映射/Local/Signal完整长循环、自动IRQ/检查点、原生准入与Fix/专用发布仍须接通。

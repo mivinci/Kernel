@@ -85,6 +85,8 @@ int spacebootcheck(Spaceid id, u64 address, u64 bytes);
 int spacefrozen(Spaceid id);
 u32 spacelookup(Spaceid id, u64 va, Hpte *out);
 int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep);
+/* Ordinary DATA alias admission also refuses a Mem with any frozen alias
+   root, even when id itself is not frozen. No new mapping/ref is acquired. */
 int spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
 /* Trusted inactive-space preparation: protect all existing logical RW aliases
    of this private Mem across spaces, clone, and undo new protections on error.

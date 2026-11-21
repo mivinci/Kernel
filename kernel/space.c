@@ -135,6 +135,24 @@ samemem(Memid a, Memid b)
 {
   return a.generation == b.generation && a.index == b.index;
 }
+static int
+aliasmapcheck(Memid memory)
+{
+  u32 node, scanned = 0, space;
+  if (!snapshot)
+    return 0;
+  for (node = memmaps[memory.index]; node != PG_NONE; node = maplinks[node].next) {
+    if (node >= MMAPS || ++scanned > MMAPS || !mappings[node].length ||
+        !samemem(mappings[node].mem, memory))
+      return SP_BAD;
+    space = maplinks[node].space;
+    if (space >= SPACES || !spaces[space].state)
+      return SP_BAD;
+    if (spaces[space].frozen)
+      return SP_BUSY;
+  }
+  return 0;
+}
 static u64
 logicalprot(const Mmap *m)
 {
@@ -514,6 +532,14 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
     return SP_BAD;
   if (memstat(memory, &mem))
     return SP_BAD;
+  /* A different, still-unfrozen root must not prepend an alias to a private
+     Mem already retained by a frozen root. Internal snapshot installation
+     alone may extend the exact child prefix admitted by the transaction. */
+  if (!building && mem.managers && mem.kind == MEM_RAM && mem.state == MEM_DATA) {
+    error = aliasmapcheck(memory);
+    if (error)
+      return error;
+  }
   error = memcanmap(memory, cow ? VM_READ : prot);
   if (!cow && error == MEM_BUSY && !mem.busy && !prep.generation && mem.kind == MEM_RAM &&
       mem.state == MEM_DATA && prot == (VM_READ | VM_WRITE)) {
