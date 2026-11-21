@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include "private/syscall.h"
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -13,6 +14,10 @@ main(int argc, char **argv)
   u64    mask, pending;
   u32    reset, ignored;
   REQUIRE(argc == 1, 151);
+  if (!strcmp(argv[0], "killed")) {
+    raise(SIGKILL);
+    return 158;
+  }
   reset = !strcmp(argv[0], "reset");
   ignored = !strcmp(argv[0], "auto") || !strcmp(argv[0], "again");
   REQUIRE(reset || ignored || !strcmp(argv[0], "keep"), 152);

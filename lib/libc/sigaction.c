@@ -44,13 +44,11 @@ faultcode(int signum, u64 reason)
 }
 
 static int
-childcode(u64 reason)
+childcode(u64 reason, u64 status)
 {
-  if (reason & WAIT_SIGNALLED)
-    return reason & WAIT_CORE ? CLD_DUMPED : CLD_KILLED;
   switch (reason) {
   case WAIT_EXITED:
-    return CLD_EXITED;
+    return !(status & WAIT_SIGNALLED) ? CLD_EXITED : status & WAIT_CORE ? CLD_DUMPED : CLD_KILLED;
   case WAIT_STOPPED:
     return CLD_STOPPED;
   case WAIT_CONTINUED:
@@ -73,8 +71,9 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 fra
       converted.si_pid = (pid_t) info->pid;
       converted.si_uid = info->uid;
       if (info->code == SIGNAL_SOURCE_CHILD) {
-        converted.si_code = childcode(info->reason);
-        converted.si_status = (int) info->status;
+        converted.si_code = childcode(info->reason, info->status);
+        converted.si_status =
+            info->reason == WAIT_CONTINUED ? SIGCONT : (int) (info->status & 0xff);
       } else
         converted.si_code = SI_USER;
     } else if (info->code == SIGNAL_SOURCE_FAULT) {

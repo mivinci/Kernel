@@ -1523,7 +1523,7 @@ def exercise(args, run_dir, record):
                 if args.case == "sigconfig":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("SIGCONFIGCHECK ")]
                     if (len(checks)!=1 or {key:checks[0].get(key) for key in ("children","retained","automatic","old_result","child_info","charged","allocated")} !=
-                            {"children":6,"retained":2,"automatic":4,"old_result":1,"child_info":1,"charged":0,"allocated":transition["tables"]}):
+                            {"children":7,"retained":3,"automatic":4,"old_result":1,"child_info":2,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("signal mask/action/child policy mismatch")
                     record["signal_configuration"]=checks[0]
                 if args.case in ("init", "initfatal", "normal", "sigsend"):

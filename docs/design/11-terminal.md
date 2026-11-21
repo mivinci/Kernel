@@ -848,3 +848,5 @@ CASE=sigsend新增3个独立实际用户场景：13组普通检查覆盖同步ha
 stage248：libc `sigaction` 接入单参数 handler、SIG_DFL、SIG_IGN 和既有原生 NODEFER/RESETHAND/NOCLDSTOP/NOCLDWAIT 标志。trampoline 从内核动作快照取得 handler，保存并恢复 errno 后 sigreturn；无需应用动作副表。安装和获取旧动作沿一次原生调用完成；旧动作输出复制失败不回滚已提交的动作，原生自订 trampoline 不作为公开 handler 回报。SA_SIGINFO、SA_RESTART 与 Rctx/Fix 前置仍待接。双架构 sigsend 实际验证安装与查询、入口掩码、RESETHAND、errno 恢复、同址输入输出及忽略；8 项既有信号主机测试与格式检查通过。
 
 stage249：`SA_SIGINFO` 使用同次快照的三参数原型。libc 将 USER 转换为 SI_USER 并保留完整 PID/UID，将 CHILD 的 wait 原因转换为 CLD_* 并保留状态，将 FAULT 转换为对应信号的原因和地址。无法细分的内核来源使用 SI_KERNEL，其余字段清零。第三参数沿用架构保存现场，修改仍由 sigreturn 校验。ARM64/RV64 的 sigsend、sigframe 和格式检查通过，覆盖实际 USER 递送、三参数动作查询、errno 恢复、SEGV_MAPERR/ACCERR 和修改现场后继续执行。公开 CHILD 转换、通用 ucontext 接口、SA_RESTART 及 Rctx/Fix 前置仍待接或验证。
+
+stage250：`SIGCHLD` 的信号终止标志取自原生 status。libc 以该字段区分 CLD_EXITED、CLD_KILLED、CLD_DUMPED，并仅将退出码或信号号交给 `si_status`；收到 CLD_CONTINUED 时报告 SIGCONT。ARM64/RV64 的 sigconfig 以公开 `sigaction` 实际验证退出 31 与自发 SIGKILL，分别核对 handler 的 PID、UID、原因与状态，以及同一个孩子的 `waitpid` 结果。原自动收取与资源回收断言继续通过；CLD_STOPPED、CLD_CONTINUED 与 CLD_DUMPED 尚无本次公开递送证据。

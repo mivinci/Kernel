@@ -2,6 +2,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <signal.h>
 #include "private/elf.h"
 #include "private/start.h"
 extern const u8       sig_child[], sig_child_end[];
@@ -104,30 +105,23 @@ setchild(u64 kind, u64 flags)
   REQUIRE(!__sys_sigaction(SIGNAL_CHLD, &action, NULL), 168);
 }
 static void
-childhandler(u64 signum, const Siginfo *info)
+childhandler(int signum, siginfo_t *info, void *context)
 {
-  REQUIRE(signum == SIGNAL_CHLD && info->signum == SIGNAL_CHLD &&
-              info->code == SIGNAL_SOURCE_CHILD && info->pid == signal_trace[8] &&
-              info->uid == childruid && !info->reserved0 && !info->address &&
-              info->reason == WAIT_EXITED && info->status == 31 && !info->reserved[0] &&
-              !info->reserved[1],
+  int killed = signal_trace[16] == 1;
+  REQUIRE(signum == SIGCHLD && info->si_signo == SIGCHLD && context &&
+              info->si_code == (killed ? CLD_KILLED : CLD_EXITED) &&
+              (u64) info->si_pid == signal_trace[killed ? 14 : 8] && info->si_uid == childruid &&
+              !info->si_errno && !info->si_addr && info->si_status == (killed ? SIGKILL : 31),
           200);
   signal_trace[16]++;
-  signal_trace[17] = info->pid;
-  signal_trace[18] = info->uid;
-  signal_trace[19] = info->code;
-  signal_trace[20] = info->reason;
-  signal_trace[21] = info->status;
-}
-static NORETURN void
-childtrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address,
-                u64 flags)
-{
-  REQUIRE(function == (u64) childhandler && flags == SIGNAL_SIGINFO && (u64) info == address + 64 &&
-              (u64) context == address + 128,
-          201);
-  childhandler(signum, info);
-  __sys_sigreturn((void *) address);
+  if (killed)
+    signal_trace[22] = (u64) info->si_pid;
+  else {
+    signal_trace[17] = (u64) info->si_pid;
+    signal_trace[18] = info->si_uid;
+    signal_trace[19] = info->si_code;
+    signal_trace[21] = info->si_status;
+  }
 }
 int
 main(int argc, char **argv)
@@ -187,18 +181,21 @@ main(int argc, char **argv)
   signal_trace[5] = 1;
   REQUIRE(!__sys_getcred(0, 0, 0, ids), 202);
   childruid = ids[0];
-  memset(&action, 0, sizeof(action));
-  action.kind = SIGNAL_HANDLER;
-  action.handler = (u64) childhandler;
-  action.trampoline = (u64) childtrampoline;
-  action.flags = SIGNAL_SIGINFO;
-  REQUIRE(!__sys_sigaction(SIGNAL_CHLD, &action, NULL), 203);
+  {
+    struct sigaction public = {0};
+    public.sa_sigaction = childhandler;
+    public.sa_flags = SA_SIGINFO;
+    REQUIRE(!sigaction(SIGCHLD, &public, NULL), 203);
+  }
   pid = spawn(0, "keep", 0, usr1, 0);
   REQUIRE(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 31, 193);
   REQUIRE(signal_trace[16] == 1 && signal_trace[17] == (u64) pid && signal_trace[18] == childruid &&
-              signal_trace[19] == SIGNAL_SOURCE_CHILD && signal_trace[20] == WAIT_EXITED &&
-              signal_trace[21] == 31,
+              signal_trace[19] == CLD_EXITED && signal_trace[21] == 31,
           204);
+  pid = spawn(6, "killed", 0, usr1, 0);
+  REQUIRE(waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL &&
+              signal_trace[16] == 2 && signal_trace[22] == (u64) pid,
+          205);
   setchild(SIGNAL_DEFAULT, 0);
   signal_trace[3]++;
   pid = spawn(1, "keep", 0, usr1, 0);
@@ -206,7 +203,7 @@ main(int argc, char **argv)
   setchild(SIGNAL_IGNORE, 0);
   REQUIRE(waitpid(pid, &status, 0) == pid && WEXITSTATUS(status) == 31, 195);
   signal_trace[3]++;
-  signal_trace[14] = 1;
+  signal_trace[23] = 1;
   for (i = 2; i < 6; i++) {
     if (i == 3)
       setchild(SIGNAL_DEFAULT, SIGNAL_NOCLDWAIT);

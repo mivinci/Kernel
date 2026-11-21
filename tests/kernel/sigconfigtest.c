@@ -115,10 +115,10 @@ sigconfigtest(void)
     REQUIRE(procwork(8) >= 0 && prepwork(8) >= 0);
   }
   REQUIRE(trace[3] == 2 && trace[4] == 4 && trace[5] == 1 &&
-          trace[7] == ((u64) 1 << (SIGNAL_USR1 - 1)) && trace[14] == 1 && retained == 3 &&
+          trace[7] == ((u64) 1 << (SIGNAL_USR1 - 1)) && trace[23] == 1 && retained == 3 &&
           automatic == 60);
-  REQUIRE(trace[16] == 1 && trace[17] == trace[8] && trace[18] == 0 &&
-          trace[19] == SIGNAL_SOURCE_CHILD && trace[20] == WAIT_EXITED && trace[21] == 31);
+  REQUIRE(trace[16] == 2 && trace[17] == trace[8] && trace[18] == 0 && trace[21] == 31 &&
+          trace[14] && trace[22] == trace[14]);
   while ((error = procclean(pid)) > 0) {
   }
   REQUIRE(!error && !lifecollect(parent.life, 1, &result) && result.code == 42);
@@ -131,13 +131,13 @@ sigconfigtest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGCONFIGCHECK children=");
-  puthex(6);
+  puthex(7);
   putstr(" retained=");
-  puthex(2);
+  puthex(3);
   putstr(" automatic=");
   puthex(4);
   putstr(" old_result=");
-  puthex(trace[14]);
+  puthex(trace[23]);
   putstr(" child_info=");
   puthex(trace[16]);
   putstr(" charged=");
