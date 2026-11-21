@@ -270,7 +270,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
           !ipc_recv(0, 0, &request) && request.kind == IPC_CALL && request.words[0] == FS_CLOSE &&
           !ipc_defer(request.request));
     target.target = request.source;
-    CHECK((interrupt != 3 || !__sys_sigsend(&target, SIGNAL_USR1)) && !ipc_recv(0, 0, &gate) &&
+    CHECK((interrupt == 2 || !__sys_sigsend(&target, SIGNAL_USR1)) && !ipc_recv(0, 0, &gate) &&
           gate.kind == IPC_CALL && gate.source == target.target && gate.words[0] == PIPETEST &&
           !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request));
   }
@@ -483,51 +483,64 @@ serviceclient(const Bootview *boot)
   pipeiotrace[0] = 7;
 }
 
+static Connwork *closepeer;
+static Handle    closerpc;
+static u32       closerestart;
+
 static void
 closecaught(int signum)
 {
-  if (signum == SIGUSR1)
+  Msg    gate = {{PIPETEST, 0, 0, 0}};
+  Ipcmsg result;
+  if (signum == SIGUSR1) {
+    closerpc = closepeer->state.operations[6].rpc;
+    CHECK(closerpc && dup(0) == 1);
+    if (closerestart)
+      CHECK(!ipc_call(closepeer->state.call, &gate, CALL_CONTROL, &result));
     caught++;
+  }
 }
 
 static void
-closeclient(const Bootview *boot, u32 signal)
+closeclient(u32 mode)
 {
+  Fileimage       *image;
+  Connwork        *peer;
+  Conncache       *directory;
   Pipecreate       pipe = {0};
-  Fileclose        anchor;
-  Opkey            key, background = {0};
-  Fdview           view;
+  Fdview           old, view;
   Fileref          ref;
   Msg              gate = {{PIPETEST, 0, 0, 0}};
   Ipcmsg           result;
   struct sigaction action = {0};
   Handle           rpc;
   int              fds[2];
-  u64              now, deadline, mask, ignored, closing;
   isize            business;
-  setup(boot, &work, &cache, &bank);
+  CHECK(!sysfileimage(&image) && !sysfileimagefs(0, ADDRESS, &peer));
+  directory = sysfileimagecache(image);
+  closepeer = peer;
+  closerestart = mode == 2;
   action.sa_handler = closecaught;
-  CHECK(!sigaction(SIGUSR1, &action, NULL) && !sysfilerefinit(&pool, work.state.self));
-  submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 1);
-  CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fds, &business) && !business &&
-        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
-        !sysfdobserve(&table, fds[1], &view) &&
-        !sysfdclose(&table, &pool, work.state.self, view.tag, &closing) && closing &&
-        !systimernow(&now));
-  deadline = now + (signal ? UINT64_C(1000000000) : UINT64_C(30000000));
-  CHECK(!sysfileclosesubmit(&pool, &work, &cache, closing, deadline, &anchor, &key) &&
-        !sysoprpc(&work, &cache, &key, &rpc) &&
-        sysfileclosewait(&pool, &work, &cache, &anchor, &key, &background, mask) ==
-            (signal ? SYSFILE_CLOSE_SIGNAL : SYSFILE_CLOSE_FAULT) &&
-        !systimernow(&now) && (signal ? now < deadline : now >= deadline) && caught == !!signal &&
-        !key.lease.seq && background.lease.seq && work.state.operations[6].rpc == rpc &&
-        !sysfdobserve(&table, fds[1], &view) && view.tag.state == SYSFD_FREE &&
-        !sysfilerefview(&pool, work.state.self, closing, &ref) &&
-        ref.state == SYSFILE_REF_CLOSING && !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
-  CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result) &&
-        !ipc_rqwait(rpc, RQ_FINISH, &result) &&
-        !sysfileclosework(&pool, &work, &cache, &anchor, &background) &&
-        sysfilerefview(&pool, work.state.self, closing, &ref) == -ERR_STALE);
+  action.sa_flags = closerestart ? SA_RESTART : 0;
+  CHECK(!sigaction(SIGUSR1, &action, NULL));
+  submitpipe(&image->contexts, peer, directory, &image->files, &image->fds, &pipe, 1);
+  CHECK(!sysfilepipefinish(&image->files, peer, directory, &image->fds, &pipe, fds, &business) &&
+        !business && !sysfdobserve(&image->fds, fds[1], &old));
+  if (closerestart)
+    CHECK(!close(fds[1]) && caught == 1 && closerpc && !peer->state.operations[6].rpc);
+  else {
+    CHECK(close(fds[1]) == -1 && errno == (mode ? EINPROGRESS : EIO) && caught == !!mode);
+    rpc = peer->state.operations[6].rpc;
+    CHECK(rpc && (!mode || rpc == closerpc) && peer->state.operations[6].file == old.file &&
+          !ipc_call(peer->state.call, &gate, CALL_CONTROL, &result) &&
+          !ipc_rqwait(rpc, RQ_FINISH, &result) && !sysfileimageclosework(peer->state.tag));
+  }
+  CHECK(sysfilerefview(&image->files, peer->state.self, old.file, &ref) == -ERR_STALE &&
+        !sysfdobserve(&image->fds, fds[1], &view));
+  if (mode)
+    CHECK(view.tag.state == SYSFD_LIVE && view.tag.generation > old.tag.generation &&
+          view.file != old.file && !close(fds[1]));
+  CHECK(close(fds[1]) == -1 && errno == EBADF);
   pipeiotrace[0] = 7;
 }
 
@@ -636,7 +649,11 @@ main(int argc, char **argv)
   else if (argv[0][0] == 'T' || argv[0][0] == 'U')
     serviceloop(boot, argv[0][0] == 'T' ? 2 : 3);
   else if (argv[0][0] == 't' || argv[0][0] == 'u')
-    closeclient(boot, argv[0][0] == 'u');
+    closeclient(argv[0][0] == 'u');
+  else if (argv[0][0] == 'R')
+    serviceloop(boot, 4);
+  else if (argv[0][0] == 'r')
+    closeclient(2);
   else
     run(boot);
   return 42;

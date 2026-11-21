@@ -63,7 +63,7 @@ static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 frame, u64 flags)
 {
   int saved = errno;
-  if (sysctxsigentry((const Sighead *) (uintptr_t) frame))
+  if (sysctxsigentry((const Sighead *) (uintptr_t) frame, flags))
     __sys_exit(128 + SIGSEGV);
   if (flags & SIGNAL_SIGINFO) {
     void (*handler)(int, siginfo_t *, void *) =

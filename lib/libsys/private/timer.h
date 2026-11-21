@@ -30,7 +30,7 @@ isize systimerdue(Timerheap *heap, u64 now, Timerjob *out);
 
 isize sysnanosleep(u64 duration, u64 *remaining);
 int   syssleepwaiting(void);
-void  syssleepinterrupt(void *trap, void *outer);
+void  syssleepinterrupt(void *trap, void *outer, u64 flags);
 /* Wait once on the shared alarm or specified events. Called with caught
    signals blocked; returns with them blocked and uses mask while sleeping.
    A notification is a hint: caller must recheck its condition and deadline. */

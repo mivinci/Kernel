@@ -188,7 +188,7 @@ syssleepwaiting(void)
 }
 
 void
-syssleepinterrupt(void *trap, void *outer)
+syssleepinterrupt(void *trap, void *outer, u64 flags)
 {
   Sleepwait *wait = pending;
   u64        begin = (u64) __sys_sleepwait_checked, end = (u64) __sys_sleepwait_return;
@@ -199,7 +199,7 @@ syssleepinterrupt(void *trap, void *outer)
     error = systimercancel(&sleepheap, eventwait->ticket);
     if (error)
       sleepfault = error;
-    eventwait->result = error ? error : -ERR_INTERRUPTED;
+    eventwait->result = error ? error : (flags & SIGNAL_RESTART ? 0 : -ERR_INTERRUPTED);
     eventwait->ticket = 0;
     eventwait = NULL;
     syssleepskip(trap, begin, end, resume);
@@ -244,7 +244,7 @@ systimerwait(u64 deadline, u64 events, u64 mask)
     sleepfault = cancelled;
   if (blocked || cancelled)
     return blocked ? blocked : cancelled;
-  return wait.result ? wait.result : error;
+  return wait.ticket ? error : wait.result;
 }
 
 isize

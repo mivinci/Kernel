@@ -38,3 +38,13 @@ dup2(int fd, int target)
 {
   return dupresult(sysfileimagedup2(fd, target));
 }
+
+int
+close(int fd)
+{
+  isize result = sysfileimageclose(fd);
+  if (!result)
+    return 0;
+  errno = result == -ERR_BAD_HANDLE ? EBADF : result == -ERR_INTERRUPTED ? EINPROGRESS : EIO;
+  return -1;
+}

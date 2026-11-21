@@ -5,5 +5,5 @@
 struct Rbank;
 /* Publish an initialized bank in private storage for the life of this image. */
 isize sysctxsigbind(struct Rbank *bank);
-isize sysctxsigentry(const Sighead *frame);
+isize sysctxsigentry(const Sighead *frame, u64 flags);
 #endif

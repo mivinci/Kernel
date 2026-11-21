@@ -200,6 +200,69 @@ closework(Fileimage *state, Conntag tag)
   return sysfileclosepump(&state->files, work, cache, file, 0);
 }
 
+static isize
+closefile(Fileimage *state, u64 file, u64 mask)
+{
+  Fileclose  anchor;
+  Opkey      key, background = {0};
+  Fileref    ref;
+  Conncache *cache = sysfileimagecache(state);
+  Connentry  entry;
+  Connwork  *work;
+  u64        now, deadline;
+  isize      error;
+  if (sysfilerefview(&state->files, state->files.self, file, &ref) ||
+      sysconnview(cache, ref.connection, &entry) || systimernow(&now) ||
+      now > UINT64_MAX - UINT64_C(1000000000))
+    return -ERR_STATE;
+  work = &state->connections[ref.connection.index];
+  deadline = now + UINT64_C(1000000000);
+  for (;;) {
+    error = sysfileclosesubmit(&state->files, work, cache, file, deadline, &anchor, &key);
+    if (!error)
+      break;
+    if (error != -ERR_BUSY && error != -ERR_CAPACITY)
+      return -ERR_STATE;
+    if (work->state.operations[6].phase && !closework(state, ref.connection))
+      continue;
+    if (systimernow(&now) || now >= deadline)
+      return -ERR_STATE;
+    error = systimerwait(deadline, EVENT_RQ_DONE, mask);
+    if (error)
+      return error == -ERR_INTERRUPTED ? error : -ERR_STATE;
+  }
+  error = sysfileclosewait(&state->files, work, cache, &anchor, &key, &background, mask);
+  if (error == SYSFILE_CLOSE_SIGNAL)
+    return -ERR_INTERRUPTED;
+  return !error || error == SYSFILE_CLOSE_CONFIRMED ? 0 : -ERR_STATE;
+}
+
+isize
+sysfileimageclose(int fd)
+{
+  Fileimage *state;
+  Fdview     view;
+  u64        mask, ignored, file = 0;
+  isize      error, restored;
+  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
+    return -ERR_BAD_HANDLE;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfdobserve(&state->fds, (u32) fd, &view);
+  if (!error)
+    error = view.tag.state == SYSFD_LIVE
+                ? sysfdclose(&state->fds, &state->files, state->files.self, view.tag, &file)
+                : -ERR_BAD_HANDLE;
+  if (!error && file)
+    error = closefile(state, file, mask);
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : restored;
+}
+
 isize
 sysfileimageclosework(Conntag tag)
 {

@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage406：公开 `close()` 在信号保护段核对并摘除 fd；只减少本地别名时直接完成，最后一个别名按原 File 等待后端确认。ARM64/RV64 QEMU `pipeio` 验证超时返回 EIO、捕获信号返回 EINPROGRESS，以及 SA_RESTART 后继续原请求。后两种情况下，handler 均复用原编号，外层不会摘除新 fd。超时或中断后的后台确认仍由夹具主动推进。
+
 stage405：ARM64/RV64 QEMU `pipeio` 让服务接收并延迟前台 CLOSE。客户端分别等到真实计时器截止和收到 SIGUSR1，核对 fd 已摘除，旧 File 和同一 RPC 转入后台。服务随后确认原请求，后台才回收旧引用。这里验证交接；公开 `close()` 和 `SA_RESTART` 仍待接入。
 
 stage404：前台 CLOSE 使用 Image 现有的逻辑计时器和仅事件等待；每次唤醒先核对原 RPC，保留提交时的绝对期限。两个架构的 QEMU `pipeio` 均验证从原 CLOSE 回复完成写端收尾。计时器到期和信号交接的 CLOSE 场景仍待专项验收；公开 `close()` 和 SA_RESTART 未接入。

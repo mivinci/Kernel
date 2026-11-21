@@ -76,7 +76,7 @@ prepareframe(Rbank *bank, Connpeer self, const Sighead *head, void *trap)
 }
 
 static isize
-preparesignal(Rbank *bank, const Sighead *frame)
+preparesignal(Rbank *bank, const Sighead *frame, u64 flags)
 {
   Sighead  outer;
   void    *trap = (u8 *) frame + SIGNAL_FRAME_TF;
@@ -100,7 +100,7 @@ preparesignal(Rbank *bank, const Sighead *frame)
       return -ERR_INVALID;
     outer_trap = (void *) (uintptr_t) (previous + SIGNAL_FRAME_TF);
   }
-  syssleepinterrupt(trap, outer_trap);
+  syssleepinterrupt(trap, outer_trap, flags);
   if (!bank)
     return 0;
   error = __sys_getid(&self.pid, &self.image, &parent);
@@ -123,7 +123,7 @@ preparesignal(Rbank *bank, const Sighead *frame)
 }
 
 isize
-sysctxsigentry(const Sighead *frame)
+sysctxsigentry(const Sighead *frame, u64 flags)
 {
   u64   mask, ignored;
   isize error, restored;
@@ -132,7 +132,7 @@ sysctxsigentry(const Sighead *frame)
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
-  error = preparesignal(signalbank, frame);
+  error = preparesignal(signalbank, frame, flags);
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return error ? error : restored;
 }

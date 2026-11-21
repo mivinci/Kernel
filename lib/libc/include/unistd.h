@@ -18,6 +18,7 @@ int           setpgid(pid_t pid, pid_t pgid);
 pid_t         setsid(void);
 int           dup(int fd);
 int           dup2(int fd, int target);
+int           close(int fd);
 long          sysconf(int name);
 NORETURN void _exit(int status);
 #endif

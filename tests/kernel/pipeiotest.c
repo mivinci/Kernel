@@ -118,4 +118,5 @@ pipeiotest(void)
   testpair("Ii");
   testpair("Tt");
   testpair("Uu");
+  testpair("Rr");
 }
