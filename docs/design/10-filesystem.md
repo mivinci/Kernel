@@ -138,6 +138,8 @@ stage292：`sysfilerefnextclose` 按连接槽及代次查找已无在途引用�
 
 stage293：`sysfileclosepick` 在同一信号保护段内发现、领取并准备一笔 CLOSE。控制槽忙或准备已回滚时归还领取责任，序号不复用；若内部回滚未能释放操作槽，则保留领取责任，避免重复准备。RV64、ARM64 `libsys` 验证控制槽忙时无输出、释放后能再次领取并通过原 Rctx 完成真实 CLOSE。65 项文件主机测试与格式通过。生产调度仍待接入。
 
+stage294：`sysfileclosepump` 按连接提交一笔后台 CLOSE，或非阻塞推进控制槽已有的后台请求。提交前被拒时归还槽和 File 领取记录；提交后由槽保留原 RPC，后续按原 File 代次和关闭序号核对结果、排空并 ACK，不重发。RV64、ARM64 QEMU `runtime` 以此路径完成 `dup2` 替换掉的后端引用关闭，源引用与替换后的 fd 保持有效；65 项文件主机测试和格式检查通过。生产事件循环和公开 `close()` 待接。
+
 ### open/close 的信号重启边界（已冻结）
 
 read/write 已讨论语义见 [信号中断与重启](11-terminal.md#readwrite-的中断与重启已冻结)。

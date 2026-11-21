@@ -403,6 +403,7 @@ client(const Bootview *boot)
   Msg                gate;
   Ipcmsg             result;
   Handle             rpc;
+  isize              closeprogress;
   Msg                hello = {{FS_HELLO, 0, 1, UINT64_MAX}};
   Msg                stale = {{FS_READ, 0x10000, 1, 0}};
   volatile Filehead *head;
@@ -496,7 +497,19 @@ client(const Bootview *boot)
         !sysfdobserve(&fds, 1, &replaced) && replaced.file == first &&
         replaced.tag.generation != detached.tag.generation &&
         !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
-  closefile(displaced, 0);
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        sysfileclosepump(&pool, &work, &cache, 900 + filecreatetrace[2], 0) ==
+            SYSFILE_CLOSE_SUBMITTED &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  do {
+    CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask));
+    closeprogress = sysfileclosepump(&pool, &work, &cache, 900 + filecreatetrace[2], 0);
+    CHECK(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+    if (closeprogress == -ERR_WOULD_BLOCK)
+      CHECK(!ipc_recv(EVENT_RQ_DONE, RECV_EVENTS_ONLY, &result));
+  } while (closeprogress == -ERR_WOULD_BLOCK);
+  CHECK(!closeprogress);
+  filecreatetrace[2]++;
   CHECK(sysfilerefview(&pool, work.state.self, second, &reference) == -ERR_STALE &&
         !sysfilerefview(&pool, work.state.self, first, &reference) && reference.aliases == 2 &&
         !sysfdobserve(&fds, 1, &detached) && detached.file == first &&

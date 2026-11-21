@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage294：libsys 可非阻塞提交并推进后台 CLOSE，复用原 RPC。RV64、ARM64 QEMU `runtime` 验证 `dup2` 旧引用经此路径关闭，65 项文件主机测试和格式通过。
+
 - stage293：libsys 接通待关闭 File 的领取与 CLOSE 准备，控制槽忙时可重试。双架构 QEMU `libsys`、65 项文件主机测试与格式通过。
 
 - stage292：File 池可按连接代次发现已排空、尚未领取的关闭责任。双架构 QEMU `libsys`、65 项文件主机测试及格式通过；生产调度待接。

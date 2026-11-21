@@ -6,6 +6,7 @@
 #define SYSFILE_CLOSE_FAULT     1
 #define SYSFILE_CLOSE_SIGNAL    2
 #define SYSFILE_CLOSE_CONFIRMED 3
+#define SYSFILE_CLOSE_SUBMITTED 4
 /* Short protected adapter, not POSIX close. A persistent last-close anchor
    already exists, old fd is detached and pins=0. Builds slot6 descriptor with
    real backend reference_id and the frozen four-word request. Caller submits
@@ -43,6 +44,11 @@ isize sysfilecloseinterrupt(Filepool *pool, Connwork *work, Conncache *cache,
    remaining responsibility for lifecycle recovery; no duplicate submission. */
 isize sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                        const Opkey *key);
+/* Under caught-signal exclusion, submit one pending background CLOSE or
+   advance the existing background CLOSE in slot 6. SUBMITTED means an RPC
+   is retained; zero means it was confirmed and drained. WOULD_BLOCK means
+   no eligible File or the retained RPC has not finished. Never waits. */
+isize sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline);
 /* Exact old backend has independently been marked ended. These perform local
    recovery, never claim a successful service CLOSE. Caller has finished bound
    Rctx handoff/continuations; last fd alias is detached, pins=0. recover keeps

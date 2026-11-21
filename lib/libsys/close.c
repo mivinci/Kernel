@@ -255,6 +255,49 @@ sysfileclosework(Filepool *pool, Connwork *work, Conncache *cache, const Fileclo
     return -ERR_STATE;
   return progress(pool, work, cache, anchor, key, &confirmed);
 }
+isize
+sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline)
+{
+  Fileclose anchor;
+  Fileref   reference;
+  Slotop   *op;
+  Opkey     key, background;
+  Msg       message;
+  Ipcmsg    result;
+  u64       file = 0;
+  isize     error;
+  if (!pool || !work || !cache)
+    return -ERR_INVALID;
+  op = &work->state.operations[6];
+  if (op->phase) {
+    if (op->opcode != FS_CLOSE ||
+        (op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) != (SYSOP_BACKGROUND | SYSOP_APP_ENDED))
+      return -ERR_BUSY;
+    error = sysfilerefview(pool, work->state.self, op->file, &reference);
+    if (error)
+      return error;
+    anchor.file = op->file;
+    anchor.sequence = reference.close_sequence;
+    key.connection = work->state.tag;
+    key.lease = op->lease;
+    key.owner = 0;
+    return sysfileclosework(pool, work, cache, &anchor, &key);
+  }
+  error = sysfileclosepick(pool, work, cache, owner, deadline, &anchor, &key, &message);
+  if (error)
+    return error;
+  error = ipc_call(work->state.call, &message, SYSFILE_CLOSE_OPTIONS, &result);
+  if (error) {
+    if (sysopabort(work, cache, &key, &file) || file != anchor.file ||
+        sysfilerefunclaimclose(pool, work->state.self, &anchor))
+      return -ERR_STATE;
+    return error;
+  }
+  error = sysopsubmitted(work, cache, &key, &result.request);
+  if (!error)
+    error = sysopabandon(work, cache, &key, &background);
+  return error ? error : SYSFILE_CLOSE_SUBMITTED;
+}
 static isize
 peerended(Connwork *work, Conncache *cache)
 {
