@@ -63,6 +63,7 @@ class RuntimeContextTests(unittest.TestCase):
                 'sysctxfinish':[C.POINTER(Bank),Peer,Key],
                 'sysctxdecode':[C.POINTER(Context),C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64],
                 'sysctxfixcheck':[C.POINTER(Bank),Peer,C.c_void_p],
+                'sysctxfixraw':[C.POINTER(Bank),Peer,Peer,C.c_void_p],
                 'sysforkdecode':[C.c_void_p,C.c_uint64,C.c_uint64,C.c_void_p],
                 'testreset':[C.c_uint64],'testget':[C.c_uint32],'testseen':[]}
             for name,args in signatures.items():getattr(lib,name).argtypes=args;getattr(lib,name).restype=C.c_int64
@@ -87,6 +88,33 @@ class RuntimeContextTests(unittest.TestCase):
             layers[4],layers[5]=key.sequence,3
             self.assertEqual(lib.sysctxfixcheck(C.byref(bank),owner,layers),-4)
             self.assertEqual(bytes(bank),before)
+
+    def test_fix_raw_checks_last_layer_before_rebinding_and_preserves_completed_tuple(self):
+        for _,_,lib in self.libs:
+            bank=Bank();owner=Peer(pid(1),9);child=Peer(pid(2),10)
+            keys=[Key() for _ in range(3)]
+            lib.sysctxinit(C.byref(bank),owner)
+            for layer,key in enumerate(keys):
+                self.assertEqual(lib.sysctxprepare(C.byref(bank),owner,layer,0x4f,None,C.byref(key)),0)
+            bank.contexts[1].phase=3
+            bank.contexts[1].result.values[0]=0x12345678
+            bank.contexts[2].phase=2
+            bank.snapshots[0][0]=91
+            layers=(C.c_uint64*6)(keys[0].sequence,1,keys[1].sequence,2,keys[2].sequence,3)
+            before=bytes(bank)
+            self.assertEqual(lib.sysctxfixraw(C.byref(bank),owner,child,layers),-18)
+            self.assertEqual(bytes(bank),before)
+            bank.contexts[2].phase=1;layers[5]=1
+            saved=bytes(bank)[C.sizeof(Peer):]
+            self.assertEqual(lib.sysctxfixraw(C.byref(bank),owner,child,layers),0)
+            self.assertEqual((bank.self.pid,bank.self.image),(child.pid,child.image))
+            self.assertEqual(bytes(bank)[C.sizeof(Peer):],saved)
+            after=bytes(bank)
+            self.assertEqual(lib.sysctxfixraw(C.byref(bank),owner,child,layers),0)
+            self.assertEqual(bytes(bank),after)
+            status=C.c_int64();result=Result()
+            self.assertEqual(lib.sysctxresult(C.byref(bank),child,keys[1],C.byref(status),C.byref(result)),0)
+            self.assertEqual(result.values[0],0x12345678)
 
     def test_fork_decoder_reads_only_successful_child_returns_inside_window(self):
         for arch,kind,lib in self.libs:
