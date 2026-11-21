@@ -110,16 +110,27 @@ loadread(Loadtable *table, u64 session, Handle pid, u64 image, const Loadfile *f
   return 0;
 }
 
+static isize
+readstatus(const Loadslot *entry, u64 ticket, u64 now)
+{
+  if (!entry || !ticket || entry->read != ticket)
+    return -ERR_STALE;
+  return entry->stopped ? entry->stopped : now >= entry->deadline ? -ERR_TIMEDOUT : 0;
+}
+
+isize
+loadstatus(Loadtable *table, u64 session, u64 ticket, u64 now)
+{
+  return readstatus(lookup(table, session), ticket, now);
+}
+
 isize
 loadfinish(Loadtable *table, u64 session, u64 ticket, u64 now)
 {
   Loadslot *entry = lookup(table, session);
-  isize     error;
-  if (!entry || !ticket || entry->read != ticket)
-    return -ERR_STALE;
-  error = entry->stopped;
-  if (!error && now >= entry->deadline)
-    error = -ERR_TIMEDOUT;
+  isize     error = readstatus(entry, ticket, now);
+  if (error == -ERR_STALE)
+    return error;
   entry->read = 0;
   if (error)
     stop(entry, error);

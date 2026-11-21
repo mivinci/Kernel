@@ -34,6 +34,7 @@ isize loadopen(Loadtable *table, const Loadfile *file, Handle pid, u64 image, u6
    before publishing staged output; a negative result forbids publication. */
 isize loadread(Loadtable *table, u64 session, Handle pid, u64 image, const Loadfile *file,
                u64 offset, u64 bytes, u64 now, u64 *ticket);
+isize loadstatus(Loadtable *table, u64 session, u64 ticket, u64 now);
 isize loadfinish(Loadtable *table, u64 session, u64 ticket, u64 now);
 isize loadclose(Loadtable *table, u64 session, Handle pid, u64 image);
 void  loadsweep(Loadtable *table, u64 now);
