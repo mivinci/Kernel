@@ -537,6 +537,14 @@ timercheck(void)
 }
 
 static volatile u32 slept;
+static volatile u32 continued;
+
+static void
+sleepcontinue(int signal)
+{
+  REQUIRE(signal == SIGCONT, 122);
+  continued++;
+}
 
 static void
 sleepinterrupt(int signal)
@@ -574,8 +582,23 @@ sleepcheck(void)
   REQUIRE(nanosleep(&request, (struct timespec *) (uintptr_t) 1) == -1 && errno == EFAULT &&
               slept == 2,
           120);
+  /* The scheduler stops this process only after observing the native wait. */
   runtime_trace[6] = 93;
-  REQUIRE(!nanosleep(&brief, NULL), 121);
+  REQUIRE(!nanosleep(&brief, &remaining) && !continued && remaining.tv_sec == 4 &&
+              remaining.tv_nsec == 9,
+          121);
+  action.sa_handler = sleepcontinue;
+  REQUIRE(!sigaction(SIGCONT, &action, NULL), 123);
+  request.tv_nsec = 900000000;
+  runtime_trace[6] = 94;
+  REQUIRE(nanosleep(&request, &remaining) == -1 && errno == EINTR && continued == 1 &&
+              !remaining.tv_sec && remaining.tv_nsec > 0 && remaining.tv_nsec <= request.tv_nsec,
+          124);
+  before = (u64) remaining.tv_nsec;
+  runtime_trace[6] = 95;
+  REQUIRE(!nanosleep(&brief, &remaining) && continued == 2 && !remaining.tv_sec &&
+              (u64) remaining.tv_nsec == before,
+          125);
 }
 
 int

@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include "load.h"
 #include <diag.h>
+#include <clock.h>
 #include <abi/boot.h>
 extern const u8  runtime_image[], runtime_image_end[];
 extern const u64 runtime_trace_address;
@@ -107,6 +108,27 @@ startup(Handle pid, u32 mode)
   boot->bytes = cursor;
   return cursor;
 }
+static void
+sleepjob(Handle pid, u64 stage)
+{
+  Siginfo  signal = {0};
+  Procinfo process;
+  u64      now, until;
+  REQUIRE(!procinfo(pid, &process) && process.state == PROC_BLOCKED);
+  signal.signum = SIGNAL_STOP;
+  REQUIRE(!procsigqueue(pid, &signal) && !procinfo(pid, &process) && process.state == PROC_STOPPED);
+  if (stage != 94) {
+    REQUIRE(!clockmono(&now) && now <= UINT64_MAX - UINT64_C(40000000));
+    until = now + UINT64_C(40000000);
+    do {
+      REQUIRE(procidle() == 1 && !clockmono(&now));
+    } while (now < until);
+    REQUIRE(!procinfo(pid, &process) && process.state == PROC_STOPPED);
+  }
+  signal.signum = SIGNAL_CONT;
+  REQUIRE(!procsigqueue(pid, &signal) && !procinfo(pid, &process) && process.state == PROC_READY);
+}
+
 void
 runtimetest(void)
 {
@@ -143,11 +165,17 @@ runtimetest(void)
         REQUIRE(
             error == -ERR_WOULD_BLOCK && mode == 1 &&
             !spaceread(info.space, runtime_trace_address + 6 * sizeof(u64), &stage, sizeof(stage)));
-        if (stage == injected + 1 && stage <= 92) {
-          REQUIRE(!procsigqueue(pid, &interrupt));
+        if (stage == injected + 1 && stage <= 95) {
+          if (stage <= 92)
+            REQUIRE(!procsigqueue(pid, &interrupt));
+          else
+            sleepjob(pid, stage);
           injected = stage;
-        } else
+        } else {
+          /* An interrupted or overdue stopped wait must not block again. */
+          REQUIRE(stage < 93);
           REQUIRE(procidle() == 1);
+        }
       }
     }
     good = mode <= 3 || mode == 6;
@@ -198,7 +226,7 @@ runtimetest(void)
             groupstat(ended_group, &relationship) == -ERR_BAD_HANDLE);
   }
   REQUIRE(!setstat(set, &account) && !account.charged && !account.instances && !setclose(set));
-  REQUIRE(injected == 92);
+  REQUIRE(injected == 95);
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !lifecheck() && !groupcheck());
