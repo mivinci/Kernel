@@ -252,6 +252,98 @@ sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *inpu
 }
 
 isize
+sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fileioresult *result)
+{
+  Conncache *cache;
+  Connwork  *work;
+  Slotop    *op;
+  u64        file = 0, address, storage;
+  isize      error;
+  if (!state || !key || !result || !key->owner || key->connection.index >= SYSCONN_COUNT ||
+      key->lease.span != 1 || bytes > FS_SLOT_BYTES)
+    return -ERR_INVALID;
+  cache = sysfileimagecache(state);
+  work = &state->connections[key->connection.index];
+  error = sysopcheck(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->opcode != FS_READ && op->opcode != FS_WRITE)
+    return -ERR_INVALID;
+  error = sysoppoll(work, cache, key);
+  if (!error)
+    error = sysopfinished(work, cache, key);
+  if (error)
+    return error;
+  if (!(op->flags & SYSOP_SAVED)) {
+    result->native = result->business = 0;
+    result->count = 0;
+    if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT)
+      result->native = -ERR_STATE;
+    else if (op->status) {
+      if (op->words[0] || op->words[1] || op->words[2] || op->words[3])
+        result->native = -ERR_STATE;
+      else {
+        if (op->status == -ERR_PEER && !work->state.ended) {
+          error = sysoppeerended(work, cache, key);
+          if (error)
+            return error;
+        }
+        result->native = op->status;
+      }
+    } else if (op->words[1] != key->lease.seq || (isize) op->words[0] > 0 ||
+               (op->words[0] && (op->words[2] || op->words[3])) || op->words[2] > bytes ||
+               op->words[3] != (op->opcode == FS_READ ? op->words[2] : 0))
+      result->native = -ERR_STATE;
+    else {
+      result->business = (isize) op->words[0];
+      result->count = op->words[2];
+      if (op->words[3]) {
+        address = (uintptr_t) output;
+        storage = (uintptr_t) state;
+        if (address > UINT64_MAX - result->count ||
+            (address < storage + sizeof(*state) && storage < address + result->count))
+          error = -ERR_FAULT;
+        else {
+          storage = (uintptr_t) result;
+          if (address < storage + sizeof(*result) && storage < address + result->count)
+            error = -ERR_FAULT;
+          else
+            error = sysopcopy(work, cache, key, 0, result->count, output);
+        }
+        if (error) {
+          result->native = error == -ERR_INVALID ? -ERR_FAULT : error;
+          result->count = 0;
+        }
+      }
+    }
+    if (op->resource) {
+      Handle dropped;
+      error = __sys_free(op->resource);
+      if (error)
+        return error;
+      error = sysopresource(work, cache, key, &dropped);
+      if (error)
+        return error;
+    }
+    error = sysopsaved(work, cache, key);
+    if (error)
+      return error;
+  }
+  if (op->phase != SYSOP_ACKED) {
+    error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  error = sysopfinish(work, cache, key, &file);
+  if (!error)
+    error = sysfilerefunpin(&state->files, work->state.self, file);
+  if (!error)
+    closeprogress(state);
+  return error;
+}
+
+isize
 sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                  Opkey *key, Opkey *background, u64 mask)
 {

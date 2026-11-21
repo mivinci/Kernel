@@ -4,13 +4,19 @@
 #include "fd.h"
 #include "filecreate.h"
 
-typedef struct Fileimage Fileimage;
+typedef struct Fileimage    Fileimage;
+typedef struct Fileioresult Fileioresult;
 struct Fileimage
 {
   Connwork connections[SYSCONN_COUNT];
   Fdtable  fds;
   Filepool files;
   Rbank    contexts;
+};
+struct Fileioresult
+{
+  isize native, business;
+  u64   count;
 };
 
 /* One shared file state per image, initialized on demand. Inherited image
@@ -30,6 +36,11 @@ isize sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active
    caught signals through Rctx registration and owns the resulting Opkey. */
 isize sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
                      Connwork **out, Opkey *key);
+/* Collect a submitted chunk without blocking. Keep signals masked and use
+   the same private result storage and original byte limit across retries.
+   Zero means the operation was released; inspect result for its outcome. */
+isize sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes,
+                      Fileioresult *result);
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
 isize sysfileimagedup2(int fd, int target);
