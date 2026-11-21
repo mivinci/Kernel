@@ -14,6 +14,9 @@ static Spaceid  aliasroot;
 static u32      armed, mode, reached, peerprogress, resumed, churn;
 static u32      selfstopped;
 static u32      aliasdenied;
+static Setid    buildset;
+static Handle   buildchild;
+void            arch_forktrap(Hctx *context);
 NORETURN void   __real_hal_user_enter(Hctx *context);
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
@@ -114,6 +117,15 @@ __wrap_hal_user_enter(Hctx *context)
   faultframeenter(context);
   runtimeframeenter(context);
   if (armed && table) {
+    if (mode == 3 && table->owner == parentpid) {
+      Handle construct;
+      arch_forktrap(context);
+      REQUIRE(!procstop(parentpid, SIGNAL_STOP));
+      REQUIRE(!procforkbuild(buildset, table, context, 1, 0, &construct, &buildchild) &&
+              construct && buildchild && !spacefrozen(parentinfo.space) &&
+              !localdestroy(table, construct));
+      procexit(LIFE_EXIT, 42, NULL);
+    }
     if (table->owner == parentpid)
       builder();
     if (table->owner == peerpid) {
@@ -273,10 +285,36 @@ forkcontinuetest(void)
     if (mode)
       REQUIRE(work > 2);
   }
+  buildchild = 0;
+  REQUIRE(!setcreate(1024, 1024, 8, &buildset) && !procnew(buildset, 1, 128, 128, 64, &parentpid) &&
+          !procinfo(parentpid, &parentinfo));
+  bootstrap(parentpid);
+  REQUIRE(!procpublish(parentpid));
+  armed = 1;
+  REQUIRE(!procrunone() && !procinfo(parentpid, &stale) && stale.state == PROC_STOPPED &&
+          !buildchild && spacefrozen(parentinfo.space) == 1 && procrunone() == -ERR_WOULD_BLOCK);
+  REQUIRE(!proccontinue(parentpid) && !procrunone() && buildchild && !procinfo(parentpid, &stale) &&
+          stale.state == PROC_EXITING);
+  armed = 0;
+  for (j = 0; j < 2; j++) {
+    Handle pid = j ? buildchild : parentpid;
+    for (i = 0; i < 64; i++) {
+      error = procclean(pid);
+      REQUIRE(error >= 0);
+      if (!error)
+        break;
+    }
+    REQUIRE(i < 64 && procinfo(pid, &stale) == -ERR_STALE);
+  }
+  REQUIRE(!lifecollect(parentinfo.life, 1, &result) && result.reason == LIFE_EXIT &&
+          result.code == 42 && !setstat(buildset, &group) && !group.charged && !group.instances &&
+          !setclose(buildset));
   pgstat(&after);
   REQUIRE(before.free == after.free && before.allocated == after.allocated);
   putstr("FORKCONTCHECK cases=");
-  puthex(3);
+  puthex(4);
+  putstr(" builder_resumed=");
+  puthex(1);
   putstr(" resumed=");
   puthex(continued);
   putstr(" killed=");

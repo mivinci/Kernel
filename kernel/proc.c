@@ -410,6 +410,22 @@ proccreate(Rtable *source, Handle authority, const Createarg *args, Handle *cons
     panic("create cleanup rollback");
   return error;
 }
+static int
+forkcheck(Prepid prep)
+{
+  int error;
+  if (!(current->configured & CONFIG_KERNEL)) {
+    error = procforkenter(prep);
+    if (error)
+      return error;
+  }
+  hal_irq_enable();
+  (void) hal_irq_save();
+  if (reschedule_requested || current->phase.resume == PROC_RUNNING)
+    procforkyield();
+  return 0;
+}
+
 int
 procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 reserve,
               Handle *construct, Handle *pid)
@@ -426,7 +442,7 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
   Local    *slot;
   Handle    target = 0, view = 0;
   u32       i;
-  int       error, finish, more;
+  int       error, finish, more, running;
   if (!construct || !pid || construct == pid)
     return -ERR_INVALID;
   *construct = *pid = 0;
@@ -443,6 +459,7 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
   error = localroom(source);
   if (error)
     return error;
+  running = current && source == &current->resources && !vm_paused;
   limits.memlimit = account.limit;
   limits.exec_limit = account.exec_limit;
   limits.resources = source->count;
@@ -476,7 +493,15 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
           localrevoke(&child->resources, handlepack(HANDLE_RESOURCE, slot->generation, i)))
         panic("fork bootstrap replacement");
     }
-    error = forksnapshot(source, &child->resources, &limits, reserve, parent, child->user, prep);
+    if (running)
+      procpausevm();
+    error = forksnapshotchecked(source, &child->resources, &limits, reserve, parent, child->user,
+                                prep, running ? forkcheck : NULL);
+    if (running) {
+      if ((current->configured & CONFIG_KERNEL) && procforkleave())
+        panic("fork construction continuation release");
+      procresumevm();
+    }
     finish = prepforkfinish(prep);
     if (!error)
       error = finish;
@@ -490,8 +515,8 @@ procforkbuild(Setid set, Rtable *source, const Hctx *parent, u32 pending, u32 re
   }
   if (procdestroy(target))
     panic("fork construction cancellation");
-  /* This trusted synchronous builder cannot checkpoint yet. No identity escaped;
-     later native integration must use the bounded CPU cleanup/clone checkpoints. */
+  if (running)
+    return error;
   while ((more = procclean(target)) > 0) {
   }
   if (more)

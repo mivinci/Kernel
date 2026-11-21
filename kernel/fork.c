@@ -32,8 +32,8 @@ memory(const Local *slot)
 }
 
 int
-forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
-             const Hctx *parent, Hctx *child, Prepid prep)
+forksnapshotchecked(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
+                    const Hctx *parent, Hctx *child, Prepid prep, Forkcheck checkpoint)
 {
   Hctx    candidate;
   Imageid sourceimage, targetimage;
@@ -47,7 +47,7 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
   if (!source || !target || source == target || !source->slots || !target->slots ||
       source->state != LOCAL_OPEN || target->state != LOCAL_OPEN || !source->count ||
       source->count > LOCALS || source->count != target->count || !limits || reserve > 8 ||
-      prep.reserved || (!prep.generation && prep.index) || !parent || !child ||
+      prep.reserved || (!prep.generation && (prep.index || checkpoint)) || !parent || !child ||
       ((u64) parent < (u64) child + sizeof(Hctx) && (u64) child < (u64) parent + sizeof(Hctx)))
     return -ERR_INVALID;
   if (imagefind(source->owner, source->image, &sourceimage) || imagestat(sourceimage, &image) ||
@@ -66,10 +66,20 @@ forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserv
     if (error)
       return error;
   }
-  error = convert(prep.generation ? spacesnapshotprep(source->space, target->space, prep)
-                                  : spacesnapshotbegin(source->space, target->space));
+  error = convert(spacesnapshotopen(source->space, target->space, prep));
   if (error)
     return error;
+  for (;;) {
+    error = spacesnapshotbuild(source->space, target->space);
+    if (error <= 0)
+      break;
+    if (checkpoint && (error = checkpoint(prep)))
+      goto failed;
+  }
+  if (error) {
+    error = convert(error);
+    goto failed;
+  }
   for (i = 0; i < source->count; i++) {
     slot = &source->slots[i];
     if (slot->subtype != LOCAL_MEM || !(slot->inherit & LOCAL_FORK))
@@ -137,4 +147,11 @@ failed:
   if (spacesnapshotend(source->space, target->space, 0))
     panic("fork mapping rollback");
   return error;
+}
+
+int
+forksnapshot(Rtable *source, Rtable *target, const Createarg *limits, u32 reserve,
+             const Hctx *parent, Hctx *child, Prepid prep)
+{
+  return forksnapshotchecked(source, target, limits, reserve, parent, child, prep, NULL);
 }

@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage184：当前 Run 的可信 fork 构造在映射批次之间接入内核根续点；双架构 sigframe 验证实际构造器 STOP/CONT 后完成构造并清理。未映射 Mem、Local、Signal 的检查点仍待接。
+
 - stage183：快照从 READY 转入提交时重新检查准备期限，超期仍可回滚；组合构造在发布子信号状态及提交 Local/Mem 前通过此检查。22 项主机专项及双架构 QEMU sigframe 通过。
 
 - stage182：未映射 DATA 的 fork 克隆核对完整源 Acct，拒绝同 Set 下其他 Acct 的对象。26 项主机 Space 快照专项、格式检查及双架构 QEMU sigframe 通过。
