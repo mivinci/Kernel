@@ -699,6 +699,10 @@ vfsdeathclient(const Bootview *boot, u32 timeout)
   Msg       query;
   Ipcmsg    result;
   Createop *creator;
+  Fileref   reference;
+  Filelease lease;
+  Fileslot  slot;
+  Handle    rpc;
   u64       bound;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
@@ -726,6 +730,28 @@ vfsdeathclient(const Bootview *boot, u32 timeout)
   query.words[2]++;
   CHECK(!ipc_call(creator->call, &query, CALL_CONTROL, &result) && !result.words[0] &&
         result.words[1] == 3 && !result.words[2] && !result.words[3]);
+  CHECK(!sysfilerefview(&pool, backend_work.state.self, bound, &reference) &&
+        !sysconnworkreserve(&backend_work, &cache, SYSFILE_CONTROL, 1, &lease));
+  zero(&slot, sizeof(slot));
+  slot.seq = lease.seq;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.object = reference.session;
+  slot.span = 1;
+  slot.args[0] = reference.reference ^ (UINT64_C(1) << 63);
+  CHECK(slot.args[0] &&
+        !__sys_copy((void *) (uintptr_t) (backend_work.state.map.address + FS_DESC_OFFSET +
+                                          lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)));
+  query.words[0] = FS_CLOSE;
+  query.words[1] = CONNID;
+  query.words[2] = lease.seq;
+  query.words[3] = lease.slot;
+  CHECK(!ipc_call(backend_work.state.call, &query, CALL_ASYNC | CALL_CONTROL, &result));
+  rpc = result.request;
+  CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqwait(rpc, 0, &result) &&
+        (isize) result.words[0] == -ESTALE && result.words[1] == lease.seq && !result.words[2] &&
+        !result.words[3] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+        !sysconnworkrelease(&backend_work, &cache, lease));
   closeat(&backend_work, bound, 1);
   query.words[0] = STOP;
   query.words[1] = query.words[2] = query.words[3] = 0;
@@ -972,15 +998,15 @@ backend(const Bootview *boot, u32 recover)
     else
       CHECK(!sysfilerequest(head, FS_CONN_BYTES, 6, input.words[2], &descriptor));
     CHECK(!sysfileargs(FS_CLOSE, &descriptor));
-    i = 0;
-    while (i < created &&
-           (preps[i].session != descriptor.object || preps[i].reference != descriptor.args[0]))
-      i++;
-    CHECK(i < created && preps[i].state == Openattached);
-    if (recover >= 9)
-      CHECK(i == 0 && cancelled == 1);
-    sysopenretire(&preps[i]);
-    closed++;
+    prep = sysopenref(preps, ARRAY_SIZE(preps), &input, &descriptor);
+    if (!prep)
+      reply.words[0] = (u64) -ESTALE;
+    else {
+      if (recover >= 9)
+        CHECK(prep == &preps[0] && cancelled == 1);
+      sysopenretire(prep);
+      closed++;
+    }
     reply.words[1] = input.words[2];
     CHECK(!ipc_reply(input.request, &reply));
     if (recover >= 9)

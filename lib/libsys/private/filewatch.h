@@ -43,6 +43,9 @@ isize     sysopenrelease(Openprep *pool, u32 count, u64 token);
 /* Serialize the check, resource reply and commit in the service loop. */
 isize sysopenattach(const Openprep *prep, const Ipcmsg *call, u64 now);
 void  sysopencommit(Openprep *prep);
+/* Resolve only a live attached reference after connection and slot validation.
+   The caller still owns logical close and any downstream drain. */
+Openprep *sysopenref(Openprep *pool, u32 count, const Ipcmsg *call, const Fileslot *slot);
 /* Validate any nonzero connid against the caller's connection first. Return
    1 while a logical close is owed, or 0 for a tombstone. Retire only after
    closing the reference or saving its cleanup. */

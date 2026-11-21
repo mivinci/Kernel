@@ -99,6 +99,26 @@ sysopencommit(Openprep *prep)
   prep->state = Openattached;
 }
 
+Openprep *
+sysopenref(Openprep *pool, u32 count, const Ipcmsg *call, const Fileslot *slot)
+{
+  Openprep *found = NULL;
+  u32       i;
+  if (!pool || count > SYSOPEN_POOL_MAX || !call || call->kind != IPC_CALL || !slot)
+    return NULL;
+  for (i = 0; i < count; i++) {
+    Openprep *prep = &pool[i];
+    if (prep->state == Openattached && prep->client == call->source &&
+        prep->client_image == call->image && prep->session == slot->object &&
+        prep->reference == slot->args[0]) {
+      if (found)
+        return NULL;
+      found = prep;
+    }
+  }
+  return found;
+}
+
 isize
 sysopenabort(const Openprep *prep, const Ipcmsg *call)
 {
