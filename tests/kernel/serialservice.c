@@ -3,6 +3,8 @@
 #include <sys/channel.h>
 #include <proto/serial.h>
 #include <proto/init.h>
+#include <proto/file.h>
+#include <errno.h>
 #include <abi/resource.h>
 #include <abi/system.h>
 #include <abi/time.h>
@@ -401,6 +403,18 @@ main(int argc, char **argv)
     serialserviceproof[2] = tty ? 3 : 1;
     serialserviceproof[3] = (u64) client.pid;
     if (tty) {
+      Handle call;
+      Msg    hello = {{FS_HELLO, 0, 17, UINT64_MAX}};
+      Msg    read = {{FS_READ, 0x10000, 23, 0}};
+      CHECK(!__sys_connect(client.control, CONNECT_CALL, RESOURCE_USE, 0, &call), 160);
+      CHECK(!ipc_call(call, &hello, CALL_RECV_MEM, &response) && !response.kind &&
+                (isize) response.words[0] == -ENOTSUP && response.words[1] == hello.words[2] &&
+                !response.words[2] && !response.words[3],
+            161);
+      CHECK(!ipc_call(call, &read, 0, &response) && !response.kind &&
+                (isize) response.words[0] == -ENOTSUP && response.words[1] == read.words[2] &&
+                !response.words[2] && !response.words[3] && !__sys_free(call),
+            162);
       idle(0, 0, 8);
       idle(3, 3, 9);
       idle(8, 9, 13);

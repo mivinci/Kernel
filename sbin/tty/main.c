@@ -4,6 +4,7 @@
 #include "private/syscall.h"
 #include <abi/resource.h>
 #include <abi/time.h>
+#include <errno.h>
 #include <proto/init.h>
 #include <sys/channel.h>
 #include <unistd.h>
@@ -193,7 +194,7 @@ readyresult(u64 deadline, u64 number, u64 image)
 static void
 reject(const Ipcmsg *message)
 {
-  Msg   reply = {{(u64) -ERR_NOTSUP, message->words[1], 0, 0}};
+  Msg   reply = {{(u64) -ENOTSUP, message->words[2], 0, 0}};
   u64   state;
   isize error = ipc_rqcheck(message->request, &state);
   if (!error) {
@@ -201,7 +202,7 @@ reject(const Ipcmsg *message)
       error = ipc_rqfinish(message->request);
     else {
       if (state & RQ_CHECK_CANCEL)
-        reply.words[0] = (u64) -ERR_CANCELLED;
+        reply.words[0] = (u64) -EINTR;
       error = ipc_reply(message->request, &reply);
     }
   }
