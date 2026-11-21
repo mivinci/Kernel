@@ -2,13 +2,22 @@
 #define _BLK_IO_H
 #include "private/virtio/block.h"
 
-typedef struct Blkdma Blkdma;
+typedef struct Blkdma   Blkdma;
+typedef struct Blkqueue Blkqueue;
 struct Blkdma
 {
   Vblkhead    *header;
   volatile u8 *data, *status;
   u64          headaddr, dataaddr, statusaddr;
   u32          capacity;
+};
+struct Blkqueue
+{
+  Vring        *ring;
+  Vblkreq      *slots;
+  const Blkdma *buffers;
+  u64           generation, serial;
+  u32           count;
 };
 
 /* The driver owns the request and its exclusive DMA windows until completion
@@ -27,4 +36,15 @@ int blkiofinish(Vblkreq *request, const Vdone *done, const Blkdma *dma, void *de
    refreshed before accepting new I/O. Drain more before rearming the IRQ. */
 int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u32 *more,
                u32 *causes);
+/* Prepaid slots with independent DMA storage. On reinitialization, drain
+   or recover old requests and advance the ring generation first. The event
+   loop serializes all operations. Keep the buffer descriptions immutable. */
+int blkqinit(Blkqueue *queue, Vring *ring, Vblkreq *slots, const Blkdma *buffers, u32 count);
+int blkqsubmit(Blkqueue *queue, u32 slot, const Vblkconfig *config, u32 type, u64 sector, u32 bytes,
+               const void *source, Vblksync sync, void *context);
+/* Return the exact active slot for a completion, or a native error. */
+int blkqmatch(const Blkqueue *queue, const Vdone *done);
+int blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity);
+/* Call only after confirmed device stop. */
+int blkqreclaim(Blkqueue *queue, u32 slot);
 #endif

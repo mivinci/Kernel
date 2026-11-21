@@ -287,7 +287,7 @@ vdevtest(const Dtinfo *info)
             trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 4 * trace[18] &&
             trace[3] == 3 * trace[18] && trace[38] == trace[2] + trace[3] + trace[22] &&
             trace[39] == trace[18] + trace[19] && resize == trace[18] &&
-            trace[VTEST_CAPACITY] == 2 * trace[20]);
+            trace[VTEST_CAPACITY] == 2 * trace[20] && trace[VTEST_PARALLEL] == 2 * trace[18]);
     interrupts += (u32) trace[38];
     retired += (u32) trace[39];
     probes += (u32) trace[12];
@@ -300,7 +300,7 @@ vdevtest(const Dtinfo *info)
     readonly += (u32) trace[19];
     rwsectors += trace[20];
     rosectors += trace[21];
-    reads += (u32) trace[22];
+    reads += (u32) (trace[22] + trace[VTEST_PARALLEL]);
     writes += (u32) trace[2];
     flushes += (u32) trace[3];
     pages++;

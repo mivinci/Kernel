@@ -1,5 +1,9 @@
 #include "io.h"
 
+#define BLK_SLOT_BITS 7
+#define BLK_SLOT_MASK ((1U << BLK_SLOT_BITS) - 1)
+STATIC_ASSERT(VQ_SIZE <= (1U << BLK_SLOT_BITS), blk_cookie_slot);
+
 int
 blkiosubmit(Vblkreq *request, Vring *ring, const Vblkconfig *config, const Blkdma *dma, u32 type,
             u64 sector, u32 bytes, u64 cookie, const void *source, Vblksync sync, void *context)
@@ -51,4 +55,75 @@ blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u
     return -ERR_STALE;
   error = vinterrupt(device, causes);
   return error ? error : vrpoll(ring, generation, done, count, more);
+}
+
+int
+blkqinit(Blkqueue *queue, Vring *ring, Vblkreq *slots, const Blkdma *buffers, u32 count)
+{
+  u32 i;
+  if (!queue || !ring || !ring->initialized || !slots || !buffers || !count || count > VQ_SIZE)
+    return -ERR_INVALID;
+  queue->ring = ring;
+  queue->slots = slots;
+  queue->buffers = buffers;
+  queue->count = count;
+  queue->generation = ring->queue.generation;
+  queue->serial = 0;
+  for (i = 0; i < count; i++)
+    slots[i].held = slots[i].active = 0;
+  return 0;
+}
+
+int
+blkqsubmit(Blkqueue *queue, u32 index, const Vblkconfig *config, u32 type, u64 sector, u32 bytes,
+           const void *source, Vblksync sync, void *context)
+{
+  Vblkreq *slot;
+  u64      cookie;
+  if (!queue || index >= queue->count)
+    return -ERR_INVALID;
+  if (queue->ring->queue.generation != queue->generation)
+    return -ERR_STALE;
+  slot = &queue->slots[index];
+  if (slot->held || slot->active)
+    return -ERR_BUSY;
+  if (queue->serial == (UINT64_MAX >> BLK_SLOT_BITS))
+    return -ERR_OVERFLOW;
+  cookie = (++queue->serial << BLK_SLOT_BITS) | index;
+  return blkiosubmit(slot, queue->ring, config, &queue->buffers[index], type, sector, bytes, cookie,
+                     source, sync, context);
+}
+
+int
+blkqmatch(const Blkqueue *queue, const Vdone *done)
+{
+  const Vblkreq *slot;
+  u32            index;
+  if (!queue || !done)
+    return -ERR_INVALID;
+  index = (u32) (done->cookie & BLK_SLOT_MASK);
+  if (index >= queue->count || done->generation != queue->generation ||
+      queue->ring->queue.generation != queue->generation)
+    return -ERR_STALE;
+  slot = &queue->slots[index];
+  if (!slot->active || done->cookie != slot->cookie || done->generation != slot->generation)
+    return -ERR_STALE;
+  return (int) index;
+}
+
+int
+blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity)
+{
+  int index = blkqmatch(queue, done);
+  if (index < 0)
+    return index;
+  return blkiofinish(&queue->slots[index], done, &queue->buffers[index], destination, capacity);
+}
+
+int
+blkqreclaim(Blkqueue *queue, u32 index)
+{
+  if (!queue || index >= queue->count)
+    return -ERR_INVALID;
+  return vblkreclaim(&queue->slots[index]);
 }

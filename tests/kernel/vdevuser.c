@@ -66,6 +66,17 @@ blksync(void *context, u32 phase, const Vbuf *buffer)
   return 0;
 }
 static void
+testbuffer(const Testdma *dma, u32 page, Blkdma *buffer)
+{
+  buffer->header = (void *) (dma->va + page * PAGE_SIZE);
+  buffer->data = (void *) (dma->va + (page + 1) * PAGE_SIZE);
+  buffer->status = (void *) (dma->va + (page + 2) * PAGE_SIZE);
+  buffer->headaddr = dma->addresses[page];
+  buffer->dataaddr = dma->addresses[page + 1];
+  buffer->statusaddr = dma->addresses[page + 2];
+  buffer->capacity = PAGE_SIZE;
+}
+static void
 transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
          const Vblkconfig *config, const Testdma *dma, u32 type, u64 sector, u64 cookie, u8 seed,
          Vdone *prior, const u8 *image)
@@ -80,13 +91,7 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   u32       bytes = type == VBLK_FLUSH ? 0 : config->blocksize;
   u32       count, more, i, causes;
   u64       generation, started;
-  buffer.header = (void *) (dma->va + 3 * PAGE_SIZE);
-  buffer.data = (void *) (dma->va + 4 * PAGE_SIZE);
-  buffer.status = (void *) (dma->va + 5 * PAGE_SIZE);
-  buffer.headaddr = dma->addresses[3];
-  buffer.dataaddr = dma->addresses[4];
-  buffer.statusaddr = dma->addresses[5];
-  buffer.capacity = PAGE_SIZE;
+  testbuffer(dma, 3, &buffer);
   REQUIRE(bytes <= sizeof(staged), 204);
   if (type == VBLK_WRITE && !source) {
     for (i = 0; i < bytes; i++)
@@ -214,19 +219,20 @@ static void
 resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
              const Testdma *dma)
 {
-  Vblkreq      request = {0};
-  Vblkhead    *header = (void *) (dma->va + 3 * PAGE_SIZE);
-  volatile u8 *status = (void *) (dma->va + 5 * PAGE_SIZE);
-  Ipcmsg       event;
-  u64          generation, started = now();
-  u32          causes;
+  Vblkreq  request;
+  Blkdma   buffer;
+  Blkqueue queue;
+  Ipcmsg   event;
+  u64      generation, started = now();
+  u32      causes;
 
+  testbuffer(dma, 3, &buffer);
+  REQUIRE(!blkqinit(&queue, ring, &request, &buffer, 1), 224);
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           185);
-  REQUIRE(!vblksubmit(&request, ring, config, VBLK_READ, config->blocksize / VBLK_SECTOR, 6,
-                      dma->addresses[3], dma->addresses[4], config->blocksize, dma->addresses[5],
-                      header, status, blksync, device),
+  REQUIRE(!blkqsubmit(&queue, 0, config, VBLK_READ, config->blocksize / VBLK_SECTOR,
+                      config->blocksize, NULL, blksync, device),
           186);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent && !__sys_alarmcancel(&generation),
@@ -237,7 +243,7 @@ resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
               request.active && request.held == 7 && ring->queue.free == VQ_SIZE - 3,
           188);
   reset(device);
-  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes && !vblkreclaim(&request) &&
+  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes && !blkqreclaim(&queue, 0) &&
               !request.active && !request.held,
           189);
   vdev_trace[39]++;
@@ -254,15 +260,19 @@ testresize(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkco
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
           208);
   vdev_trace[VTEST_RESIZE] = 1;
-  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
-              event.words[0] == irqevent && !__sys_alarmcancel(&alarm),
-          209);
-  REQUIRE(blkirqpoll(device, ring, 1, done, &count, &more, &causes) == -ERR_STALE && !causes &&
-              !count && !more,
-          210);
-  REQUIRE(!blkirqpoll(device, ring, 2, done, &count, &more, &causes) &&
-              (causes & VDEV_IRQ_CONFIG) && !count && !more,
-          211);
+  for (;;) {
+    REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) &&
+                event.kind == IPC_EVENT && event.words[0] == irqevent,
+            209);
+    REQUIRE(blkirqpoll(device, ring, 1, done, &count, &more, &causes) == -ERR_STALE && !causes &&
+                !count && !more,
+            210);
+    REQUIRE(!blkirqpoll(device, ring, 2, done, &count, &more, &causes) && !count && !more, 211);
+    if (causes & VDEV_IRQ_CONFIG)
+      break;
+    REQUIRE(!__sys_irqack(binding), 226);
+  }
+  REQUIRE(!__sys_alarmcancel(&alarm), 227);
   REQUIRE(!vblkconfig(device, &refreshed) && refreshed.sectors == 2 * old->sectors &&
               refreshed.blocksize == old->blocksize && refreshed.physical == old->physical &&
               refreshed.alignment == old->alignment && refreshed.flush == old->flush &&
@@ -271,6 +281,62 @@ testresize(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkco
   REQUIRE(!blkirqpoll(device, ring, 2, done, &count, &more, &causes) && !count && !more && !causes,
           213);
   vdev_trace[VTEST_CAPACITY] = refreshed.sectors;
+}
+static void
+testparallel(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
+             const Testdma *dma)
+{
+  static u8 staged[PAGE_SIZE];
+  Vblkreq   requests[2];
+  Blkdma    buffers[2];
+  Blkqueue  queue;
+  Ipcmsg    event;
+  Vdone     done[VQ_BATCH], stale;
+  u64       stride = config->blocksize / VBLK_SECTOR;
+  u64       alarm, started = now();
+  u32       count, causes, more, i, j, seen = 0;
+  int       slot;
+  testbuffer(dma, 3, &buffers[0]);
+  testbuffer(dma, 6, &buffers[1]);
+  REQUIRE(!blkqinit(&queue, ring, requests, buffers, ARRAY_SIZE(requests)), 214);
+  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+              !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
+          215);
+  REQUIRE(
+      !blkqsubmit(&queue, 0, config, VBLK_READ, stride, config->blocksize, NULL, blksync, device) &&
+          !blkqsubmit(&queue, 1, config, VBLK_READ, 2 * stride, config->blocksize, NULL, blksync,
+                      device) &&
+          blkqsubmit(&queue, 0, config, VBLK_READ, 0, config->blocksize, NULL, blksync, device) ==
+              -ERR_BUSY,
+      216);
+  while (seen != 3) {
+    REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) &&
+                event.kind == IPC_EVENT && event.words[0] == irqevent,
+            217);
+    REQUIRE(!blkirqpoll(device, ring, 2, done, &count, &more, &causes) &&
+                !(causes & VDEV_IRQ_CONFIG) && !more,
+            218);
+    for (i = 0; i < count; i++) {
+      slot = blkqmatch(&queue, &done[i]);
+      REQUIRE(slot >= 0 && slot < 2 && !(seen & (1U << slot)), 219);
+      stale = done[i];
+      stale.generation--;
+      REQUIRE(blkqfinish(&queue, &stale, staged, sizeof(staged)) == -ERR_STALE, 225);
+      stale = done[i];
+      stale.cookie += VQ_SIZE;
+      REQUIRE(blkqmatch(&queue, &stale) == -ERR_STALE &&
+                  !blkqfinish(&queue, &done[i], staged, sizeof(staged)) &&
+                  blkqmatch(&queue, &done[i]) == -ERR_STALE,
+              220);
+      for (j = 0; j < config->blocksize; j++)
+        REQUIRE(staged[j] == (u8) ((slot ? 0x37 : 0x51) + j * 37), 221);
+      seen |= 1U << slot;
+    }
+    if (seen != 3)
+      REQUIRE(!__sys_irqack(binding), 222);
+  }
+  REQUIRE(!__sys_alarmcancel(&alarm) && ring->queue.free == VQ_SIZE, 223);
+  vdev_trace[VTEST_PARALLEL] = 2;
 }
 static void
 testblock(Vdev *device, const Vblkconfig *config, u32 member)
@@ -312,6 +378,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   REQUIRE(prior.generation == 2, 192);
   if (!config->readonly) {
     testredo(device, &ring, binding, irqevent, &fresh, &dma);
+    testparallel(device, &ring, binding, irqevent, &fresh, &dma);
     testresize(device, &ring, binding, irqevent, &fresh);
   }
 }
