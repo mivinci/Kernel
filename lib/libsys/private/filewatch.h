@@ -3,13 +3,25 @@
 #include "file.h"
 #include <sys/channel.h>
 
+typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
+struct Fileowner
+{
+  Handle pid;
+  u64    image, cookie, reason;
+};
 struct Filewatch
 {
-  Handle       pid;
-  u64          image, connid, cookie, reason;
+  Fileowner    owner;
+  u64          connid;
   Fileinflight active;
 };
+
+/* Share one zero-initialized owner record among all dependencies on the same
+   source image. Clear it only once those dependencies are retired or moved. */
+isize sysfileowner(Fileowner *owner, Handle permit, const Ipcmsg *source);
+isize sysfileownerread(Fileowner *owner);
+isize sysfileownerclose(Fileowner *owner);
 
 /* Use a zero-initialized watch in private storage separate from the region
    and descriptor output. The serialized service loop supplies a received

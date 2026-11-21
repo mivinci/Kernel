@@ -478,7 +478,7 @@ server(const Bootview *boot, u32 recover)
     CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : 0, 0, &input));
     if (input.kind == IPC_EVENT) {
       CHECK(recover == 12 && input.words[0] == EVENT_LIFE && !sysfilewatchread(&watch) &&
-            watch.reason == OBS_EXIT && pending && created == 2 && !closed && references[0] &&
+            watch.owner.reason == OBS_EXIT && pending && created == 2 && !closed && references[0] &&
             references[1]);
       CHECK(sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &deferred, &descriptor) == -ERR_PEER &&
             sysfilewatchclose(&watch) == -ERR_BUSY);
@@ -612,6 +612,10 @@ server(const Bootview *boot, u32 recover)
         transfer.business[2] = token;
         CHECK(!ipc_reply_resource(input.request, &transfer) &&
               !sysfilefinish(&watch.active, input.request));
+        if (recover == 13) {
+          filecreatetrace[0] = 2;
+          return;
+        }
         continue;
       }
       number = opcode == FS_PIPE ? 2 : 1;
@@ -654,14 +658,47 @@ server(const Bootview *boot, u32 recover)
         !__sys_free(bootresource(boot, 256)));
   if (recover == 12) {
     Handle pid;
-    u64    state, reason, image, cookie = watch.cookie;
-    CHECK(!sysfilewatchclose(&watch) && !watch.cookie &&
+    u64    state, reason, image, cookie = watch.owner.cookie;
+    CHECK(!sysfilewatchclose(&watch) && !watch.owner.cookie &&
           __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
     filecreatetrace[3] = 1;
   } else
     CHECK(!sysfilewatchclose(&watch));
   filecreatetrace[1] = created;
   filecreatetrace[2] = closed;
+  filecreatetrace[0] = 2;
+}
+static void
+vfsdeathclient(const Bootview *boot)
+{
+  Opkey     key;
+  Msg       query;
+  Ipcmsg    result;
+  Createop *creator;
+  setup(boot);
+  CHECK(!sysctxinit(&contexts, work.state.self));
+  key = begin(FS_OPEN, "/bound", 0);
+  collect(&key);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+  creator = &work.state.creators[key.lease.slot];
+  CHECK(creator->token && creator->call);
+  query.words[0] = STOP;
+  query.words[1] = query.words[2] = query.words[3] = 0;
+  CHECK(ipc_call(work.state.call, &query, CALL_CONTROL, &result) == -ERR_PEER);
+  query.words[0] = FS_ATTACH;
+  query.words[1] = 0;
+  query.words[2] = 1;
+  query.words[3] = creator->token;
+  CHECK(!ipc_call(creator->call, &query, CALL_RECV_MEM, &result) &&
+        (isize) result.words[0] == -ESTALE && result.words[1] == 1 && !result.words[2] &&
+        !result.words[3]);
+  query.words[0] = FS_ABORT;
+  query.words[2]++;
+  CHECK(!ipc_call(creator->call, &query, CALL_CONTROL, &result) && !result.words[0] &&
+        result.words[1] == 2 && !result.words[2] && !result.words[3]);
+  query.words[0] = STOP;
+  query.words[1] = query.words[2] = query.words[3] = 0;
+  CHECK(!ipc_call(creator->call, &query, CALL_CONTROL, &result) && result.words[0] == 1);
   filecreatetrace[0] = 2;
 }
 static void
@@ -674,10 +711,12 @@ backend(const Bootview *boot, u32 recover)
   Allocarg  alloc;
   Maparg    mapping;
   Fileslot  descriptor;
+  Fileowner preparer = {0};
   Handle    memory = 0, space = bootresource(boot, BOOT_SELF_SPACE);
   Filehead *head = (Filehead *) ADDRESS;
   u64       sessions[4], references[4], created = 0, closed = 0, token, i;
   u64       wanted, attached, aborted;
+  u32       claimed = 0;
   wanted = recover == 4 ? 1 : recover == 2 ? 2 : recover == 5 ? 3 : 4;
   attached = recover == 4 ? 1 : recover == 2 ? 2 : 3;
   aborted = recover == 4 || recover == 2 ? 1 : recover == 5 ? 2 : 3;
@@ -686,11 +725,29 @@ backend(const Bootview *boot, u32 recover)
   zero(sessions, sizeof(sessions));
   zero(references, sizeof(references));
   for (;;) {
-    CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL);
+    CHECK(!ipc_recv(recover == 9 ? EVENT_LIFE : 0, 0, &input));
+    if (recover == 9 && preparer.cookie) {
+      CHECK(!sysfileownerread(&preparer));
+      if (preparer.reason) {
+        CHECK(preparer.reason == OBS_EXIT);
+        for (i = 0; i < created; i++)
+          if (references[i] && !(claimed & (1U << i))) {
+            references[i] = 0;
+            closed++;
+          }
+        CHECK(!sysfileownerclose(&preparer));
+      }
+    }
+    if (input.kind == IPC_EVENT) {
+      CHECK(recover == 9 && input.words[0] == EVENT_LIFE);
+      continue;
+    }
+    CHECK(input.kind == IPC_CALL);
     zero(&reply, sizeof(reply));
     if (input.words[0] == PREPARE) {
       CHECK(input.source == vfspeer.pid && input.image == vfspeer.image && created < 4 &&
             input.words[3] == created + 1 && input.words[1] && input.words[2]);
+      CHECK(!sysfileowner(&preparer, bootresource(boot, 258), &input));
       sessions[created] = input.words[1];
       references[created] = input.words[2];
       created++;
@@ -709,6 +766,14 @@ backend(const Bootview *boot, u32 recover)
     }
     CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
     if (input.words[0] == STOP) {
+      if (recover == 9) {
+        CHECK(created == 1 && closed == 1 && !preparer.cookie && !memory && !references[0]);
+        reply.words[0] = closed;
+        CHECK(!ipc_reply(input.request, &reply));
+        filecreatetrace[0] = 2;
+        filecreatetrace[1] = closed;
+        return;
+      }
       CHECK(created == wanted && closed == created && filecreatetrace[3] == attached &&
             filecreatetrace[4] == aborted);
       for (i = 0; i < created; i++)
@@ -738,7 +803,11 @@ backend(const Bootview *boot, u32 recover)
         CHECK(!ipc_reply(input.request, &reply));
         continue;
       }
-      CHECK(references[token - 1]);
+      if (!references[token - 1]) {
+        reply.words[0] = (u64) -ESTALE;
+        CHECK(!ipc_reply(input.request, &reply));
+        continue;
+      }
       filecreatetrace[3]++;
       if (recover == 7 || (recover == 8 && token == 2)) {
         filecreatetrace[1] = created;
@@ -795,6 +864,7 @@ backend(const Bootview *boot, u32 recover)
         reply.words[3] = FS_CONN_BYTES;
         CHECK(!ipc_reply(input.request, &reply));
       }
+      claimed |= 1U << (token - 1);
       continue;
     }
     CHECK(input.words[0] == FS_CLOSE && input.words[1] == CONNID && input.words[3] == 6 &&
@@ -811,6 +881,7 @@ backend(const Bootview *boot, u32 recover)
   }
   CHECK(memory && !__sys_unmap(space, ADDRESS) && !__sys_free(memory) &&
         !__sys_free(bootresource(boot, 256)) && !__sys_free(bootresource(boot, 257)));
+  CHECK(!sysfileownerclose(&preparer));
   filecreatetrace[1] = created;
   filecreatetrace[2] = closed;
   filecreatetrace[0] = 2;
@@ -1533,7 +1604,7 @@ main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
         ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'z') ||
-         (argv[0][0] >= 'A' && argv[0][0] <= 'K')) &&
+         (argv[0][0] >= 'A' && argv[0][0] <= 'N')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -1598,6 +1669,12 @@ main(int argc, char **argv)
     exitclient(sysboot());
   else if (argv[0][0] == 'K')
     server(sysboot(), 12);
+  else if (argv[0][0] == 'L')
+    vfsdeathclient(sysboot());
+  else if (argv[0][0] == 'M')
+    server(sysboot(), 13);
+  else if (argv[0][0] == 'N')
+    backend(sysboot(), 9);
   else
     backend(sysboot(), argv[0][0] == 'w' ? 6 : argv[0][0] == 'z' ? 7 : 8);
   return 42;

@@ -1622,6 +1622,11 @@ def exercise(args, run_dir, record):
                     if file_watch != [dict(references=2, drained=1, acked=1)]:
                         raise SmokeError("file connection exit observation or cleanup mismatch")
                     record['file_watch'] = file_watch[0]
+                    prep_death = [fields(line) for line in serial.read_text().splitlines()
+                                  if line.startswith("FILEPREPDEATHCHECK ")]
+                    if prep_death != [dict(cancelled=1)]:
+                        raise SmokeError("file prepare ownership after VFS exit mismatch")
+                    record['file_prepare_death'] = prep_death[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
                     if creators != [dict(actors=3,requests=11,references=11,closed=11,
                             creator_signals=2,creator_captured=1,creator_waiting=1,resource_opens=4,

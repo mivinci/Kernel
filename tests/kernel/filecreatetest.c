@@ -25,7 +25,7 @@ static void      bootstraptest(u32 variant);
 static void      bootpeertest(u32 mode);
 static void      creatorbackendtest(u32 mode);
 static void      datarecoverytest(u32 mode);
-static void      clientexittest(void);
+static void      filewatchexittest(u32 vfs);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -98,7 +98,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
       packet.resources[3].tag = 257;
       packet.resources[3].handle = call;
     }
-    if (i == 1) {
+    if (i) {
       CHECK(!localobserve(table, OBSERVE_SOURCE, &call));
       packet.resources[packet.header.resource_count].tag = 258;
       packet.resources[packet.header.resource_count++].handle = call;
@@ -227,27 +227,28 @@ filecreatetest(void)
   datarecoverytest(0);
   datarecoverytest(1);
   datarecoverytest(2);
-  clientexittest();
+  filewatchexittest(0);
+  filewatchexittest(1);
 }
 static void
-clientexittest(void)
+filewatchexittest(u32 vfs)
 {
   Setid      set;
   Set        budget;
-  Procinfo   process[2];
-  Handle     pid[2];
+  Procinfo   process[3];
+  Handle     pid[3];
   Bootimage  image;
   Life       life;
   Liferesult result;
   Pgstat     before, after;
   u64        trace[16];
-  u32        i, turns = 0;
+  u32        i, count = vfs ? 3 : 2, turns = 0;
   int        error;
   pgstat(&before);
-  CHECK(!setcreate(2048, 4096, 2, &set) &&
+  CHECK(!setcreate(2048, 4096, count, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  loadroles(set, &image, pid, process, "JK", 2);
-  for (i = 0; i < ARRAY_SIZE(pid); i++) {
+  loadroles(set, &image, pid, process, vfs ? "LMN" : "JK", count);
+  for (i = 0; i < count; i++) {
     CHECK(!procinfo(pid[i], &process[i]));
     while (process[i].state != PROC_EXITING) {
       error = procrunone();
@@ -268,9 +269,11 @@ clientexittest(void)
       putstr("\n");
       panic("file connection observation");
     }
-    CHECK(trace[0] == 2 && trace[1] == 2);
-    if (i)
+    CHECK(trace[0] == 2);
+    if (!vfs && i)
       CHECK(trace[2] == 2 && trace[3] == 1);
+    if (vfs && i == 2)
+      CHECK(trace[1] == 1);
     while ((error = procclean(pid[i])) > 0) {
     }
     CHECK(!error && !lifecollect(process[i].life, 1, &result));
@@ -279,6 +282,12 @@ clientexittest(void)
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck());
+  if (vfs) {
+    putstr("FILEPREPDEATHCHECK cancelled=");
+    puthex(trace[1]);
+    putstr("\n");
+    return;
+  }
   putstr("FILEWATCHCHECK references=");
   puthex(trace[2]);
   putstr(" drained=");
