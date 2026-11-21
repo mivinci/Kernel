@@ -3,6 +3,13 @@
 #define BLK_SLOT_BITS 7
 #define BLK_SLOT_MASK ((1U << BLK_SLOT_BITS) - 1)
 STATIC_ASSERT(VQ_SIZE <= (1U << BLK_SLOT_BITS), blk_cookie_slot);
+enum
+{
+  BLK_OPEN = 1,
+  BLK_STOPPING,
+  BLK_RECLAIM,
+  BLK_STOPPED
+};
 
 int
 blkiosubmit(Vblkreq *request, Vring *ring, const Vblkconfig *config, const Blkdma *dma, u32 type,
@@ -58,17 +65,28 @@ blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u
 }
 
 int
-blkqinit(Blkqueue *queue, Vring *ring, Vblkreq *slots, const Blkdma *buffers, u32 count)
+blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
+         u32 count)
 {
   u32 i;
-  if (!queue || !ring || !ring->initialized || !slots || !buffers || !count || count > VQ_SIZE)
+  if (!queue || !device || !ring || !ring->initialized || !slots || !buffers || !count ||
+      count > VQ_SIZE)
     return -ERR_INVALID;
+  if (queue->state && (queue->state != BLK_STOPPED || device != queue->device))
+    return -ERR_STATE;
+  if (queue->state && ring->queue.generation <= queue->generation)
+    return -ERR_STALE;
+  if (device->state != VDEV_LIVE)
+    return -ERR_STATE;
+  queue->device = device;
   queue->ring = ring;
   queue->slots = slots;
   queue->buffers = buffers;
   queue->count = count;
   queue->generation = ring->queue.generation;
   queue->serial = 0;
+  queue->reclaimed = 0;
+  queue->state = BLK_OPEN;
   for (i = 0; i < count; i++)
     slots[i].held = slots[i].active = 0;
   return 0;
@@ -82,6 +100,8 @@ blkqsubmit(Blkqueue *queue, u32 index, const Vblkconfig *config, u32 type, u64 s
   u64      cookie;
   if (!queue || index >= queue->count)
     return -ERR_INVALID;
+  if (queue->state != BLK_OPEN)
+    return -ERR_STATE;
   if (queue->ring->queue.generation != queue->generation)
     return -ERR_STALE;
   slot = &queue->slots[index];
@@ -101,6 +121,8 @@ blkqmatch(const Blkqueue *queue, const Vdone *done)
   u32            index;
   if (!queue || !done)
     return -ERR_INVALID;
+  if (queue->state != BLK_OPEN)
+    return -ERR_STATE;
   index = (u32) (done->cookie & BLK_SLOT_MASK);
   if (index >= queue->count || done->generation != queue->generation ||
       queue->ring->queue.generation != queue->generation)
@@ -121,9 +143,30 @@ blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity)
 }
 
 int
-blkqreclaim(Blkqueue *queue, u32 index)
+blkqrecover(Blkqueue *queue, u64 now)
 {
-  if (!queue || index >= queue->count)
+  u32 budget;
+  int error;
+  if (!queue || !queue->state)
     return -ERR_INVALID;
-  return vblkreclaim(&queue->slots[index]);
+  if (queue->state == BLK_STOPPED)
+    return 0;
+  if (queue->state != BLK_RECLAIM) {
+    queue->state = BLK_STOPPING;
+    error = queue->device->state == VDEV_RESETTING ? vresetpoll(queue->device, now)
+                                                   : vresetbegin(queue->device, now);
+    if (error)
+      return error;
+    queue->state = BLK_RECLAIM;
+  }
+  for (budget = VQ_BATCH; budget && queue->reclaimed < queue->count; budget--) {
+    error = vblkreclaim(&queue->slots[queue->reclaimed]);
+    if (error)
+      return error;
+    queue->reclaimed++;
+  }
+  if (queue->reclaimed < queue->count)
+    return -ERR_WOULD_BLOCK;
+  queue->state = BLK_STOPPED;
+  return 0;
 }

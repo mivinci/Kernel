@@ -8,12 +8,18 @@
 #include "../../sbin/blk/io.h"
 #include "../../sbin/fs/journal.h"
 #include "virtiouser.h"
-volatile u64           vdev_trace[VTEST_TRACE];
-typedef struct Testdma Testdma;
+volatile u64             vdev_trace[VTEST_TRACE];
+typedef struct Testdma   Testdma;
+typedef struct Resetsync Resetsync;
 struct Testdma
 {
   u64                 va;
   const volatile u64 *addresses;
+};
+struct Resetsync
+{
+  Vdev *device;
+  u32   after;
 };
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
@@ -64,6 +70,17 @@ blksync(void *context, u32 phase, const Vbuf *buffer)
   UNUSED(buffer);
   virtiofence(context, phase == VR_BEFORE ? VR_RELEASE : VR_ACQUIRE);
   return 0;
+}
+static int
+resetsync(void *context, u32 phase, const Vbuf *buffer)
+{
+  Resetsync *sync = context;
+  if (phase == VR_AFTER) {
+    REQUIRE(sync->device->state == VDEV_RESET && !sync->device->status, 228);
+    if (++sync->after == 2)
+      return -ERR_BUSY;
+  }
+  return blksync(sync->device, phase, buffer);
 }
 static void
 testbuffer(const Testdma *dma, u32 page, Blkdma *buffer)
@@ -217,22 +234,21 @@ startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
 }
 static void
 resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
-             const Testdma *dma)
+             const Testdma *dma, Blkqueue *queue, Vblkreq *request, Blkdma *buffer)
 {
-  Vblkreq  request;
-  Blkdma   buffer;
-  Blkqueue queue;
-  Ipcmsg   event;
-  u64      generation, started = now();
-  u32      causes;
+  Resetsync sync = {device, 0};
+  Ipcmsg    event;
+  u64       generation, started = now();
+  u32       causes;
+  int       error;
 
-  testbuffer(dma, 3, &buffer);
-  REQUIRE(!blkqinit(&queue, ring, &request, &buffer, 1), 224);
+  testbuffer(dma, 3, buffer);
+  REQUIRE(!blkqinit(queue, device, ring, request, buffer, 1), 224);
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           185);
-  REQUIRE(!blkqsubmit(&queue, 0, config, VBLK_READ, config->blocksize / VBLK_SECTOR,
-                      config->blocksize, NULL, blksync, device),
+  REQUIRE(!blkqsubmit(queue, 0, config, VBLK_READ, config->blocksize / VBLK_SECTOR,
+                      config->blocksize, NULL, resetsync, &sync),
           186);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent && !__sys_alarmcancel(&generation),
@@ -240,12 +256,21 @@ resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
   /* Leave the device cause and used entry unconsumed. The IRQ alone does
      not return ownership of the request buffers. */
   REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && causes == VDEV_IRQ_USED &&
-              request.active && request.held == 7 && ring->queue.free == VQ_SIZE - 3,
+              request->active && request->held == 7 && ring->queue.free == VQ_SIZE - 3,
           188);
-  reset(device);
-  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes && !blkqreclaim(&queue, 0) &&
-              !request.active && !request.held,
+  do {
+    error = blkqrecover(queue, now());
+  } while (error == -ERR_WOULD_BLOCK);
+  REQUIRE(error == -ERR_BUSY && sync.after == 2 && request->held == 6 &&
+              blkqinit(queue, device, ring, request, buffer, 1) == -ERR_STATE &&
+              blkqsubmit(queue, 0, config, VBLK_READ, 0, config->blocksize, NULL, blksync,
+                         device) == -ERR_STATE,
+          229);
+  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes &&
+              !blkqrecover(queue, now()) && sync.after == 4 && !request->active && !request->held &&
+              blkqinit(queue, device, ring, request, buffer, 1) == -ERR_STALE,
           189);
+  vdev_trace[16]++;
   vdev_trace[39]++;
 }
 static void
@@ -289,7 +314,7 @@ testparallel(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
   static u8 staged[PAGE_SIZE];
   Vblkreq   requests[2];
   Blkdma    buffers[2];
-  Blkqueue  queue;
+  Blkqueue  queue = {0};
   Ipcmsg    event;
   Vdone     done[VQ_BATCH], stale;
   u64       stride = config->blocksize / VBLK_SECTOR;
@@ -298,7 +323,7 @@ testparallel(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
   int       slot;
   testbuffer(dma, 3, &buffers[0]);
   testbuffer(dma, 6, &buffers[1]);
-  REQUIRE(!blkqinit(&queue, ring, requests, buffers, ARRAY_SIZE(requests)), 214);
+  REQUIRE(!blkqinit(&queue, device, ring, requests, buffers, ARRAY_SIZE(requests)), 214);
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
           215);
@@ -344,6 +369,9 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   Vring      ring;
   Vdone      stale[VQ_BATCH];
   Vdone      prior = {0};
+  Blkqueue   queue = {0};
+  Vblkreq    request;
+  Blkdma     buffer;
   Vblkconfig fresh;
   Testdma    dma;
   u32        count, more;
@@ -364,13 +392,16 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
     transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
              NULL, NULL);
   }
-  resetpending(device, &ring, binding, irqevent, config, &dma);
+  resetpending(device, &ring, binding, irqevent, config, &dma, &queue, &request, &buffer);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
               fresh.flush == config->flush && fresh.blocksize == config->blocksize &&
               fresh.physical == config->physical && fresh.alignment == config->alignment,
           183);
   startqueue(device, &ring, 2, &dma);
+  REQUIRE(!blkqinit(&queue, device, &ring, &request, &buffer, 1) &&
+              blkqmatch(&queue, &prior) == -ERR_STALE,
+          230);
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
   REQUIRE(prior.generation == 1, 191);
   transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ,

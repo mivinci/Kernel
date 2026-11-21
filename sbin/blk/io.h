@@ -13,11 +13,12 @@ struct Blkdma
 };
 struct Blkqueue
 {
+  Vdev         *device;
   Vring        *ring;
   Vblkreq      *slots;
   const Blkdma *buffers;
   u64           generation, serial;
-  u32           count;
+  u32           count, state, reclaimed;
 };
 
 /* The driver owns the request and its exclusive DMA windows until completion
@@ -36,15 +37,20 @@ int blkiofinish(Vblkreq *request, const Vdone *done, const Blkdma *dma, void *de
    refreshed before accepting new I/O. Drain more before rearming the IRQ. */
 int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u32 *more,
                u32 *causes);
-/* Prepaid slots with independent DMA storage. On reinitialization, drain
-   or recover old requests and advance the ring generation first. The event
-   loop serializes all operations. Keep the buffer descriptions immutable. */
-int blkqinit(Blkqueue *queue, Vring *ring, Vblkreq *slots, const Blkdma *buffers, u32 count);
+/* Zero the queue before first use. Bind a live device and its configured
+   ring. Reinitialize only after recovery, with a newer generation on the
+   same device. The event loop serializes operations and stops polling the
+   old ring when recovery starts. Keep buffer descriptions immutable. */
+int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
+             u32 count);
 int blkqsubmit(Blkqueue *queue, u32 slot, const Vblkconfig *config, u32 type, u64 sector, u32 bytes,
                const void *source, Vblksync sync, void *context);
 /* Return the exact active slot for a completion, or a native error. */
 int blkqmatch(const Blkqueue *queue, const Vdone *done);
 int blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity);
-/* Call only after confirmed device stop. */
-int blkqreclaim(Blkqueue *queue, u32 slot);
+/* Close admission and advance reset/reclaim by one step. WOULD_BLOCK means
+   poll again. Other failures leave admission closed and retain progress;
+   retry reset only within the device attempt limit. Zero means all old
+   windows were returned. Old requests must be reported as failed. */
+int blkqrecover(Blkqueue *queue, u64 now);
 #endif
