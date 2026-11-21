@@ -99,6 +99,44 @@ sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, 
   return error;
 }
 isize
+sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, Connclaim *claim,
+                   Handle *call)
+{
+  Connentry  entry;
+  Connclaim  prepared;
+  Connstate *s;
+  isize      error = view(work, cache, &entry);
+  if (error)
+    return error;
+  if (!owner || !separate(work, sizeof(*work), claim, sizeof(*claim)) ||
+      !separate(work, sizeof(*work), call, sizeof(*call)) ||
+      !separate(cache, sizeof(*cache), claim, sizeof(*claim)) ||
+      !separate(cache, sizeof(*cache), call, sizeof(*call)) ||
+      !separate(claim, sizeof(*claim), call, sizeof(*call)))
+    return -ERR_INVALID;
+  s = &work->state;
+  if (entry.state == SYSCONN_DRAINING)
+    return -ERR_PEER;
+  if (!s->fork_token || handlekind(s->call) != HANDLE_RESOURCE)
+    return -ERR_STATE;
+  if (sysbootcheck(&s->bootstrap))
+    return -ERR_STATE;
+  if (s->bootstrap.state != SYSBOOT_FREE)
+    return -ERR_BUSY;
+  error = sysconnbegin(cache, s->tag, owner, &prepared);
+  if (error)
+    return error;
+  error = sysbootprepare(&s->bootstrap, prepared, FS_ATTACH, s->fork_token, deadline);
+  if (error) {
+    if (sysconnrollback(cache, prepared))
+      return -ERR_STATE;
+    return error;
+  }
+  *claim = prepared;
+  *call = s->call;
+  return 0;
+}
+isize
 sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag)
 {
   Connentry entry;

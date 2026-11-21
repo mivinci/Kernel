@@ -76,6 +76,11 @@ isize sysconnforkunmap(Connwork *work, Connpeer parent, Connpeer child, Handle c
    Directory already rebound, tag selects the same backend in UNCLAIMED.
    Keep the exact child prepare token; repeated repair must match it. */
 isize sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, u64 token);
+/* Lazy child ATTACH only, after inheritable CALL adoption. Prepare one owned
+   transport record before submission; outputs borrow the CALL and claim.
+   No blocking or native submission; caller excludes caught signals. */
+isize sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline,
+                         Connclaim *claim, Handle *call);
 /* Cold native lookup first. First distinct owned CALL moves into the work
    page; another Handle to the exact same peer moves to initially-zero redundant
    for explicit caller release. Same Handle is not two owned references.

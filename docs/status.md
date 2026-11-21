@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage220：子准备 token 已接按需 ATTACH 的本地准备与既有 Bootstrap 路径；完整 1206 项主机测试、格式和双架构 sigframe 回归通过。真实后端、IPC Rctx/File 修复与整体 fork 协调器待接。
+
 - stage219：子 Connwork 保存准备 token，重复修复拒绝不同 token 且不改工作区；70 项相关主机测试、格式与双架构 sigframe 回归通过。真实后端 ATTACH 与整体 fork 协调器待接。
 
 - stage218：子 Connwork 可在别名解除后重绑，清除父运输记录副本且不 free/ACK；10 项主机测试、格式与双架构 sigframe 回归通过。真实运输与整体协调器待接。

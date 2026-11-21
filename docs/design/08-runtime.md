@@ -374,6 +374,10 @@ stage218：`sysconnworkfork` 在目录已重绑、原共享别名已解除、Rct
 
 stage219：子工作区重绑同时保存非零 prepare token，重复修复须匹配同一子身份、目录 tag 和 token；不匹配返回 STALE 并保持工作区。新增字段仍满足工作区与目录共用一页的静态预算。连接工作区、操作、IPC 上下文、文件创建与关闭共 70 项主机测试、格式检查及 ARM64/RV64 sigframe 回归通过；token 保存路径仍仅主机调用，尚未用于真实后端 ATTACH，也未接入整体 fork 协调器。日志：`/private/tmp/kernel-stage219-{fmt,arm64,riscv}.log`，未执行 CI 或板端验收。
 
+stage220：`sysconnforkprepare` 将子工作区保存的 token 接入按需 ATTACH：继承 CALL 经精确后端核验并接管后，用当前子目录的 Image 统一序号建立 CONNECTING 和预付 Bootstrap，保留调用者 owner/绝对 deadline，输出借用 CALL/claim，随后复用既有提交、回复、映射接管与 ACK 路径。未取得 CALL、已有运输、目录忙及输出重叠时不覆盖原责任；不在子 fork 返回前发消息或阻塞等待。12 项工作区主机测试覆盖子独立序号、实际消息四字、重复准备不变性、新 MEM/connid 接管与 ACK、父私有记录不变及输出别名拒绝；格式与双架构 sigframe 回归通过。新增路径仍仅主机调用，真实服务 ATTACH、IPC Rctx/File 修复及整体协调器待接；未执行 CI 或板端验收。
+
+stage220 完整回归：`make unit` 1206 项通过（172 秒）；追加消息四字断言后单独重跑工作区 12 项通过。日志 `/private/tmp/kernel-stage220-{unit,fmt,arm64,riscv}.log`。QEMU 为既有 sigframe 回归，未运行完整场景矩阵。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

@@ -37,6 +37,8 @@ class ConnectionWorkTests(unittest.TestCase):
             'sysconnworkclean':[C.POINTER(Work),C.POINTER(Cache)],
             'sysconnforkunmap':[C.POINTER(Work),Peer,Peer,C.c_int64],
             'sysconnworkfork':[C.POINTER(Work),C.POINTER(Cache),Peer,Tag,C.c_uint64],
+            'sysconnforkprepare':[C.POINTER(Work),C.POINTER(Cache),C.c_uint64,C.c_uint64,C.POINTER(Claim),C.POINTER(C.c_int64)],
+            'sysbootrequest':[C.POINTER(support.Record),Claim,C.POINTER(C.c_uint64*4)],
             'sysconnfork':[C.POINTER(Cache),Peer,Peer,C.c_void_p,C.c_uint64],
             'testmemory':[C.c_int64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64,C.c_uint64],
             'testmaperror':[C.c_int64,C.c_int64,C.c_int64,C.c_int64],
@@ -119,6 +121,57 @@ class ConnectionWorkTests(unittest.TestCase):
         self.assertEqual(self.lib.sysconnworkadopt(C.byref(self.work),C.byref(self.cache),self.claim,self.space,C.byref(mapped)),0)
         self.assertEqual(bytes(mapped),bytes(C.sizeof(mapped)))
         return mapped
+
+    def test_child_lazy_attach_uses_saved_token_and_owns_only_new_transport(self):
+        self.adopt()
+        parent_work=bytes(self.work);parent_cache=bytes(self.cache)
+        child_work=Work.from_buffer_copy(parent_work)
+        child_cache=Cache.from_buffer_copy(parent_cache)
+        child=Peer(pid(3),20);tag=Tag();claim=Claim();call=C.c_int64()
+        entries=(C.c_uint64*3)(self.peer.pid,self.peer.image,701)
+        self.assertEqual(self.lib.sysconnforkunmap(C.byref(child_work),self.self,child,self.space),0)
+        self.assertEqual(self.lib.sysconnfork(C.byref(child_cache),self.self,child,entries,1),0)
+        self.assertEqual(self.lib.sysconnbind(C.byref(child_cache),self.peer,C.byref(tag)),0)
+        self.assertEqual(self.lib.sysconnworkfork(C.byref(child_work),C.byref(child_cache),self.self,tag,701),0)
+        before=(bytes(child_work),bytes(child_cache))
+        self.assertEqual(self.lib.sysconnforkprepare(C.byref(child_work),C.byref(child_cache),901,999,C.byref(claim),C.byref(call)),-6)
+        self.assertEqual((bytes(child_work),bytes(child_cache)),before)
+        donated=C.c_int64(self.call);redundant=C.c_int64()
+        self.assertEqual(self.lib.sysconnworktakecall(C.byref(child_work),C.byref(child_cache),C.byref(donated),C.byref(redundant)),0)
+        self.assertEqual(self.lib.sysconnforkprepare(C.byref(child_work),C.byref(child_cache),901,999,C.byref(claim),C.byref(call)),0)
+        boot=child_work.state.bootstrap
+        self.assertEqual((boot.opcode,boot.token,boot.deadline,boot.state,call.value),(3,701,999,1,self.call))
+        self.assertEqual((claim.owner,claim.seq),(901,1))
+        request=(C.c_uint64*4)()
+        self.assertEqual(self.lib.sysbootrequest(C.byref(boot),claim,C.byref(request)),0)
+        self.assertEqual(list(request),[3,0,claim.seq,701])
+        before=(bytes(child_work),bytes(child_cache),bytes(claim),call.value)
+        self.assertEqual(self.lib.sysconnforkprepare(C.byref(child_work),C.byref(child_cache),902,0,C.byref(claim),C.byref(call)),-7)
+        self.assertEqual((bytes(child_work),bytes(child_cache),bytes(claim),call.value),before)
+        newrpc=C.c_int64(self.rpc+65536);newmem=self.mem+65536
+        self.assertEqual(self.lib.sysbootsubmitted(C.byref(boot),claim,C.byref(newrpc)),0)
+        self.lib.testmemory(newmem,4,3,0,36864,self.connid+65536,19)
+        self.lib.testresult(0,4,newmem,claim.seq,self.connid+65536,36864)
+        self.assertEqual(self.lib.sysbootpoll(C.byref(boot),claim),0)
+        mapping=Mapping(0x2400000,36864,self.connid+65536,19,1,1)
+        self.assertEqual(self.lib.sysconnworkadopt(C.byref(child_work),C.byref(child_cache),claim,self.space,C.byref(mapping)),0)
+        self.assertEqual((child_work.state.memory,child_work.state.map.connid),(newmem,self.connid+65536))
+        self.assertEqual((bytes(self.work),bytes(self.cache)),(parent_work,parent_cache))
+        self.assertEqual(self.lib.sysbootack(C.byref(boot),claim),0)
+        self.assertEqual(self.lib.sysbootfinish(C.byref(boot),claim),0)
+
+    def test_child_attach_prepare_failure_preserves_record_directory_and_outputs(self):
+        self.work.state.fork_token=701
+        claim=Claim();call=C.c_int64(123)
+        before=(bytes(self.work),bytes(self.cache),bytes(claim),call.value)
+        self.assertEqual(self.lib.sysconnforkprepare(C.byref(self.work),C.byref(self.cache),0,0,C.byref(claim),C.byref(call)),-1)
+        self.assertEqual((bytes(self.work),bytes(self.cache),bytes(claim),call.value),before)
+        alias=C.cast(C.byref(self.work),C.POINTER(Claim))
+        self.assertEqual(self.lib.sysconnforkprepare(C.byref(self.work),C.byref(self.cache),901,0,alias,C.byref(call)),-1)
+        self.assertEqual((bytes(self.work),bytes(self.cache),bytes(claim),call.value),before)
+        # Existing CONNECTING claim belongs to another operation.
+        self.assertEqual(self.lib.sysconnforkprepare(C.byref(self.work),C.byref(self.cache),901,0,C.byref(claim),C.byref(call)),-7)
+        self.assertEqual((bytes(self.work),bytes(self.cache),bytes(claim),call.value),before)
 
     def finish(self,claim=None):
         claim=claim or self.claim
