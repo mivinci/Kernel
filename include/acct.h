@@ -109,6 +109,8 @@ int acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out);
 int acctexecbegin(Acctid id, u64 *ticket);
 int acctexecvalid(Acctid id, u64 ticket);
 int acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out);
+/* Compare steady-state limits without changing the live charges. */
+int acctexeccheck(Acctid id, u64 ticket, u64 reclaim);
 int acctexecend(Acctid id, u64 ticket);
 int acctfree(Acctblk block);
 int acctcheck(void);

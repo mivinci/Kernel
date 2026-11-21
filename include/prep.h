@@ -45,6 +45,7 @@ int prepforkcreate(Rtable *source, Rtable *target, Lifeid life, Imageid identity
 int prepexecopen(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u64 ticket,
                  Prepid *out);
 int prepexecticket(Prepid id, Rtable *source, u64 *out);
+int prepexecbudget(Prepid id, Rtable *source);
 int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
 /* Space borrows stable embedded storage, then retains Prep/root references.
    Cancelled records remain accessible until that ownership is released. */

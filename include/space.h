@@ -75,6 +75,8 @@ int spacecreate(Acctid acct, Spaceid *out);
    The ticket authorizes page allocations only for this operation. */
 int spaceexeccreate(Acctid acct, u64 ticket, Spaceid *out);
 int spaceexecmap(Spaceid id, u64 ticket, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
+/* Snapshot retiring mapping references and verify exclusive root ownership. */
+int spaceexecretire(Spaceid id, u32 locals, Memretire *retire, u64 *pages);
 int spacehold(Spaceid id);
 int spacedrop(Spaceid id);
 int spacedestroy(Spaceid id);

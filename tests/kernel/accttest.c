@@ -39,6 +39,10 @@ execpeaktest(void)
           "prepare peak two-layer admission");
   REQUIRE(!acctcowalloc(&credit, &redeemed) && !setstat(set, &group) && group.charged == 5,
           "prepare peak existing COW credit");
+  REQUIRE(acctexeccheck(a, at, 2) == AC_LIMIT && !acctexeccheck(a, at, 3) &&
+              acctexeccheck(a, at, 4) == AC_BAD && acctexeccheck(a, bt, 3) == AC_BAD &&
+              !setstat(set, &group) && group.charged == 5,
+          "exec retirement does not discount parallel preparations or change charges");
   REQUIRE(!acctexecend(a, at) && !acctexecbegin(a, &other) && other != at &&
               acctexecalloc(a, at, 0, NULL, &denied) == AC_BAD && !acctexecend(a, other) &&
               !acctclose(b) && acctexecalloc(b, bt, 0, NULL, &denied) == AC_BAD &&

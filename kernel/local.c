@@ -253,6 +253,36 @@ memory(const Local *l)
   id.reserved = 0;
   return id;
 }
+
+int
+localexecbudget(const Rtable *source, u64 ticket)
+{
+  static Memretire retire;
+  u64              pages;
+  u32              i, spaces = 0;
+  int              error = 0;
+  if (!source || source->state != LOCAL_OPEN || !acctexecvalid(source->acct, ticket))
+    return -ERR_STATE;
+  for (i = 0; i < source->count; i++) {
+    const Local *slot = &source->slots[i];
+    if (slot->subtype == LOCAL_SPACE && slot->object == source->space.index &&
+        slot->objectgen == source->space.generation)
+      spaces++;
+    if (slot->subtype == LOCAL_MEM && slot->source != LOCAL_LOAD) {
+      error = memretireadd(&retire, memory(slot));
+      if (error)
+        break;
+    }
+  }
+  if (!error)
+    error = spaceexecretire(source->space, spaces, &retire, &pages);
+  if (!error) {
+    pages += memretirepages(&retire, source->acct);
+    error = acctexeccheck(source->acct, ticket, pages);
+  }
+  memretireclear(&retire);
+  return convert(error);
+}
 static int
 window(const Local *l, u64 offset, u64 length)
 {

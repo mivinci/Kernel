@@ -158,6 +158,8 @@ int localconstruct(Rtable *source, Prepid prep, u64 rights, Handle *out);
 int localtarget(Rtable *source, Handle target, u64 rights, Prepid *prep, Handle *pid);
 int localexecview(Rtable *source, Handle view, u64 rights, Prepid *prep);
 int localselfspace(Rtable *source, Handle space);
+/* Read-only budget check, serialized with the eventual commit. */
+int localexecbudget(const Rtable *source, u64 ticket);
 int localprepared(Rtable *source, Prepid prep, Memid memory, u64 rights, Handle *out);
 int localconfigure(Rtable *source, Handle target, const Config *config, u32 reserve);
 int localstart(Rtable *source, Handle target);

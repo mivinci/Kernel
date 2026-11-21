@@ -61,6 +61,56 @@ clearbacking(Mem *m)
   m->backing.index = m->backing.reserved = 0;
   m->fork = m->adopted = 0;
 }
+int
+memretireadd(Memretire *retire, Memid id)
+{
+  Mem *m = find(id);
+  u16 *refs;
+  if (!m)
+    return MEM_BAD;
+  refs = &retire->refs[id.index];
+  if (*refs == 0xffffU || *refs >= m->refs)
+    return MEM_BAD;
+  if (!*refs)
+    retire->touched[retire->count++] = (u16) id.index;
+  (*refs)++;
+  return 0;
+}
+
+u64
+memretirepages(Memretire *retire, Acctid acct)
+{
+  u32 i, index, views = retire->count;
+  u64 pages = 0;
+  /* All immutable views retain the canonical Mem directly. Account for
+     those references only when the retiring view itself will reach zero. */
+  for (i = 0; i < views; i++) {
+    index = retire->touched[i];
+    Mem *m = &memories[index];
+    if (m->kind == MEM_IMMUTABLE && !m->busy && m->refs == retire->refs[index] &&
+        memretireadd(retire, m->backing))
+      panic("exec immutable reference census");
+  }
+  for (i = 0; i < retire->count; i++) {
+    index = retire->touched[i];
+    Mem *m = &memories[index];
+    if (m->kind == MEM_RAM && m->state != MEM_SHARED && !m->busy && !m->fork &&
+        m->acct.index == acct.index && m->acct.generation == acct.generation &&
+        m->refs == retire->refs[index])
+      /* Each private Blockref either releases one page or settles one COW
+         branch, returning one charge to this account in either case. */
+      pages += m->pages;
+  }
+  return pages;
+}
+
+void
+memretireclear(Memretire *retire)
+{
+  while (retire->count)
+    retire->refs[retire->touched[--retire->count]] = 0;
+}
+
 static void
 releaseblocks(Acctid acct, u32 head)
 {

@@ -25,9 +25,10 @@
 #define MEM_LIMIT       -2
 #define MEM_FULL        -3
 
-typedef struct Memid    Memid;
-typedef struct Mem      Mem;
-typedef struct Blockref Blockref;
+typedef struct Memid     Memid;
+typedef struct Mem       Mem;
+typedef struct Blockref  Blockref;
+typedef struct Memretire Memretire;
 struct Memid
 {
   u64 generation;
@@ -50,6 +51,16 @@ struct Blockref
   u64 pa;
   u32 next, order;
 };
+/* Scratch for the serialized old-image reference census. Zero-initialize once,
+   add one entry per retiring manager/map, then clear before reuse. */
+struct Memretire
+{
+  u16 refs[MEMS], touched[MEMS];
+  u32 count;
+};
+int  memretireadd(Memretire *retire, Memid id);
+u64  memretirepages(Memretire *retire, Acctid acct);
+void memretireclear(Memretire *retire);
 STATIC_ASSERT(MEMS > 0 && MEMS <= 8192, mem_capacity);
 STATIC_ASSERT(BREFS > 0 && BREFS <= 65536, blockref_capacity);
 STATIC_ASSERT(sizeof(Mem) <= 96, mem_budget);

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage323（2026-11-22）：可信 exec 提交预算清点已接，抵扣仅限确定随旧镜像释放的费用。RV64/ARM64 QEMU `prep`、`budget`、1259 项主机测试和格式检查通过；原生 `execcommit` 仍待接。
 - stage322：exec 活动表和准备表共用句柄发号记录，保留旧表有效值及预留回复槽。RV64/ARM64 QEMU `prep`、`locals`、`sigframe`、`ipc`，87 项主机回归和格式检查通过。
 - stage321：原生 `execprep`/`execabort` 接通，Proc 持有并分批清理待发布目标。RV64/ARM64 QEMU `sigframe`、`prep`、73 项主机测试及格式检查通过；`execcommit` 仍待实现。
 - stage320：可信 `EXEC_VIEW` 接通同一 Life/Acct 的准备装载和票据撤销。RV64/ARM64 QEMU `prep`、`sigframe`、73 项主机测试及格式检查通过；原生 exec 和目标所有权接入 Proc 仍待实现。

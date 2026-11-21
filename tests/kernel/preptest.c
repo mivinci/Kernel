@@ -67,6 +67,28 @@ allocate(Rtable *t, Handle construct, u64 bytes, u64 kind)
   return h;
 }
 static void
+execowtest(void)
+{
+  static Memretire retire;
+  Setid            set;
+  Acctid           payer, peer;
+  Memid            old, child;
+  Set              group;
+  Acct             account;
+  u64              before, after;
+  REQUIRE(!setcreate(2, 2, 2, &set) && !acctcreate(set, 1, 1, &payer) &&
+          !acctcreate(set, 1, 1, &peer) && !memcreate(payer, PAGE_SIZE, &old) &&
+          !memclone(old, peer, &child) && !mempage(old, 0, &before));
+  REQUIRE(!memretireadd(&retire, old) && memretirepages(&retire, payer) == 1 &&
+          !setstat(set, &group) && group.charged == 2);
+  memretireclear(&retire);
+  REQUIRE(!memfree(old) && !mempage(child, 0, &after) && before == after &&
+          !acctstat(payer, &account) && !account.used && !account.reserved &&
+          !acctstat(peer, &account) && account.used == 1 && !account.reserved &&
+          !setstat(set, &group) && group.charged == 1 && !memfree(child) && !acctclose(payer) &&
+          !acctunbind(payer) && !acctclose(peer) && !acctunbind(peer) && !setclose(set));
+}
+static void
 execpreptest(void)
 {
   static Rtable source, target;
@@ -89,11 +111,12 @@ execpreptest(void)
   Hpte          alias;
   Handle        pid = handlepack(HANDLE_PROCESS, 1, PROCS - 1);
   Handle        oldcap, futurecap, previous = 0, view, data, ignored, futurealloc;
+  Handle        owner;
   u64           ticket, duplicate, marker = 0x31415926, value;
   u32           mode, i;
   u64           va = 0x10000;
   pgstat(&before);
-  REQUIRE(!setcreate(5, 10, 1, &set) && !acctcreate(set, 5, 10, &acct) &&
+  REQUIRE(!setcreate(4, 10, 1, &set) && !acctcreate(set, 4, 10, &acct) &&
           !lifecreate(set, pid, 1, &life) && !lifebindacct(life, acct) &&
           !imagecreate(life, 0, &running) && !lifepublish(life));
   REQUIRE(!spacecreate(acct, &oldspace) && !localinit(&source, oldslots, 16, acct, oldspace));
@@ -105,6 +128,7 @@ execpreptest(void)
           source.slots[1].subtype == LOCAL_FLOOR && !imageactivate(running) &&
           !memcreate(acct, PAGE_SIZE, &original) &&
           !spacemap(oldspace, original, 0, va, PAGE_SIZE, VM_READ | VM_WRITE) &&
+          !spacemap(oldspace, original, 0, va + 2 * PAGE_SIZE, PAGE_SIZE, VM_READ) &&
           !spacewrite(oldspace, va, &marker, sizeof(marker)));
   for (mode = 0; mode < 3; mode++) {
     REQUIRE(!acctexecbegin(acct, &ticket) && !spaceexeccreate(acct, ticket, &newspace) &&
@@ -142,12 +166,25 @@ execpreptest(void)
             !spaceread(newspace, va, &value, sizeof(value)) && value == marker &&
             preppublishcheck(prep) == -ERR_BUSY && !prepstat(prep, &info) && info.temporary == 1 &&
             !setstat(set, &group) && group.charged == 8);
+    REQUIRE(prepexecbudget(prep, &target) == -ERR_BAD_HANDLE &&
+            prepexecbudget(prep, &source) == -ERR_BUSY);
+    if (!mode) {
+      REQUIRE(!localmem(&source, original, VM_READ, 0, PAGE_SIZE, 0, &owner) &&
+              !memfree(original) && !localunmap(&source, oldcap, va + PAGE_SIZE) &&
+              !memretain(original) && prepexecbudget(prep, &source) == -ERR_LIMIT &&
+              !memrelease(original) && !spacehold(oldspace) &&
+              prepexecbudget(prep, &source) == -ERR_BUSY && !spacedrop(oldspace) &&
+              !prepexecbudget(prep, &source) && !setstat(set, &group) && group.charged == 8 &&
+              !localfree(&source, owner) &&
+              !localmap(&source, oldcap, data, 0, va + PAGE_SIZE, PAGE_SIZE, VM_READ | VM_WRITE));
+    }
     if (mode == 0)
       REQUIRE(!prepcancel(prep));
     else if (mode == 1) {
       for (i = 0; i < PREPS / 8; i++)
         REQUIRE(prepexpire(info.deadline, 8) >= 0);
-      REQUIRE(preppublishcheck(prep) == -ERR_TIMEDOUT);
+      REQUIRE(preppublishcheck(prep) == -ERR_TIMEDOUT &&
+              prepexecbudget(prep, &source) == -ERR_TIMEDOUT);
     } else
       prepownerclose(&source);
     REQUIRE(!acctexecvalid(acct, ticket) &&
@@ -168,10 +205,10 @@ execpreptest(void)
             !spaceread(oldspace, va, &value, sizeof(value)) && value == marker);
   }
   REQUIRE(!localclose(&source) && !localdrain(&source, 32) && !spaceunmap(oldspace, va) &&
-          !memfree(original) && !spacedestroy(oldspace) && !lifeend(life, LIFE_EXIT, 0, NULL) &&
-          !imageend(running, IMAGE_EXIT) && !imagedetach(running) && !lifedetach(life) &&
-          !lifecollect(life, 1, &result) && !acctclose(acct) && !acctunbind(acct) &&
-          !setclose(set));
+          !spaceunmap(oldspace, va + 2 * PAGE_SIZE) && !spacedestroy(oldspace) &&
+          !lifeend(life, LIFE_EXIT, 0, NULL) && !imageend(running, IMAGE_EXIT) &&
+          !imagedetach(running) && !lifedetach(life) && !lifecollect(life, 1, &result) &&
+          !acctclose(acct) && !acctunbind(acct) && !setclose(set));
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !acctcheck() &&
           !pgcheck());
@@ -208,6 +245,7 @@ preptest(void)
   Hpte     alias;
   u64      oldpa;
   u32      i;
+  execowtest();
   execpreptest();
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 16, &set));

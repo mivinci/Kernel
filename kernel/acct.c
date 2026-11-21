@@ -418,6 +418,22 @@ acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out)
 }
 
 int
+acctexeccheck(Acctid id, u64 ticket, u64 reclaim)
+{
+  Acct *a;
+  Set  *s;
+  u64   charged;
+  if (!acctexecvalid(id, ticket))
+    return AC_BAD;
+  a = find(id);
+  s = &sets[a->set];
+  charged = a->used + a->reserved;
+  if (reclaim > charged || reclaim > s->charged)
+    return AC_BAD;
+  return charged - reclaim > a->limit || s->charged - reclaim > s->limit ? AC_LIMIT : 0;
+}
+
+int
 acctexecend(Acctid id, u64 ticket)
 {
   if (!acctexecvalid(id, ticket))

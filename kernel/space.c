@@ -1368,6 +1368,25 @@ spaceexecmap(Spaceid id, u64 ticket, Memid mem, u64 offset, u64 address, u64 len
 }
 
 int
+spaceexecretire(Spaceid id, u32 locals, Memretire *retire, u64 *pages)
+{
+  Space *s = find(id);
+  u32    node, expected;
+  if (!s || !pages || !retire)
+    return SP_BAD;
+  expected = 1 + (s == active);
+  if (s->busy || snapshot || s->refs < expected || s->refs - expected != locals)
+    return SP_BUSY;
+  for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+    const Mmap *m = &mappings[node];
+    if (!m->owner.load.generation && memretireadd(retire, m->mem))
+      return SP_BAD;
+  }
+  *pages = s->pages;
+  return 0;
+}
+
+int
 spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep)
 {
   if (!prep.generation)

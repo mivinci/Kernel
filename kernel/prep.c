@@ -222,6 +222,19 @@ prepexecticket(Prepid id, Rtable *source, u64 *out)
   return 0;
 }
 int
+prepexecbudget(Prepid id, Rtable *source)
+{
+  Prep *p = find(id);
+  int   error;
+  if (!p || p->source != source)
+    return -ERR_BAD_HANDLE;
+  if (p->origin != PREP_EXEC)
+    return -ERR_STATE;
+  error = preppublishcheck(id);
+  return error ? error : localexecbudget(source, p->work.exec.ticket);
+}
+
+int
 prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target)
 {
   Prep *p = find(id);
