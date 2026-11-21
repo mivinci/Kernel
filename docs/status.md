@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage199：Fix 三层动作头已实现和验证，19 项主机 Boot/Fix 测试、格式检查及双架构 QEMU sigframe 通过。上下文应用及子连接记录待接。
+
 - stage198：信号入口与正常子返回共用 Fix 身份校验，双架构 QEMU sigframe 与格式检查通过；上下文应用待接。
 
 - stage197：双架构 QEMU sigframe 已验证子首次返回窗口的真实 USR1、Fix 元组捕获和 sigreturn；RV64 相对 PC 对齐回归已覆盖。生产上下文修复待接。

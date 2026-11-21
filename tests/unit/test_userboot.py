@@ -94,6 +94,8 @@ class UserBootTests(unittest.TestCase):
         cls.lib.bootcheck.restype=C.c_int64
         cls.lib.sysfixview.argtypes=[C.c_void_p,C.c_uint64,C.c_int64,C.c_uint64,C.c_int64,C.POINTER(FixView)]
         cls.lib.sysfixview.restype=C.c_int64
+        cls.lib.sysfixlayers.argtypes=[C.POINTER(FixView),C.POINTER(C.c_void_p)]
+        cls.lib.sysfixlayers.restype=C.c_int64
         cls.lib.bootimagecheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(Image)]
         cls.lib.bootimagesegment.argtypes=[C.c_void_p,C.POINTER(Image),C.c_uint64,C.POINTER(Segment)]
         cls.lib.bootresource.argtypes=[C.POINTER(View),C.c_uint64];cls.lib.bootresource.restype=C.c_int64
@@ -118,6 +120,21 @@ class UserBootTests(unittest.TestCase):
                 self.assertEqual(self.lib.sysfixview(data,128,source,9,target,C.byref(result)),-1)
                 self.assertEqual(bytes(result),bytes(C.sizeof(result)))
             data[field]=saved
+    def test_fix_layers_reject_invalid_or_duplicate_incarnations(self):
+        data=(C.c_uint64*6)(1,1,7,2,0,0)
+        view=FixView(1,0,C.addressof(data),C.sizeof(data))
+        out=C.c_void_p()
+        self.assertEqual(self.lib.sysfixlayers(C.byref(view),C.byref(out)),0)
+        self.assertEqual(out.value,C.addressof(data))
+        for field,invalid in ((0,0),(1,0),(1,4),(2,1),(4,9),(5,3)):
+            saved=data[field]
+            data[field]=invalid
+            self.assertEqual(self.lib.sysfixlayers(C.byref(view),C.byref(out)),-1)
+            self.assertIsNone(out.value)
+            data[field]=saved
+        view.contexts_limit-=1
+        self.assertEqual(self.lib.sysfixlayers(C.byref(view),C.byref(out)),-1)
+
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
 

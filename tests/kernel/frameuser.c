@@ -351,13 +351,15 @@ contextuser(void)
   frame_trace[0] = 99;
   return 42;
 }
-static Forkret forkcapture;
-static Handle  forksource;
-static u64     forkimage;
+static Forkret   forkcapture;
+static Handle    forksource;
+static u64       forkimage;
+static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer);
 static NORETURN void
 forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
 {
-  Fixview view;
+  Fixview         view;
+  const Fixlayer *layers;
   UNUSED(info);
   UNUSED(function);
   UNUSED(flags);
@@ -365,7 +367,8 @@ forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64
               sysforkdecode(context, (u64) __sys_forkreturn_begin, (u64) __sys_forkreturn_end,
                             &forkcapture) == 1,
           242);
-  REQUIRE(!sysfixchild(&forkcapture, 88, forksource, forkimage, &view) && view.contexts_limit == 24,
+  REQUIRE(!sysfixchild(&forkcapture, forkbytes, forksource, forkimage, &view) &&
+              !sysfixlayers(&view, &layers) && layers[0].action == FIX_LAYER_COMPLETE,
           244);
   __sys_sigreturn((void *) address);
 }
@@ -384,8 +387,8 @@ forkprepuser(void)
   Sigact    action;
   struct
   {
-    Fix header;
-    u64 contexts[3];
+    Fix      header;
+    Fixlayer contexts[FIX_LAYER_COUNT];
   } fix;
   REQUIRE(__sys_forkprep(0, 0, &forked) == -ERR_BAD_HANDLE, 224);
   REQUIRE(__sys_forkprep(authority, 9, &forked) == -ERR_INVALID, 225);
@@ -424,7 +427,8 @@ forkprepuser(void)
     Fixview view;
     REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
                 (u64) forked.fix == address && ppid == source &&
-                !sysfixchild(&forked, 88, source, image, &view) && view.contexts_limit == 24 &&
+                !sysfixchild(&forked, forkbytes, source, image, &view) &&
+                view.contexts_limit == FIX_LAYER_COUNT * sizeof(Fixlayer) &&
                 forkcapture.pid == self && forkcapture.fix == forked.fix && !forkcapture.construct,
             234);
     return 43;
@@ -441,6 +445,8 @@ forkprepuser(void)
   fix.header.source_image = image;
   fix.header.target_pid = child;
   fix.header.contexts_off = sizeof(Fix);
+  fix.contexts[0].sequence = 1;
+  fix.contexts[0].action = FIX_LAYER_COMPLETE;
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;

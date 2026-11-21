@@ -167,6 +167,29 @@ sysfixview(const void *data, u64 available, Handle source, u64 image, Handle tar
   *out = view;
   return 0;
 }
+isize
+sysfixlayers(const Fixview *view, const Fixlayer **out)
+{
+  const Fixlayer *layers;
+  u32             i, j;
+  if (!out)
+    return -ERR_INVALID;
+  *out = NULL;
+  if (!view || !view->header || !view->contexts ||
+      view->contexts_limit < FIX_LAYER_COUNT * sizeof(*layers) || ((u64) view->contexts & 7))
+    return -ERR_INVALID;
+  layers = view->contexts;
+  for (i = 0; i < FIX_LAYER_COUNT; i++) {
+    if (layers[i].action > FIX_LAYER_INTERRUPT ||
+        ((layers[i].sequence == 0) != (layers[i].action == FIX_LAYER_EMPTY)))
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (layers[i].sequence && layers[i].sequence == layers[j].sequence)
+        return -ERR_INVALID;
+  }
+  *out = layers;
+  return 0;
+}
 Handle
 bootresource(const Bootview *view, u64 tag)
 {
