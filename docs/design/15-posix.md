@@ -211,3 +211,5 @@ stage171已接公开raise：当前单线程运行库按完整自身PID发送支�
 这不是完整公开信号层：原生安装的测试handler/trampoline不替代公开sigaction、标准siginfo转换、Rctx/Fix或SA_RESTART。公开kill未接：原生仅存活Run的范围与POSIX尚未收取僵尸的存在/权限语义冲突，扩大到僵尸Life及256项快照的候选已提出待用户确认，未实现受限临时封装或静默改变既定授权。原文与候选见11基础语义；整体POSIX/sh/net目标未完成。
 
 stage306：`string.h` 与 libc 提供 C locale 的 `strcoll`、`strxfrm`，可用于后续路径展开结果排序。RV64、ARM64 QEMU `runtime` 验证高位字节的比较和排序键结果一致、空串、零容量查询、恰好容纳终止符，以及容量不足时保持缓冲和 errno；格式检查通过。路径通配及其他 locale 仍待实现。
+
+stage307：libc 的 `<fnmatch.h>` 提供 C locale 字节模式匹配，供后续 `sh` 的 `case` 和路径展开使用。支持 `*`、`?`、反斜杠、方括号集合、范围和字符类，以及单字节排序元素和等价类。`FNM_PATHNAME` 限制通配符跨越斜杠，`FNM_PERIOD` 要求显式匹配组件首点，`FNM_NOESCAPE` 保留反斜杠字面含义。多星号匹配使用迭代回退，无需递归、分配或文件服务。RV64、ARM64 QEMU `runtime` 覆盖这些边界，主机对四组标志进行了 365040 次组合比对，格式检查通过。目录枚举、展开结果收集和 shell 引号处理仍待接入。

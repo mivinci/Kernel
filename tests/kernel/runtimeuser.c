@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <fnmatch.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -172,6 +173,31 @@ collationcheck(void)
               strcoll("", "a") < 0,
           250);
   REQUIRE(strxfrm(other, "", 1) == 0 && !other[0] && errno == EDOM, 251);
+}
+static void
+patterncheck(void)
+{
+  REQUIRE(!fnmatch("a**b?c*d", "abbxcyd", 0) && fnmatch("a**b?c*d", "abxcye", 0) == FNM_NOMATCH &&
+              !fnmatch("*", "", 0) && fnmatch("?", "", 0) == FNM_NOMATCH,
+          248);
+  REQUIRE(!fnmatch("a/*/b", "a/x/b", FNM_PATHNAME) &&
+              fnmatch("a/*/b", "a/x/y/b", FNM_PATHNAME) == FNM_NOMATCH &&
+              !fnmatch("a/*/b", "a/x/y/b", 0) &&
+              fnmatch("a[/]b", "a/b", FNM_PATHNAME) == FNM_NOMATCH,
+          249);
+  REQUIRE(fnmatch("a/*", "a/.x", FNM_PATHNAME | FNM_PERIOD) == FNM_NOMATCH &&
+              fnmatch("[.]x", ".x", FNM_PERIOD) == FNM_NOMATCH &&
+              !fnmatch("a/.*", "a/.x", FNM_PATHNAME | FNM_PERIOD) &&
+              !fnmatch("a/*", "a/.x", FNM_PERIOD),
+          250);
+  REQUIRE(!fnmatch("[!a-c][]-][[:digit:]]", "z]4", 0) &&
+              fnmatch("[!a-c][]-][[:digit:]]", "b-4", 0) == FNM_NOMATCH &&
+              !fnmatch("[[.a.]-[.c.]][[=z=]]", "bz", 0) && !fnmatch("[\200-\377]", "\377", 0),
+          251);
+  REQUIRE(!fnmatch("\\*\\?", "*?", 0) && fnmatch("\\*\\?", "*?", FNM_NOESCAPE) == FNM_NOMATCH &&
+              !fnmatch("[abc", "[abc", 0) && fnmatch("\\", "\\", 0) == FNM_NOMATCH &&
+              !fnmatch("\\", "\\", FNM_NOESCAPE),
+          252);
 }
 static void
 tokencheck(void)
@@ -531,6 +557,7 @@ main(int argc, char **argv)
   sortcheck();
   ctypecheck();
   collationcheck();
+  patterncheck();
   tokencheck();
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
