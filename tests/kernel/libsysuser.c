@@ -362,7 +362,7 @@ readfork(void)
     REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == (u64) published &&
                 result.values[1] == WAIT_EXITED && result.values[2] == 43,
             35);
-    resource_trace[57] = 1;
+    resource_trace[57]++;
   }
   REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 36);
 }
@@ -454,7 +454,7 @@ runtimehandler(u64 signum)
     resource_trace[47] = 1;
   } else
     REQUIRE(outer->phase == RCTX_CLEANING && outer->route.delivered, 108);
-  if (stage <= 4 || stage == 7)
+  if (stage <= 4 || stage == 7 || stage == 8)
     REQUIRE(sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) == -ERR_BUSY,
             108);
   if (stage <= 2)
@@ -475,7 +475,9 @@ runtimehandler(u64 signum)
   }
   if (stage > 2 && stage != 7) {
     Slotop *op = &outer->route.work->state.operations[outer->route.operation.lease.slot];
-    REQUIRE(op->phase == (stage == 4 ? SYSOP_RESULT : SYSOP_WAITING) && op->rpc && op->file, 106);
+    REQUIRE(op->phase == (stage == 4 || stage == 8 ? SYSOP_RESULT : SYSOP_WAITING) && op->rpc &&
+                op->file,
+            106);
     if (stage == 3 || stage == 5) {
       REQUIRE(op->flags & SYSOP_CANCEL_SENT && op->deadline, 100);
       if (stage == 3)
@@ -518,6 +520,17 @@ runtimehandler(u64 signum)
               66);
       resource_trace[32] = 1;
     }
+    if (stage == 8) {
+      REQUIRE(op->opcode == FS_WRITE && op->words[2] == 3 && !op->words[3] &&
+                  outer->route.snapshot_saved && !outer->route.snapshot_bytes,
+              30);
+      readfork();
+      if (readforkchild) {
+        resource_trace[20]++;
+        resource_trace[21] |= 1UL << stage;
+        return;
+      }
+    }
   }
   REQUIRE(
       !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
@@ -545,7 +558,8 @@ runtimetrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64
 {
   u64 mask, ignored, now;
   REQUIRE(signum == SIGNAL_USR1 &&
-              ((!info->code && (resource_trace[16] <= 4 || resource_trace[16] == 7)) ||
+              ((!info->code &&
+                (resource_trace[16] <= 4 || resource_trace[16] == 7 || resource_trace[16] == 8)) ||
                ((resource_trace[16] == 5 || resource_trace[16] == 6) &&
                 info->code == SIGNAL_SOURCE_USER && info->pid == (u64) connection_peer.pid)) &&
               function == (u64) runtimehandler && !flags &&
@@ -558,6 +572,8 @@ runtimetrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64
     resource_trace[30] = now;
   if (resource_trace[16] == 4)
     REQUIRE(!sysctxsnapshot(&runtime_contexts, connection_work.state.self, runtime_key, 0, 4), 98);
+  if (resource_trace[16] == 8)
+    REQUIRE(!sysctxsnapshot(&runtime_contexts, connection_work.state.self, runtime_key, 0, 0), 29);
   REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 104);
   resource_trace[19]++;
   runtimehandler(signum);
@@ -586,22 +602,69 @@ runtimeinvoke(u64 stage)
     const void *output;
     u64         bytes;
     u32         value;
-    REQUIRE(stage == 4 && runtime_contexts.contexts[0].active == 0 &&
-                sysctxforkreply(&runtime_contexts, runtime_contexts.self, runtime_key, &reply) ==
-                    1 &&
-                !reply.kind && !reply.source && !reply.request && !reply.image && !reply.words[0] &&
-                reply.words[2] == 4 && reply.words[3] == 4 &&
-                !sysctxsnapshotview(&runtime_contexts, runtime_contexts.self, runtime_key, &output,
-                                    &bytes) &&
-                bytes == 4 && !__sys_copy(&value, output, sizeof(value)) &&
-                value == UINT32_C(0x74736574) &&
-                ipc_rqpoll(readforkrpc, 0, &ignored) == -ERR_BAD_HANDLE &&
-                !sysctxfinish(&runtime_contexts, runtime_contexts.self, runtime_key),
-            37);
+    REQUIRE(
+        (stage == 4 || stage == 8) && runtime_contexts.contexts[0].active == 0 &&
+            sysctxforkreply(&runtime_contexts, runtime_contexts.self, runtime_key, &reply) == 1 &&
+            !reply.kind && !reply.source && !reply.request && !reply.image && !reply.words[0] &&
+            reply.words[2] == (stage == 4 ? 4U : 3U) && reply.words[3] == (stage == 4 ? 4U : 0U) &&
+            !sysctxsnapshotview(&runtime_contexts, runtime_contexts.self, runtime_key, &output,
+                                &bytes) &&
+            (stage == 4 ? bytes == 4 && !__sys_copy(&value, output, sizeof(value)) &&
+                              value == UINT32_C(0x74736574)
+                        : bytes == 0) &&
+            ipc_rqpoll(readforkrpc, 0, &ignored) == -ERR_BAD_HANDLE &&
+            !sysctxfinish(&runtime_contexts, runtime_contexts.self, runtime_key),
+        37);
     __sys_exit(43);
   }
   if (stage != 5 && stage != 6)
     resource_trace[16] = 0;
+}
+static void
+writeforkclient(u64 fileid, u64 restored)
+{
+  Opkey    key;
+  Fileslot descriptor;
+  u64      file = fileid, ignored;
+  u32      i;
+  REQUIRE(!sysfilerefpin(&file_registry, connection_work.state.self, fileid) &&
+              !sysopprepare(&connection_work, &connection_directory, SYSFILE_MAIN, 1, 510, &file,
+                            55, FS_WRITE, 0, &key),
+          24);
+  for (i = 0; i < sizeof(descriptor); i++)
+    ((u8 *) &descriptor)[i] = 0;
+  descriptor.seq = key.lease.seq;
+  descriptor.state = FS_SLOT_SUBMITTED;
+  descriptor.object = 55;
+  descriptor.span = 1;
+  descriptor.payload_bytes = descriptor.args[1] = 4;
+  REQUIRE(!__sys_copy((void *) (uintptr_t) (connection_work.state.map.address + FS_DESC_OFFSET +
+                                            key.lease.slot * FS_DESC_BYTES),
+                      &descriptor, sizeof(descriptor)) &&
+              !__sys_copy((void *) (uintptr_t) (connection_work.state.map.address + FS_DATA_OFFSET +
+                                                key.lease.slot * FS_SLOT_BYTES),
+                          "once", 4) &&
+              !sysctxopcall(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                            &connection_directory, &key, 0, &runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, restored, &ignored),
+          25);
+  runtimeinvoke(0);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored) &&
+              !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              !sysctxopwait(&runtime_contexts, connection_work.state.self, 0, &connection_work,
+                            &connection_directory, &key, &runtime_key) &&
+              !__sys_sigmask(SIGNAL_SETMASK, restored, &ignored),
+          26);
+  runtimeinvoke(8);
+  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored) &&
+              !sysctxhandoff(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              !sysctxfinish(&runtime_contexts, connection_work.state.self, runtime_key) &&
+              !sysopsaved(&connection_work, &connection_directory, &key) &&
+              !sysopack(&connection_work, &connection_directory, &key) &&
+              !sysopfinish(&connection_work, &connection_directory, &key, &file) &&
+              file == fileid && !sysfilerefunpin(&file_registry, connection_work.state.self, file),
+          27);
 }
 static void
 replyerror(Handle request, u64 address, isize expected, u32 extra)
@@ -805,6 +868,32 @@ typedserver(const Bootview *view)
         REQUIRE(!ipc_reply(received.request, &words), 137);
         resource_trace[53]++;
       }
+    }
+    REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.source == client &&
+                received.image == clientimage && received.words[0] == FS_WRITE &&
+                received.words[1] == header->connid && received.words[2] &&
+                received.words[3] < FS_CONN_SLOTS,
+            23);
+    {
+      Fileslot           descriptor;
+      u32                index = (u32) received.words[3];
+      const volatile u8 *data =
+          (const volatile u8 *) (uintptr_t) (map.address + FS_DATA_OFFSET + index * FS_SLOT_BYTES);
+      Fileslot *wire =
+          (Fileslot *) (uintptr_t) (map.address + FS_DESC_OFFSET + index * FS_DESC_BYTES);
+      REQUIRE(!sysfilerequest((const volatile void *) (uintptr_t) map.address, FS_CONN_BYTES, index,
+                              received.words[2], &descriptor) &&
+                  descriptor.object == 55 && descriptor.span == 1 &&
+                  descriptor.payload_bytes == 4 && !descriptor.args[0] && descriptor.args[1] == 4 &&
+                  !descriptor.args[2] && !descriptor.args[3] && !descriptor.args[4] &&
+                  !descriptor.args[5] && !descriptor.args[6] && !descriptor.args[7] &&
+                  data[0] == 'o' && data[1] == 'n' && data[2] == 'c' && data[3] == 'e',
+              22);
+      words.words[0] = words.words[3] = 0;
+      words.words[1] = received.words[2];
+      words.words[2] = 3;
+      wire->state = FS_SLOT_DONE;
+      REQUIRE(!ipc_reply(received.request, &words), 21);
     }
     REQUIRE(!ipc_recv(0, 0, &received) && received.kind == IPC_CALL && received.source == client &&
                 received.image == clientimage && received.words[0] == FS_READ &&
@@ -1509,6 +1598,7 @@ typedclient(const Bootview *view, Handle peer)
                 !sysfdpublish(&file_descriptors, descriptor_tag, fileid, BOOT_FD_CLOEXEC) &&
                 !sysfilerefpin(&file_registry, connection_work.state.self, fileid),
             124);
+    writeforkclient(fileid, oldmask);
     REQUIRE(!sysopprepare(&connection_work, &connection_directory, SYSFILE_MAIN, 1, 501, &file, 55,
                           FS_READ, 0, &operation) &&
                 !file,

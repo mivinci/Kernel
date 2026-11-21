@@ -402,6 +402,10 @@ stage225：完成普通 WRITE 的子修复沿用 SAVED 本地结果。成功回�
 
 stage225 最终完整 `make unit` 1218 项通过（168 秒），对应上述最终源码，未重跑全 QEMU 场景矩阵。
 
+stage226：双架构 libsys 增加真实 WRITE 完成后的 handler fork。客户端先 pin 原 File、预备单页并发出一次 `once` 四字节 WRITE；独立后端核对真实 source/image、connid/seq、完整描述符及 payload，固定部分完成回复 `[0,seq,3,0]`，随后只接受下一条既定 READ（重复 WRITE 会失败）。外层 RQWAIT 返回窗口递送信号，前置通过零字节快照证明原缓冲排空，handler 内原生 fork。子经 Fix 取得 SAVED 的3字节进展、零输出快照及无效旧 RPC，完成 sigreturn/汇编恢复并退出43；父 wait 收到43，继续同一 Op 的 SAVED/ACK/释放槽/File unpin，再执行已有 READ 快照 fork 与其余关闭/迟到资源验收。两次孩子成功及 handler 计数均核验，新增 write_fork=1 机器记录，最终页和费用仍守恒。
+
+ARM64/RV64 libsys、17 项上下文信号主机测试及格式通过；日志 `/private/tmp/kernel-stage226-{arm64-final,riscv-final,context,fmt}.log`。测试调用私有原生 fork 与本地修复，不代表生产 File 子引用、其他创建类完成结果或公开 fork 已交付；未跑完整主机/场景矩阵、CI 或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
