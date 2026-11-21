@@ -599,6 +599,53 @@ restore:
 }
 
 isize
+sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                 Fdtable *table, Pipecreate *pipe, Rkey *active, int *fds, isize *business)
+{
+  Connpeer self;
+  Msg      message;
+  u64      mask, ignored;
+  isize    error, status;
+  if (!bank || !work || !pipe || !active || layer >= RCTX_LAYERS ||
+      !separate(pipe, sizeof(*pipe), active, sizeof(*active)))
+    return -ERR_INVALID;
+  self = work->state.self;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  if (!pipe->operation.lease.seq) {
+    if (active->sequence || bank->contexts[layer].phase != RCTX_FREE)
+      error = -ERR_BUSY;
+    else if (bank->sequence == UINT64_MAX)
+      error = -ERR_OVERFLOW;
+    else
+      error =
+          sysfilepipeprepare(pool, work, cache, table, layer, bank->sequence + 1, pipe, &message);
+  }
+  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (error || status)
+    return error ? error : status;
+  do {
+    error = sysctxpipeio(bank, self, layer, pool, work, cache, &pipe->operation, active);
+  } while (!error);
+  if (active->sequence)
+    return error;
+  status = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (status)
+    return status;
+  if (error == 1 || error == -ERR_CANCELLED)
+    error = sysfilepipefinish(pool, work, cache, table, pipe, fds, business);
+  else if (!sysfilecreatecheck(pool, work, cache, &pipe->operation) &&
+           work->state.operations[pipe->operation.lease.slot].phase == SYSOP_PREPARED) {
+    status = sysfilepipeabort(pool, work, cache, table, pipe);
+    if (status)
+      error = status;
+  }
+  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : status;
+}
+
+isize
 sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx   *context;

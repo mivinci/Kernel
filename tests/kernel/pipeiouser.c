@@ -298,9 +298,9 @@ interruptclient(const Bootview *boot)
   struct sigaction action = {0};
   Pipecreate       pipe = {0};
   Rkey             active = {0};
-  Msg              message, gate = {{PIPETEST, 0, 0, 0}};
+  Msg              gate = {{PIPETEST, 0, 0, 0}};
   Ipcmsg           result;
-  Handle           rpc, retained;
+  Handle           rpc;
   isize            business;
   int              fds[2] = {-1, -1};
   Connpeer         self;
@@ -308,19 +308,15 @@ interruptclient(const Bootview *boot)
   self = work.state.self;
   action.sa_handler = oninterrupt;
   CHECK(!sysctxinit(&bank, self) && !sysctxsigbind(&bank) && !sigaction(SIGUSR1, &action, NULL) &&
-        !sysfilerefinit(&pool, self) &&
-        !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 1, &pipe, &message) &&
-        !sysctxpipeio(&bank, self, 0, &pool, &work, &cache, &pipe.operation, &active) &&
-        !sysoprpc(&work, &cache, &pipe.operation, &rpc));
-  CHECK(sysctxpipeio(&bank, self, 0, &pool, &work, &cache, &pipe.operation, &active) ==
+        !sysfilerefinit(&pool, self));
+  CHECK(sysctxpipecreate(&bank, 0, &pool, &work, &cache, &table, &pipe, &active, fds, &business) ==
             -ERR_INTERRUPTED &&
-        caught == 1 && !active.sequence && !sysoprpc(&work, &cache, &pipe.operation, &retained) &&
-        retained == rpc && !sysfdcheckpair(&table, pipe.tags) &&
+        caught == 1 && !active.sequence && !sysoprpc(&work, &cache, &pipe.operation, &rpc) && rpc &&
+        !sysfdcheckpair(&table, pipe.tags) && fds[0] == -1 && fds[1] == -1 &&
         !ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
-  CHECK(!sysctxpipeio(&bank, self, 0, &pool, &work, &cache, &pipe.operation, &active) &&
-        work.state.operations[pipe.operation.lease.slot].rpc == rpc &&
-        !sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fds, &business) && !business &&
-        fds[0] == 0 && fds[1] == 1 && caught == 1);
+  CHECK(!sysctxpipecreate(&bank, 0, &pool, &work, &cache, &table, &pipe, &active, fds, &business) &&
+        !pipe.operation.lease.seq && !active.sequence && !business && fds[0] == 0 && fds[1] == 1 &&
+        caught == 1);
   pipeiotrace[0] = 7;
 }
 
