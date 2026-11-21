@@ -40,8 +40,8 @@ __wrap_hal_user_enter(Hctx *context)
     REQUIRE(!procinfo(contextpid, &process) &&
             !spaceread(process.space, libsys_resource_address, trace, sizeof(trace)));
     stage = trace[16];
-    if (((stage >= 1 && stage <= 4) || stage == 7 || stage == 8) && context->tf.pc == trace[17] &&
-        !(contextinjected & (1UL << stage))) {
+    if (((stage >= 1 && stage <= 4) || stage == 7 || stage == 8 || stage == 9) &&
+        context->tf.pc == trace[17] && !(contextinjected & (1UL << stage))) {
       contextinjected |= 1UL << stage;
       for (i = 0; i < sizeof(info); i++)
         ((u8 *) &info)[i] = 0;
@@ -184,8 +184,8 @@ libsysload(void)
           u32 sweep;
           REQUIRE(!spaceread(info[0].space, libsys_resource_address, client_trace,
                              sizeof(client_trace)) &&
-                  client_trace[9] == 6 && client_trace[19] == 8 && client_trace[20] == 8 &&
-                  client_trace[21] == 510 && client_trace[22] == 1 && client_trace[23] == 1 &&
+                  client_trace[9] == 6 && client_trace[19] == 9 && client_trace[20] == 9 &&
+                  client_trace[21] == 1022 && client_trace[22] == 1 && client_trace[23] == 1 &&
                   client_trace[24] <= 1 && client_trace[25] == 1 && client_trace[26] == 1 &&
                   client_trace[27] == client_trace[30] + UINT64_C(1000000000) &&
                   client_trace[28] >= client_trace[27] &&
@@ -199,9 +199,9 @@ libsysload(void)
                   client_trace[44] == 1 && client_trace[45] &&
                   client_trace[45] == client_trace[46] && client_trace[47] == 1 &&
                   client_trace[48] == 1 && client_trace[49] == 1 && client_trace[50] == 1 &&
-                  client_trace[51] == 1 && client_trace[52] == 1 && contextinjected == 414 &&
+                  client_trace[51] == 1 && client_trace[52] == 1 && contextinjected == 926 &&
                   client_trace[53] > 8 && client_trace[54] > client_trace[53] &&
-                  client_trace[55] == 1 && client_trace[57] == 2);
+                  client_trace[55] == 1 && client_trace[57] == 3);
           aborts = 2;
           replayed = client_trace[24];
           timerwaits = client_trace[31];
@@ -275,6 +275,8 @@ libsysload(void)
   putstr(" snapshot_fork=");
   puthex(1);
   putstr(" write_fork=");
+  puthex(1);
+  putstr(" error_fork=");
   puthex(1);
   putstr(" queued_retries=");
   puthex(replayed);
