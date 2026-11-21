@@ -107,6 +107,20 @@ class ConnectionDirectoryTests(unittest.TestCase):
         self.assertEqual(self.lib.sysconnfork(C.byref(cache),owner,child,entries,1),0)
         self.assertEqual(bytes(cache),after)
 
+    def test_fork_generation_exhaustion_is_atomic_and_unkept_slots_retire(self):
+        cache=Cache();owner=Peer(pid(1),9);child=Peer(pid(3),11);backend=Peer(pid(2),10)
+        tag=Tag()
+        self.lib.sysconninit(C.byref(cache),owner)
+        self.lib.sysconnbind(C.byref(cache),backend,C.byref(tag))
+        cache.entries[tag.index].generation=MAX
+        entries=(C.c_uint64*3)(backend.pid,backend.image,101)
+        before=bytes(cache)
+        self.assertEqual(self.lib.sysconnfork(C.byref(cache),owner,child,entries,1),-20)
+        self.assertEqual(bytes(cache),before)
+        self.assertEqual(self.lib.sysconnfork(C.byref(cache),owner,child,None,0),0)
+        self.assertEqual((cache.entries[tag.index].state,cache.entries[tag.index].generation),(5,MAX))
+        self.assertEqual(self.lib.sysconncheck(C.byref(cache),child),0)
+
     def setUp(self):
         self.cache=Cache();self.self=Peer(pid(1),4)
         self.assertEqual(self.lib.sysconninit(C.byref(self.cache),self.self),0)
