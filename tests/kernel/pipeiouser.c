@@ -303,6 +303,36 @@ oninterrupt(int signal)
 }
 
 static void
+transfer(Fileimage *image, Connwork *work, int fd, u64 opcode, u8 *bytes, u64 count, u64 expected)
+{
+  Conncache *cache = sysfileimagecache(image);
+  Connwork  *peer = NULL;
+  Rkey       active;
+  Opkey      key;
+  Ipcmsg     result;
+  Handle     rpc;
+  u64        mask, ignored, file = 0;
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask));
+  CHECK(!sysfileiostage(image, 0, fd, opcode, bytes, count, &peer, &key) && peer == work);
+  if (opcode == FS_WRITE)
+    bytes[0] = 0;
+  CHECK(!sysctxopcall(&image->contexts, work->state.self, 0, work, cache, &key, 0, &active) &&
+        !sysctxinvoke(&image->contexts, work->state.self, active) &&
+        !sysctxhandoff(&image->contexts, work->state.self, active) &&
+        !sysctxfinish(&image->contexts, work->state.self, active) &&
+        !sysoprpc(work, cache, &key, &rpc) && !ipc_rqwait(rpc, RQ_FINISH, &result) &&
+        !sysoppoll(work, cache, &key));
+  CHECK(!work->state.operations[key.lease.slot].words[0] &&
+        work->state.operations[key.lease.slot].words[2] == expected);
+  if (opcode == FS_READ)
+    CHECK(!sysopcopy(work, cache, &key, 0, expected, bytes));
+  CHECK(!sysopsaved(work, cache, &key) && !sysopack(work, cache, &key) &&
+        !sysopfinish(work, cache, &key, &file) &&
+        !sysfilerefunpin(&image->files, work->state.self, file) &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+}
+
+static void
 interruptclient(void)
 {
   Fileimage            *image;
@@ -320,6 +350,10 @@ interruptclient(void)
   int                   fd;
   Fdview                original, alias, displaced;
   Fileref               ref;
+  Connwork             *draftpeer = NULL;
+  Opkey                 draft = {0};
+  u64                   mask, ignored;
+  u8                    data[2] = {'p', 'q'};
   CHECK(!sysfileimage(&image));
   cache = sysfileimagecache(image);
   CHECK(sysfileimagefs(0, (uintptr_t) pipeiotrace & ~PAGE_MASK, &work) < 0 && !work &&
@@ -343,6 +377,17 @@ interruptclient(void)
         !sysfilerefconnection(&image->files, work->state.self, work->state.tag));
   CHECK(!sysfileimagepipe(0, work, &pipe, &active, fds, &business) && !pipe.operation.lease.seq &&
         !active.sequence && !business && fds[0] == 0 && fds[1] == 1 && caught == 1);
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        sysfileiostage(image, 0, 2, FS_WRITE, data, 1, &draftpeer, &draft) == -ERR_BAD_HANDLE &&
+        sysfileiostage(image, 0, fds[1], FS_WRITE, (const void *) 1, 1, &draftpeer, &draft) ==
+            -ERR_FAULT &&
+        !draftpeer && !draft.lease.seq && !sysfdobserve(&image->fds, fds[1], &original) &&
+        !sysfilerefview(&image->files, work->state.self, original.file, &ref) && !ref.pins &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  transfer(image, work, fds[1], FS_WRITE, data, sizeof(data), sizeof(data));
+  CHECK(!data[0]);
+  transfer(image, work, fds[0], FS_READ, data, sizeof(data), sizeof(data));
+  CHECK(data[0] == 'p' && data[1] == 'q');
   CHECK(!sysfdobserve(&image->fds, fds[0], &original) &&
         !sysfdsetflags(&image->fds, original.tag, BOOT_FD_CLOEXEC));
   for (fd = 2; fd < BOOT_FD_COUNT; fd++)

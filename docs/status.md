@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage410（2026-11-22）：双架构 QEMU `pipeio` 验证从 fd 准备单页读写请求，坏源指针回滚及写入快照；公开读写尚未接。
 - stage409（2026-11-22）：双架构 QEMU `pipeio` 验证私有 PIPE 在 fd 复制失败后由镜像的后台 CLOSE 回收两端；公开 `pipe()` 未接。
 - stage408（2026-11-22）：双架构 QEMU `pipeio` 验证 `nanosleep()` 期间可回收后台 CLOSE 的迟到结果，无需后续 fd 调用。
 - stage407（2026-11-22）：双架构 QEMU `pipeio` 验证后续公开 fd 调用推进迟到的 CLOSE 回复并归还旧引用。

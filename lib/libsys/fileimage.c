@@ -184,6 +184,74 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
 }
 
 isize
+sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
+               Connwork **out, Opkey *key)
+{
+  Fileslot   descriptor;
+  Fdview     view;
+  Fileref    ref;
+  Conncache *cache;
+  Connwork  *work;
+  Opkey      draft;
+  u64        pin, base;
+  u32        i;
+  isize      error;
+  if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
+      (opcode != FS_READ && opcode != FS_WRITE))
+    return -ERR_INVALID;
+  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
+    return -ERR_BAD_HANDLE;
+  error = sysfdobserve(&state->fds, (u32) fd, &view);
+  if (error || view.tag.state != SYSFD_LIVE)
+    return error ? error : -ERR_BAD_HANDLE;
+  if (state->contexts.contexts[layer].phase != RCTX_FREE)
+    return -ERR_BUSY;
+  if (state->contexts.sequence == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  error = sysfilerefview(&state->files, state->files.self, view.file, &ref);
+  if (error)
+    return error;
+  if (ref.connection.index >= SYSCONN_COUNT)
+    return -ERR_STATE;
+  work = &state->connections[ref.connection.index];
+  if (work->state.tag.generation != ref.connection.generation)
+    return -ERR_STALE;
+  cache = sysfileimagecache(state);
+  pin = view.file;
+  error = sysfilerefpin(&state->files, state->files.self, pin);
+  if (error)
+    return error;
+  error = sysopprepare(work, cache, layer, 1, state->contexts.sequence + 1, &pin, ref.session,
+                       opcode, 0, &draft);
+  if (!error) {
+    base = work->state.map.address;
+    if (opcode == FS_WRITE && bytes)
+      error = __sys_copy((void *) (base + FS_DATA_OFFSET + draft.lease.slot * FS_SLOT_BYTES), input,
+                         bytes);
+    if (!error) {
+      for (i = 0; i < sizeof(descriptor); i++)
+        ((volatile u8 *) &descriptor)[i] = 0;
+      descriptor.seq = draft.lease.seq;
+      descriptor.state = FS_SLOT_SUBMITTED;
+      descriptor.payload_bytes = descriptor.args[1] = bytes;
+      descriptor.object = ref.session;
+      descriptor.span = 1;
+      error = __sys_copy((void *) (base + FS_DESC_OFFSET + draft.lease.slot * FS_DESC_BYTES),
+                         &descriptor, sizeof(descriptor));
+    }
+    if (!error) {
+      for (i = 0; i < sizeof(draft); i++)
+        ((volatile u8 *) key)[i] = ((const u8 *) &draft)[i];
+      *out = work;
+      return 0;
+    }
+    if (sysopabort(work, cache, &draft, &pin))
+      return -ERR_STATE;
+  }
+  return sysfilerefunpin(&state->files, state->files.self, pin) ? -ERR_STATE : error;
+}
+
+isize
 sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                  Opkey *key, Opkey *background, u64 mask)
 {

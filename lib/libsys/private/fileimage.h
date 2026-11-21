@@ -26,6 +26,10 @@ isize sysfileimagefs(u32 layer, u64 address, Connwork **out);
    continuation; failed copyout hands both File references to the image worker. */
 isize sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int *fds,
                        isize *business);
+/* Stage one READ/WRITE chunk on the exact live File. The caller excludes
+   caught signals through Rctx registration and owns the resulting Opkey. */
+isize sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
+                     Connwork **out, Opkey *key);
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
 isize sysfileimagedup2(int fd, int target);
