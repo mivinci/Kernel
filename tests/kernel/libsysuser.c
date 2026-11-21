@@ -325,9 +325,16 @@ readfork(void)
               !__sys_forkprep((Handle) resource_trace[56], 0, &forked),
           32);
   if (!forked.construct) {
+    u64 inherited = connection_work.state.map.address;
+    u32 sample;
     REQUIRE(!__sys_getid(&child.pid, &child.image, &ppid) && ppid == parent.pid &&
                 !sysfixchild(&forked, sizeof(fix), parent.pid, parent.image, &view) &&
                 !sysfixlayers(&view, &layers) &&
+                !sysctxfixwaitcheck(&runtime_contexts, parent, child, layers) && inherited &&
+                !__sys_copy(&sample, (const void *) inherited, sizeof(sample)) &&
+                !sysconnforkunmap(&connection_work, parent, child, connection_work.state.space) &&
+                __sys_copy(&sample, (const void *) inherited, sizeof(sample)) == -ERR_FAULT &&
+                !sysconnforkunmap(&connection_work, parent, child, connection_work.state.space) &&
                 !sysctxfixwait(&runtime_contexts, parent, child, layers),
             33);
     readforkchild = 1;
@@ -346,7 +353,9 @@ readfork(void)
     REQUIRE(published == forked.pid && !work.view && !work.memory && !work.mapped, 34);
     args[0] = (u64) published;
     REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == (u64) published &&
-                result.values[1] == WAIT_EXITED && result.values[2] == 43,
+                result.values[1] == WAIT_EXITED && result.values[2] == 43 &&
+                connection_work.state.map.mapped && connection_work.state.map.verified &&
+                !__sys_copy(&i, (const void *) connection_work.state.map.address, sizeof(i)),
             35);
     resource_trace[57]++;
   }
