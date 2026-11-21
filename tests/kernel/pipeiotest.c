@@ -25,8 +25,8 @@ struct Packet
     }                                                                                              \
   } while (0)
 
-void
-pipeiotest(void)
+static void
+testpair(const char *roles)
 {
   Setid      set;
   Set        budget;
@@ -58,7 +58,7 @@ pipeiotest(void)
     packet.header.user_hi = BOOT_USER_HI;
     packet.arg.offset = offsetof(Packet, role);
     packet.arg.length = sizeof(packet.role);
-    packet.role[0] = i ? 'c' : 's';
+    packet.role[0] = roles[i];
     packet.resources[0].tag = BOOT_SELF_SPACE;
     packet.resources[0].handle = testresource(table, LOCAL_SPACE);
     packet.resources[1].tag = BOOT_SELF_ALLOC;
@@ -103,4 +103,11 @@ pipeiotest(void)
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck());
+}
+
+void
+pipeiotest(void)
+{
+  testpair("sc");
+  testpair("SC");
 }

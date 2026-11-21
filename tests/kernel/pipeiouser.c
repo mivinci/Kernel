@@ -6,7 +6,7 @@
 #include "private/start.h"
 #include "private/syscall.h"
 #include "../../sbin/fs/pipefile.h"
-#include "../../sbin/fs/pipedispatch.h"
+#include "../../sbin/fs/serve.h"
 
 #define ADDRESS  0x1600000UL
 #define PIPETEST 0xf008
@@ -204,6 +204,87 @@ refcall(Connwork *work, Conncache *cache, u64 opcode, Pipekey key)
 }
 
 static void
+createpipe(Connwork *work, Conncache *cache, Pipekey keys[2])
+{
+  Fileslot      slot = {0};
+  Filelease     lease;
+  Ipcmsg        result;
+  Msg           call;
+  Handle        rpc;
+  volatile u64 *created;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  CHECK(!sysconnworkreserve(work, cache, SYSFILE_MAIN, 1, &lease));
+  call.words[0] = FS_PIPE;
+  call.words[1] = work->state.map.connid;
+  call.words[2] = slot.seq = lease.seq;
+  call.words[3] = lease.slot;
+  slot.args[1] = PIPE_CAPACITY;
+  CHECK(
+      !__sys_copy((void *) (work->state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                  &slot, sizeof(slot)) &&
+      !ipc_call(work->state.call, &call, CALL_ASYNC, &result));
+  rpc = result.request;
+  CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] == lease.seq &&
+        result.words[2] == 2 && result.words[3] == 32 && !ipc_rqwait(rpc, RQ_FINISH, &result));
+  created =
+      (volatile u64 *) (work->state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+  keys[PIPE_READ].session = created[0];
+  keys[PIPE_READ].reference = created[1];
+  keys[PIPE_WRITE].session = created[2];
+  keys[PIPE_WRITE].reference = created[3];
+  CHECK(keys[0].session && keys[1].session && keys[0].session != keys[1].session &&
+        keys[0].reference && keys[1].reference && keys[0].reference != keys[1].reference &&
+        !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) && !sysconnworkrelease(work, cache, lease));
+}
+
+static void
+serviceloop(const Bootview *boot)
+{
+  static Filelink link;
+  static Pipefile file;
+  static Pipewait wait;
+  static Piperef  refs[2];
+  Pipetable       table = {&file, refs, 1, ARRAY_SIZE(refs), 0};
+  Fsservice       fs = {bootresource(boot, 256),
+                        bootresource(boot, BOOT_SELF_ALLOC),
+                        bootresource(boot, BOOT_SELF_SPACE),
+                        ADDRESS,
+                        &link,
+                        1,
+                        {&table, &wait, 1}};
+  do {
+    CHECK(!fsstep(&fs));
+  } while (!table.serial || link.ready);
+  CHECK(!link.memory && !link.address && !link.watch.owner.cookie && !wait.io.request &&
+        !file.stream.refs[0] && !file.stream.refs[1]);
+  pipeiotrace[0] = 7;
+}
+
+static void
+serviceclient(const Bootview *boot)
+{
+  static Connwork  work;
+  static Conncache cache;
+  Pipekey          keys[2];
+  Handle           call = bootresource(boot, 256);
+  Msg              invalid = {{FS_HELLO, 0, 23, 0}};
+  Ipcmsg           result;
+  CHECK(!ipc_call(call, &invalid, 0, &result) && (isize) result.words[0] == -EINVAL &&
+        result.words[1] == 23);
+  setup(boot, &work, &cache);
+  invalid.words[3] = UINT64_MAX;
+  CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -EBUSY &&
+        result.words[1] == 23);
+  invalid.words[0] = FS_ATTACH;
+  CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ENOSYS);
+  createpipe(&work, &cache, keys);
+  CHECK(!refcall(&work, &cache, FS_CLOSE, keys[PIPE_WRITE]));
+  /* Leave the read reference to the service's LIFE path. */
+  pipeiotrace[0] = 7;
+}
+
+static void
 run(const Bootview *boot)
 {
   const isize      status[] = {-EINTR, -EAGAIN, -ESPIPE, 0, 0, 0, -EPIPE};
@@ -217,30 +298,10 @@ run(const Bootview *boot)
   Handle           rpc;
   u32              attempt;
   Pipekey          keys[2], dup;
-  volatile u64    *created;
   setup(boot, &work, &cache);
+  createpipe(&work, &cache, keys);
   slot.state = FS_SLOT_SUBMITTED;
   slot.span = 1;
-  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
-  call.words[0] = FS_PIPE;
-  call.words[1] = work.state.map.connid;
-  call.words[2] = slot.seq = lease.seq;
-  call.words[3] = lease.slot;
-  slot.args[1] = PIPE_CAPACITY;
-  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
-                    &slot, sizeof(slot)) &&
-        !ipc_call(work.state.call, &call, CALL_ASYNC, &result));
-  rpc = result.request;
-  CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] == lease.seq &&
-        result.words[2] == 2 && result.words[3] == 32 && !ipc_rqwait(rpc, RQ_FINISH, &result));
-  created = (volatile u64 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
-  keys[PIPE_READ].session = created[0];
-  keys[PIPE_READ].reference = created[1];
-  keys[PIPE_WRITE].session = created[2];
-  keys[PIPE_WRITE].reference = created[3];
-  CHECK(keys[0].session && keys[1].session && keys[0].session != keys[1].session &&
-        keys[0].reference && keys[1].reference && keys[0].reference != keys[1].reference &&
-        !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) && !sysconnworkrelease(&work, &cache, lease));
   dup.session = keys[PIPE_WRITE].session;
   dup.reference = refcall(&work, &cache, FS_DUPREF, keys[PIPE_WRITE]);
   CHECK(dup.reference && dup.reference != keys[PIPE_WRITE].reference &&
@@ -316,6 +377,10 @@ main(int argc, char **argv)
   CHECK(boot && argc == 1);
   if (argv[0][0] == 's')
     server(boot);
+  else if (argv[0][0] == 'S')
+    serviceloop(boot);
+  else if (argv[0][0] == 'C')
+    serviceclient(boot);
   else
     run(boot);
   return 42;
