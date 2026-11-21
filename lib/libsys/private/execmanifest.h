@@ -27,4 +27,8 @@ struct Execmanifest
 isize sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call,
                       const Fileslot *slot, const void *page, Connpeer backend, u64 now,
                       Execsource lookup, void *context);
+/* Acquire the target observation through the original accepted REQUEST. The
+   dispatcher owns and shares one Fileowner per target image; use the normal
+   owner read/close path to retire the cookie after dependent work ends. */
+isize sysexecobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 target);
 #endif

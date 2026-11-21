@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage339（2026-11-22）：后端可通过原 EXEC_PREPARE REQUEST 观察真实目标准备镜像。双架构 QEMU `runtime` 验证虚报拒绝、真实登记和撤销后 ACK；目标引用/token 未接。
 - stage338（2026-11-22）：后端私有 EXEC_PREPARE 校验按原 REQUEST 快照并归并源引用，区分保留与 CLOEXEC-only。RV64/ARM64 QEMU `runtime`、7 项专项及格式通过；目标发权和 token 未接。
 - stage337（2026-11-22）：双架构 QEMU `runtime` 验证满 128 条 EXEC_PREPARE 双页实传、原请求占用和整对槽回收；7 项专项和格式通过。成功准备/token 仍未接。
 - stage336（2026-11-22）：EXEC_PREPARE 接入原请求账本；双架构 QEMU `runtime` 验证真实单页传输、后端拒绝及原 RPC 收尾。14 项主机回归和格式通过；后端成功准备及 Boot 未接。

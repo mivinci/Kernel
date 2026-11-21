@@ -1320,4 +1320,6 @@ stage331：FS 私有读块适配器把已登记的 `LOAD` REQUEST 和单页输�
 
 stage338：后端私有 `sysexecmanifest` 从已登记的原 REQUEST 一次快照 EXEC_PREPARE payload，核对连接、源镜像、期限、槽占用及逐 fd 的格式和后端身份。它只对每份源引用查询一次实际归属，再归并其保留和 CLOEXEC 计数；同一引用的会话不一致、fd 重复等输入不发布计划。RV64、ARM64 QEMU `runtime` 检查单条 CLOEXEC-only、128 条混合别名、错后端镜像与到期拒绝；7 项 exec fd 主机专项及格式通过。该层只核对源引用，目标必须另经可信准备观察授权；尚未发放目标引用或返回 token。
 
+stage339：`sysexecobserve` 使用后端的 FUTURE 权与原 EXEC_PREPARE REQUEST 核验同 PID 的真实准备镜像，仅在 PREPARING 时接管观察 cookie。RV64、ARM64 QEMU `runtime` 均拒绝尚不存在的目标代次；客户端通过原生 execprep 创建目标准备后，后端取得观察，随后从同一 cookie 读到真实 ABORT 并 ACK。页账守恒，格式检查通过。此点没有为目标安装引用或交付 token；生产后端 FUTURE 发权与配额仍待接。
+
 stage332：RV64、ARM64 QEMU `runtime` 用真实 CALL/REQUEST、已观察的连接和共享页运行相同的 FS 读块适配器。客户端核对页末四字节成功回复；服务端 defer 第二次读取，客户端在确认它已受理后取消，服务从原请求回复 EINTR；第三次输出跨页一字节被拒。取消和越界不写输出，三个原 RPC 均确认 FINISH/ACK 后才归还槽。服务端另核对在途读阻止同 inode 改写，关闭会话后可取得写票；该场景的最终页和账户费用守恒。35 项 FS 主机测试及格式检查通过。会话建立/关闭使用测试私有控制消息，读取数据来自测试缓冲；尚未接生产路径、权限或磁盘。

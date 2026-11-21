@@ -99,7 +99,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
       packet.resources[3].handle = call;
     }
     if (i) {
-      CHECK(!localobserve(table, OBSERVE_SOURCE, &call));
+      CHECK(!localobserve(table, OBSERVE_SOURCE | (roles[i] == '1' ? OBSERVE_FUTURE : 0), &call));
       packet.resources[packet.header.resource_count].tag = 258;
       packet.resources[packet.header.resource_count++].handle = call;
     }

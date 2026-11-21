@@ -18,18 +18,19 @@
 #include "../../sbin/tty/serial.h"
 #include "../../sbin/fs/loadio.h"
 
-#define ADDRESS  0x1600000UL
-#define STOP     0xf001
-#define GATE     0xf002
-#define PREPARE  0xf003
-#define ENDPEER  0xf004
-#define SEEN     0xf005
-#define LOADTEST 0xf006
-#define CONNID   0x10001
-#define IO_VALUE UINT64_C(0x1122334455667788)
-#define IO_WRITE UINT64_C(0x8877665544332211)
-#define IO_GHOST UINT64_C(0xdeadbeef5a5a5a5a)
-#define IO_GUARD UINT64_C(0x2468ace013579bdf)
+#define ADDRESS   0x1600000UL
+#define STOP      0xf001
+#define GATE      0xf002
+#define PREPARE   0xf003
+#define ENDPEER   0xf004
+#define SEEN      0xf005
+#define LOADTEST  0xf006
+#define EXECWATCH 0xf007
+#define CONNID    0x10001
+#define IO_VALUE  UINT64_C(0x1122334455667788)
+#define IO_WRITE  UINT64_C(0x8877665544332211)
+#define IO_GHOST  UINT64_C(0xdeadbeef5a5a5a5a)
+#define IO_GUARD  UINT64_C(0x2468ace013579bdf)
 static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
 static Filepool       pool;
@@ -405,7 +406,7 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
 }
 
 static void
-execmanifest(u64 file, u32 count)
+execmanifest(const Bootview *boot, u64 file, u32 count)
 {
   Fdtag     tag;
   Fdview    fd;
@@ -413,8 +414,11 @@ execmanifest(u64 file, u32 count)
   Msg       message;
   Ipcmsg    result;
   u64       pin = file, closing = 0;
-  Handle    rpc, original;
+  Handle    rpc, original, view = 0;
+  u64       target = work.state.self.image + 1;
   u32       i;
+  if (count > 1)
+    CHECK(!__sys_execprep(bootresource(boot, BOOT_SELF_SPACE), 0, &view, &target));
   for (i = 0; i < count; i++)
     CHECK(!sysfilerefalias(&pool, work.state.self, file) && !sysfdreserve(&fds, 0, &tag) &&
           tag.index == i && !sysfdpublish(&fds, tag, file, i & 1 ? 0 : BOOT_FD_CLOEXEC));
@@ -425,8 +429,7 @@ execmanifest(u64 file, u32 count)
   }
   CHECK(!sysexecfds(&execfds, &fds, &pool, &cache, work.state.self) &&
         !sysfilerefpin(&pool, work.state.self, pin) &&
-        !sysexecfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, work.state.self.image + 1, 100,
-                        &pin, &execsend) &&
+        !sysexecfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, target, 100, &pin, &execsend) &&
         !pin && execsend.key.lease.span == (count > 1 ? 2U : 1U));
   if (count > 1)
     CHECK(sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &spare) == -ERR_BUSY);
@@ -449,6 +452,11 @@ execmanifest(u64 file, u32 count)
     CHECK(!sysfdobserve(&fds, i, &fd) &&
           !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);
   execsend.key.lease.seq = 0;
+  if (view) {
+    Msg check = {{EXECWATCH, 0, 0, 0}};
+    CHECK(!__sys_execabort(view) && !ipc_call(work.state.call, &check, CALL_CONTROL, &result) &&
+          !result.words[0]);
+  }
   filecreatetrace[14] += count;
 }
 
@@ -596,8 +604,8 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   first = files[0];
-  execmanifest(first, 1);
-  execmanifest(first, BOOT_FD_COUNT);
+  execmanifest(boot, first, 1);
+  execmanifest(boot, first, BOOT_FD_COUNT);
   loadreads();
   ttygetattr(first);
   ttyiocall(first, FS_READ, 1);
@@ -761,6 +769,7 @@ server(const Bootview *boot, u32 recover)
   Filelink   links[2] = {0};
   Filelink  *link = &links[0];
   Filewatch *watch = &link->watch;
+  Fileowner  target = {0};
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   volatile u64   *data;
@@ -917,6 +926,11 @@ server(const Bootview *boot, u32 recover)
       CHECK(!ipc_reply(input.request, &reply));
       continue;
     }
+    if (opcode == EXECWATCH) {
+      CHECK(!recover && target.cookie && !sysfileownerread(&target) && target.reason == OBS_ABORT &&
+            !sysfileownerclose(&target) && !ipc_reply(input.request, &reply));
+      continue;
+    }
     seq = input.words[2];
     slot = input.words[3];
     reply.words[1] = seq;
@@ -958,6 +972,13 @@ server(const Bootview *boot, u32 recover)
             execplan.groups[0].reference == references[0] &&
             execplan.groups[0].retained == count / 2 &&
             execplan.groups[0].closed == (count + 1) / 2);
+      if (count == 1)
+        CHECK(sysexecobserve(&target, bootresource(boot, 258), &input, descriptor.args[1]) ==
+                  -ERR_STALE &&
+              !target.cookie);
+      else
+        CHECK(!sysexecobserve(&target, bootresource(boot, 258), &input, descriptor.args[1]) &&
+              target.cookie && target.pid == input.source && target.image == descriptor.args[1]);
       for (i = 0; i < count; i++)
         CHECK(execplan.rows[i].fd == i && execplan.rows[i].flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC));
       execplan.count = 0;

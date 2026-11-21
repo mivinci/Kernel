@@ -1,5 +1,6 @@
 #include "private/execmanifest.h"
 #include "private/syscall.h"
+#include <abi/observe.h>
 
 static int
 separate(const Execmanifest *out, const void *input, u64 bytes)
@@ -77,5 +78,30 @@ sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
       group->retained++;
   }
   out->count = groups;
+  return 0;
+}
+
+isize
+sysexecobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 target)
+{
+  u64   cookie, state, reason;
+  isize error;
+  if (!owner || !call || call->kind != IPC_CALL || call->words[0] != FS_EXEC_PREPARE ||
+      handlekind(call->source) != HANDLE_PROCESS || handlekind(call->request) != HANDLE_REQUEST ||
+      !call->image || target <= call->image)
+    return -ERR_INVALID;
+  if (owner->cookie || owner->pid || owner->image || owner->reason)
+    return -ERR_BUSY;
+  error = __sys_observe(permit, call->request, OBS_FUTURE, call->source, target, &cookie, &state,
+                        &reason);
+  if (error)
+    return error;
+  if (state == OBS_ENDED)
+    return -ERR_STALE;
+  if (state != OBS_PREPARING || !cookie || reason)
+    return -ERR_STATE;
+  owner->pid = call->source;
+  owner->image = target;
+  owner->cookie = cookie;
   return 0;
 }
