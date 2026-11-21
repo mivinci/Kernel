@@ -59,8 +59,8 @@ blksync(void *context, u32 phase, const Vbuf *buffer)
   return 0;
 }
 static void
-transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
-         u32 type, u64 sector, u64 cookie, u8 seed)
+transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
+         const Vblkconfig *config, u32 type, u64 sector, u64 cookie, u8 seed)
 {
   Vblkreq      request = {0};
   Vdone        done[VQ_BATCH];
@@ -90,7 +90,7 @@ transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   REQUIRE(!vinterrupt(device, &causes) && causes == VDEV_IRQ_USED &&
               !virtioread(device->ops.context, 0x60, &causes) && !causes,
           181);
-  REQUIRE(!vrpoll(ring, 1, done, &count, &more), 175);
+  REQUIRE(!vrpoll(ring, epoch, done, &count, &more), 175);
   REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE &&
               vblkfinish(&request, &done[0]) == VBLK_OK && !request.held,
           177);
@@ -105,29 +105,46 @@ transfer(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
     vdev_trace[3]++;
 }
 static void
-testblock(Vdev *device, const Vblkconfig *config, u32 member)
+startqueue(Vdev *device, Vring *ring, u64 epoch)
 {
-  Vring    ring;
   Vringops ops;
   u8      *desc = (void *) VTEST_DMA_BASE;
-  Handle   binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
-  u64      irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
-
-  REQUIRE(binding > 0, 182);
   ops.context = device;
   ops.sync = coherentsync;
   ops.fence = virtiofence;
   ops.notify = notify;
-  REQUIRE(!vrinit(&ring, 1, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
+  REQUIRE(!vrinit(ring, epoch, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
   REQUIRE(!vqueue(device, 0, vdev_trace[32], vdev_trace[33], vdev_trace[34]), 171);
   REQUIRE(!vstart(device), 172);
-  transfer(device, &ring, binding, irqevent, config, VBLK_READ, 1, 1,
+}
+static void
+testblock(Vdev *device, const Vblkconfig *config, u32 member)
+{
+  Vring      ring;
+  Vdone      stale[VQ_BATCH];
+  Vblkconfig fresh;
+  u32        count, more;
+  Handle     binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
+  u64        irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
+
+  REQUIRE(binding > 0, 182);
+  startqueue(device, &ring, 1);
+  transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 1, 1,
            config->readonly ? 0xa7 : 0x51);
   if (!config->readonly) {
-    transfer(device, &ring, binding, irqevent, config, VBLK_WRITE, 2, 2, 0x37);
-    transfer(device, &ring, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0);
-    transfer(device, &ring, binding, irqevent, config, VBLK_READ, 2, 4, 0x37);
+    transfer(device, &ring, 1, binding, irqevent, config, VBLK_WRITE, 2, 2, 0x37);
+    transfer(device, &ring, 1, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0);
+    transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 2, 4, 0x37);
   }
+  reset(device);
+  REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
+              fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
+              fresh.flush == config->flush,
+          183);
+  startqueue(device, &ring, 2);
+  REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
+  transfer(device, &ring, 2, binding, irqevent, &fresh, VBLK_READ, config->readonly ? 1 : 2, 5,
+           config->readonly ? 0xa7 : 0x37);
 }
 int
 main(int argc, char **argv)

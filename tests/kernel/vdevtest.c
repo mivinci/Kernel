@@ -135,9 +135,9 @@ vdevtest(const Dtinfo *info)
     }
     REQUIRE(trace[0] == 99 && !trace[31] && trace[12] == count && trace[13] + trace[14] == count &&
             trace[14] == trace[17] + trace[18] + trace[19] && trace[15] == trace[14] &&
-            trace[16] == 2 * trace[14] && trace[22] == 2 * trace[18] + trace[19] &&
-            trace[2] == trace[18] && trace[3] == trace[18] &&
-            trace[38] == trace[2] + trace[3] + trace[22]);
+            trace[16] == 2 * trace[14] + trace[18] + trace[19] &&
+            trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == trace[18] &&
+            trace[3] == trace[18] && trace[38] == trace[2] + trace[3] + trace[22]);
     interrupts += (u32) trace[38];
     probes += (u32) trace[12];
     empty += (u32) trace[13];

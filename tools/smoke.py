@@ -1548,8 +1548,8 @@ def exercise(args, run_dir, record):
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
-                                  negotiated=3,resets=6,rng=1,rwsectors=256,rosectors=128,
-                                  reads=3,writes=1,flushes=1,interrupts=5,charged=0,
+                                  negotiated=3,resets=8,rng=1,rwsectors=256,rosectors=128,
+                                  reads=5,writes=1,flushes=1,interrupts=7,charged=0,
                                   allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
