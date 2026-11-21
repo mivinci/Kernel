@@ -16,6 +16,29 @@ home(u64 block, u64 blocks)
 {
   return block >= 65 && block < blocks;
 }
+static int
+hometargets(const Journalblock *metadata, u32 count, u64 blocks)
+{
+  u32 i, j;
+  for (i = 0; i < count; i++) {
+    if (!home(metadata[i].block, blocks))
+      return 0;
+    for (j = 0; j < i; j++)
+      if (metadata[i].block == metadata[j].block)
+        return 0;
+  }
+  return 1;
+}
+static void
+copymetadata(Journal *journal, const Journalblock *metadata, u32 count)
+{
+  u32 i;
+  journal->metadata_count = count;
+  for (i = 0; i < count; i++) {
+    journal->metadata[i].block = metadata[i].block;
+    journal->metadata[i].bytes = metadata[i].bytes;
+  }
+}
 static void
 clear(Journal *journal)
 {
@@ -95,13 +118,8 @@ journalbegin(Journal *journal, const Journalplan *plan)
         !separate(plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata), plan->data,
                   (u64) plan->data_count * sizeof(*plan->data)))))
     return -ERR_INVALID;
-  for (i = 0; i < plan->metadata_count; i++) {
-    if (!home(plan->metadata[i].block, journal->blocks))
-      return -ERR_INVALID;
-    for (j = 0; j < i; j++)
-      if (plan->metadata[i].block == plan->metadata[j].block)
-        return -ERR_INVALID;
-  }
+  if (!hometargets(plan->metadata, plan->metadata_count, journal->blocks))
+    return -ERR_INVALID;
   for (i = 0; i < plan->data_count; i++) {
     if (plan->data[i].block < 99 || plan->data[i].block >= journal->blocks)
       return -ERR_INVALID;
@@ -125,12 +143,8 @@ journalbegin(Journal *journal, const Journalplan *plan)
   journal->header = plan->header;
   journal->committed = plan->committed;
   journal->empty = plan->empty;
-  journal->metadata_count = plan->metadata_count;
+  copymetadata(journal, plan->metadata, plan->metadata_count);
   journal->data_count = plan->data_count;
-  for (i = 0; i < plan->metadata_count; i++) {
-    journal->metadata[i].block = plan->metadata[i].block;
-    journal->metadata[i].bytes = plan->metadata[i].bytes;
-  }
   for (i = 0; i < plan->data_count; i++) {
     journal->data[i].block = plan->data[i].block;
     journal->data[i].bytes = plan->data[i].bytes;
@@ -139,12 +153,43 @@ journalbegin(Journal *journal, const Journalplan *plan)
   journal->cursor = journal->durable = 0;
   return 0;
 }
+isize
+journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
+            const u8 *empty)
+{
+  u32 i, j;
+  u64 descriptors = (u64) count * sizeof(*metadata);
+  if (blocks <= 99 || blocks > 32768 || !txid || !count || count > JOURNAL_META ||
+      !external(journal, metadata, descriptors) || !external(journal, empty, JOURNAL_BYTES) ||
+      !separate(metadata, descriptors, empty, JOURNAL_BYTES) ||
+      !hometargets(metadata, count, blocks))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    const u8 *bytes = metadata[i].bytes;
+    if (!external(journal, bytes, JOURNAL_BYTES) ||
+        !separate(metadata, descriptors, bytes, JOURNAL_BYTES) ||
+        !separate(empty, JOURNAL_BYTES, bytes, JOURNAL_BYTES))
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (!separate(metadata[j].bytes, JOURNAL_BYTES, bytes, JOURNAL_BYTES))
+        return -ERR_INVALID;
+  }
+  /* The previous EMPTY number is immaterial until this log is retired. */
+  journalinit(journal, blocks, 0);
+  journal->txid = txid;
+  journal->empty = empty;
+  copymetadata(journal, metadata, count);
+  journal->durable = 1;
+  journal->phase = JOURNAL_HOME_WRITE;
+  return 0;
+}
 static int
 output(const Journal *journal, const void *out, u64 bytes)
 {
   u32 i;
-  if (!external(journal, out, bytes) || !separate(journal->header, JOURNAL_BYTES, out, bytes) ||
-      !separate(journal->committed, JOURNAL_BYTES, out, bytes) ||
+  if (!external(journal, out, bytes) ||
+      (journal->header && !separate(journal->header, JOURNAL_BYTES, out, bytes)) ||
+      (journal->committed && !separate(journal->committed, JOURNAL_BYTES, out, bytes)) ||
       !separate(journal->empty, JOURNAL_BYTES, out, bytes))
     return 0;
   for (i = 0; i < journal->metadata_count; i++)

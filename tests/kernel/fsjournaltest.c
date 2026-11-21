@@ -59,11 +59,61 @@ next(u32 index, Journalio *io)
         io->block == blocks[index]);
   CHECK(io->kind == JOURNAL_FLUSH ? !io->bytes : io->bytes == bytes[sources[index]]);
 }
+static u32
+testredo(void)
+{
+  static const u64 targets[] = {65, 66, 0, 18, 0};
+  static const u32 sources[] = {3, 4, 0, 2, 0};
+  Journalio        io, old;
+  Journalplan      plan;
+  u32              i, edge;
+  for (edge = 0; edge <= ARRAY_SIZE(targets); edge++) {
+    metadata[0].block = 65;
+    metadata[1].block = 65;
+    CHECK(journalredo(&journal, 1024, 47, metadata, 2, bytes[2]) == -ERR_INVALID);
+    metadata[1].block = 66;
+    CHECK(journalredo(&journal, 1024, 47, metadata, 2, bytes[3]) == -ERR_INVALID &&
+          !journalredo(&journal, 1024, 47, metadata, 2, bytes[2]));
+    metadata[0].block = 901;
+    for (i = 0; i < ARRAY_SIZE(targets); i++) {
+      CHECK(journal.durable && !journal.last && journalrelease(&journal) == -ERR_STATE &&
+            !journalnext(&journal, &io) && io.txid == 47 && io.serial == i + 1 &&
+            io.block == targets[i] && io.bytes == (sources[i] ? bytes[sources[i]] : NULL) &&
+            io.kind == (sources[i] ? JOURNAL_WRITE : JOURNAL_FLUSH));
+      if (i == edge) {
+        copyio(&io, &old);
+        old.serial++;
+        CHECK(!journalstop(&journal) && journalrelease(&journal) == -ERR_WOULD_BLOCK &&
+              journalcomplete(&journal, &old, 1) == -ERR_STALE &&
+              !journalcomplete(&journal, &io, 1) && !journalrelease(&journal) &&
+              journal.phase == JOURNAL_STOPPED && !journal.last &&
+              journalnext(&journal, &io) == -ERR_STATE);
+        break;
+      }
+      CHECK(!journalcomplete(&journal, &io, 1));
+    }
+  }
+  CHECK(journal.phase == JOURNAL_DONE && !journalrelease(&journal) &&
+        journal.phase == JOURNAL_IDLE && journal.last == 47);
+  metadata[0].block = 65;
+  plan.header = bytes[0];
+  plan.committed = bytes[1];
+  plan.empty = bytes[2];
+  plan.metadata = metadata;
+  plan.data = NULL;
+  plan.metadata_count = 2;
+  plan.data_count = 0;
+  copyio(&io, &old);
+  CHECK(!journalbegin(&journal, &plan) && !journalnext(&journal, &io) && io.txid == 48 &&
+        io.serial == old.serial + 1 && journalcomplete(&journal, &old, 1) == -ERR_STALE &&
+        !journalstop(&journal) && !journalcomplete(&journal, &io, 1) && !journalrelease(&journal));
+  return i;
+}
 void
 fsjournaltest(void)
 {
   Journalio io, wrong;
-  u32       i, edge;
+  u32       i, edge, redo;
   begin();
   /* The engine owns a copied descriptor view, not these caller arrays. */
   data[0].block = 900;
@@ -104,12 +154,15 @@ fsjournaltest(void)
           !journalcomplete(&journal, &io, 1) && journal.phase == JOURNAL_STOPPED &&
           !journalrelease(&journal) && !journal.header && journal.last == 7);
   }
+  redo = testredo();
   putstr("FSJOURNALCHECK operations=");
   puthex(14);
   putstr(" failures=");
   puthex(14);
   putstr(" timeouts=");
   puthex(14);
+  putstr(" redo=");
+  puthex(redo);
   putstr(" state_bytes=");
   puthex(sizeof(journal));
   putstr("\n");

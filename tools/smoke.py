@@ -1724,7 +1724,7 @@ def exercise(args, run_dir, record):
                         raise SmokeError("filesystem cache authority/version gate mismatch")
                     record['fs_cache']=cache[0]
                     journal=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FSJOURNALCHECK ")]
-                    if journal != [dict(operations=14,failures=14,timeouts=14,state_bytes=2432)]:
+                    if journal != [dict(operations=14,failures=14,timeouts=14,redo=5,state_bytes=2432)]:
                         raise SmokeError("filesystem journal sequencing/drain gate mismatch")
                     record['fs_journal']=journal[0]
                     txns=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FSTXNCHECK ")]

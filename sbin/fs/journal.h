@@ -65,6 +65,12 @@ isize journalinit(Journal *journal, u64 blocks, u64 last);
    every independent 4KiB snapshot stays immutable, owned and alive through
    release. Source storage must not overlap state, descriptors or snapshots. */
 isize journalbegin(Journal *journal, const Journalplan *plan);
+/* Start recovery in fresh state after isolating and draining old IO. The
+   owner supplies the validated COMMITTED txid, every verified and classified
+   home image, and the encoded EMPTY marker for txid. Keep the snapshots
+   immutable through release. Only successful retirement permits reuse. */
+isize journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
+                  const u8 *empty);
 /* One outstanding operation. This reserves an IO anchor but does not submit
    it. Submission failure with no lower references may complete with success=0.
    Repeated next while outstanding returns BUSY, never a second submission. */
