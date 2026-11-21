@@ -10,8 +10,14 @@
 #include <hal/dma.h>
 #include <dma.h>
 #include <vm.h>
-extern const u8  vdev_image[], vdev_image_end[];
-extern const u64 vdev_trace_address;
+extern const u8        vdev_image[], vdev_image_end[];
+extern const u64       vdev_trace_address;
+typedef struct Testdma Testdma;
+struct Testdma
+{
+  Dmaid domain;
+  Memid pages[VTEST_PAGES];
+};
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -22,16 +28,17 @@ extern const u64 vdev_trace_address;
     }                                                                                              \
   } while (0)
 static void
-load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengths[8],
-     const u32 irqs[8], Memid dma[VTEST_PAGES])
+load(Handle pid, Handle memory, const Dtinfo *info, u32 count, const u32 members[VTEST_MEMBERS],
+     u64 page, Testdma dma[VTEST_MEMBERS])
 {
   struct
   {
     Boot     header;
-    Resentry resources[11];
+    Resentry resources[3 + VTEST_MEMBERS];
   } packet;
   u64      trace[VTEST_TRACE];
-  u32      i;
+  u32      i, j, slot;
+  Pglim    limits;
   Procinfo process;
   Rtable  *table = proctable(pid);
   for (i = 0; i < sizeof(packet); i++)
@@ -51,28 +58,52 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
   packet.resources[2].handle = memory;
   for (i = 0; i < count; i++) {
     packet.resources[3 + i].tag = VTEST_IRQ_TAG + i;
-    REQUIRE(!procirqinstall(pid, irqs[i], IRQ_BIT_MIN + i, &packet.resources[3 + i].handle));
+    REQUIRE(!procirqinstall(pid, info->dev[members[i]].irq[0].number, IRQ_BIT_MIN + i,
+                            &packet.resources[3 + i].handle));
   }
   testload(pid, vdev_image, (u64) (vdev_image_end - vdev_image), &packet, sizeof(packet));
   REQUIRE(!procinfo(pid, &process));
   for (i = 0; i < VTEST_TRACE; i++)
     trace[i] = 0;
   trace[1] = count;
+  limits.minpa = info->ram[0].base;
+  limits.maxpa_exclusive = limits.minpa + info->ram[0].size;
+  limits.align = PAGE_SIZE;
+  /* The test loader supplies the QEMU virt identity/coherent policy.
+     Each transport owns separate pins even when the MMIO page is shared. */
   for (i = 0; i < count; i++) {
-    trace[4 + i] = offsets[i];
-    trace[23 + i] = lengths[i];
-  }
-  /* QEMU virt uses identity DMA and coherent RAM. Only this trusted test
-     loader passes these addresses; retain the Mem managers until the guest
-     proves reset, even if its process exits on a failed transfer. */
-  for (i = 0; i < VTEST_PAGES; i++) {
-    REQUIRE(!memcreate(process.acct, PAGE_SIZE, &dma[i]));
-    REQUIRE(!spacemap(process.space, dma[i], 0, VTEST_DMA_BASE + i * PAGE_SIZE, PAGE_SIZE,
-                      VM_READ | VM_WRITE));
-    REQUIRE(!mempage(dma[i], 0, &trace[32 + i]));
-    REQUIRE(!hal_dma_sync(kaddr(trace[32 + i]), PAGE_SIZE, HDMA_BEFORE, HDMA_DEVICE_READ, 1));
+    trace[4 + i] = info->dev[members[i]].reg[0].base - page;
+    trace[23 + i] = info->dev[members[i]].reg[0].size;
+    REQUIRE(!dmaopen(members[i], process.acct, &limits, 1, &dma[i].domain));
+    for (j = 0; j < VTEST_PAGES; j++) {
+      Memid pin;
+      slot = i * VTEST_PAGES + j;
+      REQUIRE(!dmaallocpage(dma[i].domain, &pin));
+      dma[i].pages[j] = pin;
+      REQUIRE(!spacemap(process.space, pin, 0, VTEST_DMA_BASE + slot * PAGE_SIZE, PAGE_SIZE,
+                        VM_READ | VM_WRITE));
+      REQUIRE(!dmaaddress(dma[i].domain, pin, 0, PAGE_SIZE, &trace[VTEST_DMA_TRACE + slot]));
+      REQUIRE(!dmasync(dma[i].domain, pin, 0, PAGE_SIZE, HDMA_BEFORE,
+                       HDMA_DEVICE_READ | HDMA_DEVICE_WRITE));
+      REQUIRE(!memfree(pin));
+    }
   }
   REQUIRE(!spacewrite(process.space, vdev_trace_address, trace, sizeof(trace)));
+}
+static void
+testsync(u64 base)
+{
+  void *address = kaddr(base);
+  u64   grain = hal_dma_granule();
+  REQUIRE(hal_dma_sync(address, 0, HDMA_AFTER, HDMA_DEVICE_WRITE, 1) == -ERR_INVALID);
+  if (!grain) {
+    REQUIRE(hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 0) == -ERR_NOTSUP);
+    return;
+  }
+  REQUIRE(grain <= PAGE_SIZE && !(PAGE_SIZE % grain));
+  REQUIRE(hal_dma_sync(address, grain - 1, HDMA_AFTER, HDMA_DEVICE_WRITE, 0) == -ERR_INVALID);
+  REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_BEFORE, HDMA_DEVICE_WRITE, 0));
+  REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 0));
 }
 static void
 testpins(Setid set, const Dtinfo *info, u32 device)
@@ -106,6 +137,7 @@ testpins(Setid set, const Dtinfo *info, u32 device)
           base <= limits.maxpa_exclusive - PAGE_SIZE &&
           !dmaaddress(domain, oldest, PAGE_SIZE - 1, 1, &address) &&
           address == base + PAGE_SIZE - 1);
+  testsync(base);
   REQUIRE(dmaaddress(other, oldest, 0, 1, &address) == -ERR_DENIED &&
           dmasync(other, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_DENIED &&
           dmaaddress(domain, oldest, PAGE_SIZE - 1, 2, &address) == -ERR_INVALID &&
@@ -158,11 +190,11 @@ vdevtest(const Dtinfo *info)
   Pgstat     before, after;
   Device     window;
   Handle     pid, memory;
-  Memid      dma[VTEST_PAGES];
-  u64        page, members, offsets[8], lengths[8], trace[VTEST_TRACE];
+  Testdma    dma[VTEST_MEMBERS];
+  u64        page, members, trace[VTEST_TRACE];
   u64        started, current;
-  u32        irqs[8], interrupts = 0, retired = 0;
-  u32 i, j, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
+  u32        devices[VTEST_MEMBERS], interrupts = 0, retired = 0, reclaimed = 0;
+  u32 i, j, k, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
   u32 rng = 0, writable = 0, readonly = 0, reads = 0, writes = 0, flushes = 0;
   u64 rwsectors = 0, rosectors = 0;
   int error;
@@ -185,17 +217,15 @@ vdevtest(const Dtinfo *info)
     for (j = i; j < info->ndev; j++)
       if (info->dev[j].kind == DT_VIRTIO &&
           ALIGN_DOWN(info->dev[j].reg[0].base, PAGE_SIZE) == page) {
-        REQUIRE(count < 8);
+        REQUIRE(count < VTEST_MEMBERS);
         members |= (u64) 1 << j;
-        offsets[count] = info->dev[j].reg[0].base - page;
-        lengths[count] = info->dev[j].reg[0].size;
         REQUIRE(info->dev[j].nirq == 1);
-        irqs[count++] = info->dev[j].irq[0].number;
+        devices[count++] = j;
       }
     REQUIRE(count && !devgroup(page, members, &id));
     REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pid) && !procinfo(pid, &process));
     REQUIRE(!procmmioinstallgroup(pid, page, members, 3, &memory));
-    load(pid, memory, count, offsets, lengths, irqs, dma);
+    load(pid, memory, info, count, devices, page, dma);
     REQUIRE(!procpublish(pid) && !clockmono(&started));
     do {
       error = procrunone();
@@ -235,23 +265,22 @@ vdevtest(const Dtinfo *info)
     flushes += (u32) trace[3];
     pages++;
     REQUIRE(life.reason == LIFE_EXIT && life.code == 42);
-    for (j = 0; j < VTEST_PAGES; j++) {
-      void *address = kaddr(trace[32 + j]);
-      u64   grain = hal_dma_granule();
-      REQUIRE(hal_dma_sync(address, 0, HDMA_AFTER, HDMA_DEVICE_WRITE, 1) == -ERR_INVALID);
-      if (grain) {
-        REQUIRE(grain <= PAGE_SIZE && !(PAGE_SIZE % grain));
-        REQUIRE(hal_dma_sync(address, grain - 1, HDMA_AFTER, HDMA_DEVICE_WRITE, 0) == -ERR_INVALID);
-        REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_BEFORE, HDMA_DEVICE_WRITE, 0));
-        REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 0));
-      } else
-        REQUIRE(hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 0) == -ERR_NOTSUP);
-      REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 1));
-      REQUIRE(!memfree(dma[j]));
-    }
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
+    for (j = 0; j < count; j++) {
+      Mem held;
+      for (k = 0; k < VTEST_PAGES; k++) {
+        REQUIRE(!memstat(dma[j].pages[k], &held) && held.kind == MEM_DMA && held.refs == 1 &&
+                !held.managers);
+        REQUIRE(!dmasync(dma[j].domain, dma[j].pages[k], 0, PAGE_SIZE, HDMA_AFTER,
+                         HDMA_DEVICE_READ | HDMA_DEVICE_WRITE));
+      }
+      REQUIRE(!dmaend(dma[j].domain));
+      for (k = 0; k < VTEST_PAGES; k++)
+        REQUIRE(memstat(dma[j].pages[k], &held) == MEM_BAD);
+      reclaimed += VTEST_PAGES;
+    }
     REQUIRE(!devstat(id, &window) && !window.refs && !window.mappings);
   }
   REQUIRE(pages && rng == 1 && writable == 1 && readonly == 1 && probes == empty + found &&
@@ -290,6 +319,8 @@ vdevtest(const Dtinfo *info)
   puthex(retired);
   putstr(" dmagrain=");
   puthex(hal_dma_granule());
+  putstr(" dmapages=");
+  puthex(reclaimed);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

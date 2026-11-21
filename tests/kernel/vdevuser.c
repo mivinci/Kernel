@@ -7,7 +7,13 @@
 #include "private/start.h"
 #include "private/virtio/block.h"
 #include "virtiouser.h"
-volatile u64 vdev_trace[VTEST_TRACE];
+volatile u64           vdev_trace[VTEST_TRACE];
+typedef struct Testdma Testdma;
+struct Testdma
+{
+  u64                 va;
+  const volatile u64 *addresses;
+};
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -60,14 +66,15 @@ blksync(void *context, u32 phase, const Vbuf *buffer)
 }
 static void
 transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
-         const Vblkconfig *config, u32 type, u64 sector, u64 cookie, u8 seed, Vdone *prior)
+         const Vblkconfig *config, const Testdma *dma, u32 type, u64 sector, u64 cookie, u8 seed,
+         Vdone *prior)
 {
   Vblkreq      request = {0};
   Vdone        done[VQ_BATCH];
   Ipcmsg       event;
-  Vblkhead    *header = (void *) (VTEST_DMA_BASE + 3 * PAGE_SIZE);
-  volatile u8 *data = (void *) (VTEST_DMA_BASE + 4 * PAGE_SIZE);
-  volatile u8 *status = (void *) (VTEST_DMA_BASE + 5 * PAGE_SIZE);
+  Vblkhead    *header = (void *) (dma->va + 3 * PAGE_SIZE);
+  volatile u8 *data = (void *) (dma->va + 4 * PAGE_SIZE);
+  volatile u8 *status = (void *) (dma->va + 5 * PAGE_SIZE);
   u32          bytes = type == VBLK_FLUSH ? 0 : VBLK_SECTOR;
   u32          count, more, i, causes;
   u64          generation, started;
@@ -77,9 +84,9 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           179);
-  REQUIRE(!vblksubmit(&request, ring, config, type, sector, cookie, vdev_trace[35],
-                      bytes ? vdev_trace[36] : 0, bytes, vdev_trace[37], header, status, blksync,
-                      device),
+  REQUIRE(!vblksubmit(&request, ring, config, type, sector, cookie, dma->addresses[3],
+                      bytes ? dma->addresses[4] : 0, bytes, dma->addresses[5], header, status,
+                      blksync, device),
           174);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent,
@@ -111,24 +118,25 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
     vdev_trace[3]++;
 }
 static void
-startqueue(Vdev *device, Vring *ring, u64 epoch)
+startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
 {
   Vringops ops;
-  u8      *desc = (void *) VTEST_DMA_BASE;
+  u8      *desc = (void *) dma->va;
   ops.context = device;
   ops.sync = coherentsync;
   ops.fence = virtiofence;
   ops.notify = notify;
   REQUIRE(!vrinit(ring, epoch, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
-  REQUIRE(!vqueue(device, 0, vdev_trace[32], vdev_trace[33], vdev_trace[34]), 171);
+  REQUIRE(!vqueue(device, 0, dma->addresses[0], dma->addresses[1], dma->addresses[2]), 171);
   REQUIRE(!vstart(device), 172);
 }
 static void
-resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config)
+resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
+             const Testdma *dma)
 {
   Vblkreq      request = {0};
-  Vblkhead    *header = (void *) (VTEST_DMA_BASE + 3 * PAGE_SIZE);
-  volatile u8 *status = (void *) (VTEST_DMA_BASE + 5 * PAGE_SIZE);
+  Vblkhead    *header = (void *) (dma->va + 3 * PAGE_SIZE);
+  volatile u8 *status = (void *) (dma->va + 5 * PAGE_SIZE);
   Ipcmsg       event;
   u64          generation, started = now();
   u32          causes;
@@ -136,8 +144,8 @@ resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblk
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           185);
-  REQUIRE(!vblksubmit(&request, ring, config, VBLK_READ, 1, 6, vdev_trace[35], vdev_trace[36],
-                      VBLK_SECTOR, vdev_trace[37], header, status, blksync, device),
+  REQUIRE(!vblksubmit(&request, ring, config, VBLK_READ, 1, 6, dma->addresses[3], dma->addresses[4],
+                      VBLK_SECTOR, dma->addresses[5], header, status, blksync, device),
           186);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent && !__sys_alarmcancel(&generation),
@@ -160,29 +168,32 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   Vdone      stale[VQ_BATCH];
   Vdone      prior = {0};
   Vblkconfig fresh;
+  Testdma    dma;
   u32        count, more;
   Handle     binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
   u64        irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
 
   REQUIRE(binding > 0, 182);
-  startqueue(device, &ring, 1);
-  transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 1, 1,
+  dma.va = VTEST_DMA_BASE + member * VTEST_PAGES * PAGE_SIZE;
+  dma.addresses = &vdev_trace[VTEST_DMA_TRACE + member * VTEST_PAGES];
+  startqueue(device, &ring, 1, &dma);
+  transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 1, 1,
            config->readonly ? 0xa7 : 0x51, &prior);
   if (!config->readonly) {
-    transfer(device, &ring, 1, binding, irqevent, config, VBLK_WRITE, 2, 2, 0x37, NULL);
-    transfer(device, &ring, 1, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0, NULL);
-    transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 2, 4, 0x37, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_WRITE, 2, 2, 0x37, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_FLUSH, 0, 3, 0, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2, 4, 0x37, NULL);
   }
-  resetpending(device, &ring, binding, irqevent, config);
+  resetpending(device, &ring, binding, irqevent, config, &dma);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
               fresh.flush == config->flush,
           183);
-  startqueue(device, &ring, 2);
+  startqueue(device, &ring, 2, &dma);
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
   REQUIRE(prior.generation == 1, 191);
-  transfer(device, &ring, 2, binding, irqevent, &fresh, VBLK_READ, config->readonly ? 1 : 2, 1,
-           config->readonly ? 0xa7 : 0x37, &prior);
+  transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ, config->readonly ? 1 : 2,
+           1, config->readonly ? 0xa7 : 0x37, &prior);
   REQUIRE(prior.generation == 2, 192);
 }
 int
