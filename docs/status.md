@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage210：外层真实活动 Rctx 中的 handler fork 已在双架构验证：父保留成功结果、子固定 INTERRUPTED，双方完成汇编恢复和收尾。格式及 sigframe 通过；IPC 路由修复待接。
+
 - stage209：进程信号清理改动追加双架构 sigconfig/sigsuspend/jobs 六次 QEMU 和 11 项主机 sigfork 回归，全部通过。外层活动 Rctx 与 IPC 修复待接。
 
 - stage208：双架构验证 handler 内原生 fork、子嵌套信号及父子各自 sigreturn；修复撤销未发布孩子时遗漏活动信号层的清理。格式与双架构 sigframe 通过。外层活动 Rctx 与 IPC 修复待接。

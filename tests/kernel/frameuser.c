@@ -355,6 +355,7 @@ static Forkret   forkcapture;
 static Handle    forksource;
 static u64       forkimage;
 static Rkey      forkcompleted;
+static Rkey      forkouter;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer);
 static void
 forkrepair(const Forkret *result)
@@ -428,7 +429,7 @@ forkprepuser(void)
   forkimage = image;
   context_self.pid = source;
   context_self.image = image;
-  REQUIRE(!sysctxinit(&runtime_contexts, context_self) &&
+  REQUIRE((frame_trace[1] == 14 || !sysctxinit(&runtime_contexts, context_self)) &&
               !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
               !sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETID, NULL, &forkcompleted) &&
               !sysctxinvoke(&runtime_contexts, context_self, forkcompleted),
@@ -480,6 +481,10 @@ forkprepuser(void)
   fix.contexts[0].action = FIX_LAYER_UNSENT;
   fix.contexts[1].sequence = forkcompleted.sequence;
   fix.contexts[1].action = FIX_LAYER_COMPLETE;
+  if (frame_trace[1] == 14) {
+    fix.contexts[2].sequence = forkouter.sequence;
+    fix.contexts[2].action = FIX_LAYER_INTERRUPT;
+  }
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;
@@ -511,11 +516,11 @@ handlerforktrampoline(u64 signum, const Siginfo *info, void *context, u64 functi
                       u64 flags)
 {
   UNUSED(info);
-  UNUSED(context);
   UNUSED(function);
   UNUSED(flags);
   REQUIRE(signum == SIGNAL_USR2, 248);
   handlerforkresult = forkprepuser();
+  REQUIRE(sysctxcapture(&runtime_contexts, runtime_contexts.self, forkouter, context) == 1, 251);
   __sys_sigreturn((void *) address);
 }
 int
@@ -533,17 +538,28 @@ main(int argc, char **argv)
     return forkprepuser();
   if (mode == 14) {
     Sigact action;
-    Sigsel selector;
     Handle self, parent;
     u64    image;
+    isize  invoked, status;
+    Sysret result;
     REQUIRE(!__sys_getid(&self, &image, &parent), 249);
     action.kind = SIGNAL_HANDLER;
     action.handler = action.trampoline = (u64) handlerforktrampoline;
     action.mask = action.flags = action.reserved = 0;
-    selector.kind = SIGNAL_SELECT_PID;
-    selector.target = self;
-    REQUIRE(!__sys_sigaction(SIGNAL_USR2, &action, NULL) &&
-                !__sys_sigsend(&selector, SIGNAL_USR2) &&
+    context_self.pid = self;
+    context_self.image = image;
+    REQUIRE(!sysctxinit(&runtime_contexts, context_self) &&
+                !sysctxprepare(&runtime_contexts, context_self, 2, SYS_GETID, NULL, &forkouter) &&
+                !__sys_sigaction(SIGNAL_USR2, &action, NULL),
+            250);
+    frame_trace[16] = (u64) __sys_ctxreturn_begin;
+    frame_trace[0] = 1;
+    invoked = sysctxinvoke(&runtime_contexts, context_self, forkouter);
+    REQUIRE(!sysctxresult(&runtime_contexts, runtime_contexts.self, forkouter, &status, &result) &&
+                invoked == status &&
+                (handlerforkresult == 43 ? status == -ERR_INTERRUPTED && !result.values[0]
+                                         : !status && result.values[0] == (u64) self) &&
+                !sysctxfinish(&runtime_contexts, runtime_contexts.self, forkouter) &&
                 (handlerforkresult == 42 || handlerforkresult == 43),
             250);
     return handlerforkresult;

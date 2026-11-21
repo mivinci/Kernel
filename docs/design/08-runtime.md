@@ -354,6 +354,8 @@ stage208：双架构 sigframe 新增真实 USR2 handler 内原生 fork。父子�
 
 stage209：针对 stage208 的通用进程清理改动，追加 ARM64/RV64 各 sigconfig、sigsuspend、jobs 共六次 QEMU 回归，全部通过；主机 sigfork 专项 11 项通过。日志在 `/private/tmp/kernel-stage209-*.log`，编译数据库已切回 RV64/sigframe。未重跑完整 QEMU 矩阵，无 CI 或板端结论。
 
+stage210：handler fork 场景改为在外层真实 Rctx GETID 返回窗口注入 USR2。handler 保留第三层 WAITING/active 状态，在父端发布 Fix 时指定 INTERRUPT；子嵌套信号先修复，handler 返回前解码保存现场并跳到汇编 resume。父 invoke 返回原成功结果，子 invoke 返回 ERR_INTERRUPTED，随后双方领取并结束外层上下文。修正场景汇总为 15 项、两个 Rctx 窗口及一个 handler fork，检查器精确核对。格式及双架构 sigframe 通过。仍非生产 POSIX fork 或 IPC 路由修复。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

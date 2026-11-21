@@ -84,14 +84,14 @@ runtimeframeenter(Hctx *context)
     return;
   if ((trace[1] == 13 || trace[1] == 14) && table->owner != contextpid)
     forkarmed = 0;
-  else if (trace[1] == 12 && table->owner == contextpid) {
+  else if ((trace[1] == 12 || trace[1] == 14) && table->owner == contextpid) {
     contextarmed = 0;
     contextcount++;
   } else
     return;
   for (i = 0; i < sizeof(info); i++)
     ((u8 *) &info)[i] = 0;
-  info.signum = SIGNAL_USR1;
+  info.signum = trace[1] == 14 && table->owner == contextpid ? SIGNAL_USR2 : SIGNAL_USR1;
   REQUIRE(!procsigqueue(table->owner, &info));
   procuserreturn(context);
 }
@@ -181,6 +181,7 @@ sigframetest(void)
     if (mode >= 13) {
       contextpid = pid;
       forkarmed = 1;
+      contextarmed = mode == 14;
     }
     if (!mode) {
       /* Freeze a published but not yet dispatched process. This does not relax
@@ -240,6 +241,8 @@ sigframetest(void)
     putstr("\n");
     if (mode >= 13) {
       REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
+      if (mode == 14)
+        REQUIRE(!contextarmed && contextcount == 2);
     } else if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && (mode == 7 || trace[0] == 99));
       REQUIRE(trace[12] == (mode == 1 || mode == 9 || mode == 11 ? 2U : 1U));
@@ -287,8 +290,10 @@ sigframetest(void)
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !sigcheck() && !lifecheck() && !groupcheck());
   putstr("SIGFRAMECHECK cases=");
-  puthex(14);
+  puthex(15);
   putstr(" forkprep=");
+  puthex(1);
+  putstr(" handler_fork=");
   puthex(1);
   putstr(" normal=");
   puthex(6);
