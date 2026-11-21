@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage237：已排空普通READ/WRITE的PEER/CANCELLED/REVOKED可在子保留原生状态，不重发或夺父收尾责任；75项相关主机测试、格式及双架构libsys/sigframe通过。新机制失败路径仅主机调用，真实场景/整体fork与后端准备仍待接，子reference_id规则仍待确认。
+
 - stage236：组合apply已在双架构真实fork返回窗口及handler/raw/IPC场景执行，子完成标记避免重复转换，父身份/运输和最终资源守恒保持；10项组合主机测试、格式及sigframe/libsys四次QEMU通过。夹具无继承fd/后端子引用，非空File与生产整体协调器仍待接，子reference_id仍待确认。
 
 - stage235：组合准入后可单次本地转换Rctx/File/目录，保持fd和父运输责任；未支持的创建预留在写入前NOTSUP。74项相关主机测试、格式及双架构libsys/sigframe通过，新增apply仍仅主机调用；真实非空File子修复/整体协调器及后端准备未接，子reference_id仍待确认。

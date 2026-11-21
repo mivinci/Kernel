@@ -23,7 +23,9 @@ forkfixed(Rctx *context)
   Rroute expected;
   u32    i;
   if ((context->phase != RCTX_DONE && context->phase != RCTX_CLEANING) ||
-      context->status != -ERR_INTERRUPTED || context->number || context->route.delivered > 1)
+      (context->status != -ERR_INTERRUPTED && context->status != -ERR_PEER &&
+       context->status != -ERR_CANCELLED && context->status != -ERR_REVOKED) ||
+      context->number || context->route.delivered > 1)
     return -ERR_STATE;
   clearroute(&expected);
   expected.kind = RCTX_ROUTE_FORK;
@@ -38,6 +40,24 @@ forkfixed(Rctx *context)
     if (((const u8 *) &context->result)[i])
       return -ERR_STATE;
   return 0;
+}
+static int
+nativefailure(const Rctx *context, const Slotop *op)
+{
+  u32 i;
+  if ((context->status != -ERR_PEER && context->status != -ERR_CANCELLED &&
+       context->status != -ERR_REVOKED) ||
+      op->status != context->status || op->phase != SYSOP_RESULT || op->kind || op->resource ||
+      (op->opcode != FS_READ && op->opcode != FS_WRITE) ||
+      op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED))
+    return 0;
+  for (i = 0; i < ARRAY_SIZE(op->words); i++)
+    if (op->words[i])
+      return 0;
+  for (i = 0; i < sizeof(context->result); i++)
+    if (((const u8 *) &context->result)[i])
+      return 0;
+  return 1;
 }
 static isize
 ioresult(u64 opcode, const u64 words[4], u64 bytes)
@@ -85,7 +105,7 @@ forkcomplete(Rctx *context, Connpeer parent)
   Slotop *op;
   u64     base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
   isize   error;
-  if (context->phase != RCTX_CLEANING || context->number != SYS_RQWAIT || context->status ||
+  if (context->phase != RCTX_CLEANING || context->number != SYS_RQWAIT ||
       route->kind != RCTX_ROUTE_OP || route->delivered != 1 || route->pool ||
       route->snapshot_saved != 1 || route->snapshot_offset ||
       route->snapshot_bytes > RCTX_SNAPSHOT_BYTES - base || !route->work || !route->cache)
@@ -97,6 +117,11 @@ forkcomplete(Rctx *context, Connpeer parent)
   if (error)
     return error;
   op = &route->work->state.operations[route->operation.lease.slot];
+  if (context->status)
+    return nativefailure(context, op) && !route->snapshot_bytes && op->rpc == route->rpc &&
+                   (u64) op->rpc == context->args[0]
+               ? 0
+               : -ERR_STATE;
   if (op->phase != SYSOP_RESULT || op->status ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE) || op->kind != IPC_NONE || op->resource ||
       op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED) ||
@@ -202,6 +227,16 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
     return error;
   for (i = 0; i < RCTX_LAYERS; i++) {
     Rctx *context = &bank->contexts[i];
+    if (layers[i].action == FIX_LAYER_COMPLETE && context->route.kind == RCTX_ROUTE_OP &&
+        context->status) {
+      clearroute(&context->route);
+      context->route.kind = RCTX_ROUTE_FORK;
+      context->route.delivered = 1;
+      context->number = 0;
+      for (j = 0; j < ARRAY_SIZE(context->args); j++)
+        context->args[j] = 0;
+      continue;
+    }
     if (layers[i].action == FIX_LAYER_COMPLETE && context->route.kind == RCTX_ROUTE_OP) {
       Slotop *op = &context->route.work->state.operations[context->route.operation.lease.slot];
       u64     bytes = context->route.snapshot_bytes;
@@ -782,10 +817,12 @@ sysctxsnapshot(Rbank *bank, Connpeer self, Rkey key, u64 offset, u64 bytes)
     return error;
   {
     Slotop *op = &context->route.work->state.operations[context->route.operation.lease.slot];
-    if (!offset && !bytes && !op->status && op->kind == IPC_NONE && !op->resource &&
-        !(op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED)) &&
-        (isize) op->words[0] < 0 && op->words[1] == context->route.operation.lease.seq &&
-        !ioresult(op->opcode, op->words, 0))
+    if (!offset && !bytes && nativefailure(context, op))
+      error = sysopfinished(context->route.work, context->route.cache, &context->route.operation);
+    else if (!offset && !bytes && !op->status && op->kind == IPC_NONE && !op->resource &&
+             !(op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED)) &&
+             (isize) op->words[0] < 0 && op->words[1] == context->route.operation.lease.seq &&
+             !ioresult(op->opcode, op->words, 0))
       error = sysopfinished(context->route.work, context->route.cache, &context->route.operation);
     else
       error = sysopcopy(context->route.work, context->route.cache, &context->route.operation,

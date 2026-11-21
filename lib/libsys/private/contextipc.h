@@ -11,12 +11,15 @@ isize sysctxfixwaitcheck(Rbank *bank, Connpeer parent, Connpeer child,
    before modifying any layer. No poll/cancel/ACK or transport record mutation.
    Ordinary completed READ requires a full pre-fork private snapshot; WRITE
    requires a zero-byte snapshot as its pre-fork real-finish proof. Fixed
-   local results survive another fork. Other completed/unsent IPC work still
+   Terminal native PEER/CANCELLED/REVOKED on ordinary READ/WRITE requires the
+   same zero-byte real-finish proof and preserves its original native status.
+   Local results survive another fork. Other completed/unsent IPC work still
    requires its typed repair path. */
 isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
                     const Fixlayer layers[FIX_LAYER_COUNT]);
 /* A resumed IPC wrapper checks this before using its copied transport key.
-   Returns 1 for a fixed child interruption, 0 for an ordinary route. On 1,
+   Returns 1 for a fixed child interruption or completed native failure,
+   0 for an ordinary route. On 1,
    status is saved locally and the layer becomes finishable, without handoff
    to parent transport. Active invocation must unwind before finish. */
 isize sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status);

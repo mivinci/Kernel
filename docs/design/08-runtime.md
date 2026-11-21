@@ -442,6 +442,10 @@ stage236：组合转换已在双架构真实 fork 子返回中执行。sigframe 
 
 10项组合主机测试、格式及ARM64/RV64 sigframe/libsys四次QEMU通过。sigframe夹具不保留fd或后端连接，未伪造子引用或token；真实非空File保留、服务准备/按需接入和生产整体协调器仍待接，子reference_id仍未确认。日志 `/private/tmp/kernel-stage236-{forkstate,fmt,arm64,arm64-libsys,riscv,riscv-libsys}.log`，sigframe现场为 `build/arm64/smoke/e45974fee7e148c18d5552714560f925/` 与 `build/riscv/smoke/fcfb68b22a384669a659b2931944c233/`。未跑完整主机/QEMU矩阵、CI或板端。
 
+stage237：已终结普通READ/WRITE的原生PEER/CANCELLED/REVOKED可在fork子保留原机制状态。须是已handoff的RQWAIT/CLEANING，原Op为同状态RESULT、空四字/无资源/无创建责任，并在fork前通过零字节snapshot取得真实RQ_FINISH证明；未排空不发布证明。子清除父运输路由和参数，沿本地FORK结果入口返回原状态，不转写成INTERRUPTED、不重发业务；再次fork仍保留该状态。只保存原生状态，不在此猜测POSIX错误或零副作用；父继续持有原RPC、File pin及槽收尾。其他机制错误/创建结果仍拒绝。
+
+65项上下文与10项组合主机测试、格式及ARM64/RV64 libsys/sigframe四次回归通过；新增测试覆盖READ/WRITE各三种终结状态、未排空拒绝、错误状态/资源/业务字拒绝且不改bank、后续fork/finish与父运输不变。新终结机制路径仍仅主机调用，QEMU覆盖既有真实fork/业务结果/本地协调转换，不称已验真实机制失败fork。日志 `/private/tmp/kernel-stage237-{context-final,forkstate,fmt,arm64-libsys,arm64-sigframe,riscv-libsys,riscv-sigframe}.log`。未跑完整矩阵、CI或板端；生产整体协调器、后端准备及子reference_id规则继续待接/确认。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
