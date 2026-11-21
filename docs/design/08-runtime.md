@@ -352,6 +352,8 @@ stage207：stage206 源码的完整 `make unit` 通过 1198 项测试（169 秒�
 
 stage208：双架构 sigframe 新增真实 USR2 handler 内原生 fork。父子都从各自的活动信号帧 sigreturn，孩子首次返回另接嵌套 USR1，继续核对 Fix 与私有 Rctx；父 wait 收到子退出 43，父返回 42。首次 ARM64 运行发现未发布 fork 撤销时继承的活动层未被丢弃，触发 signal cleanup panic；构造清理在 Image 结束后执行 sigdiscard，再释放银行。修复后格式和两架构 sigframe 通过。此例外层无活动 Rctx，不代表等待中的 Rctx 及生产 POSIX fork 已完成。
 
+stage209：针对 stage208 的通用进程清理改动，追加 ARM64/RV64 各 sigconfig、sigsuspend、jobs 共六次 QEMU 回归，全部通过；主机 sigfork 专项 11 项通过。日志在 `/private/tmp/kernel-stage209-*.log`，编译数据库已切回 RV64/sigframe。未重跑完整 QEMU 矩阵，无 CI 或板端结论。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
