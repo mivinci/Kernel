@@ -4,6 +4,8 @@
 #define GENERATION_MAX 0x00ffffffffffffffUL
 static Set  sets[AC_SETS];
 static Acct accounts[AC_ACCTS];
+static u64  exectickets[AC_ACCTS];
+static u64  execcursor;
 
 static Set *
 setfind(Setid id)
@@ -221,6 +223,7 @@ acctclose(Acctid id)
   if (!a || a->state != AC_ACTIVE)
     return AC_BAD;
   a->state = AC_CLOSING;
+  exectickets[id.index] = 0;
   return 0;
 }
 
@@ -290,22 +293,30 @@ acctbudget(Acctid id, u64 limit, u64 peak)
   return 0;
 }
 
-int
-acctreserve(Acctid id, u64 pages)
+static int
+reserve(Acctid id, u64 pages, u64 ticket)
 {
   Acct *a = find(id);
   Set  *s;
-  u64   total;
-  if (!a || a->state != AC_ACTIVE || !pages)
+  u64   total, limit, setlimit;
+  if (!a || a->state != AC_ACTIVE || !pages || (ticket && exectickets[id.index] != ticket))
     return AC_BAD;
   s = &sets[a->set];
   total = a->used + a->reserved;
-  if (total > a->limit || pages > a->limit - total || s->charged > s->limit ||
-      pages > s->limit - s->charged)
+  limit = ticket ? a->exec_limit : a->limit;
+  setlimit = ticket ? s->exec_limit : s->limit;
+  if (total > limit || pages > limit - total || s->charged > setlimit ||
+      pages > setlimit - s->charged)
     return AC_LIMIT;
   a->reserved += pages;
   s->charged += pages;
   return 0;
+}
+
+int
+acctreserve(Acctid id, u64 pages)
+{
+  return reserve(id, pages, 0);
 }
 
 int
@@ -332,8 +343,8 @@ acctrelease(Acctid id, u64 used, u64 reserved)
   return 0;
 }
 
-int
-acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out)
+static int
+alloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out)
 {
   Pgblk block;
   u64   pages, owner;
@@ -344,7 +355,7 @@ acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out)
   error = accthold(id);
   if (error)
     return error;
-  error = acctreserve(id, pages);
+  error = reserve(id, pages, ticket);
   if (error) {
     acctdrop(id);
     return error;
@@ -369,6 +380,43 @@ acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out)
   out->acct.generation = id.generation;
   out->acct.index = id.index;
   out->acct.reserved = 0;
+  return 0;
+}
+
+int
+acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out)
+{
+  return alloc(id, 0, order, lim, out);
+}
+
+int
+acctexecbegin(Acctid id, u64 *ticket)
+{
+  Acct *a = find(id);
+  if (!ticket || !a || a->state != AC_ACTIVE)
+    return AC_BAD;
+  if (exectickets[id.index])
+    return AC_BUSY;
+  if (execcursor == ~(u64) 0)
+    return AC_FULL;
+  exectickets[id.index] = ++execcursor;
+  *ticket = execcursor;
+  return 0;
+}
+
+int
+acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out)
+{
+  return ticket ? alloc(id, ticket, order, lim, out) : AC_BAD;
+}
+
+int
+acctexecend(Acctid id, u64 ticket)
+{
+  Acct *a = find(id);
+  if (!a || a->state != AC_ACTIVE || !ticket || exectickets[id.index] != ticket)
+    return AC_BAD;
+  exectickets[id.index] = 0;
   return 0;
 }
 
@@ -607,12 +655,14 @@ acctcheck(void)
   }
   for (i = 0; i < AC_ACCTS; i++) {
     a = &accounts[i];
+    if (exectickets[i] && (a->state != AC_ACTIVE || exectickets[i] > execcursor))
+      return AC_BAD;
     if (a->state == AC_FREE)
       continue;
     if (a->state > AC_CLOSING || a->set >= AC_SETS || !a->generation ||
         a->generation > GENERATION_MAX || a->bound > 1 || a->refs < a->bound ||
         a->cow > a->reserved || a->used > ~(u64) 0 - a->reserved ||
-        a->used + a->reserved > a->limit || a->exec_limit < a->limit)
+        a->used + a->reserved > a->exec_limit || a->exec_limit < a->limit)
       return AC_BAD;
     if (charged[a->set] > ~(u64) 0 - a->used - a->reserved)
       return AC_BAD;
@@ -624,7 +674,7 @@ acctcheck(void)
     if (s->state == AC_FREE) {
       if (charged[i] || refs[i])
         return AC_BAD;
-    } else if (s->state != AC_ACTIVE || s->charged != charged[i] || s->charged > s->limit ||
+    } else if (s->state != AC_ACTIVE || s->charged != charged[i] || s->charged > s->exec_limit ||
                s->exec_limit < s->limit || s->instances > s->max_instances ||
                (u64) s->refs != 1UL + refs[i] + s->instances + s->leases)
       return AC_BAD;

@@ -10,6 +10,50 @@
   } while (0)
 
 static void
+execpeaktest(void)
+{
+  Setid   set;
+  Acctid  a, b;
+  Acctblk old, next, peer, redeemed, denied;
+  Acctcow credit = {{0, 0, 0}, {0}};
+  Pgstat  before, after;
+  Pglim   unavailable = {0, 1, PAGE_SIZE};
+  Set     group;
+  u64     at, bt, other;
+  pgstat(&before);
+  REQUIRE(!setcreate(2, 5, 2, &set) && !acctcreate(set, 1, 3, &a) && !acctcreate(set, 2, 4, &b) &&
+              !acctalloc(a, 0, NULL, &old) && !acctcowreserve(b, 1, &credit),
+          "prepare peak baseline");
+  REQUIRE(!acctexecbegin(a, &at) && acctexecbegin(a, &other) == AC_BUSY && !acctexecbegin(b, &bt) &&
+              acctexecalloc(b, at, 0, NULL, &denied) == AC_BAD,
+          "prepare peak ticket isolation");
+  denied.block.pa = 0x123;
+  REQUIRE(acctexecalloc(a, at, 1, &unavailable, &denied) == AC_NOMEM && denied.block.pa == 0x123 &&
+              !setstat(set, &group) && group.charged == 2 && !acctcheck(),
+          "prepare peak physical failure rollback");
+  REQUIRE(!acctexecalloc(a, at, 1, NULL, &next) &&
+              acctexecalloc(a, at, 0, NULL, &denied) == AC_LIMIT &&
+              acctalloc(b, 0, NULL, &denied) == AC_LIMIT &&
+              acctexecalloc(b, bt, 1, NULL, &denied) == AC_LIMIT &&
+              !acctexecalloc(b, bt, 0, NULL, &peer) && !acctcheck(),
+          "prepare peak two-layer admission");
+  REQUIRE(!acctcowalloc(&credit, &redeemed) && !setstat(set, &group) && group.charged == 5,
+          "prepare peak existing COW credit");
+  REQUIRE(!acctexecend(a, at) && !acctexecbegin(a, &other) && other != at &&
+              acctexecalloc(a, at, 0, NULL, &denied) == AC_BAD && !acctexecend(a, other) &&
+              !acctclose(b) && acctexecalloc(b, bt, 0, NULL, &denied) == AC_BAD &&
+              !setstat(set, &group) && group.charged == 5 && !acctcheck(),
+          "prepare peak revocation retains charge");
+  REQUIRE(!acctfree(next) && !acctfree(old) && !acctfree(peer) && !acctfree(redeemed) &&
+              !acctclose(a) && !acctunbind(a) && !acctunbind(b) && !setclose(set) && !acctcheck() &&
+              !pgcheck(),
+          "prepare peak cleanup");
+  pgstat(&after);
+  REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgreserved(),
+          "prepare peak physical conservation");
+}
+
+static void
 cowtest(void)
 {
   Setid         set;
@@ -122,6 +166,7 @@ accttest(void)
   Pgstat        before, after;
   volatile u64 *memory;
   cowtest();
+  execpeaktest();
   pgstat(&before);
   REQUIRE(!acctcheck(), "account initial");
   REQUIRE(!setcreate(64, 128, 2, &set) && !setenter(set), "set admission");

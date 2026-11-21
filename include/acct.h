@@ -103,6 +103,12 @@ int acctrelease(Acctid id, u64 used, u64 reserved);
    Raw pages remain unzeroed/unmapped; callers enforce sharing and DMA lifetime.
    Output is unchanged on failure. */
 int acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out);
+/* One live ticket per Acct. Prep must retain and validate its own identity
+   before using the ticket, then end it on publication or cancellation.
+   Ending a ticket revokes admission; it does not release existing charges. */
+int acctexecbegin(Acctid id, u64 *ticket);
+int acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out);
+int acctexecend(Acctid id, u64 ticket);
 int acctfree(Acctblk block);
 int acctcheck(void);
 #endif

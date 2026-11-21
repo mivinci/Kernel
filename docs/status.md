@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage318：内核账目接入按准备票据授权的 exec 峰值分配。RV64/ARM64 QEMU `budget`、26 项主机账目回归及格式检查通过；Prep、装载及镜像切换尚未接入。
 - stage317：TTY 回显暂存受背压时仍可处理 RX 队首的 ISIG 字符。RV64/ARM64 QEMU `tty`、46 项主机回归和格式检查通过。
 - stage316：私有运行库入口串接本地 fork 的准备、Fix 发布和子返回。RV64/ARM64 QEMU `sigframe` 验证跨两代复用同一 Fix 地址及发布前失败清理；47 项主机回归和格式检查通过。
 - stage315：子运行库消费 Fix 后立即归还映射，信号前置和正常返回共用一次性清理。RV64/ARM64 QEMU `sigframe`、47 项主机回归和格式检查通过。
