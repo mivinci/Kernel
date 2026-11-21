@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage178：Space 快照期间拒绝源和目标 Local 表的普通安装、撤销、继承修改和资源回复，允许已占用 IPC 槽归还。主机专项及双架构 QEMU sigframe 通过，证据在 `build/host/stage178-fork-local-gate/`。原生 fork 仍待接通。
+
 - stage177：快照期间新私有DATA别名准入已补齐；源Mem已有冻结alias root时，向另一未冻结root的普通RO/RW/COW映射返回BUSY，不取PTE/引用/费用。内部子映射、SHARED/SEALED及独立Mem规则保持；未开放原生fork或一般并发VM。
 - 6项host调用真实Space/Mem/Acct及两架构页表模型；旧版源码RO/RW/COW成功及RW可写PTE反例已记录。双架构可信内核root续点各6次拒绝、15次独立VM变更与STOP/CONT/终止回滚保持，固定记录/池不增。
 - 验收：完整test-all退出0，1181项host、格式、195个双架构QEMU及168份内核诊断journal通过；16次生产启动、10条失败清理及累计运行库/文件终结路径、SDK/载荷/生产隔离均审计。所有构建后clangd切回RV64/sigframe。

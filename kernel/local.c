@@ -47,7 +47,7 @@ static Local *
 empty(Rtable *t)
 {
   u32 i;
-  if (!t || t->state != LOCAL_OPEN)
+  if (!t || t->state != LOCAL_OPEN || spacesnapshotroot(t->space))
     return NULL;
   for (i = 0; i < t->count; i++)
     if (!t->slots[i].subtype && t->slots[i].generation < HANDLE_GENERATION_MAX)
@@ -58,6 +58,8 @@ static int
 sloterror(Rtable *t)
 {
   u32 i;
+  if (spacesnapshotroot(t->space))
+    return -ERR_BUSY;
   for (i = 0; i < t->count; i++)
     if (!t->slots[i].subtype && t->slots[i].generation == HANDLE_GENERATION_MAX)
       return -ERR_OVERFLOW;
@@ -78,6 +80,8 @@ localrooms(Rtable *t, u32 count)
     return -ERR_STATE;
   if (!count || count > LOCALS)
     return -ERR_INVALID;
+  if (spacesnapshotroot(t->space))
+    return -ERR_BUSY;
   for (i = 0; i < t->count; i++)
     if (!t->slots[i].subtype && t->slots[i].generation < HANDLE_GENERATION_MAX)
       available++;
@@ -106,6 +110,8 @@ reserve(Rtable *table, Imageid id, u32 count, Rtable *lineage)
     return error;
   if (image.state != IMAGE_PREPARING)
     return -ERR_STATE;
+  if (!lineage && spacesnapshotroot(table->space))
+    return -ERR_BUSY;
   for (i = 0; i < table->count; i++) {
     Local *slot = &table->slots[i];
     if (slot->subtype == LOCAL_RECEIVE)
@@ -170,6 +176,8 @@ localreceive(Rtable *table, Imageid id, Handle rpc, u16 *out)
     return error;
   if (image.state != IMAGE_ACTIVE)
     return -ERR_STATE;
+  if (spacesnapshotroot(table->space))
+    return -ERR_BUSY;
   for (i = 0; i < table->count; i++)
     if (table->slots[i].subtype == LOCAL_FLOOR) {
       slot = &table->slots[i];
@@ -911,6 +919,8 @@ localirqunbind(Rtable *table, Handle handle, Imageid image)
   int    error;
   if (!slot)
     return -ERR_BAD_HANDLE;
+  if (spacesnapshotroot(table->space))
+    return -ERR_BUSY;
   if (ownedimage(table, image, &target))
     return -ERR_DENIED;
   error = irqcancel(bindingid(slot), image);
@@ -1070,6 +1080,8 @@ localdeliver(Rtable *source, u32 kind, const Resreply *reply, Rtable *target, Im
       slot->object != handleindex(rpc) || slot->offset != target->epoch ||
       slot->length != image.number)
     return -ERR_STATE;
+  if (spacesnapshotroot(target->space))
+    return -ERR_BUSY;
   if (slot->generation == HANDLE_GENERATION_MAX)
     return -ERR_OVERFLOW;
   floor = slot->source;
@@ -1389,6 +1401,8 @@ localinherit(Rtable *t, Handle h, u64 flags)
   if (error)
     return error;
   l = find(t, h, 0);
+  if (spacesnapshotroot(t->space))
+    return -ERR_BUSY;
   if (l->subtype == LOCAL_MEM) {
     Mem backing;
     if (memstat(memory(l), &backing))
@@ -1409,6 +1423,8 @@ int
 localfree(Rtable *t, Handle h)
 {
   Local *l = find(t, h, 0);
+  if (l && spacesnapshotroot(t->space))
+    return -ERR_BUSY;
   return l && (l->subtype == LOCAL_MEM || l->subtype == LOCAL_CALL || l->subtype == LOCAL_SEND ||
                l->subtype == LOCAL_NOTIFY || l->subtype == LOCAL_CONTROL ||
                l->subtype == LOCAL_IRQ_BIND || l->subtype == LOCAL_IRQ_SOURCE ||
@@ -1420,6 +1436,8 @@ int
 localrevoke(Rtable *t, Handle h)
 {
   Local *l = find(t, h, 0);
+  if (l && spacesnapshotroot(t->space))
+    return -ERR_BUSY;
   return l ? removeentry(l) : -ERR_BAD_HANDLE;
 }
 int

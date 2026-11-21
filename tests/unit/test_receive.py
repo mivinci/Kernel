@@ -5,6 +5,7 @@ import test_rq as support
 from test_local import Table,Local,Queryrec
 from test_space import Spaceid
 from test_image import Imageid,Image
+from test_prep import Prepid
 
 class ReceiveSlotTests(unittest.TestCase):
     extra_flags=support.RequestTests.extra_flags
@@ -118,6 +119,32 @@ class ReceiveSlotTests(unittest.TestCase):
             self.assertEqual((self.floor(a),self.receiving(a),self.lib.localroom(C.byref(a.table))),(0,1,-9))
             self.assertEqual(self.lib.rqreply(C.byref(b.mail),received.request,C.byref(support.message(7))),0)
             self.assertEqual(self.floor(a),1)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_cancel_returns_existing_floor_during_a_fork_snapshot(self):
+        def body():
+            caller=self.endpoint(1,floor=1);peer=self.endpoint(2)
+            request=self.submit(caller,peer)
+            account=type(self.aid)();child=Spaceid()
+            lib=self.lib
+            lib.spacesnapshotopen.argtypes=[Spaceid,Spaceid,Prepid]
+            lib.spacesnapshotend.argtypes=[Spaceid,Spaceid,C.c_uint32]
+            self.assertEqual(lib.acctcreate(self.sid,32,32,C.byref(account)),0)
+            try:
+                self.assertEqual(lib.spacecreate(account,C.byref(child)),0)
+                try:
+                    self.assertEqual(lib.spacesnapshotopen(caller.space,child,Prepid()),0)
+                    try:
+                        self.assertEqual(lib.rqcancel(request,caller.image),0)
+                        self.assertEqual((self.floor(caller),self.receiving(caller)),(1,0))
+                        self.assertEqual(lib.rqack(request,caller.image,3),0)
+                    finally:
+                        self.assertEqual(lib.spacesnapshotend(caller.space,child,0),0)
+                finally:
+                    self.assertEqual(lib.spacedestroy(child),0)
+            finally:
+                self.assertEqual(lib.acctclose(account),0)
+                self.assertEqual(lib.acctunbind(account),0)
         for lib in self.libs:self.exercise(lib,body)
 
     def test_full_table_rejects_before_queue_and_fallback_cancel_returns_ordinary_empty(self):

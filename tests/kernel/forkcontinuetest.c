@@ -136,6 +136,7 @@ __wrap_hal_user_enter(Hctx *context)
         Mem    beforemem, aftermem;
         Space  beforemap, aftermap;
         Pgstat beforepages, afterpages;
+        Handle inherited = 0;
         u32    found = 0, byte;
         for (i = 0; i < parenttable->count; i++)
           if (parenttable->slots[i].subtype == LOCAL_MEM &&
@@ -143,11 +144,15 @@ __wrap_hal_user_enter(Hctx *context)
             original.generation = parenttable->slots[i].objectgen;
             original.index = parenttable->slots[i].object;
             original.reserved = 0;
+            inherited = handlepack(HANDLE_RESOURCE, parenttable->slots[i].generation, i);
             found++;
           }
         REQUIRE(found == 1 && !spacefrozen(aliasroot) && !memstat(original, &beforemem) &&
                 !spacestat(aliasroot, &beforemap));
         pgstat(&beforepages);
+        REQUIRE(localrevoke(parenttable, inherited) == -ERR_BUSY &&
+                localinherit(parenttable, inherited, 0) == -ERR_BUSY &&
+                !localnative(parenttable, inherited));
         REQUIRE(spacemap(aliasroot, original, 0, 0x100000, PAGE_SIZE, VM_READ) == SP_BUSY &&
                 spacemap(aliasroot, original, 0, 0x100000, PAGE_SIZE, VM_READ | VM_WRITE) ==
                     SP_BUSY &&

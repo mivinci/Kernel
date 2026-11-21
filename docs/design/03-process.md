@@ -1503,3 +1503,7 @@ RPC反例同时验证：A等待B时STOP，B再call A仍得到DEADLOCK；B先回�
 当前Run注入只在jobs/sigframe测试内核通过既有hal_user_enter链接wrapper触发，normal不链接该wrapper或jobtest；不把它称作原生发信权限验收。sigsend选择器/逐目标授权尚待冻结，原生USER/终端信号生产、默认停止/继续信号选择与相互抵消、CHLD STOP/CONT及完整前台作业控制仍待接。
 
 fork快照接续（2026-11-21，stage177）：普通映射新私有DATA别名时，现检查该Mem是否已有冻结alias root，关闭向另一未冻结root插入新别名的入口；内部精确子前缀、SHARED/SEALED及独立Mem规则保持。原内核root续点/停放/终止移交测试每架构验证6次拒绝及15次独立VM变更，未扩固定记录/池；1181项host与完整195次QEMU/168份journal及边界见[02末尾](02-memory.md#快照期间的新data别名准入2026-11-21)。这不是原生forkprep或子返回验收；Source Local/Mem引用稳定、未映射/Local/Signal完整长循环、自动IRQ/检查点、原生准入与Fix/专用发布仍须接通。
+
+快照期间，源和目标资源表复用 Space 事务的精确根身份。普通资源安装、撤销、继承标志修改和资源回复在改槽或取得新引用前返回 BUSY。仅因私有 Mem 别名而被冻结的其他根不受此资源表门禁约束。已占用接收槽仍可随请求取消、失败或普通回复归还，因为 RECEIVE、FLOOR 和空槽均不继承引用，归还也不改变槽代次。目标暂存、保底预付和回滚继续由构建者或 CPU 清理链负责。
+
+本地 RV64 和 ARM64 的 sigframe 续点均验证源 Handle 撤销和继承标志修改被拒绝，同时原有 STOP/CONT、终止回滚和无关 VM 变更通过。主机专项验证分配和撤销拒绝无槽或账目副作用，以及活动快照期间队列取消归还原保底槽。私有 Mem 其他引用路径、长循环检查点和原生 fork 发布仍待接通。

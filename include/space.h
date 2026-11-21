@@ -83,6 +83,7 @@ int spacebootcheck(Spaceid id, u64 address, u64 bytes);
 /* 1 means this serialized snapshot retains the root/map layout, 0 free;
    negative is stale/invalid. Cleanup must defer before draining its Locals. */
 int spacefrozen(Spaceid id);
+int spacesnapshotroot(Spaceid id);
 u32 spacelookup(Spaceid id, u64 va, Hpte *out);
 int spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep);
 /* Ordinary DATA alias admission also refuses a Mem with any frozen alias

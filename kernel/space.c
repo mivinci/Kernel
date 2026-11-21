@@ -492,6 +492,13 @@ spacefrozen(Spaceid id)
   return s ? insnapshot(s) : SP_BAD;
 }
 
+int
+spacesnapshotroot(Spaceid id)
+{
+  Space *s = find(id);
+  return s && snapshot && (s == find(snapshot->source) || s == find(snapshot->target));
+}
+
 u32
 spacelookup(Spaceid id, u64 va, Hpte *out)
 {
