@@ -41,4 +41,4 @@
 
 板端证据取得成本高，保留优先级高于普通QEMU运行：放在独立板端目录并登记阶段evidence，不参与本地UUID运行自动轮转；本地保留/清理规则见14末尾及issue011。
 
-stage283：`pages` 已在 RV64、ARM64 完成无 QMP、无 GDB 的 QEMU 试点，同架构纯串口和普通 QMP 摘要一致。命令和判定规则见 [14](../design/14-operations.md#板端验收与硬件矩阵2026-11-18)；`ipc`、`cow` 与上板仍待验。
+stage283–284：`pages`、`ipc`、`cow` 已在 RV64、ARM64 完成无 QMP、无 GDB 的 QEMU 试点，同架构纯串口和普通 QMP 摘要一致。命令和判定规则见 [14](../design/14-operations.md#板端验收与硬件矩阵2026-11-18)；真实板卡与其余场景仍待验。

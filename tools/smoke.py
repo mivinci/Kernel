@@ -1055,23 +1055,67 @@ def accepted_package(args, qmp, run_dir, names, discovery):
                 retained_unchanged=True, read_only=True, isolated_edges=len(partial),retained_pages=pages+len(partial))
 
 
-def validate_serial_pages(text):
+SERIAL_CASES = ('pages', 'ipc', 'cow')
+COW_SUMMARIES = {
+    'MEMCOWCHECK': ('mem_cow', dict(clones=2, rejected=1, aliases=2)),
+    'SPACECOWCHECK': ('space_cow', dict(clones=1, aliases=3, protected=4, rollback=2)),
+    'COWCHECK': ('cow_branches', dict(cases=4, split=9, exclusive=2, full=1)),
+    'SNAPSHOTCHECK': ('space_snapshot', dict(maps=5, private=2, aliases=2, rollback=1)),
+    'COWNATIVECHECK': ('native_cow', dict(cases=5, faults=14, exited=9, readonly=1,
+                                       native_map=1, exhausted=2, kernel_copy=1)),
+}
+
+
+def serial_summary(lines, prefix, names):
+    rows = [(i, line.split(' ')[1:]) for i, line in enumerate(lines) if line.startswith(prefix + ' ')]
+    if len(rows) != 1:
+        raise SmokeError('missing or duplicate ' + prefix)
+    index, tokens = rows[0]
+    pairs = [re.fullmatch(r'(\w+)=([0-9a-f]{16})', token) for token in tokens]
+    if any(pair is None for pair in pairs) or len(pairs) != len(names):
+        raise SmokeError('invalid fields in ' + prefix)
+    values = {pair[1]: int(pair[2], 16) for pair in pairs}
+    if values.keys() != set(names):
+        raise SmokeError('unexpected or duplicate fields in ' + prefix)
+    return index, values
+
+
+def validate_serial_scenario(case, text):
+    if case not in SERIAL_CASES:
+        raise SmokeError('unsupported serial self-test scenario')
     lines = text.replace('\r', '').split('\n')[:-1]
     if any(line.startswith(('PANIC ', 'TRAP ')) for line in lines):
-        raise SmokeError('page self-test reported a panic or trap')
-    summaries = [line for line in lines if line.startswith('PAGECHECK ')]
+        raise SmokeError('self-test reported a panic or trap')
     ready = [line for line in lines if line.startswith('READY ')]
-    if (len(summaries) != 1 or ready != ['READY pages-restored'] or
-            lines.index(summaries[0]) >= lines.index(ready[0])):
-        raise SmokeError('missing, duplicate or out-of-order page self-test summary')
-    names = ('orders exhausted committed redeemed cancelled checksum managed protected '
-             'free_before free_after allocated_before allocated_after reserved_after').split()
-    fields = summaries[0].split(' ')[1:]
-    if len(fields) != len(names) or any(not re.fullmatch(key + r'=[0-9a-f]{16}', field)
-                                       for key, field in zip(names, fields)):
-        raise SmokeError('invalid page self-test summary fields')
-    values = dict(zip(names, (int(field.split('=')[1], 16) for field in fields)))
+    if ready != ['READY ' + case + '-restored']:
+        raise SmokeError('missing, duplicate or unexpected self-test completion')
+    end = lines.index(ready[0])
+    start, vm = serial_summary(lines, 'VM', ('root', 'delta', 'pc', 'sp', 'tables', 'uart'))
+    if not vm['tables']:
+        raise SmokeError('missing page table baseline')
+    baseline = dict(charged=0, allocated=vm['tables'])
+    if case == 'cow':
+        result = {}
+        for prefix, (key, counts) in COW_SUMMARIES.items():
+            expected = dict(counts, **baseline)
+            index, values = serial_summary(lines, prefix, expected)
+            if not start < index < end or values != expected:
+                raise SmokeError(prefix + ' phase or reclamation mismatch')
+            start = index
+            result[key] = values
+        return result
+    if case == 'ipc':
+        index, values = serial_summary(lines, 'IPCCHECK', ('turns', 'blocked', 'exits', *baseline))
+        if (not start < index < end or not 8 <= values['turns'] < 100 or
+                not 4 <= values['blocked'] <= 2 * values['turns'] or values['exits'] != 2 or
+                any(values[key] != value for key, value in baseline.items())):
+            raise SmokeError('IPC blocking/reclamation mismatch')
+        return {'ipc': values}
+    index, values = serial_summary(lines, 'PAGECHECK',
+        ('orders exhausted committed redeemed cancelled checksum managed protected '
+         'free_before free_after allocated_before allocated_after reserved_after').split())
     if (not 1 <= values['orders'] <= 17 or not values['exhausted'] or
+            not start < index < end or values['allocated_before'] != vm['tables'] or
             (values['committed'], values['redeemed'], values['cancelled']) != (8, 8, 9) or
             values['protected'] != 256 or values['reserved_after'] or
             values['free_before'] != values['free_after'] or
@@ -1079,26 +1123,28 @@ def validate_serial_pages(text):
             values['free_after'] + values['allocated_after'] != values['managed'] or
             values['exhausted'] + values['protected'] != values['free_before']):
         raise SmokeError('page self-test accounting mismatch')
-    return values
+    return {'pages': values}
 
 
-def serial_pages(command, serial, run_dir, record, timeout):
+def serial_selftest(command, serial, run_dir, record, timeout):
     record['observation'] = 'serial-only'
     record['argv'] = command
     (run_dir / 'launch.json').write_text(json.dumps(record, indent=2) + '\n')
     deadline = time.monotonic() + timeout
+    case = record['case']
+    expected = '\nREADY ' + case + '-restored\n'
     with (run_dir / 'qemu.log').open('wb') as output:
         proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
                                 stderr=subprocess.STDOUT, start_new_session=True)
         try:
             while True:
                 text = serial.read_bytes().decode('ascii', errors='replace') if serial.is_file() else ''
-                if diagnostic_ready(text.replace('\r', ''), '\nREADY pages-restored\n'):
-                    record['pages'] = validate_serial_pages(text)
+                if diagnostic_ready(text.replace('\r', ''), expected):
+                    record.update(validate_serial_scenario(case, text))
                     record['guest_executed'] = True
                     return
                 if proc.poll() is not None or time.monotonic() >= deadline:
-                    raise SmokeError('QEMU exited/timed out before the page self-test completed')
+                    raise SmokeError('QEMU exited/timed out before the self-test completed')
                 time.sleep(0.02)
         finally:
             _stop_group(proc)
@@ -1145,8 +1191,8 @@ def exercise(args, run_dir, record):
                '-m', str(args.ram) + 'M', '-nodefaults', '-display', 'none', '-monitor', 'none',
                '-no-reboot', '-global', 'virtio-mmio.force-legacy=false', '-kernel', str(boot_artifact)]
     if getattr(args, 'serial_only', False):
-        return serial_pages(command + ['-serial', 'file:' + str(serial)], serial, run_dir,
-                            record, args.timeout)
+        return serial_selftest(command + ['-serial', 'file:' + str(serial)], serial, run_dir,
+                               record, args.timeout)
     inspect = run_command([manifest["tools"]["readelf"]["path"], "-s", str(artifact)],
                           run_dir / "symbols.log", args.timeout)
     if not inspect.ok:
@@ -1968,7 +2014,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
     parser.add_argument('--qmp-stdio', action='store_true', help='use QMP pipes without a socket listener')
-    parser.add_argument('--serial-only', action='store_true', help='validate the pages pilot from UART only')
+    parser.add_argument('--serial-only', action='store_true', help='validate pages, ipc or cow from UART only')
     parser.add_argument("--firmware", default=os.environ.get("OPENSBI"))
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--ram", type=int, choices=(128, 256, 512, 2048, KMAP_BYTES // (1024 * 1024)), default=256)
@@ -1976,9 +2022,9 @@ def main():
     parser.add_argument('--cpus',type=int,choices=(1,4),default=1)
     parser.add_argument('--boot-hart',type=int,help='explicit OpenSBI cold-boot-harts policy for RISC-V fixtures')
     args = parser.parse_args()
-    if args.serial_only and (args.case != 'pages' or args.qmp_stdio or args.trace or args.initrd or
+    if args.serial_only and (args.case not in SERIAL_CASES or args.qmp_stdio or args.trace or args.initrd or
                              args.virtio or args.boot_hart is not None):
-        parser.error('--serial-only requires pages without QMP, trace, initrd, virtio or boot-hart options')
+        parser.error('--serial-only requires pages, ipc or cow without QMP, trace, initrd, virtio or boot-hart options')
     if args.case=='cpus' and args.cpus!=4:parser.error('cpus fixture requires --cpus 4')
     if args.boot_hart is not None and (args.arch!='riscv' or args.boot_hart not in range(args.cpus)):
         parser.error('preferred boot hart requires RISC-V and an enabled CPU index')

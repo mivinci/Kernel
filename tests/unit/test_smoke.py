@@ -6,11 +6,26 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from smoke import SmokeError, validate_output, diagnostic_ready, retained_probe_record
+from smoke import SmokeError, validate_output, diagnostic_ready, retained_probe_record, validate_serial_scenario
 from smoke import Qmp
 
 
 class SerialDiagnosticTests(unittest.TestCase):
+    def test_ipc_uart_completion_requires_a_unique_summary_and_restored_baseline(self):
+        boot = ('VM root=000000004002a000 delta=ffffffc000000000 pc=ffffffc040201000 '
+                'sp=ffffffc04020fff0 tables=0000000000000084 uart=ffffffc500000000\n')
+        result = ('IPCCHECK turns=000000000000000a blocked=000000000000000b '
+                  'exits=0000000000000002 charged=0000000000000000 allocated=0000000000000084\n')
+        ready = 'READY ipc-restored\n'
+        output = boot + result + ready
+        self.assertEqual(validate_serial_scenario('ipc', output.replace('\n', '\r\n'))['ipc']['exits'], 2)
+        for text in (boot + ready, boot + result + result + ready, boot + ready + result,
+                     output[:-1], output + 'TRAP unexpected\n',
+                     output.replace('allocated=0000000000000084', 'allocated=0000000000000085'),
+                     output.replace('charged=0000000000000000', 'exits=0000000000000002')):
+            with self.subTest(text=text), self.assertRaises(SmokeError):
+                validate_serial_scenario('ipc', text)
+
     def test_retained_probe_waits_for_every_uart_fragment_including_the_final_newline(self):
         row='INITRETAIN charged=0000000000000035 acct=0000000000000100 root=000000004002a000 stack_table=0000000040031000 stack_va=ffffffc401001000\n'
         for end in range(len(row)):

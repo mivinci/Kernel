@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage284：`ipc`、`cow` 接入纯串口验收。RV64、ARM64 的 `pages`、`ipc`、`cow` 各通过纯串口和普通 QMP，12 次摘要按架构和场景成对一致；16 项 smoke 主机检查通过，板端待验。
+
 - stage283：`pages` 纯串口试点在 RV64、ARM64 QEMU 验证页数回基线和 COW 预留归零；各架构摘要与普通 QMP 路径一致。`ipc`、`cow` 及上板验证待接。
 
 - stage282：libc 提供 `sysconf(_SC_PAGESIZE)`（同义 `_SC_PAGE_SIZE`）。RV64、ARM64 QEMU runtime 验证实际页大小、成功保留 errno 和无效选项 EINVAL，格式检查通过。
