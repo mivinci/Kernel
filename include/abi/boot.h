@@ -5,6 +5,7 @@
 #include <abi/boot.inc>
 #define BOOT_MAGIC          UINT64_C(0x4b424f4f54303031)
 #define BOOT_MAX_BYTES      65536
+#define FIX_FORMAT          1
 #define BOOT_ARG_BYTES      16384
 #define BOOT_ARG_COUNT      256
 #define BOOT_RESOURCE_COUNT 128
@@ -32,6 +33,7 @@ typedef struct Boot      Boot;
 typedef struct Strref    Strref;
 typedef struct Resentry  Resentry;
 typedef struct Bootfd    Bootfd;
+typedef struct Fix       Fix;
 struct Boot
 {
   u64 magic, format, bytes, flags, argc, argv_off, envc, env_off;
@@ -64,6 +66,16 @@ struct Bootfd
   Handle backend_call;
   u64    session, prepare_token, reserved;
 };
+struct Fix
+{
+  u64    format, bytes;
+  Handle source_pid;
+  u64    source_image;
+  Handle target_pid;
+  u64    resource_count, resources_off, contexts_off;
+};
+STATIC_ASSERT(sizeof(Fix) == 64, fix_header);
+STATIC_ASSERT(offsetof(Fix, contexts_off) == 56, fix_context_offset);
 STATIC_ASSERT(sizeof(Strref) == 8, boot_string_entry);
 STATIC_ASSERT(sizeof(Resentry) == 32, boot_resource_entry);
 STATIC_ASSERT(sizeof(Bootfd) == 48, boot_fd_entry);

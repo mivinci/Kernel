@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage192：运行库验证 Fix 头、精确身份和资源表。18 项主机测试、格式检查及双架构 QEMU sigframe 的真实子返回解析通过。三层上下文记录编码和修复仍待接。
+
 - stage191：原生 forkcommit 校验 Fix 权限与本次构造归属，双架构 QEMU sigframe 验证子真实返回及父 wait，格式检查通过。运行库 Fix 解析、修复和公开 fork 仍待接。
 
 - stage190：原生 forkprep/forkabort 已接，按当前 CREATE 和父实际规格准入。双架构 QEMU sigframe 验证真实陷阱、未发布孩子撤销和账目回收。Fix 校验、forkcommit 与运行库接续仍待实现。

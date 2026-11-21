@@ -1,4 +1,5 @@
 #include <sys/boot.h>
+#include "private/fix.h"
 typedef struct Region Region;
 struct Region
 {
@@ -19,6 +20,23 @@ resource(Handle handle)
 {
   u64 word = (u64) handle;
   return handle > 0 && word >> 59 == HANDLE_RESOURCE && ((word >> 16) & HANDLE_GENERATION_MAX);
+}
+static int
+resources(const Resentry *entries, u64 count)
+{
+  u64 i, seen = 0;
+  for (i = 0; i < count; i++) {
+    const Resentry *entry = &entries[i];
+    if (!entry->tag || (entry->tag > BOOT_IMAGE && entry->tag < 256) || !resource(entry->handle) ||
+        entry->flags & ~3UL || entry->reserved)
+      return 0;
+    if (entry->tag <= BOOT_IMAGE) {
+      if (seen & ((u64) 1 << entry->tag))
+        return 0;
+      seen |= (u64) 1 << entry->tag;
+    }
+  }
+  return 1;
 }
 static int
 strings(const u8 *data, const Strref *refs, u64 count, const Region regions[6], u64 bytes,
@@ -46,7 +64,7 @@ bootcheck(const void *data, u64 available, Bootview *out)
   const Boot *header = data;
   const u8   *base = data;
   Region      regions[6];
-  u64         i, j, used, seen = 0;
+  u64         i, j, used;
   if (!out)
     return -ERR_INVALID;
   out->header = NULL;
@@ -96,17 +114,8 @@ bootcheck(const void *data, u64 available, Bootview *out)
   if (!strings(base, view.argv, header->argc, regions, header->bytes, &used) ||
       !strings(base, view.env, header->envc, regions, header->bytes, &used))
     return -ERR_INVALID;
-  for (i = 0; i < header->resource_count; i++) {
-    const Resentry *entry = &view.resources[i];
-    if (!entry->tag || (entry->tag > BOOT_IMAGE && entry->tag < 256) || !resource(entry->handle) ||
-        entry->flags & ~3UL || entry->reserved)
-      return -ERR_INVALID;
-    if (entry->tag <= BOOT_IMAGE) {
-      if (seen & ((u64) 1 << entry->tag))
-        return -ERR_INVALID;
-      seen |= (u64) 1 << entry->tag;
-    }
-  }
+  if (!resources(view.resources, header->resource_count))
+    return -ERR_INVALID;
   for (i = 0; i < header->fd_count; i++) {
     const Bootfd *fd = &view.fds[i];
     if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~((u64) BOOT_FD_CLOEXEC) || fd->reserved ||
@@ -116,6 +125,45 @@ bootcheck(const void *data, u64 available, Bootview *out)
       if (view.fds[j].fd == fd->fd)
         return -ERR_INVALID;
   }
+  *out = view;
+  return 0;
+}
+isize
+sysfixview(const void *data, u64 available, Handle source, u64 image, Handle target, Fixview *out)
+{
+  const Fix *header = data;
+  const u8  *base = data;
+  Fixview    view;
+  Region     table;
+  u64        limit;
+  if (!out)
+    return -ERR_INVALID;
+  out->header = NULL;
+  out->resources = NULL;
+  out->contexts = NULL;
+  out->contexts_limit = 0;
+  if (!data || (u64) data & 7 || available < sizeof(Fix) || header->format != FIX_FORMAT ||
+      header->bytes < sizeof(Fix) || header->bytes > BOOT_MAX_BYTES || header->bytes > available ||
+      header->resource_count > BOOT_RESOURCE_COUNT || header->source_pid != source ||
+      header->source_image != image || header->target_pid != target || !image || source == target ||
+      target == 1 || handlekind(source) != HANDLE_PROCESS || handlekind(target) != HANDLE_PROCESS)
+    return -ERR_INVALID;
+  table.offset = header->resources_off;
+  table.bytes = header->resource_count * sizeof(Resentry);
+  if ((table.offset | header->contexts_off) & 7 ||
+      !inside(table.offset, table.bytes, header->bytes) ||
+      (table.bytes && table.offset < sizeof(Fix)) || header->contexts_off < sizeof(Fix) ||
+      header->contexts_off >= header->bytes ||
+      (table.bytes && header->contexts_off >= table.offset &&
+       header->contexts_off - table.offset < table.bytes))
+    return -ERR_INVALID;
+  view.resources = table.bytes ? (const Resentry *) (base + table.offset) : NULL;
+  if (!resources(view.resources, header->resource_count))
+    return -ERR_INVALID;
+  limit = table.bytes && table.offset > header->contexts_off ? table.offset : header->bytes;
+  view.header = header;
+  view.contexts = base + header->contexts_off;
+  view.contexts_limit = limit - header->contexts_off;
   *out = view;
   return 0;
 }

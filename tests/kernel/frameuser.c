@@ -6,6 +6,7 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "private/context.h"
+#include "private/fix.h"
 #include <abi/syscall.h>
 volatile u64    frame_trace[32];
 static u8       saved[1024];
@@ -358,6 +359,9 @@ forkprepuser(void)
   Maparg    map = {0, 0, 0x30000000, 4096, 1, 0};
   u64       args[7] = {0};
   u64       authority = frame_trace[18], child, construct;
+  Handle    source, parent, selfspace;
+  u64       image;
+  Fix      *fix;
   REQUIRE(__sys_enter(SYS_FORKPREP, args, &result) == -ERR_BAD_HANDLE, 224);
   args[0] = authority;
   args[1] = 9;
@@ -382,13 +386,17 @@ forkprepuser(void)
   args[1] = 0;
   REQUIRE(__sys_enter(SYS_FORKABORT, args, &result) == -ERR_STATE, 231);
   REQUIRE(!__sys_enter(SYS_DESTROY, args, &result), 232);
+  REQUIRE(!__sys_getid(&source, &image, &parent), 241);
   args[0] = authority;
   REQUIRE(!__sys_enter(SYS_FORKPREP, args, &result), 233);
   if (!result.values[0]) {
-    Handle self, parent;
-    u64    image;
-    REQUIRE(!__sys_getid(&self, &image, &parent) && result.values[1] == (u64) self &&
-                result.values[2] == map.address && !*(const volatile u64 *) map.address,
+    Handle  self, ppid;
+    u64     childimage;
+    Fixview view;
+    REQUIRE(!__sys_getid(&self, &childimage, &ppid) && result.values[1] == (u64) self &&
+                result.values[2] == map.address && ppid == source &&
+                !sysfixview((const void *) map.address, 88, source, image, self, &view) &&
+                view.contexts_limit == 24,
             234);
     return 43;
   }
@@ -402,10 +410,26 @@ forkprepuser(void)
   args[2] = 0;
   REQUIRE(!__sys_enter(SYS_ALLOC, args, &result), 236);
   map.mem = (Handle) result.values[0];
+  selfspace = bootresource(sysboot(), BOOT_SELF_SPACE);
+  args[0] = selfspace;
   args[1] = (u64) &map;
+  map.prot = 3;
+  REQUIRE(!__sys_enter(SYS_MAP, args, &result), 242);
+  fix = (Fix *) map.address;
+  fix->format = FIX_FORMAT;
+  fix->bytes = 88;
+  fix->source_pid = source;
+  fix->source_image = image;
+  fix->target_pid = (Handle) child;
+  fix->contexts_off = sizeof(Fix);
+  args[1] = map.address;
+  REQUIRE(!__sys_enter(SYS_UNMAP, args, &result), 243);
+  args[0] = construct;
+  args[1] = (u64) &map;
+  map.prot = 1;
   REQUIRE(!__sys_enter(SYS_MAP, args, &result), 237);
   args[1] = map.address;
-  args[2] = 64;
+  args[2] = 88;
   REQUIRE(!__sys_enter(SYS_FORKCOMMIT, args, &result) && result.values[0] == child, 238);
   args[1] = args[2] = 0;
   {

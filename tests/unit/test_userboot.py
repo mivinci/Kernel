@@ -68,6 +68,9 @@ class StaticUserElfTests(unittest.TestCase):
 class View(C.Structure):
     _fields_=[(x,C.c_void_p) for x in ('header','argv','env','resources','fds')]
 
+class FixView(C.Structure):
+    _fields_=[(x,C.c_void_p) for x in ('header','resources','contexts')]+[('contexts_limit',C.c_uint64)]
+
 class Image(C.Structure):
     _fields_=[(x,C.c_uint64) for x in ('magic','format','bytes','entry','segment_count','segments_off','boot_off','boot_bytes')]
 
@@ -89,10 +92,32 @@ class UserBootTests(unittest.TestCase):
         cls.lib=C.CDLL(str(path))
         cls.lib.bootcheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(View)]
         cls.lib.bootcheck.restype=C.c_int64
+        cls.lib.sysfixview.argtypes=[C.c_void_p,C.c_uint64,C.c_int64,C.c_uint64,C.c_int64,C.POINTER(FixView)]
+        cls.lib.sysfixview.restype=C.c_int64
         cls.lib.bootimagecheck.argtypes=[C.c_void_p,C.c_uint64,C.POINTER(Image)]
         cls.lib.bootimagesegment.argtypes=[C.c_void_p,C.POINTER(Image),C.c_uint64,C.POINTER(Segment)]
         cls.lib.bootresource.argtypes=[C.POINTER(View),C.c_uint64];cls.lib.bootresource.restype=C.c_int64
         cls.lib.bootarg.argtypes=[C.POINTER(View),C.c_uint64,C.c_uint32];cls.lib.bootarg.restype=C.c_void_p
+
+    def test_fix_envelope_bounds_contexts_and_checks_exact_identities(self):
+        source=(1<<59)|(7<<16)|2
+        target=(1<<59)|(8<<16)|3
+        resource=(2<<59)|(4<<16)|5
+        data=(C.c_uint64*16)(1,128,source,9,target,1,96,64,*([0]*4),1,resource,0,0)
+        result=FixView()
+        self.assertEqual(self.lib.sysfixview(data,128,source,9,target,C.byref(result)),0)
+        self.assertEqual((result.header,result.resources,result.contexts,result.contexts_limit),
+                         (C.addressof(data),C.addressof(data)+96,C.addressof(data)+64,32))
+        for identity in ((source,8,target),(target,9,source),(source,9,target+1)):
+            self.assertEqual(self.lib.sysfixview(data,128,*identity,C.byref(result)),-1)
+            self.assertEqual(bytes(result),bytes(C.sizeof(result)))
+        for field,invalid in ((0,2),(1,129),(5,129),(6,56),(6,104),(7,96),(7,128),(13,1),(15,1)):
+            saved=data[field]
+            data[field]=invalid
+            with self.subTest(field=field,invalid=invalid):
+                self.assertEqual(self.lib.sysfixview(data,128,source,9,target,C.byref(result)),-1)
+                self.assertEqual(bytes(result),bytes(C.sizeof(result)))
+            data[field]=saved
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
 
