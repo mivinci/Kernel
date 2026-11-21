@@ -1477,7 +1477,9 @@ typedclient(const Bootview *view, Handle peer)
     const void *input, *output;
     Fileref     reference;
     Fileclose   closing;
-    Fdtag       descriptor_tag;
+    Fdtag       descriptor_tag, last;
+    Fdview      sourcefd, duplicatefd;
+    Fileref     duplicatefile;
     Fdview      removed;
     u32         saved;
     isize       cancellation;
@@ -1605,13 +1607,25 @@ typedclient(const Bootview *view, Handle peer)
     REQUIRE(!sysfilerefinit(&file_registry, connection_work.state.self), 125);
     referenceprepare(connection_work.state.self, connection_tag, &file);
     fileid = file;
-    REQUIRE(!sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 0 &&
-                !sysfdpublish(&file_descriptors, descriptor_tag, file, 0) &&
-                !sysfilerefalias(&file_registry, connection_work.state.self, fileid) &&
-                !sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 1 &&
-                !sysfdpublish(&file_descriptors, descriptor_tag, fileid, BOOT_FD_CLOEXEC) &&
-                !sysfilerefpin(&file_registry, connection_work.state.self, fileid),
-            124);
+    REQUIRE(
+        !sysfdreserve(&file_descriptors, 0, &descriptor_tag) && descriptor_tag.index == 0 &&
+            !sysfdpublish(&file_descriptors, descriptor_tag, file, BOOT_FD_CLOEXEC) &&
+            !sysfdreserve(&file_descriptors, BOOT_FD_COUNT - 1, &last) &&
+            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 0,
+                     BOOT_FD_COUNT - 1) == -ERR_CAPACITY &&
+            !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
+            duplicatefile.aliases == 1 && !sysfdcancel(&file_descriptors, last) &&
+            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 1, 1) ==
+                -ERR_BAD_HANDLE &&
+            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 0, 1) == 1 &&
+            !sysfdobserve(&file_descriptors, 0, &sourcefd) && sourcefd.flags == BOOT_FD_CLOEXEC &&
+            !sysfdobserve(&file_descriptors, 1, &duplicatefd) && duplicatefd.file == fileid &&
+            !duplicatefd.flags &&
+            !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
+            duplicatefile.aliases == 2 && !sysfdsetflags(&file_descriptors, sourcefd.tag, 0) &&
+            !sysfdsetflags(&file_descriptors, duplicatefd.tag, BOOT_FD_CLOEXEC) &&
+            !sysfilerefpin(&file_registry, connection_work.state.self, fileid),
+        124);
     writeforkclient(fileid, oldmask, 8);
     writeforkclient(fileid, oldmask, 9);
     REQUIRE(!sysopprepare(&connection_work, &connection_directory, SYSFILE_MAIN, 1, 501, &file, 55,

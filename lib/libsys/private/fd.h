@@ -59,4 +59,8 @@ isize sysfdcancel(Fdtable *table, Fdtag reserved);
 isize sysfdreplace(Fdtable *table, Fdtag expected, u64 file, u64 flags, Fdview *out);
 isize sysfddetach(Fdtable *table, Fdtag expected, Fdview *out);
 isize sysfdsetflags(Fdtable *table, Fdtag expected, u64 flags);
+/* Duplicate into the lowest free fd at or above minimum; return its number.
+   Caller excludes caught signals across both disjoint tables. The source's
+   File and prepaid close anchor are shared; the new fd starts without CLOEXEC. */
+isize sysfddup(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 minimum);
 #endif

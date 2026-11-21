@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage287：libsys 接入受保护的本地 fd 复制，复用原 File 的预付关闭责任。双架构 QEMU libsys、13 项 fd 主机检查及格式通过；公开 dup 和 dup2 待接。
+
 - stage286：libc 提供 `strdup`、`strndup`。RV64、ARM64 QEMU runtime 验证独立副本、无 NUL 的有界输入和零长度，格式检查通过。
 
 - stage285：`checkuart.py` 离线校验 `pages`、`ipc`、`cow` 的串口日志。两架构六份 QEMU 日志重放与实时摘要一致，16 项 smoke 主机检查通过；真实板卡待验。
