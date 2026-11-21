@@ -98,6 +98,7 @@ main(int argc, char **argv)
   const Bootview *own = sysboot();
   Elfsource       source;
   Elfwork         work;
+  Execwork        replacement = {0};
   Createarg       args;
   Config          config;
   Reader          reader;
@@ -239,22 +240,32 @@ main(int argc, char **argv)
   reader.malformed = 0;
   REQUIRE(!elfcheck(&source, 64, &plan), 230);
   bootpacket(0, 1);
-  memset(&work, 0, sizeof(work));
-  work.parent_space = space;
-  work.scratch = 0x2000000;
-  work.scratch_bytes = BOOT_MAX_BYTES;
+  replacement.elf.parent_space = space;
+  replacement.elf.scratch = 0x2000000;
+  replacement.elf.scratch_bytes = BOOT_MAX_BYTES;
   reader.fail_after = plan.segments[0].offset + PAGE_SIZE;
-  REQUIRE(sysexecimage(&source, &plan, &packet, packet.header.bytes, 0, &work) == -ERR_FAULT &&
-              !work.view && !work.memory && !work.mapped && work.failure == -ERR_FAULT,
+  REQUIRE(!sysexecprepare(&replacement, 0) && sysexecpublish(&replacement) == -ERR_STATE &&
+              sysexecfill(&replacement, &source, &plan, &packet, packet.header.bytes) ==
+                  -ERR_FAULT &&
+              replacement.elf.view && !replacement.elf.memory && !replacement.elf.mapped &&
+              replacement.elf.failure == -ERR_FAULT && !sysexeccancel(&replacement) &&
+              !replacement.elf.view,
           231);
   reader.fail_after = ~(u64) 0;
   elf_trace[0] = 99;
   REQUIRE(!__sys_yield(), 232);
   do {
-    error = sysexecimage(&source, &plan, &packet, packet.header.bytes, 0, &work);
+    error = sysexecprepare(&replacement, 0);
     if (error == -ERR_BUSY)
       REQUIRE(++retries < 64 && !__sys_yield(), 232);
   } while (error == -ERR_BUSY);
+  REQUIRE(!error && !sysexecfill(&replacement, &source, &plan, &packet, packet.header.bytes), 234);
+  /* After sealing the target the loader no longer needs the source or Boot. */
+  source.read = NULL;
+  memset(&packet, 0, sizeof(packet));
+  REQUIRE(!__sys_yield(), 235);
+  error = sysexecpublish(&replacement);
+  REQUIRE(!sysexeccancel(&replacement), 236);
   elf_trace[15] = (u64) error;
   return 233;
 }

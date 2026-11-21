@@ -12,6 +12,7 @@ typedef struct Elfsource Elfsource;
 typedef struct Elfseg    Elfseg;
 typedef struct Elfplan   Elfplan;
 typedef struct Elfwork   Elfwork;
+typedef struct Execwork  Execwork;
 struct Elfsource
 {
   void *context;
@@ -38,6 +39,11 @@ struct Elfwork
   isize  failure;
   u64    sigmask;
 };
+struct Execwork
+{
+  Elfwork elf;
+  Config  config;
+};
 /* The architecture adapter selects file machine and entry alignment. */
 u32   elfmachine(void);
 u32   elfentryalign(void);
@@ -51,11 +57,16 @@ isize elfcheck(const Elfsource *source, u64 max_pages, Elfplan *out);
 isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
               Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
-/* Same immutable input and scratch contract as elfload. The caller supplies a
-   clean work record with its current SELF_SPACE and private scratch window. */
-isize sysexecimage(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bytes,
-                   u64 reserve, Elfwork *work);
-isize sysexeccancel(Elfwork *work);
+/* Zero-initialize the record and set elf.parent_space and the private scratch
+   window. The view and target image become available before Boot is built.
+   An accepted preparation remains owned until commit or explicit cancel. */
+isize sysexecprepare(Execwork *work, u64 reserve);
+/* Same immutable input contract as elfload. Once this succeeds the source
+   can be released; publication uses only the prepared image and config. */
+isize sysexecfill(Execwork *work, const Elfsource *source, const Elfplan *plan, const void *boot,
+                  u64 bytes);
+isize sysexecpublish(Execwork *work);
+isize sysexeccancel(Execwork *work);
 isize sysfixload(Elfwork *work, u64 address, const void *data, u64 bytes);
 /* Finish a fresh native fork preparation using a packed Fix. Returns the
    published PID or negative status. Consumes view on publication or confirmed

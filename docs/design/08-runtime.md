@@ -872,3 +872,5 @@ stage159把10篇已有的Createop捕获接入共用sysctxsignal前置。sysctxcr
 stage329：`sysexecimage` 对已有稳定 ELF 源、已验证的装载计划及已打包的 Boot，串接原生 `execprep`、`elfload` 和 `execcommit`。装载或提交失败时解除临时映射、释放临时 MEM 并撤销本次准备；未清完的本地责任留在原 `Elfwork` 供 `sysexeccancel` 重试。提交成功从新 ELF 的 `_start` 进入用户态。
 
 RV64、ARM64 QEMU `elf` 保留原有六项子进程装载场景，并注入一次 exec 装载读取故障。旧镜像收到 `ERR_FAULT` 并清理后重试，新镜像验证 argv/env、构造函数、SELF 句柄与同一 PID；内核核对 Life 不变、新根、镜像号及退出后的页账守恒。15 项 ELF 主机回归及格式检查通过。此点仍使用内嵌稳定源；FS 路径解析和装载会话、服务端 fd 交接及公开 `execve` 未接。
+
+stage333：私有 `Execwork` 将替换拆成准备、装载、发布和显式撤销。准备先交出目标镜像号和受限视图，供调用者构造目标 Boot 和准备继承引用；装载成功后发布只依赖目标镜像及 Config，调用者可在提交之前释放源。装载或提交失败仍持有准备责任，不重做原请求，由调用者撤销并收尾。RV64、ARM64 QEMU `elf` 验证未装载不可发布、装载故障可撤销后重试、旧端禁用源并清空原 Boot 缓冲后仍能发布新镜像，页账守恒；15 项 ELF 主机回归及格式通过。源仍是测试内嵌 ELF，尚无生产 FS 会话或 fd 交接。
