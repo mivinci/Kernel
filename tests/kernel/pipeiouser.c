@@ -3,6 +3,7 @@
 #include <sys/channel.h>
 #include "private/close.h"
 #include "private/connection.h"
+#include "private/contextipc.h"
 #include "private/filecreate.h"
 #include "private/filewatch.h"
 #include "private/start.h"
@@ -264,17 +265,23 @@ serviceloop(const Bootview *boot)
 }
 
 static void
-submitpipe(Connwork *work, Conncache *cache, Filepool *pool, Fdtable *table, Pipecreate *pipe,
-           u64 owner)
+submitpipe(Rbank *bank, Connwork *work, Conncache *cache, Filepool *pool, Fdtable *table,
+           Pipecreate *pipe, u64 owner)
 {
-  Msg    message;
-  Ipcmsg result;
-  Handle rpc;
+  Msg      message;
+  Rkey     key;
+  Handle   rpc;
+  Connpeer self = work->state.self;
   CHECK(!sysfilepipeprepare(pool, work, cache, table, SYSFILE_MAIN, owner, pipe, &message) &&
-        !ipc_call(work->state.call, &message, CALL_ASYNC, &result));
-  rpc = result.request;
-  CHECK(!sysopsubmitted(work, cache, &pipe->operation, &result.request) &&
-        !ipc_rqwait(rpc, RQ_FINISH, &result));
+        sysctxpipestep(bank, self, 1, pool, work, cache, &pipe->operation, &key) == -ERR_INVALID &&
+        !sysctxpipestep(bank, self, 0, pool, work, cache, &pipe->operation, &key) &&
+        !sysctxinvoke(bank, self, key) && !sysctxhandoff(bank, self, key) &&
+        !sysctxfinish(bank, self, key) && !sysoprpc(work, cache, &pipe->operation, &rpc));
+  CHECK(!sysctxpipestep(bank, self, 0, pool, work, cache, &pipe->operation, &key) &&
+        bank->contexts[0].route.rpc == rpc && !sysctxinvoke(bank, self, key) &&
+        !sysctxhandoff(bank, self, key) && !sysctxcreateresult(bank, self, key) &&
+        !sysctxfinish(bank, self, key) &&
+        sysctxpipestep(bank, self, 0, pool, work, cache, &pipe->operation, &key) == 1);
 }
 
 static void
@@ -298,6 +305,7 @@ serviceclient(const Bootview *boot)
   static Conncache cache;
   static Fdtable   table;
   static Filepool  pool;
+  static Rbank     bank;
   Fdtag            held;
   Pipecreate       pipe = {0};
   Fdview           view;
@@ -316,7 +324,8 @@ serviceclient(const Bootview *boot)
         result.words[1] == 23);
   invalid.words[0] = FS_ATTACH;
   CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ENOSYS);
-  CHECK(!sysfilerefinit(&pool, work.state.self) && !sysfdreserve(&table, 1, &held) &&
+  CHECK(!sysctxinit(&bank, work.state.self) && !sysfilerefinit(&pool, work.state.self) &&
+        !sysfdreserve(&table, 1, &held) &&
         !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 99, &pipe, &invalid) &&
         !sysfilepipeabort(&pool, &work, &cache, &table, &pipe) && !pipe.operation.lease.seq);
   CHECK(!sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 98, &pipe, &invalid) &&
@@ -327,7 +336,7 @@ serviceclient(const Bootview *boot)
         sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) == -ERR_CANCELLED &&
         !business && !pipe.operation.lease.seq && fd[0] == -1 && fd[1] == -1 &&
         !sysfilerefconnection(&pool, work.state.self, work.state.tag));
-  submitpipe(&work, &cache, &pool, &table, &pipe, 100);
+  submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 100);
   CHECK(sysfilepipefinish(&pool, &work, &cache, &table, &pipe, (int *) 1, &business) ==
             -ERR_FAULT &&
         !business && !pipe.operation.lease.seq && !sysfdobserve(&table, 0, &view) &&
@@ -336,11 +345,10 @@ serviceclient(const Bootview *boot)
   closepending(&work, &cache, &pool, 101);
   closepending(&work, &cache, &pool, 102);
   CHECK(!sysfilerefconnection(&pool, work.state.self, work.state.tag));
-  submitpipe(&work, &cache, &pool, &table, &pipe, 103);
-  CHECK(!sysopcancel(&work, &cache, &pipe.operation) &&
-        !sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
+  submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 103);
+  CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
         fd[0] == 0 && fd[1] == 2);
-  submitpipe(&work, &cache, &pool, &table, &pipe, 104);
+  submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 104);
   CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) &&
         business == -ENFILE && fd[0] == 0 && fd[1] == 2 && !pipe.operation.lease.seq &&
         !sysfdobserve(&table, 3, &view) && view.tag.state == SYSFD_FREE &&

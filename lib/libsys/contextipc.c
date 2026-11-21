@@ -523,6 +523,29 @@ sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork
   return operation(bank, self, layer, pool, work, cache, key, 0, SYS_RQWAIT, out);
 }
 isize
+sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+               Conncache *cache, const Opkey *key, Rkey *out)
+{
+  const Slotop *op;
+  isize         error = sysfilecreatecheck(pool, work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->opcode != FS_PIPE || layer >= RCTX_LAYERS || key->lease.slot / 2 != layer)
+    return -ERR_INVALID;
+  switch (op->phase) {
+  case SYSOP_PREPARED:
+    return sysctxcreatecall(bank, self, layer, pool, work, cache, key, out);
+  case SYSOP_WAITING:
+    return sysctxcreatewait(bank, self, layer, pool, work, cache, key, out);
+  case SYSOP_RESULT:
+  case SYSOP_ACKED:
+    return 1;
+  default:
+    return -ERR_STATE;
+  }
+}
+isize
 sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx   *context;

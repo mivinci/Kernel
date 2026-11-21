@@ -52,6 +52,11 @@ isize sysctxcreatecall(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Co
                        Conncache *cache, const Opkey *operation, Rkey *out);
 isize sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
                        Conncache *cache, const Opkey *operation, Rkey *out);
+/* Register the next native action for a PIPE continuation. PREPARED can
+   submit; WAITING can only wait on the already-owned RPC; a fixed result
+   requires no native action (returns 1). Caller excludes caught signals. */
+isize sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                     Conncache *cache, const Opkey *operation, Rkey *out);
 /* Protected nonblocking typed capture after raw handoff. Records the outcome
    in route.capture_status, preserving the native status separately. Failure
    keeps the original Op/Createop and every reservation/resource; no ACK or fd
