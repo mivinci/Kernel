@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage389：管道分派使用原 CALL、连接身份和共享槽快照，处理 PIPE、DUPREF、CLOSE、READ、WRITE。从预付等待表保留阻塞 Rq，处理取消提示并在流状态改变后重新检查；客户端 LIFE 终结时释放该镜像的引用并排空原 Rq，再释放连接映射。ARM64/RV64 QEMU `pipeio` 经真实 IPC 验证复制引用、原引用关闭后继续写、控制 CLOSE 唤醒等待读端返回 EOF、客户端带阻塞读退出后回收等待记录及页账。当前分派仅接入测试服务循环，未进入默认启动包；公开 `pipe()`、poll 和 SIGPIPE 仍待接。
+
 stage388：`sbin/fs/pipefile.c` 为管道提供预付流和引用表，创建前确定两条关闭记录都可用。读写按真实 PID/image、session 和方向核对并固定端点直到原 Rq 收尾；DUPREF 增加独立引用，CLOSE 只释放匹配的原引用。端点最后一个在途引用退场前不产生 EOF 或回收流。双架构 QEMU `pipeio` 用真实 IPC 创建管道、按原槽领取两个会话并凭此提交原读写；同一夹具还核对错误镜像/方向被拒、引用满额、复制后关闭原引用不影响新引用、在途固定延迟 EOF、镜像退役和流槽复用。当前发号器是私有管道表所有，正式 FS 会话分派、LIFE 驱动清理及公开 `pipe()` 尚未接入。
 
 stage387：`sbin/fs/pipeio.c` 将获准的 READ/WRITE 原 REQUEST 和共享槽快照接到管道。阻塞时由分派者保留原 REQUEST 并 defer，恢复时核对取消；已提交的结果保留用于回复，重试不再消耗或写入字节。ARM64/RV64 QEMU `pipeio` 通过真实 IPC 和共享页验证空读取消、非阻塞 EAGAIN、定位 ESPIPE、满管道写等待和恢复（提交后修改共享页仍读取原字节）、EOF 与 EPIPE；客户端确认原 Rq 已收尾再回收槽，服务端在途表和系统页账回到基线。端点与唤醒由夹具提供，生产 File 分派、公开 `pipe()`、poll 和 SIGPIPE 仍待接。

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage389（2026-11-22）：FS 管道请求分派接入真实 PIPE/DUPREF/CLOSE/READ/WRITE 和原 Rq 等待。ARM64/RV64 QEMU `pipeio` 验证关闭唤醒 EOF、客户端退出排空及页账回收；默认启动包尚未启动 FS。
 - stage388（2026-11-22）：FS 私有管道端点按 PID/image 与会话授权，在途读写保留端点引用。双架构 QEMU `pipeio` 验证真实 PIPE 返回、引用复制/关闭及退役；正式 FS 服务循环未接。
 - stage387（2026-11-22）：FS 私有管道读写适配接通原 REQUEST。双架构 QEMU `pipeio` 验证取消、非阻塞、定位拒绝、延迟写快照、EOF、断管及页账回收；生产分派和公开 `pipe()` 未接。
 - stage386（2026-11-22）：FS 管道字节流支持 4 KiB 原子写、短写、端点引用、EOF 和断管。双架构 QEMU `runtime` 与格式检查通过；File/IPC 分派仍待接。
