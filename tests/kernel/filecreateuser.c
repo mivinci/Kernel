@@ -867,28 +867,45 @@ claimlookup(void *context, Handle pid, u64 image, u64 session, u64 reference)
   return execreference(context, pid, image, session, reference);
 }
 
+typedef struct Claimrefs Claimrefs;
+struct Claimrefs
+{
+  Openprep refs[3];
+  u32      steps;
+};
+
 static isize
 claimactivate(void *context, const Fileowner *target, u64 hold)
 {
-  u32 *steps = context;
-  CHECK(!*steps && target->image == 2 && !target->reason && hold == 1);
-  *steps = 1;
+  Claimrefs *refs = context;
+  CHECK(!refs->steps && target->image == 2 && !target->reason && hold == 1);
+  refs->steps = 1;
   return 0;
+}
+
+static isize
+claimclose(void *context, const Openprep *prep)
+{
+  Claimrefs *refs = context;
+  CHECK(prep->state == Openattached && prep->client_image == 1 && prep->session == 100);
+  if (prep->reference == 1000) {
+    CHECK(refs->steps == 1);
+    refs->steps = 2;
+    return 0;
+  }
+  CHECK(prep->reference == 1001 && (refs->steps == 2 || refs->steps == 3));
+  return ++refs->steps == 3 ? -ERR_WOULD_BLOCK : 0;
 }
 
 static isize
 claimretire(void *context, const Fileowner *source, const Execgroup *group)
 {
-  u32 *steps = context;
-  CHECK(source->image == 1 && source->reason == OBS_EXEC && group->session == 100);
-  if (group->reference == 1000) {
-    CHECK(*steps == 1 && group->retained == 1 && !group->closed);
-    *steps = 2;
-    return 0;
-  }
-  CHECK(group->reference == 1001 && !group->retained && group->closed == 1 &&
-        (*steps == 2 || *steps == 3));
-  return ++*steps == 3 ? -ERR_WOULD_BLOCK : 0;
+  Claimrefs *refs = context;
+  CHECK(source->image == 1 && source->reason == OBS_EXEC);
+  CHECK(group->reference == 1000 ? group->retained == 1 && !group->closed
+                                 : !group->retained && group->closed == 1);
+  return sysopenclose(refs->refs, ARRAY_SIZE(refs->refs), source->pid, source->image,
+                      group->session, group->reference, claimclose, refs);
 }
 
 static void
@@ -903,7 +920,8 @@ claimbackend(const Bootview *boot)
   Ipcmsg     input;
   Fileslot   slot;
   u64        key[5], held = 0;
-  u32        steps = 0;
+  Claimrefs  refs = {0};
+  u32        i;
   volatile u64 *marker;
   Msg           stale = {{(u64) -ESTALE, 2, 0, 0}};
   CHECK(!__sys_getid(&self.pid, &self.image, &parent) && !ipc_recv(0, 0, &input) &&
@@ -914,6 +932,13 @@ claimbackend(const Bootview *boot)
   key[2] = 100;
   key[3] = 1000;
   key[4] = 0;
+  for (i = 0; i < ARRAY_SIZE(refs.refs); i++) {
+    refs.refs[i].client = old->owner.pid;
+    refs.refs[i].client_image = i == 2 ? 2 : 1;
+    refs.refs[i].session = key[2];
+    refs.refs[i].reference = key[3] + (i == 1);
+    sysopencommit(&refs.refs[i]);
+  }
   CHECK(!sysexecmanifest(&execplan, old, &input, &slot,
                          (const void *) (ADDRESS + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
                          self, 0, claimlookup, key) &&
@@ -923,16 +948,20 @@ claimbackend(const Bootview *boot)
         links[1].watch.connid == EXEC_CLAIM_CONNID);
   marker = (volatile u64 *) (links[1].address + FS_DATA_OFFSET);
   *marker = EXEC_CLAIM_MARKER;
-  CHECK(sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &steps) ==
+  CHECK(sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &refs) ==
             -ERR_BUSY &&
-        !steps && !sysexecreply(&execreserve, old, &links[1], &input, EXEC_CLAIM_TOKEN, 0));
+        !refs.steps && !sysexecreply(&execreserve, old, &links[1], &input, EXEC_CLAIM_TOKEN, 0));
   CHECK(!ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input) && input.kind == IPC_EVENT &&
         input.words[0] == EVENT_LIFE &&
-        sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &steps) ==
+        sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &refs) ==
             -ERR_WOULD_BLOCK &&
-        steps == 3 && links[1].prepaid && !links[1].ready &&
-        !sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &steps) &&
-        steps == 4);
+        refs.steps == 3 && refs.refs[0].state == Openclosed && refs.refs[1].state == Openattached &&
+        links[1].prepaid && !links[1].ready &&
+        !sysexecadvance(&execreserve, &old->owner, target, claimactivate, claimretire, &refs) &&
+        refs.steps == 4 && refs.refs[1].state == Openclosed && refs.refs[2].state == Openattached &&
+        !sysopenclose(refs.refs, ARRAY_SIZE(refs.refs), old->owner.pid, 1, 100, 1000, claimclose,
+                      &refs) &&
+        refs.steps == 4);
   CHECK(!ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
         old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held &&
         !ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&

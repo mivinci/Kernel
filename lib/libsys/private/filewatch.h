@@ -48,6 +48,12 @@ void  sysopencommit(Openprep *prep);
 /* Resolve only a live attached reference after connection and slot validation.
    The caller still owns logical close and any downstream drain. */
 Openprep *sysopenref(Openprep *pool, u32 count, const Ipcmsg *call, const Fileslot *slot);
+/* Resolve a trusted client identity and exact reference (e.g. an admitted
+   CLOSE or a published exec manifest). Before returning success, revoke must
+   close the reference or save its downstream cleanup in preallocated storage.
+   On failure the entry remains attached. A closed entry is idempotent. */
+isize sysopenclose(Openprep *pool, u32 count, Handle client, u64 image, u64 session, u64 reference,
+                   Openrevoke revoke, void *context);
 /* Validate any nonzero connid against the caller's connection first. Return
    1 while a logical close is owed, or 0 for a tombstone. Retire only after
    closing the reference or saving its cleanup. */

@@ -99,24 +99,52 @@ sysopencommit(Openprep *prep)
   prep->state = Openattached;
 }
 
-Openprep *
-sysopenref(Openprep *pool, u32 count, const Ipcmsg *call, const Fileslot *slot)
+static Openprep *
+openref(Openprep *pool, u32 count, Handle client, u64 image, u64 session, u64 reference, int closed)
 {
   Openprep *found = NULL;
   u32       i;
-  if (!pool || count > SYSOPEN_POOL_MAX || !call || call->kind != IPC_CALL || !slot)
+  if (!pool || count > SYSOPEN_POOL_MAX)
     return NULL;
   for (i = 0; i < count; i++) {
     Openprep *prep = &pool[i];
-    if (prep->state == Openattached && prep->client == call->source &&
-        prep->client_image == call->image && prep->session == slot->object &&
-        prep->reference == slot->args[0]) {
+    if ((prep->state == Openattached || (closed && prep->state == Openclosed)) &&
+        prep->client == client && prep->client_image == image && prep->session == session &&
+        prep->reference == reference) {
       if (found)
         return NULL;
       found = prep;
     }
   }
   return found;
+}
+
+Openprep *
+sysopenref(Openprep *pool, u32 count, const Ipcmsg *call, const Fileslot *slot)
+{
+  if (!call || call->kind != IPC_CALL || !slot)
+    return NULL;
+  return openref(pool, count, call->source, call->image, slot->object, slot->args[0], 0);
+}
+
+isize
+sysopenclose(Openprep *pool, u32 count, Handle client, u64 image, u64 session, u64 reference,
+             Openrevoke revoke, void *context)
+{
+  Openprep *prep;
+  isize     error;
+  if (!pool || !count || count > SYSOPEN_POOL_MAX || !revoke ||
+      handlekind(client) != HANDLE_PROCESS || !image || !session || !reference)
+    return -ERR_INVALID;
+  prep = openref(pool, count, client, image, session, reference, 1);
+  if (!prep)
+    return -ERR_STALE;
+  if (prep->state == Openclosed)
+    return 0;
+  error = revoke(context, prep);
+  if (!error)
+    sysopenretire(prep);
+  return error;
 }
 
 isize
