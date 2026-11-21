@@ -461,7 +461,16 @@ forkprepuser(void)
   args[0] = construct;
   args[1] = 0;
   REQUIRE(__sys_enter(SYS_START, args, &result) == -ERR_STATE, 227);
-  REQUIRE(!__sys_forkabort(construct), 228);
+  memset(&work, 0, sizeof(work));
+  work.view = construct;
+  work.pid = child;
+  work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
+  work.scratch = address;
+  work.scratch_bytes = 4096;
+  memset(fix, 0, sizeof(fix));
+  REQUIRE(sysforkpublish(&work, address, fix, sizeof(fix)) == -ERR_INVALID &&
+              work.failure == -ERR_INVALID && !work.view && !work.memory && !work.mapped,
+          228);
   args[0] = child;
   args[1] = 1;
   REQUIRE(__sys_enter(SYS_WAIT, args, &result) == -ERR_CHILD, 229);
@@ -540,9 +549,8 @@ forkprepuser(void)
   work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
   work.scratch = address;
   work.scratch_bytes = 4096;
-  REQUIRE(!sysfixload(&work, address, fix, (u64) bytes) && !work.memory && !work.mapped, 237);
-  REQUIRE(!__sys_forkcommit(construct, (const void *) address, (u64) bytes, &published) &&
-              published == child,
+  REQUIRE(sysforkpublish(&work, address, fix, (u64) bytes) == child && !work.view && !work.memory &&
+              !work.mapped,
           238);
   args[1] = args[2] = 0;
   {

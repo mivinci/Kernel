@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage243：父侧 Fix 装载、提交和失败撤销已串联，未完成清理可重试。8 项主机测试、格式与双架构 sigframe/libsys 通过；后端准备与公开入口仍待接。
+
 - stage242：父侧 `sysfixpack` 按现有格式验证并组装 Fix，出错不改目标缓冲。28 项主机测试、格式和双架构 sigframe/libsys 通过；生产事务和后端准备仍待接。
 
 - stage241：父侧 `sysctxfixplan` 从稳定 Rbank 导出三层记录并复用子侧路由准入。65 项上下文主机测试、格式、双架构 sigframe/libsys 通过；完整父侧协调器与后端准备仍待接。

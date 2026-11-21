@@ -52,4 +52,10 @@ isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u6
               Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
 isize sysfixload(Elfwork *work, u64 address, const void *data, u64 bytes);
+/* Finish a fresh native fork preparation using a packed Fix. Returns the
+   published PID or negative status. Consumes view on publication or confirmed
+   revocation; failure keeps the original error and any unfinished cleanup.
+   The caller owns the preparation and reserved scratch until both are clean. */
+isize sysforkpublish(Elfwork *work, u64 address, const void *data, u64 bytes);
+isize sysforkcancel(Elfwork *work);
 #endif

@@ -38,7 +38,7 @@ class ElfLoaderTests(unittest.TestCase):
             path=Path(cls.temp.name)/(arch+'.so')
             command=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
                      '-I'+str(ROOT/'include'),'-I'+str(ROOT/'lib/libsys/include'),'-I'+str(ROOT/'lib/libsys'),
-                     *[str(ROOT/'lib/libsys'/x) for x in ('boot.c','elf.c','load.c',arch+'/elf.c')],
+                     *[str(ROOT/'lib/libsys'/x) for x in ('boot.c','elf.c','load.c','fork.c',arch+'/elf.c')],
                      str(ROOT/'tests/unit/elf_fixture.c'),'-o',str(path)]
             if sys.platform=='darwin':
                 sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
@@ -49,6 +49,9 @@ class ElfLoaderTests(unittest.TestCase):
                 ('elfcheck',[C.POINTER(Source),C.c_uint64,C.POINTER(Plan)],C.c_int64),
                 ('elfload',[C.POINTER(Source),C.POINTER(Plan),C.c_void_p,C.c_uint64,C.POINTER(Work),C.POINTER(Config)],C.c_int64),
                 ('sysfixload',[C.POINTER(Work),C.c_uint64,C.c_void_p,C.c_uint64],C.c_int64),
+                ('sysforkpublish',[C.POINTER(Work),C.c_uint64,C.c_void_p,C.c_uint64],C.c_int64),
+                ('sysforkcancel',[C.POINTER(Work)],C.c_int64),
+                ('mock_fork_fail',[C.c_int64,C.c_int64],None),
                 ('elfclean',[C.POINTER(Work)],C.c_int64),('mock_reset',[C.c_uint64],None),
                 ('mock_fail',[C.c_uint32],None),('mock_cleanup_fail',[C.c_uint32,C.c_uint32],None),
                 ('mock_peek',[C.c_uint64,C.c_void_p,C.c_uint64,C.POINTER(C.c_uint64)],C.c_int)):
@@ -92,6 +95,31 @@ class ElfLoaderTests(unittest.TestCase):
                     else:
                         self.assertEqual((status,found,prot.value,out.raw),(0,0,1,payload))
                     lib.mock_abort()
+
+    def test_fork_publication_failure_preserves_first_error_and_retries_exact_cleanup(self):
+        target=(1<<59)|(4<<16)|3
+        payload=struct.pack('<15Q',1,120,1,1,target,0,0,64,*([0]*7))
+        source=self.window+PAGE
+        C.memmove(source,payload,len(payload))
+        for _,lib in self.libs:
+            lib.mock_reset(self.window)
+            work=Work(101,target,102,0,1,self.window,PAGE,0,0,0)
+            lib.mock_fork_fail(-21,-7)
+            self.assertEqual(lib.sysforkpublish(C.byref(work),0x50000,source,len(payload)),-7)
+            self.assertEqual((work.failure,work.view,work.mapped,work.memory,lib.mock_live()),
+                             (-21,101,0,0,1))
+            lib.mock_fork_fail(0,0)
+            self.assertEqual(lib.sysforkpublish(C.byref(work),0x50000,source,len(payload)),-6)
+            self.assertEqual(lib.sysforkcancel(C.byref(work)),0)
+            self.assertEqual((work.failure,work.view,lib.mock_live()),(-21,0,0))
+
+            lib.mock_reset(self.window)
+            work=Work(101,target,102,0,1,self.window,PAGE,0,0,0)
+            lib.mock_cleanup_fail(3,0)
+            self.assertLess(lib.sysforkpublish(C.byref(work),0x50000,source,len(payload)),0)
+            self.assertEqual((work.view,work.mapped,lib.mock_live()),(0,1,1))
+            self.assertEqual(lib.sysforkcancel(C.byref(work)),0)
+            self.assertEqual((work.view,work.mapped,work.memory,lib.mock_live()),(0,0,0,0))
 
     def packet(self):
         data=bytearray(BOOT_HEADER_BYTES+3*32)

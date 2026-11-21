@@ -31,6 +31,7 @@ static Memory  memories[OBJECTS];
 static Mapping targets[TARGETS];
 static u64     scratch;
 static u32     alias_id, step, fail_step, unmap_failures, free_failures, bad_free;
+static isize   commit_error, abort_error;
 static int
 fault(void)
 {
@@ -51,6 +52,7 @@ mock_reset(u64 window)
   memset(targets, 0, sizeof(targets));
   scratch = window;
   alias_id = step = fail_step = unmap_failures = free_failures = bad_free = 0;
+  commit_error = abort_error = 0;
 }
 void
 mock_fail(u32 at)
@@ -103,6 +105,36 @@ mock_abort(void)
       memories[targets[i].memory].refs--;
       targets[i].live = 0;
     }
+}
+void
+mock_fork_fail(isize commit, isize abort)
+{
+  commit_error = commit;
+  abort_error = abort;
+}
+isize
+__sys_forkcommit(Handle view, const void *fix, u64 bytes, Handle *pid)
+{
+  u32 i;
+  if (view != VIEW || alias_id || mock_locals())
+    return -ERR_STATE;
+  for (i = 0; i < TARGETS; i++)
+    if (targets[i].live && targets[i].address == (u64) fix && targets[i].bytes >= bytes &&
+        targets[i].prot == MAP_READ) {
+      *pid = PID;
+      return commit_error;
+    }
+  return -ERR_FAULT;
+}
+isize
+__sys_forkabort(Handle view)
+{
+  if (view != VIEW)
+    return -ERR_BAD_HANDLE;
+  if (abort_error)
+    return abort_error;
+  mock_abort();
+  return 0;
 }
 int
 mock_peek(u64 address, void *out, u64 bytes, u64 *prot)

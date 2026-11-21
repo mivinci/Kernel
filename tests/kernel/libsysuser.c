@@ -348,11 +348,8 @@ readfork(void)
     work.parent_space = connection_work.state.space;
     work.scratch = 0x31000000;
     work.scratch_bytes = PAGE_SIZE;
-    REQUIRE(!sysfixload(&work, 0x32000000, fix, (u64) bytes) &&
-                !__sys_forkcommit(forked.construct, (const void *) 0x32000000, (u64) bytes,
-                                  &published) &&
-                published == forked.pid,
-            34);
+    published = sysforkpublish(&work, 0x32000000, fix, (u64) bytes);
+    REQUIRE(published == forked.pid && !work.view && !work.memory && !work.mapped, 34);
     args[0] = (u64) published;
     REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == (u64) published &&
                 result.values[1] == WAIT_EXITED && result.values[2] == 43,
