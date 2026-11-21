@@ -25,6 +25,7 @@
 #define FS_PATH             10
 #define FS_POLL_QUERY       11
 #define FS_POLL_WAIT        12
+#define FS_POLL_ROWS        128
 #define FS_FORK_SNAPSHOT    16
 #define FS_FORK_PREPARE     17
 #define FS_EXEC_PREPARE     18
@@ -53,6 +54,7 @@
 typedef struct Filehead    Filehead;
 typedef struct Fileslot    Fileslot;
 typedef struct Fileinherit Fileinherit;
+typedef struct Filepoll    Filepoll;
 struct Filehead
 {
   u64 magic, bytes, connid, serverimage, slots, slotbytes, reserved[2];
@@ -66,6 +68,13 @@ struct Fileinherit
 {
   u64 fd, flags, backend_pid, backend_image, session, reference_id;
 };
+struct Filepoll
+{
+  u64 session, fd_generation, events, revents;
+};
+STATIC_ASSERT(sizeof(Filepoll) == 32 && FS_POLL_ROWS * sizeof(Filepoll) == FS_SLOT_BYTES,
+              file_poll_rows_fit_page);
+STATIC_ASSERT(offsetof(Filepoll, revents) == 24, file_poll_output_offset);
 STATIC_ASSERT(sizeof(Fileinherit) == 48, file_inherit_record);
 STATIC_ASSERT(sizeof(Filehead) == 64, file_connection_header);
 STATIC_ASSERT(sizeof(Fileslot) == FS_DESC_BYTES, file_slot_descriptor);

@@ -39,6 +39,11 @@ isize sysfilerequest(const volatile void *region, u64 bytes, u32 slot, u64 seq, 
 /* Validate a privately captured READ/WRITE/CLOSE/DUPREF descriptor before
    touching payload. File mode, offset and reference authority are separate. */
 isize sysfileargs(u64 opcode, const Fileslot *slot);
+/* Snapshot the rows from one admitted QUERY/WAIT request into private
+   storage. Capacity is given in rows. Event semantics are checked by the
+   backend before using or writing any rows. */
+isize sysfilepollrows(const Fileinflight *active, Handle request, const volatile void *region,
+                      u64 bytes, u32 index, const Fileslot *slot, Filepoll *out, u32 capacity);
 /* Zero-initialized private ledger for one exact service connection. The
    serialized service loop verifies source and connid before admission.
    Keep the full REQUEST reserved through defer, cancellation and downstream

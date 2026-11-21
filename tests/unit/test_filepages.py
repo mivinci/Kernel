@@ -32,6 +32,10 @@ class Inflight(C.Structure):
     _fields_ = [('requests', C.c_int64 * 8)]
 
 
+class Pollrow(C.Structure):
+    _fields_ = [(name, C.c_uint64) for name in ('session', 'fd_generation', 'events', 'revents')]
+
+
 class FilePageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -46,6 +50,8 @@ class FilePageTests(unittest.TestCase):
             'sysfilehead':[C.c_void_p,C.c_uint64,C.c_uint64,C.c_uint64,C.POINTER(Head)],
             'sysfilerequest':[C.c_void_p,C.c_uint64,C.c_uint32,C.c_uint64,C.POINTER(Slot)],
             'sysfileargs':[C.c_uint64,C.POINTER(Slot)],
+            'sysfilepollrows':[C.POINTER(Inflight), C.c_int64, C.c_void_p, C.c_uint64,
+                               C.c_uint32, C.POINTER(Slot), C.c_void_p, C.c_uint32],
             'sysfileaccept':[C.POINTER(Inflight), C.c_void_p, C.c_uint64, C.c_uint64,
                              C.c_uint64, C.c_int64, C.POINTER(Slot)],
             'sysfilefinish':[C.POINTER(Inflight), C.c_int64],
@@ -74,6 +80,43 @@ class FilePageTests(unittest.TestCase):
         self.assertEqual((check(6), check(7)), (0, 0))
         slot.args[7] = 1
         self.assertEqual((check(6), check(7)), (-1, -1))
+
+    def test_poll_snapshot_requires_owned_single_page_and_copies_whole_group(self):
+        active, descriptor = Inflight(), Slot()
+        request = (3 << 59) | (1 << 16) | 7
+        index = 7
+        slot = self.slot(index)
+        slot.seq, slot.state, slot.span, slot.payload_bytes = 13, 1, 1, 4096
+        slot.args[:] = [128, 12345, 9, 0, 0, 0, 0, 0]
+        shared = (Pollrow * 128).from_buffer(self.memory, (index + 1) * 4096)
+        out = (Pollrow * 128)()
+        shared[0].session, shared[127].fd_generation = 21, 22
+        args = (C.byref(active), self.memory, BYTES)
+        self.assertEqual(self.lib.sysfileaccept(*args, index, 13, request, C.byref(descriptor)), 0)
+
+        def capture(rq=request, target=out, capacity=128):
+            return self.lib.sysfilepollrows(C.byref(active), rq, self.memory, BYTES, index,
+                                            C.byref(descriptor), target, capacity)
+
+        self.assertEqual(capture(), 0)
+        self.assertEqual((out[0].session, out[127].fd_generation), (21, 22))
+        shared[0].session = 99
+        saved = bytes(out)
+        self.assertEqual(capture(request + 1), -4)
+        self.assertEqual(capture(capacity=127), -1)
+        self.assertEqual(capture(target=shared), -1)
+        descriptor.args[0] = 129
+        self.assertEqual(capture(capacity=129), -1)
+        descriptor.args[0] = 128
+        descriptor.payload_bytes -= 1
+        self.assertEqual(capture(), -1)
+        descriptor.payload_bytes += 1
+        descriptor.args[7] = 1
+        self.assertEqual(capture(), -1)
+        self.assertEqual(bytes(out), saved)
+        self.assertEqual(self.lib.sysfilefinish(C.byref(active), request), 0)
+        descriptor.args[7] = 0
+        self.assertEqual(capture(), -4)
 
     @classmethod
     def tearDownClass(cls):

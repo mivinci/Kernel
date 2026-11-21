@@ -86,6 +86,31 @@ sysfileargs(u64 opcode, const Fileslot *slot)
   return 0;
 }
 isize
+sysfilepollrows(const Fileinflight *active, Handle request, const volatile void *region, u64 bytes,
+                u32 index, const Fileslot *slot, Filepoll *out, u32 capacity)
+{
+  const volatile u8 *base = region;
+  u64                length;
+  u32                i;
+  if (!active || !slot || bytes != FS_CONN_BYTES || index >= FS_CONN_SLOTS ||
+      handlekind(request) != HANDLE_REQUEST || slot->span != 1 || slot->object || !slot->args[0] ||
+      slot->args[0] > FS_POLL_ROWS || slot->args[0] > capacity)
+    return -ERR_INVALID;
+  if (active->requests[index] != request)
+    return -ERR_STALE;
+  for (i = 3; i < ARRAY_SIZE(slot->args); i++)
+    if (slot->args[i])
+      return -ERR_INVALID;
+  length = slot->args[0] * sizeof(*out);
+  if (slot->payload_bytes != length || !separate(region, bytes, out, length) ||
+      !separate(active, sizeof(*active), out, length) ||
+      !separate(slot, sizeof(*slot), out, length))
+    return -ERR_INVALID;
+  snapshot(out, base + FS_DATA_OFFSET + index * FS_SLOT_BYTES, length);
+  return 0;
+}
+
+isize
 sysfileaccept(Fileinflight *active, const volatile void *region, u64 bytes, u64 slot, u64 seq,
               Handle request, Fileslot *out)
 {
