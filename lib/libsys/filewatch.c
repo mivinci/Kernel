@@ -4,6 +4,92 @@
 #include <abi/time.h>
 
 isize
+sysopenprepare(Openprep *prep, const Fileowner *owner, Handle client, u64 image, u64 token,
+               u64 session, u64 reference, u64 deadline)
+{
+  if (!prep || !owner || !owner->cookie || owner->reason || handlekind(client) != HANDLE_PROCESS ||
+      !image || !token || !session || !reference || !deadline ||
+      (owner->pid == client && owner->image == image))
+    return -ERR_INVALID;
+  if (prep->state != Openempty)
+    return -ERR_BUSY;
+  prep->preparer = owner->pid;
+  prep->preparer_image = owner->image;
+  prep->client = client;
+  prep->client_image = image;
+  prep->token = token;
+  prep->session = session;
+  prep->reference = reference;
+  prep->deadline = deadline;
+  prep->state = Openpending;
+  return 0;
+}
+
+static isize
+opencall(const Openprep *prep, const Ipcmsg *call, u64 opcode)
+{
+  if (!prep || !call || call->kind != IPC_CALL || call->words[0] != opcode || !call->words[2] ||
+      !call->words[3])
+    return -ERR_INVALID;
+  return prep->state == Openempty || prep->token != call->words[3] ? -ERR_STALE : 0;
+}
+
+isize
+sysopenattach(const Openprep *prep, const Ipcmsg *call, u64 now)
+{
+  isize status = opencall(prep, call, FS_ATTACH);
+  if (status)
+    return status;
+  if (call->words[1])
+    return -ERR_INVALID;
+  if (call->source != prep->client || call->image != prep->client_image)
+    return -ERR_DENIED;
+  return prep->state != Openpending || sysopenexpired(prep, now) ? -ERR_STALE : 0;
+}
+
+void
+sysopencommit(Openprep *prep)
+{
+  prep->deadline = 0;
+  prep->state = Openattached;
+}
+
+isize
+sysopenabort(const Openprep *prep, const Ipcmsg *call)
+{
+  isize status = opencall(prep, call, FS_ABORT);
+  if (status)
+    return status;
+  if (!(call->source == prep->client && call->image == prep->client_image) &&
+      !((prep->state == Openpending || prep->state == Opencancelled) &&
+        call->source == prep->preparer && call->image == prep->preparer_image))
+    return -ERR_DENIED;
+  return prep->state == Openpending || prep->state == Openattached;
+}
+
+int
+sysopenexpired(const Openprep *prep, u64 now)
+{
+  return prep->state == Openpending && now >= prep->deadline;
+}
+
+int
+sysopenorphan(const Openprep *prep, const Fileowner *owner)
+{
+  return prep->state == Openpending && owner->cookie && owner->reason &&
+         owner->pid == prep->preparer && owner->image == prep->preparer_image;
+}
+
+void
+sysopenretire(Openprep *prep)
+{
+  if (prep->state == Openpending || prep->state == Openattached) {
+    prep->state = prep->state == Openpending ? Opencancelled : Openclosed;
+    prep->deadline = 0;
+  }
+}
+
+isize
 sysfilenow(u64 *now)
 {
   int64_t seconds;

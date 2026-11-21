@@ -608,6 +608,14 @@ server(const Bootview *boot, u32 recover)
         Ipcmsg result;
         Handle rpc;
         u64    token = ++filecreatetrace[4];
+        if (recover == 14 && token == 2) {
+          prepare.words[0] = FS_ABORT;
+          prepare.words[1] = 0;
+          prepare.words[2] = 1;
+          prepare.words[3] = 1;
+          CHECK(!ipc_call(bootresource(boot, 257), &prepare, CALL_CONTROL, &result) &&
+                (isize) result.words[0] == -EACCES && result.words[1] == 1);
+        }
         prepare.words[0] = PREPARE;
         prepare.words[1] = 200 + token;
         prepare.words[2] = 2000 + token;
@@ -739,23 +747,23 @@ backend(const Bootview *boot, u32 recover)
   Filewatch watch = {0};
   Handle    memory = 0, space = bootresource(boot, BOOT_SELF_SPACE), waiter = 0;
   Filehead *head = (Filehead *) ADDRESS;
-  u64       sessions[4], references[4], created = 0, closed = 0, token, i;
+  Openprep  preps[4] = {{0}};
+  Openprep *prep;
+  u64       created = 0, closed = 0, token, i;
   u64       wanted, attached, aborted, cancelled = 0;
-  u64       deadlines[4] = {0, 0, 0, 0}, armed = 0, next, now, generation;
-  u32       claimed = 0;
+  u64       armed = 0, next, now, generation;
+  isize     status;
   wanted = recover == 4 ? 1 : recover == 2 ? 2 : recover == 5 ? 3 : 4;
   attached = recover == 4 ? 1 : recover == 2 ? 2 : 3;
   aborted = recover == 4 || recover == 2 ? 1 : recover == 5 ? 2 : 3;
   CHECK(!sysconnpeer(bootresource(boot, 256), &clientpeer) &&
         !sysconnpeer(bootresource(boot, 257), &vfspeer));
-  zero(sessions, sizeof(sessions));
-  zero(references, sizeof(references));
   for (;;) {
     if (recover == 10) {
       next = 0;
       for (i = 0; i < created; i++)
-        if (deadlines[i] && (!next || deadlines[i] < next))
-          next = deadlines[i];
+        if (preps[i].deadline && (!next || preps[i].deadline < next))
+          next = preps[i].deadline;
       if (next != armed) {
         CHECK(!(next ? __sys_alarmset(next, &generation) : __sys_alarmcancel(&generation)));
         armed = next;
@@ -765,10 +773,8 @@ backend(const Bootview *boot, u32 recover)
     if (recover == 10) {
       CHECK(!sysfilenow(&now));
       for (i = 0; i < created; i++)
-        if (deadlines[i] && now >= deadlines[i]) {
-          CHECK(references[i] && !(claimed & (1U << i)));
-          deadlines[i] = 0;
-          references[i] = 0;
+        if (sysopenexpired(&preps[i], now)) {
+          sysopenretire(&preps[i]);
           closed++;
           cancelled++;
         }
@@ -788,8 +794,8 @@ backend(const Bootview *boot, u32 recover)
       if (preparer.reason) {
         CHECK(preparer.reason == OBS_EXIT);
         for (i = 0; i < created; i++)
-          if (references[i] && !(claimed & (1U << i))) {
-            references[i] = 0;
+          if (sysopenorphan(&preps[i], &preparer)) {
+            sysopenretire(&preps[i]);
             closed++;
             cancelled++;
           }
@@ -806,10 +812,9 @@ backend(const Bootview *boot, u32 recover)
       CHECK(input.source == vfspeer.pid && input.image == vfspeer.image && created < 4 &&
             input.words[3] == created + 1 && input.words[1] && input.words[2]);
       CHECK(!sysfileowner(&preparer, bootresource(boot, 258), &input));
-      if (recover == 10)
-        CHECK(!sysfileopendeadline(&deadlines[created]));
-      sessions[created] = input.words[1];
-      references[created] = input.words[2];
+      CHECK(!sysfileopendeadline(&next) &&
+            !sysopenprepare(&preps[created], &preparer, clientpeer.pid, clientpeer.image,
+                            input.words[3], input.words[1], input.words[2], next));
       created++;
       reply.words[1] = input.words[3];
       CHECK(!ipc_reply(input.request, &reply));
@@ -817,14 +822,16 @@ backend(const Bootview *boot, u32 recover)
     }
     if (input.words[0] == ENDPEER) {
       CHECK((recover == 1 || recover == 6) && input.source == vfspeer.pid &&
-            input.image == vfspeer.image && created == 1 && references[0] && !memory);
+            input.image == vfspeer.image && created == 1 && preps[0].state == Openpending &&
+            !memory);
       filecreatetrace[1] = 1;
       filecreatetrace[2] = 0;
       filecreatetrace[4] = 1;
       filecreatetrace[0] = 2;
       return;
     }
-    CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
+    if (input.words[0] != FS_ABORT && input.words[0] != FS_ATTACH)
+      CHECK(input.source == clientpeer.pid && input.image == clientpeer.image);
     if (recover == 10 && input.words[0] == SEEN) {
       CHECK(!waiter);
       if (filecreatetrace[6])
@@ -837,9 +844,9 @@ backend(const Bootview *boot, u32 recover)
     }
     if (input.words[0] == STOP) {
       if (recover >= 9) {
-        CHECK(created == 2 && closed == 2 && cancelled == 1 && memory && claimed == 1 &&
-              !references[0] && !references[1] && filecreatetrace[3] == 1 &&
-              filecreatetrace[4] == 1);
+        CHECK(created == 2 && closed == 2 && cancelled == 1 && memory &&
+              preps[0].state == Openclosed && preps[1].state == Opencancelled &&
+              filecreatetrace[3] == 1 && filecreatetrace[4] == 1);
         CHECK(recover == 9 ? !preparer.cookie : filecreatetrace[6] == 1 && !waiter);
         reply.words[0] = created;
         reply.words[1] = closed;
@@ -850,7 +857,7 @@ backend(const Bootview *boot, u32 recover)
       CHECK(created == wanted && closed == created && filecreatetrace[3] == attached &&
             filecreatetrace[4] == aborted);
       for (i = 0; i < created; i++)
-        CHECK(!references[i]);
+        CHECK(preps[i].state == Openclosed || preps[i].state == Opencancelled);
       reply.words[0] = created;
       reply.words[1] = closed;
       CHECK(!ipc_reply(input.request, &reply));
@@ -859,8 +866,10 @@ backend(const Bootview *boot, u32 recover)
     if (input.words[0] == FS_ABORT || input.words[0] == FS_ATTACH) {
       token = input.words[3];
       CHECK(!input.words[1] && input.words[2] && token && token <= created);
+      prep = &preps[token - 1];
       if (recover == 3 && input.words[0] == FS_ABORT) {
-        CHECK(created == 1 && references[0] && !memory);
+        CHECK(created == 1 && prep->state == Openpending && sysopenabort(prep, &input) == 1 &&
+              !memory);
         filecreatetrace[1] = 1;
         filecreatetrace[4] = 1;
         filecreatetrace[0] = 2;
@@ -868,17 +877,22 @@ backend(const Bootview *boot, u32 recover)
       }
       reply.words[1] = input.words[2];
       if (input.words[0] == FS_ABORT) {
-        if (references[token - 1]) {
-          deadlines[token - 1] = 0;
-          references[token - 1] = 0;
+        status = sysopenabort(prep, &input);
+        if (status == 1) {
+          sysopenretire(prep);
           closed++;
         }
-        filecreatetrace[4]++;
+        if (status < 0)
+          reply.words[0] = (u64) (status == -ERR_DENIED ? -EACCES : -ESTALE);
+        else
+          filecreatetrace[4]++;
         CHECK(!ipc_reply(input.request, &reply));
         continue;
       }
-      if (!references[token - 1]) {
-        reply.words[0] = (u64) -ESTALE;
+      CHECK(!sysfilenow(&now));
+      status = sysopenattach(prep, &input, now);
+      if (status) {
+        reply.words[0] = (u64) (status == -ERR_DENIED ? -EACCES : -ESTALE);
         CHECK(!ipc_reply(input.request, &reply));
         continue;
       }
@@ -940,8 +954,7 @@ backend(const Bootview *boot, u32 recover)
         reply.words[3] = FS_CONN_BYTES;
         CHECK(!ipc_reply(input.request, &reply));
       }
-      claimed |= 1U << (token - 1);
-      deadlines[token - 1] = 0;
+      sysopencommit(prep);
       continue;
     }
     CHECK(input.words[0] == FS_CLOSE && input.words[1] == CONNID && input.words[3] == 6);
@@ -951,12 +964,13 @@ backend(const Bootview *boot, u32 recover)
       CHECK(!sysfilerequest(head, FS_CONN_BYTES, 6, input.words[2], &descriptor));
     CHECK(descriptor.span == 1 && !descriptor.payload_bytes);
     i = 0;
-    while (i < created && (sessions[i] != descriptor.object || references[i] != descriptor.args[0]))
+    while (i < created &&
+           (preps[i].session != descriptor.object || preps[i].reference != descriptor.args[0]))
       i++;
-    CHECK(i < created && references[i]);
+    CHECK(i < created && preps[i].state == Openattached);
     if (recover >= 9)
       CHECK(i == 0 && cancelled == 1);
-    references[i] = 0;
+    sysopenretire(&preps[i]);
     closed++;
     reply.words[1] = input.words[2];
     CHECK(!ipc_reply(input.request, &reply));

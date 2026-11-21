@@ -932,6 +932,10 @@ stage263：双架构 runtime 对同一次 VFS 退出同时保留两种归属：�
 
 stage264：普通 OPEN 准备使用 `sysfileopendeadline` 取得单调时钟上的 10 秒绝对期限，拒绝时间换算及加法溢出。双架构 runtime 中，后端夹具在最早期限设置闹钟，每次接收返回先处理已到期记录，ATTACH 成功后清除此期限。VFS 仍存活时，后端在空闲等待中由 TIMER 唤醒，撤销未接入的引用；迟到 ATTACH 返回 ESTALE，原 token ABORT 幂等，已接入引用仍通过原共享连接完成 CLOSE。页和费用归还，64 项文件主机回归及格式检查通过。生产连接表和事件循环仍待接入；本路径不用于继承 token。
 
+stage265：普通资源 OPEN 的私有 `Openprep` 取代夹具的平行引用、期限和接入状态表。每条记录绑定原 VFS 及目标客户端的 PID/image、token、session、reference_id 和期限。服务用真实 CALL 校验 ATTACH/ABORT，在 ATTACH 回复成功后提交移交；VFS 只能撤销尚未移交的引用，授权方重复撤销只读取已关闭记录。关闭、期限到达和原 VFS 终结由同一记录判定，服务仍负责实际引用关闭、下游排空及 token 记录回收。非零 connid 的 ABORT 需由上层先核验连接。本点不改变线上协议，生产池、分配代次和事件循环仍待接入。
+
+ARM64/RV64 runtime 实测原 VFS 对已接入 token 的 ABORT 返回 EACCES；原客户端随后正常 CLOSE，同次超时仍只撤销未接入引用。两架构 VFS 退出与其他创建回归同时通过，另有 64 项文件主机回归和格式检查通过。
+
 ### 后端冷路识别与唯一接入门闩（2026-11-20）
 
 私有sysconnpeer从本主体QUERY_RESOURCE枚举中定位完整本地CALL Handle，核对RESOURCE_CALL及USE，再取得内核记录的固定目标PID/image；不按Handle整数或共享头猜后端。不匹配/已释放返回STALE，错误子类型拒绝，失败不覆盖旧输出。查询按128项本地上限及16项原生批次有界推进，仅用于新授权冷路径，热I/O不追加查询。该结果识别固定授权目标，不证明目标此后仍ACTIVE，也不授予File/session权。

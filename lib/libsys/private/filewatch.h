@@ -6,6 +6,36 @@
 
 typedef struct Fileowner Fileowner;
 typedef struct Filewatch Filewatch;
+typedef struct Openprep  Openprep;
+enum
+{
+  Openempty,
+  Openpending,
+  Openattached,
+  Openclosed,
+  Opencancelled
+};
+struct Openprep
+{
+  Handle preparer, client;
+  u64    preparer_image, client_image, token, session, reference, deadline;
+  u32    state;
+};
+
+/* One record per ordinary OPEN; the service supplies reserved storage and an
+   unrepeated token. Keep tombstones until the service retires the token.
+   Serialize the check, resource reply and commit in the service loop. */
+isize sysopenprepare(Openprep *prep, const Fileowner *owner, Handle client, u64 image, u64 token,
+                     u64 session, u64 reference, u64 deadline);
+isize sysopenattach(const Openprep *prep, const Ipcmsg *call, u64 now);
+void  sysopencommit(Openprep *prep);
+/* Validate any nonzero connid against the caller's connection first. Return
+   1 while a logical close is owed, or 0 for a tombstone. Retire only after
+   closing the reference or saving its cleanup. */
+isize sysopenabort(const Openprep *prep, const Ipcmsg *call);
+int   sysopenexpired(const Openprep *prep, u64 now);
+int   sysopenorphan(const Openprep *prep, const Fileowner *owner);
+void  sysopenretire(Openprep *prep);
 struct Fileowner
 {
   Handle pid;
