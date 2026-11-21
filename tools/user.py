@@ -396,6 +396,7 @@ def build(args):
         compile_adoption(ROOT/'tests/kernel/vdevuser.c', 'vdevuser'),
         compile_adoption(ROOT/'tests/kernel'/args.arch/'virtiommio.c', 'virtiommio'),
         compile_adoption(ROOT/'sbin/blk/io.c', 'vdev-blk-io'),
+        compile_adoption(ROOT/'sbin/fs/cache.c', 'vdev-fs-cache'),
         compile_adoption(ROOT/'sbin/fs/geometry.c', 'vdev-fs-geometry'),
         compile_adoption(ROOT/'sbin/fs/journal.c', 'vdev-journal')], (virtio_archive,))
     vdev_image=sdk/'vdevuser.img'

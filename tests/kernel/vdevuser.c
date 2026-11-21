@@ -6,6 +6,7 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "../../sbin/blk/io.h"
+#include "../../sbin/fs/cache.h"
 #include "../../sbin/fs/journal.h"
 #include "virtiouser.h"
 volatile u64             vdev_trace[VTEST_TRACE];
@@ -343,14 +344,27 @@ testresize(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *old)
 static void
 testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config)
 {
-  static u8 staged[PAGE_SIZE];
-  Vdev     *device = queue->device;
-  Ipcmsg    event;
-  Vdone     done[VQ_BATCH], stale;
-  u64       stride = config->blocksize / VBLK_SECTOR;
-  u64       alarm, started = now();
-  u32       count, causes, more, i, j, seen = 0;
-  int       slot;
+  static Cacheblock storage[2];
+  Cache             cache = {0};
+  Cachespan         span = {0};
+  Cacheio           tickets[2], duplicate;
+  Cachekey          competing;
+  u8               *destinations[2], *unused = NULL;
+  u8                staged[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+  Vdev             *device = queue->device;
+  Ipcmsg            event;
+  Vdone             done[VQ_BATCH], stale;
+  u64               stride = config->blocksize / VBLK_SECTOR;
+  u64               alarm, started = now();
+  u32               count, causes, more, i, j, seen = 0;
+  int               slot;
+  REQUIRE(config->blocksize == CACHE_BYTES &&
+              !cacheinit(&cache, storage, ARRAY_SIZE(storage), config->sectors / stride) &&
+              !cachespanbegin(&cache, 1, 2, CACHE_BYTES - 2, sizeof(staged), &span) &&
+              cachefetch(&cache, 1, CACHE_DATA, &tickets[0], &destinations[0]) == 1 &&
+              cachefetch(&cache, 2, CACHE_DATA, &tickets[1], &destinations[1]) == 1 &&
+              cachefetch(&cache, 1, CACHE_DATA, &duplicate, &unused) == -ERR_WOULD_BLOCK && !unused,
+          237);
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
           215);
@@ -370,21 +384,34 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
       REQUIRE(slot >= 0 && slot < 2 && !(seen & (1U << slot)), 219);
       stale = done[i];
       stale.generation--;
-      REQUIRE(blkqfinish(queue, &stale, staged, sizeof(staged)) == -ERR_STALE, 225);
+      REQUIRE(blkqfinish(queue, &stale, destinations[slot], CACHE_BYTES) == -ERR_STALE, 225);
       stale = done[i];
       stale.cookie += VQ_SIZE;
       REQUIRE(blkqmatch(queue, &stale) == -ERR_STALE &&
-                  !blkqfinish(queue, &done[i], staged, sizeof(staged)) &&
-                  blkqmatch(queue, &done[i]) == -ERR_STALE,
+                  !blkqfinish(queue, &done[i], destinations[slot], CACHE_BYTES) &&
+                  blkqmatch(queue, &done[i]) == -ERR_STALE &&
+                  !cachecomplete(&cache, &tickets[slot], 1),
               220);
       for (j = 0; j < config->blocksize; j++)
-        REQUIRE(staged[j] == (u8) ((slot ? 0x37 : 0x51) + j * 37), 221);
+        REQUIRE(destinations[slot][j] == (u8) ((slot ? 0x37 : 0x51) + j * 37), 221);
       seen |= 1U << slot;
+      if (seen != 3) {
+        REQUIRE(cachespancopy(&span, staged) == -ERR_WOULD_BLOCK &&
+                    cacheget(&cache, 3, CACHE_DATA, &competing) == -ERR_CAPACITY,
+                238);
+        for (j = 0; j < sizeof(staged); j++)
+          REQUIRE(staged[j] == 0xa5, 239);
+      }
     }
     if (seen != 3)
       REQUIRE(!__sys_irqack(binding), 222);
   }
   REQUIRE(!__sys_alarmcancel(&alarm) && queue->ring->queue.free == VQ_SIZE, 223);
+  REQUIRE(!cachespancopy(&span, staged) && staged[0] == (u8) (0x51 + (CACHE_BYTES - 2) * 37) &&
+              staged[1] == (u8) (0x51 + (CACHE_BYTES - 1) * 37) && staged[2] == 0x37 &&
+              staged[3] == (u8) (0x37 + 37) && !cachespanend(&span) &&
+              !cacheget(&cache, 3, CACHE_DATA, &competing) && !cacheput(&cache, &competing),
+          240);
   vdev_trace[VTEST_PARALLEL] = 2;
 }
 static void
