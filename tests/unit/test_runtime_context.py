@@ -90,7 +90,7 @@ class RuntimeContextTests(unittest.TestCase):
             self.assertEqual(bytes(bank),before)
 
     def test_fix_raw_interrupt_discards_parent_tuple_and_retains_private_input(self):
-        for _,_,lib in self.libs:
+        for arch,kind,lib in self.libs:
             bank=Bank();owner=Peer(pid(1),9);child=Peer(pid(2),10);key=Key()
             lib.sysctxinit(C.byref(bank),owner)
             lib.sysctxprepare(C.byref(bank),owner,0,0x12,None,C.byref(key))
@@ -103,6 +103,23 @@ class RuntimeContextTests(unittest.TestCase):
             self.assertEqual(list(ctx.result.values),[0]*7)
             self.assertEqual(list(ctx.args),[0]*7)
             self.assertEqual(bank.snapshots[0][0],77)
+            frame=frames.Context(kind)
+            frame.value.tf.pc=0x10000
+            registers=frame.value.tf.x
+            start=10 if arch=='riscv' else 0
+            for index in range(8):registers[start+index]=0xdead0000+index
+            registers[8 if arch=='riscv' else 19]=C.addressof(ctx)
+            before=bytes(ctx)
+            self.assertEqual(lib.sysctxdecode(C.byref(ctx),frame.pointer,0x10000,0x10040,0x10040),1)
+            self.assertEqual(frame.value.tf.pc,0x10040)
+            self.assertEqual(bytes(ctx),before)
+            # The assembly resume and invoke wrapper then release active.
+            ctx.active=0
+            status=C.c_int64();result=Result()
+            self.assertEqual(lib.sysctxresult(C.byref(bank),child,key,C.byref(status),C.byref(result)),0)
+            self.assertEqual(status.value,-12)
+            self.assertEqual(bytes(result),bytes(C.sizeof(result)))
+            self.assertEqual(lib.sysctxfinish(C.byref(bank),child,key),0)
 
     def test_fix_raw_checks_last_layer_before_rebinding_and_preserves_completed_tuple(self):
         for _,_,lib in self.libs:
