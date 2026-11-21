@@ -1738,12 +1738,23 @@ typedclient(const Bootview *view, Handle peer)
                               &delayed_file, 55, FS_READ, 0, &delayed) &&
                 !delayed_file,
             67);
-    for (i = 0; i < 2; i++) {
+    REQUIRE(!sysfdobserve(&file_descriptors, 0, &removed) && removed.file == fileid &&
+                !sysfdclose(&file_descriptors, &file_registry, connection_work.state.self,
+                            removed.tag, &displaced) &&
+                !displaced &&
+                sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 1, 0) == 0,
+            122);
+    displaced = 99;
+    REQUIRE(sysfdclose(&file_descriptors, &file_registry, connection_work.state.self, removed.tag,
+                       &displaced) == -ERR_STALE &&
+                displaced == 99,
+            122);
+    for (i = 0; i < 2; i++)
       REQUIRE(!sysfdobserve(&file_descriptors, i, &removed) && removed.file == fileid &&
-                  !sysfddetach(&file_descriptors, removed.tag, &removed) &&
-                  !sysfilerefdrop(&file_registry, connection_work.state.self, removed.file),
+                  !sysfdclose(&file_descriptors, &file_registry, connection_work.state.self,
+                              removed.tag, &displaced) &&
+                  displaced == (i ? fileid : 0),
               122);
-    }
     REQUIRE(!sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) &&
                 reference.state == SYSFILE_REF_CLOSING && !reference.aliases &&
                 reference.pins == 2 &&

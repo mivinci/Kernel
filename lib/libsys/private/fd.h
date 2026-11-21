@@ -63,6 +63,10 @@ isize sysfdsetflags(Fdtable *table, Fdtag expected, u64 flags);
    Caller excludes caught signals across both disjoint tables. The source's
    File and prepaid close anchor are shared; the new fd starts without CLOEXEC. */
 isize sysfddup(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 minimum);
+/* Commit a close of the previously observed LIVE tag. Use the same protection
+   as sysfddup. Writes the last-alias File ID or zero on success; failure
+   leaves both tables and the disjoint output untouched. Never waits. */
+isize sysfdclose(Fdtable *table, Filepool *pool, Connpeer self, Fdtag expected, u64 *closing);
 /* Same protection as sysfddup. Success drops the displaced alias into its
    prepaid File record and writes the newly closing File ID, or zero if no
    last alias was displaced. The output disjoint from both tables is unchanged

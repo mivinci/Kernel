@@ -51,6 +51,34 @@ disjoint(const void *base, u64 size, const u64 *closing)
 }
 
 isize
+sysfdclose(Fdtable *table, Filepool *pool, Connpeer self, Fdtag expected, u64 *closing)
+{
+  Fdview  old, removed;
+  Fileref reference;
+  isize   error;
+  if (!disjoint(table, sizeof(*table), closing) || !disjoint(pool, sizeof(*pool), closing) ||
+      expected.state != SYSFD_LIVE)
+    return -ERR_INVALID;
+  error = sysfdobserve(table, expected.index, &old);
+  if (error)
+    return error;
+  if (old.tag.generation != expected.generation || old.tag.state != expected.state)
+    return -ERR_STALE;
+  error = sysfilerefview(pool, self, old.file, &reference);
+  if (error)
+    return error;
+  if (reference.state != SYSFILE_REF_LIVE || !reference.aliases)
+    return -ERR_STATE;
+  error = sysfddetach(table, expected, &removed);
+  if (error)
+    return error;
+  /* Both tables remain protected; the validated alias cannot disappear. */
+  (void) sysfilerefdrop(pool, self, removed.file);
+  *closing = reference.aliases == 1 ? removed.file : 0;
+  return 0;
+}
+
+isize
 sysfddup2(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 target, u64 *closing)
 {
   Fdview  from, to, removed;

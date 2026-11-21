@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage291：libsys 原子提交本地 close，旧标签不能摘除复用后的 fd，有在途操作时保留原 File。双架构 QEMU `libsys`、13 项 fd 主机检查和格式通过；公开 close 待接。
+
 - stage290：`sysfddup2` 在替换时直接把旧目标的最后一个别名归入预付关闭记录。双架构 QEMU `runtime`、`libsys`、13 项 fd 主机检查和格式通过；公开接口及生产关闭调度待接。
 
 - stage289：双架构 QEMU runtime 验证 `dup2` 替换后，经真实 IPC 关闭旧目标的后端引用，新目标保持有效；格式检查通过。公开接口与生产关闭调度待接。
