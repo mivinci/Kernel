@@ -701,8 +701,11 @@ forksignal(Imageid sourceid, Spaceid source_space, Imageid targetid, Spaceid tar
                    sizeof(cookies[i])))
       return -ERR_FAULT;
   }
-  if (source_table && spacesnapshotcommit(source_space, target_space))
-    return -ERR_BUSY;
+  if (source_table && spacesnapshotcommit(source_space, target_space)) {
+    /* The commit check can expire the Prep after the last checkpoint. */
+    error = prep.generation ? prepsnapshotcheck(prep, source_table, target_table) : 0;
+    return error ? error : -ERR_BUSY;
+  }
   if (policy(targetid, &source->actions[SIGNAL_CHLD - 1]))
     panic("fork child signal policy");
   for (i = 0; i < SIGNAL_COUNT; i++) {

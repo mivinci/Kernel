@@ -219,6 +219,50 @@ class ForkSnapshotTests(unittest.TestCase):
     def test_signal_checkpoint_expiry_rolls_back_loaded_resources(self):
         self.check_checkpoint_expiry(4,2)
 
+    def test_deadline_between_final_checkpoint_and_commit_rolls_back(self):
+        def body(expire_at=0):
+            lib=self.lib
+            prep=self.owner()
+            self.lib.hal_user_init(self.user.pointer,C.byref(context.Initial(0x10000,0x30000,0)))
+            frame=self.push()
+            self.trap()
+            before=(self.pstat().allocated,self.leaf(self.mapped,0x20000),
+                    self.packet(frame).raw,self.output.bytes())
+            state=Prepinfo()
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            lib.test_after_clock_read.argtypes=[C.c_uint64]
+            count=0
+            callback_type=C.CFUNCTYPE(C.c_int,Prepid)
+
+            @callback_type
+            def checkpoint(identity):
+                nonlocal count
+                count+=1
+                if count==expire_at:
+                    lib.test_after_clock_read(state.deadline)
+                return 0
+
+            lib.forksnapshotchecked.argtypes=[*lib.forksnapshot.argtypes,callback_type]
+            self.assertEqual(lib.forksnapshotchecked(C.byref(self.parent),C.byref(self.target),
+                C.byref(self.limits),1,self.user.pointer,self.output.pointer,prep,checkpoint),
+                -21 if expire_at else 0)
+            if not expire_at:
+                return count
+            self.assertEqual(count,expire_at)
+            self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+            self.assertTrue(state.expired)
+            self.assertEqual((self.pstat().allocated,self.leaf(self.mapped,0x20000),
+                              self.packet(frame).raw,self.output.bytes()),before)
+            self.assertEqual(self.tree(self.target.space).mapcount,0)
+            self.assertEqual(self.snapshot(self.branch[1]).depth,0)
+            self.assertFalse(any(slot.subtype for slot in self.tables[1][1]))
+
+        for lib in self.libs:
+            final_checkpoint=[]
+            self.exercise(lib,lambda: final_checkpoint.append(body()))
+            self.assertGreater(final_checkpoint[0],0)
+            self.exercise(lib,lambda: body(final_checkpoint[0]))
+
     def test_existing_cow_branch_and_parent_protection_survive_late_failure_unchanged(self):
         def body():
             sibling=self.child(parent=self.parent.owner,copy=True,slot=3)

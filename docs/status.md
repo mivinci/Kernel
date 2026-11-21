@@ -11,8 +11,8 @@
 ## 已实现边界
 
 - [01 硬件](design/01-hardware.md)：RV64/ARM64 启动/DTB、单主核调度及约 5ms timer、GICv2/PLIC、Device/IRQ/EVENT、其余核固件停放。RV 非零 hart/动态 PLIC S 上下文与四核矩阵已验；不是 SMP。真实板、PSCI SMC/EL2 降级、非一致 DMA/RV 物理缓存仍待验。
-- [02 内存](design/02-memory.md)：预算/页/Space/Mem/Mmap、W^X/guard、SHARED/Device、COW 承诺/克隆/写分离、完整整数/FP现场。可信 fork 快照/准备与回滚已接，原生 fork 准入、长操作检查点/发布和完整 exec 仍待接。
-- [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
+- [02 内存](design/02-memory.md)：预算/页/Space/Mem/Mmap、W^X/guard、SHARED/Device、COW 承诺/克隆/写分离、完整整数/FP现场。fork 快照、回滚与长操作检查点已局部验证；完整 exec 仍待接。
+- [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、forkprep/forkcommit/forkabort、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
 - [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
 - [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD/同步FAULT来源、原生sigsend与libc raise、普通等待中断、阻塞 waitpid 的 SA_RESTART、ttycreate/ttybind/getfg 已接。公开 sigaction 支持单参数、SA_SIGINFO、已绑定 Rbank 的 Rctx 前置和私有 fork 返回的子 Fix 前置。kill、setfg/ttysignal、完整终端关联/挂断/孤儿策略仍待接。
 - [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx/快照/IO/关闭worker、参数捕获及目标Boot打包已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、完整exec路径/Fix尚未完成。
@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage313：fork 快照提交时到期返回 `ERR_TIMEDOUT`，并完整回滚。94 项主机专项、RV64/ARM64 QEMU `sigframe` 回归和格式检查通过。
 - stage312：RV64/ARM64 QEMU `sigframe` 验证硬件 timer IRQ 在可信 fork 构造检查点触发让出、就绪进程先运行和父续点恢复；费用与页回到基线，格式通过。
 - stage311：未映射 DATA 的别名登记与根冻结可按 32 项开放 fork 检查点；70 项主机专项、双架构 QEMU `sigframe` 和格式检查通过。
 - stage310：fork 快照期间禁止激活与冻结根共用可写私有 DATA 的用户根；双架构 QEMU `sigframe`、`jobs`、54 项主机专项及格式检查通过。
@@ -36,7 +37,7 @@
 
 - 待确认：生产 TTY/VFS 首次发放 `OBSERVE_SOURCE` 的方式，见[文件连接观察](design/10-filesystem.md)；目前仅夹具接通。
 - 待确认：后端继承引用的 `reference_id` 命名空间及 Bootfd 交付格式，见[文件继承](design/10-filesystem.md)和[Boot](design/07-boot.md)；实际启动文件表仍未接通。
-- fork接续：新 DATA 别名准入及检查点的 timer 调度已验证；继续核对 Source Local/Mem 引用变化和剩余长循环及提交阶段，再接原生准入、Fix、专用发布。
+- fork接续：原生准入、Fix 映射校验和专用发布已有双架构用户载荷验收；继续核对 Source Local/Mem 引用变化和剩余长循环，再接服务继承及完整运行库路径。
 - 待确认：生产rqclean的CONTROL_CLEAN=0x80、仅初始init持有及完整REQUEST参数方案已单独提问，尚未修改CONTROL/0x1b实现；候选及04/06旧表差异见04管理代收尾节。
 - 待确认：堆/连接共用VA登记、保留128堆区域及8份连接预付责任、短屏蔽信号更新范围的方向已提问，见08；当前vm.c仍不承诺信号安全，未新增映射查询或内核保留区。
 - 待确认：setfg/ttysignal的修正版后台/错误规则见11；旧“屏蔽/忽略TTOU也EIO”候选已撤回，修正版允许该情形继续切换。尚未新增ERR_IO=23或开放原生终端调用。
