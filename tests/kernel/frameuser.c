@@ -354,6 +354,7 @@ contextuser(void)
 static Forkret   forkcapture;
 static Handle    forksource;
 static u64       forkimage;
+static Rkey      forkcompleted;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer);
 static void
 forkrepair(const Forkret *result)
@@ -428,7 +429,9 @@ forkprepuser(void)
   context_self.pid = source;
   context_self.image = image;
   REQUIRE(!sysctxinit(&runtime_contexts, context_self) &&
-              !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key),
+              !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
+              !sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETID, NULL, &forkcompleted) &&
+              !sysctxinvoke(&runtime_contexts, context_self, forkcompleted),
           245);
   action.kind = SIGNAL_HANDLER;
   action.handler = (u64) forktrampoline;
@@ -450,6 +453,10 @@ forkprepuser(void)
             234);
     peer.pid = self;
     peer.image = childimage;
+    REQUIRE(!sysctxresult(&runtime_contexts, peer, forkcompleted, &status, &result) && !status &&
+                result.values[0] == (u64) source && result.values[1] == image &&
+                !sysctxfinish(&runtime_contexts, peer, forkcompleted),
+            247);
     REQUIRE(!sysctxinvoke(&runtime_contexts, peer, runtime_key) &&
                 !sysctxresult(&runtime_contexts, peer, runtime_key, &status, &result) && !status &&
                 result.values[0] == (u64) self && result.values[1] == childimage &&
@@ -471,6 +478,8 @@ forkprepuser(void)
   fix.header.contexts_off = sizeof(Fix);
   fix.contexts[0].sequence = runtime_key.sequence;
   fix.contexts[0].action = FIX_LAYER_UNSENT;
+  fix.contexts[1].sequence = forkcompleted.sequence;
+  fix.contexts[1].action = FIX_LAYER_COMPLETE;
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;

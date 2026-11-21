@@ -116,11 +116,21 @@ sysctxfixraw(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layers
   error = sysctxfixcheck(bank, parent, layers);
   if (error)
     return error;
-  for (i = 0; i < RCTX_LAYERS; i++)
-    if (layers[i].action != FIX_LAYER_EMPTY &&
-        (layers[i].action != FIX_LAYER_UNSENT || bank->contexts[i].active ||
-         bank->contexts[i].route.kind != RCTX_ROUTE_NONE))
+  for (i = 0; i < RCTX_LAYERS; i++) {
+    Rctx *context = &bank->contexts[i];
+    if (layers[i].action == FIX_LAYER_EMPTY)
+      continue;
+    if (context->active || context->route.kind != RCTX_ROUTE_NONE)
       return -ERR_NOTSUP;
+    if (layers[i].action == FIX_LAYER_UNSENT)
+      continue;
+    /* Only value-only queries have no resource or external cleanup ownership.
+       Other completed syscalls require typed repair before admission. */
+    if (layers[i].action != FIX_LAYER_COMPLETE ||
+        (context->number != SYS_GETID && context->number != SYS_GETPG &&
+         context->number != SYS_CLOCK_GETTIME && context->number != SYS_CLOCK_GETRES))
+      return -ERR_NOTSUP;
+  }
   bank->self = child;
   return 0;
 }
