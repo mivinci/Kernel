@@ -20,6 +20,12 @@ isize sysfilecloseprepare(Filepool *pool, Connwork *work, Conncache *cache, cons
    Outputs are separate, unowned storage and change only on success. */
 isize sysfileclosepick(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline,
                        Fileclose *anchor, Opkey *key, Msg *message);
+/* Claim exactly the detached File and submit its foreground CLOSE once.
+   Caller excludes caught signals and supplies the original absolute deadline.
+   Successful outputs own the original RPC until watch/interrupt settles it.
+   Pre-submission failure leaves the File pending and outputs unchanged. */
+isize sysfileclosesubmit(Filepool *pool, Connwork *work, Conncache *cache, u64 file, u64 deadline,
+                         Fileclose *anchor, Opkey *key);
 /* Validates only a positive logical-close confirmation on the original Rq.
    Errors/unknown results keep anchor/op/resources. Call before SAVED/ACK. */
 isize sysfilecloseresult(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,

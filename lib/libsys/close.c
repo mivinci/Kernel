@@ -279,6 +279,59 @@ sysfileconnreap(const Filepool *pool, Connwork *work, Conncache *cache)
   return error ? error : sysconnforget(cache, work->state.tag);
 }
 
+static isize
+submit(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor, const Opkey *key,
+       const Msg *message)
+{
+  Ipcmsg result;
+  u64    file = 0;
+  isize  error = ipc_call(work->state.call, message, SYSFILE_CLOSE_OPTIONS, &result);
+  if (error) {
+    if (sysopabort(work, cache, key, &file) || file != anchor->file ||
+        sysfilerefunclaimclose(pool, work->state.self, anchor))
+      return -ERR_STATE;
+    return error;
+  }
+  return sysopsubmitted(work, cache, key, &result.request);
+}
+
+isize
+sysfileclosesubmit(Filepool *pool, Connwork *work, Conncache *cache, u64 file, u64 deadline,
+                   Fileclose *anchor, Opkey *key)
+{
+  Fileclose claimed;
+  Opkey     prepared;
+  Msg       message;
+  isize     error;
+  if (!deadline || !separate(pool, sizeof(*pool), anchor, sizeof(*anchor)) ||
+      !separate(work, sizeof(*work), anchor, sizeof(*anchor)) ||
+      !separate(cache, sizeof(*cache), anchor, sizeof(*anchor)) ||
+      !separate(pool, sizeof(*pool), key, sizeof(*key)) ||
+      !separate(work, sizeof(*work), key, sizeof(*key)) ||
+      !separate(cache, sizeof(*cache), key, sizeof(*key)) ||
+      !separate(anchor, sizeof(*anchor), key, sizeof(*key)))
+    return -ERR_INVALID;
+  error = sysfilerefclose(pool, work->state.self, file, &claimed);
+  if (error)
+    return error;
+  error = sysfilecloseprepare(pool, work, cache, &claimed, file, deadline, &prepared, &message);
+  if (error)
+    return sysfilerefunclaimclose(pool, work->state.self, &claimed) ? -ERR_STATE : error;
+  error = submit(pool, work, cache, &claimed, &prepared, &message);
+  if (!error) {
+    anchor->file = claimed.file;
+    anchor->sequence = claimed.sequence;
+    key->connection.generation = prepared.connection.generation;
+    key->connection.index = prepared.connection.index;
+    key->connection.reserved = 0;
+    key->lease.seq = prepared.lease.seq;
+    key->lease.slot = prepared.lease.slot;
+    key->lease.span = prepared.lease.span;
+    key->owner = prepared.owner;
+  }
+  return error;
+}
+
 isize
 sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline)
 {
@@ -287,7 +340,6 @@ sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u6
   Slotop   *op;
   Opkey     key, background;
   Msg       message;
-  Ipcmsg    result;
   u64       file = 0;
   u32       confirmed;
   isize     error;
@@ -335,14 +387,7 @@ sysfileclosepump(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u6
   error = sysfileclosepick(pool, work, cache, owner, deadline, &anchor, &key, &message);
   if (error)
     return error;
-  error = ipc_call(work->state.call, &message, SYSFILE_CLOSE_OPTIONS, &result);
-  if (error) {
-    if (sysopabort(work, cache, &key, &file) || file != anchor.file ||
-        sysfilerefunclaimclose(pool, work->state.self, &anchor))
-      return -ERR_STATE;
-    return error;
-  }
-  error = sysopsubmitted(work, cache, &key, &result.request);
+  error = submit(pool, work, cache, &anchor, &key, &message);
   if (!error)
     error = sysopabandon(work, cache, &key, &background);
   return error ? error : SYSFILE_CLOSE_SUBMITTED;

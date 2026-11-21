@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage403：`sysfileclosesubmit` 按已摘除的 File ID 领取并提交前台 CLOSE，保留调用者给出的绝对期限，和后台路径共用提交与提交前回滚。ARM64/RV64 QEMU `pipeio` 验证重复领取被拒，且从原 RPC 的确认回收旧写端引用。此项仍由夹具等待；公开 `close()` 的限时等待和信号重启尚未接入。
+
 stage402：公开 `dup2()` 在同一镜像 fd 表内原子替换目标；旧 File 的最后一个别名脱离后，运行库尝试通过原连接发出控制 CLOSE，后续由同连接的非阻塞推进入口领取原结果。双架构 QEMU `pipeio` 验证满表替换、同号保留 CLOEXEC、无效源不改目标、替换清除 CLOEXEC，并确认关闭的是旧写端引用。夹具主动推进后台收尾；生产自动调度与公开 `close()` 仍待接入。
 
 stage401：公开 `dup()` 复制当前镜像中有效的 fd，共用原 File 和后端引用，新描述符清除 CLOEXEC。双架构 QEMU `pipeio` 验证最低可用编号、表满 EMFILE 且引用数不变，以及真实信号处理函数中对保留 fd 返回 EBADF、返回后恢复原 errno。未接公开 `dup2()` 或 `close()`。
