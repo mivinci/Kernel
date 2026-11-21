@@ -13,6 +13,28 @@ class Owner(C.Structure):
     _fields_ = [('pid', C.c_int64), ('image', U), ('cookie', U), ('reason', U)]
 
 
+class Group(C.Structure):
+    _fields_ = [('session', U), ('reference', U), ('retained', C.c_uint32), ('closed', C.c_uint32)]
+
+
+class Plan(C.Structure):
+    _fields_ = [('rows', (U * 6) * 128), ('groups', Group * 128), ('pid', C.c_int64),
+                ('source_image', U), ('target_image', U), ('count', C.c_uint32)]
+
+
+class Hold(C.Structure):
+    _fields_ = [('group', Group), ('hold', U)]
+
+
+class Reserve(C.Structure):
+    _fields_ = [('entries', Hold * 128), ('source', U), ('target', U),
+                ('count', C.c_uint32), ('ready', C.c_uint32)]
+
+
+TAKE = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.POINTER(Owner), C.POINTER(Owner), C.POINTER(Group), C.POINTER(U))
+DROP = C.CFUNCTYPE(C.c_int64, C.c_void_p, U)
+
+
 STUB = '''
 #include "private/syscall.h"
 static u64 states[2], reasons[2], images[2], reads[2];
@@ -61,6 +83,12 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.observed.argtypes, cls.lib.observed.restype = [U], U
         cls.lib.sysexecstate.argtypes = [C.POINTER(Owner), C.POINTER(Owner)]
         cls.lib.sysexecstate.restype = C.c_int64
+        cls.lib.sysexecreserve.argtypes = [C.POINTER(Reserve), C.POINTER(Plan), C.POINTER(Owner),
+                                          C.POINTER(Owner), TAKE, DROP, C.c_void_p]
+        cls.lib.sysexecreserve.restype = C.c_int64
+        cls.lib.sysexecdiscard.argtypes = [C.POINTER(Reserve), C.POINTER(Owner), C.POINTER(Owner),
+                                          DROP, C.c_void_p]
+        cls.lib.sysexecdiscard.restype = C.c_int64
 
     def test_preparing_or_aborted_never_retires_source(self):
         for state, reason, expected in ((1, 0, 1), (3, 2, 3), (3, 4, 3)):
@@ -89,3 +117,36 @@ class ExecStateTests(unittest.TestCase):
         self.lib.sample(1, 2, 0, 8)
         self.assertEqual(self.lib.sysexecstate(C.byref(source), C.byref(target)), -4)
         self.assertEqual((source.reason, target.reason), (0, 0))
+
+    def test_partial_reservation_can_resume_failed_rollback_without_releasing_twice(self):
+        source, target = Owner(1, 6, 1, 0), Owner(1, 8, 2, 0)
+        self.lib.sample(1, 1, 0, 8)
+        plan, record = Plan(), Reserve()
+        plan.pid, plan.source_image, plan.target_image, plan.count = 1, 6, 8, 4
+        for i, retained in enumerate((1, 0, 1, 1)):
+            plan.groups[i] = Group(10 + i, 20 + i, retained, 1)
+        acquired, dropped = [], []
+
+        @TAKE
+        def take(_context, _source, _target, group, hold):
+            ref = group.contents.reference
+            if ref == 23:
+                return -9
+            acquired.append(ref)
+            hold[0] = ref
+            return 0
+
+        @DROP
+        def drop(_context, hold):
+            if hold == 20 and dropped == [22]:
+                dropped.append('interrupted')
+                return -12
+            dropped.append(hold)
+            return 0
+
+        self.assertEqual(self.lib.sysexecreserve(C.byref(record), C.byref(plan), C.byref(source),
+                                                 C.byref(target), take, drop, None), -12)
+        self.assertEqual((record.ready, record.count, acquired), (0, 1, [20, 22]))
+        self.assertEqual(self.lib.sysexecdiscard(C.byref(record), C.byref(source), C.byref(target),
+                                                drop, None), 0)
+        self.assertEqual((record.count, record.target, dropped), (0, 0, [22, 'interrupted', 20]))

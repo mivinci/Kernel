@@ -77,6 +77,9 @@ sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
     else
       group->retained++;
   }
+  out->pid = call->source;
+  out->source_image = call->image;
+  out->target_image = slot->args[1];
   out->count = groups;
   return 0;
 }
@@ -148,4 +151,85 @@ sysexecstate(Fileowner *source, Fileowner *target)
     return SYSEXEC_ACTIVE;
   target->reason = nextreason;
   return SYSEXEC_ENDED;
+}
+
+static isize
+discard(Execreserve *record, Execdrop drop, void *context)
+{
+  Exechold *entry;
+  isize     error;
+  while (record->count) {
+    entry = &record->entries[record->count - 1];
+    if (entry->hold) {
+      error = drop(context, entry->hold);
+      if (error)
+        return error;
+      entry->hold = 0;
+    }
+    record->count--;
+  }
+  record->source = record->target = 0;
+  return 0;
+}
+
+isize
+sysexecreserve(Execreserve *out, const Execmanifest *plan, Fileowner *source, Fileowner *target,
+               Exectake take, Execdrop drop, void *context)
+{
+  Exechold        *entry;
+  const Execgroup *group;
+  isize            error, cleanup;
+  u32              i;
+  if (!plan || !take || !drop || !plan->count || plan->count > BOOT_FD_COUNT ||
+      !separate(plan, out, sizeof(*out)))
+    return -ERR_INVALID;
+  if (out->count || out->ready || out->source || out->target)
+    return -ERR_BUSY;
+  if (!source || !target || plan->pid != source->pid || plan->source_image != source->image ||
+      plan->target_image != target->image)
+    return -ERR_STALE;
+  error = sysexecstate(source, target);
+  if (error != SYSEXEC_PENDING)
+    return error < 0 ? error : -ERR_STALE;
+  out->source = source->cookie;
+  out->target = target->cookie;
+  for (i = 0; i < plan->count; i++) {
+    entry = &out->entries[i];
+    group = &plan->groups[i];
+    entry->hold = 0;
+    if (group->retained) {
+      error = take(context, source, target, group, &entry->hold);
+      if (error || !entry->hold) {
+        cleanup = discard(out, drop, context);
+        return cleanup ? cleanup : error ? error : -ERR_STATE;
+      }
+    }
+    entry->group.session = group->session;
+    entry->group.reference = group->reference;
+    entry->group.retained = group->retained;
+    entry->group.closed = group->closed;
+    out->count++;
+  }
+  out->ready = 1;
+  return 0;
+}
+
+isize
+sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdrop drop,
+               void *context)
+{
+  isize state;
+  if (!record || !drop || record->count > BOOT_FD_COUNT)
+    return -ERR_INVALID;
+  if (!record->source && !record->target)
+    return -ERR_STALE;
+  if (!source || !target || record->source != source->cookie || record->target != target->cookie)
+    return -ERR_STALE;
+  if (record->ready) {
+    state = sysexecstate(source, target);
+    if (state != SYSEXEC_ABORTED && state != SYSEXEC_ENDED)
+      return state < 0 ? state : -ERR_BUSY;
+    record->ready = 0;
+  }
+  return discard(record, drop, context);
 }

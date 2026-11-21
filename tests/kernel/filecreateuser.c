@@ -38,6 +38,7 @@ static Fdtable        fds;
 static Execfds        execfds;
 static Execsend       execsend;
 static Execmanifest   execplan;
+static Execreserve    execreserve;
 static Rbank          contexts;
 static Rkey           active_key;
 static Ttyinput       ttyline;
@@ -756,6 +757,27 @@ execreference(void *context, Handle pid, u64 image, u64 session, u64 reference)
   return 0;
 }
 
+static isize
+exectake(void *context, const Fileowner *source, const Fileowner *target, const Execgroup *group,
+         u64 *hold)
+{
+  u64 *held = context;
+  if (*held || !group->retained || source->pid != target->pid || target->image <= source->image)
+    return -ERR_STATE;
+  *hold = *held = 1;
+  return 0;
+}
+
+static isize
+execdrop(void *context, u64 hold)
+{
+  u64 *held = context;
+  if (!hold || *held != hold)
+    return -ERR_STALE;
+  *held = 0;
+  return 0;
+}
+
 static void
 server(const Bootview *boot, u32 recover)
 {
@@ -770,6 +792,7 @@ server(const Bootview *boot, u32 recover)
   Filelink  *link = &links[0];
   Filewatch *watch = &link->watch;
   Fileowner  target = {0};
+  u64        held = 0;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   volatile u64   *data;
@@ -927,9 +950,10 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (opcode == EXECWATCH) {
-      CHECK(!recover && target.cookie && sysexecstate(&watch->owner, &target) == SYSEXEC_ABORTED &&
-            target.reason == OBS_ABORT && !watch->owner.reason && !sysfileownerclose(&target) &&
-            !ipc_reply(input.request, &reply));
+      CHECK(!recover && target.cookie && held &&
+            !sysexecdiscard(&execreserve, &watch->owner, &target, execdrop, &held) && !held &&
+            !execreserve.count && target.reason == OBS_ABORT && !watch->owner.reason &&
+            !sysfileownerclose(&target) && !ipc_reply(input.request, &reply));
       continue;
     }
     seq = input.words[2];
@@ -980,7 +1004,10 @@ server(const Bootview *boot, u32 recover)
       else
         CHECK(!sysexecobserve(&target, bootresource(boot, 258), &input, descriptor.args[1]) &&
               target.cookie && target.pid == input.source && target.image == descriptor.args[1] &&
-              sysexecstate(&watch->owner, &target) == SYSEXEC_PENDING);
+              !sysexecreserve(&execreserve, &execplan, &watch->owner, &target, exectake, execdrop,
+                              &held) &&
+              held == 1 && execreserve.count == 1 &&
+              sysexecdiscard(&execreserve, &watch->owner, &target, execdrop, &held) == -ERR_BUSY);
       for (i = 0; i < count; i++)
         CHECK(execplan.rows[i].fd == i && execplan.rows[i].flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC));
       execplan.count = 0;
