@@ -9,7 +9,7 @@
 #include "private/fd.h"
 #include "private/close.h"
 #include "private/contextipc.h"
-#include "private/elf.h"
+#include "private/fork.h"
 #include <proto/file.h>
 #include <abi/syscall.h>
 #include <abi/time.h>
@@ -309,9 +309,7 @@ static void
 readfork(void)
 {
   u64             fix[FIX_BASE_BYTES / sizeof(u64)];
-  Fixlayer        plan[FIX_LAYER_COUNT];
-  Fixspec         spec = {0};
-  isize           bytes;
+  Forkfix         finish = {0};
   Forkret         forked;
   Elfwork         work;
   Fixview         view;
@@ -334,13 +332,6 @@ readfork(void)
             33);
     readforkchild = 1;
   } else {
-    spec.source = parent.pid;
-    spec.image = parent.image;
-    spec.target = forked.pid;
-    spec.layers = plan;
-    REQUIRE(!sysctxfixplan(&runtime_contexts, parent, plan), 34);
-    bytes = sysfixpack(&spec, fix, sizeof(fix));
-    REQUIRE(bytes == FIX_BASE_BYTES, 34);
     for (i = 0; i < sizeof(work); i++)
       ((u8 *) &work)[i] = 0;
     work.view = forked.construct;
@@ -348,7 +339,10 @@ readfork(void)
     work.parent_space = connection_work.state.space;
     work.scratch = 0x31000000;
     work.scratch_bytes = PAGE_SIZE;
-    published = sysforkpublish(&work, 0x32000000, fix, (u64) bytes);
+    finish.address = 0x32000000;
+    finish.buffer = fix;
+    finish.capacity = sizeof(fix);
+    published = sysforkfinish(&work, &runtime_contexts, parent, &finish);
     REQUIRE(published == forked.pid && !work.view && !work.memory && !work.mapped, 34);
     args[0] = (u64) published;
     REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && result.values[0] == (u64) published &&

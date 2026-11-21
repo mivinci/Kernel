@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage244：父侧 `sysforkfinish` 串起上下文准入、Fix 组装、发布和失败撤销。18 项主机回归、格式及双架构 sigframe/libsys 通过；后端继承与公开 `fork` 仍待接。
+
 - stage243：父侧 Fix 装载、提交和失败撤销已串联，未完成清理可重试。8 项主机测试、格式与双架构 sigframe/libsys 通过；后端准备与公开入口仍待接。
 
 - stage242：父侧 `sysfixpack` 按现有格式验证并组装 Fix，出错不改目标缓冲。28 项主机测试、格式和双架构 sigframe/libsys 通过；生产事务和后端准备仍待接。

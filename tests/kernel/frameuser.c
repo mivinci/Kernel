@@ -9,7 +9,7 @@
 #include "private/contextipc.h"
 #include "private/forkstate.h"
 #include "private/fix.h"
-#include "private/elf.h"
+#include "private/fork.h"
 #include <abi/syscall.h>
 volatile u64    frame_trace[32];
 static u8       saved[1024];
@@ -449,9 +449,7 @@ forkprepuser(void)
   Elfwork   work;
   Sigact    action;
   u64       fix[FIX_BASE_BYTES / sizeof(u64)];
-  Fixlayer  layers[FIX_LAYER_COUNT];
-  Fixspec   spec;
-  isize     bytes;
+  Forkfix   finish = {0};
   REQUIRE(__sys_forkprep(0, 0, &forked) == -ERR_BAD_HANDLE, 224);
   REQUIRE(__sys_forkprep(authority, 9, &forked) == -ERR_INVALID, 225);
   REQUIRE(!__sys_forkprep(authority, 2, &forked) && forked.construct && forked.pid && !forked.fix,
@@ -499,6 +497,19 @@ forkprepuser(void)
               !sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETID, NULL, &forkcompleted) &&
               !sysctxinvoke(&runtime_contexts, context_self, forkcompleted),
           245);
+  REQUIRE(!__sys_forkprep(authority, 0, &forked) && forked.construct && !forked.fix, 237);
+  work.view = forked.construct;
+  work.pid = forked.pid;
+  work.failure = 0;
+  finish.address = address;
+  finish.buffer = fix;
+  finish.capacity = sizeof(fix) - 1;
+  REQUIRE(sysforkfinish(&work, &runtime_contexts, context_self, &finish) == -ERR_CAPACITY &&
+              work.failure == -ERR_CAPACITY && !work.view && !work.memory && !work.mapped,
+          237);
+  args[0] = forked.pid;
+  args[1] = 1;
+  REQUIRE(__sys_enter(SYS_WAIT, args, &result) == -ERR_CHILD, 237);
   action.kind = SIGNAL_HANDLER;
   action.handler = (u64) forktrampoline;
   action.trampoline = (u64) forktrampoline;
@@ -535,22 +546,15 @@ forkprepuser(void)
   args[0] = construct;
   REQUIRE(__sys_forkcommit(construct, (const void *) frame_trace, 64, &published) == -ERR_FAULT,
           235);
-  memset(&spec, 0, sizeof(spec));
-  spec.source = source;
-  spec.image = image;
-  spec.target = child;
-  spec.layers = layers;
-  REQUIRE(!sysctxfixplan(&runtime_contexts, context_self, layers), 237);
-  bytes = sysfixpack(&spec, fix, sizeof(fix));
-  REQUIRE(bytes == FIX_BASE_BYTES, 237);
   memset(&work, 0, sizeof(work));
   work.view = construct;
   work.pid = child;
   work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
   work.scratch = address;
   work.scratch_bytes = 4096;
-  REQUIRE(sysforkpublish(&work, address, fix, (u64) bytes) == child && !work.view && !work.memory &&
-              !work.mapped,
+  finish.capacity = sizeof(fix);
+  REQUIRE(sysforkfinish(&work, &runtime_contexts, context_self, &finish) == child && !work.view &&
+              !work.memory && !work.mapped,
           238);
   args[1] = args[2] = 0;
   {
