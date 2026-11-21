@@ -109,5 +109,8 @@ isize sysfilerefnextclose(const Filepool *pool, Connpeer self, Conntag connectio
    confirmed is ONLY after caller matched an actual backend close result or
    completed its explicit lifecycle recovery policy. It performs no RPC. */
 isize sysfilerefclose(Filepool *pool, Connpeer self, u64 file, Fileclose *out);
+/* Roll back a claim only when no operation has been prepared or submitted
+   for it (or preparation has rolled back). The sequence is never reused. */
+isize sysfilerefunclaimclose(Filepool *pool, Connpeer self, const Fileclose *key);
 isize sysfilerefconfirmed(Filepool *pool, Connpeer self, const Fileclose *key);
 #endif

@@ -1184,24 +1184,33 @@ lateclient(const Bootview *view, Opkey *operation)
   REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 68);
 }
 static void
-closeclient(const Fileclose *anchor)
+closeclient(u64 file)
 {
-  Opkey   operation, background, stale;
-  Msg     words;
-  Ipcmsg  result;
-  Fileref reference;
-  Handle  rpc;
-  u64     mask, ignored, now, deadline, generation;
-  u32     i;
-  isize   error;
+  Fileclose        claimed = {0, 0};
+  const Fileclose *anchor = &claimed;
+  Filelease        busy;
+  Opkey            operation, background, stale;
+  Msg              words;
+  Ipcmsg           result;
+  Fileref          reference;
+  Handle           rpc;
+  u64              mask, ignored, now, deadline, generation;
+  u32              i;
+  isize            error;
   REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask), 59);
   now = runtimenow();
   REQUIRE(now <= UINT64_MAX - SYSOP_CONTROL_NS, 58);
   deadline = now + SYSOP_CONTROL_NS;
   resource_trace[33] = deadline;
   resource_trace[39] = now;
-  REQUIRE(!sysfilecloseprepare(&file_registry, &connection_work, &connection_directory, anchor, 503,
-                               deadline, &operation, &words) &&
+  REQUIRE(!sysconnworkreserve(&connection_work, &connection_directory, SYSFILE_CONTROL, 1, &busy) &&
+              sysfileclosepick(&file_registry, &connection_work, &connection_directory, 503,
+                               deadline, &claimed, &operation, &words) == -ERR_BUSY &&
+              !claimed.file && !claimed.sequence &&
+              !sysconnworkrelease(&connection_work, &connection_directory, busy) &&
+              !sysfileclosepick(&file_registry, &connection_work, &connection_directory, 503,
+                                deadline, &claimed, &operation, &words) &&
+              claimed.file == file && claimed.sequence &&
               !sysctxopcall(&runtime_contexts, connection_work.state.self, 0, &connection_work,
                             &connection_directory, &operation, 0, &runtime_key) &&
               sysctxinterruptible(&runtime_contexts, connection_work.state.self, runtime_key) ==
@@ -1804,13 +1813,9 @@ typedclient(const Bootview *view, Handle peer)
                 !sysfilerefnextclose(&file_registry, connection_work.state.self, connection_tag, 0,
                                      &displaced) &&
                 displaced == fileid &&
-                !sysfilerefclose(&file_registry, connection_work.state.self, displaced, &closing) &&
-                sysfilerefnextclose(&file_registry, connection_work.state.self, connection_tag, 0,
-                                    &displaced) == -ERR_WOULD_BLOCK &&
-                displaced == fileid && closing.file == fileid && closing.sequence &&
                 !sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) &&
                 reference.state == SYSFILE_REF_CLOSING && !reference.aliases && !reference.pins &&
-                reference.close_sequence == closing.sequence &&
+                !reference.close_sequence &&
                 !sysfilerefcheck(&file_registry, connection_work.state.self) &&
                 sysfilerefconnection(&file_registry, connection_work.state.self, connection_tag) ==
                     1 &&
@@ -1829,7 +1834,7 @@ typedclient(const Bootview *view, Handle peer)
     REQUIRE(ipc_call(connection_work.state.call, &words, CALL_ASYNC, &result) == -ERR_CAPACITY &&
                 !result.request && !__sys_sigmask(SIGNAL_SETMASK, oldmask, &oldmask),
             114);
-    closeclient(&closing);
+    closeclient(fileid);
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &oldmask) &&
                 sysfilerefview(&file_registry, connection_work.state.self, fileid, &reference) ==
                     -ERR_STALE &&

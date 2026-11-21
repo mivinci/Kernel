@@ -98,6 +98,38 @@ sysfilecloseprepare(Filepool *pool, Connwork *work, Conncache *cache, const File
   return 0;
 }
 isize
+sysfileclosepick(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline,
+                 Fileclose *anchor, Opkey *key, Msg *message)
+{
+  Fileclose claimed;
+  u64       file;
+  isize     error;
+  if (!separate(pool, sizeof(*pool), anchor, sizeof(*anchor)) ||
+      !separate(work, sizeof(*work), anchor, sizeof(*anchor)) ||
+      !separate(cache, sizeof(*cache), anchor, sizeof(*anchor)) ||
+      !separate(key, sizeof(*key), anchor, sizeof(*anchor)) ||
+      !separate(message, sizeof(*message), anchor, sizeof(*anchor)))
+    return -ERR_INVALID;
+  error = sysfilerefnextclose(pool, work->state.self, work->state.tag, 0, &file);
+  if (!error)
+    error = sysfilerefclose(pool, work->state.self, file, &claimed);
+  if (error)
+    return error;
+  error = sysfilecloseprepare(pool, work, cache, &claimed, owner, deadline, key, message);
+  if (error) {
+    /* A failed preparation normally owns no slot. Keep the claim if an
+       internal rollback failed and left responsibility attached to it. */
+    if (work->state.operations[6].phase && work->state.operations[6].file == file)
+      return error;
+    if (sysfilerefunclaimclose(pool, work->state.self, &claimed))
+      return -ERR_STATE;
+    return error;
+  }
+  *anchor = claimed;
+  return 0;
+}
+
+isize
 sysfilecloseresult(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                    const Opkey *key)
 {

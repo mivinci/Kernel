@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage293：libsys 接通待关闭 File 的领取与 CLOSE 准备，控制槽忙时可重试。双架构 QEMU `libsys`、65 项文件主机测试与格式通过。
+
 - stage292：File 池可按连接代次发现已排空、尚未领取的关闭责任。双架构 QEMU `libsys`、65 项文件主机测试及格式通过；生产调度待接。
 
 - stage291：libsys 原子提交本地 close，旧标签不能摘除复用后的 fd，有在途操作时保留原 File。双架构 QEMU `libsys`、13 项 fd 主机检查和格式通过；公开 close 待接。

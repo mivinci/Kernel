@@ -13,6 +13,11 @@
    restoring signals. Failure before submission leaves anchor in Filepool. */
 isize sysfilecloseprepare(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                           u64 owner, u64 deadline, Opkey *key, Msg *message);
+/* Same signal exclusion as prepare. Claim and prepare one pending File on
+   this connection; an ordinary pre-submission failure releases the claim.
+   Outputs are separate, unowned storage and change only on success. */
+isize sysfileclosepick(Filepool *pool, Connwork *work, Conncache *cache, u64 owner, u64 deadline,
+                       Fileclose *anchor, Opkey *key, Msg *message);
 /* Validates only a positive logical-close confirmation on the original Rq.
    Errors/unknown results keep anchor/op/resources. Call before SAVED/ACK. */
 isize sysfilecloseresult(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,

@@ -136,6 +136,8 @@ stage291：私有 `sysfdclose` 在捕获信号被屏蔽期间核对原 LIVE 标�
 
 stage292：`sysfilerefnextclose` 按连接槽及代次查找已无在途引用、尚未领号的 CLOSING File；工作者可直接从 File 池找回待处理项。查找不修改记录，调用者在同一信号保护段用 `sysfilerefclose` 领号。双架构 `libsys` 验证两笔在途操作结束前查不到旧 File、排空后能找到，领号后不再被发现；真实 CLOSE、65 项文件主机测试和格式通过。生产调度及公开 `close()` 待接。
 
+stage293：`sysfileclosepick` 在同一信号保护段内发现、领取并准备一笔 CLOSE。控制槽忙或准备已回滚时归还领取责任，序号不复用；若内部回滚未能释放操作槽，则保留领取责任，避免重复准备。RV64、ARM64 `libsys` 验证控制槽忙时无输出、释放后能再次领取并通过原 Rctx 完成真实 CLOSE。65 项文件主机测试与格式通过。生产调度仍待接入。
+
 ### open/close 的信号重启边界（已冻结）
 
 read/write 已讨论语义见 [信号中断与重启](11-terminal.md#readwrite-的中断与重启已冻结)。

@@ -446,6 +446,23 @@ sysfilerefclose(Filepool *pool, Connpeer self, u64 file, Fileclose *out)
   return 0;
 }
 isize
+sysfilerefunclaimclose(Filepool *pool, Connpeer self, const Fileclose *key)
+{
+  Fileref *entry;
+  isize    error;
+  if (!output(pool, key, sizeof(*key)))
+    return -ERR_INVALID;
+  error = find(pool, self, key->file, &entry);
+  if (error)
+    return error;
+  if (!key->sequence || entry->state != SYSFILE_REF_CLOSING ||
+      entry->close_sequence != key->sequence)
+    return -ERR_STALE;
+  entry->close_sequence = 0;
+  return 0;
+}
+
+isize
 sysfilerefconfirmed(Filepool *pool, Connpeer self, const Fileclose *key)
 {
   Fileref *entry;
