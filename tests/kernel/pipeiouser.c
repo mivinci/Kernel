@@ -263,6 +263,12 @@ serviceloop(const Bootview *boot, u32 interrupt)
           gate.source == target.target && gate.words[0] == PIPETEST && !table.serial &&
           !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request) &&
           table.serial == 4);
+    CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && table.serial == 8 &&
+          !ipc_recv(0, 0, &request) && request.words[0] == FS_READ &&
+          !pipedispatch(&fs.pipes, &link, 1, &request) && wait.io.request == request.request &&
+          !__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
+          gate.source == target.target && gate.words[0] == PIPETEST &&
+          !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !wait.io.request);
   } else if (interrupt) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -294,6 +300,10 @@ oninterrupt(int signal)
   Connwork  *work;
   Fdview     readend, writeend;
   if (signal == SIGUSR1) {
+    if (caught) {
+      caught++;
+      return;
+    }
     CHECK(!sysfileimage(&image) && image == interruptedimage && !sysfileimagefs(1, 0, &work) &&
           work == interruptedwork && !sysfdobserve(&image->fds, 0, &readend) &&
           readend.tag.state == SYSFD_RESERVED && !sysfdobserve(&image->fds, 1, &writeend) &&
@@ -308,21 +318,14 @@ transfer(Fileimage *image, Connwork *work, int fd, u64 opcode, u8 *bytes, u64 co
 {
   Conncache   *cache = sysfileimagecache(image);
   Connwork    *peer = NULL;
-  Rkey         active;
   Opkey        key;
-  Ipcmsg       result;
   Fileioresult completed;
-  Handle       rpc;
   u64          mask, ignored;
   CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask));
   CHECK(!sysfileiostage(image, 0, fd, opcode, bytes, count, &peer, &key) && peer == work);
   if (opcode == FS_WRITE)
     bytes[0] = 0;
-  CHECK(!sysctxopcall(&image->contexts, work->state.self, 0, work, cache, &key, 0, &active) &&
-        !sysctxinvoke(&image->contexts, work->state.self, active) &&
-        !sysctxhandoff(&image->contexts, work->state.self, active) &&
-        !sysctxfinish(&image->contexts, work->state.self, active) &&
-        !sysoprpc(work, cache, &key, &rpc) && !ipc_rqwait(rpc, RQ_FINISH, &result));
+  CHECK(!sysfileiowait(image, 0, &key, mask));
   CHECK(!sysfileiofinish(image, &key, bytes, count, &completed) && completed.native == native &&
         !completed.business && completed.count == expected &&
         sysopcheck(work, cache, &key) == -ERR_STALE &&
@@ -349,6 +352,7 @@ interruptclient(void)
   Fileref               ref;
   Connwork             *draftpeer = NULL;
   Opkey                 draft = {0};
+  Fileioresult          completed;
   u64                   mask, ignored;
   u8                    data[3] = {'p', 'q', 0xa5};
   CHECK(!sysfileimage(&image));
@@ -380,7 +384,15 @@ interruptclient(void)
             -ERR_FAULT &&
         !draftpeer && !draft.lease.seq && !sysfdobserve(&image->fds, fds[1], &original) &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) && !ref.pins &&
-        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+        !sysfileiostage(image, 0, fds[0], FS_READ, NULL, 1, &draftpeer, &draft) &&
+        draftpeer == work && sysfileiowait(image, 0, &draft, mask) == -ERR_INTERRUPTED &&
+        caught == 2 && !sysoprpc(work, cache, &draft, &rpc) &&
+        (work->state.operations[draft.lease.slot].flags & SYSOP_CANCEL_SENT) &&
+        !ipc_call(work->state.call, &gate, CALL_CONTROL, &result) &&
+        !sysfileiowait(image, 0, &draft, mask) &&
+        !sysfileiofinish(image, &draft, data, 1, &completed) && !completed.native &&
+        completed.business == -EINTR && !completed.count && data[0] == 'p' &&
+        ipc_rqpoll(rpc, 0, &result) < 0 && !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
   data[0] = 'p';

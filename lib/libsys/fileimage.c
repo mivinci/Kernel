@@ -252,6 +252,72 @@ sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *inpu
 }
 
 isize
+sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask)
+{
+  Conncache *cache;
+  Connwork  *work;
+  Connpeer   self;
+  Slotop    *op;
+  Rkey       context;
+  u64        now;
+  isize      error, status;
+  if (!state || !key || !key->owner || key->connection.index >= SYSCONN_COUNT ||
+      layer >= RCTX_LAYERS)
+    return -ERR_INVALID;
+  work = &state->connections[key->connection.index];
+  cache = sysfileimagecache(state);
+  self = work->state.self;
+  error = sysopcheck(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->opcode != FS_READ && op->opcode != FS_WRITE)
+    return -ERR_INVALID;
+  if (op->phase == SYSOP_PREPARED) {
+    error = sysctxopcall(&state->contexts, self, layer, work, cache, key, 0, &context);
+    if (error)
+      return error;
+    status = sysctxinvoke(&state->contexts, self, context);
+    error = sysctxhandoff(&state->contexts, self, context);
+    if (!error && status == -ERR_PEER)
+      error = sysctxpeerended(&state->contexts, self, context);
+    if (!error)
+      error = sysctxfinish(&state->contexts, self, context);
+    if (error || status)
+      return error ? error : status;
+  }
+  for (;;) {
+    closeprogress(state);
+    error = sysoppoll(work, cache, key);
+    if (!error)
+      error = sysopfinished(work, cache, key);
+    if (error != -ERR_WOULD_BLOCK)
+      return error;
+    if (op->deadline) {
+      error = systimernow(&now);
+      if (error || now >= op->deadline)
+        return error ? error : -ERR_TIMEDOUT;
+    }
+    if (op->phase == SYSOP_WAITING) {
+      /* Bind the exact RPC for signal cancellation, but wait on its event.
+         The event wait guard also covers a signal arriving before recv. */
+      error = sysctxopwait(&state->contexts, self, layer, work, cache, key, &context);
+      if (error)
+        return error;
+      status = sysctxinterruptible(&state->contexts, self, context);
+      if (!status)
+        status = systimerwait(op->deadline, EVENT_RQ_DONE, mask);
+      error = sysctxabort(&state->contexts, self, context);
+      if (error)
+        return error;
+    } else
+      status = systimerwait(op->deadline, EVENT_RQ_DONE, mask);
+    if (status)
+      return status;
+  }
+}
+
+isize
 sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fileioresult *result)
 {
   Conncache *cache;

@@ -36,6 +36,10 @@ isize sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active
    caught signals through Rctx registration and owns the resulting Opkey. */
 isize sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
                      Connwork **out, Opkey *key);
+/* Submit once and wait for the original RPC's result and FINISH proof.
+   Caller holds caught signals blocked except while waiting with mask.
+   Interruption or timeout leaves the original key and its obligation live. */
+isize sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask);
 /* Collect a submitted chunk without blocking. Keep signals masked and use
    the same private result storage and original byte limit across retries.
    Zero means the operation was released; inspect result for its outcome. */

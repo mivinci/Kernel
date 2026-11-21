@@ -33,7 +33,8 @@ int   syssleepwaiting(void);
 void  syssleepinterrupt(void *trap, void *outer, u64 flags);
 /* Wait once on the shared alarm or specified events. Called with caught
    signals blocked; returns with them blocked and uses mask while sleeping.
-   A notification is a hint: caller must recheck its condition and deadline. */
+   A zero deadline waits on events alone. A notification is a hint: caller
+   must recheck its condition and deadline. */
 isize systimerwait(u64 deadline, u64 events, u64 mask);
 /* Optional file-runtime hook. Runs under caught-signal exclusion and returns
    nonzero while original request completions can advance pending cleanup. */

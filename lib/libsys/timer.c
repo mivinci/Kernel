@@ -169,6 +169,7 @@ struct Eventwait
 {
   volatile u64 ticket;
   isize        result;
+  u32          timed;
 };
 static Eventwait *eventwait;
 static isize      sleepfault;
@@ -203,7 +204,7 @@ syssleepinterrupt(void *trap, void *outer, u64 flags)
   u64        now;
   isize      error;
   if (eventwait) {
-    error = systimercancel(&sleepheap, eventwait->ticket);
+    error = eventwait->timed ? systimercancel(&sleepheap, eventwait->ticket) : 0;
     if (error)
       sleepfault = error;
     eventwait->result = error ? error : (flags & SIGNAL_RESTART ? 0 : -ERR_INTERRUPTED);
@@ -230,23 +231,27 @@ isize
 systimerwait(u64 deadline, u64 events, u64 mask)
 {
   Eventwait wait = {0};
-  u64       ticket, ignored;
+  u64       ticket = 1, ignored;
   isize     error, blocked, cancelled;
   if (eventwait || pending)
     return -ERR_BUSY;
   if (sleepfault)
     return sleepfault;
-  error = systimeradd(&sleepheap, deadline, &ticket);
-  if (error)
-    return error;
+  if (deadline) {
+    error = systimeradd(&sleepheap, deadline, &ticket);
+    if (error)
+      return error;
+    wait.timed = 1;
+    events |= EVENT_TIMER;
+  }
   wait.ticket = ticket;
   eventwait = &wait;
   error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   if (!error)
-    error = __sys_sleepwait(&wait.ticket, events | EVENT_TIMER);
+    error = __sys_sleepwait(&wait.ticket, events);
   blocked = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored);
   eventwait = NULL;
-  cancelled = wait.ticket ? systimercancel(&sleepheap, ticket) : 0;
+  cancelled = wait.ticket && wait.timed ? systimercancel(&sleepheap, ticket) : 0;
   if (cancelled)
     sleepfault = cancelled;
   if (blocked || cancelled)
