@@ -1764,9 +1764,12 @@ spacesnapshotclone(Spaceid sourceid, Spaceid targetid, Memid original, Memid *ou
 {
   Space    *source = find(sourceid), *target = find(targetid);
   Spacetxn *owned;
+  Mem       backing;
   if (!snapshot || snapshot->phase != SNAP_READY || !source || !target ||
       source != find(snapshot->source) || target != find(snapshot->target) ||
-      contains(source, original))
+      contains(source, original) || memstat(original, &backing) ||
+      backing.acct.index != source->acct.index ||
+      backing.acct.generation != source->acct.generation)
     return SP_BAD;
   if (snapshot->owner.generation && prepforkopen(snapshot->owner, sourceid, targetid, &owned))
     return SP_BUSY;

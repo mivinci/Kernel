@@ -124,7 +124,7 @@ int spacesnapshotend(Spaceid source, Spaceid target, u32 commit);
    First call fixes commit/abort. Same IRQ-masked/no-checkpoint scope; abort
    requires child Local/unmapped references already dropped. */
 int spacesnapshotstep(Spaceid source, Spaceid target, u32 commit);
-/* Unmapped-in-source DATA only; child owns its durable original/adoption
+/* Unmapped DATA owned by the source Acct; child owns its durable original/adoption
    journal. Commit it with memforkcommit, or release every child reference before
    aborting the PTE journal. No stack-resident undo mask escapes this call. */
 int spacesnapshotclone(Spaceid source, Spaceid target, Memid original, Memid *view);

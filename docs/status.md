@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage182：未映射 DATA 的 fork 克隆核对完整源 Acct，拒绝同 Set 下其他 Acct 的对象。26 项主机 Space 快照专项、格式检查及双架构 QEMU sigframe 通过。
+
 - stage181：带 Prep 的分批构造和未映射 Mem 克隆入口主动检查截止时间。21 项主机 fork 快照专项、格式检查及双架构 QEMU sigframe 通过。
 
 - stage180：READY 快照只给目标根开放内核写入，供子信号 cookie 准备。源根拒绝写入，未冻结对端的 SHARED 写入通过。26 项主机 Space 快照专项及双架构 QEMU sigframe 通过。
