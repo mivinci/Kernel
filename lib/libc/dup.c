@@ -80,11 +80,15 @@ close(int fd)
 u32 __libc_sigdepth(void);
 
 static ssize_t
-transfer(int fd, u64 opcode, const void *input, void *output, size_t count)
+transfer(int fd, u64 opcode, const void *input, void *output, size_t count, off_t offset,
+         u32 positional)
 {
   Fileioresult completed;
-  isize status = sysfileimageio(__libc_sigdepth(), fd, opcode, input, output, count, &completed);
-  int   error;
+  u32          layer = __libc_sigdepth();
+  isize        status =
+      positional ? sysfileimageposio(layer, fd, opcode, input, output, count, offset, &completed)
+                        : sysfileimageio(layer, fd, opcode, input, output, count, &completed);
+  int error;
   if (!status) {
     status = completed.native;
     if (!status) {
@@ -103,6 +107,9 @@ transfer(int fd, u64 opcode, const void *input, void *output, size_t count)
     break;
   case -ERR_FAULT:
     error = EFAULT;
+    break;
+  case -ERR_INVALID:
+    error = EINVAL;
     break;
   case -ERR_CANCELLED:
     error = EINTR;
@@ -126,11 +133,23 @@ transfer(int fd, u64 opcode, const void *input, void *output, size_t count)
 ssize_t
 read(int fd, void *buffer, size_t count)
 {
-  return transfer(fd, FS_READ, NULL, buffer, count);
+  return transfer(fd, FS_READ, NULL, buffer, count, 0, 0);
 }
 
 ssize_t
 write(int fd, const void *buffer, size_t count)
 {
-  return transfer(fd, FS_WRITE, buffer, NULL, count);
+  return transfer(fd, FS_WRITE, buffer, NULL, count, 0, 0);
+}
+
+ssize_t
+pread(int fd, void *buffer, size_t count, off_t offset)
+{
+  return transfer(fd, FS_READ, NULL, buffer, count, offset, 1);
+}
+
+ssize_t
+pwrite(int fd, const void *buffer, size_t count, off_t offset)
+{
+  return transfer(fd, FS_WRITE, buffer, NULL, count, offset, 1);
 }

@@ -187,7 +187,7 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
 
 static isize
 iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 opcode,
-        const void *input, u64 bytes, u32 replay, Opkey *key)
+        const void *input, u64 bytes, u64 offset, u32 positional, u32 replay, Opkey *key)
 {
   Fileslot   descriptor;
   Conncache *cache = sysfileimagecache(state);
@@ -213,6 +213,8 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
       descriptor.seq = draft.lease.seq;
       descriptor.state = FS_SLOT_SUBMITTED;
       descriptor.payload_bytes = descriptor.args[1] = bytes;
+      descriptor.args[0] = offset;
+      descriptor.args[3] = positional ? FS_IO_POSITIONAL : 0;
       descriptor.object = session;
       descriptor.span = 1;
       error = __sys_copy((void *) (base + FS_DESC_OFFSET + draft.lease.slot * FS_DESC_BYTES),
@@ -229,9 +231,9 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
   return sysfilerefunpin(&state->files, state->files.self, pin) ? -ERR_STATE : error;
 }
 
-isize
-sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
-               Connwork **out, Opkey *key)
+static isize
+stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes, u64 offset,
+        u32 positional, Connwork **out, Opkey *key)
 {
   Fdview    view;
   Fileref   ref;
@@ -259,11 +261,19 @@ sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *inpu
     return -ERR_STALE;
   error = sysfilerefpin(&state->files, state->files.self, view.file);
   if (!error) {
-    error = iostage(state, layer, work, view.file, ref.session, opcode, input, bytes, 0, key);
+    error = iostage(state, layer, work, view.file, ref.session, opcode, input, bytes, offset,
+                    positional, 0, key);
     if (!error)
       *out = work;
   }
   return error;
+}
+
+isize
+sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
+               Connwork **out, Opkey *key)
+{
+  return stagefd(state, layer, fd, opcode, input, bytes, 0, 0, out, key);
 }
 
 isize
@@ -360,8 +370,8 @@ sysfileioresume(Fileimage *state, Opkey *key)
   return error;
 }
 
-isize
-sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
+static isize
+restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
 {
   Conncache *cache;
   Connwork  *work;
@@ -410,7 +420,14 @@ sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
   if (error)
     return error;
   key->lease.seq = 0;
-  return iostage(state, layer, work, file, session, opcode, NULL, bytes, 1, key);
+  return iostage(state, layer, work, file, session, opcode, NULL, bytes, offset, positional, 1,
+                 key);
+}
+
+isize
+sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
+{
+  return restartio(state, key, bytes, 0, 0);
 }
 
 isize
@@ -505,9 +522,9 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   return error;
 }
 
-isize
-sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
-               Fileioresult *result)
+static isize
+imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes, u64 offset,
+        u32 positional, Fileioresult *result)
 {
   Fileimage *state;
   Connwork  *work;
@@ -525,7 +542,7 @@ sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u
     return error;
   fileprogress(state);
   bytes = MIN(bytes, FS_SLOT_BYTES);
-  error = sysfileiostage(state, layer, fd, opcode, input, bytes, &work, &key);
+  error = stagefd(state, layer, fd, opcode, input, bytes, offset, positional, &work, &key);
   if (error)
     goto restore;
   cache = sysfileimagecache(state);
@@ -538,7 +555,7 @@ sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u
       continue;
     }
     if (!error && interrupted && retry) {
-      error = sysfileiorestart(state, &key, bytes);
+      error = restartio(state, &key, bytes, offset, positional);
       if (!error) {
         interrupted = 0;
         continue;
@@ -578,6 +595,22 @@ sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u
 restore:
   discard = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return error ? error : discard;
+}
+
+isize
+sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
+               Fileioresult *result)
+{
+  return imageio(layer, fd, opcode, input, output, bytes, 0, 0, result);
+}
+
+isize
+sysfileimageposio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
+                  int64_t offset, Fileioresult *result)
+{
+  if (offset < 0)
+    return -ERR_INVALID;
+  return imageio(layer, fd, opcode, input, output, bytes, (u64) offset, 1, result);
 }
 
 isize

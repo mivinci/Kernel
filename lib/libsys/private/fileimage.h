@@ -56,6 +56,8 @@ isize sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 byte
                       Fileioresult *result);
 isize sysfileimageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
                      Fileioresult *result);
+isize sysfileimageposio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes,
+                        int64_t offset, Fileioresult *result);
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
 isize sysfileimagedup2(int fd, int target);

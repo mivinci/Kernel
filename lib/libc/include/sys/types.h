@@ -7,4 +7,5 @@ typedef uint32_t gid_t;
 typedef uint64_t sigset_t;
 typedef int64_t  time_t;
 typedef int64_t  ssize_t;
+typedef int64_t  off_t;
 #endif

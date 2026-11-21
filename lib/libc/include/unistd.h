@@ -21,6 +21,8 @@ int           dup2(int fd, int target);
 int           close(int fd);
 ssize_t       read(int fd, void *buffer, size_t count);
 ssize_t       write(int fd, const void *buffer, size_t count);
+ssize_t       pread(int fd, void *buffer, size_t count, off_t offset);
+ssize_t       pwrite(int fd, const void *buffer, size_t count, off_t offset);
 long          sysconf(int name);
 NORETURN void _exit(int status);
 #endif

@@ -18,8 +18,9 @@
 #include "../../sbin/fs/pipefile.h"
 #include "../../sbin/fs/serve.h"
 
-#define ADDRESS  0x1600000UL
-#define PIPETEST 0xf008
+#define ADDRESS     0x1600000UL
+#define PIPETEST    0xf008
+#define TEST_OFFSET INT64_C(0x100000003)
 
 volatile u64 pipeiotrace[2];
 
@@ -300,6 +301,22 @@ serviceloop(const Bootview *boot, u32 interrupt)
         CHECK(!fsstep(&fs));
       } while (file.stream.bytes);
     }
+    for (i = 0; i < 2; i++) {
+      Fileslot row;
+      CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_WRITE &&
+            !sysfilerequest((const volatile void *) link.address, FS_CONN_BYTES, request.words[3],
+                            request.words[2], &row) &&
+            row.args[0] == TEST_OFFSET && row.args[3] == FS_IO_POSITIONAL && row.args[1] == 1);
+      if (!i) {
+        Msg cancelled = {{(u64) -EINTR, request.words[2], 0, 0}};
+        u64 state;
+        CHECK(!ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1) &&
+              !ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST &&
+              !ipc_rqcheck(request.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
+              !ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &cancelled));
+      } else
+        CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && !file.stream.bytes);
+    }
   } else if (interrupt == 5) {
     CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
           wait.io.end == PIPE_READ && !file.stream.bytes);
@@ -476,6 +493,7 @@ interruptclient(void)
   release_read = 1;
   CHECK(write(fds[1], "pq", 2) == 2 && read(fds[0], data, sizeof(data)) == 2 && data[0] == 'p' &&
         data[1] == 'q' && data[2] == 0xa5 && errno == EBUSY && caught == 5);
+  CHECK(pwrite(fds[1], "z", 1, TEST_OFFSET) == -1 && errno == ESPIPE && caught == 6);
   release_read = 0;
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
@@ -484,6 +502,9 @@ interruptclient(void)
   CHECK(!data[0]);
   transfer(image, work, fds[0], FS_READ, data, sizeof(data), 2, 0);
   CHECK(data[0] == 'p' && data[1] == 'q' && data[2] == 0xa5);
+  CHECK(write(fds[1], "p", 1) == 1 && pread(fds[0], data, 1, -1) == -1 && errno == EINVAL &&
+        pread(fds[0], data + 2, 1, TEST_OFFSET) == -1 && errno == ESPIPE && data[2] == 0xa5 &&
+        read(fds[0], data, 1) == 1 && data[0] == 'p');
   CHECK(!sysfdobserve(&image->fds, fds[0], &original) && !fcntl(fds[0], F_SETFD, FD_CLOEXEC) &&
         fcntl(fds[0], F_GETFD) == FD_CLOEXEC && fcntl(fds[0], F_DUPFD, 4) == 4 &&
         fcntl(4, F_DUPFD, 4) == 5 && !fcntl(4, F_GETFD) && !fcntl(4, F_SETFD, FD_CLOEXEC) &&
