@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage408（2026-11-22）：双架构 QEMU `pipeio` 验证 `nanosleep()` 期间可回收后台 CLOSE 的迟到结果，无需后续 fd 调用。
 - stage407（2026-11-22）：双架构 QEMU `pipeio` 验证后续公开 fd 调用推进迟到的 CLOSE 回复并归还旧引用。
 - stage406（2026-11-22）：公开 `close()` 接入；双架构 QEMU `pipeio` 验证超时、EINPROGRESS、SA_RESTART 和 handler 复用同号 fd 后继续原关闭。
 - stage405（2026-11-22）：双架构 QEMU `pipeio` 验证前台 CLOSE 到期或遇信号后，把同一 RPC 交给后台；服务确认后才回收旧引用。

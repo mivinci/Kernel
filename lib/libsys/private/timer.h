@@ -35,6 +35,9 @@ void  syssleepinterrupt(void *trap, void *outer, u64 flags);
    signals blocked; returns with them blocked and uses mask while sleeping.
    A notification is a hint: caller must recheck its condition and deadline. */
 isize systimerwait(u64 deadline, u64 events, u64 mask);
+/* Optional file-runtime hook. Runs under caught-signal exclusion and returns
+   nonzero while original request completions can advance pending cleanup. */
+void systimerbindrq(int (*progress)(void));
 /* Architecture guard between the last ticket load and the blocking recv. */
 isize __sys_sleepwait(const volatile u64 *ticket, u64 events);
 void  syssleepskip(void *trap, u64 begin, u64 end, u64 resume);

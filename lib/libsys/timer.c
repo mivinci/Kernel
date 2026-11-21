@@ -155,7 +155,14 @@ struct Sleepwait
   isize        result;
   u32          used;
 };
-static Timerheap         sleepheap;
+static Timerheap sleepheap;
+static int (*rqprogress)(void);
+
+void
+systimerbindrq(int (*progress)(void))
+{
+  rqprogress = progress;
+}
 static Sleepwait         waits[SIGNAL_DEPTH + 1], *pending;
 typedef struct Eventwait Eventwait;
 struct Eventwait
@@ -251,7 +258,7 @@ isize
 sysnanosleep(u64 duration, u64 *remaining)
 {
   Sleepwait *wait = NULL;
-  u64        mask, ignored, now, ticket;
+  u64        mask, ignored, now, ticket, events;
   isize      error, received = 0, restored;
   u32        i;
   if (!remaining)
@@ -283,6 +290,9 @@ sysnanosleep(u64 duration, u64 *remaining)
     }
   }
   while (!error && wait->ticket) {
+    events = EVENT_TIMER;
+    if (rqprogress && rqprogress())
+      events |= EVENT_RQ_DONE;
     error = systimernow(&now);
     if (!error && now >= wait->deadline)
       settle(wait, 0, 0);
@@ -293,7 +303,7 @@ sysnanosleep(u64 duration, u64 *remaining)
     error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
     if (error)
       break;
-    received = __sys_sleepwait(&wait->ticket, EVENT_TIMER);
+    received = __sys_sleepwait(&wait->ticket, events);
     error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored);
   }
   if (wait && wait->used) {

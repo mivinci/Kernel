@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
+#include <time.h>
 #include <unistd.h>
 #include "private/close.h"
 #include "private/connection.h"
@@ -498,18 +499,19 @@ closecaught(int signum)
 static void
 closeclient(u32 mode)
 {
-  Fileimage       *image;
-  Connwork        *peer;
-  Conncache       *directory;
-  Pipecreate       pipe = {0};
-  Fdview           old, view;
-  Fileref          ref;
-  Msg              gate = {{PIPETEST, 0, 0, 0}};
-  Ipcmsg           result;
-  struct sigaction action = {0};
-  Handle           rpc;
-  int              fds[2];
-  isize            business;
+  Fileimage            *image;
+  Connwork             *peer;
+  Conncache            *directory;
+  Pipecreate            pipe = {0};
+  Fdview                old, view;
+  Fileref               ref;
+  Msg                   gate = {{PIPETEST, 0, 0, 0}};
+  Ipcmsg                result;
+  struct sigaction      action = {0};
+  const struct timespec pause = {0, 30000000};
+  Handle                rpc;
+  int                   fds[2];
+  isize                 business;
   CHECK(!sysfileimage(&image) && !sysfileimagefs(0, ADDRESS, &peer));
   directory = sysfileimagecache(image);
   closepeer = peer;
@@ -526,8 +528,8 @@ closeclient(u32 mode)
     CHECK(close(fds[1]) == -1 && errno == (mode ? EINPROGRESS : EIO) && caught == !!mode);
     rpc = peer->state.operations[6].rpc;
     CHECK(rpc && (!mode || rpc == closerpc) && peer->state.operations[6].file == old.file &&
-          !ipc_call(peer->state.call, &gate, CALL_CONTROL, &result) &&
-          !ipc_rqwait(rpc, RQ_FINISH, &result) && dup2(fds[0], fds[0]) == fds[0]);
+          !ipc_call(peer->state.call, &gate, CALL_CONTROL, &result) && !nanosleep(&pause, NULL) &&
+          !peer->state.operations[6].rpc);
   }
   CHECK(sysfilerefview(&image->files, peer->state.self, old.file, &ref) == -ERR_STALE &&
         !sysfdobserve(&image->fds, fds[1], &view));

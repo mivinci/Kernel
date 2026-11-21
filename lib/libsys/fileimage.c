@@ -13,6 +13,7 @@ static Rkey      hello;
 static Bootmap   candidate;
 static u32       initialized, connecting, closing;
 static void      closeprogress(Fileimage *state);
+static int       closeevents(void);
 
 Conncache *
 sysfileimagecache(Fileimage *state)
@@ -46,6 +47,7 @@ sysfileimage(Fileimage **out)
     if (!error) {
       sysfdinit(&image.fds);
       initialized = 1;
+      systimerbindrq(closeevents);
     }
   }
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
@@ -224,6 +226,22 @@ closeprogress(Fileimage *state)
   for (i = 0; pending; i++, pending >>= 1)
     if (pending & 1)
       (void) closework(state, state->connections[i].state.tag);
+}
+
+static int
+closeevents(void)
+{
+  Conncache *cache = sysfileimagecache(&image);
+  u32        i;
+  closeprogress(&image);
+  for (i = 0; i < SYSCONN_COUNT && closing; i++) {
+    Slotop *op = &image.connections[i].state.operations[6];
+    u32     state = cache->entries[i].state;
+    if ((state == SYSCONN_READY || state == SYSCONN_DRAINING) && op->rpc &&
+        op->opcode == FS_CLOSE && (op->flags & SYSOP_BACKGROUND))
+      return 1;
+  }
+  return 0;
 }
 
 static isize
