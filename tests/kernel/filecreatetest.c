@@ -273,7 +273,7 @@ filewatchexittest(u32 vfs)
     if (!vfs && i)
       CHECK(trace[2] == 2 && trace[3] == 1);
     if (vfs && i == 2)
-      CHECK(trace[1] == 1);
+      CHECK(trace[1] == 2 && trace[2] == 2 && trace[3] == 1 && trace[5] == 1);
     while ((error = procclean(pid[i])) > 0) {
     }
     CHECK(!error && !lifecollect(process[i].life, 1, &result));
@@ -284,7 +284,11 @@ filewatchexittest(u32 vfs)
         !acctcheck() && !lifecheck());
   if (vfs) {
     putstr("FILEPREPDEATHCHECK cancelled=");
-    puthex(trace[1]);
+    puthex(trace[5]);
+    putstr(" attached=");
+    puthex(trace[3]);
+    putstr(" closed=");
+    puthex(trace[2]);
     putstr("\n");
     return;
   }

@@ -928,6 +928,8 @@ stage262：提取可共享的 `Fileowner` 观察记录。后端在安装普通 O
 
 ARM64/RV64 runtime 的三进程场景中，VFS 交付后端 CALL/token 后退出，后端观察旧 VFS 并撤销唯一尚未接入的引用。原客户端的迟到 ATTACH 返回 ESTALE，定点 ABORT 仍返回成功且只撤销一次，没有分配连接共享区；启动费用和页数回到基线。64 项文件主机回归及格式检查通过。该退出场景覆盖未领取 token；同一退出事件下已移交引用的存续、10 秒期限及生产表接入仍待验收。
 
+stage263：双架构 runtime 对同一次 VFS 退出同时保留两种归属：第一份引用已完成 ATTACH、映射及本地 File 安装，后端持有真实客户端的 SOURCE 观察；第二份仍由 VFS 准备。观察 VFS 退出只撤销第二份，迟到 ATTACH 返回 ESTALE，重复补偿 ABORT 成功；第一份通过原共享映射、客户端观察、session 和 reference_id 执行 CLOSE。两份各关闭一次，页及费用归还，格式检查通过。此验收仅修改夹具，10 秒期限及生产表接入仍待实现。
+
 ### 后端冷路识别与唯一接入门闩（2026-11-20）
 
 私有sysconnpeer从本主体QUERY_RESOURCE枚举中定位完整本地CALL Handle，核对RESOURCE_CALL及USE，再取得内核记录的固定目标PID/image；不按Handle整数或共享头猜后端。不匹配/已释放返回STALE，错误子类型拒绝，失败不覆盖旧输出。查询按128项本地上限及16项原生批次有界推进，仅用于新授权冷路径，热I/O不追加查询。该结果识别固定授权目标，不证明目标此后仍ACTIVE，也不授予File/session权。

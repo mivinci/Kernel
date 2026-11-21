@@ -1624,7 +1624,7 @@ def exercise(args, run_dir, record):
                     record['file_watch'] = file_watch[0]
                     prep_death = [fields(line) for line in serial.read_text().splitlines()
                                   if line.startswith("FILEPREPDEATHCHECK ")]
-                    if prep_death != [dict(cancelled=1)]:
+                    if prep_death != [dict(cancelled=1, attached=1, closed=2)]:
                         raise SmokeError("file prepare ownership after VFS exit mismatch")
                     record['file_prepare_death'] = prep_death[0]
                     creators=[fields(line) for line in serial.read_text().splitlines() if line.startswith("FILECREATECHECK ")]
