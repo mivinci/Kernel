@@ -5,7 +5,7 @@
 #include <abi/irq.h>
 #include "private/syscall.h"
 #include "private/start.h"
-#include "private/virtio/block.h"
+#include "../../sbin/blk/io.h"
 #include "../../sbin/fs/journal.h"
 #include "virtiouser.h"
 volatile u64           vdev_trace[VTEST_TRACE];
@@ -70,24 +70,38 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
          const Vblkconfig *config, const Testdma *dma, u32 type, u64 sector, u64 cookie, u8 seed,
          Vdone *prior, const u8 *image)
 {
-  Vblkreq      request = {0};
-  Vdone        done[VQ_BATCH];
-  Ipcmsg       event;
-  Vblkhead    *header = (void *) (dma->va + 3 * PAGE_SIZE);
-  volatile u8 *data = (void *) (dma->va + 4 * PAGE_SIZE);
-  volatile u8 *status = (void *) (dma->va + 5 * PAGE_SIZE);
-  u32          bytes = type == VBLK_FLUSH ? 0 : config->blocksize;
-  u32          count, more, i, causes;
-  u64          generation, started;
-  for (i = 0; i < bytes; i++)
-    data[i] = type != VBLK_WRITE ? 0 : image ? image[i] : (u8) (seed + i * 37);
+  static u8 staged[PAGE_SIZE];
+  Vblkreq   request = {0};
+  Vdone     done[VQ_BATCH];
+  Ipcmsg    event;
+  Blkdma    buffer;
+  const u8 *source = image;
+  u8       *destination = type == VBLK_READ ? staged : NULL;
+  u32       bytes = type == VBLK_FLUSH ? 0 : config->blocksize;
+  u32       count, more, i, causes;
+  u64       generation, started;
+  buffer.header = (void *) (dma->va + 3 * PAGE_SIZE);
+  buffer.data = (void *) (dma->va + 4 * PAGE_SIZE);
+  buffer.status = (void *) (dma->va + 5 * PAGE_SIZE);
+  buffer.headaddr = dma->addresses[3];
+  buffer.dataaddr = dma->addresses[4];
+  buffer.statusaddr = dma->addresses[5];
+  buffer.capacity = PAGE_SIZE;
+  REQUIRE(bytes <= sizeof(staged), 204);
+  if (type == VBLK_WRITE && !source) {
+    for (i = 0; i < bytes; i++)
+      staged[i] = (u8) (seed + i * 37);
+    source = staged;
+  }
+  if (destination)
+    for (i = 0; i < bytes; i++)
+      destination[i] = 0xa5;
   started = now();
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
           179);
-  REQUIRE(!vblksubmit(&request, ring, config, type, sector, cookie, dma->addresses[3],
-                      bytes ? dma->addresses[4] : 0, bytes, dma->addresses[5], header, status,
-                      blksync, device),
+  REQUIRE(!blkiosubmit(&request, ring, config, &buffer, type, sector, bytes, cookie, source,
+                       blksync, device),
           174);
   REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
               event.words[0] == irqevent,
@@ -99,19 +113,29 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
               !virtioread(device->ops.context, 0x60, &causes) && !causes,
           181);
   if (prior && prior->generation)
-    REQUIRE(prior->cookie == cookie && vblkfinish(&request, prior) == -ERR_STALE &&
+    REQUIRE(prior->cookie == cookie &&
+                blkiofinish(&request, prior, &buffer, destination, bytes) == -ERR_STALE &&
                 request.active && request.held == 7,
             190);
   REQUIRE(!vrpoll(ring, epoch, done, &count, &more), 175);
-  REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE &&
-              vblkfinish(&request, &done[0]) == VBLK_OK && !request.held,
+  REQUIRE(count == 1 && !more && done[0].cookie == cookie && ring->queue.free == VQ_SIZE, 207);
+  if (destination) {
+    REQUIRE(blkiofinish(&request, &done[0], &buffer, destination, bytes - 1) == -ERR_INVALID &&
+                request.active,
+            205);
+    for (i = 0; i < bytes; i++)
+      REQUIRE(destination[i] == 0xa5, 206);
+  }
+  REQUIRE(blkiofinish(&request, &done[0], &buffer, destination, destination ? bytes : 0) ==
+                  VBLK_OK &&
+              !request.held,
           177);
   if (prior)
     *prior = done[0];
   vdev_trace[38]++;
   if (type == VBLK_READ) {
     for (i = 0; i < bytes; i++)
-      REQUIRE(data[i] == (u8) (seed + i * 37), 178);
+      REQUIRE(destination[i] == (u8) (seed + i * 37), 178);
     vdev_trace[22]++;
   } else if (type == VBLK_WRITE)
     vdev_trace[2]++;
