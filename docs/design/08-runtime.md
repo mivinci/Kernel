@@ -396,6 +396,12 @@ stage224：双架构 libsys 的真实 READ 完成信号路径已接 handler 内�
 
 ARM64/RV64 libsys、15 项上下文信号主机测试及格式通过，日志 `/private/tmp/kernel-stage224-{arm64-final,riscv-final,context,fmt}.log`。新增测试最初遗漏 trace 大小同步及 rq 头导致构建明确失败；运行首次账目检查早于已退出孩子的有界清理，推进既有 procwork 后保留原3页退出断言并通过，未修改内核清理。夹具只继承本地稳定结果，不代表后端 File 子引用、其他完成业务或生产 fork 协调器已接；未跑全矩阵、CI 或板端。
 
+stage225：完成普通 WRITE 的子修复沿用 SAVED 本地结果。成功回复须为 `[0,seq,value,0]`、value<=4096、无资源/创建责任，且在 fork 前已用零字节 `sysctxsnapshot` 通过原 Op 的真实 RQ_FINISH，记录排空证明；没有证明则拒绝。子仅复制实际完成字节数，清除父运输参数与指针，不复制输入缓冲、不 ACK 或重发 WRITE。SAVED 路由下 Rctx.number 保存 READ/WRITE 业务类型用于后续核验；它不是可进入内核的准备调用，phase 保持 CLEANING。再次 fork 保留同一值和类型，非法 payload/超限计数保持全银行不变。此层只核对协议上界，完整前端仍须按私有原请求长度验证部分进展。
+
+17 项上下文信号主机测试及格式通过，ARM64/RV64 libsys/sigframe 四次 QEMU 回归通过；新 WRITE 修复仅主机直接调用，QEMU 继续覆盖此前真实 READ/IPC fork，不把该回归称为真实 WRITE fork 验收。日志 `/private/tmp/kernel-stage225-{unit,fmt,arm64-libsys,riscv-libsys,arm64-sigframe,riscv-sigframe}.log`。后续仍需完成真实 WRITE 场景、其他完成业务/File 子引用和生产协调器，无 CI 或板端结果。
+
+stage225 最终完整 `make unit` 1218 项通过（168 秒），对应上述最终源码，未重跑全 QEMU 场景矩阵。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

@@ -144,6 +144,36 @@ class ContextSignalTests(unittest.TestCase):
         self.assertEqual(self.lib.sysctxforkreply(self.b,child,key,C.byref(reply)),-6)
         self.assertEqual((bytes(self.bank),reply.words[0]),(before,123))
 
+    def test_completed_write_keeps_partial_progress_without_copy_or_replay(self):
+        operation,key=self.complete()
+        op=self.op(operation);op.opcode=5;op.words[2]=3;op.words[3]=0
+        layers=(C.c_uint64*6)(key.sequence,2,0,0,0,0);child=Peer(pid(3),20)
+        # A fixed reply alone does not prove that the original buffer drained.
+        before=bytes(self.bank)
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-18)
+        self.assertEqual(bytes(self.bank),before)
+        self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,0),0)
+        records=(bytes(self.work),bytes(self.cache));copies=self.lib.testcopies()
+        self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+        reply=bootstrap.Message()
+        self.assertEqual(self.lib.sysctxforkreply(self.b,child,key,C.byref(reply)),1)
+        self.assertEqual(list(reply.words),[0,operation.lease.seq,3,0])
+        self.assertEqual((bytes(self.work),bytes(self.cache),self.lib.testcopies()),(*records,copies))
+        self.assertEqual(self.lib.sysctxfixwait(self.b,child,Peer(pid(4),21),layers),0)
+        self.assertEqual(self.lib.sysctxforkreply(self.b,Peer(pid(4),21),key,C.byref(reply)),1)
+        self.assertEqual(list(reply.words),[0,operation.lease.seq,3,0])
+
+    def test_completed_write_rejects_payload_or_excess_progress_atomically(self):
+        operation,key=self.complete();op=self.op(operation)
+        op.opcode=5;op.words[3]=0
+        self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,0),0)
+        layers=(C.c_uint64*6)(key.sequence,2,0,0,0,0);child=Peer(pid(3),20)
+        for value,bytes_ in [(4097,0),(4,1)]:
+            op.words[2]=value;op.words[3]=bytes_
+            before=(bytes(self.bank),bytes(self.work),bytes(self.cache))
+            self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-6)
+            self.assertEqual((bytes(self.bank),bytes(self.work),bytes(self.cache)),before)
+
     def test_raw_route_has_no_posix_cancellation_policy(self):
         operation, key = self.route(interruptible=False)
         self.returned(key, message=bootstrap.Message(request=self.rpc))

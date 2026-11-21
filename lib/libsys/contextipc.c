@@ -49,10 +49,13 @@ savedcheck(Rctx *context)
   u32 i;
   for (i = 0; i < sizeof(message); i++)
     ((u8 *) &message)[i] = ((const u8 *) &context->result)[i];
-  if (context->phase != RCTX_CLEANING || context->status || context->number ||
+  if (context->phase != RCTX_CLEANING || context->status ||
+      (context->number != FS_READ && context->number != FS_WRITE) ||
       context->route.snapshot_bytes > RCTX_SNAPSHOT_BYTES - base || reply->kind || reply->source ||
       reply->request || reply->image || reply->words[0] || !reply->words[1] ||
-      reply->words[2] != reply->words[3] || reply->words[3] != context->route.snapshot_bytes)
+      reply->words[3] != context->route.snapshot_bytes ||
+      (context->number == FS_READ ? reply->words[2] != reply->words[3]
+                                  : reply->words[3] || reply->words[2] > FS_SLOT_BYTES))
     return -ERR_STATE;
   clearroute(&expected);
   expected.kind = RCTX_ROUTE_SAVED;
@@ -85,9 +88,12 @@ forkcomplete(Rctx *context, Connpeer parent)
   if (error)
     return error;
   op = &route->work->state.operations[route->operation.lease.slot];
-  if (op->phase != SYSOP_RESULT || op->status || op->opcode != FS_READ || op->kind != IPC_NONE ||
-      op->resource || op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED) ||
-      op->words[0] || op->words[1] != route->operation.lease.seq || op->words[2] != op->words[3] ||
+  if (op->phase != SYSOP_RESULT || op->status ||
+      (op->opcode != FS_READ && op->opcode != FS_WRITE) || op->kind != IPC_NONE || op->resource ||
+      op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED) || op->words[0] ||
+      op->words[1] != route->operation.lease.seq ||
+      (op->opcode == FS_READ ? op->words[2] != op->words[3]
+                             : op->words[3] || op->words[2] > FS_SLOT_BYTES) ||
       op->words[3] != route->snapshot_bytes ||
       op->words[3] > (u64) route->operation.lease.span * FS_SLOT_BYTES || op->rpc != route->rpc ||
       (u64) op->rpc != context->args[0])
@@ -177,6 +183,7 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
     if (layers[i].action == FIX_LAYER_COMPLETE && context->route.kind == RCTX_ROUTE_OP) {
       Slotop *op = &context->route.work->state.operations[context->route.operation.lease.slot];
       u64     bytes = context->route.snapshot_bytes;
+      u64     opcode = op->opcode;
       Ipcmsg  reply;
       for (j = 0; j < sizeof(reply); j++)
         ((u8 *) &reply)[j] = 0;
@@ -189,7 +196,8 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
       context->route.delivered = 1;
       context->route.snapshot_saved = 1;
       context->route.snapshot_bytes = bytes;
-      context->number = 0;
+      /* SAVED is a local business result, never a native syscall to enter. */
+      context->number = opcode;
       for (j = 0; j < ARRAY_SIZE(context->args); j++)
         context->args[j] = 0;
     }

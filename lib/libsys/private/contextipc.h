@@ -4,7 +4,8 @@
 /* Child-local repair of pending IPC waits mixed with admitted raw layers.
    Validate every route against the still inherited parent records
    before modifying any layer. No poll/cancel/ACK or transport record mutation.
-   Ordinary completed READ requires a full pre-fork private snapshot. Fixed
+   Ordinary completed READ requires a full pre-fork private snapshot; WRITE
+   requires a zero-byte snapshot as its pre-fork real-finish proof. Fixed
    local results survive another fork. Other completed/unsent IPC work still
    requires its typed repair path. */
 isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
@@ -14,7 +15,7 @@ isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
    status is saved locally and the layer becomes finishable, without handoff
    to parent transport. Active invocation must unwind before finish. */
 isize sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status);
-/* Completed ordinary READ whose entire output was snapshotted before fork.
+/* Completed ordinary READ/WRITE with pre-fork snapshot/finish proof.
    Returns 1 and borrowed value-only reply, 0 for other routes. Snapshot view
    remains valid until finish. Never resumes a parent Op or repeats READ. */
 isize sysctxforkreply(Rbank *bank, Connpeer self, Rkey key, Ipcmsg *out);
