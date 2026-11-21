@@ -167,15 +167,21 @@ loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 no
             work->inflight = 1;
             return 1;
           }
-          if (error)
+          if (error == -ERR_WOULD_BLOCK)
             return error;
+          if (error) {
+            work->failed = 1;
+            break;
+          }
         }
         work->next++;
       }
-      error = cachespancopy(&work->span, scratch);
-      if (error)
-        return error;
-      bytes = io->bytes;
+      if (!work->failed) {
+        error = cachespancopy(&work->span, scratch);
+        if (error)
+          return error;
+        bytes = io->bytes;
+      }
     }
     error = cachespanend(&work->span);
     if (error)

@@ -348,7 +348,7 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   Cache             cache = {0};
   Cachespan         span = {0};
   Cacheio           tickets[2], duplicate;
-  Cachekey          competing;
+  Cachekey          competing = {0};
   u8               *destinations[2], *unused = NULL;
   u8                staged[4] = {0xa5, 0xa5, 0xa5, 0xa5};
   Vdev             *device = queue->device;

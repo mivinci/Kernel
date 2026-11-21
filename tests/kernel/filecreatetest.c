@@ -168,7 +168,7 @@ filecreatetest(void)
     CHECK(trace[0] == 2);
     if (!i)
       CHECK(trace[1] == 11 && trace[2] == 9 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1 &&
-            trace[10] == 2 && trace[11] == 1 && trace[12] == 1 && trace[13] == 3 &&
+            trace[10] == 2 && trace[11] == 1 && trace[12] == 1 && trace[13] == 5 &&
             trace[14] == BOOT_FD_COUNT + 1 && injected == 6);
     else if (i == 1)
       CHECK(trace[1] == 7 && trace[2] == 7 && trace[4] == 4);

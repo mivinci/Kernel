@@ -49,7 +49,7 @@ static Serialring     ttyrx, ttytx;
 static Loadtable      loadtable;
 static const Loadfile loadfile = {7, 2, 3, (LOAD_DIRECT + 1) * CACHE_BYTES};
 static const Loadmap  loadmap = {
-    {7, 2, 3, (LOAD_DIRECT + 1) * CACHE_BYTES}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100}, 102};
+    {7, 2, 3, (LOAD_DIRECT + 1) * CACHE_BYTES}, {99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100}, 102};
 static const Loadindex loadindex = {102, {101}};
 static Cacheblock      loadblocks[2];
 volatile u64           filecreatetrace[16];
@@ -493,11 +493,15 @@ loadreads(void)
   slot.args[3] = loadfile.length;
   slot.args[5] = 4;
   slot.args[6] = FS_SLOT_BYTES - 4;
-  for (attempt = 0; attempt < 3; attempt++) {
+  for (attempt = 0; attempt < 5; attempt++) {
+    if (attempt >= 3) {
+      control.words[1] = attempt == 3 ? 6 : 7;
+      CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result));
+    }
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
     slot.seq = call.words[2] = lease.seq;
     call.words[3] = lease.slot;
-    slot.args[4] = attempt == 1 ? 4 : LOAD_DIRECT * CACHE_BYTES - 2;
+    slot.args[4] = attempt >= 3 ? 0 : attempt == 1 ? 4 : LOAD_DIRECT * CACHE_BYTES - 2;
     slot.args[6] = FS_SLOT_BYTES - (attempt == 2 ? 3 : 4);
     page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
     for (i = 0; i < 5; i++)
@@ -519,15 +523,25 @@ loadreads(void)
       control.words[1] = 2;
       CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result));
     }
+    if (attempt == 4) {
+      control.words[1] = 8;
+      CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result));
+    }
     CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq &&
           page[FS_SLOT_BYTES - 5] == 0xa5);
     if (!attempt)
       CHECK(!result.words[0] && result.words[2] == 4 && result.words[3] == 4 &&
             page[FS_SLOT_BYTES - 4] == 'E' && page[FS_SLOT_BYTES - 3] == 'L' &&
             page[FS_SLOT_BYTES - 2] == 'F' && page[FS_SLOT_BYTES - 1] == '!');
-    else {
-      CHECK((isize) result.words[0] == (attempt == 1 ? -EINTR : -EINVAL) && !result.words[2] &&
-            !result.words[3]);
+    else if (attempt == 4) {
+      CHECK(!result.words[0] && result.words[2] == 4 && result.words[3] == 4);
+      for (i = 1; i < 5; i++)
+        CHECK(!page[FS_SLOT_BYTES - 5 + i]);
+    } else {
+      CHECK((isize) result.words[0] == (attempt == 1   ? -EINTR
+                                        : attempt == 2 ? -EINVAL
+                                                       : -EIO) &&
+            !result.words[2] && !result.words[3]);
       for (i = 1; i < 5; i++)
         CHECK(page[FS_SLOT_BYTES - 5 + i] == 0xa5);
     }
@@ -1210,6 +1224,20 @@ server(const Bootview *boot, u32 recover)
               !cacheget(&loadcache, 110, CACHE_DATA, &competing) &&
               !cacheput(&loadcache, &competing));
         loadtarget = NULL;
+      } else if (input.words[1] == 6 || input.words[1] == 7) {
+        CHECK(!loadio.request && !loadwork.request &&
+              !cacheget(&loadcache, 99, CACHE_DATA, &competing));
+        if (input.words[1] == 6) {
+          loadblocks[competing.index].serial = UINT64_MAX;
+          CHECK(!cacheput(&loadcache, &competing));
+        } else
+          CHECK(!cacheinvalidate(&loadcache, &competing));
+      } else if (input.words[1] == 8) {
+        CHECK(loadio.request && loadtarget && fetch.block == 99);
+        zero(loadtarget, CACHE_BYTES);
+        CHECK(!loadcachecomplete(&loadwork, &fetch.ticket, 1) &&
+              !loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3));
+        loadtarget = NULL;
       } else {
         CHECK(input.words[1] == 3 && input.words[2] == loadsession && !loadio.request &&
               !loadclose(&loadtable, loadsession, input.source, input.image) &&
@@ -1331,9 +1359,13 @@ server(const Bootview *boot, u32 recover)
           CHECK(loadio.bytes == sizeof(loadbytes) &&
                 !loadmapspan(&loadio.file, &loadmap, &loadindex, 99, 128, loadio.offset,
                              loadio.bytes, &loadspan) &&
-                !loadcachebegin(&loadwork, &loadio, &loadcache, &loadspan) &&
-                loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 2) == 1 &&
-                fetch.block == loadspan.first &&
+                !loadcachebegin(&loadwork, &loadio, &loadcache, &loadspan));
+          status = loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 2);
+          if (!loadio.request) {
+            CHECK(!status && !loadio.offset && !loadwork.request);
+            continue;
+          }
+          CHECK(status == 1 && fetch.block == loadspan.first &&
                 loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 2) == -ERR_WOULD_BLOCK &&
                 cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) ==
                     -ERR_WOULD_BLOCK &&
