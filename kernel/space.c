@@ -1315,7 +1315,7 @@ spacesnapshotbuild(Spaceid sourceid, Spaceid targetid)
   Mmap     *m, *alias;
   Mem       backing;
   Memid     memory;
-  Prepinfo  prep;
+  Spacetxn *owned;
   Prepid    none;
   Hvs       vs;
   Hpte      entry;
@@ -1329,8 +1329,7 @@ spacesnapshotbuild(Spaceid sourceid, Spaceid targetid)
     return SP_BAD;
   if (source->busy || target->busy || source == active || target == active)
     return SP_BUSY;
-  if (tree->owner.generation &&
-      (prepstat(tree->owner, &prep) || prep.state != PREP_ACTIVE || prep.cloning != PREP_CLONING))
+  if (tree->owner.generation && prepforkopen(tree->owner, sourceid, targetid, &owned))
     return snapshotfail(tree, SP_BUSY);
   none.generation = none.index = none.reserved = 0;
   while (work < 32) {
@@ -1763,14 +1762,13 @@ spacesnapshotend(Spaceid sourceid, Spaceid targetid, u32 commit)
 int
 spacesnapshotclone(Spaceid sourceid, Spaceid targetid, Memid original, Memid *out)
 {
-  Space   *source = find(sourceid), *target = find(targetid);
-  Prepinfo owner;
+  Space    *source = find(sourceid), *target = find(targetid);
+  Spacetxn *owned;
   if (!snapshot || snapshot->phase != SNAP_READY || !source || !target ||
       source != find(snapshot->source) || target != find(snapshot->target) ||
       contains(source, original))
     return SP_BAD;
-  if (snapshot->owner.generation && (prepstat(snapshot->owner, &owner) ||
-                                     owner.state != PREP_ACTIVE || owner.cloning != PREP_CLONING))
+  if (snapshot->owner.generation && prepforkopen(snapshot->owner, sourceid, targetid, &owned))
     return SP_BUSY;
   return clone(original, target->acct, out, 1);
 }

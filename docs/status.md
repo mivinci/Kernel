@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage181：带 Prep 的分批构造和未映射 Mem 克隆入口主动检查截止时间。21 项主机 fork 快照专项、格式检查及双架构 QEMU sigframe 通过。
+
 - stage180：READY 快照只给目标根开放内核写入，供子信号 cookie 准备。源根拒绝写入，未冻结对端的 SHARED 写入通过。26 项主机 Space 快照专项及双架构 QEMU sigframe 通过。
 
 - stage179：打开带 Prep 的快照前校验源、目标 Spaceid 及准备有效性。同 Acct 的其他根不能借用该准备。主机 fork 快照专项和双架构 sigframe 验证此路径，日志在 `build/host/stage179-fork-prep-root/`。

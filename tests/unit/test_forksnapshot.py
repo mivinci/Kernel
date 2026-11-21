@@ -54,7 +54,7 @@ class ForkSnapshotTests(unittest.TestCase):
                 for prep in self.scopes:
                     self.assertEqual(lib.prepcancel(prep),0)
                     state=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
-                    if state.cloning:self.assertEqual(lib.prepforkfinish(prep),-15)
+                    if state.cloning:self.assertEqual(lib.prepforkfinish(prep),-21 if state.expired else -15)
                     self.assertEqual(lib.prepdrop(prep),0)
                 for table,storage in reversed(self.tables):
                     self.assertEqual(lib.localclose(C.byref(table)),0)
@@ -289,6 +289,27 @@ class ForkSnapshotTests(unittest.TestCase):
             self.assertEqual(self.tree(self.target.space).refs,1)
             self.assertEqual(lib.prepstat(prep,C.byref(state)),0);self.assertEqual(state.refs,1)
             self.assertEqual(lib.prepforkfinish(prep),-15)
+        for lib in self.libs:self.exercise(lib,body)
+
+    def test_build_rechecks_deadline_without_waiting_for_expiry_scanner(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            source,target=self.parent.space,self.target.space
+            lib.test_now.argtypes=[C.c_uint64]
+            for name in ('spacesnapshotopen','spacesnapshotbuild','spacesnapshotend'):
+                extra={'spacesnapshotopen':[Prepid],'spacesnapshotbuild':[],
+                       'spacesnapshotend':[C.c_uint32]}[name]
+                getattr(lib,name).argtypes=[local.support.Spaceid,local.support.Spaceid,*extra]
+            self.assertEqual(lib.spacesnapshotopen(source,target,prep),0)
+            try:
+                state=Prepinfo();self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+                lib.test_now(state.deadline)
+                self.assertEqual(lib.spacesnapshotbuild(source,target),-4)
+                self.assertEqual(lib.prepstat(prep,C.byref(state)),0)
+                self.assertEqual((state.state,state.expired,self.tree(target).mapcount),(3,1,0))
+            finally:
+                self.assertEqual(lib.spacesnapshotend(source,target,0),0)
+            self.assertEqual((self.tree(source).frozen,self.tree(target).frozen),(0,0))
         for lib in self.libs:self.exercise(lib,body)
 
     def transfer(self,mode):
