@@ -307,7 +307,7 @@ forkfreezetest(void)
   Prepid   none;
   Pgstat   before, after;
   Cowpool  pool;
-  u64      value = 0x4141, observed;
+  u64      value = 0x4141, observed = 0;
   u32      i, steps = 0, deferred = 0;
   int      error;
   pgstat(&before);
@@ -334,6 +334,9 @@ forkfreezetest(void)
   none.generation = none.index = none.reserved = 0;
   REQUIRE(!spacesnapshotopen(process.space, target, none) && !spacefrozen(alias) &&
           spaceunmap(alias, 0x10000) == SP_BUSY && spaceclear(alias, 1) == SP_BUSY &&
+          spacewritable(alias, 0x10000, sizeof(value)) == SP_BUSY &&
+          spacewrite(alias, 0x10000, &observed, sizeof(observed)) == SP_BUSY &&
+          spacecopy(alias, 0x10000, 0x11000, sizeof(value)) == SP_BUSY &&
           !spaceread(alias, 0x10000, &observed, sizeof(observed)) && observed == value);
   do {
     error = spacesnapshotbuild(process.space, target);

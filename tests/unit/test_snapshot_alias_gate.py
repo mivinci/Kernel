@@ -168,3 +168,29 @@ class SnapshotAliasGateTests(unittest.TestCase):
             self.maps.remove((peer, 0x10000))
         for lib in self.libs:
             self.exercise(lib, body)
+
+    def test_write_preflights_every_mapping_before_touching_data(self):
+        def body():
+            self.building()
+            parent, peer = self.create(), self.create()
+            data, other = self.memory_create(), self.memory_create()
+            self.write(data, 0, b'd')
+            self.write(other, 4095, b'o')
+            self.assertEqual(self.map(parent, data), 0)
+            self.assertEqual(self.map(peer, other), 0)
+            self.assertEqual(self.map(peer, data, address=0x11000), 0)
+            _, child = self.destination()
+            self.assertEqual(self.lib.spacesnapshotopen(parent, child, Prepid()), 0)
+            try:
+                self.assertFalse(self.stat(peer).frozen)
+                write = C.create_string_buffer(b'xy')
+                self.assertEqual(self.lib.spacewrite(peer, 0x10fff, write, 2), -4)
+                self.assertEqual(self.mapped(peer, 0x10fff, 2), b'od')
+                self.assertEqual(self.lib.spacewrite(peer, 0x10fff, write, 1), 0)
+                self.assertEqual(self.mapped(peer, 0x10fff, 2), b'xd')
+            finally:
+                self.assertEqual(self.lib.spacesnapshotend(parent, child, 0), 0)
+            self.assertEqual(self.lib.spacewrite(peer, 0x11000, write, 1), 0)
+            self.assertEqual(self.mapped(parent, 0x10000, 1), b'x')
+        for lib in self.libs:
+            self.exercise(lib, body)

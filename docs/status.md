@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage309：fork 快照期间，内核写入及复制在改动任何字节前检查整个目标区间；双架构 QEMU `sigframe`、54 项主机专项及格式检查通过。
 - stage308：fork 快照保护已有私有 DATA 别名免于提前解除映射；双架构 QEMU `sigframe`、53 项主机专项及格式检查通过。
 - stage307：libc 提供 C locale 的 `fnmatch`；双架构 QEMU `runtime`、主机匹配比对和格式检查通过。目录枚举及 `sh` 接入仍待实现。
 - stage306：libc 提供 C locale 的 `strcoll`、`strxfrm`；双架构 QEMU `runtime` 和格式检查通过。

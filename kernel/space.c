@@ -137,7 +137,7 @@ samemem(Memid a, Memid b)
   return a.generation == b.generation && a.index == b.index;
 }
 static int
-aliaschangecheck(Memid memory)
+aliaschangecheck(Memid memory, const Space *writer)
 {
   u32 node, scanned = 0, space;
   if (!snapshot)
@@ -149,7 +149,7 @@ aliaschangecheck(Memid memory)
     space = maplinks[node].space;
     if (space >= SPACES || !spaces[space].state)
       return SP_BAD;
-    if (spaces[space].frozen)
+    if (spaces[space].frozen && &spaces[space] != writer)
       return SP_BUSY;
   }
   return 0;
@@ -544,7 +544,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
      Mem already retained by a frozen root. Internal snapshot installation
      alone may extend the exact child prefix admitted by the transaction. */
   if (mode != MAP_SNAPSHOT && mem.managers && mem.kind == MEM_RAM && mem.state == MEM_DATA) {
-    error = aliaschangecheck(memory);
+    error = aliaschangecheck(memory, NULL);
     if (error)
       return error;
   }
@@ -955,7 +955,7 @@ unmap(Spaceid id, u64 address, u32 ending)
   /* The snapshot may hold a cursor to this alias even if its root has
      not been visited yet. Its own rollback may remove the child prefix. */
   if (!ending && backing.kind == MEM_RAM && backing.state == MEM_DATA) {
-    error = aliaschangecheck(m->mem);
+    error = aliaschangecheck(m->mem, NULL);
     if (error)
       return error;
   }
@@ -1069,14 +1069,33 @@ spaceread(Spaceid id, u64 address, void *target, u64 bytes)
 static int
 writecheck(Space *s, Hvs *vs, u64 address, u64 bytes)
 {
-  Hpte entry;
-  u64  page, end;
-  int  error;
+  Hpte  entry;
+  Mem   backing;
+  Mmap *m;
+  u64   page, end;
+  u32   node;
+  int   error;
   if (snapshotwritebusy(s))
     return SP_BUSY;
   if (!bytes || address < 0x10000 || address >= (1UL << 38) || bytes > (1UL << 38) - address)
     return SP_BAD;
   end = address + bytes;
+  if (snapshot) {
+    /* Preflight the whole destination before splitting COW or writing bytes.
+       Only the READY child may ignore its own freeze, as checked above. */
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      m = &mappings[node];
+      if (m->address >= end || m->address + m->length <= address)
+        continue;
+      if (memstat(m->mem, &backing))
+        return SP_BAD;
+      if (backing.kind != MEM_RAM || backing.state != MEM_DATA)
+        continue;
+      error = aliaschangecheck(m->mem, s);
+      if (error)
+        return error;
+    }
+  }
   for (page = ALIGN_DOWN(address, PAGE_SIZE); page < end; page += PAGE_SIZE) {
     if (!hal_vm_lookup(vs, page, &entry) || entry.attr != VM_NORMAL || !(entry.prot & VM_USER))
       return SP_BAD;
