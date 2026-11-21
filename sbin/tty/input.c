@@ -48,6 +48,27 @@ matches(u8 byte, u8 control)
   return control && byte == control;
 }
 
+static u8
+translate(const Termarg *mode, u8 byte)
+{
+  return byte == '\r' && (mode->iflag & TTY_ICRNL) ? '\n' : byte;
+}
+
+u32
+ttyinputsignal(const Termarg *mode, u8 byte)
+{
+  if (!(mode->lflag & TTY_ISIG))
+    return 0;
+  byte = translate(mode, byte);
+  if (matches(byte, mode->cc[TTY_VINTR]))
+    return SIGNAL_INT;
+  if (matches(byte, mode->cc[TTY_VQUIT]))
+    return SIGNAL_QUIT;
+  if (matches(byte, mode->cc[TTY_VSUSP]))
+    return SIGNAL_TSTP;
+  return 0;
+}
+
 static void
 drop(Ttyinput *input, Ttyeffect *effect)
 {
@@ -74,16 +95,8 @@ ttyinputbyte(Ttyinput *input, const Termarg *mode, u8 byte, Ttyeffect *effect)
   result.bytes = result.signal = result.flags = result.dropped = 0;
   for (i = 0; i < ARRAY_SIZE(result.echo); i++)
     result.echo[i] = 0;
-  if (byte == '\r' && mode->iflag & TTY_ICRNL)
-    byte = '\n';
-  if (mode->lflag & TTY_ISIG) {
-    if (matches(byte, mode->cc[TTY_VINTR]))
-      result.signal = SIGNAL_INT;
-    else if (matches(byte, mode->cc[TTY_VQUIT]))
-      result.signal = SIGNAL_QUIT;
-    else if (matches(byte, mode->cc[TTY_VSUSP]))
-      result.signal = SIGNAL_TSTP;
-  }
+  result.signal = ttyinputsignal(mode, byte);
+  byte = translate(mode, byte);
   if (result.signal) {
     input->head = input->used = input->ready = 0;
     result.flags = TTY_FLUSH_OUTPUT;

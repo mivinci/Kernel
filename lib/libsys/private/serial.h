@@ -15,4 +15,6 @@ isize serialinit(Serialring *ring, u64 epoch);
    index, clears flags, yields, notifies or resets a live ring. */
 isize serialwrite(Serialring *ring, u64 epoch, const void *data, u32 bytes);
 isize serialread(Serialring *ring, u64 epoch, void *data, u32 bytes);
+/* Inspect the next consumer byte without publishing any room to the producer. */
+isize serialpeek(Serialring *ring, u64 epoch, u8 *byte);
 #endif

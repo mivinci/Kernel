@@ -25,6 +25,8 @@ struct Ttyeffect
 /* Fresh private storage, before use; mode changes and live SETATTR are a
    separate service transaction. No allocation or backend references. */
 isize ttyinputinit(Ttyinput *input, u32 canonical);
+/* Classify a raw byte under the accepted mode, including input translation. */
+u32 ttyinputsignal(const Termarg *mode, u8 byte);
 /* One byte, accepted mode snapshot. All pointers are disjoint private ordinary
    storage. Success consumes the byte, including deliberately dropped overflow.
    Apply returned flush/signal and stage its echo before accepting another byte;

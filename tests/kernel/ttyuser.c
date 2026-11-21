@@ -83,6 +83,44 @@ ttyserialcheck(void)
 }
 
 static void
+ttyserialsignalcheck(void)
+{
+  Ttyserial       io;
+  Ttyserialresult result;
+  u8              filler[SERIAL_BATCH], newline[TTY_BATCH];
+  const u8        intr[] = {'z', 3, 'q'};
+  u8              byte;
+  u64             committed, read;
+  u32             i;
+  for (i = 0; i < ARRAY_SIZE(filler); i++)
+    filler[i] = 'x';
+  for (i = 0; i < ARRAY_SIZE(newline); i++)
+    newline[i] = '\n';
+  CHECK(!serialinit(&rx, 1) && !serialinit(&tx, 1) && !ttyinputinit(&line, 1) &&
+        !ttyserialinit(&io, &rx, &tx, 1));
+  for (i = 0; i < SERIAL_CAPACITY / SERIAL_BATCH; i++)
+    CHECK(serialwrite(&tx, 1, filler, sizeof(filler)) == sizeof(filler));
+  committed = tx.producer;
+  CHECK(ttyserialoutput(&io, attr.oflag, newline, sizeof(newline)) == sizeof(newline) &&
+        serialwrite(&rx, 1, filler, 1) == 1 &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && io.queued == 65 &&
+        line.used == 1 && result.hints == SERIAL_RX_ROOM);
+  read = rx.consumer;
+  CHECK(serialwrite(&rx, 1, intr, sizeof(intr)) == sizeof(intr) &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && !result.hints &&
+        !result.signal && !result.again && io.queued == 65 && rx.consumer == read &&
+        tx.producer == committed);
+  CHECK(serialread(&tx, 1, &byte, 1) == 1 && byte == 'x' &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) &&
+        result.hints == SERIAL_TX_READY && result.again && io.queued == 64 && rx.consumer == read &&
+        tx.producer == committed + 1);
+  CHECK(!ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && result.signal == SIGNAL_INT &&
+        result.again && result.hints == SERIAL_RX_ROOM && !line.used && !line.ready &&
+        io.queued == 4 && io.output[0] == '^' && io.output[1] == 'C' && io.output[2] == '\r' &&
+        io.output[3] == '\n' && rx.consumer == read + 2 && tx.producer == committed + 1);
+}
+
+static void
 ttyfilereadcheck(void)
 {
   Fileslot  read = {0};
@@ -202,6 +240,7 @@ ttyusercheck(void)
   consumed = 99;
   CHECK(ttyencode(8, input, 1, output, sizeof(output), &consumed) == -ERR_NOTSUP && consumed == 99);
   ttyserialcheck();
+  ttyserialsignalcheck();
   ttyfilereadcheck();
   ttytimedcheck();
 }

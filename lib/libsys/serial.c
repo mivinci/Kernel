@@ -64,8 +64,8 @@ serialwrite(Serialring *ring, u64 epoch, const void *data, u32 bytes)
   return amount;
 }
 
-isize
-serialread(Serialring *ring, u64 epoch, void *data, u32 bytes)
+static isize
+readring(Serialring *ring, u64 epoch, void *data, u32 bytes, u32 consume)
 {
   u8   *destination = data;
   u64   producer, consumer, flags;
@@ -83,6 +83,19 @@ serialread(Serialring *ring, u64 epoch, void *data, u32 bytes)
   amount = (u32) MIN(bytes, producer - consumer);
   for (i = 0; i < amount; i++)
     destination[i] = ring->data[(consumer + i) % SERIAL_CAPACITY];
-  __atomic_store_n(&ring->consumer, consumer + amount, __ATOMIC_RELEASE);
+  if (consume)
+    __atomic_store_n(&ring->consumer, consumer + amount, __ATOMIC_RELEASE);
   return amount;
+}
+
+isize
+serialread(Serialring *ring, u64 epoch, void *data, u32 bytes)
+{
+  return readring(ring, epoch, data, bytes, 1);
+}
+
+isize
+serialpeek(Serialring *ring, u64 epoch, u8 *byte)
+{
+  return readring(ring, epoch, byte, 1, 0);
 }

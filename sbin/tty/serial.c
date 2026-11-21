@@ -259,8 +259,15 @@ ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
   for (received = 0; received < rxlimit; received++) {
     u64 end;
     if ((mode->lflag & TTY_ECHO) && sizeof(io->output) - io->queued < 2 * sizeof(effect.echo)) {
-      full = 1;
-      break;
+      /* A signal at the head clears staging before it adds its own echo.
+         Inspect without releasing the slot or skipping earlier input. */
+      count = serialpeek(io->rx, io->epoch, &byte);
+      if (count < 0)
+        return count;
+      if (!count || !ttyinputsignal(mode, byte)) {
+        full = 1;
+        break;
+      }
     }
     count = serialread(io->rx, io->epoch, &byte, 1);
     if (!count) {
