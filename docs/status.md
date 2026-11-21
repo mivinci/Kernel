@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage215：目录重绑已在双架构真实 fork/信号返回中验证，子旧 tag 失效、父目录保持；格式及 sigframe 通过。fixture 无运输资源，非空连接与 Connwork 整体修复待接。
+
 - stage214：子连接目录重绑与旧 tag 失效已接，14 项主机测试、格式及双架构 sigframe 回归通过。新目录路径仅主机调用；Connwork/File/Rctx 整体修复与旧共享别名解除待接。
 
 - stage213：Fix 子 token 与父目录的只读准入已接，13 项主机目录测试、格式及双架构 sigframe 回归通过。目录实际重绑与 IPC 责任隔离仍待接。

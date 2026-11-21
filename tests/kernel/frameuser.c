@@ -356,6 +356,8 @@ static Handle    forksource;
 static u64       forkimage;
 static Rkey      forkcompleted;
 static Rkey      forkouter;
+static Conncache forkdirectory;
+static Conntag   forkoldtag;
 static const u64 forkbytes = sizeof(Fix) + FIX_LAYER_COUNT * sizeof(Fixlayer) + sizeof(u64);
 static void
 forkrepair(const Forkret *result)
@@ -365,6 +367,7 @@ forkrepair(const Forkret *result)
   const Fixconn  *connections;
   u64             count;
   Connpeer        child;
+  Connentry       entry;
   Handle          parent;
   u64             mask, ignored;
   REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
@@ -372,6 +375,8 @@ forkrepair(const Forkret *result)
               !sysfixchild(result, forkbytes, forksource, forkimage, &view) &&
               !sysfixlayers(&view, &layers) && !sysfixconnections(&view, &connections, &count) &&
               !count && !connections &&
+              !sysconnfork(&forkdirectory, context_self, child, connections, count) &&
+              sysconnview(&forkdirectory, forkoldtag, &entry) == -ERR_STALE &&
               !sysctxfixraw(&runtime_contexts, context_self, child, layers) &&
               !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
           244);
@@ -433,6 +438,10 @@ forkprepuser(void)
   forkimage = image;
   context_self.pid = source;
   context_self.image = image;
+  /* Identity-only directory fixture; no transport or service authority. */
+  REQUIRE(!sysconninit(&forkdirectory, context_self) &&
+              !sysconnbind(&forkdirectory, context_self, &forkoldtag),
+          252);
   REQUIRE((frame_trace[1] == 14 || !sysctxinit(&runtime_contexts, context_self)) &&
               !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
               !sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETID, NULL, &forkcompleted) &&
@@ -506,6 +515,12 @@ forkprepuser(void)
   }
   args[0] = child;
   REQUIRE(!__sys_enter(SYS_WAIT, args, &result), 240);
+  {
+    Connentry entry;
+    REQUIRE(!sysconnview(&forkdirectory, forkoldtag, &entry) && entry.state == SYSCONN_UNCLAIMED &&
+                !sysconncheck(&forkdirectory, context_self),
+            253);
+  }
   frame_trace[20] = result.values[1];
   frame_trace[21] = result.values[2];
   REQUIRE((Handle) result.values[0] == child && result.values[1] == WAIT_EXITED &&
