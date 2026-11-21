@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage324（2026-11-22）：可信 exec 信号移交保留有效掩码、pending 和显式 IGNORE，丢弃旧活动帧。RV64/ARM64 QEMU `sigframe`、`sigconfig`、59 项主机回归和格式检查通过；尚未接入原生提交。
 - stage323（2026-11-22）：可信 exec 提交预算清点已接，抵扣仅限确定随旧镜像释放的费用。RV64/ARM64 QEMU `prep`、`budget`、1259 项主机测试和格式检查通过；原生 `execcommit` 仍待接。
 - stage322：exec 活动表和准备表共用句柄发号记录，保留旧表有效值及预留回复槽。RV64/ARM64 QEMU `prep`、`locals`、`sigframe`、`ipc`，87 项主机回归和格式检查通过。
 - stage321：原生 `execprep`/`execabort` 接通，Proc 持有并分批清理待发布目标。RV64/ARM64 QEMU `sigframe`、`prep`、73 项主机测试及格式检查通过；`execcommit` 仍待实现。

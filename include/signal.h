@@ -73,6 +73,9 @@ int sigbaseline(Imageid target, Imageid source);
 int sigfork(Imageid source, Spaceid source_space, Imageid target, Spaceid target_space);
 int sigforksnapshot(Imageid source, Rtable *source_table, Imageid target, Rtable *target_table,
                     Prepid prep, Forkcheck checkpoint);
+/* Transfer the Run's signal bank immediately before the infallible image
+   switch. The caller serializes this with publication and settles old IPC. */
+int sigexec(Imageid source, Imageid target);
 int siginitialcheck(Imageid image, u64 mask, u64 defaults);
 int siginitial(Imageid image, u64 mask, u64 defaults);
 int sigstat(Imageid image, Sigstat *out);

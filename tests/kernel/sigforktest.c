@@ -18,6 +18,94 @@ copyuser(Hctx *out, const Hctx *in)
   for (i = 0; i < sizeof(*out); i++)
     ((u8 *) out)[i] = ((const u8 *) in)[i];
 }
+static void
+sigexectest(void)
+{
+  Setid      set;
+  Acctid     acct;
+  Lifeid     owner;
+  Imageid    old, next, wrong;
+  Spaceid    space;
+  Memid      code, stack;
+  Life       life;
+  Liferesult result;
+  Sigact     handler = {SIGNAL_HANDLER, 0x10080, 0x10040, 0, SIGNAL_SIGINFO, 0};
+  Sigact     action, child;
+  Siginfo    info = {0}, received;
+  Sigstat    state;
+  Sighead    first, second;
+  Hctx       user;
+  Hinit      initial;
+  Pgstat     before, after;
+  u32        mode;
+  u64        frame;
+  u64        usr1 = (u64) 1 << (SIGNAL_USR1 - 1), usr2 = (u64) 1 << (SIGNAL_USR2 - 1);
+  Handle     pid = handlepack(HANDLE_PROCESS, 3010, 1);
+  pgstat(&before);
+  REQUIRE(!setcreate(64, 64, 1, &set) && !acctcreate(set, 64, 64, &acct) &&
+          !spacecreate(acct, &space) && !lifecreate(set, pid, 1, &owner) &&
+          !lifebindacct(owner, acct) && !imagecreate(owner, 0, &old) && !sigreserve(old) &&
+          !lifepublish(owner) && !imageactivate(old));
+  REQUIRE(!memcode(acct, PAGE_SIZE, &code) && !memseal(code) &&
+          !spacemap(space, code, 0, 0x10000, PAGE_SIZE, VM_READ | VM_EXEC) &&
+          !memcreate(acct, PAGE_SIZE, &stack) &&
+          !spacemap(space, stack, 0, 0x80000, PAGE_SIZE, VM_READ | VM_WRITE));
+  initial.entry = 0x10000;
+  initial.sp = 0x81000;
+  initial.arg = 0;
+  for (mode = 0; mode < 2; mode++) {
+    child = (Sigact){0};
+    child.kind = mode ? SIGNAL_IGNORE : SIGNAL_DEFAULT;
+    child.flags = SIGNAL_NOCLDWAIT | SIGNAL_NOCLDSTOP;
+    REQUIRE(!siginstall(old, SIGNAL_CHLD, &child) && !siginstall(old, SIGNAL_USR1, &handler) &&
+            !siginstall(old, SIGNAL_USR2, &handler) &&
+            !sigsetmask(old, SIGNAL_SETMASK, usr2, &frame));
+    hal_user_init(&user, &initial);
+    info.signum = SIGNAL_USR1;
+    REQUIRE(!sigqueue(old, &info) && !sigdeliver(old, space, &user));
+    frame = hal_user_sp(&user);
+    REQUIRE(!spaceread(space, frame, &first, sizeof(first)));
+    info.signum = SIGNAL_USR2;
+    info.status = 0x1234 + mode;
+    REQUIRE(!sigqueue(old, &info) && !sigstat(old, &state) && state.depth == 1 &&
+            state.mask == (usr1 | usr2) && state.pending == usr2 &&
+            !imagecreate(owner, 0, &wrong) && !imagecreate(owner, state.image, &next) &&
+            sigexec(old, wrong) == -ERR_STATE && !sigstat(old, &state) && state.depth == 1 &&
+            state.pending == usr2 && !lifestat(owner, &life) &&
+            (life.child_policy & LIFE_AUTOCHILD));
+    REQUIRE(!sigrestore(old, space, &user, frame) && !sigstat(old, &state) && !state.depth &&
+            state.mask == usr2 && state.pending == usr2);
+    info.signum = SIGNAL_USR1;
+    REQUIRE(!sigqueue(old, &info) && !sigdeliver(old, space, &user) &&
+            hal_user_sp(&user) == frame && !spaceread(space, frame, &first, sizeof(first)));
+    REQUIRE(!imageend(wrong, IMAGE_ABORT) && !imagedetach(wrong) && !sigexec(old, next) &&
+            sigstat(old, &state) == -ERR_STALE && !imageend(old, IMAGE_EXEC) && !imagedetach(old) &&
+            !imageactivate(next) && !sigstat(next, &state) && !state.depth &&
+            state.mask == (usr1 | usr2) && state.pending == usr2 && !sigready(next) &&
+            sigrestore(next, space, &user, frame) == -ERR_STATE);
+    REQUIRE(!siggetaction(next, SIGNAL_USR1, &action) && action.kind == SIGNAL_DEFAULT &&
+            !action.handler && !action.trampoline && !action.mask && !action.flags &&
+            !siggetaction(next, SIGNAL_CHLD, &action) && action.kind == child.kind &&
+            !action.flags && !lifestat(owner, &life) &&
+            life.child_policy == (mode ? LIFE_AUTOCHILD | LIFE_IGNORECHLD : 0));
+    hal_user_init(&user, &initial);
+    REQUIRE(!sigsetmask(next, SIGNAL_UNBLOCK, usr2, &frame) && sigready(next) == 1 &&
+            !siginstall(next, SIGNAL_USR2, &handler) && !sigdeliver(next, space, &user));
+    frame = hal_user_sp(&user);
+    REQUIRE(!spaceread(space, frame, &second, sizeof(second)) && second.cookie > first.cookie &&
+            !spaceread(space, frame + sizeof(Sighead), &received, sizeof(received)) &&
+            received.signum == SIGNAL_USR2 && received.status == info.status &&
+            !sigrestore(next, space, &user, frame));
+    old = next;
+  }
+  REQUIRE(!imageend(old, IMAGE_EXIT) && !sigdiscard(old) && !sigrelease(old) && !imagedetach(old) &&
+          !spaceclear(space, 32) && !memfree(code) && !memfree(stack) && !spacedestroy(space) &&
+          !lifeend(owner, LIFE_EXIT, 42, NULL) && !lifedetach(owner) &&
+          !lifecollect(owner, 1, &result) && !acctclose(acct) && !acctunbind(acct) &&
+          !setclose(set) && !sigcheck() && !lifecheck() && !acctcheck() && !pgcheck());
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated);
+}
 void
 sigforktest(void)
 {
@@ -43,6 +131,7 @@ sigforktest(void)
   u64        frames[2], old, mask, childcookie;
   u32        mode, i, layers = 0, rejected = 0;
   int        error;
+  sigexectest();
   pgstat(&before);
   for (mode = 0; mode < 2; mode++) {
     REQUIRE(!setcreate(128, 128, 4, &set));

@@ -569,6 +569,50 @@ clearcontext(Sigctx *context)
   for (i = 0; i < sizeof(*context); i++)
     bytes[i] = 0;
 }
+int
+sigexec(Imageid source, Imageid target)
+{
+  Signal *s = find(source);
+  Image   old, next;
+  u32     i, childpolicy;
+  int     error;
+  if (!s || imagestat(source, &old) || imagestat(target, &next))
+    return -ERR_STALE;
+  if (old.state != IMAGE_ACTIVE || next.state != IMAGE_PREPARING || next.pid != old.pid ||
+      next.life.index != old.life.index || next.life.generation != old.life.generation ||
+      next.sourceimage != old.number)
+    return -ERR_STATE;
+  for (i = 0; i < SIGNAL_DEPTH; i++)
+    if (s->contexts[i].request.generation)
+      return -ERR_BUSY;
+  error = imagehold(target, IMAGE_CLEANUP);
+  if (error)
+    return error;
+  childpolicy =
+      s->actions[SIGNAL_CHLD - 1].kind == SIGNAL_IGNORE ? LIFE_AUTOCHILD | LIFE_IGNORECHLD : 0;
+  error = lifechildpolicy(old.life, childpolicy);
+  if (error) {
+    if (imagedrop(target, IMAGE_CLEANUP))
+      panic("exec signal target reference");
+    return error;
+  }
+  for (i = 0; i < SIGNAL_COUNT; i++) {
+    Sigact *action = &s->actions[i];
+    if (action->kind != SIGNAL_IGNORE)
+      action->kind = SIGNAL_DEFAULT;
+    action->handler = action->trampoline = action->mask = action->flags = action->reserved = 0;
+  }
+  for (i = 0; i < SIGNAL_DEPTH; i++)
+    clearcontext(&s->contexts[i]);
+  s->depth = s->initial_ignore = s->forked = 0;
+  /* The effective mask, pending payloads and frame cookie sequence belong
+     to the surviving Run. Active frame and restart records do not. */
+  s->identity = target;
+  s->image = next.number;
+  if (imagedrop(source, IMAGE_CLEANUP))
+    panic("exec signal source reference");
+  return 0;
+}
 static int
 framehead(const Signal *s, u32 index, const Sighead *head)
 {
