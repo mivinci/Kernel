@@ -164,42 +164,88 @@ cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version)
   return 0;
 }
 isize
-cachecopydata(Cache *cache, u64 first, u64 next, u32 offset, void *out, u32 bytes)
+cachespanbegin(Cache *cache, u64 first, u64 next, u32 offset, u32 bytes, Cachespan *span)
 {
-  Cachekey  key[2] = {{0}, {0}};
+  isize error = 0, cleanup;
+  if (offset >= CACHE_BYTES || !bytes || bytes > CACHE_BYTES ||
+      !external(cache, span, sizeof(*span)))
+    return -ERR_INVALID;
+  if (span->cache || span->keys[0].generation || span->keys[1].generation)
+    return -ERR_BUSY;
+  if ((bytes <= CACHE_BYTES - offset && next) || first >= cache->blocks || next >= cache->blocks)
+    return -ERR_INVALID;
+  span->cache = cache;
+  span->offset = offset;
+  span->bytes = bytes;
+  if (first)
+    error = cacheget(cache, first, CACHE_DATA, &span->keys[0]);
+  if (!error && next)
+    error = cacheget(cache, next, CACHE_DATA, &span->keys[1]);
+  if (error) {
+    cleanup = cachespanend(span);
+    if (cleanup)
+      return cleanup;
+  }
+  return error;
+}
+
+isize
+cachespancopy(const Cachespan *span, void *out)
+{
   const u8 *data[2] = {NULL, NULL};
   u8       *destination = out;
-  u64       number[2], version;
-  u32       length, i, j, count;
-  isize     error = 0, cleanup;
-  if (offset >= CACHE_BYTES || !bytes || bytes > CACHE_BYTES || !external(cache, out, bytes))
+  u64       version;
+  u32       length, i, j;
+  isize     error;
+  if (!span || !span->bytes || span->bytes > CACHE_BYTES || span->offset >= CACHE_BYTES ||
+      !external(span->cache, out, span->bytes) || !separate(span, sizeof(*span), out, span->bytes))
     return -ERR_INVALID;
-  length = MIN(bytes, CACHE_BYTES - offset);
-  count = length == bytes ? 1 : 2;
-  if ((count == 1 && next) || first >= cache->blocks || next >= cache->blocks)
-    return -ERR_INVALID;
-  number[0] = first;
-  number[1] = next;
-  for (i = 0; i < count; i++) {
-    if (!number[i])
-      continue;
-    error = cacheget(cache, number[i], CACHE_DATA, &key[i]);
-    if (!error)
-      error = cacheview(cache, &key[i], &data[i], &version);
-    if (error)
-      break;
+  length = MIN(span->bytes, CACHE_BYTES - span->offset);
+  for (i = 0; i < 2; i++)
+    if (span->keys[i].generation) {
+      error = cacheview(span->cache, &span->keys[i], &data[i], &version);
+      if (error)
+        return error;
+    }
+  for (i = 0; i < span->bytes; i++) {
+    j = i < length ? 0 : 1;
+    destination[i] = data[j] ? data[j][j ? i - length : span->offset + i] : 0;
   }
+  return 0;
+}
+
+isize
+cachespanend(Cachespan *span)
+{
+  u32   i;
+  isize error;
+  if (!span || !span->cache)
+    return -ERR_INVALID;
+  for (i = 0; i < 2; i++)
+    if (span->keys[i].generation) {
+      error = cacheput(span->cache, &span->keys[i]);
+      if (error)
+        return error;
+    }
+  span->cache = NULL;
+  span->offset = span->bytes = 0;
+  return 0;
+}
+
+isize
+cachecopydata(Cache *cache, u64 first, u64 next, u32 offset, void *out, u32 bytes)
+{
+  Cachespan span = {0};
+  isize     error, cleanup;
+  if (!external(cache, out, bytes))
+    return -ERR_INVALID;
+  error = cachespanbegin(cache, first, next, offset, bytes, &span);
+  if (error)
+    return error;
+  error = cachespancopy(&span, out);
+  cleanup = cachespanend(&span);
   if (!error)
-    for (i = 0; i < bytes; i++) {
-      j = i < length ? 0 : 1;
-      destination[i] = data[j] ? data[j][j ? i - length : offset + i] : 0;
-    }
-  for (i = 0; i < count; i++)
-    if (key[i].generation) {
-      cleanup = cacheput(cache, &key[i]);
-      if (!error)
-        error = cleanup;
-    }
+    error = cleanup;
   return error;
 }
 

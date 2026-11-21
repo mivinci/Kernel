@@ -13,6 +13,7 @@ typedef struct Cache      Cache;
 typedef struct Cacheblock Cacheblock;
 typedef struct Cachekey   Cachekey;
 typedef struct Cacheio    Cacheio;
+typedef struct Cachespan  Cachespan;
 struct Cachekey
 {
   u64 generation;
@@ -36,6 +37,12 @@ struct Cache
   u64         blocks;
   u32         capacity, cursor;
 };
+struct Cachespan
+{
+  Cache   *cache;
+  Cachekey keys[2];
+  u32      offset, bytes;
+};
 STATIC_ASSERT(sizeof(Cachekey) == 16 && sizeof(Cacheio) == 40, cache_ticket_size);
 STATIC_ASSERT(sizeof(Cacheblock) == CACHE_BYTES + 72 && sizeof(Cache) == 24, cache_storage_size);
 /* Private serialized FS event-loop core. One fixed device instance per cache;
@@ -51,6 +58,12 @@ isize cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version)
    The caller resolves blocks from the pinned file version; zero is a hole.
    A miss leaves the independent output buffer unchanged. */
 isize cachecopydata(Cache *cache, u64 first, u64 next, u32 offset, void *out, u32 bytes);
+/* Pin the complete span in zero-initialized private storage before issuing
+   reads. Keep it until bytes have been staged or the span is abandoned.
+   Ending the span does not finish any outstanding device read tickets. */
+isize cachespanbegin(Cache *cache, u64 first, u64 next, u32 offset, u32 bytes, Cachespan *span);
+isize cachespancopy(const Cachespan *span, void *out);
+isize cachespanend(Cachespan *span);
 isize cacheedit(Cache *cache, const Cachekey *key, u32 offset, const void *data, u32 bytes);
 /* IO tickets are separate eviction anchors. Caller may put its key while IO
    remains. Read destination is private until successful completion. Write

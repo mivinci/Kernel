@@ -1046,6 +1046,8 @@ server(const Bootview *boot, u32 recover)
   Loadio          loadio = {0};
   Cache           loadcache = {0};
   Loadspan        loadspan;
+  Cachespan       pinned = {0};
+  Cachekey        competing = {0};
   Cacheio         loadticket, duplicate;
   u8             *loadtarget = NULL, *unused = NULL;
   u8              loadbytes[4];
@@ -1192,6 +1194,7 @@ server(const Bootview *boot, u32 recover)
         loadtarget[CACHE_BYTES - 2] = 'E';
         loadtarget[CACHE_BYTES - 1] = 'L';
         CHECK(!cachecomplete(&loadcache, &loadticket, 1) &&
+              cacheget(&loadcache, 110, CACHE_DATA, &competing) == -ERR_CAPACITY &&
               cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) == 0 &&
               !unused &&
               cachefetch(&loadcache, loadspan.next, CACHE_DATA, &loadticket, &loadtarget) == 1);
@@ -1200,9 +1203,9 @@ server(const Bootview *boot, u32 recover)
         zero(loadtarget, CACHE_BYTES);
         loadtarget[0] = 'F';
         loadtarget[1] = '!';
-        CHECK(!cachecomplete(&loadcache, &loadticket, 1) &&
-              !cachecopydata(&loadcache, loadspan.first, loadspan.next, loadspan.offset, loadbytes,
-                             sizeof(loadbytes)) &&
+        CHECK(!cachecomplete(&loadcache, &loadticket, 1) && !cachespancopy(&pinned, loadbytes) &&
+              !cachespanend(&pinned) && !cacheget(&loadcache, 110, CACHE_DATA, &competing) &&
+              !cacheput(&loadcache, &competing) &&
               !loadioreply(&loadio, loadbytes, sizeof(loadbytes), 3));
         loadtarget = NULL;
       } else {
@@ -1326,6 +1329,8 @@ server(const Bootview *boot, u32 recover)
           CHECK(loadio.bytes == sizeof(loadbytes) &&
                 !loadmapspan(&loadio.file, &loadmap, &loadindex, 99, 128, loadio.offset,
                              loadio.bytes, &loadspan) &&
+                !cachespanbegin(&loadcache, loadspan.first, loadspan.next, loadspan.offset,
+                                sizeof(loadbytes), &pinned) &&
                 cachefetch(&loadcache, loadspan.first, CACHE_DATA, &loadticket, &loadtarget) == 1 &&
                 cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) ==
                     -ERR_WOULD_BLOCK &&
