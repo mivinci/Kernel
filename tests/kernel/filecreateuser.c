@@ -927,8 +927,9 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (opcode == EXECWATCH) {
-      CHECK(!recover && target.cookie && !sysfileownerread(&target) && target.reason == OBS_ABORT &&
-            !sysfileownerclose(&target) && !ipc_reply(input.request, &reply));
+      CHECK(!recover && target.cookie && sysexecstate(&watch->owner, &target) == SYSEXEC_ABORTED &&
+            target.reason == OBS_ABORT && !watch->owner.reason && !sysfileownerclose(&target) &&
+            !ipc_reply(input.request, &reply));
       continue;
     }
     seq = input.words[2];
@@ -978,7 +979,8 @@ server(const Bootview *boot, u32 recover)
               !target.cookie);
       else
         CHECK(!sysexecobserve(&target, bootresource(boot, 258), &input, descriptor.args[1]) &&
-              target.cookie && target.pid == input.source && target.image == descriptor.args[1]);
+              target.cookie && target.pid == input.source && target.image == descriptor.args[1] &&
+              sysexecstate(&watch->owner, &target) == SYSEXEC_PENDING);
       for (i = 0; i < count; i++)
         CHECK(execplan.rows[i].fd == i && execplan.rows[i].flags == (i & 1 ? 0U : BOOT_FD_CLOEXEC));
       execplan.count = 0;

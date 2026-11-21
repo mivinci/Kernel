@@ -3,6 +3,10 @@
 #include "filewatch.h"
 #include "conn.h"
 #include <abi/boot.h>
+#define SYSEXEC_PENDING 1
+#define SYSEXEC_ACTIVE  2
+#define SYSEXEC_ABORTED 3
+#define SYSEXEC_ENDED   4
 
 typedef struct Execmanifest Execmanifest;
 typedef struct Execgroup    Execgroup;
@@ -31,4 +35,10 @@ isize sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *c
    dispatcher owns and shares one Fileowner per target image; use the normal
    owner read/close path to retire the cookie after dependent work ends. */
 isize sysexecobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 target);
+/* Use paired native observations to decide the fate of the prepared
+   references. PENDING is never permission to release them, even after their
+   deadline. ABORTED permits target-only rollback. ACTIVE and ENDED require
+   proof the source was replaced; only these permit exec-specific retirement
+   of the old references. The dispatcher owns all actual cleanup. */
+isize sysexecstate(Fileowner *source, Fileowner *target);
 #endif

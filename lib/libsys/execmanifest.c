@@ -105,3 +105,47 @@ sysexecobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 target)
   owner->cookie = cookie;
   return 0;
 }
+
+static isize
+ownerstate(const Fileowner *owner, u64 *state, u64 *reason)
+{
+  Handle pid;
+  u64    image;
+  isize  error = __sys_obsread(owner->cookie, state, reason, &pid, &image);
+  if (error)
+    return error;
+  return pid == owner->pid && image == owner->image ? 0 : -ERR_STALE;
+}
+
+isize
+sysexecstate(Fileowner *source, Fileowner *target)
+{
+  u64   next, nextreason, old, oldreason;
+  isize error;
+  if (!source || !target || !source->cookie || !target->cookie || source->pid != target->pid ||
+      !source->image || target->image <= source->image)
+    return -ERR_INVALID;
+  error = ownerstate(target, &next, &nextreason);
+  if (error)
+    return error;
+  if (next == OBS_PREPARING && !nextreason)
+    return SYSEXEC_PENDING;
+  if (next == OBS_ENDED && (nextreason == OBS_ABORT || nextreason == OBS_TIMEOUT)) {
+    target->reason = nextreason;
+    return SYSEXEC_ABORTED;
+  }
+  if ((next != OBS_ACTIVE || nextreason) &&
+      (next != OBS_ENDED || (nextreason != OBS_EXIT && nextreason != OBS_EXEC)))
+    return -ERR_STATE;
+  /* Read the target first: its publication precedes any valid ACTIVE sample. */
+  error = ownerstate(source, &old, &oldreason);
+  if (error)
+    return error;
+  if (old != OBS_ENDED || oldreason != OBS_EXEC)
+    return -ERR_STATE;
+  source->reason = oldreason;
+  if (next == OBS_ACTIVE)
+    return SYSEXEC_ACTIVE;
+  target->reason = nextreason;
+  return SYSEXEC_ENDED;
+}
