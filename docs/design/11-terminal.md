@@ -881,4 +881,6 @@ stage279：`ttyserialtimedstep` 将字节间计时接到串口 RX 步进。先�
 
 stage280：生产 TTY 尚未支持的文件 CALL 使用文件协议回复 `[−ENOTSUP,seq,0,0]`；原 REQUEST 已取消时返回业务 EINTR，已终结时仅收尾。ARM64/RV64 `serial-tty` 由启动包夹具调用实际 TTY ELF，验证 HELLO 和 READ 各回送原序号、没有资源或数据，之后串口输入和 CRLF 回显继续正常。格式检查通过；实际文件分派及首次发权仍待接入。
 
+stage302：阻塞 TTY 读写可用 `ttyfiledefer`/`ttyfileresume` 保留原 REQUEST、本地槽快照和数据页地址。重复暂存返回 BUSY，未就绪保留状态，完成回复或排空后清空待处理记录。双架构 QEMU `runtime` 用真实 IPC 验证阻塞读写重复检查及取消后不消费输入或提交输出；31 项 TTY 主机测试与格式通过。定时 READ 和生产分派仍走各自现有路径。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

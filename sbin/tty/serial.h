@@ -9,6 +9,7 @@
 
 typedef struct Ttyserial       Ttyserial;
 typedef struct Ttyserialresult Ttyserialresult;
+typedef struct Ttypending      Ttypending;
 struct Ttyserial
 {
   Serialring *rx, *tx;
@@ -20,6 +21,12 @@ struct Ttyserialresult
 {
   u64 hints, end;
   u32 again, signal;
+};
+struct Ttypending
+{
+  Ipcmsg       call;
+  Fileslot     slot;
+  volatile u8 *page;
 };
 /* Borrow distinct coherent rings for the lifetime of this attachment. */
 isize ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch);
@@ -36,6 +43,13 @@ isize ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page);
    WOULD_BLOCK it retains that ownership for a later readiness check. */
 isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
                 const Fileslot *slot, volatile u8 *page, u32 nonblock);
+/* After a blocking ttyfileio returned WOULD_BLOCK, keep a local snapshot
+   and defer the original request. Initialize pending to zero and keep the
+   ledger and mapping alive until resume settles it. */
+isize ttyfiledefer(Ttypending *pending, const Fileinflight *active, const Ipcmsg *call,
+                   const Fileslot *slot, volatile u8 *page);
+isize ttyfileresume(Ttypending *pending, Ttyserial *io, Ttyinput *input, u64 oflag,
+                    Fileinflight *active);
 /* Use the wait snapshot taken at admission. While blocked, next is the
    absolute alarm deadline, or zero for an untimed wait. */
 isize ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call,
