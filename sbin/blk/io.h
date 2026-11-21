@@ -17,8 +17,9 @@ struct Blkqueue
   Vring        *ring;
   Vblkreq      *slots;
   const Blkdma *buffers;
+  Vblkconfig    config;
   u64           generation, serial;
-  u32           count, state, reclaimed;
+  u32           count, state, reclaimed, configpending;
 };
 
 /* The driver owns the request and its exclusive DMA windows until completion
@@ -33,18 +34,21 @@ int blkiosubmit(Vblkreq *request, Vring *ring, const Vblkconfig *config, const B
 int blkiofinish(Vblkreq *request, const Vdone *done, const Blkdma *dma, void *destination,
                 u32 capacity);
 /* While the platform IRQ is masked, acknowledge device hints and poll one
-   bounded completion batch. Poll even on an empty hint. Latch CONFIG until
-   refreshed before accepting new I/O. Drain more before rearming the IRQ. */
+   bounded completion batch. Poll even on an empty hint. */
 int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u32 *more,
                u32 *causes);
-/* Zero the queue before first use. Bind a live device and its configured
-   ring. Reinitialize only after recovery, with a newer generation on the
-   same device. The event loop serializes operations and stops polling the
-   old ring when recovery starts. Keep buffer descriptions immutable. */
+/* Zero the queue before first use. Bind a live device and take ownership
+   of its configured ring. Reinitialize only after recovery, with a newer
+   generation on the same device. The event loop serializes operations and
+   stops polling the old ring when recovery starts. Keep buffers immutable. */
 int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
              u32 count);
-int blkqsubmit(Blkqueue *queue, u32 slot, const Vblkconfig *config, u32 type, u64 sector, u32 bytes,
-               const void *source, Vblksync sync, void *context);
+/* Drain more before rearming IRQ. An observed CONFIG keeps submission
+   blocked until refresh succeeds, even after the IRQ hint is cleared. */
+int blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes);
+int blkqrefresh(Blkqueue *queue, Vblkconfig *config);
+int blkqsubmit(Blkqueue *queue, u32 slot, u32 type, u64 sector, u32 bytes, const void *source,
+               Vblksync sync, void *context);
 /* Return the exact active slot for a completion, or a native error. */
 int blkqmatch(const Blkqueue *queue, const Vdone *done);
 int blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity);

@@ -1564,7 +1564,7 @@ def exercise(args, run_dir, record):
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
                     stats = {row.get("device"): row["stats"] for row in qmp.command("query-blockstats")}
-                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 6),
+                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 7),
                                                                   ("ro", 128, 0xa7, 512, 3)):
                         disk = Path(temporary) / (name + ".raw")
                         counters = stats.get(name, {})

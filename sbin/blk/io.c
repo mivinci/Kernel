@@ -55,9 +55,11 @@ blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u
            u32 *causes)
 {
   int error;
-  if (!ring || !ring->initialized || !done || !count || !more || !causes)
+  if (!done || !count || !more || !causes)
     return -ERR_INVALID;
   *count = *more = *causes = 0;
+  if (!ring || !ring->initialized)
+    return -ERR_INVALID;
   if (generation != ring->queue.generation)
     return -ERR_STALE;
   error = vinterrupt(device, causes);
@@ -69,6 +71,7 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
          u32 count)
 {
   u32 i;
+  int error;
   if (!queue || !device || !ring || !ring->initialized || !slots || !buffers || !count ||
       count > VQ_SIZE)
     return -ERR_INVALID;
@@ -78,6 +81,9 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
     return -ERR_STALE;
   if (device->state != VDEV_LIVE)
     return -ERR_STATE;
+  error = vblkconfig(device, &queue->config);
+  if (error)
+    return error;
   queue->device = device;
   queue->ring = ring;
   queue->slots = slots;
@@ -86,6 +92,7 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
   queue->generation = ring->queue.generation;
   queue->serial = 0;
   queue->reclaimed = 0;
+  queue->configpending = 0;
   queue->state = BLK_OPEN;
   for (i = 0; i < count; i++)
     slots[i].held = slots[i].active = 0;
@@ -93,25 +100,63 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
 }
 
 int
-blkqsubmit(Blkqueue *queue, u32 index, const Vblkconfig *config, u32 type, u64 sector, u32 bytes,
-           const void *source, Vblksync sync, void *context)
+blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes)
+{
+  int error;
+  if (!queue || !done || !count || !more || !causes)
+    return -ERR_INVALID;
+  if (queue->state != BLK_OPEN) {
+    *count = *more = *causes = 0;
+    return -ERR_STATE;
+  }
+  error = blkirqpoll(queue->device, queue->ring, queue->generation, done, count, more, causes);
+  if (*causes & VDEV_IRQ_CONFIG)
+    queue->configpending = 1;
+  return error;
+}
+
+int
+blkqrefresh(Blkqueue *queue, Vblkconfig *config)
+{
+  int error;
+  if (!queue || !config)
+    return -ERR_INVALID;
+  if (queue->state != BLK_OPEN || queue->device->state != VDEV_LIVE)
+    return -ERR_STATE;
+  if (queue->ring->queue.generation != queue->generation)
+    return -ERR_STALE;
+  if (queue->configpending) {
+    error = vblkconfig(queue->device, &queue->config);
+    if (error)
+      return error;
+    queue->configpending = 0;
+  }
+  *config = queue->config;
+  return 0;
+}
+
+int
+blkqsubmit(Blkqueue *queue, u32 index, u32 type, u64 sector, u32 bytes, const void *source,
+           Vblksync sync, void *context)
 {
   Vblkreq *slot;
   u64      cookie;
   if (!queue || index >= queue->count)
     return -ERR_INVALID;
-  if (queue->state != BLK_OPEN)
+  if (queue->state != BLK_OPEN || queue->device->state != VDEV_LIVE)
     return -ERR_STATE;
   if (queue->ring->queue.generation != queue->generation)
     return -ERR_STALE;
+  if (queue->configpending)
+    return -ERR_WOULD_BLOCK;
   slot = &queue->slots[index];
   if (slot->held || slot->active)
     return -ERR_BUSY;
   if (queue->serial == (UINT64_MAX >> BLK_SLOT_BITS))
     return -ERR_OVERFLOW;
   cookie = (++queue->serial << BLK_SLOT_BITS) | index;
-  return blkiosubmit(slot, queue->ring, config, &queue->buffers[index], type, sector, bytes, cookie,
-                     source, sync, context);
+  return blkiosubmit(slot, queue->ring, &queue->config, &queue->buffers[index], type, sector, bytes,
+                     cookie, source, sync, context);
 }
 
 int
