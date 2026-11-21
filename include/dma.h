@@ -16,7 +16,10 @@ struct Dmaid
 /* Trusted identity-DMA platforms only. limits describes the physical
    aperture and allocation alignment. coherency is a platform property. */
 int dmaopen(u32 device, Acctid acct, const Pglim *limits, u32 coherent, Dmaid *out);
-int dmaallocpage(Dmaid id, Memid *out);
+/* The request can narrow the domain aperture and increase alignment.
+   Charge the entire contiguous buddy block; expose only the requested
+   whole pages. A null request uses the domain's allocation limits. */
+int dmaalloc(Dmaid id, u64 bytes, const Pglim *request, Memid *out);
 int dmaaddress(Dmaid id, Memid memory, u64 offset, u64 bytes, u64 *out);
 /* The caller owns the full maintenance granules touched by the window.
    Recovery may synchronize AFTER even if the last manager has exited. */

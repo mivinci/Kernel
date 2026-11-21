@@ -9,6 +9,9 @@
 #include <hal/dma.h>
 #include <abi/base.h>
 
+#define DMA_END_PAGES 32
+STATIC_ASSERT(MEM_PAGES <= DMA_END_PAGES, dma_end_progress);
+
 typedef struct Dmadomain Dmadomain;
 struct Dmadomain
 {
@@ -200,12 +203,12 @@ reap(Mem *m)
 }
 
 static int
-create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state, const Pglim *limits)
+create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state, const Pglim *limits, u32 order)
 {
   Mem          *m;
   Acctblk       block;
   volatile u64 *memory;
-  u32           slot, i, j, node, head = PG_NONE, pages;
+  u32           slot, i, j, node, head = PG_NONE, pages, blocksneeded;
   int           error;
   if (!initialized || !out || !bytes)
     return MEM_BAD;
@@ -218,26 +221,27 @@ create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state, const Pglim *l
   if (error)
     return error;
   pages = (u32) ((bytes + PAGE_MASK) / PAGE_SIZE);
-  for (i = 0; i < pages; i++) {
+  blocksneeded = (pages + (1U << order) - 1) >> order;
+  for (i = 0; i < blocksneeded; i++) {
     if (freehead == PG_NONE) {
       error = MEM_FULL;
       break;
     }
-    error = ticket ? acctexecalloc(acct, ticket, 0, limits, &block)
-                   : acctalloc(acct, 0, limits, &block);
+    error = ticket ? acctexecalloc(acct, ticket, order, limits, &block)
+                   : acctalloc(acct, order, limits, &block);
     if (error)
       break;
     node = freehead;
     freehead = blocks[node].next;
     blocks[node].pa = block.block.pa;
-    blocks[node].order = 0;
+    blocks[node].order = order;
     blocks[node].next = head;
     head = node;
     memory = kaddr(block.block.pa);
-    for (j = 0; j < PAGE_SIZE / sizeof(u64); j++)
+    for (j = 0; j < (PAGE_SIZE << order) / sizeof(u64); j++)
       memory[j] = 0;
   }
-  if (i != pages) {
+  if (i != blocksneeded) {
     releaseblocks(acct, head);
     acctdrop(acct);
     return error;
@@ -263,7 +267,7 @@ create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state, const Pglim *l
 int
 memcreate(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, 0, bytes, out, MEM_DATA, NULL);
+  return create(acct, 0, bytes, out, MEM_DATA, NULL, 0);
 }
 
 static Dmadomain *
@@ -312,21 +316,38 @@ dmaopen(u32 device, Acctid acct, const Pglim *limits, u32 coherent, Dmaid *out)
 }
 
 int
-dmaallocpage(Dmaid id, Memid *out)
+dmaalloc(Dmaid id, u64 bytes, const Pglim *request, Memid *out)
 {
   Dmadomain *d = dmadomain(id);
   Acct       account;
   Mem       *m;
+  Pglim      limits;
+  u32        order = 0;
   int        error;
   if (!d || d->closing)
     return -ERR_STALE;
-  if (!out)
+  if (!out || !bytes ||
+      (request && (!request->align || (request->align & (request->align - 1)) ||
+                   request->maxpa_exclusive <= request->minpa)))
     return -ERR_INVALID;
+  if (bytes > MEM_PAGES * PAGE_SIZE)
+    return -ERR_LIMIT;
   if (acctstat(d->acct, &account) || account.state != AC_ACTIVE)
     return -ERR_STATE;
-  if (d->pages == DMA_MAX_PAGES)
+  while ((PAGE_SIZE << order) < bytes)
+    order++;
+  if ((1U << order) > DMA_MAX_PAGES - d->pages)
     return -ERR_LIMIT;
-  error = create(d->acct, 0, PAGE_SIZE, out, MEM_DATA, &d->limits);
+  limits = d->limits;
+  if (request) {
+    limits.minpa = MAX(limits.minpa, request->minpa);
+    limits.maxpa_exclusive = MIN(limits.maxpa_exclusive, request->maxpa_exclusive);
+    limits.align = MAX(limits.align, request->align);
+    if (limits.minpa >= limits.maxpa_exclusive ||
+        limits.maxpa_exclusive - limits.minpa < (PAGE_SIZE << order))
+      return -ERR_NOMEM;
+  }
+  error = create(d->acct, 0, bytes, out, MEM_DATA, &limits, order);
   if (error)
     return error == AC_LIMIT ? -ERR_LIMIT : -ERR_NOMEM;
   m = find(*out);
@@ -336,7 +357,7 @@ dmaallocpage(Dmaid id, Memid *out)
   m->backing = d->first;
   m->refs++;
   d->first = *out;
-  d->pages++;
+  d->pages += 1U << order;
   return 0;
 }
 
@@ -394,17 +415,22 @@ dmaend(Dmaid id)
   if (!d)
     return -ERR_STALE;
   d->closing = 1;
-  for (count = 0; count < 32 && d->pages; count++) {
+  for (count = 0; d->pages;) {
     Memid pin = d->first;
     Mem  *m = find(pin);
+    u32   pages;
     if (!m || m->kind != MEM_DMA || dmaowners[pin.index] != id.device + 1)
       panic("DMA domain pin");
+    pages = 1U << blocks[m->head].order;
+    if (pages > DMA_END_PAGES - count)
+      break;
+    count += pages;
+    d->pages -= pages;
     dmaowners[pin.index] = 0;
     d->first = m->backing;
     clearbacking(m);
     if (memrelease(pin))
       panic("DMA pin reference");
-    d->pages--;
   }
   if (d->pages)
     return 1;
@@ -417,7 +443,7 @@ dmaend(Dmaid id)
 int
 memcode(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, 0, bytes, out, MEM_LOADING, NULL);
+  return create(acct, 0, bytes, out, MEM_LOADING, NULL, 0);
 }
 
 int
@@ -425,13 +451,13 @@ memexeccreate(Acctid acct, u64 ticket, u64 bytes, u32 code, Memid *out)
 {
   if (!acctexecvalid(acct, ticket) || code > 1)
     return MEM_BAD;
-  return create(acct, ticket, bytes, out, code ? MEM_LOADING : MEM_DATA, NULL);
+  return create(acct, ticket, bytes, out, code ? MEM_LOADING : MEM_DATA, NULL, 0);
 }
 
 int
 memshared(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, 0, bytes, out, MEM_SHARED, NULL);
+  return create(acct, 0, bytes, out, MEM_SHARED, NULL, 0);
 }
 
 int
@@ -911,6 +937,10 @@ mempage(Memid id, u32 page, u64 *pa)
     return bootstorepage((u64) m->head + page, pa);
   if (m->kind == MEM_IMMUTABLE)
     return mempage(m->backing, page, pa);
+  if (m->kind == MEM_DMA) {
+    *pa = blocks[m->head].pa + (u64) page * PAGE_SIZE;
+    return 0;
+  }
   for (node = m->head; page; page--)
     node = blocks[node].next;
   if (blocks[node].order & BLOCK_COW) {
@@ -1033,8 +1063,8 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
     return MEM_BUSY;
   first = (u32) (offset / PAGE_SIZE);
   last = (u32) ((offset + bytes - 1) / PAGE_SIZE);
-  node = m->head;
-  for (page = 0; page <= last; page++, node = blocks[node].next) {
+  node = m->kind == MEM_DMA ? PG_NONE : m->head;
+  for (page = 0; node != PG_NONE && page <= last; page++, node = blocks[node].next) {
     if (page < first)
       continue;
     shared = sharedbranch(node);
@@ -1044,8 +1074,8 @@ memwrite(Memid id, u64 offset, const void *source, u64 bytes)
       return MEM_BUSY;
   }
   m->busy = 1;
-  node = m->head;
-  for (page = 0; page <= last; page++, node = blocks[node].next) {
+  node = m->kind == MEM_DMA ? PG_NONE : m->head;
+  for (page = 0; node != PG_NONE && page <= last; page++, node = blocks[node].next) {
     if (page < first || !(blocks[node].order & BLOCK_COW))
       continue;
     error = cowwrite(branchof(node), &pa);

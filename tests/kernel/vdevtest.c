@@ -78,7 +78,7 @@ load(Handle pid, Handle memory, const Dtinfo *info, u32 count, const u32 members
     for (j = 0; j < VTEST_PAGES; j++) {
       Memid pin;
       slot = i * VTEST_PAGES + j;
-      REQUIRE(!dmaallocpage(dma[i].domain, &pin));
+      REQUIRE(!dmaalloc(dma[i].domain, PAGE_SIZE, NULL, &pin));
       dma[i].pages[j] = pin;
       REQUIRE(!spacemap(process.space, pin, 0, VTEST_DMA_BASE + slot * PAGE_SIZE, PAGE_SIZE,
                         VM_READ | VM_WRITE));
@@ -114,7 +114,8 @@ testpins(Setid set, const Dtinfo *info, u32 device)
   Mem    held;
   Set    account;
   Pglim  limits, occupied;
-  u64    address, base;
+  u64    address, base, second, third;
+  u8     sample[2] = {0xa5, 0x5a};
   u32    i, peer;
   int    error;
   limits.minpa = info->ram[0].base;
@@ -123,7 +124,7 @@ testpins(Setid set, const Dtinfo *info, u32 device)
   for (peer = device + 1; peer < info->ndev && info->dev[peer].kind != DT_VIRTIO; peer++) {
   }
   REQUIRE(peer < info->ndev);
-  REQUIRE(!acctcreate(set, DMA_MAX_PAGES, DMA_MAX_PAGES, &payer));
+  REQUIRE(!acctcreate(set, DMA_MAX_PAGES + 4, DMA_MAX_PAGES + 4, &payer));
   REQUIRE(!acctcreate(set, 2, 2, &next));
   REQUIRE(!dmaopen(device, payer, &limits, 1, &domain) &&
           dmaopen(device, next, &limits, 1, &other) == -ERR_BUSY);
@@ -133,29 +134,45 @@ testpins(Setid set, const Dtinfo *info, u32 device)
   REQUIRE(dmaaddress(domain, ordinary, 0, 1, &address) == -ERR_DENIED && address == UINT64_MAX &&
           dmasync(domain, ordinary, 0, 1, HDMA_BEFORE, HDMA_DEVICE_READ) == -ERR_DENIED &&
           !memfree(ordinary));
-  REQUIRE(!dmaallocpage(domain, &oldest) && !mempage(oldest, 0, &base) && base >= limits.minpa &&
-          base <= limits.maxpa_exclusive - PAGE_SIZE &&
-          !dmaaddress(domain, oldest, PAGE_SIZE - 1, 1, &address) &&
+  occupied = limits;
+  occupied.minpa += PAGE_SIZE;
+  occupied.maxpa_exclusive -= PAGE_SIZE;
+  occupied.align = 8 * PAGE_SIZE;
+  REQUIRE(!dmaalloc(domain, 3 * PAGE_SIZE, &occupied, &oldest) && !mempage(oldest, 0, &base) &&
+          base >= occupied.minpa && base <= occupied.maxpa_exclusive - 4 * PAGE_SIZE &&
+          !(base & (occupied.align - 1)) && !mempage(oldest, 1, &second) &&
+          !mempage(oldest, 2, &third) && second == base + PAGE_SIZE &&
+          third == second + PAGE_SIZE && mempage(oldest, 3, &address) == MEM_BAD &&
+          !setstat(set, &account) && account.charged == 4);
+  REQUIRE(!memwrite(oldest, PAGE_SIZE - 1, sample, sizeof(sample)) &&
+          *(const u8 *) kaddr(second - 1) == sample[0] && *(const u8 *) kaddr(second) == sample[1]);
+  REQUIRE(!dmaaddress(domain, oldest, PAGE_SIZE - 1, 2, &address) &&
           address == base + PAGE_SIZE - 1);
   testsync(base);
   REQUIRE(dmaaddress(other, oldest, 0, 1, &address) == -ERR_DENIED &&
           dmasync(other, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_DENIED &&
-          dmaaddress(domain, oldest, PAGE_SIZE - 1, 2, &address) == -ERR_INVALID &&
+          dmaaddress(domain, oldest, 3 * PAGE_SIZE - 1, 2, &address) == -ERR_INVALID &&
           address == base + PAGE_SIZE - 1 &&
-          !dmasync(domain, oldest, PAGE_SIZE - 1, 1, HDMA_BEFORE, HDMA_DEVICE_WRITE) &&
+          !dmasync(domain, oldest, PAGE_SIZE - 1, 2, HDMA_BEFORE, HDMA_DEVICE_WRITE) &&
+          dmasync(domain, oldest, 3 * PAGE_SIZE, 1, HDMA_BEFORE, HDMA_DEVICE_WRITE) ==
+              -ERR_INVALID &&
           dmasync(domain, oldest, 1, UINT64_MAX, HDMA_BEFORE, HDMA_DEVICE_WRITE) == -ERR_INVALID);
   REQUIRE(!dmaend(other));
   occupied.minpa = base;
   occupied.maxpa_exclusive = base + PAGE_SIZE;
   occupied.align = PAGE_SIZE;
   page = oldest;
-  REQUIRE(!dmaopen(peer, payer, &occupied, 1, &other) && dmaallocpage(other, &page) == -ERR_NOMEM &&
+  REQUIRE(!dmaopen(peer, payer, &occupied, 1, &other) &&
+          dmaalloc(other, PAGE_SIZE, NULL, &page) == -ERR_NOMEM &&
           page.generation == oldest.generation && page.index == oldest.index && !dmaend(other) &&
           !memfree(oldest));
-  for (i = 1; i < DMA_MAX_PAGES; i++) {
-    REQUIRE(!dmaallocpage(domain, &page) && !memfree(page));
+  for (i = 4; i < DMA_MAX_PAGES; i++) {
+    if (i == DMA_MAX_PAGES - 2)
+      REQUIRE(dmaalloc(domain, 3 * PAGE_SIZE, NULL, &page) == -ERR_LIMIT);
+    REQUIRE(!dmaalloc(domain, PAGE_SIZE, NULL, &page) && !memfree(page));
   }
-  REQUIRE(dmaallocpage(domain, &page) == -ERR_LIMIT && !acctclose(payer) && !acctunbind(payer));
+  REQUIRE(dmaalloc(domain, PAGE_SIZE, NULL, &page) == -ERR_LIMIT && !acctclose(payer) &&
+          !acctunbind(payer));
   REQUIRE(!memstat(oldest, &held) && held.kind == MEM_DMA && held.refs == 1 && !held.managers &&
           !setstat(set, &account) && account.charged == DMA_MAX_PAGES);
   REQUIRE(dmaaddress(domain, oldest, 0, 1, &address) == -ERR_DENIED &&
@@ -163,7 +180,7 @@ testpins(Setid set, const Dtinfo *info, u32 device)
           !dmasync(domain, oldest, PAGE_SIZE - 1, 1, HDMA_AFTER, HDMA_DEVICE_WRITE));
   /* No DMA is submitted in this census. The real I/O cases below separately
      verify device reset before releasing their test buffers. */
-  REQUIRE(dmaend(domain) == 1 && dmaallocpage(domain, &page) == -ERR_STALE &&
+  REQUIRE(dmaend(domain) == 1 && dmaalloc(domain, PAGE_SIZE, NULL, &page) == -ERR_STALE &&
           dmaopen(device, next, &limits, 1, &other) == -ERR_BUSY && !memstat(oldest, &held) &&
           dmasync(domain, oldest, 0, 1, HDMA_AFTER, HDMA_DEVICE_WRITE) == -ERR_STALE);
   do {
@@ -172,8 +189,8 @@ testpins(Setid set, const Dtinfo *info, u32 device)
   REQUIRE(!error && memstat(oldest, &held) == MEM_BAD && !setstat(set, &account) &&
           !account.charged);
   REQUIRE(!dmaopen(device, next, &limits, 1, &other) && other.generation > domain.generation &&
-          dmaend(domain) == -ERR_STALE && dmaallocpage(domain, &page) == -ERR_STALE);
-  REQUIRE(!dmaallocpage(other, &page) && !dmaend(other) && !memfree(page));
+          dmaend(domain) == -ERR_STALE && dmaalloc(domain, PAGE_SIZE, NULL, &page) == -ERR_STALE);
+  REQUIRE(!dmaalloc(other, PAGE_SIZE, NULL, &page) && !dmaend(other) && !memfree(page));
   REQUIRE(!acctclose(next) && !acctunbind(next));
   putstr("DMAPINCHECK pages=");
   puthex(DMA_MAX_PAGES);
