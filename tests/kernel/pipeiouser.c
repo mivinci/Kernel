@@ -1,7 +1,9 @@
 #include <errno.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
+#include "private/close.h"
 #include "private/connection.h"
+#include "private/filecreate.h"
 #include "private/filewatch.h"
 #include "private/start.h"
 #include "private/syscall.h"
@@ -262,11 +264,48 @@ serviceloop(const Bootview *boot)
 }
 
 static void
+finishpipe(Connwork *work, Conncache *cache, Filepool *pool, u64 files[2], u64 owner)
+{
+  Opkey  key;
+  Msg    message;
+  Ipcmsg result;
+  Handle rpc;
+  u64    source = 0, args[8] = {0, PIPE_CAPACITY};
+  CHECK(!sysfilecreateprepare(pool, work, cache, SYSFILE_MAIN, owner, FS_PIPE, 0, &source, args,
+                              NULL, 0, &key, &message) &&
+        !ipc_call(work->state.call, &message, CALL_ASYNC, &result));
+  rpc = result.request;
+  CHECK(!sysopsubmitted(work, cache, &key, &result.request) &&
+        !ipc_rqwait(rpc, RQ_FINISH, &result) && !sysfilecreateack(pool, work, cache, &key) &&
+        !sysfilecreatesettle(pool, work, cache, &key, 0) &&
+        !sysfilecreatefinish(pool, work, cache, &key, files, &source) && !source);
+}
+
+static void
+closepending(Connwork *work, Conncache *cache, Filepool *pool, u64 owner)
+{
+  Ipcmsg result;
+  isize  error;
+  CHECK(sysfileclosepump(pool, work, cache, owner, 0) == SYSFILE_CLOSE_SUBMITTED);
+  do {
+    error = sysfileclosepump(pool, work, cache, owner, 0);
+    if (error == -ERR_WOULD_BLOCK)
+      CHECK(!ipc_recv(EVENT_RQ_DONE, RECV_EVENTS_ONLY, &result));
+  } while (error == -ERR_WOULD_BLOCK);
+  CHECK(!error);
+}
+
+static void
 serviceclient(const Bootview *boot)
 {
   static Connwork  work;
   static Conncache cache;
-  Pipekey          keys[2];
+  static Fdtable   table;
+  static Filepool  pool;
+  Fdtag            tags[2], held;
+  Fdview           view;
+  u64              files[2] = {0}, closing;
+  int              fd[2] = {-1, -1};
   Handle           call = bootresource(boot, 256);
   Msg              invalid = {{FS_HELLO, 0, 23, 0}};
   Ipcmsg           result;
@@ -278,8 +317,25 @@ serviceclient(const Bootview *boot)
         result.words[1] == 23);
   invalid.words[0] = FS_ATTACH;
   CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ENOSYS);
-  createpipe(&work, &cache, keys);
-  CHECK(!refcall(&work, &cache, FS_CLOSE, keys[PIPE_WRITE]));
+  CHECK(!sysfilerefinit(&pool, work.state.self) && !sysfdreserve(&table, 1, &held) &&
+        !sysfdreservepair(&table, tags) && tags[0].index == 0 && tags[1].index == 2);
+  finishpipe(&work, &cache, &pool, files, 100);
+  CHECK(sysfilepipeinstall(&table, tags, files, (int *) 1) == -ERR_FAULT &&
+        !sysfdcheckpair(&table, tags) && !sysfdcancelpair(&table, tags) &&
+        !sysfilerefdrop(&pool, work.state.self, files[0]) &&
+        !sysfilerefdrop(&pool, work.state.self, files[1]));
+  closepending(&work, &cache, &pool, 101);
+  closepending(&work, &cache, &pool, 102);
+  CHECK(!sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
+        !sysfdreservepair(&table, tags));
+  files[0] = files[1] = 0;
+  finishpipe(&work, &cache, &pool, files, 103);
+  CHECK(!sysfilepipeinstall(&table, tags, files, fd) && fd[0] == 0 && fd[1] == 2 &&
+        !sysfdobserve(&table, fd[0], &view) && view.tag.state == SYSFD_LIVE &&
+        view.file == files[0] && !view.flags && !sysfdobserve(&table, fd[1], &view) &&
+        view.file == files[1] && !view.flags &&
+        !sysfdclose(&table, &pool, work.state.self, view.tag, &closing) && closing == files[1]);
+  closepending(&work, &cache, &pool, 104);
   /* Leave the read reference to the service's LIFE path. */
   pipeiotrace[0] = 7;
 }

@@ -48,6 +48,12 @@ isize sysfdforkcheck(const Fdtable *table, const Filefork *entries, u64 count);
    State is part of the tag: a reserved tag cannot later name a published fd. */
 isize sysfdobserve(const Fdtable *table, u32 fd, Fdview *out);
 isize sysfdreserve(Fdtable *table, u32 minimum, Fdtag *out);
+/* A pipe reserves the two lowest free slots together. Pair operations check
+   both tags before changing either entry. */
+isize sysfdreservepair(Fdtable *table, Fdtag tags[2]);
+isize sysfdcheckpair(Fdtable *table, const Fdtag tags[2]);
+isize sysfdpublishpair(Fdtable *table, const Fdtag tags[2], const u64 files[2], u64 flags);
+isize sysfdcancelpair(Fdtable *table, const Fdtag tags[2]);
 /* Successful publication/replacement moves one caller-prepared reference to
    the table. A failure leaves the input reference owned by the caller. */
 isize sysfdpublish(Fdtable *table, Fdtag reserved, u64 file, u64 flags);

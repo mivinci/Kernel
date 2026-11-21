@@ -1,6 +1,11 @@
 #ifndef _LIBSYS_FILECREATE_H
 #define _LIBSYS_FILECREATE_H
 #include "operation.h"
+#include "fd.h"
+/* Publish an already collected ordinary PIPE result. Keep signals excluded
+   across the checked output and paired commit. On error, caller still owns
+   both reservations and File IDs and must cancel/drop them. */
+isize sysfilepipeinstall(Fdtable *table, const Fdtag tags[2], const u64 files[2], int *userfds);
 /* Protected read-only validation of the exact creator/pool responsibility. */
 isize sysfilecreatecheck(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 /* Private per-slot creator responsibility in the existing connection page.

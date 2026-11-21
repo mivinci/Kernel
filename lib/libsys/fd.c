@@ -144,6 +144,74 @@ sysfdreserve(Fdtable *table, u32 minimum, Fdtag *out)
   return -ERR_CAPACITY;
 }
 isize
+sysfdreservepair(Fdtable *table, Fdtag tags[2])
+{
+  u32 indices[2], i, count = 0;
+  if (!output(table, tags, 2 * sizeof(*tags)))
+    return -ERR_INVALID;
+  for (i = 0; i < BOOT_FD_COUNT && count < ARRAY_SIZE(indices); i++) {
+    if (!valid(&table->entries[i]))
+      return -ERR_STATE;
+    if (table->entries[i].state == SYSFD_FREE)
+      indices[count++] = i;
+  }
+  if (count != ARRAY_SIZE(indices))
+    return -ERR_CAPACITY;
+  for (i = 0; i < ARRAY_SIZE(indices); i++) {
+    Fdentry *entry = &table->entries[indices[i]];
+    tags[i].generation = ++entry->generation;
+    tags[i].index = indices[i];
+    tags[i].state = entry->state = SYSFD_RESERVED;
+  }
+  return 0;
+}
+static isize
+matchpair(Fdtable *table, const Fdtag tags[2], Fdentry *entries[2])
+{
+  isize error;
+  if (!output(table, tags, 2 * sizeof(*tags)) || tags[0].index >= tags[1].index ||
+      tags[0].state != SYSFD_RESERVED || tags[1].state != SYSFD_RESERVED)
+    return -ERR_INVALID;
+  error = match(table, tags[0], &entries[0]);
+  return error ? error : match(table, tags[1], &entries[1]);
+}
+isize
+sysfdcheckpair(Fdtable *table, const Fdtag tags[2])
+{
+  Fdentry *entries[2];
+  return matchpair(table, tags, entries);
+}
+isize
+sysfdpublishpair(Fdtable *table, const Fdtag tags[2], const u64 files[2], u64 flags)
+{
+  Fdentry *entries[2];
+  u32      i;
+  isize    error;
+  if (!output(table, files, 2 * sizeof(*files)) || !files[0] || !files[1] || files[0] == files[1] ||
+      flags & ~((u64) BOOT_FD_CLOEXEC))
+    return -ERR_INVALID;
+  error = matchpair(table, tags, entries);
+  if (error)
+    return error;
+  for (i = 0; i < ARRAY_SIZE(entries); i++) {
+    entries[i]->file = files[i];
+    entries[i]->flags = flags;
+    entries[i]->state = SYSFD_LIVE;
+  }
+  return 0;
+}
+isize
+sysfdcancelpair(Fdtable *table, const Fdtag tags[2])
+{
+  Fdentry *entries[2];
+  isize    error = matchpair(table, tags, entries);
+  if (error)
+    return error;
+  retire(entries[0]);
+  retire(entries[1]);
+  return 0;
+}
+isize
 sysfdpublish(Fdtable *table, Fdtag reserved, u64 file, u64 flags)
 {
   Fdentry *entry;

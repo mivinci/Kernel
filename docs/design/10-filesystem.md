@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage391：libsys 在发送 PIPE 前成对保留两个最低可用 fd 和两份 File 关闭责任。原请求排空并领取后，先受检复制两个 fd 数字，再在同一信号保护段发布两端；复制失败时两端均未发布，调用方撤销预留槽并用两份原引用驱动 CLOSE。ARM64/RV64 QEMU `pipeio` 用实际 FS 服务验证 EFAULT 后补偿关闭、同一服务槽再次创建，以及跨过已占用的 fd 按读端、写端顺序发布。此为私有运行库步骤，尚未接公开 `pipe()`。
+
 stage390：`sbin/fs/serve.c` 提供串行服务循环的阻塞单步，从原 CALL 分流 HELLO 和管道请求，处理 LIFE、取消提示和客户端退出后的连接释放；未知操作不读取共享槽。ARM64/RV64 QEMU `pipeio` 使用独立的服务和客户端进程验证畸形 HELLO 拒绝、MEM 交付、重复连接拒绝、PIPE/CLOSE 和 LIFE 回收，页账恢复。观察许可由可信测试夹具提供，未改变 Boot 资源布局、生产发权、默认启动包或公开 fd API。
 
 stage389：管道分派使用原 CALL、连接身份和共享槽快照，处理 PIPE、DUPREF、CLOSE、READ、WRITE。从预付等待表保留阻塞 Rq，处理取消提示并在流状态改变后重新检查；客户端 LIFE 终结时释放该镜像的引用并排空原 Rq，再释放连接映射。ARM64/RV64 QEMU `pipeio` 经真实 IPC 验证复制引用、原引用关闭后继续写、控制 CLOSE 唤醒等待读端返回 EOF、客户端带阻塞读退出后回收等待记录及页账。当前分派仅接入测试服务循环，未进入默认启动包；公开 `pipe()`、poll 和 SIGPIPE 仍待接。

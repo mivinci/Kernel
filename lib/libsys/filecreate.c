@@ -844,6 +844,25 @@ sysfilecreatebackendended(Filepool *pool, Connwork *work, Conncache *cache, cons
   return 0;
 }
 isize
+sysfilepipeinstall(Fdtable *table, const Fdtag tags[2], const u64 files[2], int *userfds)
+{
+  int   numbers[2];
+  isize error = sysfdcheckpair(table, tags);
+  if (error)
+    return error;
+  if (!files || !separate(files, 2 * sizeof(*files), table, sizeof(*table)) || !files[0] ||
+      !files[1] || files[0] == files[1])
+    return -ERR_INVALID;
+  if (!userfds || !separate(userfds, sizeof(numbers), table, sizeof(*table)) ||
+      !separate(userfds, sizeof(numbers), tags, 2 * sizeof(*tags)) ||
+      !separate(userfds, sizeof(numbers), files, 2 * sizeof(*files)))
+    return -ERR_FAULT;
+  numbers[0] = (int) tags[0].index;
+  numbers[1] = (int) tags[1].index;
+  error = __sys_copy(userfds, numbers, sizeof(numbers));
+  return error ? error : sysfdpublishpair(table, tags, files, 0);
+}
+isize
 sysfilecreatefinish(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                     u64 files[2], u64 *source)
 {
