@@ -14,6 +14,7 @@
 #include <abi/resource.h>
 #include <abi/observe.h>
 #include "../../sbin/tty/serial.h"
+#include "../../sbin/fs/loadio.h"
 
 #define ADDRESS  0x1600000UL
 #define STOP     0xf001
@@ -21,6 +22,7 @@
 #define PREPARE  0xf003
 #define ENDPEER  0xf004
 #define SEEN     0xf005
+#define LOADTEST 0xf006
 #define CONNID   0x10001
 #define IO_VALUE UINT64_C(0x1122334455667788)
 #define IO_WRITE UINT64_C(0x8877665544332211)
@@ -28,13 +30,15 @@
 #define IO_GUARD UINT64_C(0x2468ace013579bdf)
 static Connwork work, backend_work;
 #define cache (*(Conncache *) (void *) work.reserved)
-static Filepool   pool;
-static Fdtable    fds;
-static Rbank      contexts;
-static Rkey       active_key;
-static Ttyinput   ttyline;
-static Serialring ttyrx, ttytx;
-volatile u64      filecreatetrace[16];
+static Filepool       pool;
+static Fdtable        fds;
+static Rbank          contexts;
+static Rkey           active_key;
+static Ttyinput       ttyline;
+static Serialring     ttyrx, ttytx;
+static Loadtable      loadtable;
+static const Loadfile loadfile = {7, 2, 3, 8};
+volatile u64          filecreatetrace[16];
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -396,6 +400,68 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
 }
 
 static void
+loadreads(void)
+{
+  Msg          control = {{LOADTEST, 0, 0, 0}}, call = {{FS_LOAD, work.state.map.connid, 0, 0}};
+  Ipcmsg       result;
+  Filelease    lease;
+  Fileslot     slot = {0};
+  Handle       rpc;
+  volatile u8 *page;
+  u32          attempt, i;
+  CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result) && result.words[2]);
+  slot.object = result.words[2];
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.payload_bytes = FS_SLOT_BYTES;
+  slot.args[0] = loadfile.inode;
+  slot.args[1] = loadfile.generation;
+  slot.args[2] = loadfile.version;
+  slot.args[3] = loadfile.length;
+  slot.args[5] = 4;
+  slot.args[6] = FS_SLOT_BYTES - 4;
+  for (attempt = 0; attempt < 3; attempt++) {
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    slot.seq = call.words[2] = lease.seq;
+    call.words[3] = lease.slot;
+    slot.args[4] = attempt == 1 ? 4 : 0;
+    slot.args[6] = FS_SLOT_BYTES - (attempt == 2 ? 3 : 4);
+    page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+    for (i = 0; i < 5; i++)
+      page[FS_SLOT_BYTES - 5 + i] = 0xa5;
+    CHECK(
+        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &call, CALL_ASYNC, &result));
+    rpc = result.request;
+    if (attempt == 1) {
+      control.words[1] = 1;
+      CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result) && !ipc_rqcancel(rpc));
+      control.words[1] = 2;
+      CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result));
+    }
+    CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq &&
+          page[FS_SLOT_BYTES - 5] == 0xa5);
+    if (!attempt)
+      CHECK(!result.words[0] && result.words[2] == 4 && result.words[3] == 4 &&
+            page[FS_SLOT_BYTES - 4] == 'E' && page[FS_SLOT_BYTES - 3] == 'L' &&
+            page[FS_SLOT_BYTES - 2] == 'F' && page[FS_SLOT_BYTES - 1] == '!');
+    else {
+      CHECK((isize) result.words[0] == (attempt == 1 ? -EINTR : -EINVAL) && !result.words[2] &&
+            !result.words[3]);
+      for (i = 1; i < 5; i++)
+        CHECK(page[FS_SLOT_BYTES - 5 + i] == 0xa5);
+    }
+    CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+          !sysconnworkrelease(&work, &cache, lease));
+    filecreatetrace[13]++;
+  }
+  control.words[1] = 3;
+  control.words[2] = slot.object;
+  CHECK(!ipc_call(work.state.call, &control, CALL_CONTROL, &result) && !result.words[0]);
+}
+
+static void
 ttygetattr(u64 file)
 {
   const Termarg expected = {0, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON, 0, 0, {0}};
@@ -477,6 +543,7 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   complete(&key, 0, files, &source);
   first = files[0];
+  loadreads();
   ttygetattr(first);
   ttyiocall(first, FS_READ, 1);
   ttyiocall(first, FS_READ, 0);
@@ -639,6 +706,8 @@ server(const Bootview *boot, u32 recover)
   Ttyserialresult ttyresult;
   Ttywait         ttywait;
   Ttypending      ttydeferred = {0};
+  Loadio          loadio = {0};
+  u64             loadsession = 0, guard;
   u64             ttynow, ttyalarm = 0, generation;
   u8              output[3];
   u32             ttyseen = 0;
@@ -704,6 +773,7 @@ server(const Bootview *boot, u32 recover)
     }
     if (opcode == STOP) {
       CHECK(!pending && created == (recover ? 0 : 7) && closed == (recover ? 0 : 7));
+      CHECK(!loadsession && !loadio.request);
       for (i = 0; i < FS_CONN_SLOTS; i++)
         CHECK(!watch->active.requests[i]);
       for (i = 0; i < created; i++)
@@ -763,6 +833,25 @@ server(const Bootview *boot, u32 recover)
       CHECK(recover == 12 && pending && created == 2 && !ipc_reply(input.request, &reply));
       continue;
     }
+    if (opcode == LOADTEST) {
+      CHECK(!recover);
+      if (!input.words[1]) {
+        CHECK(!loadsession &&
+              !loadopen(&loadtable, &loadfile, input.source, input.image, 0, 100, &loadsession));
+        reply.words[2] = loadsession;
+      } else if (input.words[1] == 1) {
+        CHECK(loadio.request && loadwrite(&loadtable, loadfile.inode, &guard) == -ERR_BUSY);
+      } else if (input.words[1] == 2) {
+        CHECK(loadio.request && !loadioreply(&loadio, "ELF!", 4, 3));
+      } else {
+        CHECK(input.words[1] == 3 && input.words[2] == loadsession && !loadio.request &&
+              !loadclose(&loadtable, loadsession, input.source, input.image) &&
+              !loadwrite(&loadtable, loadfile.inode, &guard) && !loadunwrite(&loadtable, guard));
+        loadsession = 0;
+      }
+      CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
     seq = input.words[2];
     slot = input.words[3];
     reply.words[1] = seq;
@@ -783,6 +872,21 @@ server(const Bootview *boot, u32 recover)
     if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
+    if (!recover && opcode == FS_LOAD) {
+      status = loadiostart(&loadio, &loadtable, &watch->active, &input, &descriptor,
+                           (volatile u8 *) data, 2);
+      if (status == -ERR_INVALID) {
+        reply.words[0] = (u64) -EINVAL;
+        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
+      } else {
+        CHECK(!status);
+        if (loadio.offset)
+          CHECK(!ipc_defer(input.request));
+        else
+          CHECK(!loadioreply(&loadio, "ELF!", 4, 3));
+      }
+      continue;
+    }
     if (!recover && opcode == FS_TTYCTL) {
       found = 0;
       for (i = 0; i < created; i++)
