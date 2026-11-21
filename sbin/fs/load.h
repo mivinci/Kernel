@@ -3,15 +3,39 @@
 #include <types.h>
 #include <abi/base.h>
 
-#define LOAD_SLOTS 32
+#define LOAD_SLOTS    32
+#define LOAD_DIRECT   12
+#define LOAD_INDIRECT 1024
 
 typedef struct Loadfile  Loadfile;
 typedef struct Loadslot  Loadslot;
 typedef struct Loadtable Loadtable;
+typedef struct Loadmap   Loadmap;
+typedef struct Loadindex Loadindex;
+typedef struct Loadspan  Loadspan;
 struct Loadfile
 {
   u64 inode, generation, version, length;
 };
+/* Decoded filesystem state, not an on-disk layout. Keep both snapshots
+   pinned to the same file version while resolving and reading a span. */
+struct Loadmap
+{
+  Loadfile file;
+  u32      direct[LOAD_DIRECT], indirect;
+};
+struct Loadindex
+{
+  u32 block, entries[LOAD_INDIRECT];
+};
+struct Loadspan
+{
+  u32 first, next, offset;
+};
+/* Resolve a LOAD range of at most one page. A missing required indirect
+   snapshot returns WOULD_BLOCK; bad block references return STATE. */
+isize loadmapspan(const Loadfile *file, const Loadmap *map, const Loadindex *index, u32 data_start,
+                  u32 blocks, u64 offset, u64 bytes, Loadspan *out);
 struct Loadslot
 {
   Loadfile file;

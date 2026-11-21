@@ -14,6 +14,18 @@ class File(C.Structure):
     _fields_ = [(name, U) for name in ('inode', 'generation', 'version', 'length')]
 
 
+class Map(C.Structure):
+    _fields_ = [('file', File), ('direct', C.c_uint32 * 12), ('indirect', C.c_uint32)]
+
+
+class Index(C.Structure):
+    _fields_ = [('block', C.c_uint32), ('entries', C.c_uint32 * 1024)]
+
+
+class Span(C.Structure):
+    _fields_ = [(name, C.c_uint32) for name in ('first', 'next', 'offset')]
+
+
 class Slot(C.Structure):
     _fields_ = [('file', File)] + [(name, U) for name in ('id', 'image', 'deadline', 'read')] + [
         ('pid', I), ('stopped', I)]
@@ -37,6 +49,9 @@ class FsLoadTests(unittest.TestCase):
             command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]
         subprocess.run(command, check=True)
         cls.lib = C.CDLL(str(library))
+        cls.lib.loadmapspan.argtypes = [C.POINTER(File), C.POINTER(Map), C.POINTER(Index),
+                                       C.c_uint32, C.c_uint32, U, U, C.POINTER(Span)]
+        cls.lib.loadmapspan.restype = I
         args = {
             'loadopen': [C.POINTER(File), I, U, U, U, C.POINTER(U)],
             'loadread': [U, I, U, C.POINTER(File), U, U, U, C.POINTER(U)],
@@ -53,6 +68,30 @@ class FsLoadTests(unittest.TestCase):
         self.table = Table()
         self.ref = C.byref(self.table)
         self.file = File(7, 2, 3, 5000)
+
+    def test_resolve_across_direct_indirect_boundary_and_reject_wrong_snapshot(self):
+        file = File(7, 2, 3, 13 * 4096)
+        mapping, index, span = Map(), Index(), Span(1, 2, 3)
+        mapping.file, mapping.indirect = file, 100
+        mapping.direct[11], index.entries[0] = 101, 102
+
+        def resolve(snapshot):
+            return self.lib.loadmapspan(C.byref(file), C.byref(mapping), snapshot,
+                                        99, 200, 12 * 4096 - 2, 4, C.byref(span))
+
+        self.assertEqual(resolve(None), -11)
+        self.assertEqual(resolve(C.byref(index)), -4)
+        self.assertEqual((span.first, span.next, span.offset), (1, 2, 3))
+        index.block = 100
+        self.assertEqual(resolve(C.byref(index)), 0)
+        self.assertEqual((span.first, span.next, span.offset), (101, 102, 4094))
+        index.entries[0] = 98
+        self.assertEqual(resolve(C.byref(index)), -6)
+        mapping.indirect = 0
+        self.assertEqual(resolve(None), 0)
+        self.assertEqual(span.next, 0)
+        mapping.file.version += 1
+        self.assertEqual(resolve(None), -4)
 
     def open(self, file=None, pid=5, image=11, now=1, deadline=10, status=0):
         session = U()

@@ -47,10 +47,13 @@ static Rkey           active_key;
 static Ttyinput       ttyline;
 static Serialring     ttyrx, ttytx;
 static Loadtable      loadtable;
-static const Loadfile loadfile = {7, 2, 3, 2 * CACHE_BYTES};
-static Cacheblock     loadblocks[2];
-volatile u64          filecreatetrace[16];
-extern const u8       execclaim_elf[], execclaim_elf_end[];
+static const Loadfile loadfile = {7, 2, 3, (LOAD_DIRECT + 1) * CACHE_BYTES};
+static const Loadmap  loadmap = {
+    {7, 2, 3, (LOAD_DIRECT + 1) * CACHE_BYTES}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100}, 102};
+static const Loadindex loadindex = {102, {101}};
+static Cacheblock      loadblocks[2];
+volatile u64           filecreatetrace[16];
+extern const u8        execclaim_elf[], execclaim_elf_end[];
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -494,7 +497,7 @@ loadreads(void)
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
     slot.seq = call.words[2] = lease.seq;
     call.words[3] = lease.slot;
-    slot.args[4] = attempt == 1 ? 4 : CACHE_BYTES - 2;
+    slot.args[4] = attempt == 1 ? 4 : LOAD_DIRECT * CACHE_BYTES - 2;
     slot.args[6] = FS_SLOT_BYTES - (attempt == 2 ? 3 : 4);
     page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
     for (i = 0; i < 5; i++)
@@ -1059,6 +1062,7 @@ server(const Bootview *boot, u32 recover)
   Ttypending      ttydeferred = {0};
   Loadio          loadio = {0};
   Cache           loadcache = {0};
+  Loadspan        loadspan;
   u8              loadbytes[4];
   u64             loadsession = 0, guard;
   u64             ttynow, ttyalarm = 0, generation;
@@ -1315,9 +1319,11 @@ server(const Bootview *boot, u32 recover)
         if (loadio.offset == 4)
           CHECK(!ipc_defer(input.request));
         else
-          CHECK(loadio.offset == CACHE_BYTES - 2 && loadio.bytes == sizeof(loadbytes) &&
-                !cachecopydata(&loadcache, 100, 101, (u32) loadio.offset, loadbytes,
-                               sizeof(loadbytes)) &&
+          CHECK(loadio.bytes == sizeof(loadbytes) &&
+                !loadmapspan(&loadio.file, &loadmap, &loadindex, 99, 128, loadio.offset,
+                             loadio.bytes, &loadspan) &&
+                !cachecopydata(&loadcache, loadspan.first, loadspan.next, loadspan.offset,
+                               loadbytes, sizeof(loadbytes)) &&
                 !loadioreply(&loadio, loadbytes, sizeof(loadbytes), 3));
       }
       continue;

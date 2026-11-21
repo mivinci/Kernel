@@ -1,4 +1,5 @@
 #include "load.h"
+#include "cache.h"
 #include <proto/file.h>
 
 static Loadslot *
@@ -17,6 +18,53 @@ samefile(const Loadfile *a, const Loadfile *b)
 {
   return a->inode == b->inode && a->generation == b->generation && a->version == b->version &&
          a->length == b->length;
+}
+
+static isize
+datablock(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, u32 logical, u32 *out)
+{
+  u32 block;
+  if (logical < LOAD_DIRECT)
+    block = map->direct[logical];
+  else if (!map->indirect)
+    block = 0;
+  else {
+    if (!index)
+      return -ERR_WOULD_BLOCK;
+    if (index->block != map->indirect)
+      return -ERR_STALE;
+    block = index->entries[logical - LOAD_DIRECT];
+  }
+  if (block && (block < start || block >= blocks || block == map->indirect))
+    return -ERR_STATE;
+  *out = block;
+  return 0;
+}
+
+isize
+loadmapspan(const Loadfile *file, const Loadmap *map, const Loadindex *index, u32 data_start,
+            u32 blocks, u64 offset, u64 bytes, Loadspan *out)
+{
+  u32   first, next = 0, logical;
+  isize error;
+  if (!file || !map || !out || !data_start || data_start >= blocks || !bytes ||
+      bytes > FS_SLOT_BYTES || file->length > 4 * 1024 * 1024 || offset > file->length ||
+      bytes > file->length - offset)
+    return -ERR_INVALID;
+  if (!samefile(file, &map->file))
+    return -ERR_STALE;
+  if (map->indirect && (map->indirect < data_start || map->indirect >= blocks))
+    return -ERR_STATE;
+  logical = (u32) (offset / CACHE_BYTES);
+  error = datablock(map, index, data_start, blocks, logical, &first);
+  if (!error && (offset + bytes - 1) / CACHE_BYTES != logical)
+    error = datablock(map, index, data_start, blocks, logical + 1, &next);
+  if (error)
+    return error;
+  out->first = first;
+  out->next = next;
+  out->offset = (u32) (offset % CACHE_BYTES);
+  return 0;
 }
 
 static isize
