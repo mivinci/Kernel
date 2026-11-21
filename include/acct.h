@@ -107,6 +107,7 @@ int acctalloc(Acctid id, u32 order, const Pglim *lim, Acctblk *out);
    before using the ticket, then end it on publication or cancellation.
    Ending a ticket revokes admission; it does not release existing charges. */
 int acctexecbegin(Acctid id, u64 *ticket);
+int acctexecvalid(Acctid id, u64 ticket);
 int acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out);
 int acctexecend(Acctid id, u64 ticket);
 int acctfree(Acctblk block);

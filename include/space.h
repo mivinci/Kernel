@@ -71,6 +71,10 @@ int spaceinit(const Hvs *kernel);
 int spaceactivate(Spaceid id);
 int spacedeactivate(void);
 int spacecreate(Acctid acct, Spaceid *out);
+/* The caller verifies the exact exec preparation and destination Space.
+   The ticket authorizes page allocations only for this operation. */
+int spaceexeccreate(Acctid acct, u64 ticket, Spaceid *out);
+int spaceexecmap(Spaceid id, u64 ticket, Memid mem, u64 offset, u64 address, u64 length, u64 prot);
 int spacehold(Spaceid id);
 int spacedrop(Spaceid id);
 int spacedestroy(Spaceid id);

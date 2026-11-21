@@ -405,6 +405,13 @@ acctexecbegin(Acctid id, u64 *ticket)
 }
 
 int
+acctexecvalid(Acctid id, u64 ticket)
+{
+  Acct *a = find(id);
+  return a && a->state == AC_ACTIVE && ticket && exectickets[id.index] == ticket;
+}
+
+int
 acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out)
 {
   return ticket ? alloc(id, ticket, order, lim, out) : AC_BAD;
@@ -413,8 +420,7 @@ acctexecalloc(Acctid id, u64 ticket, u32 order, const Pglim *lim, Acctblk *out)
 int
 acctexecend(Acctid id, u64 ticket)
 {
-  Acct *a = find(id);
-  if (!a || a->state != AC_ACTIVE || !ticket || exectickets[id.index] != ticket)
+  if (!acctexecvalid(id, ticket))
     return AC_BAD;
   exectickets[id.index] = 0;
   return 0;

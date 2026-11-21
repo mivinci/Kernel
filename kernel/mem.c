@@ -132,7 +132,7 @@ reap(Mem *m)
 }
 
 static int
-create(Acctid acct, u64 bytes, Memid *out, u32 state)
+create(Acctid acct, u64 ticket, u64 bytes, Memid *out, u32 state)
 {
   Mem          *m;
   Acctblk       block;
@@ -155,7 +155,8 @@ create(Acctid acct, u64 bytes, Memid *out, u32 state)
       error = MEM_FULL;
       break;
     }
-    error = acctalloc(acct, 0, NULL, &block);
+    error =
+        ticket ? acctexecalloc(acct, ticket, 0, NULL, &block) : acctalloc(acct, 0, NULL, &block);
     if (error)
       break;
     node = freehead;
@@ -194,19 +195,27 @@ create(Acctid acct, u64 bytes, Memid *out, u32 state)
 int
 memcreate(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, bytes, out, MEM_DATA);
+  return create(acct, 0, bytes, out, MEM_DATA);
 }
 
 int
 memcode(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, bytes, out, MEM_LOADING);
+  return create(acct, 0, bytes, out, MEM_LOADING);
+}
+
+int
+memexeccreate(Acctid acct, u64 ticket, u64 bytes, u32 code, Memid *out)
+{
+  if (!acctexecvalid(acct, ticket) || code > 1)
+    return MEM_BAD;
+  return create(acct, ticket, bytes, out, code ? MEM_LOADING : MEM_DATA);
 }
 
 int
 memshared(Acctid acct, u64 bytes, Memid *out)
 {
-  return create(acct, bytes, out, MEM_SHARED);
+  return create(acct, 0, bytes, out, MEM_SHARED);
 }
 
 int

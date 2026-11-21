@@ -57,7 +57,9 @@ STATIC_ASSERT(sizeof(Blockref) == 16, blockref_budget);
 void meminit(void);
 int  memcreate(Acctid acct, u64 bytes, Memid *out);
 int  memcode(Acctid acct, u64 bytes, Memid *out);
-int  memshared(Acctid acct, u64 bytes, Memid *out);
+/* Trusted exec loader. The caller verifies the exact preparation. */
+int memexeccreate(Acctid acct, u64 ticket, u64 bytes, u32 code, Memid *out);
+int memshared(Acctid acct, u64 bytes, Memid *out);
 /* Trusted retained-package slice, pages counted from bootstore logical start.
    No physical allocation/charge, user Handle, write or execute authority. */
 int memboot(Acctid acct, u32 first, u32 pages, Memid *out);

@@ -29,6 +29,7 @@ STATIC_ASSERT(sizeof(Maplink) == 12, maplink_budget);
 struct Sourcectx
 {
   Acctid acct;
+  u64    ticket;
   int    error;
 };
 
@@ -198,7 +199,8 @@ allocate(void *context, u64 *pa)
 {
   Sourcectx *s = context;
   Acctblk    block;
-  s->error = acctalloc(s->acct, 0, NULL, &block);
+  s->error = s->ticket ? acctexecalloc(s->acct, s->ticket, 0, NULL, &block)
+                       : acctalloc(s->acct, 0, NULL, &block);
   if (s->error)
     return -1;
   *pa = block.block.pa;
@@ -228,6 +230,7 @@ static void
 view(Space *s, Hvs *vs, Sourcectx *context)
 {
   context->acct = s->acct;
+  context->ticket = 0;
   context->error = 0;
   vs->root = s->root;
   vs->pages = s->pages;
@@ -261,8 +264,8 @@ spaceinit(const Hvs *kernel)
   return 0;
 }
 
-int
-spacecreate(Acctid acct, Spaceid *out)
+static int
+create(Acctid acct, u64 ticket, Spaceid *out)
 {
   Sourcectx pending;
   Space    *s;
@@ -281,6 +284,7 @@ spacecreate(Acctid acct, Spaceid *out)
   if (error)
     return error;
   pending.acct = acct;
+  pending.ticket = ticket;
   pending.error = 0;
   source.alloc = allocate;
   source.free = release;
@@ -311,6 +315,18 @@ spacecreate(Acctid acct, Spaceid *out)
   out->index = i;
   out->reserved = 0;
   return 0;
+}
+
+int
+spacecreate(Acctid acct, Spaceid *out)
+{
+  return create(acct, 0, out);
+}
+
+int
+spaceexeccreate(Acctid acct, u64 ticket, Spaceid *out)
+{
+  return acctexecvalid(acct, ticket) ? create(acct, ticket, out) : SP_BAD;
 }
 
 int
@@ -517,7 +533,7 @@ spacelookup(Spaceid id, u64 va, Hpte *out)
 
 static int
 map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Prepid prep, u32 cow,
-    u32 mode)
+    u32 mode, u64 ticket)
 {
   Space    *s = find(id);
   Mem       mem;
@@ -527,7 +543,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   u64       pa;
   u32       node, i, made = 0, pages;
   int       error;
-  if (!s)
+  if (!s || (ticket && !acctexecvalid(s->acct, ticket)))
     return SP_BAD;
   if (s->busy || s == active ||
       (insnapshot(s) &&
@@ -589,6 +605,7 @@ map(Spaceid id, Memid memory, u64 offset, u64 address, u64 length, u64 prot, Pre
   mappings[node].length = 1; /* Reserved, not linked into a visible address space. */
   s->busy = 1;
   view(s, &vs, &context);
+  context.ticket = ticket;
   pages = (u32) (length / PAGE_SIZE);
   error = 0;
   for (i = 0; i < pages; i++) {
@@ -1338,14 +1355,24 @@ spacemap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot)
   Prepid none;
   none.generation = 0;
   none.index = none.reserved = 0;
-  return map(id, mem, offset, address, length, prot, none, 0, 0);
+  return map(id, mem, offset, address, length, prot, none, 0, 0, 0);
 }
+
+int
+spaceexecmap(Spaceid id, u64 ticket, Memid mem, u64 offset, u64 address, u64 length, u64 prot)
+{
+  Prepid none = {0, 0, 0};
+  if (!ticket)
+    return SP_BAD;
+  return map(id, mem, offset, address, length, prot, none, 0, 0, ticket);
+}
+
 int
 spaceloadmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 prot, Prepid prep)
 {
   if (!prep.generation)
     return SP_BAD;
-  return map(id, mem, offset, address, length, prot, prep, 0, 0);
+  return map(id, mem, offset, address, length, prot, prep, 0, 0, 0);
 }
 
 int
@@ -1353,7 +1380,7 @@ spaceforkmap(Spaceid id, Memid mem, u64 offset, u64 address, u64 length, u64 pro
 {
   Prepid none;
   none.generation = none.index = none.reserved = 0;
-  return map(id, mem, offset, address, length, prot, none, 0, MAP_CONSTRUCT);
+  return map(id, mem, offset, address, length, prot, none, 0, MAP_CONSTRUCT, 0);
 }
 int
 spaceforkfix(Spaceid id, u64 address, u64 bytes)
@@ -1408,7 +1435,7 @@ spacecowmap(Spaceid id, Memid memory, u64 offset, u64 address, u64 length)
 {
   Prepid none;
   none.generation = none.index = none.reserved = 0;
-  return map(id, memory, offset, address, length, VM_READ | VM_WRITE, none, 1, 0);
+  return map(id, memory, offset, address, length, VM_READ | VM_WRITE, none, 1, 0, 0);
 }
 
 int
@@ -1715,7 +1742,7 @@ spacesnapshotbuild(Spaceid sourceid, Spaceid targetid)
           return snapshotfail(tree, error);
       }
       error = map(targetid, memory, m->offset, m->address, m->length, logicalprot(m), none,
-                  backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE), MAP_SNAPSHOT);
+                  backing.state == MEM_DATA && (logicalprot(m) & VM_WRITE), MAP_SNAPSHOT, 0);
       if (error) {
         if (fresh && memfree(memory))
           panic("snapshot unmapped Mem rollback");

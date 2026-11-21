@@ -12,6 +12,62 @@
 static Spaceid roots[SPACES];
 
 static void
+execspacetest(void)
+{
+  Setid   set;
+  Acctid  acct;
+  Spaceid old, next;
+  Memid   data, code, denied;
+  Space   target;
+  Set     group;
+  Hpte    pte;
+  Pgstat  before, after;
+  u64     ticket, marker = 0x31415926, value = 0;
+  u64     edge = (1UL << 21) - PAGE_SIZE;
+  pgstat(&before);
+  REQUIRE(!setcreate(4, 9, 1, &set) && !acctcreate(set, 4, 9, &acct) && !spacecreate(acct, &old) &&
+              !memcreate(acct, PAGE_SIZE, &data) &&
+              !spacemap(old, data, 0, 0x10000, PAGE_SIZE, VM_READ | VM_WRITE) &&
+              !spacewrite(old, 0x10000, &marker, sizeof(marker)),
+          "exec load old image");
+  REQUIRE(!acctexecbegin(acct, &ticket) && spacecreate(acct, &next) == AC_LIMIT &&
+              !spaceexeccreate(acct, ticket, &next),
+          "exec load root admission");
+  denied.generation = 99;
+  REQUIRE(memexeccreate(acct, ticket, 5 * PAGE_SIZE, 0, &denied) == AC_LIMIT &&
+              denied.generation == 99 && !setstat(set, &group) && group.charged == 5,
+          "exec load backing prefix rollback");
+  REQUIRE(!memexeccreate(acct, ticket, 2 * PAGE_SIZE, 1, &code) &&
+              !memwrite(code, 0, &marker, sizeof(marker)) && !memseal(code),
+          "exec load sealed code");
+  REQUIRE(spacemap(next, code, 0, edge, PAGE_SIZE, VM_READ | VM_EXEC) == AC_LIMIT &&
+              spaceexecmap(next, ticket, code, 0, edge, 2 * PAGE_SIZE, VM_READ | VM_EXEC) ==
+                  AC_LIMIT &&
+              !spacestat(next, &target) && target.pages == 1 && !target.mapcount &&
+              !spacelookup(next, edge, &pte) && !setstat(set, &group) && group.charged == 7,
+          "exec load page table prefix rollback");
+  REQUIRE(!spaceexecmap(next, ticket, code, 0, edge, PAGE_SIZE, VM_READ | VM_EXEC) &&
+              spacelookup(next, edge, &pte) && pte.prot == (VM_READ | VM_EXEC | VM_USER) &&
+              !spaceread(next, edge, &value, sizeof(value)) && value == marker &&
+              !setstat(set, &group) && group.charged == 9 && !acctcheck(),
+          "exec load target map");
+  REQUIRE(!acctexecend(acct, ticket) &&
+              spaceexecmap(next, ticket, code, PAGE_SIZE, edge - PAGE_SIZE, PAGE_SIZE, VM_READ) ==
+                  SP_BAD &&
+              !spacelookup(next, edge - PAGE_SIZE, &pte) && !spaceunmap(next, edge) &&
+              !memfree(code) && !spacedestroy(next) && !setstat(set, &group) &&
+              group.charged == 4 && !spaceread(old, 0x10000, &value, sizeof(value)) &&
+              value == marker,
+          "exec load cancellation and old image preservation");
+  REQUIRE(!spaceunmap(old, 0x10000) && !memfree(data) && !spacedestroy(old) && !acctclose(acct) &&
+              !acctunbind(acct) && !setclose(set) && !acctcheck() && !pgcheck(),
+          "exec load cleanup");
+  pgstat(&after);
+  REQUIRE(before.free == after.free && before.allocated == after.allocated,
+          "exec load physical conservation");
+}
+
+static void
 replacetest(Hvs *kernel)
 {
   Pgblk         frames[2];
@@ -87,6 +143,7 @@ spacetest(Hvs *kernel)
   volatile u64 *memory;
   const u64    *parent = kaddr(kernel->root);
   replacetest(kernel);
+  execspacetest();
   pgstat(&before);
   REQUIRE(!setcreate(512, 1024, 8, &group) && !acctcreate(group, 512, 1024, &acct), "root account");
   REQUIRE(!acctalloc(acct, 0, NULL, &dirty), "dirty root preparation");

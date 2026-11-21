@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage319：exec 峰值票据可用于可信目标根、私有页和映射表页分配。RV64/ARM64 QEMU `spaces`、`sigframe`、64 项主机回归及格式检查通过；Prep 和镜像切换仍待接。
 - stage318：内核账目接入按准备票据授权的 exec 峰值分配。RV64/ARM64 QEMU `budget`、26 项主机账目回归及格式检查通过；Prep、装载及镜像切换尚未接入。
 - stage317：TTY 回显暂存受背压时仍可处理 RX 队首的 ISIG 字符。RV64/ARM64 QEMU `tty`、46 项主机回归和格式检查通过。
 - stage316：私有运行库入口串接本地 fork 的准备、Fix 发布和子返回。RV64/ARM64 QEMU `sigframe` 验证跨两代复用同一 Fix 地址及发布前失败清理；47 项主机回归和格式检查通过。
