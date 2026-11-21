@@ -300,6 +300,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/pipe.c','pipe'), compile_adoption(ROOT/'sbin/fs/pipeio.c','pipeio'),
         compile_adoption(ROOT/'sbin/fs/pipefile.c','pipefile'),
         compile_adoption(ROOT/'sbin/fs/pipedispatch.c','pipedispatch'),
+        compile_adoption(ROOT/'sbin/fs/seek.c','fs-seek'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
     pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],128))

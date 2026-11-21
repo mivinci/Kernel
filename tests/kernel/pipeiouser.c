@@ -16,6 +16,7 @@
 #include "private/syscall.h"
 #include "private/timer.h"
 #include "../../sbin/fs/pipefile.h"
+#include "../../sbin/fs/seek.h"
 #include "../../sbin/fs/serve.h"
 
 #define ADDRESS     0x1600000UL
@@ -333,6 +334,18 @@ serviceloop(const Bootview *boot, u32 interrupt)
       reply.words[2] = TEST_OFFSET;
       CHECK(!ipc_reply(request.request, &reply));
     }
+    {
+      Fileslot  row;
+      u64       position = 0;
+      const u64 expected[] = {17, INT64_MAX, INT64_MAX, INT64_MAX, INT64_MAX, 0};
+      for (i = 0; i < ARRAY_SIZE(expected); i++) {
+        CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_SEEK &&
+              !sysfilelinkaccept(&link, 1, &request, &row) &&
+              row.object == file.session[PIPE_READ] &&
+              !fileseek(&link.watch.active, &request, &row, 20, &position) &&
+              position == expected[i] && !link.watch.active.requests[request.words[3]]);
+      }
+    }
   } else if (interrupt == 5) {
     CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
           wait.io.end == PIPE_READ && !file.stream.bytes);
@@ -545,6 +558,12 @@ interruptclient(void)
   CHECK(pwrite(fds[1], "z", 1, TEST_OFFSET) == -1 && errno == ESPIPE && caught == 6);
   CHECK(lseek(fds[0], -3, SEEK_CUR) == TEST_OFFSET && caught == 7);
   release_read = 0;
+  fd = dup(fds[0]);
+  CHECK(fd == 2 && lseek(fds[0], -3, SEEK_END) == 17 &&
+        lseek(fd, INT64_MAX, SEEK_SET) == INT64_MAX && lseek(fds[0], 1, SEEK_CUR) == -1 &&
+        errno == EOVERFLOW && lseek(fd, INT64_MIN, SEEK_CUR) == -1 && errno == EINVAL &&
+        lseek(fds[0], 0, SEEK_CUR) == INT64_MAX && lseek(fd, -INT64_MAX, SEEK_CUR) == 0 &&
+        !close(fd));
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
   data[0] = 'p';
