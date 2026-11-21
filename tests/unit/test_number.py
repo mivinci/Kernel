@@ -15,7 +15,8 @@ class NumberTests(unittest.TestCase):
         command=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'include'),
                  '-Dstrtol=user_strtol','-Dstrtoul=user_strtoul','-D__errno_location=user_errno_location',
-                 '-Dstrerror=user_strerror',str(ROOT/'lib/libc/number.c'),str(ROOT/'lib/libc/errno.c'),'-o',str(cls.path)]
+                 '-Dstrerror=user_strerror','-Disspace=user_isspace',str(ROOT/'lib/libc/number.c'),
+                 str(ROOT/'lib/libc/ctype.c'),str(ROOT/'lib/libc/errno.c'),'-o',str(cls.path)]
         if sys.platform=='darwin':
             sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
             command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]

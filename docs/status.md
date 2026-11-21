@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage258：SDK 补齐 C locale `<ctype.h>`，整数解析复用 `isspace`。ARM64/RV64 runtime、13 项整数解析及 SDK 主机检查、格式检查通过。
+
 - stage256：ARM64/RV64 的 `serial-tty` 验证实际 tty ELF 的 READY、晚绑定、两次阻塞后唤醒、8 字节输入与 9 字节 CRLF 回显。既有串口场景及格式检查通过；下一步接默认 init 清单和双服务监督。
 
 - stage255：双架构启动包场景验证实际 serial 和 tty 数据模块跨进程共享双环、晚绑定及双向通知。双方阻塞后分两批收 7 字节，UART 输出 24 字节，双架构 tty 回归与格式通过。启动由 PID1 测试夹具发起，默认 init 上线仍待接。

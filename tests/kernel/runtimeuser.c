@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -35,7 +36,7 @@ struct Numbercase
 static const Numbercase numbers[] = {
     {"", 0, 0, 0, 0, EDOM, EDOM},
     {" \t+", 0, 0, 0, 0, EDOM, EDOM},
-    {" -0x2a!", 0, -42, ULONG_MAX - 41, 6, EDOM, EDOM},
+    {" \t\n\v\f\r-0x2a!", 0, -42, ULONG_MAX - 41, 11, EDOM, EDOM},
     {"0779", 0, 63, 63, 3, EDOM, EDOM},
     {"0xg", 16, 0, 0, 1, EDOM, EDOM},
     {"0b11", 0, 0, 0, 1, EDOM, EDOM},
@@ -116,6 +117,40 @@ numbercheck(void)
             183);
   }
   return (u32) ARRAY_SIZE(numbers) + 35;
+}
+
+static void
+ctypecheck(void)
+{
+  static int (*const classify[])(int) = {isalnum, isalpha, isblank, iscntrl, isdigit, isgraph,
+                                         islower, isprint, ispunct, isspace, isupper, isxdigit};
+  static const u32 totals[] = {62, 52, 2, 33, 10, 94, 26, 95, 32, 6, 26, 22};
+  u32              i, count;
+  const int        eof = -1;
+  int              byte;
+
+  errno = EDOM;
+  for (i = 0; i < ARRAY_SIZE(classify); i++) {
+    REQUIRE(!classify[i](eof), 244);
+    count = 0;
+    for (byte = 0; byte <= UCHAR_MAX; byte++) {
+      int member = classify[i](byte);
+      REQUIRE(byte < 128 || !member, 244);
+      count += !!member;
+    }
+    REQUIRE(count == totals[i], 244);
+  }
+  REQUIRE(isblank('\t') && !isblank('\n') && isspace('\r') && iscntrl(127) && isprint(' ') &&
+              !isgraph(' ') && ispunct('_') && !isalpha('@') && isxdigit('A') && isxdigit('f') &&
+              !isxdigit('g'),
+          245);
+  for (byte = 0; byte <= UCHAR_MAX; byte++) {
+    int lower = tolower(byte), upper = toupper(byte);
+    REQUIRE(lower == (isupper(byte) ? byte + 32 : byte) &&
+                upper == (islower(byte) ? byte - 32 : byte),
+            246);
+  }
+  REQUIRE(tolower(eof) == eof && toupper(eof) == eof && errno == EDOM, 247);
 }
 static int
 formatv(char *buffer, size_t size, const char *format, ...)
@@ -412,6 +447,7 @@ main(int argc, char **argv)
               strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
           176);
   sortcheck();
+  ctypecheck();
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
   runtime_trace[10] = groupcheck();

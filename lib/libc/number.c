@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
@@ -32,7 +33,7 @@ convert(const char *string, char **end, int base, u32 signed_value)
     errno = EINVAL;
     return result;
   }
-  while (*cursor == ' ' || (*cursor >= '\t' && *cursor <= '\r'))
+  while (isspace((u8) *cursor))
     cursor++;
   if (*cursor == '-' || *cursor == '+') {
     result.negative = *cursor == '-';
