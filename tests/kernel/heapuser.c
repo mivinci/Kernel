@@ -23,6 +23,21 @@ constructor(void)
     memset(early, 0x55, 512);
   }
 }
+static void
+stringcopies(void)
+{
+  char  source[] = "argv";
+  char  raw[] = {'x', 'y', 'z'};
+  char *copy = strdup(source);
+  char *bounded = strndup(raw, sizeof(raw));
+  char *empty = strndup(source, 0);
+  source[0] = '!';
+  REQUIRE(copy && !strcmp(copy, "argv") && bounded && !strcmp(bounded, "xyz") && empty && !*empty,
+          224);
+  free(copy);
+  free(bounded);
+  free(empty);
+}
 int
 main(int argc, char **argv)
 {
@@ -57,6 +72,7 @@ main(int argc, char **argv)
   }
   errno = EDOM;
   free(NULL);
+  stringcopies();
   for (i = 0; i < 64; i++) {
     small[i] = malloc(i + 1);
     REQUIRE(small[i] && !((usize) small[i] & 15) && errno == EDOM, 205);

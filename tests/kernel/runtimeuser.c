@@ -515,19 +515,6 @@ main(int argc, char **argv)
   sortcheck();
   ctypecheck();
   tokencheck();
-  {
-    char  source[] = "argv";
-    char  raw[] = {'x', 'y', 'z'};
-    char *copy = strdup(source);
-    char *bounded = strndup(raw, sizeof(raw));
-    char *empty = strndup(source, 0);
-    source[0] = '!';
-    REQUIRE(copy && !strcmp(copy, "argv") && bounded && !strcmp(bounded, "xyz") && empty && !*empty,
-            268);
-    free(copy);
-    free(bounded);
-    free(empty);
-  }
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
   runtime_trace[10] = groupcheck();

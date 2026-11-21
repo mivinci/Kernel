@@ -643,6 +643,8 @@ Elfwork记录当前临时MEM、父空间/窗口、alias存在位及首个装载�
 
 验证：新增CASE=elf，两架构真实C加载器复用同一libsys，读取/解析只读嵌入的完整runtimeuser.elf，在用户态完成native create、Boot SELF发现、逐页装载、configure/start和原生wait。普通成功与父资源表填满只留1个临时槽两次发布均运行到孩子main并退出42；孩子查询证实只占3个真实SELF/ALLOC/CREATE槽，继续申请MEM因表满明确CAPACITY。四次失败覆盖孩子额度不足、文件内容读取中断、临时VA冲突和坏Boot，全部无wait结果且页/Set/引用结清。畸形ELF在创建前拒绝。
 
+stage297：把 `strdup`/`strndup` 的分配检查从共用的 `runtimeuser` 移到 `heapuser`。原检查需要申请堆页，与 `elf` 子镜像的三个资源槽全部占用冲突；修复后保留三槽约束、满表错误与收尾断言。RV64、ARM64 QEMU `elf`、`heap`、`runtime` 及格式检查通过。
+
 新增6项host覆盖非法/脏工作区不丢责任、页权限并集/文件内容/BSS及真实Boot SELF补齐、每一步native分配/映射/封存/释放失败、清理错误责任保留与显式重试、源读取失败，以及两目标架构下的种子变异输入与独立Python页规划对照。主机shim只验证用户库事务，不替代真实内核权限或QEMU验收。本地完整make test-all通过241项host、格式及88个两架构QEMU；最后工作区拒绝反例/来源回调检查补齐后再验完整242项host、格式和两架构elf，日志build/host/stage34-user-elf/。首次固件路径拼写错误的失败日志另保留；生产init/清单、FS快照、信号中断重启、fork/exec和完整POSIX spawn仍待执行。
 
 ### 原生受检查复制接续（2026-11-16）
