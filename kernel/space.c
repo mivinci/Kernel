@@ -106,10 +106,8 @@ insnapshot(const Space *s)
 static int
 snapshotwritebusy(const Space *s)
 {
-  /* Only the two owned transaction roots admit synchronous kernel writes
-     while READY (for child signal cookies). Other retained aliases stay shut. */
-  return s->frozen && (!snapshot || snapshot->phase != SNAP_READY ||
-                       (s != find(snapshot->source) && s != find(snapshot->target)));
+  /* Child signal cookies may be written once the target tree is complete. */
+  return s->frozen && (!snapshot || snapshot->phase != SNAP_READY || s != find(snapshot->target));
 }
 
 static int

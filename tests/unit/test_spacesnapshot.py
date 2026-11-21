@@ -369,6 +369,8 @@ class SpaceSnapshotTests(unittest.TestCase):
                 self.assertEqual(self.map(sid,shared),0);self.assertEqual(self.map(sid,code,address=0x20000,prot=5),0)
             _,child=self.destination();self.assertEqual(self.lib.spacesnapshotbegin(parent,child),0)
             self.assertEqual((self.stat(peer).frozen,self.stat(peer).refs,self.lib.spacefrozen(peer)),(0,1,0))
+            self.assertEqual(self.lib.spacewrite(parent,0x10000,C.create_string_buffer(b'p'),1),-4)
+            self.assertEqual(self.mapped(child,0x10000,1),b'\0')
             self.assertEqual(self.lib.spaceactivate(peer),0)
             self.assertEqual(self.lib.spacewrite(peer,0x10000,C.create_string_buffer(b's'),1),0)
             self.assertEqual(self.lib.spacedeactivate(),0)
