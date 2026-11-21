@@ -3,6 +3,8 @@
 #include "input.h"
 #include <proto/serial.h>
 #include <proto/file.h>
+#include "private/file.h"
+#include <sys/channel.h>
 
 typedef struct Ttyserial       Ttyserial;
 typedef struct Ttyserialresult Ttyserialresult;
@@ -29,6 +31,10 @@ isize ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size);
 isize ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8 *page);
 /* Commit a READ after authorization, readiness and cancellation checks. */
 isize ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page);
+/* The service has authorized this request and owns the exact slot. On
+   WOULD_BLOCK it retains that ownership for a later readiness check. */
+isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
+                const Fileslot *slot, volatile u8 *page, u32 nonblock);
 /* Process up to rxlimit RX bytes and one TX batch. A timed reader can check
    its deadline and retention after each byte by passing rxlimit=1.
    Notify with hints even after partial progress followed by failure.

@@ -871,4 +871,6 @@ stage274：`ttyserialwrite` 接入文件 WRITE 的私有槽快照。它在读取
 
 stage275：`ttyserialread` 验证 READ 槽快照后，可向共享响应页的 `data_off` 提交最多一页输入。规范读在首个行尾或空 EOF 停止；短读保留行尾，零长读不消费 EOF。ARM64/RV64 tty 验证超过 32 字节的规范行一次返回、空 EOF 只交付一次，以及未成行和越界请求不写响应页。31 项主机测试和格式检查通过。前台、计时、取消与原 IPC 回复仍由服务分派负责。
 
+stage276：`ttyfileio` 按私有槽账本核对原 REQUEST，在提交读写前检查取消或强制终结。取消回复业务 EINTR；终结请求只收尾；未就绪的阻塞请求保留槽，非阻塞请求回复 EAGAIN。成功结果通过原 REQUEST 回复。ARM64/RV64 runtime 实测已接收的 READ 等待后被取消，随后到达的输入和响应页均不被旧请求修改，下一笔 READ 收取该行。96 项主机测试和格式检查通过。生产分派、计时读调度及 WRITE 的真实 IPC 回归仍待接入。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

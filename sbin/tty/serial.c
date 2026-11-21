@@ -1,7 +1,6 @@
 #include "serial.h"
-#include "private/file.h"
 #include "private/serial.h"
-#include <sys/channel.h>
+#include <errno.h>
 
 isize
 ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch)
@@ -73,6 +72,50 @@ ttyserialread(Ttyinput *input, const Fileslot *slot, volatile u8 *page)
   if (!page)
     return -ERR_INVALID;
   return ttyinputcopy(input, page + slot->args[2], (u32) slot->args[1], &ended);
+}
+
+isize
+ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
+          const Fileslot *slot, volatile u8 *page, u32 nonblock)
+{
+  Msg   reply = {{0, 0, 0, 0}};
+  u64   state, opcode;
+  isize result, error;
+  if (!active || !call || call->kind != IPC_CALL || !slot || nonblock > 1 ||
+      call->words[3] >= FS_CONN_SLOTS || active->requests[call->words[3]] != call->request ||
+      !call->request || !slot->seq || slot->seq != call->words[2])
+    return -ERR_INVALID;
+  opcode = call->words[0];
+  if (opcode != FS_READ && opcode != FS_WRITE)
+    return -ERR_INVALID;
+  error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_DRAINING) {
+    error = ipc_rqfinish(call->request);
+    return error ? error : sysfilefinish(active, call->request);
+  }
+  reply.words[1] = slot->seq;
+  if (state & RQ_CHECK_CANCEL)
+    reply.words[0] = (u64) -EINTR;
+  else {
+    result = opcode == FS_READ ? ttyserialread(input, slot, page)
+                               : ttyserialwrite(io, oflag, slot, page);
+    if (result == -ERR_WOULD_BLOCK && !nonblock)
+      return result;
+    if (result < 0)
+      reply.words[0] = (u64) (result == -ERR_WOULD_BLOCK ? -EAGAIN
+                              : result == -ERR_INVALID   ? -EINVAL
+                              : result == -ERR_NOTSUP    ? -ESPIPE
+                                                         : -EIO);
+    else {
+      reply.words[2] = (u64) result;
+      if (opcode == FS_READ)
+        reply.words[3] = (u64) result;
+    }
+  }
+  error = ipc_reply(call->request, &reply);
+  return error ? error : sysfilefinish(active, call->request);
 }
 
 isize
