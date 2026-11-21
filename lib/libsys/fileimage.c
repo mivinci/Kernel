@@ -5,6 +5,7 @@
 #include "private/syscall.h"
 #include "private/timer.h"
 #include <abi/signal.h>
+#include <errno.h>
 #include <proto/file.h>
 
 static Fileimage image;
@@ -184,19 +185,58 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
   return error;
 }
 
+static isize
+iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 opcode,
+        const void *input, u64 bytes, u32 replay, Opkey *key)
+{
+  Fileslot   descriptor;
+  Conncache *cache = sysfileimagecache(state);
+  Opkey      draft;
+  u64        base;
+  u8        *snapshot = state->contexts.snapshots[layer];
+  u32        i;
+  isize      error;
+  error = sysopprepare(work, cache, layer, 1, state->contexts.sequence + 1, &pin, session, opcode,
+                       0, &draft);
+  if (!error) {
+    base = work->state.map.address;
+    if (opcode == FS_WRITE && bytes) {
+      if (!replay)
+        error = __sys_copy(snapshot, input, bytes);
+      if (!error)
+        error = __sys_copy((void *) (base + FS_DATA_OFFSET + draft.lease.slot * FS_SLOT_BYTES),
+                           snapshot, bytes);
+    }
+    if (!error) {
+      for (i = 0; i < sizeof(descriptor); i++)
+        ((volatile u8 *) &descriptor)[i] = 0;
+      descriptor.seq = draft.lease.seq;
+      descriptor.state = FS_SLOT_SUBMITTED;
+      descriptor.payload_bytes = descriptor.args[1] = bytes;
+      descriptor.object = session;
+      descriptor.span = 1;
+      error = __sys_copy((void *) (base + FS_DESC_OFFSET + draft.lease.slot * FS_DESC_BYTES),
+                         &descriptor, sizeof(descriptor));
+    }
+    if (!error) {
+      for (i = 0; i < sizeof(draft); i++)
+        ((volatile u8 *) key)[i] = ((const u8 *) &draft)[i];
+      return 0;
+    }
+    if (sysopabort(work, cache, &draft, &pin))
+      return -ERR_STATE;
+  }
+  return sysfilerefunpin(&state->files, state->files.self, pin) ? -ERR_STATE : error;
+}
+
 isize
 sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
                Connwork **out, Opkey *key)
 {
-  Fileslot   descriptor;
-  Fdview     view;
-  Fileref    ref;
-  Conncache *cache;
-  Connwork  *work;
-  Opkey      draft;
-  u64        pin, base;
-  u32        i;
-  isize      error;
+  Fdview    view;
+  Fileref   ref;
+  Connwork *work;
+  isize     error;
   if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
       (opcode != FS_READ && opcode != FS_WRITE))
     return -ERR_INVALID;
@@ -217,39 +257,13 @@ sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *inpu
   work = &state->connections[ref.connection.index];
   if (work->state.tag.generation != ref.connection.generation)
     return -ERR_STALE;
-  cache = sysfileimagecache(state);
-  pin = view.file;
-  error = sysfilerefpin(&state->files, state->files.self, pin);
-  if (error)
-    return error;
-  error = sysopprepare(work, cache, layer, 1, state->contexts.sequence + 1, &pin, ref.session,
-                       opcode, 0, &draft);
+  error = sysfilerefpin(&state->files, state->files.self, view.file);
   if (!error) {
-    base = work->state.map.address;
-    if (opcode == FS_WRITE && bytes)
-      error = __sys_copy((void *) (base + FS_DATA_OFFSET + draft.lease.slot * FS_SLOT_BYTES), input,
-                         bytes);
-    if (!error) {
-      for (i = 0; i < sizeof(descriptor); i++)
-        ((volatile u8 *) &descriptor)[i] = 0;
-      descriptor.seq = draft.lease.seq;
-      descriptor.state = FS_SLOT_SUBMITTED;
-      descriptor.payload_bytes = descriptor.args[1] = bytes;
-      descriptor.object = ref.session;
-      descriptor.span = 1;
-      error = __sys_copy((void *) (base + FS_DESC_OFFSET + draft.lease.slot * FS_DESC_BYTES),
-                         &descriptor, sizeof(descriptor));
-    }
-    if (!error) {
-      for (i = 0; i < sizeof(draft); i++)
-        ((volatile u8 *) key)[i] = ((const u8 *) &draft)[i];
+    error = iostage(state, layer, work, view.file, ref.session, opcode, input, bytes, 0, key);
+    if (!error)
       *out = work;
-      return 0;
-    }
-    if (sysopabort(work, cache, &draft, &pin))
-      return -ERR_STATE;
   }
-  return sysfilerefunpin(&state->files, state->files.self, pin) ? -ERR_STATE : error;
+  return error;
 }
 
 isize
@@ -340,6 +354,59 @@ sysfileioresume(Fileimage *state, Opkey *key)
   if (error == SYSOP_ABANDONED)
     draining |= 1U << background.connection.index;
   return error;
+}
+
+isize
+sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
+{
+  Conncache *cache;
+  Connwork  *work;
+  Slotop    *op;
+  u64        file = 0, session, opcode;
+  u32        layer;
+  isize      error;
+  if (!state || !key || !key->owner || key->connection.index >= SYSCONN_COUNT ||
+      key->lease.span != 1 || bytes > FS_SLOT_BYTES)
+    return -ERR_INVALID;
+  layer = key->lease.slot / 2;
+  if (layer >= RCTX_LAYERS || state->contexts.contexts[layer].phase != RCTX_FREE)
+    return -ERR_STATE;
+  if (state->contexts.sequence == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  cache = sysfileimagecache(state);
+  work = &state->connections[key->connection.index];
+  error = sysopcheck(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->opcode != FS_READ && op->opcode != FS_WRITE)
+    return -ERR_INVALID;
+  error = sysoppoll(work, cache, key);
+  if (error)
+    return error;
+  if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT ||
+      !(op->flags & SYSOP_CANCEL_SENT) || op->words[2] || op->words[3] ||
+      (op->status == -ERR_CANCELLED
+           ? (op->words[0] || op->words[1])
+           : (op->status || (isize) op->words[0] != -EINTR || op->words[1] != key->lease.seq)))
+    return -ERR_STATE;
+  error = sysopfinished(work, cache, key);
+  if (error)
+    return error;
+  session = op->object;
+  opcode = op->opcode;
+  if (op->phase != SYSOP_ACKED) {
+    error = sysopsaved(work, cache, key);
+    if (!error)
+      error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  error = sysopfinish(work, cache, key, &file);
+  if (error)
+    return error;
+  key->lease.seq = 0;
+  return iostage(state, layer, work, file, session, opcode, NULL, bytes, 1, key);
 }
 
 isize

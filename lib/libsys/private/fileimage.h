@@ -44,6 +44,11 @@ isize sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32
 /* After interruption, check the original result before the cancellation
    deadline. SYSOP_ABANDONED consumes key and schedules background cleanup. */
 isize sysfileioresume(Fileimage *state, Opkey *key);
+/* After a restartable signal, replace a proved zero-effect operation with a
+   new draft using its File pin and original snapshot. Caught signals stay
+   blocked; bytes is the original length. On failure after retirement, the
+   key's sequence is zero and there is no remaining foreground operation. */
+isize sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes);
 /* Collect a submitted chunk without blocking. Keep signals masked and use
    the same private result storage and original byte limit across retries.
    Zero means the operation was released; inspect result for its outcome. */

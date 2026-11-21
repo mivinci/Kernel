@@ -271,6 +271,15 @@ serviceloop(const Bootview *boot, u32 interrupt)
             !__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
             gate.source == target.target && gate.words[0] == PIPETEST &&
             !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !wait.io.request);
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_WRITE &&
+          !ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1) &&
+          !ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST);
+    {
+      u64 flags;
+      Msg cancelled = {{(u64) -EINTR, request.words[2], 0, 0}};
+      CHECK(!ipc_rqcheck(request.request, &flags) && flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
+            !ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &cancelled));
+    }
   } else if (interrupt) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -356,6 +365,7 @@ interruptclient(void)
   Opkey                 draft = {0};
   Fileioresult          completed;
   u64                   mask, ignored;
+  u64                   originalseq, originalfile;
   u32                   slot, restart = 2;
   u8                    data[3] = {'p', 'q', 0xa5};
   CHECK(!sysfileimage(&image));
@@ -412,6 +422,28 @@ interruptclient(void)
         !ipc_call(work->state.call, &gate, CALL_CONTROL, &result) && !nanosleep(&pause, NULL) &&
         !work->state.operations[slot].phase && ipc_rqpoll(rpc, 0, &result) < 0 &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) && !ref.pins);
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        !sysfileiostage(image, 0, fds[1], FS_WRITE, data, 1, &draftpeer, &draft) &&
+        sysfileiowait(image, 0, &draft, mask, &restart) == -ERR_INTERRUPTED && restart == 1 &&
+        caught == 4 && sysfileiorestart(image, &draft, 1) == -ERR_WOULD_BLOCK);
+  originalseq = draft.lease.seq;
+  originalfile = work->state.operations[draft.lease.slot].file;
+  data[0] = 'x';
+  *(volatile u8 *) (work->state.map.address + FS_DATA_OFFSET + draft.lease.slot * FS_SLOT_BYTES) =
+      'y';
+  CHECK(dup2(fds[1], 2) == 2);
+  CHECK(dup2(fds[0], fds[1]) == fds[1] &&
+        !ipc_call(work->state.call, &gate, CALL_CONTROL, &result) &&
+        !sysfileiowait(image, 0, &draft, mask, &restart) && !sysfileiorestart(image, &draft, 1) &&
+        draft.lease.seq > originalseq &&
+        work->state.operations[draft.lease.slot].file == originalfile &&
+        !sysfileiowait(image, 0, &draft, mask, &restart) &&
+        sysfileiorestart(image, &draft, 1) == -ERR_STATE &&
+        !sysfileiofinish(image, &draft, NULL, 1, &completed) && !completed.native &&
+        !completed.business && completed.count == 1 && dup2(2, fds[1]) == fds[1] && !close(2) &&
+        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
+  transfer(image, work, fds[0], FS_READ, data, 1, 1, 0);
+  CHECK(data[0] == 'p');
   transfer(image, work, fds[1], FS_WRITE, data, 1, 1, 0);
   transfer(image, work, fds[0], FS_READ, (u8 *) 1, 1, 0, -ERR_FAULT);
   data[0] = 'p';
