@@ -852,3 +852,7 @@ stage249：`SA_SIGINFO` 使用同次快照的三参数原型。libc 将 USER 转
 stage250：`SIGCHLD` 的信号终止标志取自原生 status。libc 以该字段区分 CLD_EXITED、CLD_KILLED、CLD_DUMPED，并仅将退出码或信号号交给 `si_status`；收到 CLD_CONTINUED 时报告 SIGCONT。ARM64/RV64 的 sigconfig 以公开 `sigaction` 实际验证退出 31 与自发 SIGKILL，分别核对 handler 的 PID、UID、原因与状态，以及同一个孩子的 `waitpid` 结果。原自动收取与资源回收断言继续通过；CLD_STOPPED、CLD_CONTINUED 与 CLD_DUMPED 尚无本次公开递送证据。
 
 stage251：按 03 的等待规则实现 `SA_RESTART`。阻塞 wait 尚未收取结果而被中断时，仅为带 `SA_RESTART` 的实际递送帧保存内部选择器和选项；校验 sigreturn 后重新检查孩子，结果写回原调用现场。`waitpid(0)` 保存带代次的组标识，handler 换组不改选；改写返回 PC 跳过重启，fork 子帧不继承父的重启责任。ARM64/RV64 的 jobs 实测换组后连续两次中断仍收取原组孩子，以及 handler 先收取后原等待得到 ECHILD；原有已提交结果与 EINTR 用例同时通过。双架构 sigconfig/sigframe 和格式检查通过；没有增加 IPC 重启或 Rctx/Fix 前置。
+
+stage252：公开 `sigaction` 的 trampoline 在调用应用 handler 前执行 libsys 的 Rctx 前置。运行库可私下绑定当前镜像的预付 Rbank。前置短暂屏蔽可捕获信号，按活动帧深度从外到内处理被打断的层，每个 cookie 只处理一次。原生返回窗口、RPC 与创建结果沿已有 `sysctxsignal` 路径接管，随后恢复本次动作的实际掩码。原生阻塞 wait 的返回窗口保留给 sigreturn 重启后的最终结果。未绑定 Rbank 的镜像直接执行原信号路径。子 Fix 与正式 fork/文件前端的银行绑定仍待接。
+
+双架构 sigframe 在 GETID 第一条返回存储前递送 USR1，再在其公开 trampoline 首条指令前递送 USR2。内层 handler 已能看到固定的原调用结果，两层 handler 分别使用自己的 Rctx，原调用的 errno、FP 和最终结果通过恢复检查。双架构 runtime 将两处资源 OPEN 返回窗口改走正式 trampoline，验证原 RPC、创建预留和资源回复由原层接管后，handler 可以在自己的层另行 OPEN/CLOSE。该场景使用测试后端。

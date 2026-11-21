@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
 #include "private/syscall.h"
@@ -6,6 +7,7 @@
 #include "private/close.h"
 #include "private/fd.h"
 #include "private/contextipc.h"
+#include "private/sigentry.h"
 #include <abi/resource.h>
 
 #define ADDRESS  0x1600000UL
@@ -255,7 +257,7 @@ resourceopens(const Bootview *boot)
   filecreatetrace[5] = 1;
 }
 static void
-creatorhandler(u64 signum)
+creatorhandler(int signum)
 {
   Rctx        *outer = &contexts.contexts[0];
   const Opkey *mainkey = &outer->route.operation;
@@ -300,27 +302,13 @@ creatorhandler(u64 signum)
   closefile(id, 0);
   filecreatetrace[10]++;
 }
-static NORETURN void
-creatortrampoline(u64 signum, const Siginfo *info, void *trap, u64 function, u64 address, u64 flags)
-{
-  u64 mask, ignored;
-  CHECK(signum == SIGNAL_USR1 && !info->code && !flags && function == (u64) creatorhandler &&
-        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
-        !sysctxsignal(&contexts, work.state.self, active_key, trap, 0) &&
-        !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
-  creatorhandler(signum);
-  __sys_sigreturn((void *) address);
-}
 static void
 creatorsignals(void)
 {
-  Sigact action;
-  CHECK(!sysctxinit(&contexts, work.state.self));
-  zero(&action, sizeof(action));
-  action.kind = SIGNAL_HANDLER;
-  action.handler = (u64) creatorhandler;
-  action.trampoline = (u64) creatortrampoline;
-  CHECK(!__sys_sigaction(SIGNAL_USR1, &action, NULL));
+  struct sigaction action = {0};
+  CHECK(!sysctxinit(&contexts, work.state.self) && !sysctxsigbind(&contexts));
+  action.sa_handler = creatorhandler;
+  CHECK(!sigaction(SIGUSR1, &action, NULL));
   filecreatetrace[7] = (u64) (uintptr_t) __sys_ctxreturn_begin;
   filecreatetrace[8] = (u64) (uintptr_t) __sys_ctxresume;
 }

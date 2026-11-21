@@ -14,11 +14,13 @@
 - [02 内存](design/02-memory.md)：预算/页/Space/Mem/Mmap、W^X/guard、SHARED/Device、COW 承诺/克隆/写分离、完整整数/FP现场。可信 fork 快照/准备与回滚已接，原生 fork 准入、长操作检查点/发布和完整 exec 仍待接。
 - [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
 - [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
-- [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD/同步FAULT来源、原生sigsend与libc raise、普通等待中断、阻塞 waitpid 的 SA_RESTART、ttycreate/ttybind/getfg 已接。公开 sigaction 支持单参数与 SA_SIGINFO；Rctx/Fix 信号入口、kill、setfg/ttysignal、完整终端关联/挂断/孤儿策略仍待接。
+- [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD/同步FAULT来源、原生sigsend与libc raise、普通等待中断、阻塞 waitpid 的 SA_RESTART、ttycreate/ttybind/getfg 已接。公开 sigaction 支持单参数、SA_SIGINFO 和已绑定 Rbank 的 Rctx 前置；子 Fix 前置、kill、setfg/ttysignal、完整终端关联/挂断/孤儿策略仍待接。
 - [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx/快照/IO/关闭worker、参数捕获及目标Boot打包已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、完整exec路径/Fix尚未完成。
 - 用户态 tty 行规程、输出转换与 VMIN/VTIME 等有界核心已验，尚非默认包里的 tty 服务。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
 
 ## 最新完成点与证据
+
+- stage252：正式信号入口接管已绑定 Rbank 的原调用与 IPC 结果。双架构 sigframe 验证外层前置前即发生嵌套，runtime 验证资源 OPEN 的两处返回窗口，jobs 回归和 65 项上下文主机测试通过。子 Fix 与生产文件前端仍待接。
 
 - stage251：阻塞 `waitpid` 支持 `SA_RESTART`，沿原选择器与选项重新检查；双架构 jobs 实测 `waitpid(0)` 换组后连续两次中断仍收取原组孩子、handler 先收取后外层返回 ECHILD。双架构 sigconfig/sigframe 回归与格式通过。
 
@@ -183,7 +185,7 @@
 - 待确认：公开kill与原生仅存活Run规则存在僵尸语义冲突；建议普通选择器纳入未收取ENDED Life，授权后成功但不排队，快照上限从64 Run改256 Life，CONTROL保持存活规则。见11候选；未改内核或提供受限kill封装。
 - 已确认的token定点ABORT、Image统一序号及创建记录与清理运输的类型化衔接已接。生产token授权/撤销、准备观察与服务私有in-flight仍待接；不把三角色fixture当成真实VFS/后端服务，规则见10篇。
 - 块缓存、日志顺序与快照退休衔接已局部验收；10篇magic/CRC精确参数候选已提问待确认，全部整数端序、inode flags及目录type等仍须收口；再接盘上编码、逻辑事务/分类、恢复及blk运输，不以内部顺序/门禁代替持久证明。
-- 创建/CLOSE、资源ABORT、map/复用失败、bootstrap/创建者终结及普通读写槽收尾已局部接通；继续File/槽生命周期观察与整体终结协调、待定VA/管理入口，再接完整装载/公开前端/Fix。公开信号 trampoline 的 Rctx/Fix 前置待接；kill待上文确认，外部总线/FPE/SP对齐仍仅host分类检查。
+- 创建/CLOSE、资源ABORT、map/复用失败、bootstrap/创建者终结及普通读写槽收尾已局部接通；继续File/槽生命周期观察与整体终结协调、待定VA/管理入口，再接完整装载/公开前端/Fix。公开信号 trampoline 的子 Fix 前置待接；kill待上文确认，外部总线/FPE/SP对齐仍仅host分类检查。
 - 继续装载/公开信号前端、服务私有in-flight/生命周期观察，再接VA分配、Fix、标准fd API及生产tty/fs/blk。保留完整fork/exec、管道/作业控制与sh/net/最终GUI目标，不把当前传输适配当作已完成服务。
 - DMA设备实例代次域/固定解除方向已确认，具体权限/调用ABI仍须冻结；设备未停止前不得回收缓冲。图形线协议仍按13候选状态处理。
 

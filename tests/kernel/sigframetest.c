@@ -21,6 +21,7 @@ static Handle    forcedpid;
 static u32       forcedarmed, forcedcount;
 static Handle    contextpid;
 static u32       contextarmed, contextcount;
+static u32       preludearmed, preludecount;
 static u32       forkarmed;
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
@@ -74,19 +75,30 @@ runtimeframeenter(Hctx *context)
   Siginfo  info;
   u64      trace[32];
   u32      i;
-  if (!table || (!contextarmed && !forkarmed))
+  if (!table || (!contextarmed && !forkarmed && !preludearmed))
     return;
-  if (table->owner == contextpid ? !contextarmed : !forkarmed)
+  if (table->owner == contextpid ? !(contextarmed || preludearmed) : !forkarmed)
     return;
   REQUIRE(!procinfo(table->owner, &process) &&
           !spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
-  if (trace[0] != 1 || context->tf.pc != trace[16])
+  if (trace[0] != 1)
+    return;
+  if (preludearmed && table->owner == contextpid && context->tf.pc == trace[22]) {
+    preludearmed = 0;
+    preludecount++;
+    info = (Siginfo){0};
+    info.signum = SIGNAL_USR2;
+    REQUIRE(!procsigqueue(table->owner, &info));
+    procuserreturn(context);
+  }
+  if (context->tf.pc != trace[16])
     return;
   if (trace[1] >= 13 && table->owner != contextpid)
     forkarmed = 0;
   else if ((trace[1] == 12 || trace[1] == 14) && table->owner == contextpid) {
     contextarmed = 0;
     contextcount++;
+    preludearmed = trace[1] == 12;
   } else
     return;
   for (i = 0; i < sizeof(info); i++)
@@ -295,8 +307,8 @@ sigframetest(void)
       if (mode == 11)
         REQUIRE(!forcedarmed && forcedcount == 1 && trace[7] > trace[6]);
       if (mode == 12)
-        REQUIRE(!contextarmed && contextcount == 1 && trace[18] == 1 && trace[19] == 1 &&
-                trace[20] > trace[21]);
+        REQUIRE(!contextarmed && contextcount == 1 && !preludearmed && preludecount == 1 &&
+                trace[18] == 1 && trace[19] == 1 && trace[20] > trace[21]);
     } else if (mode == 8) {
       REQUIRE(life.reason == LIFE_SIGNAL && life.code == SIGNAL_USR1 && trace[12] == 1);
     } else {
@@ -366,6 +378,8 @@ sigframetest(void)
   puthex(forcedcount);
   putstr(" rctx_window=");
   puthex(contextcount);
+  putstr(" nested_prelude=");
+  puthex(preludecount);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

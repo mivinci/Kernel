@@ -7,6 +7,7 @@
 #include "private/start.h"
 #include "private/context.h"
 #include "private/contextipc.h"
+#include "private/sigentry.h"
 #include "private/forkstate.h"
 #include "private/fix.h"
 #include "private/fork.h"
@@ -266,14 +267,16 @@ forceduser(void)
   return 42;
 }
 static void
-contexthandler(u64 signum)
+contexthandler(int signum)
 {
   Rkey   nested;
   Sysret result;
   isize  status;
   REQUIRE(signum == SIGNAL_USR1 && runtime_contexts.contexts[0].phase == RCTX_DONE &&
               runtime_contexts.contexts[0].active == 1 &&
-              runtime_contexts.contexts[0].result.values[0] == (u64) context_self.pid,
+              runtime_contexts.contexts[0].result.values[0] == (u64) context_self.pid &&
+              frame_trace[18] == 1 && errno == EDOM &&
+              sysctxfinish(&runtime_contexts, context_self, runtime_key) == -ERR_BUSY,
           213);
   REQUIRE(!sysctxprepare(&runtime_contexts, context_self, 1, SYS_GETPG, NULL, &nested) &&
               !sysctxinvoke(&runtime_contexts, context_self, nested) &&
@@ -290,46 +293,50 @@ contexthandler(u64 signum)
   frame_trace[12]++;
   errno = ENOENT;
 }
-static NORETURN void
-contexttrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address,
-                  u64 flags)
+static void
+contextnested(int signum)
 {
-  u64 mask, ignored;
-  int saved_errno = errno;
-  REQUIRE(signum == SIGNAL_USR1 && info->signum == signum && !info->code &&
-              function == (u64) contexthandler && !flags &&
-              runtime_contexts.contexts[0].phase == RCTX_WAITING,
+  Rkey     nested;
+  Sysret   result;
+  isize    status;
+  sigset_t mask;
+  REQUIRE(signum == SIGUSR2 && runtime_contexts.contexts[0].phase == RCTX_DONE &&
+              runtime_contexts.contexts[0].active == 1 &&
+              runtime_contexts.contexts[0].result.values[0] == (u64) context_self.pid &&
+              errno == EDOM && !frame_trace[12] && !frame_trace[18],
           216);
-  REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
-              sysctxcapture(&runtime_contexts, context_self, runtime_key, context) == 1 &&
-              runtime_contexts.contexts[0].phase == RCTX_DONE &&
-              !runtime_contexts.contexts[0].status &&
-              sysctxfinish(&runtime_contexts, context_self, runtime_key) == -ERR_BUSY,
+  REQUIRE(!sigprocmask(SIG_BLOCK, NULL, &mask) &&
+              mask == (((u64) 1 << (SIGUSR1 - 1)) | ((u64) 1 << (SIGUSR2 - 1))) &&
+              !sysctxprepare(&runtime_contexts, context_self, 2, SYS_GETID, NULL, &nested) &&
+              !sysctxinvoke(&runtime_contexts, context_self, nested) &&
+              !sysctxresult(&runtime_contexts, context_self, nested, &status, &result) && !status &&
+              result.values[0] == (u64) context_self.pid &&
+              !sysctxfinish(&runtime_contexts, context_self, nested),
           217);
   frame_trace[18] = 1;
-  contexthandler(signum);
-  errno = saved_errno;
-  REQUIRE(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored), 218);
-  __sys_sigreturn((void *) address);
+  errno = EINVAL;
 }
 static int
 contextuser(void)
 {
-  Handle parent;
-  Sigact action;
-  Sysret result;
-  isize  status;
-  u64    mask, ignored;
+  struct sigaction action = {0};
+  Handle           parent;
+  Sigact           native;
+  Sysret           result;
+  isize            status;
+  u64              mask, ignored;
   REQUIRE(!__sys_getid(&context_self.pid, &context_self.image, &parent) && parent == 1 &&
-              !sysctxinit(&runtime_contexts, context_self),
+              !sysctxinit(&runtime_contexts, context_self) && !sysctxsigbind(&runtime_contexts),
           219);
-  action.kind = SIGNAL_HANDLER;
-  action.handler = (u64) contexthandler;
-  action.trampoline = (u64) contexttrampoline;
-  action.mask = action.flags = action.reserved = 0;
-  REQUIRE(!__sys_sigaction(SIGNAL_USR1, &action, NULL) && frame_fp(1) == 0, 220);
+  action.sa_handler = contexthandler;
+  REQUIRE(!sigaction(SIGUSR1, &action, NULL), 220);
+  action.sa_handler = contextnested;
+  REQUIRE(!sigaction(SIGUSR2, &action, NULL) && !__sys_sigaction(SIGNAL_USR1, NULL, &native) &&
+              frame_fp(1) == 0,
+          220);
   frame_trace[16] = (u64) (uintptr_t) __sys_ctxreturn_begin;
   frame_trace[17] = (u64) (uintptr_t) __sys_ctxresume;
+  frame_trace[22] = native.trampoline;
   REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
               !sysctxprepare(&runtime_contexts, context_self, 0, SYS_GETID, NULL, &runtime_key) &&
               !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored),
