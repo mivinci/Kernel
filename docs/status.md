@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage329（2026-11-22）：私有 libsys 装载入口接通原生 exec。RV64/ARM64 QEMU `elf` 验证读取故障撤销后可重试，进入同 PID 的新 ELF，页账守恒；15 项主机测试及格式通过。FS 稳定装载会话、fd 交接和公开 `execve` 仍待接。
 - stage328：RV64/ARM64 QEMU `sigframe` 验证原生 exec 成功后可再次准备、撤销，旧表回收及页账守恒；第二次成功提交仍待验收。
 - stage327（2026-11-22）：原生 `execcommit` 已进入同 PID 新镜像。RV64/ARM64 QEMU `sigframe`、`prep`、59 项主机回归与格式通过；公开 `execve` 和 fd 交接仍待接。
 - stage326（2026-11-22）：可信 exec IPC 移交隔离新旧收件箱，已接收的旧出站请求仍等服务收尾。RV64/ARM64 QEMU `requests`、`ipc`、46 项主机回归和格式检查通过；尚未接入原生提交。

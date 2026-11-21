@@ -497,6 +497,25 @@ main(int argc, char **argv)
   REQUIRE(!bootcheck(libcboot(), libcboot()->bytes, &view), 160);
   REQUIRE(argv && !argv[argc] && environ, 161);
   REQUIRE(!getenv("") && !getenv("X=") && !getenv("MISSING"), 162);
+  if (mode && !strcmp(mode, "4")) {
+    Queryrec entries[2];
+    Handle   pid, parent, space, allocator;
+    u64      image, count, next;
+    REQUIRE(argc == 3 && !strcmp(argv[0], "runtime") && !strcmp(argv[1], "alpha") &&
+                !strcmp(argv[2], "beta") && getenv("X") && !strcmp(getenv("X"), "value"),
+            268);
+    REQUIRE(!__sys_getid(&pid, &image, &parent) && pid == getpid() && pid > 1 && parent == 1 &&
+                image == 3,
+            269);
+    space = bootresource(&view, BOOT_SELF_SPACE);
+    allocator = bootresource(&view, BOOT_SELF_ALLOC);
+    REQUIRE(space > 0 && allocator > 0 && !bootresource(&view, BOOT_CREATE) &&
+                !__sys_query(0, QUERY_RESOURCE, 0, entries, 2, &count, &next) && count == 2 &&
+                entries[0].image == image && entries[1].image == image &&
+                (Handle) entries[0].data[0] == space && (Handle) entries[1].data[0] == allocator,
+            270);
+    _exit(42);
+  }
   if (runtime_trace[4] == 1) {
     REQUIRE(argc == 3 && !strcmp(argv[0], "runtime") && !strcmp(argv[1], "alpha") &&
                 !strcmp(argv[2], "beta") && !strcmp(getenv("X"), "value"),

@@ -51,6 +51,11 @@ isize elfcheck(const Elfsource *source, u64 max_pages, Elfplan *out);
 isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
               Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
+/* Same immutable input and scratch contract as elfload. The caller supplies a
+   clean work record with its current SELF_SPACE and private scratch window. */
+isize sysexecimage(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bytes,
+                   u64 reserve, Elfwork *work);
+isize sysexeccancel(Elfwork *work);
 isize sysfixload(Elfwork *work, u64 address, const void *data, u64 bytes);
 /* Finish a fresh native fork preparation using a packed Fix. Returns the
    published PID or negative status. Consumes view on publication or confirmed

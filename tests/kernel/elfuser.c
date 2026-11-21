@@ -47,13 +47,14 @@ readpayload(void *context, u64 offset, void *destination, u64 bytes)
   return 0;
 }
 static void
-bootpacket(Handle fdcall)
+bootpacket(Handle fdcall, int replacing)
 {
   const char *argv[4], *envp[3];
   Argsnap     snapshot;
   u64         mask, ignored;
   argument_word[0] = 'a';
   environment_word[0] = 'M';
+  environment_word[5] = replacing ? '4' : '1';
   argv[0] = "runtime";
   argv[1] = argument_word;
   argv[2] = "beta";
@@ -70,7 +71,7 @@ bootpacket(Handle fdcall)
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = offsetof(Packet, arguments);
-  packet.header.resource_count = 3;
+  packet.header.resource_count = replacing ? 2 : 3;
   packet.header.resources_off = offsetof(Packet, resources);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
@@ -105,7 +106,7 @@ main(int argc, char **argv)
   Allocarg        alloc;
   Handle          create, space, allocator, pid, control, collected, occupied = 0;
   u64             written, next, kind, code, sequence;
-  u32             ids[4], scenario, count = 0;
+  u32             ids[4], scenario, count = 0, retries = 0;
   isize           error;
   int             status;
   REQUIRE(argc == 0 && argv && !argv[0] && getpid() > 1 && getppid() == 1, 181);
@@ -155,7 +156,7 @@ main(int argc, char **argv)
                 written == 3 && !next,
             187);
     elf_trace[5]++;
-    bootpacket(scenario == 5 ? (Handle) resources[0].data[0] : 0);
+    bootpacket(scenario == 5 ? (Handle) resources[0].data[0] : 0, 0);
     if (scenario == 1) {
       count = 0;
       while (!(error = __sys_alloc(allocator, &alloc, &pressure[count]))) {
@@ -235,6 +236,25 @@ main(int argc, char **argv)
   reader.fail_after = ~(u64) 0;
   REQUIRE(elfcheck(&source, 64, &plan) == -ERR_INVALID && !plan.entry && !plan.pages, 206);
   elf_trace[3] = 1;
+  reader.malformed = 0;
+  REQUIRE(!elfcheck(&source, 64, &plan), 230);
+  bootpacket(0, 1);
+  memset(&work, 0, sizeof(work));
+  work.parent_space = space;
+  work.scratch = 0x2000000;
+  work.scratch_bytes = BOOT_MAX_BYTES;
+  reader.fail_after = plan.segments[0].offset + PAGE_SIZE;
+  REQUIRE(sysexecimage(&source, &plan, &packet, packet.header.bytes, 0, &work) == -ERR_FAULT &&
+              !work.view && !work.memory && !work.mapped && work.failure == -ERR_FAULT,
+          231);
+  reader.fail_after = ~(u64) 0;
   elf_trace[0] = 99;
-  return 42;
+  REQUIRE(!__sys_yield(), 232);
+  do {
+    error = sysexecimage(&source, &plan, &packet, packet.header.bytes, 0, &work);
+    if (error == -ERR_BUSY)
+      REQUIRE(++retries < 64 && !__sys_yield(), 232);
+  } while (error == -ERR_BUSY);
+  elf_trace[15] = (u64) error;
+  return 233;
 }

@@ -1655,7 +1655,7 @@ def exercise(args, run_dir, record):
                 if args.case == "elf":
                     checks = [fields(x) for x in serial.read_text().splitlines() if x.startswith("ELFCHECK ")]
                     if (len(checks) != 1 or not 8 <= checks[0].get("turns",0) < 256 or checks[0].get("pressure",0) <= 1 or
-                            checks[0].get("boot_args") != 6 or
+                            checks[0].get("boot_args") != 7 or
                             {k:checks[0].get(k) for k in ("children","rollback","invalid","slots","charged","allocated")} !=
                             {"children":2,"rollback":4,"invalid":1,"slots":3,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("user ELF preparation/rollback/slot conservation mismatch")

@@ -866,3 +866,9 @@ stage159把10篇已有的Createop捕获接入共用sysctxsignal前置。sysctxcr
 新增8项host覆盖类型化池绑定/OPEN接收同意、原结果只捕获一次、未排空延后且不ACK、坏回复保留、资源CALL/token/8字节ref捕获、handler独立层/页、异步提交信号与取消策略，以及错误池/输出别名拒绝；上下文专项合计39项。原三角色filecreateuser在RV64/ARM64均改用同一Rctx创建运输：测试内核只在客户端两处真实原生返回窗口各注入一次USR1，trampoline调用共用前置后handler用信号层1/页2执行另一份OPEN与精确CLOSE。第一次handler见主请求WAITING和原预留，第二次已见稳定的新引用；两次都不能finish外层active Rctx，handler自己的关闭不改变主层引用。新钩子只在runtime测试内核链接，普通内核及生产包不带该wrapper；并非公开应用信号ABI或生产VFS实现。
 
 含原资源OPEN的首次ATTACH/复用/token撤销，三角色fixture每架构11个创建请求产生11份引用，9次CLOSE及2份token撤销归零，重复ABORT不多关引用。1055项完整host、格式、两架构各runtime/libsys/sigframe/normal共8次QEMU及8份journal通过。目标布局、SDK源码/头/库、实际链接载荷和无libc依赖均已核对，init/serial与stage155逐字节相同，clangd切回RV64/runtime。证据build/host/stage159-creator-prelude/的unit、focused、runtime-riscv-initial与其他场景-reviewed日志、目标layout对象、verify.py和evidence.json。初次专项误把信号层1页号写成4，按既定2..3页修正测试后完整复验，原失败日志保留；未调整页预算或实现。未重跑195矩阵（最近stage154），无CI、板端或性能结果；生产服务、生命周期恢复、完整sh/net/GUI仍待继续。
+
+### 私有 ELF 装载接入原生 exec（2026-11-22）
+
+stage329：`sysexecimage` 对已有稳定 ELF 源、已验证的装载计划及已打包的 Boot，串接原生 `execprep`、`elfload` 和 `execcommit`。装载或提交失败时解除临时映射、释放临时 MEM 并撤销本次准备；未清完的本地责任留在原 `Elfwork` 供 `sysexeccancel` 重试。提交成功从新 ELF 的 `_start` 进入用户态。
+
+RV64、ARM64 QEMU `elf` 保留原有六项子进程装载场景，并注入一次 exec 装载读取故障。旧镜像收到 `ERR_FAULT` 并清理后重试，新镜像验证 argv/env、构造函数、SELF 句柄与同一 PID；内核核对 Life 不变、新根、镜像号及退出后的页账守恒。15 项 ELF 主机回归及格式检查通过。此点仍使用内嵌稳定源；FS 路径解析和装载会话、服务端 fd 交接及公开 `execve` 未接。

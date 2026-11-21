@@ -31,6 +31,7 @@ elftest(void)
   } boot;
   Pgstat     before, after;
   Life       life;
+  Procinfo   replaced;
   Liferesult result;
   u64        trace[16];
   u32        i, have[6], turns = 0;
@@ -67,11 +68,12 @@ elftest(void)
   REQUIRE(!procpublish(pid));
   for (;;) {
     REQUIRE(!procrunone() && ++turns < 256);
-    REQUIRE(!spaceread(parent.space, elf_trace_address, trace, sizeof(trace)));
+    REQUIRE(!lifestat(parent.life, &life) && !procinfo(pid, &replaced));
+    if (replaced.image == parent.image)
+      REQUIRE(!spaceread(parent.space, elf_trace_address, trace, sizeof(trace)));
     for (i = 0; i < 6; i++)
       if (trace[8 + i] && !have[i] && !procinfo((Handle) trace[8 + i], &children[i]))
         have[i] = 1;
-    REQUIRE(!lifestat(parent.life, &life));
     if (life.state == LIFE_ENDED) {
       if (life.reason != LIFE_EXIT || life.code != 42) {
         putstr("ELFRESULT stage=");
@@ -87,10 +89,13 @@ elftest(void)
       }
       break;
     }
-    REQUIRE(procwork(8) >= 0 && prepwork(8) >= 0);
+    REQUIRE(procwork(trace[0] == 99 ? 32 : 8) >= 0 && prepwork(8) >= 0);
   }
   REQUIRE(trace[0] == 99 && trace[1] == 2 && trace[2] == 4 && trace[3] == 1 && trace[4] > 1 &&
-          trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 6);
+          trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 7);
+  REQUIRE(life.imagegen == 3 && replaced.image == 3 && replaced.space.index != parent.space.index &&
+          replaced.life.generation == parent.life.generation &&
+          replaced.life.index == parent.life.index);
   while ((error = procclean(pid)) > 0) {
   }
   REQUIRE(!error && !lifecollect(parent.life, 1, &result) && result.code == 42);
