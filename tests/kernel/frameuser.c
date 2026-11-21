@@ -351,6 +351,19 @@ contextuser(void)
   frame_trace[0] = 99;
   return 42;
 }
+static Forkret forkcapture;
+static NORETURN void
+forktrampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
+{
+  UNUSED(info);
+  UNUSED(function);
+  UNUSED(flags);
+  REQUIRE(signum == SIGNAL_USR1 && !forkcapture.pid &&
+              sysforkdecode(context, (u64) __sys_forkreturn_begin, (u64) __sys_forkreturn_end,
+                            &forkcapture) == 1,
+          242);
+  __sys_sigreturn((void *) address);
+}
 static int
 forkprepuser(void)
 {
@@ -363,6 +376,7 @@ forkprepuser(void)
   Handle    source, parent, published;
   u64       image;
   Elfwork   work;
+  Sigact    action;
   struct
   {
     Fix header;
@@ -389,6 +403,13 @@ forkprepuser(void)
   REQUIRE(__sys_forkabort((Handle) args[0]) == -ERR_STATE, 231);
   REQUIRE(!__sys_enter(SYS_DESTROY, args, &result), 232);
   REQUIRE(!__sys_getid(&source, &image, &parent), 241);
+  action.kind = SIGNAL_HANDLER;
+  action.handler = (u64) forktrampoline;
+  action.trampoline = (u64) forktrampoline;
+  action.mask = action.flags = action.reserved = 0;
+  REQUIRE(!__sys_sigaction(SIGNAL_USR1, &action, NULL), 243);
+  frame_trace[16] = (u64) __sys_forkreturn_begin;
+  frame_trace[0] = 1;
   REQUIRE(!__sys_forkprep(authority, 0, &forked), 233);
   if (!forked.construct) {
     Handle  self, ppid;
@@ -397,7 +418,8 @@ forkprepuser(void)
     REQUIRE(!__sys_getid(&self, &childimage, &ppid) && forked.pid == self &&
                 (u64) forked.fix == address && ppid == source &&
                 !sysfixview(forked.fix, 88, source, image, self, &view) &&
-                view.contexts_limit == 24,
+                view.contexts_limit == 24 && forkcapture.pid == self &&
+                forkcapture.fix == forked.fix && !forkcapture.construct,
             234);
     return 43;
   }
@@ -429,8 +451,11 @@ forkprepuser(void)
     REQUIRE(status == -ERR_REVOKED || status == -ERR_BAD_HANDLE, 239);
   }
   args[0] = child;
-  REQUIRE(!__sys_enter(SYS_WAIT, args, &result) && (Handle) result.values[0] == child &&
-              result.values[1] == WAIT_EXITED && result.values[2] == 43,
+  REQUIRE(!__sys_enter(SYS_WAIT, args, &result), 240);
+  frame_trace[20] = result.values[1];
+  frame_trace[21] = result.values[2];
+  REQUIRE((Handle) result.values[0] == child && result.values[1] == WAIT_EXITED &&
+              result.values[2] == 43,
           240);
   frame_trace[0] = 99;
   return 42;

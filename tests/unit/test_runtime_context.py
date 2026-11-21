@@ -71,8 +71,8 @@ class RuntimeContextTests(unittest.TestCase):
     def tearDownClass(cls):cls.temp.cleanup()
 
     def test_fork_decoder_reads_only_successful_child_returns_inside_window(self):
-        begin=0x10000
         for arch,kind,lib in self.libs:
+            begin=0x10002 if arch=='riscv' else 0x10000
             frame=frames.Context(kind)
             start=10 if arch=='riscv' else 0
             end=begin+(12 if arch=='riscv' else 8)

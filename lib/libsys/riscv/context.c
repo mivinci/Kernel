@@ -6,9 +6,9 @@ isize
 sysforkdecode(const void *raw, u64 begin, u64 end, Forkret *out)
 {
   const Trapframe *trap = raw;
-  if (!trap || !out || begin >= end || (begin | end) & 3)
+  if (!trap || !out || begin >= end || (begin & 1) || ((end - begin) & 3))
     return -ERR_INVALID;
-  if (trap->pc < begin || trap->pc >= end || trap->pc & 3 || trap->x[10] || trap->x[11])
+  if (trap->pc < begin || trap->pc >= end || ((trap->pc - begin) & 3) || trap->x[10] || trap->x[11])
     return 0;
   out->construct = 0;
   out->pid = (Handle) trap->x[12];

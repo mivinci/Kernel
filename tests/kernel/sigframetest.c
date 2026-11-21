@@ -21,6 +21,7 @@ static Handle    forcedpid;
 static u32       forcedarmed, forcedcount;
 static Handle    contextpid;
 static u32       contextarmed, contextcount;
+static u32       forkarmed;
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -73,18 +74,25 @@ runtimeframeenter(Hctx *context)
   Siginfo  info;
   u64      trace[32];
   u32      i;
-  if (!contextarmed || !table || table->owner != contextpid)
+  if (!table || (!contextarmed && !forkarmed))
     return;
-  REQUIRE(!procinfo(contextpid, &process) &&
+  if (table->owner == contextpid ? !contextarmed : !forkarmed)
+    return;
+  REQUIRE(!procinfo(table->owner, &process) &&
           !spaceread(process.space, frame_trace_address, trace, sizeof(trace)));
-  if (trace[0] != 1 || trace[1] != 12 || context->tf.pc != trace[16])
+  if (trace[0] != 1 || context->tf.pc != trace[16])
     return;
-  contextarmed = 0;
-  contextcount++;
+  if (trace[1] == 13 && table->owner != contextpid)
+    forkarmed = 0;
+  else if (trace[1] == 12 && table->owner == contextpid) {
+    contextarmed = 0;
+    contextcount++;
+  } else
+    return;
   for (i = 0; i < sizeof(info); i++)
     ((u8 *) &info)[i] = 0;
   info.signum = SIGNAL_USR1;
-  REQUIRE(!procsigqueue(contextpid, &info));
+  REQUIRE(!procsigqueue(table->owner, &info));
   procuserreturn(context);
 }
 void
@@ -170,6 +178,10 @@ sigframetest(void)
       contextpid = pid;
       contextarmed = 1;
     }
+    if (mode == 13) {
+      contextpid = pid;
+      forkarmed = 1;
+    }
     if (!mode) {
       /* Freeze a published but not yet dispatched process. This does not relax
          native configure/publish validation or claim a fork-stack ABI. */
@@ -184,6 +196,12 @@ sigframetest(void)
         puthex(mode);
         putstr(" code=");
         puthex(trace[31]);
+        if (mode == 13) {
+          putstr(" child_kind=");
+          puthex(trace[20]);
+          putstr(" child_code=");
+          puthex(trace[21]);
+        }
         putstr("\n");
       }
       REQUIRE(!trace[31]);
@@ -221,7 +239,7 @@ sigframetest(void)
     puthex(life.code);
     putstr("\n");
     if (mode == 13) {
-      REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
+      REQUIRE(!forkarmed && life.reason == LIFE_EXIT && life.code == 42 && trace[0] == 99);
     } else if (mode == 0 || mode == 1 || mode == 7 || mode == 9 || mode == 11 || mode == 12) {
       REQUIRE(life.reason == LIFE_EXIT && life.code == 42 && (mode == 7 || trace[0] == 99));
       REQUIRE(trace[12] == (mode == 1 || mode == 9 || mode == 11 ? 2U : 1U));
