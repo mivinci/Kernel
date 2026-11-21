@@ -174,6 +174,37 @@ class ContextSignalTests(unittest.TestCase):
             self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),-6)
             self.assertEqual((bytes(self.bank),bytes(self.work),bytes(self.cache)),before)
 
+    def test_completed_io_business_failure_survives_fork_without_becoming_eintr(self):
+        for opcode in (4,5):
+            self.setUp()
+            operation,key=self.complete();op=self.op(operation)
+            op.opcode=opcode;op.words[0]=C.c_uint64(-5).value;op.words[2]=op.words[3]=0
+            self.lib.testpayload(90,0,1)
+            before=bytes(self.bank)
+            self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,0),-11)
+            self.assertEqual(bytes(self.bank),before)
+            self.lib.testpayload(90,0,0)
+            self.assertEqual(self.lib.sysctxsnapshot(self.b,self.self,key,0,0),0)
+            records=(bytes(self.work),bytes(self.cache))
+            child=Peer(pid(3),20);layers=(C.c_uint64*6)(key.sequence,2,0,0,0,0)
+            self.assertEqual(self.lib.sysctxfixwait(self.b,self.self,child,layers),0)
+            reply=bootstrap.Message()
+            self.assertEqual(self.lib.sysctxforkreply(self.b,child,key,C.byref(reply)),1)
+            self.assertEqual((C.c_int64(reply.words[0]).value,list(reply.words[1:])),(-5,[operation.lease.seq,0,0]))
+            self.assertEqual(self.lib.sysctxfixwait(self.b,child,Peer(pid(4),21),layers),0)
+            self.assertEqual(self.lib.sysctxforkreply(self.b,Peer(pid(4),21),key,C.byref(reply)),1)
+            self.assertEqual(C.c_int64(reply.words[0]).value,-5)
+            self.assertEqual((bytes(self.work),bytes(self.cache)),records)
+            self.assertEqual(self.lib.testcopies(),0)
+
+    def test_error_with_progress_or_positive_status_cannot_be_saved_as_io_failure(self):
+        operation,key=self.complete();op=self.op(operation);op.words[2]=op.words[3]=0
+        for status,value,bytes_ in [(-5,1,0),(-5,0,1),(5,0,0)]:
+            op.words[0]=C.c_uint64(status).value;op.words[2]=value;op.words[3]=bytes_
+            before=(bytes(self.bank),bytes(self.work),bytes(self.cache))
+            self.assertLess(self.lib.sysctxsnapshot(self.b,self.self,key,0,0),0)
+            self.assertEqual((bytes(self.bank),bytes(self.work),bytes(self.cache)),before)
+
     def test_raw_route_has_no_posix_cancellation_policy(self):
         operation, key = self.route(interruptible=False)
         self.returned(key, message=bootstrap.Message(request=self.rpc))

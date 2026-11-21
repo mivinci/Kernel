@@ -16,6 +16,7 @@ isize sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child,
    to parent transport. Active invocation must unwind before finish. */
 isize sysctxforkresult(Rbank *bank, Connpeer self, Rkey key, isize *status);
 /* Completed ordinary READ/WRITE with pre-fork snapshot/finish proof.
+   Negative business replies require zero value/bytes and a zero-byte proof.
    Returns 1 and borrowed value-only reply, 0 for other routes. Snapshot view
    remains valid until finish. Never resumes a parent Op or repeats READ. */
 isize sysctxforkreply(Rbank *bank, Connpeer self, Rkey key, Ipcmsg *out);

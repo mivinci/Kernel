@@ -40,6 +40,18 @@ forkfixed(Rctx *context)
   return 0;
 }
 static isize
+ioresult(u64 opcode, const u64 words[4], u64 bytes)
+{
+  if ((opcode != FS_READ && opcode != FS_WRITE) || !words[1] || words[3] != bytes ||
+      (isize) words[0] > 0)
+    return -ERR_STATE;
+  if ((isize) words[0] < 0)
+    return words[2] || words[3] ? -ERR_STATE : 0;
+  if (opcode == FS_READ)
+    return words[2] == words[3] && words[3] <= FS_SLOT_BYTES ? 0 : -ERR_STATE;
+  return words[3] || words[2] > FS_SLOT_BYTES ? -ERR_STATE : 0;
+}
+static isize
 savedcheck(Rctx *context)
 {
   Rroute        expected;
@@ -50,12 +62,9 @@ savedcheck(Rctx *context)
   for (i = 0; i < sizeof(message); i++)
     ((u8 *) &message)[i] = ((const u8 *) &context->result)[i];
   if (context->phase != RCTX_CLEANING || context->status ||
-      (context->number != FS_READ && context->number != FS_WRITE) ||
       context->route.snapshot_bytes > RCTX_SNAPSHOT_BYTES - base || reply->kind || reply->source ||
-      reply->request || reply->image || reply->words[0] || !reply->words[1] ||
-      reply->words[3] != context->route.snapshot_bytes ||
-      (context->number == FS_READ ? reply->words[2] != reply->words[3]
-                                  : reply->words[3] || reply->words[2] > FS_SLOT_BYTES))
+      reply->request || reply->image ||
+      ioresult(context->number, reply->words, context->route.snapshot_bytes))
     return -ERR_STATE;
   clearroute(&expected);
   expected.kind = RCTX_ROUTE_SAVED;
@@ -90,11 +99,9 @@ forkcomplete(Rctx *context, Connpeer parent)
   op = &route->work->state.operations[route->operation.lease.slot];
   if (op->phase != SYSOP_RESULT || op->status ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE) || op->kind != IPC_NONE || op->resource ||
-      op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED) || op->words[0] ||
+      op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED) ||
       op->words[1] != route->operation.lease.seq ||
-      (op->opcode == FS_READ ? op->words[2] != op->words[3]
-                             : op->words[3] || op->words[2] > FS_SLOT_BYTES) ||
-      op->words[3] != route->snapshot_bytes ||
+      ioresult(op->opcode, op->words, route->snapshot_bytes) ||
       op->words[3] > (u64) route->operation.lease.span * FS_SLOT_BYTES || op->rpc != route->rpc ||
       (u64) op->rpc != context->args[0])
     return -ERR_STATE;
@@ -755,8 +762,20 @@ sysctxsnapshot(Rbank *bank, Connpeer self, Rkey key, u64 offset, u64 bytes)
   base = (context->input_bytes + RCTX_INPUT_ALIGN - 1) & ~((u64) RCTX_INPUT_ALIGN - 1);
   if (bytes > RCTX_SNAPSHOT_BYTES - base)
     return -ERR_CAPACITY;
-  error = sysopcopy(context->route.work, context->route.cache, &context->route.operation, offset,
-                    bytes, bank->snapshots[key.layer] + base);
+  error = sysopcheck(context->route.work, context->route.cache, &context->route.operation);
+  if (error)
+    return error;
+  {
+    Slotop *op = &context->route.work->state.operations[context->route.operation.lease.slot];
+    if (!offset && !bytes && !op->status && op->kind == IPC_NONE && !op->resource &&
+        !(op->flags & (SYSOP_BAD_RESULT | SYSOP_CREATOR | SYSOP_APP_ENDED)) &&
+        (isize) op->words[0] < 0 && op->words[1] == context->route.operation.lease.seq &&
+        !ioresult(op->opcode, op->words, 0))
+      error = sysopfinished(context->route.work, context->route.cache, &context->route.operation);
+    else
+      error = sysopcopy(context->route.work, context->route.cache, &context->route.operation,
+                        offset, bytes, bank->snapshots[key.layer] + base);
+  }
   if (error)
     return error;
   context->route.snapshot_offset = offset;

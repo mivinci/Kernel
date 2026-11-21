@@ -406,6 +406,10 @@ stage226：双架构 libsys 增加真实 WRITE 完成后的 handler fork。客�
 
 ARM64/RV64 libsys、17 项上下文信号主机测试及格式通过；日志 `/private/tmp/kernel-stage226-{arm64-final,riscv-final,context,fmt}.log`。测试调用私有原生 fork 与本地修复，不代表生产 File 子引用、其他创建类完成结果或公开 fork 已交付；未跑完整主机/场景矩阵、CI 或板端。
 
+stage227：普通 READ/WRITE 已完成的负业务回复可随子 SAVED 路由保留。协议固定为 `[negative_status,seq,0,0]`、原生状态成功且无资源/创建责任；零字节 snapshot 对该形状检查原 RQ_FINISH，而不尝试复制失败操作的共享数据。未排空不发布证明，正业务状态或错误夹带 value/bytes 拒绝。子保留原错误，不变成 INTERRUPTED、不重发，不修改父 Op/槽/File pin/RPC；后续 fork 继续保留本地错误。普通成功 READ/WRITE 与负回复共用有界形状校验，READ 同样限制到4096字节。原生 PEER/CANCELLED 等机制失败尚未纳入此业务回复路径。
+
+上下文系列64项及双架构原始上下文11项主机测试通过，新增负回复排空前拒绝、READ/WRITE错误保持、再次fork、无数据复制和非法进展失败不变性；格式和ARM64/RV64 libsys/sigframe四次回归通过，日志 `/private/tmp/kernel-stage227-{context,runtime,fmt,arm64-libsys,riscv-libsys,arm64-sigframe,riscv-sigframe}.log`。新增负业务修复仅主机调用，QEMU仍验证既有真实成功READ/WRITE与等待IPC fork；真实业务错误fork、其他结果/File子引用及生产协调器待接，未跑完整矩阵、CI或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
