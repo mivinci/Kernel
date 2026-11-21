@@ -1549,18 +1549,20 @@ def exercise(args, run_dir, record):
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
                                   negotiated=3,resets=8,rng=1,rwsectors=256,rosectors=128,
-                                  reads=5,writes=1,flushes=1,interrupts=7,charged=0,
+                                  reads=5,writes=1,flushes=1,interrupts=7,retired=2,charged=0,
                                   allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
                     stats = {row.get("device"): row["stats"] for row in qmp.command("query-blockstats")}
                     for name, sectors, seed in (("rw", 256, 0x51), ("ro", 128, 0xa7)):
                         disk = Path(temporary) / (name + ".raw")
+                        counters = stats.get(name, {})
+                        if counters.get("rd_bytes") != (2048 if name == "rw" else 1536):
+                            raise SmokeError(f"virtio backing reads mismatch: {name}: {counters}")
                         expected_image = bytearray(sectors * 512)
                         expected_image[512:1024] = bytes((seed + i * 37) & 0xff for i in range(512))
                         if name == "rw":
                             expected_image[1024:1536] = bytes((0x37 + i * 37) & 0xff for i in range(512))
-                            counters = stats.get(name, {})
                             if counters.get("wr_bytes") != 512 or counters.get("flush_operations") != 1:
                                 raise SmokeError(f"virtio backing write/flush count mismatch: {counters}")
                         if disk.read_bytes() != expected_image:

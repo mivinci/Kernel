@@ -84,7 +84,7 @@ vdevtest(const Dtinfo *info)
   Memid      dma[VTEST_PAGES];
   u64        page, members, offsets[8], lengths[8], trace[VTEST_TRACE];
   u64        started, current;
-  u32        irqs[8], interrupts = 0;
+  u32        irqs[8], interrupts = 0, retired = 0;
   u32 i, j, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
   u32 rng = 0, writable = 0, readonly = 0, reads = 0, writes = 0, flushes = 0;
   u64 rwsectors = 0, rosectors = 0;
@@ -137,8 +137,10 @@ vdevtest(const Dtinfo *info)
             trace[14] == trace[17] + trace[18] + trace[19] && trace[15] == trace[14] &&
             trace[16] == 2 * trace[14] + trace[18] + trace[19] &&
             trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == trace[18] &&
-            trace[3] == trace[18] && trace[38] == trace[2] + trace[3] + trace[22]);
+            trace[3] == trace[18] && trace[38] == trace[2] + trace[3] + trace[22] &&
+            trace[39] == trace[18] + trace[19]);
     interrupts += (u32) trace[38];
+    retired += (u32) trace[39];
     probes += (u32) trace[12];
     empty += (u32) trace[13];
     found += (u32) trace[14];
@@ -193,6 +195,8 @@ vdevtest(const Dtinfo *info)
   puthex(flushes);
   putstr(" interrupts=");
   puthex(interrupts);
+  putstr(" retired=");
+  puthex(retired);
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

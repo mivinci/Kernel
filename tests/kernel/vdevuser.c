@@ -118,6 +118,36 @@ startqueue(Vdev *device, Vring *ring, u64 epoch)
   REQUIRE(!vstart(device), 172);
 }
 static void
+resetpending(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config)
+{
+  Vblkreq      request = {0};
+  Vblkhead    *header = (void *) (VTEST_DMA_BASE + 3 * PAGE_SIZE);
+  volatile u8 *status = (void *) (VTEST_DMA_BASE + 5 * PAGE_SIZE);
+  Ipcmsg       event;
+  u64          generation, started = now();
+  u32          causes;
+
+  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+              !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
+          185);
+  REQUIRE(!vblksubmit(&request, ring, config, VBLK_READ, 1, 6, vdev_trace[35], vdev_trace[36],
+                      VBLK_SECTOR, vdev_trace[37], header, status, blksync, device),
+          186);
+  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
+              event.words[0] == irqevent && !__sys_alarmcancel(&generation),
+          187);
+  /* Leave the device cause and used entry unconsumed. The IRQ alone does
+     not return ownership of the request buffers. */
+  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && causes == VDEV_IRQ_USED &&
+              request.active && request.held == 7 && ring->queue.free == VQ_SIZE - 3,
+          188);
+  reset(device);
+  REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes && !vblkreclaim(&request) &&
+              !request.active && !request.held,
+          189);
+  vdev_trace[39]++;
+}
+static void
 testblock(Vdev *device, const Vblkconfig *config, u32 member)
 {
   Vring      ring;
@@ -136,7 +166,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
     transfer(device, &ring, 1, binding, irqevent, config, VBLK_FLUSH, 0, 3, 0);
     transfer(device, &ring, 1, binding, irqevent, config, VBLK_READ, 2, 4, 0x37);
   }
-  reset(device);
+  resetpending(device, &ring, binding, irqevent, config);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
               fresh.flush == config->flush,
