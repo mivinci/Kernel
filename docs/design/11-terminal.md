@@ -844,3 +844,5 @@ stage171新增raise.c及signal.h声明，SDK归档接入；封装只使用getpid
 CASE=sigsend新增3个独立实际用户场景：13组普通检查覆盖同步handler返回、屏蔽后的合并pending/解除屏蔽、忽略与默认CONT、handler内raise CONT的第二层递送，共5次handler并核验USER字段及最终完整自身PID/euid；自发KILL按原信号终止且不返回；自发STOP停在原raise内，由另一个真实同凭据用户进程发送CONT后继续原调用，退出42。原59个控制请求增为60（多一次CONT），旧组/UID/授权、32项快照、PID复用/迟到、PID1排除及费用/页基线继续核验。安装handler与trampoline仍使用原生测试代码，不是已交付公开sigaction、Rctx/errno trampoline或SA_RESTART。
 
 1135项完整host、格式及两架构各sigsend/sigframe/jobs/normal共8次QEMU、8份内核诊断journal通过；SDK源/头/库、真实用户ELF到映像打包及实际内嵌载荷、raise.o仅3个预期依赖和两架构真实raise调用已核对。默认init装载段保持、serial完整ELF保持，生产镜像无raise测试载荷；全部构建后clangd切回RV64/sigsend。证据build/host/stage171-libc-raise/的unit/focused-initial、场景日志、standards/sources.json、verify.py与evidence.json。最近完整195矩阵仍为stage165，无CI/板端/性能结果。公开kill因上文僵尸语义候选待确认，原生目标选择未提前改动；完整信号/作业控制、公开文件接口/Fix、生产服务及sh/net/最终GUI目标继续。
+
+stage248：libc `sigaction` 接入单参数 handler、SIG_DFL、SIG_IGN 和既有原生 NODEFER/RESETHAND/NOCLDSTOP/NOCLDWAIT 标志。trampoline 从内核动作快照取得 handler，保存并恢复 errno 后 sigreturn；无需应用动作副表。安装和获取旧动作沿一次原生调用完成；旧动作输出复制失败不回滚已提交的动作，原生自订 trampoline 不作为公开 handler 回报。SA_SIGINFO、SA_RESTART 与 Rctx/Fix 前置仍待接。双架构 sigsend 实际验证安装与查询、入口掩码、RESETHAND、errno 恢复、同址输入输出及忽略；8 项既有信号主机测试与格式检查通过。

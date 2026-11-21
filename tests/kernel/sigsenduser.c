@@ -39,6 +39,40 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 add
   handler(signum, info);
   __sys_sigreturn((void *) address);
 }
+static volatile u32 actioncalls;
+static void
+publichandler(int signal)
+{
+  sigset_t         mask;
+  struct sigaction current;
+  if (signal != SIGALRM || errno != EDOM || sigprocmask(SIG_BLOCK, NULL, &mask) ||
+      sigismember(&mask, SIGTERM) != 1 || sigaction(SIGALRM, NULL, &current) ||
+      current.sa_handler != SIG_DFL)
+    __sys_exit(206);
+  actioncalls++;
+  errno = ERANGE;
+}
+
+static int
+actioncheck(void)
+{
+  struct sigaction action = {publichandler, 0, SA_RESETHAND}, old;
+  sigset_t         mask;
+  if (sigaddset(&action.sa_mask, SIGTERM) || sigaction(SIGALRM, &action, &old) ||
+      old.sa_handler != SIG_DFL || sigaction(SIGALRM, NULL, &old) ||
+      old.sa_handler != publichandler || old.sa_mask != action.sa_mask ||
+      old.sa_flags != SA_RESETHAND)
+    return 0;
+  errno = EDOM;
+  if (raise(SIGALRM) || actioncalls != 1 || errno != EDOM || sigprocmask(SIG_BLOCK, NULL, &mask) ||
+      sigismember(&mask, SIGTERM))
+    return 0;
+  action.sa_handler = SIG_IGN;
+  action.sa_flags = 0;
+  return !sigaction(SIGALRM, &action, &action) && action.sa_handler == SIG_DFL && !raise(SIGALRM) &&
+         actioncalls == 1;
+}
+
 static int
 raisecheck(void)
 {
@@ -111,6 +145,8 @@ main(int argc, char **argv)
     sendtrace[1] = (u64) checks;
     if (checks != 13)
       return checks;
+    if (!actioncheck())
+      return 207;
     sendtrace[0] = 2;
     return 42;
   }
