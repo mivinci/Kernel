@@ -663,33 +663,61 @@ publicforkuser(void)
               !result.construct && !result.pid && !result.fix,
           272);
   frame_trace[26] = 2;
-  REQUIRE(!sysforkresume((Handle) frame_trace[18], 0, &plan, &result), 273);
-  if (!result.construct) {
+  work.parent_space = plan.space;
+  work.scratch = finish.address = address;
+  work.scratch_bytes = 4096;
+  finish.buffer = fix;
+  finish.capacity = sizeof(fix);
+  status = sysforklocal((Handle) frame_trace[18], 0, &plan, &work, &finish);
+  REQUIRE(status >= 0, 273);
+  if (!status) {
     Connpeer self = runtime_contexts.self;
+    Handle   pid, ppid;
+    u64      image;
     u64      probe;
-    REQUIRE(frame_trace[24] == (frame_trace[1] == 17 ? 2U : 1U) && result.pid == self.pid &&
-                result.pid != context_self.pid && !result.fix &&
+    Elfwork  rejected = work;
+    Forkfix  shortfix = finish;
+    Fdtag    reserved;
+    REQUIRE(frame_trace[24] == (frame_trace[1] == 17 ? 2U : 1U) && self.pid != context_self.pid &&
+                !work.view && !work.pid &&
                 __sys_copy(&probe, (const void *) address, sizeof(probe)) == -ERR_FAULT &&
                 !sysctxinvoke(&runtime_contexts, self, runtime_key) &&
                 !sysctxresult(&runtime_contexts, self, runtime_key, &status, &tuple) && !status &&
                 tuple.values[0] == (u64) self.pid && tuple.values[1] == self.image &&
                 !sysctxfinish(&runtime_contexts, self, runtime_key),
             274);
+    REQUIRE(!sysfdreserve(&forkfds, 0, &reserved) &&
+                sysforklocal((Handle) frame_trace[18], 0, &plan, &work, &finish) == -ERR_NOTSUP &&
+                !work.view && !work.pid && !sysfdcancel(&forkfds, reserved),
+            281);
+    shortfix.capacity--;
+    REQUIRE(sysforklocal((Handle) frame_trace[18], 0, &plan, &rejected, &shortfix) ==
+                    -ERR_CAPACITY &&
+                rejected.pid && !rejected.view && !rejected.memory && !rejected.mapped,
+            282);
+    args[0] = (u64) rejected.pid;
+    REQUIRE(__sys_enter(SYS_WAIT, args, &tuple) == -ERR_CHILD, 283);
+    status = sysforklocal((Handle) frame_trace[18], 0, &plan, &work, &finish);
+    REQUIRE(status >= 0 && !work.view, 278);
+    if (!status) {
+      REQUIRE(!work.pid && !__sys_getid(&pid, &image, &ppid) && ppid == self.pid &&
+                  pid != self.pid && pid == runtime_contexts.self.pid &&
+                  image == runtime_contexts.self.image &&
+                  __sys_copy(&probe, (const void *) address, sizeof(probe)) == -ERR_FAULT,
+              279);
+      return 44;
+    }
+    args[0] = (u64) status;
+    REQUIRE(!__sys_enter(SYS_WAIT, args, &tuple) && tuple.values[0] == (u64) status &&
+                tuple.values[1] == WAIT_EXITED && tuple.values[2] == 44,
+            280);
     return 43;
   }
-  REQUIRE(frame_trace[23] == 2 && !frame_trace[24] && !result.fix &&
+  REQUIRE(frame_trace[23] == 2 && !frame_trace[24] && !work.view && work.pid == status &&
               runtime_contexts.self.pid == context_self.pid,
           275);
-  work.view = result.construct;
-  work.pid = result.pid;
-  work.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
-  work.scratch = finish.address = address;
-  work.scratch_bytes = 4096;
-  finish.buffer = fix;
-  finish.capacity = sizeof(fix);
-  REQUIRE(sysforkfinish(&work, &runtime_contexts, context_self, &finish) == result.pid, 276);
-  args[0] = (u64) result.pid;
-  REQUIRE(!__sys_enter(SYS_WAIT, args, &tuple) && tuple.values[0] == (u64) result.pid &&
+  args[0] = (u64) status;
+  REQUIRE(!__sys_enter(SYS_WAIT, args, &tuple) && tuple.values[0] == (u64) status &&
               tuple.values[1] == WAIT_EXITED && tuple.values[2] == 43,
           277);
   frame_trace[0] = 99;

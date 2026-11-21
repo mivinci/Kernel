@@ -79,6 +79,49 @@ sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *ou
 }
 
 isize
+sysforklocal(Handle authority, u64 reserve, const Forkresume *plan, Elfwork *work,
+             const Forkfix *fix)
+{
+  const Forkstate *state;
+  Connpeer         parent;
+  Forkret          result;
+  u32              i;
+  isize            error;
+  if (!plan || !plan->state.contexts || !plan->state.fds || !plan->state.files ||
+      !plan->state.connections || plan->file_count || plan->detach || !work || work->view ||
+      work->pid || work->memory || work->mapped || work->reserved || work->failure ||
+      work->parent_space != plan->space || !fix || fix->connection_count ||
+      fix->capacity > plan->available)
+    return -ERR_INVALID;
+  state = &plan->state;
+  for (i = 0; i < BOOT_FD_COUNT; i++)
+    if (state->fds->entries[i].state != SYSFD_FREE && state->fds->entries[i].state != SYSFD_RETIRED)
+      return -ERR_NOTSUP;
+  for (i = 0; i < SYSFILE_REFS; i++)
+    if (state->files->entries[i].state != SYSFILE_REF_FREE &&
+        state->files->entries[i].state != SYSFILE_REF_RETIRED)
+      return -ERR_NOTSUP;
+  for (i = 0; i < SYSCONN_COUNT; i++)
+    if (state->connections->entries[i].state != SYSCONN_FREE &&
+        state->connections->entries[i].state != SYSCONN_RETIRED)
+      return -ERR_NOTSUP;
+  parent = state->contexts->self;
+  error = sysfdcheck(state->fds);
+  if (!error)
+    error = sysfilerefcheck(state->files, parent);
+  if (!error)
+    error = sysconncheck(state->connections, parent);
+  if (error)
+    return error;
+  error = sysforkresume(authority, reserve, plan, &result);
+  if (error || !result.construct)
+    return error;
+  work->view = result.construct;
+  work->pid = result.pid;
+  return sysforkfinish(work, state->contexts, parent, fix);
+}
+
+isize
 sysforksignal(Rbank *bank, const void *trap, const void *outer)
 {
   const u64   begin = (u64) (uintptr_t) __sys_forkreturn_begin;

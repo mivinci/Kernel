@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage316：私有运行库入口串接本地 fork 的准备、Fix 发布和子返回。RV64/ARM64 QEMU `sigframe` 验证跨两代复用同一 Fix 地址及发布前失败清理；47 项主机回归和格式检查通过。
 - stage315：子运行库消费 Fix 后立即归还映射，信号前置和正常返回共用一次性清理。RV64/ARM64 QEMU `sigframe`、47 项主机回归和格式检查通过。
 - stage314：fork 快照打开、映射构建及未映射 DATA 克隆保留 Prep 的超期和撤销状态。103 项主机专项、RV64/ARM64 QEMU `sigframe` 回归和格式检查通过。
 - stage313：fork 快照提交时到期返回 `ERR_TIMEDOUT`，并完整回滚。94 项主机专项、RV64/ARM64 QEMU `sigframe` 回归和格式检查通过。

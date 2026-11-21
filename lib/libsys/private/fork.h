@@ -52,6 +52,11 @@ isize sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, con
    Space is the inherited SELF_SPACE; Fix starts at its own mapping base.
    The runtime consumes Fix before exposing the child PID, so out->fix is null. */
 isize sysforkresume(Handle authority, u64 reserve, const Forkresume *plan, Forkret *out);
+/* Local fork path for state that needs no new backend references. Keep the
+   snapshot inputs stable. Returns the child PID in the parent, zero in the
+   repaired child, or a native error; retained work still belongs to the parent. */
+isize sysforklocal(Handle authority, u64 reserve, const Forkresume *plan, Elfwork *work,
+                   const Forkfix *fix);
 /* Called with caught signals masked when a bound bank still names the parent. */
 isize sysforksignal(Rbank *bank, const void *trap, const void *outer);
 #endif
