@@ -59,6 +59,7 @@ class ConnectionDirectoryTests(unittest.TestCase):
         signatures={
             'sysconnpeer':[C.c_int64,C.POINTER(Peer)],'sysconninit':[C.POINTER(Cache),Peer],
             'sysconncheck':[C.POINTER(Cache),Peer],'sysconnbind':[C.POINTER(Cache),Peer,C.POINTER(Tag)],
+            'sysconnforkcheck':[C.POINTER(Cache),Peer,C.c_void_p,C.c_uint64],
             'sysconnview':[C.POINTER(Cache),Tag,C.POINTER(Entry)],
             'sysconnbegin':[C.POINTER(Cache),Tag,C.c_uint64,C.POINTER(Claim)],
             'sysconnreusebegin':[C.POINTER(Cache),Tag,C.c_uint64,C.POINTER(Claim)],
@@ -75,6 +76,19 @@ class ConnectionDirectoryTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.temp.cleanup()
+
+    def test_fork_tokens_match_exact_live_directory_without_mutation(self):
+        cache=Cache();owner=Peer(pid(1),9);backend=Peer(pid(2),10);tag=Tag()
+        self.assertEqual(self.lib.sysconninit(C.byref(cache),owner),0)
+        self.assertEqual(self.lib.sysconnbind(C.byref(cache),backend,C.byref(tag)),0)
+        entries=(C.c_uint64*3)(backend.pid,backend.image,101)
+        before=bytes(cache)
+        self.assertEqual(self.lib.sysconnforkcheck(C.byref(cache),owner,entries,1),0)
+        entries[1]+=1
+        self.assertEqual(self.lib.sysconnforkcheck(C.byref(cache),owner,entries,1),-4)
+        entries[1]-=1;entries[2]=0
+        self.assertEqual(self.lib.sysconnforkcheck(C.byref(cache),owner,entries,1),-1)
+        self.assertEqual(bytes(cache),before)
 
     def setUp(self):
         self.cache=Cache();self.self=Peer(pid(1),4)

@@ -2,6 +2,7 @@
 #define _LIBSYS_CONN_H
 #include <types.h>
 #include <abi/base.h>
+#include "fix.h"
 #define SYSCONN_COUNT      8
 #define SYSCONN_FREE       0
 #define SYSCONN_UNCLAIMED  1
@@ -52,6 +53,8 @@ isize sysconnpeer(Handle call, Connpeer *out);
    Fresh unowned storage, current Image, caught signals excluded by caller.
    It may be embedded in the already budgeted connection-private work area. */
 isize sysconninit(Conncache *cache, Connpeer self);
+/* Read-only admission of child tokens against the inherited directory. */
+isize sysconnforkcheck(Conncache *cache, Connpeer parent, const Fixconn *entries, u64 count);
 isize sysconncheck(const Conncache *cache, Connpeer self);
 isize sysconnbind(Conncache *cache, Connpeer peer, Conntag *out);
 isize sysconnview(Conncache *cache, Conntag tag, Connentry *out);

@@ -61,6 +61,38 @@ entryat(Conncache *cache, Conntag tag, Connentry **out)
   *out = entry;
   return 0;
 }
+isize
+sysconnforkcheck(Conncache *cache, Connpeer parent, const Fixconn *entries, u64 count)
+{
+  u64   i, j;
+  int   found;
+  isize error = sysconncheck(cache, parent);
+  if (error)
+    return error;
+  if (count > SYSCONN_COUNT || (count && !entries))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    if (handlekind(entries[i].pid) != HANDLE_PROCESS || !entries[i].image || !entries[i].token)
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (entries[i].pid == entries[j].pid && entries[i].image == entries[j].image)
+        return -ERR_INVALID;
+    found = 0;
+    for (j = 0; j < SYSCONN_COUNT; j++) {
+      Connentry *entry = &cache->entries[j];
+      if (entry->peer.pid != entries[i].pid || entry->peer.image != entries[i].image)
+        continue;
+      if (entry->state == SYSCONN_DRAINING)
+        return -ERR_STATE;
+      if (entry->state == SYSCONN_UNCLAIMED || entry->state == SYSCONN_CONNECTING ||
+          entry->state == SYSCONN_READY)
+        found = 1;
+    }
+    if (!found)
+      return -ERR_STALE;
+  }
+  return 0;
+}
 static isize
 claimat(Conncache *cache, Connclaim claim, Connentry **out)
 {
