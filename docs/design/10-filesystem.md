@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage392：libsys 的私有 PIPE 创建事务同时保留两个 fd 和原创建操作，用同一 continuation 完成提交前撤销或原 RPC 结果领取。后端拒绝时归还 fd 预留并保持输出不变；后端已创建而受检输出失败时，两端都转入预付 CLOSE。ARM64/RV64 QEMU `pipeio` 走真实服务验证撤销后复用、EFAULT 后两笔补偿、成功安装和后端 ENFILE 不改已安装的 fd。此处调用者仍负责提交与等待、信号保护和驱动关闭工作者。
+
 stage391：libsys 在发送 PIPE 前成对保留两个最低可用 fd 和两份 File 关闭责任。原请求排空并领取后，先受检复制两个 fd 数字，再在同一信号保护段发布两端；复制失败时两端均未发布，调用方撤销预留槽并用两份原引用驱动 CLOSE。ARM64/RV64 QEMU `pipeio` 用实际 FS 服务验证 EFAULT 后补偿关闭、同一服务槽再次创建，以及跨过已占用的 fd 按读端、写端顺序发布。此为私有运行库步骤，尚未接公开 `pipe()`。
 
 stage390：`sbin/fs/serve.c` 提供串行服务循环的阻塞单步，从原 CALL 分流 HELLO 和管道请求，处理 LIFE、取消提示和客户端退出后的连接释放；未知操作不读取共享槽。ARM64/RV64 QEMU `pipeio` 使用独立的服务和客户端进程验证畸形 HELLO 拒绝、MEM 交付、重复连接拒绝、PIPE/CLOSE 和 LIFE 回收，页账恢复。观察许可由可信测试夹具提供，未改变 Boot 资源布局、生产发权、默认启动包或公开 fd API。

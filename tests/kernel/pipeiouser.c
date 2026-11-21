@@ -264,21 +264,17 @@ serviceloop(const Bootview *boot)
 }
 
 static void
-finishpipe(Connwork *work, Conncache *cache, Filepool *pool, u64 files[2], u64 owner)
+submitpipe(Connwork *work, Conncache *cache, Filepool *pool, Fdtable *table, Pipecreate *pipe,
+           u64 owner)
 {
-  Opkey  key;
   Msg    message;
   Ipcmsg result;
   Handle rpc;
-  u64    source = 0, args[8] = {0, PIPE_CAPACITY};
-  CHECK(!sysfilecreateprepare(pool, work, cache, SYSFILE_MAIN, owner, FS_PIPE, 0, &source, args,
-                              NULL, 0, &key, &message) &&
+  CHECK(!sysfilepipeprepare(pool, work, cache, table, SYSFILE_MAIN, owner, pipe, &message) &&
         !ipc_call(work->state.call, &message, CALL_ASYNC, &result));
   rpc = result.request;
-  CHECK(!sysopsubmitted(work, cache, &key, &result.request) &&
-        !ipc_rqwait(rpc, RQ_FINISH, &result) && !sysfilecreateack(pool, work, cache, &key) &&
-        !sysfilecreatesettle(pool, work, cache, &key, 0) &&
-        !sysfilecreatefinish(pool, work, cache, &key, files, &source) && !source);
+  CHECK(!sysopsubmitted(work, cache, &pipe->operation, &result.request) &&
+        !ipc_rqwait(rpc, RQ_FINISH, &result));
 }
 
 static void
@@ -302,9 +298,11 @@ serviceclient(const Bootview *boot)
   static Conncache cache;
   static Fdtable   table;
   static Filepool  pool;
-  Fdtag            tags[2], held;
+  Fdtag            held;
+  Pipecreate       pipe = {0};
   Fdview           view;
-  u64              files[2] = {0}, closing;
+  u64              closing;
+  isize            business;
   int              fd[2] = {-1, -1};
   Handle           call = bootresource(boot, 256);
   Msg              invalid = {{FS_HELLO, 0, 23, 0}};
@@ -318,24 +316,28 @@ serviceclient(const Bootview *boot)
   invalid.words[0] = FS_ATTACH;
   CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ENOSYS);
   CHECK(!sysfilerefinit(&pool, work.state.self) && !sysfdreserve(&table, 1, &held) &&
-        !sysfdreservepair(&table, tags) && tags[0].index == 0 && tags[1].index == 2);
-  finishpipe(&work, &cache, &pool, files, 100);
-  CHECK(sysfilepipeinstall(&table, tags, files, (int *) 1) == -ERR_FAULT &&
-        !sysfdcheckpair(&table, tags) && !sysfdcancelpair(&table, tags) &&
-        !sysfilerefdrop(&pool, work.state.self, files[0]) &&
-        !sysfilerefdrop(&pool, work.state.self, files[1]));
+        !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 99, &pipe, &invalid) &&
+        !sysfilepipeabort(&pool, &work, &cache, &table, &pipe) && !pipe.operation.lease.seq);
+  submitpipe(&work, &cache, &pool, &table, &pipe, 100);
+  CHECK(sysfilepipefinish(&pool, &work, &cache, &table, &pipe, (int *) 1, &business) ==
+            -ERR_FAULT &&
+        !business && !pipe.operation.lease.seq && !sysfdobserve(&table, 0, &view) &&
+        view.tag.state == SYSFD_FREE && !sysfdobserve(&table, 2, &view) &&
+        view.tag.state == SYSFD_FREE);
   closepending(&work, &cache, &pool, 101);
   closepending(&work, &cache, &pool, 102);
-  CHECK(!sysfilerefconnection(&pool, work.state.self, work.state.tag) &&
-        !sysfdreservepair(&table, tags));
-  files[0] = files[1] = 0;
-  finishpipe(&work, &cache, &pool, files, 103);
-  CHECK(!sysfilepipeinstall(&table, tags, files, fd) && fd[0] == 0 && fd[1] == 2 &&
-        !sysfdobserve(&table, fd[0], &view) && view.tag.state == SYSFD_LIVE &&
-        view.file == files[0] && !view.flags && !sysfdobserve(&table, fd[1], &view) &&
-        view.file == files[1] && !view.flags &&
-        !sysfdclose(&table, &pool, work.state.self, view.tag, &closing) && closing == files[1]);
-  closepending(&work, &cache, &pool, 104);
+  CHECK(!sysfilerefconnection(&pool, work.state.self, work.state.tag));
+  submitpipe(&work, &cache, &pool, &table, &pipe, 103);
+  CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
+        fd[0] == 0 && fd[1] == 2);
+  submitpipe(&work, &cache, &pool, &table, &pipe, 104);
+  CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) &&
+        business == -ENFILE && fd[0] == 0 && fd[1] == 2 && !pipe.operation.lease.seq &&
+        !sysfdobserve(&table, 3, &view) && view.tag.state == SYSFD_FREE &&
+        !sysfdobserve(&table, fd[0], &view) && view.tag.state == SYSFD_LIVE && !view.flags &&
+        !sysfdobserve(&table, fd[1], &view) && view.tag.state == SYSFD_LIVE && !view.flags &&
+        !sysfdclose(&table, &pool, work.state.self, view.tag, &closing) && closing == view.file);
+  closepending(&work, &cache, &pool, 105);
   /* Leave the read reference to the service's LIFE path. */
   pipeiotrace[0] = 7;
 }

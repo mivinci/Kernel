@@ -2,6 +2,24 @@
 #define _LIBSYS_FILECREATE_H
 #include "operation.h"
 #include "fd.h"
+typedef struct Pipecreate Pipecreate;
+struct Pipecreate
+{
+  Opkey operation;
+  Fdtag tags[2];
+};
+/* Zero-initialized caller-owned continuation; keep it intact with the exact
+   table until done. All three steps exclude caught signals; the caller binds
+   operation to the existing creator CALL/wait route between steps. */
+isize sysfilepipeprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                         u32 layer, u64 owner, Pipecreate *pipe, Msg *message);
+isize sysfilepipeabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                       Pipecreate *pipe);
+/* Native errors before consuming the operation preserve the continuation.
+   On completion, business contains the reply status, or zero; a checked
+   output fault queues both closes and returns the native copy error. */
+isize sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                        Pipecreate *pipe, int *userfds, isize *business);
 /* Publish an already collected ordinary PIPE result. Keep signals excluded
    across the checked output and paired commit. On error, caller still owns
    both reservations and File IDs and must cancel/drop them. */

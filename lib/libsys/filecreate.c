@@ -895,3 +895,108 @@ sysfilecreatefinish(Filepool *pool, Connwork *work, Conncache *cache, const Opke
   clear(create, sizeof(*create));
   return 0;
 }
+
+static int
+pipestorage(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Pipecreate *pipe)
+{
+  return external(pool, work, cache, table, sizeof(*table)) &&
+         external(pool, work, cache, pipe, sizeof(*pipe)) &&
+         separate(table, sizeof(*table), pipe, sizeof(*pipe));
+}
+
+isize
+sysfilepipeprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, u32 layer,
+                   u64 owner, Pipecreate *pipe, Msg *message)
+{
+  const u64 args[8] = {0, 8192};
+  u64       source = 0;
+  isize     error;
+  if (!pipestorage(pool, work, cache, table, pipe) || pipe->operation.lease.seq ||
+      !separate(message, sizeof(*message), table, sizeof(*table)) ||
+      !separate(message, sizeof(*message), pipe, sizeof(*pipe)))
+    return -ERR_INVALID;
+  error = sysfdreservepair(table, pipe->tags);
+  if (error)
+    return error;
+  error = sysfilecreateprepare(pool, work, cache, layer, owner, FS_PIPE, 0, &source, args, NULL, 0,
+                               &pipe->operation, message);
+  if (error) {
+    (void) sysfdcancelpair(table, pipe->tags);
+    clear(pipe, sizeof(*pipe));
+  }
+  return error;
+}
+
+static isize
+pipecheck(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Pipecreate *pipe,
+          Createop **create)
+{
+  isize error;
+  if (!pipestorage(pool, work, cache, table, pipe))
+    return -ERR_INVALID;
+  error = sysfdcheckpair(table, pipe->tags);
+  if (!error)
+    error = target(pool, work, cache, &pipe->operation, create);
+  if (!error && work->state.operations[pipe->operation.lease.slot].opcode != FS_PIPE)
+    return -ERR_INVALID;
+  return error;
+}
+
+isize
+sysfilepipeabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Pipecreate *pipe)
+{
+  Createop *create;
+  u64       source = 0;
+  isize     error = pipecheck(pool, work, cache, table, pipe, &create);
+  if (!error)
+    error = sysfilecreateabort(pool, work, cache, &pipe->operation, &source);
+  if (!error) {
+    error = sysfdcancelpair(table, pipe->tags);
+    clear(pipe, sizeof(*pipe));
+  }
+  return error;
+}
+
+isize
+sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                  Pipecreate *pipe, int *userfds, isize *business)
+{
+  Createop *create;
+  u64       source = 0, files[2] = {0};
+  isize     status, cleanup, error = pipecheck(pool, work, cache, table, pipe, &create);
+  if (error)
+    return error;
+  if (!external(pool, work, cache, business, sizeof(*business)) ||
+      !separate(table, sizeof(*table), business, sizeof(*business)) ||
+      !separate(pipe, sizeof(*pipe), business, sizeof(*business)))
+    return -ERR_INVALID;
+  if (!external(pool, work, cache, userfds, 2 * sizeof(*userfds)) ||
+      !separate(pipe, sizeof(*pipe), userfds, 2 * sizeof(*userfds)) ||
+      !separate(business, sizeof(*business), userfds, 2 * sizeof(*userfds)))
+    userfds = NULL;
+  error = sysfilecreateack(pool, work, cache, &pipe->operation);
+  if (!error)
+    error = sysfilecreatesettle(pool, work, cache, &pipe->operation, 0);
+  if (error)
+    return error;
+  status = create->error;
+  error = sysfilecreatefinish(pool, work, cache, &pipe->operation, files, &source);
+  if (error)
+    return error;
+  if (!status)
+    error = sysfilepipeinstall(table, pipe->tags, files, userfds);
+  if (status || error) {
+    cleanup = sysfdcancelpair(table, pipe->tags);
+    if (!status) {
+      isize first = sysfilerefdrop(pool, work->state.self, files[0]);
+      isize second = sysfilerefdrop(pool, work->state.self, files[1]);
+      if (!cleanup)
+        cleanup = first ? first : second;
+    }
+    if (cleanup)
+      error = cleanup;
+  }
+  *business = status;
+  clear(pipe, sizeof(*pipe));
+  return error;
+}
