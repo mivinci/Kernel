@@ -7,6 +7,8 @@
 #include <diag.h>
 #include <irq.h>
 #include <clock.h>
+#include <hal/dma.h>
+#include <vm.h>
 extern const u8  vdev_image[], vdev_image_end[];
 extern const u64 vdev_trace_address;
 #define REQUIRE(c)                                                                                 \
@@ -67,6 +69,7 @@ load(Handle pid, Handle memory, u32 count, const u64 offsets[8], const u64 lengt
     REQUIRE(!spacemap(process.space, dma[i], 0, VTEST_DMA_BASE + i * PAGE_SIZE, PAGE_SIZE,
                       VM_READ | VM_WRITE));
     REQUIRE(!mempage(dma[i], 0, &trace[32 + i]));
+    REQUIRE(!hal_dma_sync(kaddr(trace[32 + i]), PAGE_SIZE, HDMA_BEFORE, HDMA_DEVICE_READ, 1));
   }
   REQUIRE(!spacewrite(process.space, vdev_trace_address, trace, sizeof(trace)));
 }
@@ -156,8 +159,20 @@ vdevtest(const Dtinfo *info)
     flushes += (u32) trace[3];
     pages++;
     REQUIRE(life.reason == LIFE_EXIT && life.code == 42);
-    for (j = 0; j < VTEST_PAGES; j++)
+    for (j = 0; j < VTEST_PAGES; j++) {
+      void *address = kaddr(trace[32 + j]);
+      u64   grain = hal_dma_granule();
+      REQUIRE(hal_dma_sync(address, 0, HDMA_AFTER, HDMA_DEVICE_WRITE, 1) == -ERR_INVALID);
+      if (grain) {
+        REQUIRE(grain <= PAGE_SIZE && !(PAGE_SIZE % grain));
+        REQUIRE(hal_dma_sync(address, grain - 1, HDMA_AFTER, HDMA_DEVICE_WRITE, 0) == -ERR_INVALID);
+        REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_BEFORE, HDMA_DEVICE_WRITE, 0));
+        REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 0));
+      } else
+        REQUIRE(hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 0) == -ERR_NOTSUP);
+      REQUIRE(!hal_dma_sync(address, PAGE_SIZE, HDMA_AFTER, HDMA_DEVICE_WRITE, 1));
       REQUIRE(!memfree(dma[j]));
+    }
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
@@ -197,6 +212,8 @@ vdevtest(const Dtinfo *info)
   puthex(interrupts);
   putstr(" retired=");
   puthex(retired);
+  putstr(" dmagrain=");
+  puthex(hal_dma_granule());
   putstr(" charged=");
   puthex(0);
   putstr(" allocated=");

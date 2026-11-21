@@ -1,4 +1,6 @@
 #include <hal/vm.h>
+#include <hal/dma.h>
+#include <abi/base.h>
 #include <vm.h>
 #include <boot.h>
 #include <diag.h>
@@ -75,4 +77,57 @@ hal_code_sync(u64 pa, u64 bytes)
   for (address = ALIGN_DOWN(address, line); address < end; address += line)
     __asm__ __volatile__("dc cvau, %0" ::"r"(address) : "memory");
   __asm__ __volatile__("dsb ish; ic iallu; dsb ish; isb" ::: "memory");
+}
+
+static u64
+cachetype(void)
+{
+  u64 ctr;
+  __asm__ __volatile__("mrs %0, ctr_el0" : "=r"(ctr));
+  return ctr;
+}
+
+static u64
+dmagrain(u64 ctr)
+{
+  u64 line = 4UL << ((ctr >> 16) & 15), cwg = (ctr >> 24) & 15;
+  u64 writeback = 4UL << cwg;
+  if (!cwg || line > PAGE_SIZE || writeback > PAGE_SIZE)
+    return 0;
+  return MAX(line, writeback);
+}
+
+u64
+hal_dma_granule(void)
+{
+  return dmagrain(cachetype());
+}
+
+int
+hal_dma_sync(void *address, u64 bytes, u32 phase, u32 direction, u32 coherent)
+{
+  u64 va = (u64) address, ctr, grain, line, end;
+  if (!address || !bytes || bytes > UINT64_MAX - va || phase > HDMA_AFTER || !direction ||
+      direction > (HDMA_DEVICE_READ | HDMA_DEVICE_WRITE) || coherent > 1)
+    return -ERR_INVALID;
+  if (!coherent) {
+    ctr = cachetype();
+    grain = dmagrain(ctr);
+    if (!grain)
+      return -ERR_NOTSUP;
+    if ((va | bytes) & (grain - 1))
+      return -ERR_INVALID;
+    line = 4UL << ((ctr >> 16) & 15);
+    end = va + bytes;
+    __asm__ __volatile__("dsb sy" ::: "memory");
+    if (phase == HDMA_BEFORE) {
+      for (; va < end; va += line)
+        __asm__ __volatile__("dc cvac, %0" : : "r"(va) : "memory");
+    } else if (direction & HDMA_DEVICE_WRITE) {
+      for (; va < end; va += line)
+        __asm__ __volatile__("dc ivac, %0" : : "r"(va) : "memory");
+    }
+  }
+  __asm__ __volatile__("dsb sy" ::: "memory");
+  return 0;
 }
