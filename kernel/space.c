@@ -1246,15 +1246,11 @@ spacesnapshotopen(Spaceid sourceid, Spaceid targetid, Prepid owner)
 {
   Space    *source = find(sourceid), *target = find(targetid);
   Spacetxn *tree = &standalone;
-  Prepinfo  prep;
   Acct      a, b;
   u32       leases = owner.generation ? 2 : 1;
   if (owner.reserved || (!owner.generation && owner.index))
     return SP_BAD;
-  if (owner.generation &&
-      (prepstat(owner, &prep) || prep.state != PREP_ACTIVE || prep.origin != PREP_FORK ||
-       !prep.cloning || !prep.target || prep.space.index != targetid.index ||
-       prep.space.generation != targetid.generation || prepforktree(owner, &tree)))
+  if (owner.generation && prepforkopen(owner, sourceid, targetid, &tree))
     return SP_BAD;
   if (!source || !target || source == target || target->maps != PG_NONE || target->mapcount ||
       target->pages != 1 || target->refs != leases || acctstat(source->acct, &a) ||

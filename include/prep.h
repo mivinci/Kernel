@@ -43,6 +43,7 @@ int prepsnapshotcheck(Prepid id, Rtable *source, Rtable *target);
 /* Space borrows stable embedded storage, then retains Prep/root references.
    Cancelled records remain accessible until that ownership is released. */
 int prepforktree(Prepid id, Spacetxn **out);
+int prepforkopen(Prepid id, Spaceid source, Spaceid target, Spacetxn **out);
 /* Always releases the clone phase, even when already cancelled/expired. */
 int prepforkfinish(Prepid id);
 /* Trusted ownership transfer, not a syscall. Caller has returned every fresh

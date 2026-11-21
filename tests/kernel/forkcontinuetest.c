@@ -78,6 +78,8 @@ builder(void)
   procpausevm();
   REQUIRE(
       !prepforkcreate(parenttable, childtable, childinfo.life, childinfo.identity, &preparation) &&
+      spacesnapshotopen(aliasroot, childinfo.space, preparation) == SP_BAD &&
+      !spacefrozen(aliasroot) && !spacefrozen(childinfo.space) &&
       !spacesnapshotopen(parentinfo.space, childinfo.space, preparation) &&
       !procforkenter(preparation) && procforkenter(preparation) == -ERR_STATE);
   for (i = 0; i < 100; i++) {

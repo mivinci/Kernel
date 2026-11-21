@@ -246,6 +246,21 @@ class ForkSnapshotTests(unittest.TestCase):
             self.assertEqual(self.tree(self.target.space).refs,3)
         for lib in self.libs:self.exercise(lib,body)
 
+    def test_same_account_wrong_source_cannot_open_or_pin_the_preparation(self):
+        def body():
+            prep=self.owner();lib=self.lib
+            wrong=local.support.Spaceid()
+            self.assertEqual(lib.spacecreate(self.parent.acct,C.byref(wrong)),0);self.ids.append(wrong)
+            lib.spacesnapshotopen.argtypes=[local.support.Spaceid,local.support.Spaceid,Prepid]
+            lib.spacesnapshotend.argtypes=[local.support.Spaceid,local.support.Spaceid,C.c_uint32]
+            target=self.target.space
+            self.assertEqual(lib.spacesnapshotopen(wrong,target,prep),-1)
+            self.assertEqual((self.tree(wrong).refs,self.tree(target).refs),(1,2))
+            self.assertEqual((self.tree(wrong).frozen,self.tree(target).frozen),(0,0))
+            self.assertEqual(lib.spacesnapshotopen(self.parent.space,target,prep),0)
+            self.assertEqual(lib.spacesnapshotend(self.parent.space,target,0),0)
+        for lib in self.libs:self.exercise(lib,body)
+
     def test_preparation_owns_ending_cursor_and_root_leases_after_cancel(self):
         def body():
             prep=self.owner();lib=self.lib

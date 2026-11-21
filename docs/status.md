@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage179：打开带 Prep 的快照前校验源、目标 Spaceid 及准备有效性。同 Acct 的其他根不能借用该准备。主机 fork 快照专项和双架构 sigframe 验证此路径，日志在 `build/host/stage179-fork-prep-root/`。
+
 - stage178：Space 快照期间拒绝源和目标 Local 表的普通安装、撤销、继承修改和资源回复，允许已占用 IPC 槽归还。主机专项及双架构 QEMU sigframe 通过，证据在 `build/host/stage178-fork-local-gate/`。原生 fork 仍待接通。
 
 - stage177：快照期间新私有DATA别名准入已补齐；源Mem已有冻结alias root时，向另一未冻结root的普通RO/RW/COW映射返回BUSY，不取PTE/引用/费用。内部子映射、SHARED/SEALED及独立Mem规则保持；未开放原生fork或一般并发VM。

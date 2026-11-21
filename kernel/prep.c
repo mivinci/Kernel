@@ -192,6 +192,18 @@ prepforktree(Prepid id, Spacetxn **out)
   return 0;
 }
 int
+prepforkopen(Prepid id, Spaceid source, Spaceid target, Spacetxn **out)
+{
+  Prep *p = find(id);
+  if (!p || !out || source.reserved || target.reserved || p->origin != PREP_FORK ||
+      p->cloning != PREP_CLONING || source.index != p->sourcespace.index ||
+      source.generation != p->sourcespace.generation || target.index != p->space.index ||
+      target.generation != p->space.generation || !active(p))
+    return -ERR_STATE;
+  *out = &p->tree;
+  return 0;
+}
+int
 prepforkfinish(Prepid id)
 {
   Prep *p = find(id);
