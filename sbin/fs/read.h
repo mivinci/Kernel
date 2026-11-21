@@ -4,12 +4,30 @@
 #include "load.h"
 #include "seek.h"
 
+typedef struct Readwork  Readwork;
+typedef struct Readfetch Readfetch;
+struct Readfetch
+{
+  Cacheio ticket;
+  u8     *destination;
+  u32     block;
+};
+struct Readwork
+{
+  Cachespan span;
+  Cacheio   ticket;
+  Handle    request;
+  u32       inflight, failed;
+};
+
 /* The serialized dispatcher has authorized a readable regular File and
-   admitted this request. Map/index describe its current inode version.
-   On WOULD_BLOCK no bytes or cursor are changed; the caller retains the
-   request and may stage missing blocks before retrying. Scratch is private,
-   independent storage of CACHE_BYTES; page is the admitted data page. */
-isize fileread(Fileinflight *active, const Ipcmsg *call, const Fileslot *slot, const Loadmap *map,
-               const Loadindex *index, Cache *cache, u32 first, u64 *position, void *scratch,
-               volatile u8 *page);
+   admitted this request. It keeps the map, cursor and descriptor stable
+   across retries. A zeroed work record pins the data blocks until reply.
+   Return 1 with a read ticket to submit, or WOULD_BLOCK to await progress.
+   Scratch is private independent storage of CACHE_BYTES. */
+isize fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *call,
+               const Fileslot *slot, const Loadmap *map, const Loadindex *index, Cache *cache,
+               u32 first, u64 *position, void *scratch, volatile u8 *page);
+/* Only after the issued lower-level access has actually drained. */
+isize filereadcomplete(Readwork *work, const Cacheio *ticket, u32 success);
 #endif

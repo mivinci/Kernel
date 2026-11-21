@@ -352,8 +352,8 @@ serviceloop(const Bootview *boot, u32 interrupt)
         const Loadmap     map = {{7, 1, 1, CACHE_BYTES + 2}, {5}, 0};
         const u64         cursors[] = {2, 2, 3, CACHE_BYTES + 1, CACHE_BYTES + 2, CACHE_BYTES + 2};
         Cache             cache = {0};
-        Cacheio           ticket;
-        u8               *dest;
+        Readwork          readwork = {0};
+        Readfetch         fetch;
         volatile u8      *page;
         CHECK(!cacheinit(&cache, blocks, ARRAY_SIZE(blocks), 16));
         for (i = 0; i < ARRAY_SIZE(cursors); i++) {
@@ -362,22 +362,29 @@ serviceloop(const Bootview *boot, u32 interrupt)
           page = (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
           if (!i) {
             page[0] = 0xa5;
-            CHECK(fileread(&link.watch.active, &request, &row, &map, NULL, &cache, 4, &position,
-                           scratch, page) == -ERR_WOULD_BLOCK &&
-                  !position && page[0] == 0xa5 &&
-                  cachefetch(&cache, 5, CACHE_DATA, &ticket, &dest) == 1);
-            dest[0] = 'A';
-            dest[1] = 'B';
-            dest[2] = 'C';
-            dest[CACHE_BYTES - 1] = 'Z';
-            CHECK(!cachecomplete(&cache, &ticket, 1));
+            Cacheio stale;
+            CHECK(fileread(&readwork, &fetch, &link.watch.active, &request, &row, &map, NULL,
+                           &cache, 4, &position, scratch, page) == 1 &&
+                  fetch.block == 5 &&
+                  fileread(&readwork, &fetch, &link.watch.active, &request, &row, &map, NULL,
+                           &cache, 4, &position, scratch, page) == -ERR_WOULD_BLOCK &&
+                  !position && page[0] == 0xa5);
+            stale = fetch.ticket;
+            stale.serial++;
+            CHECK(filereadcomplete(&readwork, &stale, 1) == -ERR_STALE);
+            fetch.destination[0] = 'A';
+            fetch.destination[1] = 'B';
+            fetch.destination[2] = 'C';
+            fetch.destination[CACHE_BYTES - 1] = 'Z';
+            CHECK(!filereadcomplete(&readwork, &fetch.ticket, 1));
           }
           if (i == 3)
             CHECK(!fileseek(&link.watch.active, &request, &row, map.file.length, &position));
           else
-            CHECK(!fileread(&link.watch.active, &request, &row, &map, NULL, &cache, 4, &position,
-                            scratch, page));
-          CHECK(position == cursors[i] && !link.watch.active.requests[request.words[3]]);
+            CHECK(!fileread(&readwork, &fetch, &link.watch.active, &request, &row, &map, NULL,
+                            &cache, 4, &position, scratch, page));
+          CHECK(position == cursors[i] && !link.watch.active.requests[request.words[3]] &&
+                !readwork.request && !readwork.span.cache);
         }
       }
     }
