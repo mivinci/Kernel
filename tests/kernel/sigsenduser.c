@@ -40,6 +40,17 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 add
   __sys_sigreturn((void *) address);
 }
 static volatile u32 actioncalls;
+static volatile u32 infocalls;
+static void
+publicinfo(int signal, siginfo_t *info, void *context)
+{
+  if (signal != SIGALRM || info->si_signo != signal || info->si_code != SI_USER ||
+      info->si_pid != getpid() || info->si_uid != geteuid() || info->si_errno || info->si_addr ||
+      info->si_status || !context || errno != EDOM)
+    __sys_exit(208);
+  infocalls++;
+  errno = ERANGE;
+}
 static void
 publichandler(int signal)
 {
@@ -56,8 +67,10 @@ publichandler(int signal)
 static int
 actioncheck(void)
 {
-  struct sigaction action = {publichandler, 0, SA_RESETHAND}, old;
+  struct sigaction action = {0}, old;
   sigset_t         mask;
+  action.sa_handler = publichandler;
+  action.sa_flags = SA_RESETHAND;
   if (sigaddset(&action.sa_mask, SIGTERM) || sigaction(SIGALRM, &action, &old) ||
       old.sa_handler != SIG_DFL || sigaction(SIGALRM, NULL, &old) ||
       old.sa_handler != publichandler || old.sa_mask != action.sa_mask ||
@@ -69,8 +82,14 @@ actioncheck(void)
     return 0;
   action.sa_handler = SIG_IGN;
   action.sa_flags = 0;
-  return !sigaction(SIGALRM, &action, &action) && action.sa_handler == SIG_DFL && !raise(SIGALRM) &&
-         actioncalls == 1;
+  if (sigaction(SIGALRM, &action, &action) || action.sa_handler != SIG_DFL || raise(SIGALRM) ||
+      actioncalls != 1)
+    return 0;
+  action.sa_sigaction = publicinfo;
+  action.sa_flags = SA_SIGINFO;
+  return !sigaction(SIGALRM, &action, &old) && old.sa_handler == SIG_IGN &&
+         !sigaction(SIGALRM, NULL, &old) && old.sa_sigaction == publicinfo &&
+         old.sa_flags == SA_SIGINFO && !raise(SIGALRM) && infocalls == 1 && errno == EDOM;
 }
 
 static int

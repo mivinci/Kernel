@@ -846,3 +846,5 @@ CASE=sigsend新增3个独立实际用户场景：13组普通检查覆盖同步ha
 1135项完整host、格式及两架构各sigsend/sigframe/jobs/normal共8次QEMU、8份内核诊断journal通过；SDK源/头/库、真实用户ELF到映像打包及实际内嵌载荷、raise.o仅3个预期依赖和两架构真实raise调用已核对。默认init装载段保持、serial完整ELF保持，生产镜像无raise测试载荷；全部构建后clangd切回RV64/sigsend。证据build/host/stage171-libc-raise/的unit/focused-initial、场景日志、standards/sources.json、verify.py与evidence.json。最近完整195矩阵仍为stage165，无CI/板端/性能结果。公开kill因上文僵尸语义候选待确认，原生目标选择未提前改动；完整信号/作业控制、公开文件接口/Fix、生产服务及sh/net/最终GUI目标继续。
 
 stage248：libc `sigaction` 接入单参数 handler、SIG_DFL、SIG_IGN 和既有原生 NODEFER/RESETHAND/NOCLDSTOP/NOCLDWAIT 标志。trampoline 从内核动作快照取得 handler，保存并恢复 errno 后 sigreturn；无需应用动作副表。安装和获取旧动作沿一次原生调用完成；旧动作输出复制失败不回滚已提交的动作，原生自订 trampoline 不作为公开 handler 回报。SA_SIGINFO、SA_RESTART 与 Rctx/Fix 前置仍待接。双架构 sigsend 实际验证安装与查询、入口掩码、RESETHAND、errno 恢复、同址输入输出及忽略；8 项既有信号主机测试与格式检查通过。
+
+stage249：`SA_SIGINFO` 使用同次快照的三参数原型。libc 将 USER 转换为 SI_USER 并保留完整 PID/UID，将 CHILD 的 wait 原因转换为 CLD_* 并保留状态，将 FAULT 转换为对应信号的原因和地址。无法细分的内核来源使用 SI_KERNEL，其余字段清零。第三参数沿用架构保存现场，修改仍由 sigreturn 校验。ARM64/RV64 的 sigsend、sigframe 和格式检查通过，覆盖实际 USER 递送、三参数动作查询、errno 恢复、SEGV_MAPERR/ACCERR 和修改现场后继续执行。公开 CHILD 转换、通用 ucontext 接口、SA_RESTART 及 Rctx/Fix 前置仍待接或验证。

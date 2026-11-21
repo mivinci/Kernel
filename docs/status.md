@@ -20,6 +20,8 @@
 
 ## 最新完成点与证据
 
+- stage249：公开 `SA_SIGINFO` 支持三参数 handler，转换 USER、CHILD、FAULT 来源。双架构 sigsend/sigframe 验证 USER、访问故障及上下文恢复；CHILD 的公开转换仍待运行验收。
+
 - stage248：libc 公开 `sigaction` 单参数处理入口，使用内核同次动作快照并在返回时恢复 errno。双架构 sigsend、8 项信号主机回归和格式通过；SA_SIGINFO、SA_RESTART、Rctx/Fix 前置待接。
 
 - stage247：子侧修复可在转换本地表前批量解除调用方列出的继承连接映射。23 项主机测试、格式及双架构 libsys/sigframe 通过；非空连接的完整转换及后端接入仍待接。

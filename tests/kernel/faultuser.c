@@ -1,5 +1,6 @@
 #include "private/syscall.h"
 #include <abi/boot.h>
+#include <signal.h>
 
 volatile u64     faulttrace[16];
 u64              fault_data[2];
@@ -41,6 +42,16 @@ handler(u64 signum, const Siginfo *info, void *context)
   faultsetpc(context, (u64) fault_resume);
 }
 
+static void
+publichandler(int signum, siginfo_t *info, void *context)
+{
+  CHECK(signum == SIGSEGV && info->si_signo == SIGSEGV &&
+        info->si_code == (faulttrace[1] ? SEGV_ACCERR : SEGV_MAPERR) &&
+        (u64) info->si_addr == faulttrace[4] && !info->si_errno && !info->si_pid && !info->si_uid &&
+        !info->si_status);
+  handler((u64) signum, (const Siginfo *) ((const u8 *) context - sizeof(Siginfo)), context);
+}
+
 static NORETURN void
 trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 address, u64 flags)
 {
@@ -79,7 +90,13 @@ main(int argc, char **argv)
   action.trampoline = action.kind == SIGNAL_HANDLER ? (u64) trampoline : 0;
   action.mask = action.reserved = 0;
   action.flags = mode == 10 ? SIGNAL_NODEFER : 0;
-  CHECK(!__sys_sigaction(faulttrace[5], &action, 0));
+  if (mode < 2) {
+    struct sigaction public = {0};
+    public.sa_sigaction = publichandler;
+    public.sa_flags = SA_SIGINFO;
+    CHECK(!sigaction(SIGSEGV, &public, NULL));
+  } else
+    CHECK(!__sys_sigaction(faulttrace[5], &action, 0));
   if (mode == 7)
     CHECK(!__sys_sigmask(SIGNAL_BLOCK, UINT64_C(1) << (SIGNAL_SEGV - 1), &old));
   faulttrace[0] = 1;
