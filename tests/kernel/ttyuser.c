@@ -1,16 +1,73 @@
 /* Exercise the same tty output stage in a real user address space. */
 #include "ttyuser.h"
 #include "../../sbin/tty/term.h"
+#include "../../sbin/tty/serial.h"
 #include "private/serial.h"
 #include <unistd.h>
 
-static Serialring tx;
+static Serialring rx, tx;
 static Termarg    attr;
+static Ttyinput   line;
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
-    if (!(c))                                                                                      \
+    if (!(c)) {                                                                                    \
+      ttytrace[7] = __LINE__;                                                                      \
       _exit(230);                                                                                  \
+    }                                                                                              \
   } while (0)
+
+static void
+ttyserialcheck(void)
+{
+  Ttyserial       io;
+  Ttyserialresult result;
+  u8              readback[SERIAL_BATCH], filler[SERIAL_BATCH];
+  const u8        edit[] = {'a', 'b', 127, '\r'};
+  const u8        echo[] = {'a', 'b', '\b', ' ', '\b', '\r', '\n'};
+  const u8        intr[] = {3, 'z', '\n'};
+  u32             ended, i;
+  attr.cc[TTY_VERASE] = 127;
+  attr.cc[TTY_VINTR] = 3;
+  CHECK(!serialinit(&rx, 1) && !serialinit(&tx, 1) && !ttyinputinit(&line, 1));
+  CHECK(ttyserialinit(&io, &rx, &tx, 2) == -ERR_STALE && !ttyserialinit(&io, &rx, &tx, 1));
+  CHECK(serialwrite(&rx, 1, edit, sizeof(edit)) == sizeof(edit) &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) &&
+        result.hints == (SERIAL_RX_ROOM | SERIAL_TX_READY) && !result.signal && !result.again);
+  CHECK(ttyinputread(&line, readback, sizeof(readback), &ended) == 2 && ended &&
+        readback[0] == 'a' && readback[1] == '\n');
+  CHECK(serialread(&tx, 1, readback, sizeof(readback)) == sizeof(echo));
+  for (i = 0; i < sizeof(echo); i++)
+    CHECK(readback[i] == echo[i]);
+
+  for (i = 0; i < sizeof(filler); i++)
+    filler[i] = 'x';
+  for (i = 0; i < SERIAL_CAPACITY / SERIAL_BATCH; i++)
+    CHECK(serialwrite(&tx, 1, filler, sizeof(filler)) == sizeof(filler));
+  CHECK(ttyserialoutput(&io, attr.oflag, "\n\n", 2) == 2 &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && !result.hints &&
+        !result.again && io.queued == 4);
+  CHECK(serialread(&tx, 1, readback, 1) == 1 && readback[0] == 'x' &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) &&
+        result.hints == SERIAL_TX_READY && io.queued == 3);
+  CHECK(serialwrite(&rx, 1, intr, sizeof(intr)) == sizeof(intr) &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && result.again &&
+        result.signal == SIGNAL_INT && result.hints == SERIAL_RX_ROOM && io.queued == 4 &&
+        tx.producer - tx.consumer == SERIAL_CAPACITY && rx.producer - rx.consumer == 2);
+  for (i = 0; i < SERIAL_CAPACITY / SERIAL_BATCH; i++)
+    CHECK(serialread(&tx, 1, readback, sizeof(readback)) == sizeof(readback));
+  CHECK(readback[SERIAL_BATCH - 2] == 'x' && readback[SERIAL_BATCH - 1] == '\r');
+
+  __atomic_store_n(&rx.flags, SERIAL_EOF, __ATOMIC_RELEASE);
+  CHECK(!ttyserialstep(&io, &line, &attr, 1, &result) && result.again && !result.end &&
+        !line.ready);
+  CHECK(!ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && result.end == SERIAL_EOF &&
+        !result.again && result.hints == (SERIAL_RX_ROOM | SERIAL_TX_READY));
+  CHECK(ttyinputread(&line, readback, sizeof(readback), &ended) == 2 && ended &&
+        readback[0] == 'z' && readback[1] == '\n');
+  CHECK(serialread(&tx, 1, readback, sizeof(readback)) == 7 && readback[0] == '^' &&
+        readback[1] == 'C' && readback[2] == '\r' && readback[3] == '\n' && readback[4] == 'z' &&
+        readback[5] == '\r' && readback[6] == '\n');
+}
 
 void
 ttyusercheck(void)
@@ -64,4 +121,5 @@ ttyusercheck(void)
         output[0] == '\n' && output[1] == '\n' && output[2] == '\n');
   consumed = 99;
   CHECK(ttyencode(8, input, 1, output, sizeof(output), &consumed) == -ERR_NOTSUP && consumed == 99);
+  ttyserialcheck();
 }

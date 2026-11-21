@@ -16,9 +16,11 @@
 - [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
 - [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD/同步FAULT来源、原生sigsend与libc raise、普通等待中断、阻塞 waitpid 的 SA_RESTART、ttycreate/ttybind/getfg 已接。公开 sigaction 支持单参数、SA_SIGINFO、已绑定 Rbank 的 Rctx 前置和私有 fork 返回的子 Fix 前置。kill、setfg/ttysignal、完整终端关联/挂断/孤儿策略仍待接。
 - [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx/快照/IO/关闭worker、参数捕获及目标Boot打包已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、完整exec路径/Fix尚未完成。
-- 用户态 tty 行规程、输出转换与 VMIN/VTIME 等有界核心已验，尚非默认包里的 tty 服务。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
+- 用户态 tty 行规程、串口双环数据处理、输出转换与 VMIN/VTIME 等有界核心已验，尚非默认包里的 tty 服务。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
 
 ## 最新完成点与证据
+
+- stage254：tty 串口双环接入行规程与输出暂存。双架构 tty 实测编辑回显、满环、部分提交、ISIG 私有清理与排空后 EOF。31 项既有 tty 主机测试和格式通过。跨进程映射、通知与默认启动仍待接。
 
 - stage253：私有 fork 返回与正式信号入口共用子 Fix。双架构 sigframe 验证发布元组前后、首层 trampoline 执行前的嵌套，以及父成功和错误返回。双架构 runtime、46 项 fork 主机测试和格式通过。公开 fork 及服务引用继承仍待接。
 

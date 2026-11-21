@@ -64,10 +64,14 @@ ttytest(void)
     if (error == -ERR_WOULD_BLOCK)
       CHECK(procidle() >= 0);
   }
-  CHECK(life.reason == LIFE_EXIT && life.code == 42 && blocked &&
-        !spaceread(process.space, tty_trace_address, trace, sizeof(trace)) && trace[0] == 1 &&
-        trace[1] == 2 && trace[3] >= trace[2] && trace[4] == 1 && trace[5] == 1 && trace[6] == 1 &&
-        trace[7] == 42);
+  CHECK(!spaceread(process.space, tty_trace_address, trace, sizeof(trace)));
+  if (life.code == 230) {
+    putstr("TTYUSER line=");
+    puthex(trace[7]);
+    putstr("\n");
+  }
+  CHECK(life.reason == LIFE_EXIT && life.code == 42 && blocked && trace[0] == 1 && trace[1] == 2 &&
+        trace[3] >= trace[2] && trace[4] == 1 && trace[5] == 1 && trace[6] == 1 && trace[7] == 42);
   while ((error = procclean(pid)) > 0) {
   }
   CHECK(!error && !lifecollect(process.life, 1, &result) && result.code == 42 &&

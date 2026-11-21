@@ -264,7 +264,7 @@ def build(args):
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
     tty_sources=[ROOT/name for name in ('tests/kernel/ttywaituser.c','tests/kernel/ttyuser.c',
-        'tests/kernel/ttyinputuser.c','sbin/tty/term.c','sbin/tty/input.c','sbin/tty/wait.c')]
+        'tests/kernel/ttyinputuser.c','sbin/tty/term.c','sbin/tty/input.c','sbin/tty/wait.c','sbin/tty/serial.c')]
     tty_elf=link_adoption('ttyuser',[compile_adoption(source,'tty-'+source.stem) for source in tty_sources])
     tty_image=sdk/'ttyuser.img'
     tty_image.write_bytes(pack(tty_elf.read_bytes(),profile['machine'],128))
