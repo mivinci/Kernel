@@ -1009,10 +1009,29 @@ spaceactivate(Spaceid id)
   Space    *s = find(id);
   Sourcectx context;
   Hvs       vs;
+  Mem       backing;
+  u32       node;
+  int       error;
   if (!s)
     return SP_BAD;
   if (active || s->busy || s->refs == 0xffffffffU || insnapshot(s))
     return SP_BUSY;
+  if (snapshot) {
+    /* User stores do not pass through writecheck. Park roots with a
+       writable alias to private data already retained by the snapshot. */
+    for (node = s->maps; node != PG_NONE; node = mappings[node].next) {
+      const Mmap *m = &mappings[node];
+      if (!(logicalprot(m) & VM_WRITE))
+        continue;
+      if (memstat(m->mem, &backing))
+        return SP_BAD;
+      if (backing.kind != MEM_RAM || backing.state != MEM_DATA)
+        continue;
+      error = aliaschangecheck(m->mem, NULL);
+      if (error)
+        return error;
+    }
+  }
   view(s, &vs, &context);
   s->refs++;
   active = s;

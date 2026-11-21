@@ -333,7 +333,8 @@ forkfreezetest(void)
           !acctcreate(set, 128, 128, &targetacct) && !spacecreate(targetacct, &target));
   none.generation = none.index = none.reserved = 0;
   REQUIRE(!spacesnapshotopen(process.space, target, none) && !spacefrozen(alias) &&
-          spaceunmap(alias, 0x10000) == SP_BUSY && spaceclear(alias, 1) == SP_BUSY &&
+          spaceactivate(alias) == SP_BUSY && spaceunmap(alias, 0x10000) == SP_BUSY &&
+          spaceclear(alias, 1) == SP_BUSY &&
           spacewritable(alias, 0x10000, sizeof(value)) == SP_BUSY &&
           spacewrite(alias, 0x10000, &observed, sizeof(observed)) == SP_BUSY &&
           spacecopy(alias, 0x10000, 0x11000, sizeof(value)) == SP_BUSY &&

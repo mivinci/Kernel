@@ -790,26 +790,41 @@ int
 procrunone(void)
 {
   Proc *p;
+  u32   slot, previous = PG_NONE, scans;
+  int   error;
   if (current || vm_paused)
     return -ERR_STATE;
   lifework(8);
   wakechecks();
-  if (readyhead == PG_NONE)
+  /* Keep parked roots in queue order. A kernel continuation can run
+     without activating its user root and may be what unblocks them. */
+  for (slot = readyhead, scans = 0; slot != PG_NONE; slot = p->next) {
+    if (slot >= PROCS || scans++ == PROCS)
+      panic("process ready queue index");
+    p = &processes[slot];
+    if (p->state != PROC_READY)
+      panic("process ready queue");
+    error = (p->configured & CONFIG_KERNEL) ? 0 : spaceactivate(p->space);
+    if (!error)
+      break;
+    if (error != SP_BUSY)
+      panic("process root activation");
+    previous = slot;
+  }
+  if (slot == PG_NONE)
     return -ERR_WOULD_BLOCK;
-  p = &processes[readyhead];
-  readyhead = p->next;
-  if (readyhead == PG_NONE)
-    readytail = PG_NONE;
+  if (previous == PG_NONE)
+    readyhead = p->next;
+  else
+    processes[previous].next = p->next;
+  if (readytail == slot)
+    readytail = previous;
   p->next = PG_NONE;
-  if (p->state != PROC_READY)
-    panic("process ready queue");
   current = p;
   p->state = PROC_RUNNING;
   reschedule_requested = 0;
   if (p->configured & CONFIG_KERNEL)
     vm_paused = 1;
-  else if (spaceactivate(p->space))
-    panic("process root activation");
   if (timer_enabled) {
     u64 ticks = hal_clock_read();
     if (ticks > ~(u64) 0 - timer_interval)
@@ -1345,10 +1360,9 @@ procidle(void)
 {
   if (current || vm_paused)
     return -ERR_STATE;
-  if (readyhead != PG_NONE)
-    return 0;
   if (!timer_enabled && !irqwaiting())
-    return -ERR_STATE;
+    return readyhead != PG_NONE ? 0 : -ERR_STATE;
+  /* A nonempty ready queue can contain only snapshot-parked roots. */
   hal_idle();
   if (procwork(1) < 0 || prepwork(1) < 0)
     panic("idle cleanup");

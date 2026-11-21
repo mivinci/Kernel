@@ -290,6 +290,17 @@ forkcontinuetest(void)
           !procinfo(parentpid, &parentinfo));
   bootstrap(parentpid);
   REQUIRE(!procpublish(parentpid));
+  {
+    Acctid  account;
+    Spaceid target;
+    Prepid  none = {0};
+    REQUIRE(!acctcreate(buildset, 128, 128, &account) && !spacecreate(account, &target) &&
+            !spacesnapshotopen(parentinfo.space, target, none));
+    REQUIRE(procrunone() == -ERR_WOULD_BLOCK && !procinfo(parentpid, &stale) &&
+            stale.state == PROC_READY);
+    REQUIRE(!spacesnapshotend(parentinfo.space, target, 0) && !spacedestroy(target) &&
+            !acctclose(account) && !acctunbind(account));
+  }
   armed = 1;
   REQUIRE(!procrunone() && !procinfo(parentpid, &stale) && stale.state == PROC_STOPPED &&
           !buildchild && spacefrozen(parentinfo.space) == 1 && procrunone() == -ERR_WOULD_BLOCK);
