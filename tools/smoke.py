@@ -1219,6 +1219,13 @@ def exercise(args, run_dir, record):
             record['initrd'] = dict(path=str(args.initrd), bytes=args.initrd.stat().st_size, sha256=digest(args.initrd))
         if args.virtio:
             command += ["-device", "virtio-rng-device"]
+        if args.case == "virtiodev":
+            for name, sectors, readonly in (("rw", 256, "off"), ("ro", 128, "on")):
+                disk = Path(temporary) / (name + ".raw")
+                with disk.open("wb") as image:
+                    image.truncate(sectors * 512)
+                command += ["-drive", f"if=none,format=raw,id={name},file={disk},readonly={readonly}",
+                            "-device", f"virtio-blk-device,drive={name}"]
         if args.trace:
             command += ["-d", "int,guest_errors", "-D", str(run_dir / "trace.log")]
         if getattr(args,'uart_trace',False):
@@ -1537,8 +1544,9 @@ def exercise(args, run_dir, record):
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("VIRTIOCHECK ")]
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
-                    expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-1,found=1,
-                                  negotiated=1,resets=2,charged=0,allocated=transition["tables"])
+                    expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
+                                  negotiated=3,resets=6,rng=1,rwsectors=256,rosectors=128,
+                                  charged=0,allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery/negotiation/reset mismatch")
                     record["virtio_device"]=checks[0]

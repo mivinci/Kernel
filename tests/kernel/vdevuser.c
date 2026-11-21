@@ -4,7 +4,7 @@
 #include <abi/syscall.h>
 #include "private/syscall.h"
 #include "private/start.h"
-#include "private/virtio/device.h"
+#include "private/virtio/block.h"
 #include "virtiouser.h"
 volatile u64 vdev_trace[32];
 #define REQUIRE(c, n)                                                                              \
@@ -42,8 +42,9 @@ main(int argc, char **argv)
   Maparg  mapping;
   Vdev    device;
   Vdevops ops;
-  u64     base;
-  u32     i, status;
+  Vblkconfig config;
+  u64        base;
+  u32        i, status;
   UNUSED(argc);
   UNUSED(argv);
   REQUIRE(memory > 0 && vdev_trace[1] && vdev_trace[1] <= 8, 151);
@@ -58,7 +59,7 @@ main(int argc, char **argv)
   ops.read = virtioread;
   ops.write = virtiowrite;
   for (i = 0; i < vdev_trace[1]; i++) {
-    REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x100, 153);
+    REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x100 && vdev_trace[23 + i] >= 0x100, 153);
     base = mapping.address + vdev_trace[4 + i];
     REQUIRE(!vprobe(&device, &ops), 154);
     vdev_trace[12]++;
@@ -67,22 +68,33 @@ main(int argc, char **argv)
       vdev_trace[13]++;
       continue;
     }
-    REQUIRE(device.device == 4 && device.state == VDEV_FOUND, 156);
+    REQUIRE((device.device == 4 || device.device == VBLK_DEVICE) && device.state == VDEV_FOUND,
+            156);
     vdev_trace[14]++;
     reset(&device);
-    REQUIRE(!vfeatures(&device, 0, 0) && device.state == VDEV_FEATURES &&
-                device.features == VDEV_VERSION1 && (device.offered & VDEV_VERSION1),
-            157);
+    if (device.device == VBLK_DEVICE) {
+      REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x108 && vdev_trace[23 + i] >= 0x108, 163);
+      REQUIRE(!vblkfeatures(&device) && !vblkconfig(&device, &config), 164);
+      if (config.readonly) {
+        REQUIRE((device.features & VBLK_F_RO) && config.sectors == 128, 165);
+        vdev_trace[19]++;
+        vdev_trace[21] = config.sectors;
+      } else {
+        REQUIRE(!(device.features & VBLK_F_RO) && config.flush && config.sectors == 256, 166);
+        vdev_trace[18]++;
+        vdev_trace[20] = config.sectors;
+      }
+    } else {
+      REQUIRE(!vfeatures(&device, 0, 0) && device.features == VDEV_VERSION1, 157);
+      vdev_trace[17]++;
+    }
+    REQUIRE(device.state == VDEV_FEATURES && (device.features & VDEV_VERSION1) &&
+                (device.offered & device.features) == device.features,
+            167);
     REQUIRE(!virtioread(&base, 0x70, &status) && status == 11, 158);
     vdev_trace[15]++;
-    vdev_trace[18] = device.device;
-    vdev_trace[19] = device.vendor;
-    vdev_trace[20] = device.offered;
-    vdev_trace[21] = device.features;
-    vdev_trace[22] = status;
     reset(&device);
     REQUIRE(!virtioread(&base, 0x70, &status) && !status, 159);
-    vdev_trace[23] = status;
   }
   REQUIRE(!__sys_unmap(space, mapping.address), 160);
   vdev_trace[0] = 99;

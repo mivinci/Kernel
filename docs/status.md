@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage356（2026-11-22）：双架构 QEMU `virtiodev` 通过实际 Device 映射核对可写盘的 FLUSH、只读盘的 RO 和两盘容量；保留 RNG 协商与复位验收。26 项 virtio 主机测试和格式通过；设备队列和 DMA 待接。
 - stage355（2026-11-22）：virtio-blk 协商 RO/FLUSH，按配置代次读取容量，无 FLUSH 时只读。26 项 virtio 主机测试和格式通过，双架构 QEMU `runtime` 回归通过；实际设备容量读取待验。
 - stage354（2026-11-22）：virtio-blk 可构造 READ/WRITE/FLUSH 描述符并校验完成状态。双架构 QEMU `runtime` 验证 READ 环交接，25 项 virtio 主机回归和格式通过；实际 DMA 和块设备传输未接。
 - stage353（2026-11-22）：LOAD 缓存工作记录按原请求逐次推进读票。双架构 QEMU `runtime`、37 项 FS 主机回归及格式通过；设备提交仍由夹具模拟。
