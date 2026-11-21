@@ -48,6 +48,11 @@ isize ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call,
    Yield and recheck when again is set, without waiting for another hint. */
 isize ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
                     Ttyserialresult *out);
+/* For one blocking interbyte READ, return 1 when it can complete. A ready
+   read takes precedence over the next RX byte. Otherwise consume at most
+   one byte and restart the deadline only if that byte was retained. */
+isize ttyserialtimedstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, Ttywait *wait,
+                         u64 now, u64 *next, Ttyserialresult *out);
 /* Run a step and publish its hints on the exact serial peer's NOTIFY handle. */
 isize ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
                     Ttyserialresult *out);

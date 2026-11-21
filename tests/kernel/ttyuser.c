@@ -120,6 +120,35 @@ ttyfilereadcheck(void)
         ttyserialread(&line, &read, page) == 1 && page[2] == '\n' && !line.ready);
 }
 
+static void
+ttytimedcheck(void)
+{
+  Ttyserial       io;
+  Ttyserialresult result;
+  Ttywait         wait;
+  Termarg         raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
+  u64             first, next;
+  u32             ended;
+  u8              bytes[2];
+  raw.cc[TTY_VMIN] = 3;
+  raw.cc[TTY_VTIME] = 1;
+  CHECK(!serialinit(&rx, 1) && !serialinit(&tx, 1) && !ttyinputinit(&line, 0) &&
+        !ttyserialinit(&io, &rx, &tx, 1) && !ttywaitinit(&wait, &raw, 3, 0, 0, 0));
+  CHECK(!ttyserialtimedstep(&io, &line, &raw, &wait, 1, &next, &result) && !next);
+  CHECK(serialwrite(&rx, 1, "ab", 2) == 2 &&
+        !ttyserialtimedstep(&io, &line, &raw, &wait, 2, &first, &result) &&
+        first == UINT64_C(100000002) && line.ready == 1);
+  CHECK(!ttyserialtimedstep(&io, &line, &raw, &wait, first - 1, &next, &result) &&
+        next == first - 1 + UINT64_C(100000000) && line.ready == 2);
+  CHECK(serialwrite(&rx, 1, "c", 1) == 1 &&
+        ttyserialtimedstep(&io, &line, &raw, &wait, next, &next, &result) == 1 && !next &&
+        !result.hints && line.ready == 2 && rx.producer - rx.consumer == 1);
+  CHECK(ttyinputread(&line, bytes, sizeof(bytes), &ended) == 2 && bytes[0] == 'a' &&
+        bytes[1] == 'b' && !ended);
+  CHECK(!ttyserialstep(&io, &line, &raw, 1, &result) &&
+        ttyinputread(&line, bytes, sizeof(bytes), &ended) == 1 && bytes[0] == 'c');
+}
+
 void
 ttyusercheck(void)
 {
@@ -174,4 +203,5 @@ ttyusercheck(void)
   CHECK(ttyencode(8, input, 1, output, sizeof(output), &consumed) == -ERR_NOTSUP && consumed == 99);
   ttyserialcheck();
   ttyfilereadcheck();
+  ttytimedcheck();
 }

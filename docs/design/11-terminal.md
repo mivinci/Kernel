@@ -877,4 +877,6 @@ stage277：ARM64/RV64 runtime 使用原 REQUEST 验证 WRITE 在 TX 暂存忙时
 
 stage278：`ttyfilereadwait` 用接收时的 VMIN/VTIME 状态和当前可读量决定何时提交原 READ，等待时向调用者返回绝对期限；取消及强制终结仍优先处理。ARM64/RV64 runtime 以实际单调闹钟验证 VMIN=0、VTIME=1、无输入的请求到期返回零字节，响应页保持。31 项 TTY 主机测试和格式通过。生产事件循环仍须合并期限并在字节进入前检查已到期的间隔读。
 
+stage279：`ttyserialtimedstep` 将字节间计时接到串口 RX 步进。先检查旧读是否可完成，再最多接收一字节；只有实际保留的字节才启动或重置期限。ARM64/RV64 tty 用测试环和受控时间验证空等、首字节启动、第二字节续期，以及恰到期限时先读旧数据、保留新字节。31 项 TTY 主机测试和格式通过。生产事件循环和前台权限仍待接入。
+
 ARM64 与 RV64 的 `serial-tty` 用 PID1 夹具从真实生产 ELF 装载两个服务，核验 tty 的 READY，完成晚绑定。双方阻塞后分两批注入 `uar` 和 `t-rx\r`；物理 UART 模型可见 `uart-rx\r\n`，serial 计数为接收 8、发送 9，两个服务重新阻塞并最终收取、回收。既有 `serial-service`、`serial-timeout` 与格式检查通过。

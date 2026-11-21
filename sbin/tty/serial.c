@@ -227,6 +227,33 @@ ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
 }
 
 isize
+ttyserialtimedstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, Ttywait *wait, u64 now,
+                   u64 *next, Ttyserialresult *out)
+{
+  Ttywait updated;
+  isize   status;
+  u32     available;
+  if (!input || !wait || !out || !next || input->canonical || wait->canonical || wait->nonblock ||
+      !wait->minimum || !wait->time)
+    return -ERR_INVALID;
+  *out = (Ttyserialresult){0};
+  available = input->ready;
+  updated = *wait;
+  status = ttywaitcheck(&updated, available, now, next);
+  if (status)
+    return status;
+  status = ttywaitbyte(&updated, now);
+  if (status)
+    return status;
+  status = ttyserialstep(io, input, mode, 1, out);
+  if (input->ready > available)
+    *wait = updated;
+  if (status < 0)
+    return status;
+  return ttywaitcheck(wait, input->ready, now, next);
+}
+
+isize
 ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
               Ttyserialresult *out)
 {
