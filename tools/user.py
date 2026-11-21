@@ -376,7 +376,10 @@ def build(args):
     if len(group_rows)!=1 or int(group_rows[0][2])!=256:raise BuildError('MMIO group trace missing')
     group_address=int(group_rows[0][1],16)
     (sdk/'groupimage.S').write_text('/* image sha256: '+digest(group_image)+' */\n.section .rodata\n.balign 8\n.global group_image,group_image_end,group_trace_address\ngroup_image:\n.incbin "'+str(group_image)+'"\ngroup_image_end:\n.balign 8\ngroup_trace_address:\n.quad '+str(group_address)+'\n')
-    vdev_user=link_adoption('vdevuser',[compile_adoption(ROOT/'tests/kernel/vdevuser.c','vdevuser'),compile_adoption(ROOT/'tests/kernel'/args.arch/'virtiommio.c','virtiommio')],(virtio_archive,))
+    vdev_user=link_adoption('vdevuser', [
+        compile_adoption(ROOT/'tests/kernel/vdevuser.c', 'vdevuser'),
+        compile_adoption(ROOT/'tests/kernel'/args.arch/'virtiommio.c', 'virtiommio'),
+        compile_adoption(ROOT/'sbin/fs/journal.c', 'vdev-journal')], (virtio_archive,))
     vdev_image=sdk/'vdevuser.img'
     vdev_image.write_bytes(pack(vdev_user.read_bytes(),profile['machine'],128))
     vdev_inspect=invoke('inspect-virtio-device',[tools['readelf']['path'],'-h','-l','-s',str(vdev_user)])

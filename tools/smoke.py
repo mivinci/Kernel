@@ -1220,7 +1220,7 @@ def exercise(args, run_dir, record):
         if args.virtio:
             command += ["-device", "virtio-rng-device"]
         if args.case == "virtiodev":
-            for name, sectors, readonly, blocksize in (("rw", 256, "off", 4096), ("ro", 128, "on", 512)):
+            for name, sectors, readonly, blocksize in (("rw", 1024, "off", 4096), ("ro", 128, "on", 512)):
                 disk = Path(temporary) / (name + ".raw")
                 with disk.open("wb") as image:
                     image.truncate(sectors * 512)
@@ -1553,15 +1553,15 @@ def exercise(args, run_dir, record):
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
-                                  negotiated=3,resets=8,rng=1,rwsectors=256,rosectors=128,
-                                  reads=5,writes=1,flushes=1,interrupts=7,retired=2,
+                                  negotiated=3,resets=8,rng=1,rwsectors=1024,rosectors=128,
+                                  reads=5,writes=4,flushes=3,interrupts=12,retired=2,
                                   dmagrain=64 if args.arch == "arm64" else 0,charged=0,
                                   dmapages=6*len(transports),
                                   allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
                     stats = {row.get("device"): row["stats"] for row in qmp.command("query-blockstats")}
-                    for name, sectors, seed, blocksize, reads in (("rw", 256, 0x51, 4096, 4),
+                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 4),
                                                                   ("ro", 128, 0xa7, 512, 3)):
                         disk = Path(temporary) / (name + ".raw")
                         counters = stats.get(name, {})
@@ -1571,7 +1571,11 @@ def exercise(args, run_dir, record):
                         expected_image[blocksize:2 * blocksize] = bytes((seed + i * 37) & 0xff for i in range(blocksize))
                         if name == "rw":
                             expected_image[2 * blocksize:3 * blocksize] = bytes((0x37 + i * 37) & 0xff for i in range(blocksize))
-                            if counters.get("wr_bytes") != blocksize or counters.get("flush_operations") != 1:
+                            for index, block in enumerate((65, 66, 18)):
+                                base = block * blocksize
+                                expected_image[base:base + blocksize] = bytes(
+                                    (0x92 + index * 31 + i * 37) & 0xff for i in range(blocksize))
+                            if counters.get("wr_bytes") != 4 * blocksize or counters.get("flush_operations") != 3:
                                 raise SmokeError(f"virtio backing write/flush count mismatch: {counters}")
                         if disk.read_bytes() != expected_image:
                             raise SmokeError(f"virtio backing image mismatch: {name}")

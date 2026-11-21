@@ -6,6 +6,7 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "private/virtio/block.h"
+#include "../../sbin/fs/journal.h"
 #include "virtiouser.h"
 volatile u64           vdev_trace[VTEST_TRACE];
 typedef struct Testdma Testdma;
@@ -67,7 +68,7 @@ blksync(void *context, u32 phase, const Vbuf *buffer)
 static void
 transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
          const Vblkconfig *config, const Testdma *dma, u32 type, u64 sector, u64 cookie, u8 seed,
-         Vdone *prior)
+         Vdone *prior, const u8 *image)
 {
   Vblkreq      request = {0};
   Vdone        done[VQ_BATCH];
@@ -79,7 +80,7 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   u32          count, more, i, causes;
   u64          generation, started;
   for (i = 0; i < bytes; i++)
-    data[i] = type == VBLK_WRITE ? (u8) (seed + i * 37) : 0;
+    data[i] = type != VBLK_WRITE ? 0 : image ? image[i] : (u8) (seed + i * 37);
   started = now();
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &generation) && !__sys_irqack(binding),
@@ -116,6 +117,37 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
     vdev_trace[2]++;
   else
     vdev_trace[3]++;
+}
+static void
+testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
+         const Testdma *dma)
+{
+  static Journal journal;
+  static u8      images[3][JOURNAL_BYTES];
+  Journalblock   metadata[2];
+  Journalio      io;
+  u32            i, j, count = 0;
+  u64            stride = JOURNAL_BYTES / VBLK_SECTOR;
+  REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
+  for (i = 0; i < ARRAY_SIZE(images); i++)
+    for (j = 0; j < JOURNAL_BYTES; j++)
+      images[i][j] = (u8) (0x92 + i * 31 + j * 37);
+  metadata[0].block = 65;
+  metadata[0].bytes = images[0];
+  metadata[1].block = 66;
+  metadata[1].bytes = images[1];
+  /* Synthetic snapshots exercise transport and ordering before a disk
+     codec exists. The independent host census checks the written bytes. */
+  REQUIRE(!journalredo(&journal, config->sectors / stride, 47, metadata, 2, images[2]), 194);
+  while (journal.phase != JOURNAL_DONE) {
+    REQUIRE(count < 5 && !journalnext(&journal, &io) && io.txid == 47, 195);
+    transfer(device, ring, 2, binding, irqevent, config, dma,
+             io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH, io.block * stride, 2 + count, 0,
+             NULL, io.bytes);
+    REQUIRE(!journalcomplete(&journal, &io, 1), 196);
+    count++;
+  }
+  REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
 }
 static void
 startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
@@ -180,13 +212,13 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   dma.addresses = &vdev_trace[VTEST_DMA_TRACE + member * VTEST_PAGES];
   startqueue(device, &ring, 1, &dma);
   transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, stride, 1,
-           config->readonly ? 0xa7 : 0x51, &prior);
+           config->readonly ? 0xa7 : 0x51, &prior, NULL);
   if (!config->readonly) {
     transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_WRITE, 2 * stride, 2, 0x37,
-             NULL);
-    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_FLUSH, 0, 3, 0, NULL);
+             NULL, NULL);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_FLUSH, 0, 3, 0, NULL, NULL);
     transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
-             NULL);
+             NULL, NULL);
   }
   resetpending(device, &ring, binding, irqevent, config, &dma);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
@@ -197,8 +229,10 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
   REQUIRE(prior.generation == 1, 191);
   transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ,
-           config->readonly ? stride : 2 * stride, 1, config->readonly ? 0xa7 : 0x37, &prior);
+           config->readonly ? stride : 2 * stride, 1, config->readonly ? 0xa7 : 0x37, &prior, NULL);
   REQUIRE(prior.generation == 2, 192);
+  if (!config->readonly)
+    testredo(device, &ring, binding, irqevent, &fresh, &dma);
 }
 int
 main(int argc, char **argv)
@@ -246,7 +280,7 @@ main(int argc, char **argv)
         vdev_trace[19]++;
         vdev_trace[21] = config.sectors;
       } else {
-        REQUIRE(!(device.features & VBLK_F_RO) && config.flush && config.sectors == 256 &&
+        REQUIRE(!(device.features & VBLK_F_RO) && config.flush && config.sectors == 1024 &&
                     config.blocksize == PAGE_SIZE,
                 166);
         vdev_trace[18]++;
