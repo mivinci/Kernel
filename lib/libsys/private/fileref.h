@@ -13,6 +13,7 @@ typedef struct Filepool  Filepool;
 typedef struct Fileclose Fileclose;
 typedef struct Filestage Filestage;
 typedef struct Filevalue Filevalue;
+typedef struct Filefork  Filefork;
 struct Filestage
 {
   u64 files[2];
@@ -23,6 +24,13 @@ struct Filevalue
   Conntag connection;
   u64     session, reference, token;
 };
+struct Filefork
+{
+  u64       file;
+  Filevalue value;
+  u32       aliases, pins;
+};
+STATIC_ASSERT(sizeof(Filefork) == 56, file_fork_plan_size);
 struct Fileref
 {
   u64     generation;
@@ -51,6 +59,15 @@ STATIC_ASSERT(sizeof(Filestage) == 24 && sizeof(Filevalue) == 40, prospective_fi
    file IDs are private generation[55:0]/index[7:0], not kernel Handles. */
 isize sysfilerefinit(Filepool *pool, Connpeer self);
 isize sysfilerefcheck(const Filepool *pool, Connpeer self);
+/* Protected child-local conversion after the coordinator fixed all Rctx/File
+   results and prepared exact target backend references/tokens. The plan owns
+   no authority itself; caller verifies service identities and child claims.
+   Preserve retained local IDs, reduce alias/pin counts only, rebind to the
+   next directory generation at the same index. Drop other parent copies
+   without CLOSE/unpin/ACK; their responsibility remains in the parent.
+   No reserved creator may be retained through this live-reference path. */
+isize sysfilereffork(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries,
+                     u64 count);
 /* Reserve one creator result or both PIPE ends before remote submission.
    stage is initially zero; reserved IDs cannot be viewed/pinned/published as
    live references. Capacity failure changes neither generations nor outputs.

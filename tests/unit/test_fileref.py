@@ -29,6 +29,10 @@ class Value(C.Structure):
     _fields_=[('connection',Tag),('session',C.c_uint64),('reference',C.c_uint64),('token',C.c_uint64)]
 
 
+class Fork(C.Structure):
+    _fields_=[('file',C.c_uint64),('value',Value),('aliases',C.c_uint32),('pins',C.c_uint32)]
+
+
 class FileReferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -46,6 +50,7 @@ class FileReferenceTests(unittest.TestCase):
             'sysfilerefclose':[C.POINTER(Pool),Peer,C.c_uint64,C.POINTER(Close)],
             'sysfilerefconfirmed':[C.POINTER(Pool),Peer,C.POINTER(Close)]}
         signatures['sysfilerefconnection']=[C.POINTER(Pool),Peer,Tag]
+        signatures['sysfilereffork']=[C.POINTER(Pool),Peer,Peer,C.POINTER(Fork),C.c_uint64]
         signatures['sysfilerefreserve']=[C.POINTER(Pool),Peer,C.c_uint32,C.POINTER(Stage)]
         signatures['sysfilerefcommit']=[C.POINTER(Pool),Peer,C.POINTER(Stage),C.POINTER(Value),C.c_uint32]
         signatures['sysfilerefabort']=[C.POINTER(Pool),Peer,C.POINTER(Stage)]
@@ -69,6 +74,76 @@ class FileReferenceTests(unittest.TestCase):
 
     def view(self,file):
         out=Ref();self.assertEqual(self.lib.sysfilerefview(C.byref(self.pool),self.self,file,C.byref(out)),0);return out
+
+    def test_child_fork_rebinds_live_ids_reduces_pins_and_drops_parent_cleanup(self):
+        file=self.new()
+        self.assertEqual(self.lib.sysfilerefalias(C.byref(self.pool),self.self,file),0)
+        self.assertEqual(self.lib.sysfilerefpin(C.byref(self.pool),self.self,file),0)
+        dropped=C.c_uint64()
+        self.assertEqual(self.lib.sysfilerefnew(C.byref(self.pool),self.self,self.tag,56,78,66,C.byref(dropped)),0)
+        self.assertEqual(self.lib.sysfilerefdrop(C.byref(self.pool),self.self,dropped.value),0)
+        closing=Close()
+        self.assertEqual(self.lib.sysfilerefclose(C.byref(self.pool),self.self,dropped.value,C.byref(closing)),0)
+        reserved=Stage()
+        self.assertEqual(self.lib.sysfilerefreserve(C.byref(self.pool),self.self,1,C.byref(reserved)),0)
+        parent=bytes(self.pool);childpool=Pool.from_buffer_copy(parent);child=Peer(pid(3),10)
+        plan=(Fork*1)(Fork(file,Value(Tag(9,2,0),55,177,701),2,0))
+        self.assertEqual(self.lib.sysfilereffork(C.byref(childpool),self.self,child,plan,1),0)
+        out=Ref()
+        self.assertEqual(self.lib.sysfilerefview(C.byref(childpool),child,file,C.byref(out)),0)
+        self.assertEqual((out.aliases,out.pins,out.session,out.reference,out.token,out.connection.generation),(2,0,55,177,701,9))
+        self.assertEqual(self.lib.sysfilerefview(C.byref(childpool),child,dropped.value,C.byref(out)),-4)
+        self.assertEqual(childpool.entries[reserved.files[0]&255].state,0)
+        self.assertEqual(self.lib.sysfilerefcheck(C.byref(childpool),child),0)
+        self.assertEqual(bytes(self.pool),parent)
+        stable=bytes(childpool)
+        self.assertEqual(self.lib.sysfilereffork(C.byref(childpool),self.self,child,plan,1),0)
+        self.assertEqual(bytes(childpool),stable)
+
+    def test_child_fork_keeps_only_selected_active_pin_after_descriptor_close(self):
+        file=self.new()
+        self.assertEqual(self.lib.sysfilerefpin(C.byref(self.pool),self.self,file),0)
+        self.assertEqual(self.lib.sysfilerefdrop(C.byref(self.pool),self.self,file),0)
+        child=Peer(pid(3),10);plan=(Fork*1)(Fork(file,Value(Tag(9,2,0),55,177,701),0,1))
+        self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,1),0)
+        self.assertEqual(self.lib.sysfilerefunpin(C.byref(self.pool),child,file),0)
+        close=Close()
+        self.assertEqual(self.lib.sysfilerefclose(C.byref(self.pool),child,file,C.byref(close)),0)
+        self.assertEqual(close.file,file)
+
+    def test_child_fork_invalid_plan_is_atomic_and_cannot_inflate_ownership(self):
+        file=self.new();child=Peer(pid(3),10)
+        for aliases,pins,session,generation in [(2,0,55,9),(1,1,55,9),(1,0,56,9),(1,0,55,8),(0,0,55,9)]:
+            plan=(Fork*1)(Fork(file,Value(Tag(generation,2,0),session,177,701),aliases,pins))
+            before=bytes(self.pool)
+            self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,1),-1)
+            self.assertEqual(bytes(self.pool),before)
+        plan=(Fork*2)(*[Fork(file,Value(Tag(9,2,0),55,177,701),1,0) for _ in range(2)])
+        before=bytes(self.pool)
+        self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,2),-1)
+        self.assertEqual(bytes(self.pool),before)
+
+    def test_child_fork_dropped_max_generation_is_retired_and_old_id_stays_stale(self):
+        file=self.new();self.pool.entries[file&255].generation=MAX
+        child=Peer(pid(3),10)
+        self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,None,0),0)
+        self.assertEqual((self.pool.entries[file&255].generation,self.pool.entries[file&255].state),(MAX,3))
+        self.assertEqual(self.lib.sysfilerefcheck(C.byref(self.pool),child),0)
+
+    def test_child_fork_rejects_duplicate_backend_references_and_mixed_tokens(self):
+        first=self.new();second=C.c_uint64()
+        self.assertEqual(self.lib.sysfilerefnew(C.byref(self.pool),self.self,self.tag,56,78,66,C.byref(second)),0)
+        child=Peer(pid(3),10)
+        for reference,token in [(177,701),(178,702)]:
+            plan=(Fork*2)(Fork(first,Value(Tag(9,2,0),55,177,701),1,0),
+                           Fork(second.value,Value(Tag(9,2,0),56,reference,token),1,0))
+            before=bytes(self.pool)
+            self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,plan,2),-1)
+            self.assertEqual(bytes(self.pool),before)
+        before=bytes(self.pool)
+        alias=C.cast(C.byref(self.pool),C.POINTER(Fork))
+        self.assertEqual(self.lib.sysfilereffork(C.byref(self.pool),self.self,child,alias,1),-1)
+        self.assertEqual(bytes(self.pool),before)
 
     def test_aliases_and_operation_pins_hold_last_close_until_both_are_gone(self):
         file=self.new();close=Close()

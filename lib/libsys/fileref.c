@@ -92,6 +92,66 @@ sysfilerefcheck(const Filepool *pool, Connpeer self)
   return 0;
 }
 isize
+sysfilereffork(Filepool *pool, Connpeer parent, Connpeer child, const Filefork *entries, u64 count)
+{
+  u16   selected[SYSFILE_REFS];
+  u32   i, j;
+  isize error;
+  if (!pool || !identity(parent) || !identity(child) || parent.pid == child.pid ||
+      count > SYSFILE_REFS || (count && !output(pool, entries, count * sizeof(*entries))))
+    return -ERR_INVALID;
+  if (!source(pool, child))
+    return 0;
+  error = sysfilerefcheck(pool, parent);
+  if (error)
+    return error;
+  for (i = 0; i < SYSFILE_REFS; i++)
+    selected[i] = SYSFILE_REFS;
+  for (i = 0; i < count; i++) {
+    const Filefork  *plan = &entries[i];
+    const Filevalue *value = &plan->value;
+    Fileref         *entry;
+    error = find(pool, parent, plan->file, &entry);
+    if (error)
+      return error;
+    if (selected[plan->file & 255] != SYSFILE_REFS || (!plan->aliases && !plan->pins) ||
+        plan->aliases > entry->aliases || plan->pins > entry->pins || !value->session ||
+        value->session != entry->session || !value->reference || !value->token ||
+        value->connection.reserved || value->connection.index != entry->connection.index ||
+        entry->connection.generation == UINT64_MAX ||
+        value->connection.generation != entry->connection.generation + 1)
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++) {
+      const Filefork *other = &entries[j];
+      if (value->connection.index == other->value.connection.index &&
+          (value->connection.generation != other->value.connection.generation ||
+           value->token != other->value.token || value->reference == other->value.reference))
+        return -ERR_INVALID;
+    }
+    selected[plan->file & 255] = (u16) i;
+  }
+  for (i = 0; i < SYSFILE_REFS; i++) {
+    Fileref        *entry = &pool->entries[i];
+    const Filefork *plan = selected[i] == SYSFILE_REFS ? NULL : &entries[selected[i]];
+    u64             generation = entry->generation;
+    clear(entry);
+    entry->generation = generation;
+    if (!plan) {
+      entry->state = generation == SYSFILE_GEN_MAX ? SYSFILE_REF_RETIRED : SYSFILE_REF_FREE;
+      continue;
+    }
+    entry->connection = plan->value.connection;
+    entry->session = plan->value.session;
+    entry->reference = plan->value.reference;
+    entry->token = plan->value.token;
+    entry->aliases = plan->aliases;
+    entry->pins = plan->pins;
+    entry->state = plan->aliases ? SYSFILE_REF_LIVE : SYSFILE_REF_CLOSING;
+  }
+  pool->self = child;
+  return 0;
+}
+isize
 sysfilerefreserve(Filepool *pool, Connpeer self, u32 count, Filestage *stage)
 {
   u32   slots[2], found = 0, i;

@@ -414,6 +414,12 @@ stage228：双架构 libsys 增加真实负业务回复的 handler fork。独立
 
 ARM64/RV64 libsys、19 项上下文信号主机测试和格式通过，日志 `/private/tmp/kernel-stage228-{arm64,riscv,context,fmt}.log`；READ 负业务仅主机验证，原生机制失败、创建结果/File 子引用及生产协调器仍待接，未跑完整主机/场景矩阵、CI 或板端。
 
+stage229：新增私有 `sysfilereffork`，供整体协调器在固定 Rctx/File 结果并取得精确子后端引用后执行本地转换。独立只读 Filefork 清单包含原本地 ID、子 Filevalue、需保留 alias/pin 数；原 session 保持，连接须同索引且代次加一，reference/token 非零，同后端 token 一致且 reference 不重复，计数不可增加、清单 ID 不重复。先核验整份源注册表和清单，失败不改源；再保留选中 ID 的代次并写入子后端引用、计数和 LIVE/CLOSING 状态。未选中的父活动/关闭/预留副本只清本地责任，不 CLOSE/unpin/ACK；保留代次墓碑，耗尽项退休，最后重绑子身份。重复已修复子调用不重置新状态。
+
+该原语不解析 fd 或随意推断 pin，不生成远端引用/授权；上层仍须从合法 fd、活动调用和服务准备结果构造完整清单，先修复被复制调用栈，再丢父运输副本。未提交创建的 RESERVED 不能通过此 live 引用路径保留，须有单独重建步骤。19 项注册表主机测试覆盖 alias/pin 减权、保留已无 fd 的活动 pin、父关闭/预留副本丢弃、错误清单失败不变、同后端重复引用/不同 token、清单重叠、墓碑退休及父状态不变；格式及双架构 libsys/sigframe 四次回归通过。新原语仍仅主机调用，远端 FORK_PREPARE、真实 File 重绑及生产协调器未接；无全 QEMU 矩阵、CI 或板端结果。日志 `/private/tmp/kernel-stage229-{unit,fmt,arm64-libsys,riscv-libsys,arm64-sigframe,riscv-sigframe}.log`。
+
+stage229 最终完整 `make unit` 1225 项通过（207 秒），未重跑全 QEMU 场景矩阵。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。
