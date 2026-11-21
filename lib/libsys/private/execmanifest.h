@@ -76,7 +76,7 @@ isize sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, 
 /* Caller has prepaid connection and token storage. Preserve the record and
    slot on failure. On success only the original request is finished; the
    token and its holds stay owned by the backend. */
-isize sysexecreply(Execreserve *record, Filewatch *watch, Fileowner *target, const Ipcmsg *call,
+isize sysexecreply(Execreserve *record, Filewatch *watch, Filelink *link, const Ipcmsg *call,
                    u64 token, u64 now);
 /* The serialized backend supplies the exact target's prepaid, initialized
    connection. Its watch owns the observation used to reserve the token.

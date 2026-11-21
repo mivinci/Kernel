@@ -781,6 +781,14 @@ execdrop(void *context, u64 hold)
   return 0;
 }
 
+static isize
+execdrain(void *context, Filelink *link)
+{
+  Filelink *target = context;
+  CHECK(link == target && link->watch.owner.reason == OBS_ABORT);
+  return execreserve.count ? -ERR_BUSY : 0;
+}
+
 static void
 server(const Bootview *boot, u32 recover)
 {
@@ -963,9 +971,13 @@ server(const Bootview *boot, u32 recover)
     }
     if (opcode == EXECWATCH) {
       CHECK(!recover && target->cookie && held &&
+            sysfilelinksweep(links, ARRAY_SIZE(links), execdrain, &links[1]) == -ERR_BUSY &&
+            links[1].prepaid && links[1].memory &&
             !sysexecdiscard(&execreserve, &watch->owner, target, execdrop, &held) && !held &&
             !execreserve.count && target->reason == OBS_ABORT && !watch->owner.reason &&
-            !sysfileownerclose(target) && !ipc_reply(input.request, &reply));
+            !sysfilelinksweep(links, ARRAY_SIZE(links), execdrain, &links[1]) && !target->cookie &&
+            !links[1].memory && !links[1].address && !links[1].prepaid &&
+            !ipc_reply(input.request, &reply));
       continue;
     }
     seq = input.words[2];
@@ -1030,9 +1042,17 @@ server(const Bootview *boot, u32 recover)
       } else {
         Ipcmsg wrong = input;
         wrong.words[2]++;
-        CHECK(sysexecreply(&execreserve, watch, target, &wrong, 41, 0) == -ERR_STALE &&
+        CHECK(sysexecreply(&execreserve, watch, &links[1], &input, 41, 0) == -ERR_STATE &&
+              !sysfileprepay(links, ARRAY_SIZE(links), 1, bootresource(boot, BOOT_SELF_ALLOC),
+                             space, ADDRESS) &&
+              sysfileprepay(links, ARRAY_SIZE(links), 1, bootresource(boot, BOOT_SELF_ALLOC), space,
+                            ADDRESS) == -ERR_BUSY &&
+              !sysfilelinksweep(links, ARRAY_SIZE(links), execdrain, &links[1]) &&
+              links[1].prepaid && !links[1].ready && links[1].watch.connid == 0x10001 &&
+              links[1].memory && held);
+        CHECK(sysexecreply(&execreserve, watch, &links[1], &wrong, 41, 0) == -ERR_STALE &&
               !execreserve.token && watch->active.requests[slot] == input.request &&
-              !sysexecreply(&execreserve, watch, target, &input, 41, 0) &&
+              !sysexecreply(&execreserve, watch, &links[1], &input, 41, 0) &&
               execreserve.token == 41 && !watch->active.requests[slot] &&
               !watch->active.requests[slot + 1]);
       }

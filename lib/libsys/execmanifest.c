@@ -246,16 +246,18 @@ sysexecdiscard(Execreserve *record, Fileowner *source, Fileowner *target, Execdr
 }
 
 isize
-sysexecreply(Execreserve *record, Filewatch *watch, Fileowner *target, const Ipcmsg *call,
-             u64 token, u64 now)
+sysexecreply(Execreserve *record, Filewatch *watch, Filelink *link, const Ipcmsg *call, u64 token,
+             u64 now)
 {
-  Msg   reply;
-  u64   state;
-  isize error;
-  if (!record || !watch || !target || !call || !token)
+  Msg        reply;
+  u64        state;
+  isize      error;
+  Fileowner *target;
+  if (!record || !watch || !link || !call || !token)
     return -ERR_INVALID;
-  if (!record->ready || record->token)
+  if (!record->ready || record->token || !link->prepaid)
     return -ERR_STATE;
+  target = &link->watch.owner;
   if (record->source != watch->owner.cookie || record->target != target->cookie ||
       record->request != call->request || record->connid != watch->connid ||
       record->connid != call->words[1] || record->seq != call->words[2] ||
@@ -298,7 +300,8 @@ sysexecclaim(Execreserve *record, Fileowner *source, Filelink *link, const Ipcms
       record->target != link->watch.owner.cookie || call->source != link->watch.owner.pid ||
       call->image != link->watch.owner.image)
     return -ERR_STALE;
-  if (!link->watch.connid || !link->memory || !link->space || !link->address || !link->serverimage)
+  if ((!link->ready && !link->prepaid) || !link->watch.connid || !link->memory || !link->space ||
+      !link->address || !link->serverimage)
     return -ERR_STATE;
   error = sysexecstate(source, &link->watch.owner);
   if (error != SYSEXEC_ACTIVE)
@@ -323,6 +326,7 @@ sysexecclaim(Execreserve *record, Fileowner *source, Filelink *link, const Ipcms
   if (error)
     return error;
   record->token = 0;
+  link->prepaid = 0;
   link->ready = 1;
   return 0;
 }

@@ -342,7 +342,7 @@ sysfilelinkclose(Filelink *link)
   for (i = 0; i < FS_CONN_SLOTS; i++)
     if (link->watch.active.requests[i])
       return -ERR_BUSY;
-  link->ready = 0;
+  link->ready = link->prepaid = 0;
   if (link->address) {
     status = __sys_unmap(link->space, link->address);
     if (status)
@@ -363,18 +363,14 @@ sysfilelinkclose(Filelink *link)
 }
 
 static isize
-linkhello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address, u64 connid,
-          const Ipcmsg *call)
+linkallocate(Filelink *link, Handle allocator, Handle space, u64 address, u64 connid)
 {
   Allocarg alloc = {FS_CONN_BYTES, ALLOC_SHARED, 0, 0, 0, 0};
   Maparg   map = {0, 0, address, FS_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
   Filehead head = {FS_CONN_MAGIC, FS_CONN_BYTES, connid, 0, FS_CONN_SLOTS, FS_SLOT_BYTES, {0, 0}};
-  Resreply reply = {0, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES, {0, connid, FS_CONN_BYTES}};
   Handle   self, parent;
   isize    status;
   status = __sys_getid(&self, &head.serverimage, &parent);
-  if (!status)
-    status = sysfilewatch(&link->watch, permit, call, connid);
   if (status)
     return status;
   status = __sys_alloc(allocator, &alloc, &link->memory);
@@ -387,16 +383,60 @@ linkhello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 add
     link->address = address;
     status = __sys_copy((void *) (uintptr_t) address, &head, sizeof(head));
   }
+  if (!status)
+    link->serverimage = head.serverimage;
+  return status;
+}
+
+static isize
+linkhello(Filelink *link, Handle permit, Handle allocator, Handle space, u64 address, u64 connid,
+          const Ipcmsg *call)
+{
+  Resreply reply = {0, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES, {0, connid, FS_CONN_BYTES}};
+  isize    status = sysfilewatch(&link->watch, permit, call, connid);
+  if (status)
+    return status;
+  status = linkallocate(link, allocator, space, address, connid);
   if (!status) {
     reply.source = link->memory;
     reply.business[0] = call->words[2];
     status = ipc_reply_resource(call->request, &reply);
   }
-  if (!status) {
-    link->serverimage = head.serverimage;
+  if (!status)
     link->ready = 1;
-  } else
+  else
     (void) sysfilelinkclose(link);
+  return status;
+}
+
+isize
+sysfileprepay(Filelink *pool, u32 count, u32 index, Handle allocator, Handle space, u64 base)
+{
+  Filelink *link;
+  u64       connid;
+  u32       i;
+  isize     status;
+  if (!pool || count > FS_CONN_COUNT || index >= count || !base || (base & PAGE_MASK) ||
+      (u64) count * FS_CONN_BYTES > UINT64_MAX - base)
+    return -ERR_INVALID;
+  link = &pool[index];
+  if (!link->watch.owner.cookie || link->watch.owner.reason)
+    return -ERR_STALE;
+  if (link->ready || link->prepaid || link->memory || link->address || link->watch.connid)
+    return -ERR_BUSY;
+  for (i = 0; i < count; i++)
+    if (i != index && pool[i].watch.owner.cookie &&
+        pool[i].watch.owner.pid == link->watch.owner.pid &&
+        pool[i].watch.owner.image == link->watch.owner.image)
+      return -ERR_BUSY;
+  if (link->generation >= (UINT64_MAX >> 16))
+    return -ERR_CAPACITY;
+  connid = (++link->generation << 16) | index;
+  status = linkallocate(link, allocator, space, base + (u64) index * FS_CONN_BYTES, connid);
+  if (!status) {
+    link->watch.connid = connid;
+    link->prepaid = 1;
+  }
   return status;
 }
 
@@ -464,7 +504,7 @@ sysfilelinksweep(Filelink *pool, u32 count, Filedrain drain, void *context)
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
     Filelink *link = &pool[i];
-    if (link->ready) {
+    if (link->ready || link->prepaid) {
       status = link->watch.owner.reason ? 0 : sysfilewatchread(&link->watch);
       if (!status && !link->watch.owner.reason)
         continue;

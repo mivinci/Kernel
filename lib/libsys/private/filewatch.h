@@ -103,7 +103,7 @@ struct Filelink
   Filewatch watch;
   Handle    memory, space;
   u64       address, serverimage, generation;
-  u32       ready;
+  u32       ready, prepaid;
 };
 
 /* Use a fixed zeroed pool and an exclusive VA arena in the service's own
@@ -111,6 +111,10 @@ struct Filelink
    until they can share ownership of the source cookie. */
 isize sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space,
                    u64 base, const Ipcmsg *call);
+/* Fund an observed target's connection without delivering its MEM. The
+   dispatcher first installs the target observation at index. On failure it
+   owns cleanup, including any incomplete mapping or observation. */
+isize sysfileprepay(Filelink *pool, u32 count, u32 index, Handle allocator, Handle space, u64 base);
 /* Route by full connid and source before reading the shared head or slot. */
 isize sysfilelinkaccept(Filelink *pool, u32 count, const Ipcmsg *call, Fileslot *out);
 /* Call only once all business references and downstream accesses are settled.

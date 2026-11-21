@@ -88,11 +88,11 @@ isize claim(u64 reuse, u64 image, u64 token, u64 seq, u64 rqstate, isize error, 
   record.source = 1; record.target = 2; record.token = 41; record.ready = 1;
   link.watch.owner.pid = 1; link.watch.owner.image = 8; link.watch.owner.cookie = 2;
   link.watch.connid = 29; link.memory = 31; link.space = 32; link.address = 4096;
-  link.serverimage = 3; link.ready = reuse;
+  link.serverimage = 3; link.ready = reuse; link.prepaid = !reuse;
   checked = 0; checkstate = rqstate; senderror = error;
   for (i = 0; i < 5; i++) sent[i] = 0;
   status = sysexecclaim(&record, &source, &link, &call);
-  out[0] = record.token; out[1] = link.ready; out[2] = checked;
+  out[0] = record.token; out[1] = link.ready; out[2] = checked; out[9] = link.prepaid;
   for (i = 0; i < 5; i++) out[i + 3] = sent[i];
   out[8] = status == 0 ? sysexecclaim(&record, &source, &link, &call) == -ERR_STALE : 0;
   return status;
@@ -134,7 +134,7 @@ class ExecStateTests(unittest.TestCase):
 
     def test_claim_requires_exact_published_image_and_live_request(self):
         self.lib.sample(0, 3, 3, 6)
-        out = (U * 9)()
+        out = (U * 10)()
         for state, reason, image, token, seq, rqstate, expected, checked in (
                 (1, 0, 8, 41, 7, 1, -4, False),  # PREPARING
                 (3, 2, 8, 41, 7, 1, -4, False),  # ABORTED
@@ -150,15 +150,15 @@ class ExecStateTests(unittest.TestCase):
     def test_claim_consumes_token_only_after_delivery_and_reuses_connection(self):
         self.lib.sample(0, 3, 3, 6)
         self.lib.sample(1, 2, 0, 8)
-        out = (U * 9)()
+        out = (U * 10)()
         self.assertEqual(self.lib.claim(0, 8, 41, 7, 1, -9, out), -9)
-        self.assertEqual(tuple(out[:2]), (41, 0))
+        self.assertEqual((out[0], out[1], out[9]), (41, 0, 1))
         for reuse, resource in ((0, 31), (1, 0)):
             with self.subTest(reuse=reuse):
                 self.assertEqual(self.lib.claim(reuse, 8, 41, 7, 1, 0, out), 0)
                 self.assertEqual(tuple(out[:2]), (0, 1))
                 self.assertEqual(out[2], out[3])
-                self.assertEqual(tuple(out[4:]), (resource, 7, 29, 36864, 1))
+                self.assertEqual(tuple(out[4:]), (resource, 7, 29, 36864, 1, 0))
 
     def test_preparing_or_aborted_never_retires_source(self):
         for state, reason, expected in ((1, 0, 1), (3, 2, 3), (3, 4, 3)):
