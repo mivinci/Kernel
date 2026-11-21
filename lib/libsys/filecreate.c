@@ -227,6 +227,20 @@ sysfilecreateresult(Filepool *pool, Connwork *work, Conncache *cache, const Opke
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
+  if (op->status == -ERR_CANCELLED) {
+    if (op->phase != SYSOP_RESULT || op->flags & SYSOP_BAD_RESULT || op->kind != IPC_NONE ||
+        op->resource)
+      return -ERR_INVALID;
+    for (i = 0; i < ARRAY_SIZE(op->words); i++)
+      if (op->words[i])
+        return -ERR_INVALID;
+    error = sysopfinished(work, cache, key);
+    if (error)
+      return error;
+    create->error = -ERR_CANCELLED;
+    create->phase = SYSFILE_CREATE_CAPTURED;
+    return 0;
+  }
   if (op->status)
     return op->status;
   if (op->phase != SYSOP_RESULT || op->flags & SYSOP_BAD_RESULT || op->words[1] != key->lease.seq)
@@ -963,7 +977,7 @@ sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
 {
   Createop *create;
   u64       source = 0, files[2] = {0};
-  isize     status, cleanup, error = pipecheck(pool, work, cache, table, pipe, &create);
+  isize     status, native, cleanup, error = pipecheck(pool, work, cache, table, pipe, &create);
   if (error)
     return error;
   if (!external(pool, work, cache, business, sizeof(*business)) ||
@@ -980,6 +994,7 @@ sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
   if (error)
     return error;
   status = create->error;
+  native = work->state.operations[pipe->operation.lease.slot].status;
   error = sysfilecreatefinish(pool, work, cache, &pipe->operation, files, &source);
   if (error)
     return error;
@@ -996,7 +1011,7 @@ sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
     if (cleanup)
       error = cleanup;
   }
-  *business = status;
+  *business = native ? 0 : status;
   clear(pipe, sizeof(*pipe));
-  return error;
+  return error ? error : native;
 }

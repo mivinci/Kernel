@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage393（2026-11-22）：管道创建收尾区分原生排队取消与后端业务结果。双架构 QEMU `pipeio` 验证排队取消回收两端预留，已完成的成功结果不被迟到取消覆盖。
 - stage392（2026-11-22）：libsys 把 PIPE 的 fd 预留、原请求领结果和失败补偿串成一个创建事务。双架构 QEMU `pipeio` 验证提交前撤销、输出 EFAULT 和后端满额；公开入口尚未接。
 - stage391（2026-11-22）：libsys 接通 PIPE 的成对 fd 保留和发布。双架构 QEMU `pipeio` 验证输出 EFAULT 不发布 fd、两端用原关闭责任补偿；公开 `pipe()` 尚未接。
 - stage390（2026-11-22）：FS 服务循环接通 HELLO、管道分派和 LIFE 清理。ARM64/RV64 QEMU `pipeio` 使用夹具授予 SOURCE；默认启动仍待发权方案确认。

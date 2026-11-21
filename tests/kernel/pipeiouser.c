@@ -305,6 +305,7 @@ serviceclient(const Bootview *boot)
   isize            business;
   int              fd[2] = {-1, -1};
   Handle           call = bootresource(boot, 256);
+  Handle           rpc;
   Msg              invalid = {{FS_HELLO, 0, 23, 0}};
   Ipcmsg           result;
   CHECK(!ipc_call(call, &invalid, 0, &result) && (isize) result.words[0] == -EINVAL &&
@@ -318,6 +319,14 @@ serviceclient(const Bootview *boot)
   CHECK(!sysfilerefinit(&pool, work.state.self) && !sysfdreserve(&table, 1, &held) &&
         !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 99, &pipe, &invalid) &&
         !sysfilepipeabort(&pool, &work, &cache, &table, &pipe) && !pipe.operation.lease.seq);
+  CHECK(!sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 98, &pipe, &invalid) &&
+        !ipc_call(work.state.call, &invalid, CALL_ASYNC, &result));
+  rpc = result.request;
+  CHECK(!sysopsubmitted(&work, &cache, &pipe.operation, &result.request) &&
+        !sysopcancel(&work, &cache, &pipe.operation) && !ipc_rqwait(rpc, RQ_FINISH, &result) &&
+        sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) == -ERR_CANCELLED &&
+        !business && !pipe.operation.lease.seq && fd[0] == -1 && fd[1] == -1 &&
+        !sysfilerefconnection(&pool, work.state.self, work.state.tag));
   submitpipe(&work, &cache, &pool, &table, &pipe, 100);
   CHECK(sysfilepipefinish(&pool, &work, &cache, &table, &pipe, (int *) 1, &business) ==
             -ERR_FAULT &&
@@ -328,7 +337,8 @@ serviceclient(const Bootview *boot)
   closepending(&work, &cache, &pool, 102);
   CHECK(!sysfilerefconnection(&pool, work.state.self, work.state.tag));
   submitpipe(&work, &cache, &pool, &table, &pipe, 103);
-  CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
+  CHECK(!sysopcancel(&work, &cache, &pipe.operation) &&
+        !sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
         fd[0] == 0 && fd[1] == 2);
   submitpipe(&work, &cache, &pool, &table, &pipe, 104);
   CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) &&

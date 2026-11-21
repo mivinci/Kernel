@@ -17,7 +17,8 @@ isize sysfilepipeabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable
                        Pipecreate *pipe);
 /* Native errors before consuming the operation preserve the continuation.
    On completion, business contains the reply status, or zero; a checked
-   output fault queues both closes and returns the native copy error. */
+   output fault queues both closes and returns the native copy error. Native
+   queued cancellation consumes the continuation and returns ERR_CANCELLED. */
 isize sysfilepipefinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                         Pipecreate *pipe, int *userfds, isize *business);
 /* Publish an already collected ordinary PIPE result. Keep signals excluded
@@ -39,8 +40,9 @@ isize sysfilecreateprepare(Filepool *pool, Connwork *work, Conncache *cache, u32
 /* Poll original RPC, validate frozen ordinary/resource creator shapes, prove
    RQ_FINISH and capture output once before any ACK. Resource OPEN cold-queries
    its real CALL peer and moves that CALL into Createop. A valid negative
-   business result is captured in error and creates no reference. Native or
-   protocol failure keeps every original responsibility; never reissues. */
+   business result or drained native queued cancellation is captured in
+   error and creates no reference. Other native or protocol failure keeps
+   every original responsibility; never reissues. */
 isize sysfilecreateresult(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 /* Explicit recovery of an uncaptured creator whose original RPC fixed native
    ERR_PEER. The exact source backend must already be marked ended and actual
