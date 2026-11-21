@@ -450,6 +450,10 @@ stage238：双架构真实子返回的创建预留拒绝边界已验。sigframe 
 
 ARM64/RV64 sigframe、10项组合主机测试和格式通过，日志 `/private/tmp/kernel-stage238-{arm64,riscv,forkstate,fmt}.log`，现场 `build/arm64/smoke/0d5c6bba47ac4c54b03a781c55af386e/`、`build/riscv/smoke/b76a8ff8176b4d52bccc831ff832a066/`。本次只改测试夹具与机器记录核验，非真实已提交OPEN/PIPE续点修复；没有未知远端引用可据此释放。机制失败真实fork、非空File继承/后端准备及生产整体入口仍待接，子reference_id候选仍未确认；未跑完整矩阵、CI或板端。
 
+stage239：补齐公开POSIX凭据查询 `getuid/geteuid/getgid/getegid`，unistd声明，sys/types的uid_t/gid_t为原生凭据对应u32。每次通过既有getcred(0,0,0)读取当前真实/有效用户与组，不缓存父镜像身份、不依赖FS/服务连接，成功保留errno；自身查询无标准失败返回，若内部不可达错误则与getpid一样trap，不伪造身份。独立credential.o纳入libc静态库，libsys仍不依赖libc。
+
+1项主机测试覆盖四字段顺序、动态读取及完整无符号32位边界/errno，7项SDK导出测试、格式与ARM64/RV64 elf/runtime四次QEMU通过。elf用户载荷实际调用四接口并对照自身原生getcred，确认errno保持；QEMU自身凭据为夹具配置值，非凭据变更接口或授权扩展。日志 `/private/tmp/kernel-stage239-{credential,sdkheaders,fmt,arm64-elf,arm64-runtime,riscv-elf,riscv-runtime}.log`。未实现setuid/setgid/getgroups等接口，不代表完整POSIX/sh就绪；fork机制错误真实运行场景及子引用编号选择继续待接/确认，未跑全矩阵、CI或板端。
+
 ### 后台责任的预付存储（交叉复核修订）
 
 支持fd适配的libsys为最多8条缓存连接预付8个4 KiB私有控制页，总上限32 KiB；不使用共享控制页保存可信句柄/所有权，也不算入36 KiB线上连接区。每个私有页含连接身份/接入状态和8条最多128字节的槽责任记录，其余为有界索引/对齐；实现sizeof超页上限必须重审。每条原请求按起始槽占一条责任记录，双页只记一次，续页不再接收新责任。准备和接入无数据槽的bootstrap RPC由同一私有页的独立固定接入记录持有，不能和8条槽记录互相覆盖。

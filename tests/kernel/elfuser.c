@@ -107,6 +107,10 @@ main(int argc, char **argv)
   allocator = bootresource(own, BOOT_SELF_ALLOC);
   REQUIRE(create > 0 && space > 0 && allocator > 0, 182);
   REQUIRE(!__sys_getcred(0, 0, 0, ids), 183);
+  errno = EDOM;
+  REQUIRE(getuid() == ids[0] && geteuid() == ids[1] && getgid() == ids[2] && getegid() == ids[3] &&
+              errno == EDOM,
+          183);
   source.context = &reader;
   source.bytes = (u64) (payload_elf_end - payload_elf);
   source.read = readpayload;
