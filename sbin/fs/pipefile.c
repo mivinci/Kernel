@@ -30,7 +30,7 @@ install(Piperef *ref, Handle pid, u64 image, Pipekey key)
 }
 
 isize
-pipefilecreate(Pipetable *table, Handle pid, u64 image, u32 nonblock, Pipekey keys[2])
+pipefilecreate(Pipetable *table, Handle pid, u64 image, u32 nonblock, Vcred cred, Pipekey keys[2])
 {
   Pipefile *file = NULL;
   Piperef  *refs[2];
@@ -50,6 +50,7 @@ pipefilecreate(Pipetable *table, Handle pid, u64 image, u32 nonblock, Pipekey ke
   if (!file || n != ARRAY_SIZE(refs))
     return -ERR_CAPACITY;
   pipeinit(&file->stream);
+  file->owner = cred;
   for (i = PIPE_READ; i <= PIPE_WRITE; i++) {
     file->nonblock[i] = nonblock;
     keys[i].session = file->session[i] = ++table->serial;
@@ -134,10 +135,29 @@ static Pipefile *
 ownedfile(Pipetable *table, Handle pid, u64 image, u64 session, u32 *end)
 {
   u32 i;
+  if (!table)
+    return NULL;
   for (i = 0; i < table->nrefs; i++)
     if (table->refs[i].pid && owner(&table->refs[i], pid, image, session))
       return lookup(table, session, end);
   return NULL;
+}
+
+isize
+pipefilestat(Pipetable *table, Handle pid, u64 image, u64 session, Filestat *out)
+{
+  u32       end;
+  Pipefile *file = ownedfile(table, pid, image, session, &end);
+  if (!file)
+    return -ERR_STALE;
+  /* The two endpoints name the same volatile byte stream. */
+  *out = (Filestat){.ino = file->session[PIPE_READ],
+                    .mode = 0010600,
+                    .uid = file->owner.uid,
+                    .gid = file->owner.gid,
+                    .size = file->stream.bytes,
+                    .blksize = PIPE_ATOMIC};
+  return 0;
 }
 
 isize

@@ -232,7 +232,8 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
   case FS_POLL_QUERY:
   case FS_POLL_WAIT:
     return pollstart(dispatch, link, call, &slot);
-  case FS_PIPE:
+  case FS_PIPE: {
+    Vcred cred;
     error = -ERR_INVALID;
     if (slot.object || slot.span != 1 || slot.payload_bytes || slot.args[0] ||
         slot.args[1] != PIPE_CAPACITY)
@@ -241,7 +242,16 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     }
     if (i != ARRAY_SIZE(slot.args))
       break;
-    error = pipefilecreate(dispatch->table, call->source, call->image, 0, keys);
+    if (!dispatch->table) {
+      reply.words[0] = (u64) -ENOTSUP;
+      return respond(link, call->request, &reply);
+    }
+    error = vcredsource(call, 0, &cred);
+    if (error) {
+      reply.words[0] = (u64) error;
+      return respond(link, call->request, &reply);
+    }
+    error = pipefilecreate(dispatch->table, call->source, call->image, 0, cred, keys);
     if (!error) {
       for (i = 0; i < ARRAY_SIZE(keys); i++) {
         ((volatile u64 *) page)[2 * i] = keys[i].session;
@@ -251,6 +261,7 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
       reply.words[3] = sizeof(keys);
     }
     break;
+  }
   case FS_CLOSE:
   case FS_DUPREF:
     error = sysfileargs(opcode, &slot);
@@ -296,7 +307,13 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     reply.words[0] = (u64) (error ? fileerror(error) : -ESPIPE);
     return respond(link, call->request, &reply);
   case FS_TTYCTL:
-    error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
+    if (slot.object & FS_FILE_SESSION)
+      error =
+          dispatch->regular && fsfilefind(dispatch->regular, call->source, call->image, slot.object)
+              ? 0
+              : -ERR_STALE;
+    else
+      error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
     reply.words[0] = (u64) (error ? fileerror(error) : -ENOTTY);
     return respond(link, call->request, &reply);
   case FS_STAT: {
@@ -308,8 +325,8 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     if (error)
       break;
     if (!(slot.object & FS_FILE_SESSION)) {
-      error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
-      reply.words[0] = (u64) (error ? fileerror(error) : -ENOTSUP);
+      error = pipefilestat(dispatch->table, call->source, call->image, slot.object, &stat);
+      reply.words[0] = (u64) fileerror(error);
     } else {
       file = table ? fsfilefind(table, call->source, call->image, slot.object) : NULL;
       if (!file)

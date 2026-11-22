@@ -84,8 +84,9 @@ filelifetime(Handle pid, u64 image)
   Pipekey         keys[2], later[2], duplicate;
   Pipefile       *pinned;
   Pipeready       ready;
+  const Vcred     cred = {22, 32};
   u8              byte = 'z';
-  CHECK(!pipefilecreate(&table, pid, image, 1, keys) && keys[0].session != keys[1].session &&
+  CHECK(!pipefilecreate(&table, pid, image, 1, cred, keys) && keys[0].session != keys[1].session &&
         keys[0].reference != keys[1].reference &&
         pipefilepin(&table, pid, image + 1, keys[0].session, PIPE_READ, &pinned) == -ERR_STALE &&
         pipefilepin(&table, pid, image, keys[0].session, PIPE_WRITE, &pinned) == -ERR_DENIED &&
@@ -101,7 +102,7 @@ filelifetime(Handle pid, u64 image)
         ready.hup);
   /* Reuse the only stream, then keep the writer alive with an admitted I/O. */
   CHECK(!pipefileclose(&table, pid, image, keys[PIPE_READ]) &&
-        !pipefilecreate(&table, pid, image, 0, later) && later[0].session > keys[1].session &&
+        !pipefilecreate(&table, pid, image, 0, cred, later) && later[0].session > keys[1].session &&
         pipefileclose(&table, pid, image, keys[PIPE_READ]) == -ERR_STALE);
   duplicate.session = later[PIPE_WRITE].session;
   CHECK(!pipefiledup(&table, pid, image, later[PIPE_WRITE], &duplicate.reference) &&
@@ -115,7 +116,7 @@ filelifetime(Handle pid, u64 image)
   CHECK(!pipefileretire(&table, pid, image + 1) &&
         !pipefilepin(&table, pid, image, later[PIPE_READ].session, PIPE_READ, &pinned) &&
         !pipedrop(&pinned->stream, PIPE_READ));
-  CHECK(!pipefileretire(&table, pid, image) && !pipefilecreate(&table, pid, image, 0, keys) &&
+  CHECK(!pipefileretire(&table, pid, image) && !pipefilecreate(&table, pid, image, 0, cred, keys) &&
         !pipefileclose(&table, pid, image, keys[PIPE_READ]) &&
         !pipefileready(&table, pid, image, keys[PIPE_WRITE].session, &ready) && ready.error &&
         !ready.room && !ready.hup && !ready.readable && !pipefileretire(&table, pid, image));
@@ -188,14 +189,15 @@ server(const Bootview *boot)
         CHECK(attempt == 6 && !pipe->bytes && waits[0].io.request);
         break;
       case 5:
-        CHECK(attempt == 6 && !pipefilecreate(&table, input.source, input.image, 0, keys) &&
+        CHECK(attempt == 6 &&
+              !pipefilecreate(&table, input.source, input.image, 0, effective, keys) &&
               !pipefileclose(&table, input.source, input.image, keys[PIPE_READ]));
         reply.words[2] = keys[PIPE_WRITE].session;
         break;
       case 6:
         CHECK(attempt == 7 && !waits[0].io.request && !pipe->bytes && pipe->refs[PIPE_WRITE] == 1);
         CHECK(!pipefileclose(&table, input.source, input.image, keys[PIPE_WRITE]) &&
-              !pipefilecreate(&table, input.source, input.image, 0, keys));
+              !pipefilecreate(&table, input.source, input.image, 0, effective, keys));
         reply.words[2] = keys[PIPE_READ].session;
         break;
       case 7:
@@ -1460,6 +1462,16 @@ brokenclient(void)
   u64              before, after, i;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer) &&
         !sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
+  {
+    Fileioresult result;
+    Filestat     reader, writer;
+    CHECK(!sysfileimagestat(0, fds[0], &reader, &result) && !result.native && !result.business &&
+          reader.ino && reader.mode == 0010600 && !reader.size && !reader.reserved &&
+          reader.uid == geteuid() && reader.gid == getegid());
+    CHECK(write(fds[1], "s", 1) == 1 && !sysfileimagestat(0, fds[1], &writer, &result) &&
+          !result.native && !result.business && writer.ino == reader.ino && writer.size == 1 &&
+          read(fds[0], &byte, 1) == 1 && byte == 's');
+  }
   ready[0].fd = fds[0];
   ready[0].events = POLLIN;
   ready[1].fd = fds[1];
@@ -3317,8 +3329,8 @@ publicchdirserver(const Bootview *boot)
   fixture.completed = 2;
   fixture.searches = 0;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R && file.node == &fixture.file &&
-        !fsstep(&fs) && !fsstep(&fs) && !file.position && !link.watch.active.requests[0] &&
-        !fsstep(&fs) && !file.refs);
+        !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && !file.position &&
+        !link.watch.active.requests[0] && !fsstep(&fs) && !file.refs);
   fixture.length = fixture.map.file.length = 1;
   opendisk[0] = 'p';
   fs.pipes.reads = &reads;
@@ -3463,6 +3475,10 @@ publicchdirclient(void)
         !peer->state.operations[1].phase);
   CHECK(!fopen("/x", "rr") && errno == EINVAL);
   stream = fopen("/x", "rb");
+  {
+    struct termios attrs = {0};
+    CHECK(stream && tcgetattr(fileno(stream), &attrs) == -1 && errno == ENOTTY);
+  }
   {
     Fileioresult result;
     Filestat     stat;
