@@ -1511,7 +1511,11 @@ blkclient(const Bootview *boot, Handle call)
   dirs.home = &home;
   REQUIRE(!blkmountstep(&abandoned) && blk.rpc && blk.opcode == BLK_INFO && !probe.layout.blocks &&
               !blk.info.geometry_generation && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
-              !blkmountstep(&abandoned) && !blk.rpc && !probe.layout.blocks && blk.seq == 2,
+              !blkmountstep(&abandoned) && !blk.rpc && !probe.layout.blocks && blk.seq == 2 &&
+              !blk.info.geometry_generation && !abandoned.failed && !blkmountstep(&abandoned) &&
+              blk.rpc && blk.opcode == BLK_INFO && blk.seq == 3 &&
+              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blkmountstep(&abandoned) && !blk.rpc &&
+              !probe.layout.blocks,
           364);
   REQUIRE(blk.info.geometry_generation == 2 && blk.info.capacity_bytes == 2048 * 512 &&
               blk.info.logical_bytes == PAGE_SIZE && blk.info.flags == BLK_FLUSHABLE,
@@ -1986,6 +1990,9 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   REQUIRE(!blkservestep(&service) && link.ready && !blkservestep(&service) && link.ready &&
               link.generation == 1,
           370);
+  REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_INFO) &&
+              !ipc_reply(input.request, &(Msg){{(u64) -EAGAIN, input.words[2], 0, 0}}),
+          371);
   REQUIRE(!blkservestep(&service), 371);
   REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_WRITE), 382);
   /* Hold admission at the same geometry for the first WRITE only. */

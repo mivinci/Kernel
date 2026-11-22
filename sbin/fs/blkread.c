@@ -1135,9 +1135,11 @@ blkmountstep(Blkmount *work)
       return 0;
     if (result)
       break;
+    work->phase = MountProbe;
+    if (status == -EAGAIN)
+      return 0;
     if (status)
       return work->failed = status;
-    work->phase = MountProbe;
     return 0;
   }
   case MountProbe:
