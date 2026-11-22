@@ -1,6 +1,6 @@
 #include "blkread.h"
 #include "crc.h"
-#include "walk.h"
+#include "mount.h"
 
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
@@ -491,4 +491,30 @@ blkdirstep(Blkdir *work)
     return work->failed = error < 0 ? error : -ERR_STATE;
   work->offset += valid;
   return 0;
+}
+
+isize
+blkmountadd(Blkdir *work, Vmounts *mounts, Vnode *root, Vnode *point)
+{
+  const Blkprobe *probe;
+  const Dirnode  *node;
+  isize           error;
+  if (!work || !work->home || !(probe = work->home->home) || !probe->blk || !mounts || !root)
+    return -ERR_INVALID;
+  if (work->failed || work->graph.failed)
+    return work->failed ? work->failed : work->graph.failed;
+  if (work->published)
+    return -ERR_STATE;
+  if (work->inode != FS_INODES || work->graph.next != FS_INODES || probe->blk->rpc)
+    return -ERR_WOULD_BLOCK;
+  if (probe->blk->stale || probe->blk->ended ||
+      probe->blk->info.geometry_generation != probe->generation)
+    return -ERR_STALE;
+  node = &work->graph.nodes[FS_ROOT];
+  if (root->number != FS_ROOT || root->generation != node->generation || root->kind != node->kind)
+    return -ERR_STALE;
+  error = vmountadd(mounts, root, point);
+  if (!error)
+    work->published = 1;
+  return error;
 }

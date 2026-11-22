@@ -5,6 +5,7 @@
 #include "dirgraph.h"
 #include "journal.h"
 #include "load.h"
+#include "walk.h"
 
 typedef struct Blkread     Blkread;
 typedef struct Blkredoload Blkredoload;
@@ -113,7 +114,7 @@ struct Blkdir
   Dirdecode  decode;
   u64        offset;
   isize      failed;
-  u32        inode, loaded;
+  u32        inode, loaded, published;
 };
 
 /* After blkhomecheck succeeds, set home and decode on zeroed work. The
@@ -121,6 +122,9 @@ struct Blkdir
    and records ordinary edges.
    One means the traversal and graph checks both completed; zero continues. */
 isize blkdirstep(Blkdir *);
+/* Publish the checked root once. The authorized namespace owner holds
+   the volume, root and covering point through insertion. */
+isize blkmountadd(Blkdir *, Vmounts *, Vnode *root, Vnode *point);
 /* Admit a writable journal from that scan. The exclusive mount owner
    supplies the independently verified fault boundary and the encoded EMPTY
    record for this transaction. Keep snapshots stable through release. */

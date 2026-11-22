@@ -8,6 +8,7 @@
 #include "../../sbin/blk/transport.h"
 #include "../../sbin/fs/blklog.h"
 #include "../../sbin/fs/blkread.h"
+#include "../../sbin/fs/mount.h"
 #include "private/bootstrap.h"
 #include "../../sbin/fs/cache.h"
 #include "../../sbin/fs/crc.h"
@@ -1267,6 +1268,8 @@ blkclient(const Bootview *boot, Handle call)
   static Blkowners          home;
   Dirnode                   nodes[FS_INODES] = {{0}};
   Blkdir                    dirs = {0};
+  Vmounts                   mounts = {0};
+  Vnode                     root = {0, FS_ROOT, 1, VNODE_DIR};
   u8                        namebytes[256];
   u32                       nameoffsets[8];
   static u8                 data[PAGE_SIZE];
@@ -1407,6 +1410,9 @@ blkclient(const Bootview *boot, Handle call)
           424);
   dirs.home = &home;
   dirs.decode = blkdecodedir;
+  REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial &&
+              !root.mount,
+          438);
   dirs.names =
       (Dirnames){namebytes, nameoffsets, sizeof(namebytes), ARRAY_SIZE(nameoffsets), 0, 0, 0, 0};
   dirs.graph.nodes = nodes;
@@ -1427,6 +1433,18 @@ blkclient(const Bootview *boot, Handle call)
     }
   }
   REQUIRE(op == 3 && dirs.graph.incoming[34] == 1 && blkdirstep(&dirs) == 1 && !blk.rpc, 429);
+  blk.stale = 1;
+  REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial && !root.mount,
+          441);
+  blk.stale = 0;
+  root.generation++;
+  REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial && !root.mount,
+          439);
+  root.generation--;
+  REQUIRE(!blkmountadd(&dirs, &mounts, &root, NULL) && root.mount == 1 && mounts.serial == 1 &&
+              mounts.entries[0].root == &root &&
+              blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STATE,
+          440);
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
   nodes[35] = nodes[36] = (Dirnode){1, VNODE_FILE, 1};
