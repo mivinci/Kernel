@@ -9,6 +9,12 @@ getcwdcall(const Ipcmsg *call, const Fileslot *slot)
   return call->words[0] == FS_PATH && slot->args[0] == FS_PATH_GETCWD;
 }
 
+static int
+readlinkcall(const Ipcmsg *call, const Fileslot *slot)
+{
+  return call->words[0] == FS_PATH && slot->args[0] == FS_PATH_READLINK;
+}
+
 static isize
 replypath(Handle request, u64 seq, Filelink *link, isize status, u32 committed)
 {
@@ -79,6 +85,85 @@ advancecwd(Fsopen *open, Openjob *job)
 }
 
 static isize
+advancelink(Fsopen *open, Openjob *job)
+{
+  Handle      request = job->call.request;
+  const char *target;
+  u64         targetbytes, state;
+  isize       status, error;
+  for (;;) {
+    error = ipc_rqcheck(request, &state);
+    if (error)
+      return error;
+    if (state != RQ_CHECK_LIVE) {
+      if (job->waiting) {
+        error = open->cancel(job);
+        if (error == -ERR_WOULD_BLOCK)
+          return 0;
+        if (error)
+          return error;
+        job->waiting = 0;
+      }
+      vwalkdrop(&job->walk);
+      status = -EINTR;
+      break;
+    }
+    if (!job->node) {
+      status = vwalkstep(&job->walk, &job->node);
+      job->waiting = status == VWALK_WAIT;
+      if (job->waiting)
+        return 0;
+      if (status == VWALK_MORE || job->node)
+        continue;
+      break;
+    }
+    if (job->node->kind != VNODE_LINK) {
+      status = -EINVAL;
+      break;
+    }
+    target = NULL;
+    targetbytes = 0;
+    status = open->ops->readlink(job, job->node, &target, &targetbytes);
+    job->waiting = status == VWALK_WAIT;
+    if (job->waiting)
+      return 0;
+    if (status == VWALK_MORE)
+      continue;
+    if (status)
+      break;
+    if (!target || targetbytes < 2 || targetbytes > FS_SLOT_BYTES || target[targetbytes - 1] ||
+        memchr(target, 0, targetbytes - 1)) {
+      status = -EIO;
+      break;
+    }
+    error = ipc_rqcheck(request, &state);
+    if (error)
+      return error;
+    if (state == RQ_CHECK_LIVE) {
+      u64 bytes = MIN(targetbytes - 1, job->slot.args[3]);
+      Msg reply = {{0, job->slot.seq, 0, bytes}};
+      memcpy((void *) (job->link->address + FS_DATA_OFFSET + job->call.words[3] * FS_SLOT_BYTES),
+             target, bytes);
+      error = ipc_reply(request, &reply);
+      if (!error)
+        error = sysfilefinish(&job->link->watch.active, request);
+      goto done;
+    }
+    status = -EINTR;
+    break;
+  }
+  error = finish(request, job->slot.seq, job->link, status);
+done:
+  if (job->node) {
+    open->ops->drop(job, job->node);
+    job->node = NULL;
+  }
+  if (!error)
+    job->call.request = 0;
+  return error;
+}
+
+static isize
 advance(Fsopen *open, Openjob *job)
 {
   Handle request = job->call.request;
@@ -87,6 +172,8 @@ advance(Fsopen *open, Openjob *job)
   isize  status, error;
   if (getcwdcall(&job->call, &job->slot))
     return advancecwd(open, job);
+  if (readlinkcall(&job->call, &job->slot))
+    return advancelink(open, job);
   if (job->changedcwd) {
     error = replypath(request, job->slot.seq, job->link, 0, 1);
     goto done;
@@ -180,7 +267,8 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   Filelink        *link;
   Fileslot         slot;
   Vnode           *start;
-  u32              follow = 1, i;
+  u32              follow;
+  u32              i;
   isize            error;
   if (!open)
     return finish(request, call->words[2], NULL, -ENOSYS);
@@ -194,6 +282,7 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   context = fscontextfind(open->contexts, call->source, call->image);
   if (!context)
     return finish(request, slot.seq, link, -ESTALE);
+  follow = !readlinkcall(call, &slot);
   for (i = 0; i < open->count && open->jobs[i].call.request; i++) {
   }
   if (i == open->count)
@@ -236,6 +325,10 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   }
   start = context->cwd;
   error = 0;
+  if (readlinkcall(call, &slot) && !open->cancel) {
+    error = -ENOSYS;
+    goto rejected;
+  }
   if (call->words[0] == FS_OPEN) {
     error = fsfileoptions(&slot);
     if (!error)

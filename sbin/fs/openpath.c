@@ -9,13 +9,14 @@ vrequestpath(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *cont
   const volatile char *page;
   Vcred                effective;
   u64                  index, offset, bytes, state;
-  u32                  i, chdir;
+  u32                  i, chdir, readlink;
   isize                error;
   if (!link || !slot || !call || !cred || call->kind != IPC_CALL ||
       handlekind(call->request) != HANDLE_REQUEST)
     return -EINVAL;
   chdir = call->words[0] == FS_PATH && slot->args[0] == FS_PATH_CHDIR;
-  if (!chdir && call->words[0] != FS_OPEN)
+  readlink = call->words[0] == FS_PATH && slot->args[0] == FS_PATH_READLINK;
+  if (!chdir && !readlink && call->words[0] != FS_OPEN)
     return -ENOSYS;
   index = call->words[3];
   if (!link->ready || !link->address || link->watch.owner.reason ||
@@ -31,12 +32,14 @@ vrequestpath(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *cont
     return -EINTR;
   if (state != RQ_CHECK_LIVE)
     return -EIO;
-  if (chdir && slot->object)
+  if ((chdir || readlink) && slot->object)
     return -EINVAL;
-  offset = slot->args[chdir ? 1 : 2];
-  bytes = slot->args[chdir ? 2 : 3];
+  offset = slot->args[chdir || readlink ? 1 : 2];
+  bytes = slot->args[chdir || readlink ? 2 : 3];
   if (slot->span != 1 || slot->payload_bytes > FS_SLOT_BYTES || offset > slot->payload_bytes ||
       !bytes || bytes > slot->payload_bytes - offset)
+    return -EINVAL;
+  if (readlink && (!slot->args[3] || slot->args[3] > FS_SLOT_BYTES))
     return -EINVAL;
   for (i = chdir ? 3 : 4; i < ARRAY_SIZE(slot->args); i++)
     if (slot->args[i])

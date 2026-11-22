@@ -802,7 +802,8 @@ ioopcode(u64 opcode)
 
 static isize
 iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 opcode,
-        const void *input, u64 bytes, u64 offset, u32 positional, u32 replay, Opkey *key)
+        const void *input, u64 bytes, u64 offset, u32 positional, u32 pathcapacity, u32 replay,
+        Opkey *key)
 {
   Fileslot   descriptor;
   Conncache *cache = sysfileimagecache(state);
@@ -836,6 +837,10 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
           descriptor.args[0] = FS_PATH_GETCWD;
           descriptor.args[1] = bytes;
           descriptor.payload_bytes = 0;
+        } else if (offset == FS_PATH_READLINK) {
+          descriptor.args[0] = FS_PATH_READLINK;
+          descriptor.args[2] = bytes;
+          descriptor.args[3] = pathcapacity;
         } else {
           descriptor.args[0] = FS_PATH_CHDIR;
           descriptor.args[2] = bytes;
@@ -863,7 +868,7 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
 
 static isize
 stagepath(Fileimage *state, u32 layer, const char *path, u64 subcode, Connwork **work, Opkey *key,
-          u64 *bytes, isize *business)
+          u64 *bytes, u32 capacity, isize *business)
 {
   isize error;
   if (layer >= RCTX_LAYERS)
@@ -883,7 +888,8 @@ stagepath(Fileimage *state, u32 layer, const char *path, u64 subcode, Connwork *
   }
   error = readyfs(state, work);
   return error ? error
-               : iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, subcode, 0, 0, key);
+               : iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, subcode, 0, capacity, 0,
+                         key);
 }
 
 static isize
@@ -918,7 +924,7 @@ stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 
   error = sysfilerefpin(&state->files, state->files.self, view.file);
   if (!error) {
     error = iostage(state, layer, work, view.file, ref.session, opcode, input, bytes, offset,
-                    positional, 0, key);
+                    positional, 0, 0, key);
     if (!error)
       *out = work;
   }
@@ -1026,7 +1032,7 @@ sysfileioresume(Fileimage *state, Opkey *key)
 }
 
 static isize
-restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
+restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional, u32 pathcapacity)
 {
   Conncache *cache;
   Connwork  *work;
@@ -1077,14 +1083,14 @@ restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
   if (error)
     return error;
   key->lease.seq = 0;
-  return iostage(state, layer, work, file, session, opcode, NULL, bytes, offset, positional, 1,
-                 key);
+  return iostage(state, layer, work, file, session, opcode, NULL, bytes, offset, positional,
+                 pathcapacity, 1, key);
 }
 
 isize
 sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
 {
-  return restartio(state, key, bytes, 0, 0);
+  return restartio(state, key, bytes, 0, 0, 0);
 }
 
 static isize
@@ -1108,15 +1114,16 @@ copycwd(Fileimage *state, Connwork *work, Conncache *cache, const Opkey *key, u6
   return __sys_copy(output, path, bytes);
 }
 
-isize
-sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fileioresult *result)
+static isize
+fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 subcode,
+             Fileioresult *result)
 {
   Conncache *cache;
   Connwork  *work;
   Slotop    *op;
   u64        file = 0, address, storage, expected, value_limit;
   isize      error;
-  u32        cwd;
+  u32        cwd, readlink;
   if (!state || !key || !result || !key->owner || key->connection.index >= SYSCONN_COUNT ||
       key->lease.span != 1 || bytes > FS_SLOT_BYTES)
     return -ERR_INVALID;
@@ -1129,8 +1136,11 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
       (op->opcode == FS_SYNC && bytes))
     return -ERR_INVALID;
-  cwd = op->opcode == FS_PATH && bytes;
-  if (cwd && key->lease.slot / 2 >= RCTX_LAYERS)
+  cwd = op->opcode == FS_PATH && subcode == FS_PATH_GETCWD;
+  readlink = op->opcode == FS_PATH && subcode == FS_PATH_READLINK;
+  if ((cwd || readlink) && key->lease.slot / 2 >= RCTX_LAYERS)
+    return -ERR_INVALID;
+  if (readlink && !bytes)
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (!error)
@@ -1148,7 +1158,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
       value_limit = 0;
       if (!op->words[0])
         expected = sizeof(Termarg);
-    } else if (cwd) {
+    } else if (cwd || readlink) {
       value_limit = 0;
       expected = op->words[3];
     }
@@ -1170,11 +1180,12 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
     } else if (op->words[1] != key->lease.seq || (isize) op->words[0] > 0 ||
                (op->words[0] && (op->words[2] || op->words[3])) || op->words[2] > value_limit ||
                op->words[3] != expected ||
+               (readlink && !op->words[0] && (!expected || expected > bytes)) ||
                (cwd && !op->words[0] && (expected < 2 || expected > bytes)))
       result->native = -ERR_STATE;
     else {
       result->business = (isize) op->words[0];
-      result->count = op->words[2];
+      result->count = readlink ? expected : op->words[2];
       if (op->words[3]) {
         address = (uintptr_t) output;
         storage = (uintptr_t) state;
@@ -1222,6 +1233,12 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   return error;
 }
 
+isize
+sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fileioresult *result)
+{
+  return fileiofinish(state, key, output, bytes, 0, result);
+}
+
 static isize
 imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 bytes, u64 offset,
         u32 positional, Fileioresult *result)
@@ -1232,6 +1249,7 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
   Slotop    *op;
   Opkey      key, background;
   u64        mask, ignored, file;
+  u64        payload;
   u32        restart, interrupted = 0, retry = 1;
   isize      error, discard, business = 0;
   error = sysfileimage(&state);
@@ -1242,8 +1260,9 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
     return error;
   fileprogress(state);
   bytes = MIN(bytes, FS_SLOT_BYTES);
+  payload = bytes;
   if (opcode == FS_PATH) {
-    error = stagepath(state, layer, input, offset, &work, &key, &bytes, &business);
+    error = stagepath(state, layer, input, offset, &work, &key, &payload, bytes, &business);
     if (business) {
       result->native = result->count = 0;
       result->business = business;
@@ -1263,7 +1282,8 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
       continue;
     }
     if (!error && interrupted && retry) {
-      error = restartio(state, &key, bytes, offset, positional);
+      error = restartio(state, &key, opcode == FS_PATH ? payload : bytes, offset, positional,
+                        opcode == FS_PATH ? bytes : 0);
       if (!error) {
         interrupted = 0;
         continue;
@@ -1272,8 +1292,7 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
         error = 0; /* Fixed result takes precedence over restart. */
     }
     if (!error) {
-      error = sysfileiofinish(state, &key, output,
-                              opcode == FS_PATH && offset != FS_PATH_GETCWD ? 0 : bytes, result);
+      error = fileiofinish(state, &key, output, bytes, offset, result);
       if (!error)
         break;
     }
@@ -1340,6 +1359,14 @@ isize
 sysfileimagechdir(u32 layer, const char *path, Fileioresult *result)
 {
   return imageio(layer, -1, FS_PATH, path, NULL, 0, 0, 0, result);
+}
+
+isize
+sysfileimagereadlink(u32 layer, const char *path, char *buffer, u64 bytes, Fileioresult *result)
+{
+  if (!bytes)
+    return -ERR_INVALID;
+  return imageio(layer, -1, FS_PATH, path, buffer, bytes, FS_PATH_READLINK, 0, result);
 }
 
 isize

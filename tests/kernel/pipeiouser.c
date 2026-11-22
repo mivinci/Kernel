@@ -1557,7 +1557,7 @@ struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file, dir, denied, created, abandoned;
+  Vnode     root, file, dir, denied, created, abandoned, symlink;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1567,7 +1567,7 @@ struct Openfixture
   Journalio syncio;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
-  u32       cancelgrowth, durable, dirwait;
+  u32       cancelgrowth, durable, dirwait, linkwait;
 };
 
 static isize
@@ -1645,6 +1645,10 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
   Openfixture *fixture = job->backend;
   if (job->call.words[0] == FS_PATH) {
     CHECK(dir == &fixture->root && bytes == 1);
+    if (name[0] == 'l') {
+      *out = &fixture->symlink;
+      return openhold(fixture, *out);
+    }
     *out = name[0] == 'd' ? &fixture->dir : name[0] == 'n' ? &fixture->denied : &fixture->file;
     return openhold(fixture, *out);
   }
@@ -1684,7 +1688,18 @@ openparent(void *context, const Vnode *node, Vnode **out)
 static isize
 openlink(void *context, const Vnode *node, const char **target, u64 *bytes)
 {
-  (void) context;
+  Openjob     *job = context;
+  Openfixture *fixture = job->backend;
+  if (job->call.words[0] == FS_PATH && job->slot.args[0] == FS_PATH_READLINK) {
+    CHECK(node == &fixture->symlink && fixture->holds == 3);
+    if (fixture->linkwait) {
+      fixture->linkwait = 0;
+      return VWALK_WAIT;
+    }
+    *target = "../data";
+    *bytes = sizeof("../data");
+    return 0;
+  }
   (void) node;
   (void) target;
   (void) bytes;
@@ -3042,6 +3057,7 @@ publicchdirserver(const Bootview *boot)
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
   fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
+  fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.length = 20;
   CHECK(!cacheinit(&fixture.cache, &block, 1, 128));
@@ -3089,6 +3105,10 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
   CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
+  fixture.linkwait = 1;
+  CHECK(!fsstep(&fs) && job.node == &fixture.symlink && job.waiting && fixture.holds == 3 &&
+        !fsopenpump(&open) && !job.call.request && fixture.holds == 2 && !fsstep(&fs) &&
+        !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_PATH &&
         !sysfilelinkaccept(&link, 1, &request, &slot) && slot.args[0] == FS_PATH_CHDIR &&
         !ipc_defer(request.request));
@@ -3183,6 +3203,7 @@ publicchdirclient(void)
   struct sigaction action = {0};
   int              fd;
   char             cwd[4] = "xxx";
+  char             link[9] = "????????";
   CHECK(!sysfileimagefs(0, ADDRESS, &peer));
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
         open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT);
@@ -3209,6 +3230,10 @@ publicchdirclient(void)
         !strcmp(cwd, "xxx") && getcwd(cwd, 3) == cwd && errno == ERANGE && cwd[0] == '/' &&
         cwd[1] == 'd' && !cwd[2] && !cwd[3] && !getcwd((char *) (uintptr_t) 1, 3) &&
         errno == EFAULT);
+  CHECK(readlink("/l", link, 3) == 3 && !strcmp(link, "../?????") &&
+        readlink("/l", link, sizeof(link)) == 7 && !strcmp(link, "../data?") &&
+        readlink("/x", link, sizeof(link)) == -1 && errno == EINVAL && !strcmp(link, "../data?") &&
+        readlink("/l", (char *) (uintptr_t) 1, 3) == -1 && errno == EFAULT);
   CHECK(chdir("/d") == -1 && errno == EINTR && caught == 3 && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
   pipeiotrace[0] = 7;

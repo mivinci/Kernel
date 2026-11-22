@@ -189,6 +189,14 @@ write(int fd, const void *buffer, size_t count)
 }
 
 ssize_t
+readlink(const char *path, char *buffer, size_t size)
+{
+  Fileioresult completed = {0};
+  isize        status = sysfileimagereadlink(__libc_sigdepth(), path, buffer, size, &completed);
+  return ioresult(FS_PATH, status, &completed);
+}
+
+ssize_t
 pread(int fd, void *buffer, size_t count, off_t offset)
 {
   return transfer(fd, FS_READ, NULL, buffer, count, offset, 1);
