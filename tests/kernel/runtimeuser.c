@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <fnmatch.h>
+#include <getopt.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -208,6 +209,51 @@ optioncheck(void)
   REQUIRE(getopt(3, operand, "a") == -1 && optind == 1, 283);
   operand[1] = "path";
   REQUIRE(getopt(3, operand, "a") == -1 && optind == 1 && operand[2][1] == 'a', 284);
+}
+
+static void
+longoptioncheck(void)
+{
+  int                 flag = 0, index = -1;
+  const struct option options[] = {{"verbose", no_argument, &flag, 9},
+                                   {"value", required_argument, NULL, 'v'},
+                                   {"color", optional_argument, NULL, 'c'},
+                                   {"collect", no_argument, NULL, 'C'},
+                                   {NULL, 0, NULL, 0}};
+  char               *args[] = {"tool",  "left",        "--verb", "-ab",       "--value", "42",
+                                "right", "--color=red", "--",     "--collect", NULL};
+  char               *errors[] = {"tool", "--col", "--verbose=1", "--value", NULL};
+  char               *operands[] = {"tool", "left", "-a", NULL};
+  char               *optional[] = {"tool", "-cblue", "--color", "operand", "-c", NULL};
+  optind = 0;
+  REQUIRE(getopt_long(10, args, "ab", options, &index) == 0 && flag == 9 && index == 0 &&
+              getopt_long(10, args, "ab", options, &index) == 'a' &&
+              getopt_long(10, args, "ab", options, &index) == 'b' &&
+              getopt_long(10, args, "ab", options, &index) == 'v' && index == 1 &&
+              !strcmp(optarg, "42") && getopt_long(10, args, "ab", options, &index) == 'c' &&
+              index == 2 && !strcmp(optarg, "red") &&
+              getopt_long(10, args, "ab", options, NULL) == -1 && optind == 7 &&
+              !strcmp(args[6], "--") && !strcmp(args[7], "left") && !strcmp(args[8], "right") &&
+              !strcmp(args[9], "--collect"),
+          280);
+  optind = 0;
+  REQUIRE(getopt_long(4, errors, ":", options, &index) == '?' && !optopt && index == 2 &&
+              getopt_long(4, errors, ":", options, &index) == '?' && optopt == 9 &&
+              getopt_long(4, errors, ":", options, &index) == ':' && optopt == 'v' && optind == 4,
+          281);
+  optind = 0;
+  REQUIRE(getopt_long(3, operands, "+a", options, NULL) == -1 && optind == 1, 282);
+  optind = 0;
+  REQUIRE(getopt_long(3, operands, "-a", options, NULL) == 1 && optarg == operands[1] &&
+              getopt_long(3, operands, "-a", options, NULL) == 'a',
+          283);
+  optind = 0;
+  REQUIRE(getopt_long(5, optional, "c::", options, NULL) == 'c' && !strcmp(optarg, "blue") &&
+              getopt_long(5, optional, "c::", options, NULL) == 'c' && !optarg &&
+              getopt_long(5, optional, "c::", options, NULL) == 'c' && !optarg &&
+              getopt_long(5, optional, "c::", options, NULL) == -1 && optind == 4 &&
+              !strcmp(optional[4], "operand"),
+          284);
 }
 volatile u64                             runtime_trace[18];
 static volatile u64                      initialized = UINT64_C(0x123456789abcdef0);
@@ -921,6 +967,7 @@ main(int argc, char **argv)
           176);
   sortcheck();
   optioncheck();
+  longoptioncheck();
   pathwalkcheck();
   REQUIRE(!vwalkusercheck(), 294);
   ctypecheck();

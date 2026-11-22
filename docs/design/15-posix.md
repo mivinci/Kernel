@@ -151,6 +151,8 @@ stage448：libc 在 `unistd.h` 导出 `getopt(int argc, char *const argv[], cons
 
 ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个终止条件、未知选项和缺少参数。主机探针验证诊断内容、短写、EINTR 重试及静默模式，格式检查通过。
 
+为 BusyBox 移植新增 `<getopt.h>` 和 GNU 扩展 `getopt_long`。长选项支持精确名、无歧义前缀、必需和可选参数、`flag` 及 `longindex`。默认稳定重排选项和操作数；`+` 或 `POSIXLY_CORRECT` 在首个操作数停止，前导 `-` 按原顺序返回操作数。ARM64、RV64 QEMU `runtime` 核对重排、`--`、短选项组混用、歧义、错误参数、可选参数及短选项旧行为。尚未运行 BusyBox 构建。
+
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。
