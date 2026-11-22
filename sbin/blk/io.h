@@ -48,6 +48,9 @@ int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const B
    Transport and buffer ownership faults close the queue until recovery. */
 int blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes);
 int blkqrefresh(Blkqueue *queue, Vblkconfig *config);
+/* FLUSH waits for submitted writes to finish. While FLUSH is active, later
+   writes and flushes wait. The caller orders requests before submission and
+   handles completion failures before advancing a durability sequence. */
 int blkqsubmit(Blkqueue *queue, u32 slot, u32 type, u64 sector, u32 bytes, const void *source,
                Vblksync sync, void *context);
 /* Return the exact active slot for a completion, or a native error. */

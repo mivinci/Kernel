@@ -418,6 +418,47 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
           240);
   vdev_trace[VTEST_PARALLEL] = 2;
 }
+static Vdone
+waitblock(Blkqueue *queue, u64 irqevent)
+{
+  Vdone  done[VQ_BATCH];
+  Ipcmsg event;
+  u32    count, more, causes;
+  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
+              event.words[0] == irqevent && !blkqpoll(queue, done, &count, &more, &causes) &&
+              count == 1 && !more && causes == VDEV_IRQ_USED,
+          241);
+  vdev_trace[38]++;
+  return done[0];
+}
+static void
+testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
+{
+  static u8 source[PAGE_SIZE];
+  Vdev     *device = queue->device;
+  Vdone     done;
+  u64       alarm, started = now();
+  u32       i;
+  for (i = 0; i < sizeof(source); i++)
+    source[i] = (u8) (0x37 + i * 37);
+  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+              !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
+              !blkqsubmit(queue, 0, VBLK_WRITE, sector, sizeof(source), source, blksync, device),
+          242);
+  done = waitblock(queue, irqevent);
+  REQUIRE(blkqsubmit(queue, 1, VBLK_FLUSH, 0, 0, NULL, blksync, device) == -ERR_WOULD_BLOCK &&
+              !blkqfinish(queue, &done, NULL, 0) && !__sys_irqack(binding) &&
+              !blkqsubmit(queue, 1, VBLK_FLUSH, 0, 0, NULL, blksync, device),
+          243);
+  done = waitblock(queue, irqevent);
+  REQUIRE(blkqsubmit(queue, 0, VBLK_WRITE, sector, sizeof(source), source, blksync, device) ==
+                  -ERR_WOULD_BLOCK &&
+              blkqsubmit(queue, 0, VBLK_FLUSH, 0, 0, NULL, blksync, device) == -ERR_WOULD_BLOCK &&
+              !blkqfinish(queue, &done, NULL, 0) && !__sys_alarmcancel(&alarm),
+          244);
+  vdev_trace[2]++;
+  vdev_trace[3]++;
+}
 static void
 testblock(Vdev *device, const Vblkconfig *config, u32 member)
 {
@@ -440,16 +481,14 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   startqueue(device, &ring, 1, &dma);
   transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, stride, 1,
            config->readonly ? 0xa7 : 0x51, &prior, NULL);
-  if (!config->readonly) {
-    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_WRITE, 2 * stride, 2, 0x37,
-             NULL, NULL);
-    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_FLUSH, 0, 3, 0, NULL, NULL);
-    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
-             NULL, NULL);
-  }
   testbuffer(&dma, 3, &buffers[0]);
   testbuffer(&dma, 6, &buffers[1]);
   REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)), 224);
+  if (!config->readonly) {
+    testflush(&queue, binding, irqevent, 2 * stride);
+    transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
+             NULL, NULL);
+  }
   resetpending(&queue, binding, irqevent, config);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&

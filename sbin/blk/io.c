@@ -146,6 +146,7 @@ blkqsubmit(Blkqueue *queue, u32 index, u32 type, u64 sector, u32 bytes, const vo
 {
   Vblkreq *slot;
   u64      cookie;
+  u32      i;
   int      error;
   if (!queue || index >= queue->count)
     return -ERR_INVALID;
@@ -158,6 +159,13 @@ blkqsubmit(Blkqueue *queue, u32 index, u32 type, u64 sector, u32 bytes, const vo
   slot = &queue->slots[index];
   if (slot->held || slot->active)
     return -ERR_BUSY;
+  if (type == VBLK_FLUSH || type == VBLK_WRITE)
+    for (i = 0; i < queue->count; i++) {
+      const Vblkreq *pending = &queue->slots[i];
+      if (pending->active &&
+          (pending->type == VBLK_FLUSH || (type == VBLK_FLUSH && pending->type == VBLK_WRITE)))
+        return -ERR_WOULD_BLOCK;
+    }
   if (queue->serial == (UINT64_MAX >> BLK_SLOT_BITS))
     return -ERR_OVERFLOW;
   cookie = (++queue->serial << BLK_SLOT_BITS) | index;
