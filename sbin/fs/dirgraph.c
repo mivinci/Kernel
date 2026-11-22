@@ -51,6 +51,56 @@ rooted(Dirgraph *graph, u32 ino)
 }
 
 isize
+dirgraphblock(Dirgraph *graph, u32 directory, const u8 *bytes, u32 valid, Dirdecode decode)
+{
+  const Dirnode *from;
+  u32            offset = 0;
+  if (!graph || !graph->nodes || !bytes || !decode || !directory || directory >= FS_INODES ||
+      !valid || valid > FS_BLOCK_BYTES)
+    return -ERR_INVALID;
+  if (graph->failed)
+    return graph->failed;
+  if (graph->next)
+    return -ERR_STATE;
+  from = &graph->nodes[directory];
+  if (from->kind != VNODE_DIR || !from->links)
+    return graph->failed = -ERR_STATE;
+  while (offset < valid) {
+    const u32      header = 16;
+    Dirrecord      record = {0};
+    const u8      *name;
+    const Dirnode *target;
+    u32            i;
+    isize          error;
+    if (valid - offset < header || decode(bytes + offset, &record) || record.reclen < header ||
+        (record.reclen & 7) || record.reclen > valid - offset)
+      return graph->failed = -ERR_STATE;
+    name = bytes + offset + header;
+    offset += record.reclen;
+    if (!record.inode)
+      continue;
+    if (record.inode >= FS_INODES || !record.namelen || record.namelen > 255 ||
+        record.namelen >= record.reclen - header || name[record.namelen])
+      return graph->failed = -ERR_STATE;
+    for (i = 0; i < record.namelen; i++)
+      if (!name[i] || name[i] == '/')
+        return graph->failed = -ERR_STATE;
+    if (name[0] == '.' && (record.namelen == 1 || (record.namelen == 2 && name[1] == '.'))) {
+      target = &graph->nodes[record.inode];
+      if (record.kind != VNODE_DIR || target->kind != VNODE_DIR || !target->links ||
+          !record.generation || target->generation != record.generation ||
+          ((record.namelen == 1 || directory == FS_ROOT) && record.inode != directory))
+        return graph->failed = -ERR_STATE;
+      continue;
+    }
+    error = dirgraphedge(graph, directory, record.inode, record.generation, record.kind);
+    if (error)
+      return error;
+  }
+  return 0;
+}
+
+isize
 dirgraphstep(Dirgraph *graph)
 {
   u32 end;

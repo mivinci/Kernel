@@ -109,15 +109,15 @@ struct Blkdir
 {
   Blkowners *home;
   Dirgraph   graph;
-  isize (*decode)(Dirgraph *, u32 inode, u64 offset, const u8 *, u32 valid);
-  u64   offset;
-  isize failed;
-  u32   inode, loaded;
+  Dirdecode  decode;
+  u64        offset;
+  isize      failed;
+  u32        inode, loaded;
 };
 
 /* After blkhomecheck succeeds, set home and decode on zeroed work. The
-   decoder consumes one block's live records synchronously, retaining its
-   per-directory validation state across blocks, and records ordinary edges.
+   decoder normalizes a complete header. The block walker validates names
+   and records ordinary edges.
    One means the traversal and graph checks both completed; zero continues. */
 isize blkdirstep(Blkdir *);
 /* Admit a writable journal from that scan. The exclusive mount owner

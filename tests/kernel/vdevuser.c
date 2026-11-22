@@ -1228,13 +1228,15 @@ blkdecodeindex(u32 block, const u8 *encoded, Loadindex *index)
 }
 
 static isize
-blkdecodedir(Dirgraph *graph, u32 inode, u64 offset, const u8 *bytes, u32 valid)
+blkdecodedir(const u8 *bytes, Dirrecord *record)
 {
-  u32 i;
-  REQUIRE(inode == FS_ROOT && !offset && valid == PAGE_SIZE, 427);
-  for (i = 0; i < valid; i++)
-    REQUIRE(bytes[i] == (u8) (0x92 + 31 + i * 37), 428);
-  return dirgraphedge(graph, inode, 34, 1, VNODE_FILE);
+  if (bytes[0] == 0xb1) {
+    *record = (Dirrecord){0, 0, 24, 0, 0};
+  } else {
+    REQUIRE(bytes[0] == (u8) (0xb1 + 24 * 37), 427);
+    *record = (Dirrecord){34, 1, PAGE_SIZE - 24, 59, VNODE_FILE};
+  }
+  return 0;
 }
 
 static void
@@ -1389,6 +1391,12 @@ blkclient(const Bootview *boot, Handle call)
           424);
   dirs.home = &home;
   dirs.decode = blkdecodedir;
+  dirs.graph.nodes = nodes;
+  data[0] = 0xb1;
+  REQUIRE(dirgraphblock(&dirs.graph, FS_ROOT, data, 16, blkdecodedir) == -ERR_STATE &&
+              !dirs.graph.incoming[34],
+          431);
+  dirs.graph.failed = 0;
   op = 0;
   for (i = 0; i < 2 * FS_INODES / 32 + 12; i++) {
     isize done = blkdirstep(&dirs);

@@ -481,7 +481,7 @@ blkdirstep(Blkdir *work)
   if (error == -ERR_WOULD_BLOCK)
     return 0;
   if (!error)
-    error = work->decode(&work->graph, work->inode, work->offset, load->bytes, valid);
+    error = dirgraphblock(&work->graph, work->inode, load->bytes, valid, work->decode);
   if (error)
     return work->failed = error < 0 ? error : -ERR_STATE;
   work->offset += valid;
