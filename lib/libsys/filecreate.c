@@ -1004,6 +1004,8 @@ sysfileopenprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
   if (error) {
     (void) sysfdcancel(table, open->tag);
     clear(open, sizeof(*open));
+    if (error == -ERR_CAPACITY)
+      error = -ERR_NOMEM;
   } else
     open->flags = fdflags;
   return error;
@@ -1149,7 +1151,8 @@ sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
   if (error)
     return error;
   op = &work->state.operations[open->operation.lease.slot];
-  if (!(op->flags & SYSOP_CANCEL_SENT) || op->phase == SYSOP_ACKED ||
+  if (op->phase == SYSOP_PREPARED ||
+      (op->phase == SYSOP_WAITING && !(op->flags & SYSOP_CANCEL_SENT)) ||
       create->phase == SYSFILE_CREATE_RESOLVED)
     return -ERR_STATE;
   error = sysopabandon(work, cache, &open->operation, &background);

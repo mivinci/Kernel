@@ -4,6 +4,7 @@
 #include "private/timer.h"
 #include <abi/signal.h>
 #include <abi/syscall.h>
+#include <errno.h>
 #include <proto/file.h>
 typedef struct Revokeproof Revokeproof;
 struct Revokeproof
@@ -883,6 +884,12 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
       error = -ERR_OVERFLOW;
     else
       error = sysargstring(bank->snapshots[layer], FS_SLOT_BYTES, path, &args[3]);
+    if (error == -ERR_LIMIT || (!error && args[3] == 1)) {
+      *business = error ? -ENAMETOOLONG : -ENOENT;
+      *fd = -1;
+      error = 0;
+      goto restore;
+    }
     if (error)
       goto restore;
   }

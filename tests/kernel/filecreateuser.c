@@ -824,10 +824,11 @@ client(const Bootview *boot)
     CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds,
                            (const char *) (uintptr_t) BOOT_USER_HI, 0, 0, 0, &missing, &active,
                            &number, &business) == -ERR_FAULT &&
-          sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
-                           &active, &number, &business) == -ERR_LIMIT &&
+          number == -2 && business == 9 &&
+          !sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
+                            &active, &number, &business) &&
           contexts.sequence == sequence && !missing.operation.lease.seq && !active.sequence &&
-          number == -2 && business == 9 && !sysfdobserve(&fds, 2, &detached) &&
+          number == -1 && business == -ENAMETOOLONG && !sysfdobserve(&fds, 2, &detached) &&
           detached.tag.state == SYSFD_FREE);
     longpath[sizeof(longpath) - 1] = 0;
     CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,

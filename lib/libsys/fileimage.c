@@ -738,6 +738,61 @@ sysfileimageopen(u32 layer, Connwork *work, const char *path, u64 flags, u64 mod
   return restored ? restored : error ? error : -ERR_TIMEDOUT;
 }
 
+isize
+sysfileimageopenpath(u32 layer, const char *path, u64 flags, u64 mode, isize *business)
+{
+  Fileimage *state;
+  Connwork  *work;
+  Opencreate open;
+  Rkey       active = {0};
+  u64        mask, ignored;
+  u32        i;
+  int        fd = -1;
+  isize      error, restored;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  fileprogress(state);
+  error = readyfs(state, &work);
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (error || restored)
+    return error ? error : restored;
+  for (i = 0; i < sizeof(open); i++)
+    ((volatile u8 *) &open)[i] = 0;
+  error = sysfileimageopen(layer, work, path, flags, mode,
+                           flags & FS_OPEN_CLOEXEC ? BOOT_FD_CLOEXEC : 0, &open, &active, &fd,
+                           business);
+  if (!error)
+    return *business ? 0 : fd;
+  if (open.operation.lease.seq && !active.sequence) {
+    Conncache *cache = sysfileimagecache(state);
+    Slotop    *op = &work->state.operations[open.operation.lease.slot];
+    u64        now;
+    isize      cleanup = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+    if (cleanup)
+      return cleanup;
+    if (op->phase == SYSOP_WAITING && !(op->flags & SYSOP_CANCEL_SENT)) {
+      cleanup = systimernow(&now);
+      if (!cleanup)
+        cleanup = sysfileopeninterrupt(&state->files, work, cache, &state->fds, &open, now);
+    }
+    if (!cleanup)
+      cleanup = sysfileopenabandon(&state->files, work, cache, &state->fds, &open);
+    if (!cleanup) {
+      draining |= 1U << work->state.tag.index;
+      fileprogress(state);
+    }
+    restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+    if (cleanup || restored)
+      return cleanup ? cleanup : restored;
+  }
+  /* The installed connection has no allocator for a delivered backend mapping. */
+  return error == 1 ? -ERR_NOTSUP : error;
+}
+
 static int
 ioopcode(u64 opcode)
 {

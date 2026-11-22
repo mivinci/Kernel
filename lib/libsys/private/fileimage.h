@@ -77,6 +77,7 @@ isize sysfileimagepipepair(u32 layer, int *fds, isize *business);
    the image worker and releases the unpublished descriptor. */
 isize sysfileimageopen(u32 layer, Connwork *work, const char *path, u64 flags, u64 mode,
                        u64 fdflags, Opencreate *open, Rkey *active, int *fd, isize *business);
+isize sysfileimageopenpath(u32 layer, const char *path, u64 flags, u64 mode, isize *business);
 /* Stage one READ/WRITE chunk on the exact live File. The caller excludes
    caught signals through Rctx registration and owns the resulting Opkey. */
 isize sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,

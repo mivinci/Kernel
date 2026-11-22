@@ -2524,6 +2524,8 @@ publicchdirserver(const Bootview *boot)
   Openjob        job = {0};
   Fscontext      context = {0};
   Pipetable      pipes = {0};
+  Fsfile         file = {0};
+  Fsref          ref = {0};
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
@@ -2535,7 +2537,7 @@ publicchdirserver(const Bootview *boot)
                        ADDRESS,
                        &link,
                        1,
-                       {&pipes, NULL, 0, NULL, 0, NULL, NULL},
+                       {&pipes, NULL, 0, NULL, 0, &fixture.files, NULL},
                        &open,
                        0,
                        NULL};
@@ -2548,10 +2550,17 @@ publicchdirserver(const Bootview *boot)
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
+  fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
+  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength};
+  fixture.completed = fixture.attempts = 1;
   CHECK(!fsstep(&fs) && link.ready);
   target.target = link.watch.owner.pid;
   CHECK(!fscontextadd(&contexts, target.target, link.watch.owner.image, &fixture.root,
                       &fixture.root, 027));
+  CHECK(!fsstep(&fs) && !file.refs && !fixture.searches); /* Unsupported mutation. */
+  CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R &&
+        file.flags == FS_OPEN_NONBLOCK && file.node == &fixture.file);
+  CHECK(!fsstep(&fs) && !file.node && !file.refs);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.root && context.version == 1);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
@@ -2635,10 +2644,9 @@ lateopenclient(void)
         !ipc_call(peer->state.call, &gate, CALL_CONTROL, &reply) &&
         !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) && !systimernow(&now));
   deadline = now + UINT64_C(500000000);
-  do {
-    CHECK(!systimerwait(deadline, EVENT_TIMER, mask) && !systimernow(&now) && now < deadline);
-  } while (peer->state.operations[0].phase || peer->state.operations[1].phase ||
-           sysfilerefconnection(&image->files, peer->state.self, peer->state.tag));
+  while (peer->state.operations[0].phase || peer->state.operations[1].phase ||
+         sysfilerefconnection(&image->files, peer->state.self, peer->state.tag))
+    CHECK(!systimernow(&now) && now < deadline && !systimerwait(deadline, EVENT_TIMER, mask));
   CHECK(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
   pipeiotrace[0] = 7;
 }
@@ -2648,7 +2656,13 @@ publicchdirclient(void)
 {
   Connwork        *peer;
   struct sigaction action = {0};
+  int              fd;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer));
+  CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
+        open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT &&
+        open("/x", O_WRONLY | O_CREAT, 0600) == -1 && errno == ENOSYS);
+  fd = open("/x", O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  CHECK(fd == 0 && errno == ENOSYS && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
   CHECK(chdir("") == -1 && errno == ENOENT && chdir((const char *) (uintptr_t) 1) == -1 &&
         errno == EFAULT && chdir("/n") == -1 && errno == EACCES && !chdir("/d") &&
         errno == EACCES && !chdir(".") && !peer->state.operations[0].phase &&

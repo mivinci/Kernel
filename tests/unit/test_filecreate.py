@@ -23,6 +23,10 @@ class Pipecreate(C.Structure):
     _fields_ = [('operation', ops.Key), ('tags', Tag*2)]
 
 
+class Opencreate(C.Structure):
+    _fields_ = [('operation', ops.Key), ('tag', Tag), ('flags', C.c_uint64)]
+
+
 class FileCreatorTests(unittest.TestCase):
     extra_sources = ('conn.c','file.c','connection.c','operation.c','fileref.c','filecreate.c','fd.c')
     tearDownClass = classmethod(support.ConnectionWorkTests.tearDownClass.__func__)
@@ -74,6 +78,10 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
             'sysfilepipeprepare':[pool,work,cache,C.POINTER(Table),C.c_uint32,C.c_uint64,
                                   C.POINTER(Pipecreate),C.POINTER(Words)],
             'sysfilepipeabandon':[pool,work,cache,C.POINTER(Table),C.POINTER(Pipecreate)],
+            'sysfileopenprepare':[pool,work,cache,C.POINTER(Table),C.c_uint32,C.c_uint64,
+                                  C.POINTER(C.c_uint64),C.c_void_p,C.c_uint64,C.c_uint64,
+                                  C.POINTER(Opencreate),C.POINTER(Words)],
+            'sysfileopenabandon':[pool,work,cache,C.POINTER(Table),C.POINTER(Opencreate)],
             'sysfilecreatordrain':[pool,work,cache,key],
             'sysopsubmitted':[work,cache,key,C.POINTER(C.c_int64)],
             'sysopsaved':[work,cache,key], 'sysopack':[work,cache,key],
@@ -399,6 +407,30 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
         self.assertEqual(self.lib.sysfilecreaterevokeprepare(self.p,self.w,self.c,C.byref(key),
             0,0,C.byref(claim),C.byref(call)),-5)
         self.assertEqual((bytes(self.work),bytes(self.pool),bytes(self.cache)),before)
+
+    def test_uninstalled_resource_open_releases_fd_but_keeps_exact_abort_responsibility(self):
+        table, draft, message = Table(), Opencreate(), Words()
+        args = (C.c_uint64*8)(0, 0, 0, 3)
+        self.assertEqual(self.lib.sysfileopenprepare(self.p, self.w, self.c, C.byref(table),
+            0, 501, args, C.create_string_buffer(b'/a'), 3, 0, C.byref(draft), C.byref(message)), 0)
+        key = draft.operation
+        self.submit(key)
+        self.resourcecall = self.call + 1
+        self.lib.testcall(self.resourcecall, self.peer.pid, self.peer.image)
+        self.reply(key, resource=self.resourcecall, token=71)
+        self.assertEqual(self.lib.sysfilecreateack(self.p, self.w, self.c, C.byref(key)), 0)
+        background = ops.Key.from_buffer_copy(key)
+        background.owner = 0
+        self.assertEqual(self.lib.sysfileopenabandon(self.p, self.w, self.c, C.byref(table),
+                                                    C.byref(draft)), 0)
+        self.assertEqual(table.entries[0].state, 0)
+        self.assertEqual((self.create(background).call, self.create(background).token),
+                         (self.resourcecall, 71))
+        claim = self.prepare_revoke(background)
+        self.assertEqual(self.record.token, 71)
+        self.bootresult(self.record, claim)
+        self.assertEqual(self.lib.sysfilecreatordrain(self.p, self.w, self.c, C.byref(background)), 0)
+        self.assertEqual(self.op(background).phase, 0)
 
     def test_resource_attach_rejects_abandoned_live_publication_but_allows_closing_anchor(self):
         key=self.resourcekey();background=ops.Key()

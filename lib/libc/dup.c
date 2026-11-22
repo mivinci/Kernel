@@ -125,6 +125,32 @@ ioresult(u64 opcode, isize status, const Fileioresult *completed)
   return -1;
 }
 
+int
+open(const char *path, int flags, ...)
+{
+  Fileioresult completed = {0};
+  va_list      args;
+  u32          mode = 0;
+  isize        status;
+  if (flags & O_CREAT) {
+    va_start(args, flags);
+    mode = va_arg(args, unsigned int);
+    va_end(args);
+  }
+  status = sysfileimageopenpath(__libc_sigdepth(), path, (u32) flags, mode, &completed.business);
+  if (status >= 0)
+    completed.count = (u64) status;
+  else if (status == -ERR_CAPACITY)
+    completed.business = -EMFILE;
+  else if (status == -ERR_NOTSUP)
+    completed.business = -ENOSYS;
+  else if (status == -ERR_INTERRUPTED)
+    completed.business = -EINTR;
+  else
+    return (int) ioresult(FS_OPEN, status, &completed);
+  return (int) ioresult(FS_OPEN, 0, &completed);
+}
+
 static ssize_t
 transfer(int fd, u64 opcode, const void *input, void *output, size_t count, off_t offset,
          u32 positional)
