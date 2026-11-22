@@ -4,6 +4,7 @@
 #include "cache.h"
 
 typedef struct Blkread Blkread;
+struct Redoscan;
 struct Blkread
 {
   Fsblk    *blk;
@@ -20,4 +21,9 @@ isize blkreadstart(Blkread *, Cache *, u64 block, u32 metadata);
 /* Read into private storage; only a full, drained success becomes visible
    in the cache. Return a native progress error while retaining ownership. */
 isize blkreadpoll(Blkread *, isize *status);
+/* Read one block in the stable recovery view. An overlay image wins over
+   home, even if home is cached. On WOULD_BLOCK, service any pending block
+   RPC with blkreadpoll before trying again. Output is private caller storage
+   of CACHE_BYTES, disjoint from overlay, cache and transport storage. */
+isize blkreadview(Blkread *, Cache *, const struct Redoscan *, u64 block, u32 metadata, void *out);
 #endif
