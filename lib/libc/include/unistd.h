@@ -38,5 +38,6 @@ int           fdatasync(int fd);
 int           chdir(const char *path);
 char         *getcwd(char *buffer, size_t size);
 long          sysconf(int name);
+unsigned int  sleep(unsigned int seconds);
 NORETURN void _exit(int status);
 #endif

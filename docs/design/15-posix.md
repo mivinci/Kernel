@@ -48,6 +48,10 @@
 
 补充本阶段接口：clock_settime（time.h），仅支持受明确校时授权限制的 CLOCK_REALTIME；clock_getres 返回实际分辨率。时间来源/可信校准状态属于原生扩展，不因成功设置时间自动成立。具体契约及用例见 [时间接口](05-events.md)，当前未实现。
 
+标准输出由 libc 的不透明 `FILE` 绑定 fd 1/2。`stdout` 首次写入时按终端检测选择行缓冲或全缓冲；`stderr` 不缓冲。先开放 `fwrite`、`fputs`、`fputc`/`putc`、`fflush`、`ferror`/`clearerr` 及 `printf`/`fprintf` 和其 `va_list` 形式。I/O 失败记住流错误，`clearerr` 清除。正常退出在回调和析构之后刷新；`_exit` 不刷新。尚未定义开放文件流、输入或用户设置缓冲的接口。
+
+`unistd.h` 的 `unsigned int sleep(unsigned int seconds)` 复用 libc `nanosleep` 的单调截止与信号交接，不使用 SIGALRM。零秒立即成功；到期返回 0；信号中断返回中断时剩余秒数向上取整，既不重新等待也不扣除 handler 执行时间。保留 `errno`；定时设施无法建立等待时返回原请求秒数。按 [POSIX sleep](https://pubs.opengroup.org/onlinepubs/9799919799/functions/sleep.html) 核对，供 BusyBox `sleep` 使用。
+
 `libgen.h` 的 `char *dirname(char *path)` 与 `char *basename(char *path)` 由 libc 执行纯文本路径分解。BusyBox 的公共头无条件包含 `libgen.h`；`cp --parents` 会调用 `dirname`，但该选项在当前最小配置中未启用。不访问文件系统，不折叠中间的 `..`，按本系统路径规则将全斜线和根目录结果统一为 `/`（包括 `//`）。NULL 或空串返回 `.`。调用者应允许修改输入；返回值可能指向输入或只读常量，成功保留 `errno`。按 [dirname](https://pubs.opengroup.org/onlinepubs/9799919799/functions/dirname.html)、[basename](https://pubs.opengroup.org/onlinepubs/9799919799/functions/basename.html) 核对；验收覆盖相对路径、根、尾随与连续斜线及 `..` 保留。
 
 `unistd.h` 的 `long sysconf(int name)` 首先支持 `_SC_PAGESIZE` 与同义 `_SC_PAGE_SIZE`。返回目标内核构建采用的基础虚拟内存页字节数（RV64、ARM64 均为 4096），成功保留 `errno`。未知选择器返回 `-1/EINVAL`；其他配置名暂不导出，不报告尚未交付的功能。`pathconf` 和 `fpathconf` 待接。
@@ -158,6 +162,10 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 公开 SDK 提供 `<endian.h>` 的 16、32、64 位双向主机字节序转换，以及 BusyBox 平台头引用的 `<byteswap.h>`。转换只求值一次，不依赖主机头或库符号。ARM64、RV64 QEMU `runtime` 核对实际字节布局、交换与往返转换；直接编译 BusyBox 1.37.0 上游源码的进度见 [012](../issues/012-busybox-port.md)。
 
 公开 SDK 已导出 `<libgen.h>`、`dirname` 和 `basename`。ARM64、RV64 QEMU `runtime` 验证 NULL、空串、根、重复斜线、普通相对路径和 `..` 分量，成功保持 `errno`。两套 SDK 均核对了导出的头与静态库符号。BusyBox 本身仍未完成构建。
+
+公开 `sleep()` 已接入。ARM64、RV64 QEMU `runtime` 验证零秒立即返回、完整一秒不提前返回，以及原生等待被配置了 `SA_RESTART` 的 SIGUSR1 handler 中断后返回向上取整的剩余秒数；三条路径均保持 `errno`。这里验收的是 libc 入口，BusyBox `sleep` 仍待整体构建和运行。
+
+标准输出流已接入。ARM64、RV64 QEMU `pipeio` 用真实管道验证非终端 stdout 缓冲、stderr 直写、`fflush(NULL)`、含 NUL 的 `fwrite` 及断管错误指示的清除。8 项 libc 主机测试通过，其中退出测试核对析构后刷新以及直接、递归退出跳过刷新。终端行缓冲、生产 Bootfd、第三方程序的串口输出与退出码仍待联合验收。
 
 `<inttypes.h>` 提供整数输出的 `PRI*` 格式宏及 `strtoimax`、`strtoumax`。格式宏跟随 Clang 的目标类型，两个 LP64 目标的转换沿用原解析器的范围、错误码及停止位置。ARM64、RV64 QEMU `runtime` 验证从定宽、最小、快速、最大和指针整数类型格式化的实际字符串，并核对转换边界；6 项整数主机回归通过。扫描宏和宽字符接口仍待实现。
 

@@ -976,6 +976,14 @@ sleepcheck(void)
   REQUIRE(!nanosleep(&brief, &remaining) && continued == 2 && !remaining.tv_sec &&
               (u64) remaining.tv_nsec == before,
           125);
+  errno = EDOM;
+  REQUIRE(!sleep(0) && errno == EDOM, 314);
+  runtime_trace[6] = 96;
+  REQUIRE(sleep(2) == 2 && slept == 3 && errno == EDOM, 315);
+  runtime_trace[6] = 0;
+  REQUIRE(!systimernow(&before) && !sleep(1) && !systimernow(&after) &&
+              after - before >= UINT64_C(1000000000) && errno == EDOM,
+          316);
 }
 
 static void

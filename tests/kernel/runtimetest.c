@@ -165,8 +165,8 @@ runtimetest(void)
         REQUIRE(
             error == -ERR_WOULD_BLOCK && mode == 1 &&
             !spaceread(info.space, runtime_trace_address + 6 * sizeof(u64), &stage, sizeof(stage)));
-        if (stage == injected + 1 && stage <= 95) {
-          if (stage <= 92)
+        if (stage == injected + 1 && stage <= 96) {
+          if (stage <= 92 || stage == 96)
             REQUIRE(!procsigqueue(pid, &interrupt));
           else
             sleepjob(pid, stage);
@@ -226,7 +226,7 @@ runtimetest(void)
             groupstat(ended_group, &relationship) == -ERR_BAD_HANDLE);
   }
   REQUIRE(!setstat(set, &account) && !account.charged && !account.instances && !setclose(set));
-  REQUIRE(injected == 95);
+  REQUIRE(injected == 96);
   pgstat(&after);
   REQUIRE(before.allocated == after.allocated && before.free == after.free && !pgcheck() &&
           !acctcheck() && !lifecheck() && !groupcheck());

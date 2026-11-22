@@ -1,5 +1,6 @@
 #include <time.h>
 #include <errno.h>
+#include <unistd.h>
 #include "private/syscall.h"
 #include "private/timer.h"
 
@@ -38,4 +39,21 @@ nanosleep(const struct timespec *request, struct timespec *remaining)
           : error == -ERR_NOTSUP    ? ENOTSUP
                                     : EIO;
   return -1;
+}
+
+unsigned int
+sleep(unsigned int seconds)
+{
+  struct timespec request, remaining;
+  int             saved = errno;
+  if (!seconds)
+    return 0;
+  request.tv_sec = remaining.tv_sec = (time_t) seconds;
+  request.tv_nsec = remaining.tv_nsec = 0;
+  if (!nanosleep(&request, &remaining))
+    seconds = 0;
+  else
+    seconds = (unsigned int) remaining.tv_sec + (remaining.tv_nsec != 0);
+  errno = saved;
+  return seconds;
 }

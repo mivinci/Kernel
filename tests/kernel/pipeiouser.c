@@ -1443,6 +1443,19 @@ brokenclient(void)
   for (i = 0; i < 599; i++)
     CHECK(formatted[i] == '0');
   CHECK(formatted[599] == '7' && !formatted[600] && dprintf(-1, "%s", "") == -1 && errno == EBADF);
+  CHECK(fds[0] != 1 && fds[0] != 2 && dup2(fds[1], 1) == 1 && dup2(fds[1], 2) == 2);
+  errno = EDOM;
+  CHECK(printf("%s:%d", "out", 7) == 5 && putc('\n', stdout) == '\n' && !poll(ready, 1, 0) &&
+        errno == EDOM);
+  CHECK(fputs("err", stderr) >= 0 && read(fds[0], formatted, 3) == 3 &&
+        !memcmp(formatted, "err", 3) && !fflush(NULL) && read(fds[0], formatted, 6) == 6 &&
+        !memcmp(formatted, "out:7\n", 6));
+  CHECK(fwrite("a\0bc", 2, 2, stdout) == 2 && !fflush(stdout) && read(fds[0], formatted, 4) == 4 &&
+        !memcmp(formatted, "a\0bc", 4));
+  if (fds[1] != 1)
+    CHECK(!close(1));
+  if (fds[1] != 2)
+    CHECK(!close(2));
   alias = dup(fds[1]);
   CHECK(alias >= 0 && !close(fds[1]) && write(alias, "e", 1) == 1 && !close(alias) &&
         poll(ready, 3, 0) == 2 && ready[0].revents == (POLLIN | POLLHUP) &&
@@ -1456,14 +1469,20 @@ brokenclient(void)
   action.sa_handler = brokenpipe;
   CHECK(!sigaction(SIGPIPE, &action, NULL) && dprintf(brokenfd, "%s", "x") == -1 &&
         errno == EPIPE && brokenwrites == 1);
+  CHECK(dup2(brokenfd, 2) == 2);
+  CHECK(fprintf(stderr, "%s", "x") == EOF && errno == EPIPE && ferror(stderr) && brokenwrites == 2);
+  clearerr(stderr);
+  CHECK(!ferror(stderr));
+  if (brokenfd != 2)
+    CHECK(!close(2));
   CHECK(!sigemptyset(&blocked) && !sigaddset(&blocked, SIGPIPE) &&
         !sigprocmask(SIG_BLOCK, &blocked, &mask) && write(brokenfd, "x", 1) == -1 &&
-        errno == EPIPE && brokenwrites == 1 && !sigpending(&pending) &&
+        errno == EPIPE && brokenwrites == 2 && !sigpending(&pending) &&
         sigismember(&pending, SIGPIPE) == 1 && !sigprocmask(SIG_SETMASK, &mask, NULL) &&
-        brokenwrites == 2);
+        brokenwrites == 3);
   action.sa_handler = SIG_IGN;
   CHECK(!sigaction(SIGPIPE, &action, NULL) && write(brokenfd, "x", 1) == -1 && errno == EPIPE &&
-        brokenwrites == 2 && !sigpending(&pending) && !sigismember(&pending, SIGPIPE));
+        brokenwrites == 3 && !sigpending(&pending) && !sigismember(&pending, SIGPIPE));
   action.sa_handler = SIG_DFL;
   CHECK(!sigaction(SIGPIPE, &action, NULL));
   pipeiotrace[0] = 7;

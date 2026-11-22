@@ -15,33 +15,44 @@ class LibcTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();folder=Path(cls.temp.name)
+        jump=folder/'hostjump.c'; jumpobj=folder/'hostjump.o'
+        jump.write_text('''#include <setjmp.h>
+static jmp_buf target;
+void hostescape(void){longjmp(target,1);}
+void hostcapture(void (*run)(void)){if(!setjmp(target))run();}
+''')
+        subprocess.run(['clang','-std=c89','-fPIC','-c',str(jump),'-o',str(jumpobj)],
+                       check=True,capture_output=True)
         shim=folder/'exit.c'
-        shim.write_text('''#include <setjmp.h>
-#include <stdlib.h>
+        shim.write_text('''#include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include "private/libc.h"
-static jmp_buf target;
+NORETURN void hostescape(void);
+void hostcapture(void (*run)(void));
 static int result, late_result, late_errno;
 static u64 trace, calls;
-NORETURN void __sys_exit(u64 code){result=(int)code;longjmp(target,1);}
+NORETURN void __sys_exit(u64 code){result=(int)code;hostescape();}
 static void one(void){trace=trace*10+1;}
 static void two(void){trace=trace*10+2;}
 static void fini(void){trace=trace*10+9;}
+static void flush(void){trace=trace*10+8;}
 static void late(void){trace=trace*10+3;late_result=atexit(one);late_errno=errno;}
 static void recursive(void){trace=7;exit(17);}
 static void counted(void){calls++;}
+static void normal(void){exit(0x12a);}
+static void direct(void){_exit(0x12a);}
+static void capacity(void){exit(42);}
 int test_exitcase(int kind){
  libcexitinit(fini);trace=calls=0;late_result=late_errno=0;
+ libcexitflush(flush);
  atexit(one);atexit(two);if(kind==2)atexit(late);if(kind==3)atexit(recursive);
- if(setjmp(target))return result;
- if(kind==1)_exit(0x12a);exit(0x12a);
+ hostcapture(kind==1?direct:normal);return result;
 }
 int test_capacity(void){int i;libcexitinit(0);calls=0;
  for(i=0;i<32;i++)if(atexit(counted))return -1;
  if(!atexit(counted)||errno!=ENOMEM)return -2;
- if(setjmp(target))return result;
- exit(42);
+ hostcapture(capacity);return result;
 }
 u64 test_trace(void){return trace;}
 u64 test_calls(void){return calls;}
@@ -53,7 +64,7 @@ int test_late(void){return late_result==-1&&late_errno==EBUSY;}
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'lib/libc'),'-I'+str(ROOT/'lib/libsys/include'),
                  '-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'include')]
         command+=['-D'+name+'=user_'+name for name in names]
-        path=folder/'libc.so';command += [str(s) for s in sources]+['-o',str(path)]
+        path=folder/'libc.so';command += [str(s) for s in sources]+[str(jumpobj),'-o',str(path)]
         if sys.platform=='darwin':
             sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
             command += ['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
@@ -135,7 +146,7 @@ int test_late(void){return late_result==-1&&late_errno==EBUSY;}
         finally:pointer.value=previous
 
     def test_normal_direct_and_recursive_exit_have_distinct_cleanup(self):
-        for mode,code,trace in ((0,42,219),(1,42,0),(2,42,3219),(3,17,7)):
+        for mode,code,trace in ((0,42,2198),(1,42,0),(2,42,32198),(3,17,7)):
             self.assertEqual(self.lib.test_exitcase(mode),code);self.assertEqual(self.lib.test_trace(),trace)
             if mode==2:self.assertEqual(self.lib.test_late(),1)
 

@@ -4,13 +4,18 @@
 #include <unistd.h>
 #include <errno.h>
 #define EXIT_SLOTS 32
-static Exitfn callbacks[EXIT_SLOTS], finish;
+static Exitfn callbacks[EXIT_SLOTS], finish, flush;
 static u32    count, exiting;
 void
 libcexitinit(Exitfn finalizer)
 {
   count = exiting = 0;
   finish = finalizer;
+}
+void
+libcexitflush(Exitfn function)
+{
+  flush = function;
 }
 int
 atexit(void (*function)(void))
@@ -44,5 +49,7 @@ exit(int status)
     finish = NULL;
     callback();
   }
+  if (flush)
+    flush();
   _exit(status);
 }
