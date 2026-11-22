@@ -401,7 +401,9 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
               !journalmetadata(&scan, metadata, 2, 1),
           337);
   for (i = 0; i < FS_INODES / 32; i++)
-    REQUIRE(redoscanstep(&scan, redoload, &fixture) == (i == FS_INODES / 32 - 1), 338);
+    REQUIRE(redoscanstep(&scan, redoload, &fixture) == (i == FS_INODES / 32 - 1) &&
+                scan.next == (i + 1) * 32,
+            338);
   REQUIRE(journalmetadata(&scan, metadata, 2, 1), 339);
   metadata[1].block = 99;
   REQUIRE(!journalmetadata(&scan, metadata, 2, 1), 343);

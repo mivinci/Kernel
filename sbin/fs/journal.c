@@ -1011,12 +1011,13 @@ redoscaninit(Redoscan *scan, u32 blocks, const Journalblock *images, u32 count,
 isize
 redoscanstep(Redoscan *scan, isize (*load)(void *, const Redoscan *, u32, Redoinode *), void *ctx)
 {
-  u32 i, end;
+  const u32 slots = FS_BLOCK_BYTES / FS_INODE_BYTES;
+  u32       i, end;
   if (!scan || !scan->next || !load)
     return -ERR_INVALID;
   if (scan->failed)
     return scan->failed;
-  end = MIN(scan->next + FS_BLOCK_BYTES / FS_INODE_BYTES, FS_INODES);
+  end = MIN((scan->next / slots + 1) * slots, FS_INODES);
   while ((i = scan->next) < end) {
     if (scan->inodes->used[i / 64] & (UINT64_C(1) << (i % 64))) {
       Redoinode node = {0};

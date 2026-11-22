@@ -271,7 +271,7 @@ isize journalview(u64 blocks, const Journalblock *images, u32 count, u64 block, 
    be decoded from the same stable overlay. All inputs stay pinned. */
 isize redoscaninit(Redoscan *, u32 blocks, const Journalblock *, u32 count, const Inodemap *,
                    const struct Blockmap *, struct Loadowners *);
-/* Visit at most one inode-table block's worth of slots. The loader uses the
+/* Visit only slots in the current inode-table block. The loader uses the
    scan's images with journalview, including for the indirect block. Its
    returned snapshots are borrowed until the next load. After the last slot,
    require ownership of every allocated data-area block. Return one when done,
