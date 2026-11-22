@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <types.h>
+#include "private/format.h"
 typedef struct Output Output;
 /* LLVM's C89 dialect supports these exact ll varargs types. Substituting a
    same-width long would not satisfy the varargs type contract. */
@@ -10,9 +11,11 @@ __extension__ typedef long long          Llong;
 __extension__ typedef unsigned long long Ullong;
 struct Output
 {
-  char  *buffer;
-  size_t size, used;
-  int    error;
+  char      *buffer;
+  size_t     size, used;
+  int        error;
+  Formatemit sink;
+  void      *context;
 };
 enum
 {
@@ -43,6 +46,8 @@ emit(Output *out, const char *text, char fill, size_t count)
     out->error = EOVERFLOW;
     return;
   }
+  if (count && out->sink)
+    out->error = out->sink(out->context, text, fill, count);
   if (out->size && out->used < out->size - 1)
     available = MIN(count, out->size - 1 - out->used);
   if (text)
@@ -175,7 +180,8 @@ integer(Output *out, uintmax_t value, char sign, u32 base, u32 upper, u32 pointe
     emit(out, NULL, ' ', padding);
 }
 int
-vsnprintf(char *buffer, size_t size, const char *format, va_list arguments)
+__libc_format(char *buffer, size_t size, Formatemit sink, void *context, const char *format,
+              va_list arguments)
 {
   Output      out;
   va_list     copy;
@@ -190,6 +196,8 @@ vsnprintf(char *buffer, size_t size, const char *format, va_list arguments)
   out.size = size;
   out.used = 0;
   out.error = 0;
+  out.sink = sink;
+  out.context = context;
   __builtin_va_copy(copy, arguments);
   while (*format && !out.error) {
     start = format;
@@ -303,6 +311,11 @@ vsnprintf(char *buffer, size_t size, const char *format, va_list arguments)
     return -1;
   }
   return (int) out.used;
+}
+int
+vsnprintf(char *buffer, size_t size, const char *format, va_list arguments)
+{
+  return __libc_format(buffer, size, NULL, NULL, format, arguments);
 }
 int
 snprintf(char *buffer, size_t size, const char *format, ...)

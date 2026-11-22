@@ -147,6 +147,8 @@ stage448：libc 在 `unistd.h` 导出 `getopt(int argc, char *const argv[], cons
 
 `stdlib.h` 另导出 `strtoll` 和 `strtoull`，返回标准的 `long long` 和 `unsigned long long`。两个 LP64 目标共用原整数解析器，保持 C locale、进制规则、溢出饱和及 `endptr` 行为；不增加 C23 的 `0b` 识别。ARM64、RV64 QEMU `runtime` 验证正负边界、无符号负值、前缀、错误码及扫描停止位置；6 项整数解析主机回归通过。此项补齐 BusyBox 所需的转换符号，尚未运行 BusyBox 构建。
 
+`stdio.h` 提供 `dprintf` 和 `vdprintf`，使用与 `snprintf` 相同的整数、指针和字节格式。以固定栈缓冲分批调用 `write`，短写从已接受的位置续写，遇到 I/O 错误返回 `-1` 并保留已写前缀。ARM64、RV64 QEMU `pipeio` 验证跨批次输出、内嵌 NUL、无效 fd 和断管；9 项主机格式测试覆盖内存格式化回归及短写、中断后的输出前缀。`FILE`、`printf` 和生产 stdout 尚未接入。
+
 ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个终止条件、未知选项和缺少参数。主机探针验证诊断内容、短写、EINTR 重试及静默模式，格式检查通过。
 
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。

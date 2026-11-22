@@ -14,6 +14,20 @@ class FormatTests(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory();folder=Path(cls.temp.name);cls.path=folder/'format.so'
         shim=folder/'forward.c'
         shim.write_text('''#include <stdio.h>
+#include <errno.h>
+#include <unistd.h>
+unsigned char captured[1024];
+size_t used, stop;
+void reset(size_t limit) { used=0; stop=limit; }
+ssize_t write(int fd,const void *data,size_t count) {
+ size_t i;
+ if (fd != 3) { errno=EBADF; return -1; }
+ if (used == stop && count) { errno=EINTR; return -1; }
+ if (count > 7) count=7;
+ if (count > stop-used) count=stop-used;
+ for (i=0;i<count;i++) captured[used++]=((const unsigned char *)data)[i];
+ return (ssize_t)count;
+}
 int testv(char *buffer,size_t size,const char *format,...) {
  va_list args,copy;int result,needed;
  va_start(args,format);__builtin_va_copy(copy,args);
@@ -26,7 +40,9 @@ int testv(char *buffer,size_t size,const char *format,...) {
         command=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'include'),'-Dsnprintf=user_snprintf',
                  '-Dvsnprintf=user_vsnprintf','-D__errno_location=user_errno_location','-Dstrerror=user_strerror',
-                 str(ROOT/'lib/libc/format.c'),str(ROOT/'lib/libc/errno.c'),str(shim),'-o',str(cls.path)]
+                 '-Ddprintf=user_dprintf','-Dvdprintf=user_vdprintf','-Dwrite=user_write',
+                 str(ROOT/'lib/libc/format.c'),str(ROOT/'lib/libc/formatfd.c'),
+                 str(ROOT/'lib/libc/errno.c'),str(shim),'-o',str(cls.path)]
         if sys.platform=='darwin':
             sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
             command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
@@ -35,9 +51,24 @@ int testv(char *buffer,size_t size,const char *format,...) {
         for function in (cls.lib.user_snprintf,cls.lib.testv,cls.native.snprintf):
             function.argtypes=[C.c_void_p,C.c_size_t,C.c_char_p];function.restype=C.c_int
         cls.lib.user_errno_location.restype=C.POINTER(C.c_int)
+        cls.lib.user_dprintf.argtypes=[C.c_int,C.c_char_p]
+        cls.lib.user_dprintf.restype=C.c_int
+        cls.lib.reset.argtypes=[C.c_size_t]
+        cls.lib.reset.restype=None
 
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
+
+    def test_descriptor_short_write_and_interrupted_prefix(self):
+        expected=b'['+b'0'*599+b'7'+b'\0]'
+        captured=(C.c_ubyte*1024).in_dll(self.lib,'captured')
+        used=C.c_size_t.in_dll(self.lib,'used')
+        for limit,result,error in ((1024,len(expected),33),(265,-1,4)):
+            self.lib.reset(limit)
+            self.lib.user_errno_location()[0]=33
+            self.assertEqual(self.lib.user_dprintf(3,b'[%0600d%c]',C.c_int(7),C.c_int(0)),result)
+            self.assertEqual(self.lib.user_errno_location()[0],error)
+            self.assertEqual(bytes(captured[:used.value]),expected[:limit])
 
     def call(self,format,args=(),size=96,function=None):
         memory=(C.c_ubyte*(size+16))(*([0xa5]*(size+16)))

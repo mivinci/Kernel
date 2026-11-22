@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdio.h>
 #include <string.h>
 #include <termios.h>
 #include <proto/tty.h>
@@ -1421,8 +1422,9 @@ brokenclient(void)
   isize            business;
   int              fds[2], alias;
   char             byte = 0;
+  char             formatted[601];
   struct pollfd    ready[3];
-  u64              before, after;
+  u64              before, after, i;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer) &&
         !sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
   ready[0].fd = fds[0];
@@ -1434,6 +1436,12 @@ brokenclient(void)
   CHECK(poll(ready, 3, 0) == 1 && !ready[0].revents && ready[1].revents == POLLOUT &&
         !ready[2].revents && !systimernow(&before) && !poll(ready, 1, 10) && !ready[0].revents &&
         !systimernow(&after) && after - before >= 10000000 && !poll(NULL, 0, 5));
+  errno = EDOM;
+  CHECK(dprintf(fds[1], "%s", "") == 0 && dprintf(fds[1], "%0600d%c", 7, 0) == 601 &&
+        errno == EDOM && read(fds[0], formatted, sizeof(formatted)) == sizeof(formatted));
+  for (i = 0; i < 599; i++)
+    CHECK(formatted[i] == '0');
+  CHECK(formatted[599] == '7' && !formatted[600] && dprintf(-1, "%s", "") == -1 && errno == EBADF);
   alias = dup(fds[1]);
   CHECK(alias >= 0 && !close(fds[1]) && write(alias, "e", 1) == 1 && !close(alias) &&
         poll(ready, 3, 0) == 2 && ready[0].revents == (POLLIN | POLLHUP) &&
@@ -1445,8 +1453,8 @@ brokenclient(void)
         byte == 'r' && !close(alias));
   brokenfd = fds[1];
   action.sa_handler = brokenpipe;
-  CHECK(!sigaction(SIGPIPE, &action, NULL) && write(brokenfd, "x", 1) == -1 && errno == EPIPE &&
-        brokenwrites == 1);
+  CHECK(!sigaction(SIGPIPE, &action, NULL) && dprintf(brokenfd, "%s", "x") == -1 &&
+        errno == EPIPE && brokenwrites == 1);
   CHECK(!sigemptyset(&blocked) && !sigaddset(&blocked, SIGPIPE) &&
         !sigprocmask(SIG_BLOCK, &blocked, &mask) && write(brokenfd, "x", 1) == -1 &&
         errno == EPIPE && brokenwrites == 1 && !sigpending(&pending) &&
