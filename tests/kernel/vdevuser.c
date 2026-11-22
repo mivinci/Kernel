@@ -424,6 +424,27 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   REQUIRE(redoscanstep(&broken, redoload, &fixture) == -ERR_STATE &&
               !journalmetadata(&broken, metadata, 2, 1),
           345);
+  {
+    static Redoscan   leaked;
+    static Loadowners unowned;
+    static Blockmap   leaks;
+    /* Last in-volume bit, to cover the upper boundary of the bitmap. */
+    u32 block = (u32) blocks - 1;
+    u64 bit = UINT64_C(1) << (block % 64);
+    REQUIRE(block > 109 && !(allocation.used[block / 64] & bit), 346);
+    leaks.used[1] = allocation.used[1];
+    leaks.used[block / 64] |= bit;
+    REQUIRE(!redoscaninit(&leaked, (u32) blocks, metadata, 2, &inodes, &leaks, &unowned), 347);
+    for (i = 0; i < FS_INODES / 32; i++)
+      REQUIRE(redoscanstep(&leaked, redoload, &fixture) ==
+                  (i == FS_INODES / 32 - 1 ? -ERR_STATE : 0),
+              348);
+    REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                           journalmetadata, &leaked) == -ERR_STATE &&
+                journalnext(&journal, &io) == -ERR_STATE,
+            349);
+    REQUIRE(redoscanstep(&leaked, redoload, &fixture) == -ERR_STATE, 350);
+  }
   geometry.faultbytes = 0;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
                          journalmetadata, &scan) == -ERR_NOTSUP &&
@@ -946,10 +967,11 @@ waitblock(Blkqueue *queue, u64 irqevent)
   Vdone  done[VQ_BATCH];
   Ipcmsg event;
   u32    count, more, causes;
-  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT &&
-              event.words[0] == irqevent && !blkqpoll(queue, done, &count, &more, &causes) &&
-              count == 1 && !more && causes == VDEV_IRQ_USED,
+  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT,
           241);
+  REQUIRE(event.words[0] == irqevent, 351);
+  REQUIRE(!blkqpoll(queue, done, &count, &more, &causes), 352);
+  REQUIRE(count == 1 && !more && causes == VDEV_IRQ_USED, 353);
   vdev_trace[38]++;
   return done[0];
 }

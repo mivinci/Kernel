@@ -937,6 +937,23 @@ emptyvalid(const Journalmark *mark)
   return mark && !mark->state && !mark->headercrc && !mark->payloadcrc;
 }
 
+static int
+redoallocated(const Redoscan *scan)
+{
+  u32 first = FS_DATA_START / 64, last = (scan->blocks - 1) / 64;
+  u32 i;
+  for (i = first; i <= last; i++) {
+    u64 mask = UINT64_MAX;
+    if (i == first)
+      mask &= UINT64_MAX << (FS_DATA_START % 64);
+    if (i == last)
+      mask &= UINT64_MAX >> (63 - (scan->blocks - 1) % 64);
+    if ((scan->allocation->used[i] ^ scan->owners->owned.used[i]) & mask)
+      return 0;
+  }
+  return 1;
+}
+
 isize
 journalview(u64 blocks, const Journalblock *images, u32 count, u64 block, const u8 **out)
 {
@@ -1016,6 +1033,8 @@ redoscanstep(Redoscan *scan, isize (*load)(void *, const Redoscan *, u32, Redoin
     }
     scan->next++;
   }
+  if (scan->next == FS_INODES && !redoallocated(scan))
+    return scan->failed = -ERR_STATE;
   return scan->next == FS_INODES;
 }
 

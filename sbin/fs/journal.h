@@ -273,8 +273,9 @@ isize redoscaninit(Redoscan *, u32 blocks, const Journalblock *, u32 count, cons
                    const struct Blockmap *, struct Loadowners *);
 /* Visit at most one inode-table block's worth of slots. The loader uses the
    scan's images with journalview, including for the indirect block. Its
-   returned snapshots are borrowed until the next load. Return one when
-   done, zero for more work, WOULD_BLOCK to resume, or a sticky error. */
+   returned snapshots are borrowed until the next load. After the last slot,
+   require ownership of every allocated data-area block. Return one when done,
+   zero for more work, WOULD_BLOCK to resume, or a sticky error. */
 isize redoscanstep(Redoscan *, isize (*load)(void *, const Redoscan *, u32, Redoinode *), void *);
 /* Data-area classifier for a completed Redoscan and its exact images. */
 int journalmetadata(void *, const Journalblock *, u32 count, u32 index);
