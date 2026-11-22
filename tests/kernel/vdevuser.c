@@ -1243,6 +1243,16 @@ blknamed(const u8 *bytes, Dirrecord *record)
 }
 
 static isize
+blkretire(const u8 *uuid, u64 txid, u8 *bytes)
+{
+  u32 i;
+  REQUIRE(txid == 48 && uuid[0] == 3, 442);
+  for (i = 0; i < PAGE_SIZE; i++)
+    bytes[i] = 0x5a;
+  return 0;
+}
+
+static isize
 blkdecodedir(const u8 *bytes, Dirrecord *record)
 {
   if (bytes[0] == 0xb1) {
@@ -1268,6 +1278,7 @@ blkclient(const Bootview *boot, Handle call)
   static Blkowners          home;
   Dirnode                   nodes[FS_INODES] = {{0}};
   Blkdir                    dirs = {0};
+  Blkmount                  mounting = {0};
   Vmounts                   mounts = {0};
   Vnode                     root = {0, FS_ROOT, 1, VNODE_DIR};
   u8                        namebytes[256];
@@ -1358,32 +1369,7 @@ blkclient(const Bootview *boot, Handle call)
               owners.owners.owned.used[2] == owners.allocation.used[2] &&
               owners.owners.metadata.used[2] == owners.allocation.used[2],
           388);
-  for (i = 0; i < PAGE_SIZE; i++)
-    data[i] = 0x5a;
-  log.journal = &recovered;
-  REQUIRE(blkredoadmit(&owners, &recovered, 0, 0, data) < 0 && !blk.rpc &&
-              !blkredoadmit(&owners, &recovered, FS_BLOCK_BYTES, 0, data) &&
-              recovered.phase == JOURNAL_HOME_WRITE && !recovered.last && recovered.txid == 48,
-          414);
-  for (i = 0; i < 5; i++)
-    REQUIRE(!journalpump(&recovered, blklogsubmit, &log) && log.ticket.serial == i + 1 &&
-                !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blklogpoll(&log) && !blk.rpc &&
-                !recovered.last,
-            415);
-  REQUIRE(journalpump(&recovered, blklogsubmit, &log) == 1 && !journalrelease(&recovered) &&
-              recovered.last == 48 && recovered.phase == JOURNAL_IDLE,
-          416);
-  home.home = &probe;
-  REQUIRE(blkhomecheck(&home, owners.redo->probe, &recovered) == -ERR_STALE && !blk.rpc, 419);
-  homeprobe.blk = &blk;
-  REQUIRE(!blkprobestep(&homeprobe, blksuper, blkretired) && blk.rpc &&
-              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
-              !blkprobestep(&homeprobe, blksuper, blkretired) && blk.rpc &&
-              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
-              blkprobestep(&homeprobe, blksuper, blkretired) == 1 && !blk.rpc &&
-              homeprobe.mark.txid == recovered.last && !homeprobe.mark.state,
-          420);
-  home.home = &homeprobe;
+  REQUIRE(blkredoadmit(&owners, &recovered, 0, 0, data) < 0 && !blk.rpc, 414);
   home.load.read = &reader;
   home.load.cache = &cache;
   home.load.inode = blkdecodeinode;
@@ -1391,28 +1377,8 @@ blkclient(const Bootview *boot, Handle call)
   home.load.nodes = nodes;
   home.inodemap = blkdecodeinodes;
   home.blockmap = blkdecodeblocks;
-  REQUIRE(!cacheinit(&cache, &storage, 1, 256), 421);
-  op = 0;
-  for (i = 0; i < FS_INODES / 32 + 10; i++) {
-    isize done = blkhomecheck(&home, owners.redo->probe, &recovered);
-    REQUIRE(done == 0 || done == 1, 422);
-    if (done)
-      break;
-    if (blk.rpc) {
-      REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 423);
-      op++;
-    }
-  }
-  REQUIRE(op == 5 && !blk.rpc && !home.scan.count && home.scan.next == FS_INODES &&
-              home.owners.owned.used[1] == owners.owners.owned.used[1] &&
-              home.owners.metadata.used[2] == owners.owners.metadata.used[2] &&
-              blkhomecheck(&home, owners.redo->probe, &recovered) == 1,
-          424);
   dirs.home = &home;
   dirs.decode = blkdecodedir;
-  REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial &&
-              !root.mount,
-          438);
   dirs.names =
       (Dirnames){namebytes, nameoffsets, sizeof(namebytes), ARRAY_SIZE(nameoffsets), 0, 0, 0, 0};
   dirs.graph.nodes = nodes;
@@ -1421,18 +1387,36 @@ blkclient(const Bootview *boot, Handle call)
               !dirs.graph.incoming[34],
           431);
   dirs.graph.failed = 0;
+  mounting.probe = (Blkprobe *) owners.redo->probe;
+  mounting.after = &homeprobe;
+  mounting.overlay = &owners;
+  mounting.dirs = &dirs;
+  mounting.log.blk = &blk;
+  mounting.log.journal = &recovered;
+  mounting.storage = &storage;
+  mounting.capacity = 1;
+  mounting.empty = data;
+  mounting.layout = blksuper;
+  mounting.mark = blkretired;
+  mounting.retire = blkretire;
+  mounting.faultbytes = FS_BLOCK_BYTES;
   op = 0;
-  for (i = 0; i < 2 * FS_INODES / 32 + 12; i++) {
-    isize done = blkdirstep(&dirs);
+  for (i = 0; i < 3 * FS_INODES / 32 + 40; i++) {
+    isize done = blkmountstep(&mounting);
     REQUIRE(done == 0 || done == 1, 425);
     if (done)
       break;
+    if (home.home)
+      REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial, 438);
     if (blk.rpc) {
       REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 426);
       op++;
     }
   }
-  REQUIRE(op == 3 && dirs.graph.incoming[34] == 1 && blkdirstep(&dirs) == 1 && !blk.rpc, 429);
+  REQUIRE(op == 15 && dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
+              recovered.last == 48 && recovered.phase == JOURNAL_IDLE && !home.scan.count &&
+              home.owners.owned.used[1] == owners.owners.owned.used[1],
+          429);
   blk.stale = 1;
   REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial && !root.mount,
           441);

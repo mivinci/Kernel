@@ -518,3 +518,109 @@ blkmountadd(Blkdir *work, Vmounts *mounts, Vnode *root, Vnode *point)
     work->published = 1;
   return error;
 }
+
+enum
+{
+  MountProbe,
+  MountOverlay,
+  MountReplay,
+  MountReprobe,
+  MountHome,
+  MountDirectories
+};
+
+isize
+blkmountstep(Blkmount *work)
+{
+  Blkprobe  *probe, *after;
+  Blkowners *home;
+  Fsblk     *blk;
+  Journal   *journal;
+  isize      result;
+  if (!work || !(probe = work->probe) || !(blk = probe->blk) || !work->dirs ||
+      !(home = work->dirs->home) || !work->storage || !work->layout || !work->mark)
+    return -ERR_INVALID;
+  if (work->failed)
+    return work->failed;
+  after = work->after;
+  journal = work->log.journal;
+  switch (work->phase) {
+  case MountProbe:
+    result = blkprobestep(probe, work->layout, work->mark);
+    if (result != 1)
+      break;
+    if (!probe->mark.state) {
+      home->home = probe;
+      result = cacheinit(home->load.cache, work->storage, work->capacity, probe->layout.blocks);
+      work->phase = MountHome;
+      break;
+    }
+    if (!after || after == probe || !journal || work->log.blk != blk || !work->empty ||
+        !work->retire || !work->overlay || work->overlay == home || !work->overlay->redo ||
+        work->overlay->redo->probe != probe)
+      return work->failed = -ERR_INVALID;
+    {
+      Fsgeometry geometry = probe->geometry;
+      geometry.faultbytes = work->faultbytes;
+      geometry.faultoffset = work->faultoffset;
+      result = fslayoutcheck(&probe->layout, &geometry, 1);
+    }
+    if (result)
+      break;
+    result =
+        cacheinit(work->overlay->load.cache, work->storage, work->capacity, probe->layout.blocks);
+    work->phase = MountOverlay;
+    break;
+  case MountOverlay:
+    result = blkownersstep(work->overlay);
+    if (result != 1)
+      break;
+    result = work->retire(probe->uuid, probe->mark.txid, work->empty);
+    if (result)
+      return work->failed = result < 0 ? result : -ERR_STATE;
+    result = blkredoadmit(work->overlay, journal, work->faultbytes, work->faultoffset, work->empty);
+    work->phase = MountReplay;
+    break;
+  case MountReplay:
+    if (work->log.ticket.serial) {
+      result = blklogpoll(&work->log);
+      if (result == -ERR_WOULD_BLOCK)
+        return 0;
+      break;
+    }
+    if (blk->stale || blk->ended || blk->info.geometry_generation != probe->generation) {
+      journalstop(journal);
+      return work->failed = -ERR_STALE;
+    }
+    result = journalpump(journal, blklogsubmit, &work->log);
+    if (result != 1)
+      break;
+    result = journalrelease(journal);
+    after->blk = blk;
+    work->phase = MountReprobe;
+    break;
+  case MountReprobe:
+    result = blkprobestep(after, work->layout, work->mark);
+    if (result != 1)
+      break;
+    result = cacheinit(home->load.cache, work->storage, work->capacity, probe->layout.blocks);
+    home->home = after;
+    work->phase = MountHome;
+    break;
+  case MountHome:
+    result =
+        blkhomecheck(home, probe->mark.state ? probe : NULL, probe->mark.state ? journal : NULL);
+    if (result != 1)
+      break;
+    work->phase = MountDirectories;
+    return 0;
+  case MountDirectories:
+    result = blkdirstep(work->dirs);
+    break;
+  default:
+    return -ERR_STATE;
+  }
+  if (result < 0 && !blk->rpc)
+    work->failed = result;
+  return result;
+}

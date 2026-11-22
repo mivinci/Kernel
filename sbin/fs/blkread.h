@@ -1,6 +1,7 @@
 #ifndef _FS_BLKREAD_H
 #define _FS_BLKREAD_H
 #include "blk.h"
+#include "blklog.h"
 #include "cache.h"
 #include "dirgraph.h"
 #include "journal.h"
@@ -13,6 +14,7 @@ typedef struct Blkprobe    Blkprobe;
 typedef struct Blkredo     Blkredo;
 typedef struct Blkowners   Blkowners;
 typedef struct Blkdir      Blkdir;
+typedef struct Blkmount    Blkmount;
 struct Blkread
 {
   Fsblk    *blk;
@@ -125,6 +127,27 @@ isize blkdirstep(Blkdir *);
 /* Publish the checked root once. The authorized namespace owner holds
    the volume, root and covering point through insertion. */
 isize blkmountadd(Blkdir *, Vmounts *, Vnode *root, Vnode *point);
+
+struct Blkmount
+{
+  Blkprobe   *probe, *after;
+  Blkowners  *overlay;
+  Blkdir     *dirs;
+  Blklog      log;
+  Cacheblock *storage;
+  u8         *empty;
+  isize (*layout)(const u8 *, Fslayout *, u8 *);
+  isize (*mark)(const u8 *, const u8 *, Journalmark *);
+  isize (*retire)(const u8 *uuid, u64 txid, u8 *);
+  u32   capacity, faultbytes, faultoffset, phase;
+  isize failed;
+};
+
+/* Own the block connection from INFO to publication. Supply separate work
+   for the overlay and home scans; they may share cache and reader storage.
+   Zero means continue or wait on the current RPC; one means ready to call
+   blkmountadd. If an error leaves an RPC, keep the work and resume its drain. */
+isize blkmountstep(Blkmount *);
 /* Admit a writable journal from that scan. The exclusive mount owner
    supplies the independently verified fault boundary and the encoded EMPTY
    record for this transaction. Keep snapshots stable through release. */
