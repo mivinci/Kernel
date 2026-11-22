@@ -70,7 +70,7 @@ isize __sys_copy(void *to, const void *from, u64 bytes) {
 }
 static isize lookup(void *ctx, Handle pid, u64 image, u64 session, u64 reference) {
   (void) ctx; (void) pid;
-  return image == 1 && session == 13 && reference == 17 ? 0 : -ERR_STALE;
+  return image == 1 && (session == 13 || session == 14) && reference == 17 ? 0 : -ERR_STALE;
 }
 isize forkmanifest(u64 scenario, Execmanifest *out) {
   Handle parent = ((u64) HANDLE_PROCESS << 59) | (1U << 16) | 2;
@@ -87,7 +87,7 @@ isize forkmanifest(u64 scenario, Execmanifest *out) {
   slot.args[0] = parent + 1; slot.args[1] = 1; slot.args[2] = 1;
   slot.args[3] = 100; slot.args[4] = 2; slot.args[6] = 71;
   rows[0] = (Fileinherit){0, BOOT_FD_CLOEXEC, backend.pid, 4, 13, 17};
-  rows[1] = (Fileinherit){scenario == 1 ? 0 : 1, 0, backend.pid, 4, 13, 17};
+  rows[1] = (Fileinherit){scenario == 1 ? 0 : 1, 0, backend.pid, 4, scenario == 4 ? 14 : 13, 17};
   if (scenario == 3) {
     call.request++;
     call.words[0] = FS_FORK_SNAPSHOT;
@@ -230,6 +230,13 @@ class ExecStateTests(unittest.TestCase):
         self.assertEqual(self.lib.forkobserve(0, C.byref(owner)), 0)
         self.assertEqual((owner.image, owner.cookie, owner.reason), (2, 71, 0))
         self.assertLess(self.lib.forkobserve(0, C.byref(owner)), 0)
+
+    def test_equal_reference_numbers_in_distinct_sessions_do_not_alias(self):
+        plan = Plan()
+        self.assertEqual(self.lib.forkmanifest(4, C.byref(plan)), 0)
+        self.assertEqual(plan.count, 2)
+        self.assertEqual([(g.session, g.reference, g.retained) for g in plan.groups[:2]],
+                         [(13, 17, 1), (14, 17, 1)])
 
     def test_retire_even_if_target_exited_without_claiming_but_not_after_abort(self):
         for reason in (1, 2):

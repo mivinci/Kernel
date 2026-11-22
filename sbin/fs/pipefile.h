@@ -52,4 +52,7 @@ isize pipefilestat(Pipetable *table, Handle pid, u64 image, u64 session, Filesta
 /* An admitted I/O holds one endpoint reference through reply/drain, even if
    the client's last business reference disappears meanwhile. */
 isize pipefilepin(Pipetable *table, Handle pid, u64 image, u64 session, u32 end, Pipefile **out);
+/* With no output, only check ownership. A returned private hold keeps the
+   endpoint alive without giving the holder a client reference. */
+isize pipefileref(Pipetable *, Handle, u64 image, Pipekey, Pipefile **out);
 #endif

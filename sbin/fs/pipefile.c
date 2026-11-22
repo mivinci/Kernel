@@ -144,6 +144,28 @@ ownedfile(Pipetable *table, Handle pid, u64 image, u64 session, u32 *end)
 }
 
 isize
+pipefileref(Pipetable *table, Handle pid, u64 image, Pipekey key, Pipefile **out)
+{
+  Pipefile *file;
+  u32       i, end;
+  isize     error;
+  if (!table || !pid || !key.reference)
+    return -ERR_STALE;
+  for (i = 0; i < table->nrefs; i++)
+    if (owner(&table->refs[i], pid, image, key.session) &&
+        table->refs[i].reference == key.reference)
+      break;
+  if (i == table->nrefs || !(file = lookup(table, key.session, &end)))
+    return -ERR_STALE;
+  if (!out)
+    return 0;
+  error = pipehold(&file->stream, end);
+  if (!error)
+    *out = file;
+  return error;
+}
+
+isize
 pipefilestat(Pipetable *table, Handle pid, u64 image, u64 session, Filestat *out)
 {
   u32       end;

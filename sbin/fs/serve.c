@@ -48,9 +48,21 @@ hello(Fsservice *fs, const Ipcmsg *call)
 }
 
 static void
-forkdrop(Fsservice *fs, Fsfork *record)
+forkrelease(Fsservice *fs, Fsfork *record, u32 count)
 {
-  fsfiledropsnapshot(fs->pipes.regular, record->holds, record->manifest.count);
+  while (count) {
+    u32       i = --count;
+    u64       session = record->manifest.groups[i].session;
+    Forkhold *hold = &record->holds[i];
+    if (session & FS_FILE_SESSION) {
+      fsfiledrop(fs->pipes.regular, hold->file);
+      hold->file = NULL;
+    } else {
+      pipedrop(&hold->pipe->stream,
+               hold->pipe->session[PIPE_WRITE] == session ? PIPE_WRITE : PIPE_READ);
+      hold->pipe = NULL;
+    }
+  }
   record->manifest.count = 0;
   record->context = 0;
 }
@@ -73,11 +85,42 @@ forksweep(Fsservice *fs, const Filelink *link, u64 *deadline)
     if (link) {
       if (m->pid == link->watch.owner.pid && m->source_image == link->watch.owner.image &&
           m->connid == link->watch.connid)
-        forkdrop(fs, record);
+        forkrelease(fs, record, m->count);
     } else if (m->deadline <= now)
-      forkdrop(fs, record);
+      forkrelease(fs, record, m->count);
     else if (!*deadline || m->deadline < *deadline)
       *deadline = m->deadline;
+  }
+  return 0;
+}
+
+static isize
+forkref(void *service, Handle pid, u64 image, u64 session, u64 reference)
+{
+  Fsservice *fs = service;
+  if (session & FS_FILE_SESSION)
+    return fsfilerefcheck(fs->pipes.regular, pid, image, session, reference);
+  return pipefileref(fs->pipes.table, pid, image, (Pipekey){session, reference}, NULL);
+}
+
+static isize
+forkhold(Fsservice *fs, Fsfork *record)
+{
+  Execmanifest *m = &record->manifest;
+  u32           i;
+  isize         error;
+  for (i = 0; i < m->count; i++) {
+    const Execgroup *g = &m->groups[i];
+    if (g->session & FS_FILE_SESSION)
+      error = fsfileholdref(fs->pipes.regular, m->pid, m->source_image, g->session, g->reference,
+                            &record->holds[i].file);
+    else
+      error = pipefileref(fs->pipes.table, m->pid, m->source_image,
+                          (Pipekey){g->session, g->reference}, &record->holds[i].pipe);
+    if (error) {
+      forkrelease(fs, record, i);
+      return error;
+    }
   }
   return 0;
 }
@@ -108,16 +151,15 @@ forkcapture(Fsservice *fs, const Ipcmsg *call, Filelink *link, const Fileslot *s
   error = sysforksnapshot(
       &record->manifest, &link->watch, call, slot,
       (const void *) (link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES), self, now,
-      fsfilerefcheck, fs->pipes.regular, fs->forks->serial + 1);
+      forkref, fs, fs->forks->serial + 1);
   if (!error) {
-    error = fsfileholdsnapshot(fs->pipes.regular, &record->manifest, record->holds, BOOT_FD_COUNT);
+    error = forkhold(fs, record);
     if (!error) {
       fs->forks->serial++;
       record->context = context->version;
       *captured = record;
       return 0;
     }
-    record->manifest.count = 0;
   }
   switch (error) {
   case -ERR_INVALID:
@@ -142,7 +184,7 @@ forksnapshot(Fsservice *fs, const Ipcmsg *call)
   Msg       reply = {{(u64) -ENOSYS, call->words[2], 0, 0}};
   u64       state, now;
   isize     error;
-  if (fs->forks && fs->open && fs->pipes.regular) {
+  if (fs->forks && fs->open) {
     error = sysfilelinkaccept(fs->links, fs->nlinks, call, &slot);
     if (!error) {
       link = &fs->links[call->words[1] & 65535];
@@ -169,7 +211,7 @@ forksnapshot(Fsservice *fs, const Ipcmsg *call)
     error = ipc_reply(call->request, &reply);
   }
   if (record && (error || !reply.words[2]))
-    forkdrop(fs, record);
+    forkrelease(fs, record, record->manifest.count);
   return error || !link ? error : sysfilefinish(&link->watch.active, call->request);
 }
 
@@ -225,6 +267,11 @@ fsstep(Fsservice *fs)
     if (error != -ERR_WOULD_BLOCK)
       return error;
   }
+  deadline = fs->loads ? loaddeadline(fs->loads->table) : 0;
+  error = forksweep(fs, NULL, &deadline);
+  if (error)
+    return error;
+  /* Expiring a snapshot may unblock the opposite endpoint immediately. */
   error = pipepump(&fs->pipes);
   if (error)
     return error;
@@ -242,10 +289,6 @@ fsstep(Fsservice *fs)
     } else
       again |= reclaim->scan && reclaim->scan->left;
   }
-  deadline = fs->loads ? loaddeadline(fs->loads->table) : 0;
-  error = forksweep(fs, NULL, &deadline);
-  if (error)
-    return error;
   if (deadline != fs->alarm) {
     error = deadline ? __sys_alarmset(deadline, &generation) : __sys_alarmcancel(&generation);
     if (error)

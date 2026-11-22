@@ -63,7 +63,9 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
     if (used[row->fd / 64] & (UINT64_C(1) << (row->fd % 64)))
       return -ERR_INVALID;
     used[row->fd / 64] |= UINT64_C(1) << (row->fd % 64);
-    for (j = 0; j < groups && out->groups[j].reference != row->reference_id; j++) {
+    for (j = 0; j < groups && (out->groups[j].session != row->session ||
+                               out->groups[j].reference != row->reference_id);
+         j++) {
     }
     group = &out->groups[j];
     if (j == groups) {
@@ -74,8 +76,7 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
       group->reference = row->reference_id;
       group->retained = group->closed = 0;
       groups++;
-    } else if (group->session != row->session)
-      return -ERR_STALE;
+    }
     if (!fork && (row->flags & BOOT_FD_CLOEXEC))
       group->closed++;
     else

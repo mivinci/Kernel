@@ -12,10 +12,16 @@ typedef struct Fsservice Fsservice;
 typedef struct Fsreclaim Fsreclaim;
 typedef struct Fsfork    Fsfork;
 typedef struct Fsforks   Fsforks;
+typedef union Forkhold   Forkhold;
+union Forkhold
+{
+  Fsfile   *file;
+  Pipefile *pipe;
+};
 struct Fsfork
 {
   Execmanifest manifest;
-  Fsfile      *holds[BOOT_FD_COUNT];
+  Forkhold     holds[BOOT_FD_COUNT];
   u64          context;
 };
 struct Fsforks

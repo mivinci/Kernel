@@ -327,22 +327,24 @@ pollserverscript(const Bootview *boot, Fsservice *fs, Pipefile *file, int writer
   }
 }
 
+/* These two server entry paths run in separate processes. */
+static Pipefile servicepipe;
+static Pipewait servicewait;
+
 static void
 serviceloop(const Bootview *boot, u32 interrupt)
 {
   static Filelink link;
-  static Pipefile file;
-  static Pipewait wait;
   static Pipepoll poll;
   static Piperef  refs[2];
-  Pipetable       table = {&file, refs, 1, ARRAY_SIZE(refs), 0};
+  Pipetable       table = {&servicepipe, refs, 1, ARRAY_SIZE(refs), 0};
   Fsservice       fs = {bootresource(boot, 256),
                         bootresource(boot, BOOT_SELF_ALLOC),
                         bootresource(boot, BOOT_SELF_SPACE),
                         ADDRESS,
                         &link,
                         1,
-                        {&table, &wait, 1, &poll, 1, NULL, NULL},
+                        {&table, &servicewait, 1, &poll, 1, NULL, NULL},
                         NULL,
                         0,
                         NULL,
@@ -352,7 +354,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         0,
                         NULL};
   if (interrupt >= 8) {
-    pollserverscript(boot, &fs, &file, interrupt == 8);
+    pollserverscript(boot, &fs, &servicepipe, interrupt == 8);
   } else if (interrupt == 1) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -369,10 +371,10 @@ serviceloop(const Bootview *boot, u32 interrupt)
     CHECK(!fsstep(&fs) && table.serial == 8);
     for (i = 0; i < 2; i++)
       CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_READ &&
-            !pipedispatch(&fs.pipes, &link, 1, &request) && wait.io.request == request.request &&
-            !__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
-            gate.source == target.target && gate.words[0] == PIPETEST &&
-            !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !wait.io.request);
+            !pipedispatch(&fs.pipes, &link, 1, &request) &&
+            servicewait.io.request == request.request && !__sys_sigsend(&target, SIGNAL_USR1) &&
+            !ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST &&
+            !ipc_reply(gate.request, &reply) && !pipepump(&fs.pipes) && !servicewait.io.request);
     for (i = 0; i < 2; i++) {
       u64 flags;
       Msg cancelled = {{(u64) -EINTR, 0, 0, 0}};
@@ -384,10 +386,10 @@ serviceloop(const Bootview *boot, u32 interrupt)
             !ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &cancelled));
       do {
         CHECK(!fsstep(&fs));
-      } while (!file.stream.bytes);
+      } while (!servicepipe.stream.bytes);
       do {
         CHECK(!fsstep(&fs));
-      } while (file.stream.bytes);
+      } while (servicepipe.stream.bytes);
     }
     for (i = 0; i < 2; i++) {
       Fileslot row;
@@ -403,7 +405,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
               !ipc_rqcheck(request.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
               !ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &cancelled));
       } else
-        CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && !file.stream.bytes);
+        CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && !servicepipe.stream.bytes);
     }
     {
       Fileslot row;
@@ -446,7 +448,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
       for (i = 0; i < ARRAY_SIZE(expected); i++) {
         CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_SEEK &&
               !sysfilelinkaccept(&link, 1, &request, &row) &&
-              row.object == file.session[PIPE_READ] &&
+              row.object == servicepipe.session[PIPE_READ] &&
               !fileseek(&link.watch.active, &request, &row, 20, &position) &&
               position == expected[i] && !link.watch.active.requests[request.words[3]]);
       }
@@ -462,7 +464,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
         CHECK(!cacheinit(&cache, blocks, ARRAY_SIZE(blocks), 16));
         for (i = 0; i < ARRAY_SIZE(cursors); i++) {
           CHECK(!ipc_recv(0, 0, &request) && !sysfilelinkaccept(&link, 1, &request, &row) &&
-                row.object == file.session[PIPE_READ]);
+                row.object == servicepipe.session[PIPE_READ]);
           page = (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
           if (!i) {
             page[0] = 0xa5;
@@ -497,7 +499,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
             u64 opcode = i == 2 || i == 7 ? FS_READ : FS_SEEK;
             CHECK(!ipc_recv(0, 0, &request) && request.words[0] == opcode &&
                   !sysfilelinkaccept(&link, 1, &request, &row) &&
-                  row.object == file.session[PIPE_READ]);
+                  row.object == servicepipe.session[PIPE_READ]);
             page =
                 (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
             if (opcode == FS_READ)
@@ -518,8 +520,8 @@ serviceloop(const Bootview *boot, u32 interrupt)
         u32          j;
         CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_TTYCTL &&
               !sysfilelinkaccept(&link, 1, &request, &row) &&
-              row.object == file.session[PIPE_READ] && row.args[0] == TTY_GETATTR && !row.args[1] &&
-              !row.args[2] && !row.args[3] && row.args[4] == sizeof(mode) &&
+              row.object == servicepipe.session[PIPE_READ] && row.args[0] == TTY_GETATTR &&
+              !row.args[1] && !row.args[2] && !row.args[3] && row.args[4] == sizeof(mode) &&
               row.payload_bytes == sizeof(mode));
         attrs.words[1] = row.seq;
         if (i == 3) {
@@ -550,7 +552,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
         pipeiotrace[0] = (u64) i << 32 | request.words[0];
         CHECK(request.words[0] == FS_SYNC);
         CHECK(!sysfilelinkaccept(&link, 1, &request, &row) && !sysfileargs(FS_SYNC, &row));
-        CHECK(row.object == file.session[PIPE_READ] && row.args[0] == (i == 1));
+        CHECK(row.object == servicepipe.session[PIPE_READ] && row.args[0] == (i == 1));
         synced.words[1] = row.seq;
         if (i == 1)
           synced.words[0] = (u64) -EIO;
@@ -594,11 +596,11 @@ serviceloop(const Bootview *boot, u32 interrupt)
     pipeiotrace[0] = 7;
     return;
   } else if (interrupt == 5) {
-    CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
-          wait.io.end == PIPE_READ && !file.stream.bytes);
-    CHECK(!fsstep(&fs) && wait.io.request && !file.stream.bytes);
-    CHECK(!fsstep(&fs) && file.stream.bytes == 1 && !pipepump(&fs.pipes) && !wait.io.request &&
-          !file.stream.bytes);
+    CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && servicewait.io.request &&
+          servicewait.io.end == PIPE_READ && !servicepipe.stream.bytes);
+    CHECK(!fsstep(&fs) && servicewait.io.request && !servicepipe.stream.bytes);
+    CHECK(!fsstep(&fs) && servicepipe.stream.bytes == 1 && !pipepump(&fs.pipes) &&
+          !servicewait.io.request && !servicepipe.stream.bytes);
   } else if (interrupt) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -614,8 +616,8 @@ serviceloop(const Bootview *boot, u32 interrupt)
   do {
     CHECK(!fsstep(&fs));
   } while (!table.serial || link.ready);
-  CHECK(!link.memory && !link.address && !link.watch.owner.cookie && !wait.io.request &&
-        !poll.request && !file.stream.refs[0] && !file.stream.refs[1]);
+  CHECK(!link.memory && !link.address && !link.watch.owner.cookie && !servicewait.io.request &&
+        !poll.request && !servicepipe.stream.refs[0] && !servicepipe.stream.refs[1]);
   pipeiotrace[0] = 7;
 }
 
@@ -3243,11 +3245,12 @@ publicchdirserver(const Bootview *boot)
 {
   static Fsfork  record;
   Fsforks        forks = {&record, 1, 0};
+  Piperef        refs[2] = {0};
   Filelink       link = {0};
   Openfixture    fixture = {0};
   static Openjob job;
   Fscontext      context = {0};
-  Pipetable      pipes = {0};
+  Pipetable      pipes = {&servicepipe, refs, 1, ARRAY_SIZE(refs), 0};
   Fsfile         file = {0};
   Fsref          ref = {0};
   Cacheblock     block;
@@ -3268,7 +3271,7 @@ publicchdirserver(const Bootview *boot)
                        ADDRESS,
                        &link,
                        1,
-                       {&pipes, NULL, 0, NULL, 0, &fixture.files, NULL},
+                       {&pipes, &servicewait, 1, NULL, 0, &fixture.files, NULL},
                        &open,
                        0,
                        NULL,
@@ -3402,19 +3405,28 @@ publicchdirserver(const Bootview *boot)
       CHECK(!holds[0] && file.refs == 1);
     }
   }
+  CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 1); /* PIPE */
   CHECK(!fsstep(&fs) && !forks.serial && !record.manifest.count && file.refs == 1);
-  CHECK(!fsstep(&fs) && forks.serial == 1 && record.manifest.count == 1 &&
-        record.manifest.nrows == 2 && record.manifest.deadline == UINT64_MAX &&
-        record.context == context.version && record.holds[0] == &file &&
-        record.manifest.groups[0].retained == 2 && file.refs == 2);
+  CHECK(!fsstep(&fs) && forks.serial == 1 && record.manifest.count == 2 &&
+        record.manifest.nrows == 3 && record.context == context.version &&
+        record.holds[0].file == &file && record.holds[1].pipe == &servicepipe &&
+        record.manifest.groups[0].retained == 2 && file.refs == 2 &&
+        servicepipe.stream.refs[PIPE_WRITE] == 2);
   CHECK(!fsstep(&fs) && fs.alarm && forks.serial == 1 && file.refs == 2);
-  CHECK(!fsstep(&fs) && file.position == 3); /* fclose's flush. */
+  CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 1); /* CLOSE write end. */
+  CHECK(!fsstep(&fs) && file.position == 3);                       /* fclose's flush. */
   CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.position == 3);
   CHECK(context.pid == target.target && fixture.holds == 3);
+  CHECK(!fsstep(&fs) && servicewait.io.request && servicepipe.stream.refs[PIPE_WRITE] == 1);
+  /* No request can arrive from the blocked client until the alarm drops the
+     writer, the loop pumps the original READ, and the client closes its fd. */
+  CHECK(!fsstep(&fs) && servicewait.io.request && !fsstep(&fs));
+  CHECK(!record.manifest.count && !record.holds[0].file && !record.holds[1].pipe &&
+        !servicewait.io.request && !servicepipe.stream.refs[PIPE_WRITE] &&
+        !servicepipe.stream.refs[PIPE_READ] && !file.refs && !file.node);
   for (steps = 0; steps < 8 && link.ready; steps++)
     CHECK(!fsstep(&fs));
-  CHECK(!context.pid && !fixture.holds && !link.ready && !link.watch.owner.cookie &&
-        !record.manifest.count && !record.holds[0] && !record.context && !file.refs && !file.node);
+  CHECK(!context.pid && !fixture.holds && !link.ready && !link.watch.owner.cookie);
   pipeiotrace[0] = 7;
 }
 
@@ -3492,7 +3504,7 @@ lateopenclient(void)
 }
 
 static void
-publicforksnapshot(Connwork *peer, int fd)
+publicforksnapshot(Connwork *peer, int fd, int writer)
 {
   Fileimage  *image;
   Conncache  *cache;
@@ -3500,10 +3512,10 @@ publicforksnapshot(Connwork *peer, int fd)
   Fileref     ref;
   Filelease   lease;
   Fileslot    slot = {0};
-  Fileinherit rows[2];
+  Fileinherit rows[3];
   Msg         request = {{FS_FORK_SNAPSHOT, peer->state.map.connid, 0, 0}};
   Ipcmsg      result;
-  u64         address = peer->state.map.address;
+  u64         address = peer->state.map.address, now;
   u32         i;
   const isize status[] = {-ETIMEDOUT, 0, -EAGAIN};
   CHECK(!sysfileimage(&image) && !sysfdobserve(&image->fds, fd, &view) &&
@@ -3521,11 +3533,15 @@ publicforksnapshot(Connwork *peer, int fd)
       (u64) fd,    BOOT_FD_CLOEXEC, (u64) peer->state.peer.pid, peer->state.peer.image,
       ref.session, ref.reference};
   rows[1] = rows[0];
-  rows[1].fd++;
+  rows[1].fd = (u64) writer + 1;
   rows[1].flags = 0;
+  CHECK(!sysfdobserve(&image->fds, writer, &view) &&
+        !sysfilerefview(&image->files, peer->state.self, view.file, &ref) && !sysfilenow(&now));
+  rows[2] = (Fileinherit){(u64) writer,           0,           (u64) peer->state.peer.pid,
+                          peer->state.peer.image, ref.session, ref.reference};
   for (i = 0; i < ARRAY_SIZE(status); i++) {
     CHECK(!sysconnworkreserve(peer, cache, SYSFILE_MAIN, 1, &lease));
-    slot.args[3] = i ? UINT64_MAX : 0;
+    slot.args[3] = i ? now + UINT64_C(1000000000) : 0;
     request.words[2] = slot.seq = lease.seq;
     request.words[3] = lease.slot;
     CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
@@ -3546,6 +3562,8 @@ publicchdirclient(void)
   FILE            *stream;
   struct sigaction action = {0};
   int              fd;
+  int              ends[2];
+  char             byte = 'x';
   char             cwd[4] = "xxx";
   char             link[9] = "????????";
   char            *owned;
@@ -3615,8 +3633,11 @@ publicchdirclient(void)
   CHECK(stream && fileno(stream) == 0 && fcntl(0, F_GETFD) == FD_CLOEXEC &&
         fwrite("W\0", 1, 2, stream) == 2 && ftello(stream) == 3 && fputs("XY", stream) >= 0 &&
         fseek(stream, 0, SEEK_SET) == -1 && errno == ENOSPC && ferror(stream));
-  publicforksnapshot(peer, fileno(stream));
+  CHECK(!pipe(ends));
+  publicforksnapshot(peer, fileno(stream), ends[1]);
+  CHECK(!close(ends[1]));
   CHECK(fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
+  CHECK(!read(ends[0], &byte, 1) && byte == 'x' && !close(ends[0]));
   pipeiotrace[0] = 7;
 }
 
