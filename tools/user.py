@@ -196,6 +196,7 @@ def build(args):
     runtime_support = [ringuser_source, ROOT/'tests/kernel/fdtableuser.c', ROOT/'tests/kernel/fileuser.c']
     runtime_objects = []
     runtime_support.append(ROOT/'sbin/fs/pipe.c')
+    runtime_support.append(ROOT/'sbin/fs/path.c')
     for source in runtime_support:
         obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
         obj.parent.mkdir(parents=True,exist_ok=True)

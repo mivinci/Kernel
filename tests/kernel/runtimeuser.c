@@ -18,6 +18,7 @@
 #include "fileuser.h"
 #include "stringuser.h"
 #include "envuser.h"
+#include "../../sbin/fs/path.h"
 #include "../../sbin/fs/pipe.h"
 
 #define REQUIRE(c, n)                                                                              \
@@ -25,6 +26,54 @@
     if (!(c))                                                                                      \
       _exit(n);                                                                                    \
   } while (0)
+
+static void
+pathwalkcheck(void)
+{
+  char     path[] = "//a/link/../file";
+  char     longpath[FS_PATH_BYTES];
+  Fspath   walk;
+  Pathpart part;
+  u32      i;
+  REQUIRE(!fspathinit(&walk, path, sizeof(path)), 285);
+  path[2] = 'x';
+  REQUIRE(fspathnext(&walk, &part) == 1 && part.kind == PATH_ROOT && part.directory &&
+              !part.final && fspathnext(&walk, &part) == 1 && part.kind == PATH_NAME &&
+              part.bytes == 1 && part.name[0] == 'a' && part.directory &&
+              fspathnext(&walk, &part) == 1 && part.bytes == 4 && !memcmp(part.name, "link", 4) &&
+              !fspathexpand(&walk, "/b/c", sizeof("/b/c")),
+          286);
+  REQUIRE(fspathnext(&walk, &part) == 1 && part.kind == PATH_ROOT &&
+              fspathnext(&walk, &part) == 1 && part.bytes == 1 && part.name[0] == 'b' &&
+              fspathnext(&walk, &part) == 1 && part.bytes == 1 && part.name[0] == 'c' &&
+              fspathnext(&walk, &part) == 1 && part.kind == PATH_PARENT && part.directory &&
+              fspathnext(&walk, &part) == 1 && part.bytes == 4 && !memcmp(part.name, "file", 4) &&
+              part.final && !part.directory && !fspathnext(&walk, &part),
+          287);
+  REQUIRE(!fspathinit(&walk, "./link//", sizeof("./link//")) && fspathnext(&walk, &part) == 1 &&
+              part.kind == PATH_DOT && !part.final && fspathnext(&walk, &part) == 1 && part.final &&
+              part.directory && !fspathexpand(&walk, "../name", sizeof("../name")) &&
+              fspathnext(&walk, &part) == 1 && part.kind == PATH_PARENT &&
+              fspathnext(&walk, &part) == 1 && part.final && part.directory &&
+              !memcmp(part.name, "name", 4) && !fspathnext(&walk, &part),
+          288);
+  REQUIRE(fspathinit(&walk, "", 1) == -ENOENT && fspathinit(&walk, "a\0b", 4) == -EINVAL &&
+              !fspathinit(&walk, "///", 4) && fspathnext(&walk, &part) == 1 &&
+              part.kind == PATH_ROOT && part.final && !fspathnext(&walk, &part),
+          289);
+  memset(longpath, 'x', sizeof(longpath));
+  longpath[sizeof(longpath) - 1] = 0;
+  REQUIRE(!fspathinit(&walk, "link/tail", sizeof("link/tail")) && fspathnext(&walk, &part) == 1 &&
+              fspathexpand(&walk, longpath, sizeof(longpath)) == -ENAMETOOLONG && !walk.links &&
+              fspathnext(&walk, &part) == 1 && part.final && !memcmp(part.name, "tail", 4) &&
+              !fspathinit(&walk, longpath, sizeof(longpath)) &&
+              fspathnext(&walk, &part) == -ENAMETOOLONG,
+          290);
+  REQUIRE(!fspathinit(&walk, "link", 5), 291);
+  for (i = 0; i < FS_PATH_LINKS; i++)
+    REQUIRE(fspathnext(&walk, &part) == 1 && !fspathexpand(&walk, "link", 5), 292);
+  REQUIRE(fspathnext(&walk, &part) == 1 && fspathexpand(&walk, "link", 5) == -ELOOP, 293);
+}
 
 static void
 optioncheck(void)
@@ -754,6 +803,7 @@ main(int argc, char **argv)
           176);
   sortcheck();
   optioncheck();
+  pathwalkcheck();
   ctypecheck();
   collationcheck();
   patterncheck();
