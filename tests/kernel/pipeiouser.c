@@ -408,6 +408,28 @@ serviceloop(const Bootview *boot, u32 interrupt)
         }
       }
     }
+  } else if (interrupt == 6) {
+    Ipcmsg request, gate;
+    Msg    reply = {{(u64) -EINTR, 0, 0, 0}}, done = {{0, 0, 0, 0}};
+    u64    flags;
+    CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && table.serial == 4);
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY &&
+          !ipc_defer(request.request));
+    CHECK(!ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL && gate.source == request.source &&
+          gate.words[0] == PIPETEST && !ipc_rqcheck(request.request, &flags) &&
+          flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+    reply.words[1] = request.words[2];
+    CHECK(!ipc_reply(request.request, &reply) && !ipc_reply(gate.request, &done));
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY &&
+          !pipedispatch(&fs.pipes, &link, 1, &request));
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY &&
+          !ipc_defer(request.request));
+    pipeiotrace[0] = 7;
+    return;
+  } else if (interrupt == 7) {
+    CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && table.serial == 4);
+    pipeiotrace[0] = 7;
+    return;
   } else if (interrupt == 5) {
     CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fsstep(&fs) && wait.io.request &&
           wait.io.end == PIPE_READ && !file.stream.bytes);
@@ -1099,6 +1121,52 @@ brokenpipe(int signal)
 }
 
 static void
+pollfaultclient(int pending)
+{
+  Fileimage    *image;
+  Connwork     *work = NULL;
+  Rkey          active = {0};
+  Pipecreate    pipe = {0};
+  Fdview        fd;
+  Fileref       ref;
+  Ipcmsg        result;
+  Msg           gate = {{PIPETEST, 0, 0, 0}};
+  Connentry     entry;
+  struct pollfd row;
+  int           fds[2];
+  isize         business;
+  u64           before, after;
+  CHECK(!sysfileimage(&image) && !sysfileimagefs(0, ADDRESS, &work) &&
+        !sysfileimagepipe(0, work, &pipe, &active, fds, &business) && !business &&
+        !sysfdobserve(&image->fds, fds[0], &fd));
+  row.fd = fds[0];
+  row.events = POLLIN;
+  row.revents = POLLPRI;
+  if (pending) {
+    CHECK(!systimernow(&before) && poll(&row, 1, 0) == -1 && errno == EIO && !systimernow(&after) &&
+          after - before >= SYSOP_CONTROL_NS && row.revents == POLLPRI);
+    CHECK(!sysconnview(sysfileimagecache(image), work->state.tag, &entry) &&
+          entry.state == SYSCONN_READY && !work->state.ended &&
+          !sysfilerefview(&image->files, image->files.self, fd.file, &ref) && ref.pins == 1 &&
+          !ipc_call(work->state.call, &gate, CALL_CONTROL, &result));
+    row.fd = fds[1];
+    row.events = POLLOUT;
+    CHECK(poll(&row, 1, 0) == 1 && row.revents == POLLOUT &&
+          !sysfilerefview(&image->files, image->files.self, fd.file, &ref) && !ref.pins);
+    row.fd = fds[0];
+    row.events = POLLIN;
+  } else {
+    /* Observe exit through the native CALL without updating the file cache. */
+    CHECK(ipc_call(work->state.call, &gate, CALL_CONTROL, &result) == -ERR_PEER);
+  }
+  CHECK(poll(&row, 1, -1) == 1 && row.revents == POLLERR && work->state.ended &&
+        !sysconnview(sysfileimagecache(image), work->state.tag, &entry) &&
+        entry.state == SYSCONN_DRAINING);
+  CHECK(poll(&row, 1, 0) == 1 && row.revents == POLLERR);
+  pipeiotrace[0] = 7;
+}
+
+static void
 brokenclient(void)
 {
   Connwork        *peer;
@@ -1252,6 +1320,14 @@ main(int argc, char **argv)
     serviceloop(boot, 5);
   else if (argv[0][0] == 'd')
     saturatedclient();
+  else if (argv[0][0] == 'F')
+    serviceloop(boot, 6);
+  else if (argv[0][0] == 'f')
+    pollfaultclient(1);
+  else if (argv[0][0] == 'G')
+    serviceloop(boot, 7);
+  else if (argv[0][0] == 'g')
+    pollfaultclient(0);
   else if (argv[0][0] == 'I')
     serviceloop(boot, 1);
   else if (argv[0][0] == 'i')

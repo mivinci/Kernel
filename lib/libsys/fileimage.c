@@ -326,8 +326,10 @@ pollround(Fileimage *state, u32 layer, Pollfile *items, u32 count, u64 opcode, u
       error = sysfilepollsubmit(work, cache, &keys[tag.index]);
     if (error == -ERR_PEER && keys[tag.index].lease.seq) {
       error = sysconninvalidate(cache, tag);
-      if (!error)
+      if (!error) {
+        work->state.ended = 1;
         pollapply(items, rows, indices, (u32) n, 1);
+      }
     } else if (!error)
       pending |= bit;
   }

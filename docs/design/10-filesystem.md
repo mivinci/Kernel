@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage441：ARM64/RV64 QEMU `pipeio` 验证两条控制故障路径。后端接受查询后保持存活且不回复，`poll(..., 0)` 在一秒控制期限到达时返回 EIO，保留原输出和 READY 连接，迟到收尾归还 File pin 后可再次成功查询。后端在查询提交前或接受后退出时，相关 fd 返回 POLLERR，连接进入 DRAINING 并记录确切终结，重复查询沿用该结局。提交前发现的终结与原请求报告的终结使用同一连接状态。跨后端整体结果与控制故障竞争仍待验。
+
 stage440：`poll()` 将本轮在途 Rq 集合挂到共享计时等待上。信号入口在进入应用 handler 前标记取消，handler 返回后由原调用移交后台排空，保留共享槽及 File pin 直至 FINISH。ARM64/RV64 QEMU `pipeio` 中，服务处理 handler 发出的独立控制 CALL 时检查原 WAIT 已标记取消，随后验证原 WAIT 收尾与 EINTR。双架构 QEMU `runtime` 回归、17 项操作账本主机测试和改动文件格式检查通过。
 
 stage439：libc 提供 `poll.h` 和 `poll()`，当前每次调用支持至多 128 个数组项，超过此限返回 EINVAL。libsys 向相关连接提交同轮查询，无就绪才登记等待；收到就绪提示后取消剩余等待并重新查询，原请求未完成时保留共享槽并在后台收尾。ARM64/RV64 QEMU `pipeio` 验证即时查询、正超时、零 fd 睡眠、忽略负 fd、POLLNVAL、可读与挂断并存，以及 SA_RESTART 下仍返回 EINTR 并排空被取消的等待。27 项操作账本和文件页主机测试及改动文件格式检查通过。生产 TTY/FS、跨后端汇总、控制故障及竞争顺序仍需专项运行验收。
