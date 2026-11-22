@@ -29,6 +29,7 @@
 #define SEEN      0xf005
 #define LOADTEST  0xf006
 #define EXECWATCH 0xf007
+#define FORKWATCH 0xf008
 #define CONNID    0x10001
 #define IO_VALUE  UINT64_C(0x1122334455667788)
 #define IO_WRITE  UINT64_C(0x8877665544332211)
@@ -707,6 +708,18 @@ client(const Bootview *boot)
   first = files[0];
   execmanifest(boot, first, 1);
   execmanifest(boot, first, BOOT_FD_COUNT);
+  {
+    Forkret forked;
+    Msg     check = {{FORKWATCH, 0, 0, 0}};
+    /* Fixture carries the target alongside the genuine accepted REQUEST. */
+    CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked));
+    check.words[0] = FS_FORK_PREPARE;
+    check.words[1] = (u64) forked.pid;
+    CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
+    CHECK(!__sys_forkabort(forked.construct));
+    check.words[0] = FORKWATCH;
+    CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
+  }
   loadreads();
   ttygetattr(first);
   ttyiocall(first, FS_READ, 1);
@@ -1206,6 +1219,7 @@ server(const Bootview *boot, u32 recover)
   Filelink  *link = &links[0];
   Filewatch *watch = &link->watch;
   Fileowner *target = &links[1].watch.owner;
+  Fileowner  child = {0};
   u64        held = 0;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
@@ -1503,6 +1517,20 @@ server(const Bootview *boot, u32 recover)
       reply.words[0] = (u64) -ESTALE;
       reply.words[1] = input.words[2];
       CHECK(!ipc_reply(input.request, &reply));
+      continue;
+    }
+    if (!recover && opcode == FS_FORK_PREPARE) {
+      Handle permit = bootresource(boot, 258);
+      Handle pid = (Handle) input.words[1];
+      CHECK(sysforkobserve(&child, permit, &input, pid, 2) == -ERR_STALE && !child.cookie &&
+            !sysforkobserve(&child, permit, &input, pid, 1) && child.pid == pid &&
+            child.image == 1 && child.cookie && !child.reason && !ipc_reply(input.request, &reply));
+      continue;
+    }
+    if (!recover && opcode == FORKWATCH) {
+      CHECK(child.pid == (Handle) input.words[1] && !sysfileownerread(&child) &&
+            child.reason == OBS_ABORT && !sysfileownerclose(&child) && !child.cookie &&
+            !ipc_reply(input.request, &reply));
       continue;
     }
     if (opcode == EXECWATCH) {

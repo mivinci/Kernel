@@ -94,6 +94,18 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
     packet.resources[2].tag = 256;
     packet.resources[2].handle = call;
+    if (roles[i] == '0') {
+      Createpolicy policy = {0};
+      policy.set = set;
+      policy.memlimit = 256;
+      policy.exec_limit = 512;
+      policy.resources = LOCALS;
+      policy.pending = PENDING_CALLS;
+      policy.rights = CREATE_USE;
+      CHECK(!localcreate(table, &policy, &call));
+      packet.resources[packet.header.resource_count].tag = BOOT_CREATE;
+      packet.resources[packet.header.resource_count++].handle = call;
+    }
     if (count == 3 && i) {
       CHECK(!localendpoint(table, processes[i == 1 ? 2 : 1].identity, LOCAL_CALL,
                            LOCAL_USE | LOCAL_GRANT, 0, 0, &call));
@@ -103,7 +115,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     if (i) {
       CHECK(!localobserve(
           table,
-          OBSERVE_SOURCE |
+          OBSERVE_SOURCE | (roles[i] == '1' ? OBSERVE_CHILD : 0) |
               (roles[i] == '1' || roles[i] == 'S' || roles[i] == 'U' ? OBSERVE_FUTURE : 0),
           &call));
       packet.resources[packet.header.resource_count].tag = 258;
@@ -152,7 +164,7 @@ filecreatetest(void)
       break;
     error = procrunone();
     CHECK(!error || error == -ERR_WOULD_BLOCK);
-    CHECK(++turns < 256);
+    CHECK(++turns < 1024);
     if (error)
       CHECK(procidle() >= 0);
   } while (1);
