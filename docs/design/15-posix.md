@@ -157,6 +157,8 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 
 `<inttypes.h>` 提供整数输出的 `PRI*` 格式宏及 `strtoimax`、`strtoumax`。格式宏跟随 Clang 的目标类型，两个 LP64 目标的转换沿用原解析器的范围、错误码及停止位置。ARM64、RV64 QEMU `runtime` 验证从定宽、最小、快速、最大和指针整数类型格式化的实际字符串，并核对转换边界；6 项整数主机回归通过。扫描宏和宽字符接口仍待实现。
 
+`<setjmp.h>` 提供同一活动信号上下文内的 `setjmp`/`longjmp`。保存 SDK 调用约定要求的寄存器、栈指针和续点；不改变信号掩码。ARM64、RV64 QEMU `runtime` 验证从更深调用恢复到两个不同续点、跳转值 0 转为 1，以及保留负值。跨 libc 信号层的跳转会调用 `abort`，因为直接改栈会绕过内核信号帧和原请求交接。此实现不包含 `siglongjmp`，也不支持 ash 从 SIGINT handler 直接跳回命令循环。
+
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。

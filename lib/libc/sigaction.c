@@ -8,12 +8,12 @@
 #define ACTION_FLAGS                                                                               \
   (SA_NODEFER | SA_RESETHAND | SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_RESTART)
 
-static volatile u32 depth;
+__attribute__((visibility("hidden"))) volatile u32 __libc_signal_depth;
 
 u32
 __libc_sigdepth(void)
 {
-  return depth;
+  return __libc_signal_depth;
 }
 
 static int
@@ -77,7 +77,7 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 fra
   int            saved = errno;
   if (sysctxsigentry(head, flags))
     __sys_exit(128 + SIGSEGV);
-  depth = layer;
+  __libc_signal_depth = layer;
   if (flags & SIGNAL_SIGINFO) {
     void (*handler)(int, siginfo_t *, void *) =
         (void (*)(int, siginfo_t *, void *))(uintptr_t) function;
@@ -104,7 +104,7 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 fra
   }
   if (__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &ignored))
     __sys_exit(128 + SIGSEGV);
-  depth = layer - 1;
+  __libc_signal_depth = layer - 1;
   errno = saved;
   __sys_sigreturn((void *) frame);
 }

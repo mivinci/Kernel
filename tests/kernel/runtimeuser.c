@@ -3,6 +3,7 @@
 #include <fnmatch.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <setjmp.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -186,6 +187,40 @@ pathwalkcheck(void)
   for (i = 0; i < FS_PATH_LINKS; i++)
     REQUIRE(fspathnext(&walk, &part) == 1 && !fspathexpand(&walk, "link", 5), 292);
   REQUIRE(fspathnext(&walk, &part) == 1 && fspathexpand(&walk, "link", 5) == -ELOOP, 293);
+}
+
+static void __attribute__((noinline, noreturn))
+jumpfrom(jmp_buf target, int value)
+{
+  volatile u64 stack[8];
+  stack[0] = (u64) value;
+  longjmp(target, (int) stack[0]);
+}
+
+static void
+jumpcheck(void)
+{
+  jmp_buf      outer, inner;
+  volatile int step = 0;
+  switch (setjmp(outer)) {
+  case 0:
+    step = 1;
+    switch (setjmp(inner)) {
+    case 0:
+      jumpfrom(inner, 0);
+    case 1:
+      REQUIRE(step == 1, 280);
+      step = 2;
+      jumpfrom(outer, -23);
+    default:
+      REQUIRE(0, 281);
+    }
+    break;
+  case -23:
+    REQUIRE(step == 2, 282);
+    return;
+  }
+  REQUIRE(0, 283);
 }
 
 static void
@@ -1004,6 +1039,7 @@ main(int argc, char **argv)
           176);
   sortcheck();
   optioncheck();
+  jumpcheck();
   endiancheck();
   longoptioncheck();
   pathwalkcheck();
