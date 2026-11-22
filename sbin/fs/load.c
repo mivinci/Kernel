@@ -1,6 +1,7 @@
 #include "load.h"
 #include "cache.h"
 #include "geometry.h"
+#include "walk.h"
 #include <proto/file.h>
 
 static Loadslot *
@@ -304,6 +305,50 @@ loadreclaimkind(u32 inode, u32 allocated, const Loadmap *map, u32 links, u32 ref
   if (!links)
     return refs ? -ERR_BUSY : RECLAIM_ORPHAN;
   return RECLAIM_TAIL;
+}
+
+static int
+claimblock(const Blockmap *allocation, Blockmap *seen, u32 blocks, u32 block)
+{
+  if (block < FS_DATA_START || block >= blocks || !blockused(allocation, block) ||
+      blockused(seen, block))
+    return 0;
+  seen->used[block / 64] |= blockbit(block);
+  return 1;
+}
+
+isize
+loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *map, const Loadindex *index,
+              const Blockmap *allocation, u32 blocks)
+{
+  Blockmap seen = {0};
+  u32      logical, limit = LOAD_DIRECT, block, eof;
+  if (!allocation || blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || allocated > 1)
+    return -ERR_INVALID;
+  if (kind != VNODE_DIR || loadreclaimkind(FS_ROOT, allocated, map, links, 0) != RECLAIM_TAIL)
+    return -ERR_STATE;
+  eof = (u32) ((map->file.length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
+  if (map->indirect) {
+    if (!claimblock(allocation, &seen, blocks, map->indirect))
+      return -ERR_STATE;
+    if (!index)
+      return -ERR_WOULD_BLOCK;
+    if (index->block != map->indirect)
+      return -ERR_STATE;
+    limit += LOAD_INDIRECT;
+  }
+  if (eof > limit)
+    return -ERR_STATE;
+  for (logical = 0; logical < limit; logical++) {
+    block = logical < LOAD_DIRECT ? map->direct[logical] : index->entries[logical - LOAD_DIRECT];
+    if (!block) {
+      if (logical < eof)
+        return -ERR_STATE;
+    } else if (logical >= FS_FILE_BYTES / FS_BLOCK_BYTES ||
+               !claimblock(allocation, &seen, blocks, block))
+      return -ERR_STATE;
+  }
+  return 0;
 }
 
 static isize

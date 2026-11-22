@@ -125,6 +125,12 @@ isize loadorphan(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks,
    refs counts all live file and pending operation holds for orphan purposes.
    ORPHAN requires separate final inode retirement after its blocks drain. */
 isize loadreclaimkind(u32 inode, u32 allocated, const Loadmap *, u32 links, u32 refs);
+/* Check the decoded root from the recovered, stable view. Kind is a VNODE_*
+   value. Verify root identity/linkage and local block ownership, including
+   pointers beyond EOF awaiting reclaim. WOULD_BLOCK needs the matching index.
+   The caller still validates directory records and cross-inode ownership. */
+isize loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *, const Loadindex *,
+                    const Blockmap *, u32 blocks);
 struct Loadslot
 {
   Loadfile file;

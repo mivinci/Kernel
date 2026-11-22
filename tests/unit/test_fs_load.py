@@ -84,6 +84,9 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadreclaimkind.argtypes = [C.c_uint32, C.c_uint32, C.POINTER(Map),
                                             C.c_uint32, C.c_uint32]
         cls.lib.loadreclaimkind.restype = I
+        cls.lib.loadrootcheck.argtypes = [C.c_uint32] * 3 + [
+            C.POINTER(Map), C.POINTER(Index), C.POINTER(BlockMap), C.c_uint32]
+        cls.lib.loadrootcheck.restype = I
         cls.lib.loadwritestage.argtypes = [C.POINTER(WritePlan)] + [C.c_uint32] * 3 + [
             C.c_void_p] * 3 + [C.POINTER(WriteImage)]
         cls.lib.loadwritestage.restype = I
@@ -165,6 +168,33 @@ class FsLoadTests(unittest.TestCase):
         mapping.file.inode = 1
         self.assertEqual(classify(1, 1, C.byref(mapping), 0, 0), -6)
         self.assertEqual(classify(1, 1, C.byref(mapping), 1, 0), 1)
+
+    def test_root_index_and_data_must_have_distinct_allocated_blocks(self):
+        mapping = Map(File(1, 2, 1, 13 * 4096))
+        mapping.direct[:] = list(range(100, 112))
+        mapping.indirect = 112
+        index, allocation = Index(112), BlockMap()
+        index.entries[0] = 113
+        allocation.used[1] = ((1 << 14) - 1) << (100 - 64)
+        check = self.lib.loadrootcheck
+
+        def validate():
+            return check(1, 2, 1, C.byref(mapping), C.byref(index), C.byref(allocation), 200)
+
+        self.assertEqual(validate(), 0)
+        for block in (0, 98, 100, 112, 114, 200):
+            with self.subTest(block=block):
+                index.entries[0] = block
+                self.assertEqual(validate(), -6)
+        index.entries[0] = 113
+        index.block = 111
+        self.assertEqual(validate(), -6)
+        index.block = 112
+        mapping.file.length = 12 * 4096
+        self.assertEqual(validate(), 0)  # Live allocation awaiting tail reclaim.
+        index.entries[1023] = 114
+        allocation.used[1] |= 1 << (114 - 64)
+        self.assertEqual(validate(), -6)  # A pointer beyond the maximum file size.
 
     def test_orphan_reclaims_inside_eof_without_releasing_busy_blocks(self):
         mapping = Map(File(2, 1, 4, 2 * 4096))

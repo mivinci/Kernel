@@ -10,6 +10,7 @@
 #include "../../sbin/fs/crc.h"
 #include "../../sbin/fs/load.h"
 #include "../../sbin/fs/sync.h"
+#include "../../sbin/fs/walk.h"
 #include "virtiouser.h"
 volatile u64             vdev_trace[VTEST_TRACE];
 typedef struct Testdma   Testdma;
@@ -188,6 +189,25 @@ static isize journalsubmit(void *, const Journalio *, u64, u32);
 static void  journaldrain(Journaltransport *, Journal *);
 
 static void
+testroot(u32 blocks)
+{
+  static Blockmap allocation;
+  Loadmap         map = {{FS_ROOT, 1, 1, FS_BLOCK_BYTES}, {FS_DATA_START}, 0};
+  REQUIRE(loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) == -ERR_STATE, 330);
+  allocation.used[FS_DATA_START / 64] |= UINT64_C(1) << (FS_DATA_START % 64);
+  REQUIRE(!loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) &&
+              loadrootcheck(1, VNODE_FILE, 1, &map, NULL, &allocation, blocks) == -ERR_STATE &&
+              loadrootcheck(1, VNODE_DIR, 0, &map, NULL, &allocation, blocks) == -ERR_STATE,
+          331);
+  map.indirect = FS_DATA_START + 1;
+  allocation.used[map.indirect / 64] |= UINT64_C(1) << (map.indirect % 64);
+  REQUIRE(loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) == -ERR_WOULD_BLOCK, 332);
+  map.indirect = 0;
+  map.direct[1] = FS_DATA_START;
+  REQUIRE(loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) == -ERR_STATE, 333);
+}
+
+static void
 testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config)
 {
   static Journal    journal, idle;
@@ -333,6 +353,7 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
     count++;
   }
   REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
+  testroot((u32) blocks);
 }
 static isize
 syncsubmit(void *context, Handle request, const Journalio *io, u64 offset, u32 bytes)
