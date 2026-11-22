@@ -262,7 +262,9 @@ isize journalrange(const Journal *, const Journalio *, u64 *offset, u32 *bytes);
 /* Drive one operation per event-loop turn. Return one at DONE, zero while
    waiting, or an error. Submit copies the ticket before returning; a negative
    result guarantees no lower access remains. Completion is delivered via
-   journalcomplete after drain. The owner retains snapshots and publishes. */
+   journalcomplete after drain. A stopped journal reports STATE even while
+   its last ticket is still held; that error does not release ownership.
+   The owner retains snapshots and publishes or hands off to recovery. */
 isize journalpump(Journal *, isize (*submit)(void *, const Journalio *, u64, u32), void *);
 /* Call only when all lower access for this exact ticket has actually drained.
    Write success alone is not durability; only the succeeding flush advances

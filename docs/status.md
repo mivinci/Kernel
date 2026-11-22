@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage552：异步日志推进立即报告停止，原票据及快照仍须等下层实际排空。ARM64/RV64 QEMU `virtiodev` 和 47 项 FS 主机测试通过。
 - stage551：目录创建事务经双架构 QEMU `virtiodev` 完成真实块写入及 FLUSH，宿主整盘校验和 46 项 FS 主机测试通过；盘上镜像为夹具。
 - stage550：块队列等旧请求归还 DMA 窗口后才应用新几何，ARM64/RV64 QEMU `virtiodev` 在线扩盘通过。
 - stage549：块队列拒绝与 virtio 环页交叠的请求窗口，ARM64/RV64 QEMU `virtiodev` 通过。

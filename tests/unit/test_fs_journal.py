@@ -43,6 +43,7 @@ class ReclaimTx(C.Structure):
 
 
 Candidate = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.c_uint32)
+Submit = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.POINTER(Ticket), C.c_uint64, C.c_uint32)
 
 
 class FsJournalTests(unittest.TestCase):
@@ -61,7 +62,8 @@ class FsJournalTests(unittest.TestCase):
             jp,ip=C.POINTER(Journal),C.POINTER(Ticket)
             signatures={'journalinit':[jp,C.c_uint64,C.c_uint64],'journalbegin':[jp,C.POINTER(Plan)],
                         'journalnext':[jp,ip],'journalcomplete':[jp,ip,C.c_uint32],
-                        'journalstop':[jp],'journalrelease':[jp]}
+                        'journalstop':[jp],'journalrelease':[jp],
+                        'journalpump':[jp,Submit,C.c_void_p]}
             for name,args in signatures.items():getattr(lib,name).argtypes=args;getattr(lib,name).restype=C.c_int64
             lib.reclaimscanwake.argtypes = [C.POINTER(ReclaimScan)]
             lib.reclaimscanwake.restype = None
@@ -197,6 +199,30 @@ class FsJournalTests(unittest.TestCase):
                 self.assertEqual(lib.journalcomplete(self.j,C.byref(bad),1),-1 if field=='reserved' else -4)
                 self.assertEqual(bytes(self.journal),before)
             self.complete(ticket);self.assertEqual(lib.journalcomplete(self.j,C.byref(ticket),1),-4)
+
+    def test_pump_reports_stop_before_lower_io_drains(self):
+        for lib in self.libs:
+            self.init(lib)
+            self.begin()
+            requests = []
+
+            @Submit
+            def submit(_, ticket, offset, size):
+                requests.append(Ticket.from_buffer_copy(bytes(ticket.contents)))
+                return 0
+
+            self.assertEqual(lib.journalpump(self.j, submit, None), 0)
+            self.assertEqual(lib.journalpump(self.j, submit, None), 0)
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(lib.journalstop(self.j), 0)
+            before = bytes(self.journal)
+            self.assertEqual(lib.journalpump(self.j, submit, None), -6)
+            self.assertEqual(bytes(self.journal), before)
+            self.assertEqual(lib.journalrelease(self.j), -11)
+            self.complete(requests[0])
+            self.assertEqual(lib.journalpump(self.j, submit, None), -6)
+            self.assertEqual(lib.journalrelease(self.j), 0)
+            self.assertEqual(len(requests), 1)
 
     def test_begin_rejects_invalid_geometry_targets_counts_and_aliases_atomically(self):
         for lib in self.libs:

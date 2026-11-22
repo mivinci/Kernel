@@ -1093,6 +1093,8 @@ journalpump(Journal *journal, isize (*submit)(void *, const Journalio *, u64, u3
   isize     error;
   if (!journal || !submit)
     return -ERR_INVALID;
+  if (journal->phase == JOURNAL_STOPPED)
+    return -ERR_STATE;
   if (journal->active)
     return 0;
   if (journal->phase == JOURNAL_DONE)
