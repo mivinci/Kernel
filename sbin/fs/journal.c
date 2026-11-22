@@ -1254,6 +1254,19 @@ journalpump(Journal *journal, isize (*submit)(void *, const Journalio *, u64, u3
 }
 
 isize
+journalretry(Journal *journal, const Journalio *ticket)
+{
+  if (!journal || !external(journal, ticket, sizeof(*ticket)) || ticket->reserved)
+    return -ERR_INVALID;
+  if (!pendingmatch(journal, ticket))
+    return -ERR_STALE;
+  if (journal->phase == JOURNAL_STOPPED)
+    return journalcomplete(journal, ticket, 0);
+  journal->active = 0;
+  return 0;
+}
+
+isize
 journalcomplete(Journal *journal, const Journalio *ticket, u32 success)
 {
   if (!journal || !external(journal, ticket, sizeof(*ticket)) || ticket->reserved || success > 1)

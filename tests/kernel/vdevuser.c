@@ -6,7 +6,7 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "../../sbin/blk/transport.h"
-#include "../../sbin/fs/blk.h"
+#include "../../sbin/fs/blklog.h"
 #include "private/bootstrap.h"
 #include "../../sbin/fs/cache.h"
 #include "../../sbin/fs/crc.h"
@@ -1027,7 +1027,11 @@ static void
 blkclient(const Bootview *boot, Handle call)
 {
   static Fsblk              blk;
+  static Journal            journal;
   static u8                 data[PAGE_SIZE];
+  const Journalblock        block = {192, data};
+  const Journalplan         plan = {NULL, NULL, NULL, NULL, &block, 0, 1};
+  Blklog                    log = {&blk, &journal, {0}, 0, 0};
   const u64                 address = 0x2300000;
   Handle                    space = bootresource(boot, BOOT_SELF_SPACE);
   Msg                       message = {{BLK_WORD(BLK_HELLO), 0, 1, UINT64_MAX}};
@@ -1052,17 +1056,28 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(blk.info.geometry_generation == 2 && blk.info.capacity_bytes == 2048 * 512 &&
               blk.info.logical_bytes == PAGE_SIZE && blk.info.flags == BLK_FLUSHABLE,
           365);
-  for (op = 0; op < ARRAY_SIZE(blkopcodes); op++) {
-    u32 opcode = blkopcodes[op];
-    u32 bytes = opcode == BLK_FLUSH ? 0 : PAGE_SIZE;
-    if (opcode != BLK_FLUSH)
-      for (i = 0; i < PAGE_SIZE; i++)
-        data[i] = opcode == BLK_WRITE ? (u8) (0xd3 + i * 23) : 0;
-    REQUIRE(!fsblksubmit(&blk, opcode, bytes ? 192 * PAGE_SIZE : 0, bytes,
-                         opcode == BLK_WRITE ? data : NULL),
-            366);
-    blkcollect(&blk, opcode == BLK_READ ? data : NULL, opcode == BLK_READ ? bytes : 0);
-  }
+  for (i = 0; i < PAGE_SIZE; i++)
+    data[i] = (u8) (0xd3 + i * 23);
+  REQUIRE(!journalinit(&journal, blk.info.capacity_bytes / PAGE_SIZE, 47) &&
+              !journalbegin(&journal, &plan),
+          378);
+  REQUIRE(!journalpump(&journal, blklogsubmit, &log) && log.ticket.serial == 1 &&
+              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blklogpoll(&log) && !log.ticket.serial &&
+              !blk.rpc && journal.phase == JOURNAL_DATA_WRITE && !journal.active &&
+              !journal.durable,
+          381);
+  for (op = 0; op < 2; op++)
+    REQUIRE(!journalpump(&journal, blklogsubmit, &log) && log.ticket.serial == op + 2 &&
+                !journal.durable && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blklogpoll(&log) &&
+                !log.ticket.serial && !blk.rpc,
+            379);
+  REQUIRE(journal.durable && journalpump(&journal, blklogsubmit, &log) == 1 &&
+              !journalrelease(&journal) && journal.last == 47,
+          380);
+  for (i = 0; i < PAGE_SIZE; i++)
+    data[i] = 0;
+  REQUIRE(!fsblksubmit(&blk, BLK_READ, 192 * PAGE_SIZE, PAGE_SIZE, NULL), 366);
+  blkcollect(&blk, data, PAGE_SIZE);
   for (i = 0; i < PAGE_SIZE; i++)
     REQUIRE(data[i] == (u8) (0xd3 + i * 23), 367);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
@@ -1098,6 +1113,11 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_INFO) &&
               !blktransportcall(&transport, &input),
           371);
+  REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_WRITE), 382);
+  /* Hold admission at the same geometry for the first WRITE only. */
+  queue->configpending = 1;
+  REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 383);
+  queue->configpending = 0;
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
     started = now();

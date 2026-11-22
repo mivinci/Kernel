@@ -319,6 +319,8 @@ isize journalpump(Journal *, isize (*submit)(void *, const Journalio *, u64, u32
    Write success alone is not durability; only the succeeding flush advances
    that boundary. Known failure stops all new work, never implicitly retries. */
 isize journalcomplete(Journal *journal, const Journalio *ticket, u32 success);
+/* After actual drain and an explicit guarantee that no device I/O started. */
+isize journalretry(Journal *journal, const Journalio *ticket);
 /* Timeout/result-only/cancel: stop immediately but retain outstanding ticket
    and snapshots. Completing it later only drains; it cannot resume this run. */
 isize journalstop(Journal *journal);
