@@ -1072,7 +1072,7 @@ server(const Bootview *boot, u32 recover)
   Loadfetch       fetch;
   Cachekey        competing = {0};
   Cacheio         duplicate;
-  u8             *loadtarget = NULL, *unused = NULL;
+  u8              loadtarget[CACHE_BYTES], *unused = NULL;
   u8              loadbytes[4];
   u64             loadsession = 0, guard;
   u64             ttynow, ttyalarm = 0, generation;
@@ -1249,28 +1249,33 @@ server(const Bootview *boot, u32 recover)
         CHECK(loadio.request && !loadioreply(&loadio, NULL, 0, 3));
       } else if (input.words[1] == 4) {
         Cacheio previous = fetch.ticket;
-        CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
+        CHECK(loadio.request && loadio.page[loadio.dataoff] == 0xa5);
         zero(loadtarget, CACHE_BYTES);
         loadtarget[CACHE_BYTES - 2] = 'E';
         loadtarget[CACHE_BYTES - 1] = 'L';
-        CHECK(!loadcachecomplete(&loadwork, &fetch.ticket, 1) &&
+        CHECK(loadcachecomplete(&loadwork, input.request, &fetch.ticket, loadtarget,
+                                sizeof(loadtarget)) == -ERR_STALE &&
+              loadcachecomplete(&loadwork, loadio.request, &fetch.ticket, loadtarget,
+                                sizeof(loadtarget) - 1) == -ERR_INVALID &&
+              !loadcachecomplete(&loadwork, loadio.request, &fetch.ticket, loadtarget,
+                                 sizeof(loadtarget)) &&
               cacheget(&loadcache, 110, CACHE_DATA, &competing) == -ERR_CAPACITY &&
               cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) == 0 &&
               !unused && loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) == 1 &&
               fetch.block == loadspan.next &&
-              loadcachecomplete(&loadwork, &previous, 1) == -ERR_STALE &&
+              loadcachecomplete(&loadwork, loadio.request, &previous, loadtarget,
+                                sizeof(loadtarget)) == -ERR_STALE &&
               loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) == -ERR_WOULD_BLOCK);
-        loadtarget = fetch.destination;
       } else if (input.words[1] == 5) {
-        CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
+        CHECK(loadio.request && loadio.page[loadio.dataoff] == 0xa5);
         zero(loadtarget, CACHE_BYTES);
         loadtarget[0] = 'F';
         loadtarget[1] = '!';
-        CHECK(!loadcachecomplete(&loadwork, &fetch.ticket, 1) &&
+        CHECK(!loadcachecomplete(&loadwork, loadio.request, &fetch.ticket, loadtarget,
+                                 sizeof(loadtarget)) &&
               !loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) &&
               !cacheget(&loadcache, 110, CACHE_DATA, &competing) &&
               !cacheput(&loadcache, &competing));
-        loadtarget = NULL;
       } else if (input.words[1] == 6 || input.words[1] == 7) {
         CHECK(!loadio.request && !loadwork.request &&
               !cacheget(&loadcache, 99, CACHE_DATA, &competing));
@@ -1280,11 +1285,11 @@ server(const Bootview *boot, u32 recover)
         } else
           CHECK(!cacheinvalidate(&loadcache, &competing));
       } else if (input.words[1] == 8) {
-        CHECK(loadio.request && loadtarget && fetch.block == 99);
+        CHECK(loadio.request && fetch.block == 99);
         zero(loadtarget, CACHE_BYTES);
-        CHECK(!loadcachecomplete(&loadwork, &fetch.ticket, 1) &&
+        CHECK(!loadcachecomplete(&loadwork, loadio.request, &fetch.ticket, loadtarget,
+                                 sizeof(loadtarget)) &&
               !loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3));
-        loadtarget = NULL;
       } else {
         CHECK(input.words[1] == 3 && input.words[2] == loadsession && !loadio.request &&
               !loadclose(&loadtable, loadsession, input.source, input.image) &&
@@ -1417,7 +1422,6 @@ server(const Bootview *boot, u32 recover)
                 cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) ==
                     -ERR_WOULD_BLOCK &&
                 !unused && !ipc_defer(input.request));
-          loadtarget = fetch.destination;
         }
       }
       continue;

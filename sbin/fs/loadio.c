@@ -122,14 +122,18 @@ loadcachebegin(Loadcache *work, Loadio *io, Cache *cache, const Loadspan *span)
 }
 
 isize
-loadcachecomplete(Loadcache *work, const Cacheio *ticket, u32 success)
+loadcachecomplete(Loadcache *work, Handle request, const Cacheio *ticket, const void *block,
+                  u32 bytes)
 {
   isize error;
-  if (!work)
+  if (!work || !request || work->request != request)
     return -ERR_STALE;
-  error = cachefillfinish(&work->fill, ticket, success);
+  if (!block && bytes)
+    return -ERR_INVALID;
+  error = block ? cachefillcopy(&work->fill, ticket, block, bytes)
+                : cachefillfinish(&work->fill, ticket, 0);
   if (!error) {
-    work->failed = !success;
+    work->failed = !block;
     work->next++;
   }
   return error;
@@ -152,8 +156,9 @@ loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 no
         !loadstatus(io->table, io->session, io->ticket, now)) {
       while (work->next < ARRAY_SIZE(work->blocks)) {
         if (work->blocks[work->next]) {
+          u8 *destination;
           error = cachefillstart(&work->fill, work->span.cache, work->blocks[work->next],
-                                 CACHE_DATA, &out->ticket, &out->destination);
+                                 CACHE_DATA, &out->ticket, &destination);
           if (error == 1) {
             out->block = work->blocks[work->next];
             return 1;

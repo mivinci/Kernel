@@ -22,7 +22,6 @@ struct Loadio
 struct Loadfetch
 {
   Cacheio ticket;
-  u8     *destination;
   u32     block;
 };
 struct Loadcache
@@ -51,5 +50,7 @@ isize loadioreply(Loadio *io, const void *data, u64 bytes, u64 now);
    calls complete only after the exact device access has drained. */
 isize loadcachebegin(Loadcache *work, Loadio *io, Cache *cache, const Loadspan *span);
 isize loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 now);
-isize loadcachecomplete(Loadcache *work, const Cacheio *ticket, u32 success);
+/* Full independent block on success, NULL/0 on failure. */
+isize loadcachecomplete(Loadcache *work, Handle request, const Cacheio *ticket, const void *block,
+                        u32 bytes);
 #endif

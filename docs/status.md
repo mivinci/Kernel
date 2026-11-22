@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage463：LOAD 缺块也从独立缓冲提交，按原 REQUEST 和读票核验；双架构 QEMU `runtime` 与 8 项主机专项通过。
 - stage462（2026-11-22）：普通 READ 经原 REQUEST 和读票接收独立缓冲中的完整块；双架构 QEMU `pipeio` 验证错请求与短块拒绝。生产块 IPC 待接。
 - stage461（2026-11-22）：块读可从独立运输缓冲经精确读票提交到缓存；双架构 QEMU `virtiodev` 验证实际设备数据及短块、错票、重复完成拒绝。生产 IPC 待接。
 - stage460（2026-11-22）：取消的排队 READ/SEEK 可独立收尾；双架构 QEMU `pipeio` 验证 SEEK 取消、名额复用和原 READ 读票保留。
