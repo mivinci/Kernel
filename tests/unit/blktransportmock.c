@@ -859,15 +859,6 @@ linkbusytest(void)
   return 0;
 }
 
-static isize
-reapdrain(void *context, Filelink *link)
-{
-  Blktransport *target = context;
-  if (blktransportbusy(target, link))
-    return -ERR_BUSY;
-  return 0;
-}
-
 static int
 reaptest(void)
 {
@@ -878,7 +869,6 @@ reaptest(void)
   request = newrequest(1);
   preparecall(&call, &slot, 0, 0, BLK_READ, 0, 512);
   CHECK(!blktransportcall(&transport, &call));
-  CHECK(!blktransportreaper(&transport, &transport, reapdrain));
   links[0].watch.owner.reason = 1;
   CHECK(blktransportreap(&transport) == -ERR_BUSY);
   CHECK(!complete(0, 513));

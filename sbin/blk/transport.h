@@ -7,7 +7,6 @@
 
 typedef struct Blkjob       Blkjob;
 typedef struct Blktransport Blktransport;
-typedef isize (*Blkdrainlink)(void *context, Filelink *link);
 typedef isize (*Blkfilefinish)(Fileinflight *active, Handle request);
 struct Blkjob
 {
@@ -27,8 +26,6 @@ struct Blktransport
   Vblksync      sync;
   void         *syncctx;
   u32           nlinks, njobs;
-  void         *reaper;
-  Blkdrainlink  drain;
   Blkfilefinish filefinish;
   u64           device;
   u64           error;
@@ -41,7 +38,6 @@ struct Blktransport
 isize blktransportinit(Blktransport *transport, Blkqueue *queue, Filelink *links, u32 nlinks,
                        Blkjob *jobs, u32 njobs, u64 device, Vblksync sync, void *syncctx);
 void  blktransportfilefinish(Blktransport *transport, Blkfilefinish finish);
-isize blktransportreaper(Blktransport *transport, void *context, Blkdrainlink drain);
 /* Admit one INFO/READ/WRITE/FLUSH CALL using the common protected slot ledger.
    If an earlier immediate completion still needs retry, reject the new CALL
    with EAGAIN before claiming its slot. HELLO uses sysslothello separately. */

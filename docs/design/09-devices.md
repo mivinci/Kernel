@@ -221,6 +221,8 @@ transport 主机夹具直接链接生产 `sbin/blk/io.c`、`transport.c`、`libv
 
 ARM64/RV64 QEMU `virtiodev` 用两个独立用户进程走 HELLO 的资源回复、同一共享槽的 INFO/WRITE/FLUSH/READ 和退出观察回收。三笔设备请求走 `sbin/blk/transport.c`、实际 IRQ 和 virtio-blk。客户端验证结果计数及整页读回，主机核对 QMP 读写字节数、FLUSH 次数和完整盘面，内核核对连接、DMA 固定页和账户回到基线。设备、DMA 和观察权限仍由测试加载器配置，生产 `blk` 入口、默认 init 发权及 FS 挂载待接。
 
+块服务现在由 transport 自己负责结束连接的回收门禁：只要该连接还有私有任务或尚未排空的即时回复，就继续保留共享映射；全部收尾后才解除映射并撤销观察。ARM64、RV64 QEMU `virtiodev` 通过真实块 I/O 和退出观察验证回收，主机 transport 专项在 O0/O2 验证在途请求挡住回收，完成后可正常释放。不再要求服务入口安装额外的回收回调。
+
 FS 私有 `Fsblk` 适配器在已验证连接上预留一个槽，保存原异步 RPC、序号和预期长度。等原请求 FINISH 后验证业务结果和 INFO 的设备/几何代次，将读回字节保存在私有缓冲中，ACK 成功后才交给上层并归还槽。几何过期阻止非 INFO 请求；刷新后挂载所有者仍须重验卷。两架构 `virtiodev` 的客户端使用此适配器，HELLO 的授权和映射仍由夹具提供。
 
 `Blklog` 将日志原票据绑定到块 RPC，在 FINISH 和 ACK 后结算。明确未提交的 EAGAIN 保持日志阶段并废弃旧票据，下一次推进使用新序号；其他失败停止日志。两架构 `virtiodev` 注入一次提交背压后完成真实 WRITE、FLUSH 和读回；主机核对盘面及 I/O 计数。此处覆盖纯数据事务，生产挂载仍待接。

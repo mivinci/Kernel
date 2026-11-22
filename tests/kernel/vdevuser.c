@@ -1960,12 +1960,6 @@ blkclient(const Bootview *boot, Handle call)
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
 
-static isize
-blkdrain(void *context, Filelink *link)
-{
-  return blktransportbusy(context, link) ? -ERR_BUSY : 0;
-}
-
 static void
 blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
 {
@@ -1987,8 +1981,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   u32             count, more, causes, i;
   u64             alarm, started;
   REQUIRE(!blktransportinit(&transport, queue, &link, 1, jobs, ARRAY_SIZE(jobs), 1, blksync,
-                            queue->device) &&
-              !blktransportreaper(&transport, &transport, blkdrain),
+                            queue->device),
           369);
   REQUIRE(!blkservestep(&service) && link.ready && !blkservestep(&service) && link.ready &&
               link.generation == 1,

@@ -277,8 +277,6 @@ blktransportinit(Blktransport *transport, Blkqueue *queue, Filelink *links, u32 
   transport->immediate = (Blkjob){0};
   transport->nlinks = nlinks;
   transport->njobs = njobs;
-  transport->reaper = 0;
-  transport->drain = 0;
   transport->filefinish = sysfilefinish;
   transport->device = device;
   transport->sync = sync;
@@ -294,16 +292,6 @@ blktransportfilefinish(Blktransport *transport, Blkfilefinish finish)
 {
   if (transport && finish)
     transport->filefinish = finish;
-}
-
-isize
-blktransportreaper(Blktransport *transport, void *context, Blkdrainlink drain)
-{
-  if (!transport || !context || !drain)
-    return -ERR_INVALID;
-  transport->reaper = context;
-  transport->drain = drain;
-  return 0;
 }
 
 isize
@@ -582,12 +570,18 @@ blktransportrecover(Blktransport *transport, u64 now)
   return transport->active ? -ERR_STATE : 0;
 }
 
+static isize
+drainlink(void *context, Filelink *link)
+{
+  return blktransportbusy(context, link) ? -ERR_BUSY : 0;
+}
+
 isize
 blktransportreap(Blktransport *transport)
 {
-  if (!transport || !transport->links || !transport->drain || !transport->reaper)
+  if (!transport || !transport->links || !transport->jobs)
     return -ERR_INVALID;
-  return sysfilelinksweep(transport->links, transport->nlinks, transport->drain, transport->reaper);
+  return sysfilelinksweep(transport->links, transport->nlinks, drainlink, transport);
 }
 
 int
