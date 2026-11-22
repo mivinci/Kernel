@@ -34,7 +34,7 @@ elftest(void)
   Procinfo   replaced;
   Liferesult result;
   u64        trace[16];
-  u32        i, have[6], turns = 0;
+  u32        i, have[6], turns = 0, exited = 0;
   int        error;
   pgstat(&before);
   REQUIRE(!setcreate(8192, 16384, 16, &set));
@@ -74,6 +74,14 @@ elftest(void)
     for (i = 0; i < 6; i++)
       if (trace[8 + i] && !have[i] && !procinfo((Handle) trace[8 + i], &children[i]))
         have[i] = 1;
+    for (i = 0; i < 2; i++) {
+      Life child;
+      if (have[i] && !(exited & (1U << i)) && !lifestat(children[i].life, &child) &&
+          child.state == LIFE_ENDED) {
+        REQUIRE(child.reason == LIFE_EXIT && child.code == 42);
+        exited |= 1U << i;
+      }
+    }
     if (life.state == LIFE_ENDED) {
       if (life.reason != LIFE_EXIT || life.code != 42) {
         putstr("ELFRESULT stage=");
@@ -91,8 +99,8 @@ elftest(void)
     }
     REQUIRE(procwork(trace[0] == 99 ? 32 : 8) >= 0 && prepwork(8) >= 0);
   }
-  REQUIRE(trace[0] == 99 && trace[1] == 2 && trace[2] == 4 && trace[3] == 1 && trace[4] > 1 &&
-          trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 7);
+  REQUIRE(exited == 3 && trace[0] == 99 && trace[1] == 2 && trace[2] == 4 && trace[3] == 1 &&
+          trace[4] > 1 && trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 7);
   REQUIRE(life.imagegen == 3 && replaced.image == 3 && replaced.space.index != parent.space.index &&
           replaced.life.generation == parent.life.generation &&
           replaced.life.index == parent.life.index);

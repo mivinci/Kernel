@@ -22,17 +22,25 @@ main(int argc, char **argv)
   const char     *mode = getenv("MODE");
   char           *value = getenv("X");
   Queryrec        entries[3];
+  Sigact          action;
   Handle          pid, parent, space, allocator, create;
-  u64             image, count, next;
-  int             replacing;
+  u64             image, count, next, mask;
+  int             replacing, override;
   if (!constructed || !view || !mode || !value || argc != 3 || !argv || argv[3] ||
       strcmp(argv[0], "runtime") || strcmp(argv[1], "alpha") || strcmp(argv[2], "beta") ||
       strcmp(value, "value"))
     return 163;
   replacing = !strcmp(mode, "4");
-  if ((!replacing && strcmp(mode, "1")) || __sys_getid(&pid, &image, &parent) || pid != getpid() ||
-      pid <= 1 || image != (replacing ? 3U : 1U) || (replacing ? parent != 1 : parent <= 1))
+  override = !strcmp(mode, "1");
+  if ((!replacing && !override && strcmp(mode, "2")) || __sys_getid(&pid, &image, &parent) ||
+      pid != getpid() || pid <= 1 || image != (replacing ? 3U : 1U) ||
+      (replacing ? parent != 1 : parent <= 1))
     return 169;
+  if (!replacing && (__sys_sigaction(SIGNAL_USR1, NULL, &action) ||
+                     action.kind != (override ? SIGNAL_DEFAULT : SIGNAL_IGNORE) ||
+                     __sys_sigmask(SIGNAL_BLOCK, 0, &mask) ||
+                     mask != (UINT64_C(1) << ((override ? SIGNAL_USR2 : SIGNAL_USR1) - 1))))
+    return 171;
   space = bootresource(view, BOOT_SELF_SPACE);
   allocator = bootresource(view, BOOT_SELF_ALLOC);
   create = bootresource(view, BOOT_CREATE);

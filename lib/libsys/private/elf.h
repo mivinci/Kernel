@@ -13,6 +13,8 @@ typedef struct Elfseg    Elfseg;
 typedef struct Elfplan   Elfplan;
 typedef struct Elfwork   Elfwork;
 typedef struct Execwork  Execwork;
+typedef struct Spawnwork Spawnwork;
+typedef struct Spawnsig  Spawnsig;
 struct Elfsource
 {
   void *context;
@@ -44,6 +46,17 @@ struct Execwork
   Elfwork elf;
   Config  config;
 };
+struct Spawnwork
+{
+  Elfwork elf;
+  Config  config;
+  u64     defaults;
+};
+struct Spawnsig
+{
+  u64 mask, defaults;
+  u32 setmask;
+};
 /* The architecture adapter selects file machine and entry alignment. */
 u32   elfmachine(void);
 u32   elfentryalign(void);
@@ -57,13 +70,16 @@ isize elfcheck(const Elfsource *source, u64 max_pages, Elfplan *out);
 isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
               Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
-/* Native child preparation around elfload. A successful prepare gives the
-   caller the exact view and PID for service/Boot preparation. Any returned
-   CONTROL is independently owned by the caller. Publish consumes the view
-   and returns the PID. Cancel is retryable if temporary cleanup fails. */
-isize sysspawnprepare(Elfwork *work, Handle create, const Createarg *args, Handle *control);
-isize sysspawnpublish(Elfwork *work, const Config *config);
-isize sysspawncancel(Elfwork *work);
+/* Initialize like Execwork. An absent mask override samples the application
+   mask: call prepare outside any temporary library signal block. Any CONTROL
+   is independently owned. Fill accepts an immutable ELF/Boot; publish uses
+   its saved Config, consumes the view and returns the PID. Cancel is retryable. */
+isize sysspawnprepare(Spawnwork *work, Handle create, const Createarg *args, const Spawnsig *sig,
+                      Handle *control);
+isize sysspawnfill(Spawnwork *work, const Elfsource *source, const Elfplan *plan, const void *boot,
+                   u64 bytes);
+isize sysspawnpublish(Spawnwork *work);
+isize sysspawncancel(Spawnwork *work);
 /* Zero-initialize the record and set elf.parent_space and the private scratch
    window. The view and target image become available before Boot is built.
    An accepted preparation remains owned until commit or explicit cancel. */

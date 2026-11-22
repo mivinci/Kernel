@@ -47,14 +47,15 @@ readpayload(void *context, u64 offset, void *destination, u64 bytes)
   return 0;
 }
 static void
-bootpacket(Handle fdcall, int replacing)
+bootpacket(Handle fdcall, char mode)
 {
   const char *argv[4], *envp[3];
   Argsnap     snapshot;
   u64         mask, ignored;
+  int         replacing = mode == '4';
   argument_word[0] = 'a';
   environment_word[0] = 'M';
-  environment_word[5] = replacing ? '4' : '1';
+  environment_word[5] = mode;
   argv[0] = "runtime";
   argv[1] = argument_word;
   argv[2] = "beta";
@@ -97,16 +98,18 @@ main(int argc, char **argv)
 {
   const Bootview *own = sysboot();
   Elfsource       source;
-  Elfwork         work;
+  Spawnwork       spawn;
+  Elfwork        *work = &spawn.elf;
   Execwork        replacement = {0};
   Createarg       args;
-  Config          config;
+  Spawnsig        signals = {UINT64_C(1) << (SIGNAL_USR2 - 1), UINT64_C(1) << (SIGNAL_USR1 - 1), 1};
+  Sigact          ignore = {0};
   Reader          reader;
   Queryrec        resources[4];
   Maparg          map;
   Allocarg        alloc;
   Handle          create, space, allocator, pid, control, collected, occupied = 0;
-  u64             written, next, kind, code, sequence;
+  u64             written, next, kind, code, sequence, mask;
   u32             ids[4], scenario, count = 0, retries = 0;
   isize           error;
   int             status;
@@ -123,6 +126,10 @@ main(int argc, char **argv)
   source.context = &reader;
   source.bytes = (u64) (payload_elf_end - payload_elf);
   source.read = readpayload;
+  ignore.kind = SIGNAL_IGNORE;
+  REQUIRE(!__sys_sigaction(SIGNAL_USR1, &ignore, NULL) &&
+              !__sys_sigmask(SIGNAL_SETMASK, signals.defaults, &mask),
+          214);
   alloc.bytes = PAGE_SIZE;
   alloc.kind = ALLOC_DATA;
   alloc.align = alloc.minaddr = alloc.maxaddr = alloc.reserved = 0;
@@ -144,22 +151,21 @@ main(int argc, char **argv)
     args.euid = ids[1];
     args.rgid = ids[2];
     args.egid = ids[3];
-    memset(&work, 0, sizeof(work));
-    work.parent_space = space;
-    work.scratch = 0x2000000;
-    work.scratch_bytes = BOOT_MAX_BYTES;
-    config.entry = 0;
-    REQUIRE(!sysspawnprepare(&work, create, &args, &control) && work.pid > 0 && !control &&
-                sysspawnpublish(&work, &config) == -ERR_STATE,
+    memset(&spawn, 0, sizeof(spawn));
+    work->parent_space = space;
+    work->scratch = 0x2000000;
+    work->scratch_bytes = BOOT_MAX_BYTES;
+    REQUIRE(!sysspawnprepare(&spawn, create, &args, scenario == 0 ? &signals : NULL, &control) &&
+                work->pid > 0 && !control && sysspawnpublish(&spawn) == -ERR_STATE,
             185);
-    pid = work.pid;
+    pid = work->pid;
     elf_trace[8 + scenario] = (u64) pid;
     REQUIRE(!__sys_yield(), 186);
-    REQUIRE(!__sys_query(work.view, QUERY_RESOURCE, 0, resources, 4, &written, &next) &&
+    REQUIRE(!__sys_query(work->view, QUERY_RESOURCE, 0, resources, 4, &written, &next) &&
                 written == 3 && !next,
             187);
     elf_trace[5]++;
-    bootpacket(scenario == 5 ? (Handle) resources[0].data[0] : 0, 0);
+    bootpacket(scenario == 5 ? (Handle) resources[0].data[0] : 0, scenario == 1 ? '2' : '1');
     if (scenario == 1) {
       count = 0;
       while (!(error = __sys_alloc(allocator, &alloc, &pressure[count]))) {
@@ -176,27 +182,37 @@ main(int argc, char **argv)
       REQUIRE(!__sys_alloc(allocator, &alloc, &occupied), 191);
       memset(&map, 0, sizeof(map));
       map.mem = occupied;
-      map.address = work.scratch;
+      map.address = work->scratch;
       map.length = PAGE_SIZE;
       map.prot = MAP_READ | MAP_WRITE;
       REQUIRE(!__sys_map(space, &map), 192);
-      *(volatile u64 *) work.scratch = UINT64_C(0x123456789abcdef0);
+      *(volatile u64 *) work->scratch = UINT64_C(0x123456789abcdef0);
     }
     if (scenario == 5) {
-      REQUIRE(elfload(&source, &plan, &packet, packet.header.bytes, &work, &config) ==
+      Config rejected;
+      REQUIRE(elfload(&source, &plan, &packet, packet.header.bytes, work, &rejected) ==
                       -ERR_BAD_HANDLE &&
-                  work.failure == -ERR_BAD_HANDLE && !work.memory && !work.mapped && !config.entry,
+                  work->failure == -ERR_BAD_HANDLE && !work->memory && !work->mapped &&
+                  !rejected.entry,
               217);
       packet.header.fd_count = packet.header.fds_off = 0;
       packet.resources[0].flags = 4;
+      error = elfload(&source, &plan, &packet, packet.header.bytes, work, &rejected);
+    } else {
+      error = sysspawnfill(&spawn, &source, &plan, &packet, packet.header.bytes);
     }
-    error = elfload(&source, &plan, &packet, packet.header.bytes, &work, &config);
     elf_trace[15] = (u64) error;
-    REQUIRE(!work.memory && !work.mapped, 193);
+    REQUIRE(!work->memory && !work->mapped, 193);
     elf_trace[6]++;
     if (scenario <= 1) {
-      REQUIRE(!error && !work.failure, 194);
-      REQUIRE(sysspawnpublish(&work, &config) == pid && !work.view, 195);
+      REQUIRE(!error && !work->failure && !__sys_sigmask(SIGNAL_BLOCK, 0, &mask) &&
+                  mask == signals.defaults &&
+                  spawn.config.sigmask == (scenario == 0 ? signals.mask : signals.defaults),
+              194);
+      source.read = NULL;
+      memset(&packet, 0, sizeof(packet));
+      REQUIRE(sysspawnpublish(&spawn) == pid && !work->view, 195);
+      source.read = readpayload;
       status = 0x12345678;
       errno = EDOM;
       REQUIRE(waitpid(pid, &status, WNOHANG) == 0 && status == 0x12345678 && errno == EDOM, 196);
@@ -219,8 +235,10 @@ main(int argc, char **argv)
                         : scenario == 4 ? -ERR_STATE
                                         : -ERR_INVALID),
               198);
-      REQUIRE(work.failure == error && !config.entry, 199);
-      REQUIRE(!sysspawncancel(&work) && !work.view, 200);
+      REQUIRE(work->failure == error && !spawn.config.entry &&
+                  sysspawnpublish(&spawn) == -ERR_STATE,
+              199);
+      REQUIRE(!sysspawncancel(&spawn) && !work->view, 200);
       REQUIRE(__sys_wait(pid, WAIT_WNOHANG, &collected, &kind, &code, &sequence) == -ERR_CHILD &&
                   !collected,
               201);
@@ -230,8 +248,8 @@ main(int argc, char **argv)
       while (count)
         REQUIRE(!__sys_free(pressure[--count]), 202);
     if (scenario == 4) {
-      REQUIRE(*(volatile u64 *) work.scratch == UINT64_C(0x123456789abcdef0), 203);
-      REQUIRE(!__sys_unmap(space, work.scratch) && !__sys_free(occupied), 204);
+      REQUIRE(*(volatile u64 *) work->scratch == UINT64_C(0x123456789abcdef0), 203);
+      REQUIRE(!__sys_unmap(space, work->scratch) && !__sys_free(occupied), 204);
     }
     REQUIRE(!__sys_yield(), 205);
   }
@@ -241,7 +259,7 @@ main(int argc, char **argv)
   elf_trace[3] = 1;
   reader.malformed = 0;
   REQUIRE(!elfcheck(&source, 64, &plan), 230);
-  bootpacket(0, 1);
+  bootpacket(0, '4');
   replacement.elf.parent_space = space;
   replacement.elf.scratch = 0x2000000;
   replacement.elf.scratch_bytes = BOOT_MAX_BYTES;
