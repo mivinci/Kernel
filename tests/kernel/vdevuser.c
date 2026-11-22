@@ -1067,6 +1067,7 @@ static const u32 blkopcodes[] = {
     BLK_READ,  BLK_READ,                                   /* re-probe home */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* root directory */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* directory iteration */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* directory lookup */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* symlink name */
     BLK_READ,  BLK_READ,                                   /* link inode and contents */
@@ -1641,6 +1642,45 @@ blkclient(const Bootview *boot, Handle call)
               blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
           440);
   {
+    Blkiter   iter = {.home = &home,
+                      .decode = blkdecodedir,
+                      .inode = (u32) root.number,
+                      .generation = (u32) root.generation};
+    Dirrecord item = {0};
+    const u8 *name = NULL;
+    isize     step = 0;
+    u32       waits = 0;
+    REQUIRE(!cacheinit(&cache, &storage, 1, 256), 523);
+    for (i = 0; i < 24 && !step; i++) {
+      u64 before = iter.offset;
+      step = blkiterstep(&iter, &item, &name);
+      if (!step && blk.rpc) {
+        REQUIRE(iter.offset == before && !item.inode && !name, 524);
+        REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 525);
+        waits++;
+      }
+    }
+    REQUIRE(step == 1 && !blk.rpc, 526);
+    REQUIRE(waits == 3, 528);
+    REQUIRE(iter.offset == FS_BLOCK_BYTES, 529);
+    REQUIRE(item.inode == 34 && item.namelen == 59 && name && name[0] == (u8) (0xb1 + 40 * 37) &&
+                !name[item.namelen],
+            530);
+    for (i = 0, step = 0; i < 8 && !step; i++) {
+      u64 before = iter.offset;
+      step = blkiterstep(&iter, &item, &name);
+      if (!step && blk.rpc) {
+        REQUIRE(iter.offset == before && item.inode == 34 &&
+                    !ipc_rqwait(blk.rpc, RQ_FINISH, &result),
+                531);
+        waits++;
+      }
+    }
+    REQUIRE(step == 2 && waits == 4 && !blk.rpc && iter.offset == 2 * FS_BLOCK_BYTES &&
+                item.inode == 34,
+            527);
+  }
+  {
     static Vwalk   walk;
     char           name[60];
     Lookupnodes    targets = {&mounts, {root.mount, 34, 1, VNODE_FILE}, &root};
@@ -1741,6 +1781,8 @@ blkclient(const Bootview *boot, Handle call)
   data[17] = 0;
   {
     Dirrecord found = {0};
+    const u8 *name = NULL;
+    u32       offset = 0;
     REQUIRE(dirblockfind(nodes, data, 24, blknamed, "a", 1, &found) == 1 && found.inode == 35 &&
                 found.generation == 1 && found.kind == VNODE_FILE &&
                 !dirblockfind(nodes, data, 24, blknamed, "ab", 2, &found) && found.inode == 35,
@@ -1759,6 +1801,25 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(dirblockfind(nodes, data, 24, blknamed, "a", 1, &found) == -ERR_STATE && !found.inode,
             472);
     nodes[35].generation--;
+    data[24] = 0;
+    for (i = 48; i < 72; i++)
+      data[i] = 0;
+    data[48] = 36;
+    data[49] = 1;
+    data[64] = 'b';
+    REQUIRE(dirblocknext(nodes, data, 72, blknamed, &offset, &found, &name) == 1 && offset == 24 &&
+                found.inode == 35 && name == data + 16,
+            520);
+    nodes[36].generation++;
+    REQUIRE(dirblocknext(nodes, data, 72, blknamed, &offset, &found, &name) == -ERR_STATE &&
+                offset == 24 && found.inode == 35 && name == data + 16,
+            521);
+    nodes[36].generation--;
+    REQUIRE(dirblocknext(nodes, data, 72, blknamed, &offset, &found, &name) == 1 && offset == 72 &&
+                found.inode == 36 && name == data + 64 && *name == 'b' &&
+                !dirblocknext(nodes, data, 72, blknamed, &offset, &found, &name) && offset == 72 &&
+                found.inode == 36 && name == data + 64,
+            522);
   }
   REQUIRE(!dirgraphblock(&dirs.graph, &dirs.names, FS_ROOT, data, 24, blknamed), 435);
   data[0] = 36;
@@ -1845,7 +1906,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
     /* Exercise redo, re-probe, home bitmap, directory and link READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 16 == ARRAY_SIZE(blkopcodes) ||
+    if (i == 11 || i == 22 || i == 24 || i + 20 == ARRAY_SIZE(blkopcodes) ||
         i + 8 == ARRAY_SIZE(blkopcodes) || i + 6 == ARRAY_SIZE(blkopcodes) ||
         i + 4 == ARRAY_SIZE(blkopcodes) || i + 2 >= ARRAY_SIZE(blkopcodes)) {
       queue->configpending = 1;

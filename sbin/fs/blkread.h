@@ -17,6 +17,7 @@ typedef struct Blkowners   Blkowners;
 typedef struct Blkdir      Blkdir;
 typedef struct Blkmount    Blkmount;
 typedef struct Blkfind     Blkfind;
+typedef struct Blkiter     Blkiter;
 typedef struct Blklookup   Blklookup;
 struct Blkread
 {
@@ -145,6 +146,19 @@ struct Blkfind
    completion or external drain. Zero continues, one publishes a match,
    two means absent. Output is untouched until a match is published. */
 isize blkfindstep(Blkfind *, Dirrecord *);
+
+struct Blkiter
+{
+  Blkowners *home;
+  Dirdecode  decode;
+  u64        offset;
+  u32        inode, generation, loaded;
+  isize      failed;
+};
+/* One stable view and exclusive reader from start until EOF or drain.
+   Zero continues, one returns a row and a name borrowed from reader
+   scratch, two is EOF. Only a row updates the record and name outputs. */
+isize blkiterstep(Blkiter *, Dirrecord *, const u8 **name);
 struct Blklookup
 {
   Blkowners      *home;

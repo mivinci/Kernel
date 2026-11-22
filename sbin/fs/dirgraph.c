@@ -146,6 +146,37 @@ recordnext(const u8 *bytes, u32 valid, u32 *offset, Dirdecode decode, Dirrecord 
 }
 
 isize
+dirblocknext(const Dirnode *nodes, const u8 *bytes, u32 valid, Dirdecode decode, u32 *offset,
+             Dirrecord *out, const u8 **name)
+{
+  u32 position;
+  if (!nodes || !bytes || !valid || valid > FS_BLOCK_BYTES || !decode || !offset || !out || !name ||
+      *offset > valid || (*offset & 7))
+    return -ERR_INVALID;
+  position = *offset;
+  while (position < valid) {
+    Dirrecord      record = {0};
+    const u8      *entry;
+    const Dirnode *node;
+    isize          result = recordnext(bytes, valid, &position, decode, &record, &entry);
+    if (result < 0)
+      return result;
+    if (!result)
+      continue;
+    node = &nodes[record.inode];
+    if (!record.generation || record.generation != node->generation || !node->links ||
+        record.kind != node->kind || record.kind < VNODE_FILE || record.kind > VNODE_LINK)
+      return -ERR_STATE;
+    *out = record;
+    *name = entry;
+    *offset = position;
+    return 1;
+  }
+  *offset = position;
+  return 0;
+}
+
+isize
 dirblockfind(const Dirnode *nodes, const u8 *bytes, u32 valid, Dirdecode decode, const char *name,
              u32 namelen, Dirrecord *out)
 {
@@ -159,18 +190,13 @@ dirblockfind(const Dirnode *nodes, const u8 *bytes, u32 valid, Dirdecode decode,
     if (!name[i] || name[i] == '/')
       return -ERR_INVALID;
   while (offset < valid) {
-    Dirrecord      record = {0};
-    const u8      *entry;
-    const Dirnode *node;
-    isize          result = recordnext(bytes, valid, &offset, decode, &record, &entry);
+    Dirrecord record;
+    const u8 *entry;
+    isize     result = dirblocknext(nodes, bytes, valid, decode, &offset, &record, &entry);
     if (result < 0)
       return result;
     if (!result)
-      continue;
-    node = &nodes[record.inode];
-    if (!record.generation || record.generation != node->generation || !node->links ||
-        record.kind != node->kind || record.kind < VNODE_FILE || record.kind > VNODE_LINK)
-      return -ERR_STATE;
+      break;
     if (record.namelen != namelen)
       continue;
     for (i = 0; i < namelen && entry[i] == (u8) name[i]; i++)

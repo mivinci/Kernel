@@ -504,25 +504,20 @@ blkdirstep(Blkdir *work)
   return 0;
 }
 
-isize
-blkfindstep(Blkfind *work, Dirrecord *out)
+static isize
+dirread(Blkowners *home, u32 number, u32 generation, u64 offset, u32 *loaded, u32 *bytes,
+        isize *failed)
 {
-  Blkowners      *home;
   const Blkprobe *probe;
   const Loadfile *file;
   const Dirnode  *node;
   Blkredoload    *load;
   Loadspan        span;
   Redoinode       inode;
-  Dirrecord       match;
   isize           error, status;
-  u32             bytes;
-  if (!work || !out || !(home = work->home) || !(probe = home->home) || home->phase != OwnersDone ||
-      home->failed || !home->load.nodes || !work->name || !work->namelen || work->namelen > 255 ||
-      !work->decode || !work->inode || work->inode >= FS_INODES || !work->generation)
+  if (!home || !(probe = home->home) || home->phase != OwnersDone || home->failed ||
+      !home->load.nodes || !home->load.read || !number || number >= FS_INODES || !generation)
     return -ERR_INVALID;
-  if (work->failed)
-    return work->failed;
   load = &home->load;
   if (load->read->fill.cache) {
     error = blkreadpoll(load->read, &status);
@@ -531,46 +526,64 @@ blkfindstep(Blkfind *work, Dirrecord *out)
     if (status == -EAGAIN)
       return 0;
     if (status)
-      return work->failed = probe->blk->stale ? -ERR_STALE : -EIO;
+      return *failed = probe->blk->stale ? -ERR_STALE : -EIO;
   }
   if (probe->blk->stale || probe->blk->ended ||
       probe->blk->info.geometry_generation != probe->generation)
-    return work->failed = -ERR_STALE;
-  node = &load->nodes[work->inode];
-  if (node->kind != VNODE_DIR || !node->links || node->generation != work->generation)
-    return work->failed = -ERR_STALE;
-  if (!work->loaded) {
-    error = loadinode(load, &home->scan, work->inode, &inode);
+    return *failed = -ERR_STALE;
+  node = &load->nodes[number];
+  if (node->kind != VNODE_DIR || !node->links || node->generation != generation)
+    return *failed = -ERR_STALE;
+  if (!*loaded) {
+    error = loadinode(load, &home->scan, number, &inode);
     if (error == -ERR_WOULD_BLOCK)
       return 0;
     if (error || inode.kind != node->kind || inode.links != node->links ||
-        inode.map->file.inode != work->inode || inode.map->file.generation != work->generation) {
+        inode.map->file.inode != number || inode.map->file.generation != generation) {
       load->pending = 0;
-      return work->failed = error ? error : -ERR_STATE;
+      return *failed = error ? error : -ERR_STATE;
     }
-    work->loaded = 1;
+    *loaded = 1;
   }
   file = &load->map.file;
-  if (work->offset > file->length)
-    return work->failed = -ERR_STATE;
-  if (work->offset == file->length) {
+  if (file->inode != number || file->generation != generation || offset > file->length)
+    return *failed = -ERR_STATE;
+  if (offset == file->length)
+    return 2;
+  offset -= offset % FS_BLOCK_BYTES;
+  *bytes = (u32) MIN(file->length - offset, FS_BLOCK_BYTES);
+  error = loadmapspan(file, &load->map, load->map.indirect ? &load->index : NULL, FS_DATA_START,
+                      home->scan.blocks, offset, *bytes, &span);
+  if (error || !span.first)
+    return *failed = -ERR_STATE;
+  error = blkreadview(load->read, load->cache, &home->scan, span.first, CACHE_META, load->bytes);
+  if (error == -ERR_WOULD_BLOCK)
+    return 0;
+  return error ? (*failed = error) : 1;
+}
+
+isize
+blkfindstep(Blkfind *work, Dirrecord *out)
+{
+  Dirrecord match;
+  isize     error;
+  u32       bytes;
+  if (!work || !out || !work->name || !work->namelen || work->namelen > 255 || !work->decode)
+    return -ERR_INVALID;
+  if (work->failed)
+    return work->failed;
+  error = dirread(work->home, work->inode, work->generation, work->offset, &work->loaded, &bytes,
+                  &work->failed);
+  if (error <= 0)
+    return error;
+  if (error == 2) {
     if (!work->found)
       return 2;
     *out = work->match;
     return 1;
   }
-  bytes = (u32) MIN(file->length - work->offset, FS_BLOCK_BYTES);
-  error = loadmapspan(file, &load->map, load->map.indirect ? &load->index : NULL, FS_DATA_START,
-                      home->scan.blocks, work->offset, bytes, &span);
-  if (error || !span.first)
-    return work->failed = -ERR_STATE;
-  error = blkreadview(load->read, load->cache, &home->scan, span.first, CACHE_META, load->bytes);
-  if (error == -ERR_WOULD_BLOCK)
-    return 0;
-  if (error)
-    return work->failed = error;
-  error = dirblockfind(home->load.nodes, load->bytes, bytes, work->decode, work->name,
-                       work->namelen, &match);
+  error = dirblockfind(work->home->load.nodes, work->home->load.bytes, bytes, work->decode,
+                       work->name, work->namelen, &match);
   if (error < 0 || (error && work->found))
     return work->failed = error < 0 ? error : -ERR_STATE;
   if (error) {
@@ -579,6 +592,28 @@ blkfindstep(Blkfind *work, Dirrecord *out)
   }
   work->offset += bytes;
   return 0;
+}
+
+isize
+blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
+{
+  isize result;
+  u32   bytes, within, start;
+  if (!work || !out || !name || !work->decode)
+    return -ERR_INVALID;
+  if (work->failed)
+    return work->failed;
+  result = dirread(work->home, work->inode, work->generation, work->offset, &work->loaded, &bytes,
+                   &work->failed);
+  if (result != 1)
+    return result;
+  start = within = (u32) (work->offset % FS_BLOCK_BYTES);
+  result = dirblocknext(work->home->load.nodes, work->home->load.bytes, bytes, work->decode,
+                        &within, out, name);
+  if (result < 0)
+    return work->failed = result;
+  work->offset += within - start;
+  return result;
 }
 
 isize

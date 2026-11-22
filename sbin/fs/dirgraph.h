@@ -46,6 +46,11 @@ isize dirgraphedge(Dirgraph *, u32 directory, u32 target, u32 generation, u32 ki
 /* Decode only a complete header. The walker checks bounds before inspecting
    the name and does not advance past malformed records. */
 isize dirgraphblock(Dirgraph *, Dirnames *, u32 directory, const u8 *, u32 bytes, Dirdecode);
+/* Iterate live entries in one stable block from zero or a cursor returned
+   by this function. One returns a normalized record and borrowed name;
+   zero reaches the block end. Error leaves all outputs unchanged. */
+isize dirblocknext(const Dirnode *, const u8 *block, u32 bytes, Dirdecode, u32 *offset, Dirrecord *,
+                   const u8 **name);
 /* Scan one directory block for an ordinary component. One means a valid
    match, zero means absent. A malformed record or second match is an error;
    out is written only after the whole block passes. */
