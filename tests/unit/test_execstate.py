@@ -43,10 +43,13 @@ RETIRE = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.POINTER(Owner), C.POINTER(Group))
 STUB = '''
 #include "private/syscall.h"
 #include "private/execmanifest.h"
+#include <abi/observe.h>
 #include <sys/channel.h>
 static u64 states[2], reasons[2], images[2], reads[2];
 static u64 checked, sent[5], checkstate;
 static isize senderror;
+static Handle childpid;
+static u64 childstate;
 void sample(u64 slot, u64 state, u64 reason, u64 image) {
   states[slot] = state; reasons[slot] = reason; images[slot] = image; reads[slot] = 0;
 }
@@ -63,8 +66,20 @@ isize __sys_copy(void *to, const void *from, u64 bytes) {
 }
 isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 image,
                     u64 *cookie, u64 *state, u64 *reason) {
-  (void) permit; (void) basis; (void) relation; (void) pid; (void) image;
-  (void) cookie; (void) state; (void) reason; return -ERR_NOSYS;
+  if (permit != 19 || handlekind(basis) != HANDLE_REQUEST || relation != OBS_CHILD ||
+      pid != childpid || image != 2) return -ERR_DENIED;
+  *state = childstate; *reason = childstate == OBS_ENDED ? OBS_ABORT : 0;
+  *cookie = childstate == OBS_PREPARING ? 71 : 0;
+  return 0;
+}
+isize forkobserve(u64 scenario, Fileowner *owner) {
+  Handle parent = ((u64) HANDLE_PROCESS << 59) | (1U << 16) | 2;
+  Ipcmsg call = {IPC_CALL, parent, ((u64) HANDLE_REQUEST << 59) | (1U << 16),
+                 {FS_FORK_PREPARE, 0, 1, 0}, 1};
+  childpid = parent + 1;
+  childstate = scenario == 2 ? OBS_ENDED : OBS_PREPARING;
+  return sysforkobserve(owner, 19, &call, scenario == 1 ? childpid + 1 : childpid,
+                        scenario == 3 ? 0 : 2);
 }
 isize ipc_rqcheck(Handle request, u64 *state) {
   checked = request; *state = checkstate; return 0;
@@ -137,6 +152,18 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.sysexecadvance.restype = C.c_int64
         cls.lib.claim.argtypes = [U, U, U, U, U, C.c_int64, C.POINTER(U)]
         cls.lib.claim.restype = C.c_int64
+        cls.lib.forkobserve.argtypes = [U, C.POINTER(Owner)]
+        cls.lib.forkobserve.restype = C.c_int64
+
+    def test_fork_observe_installs_only_a_verified_preparing_child(self):
+        owner = Owner()
+        for scenario in (1, 2, 3):
+            with self.subTest(scenario=scenario):
+                self.assertLess(self.lib.forkobserve(scenario, C.byref(owner)), 0)
+                self.assertEqual((owner.pid, owner.image, owner.cookie, owner.reason), (0, 0, 0, 0))
+        self.assertEqual(self.lib.forkobserve(0, C.byref(owner)), 0)
+        self.assertEqual((owner.image, owner.cookie, owner.reason), (2, 71, 0))
+        self.assertLess(self.lib.forkobserve(0, C.byref(owner)), 0)
 
     def test_retire_even_if_target_exited_without_claiming_but_not_after_abort(self):
         for reason in (1, 2):

@@ -59,6 +59,9 @@ isize sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *c
    dispatcher owns and shares one Fileowner per target image; use the normal
    owner read/close path to retire the cookie after dependent work ends. */
 isize sysexecobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 target);
+/* FORK_PREPARE: the original REQUEST proves the caller owns preparation of
+   this exact child image. No local state is installed on a rejected target. */
+isize sysforkobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, Handle child, u64 image);
 /* Use paired native observations to decide the fate of the prepared
    references. PENDING is never permission to release them, even after their
    deadline. ABORTED permits target-only rollback. ACTIVE and ENDED require
