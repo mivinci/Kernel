@@ -2,6 +2,7 @@
 #define _FS_READDISPATCH_H
 #include "file.h"
 #include "read.h"
+#define FS_GROW_APPEND UINT64_MAX
 
 typedef struct Fsreads Fsreads;
 struct Readjob
@@ -36,8 +37,10 @@ struct Fsreads
   /* On the first call snapshot the input and take any needed inode guard.
      Subsequent calls get NULL input and the original request state. Return
      zero while pending, a positive committed byte count, or a negative
-     business errno after drain. A committed result survives cancellation. */
-  isize (*grow)(void *, Readjob *, u64 state, u64 offset, const volatile u8 *input);
+     business errno after drain. For FS_GROW_APPEND, choose EOF under the
+     inode guard and report that starting offset with the committed result.
+     A committed result survives cancellation. */
+  isize (*grow)(void *, Readjob *, u64 state, u64 offset, const volatile u8 *input, u64 *start);
 };
 
 /* The caller has claimed the slot and checked original request state. */

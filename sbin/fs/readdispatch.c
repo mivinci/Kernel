@@ -54,15 +54,18 @@ grow(Fsreads *reads, Readjob *job, u64 state, u64 offset, const volatile u8 *inp
   Msg   reply = {{0, job->slot.seq, 0, 0}};
   isize error;
   if (!job->growdone) {
-    isize result = reads->grow(reads->backend, job, state, offset, job->growing ? NULL : input);
+    u64   start = offset;
+    isize result =
+        reads->grow(reads->backend, job, state, offset, job->growing ? NULL : input, &start);
     job->growing = 1;
     if (!result)
       return -ERR_WOULD_BLOCK;
     if (result > 0) {
-      if ((u64) result > job->slot.args[1] || (u64) result > FS_FILE_BYTES - offset)
+      if ((offset != FS_GROW_APPEND && start != offset) || start >= FS_FILE_BYTES ||
+          (u64) result > job->slot.args[1] || (u64) result > FS_FILE_BYTES - start)
         return -ERR_STATE;
       if (!(job->slot.args[3] & FS_IO_POSITIONAL))
-        job->file->position = offset + (u64) result;
+        job->file->position = start + (u64) result;
     }
     job->growresult = result;
     job->growdone = 1;
@@ -103,15 +106,16 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
     Writeplan plan;
     u64       state,
         offset = job->slot.args[3] & FS_IO_POSITIONAL ? job->slot.args[0] : job->file->position;
+    int append = (job->file->flags & FS_OPEN_APPEND) && !(job->slot.args[3] & FS_IO_POSITIONAL);
     status = ipc_rqcheck(job->call.request, &state);
     if (status)
       return status;
     if (job->growing ||
         (state == RQ_CHECK_LIVE && (job->slot.args[3] & FS_IO_POSITIONAL || !job->slot.args[0]) &&
-         !loadmapwrite(job->map, job->index, job->first, (u32) job->cache->blocks, offset,
-                       job->slot.args[1], &plan) &&
-         (!plan.block || plan.length != job->map->file.length))) {
-      status = grow(reads, job, state, offset, page + job->slot.args[2]);
+         (append || (!loadmapwrite(job->map, job->index, job->first, (u32) job->cache->blocks,
+                                   offset, job->slot.args[1], &plan) &&
+                     (!plan.block || plan.length != job->map->file.length))))) {
+      status = grow(reads, job, state, append ? FS_GROW_APPEND : offset, page + job->slot.args[2]);
       goto done;
     }
   }
@@ -173,7 +177,7 @@ fsdatastart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
     u64 flags = slot->args[3];
     if ((flags & FS_IO_APPEND) && (!(file->flags & FS_OPEN_APPEND) || (flags & FS_IO_POSITIONAL)))
       return reject(link, call, -EINVAL);
-    if ((file->flags & FS_OPEN_APPEND) && !(flags & FS_IO_POSITIONAL))
+    if ((file->flags & FS_OPEN_APPEND) && !(flags & FS_IO_POSITIONAL) && (!reads || !reads->grow))
       return reject(link, call, -ENOSYS);
   }
   return reads ? enqueue(reads, files, file, link, call, slot) : reject(link, call, -ENOSYS);

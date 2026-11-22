@@ -1497,6 +1497,7 @@ struct Openfixture
   Cache     cache;
   Readfetch fetch;
   Handle    growth;
+  u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
 };
 
@@ -1666,17 +1667,24 @@ openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
 }
 
 static isize
-openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile u8 *input)
+openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile u8 *input,
+             u64 *start)
 {
   Openfixture *fixture = context;
-  CHECK(state == RQ_CHECK_LIVE && offset == 20 && job->slot.args[1] == 2);
+  CHECK(state == RQ_CHECK_LIVE && (offset == 20 || offset == FS_GROW_APPEND) &&
+        job->slot.args[1] == 2);
   if (input) {
     CHECK(!fixture->growth && input[0] == 'W' && !input[1]);
     fixture->growth = job->call.request;
+    CHECK(!loadwrite(job->loads, job->map->file.inode, &fixture->guard));
+    fixture->growat = offset == FS_GROW_APPEND ? fixture->length : offset;
     return 0;
   }
   CHECK(fixture->growth == job->call.request);
   fixture->growth = 0;
+  *start = fixture->growat;
+  fixture->length = *start + 2;
+  CHECK(!loadunwrite(job->loads, fixture->guard));
   return 2;
 }
 
@@ -1685,7 +1693,7 @@ openlength(void *context, const Vnode *node, u64 *length)
 {
   Openfixture *fixture = context;
   CHECK(node == &fixture->file);
-  *length = 20;
+  *length = fixture->length;
   return 0;
 }
 
@@ -1851,6 +1859,7 @@ openserver(const Bootview *boot)
   const Loadfile executable = {2, 1, 1, 20};
   u64            load;
   openwritestage();
+  fixture.length = 20;
   fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 16));
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
@@ -1911,9 +1920,10 @@ openserver(const Bootview *boot)
         !fsstep(&fs) && !file.node);
   CHECK(!fsstep(&fs) && file.access == (VACCESS_R | VACCESS_W) &&
         file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
-        file.refs == 2 && !fsstep(&fs) && !file.position && !fsstep(&fs) && !file.position &&
-        !fsstep(&fs) && !file.position && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) &&
-        !file.node && !file.refs &&
+        file.refs == 2 && !fsstep(&fs) && !file.position && fixture.growth && !fsstep(&fs) &&
+        file.position == 24 && fixture.growth && !fsstep(&fs) && file.position == 26 &&
+        !fixture.growth && !fsstep(&fs) && file.position == 26 && !fsstep(&fs) && file.refs == 1 &&
+        !fsstep(&fs) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -2011,9 +2021,10 @@ open:
     dup.reference = refcall(&work, &cache, FS_DUPREF, key);
     CHECK(dup.reference && dup.reference != key.reference);
     if (append) {
-      openwritecheck(dup.session, 0, 0, -ENOSYS, 0);
-      openwritecheck(key.session, 0, FS_IO_APPEND, -ENOSYS, 0);
+      openwritecheck(dup.session, 0, 0, 0, 2);
+      openwritecheck(key.session, 0, FS_IO_APPEND, 0, 2);
       openwritecheck(dup.session, 3, FS_IO_POSITIONAL, 0, 2);
+      openseek(key.session, FS_SEEK_CUR, 0, 0, 26);
       CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
       pipeiotrace[0] = 7;
       return;
