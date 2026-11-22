@@ -61,8 +61,10 @@ drain(void *context, Filelink *link)
 isize
 fsstep(Fsservice *fs)
 {
-  Ipcmsg input;
-  isize  error;
+  Ipcmsg     input;
+  isize      error;
+  u32        again = 0;
+  Fsreclaim *reclaim = fs->reclaim;
   error = fsloadpump(fs->loads);
   if (error)
     return error;
@@ -81,18 +83,27 @@ fsstep(Fsservice *fs)
   error = pipepump(&fs->pipes);
   if (error)
     return error;
-  if (fs->reclaim && fs->reclaim->work && fs->reclaim->work->txid) {
-    error = reclaimstep(fs->reclaim->work, fs->reclaim->submit, fs->reclaim->context);
-    if (error)
-      return error < 0 ? error : 0;
+  if (reclaim && reclaim->work) {
+    if (!reclaim->work->txid && reclaim->scan && reclaim->scan->left) {
+      error = reclaimscanstep(reclaim->scan, reclaim->work, reclaim->candidate, reclaim->context);
+      if (error < 0)
+        return error;
+    }
+    if (reclaim->work->txid) {
+      error = reclaimstep(reclaim->work, reclaim->submit, reclaim->context);
+      if (error < 0)
+        return error;
+      again = error == 1;
+    } else
+      again = reclaim->scan && reclaim->scan->left;
   }
   error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
                        (fs->loads ? fs->loads->events : 0) |
                        (fs->pipes.reads ? fs->pipes.reads->events : 0) |
                        (fs->reclaim ? fs->reclaim->events : 0),
-                   0, &input);
+                   again ? RECV_NONBLOCK : 0, &input);
   if (error)
-    return error == -ERR_INTERRUPTED ? 0 : error;
+    return error == -ERR_INTERRUPTED || (again && error == -ERR_WOULD_BLOCK) ? 0 : error;
   if (input.kind == IPC_EVENT) {
     if (input.words[0] & EVENT_LIFE) {
       error = sysfilelinksweep(fs->links, fs->nlinks, drain, fs);

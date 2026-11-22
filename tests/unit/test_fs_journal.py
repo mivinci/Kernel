@@ -32,6 +32,18 @@ class Journal(C.Structure):
         ('reserved',C.c_uint32*2)]
 
 
+class ReclaimScan(C.Structure):
+    _fields_ = [('next', C.c_uint32), ('left', C.c_uint32)]
+
+
+class ReclaimTx(C.Structure):
+    _fields_ = [(name, C.c_void_p) for name in ('journal', 'cache', 'batch', 'live', 'index',
+                                               'allocation')] + [('txid', C.c_uint64)]
+
+
+Candidate = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.c_uint32)
+
+
 class FsJournalTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -50,10 +62,47 @@ class FsJournalTests(unittest.TestCase):
                         'journalnext':[jp,ip],'journalcomplete':[jp,ip,C.c_uint32],
                         'journalstop':[jp],'journalrelease':[jp]}
             for name,args in signatures.items():getattr(lib,name).argtypes=args;getattr(lib,name).restype=C.c_int64
+            lib.reclaimscanwake.argtypes = [C.POINTER(ReclaimScan)]
+            lib.reclaimscanwake.restype = None
+            lib.reclaimscanstep.argtypes = [C.POINTER(ReclaimScan), C.POINTER(ReclaimTx),
+                                            Candidate, C.c_void_p]
+            lib.reclaimscanstep.restype = C.c_int64
             cls.libs.append(lib)
 
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
+
+    def test_reclaim_scan_bounds_work_and_revisits_busy_inode_on_wake(self):
+        for lib in self.libs:
+            scan, txn = ReclaimScan(), ReclaimTx()
+            seen, ready = [], False
+
+            @Candidate
+            def candidate(_, inode):
+                seen.append(inode)
+                if inode == 2 and ready:
+                    txn.txid = 10
+                    return 1
+                return -7 if inode == 2 else 0
+
+            def step():
+                return lib.reclaimscanstep(C.byref(scan), C.byref(txn), candidate, None)
+
+            lib.reclaimscanwake(C.byref(scan))
+            self.assertEqual(step(), 0)
+            self.assertEqual(seen, list(range(1, 33)))
+            while scan.left:
+                self.assertEqual(step(), 0)
+            self.assertEqual(seen, list(range(1, 1024)))
+            ready = True
+            self.assertEqual(step(), 0)
+            lib.reclaimscanwake(C.byref(scan))
+            self.assertEqual(step(), 1)
+            self.assertEqual(seen[-2:], [1, 2])
+            self.assertEqual(step(), -7)
+            txn.txid = 0
+            self.assertEqual(step(), 1)
+            self.assertEqual(seen[-1], 2)
 
     def init(self,lib,meta=2,data=2,last=7):
         self.lib=lib;self.journal=Journal();self.j=C.byref(self.journal)

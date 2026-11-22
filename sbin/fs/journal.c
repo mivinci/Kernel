@@ -491,6 +491,39 @@ reclaimstep(Reclaimtx *work, isize (*submit)(void *, const Journalio *, u64, u32
   return result == -ERR_BUSY ? 0 : result ? result : 1;
 }
 
+void
+reclaimscanwake(Reclaimscan *scan)
+{
+  if (!scan->next)
+    scan->next = FS_ROOT;
+  scan->left = FS_INODES - 1;
+}
+
+isize
+reclaimscanstep(Reclaimscan *scan, Reclaimtx *work, isize (*candidate)(void *, u32), void *context)
+{
+  u32   count, inode;
+  isize result;
+  if (!scan || !work || !candidate || scan->next >= FS_INODES || scan->left >= FS_INODES ||
+      (scan->left && !scan->next))
+    return -ERR_INVALID;
+  if (work->txid)
+    return -ERR_BUSY;
+  for (count = 0; scan->left && count < 32; count++) {
+    inode = scan->next;
+    result = candidate(context, inode);
+    if (work->txid)
+      return result == 1 ? 1 : -ERR_STATE;
+    if (result > 0)
+      return -ERR_STATE;
+    if (result < 0 && result != -ERR_BUSY && result != -ERR_WOULD_BLOCK)
+      return result;
+    scan->next = inode + 1 == FS_INODES ? FS_ROOT : inode + 1;
+    scan->left--;
+  }
+  return 0;
+}
+
 static int
 shrinkmatch(const Loadmap *live, const Loadmap *staged, u64 length)
 {

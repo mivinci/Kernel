@@ -13,6 +13,8 @@ struct Fsreclaim
   u64        events;
   void      *context;
   isize (*submit)(void *, const Journalio *, u64, u32);
+  Reclaimscan *scan;
+  isize (*candidate)(void *, u32 inode);
 };
 struct Fsservice
 {

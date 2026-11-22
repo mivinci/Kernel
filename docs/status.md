@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage536：回收扫描每轮最多检查 32 个 inode，忙项可在唤醒后重访。双架构 QEMU `pipeio` 和 44 项主机测试通过；生产候选回调待接。
 - stage535：FS 循环可推进已启动的尾块回收批次；双架构 QEMU `pipeio`、`virtiodev` 和 43 项 FS 主机测试通过。生产候选扫描待接。
 - stage534：回收批次合并缓存与独立 I/O 占用。双架构 QEMU `virtiodev` 和 43 项 FS 主机测试通过；后台调度待接。
 - stage533：截短回收可以丢弃已不在 EOF 内、也无引用或 I/O 的脏数据块；双架构 QEMU `pipeio` 和 43 项 FS 主机测试通过。

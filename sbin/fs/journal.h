@@ -32,10 +32,11 @@ struct Loadindex;
 struct Blockmap;
 struct Cache;
 struct Reclaim;
-typedef struct Mapmeta   Mapmeta;
-typedef struct Growth    Growth;
-typedef struct Reclaimtx Reclaimtx;
-typedef struct Shrink    Shrink;
+typedef struct Mapmeta     Mapmeta;
+typedef struct Growth      Growth;
+typedef struct Reclaimtx   Reclaimtx;
+typedef struct Reclaimscan Reclaimscan;
+typedef struct Shrink      Shrink;
 struct Journalmark
 {
   u64 txid;
@@ -93,6 +94,10 @@ struct Shrink
   const struct Loadmap *staged;
   u64                   txid, length;
 };
+struct Reclaimscan
+{
+  u32 next, left;
+};
 struct Journal
 {
   u64          blocks, last, txid, serial;
@@ -149,6 +154,13 @@ isize reclaimpublish(Reclaimtx *);
    Return one on publication, zero while awaiting I/O or cache ownership,
    or an error. On error retain the batch for the volume owner to recover. */
 isize reclaimstep(Reclaimtx *, isize (*submit)(void *, const Journalio *, u64, u32), void *);
+/* Schedule a volatile sweep from the current position. The owner calls this
+   at mount and after changes that can make previously skipped inodes ready. */
+void reclaimscanwake(Reclaimscan *);
+/* Examine up to 32 inode numbers; stop after starting one transaction.
+   Candidate returns one only with a started batch, zero for no work, BUSY
+   or WOULD_BLOCK to skip for this sweep, or another error to stop. */
+isize reclaimscanstep(Reclaimscan *, Reclaimtx *, isize (*candidate)(void *, u32), void *);
 /* Prepare the next batch from the committed bitmap and current cache state.
    Add any independent transport ownership in io. Hold the inode and volume
    writer guards through encoding and submission. As with loadreclaim, zero
