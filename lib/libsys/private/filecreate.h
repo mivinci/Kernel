@@ -139,6 +139,10 @@ isize sysfilecreateended(Filepool *pool, Connwork *work, Conncache *cache, const
    must first finish or be explicitly unprepared. */
 isize sysfilecreatebackendended(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                                 Connwork *backend, Connclaim claim);
+/* After logical revocation/termination and Rctx handoff, clean this exact
+   ATTACH before releasing the creator. The caller holds signals blocked. */
+isize sysfilecreateattachdiscard(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                                 Connwork *backend, Connclaim claim, Handle space, Bootmap *map);
 /* ACKED + RESOLVED only. Moves result IDs and the old source pin once; caller
    publishes/drops those IDs and returns the source pin separately. closing=1
    leaves ownership in the pool's close anchors and returns zero result IDs. */

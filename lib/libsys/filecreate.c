@@ -883,6 +883,44 @@ sysfilecreatebackendended(Filepool *pool, Connwork *work, Conncache *cache, cons
   return 0;
 }
 isize
+sysfilecreateattachdiscard(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                           Connwork *backend, Connclaim claim, Handle space, Bootmap *map)
+{
+  Createop  *create;
+  Connentry  entry;
+  Slotop    *op;
+  Bootstrap *boot;
+  isize      error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (!backend || !external(pool, work, cache, map, sizeof(*map)) ||
+      !separate(backend, sizeof(*backend), key, sizeof(*key)) ||
+      !separate(backend, sizeof(*backend), map, sizeof(*map)) ||
+      !separate(key, sizeof(*key), map, sizeof(*map)))
+    return -ERR_INVALID;
+  op = &work->state.operations[key->lease.slot];
+  if (op->opcode != FS_OPEN || op->kind != IPC_RESOURCE_REPLY || op->phase != SYSOP_ACKED ||
+      create->phase != SYSFILE_CREATE_RESOLVED ||
+      (create->disposition != SYSFILE_RESULT_REVOKED &&
+       create->disposition != SYSFILE_RESULT_ENDED))
+    return -ERR_STATE;
+  error = backendentry(pool, work, cache, create, backend, &entry);
+  if (error)
+    return error;
+  boot = &backend->state.bootstrap;
+  if (boot->opcode != FS_ATTACH || !sameclaim(boot->claim, claim) || claim.owner != op->file)
+    return -ERR_STALE;
+  if (entry.connid) {
+    if (map->mapped || map->verified || map->address || map->bytes || map->connid ||
+        map->serverimage)
+      return -ERR_INVALID;
+    return entry.state == SYSCONN_READY ? sysconnworkreuseabort(backend, cache, claim)
+                                        : sysconnworkbootended(backend, cache, claim);
+  }
+  return sysconnworkdiscard(backend, cache, claim, space, map);
+}
+
+isize
 sysfilepipeinstall(Fdtable *table, const Fdtag tags[2], const u64 files[2], int *userfds)
 {
   int   numbers[2];

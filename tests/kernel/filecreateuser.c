@@ -2636,13 +2636,16 @@ reuseabortclient(const Bootview *boot)
     CHECK((!variant && !extra && sysconnworkreuse(&backend_work, &cache, attach) == -ERR_PEER) ||
           (variant && extra && extra != memory &&
            sysconnworkreuse(&backend_work, &cache, attach) == -ERR_INVALID));
+    CHECK(sysfilecreateattachdiscard(&pool, &work, &cache, &key, &backend_work, attach, space,
+                                     &mapped) == -ERR_STATE);
     CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &abort, &call));
     bootstrap(&work.state.bootstrap, abort, call, CALL_CONTROL);
     CHECK(!sysfilecreaterevoked(&pool, &work, &cache, &key, abort));
+    CHECK(!sysfilecreateattachdiscard(&pool, &work, &cache, &key, &backend_work, attach, space,
+                                      &mapped));
     zero(files, sizeof(files));
     CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] &&
-          !source && !sysconnworkreuseabort(&backend_work, &cache, attach) &&
-          !backend_work.state.bootstrap.state && !backend_work.state.ended &&
+          !source && !backend_work.state.bootstrap.state && !backend_work.state.ended &&
           backend_work.state.memory == memory && backend_work.state.call == retained &&
           backend_work.state.map.address == address && backend_work.state.map.verified &&
           *(const volatile u64 *) (uintptr_t) address == FS_CONN_MAGIC &&
@@ -2693,11 +2696,17 @@ mapdiscardclient(const Bootview *boot)
         !sysfilecreaterevokeprepare(&pool, &work, &cache, &key, retained, 0, &abort, &call));
   bootstrap(&work.state.bootstrap, abort, call, CALL_CONTROL);
   CHECK(!sysfilecreaterevoked(&pool, &work, &cache, &key, abort));
+  retry = attach;
+  retry.owner++;
+  CHECK(sysfilecreateattachdiscard(&pool, &work, &cache, &key, &backend_work, retry, space,
+                                   &mapped) == -ERR_STALE &&
+        mapped.mapped && backend_work.state.bootstrap.resource == memory &&
+        backend_work.state.call == retained &&
+        !sysfilecreateattachdiscard(&pool, &work, &cache, &key, &backend_work, attach, space,
+                                    &mapped));
   zero(files, sizeof(files));
   CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source &&
-        backend_work.state.bootstrap.resource == memory && backend_work.state.call == retained &&
-        !sysconnworkdiscard(&backend_work, &cache, attach, space, &mapped) && !mapped.mapped &&
-        !backend_work.state.bootstrap.state && !backend_work.state.ended &&
+        !mapped.mapped && !backend_work.state.bootstrap.state && !backend_work.state.ended &&
         backend_work.state.call == retained && !sysconnview(&cache, tag, &entry) &&
         entry.state == SYSCONN_DRAINING && !entry.owner &&
         sysconnbegin(&cache, tag, 999, &retry) == -ERR_PEER &&
