@@ -1,6 +1,7 @@
 #ifndef _FS_BLKREAD_H
 #define _FS_BLKREAD_H
 #include "blk.h"
+#include "access.h"
 #include "blklog.h"
 #include "cache.h"
 #include "dirgraph.h"
@@ -146,10 +147,13 @@ struct Blkfind
 isize blkfindstep(Blkfind *, Dirrecord *);
 struct Blklookup
 {
-  Blkowners *home;
-  Dirdecode  decode;
-  u64        mount;
-  void      *nodes;
+  Blkowners      *home;
+  const Dirgraph *graph;
+  Dirdecode       decode;
+  u64             mount;
+  void           *nodes;
+  const Vcred    *cred;
+  isize (*mode)(void *, const Vnode *, u32 *owner, u32 *group, u32 *mode);
   isize (*acquire)(void *, const Vnode *, Vnode **);
   Blkfind find;
   char    name[255];
@@ -158,6 +162,12 @@ struct Blklookup
    mount identities, checks directory search permission separately and
    supplies acquire to transfer one held canonical vnode on success. */
 isize blklookup(void *, const Vnode *, const char *, u32, Vnode **);
+/* Vwalkops.search. cred is the request snapshot from vrequestpath; mode
+   supplies current permission metadata for the exact held vnode. */
+isize blksearch(void *, const Vnode *);
+/* Vwalkops.parent for a stable, validated directory graph. The namespace
+   owns root clamping, mount crossing and invalidation on directory mutation. */
+isize blkparent(void *, const Vnode *, Vnode **);
 /* Stop and drain before dropping a walk with an outstanding lookup. */
 isize blklookupcancel(Blklookup *);
 struct Blkmount

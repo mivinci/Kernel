@@ -650,6 +650,53 @@ blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vn
   return work->acquire(work->nodes, &identity, out);
 }
 
+isize
+blksearch(void *context, const Vnode *directory)
+{
+  const Blklookup *work = context;
+  u32              owner, group, mode;
+  isize            error;
+  if (!work || !work->cred || !work->mode || !directory)
+    return -EINVAL;
+  if (!work->mount || directory->mount != work->mount || !directory->number ||
+      directory->number >= FS_INODES || !directory->generation)
+    return -ESTALE;
+  if (directory->kind != VNODE_DIR)
+    return -ENOTDIR;
+  error = work->mode(work->nodes, directory, &owner, &group, &mode);
+  return error ? error : vaccess(work->cred, owner, group, mode, VACCESS_X, 1);
+}
+
+isize
+blkparent(void *context, const Vnode *directory, Vnode **out)
+{
+  const Blklookup *work = context;
+  const Dirgraph  *graph;
+  const Dirnode   *node;
+  Vnode            identity;
+  u32              parent;
+  if (!work || !(graph = work->graph) || !graph->nodes || !work->acquire || !directory || !out)
+    return -EINVAL;
+  if (!work->mount || directory->mount != work->mount || !directory->number ||
+      directory->number >= FS_INODES || !directory->generation)
+    return -ESTALE;
+  if (directory->kind != VNODE_DIR)
+    return -ENOTDIR;
+  if (graph->failed || graph->next != FS_INODES)
+    return -EIO;
+  node = &graph->nodes[directory->number];
+  if (!node->links || node->kind != VNODE_DIR || node->generation != directory->generation)
+    return -ESTALE;
+  parent = directory->number == FS_ROOT ? FS_ROOT : graph->parent[directory->number];
+  if (!parent || parent >= FS_INODES)
+    return -EIO;
+  node = &graph->nodes[parent];
+  if (!node->links || node->kind != VNODE_DIR || !node->generation)
+    return -EIO;
+  identity = (Vnode){work->mount, parent, node->generation, VNODE_DIR};
+  return work->acquire(work->nodes, &identity, out);
+}
+
 enum
 {
   MountProbe,

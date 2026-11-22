@@ -1324,6 +1324,7 @@ struct Lookupnodes
 {
   Vmounts *mounts;
   Vnode    file;
+  Vnode   *root;
 };
 
 static isize
@@ -1341,32 +1342,30 @@ lookupdrop(void *context, Vnode *node)
 }
 
 static isize
-lookupsearch(void *context, const Vnode *node)
+lookupmode(void *context, const Vnode *node, u32 *owner, u32 *group, u32 *mode)
 {
-  (void) context;
-  return node->kind == VNODE_DIR ? 0 : -ENOTDIR;
+  Lookupnodes *nodes = context;
+  if (node->mount != nodes->root->mount ||
+      (!vnodesame(node, nodes->root) && (node->number != 2 || node->generation != 7)))
+    return -ESTALE;
+  *owner = 123;
+  *group = 456;
+  *mode = 0710;
+  return 0;
 }
 
 static isize
 lookupacquire(void *context, const Vnode *identity, Vnode **out)
 {
   Lookupnodes *nodes = context;
+  Vnode       *node = vnodesame(identity, nodes->root) ? nodes->root : &nodes->file;
   isize        error;
-  if (!vnodesame(identity, &nodes->file) || identity->kind != nodes->file.kind)
+  if (!vnodesame(identity, node) || identity->kind != node->kind)
     return -ESTALE;
   error = vmounthold(nodes->mounts, identity->mount);
   if (!error)
-    *out = &nodes->file;
+    *out = node;
   return error;
-}
-
-static isize
-lookupnoparent(void *context, const Vnode *node, Vnode **out)
-{
-  (void) context;
-  (void) node;
-  (void) out;
-  return -EIO;
 }
 
 static isize
@@ -1631,14 +1630,17 @@ blkclient(const Bootview *boot, Handle call)
   {
     static Vwalk   walk;
     char           name[60];
-    Lookupnodes    targets = {&mounts, {root.mount, 34, 1, VNODE_FILE}};
+    Lookupnodes    targets = {&mounts, {root.mount, 34, 1, VNODE_FILE}, &root};
+    Vcred          cred = {124, 457};
     Blklookup      lookup = {.home = &home,
+                             .graph = &dirs.graph,
                              .decode = blkdecodedir,
                              .mount = root.mount,
                              .nodes = &targets,
+                             .cred = &cred,
+                             .mode = lookupmode,
                              .acquire = lookupacquire};
-    const Vwalkops ops = {lookuphold, lookupdrop,     lookupsearch,
-                          blklookup,  lookupnoparent, lookupnolink};
+    const Vwalkops ops = {lookuphold, lookupdrop, blksearch, blklookup, blkparent, lookupnolink};
     Vnode         *found = NULL;
     isize          step = VWALK_MORE;
     for (i = 0; i + 1 < sizeof(name); i++)
@@ -1646,7 +1648,15 @@ blkclient(const Bootview *boot, Handle call)
     name[i] = 0;
     REQUIRE(!cacheinit(&cache, &storage, 1, 256) &&
                 !vwalkinit(&walk, &mounts, &ops, &lookup, &root, &root, name, sizeof(name), 1),
-            473);
+            480);
+    for (i = 0; i < 4 && step == VWALK_MORE; i++) {
+      step = vwalkstep(&walk, &found);
+      REQUIRE(!found && !lookup.find.inode && !blk.rpc, 481);
+    }
+    REQUIRE(step == -EACCES && !mounts.entries[0].uses, 482);
+    cred.gid = 456;
+    step = VWALK_MORE;
+    REQUIRE(!vwalkinit(&walk, &mounts, &ops, &lookup, &root, &root, name, sizeof(name), 1), 473);
     for (i = 0; i < 24 && (step == VWALK_MORE || step == VWALK_WAIT); i++) {
       REQUIRE(!found, 473);
       step = vwalkstep(&walk, &found);
@@ -1657,6 +1667,28 @@ blkclient(const Bootview *boot, Handle call)
                 mounts.entries[0].uses == 1,
             475);
     lookupdrop(&lookup, found);
+    {
+      Vnode child = {root.mount, 2, 7, VNODE_DIR};
+      found = NULL;
+      dirs.graph.next = 0;
+      nodes[2] = (Dirnode){7, VNODE_DIR, 1};
+      REQUIRE(!dirgraphedge(&dirs.graph, FS_ROOT, 2, 7, VNODE_DIR) &&
+                  blkparent(&lookup, &child, &found) == -EIO && !found,
+              477);
+      for (i = 0; i < FS_INODES / 32; i++)
+        REQUIRE(dirgraphstep(&dirs.graph) == (i == FS_INODES / 32 - 1), 477);
+      child.generation++;
+      REQUIRE(blkparent(&lookup, &child, &found) == -ESTALE && !found && !mounts.entries[0].uses,
+              478);
+      child.generation--;
+      REQUIRE(!vwalkinit(&walk, &mounts, &ops, &lookup, &root, &child, "../..", 6, 1), 479);
+      for (i = 0, step = VWALK_MORE; i < 12 && step == VWALK_MORE; i++)
+        step = vwalkstep(&walk, &found);
+      REQUIRE(!step && found == &root && !blk.rpc && mounts.entries[0].uses == 1, 479);
+      lookupdrop(&lookup, found);
+      nodes[2] = (Dirnode){0};
+      dirs.graph.parent[2] = dirs.graph.incoming[2] = dirs.graph.reach[2] = 0;
+    }
   }
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;

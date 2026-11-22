@@ -440,6 +440,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/blk.c', 'vdev-fs-blk'),
         compile_adoption(ROOT/'sbin/fs/blklog.c', 'vdev-fs-blklog'),
         compile_adoption(ROOT/'sbin/fs/blkread.c', 'vdev-fs-blkread'),
+        compile_adoption(ROOT/'sbin/fs/access.c', 'vdev-fs-access'),
         compile_adoption(ROOT/'sbin/fs/dirgraph.c', 'vdev-fs-dirgraph'),
         compile_adoption(ROOT/'sbin/fs/mount.c', 'vdev-fs-mount'),
         compile_adoption(ROOT/'sbin/fs/walk.c', 'vdev-fs-walk'),
