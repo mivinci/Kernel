@@ -9,7 +9,10 @@
 #include <sys/channel.h>
 #include <time.h>
 #include <signal.h>
+#include <fcntl.h>
 #include "private/libc.h"
+#include "private/pathsearch.h"
+#include "private/spawnfiles.h"
 #include "private/syscall.h"
 #include "private/timer.h"
 #include "private/virtio/ring.h"
@@ -28,6 +31,111 @@ int vwalkusercheck(void);
     if (!(c))                                                                                      \
       _exit(n);                                                                                    \
   } while (0)
+
+static int
+spawnfile(void *context, const Spawnaction *action)
+{
+  u32 *step = context;
+  switch ((*step)++) {
+  case 0:
+    REQUIRE(action->kind == SPAWNFILE_OPEN && action->fd == 4 && !strcmp(action->path, "log") &&
+                action->flags == (O_CREAT | O_WRONLY) && action->mode == 0600,
+            296);
+    return 0;
+  case 1:
+    REQUIRE(action->kind == SPAWNFILE_DUP2 && action->fd == 4 && action->target == 1, 297);
+    return EACCES;
+  default:
+    return EIO;
+  }
+}
+
+static int
+spawncandidate(void *context, const char *path)
+{
+  u32 *step = context;
+  if (!(*step)++) {
+    REQUIRE(!strcmp(path, "/bin/echo"), 298);
+    return EACCES;
+  }
+  REQUIRE(!strcmp(path, "echo"), 299);
+  return 0;
+}
+
+typedef struct Spawnfixture Spawnfixture;
+struct Spawnfixture
+{
+  Fdtable  table;
+  Filepool pool;
+  u64      opened;
+};
+
+static int
+spawnopen(void *context, const char *path, int flags, mode_t mode, u64 *file)
+{
+  Spawnfixture *fixture = context;
+  Conntag       connection = {1, 0, 0};
+  REQUIRE(!strcmp(path, "log") && flags == O_CLOEXEC && mode == 0 &&
+              !sysfilerefnew(&fixture->pool, fixture->pool.self, connection, 6, 7, 0, file),
+          303);
+  fixture->opened = *file;
+  return 0;
+}
+
+static void
+spawnchildcheck(void)
+{
+  Spawnfixture              *fixture = malloc(sizeof(*fixture));
+  posix_spawn_file_actions_t actions;
+  Connpeer                   self = {1, 1};
+  Conntag                    connection = {1, 0, 0};
+  Fdview                     fd, old;
+  Fileref                    ref;
+  u64                        inherited;
+  REQUIRE(fixture, 304);
+  sysfdinit(&fixture->table);
+  REQUIRE(
+      !sysfilerefinit(&fixture->pool, self) &&
+          !sysfilerefnew(&fixture->pool, self, connection, 4, 5, 0, &inherited) &&
+          !sysfdobserve(&fixture->table, 4, &fd) &&
+          !sysfdreplace(&fixture->table, fd.tag, inherited, FD_CLOEXEC, &old) &&
+          !posix_spawn_file_actions_init(&actions) &&
+          !posix_spawn_file_actions_adddup2(&actions, 4, 1) &&
+          !posix_spawn_file_actions_adddup2(&actions, 4, 4) &&
+          !posix_spawn_file_actions_addopen(&actions, 1, "log", O_CLOEXEC, 0) &&
+          !posix_spawn_file_actions_addclose(&actions, 7) &&
+          !spawnfilesprepare(&actions, &fixture->table, &fixture->pool, self, spawnopen, fixture),
+      305);
+  REQUIRE(!sysfdobserve(&fixture->table, 1, &fd) && fd.tag.state == SYSFD_FREE &&
+              !sysfdobserve(&fixture->table, 4, &fd) && fd.file == inherited && !fd.flags &&
+              !sysfilerefview(&fixture->pool, self, inherited, &ref) && ref.aliases == 1 &&
+              !sysfilerefview(&fixture->pool, self, fixture->opened, &ref) &&
+              ref.state == SYSFILE_REF_CLOSING && !posix_spawn_file_actions_destroy(&actions),
+          306);
+  free(fixture);
+}
+
+static void
+spawncheck(void)
+{
+  posix_spawn_file_actions_t actions;
+  static char                candidate[PATHSEARCH_BYTES];
+  char                       path[] = "log";
+  u32                        step = 0;
+  errno = EDOM;
+  REQUIRE(!posix_spawn_file_actions_init(&actions) &&
+              posix_spawn_file_actions_addclose(&actions, -1) == EBADF &&
+              !posix_spawn_file_actions_addopen(&actions, 4, path, O_CREAT | O_WRONLY, 0600) &&
+              !posix_spawn_file_actions_adddup2(&actions, 4, 1) &&
+              !posix_spawn_file_actions_addclose(&actions, 4),
+          300);
+  path[0] = 'x';
+  REQUIRE(spawnfilesapply(&actions, spawnfile, &step) == EACCES && step == 2 &&
+              !posix_spawn_file_actions_destroy(&actions) && errno == EDOM,
+          301);
+  step = 0;
+  REQUIRE(!pathsearch("echo", "/bin:", candidate, spawncandidate, &step) && step == 2, 302);
+}
 
 static void
 pathwalkcheck(void)
@@ -822,6 +930,8 @@ main(int argc, char **argv)
   runtime_trace[16] = envusercheck(&view);
   runtime_trace[17] = timecheck();
   if (runtime_trace[4] == 1) {
+    spawncheck();
+    spawnchildcheck();
     timercheck();
     sleepcheck();
     pipecheck();

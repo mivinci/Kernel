@@ -20,6 +20,8 @@
 
 ## 最新验证
 
+- `posix_spawnp` 和 sh 后续可共用私有 PATH 搜索：4 项主机测试覆盖候选顺序和错误选择，双架构 SDK 构建通过。实际执行接线待做。
+- spawn 文件动作可应用到独立准备表，再关闭仍带 CLOEXEC 的 fd；双架构 `runtime` 以模拟 open 验证动作顺序、同号 dup2 与 File 引用。生产 open、后端继承与发布待接。
 - TTY 切换模式时可丢弃本地队列和 RX 环截点前的未读输入；串口终结时收尾仍阻塞的原请求。双架构 `runtime` 验证已到期时不丢输入、终结唤醒 READ 并归还原槽。物理输出排空与公开 `tcsetattr` 待接。
 - `FS_LOAD` 等待块映射时保留原请求；双架构 `pipeio` 验证同一请求可恢复，以及无新 IPC 或磁盘完成时也会按期返回 ETIMEDOUT。
 - `fcntl(F_DUPFD_CLOEXEC)` 原子发布带 CLOEXEC 的别名，共用原 File；双架构 QEMU `pipeio`、`libsys` 已验证，完整 exec 继承仍待接。

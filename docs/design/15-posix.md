@@ -134,6 +134,12 @@ T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与�
 
 ## 执行与验收
 
+libc 的私有 `pathsearch` 实现按固定 PATH 快照查找命令的顺序，供后续 `posix_spawnp` 与 sh 共用：名称含 `/` 时直接尝试；空路径分量从 cwd 尝试；ENOENT、ENOTDIR 继续搜索，遇 EACCES 记下并继续，没有成功项时优先返回 EACCES。ENOEXEC 原样返回，不启动脚本替代。最多 32 个分量，PATH 和单个候选路径各最多 4096 字节（含 NUL），不截断。4 项主机测试用回调核对候选顺序、失败归并和容量边界，ARM64/RV64 SDK 构建通过。此处尚未调用文件系统或发布进程。
+
+`<spawn.h>` 提供 `posix_spawn_file_actions_init/destroy/addopen/addclose/adddup2`。列表按登记顺序保存最多 128 项；`addopen` 自持路径副本，登记不打开文件。私有遍历器在首个动作错误处停止；未来 spawn 调用者须先捕获稳定列表，再将动作应用到未发布的子进程，并在出错时撤销准备。ARM64/RV64 QEMU `runtime` 验证路径副本、无效 fd、动作顺序、失败后不执行下一项、释放列表及 PATH 候选顺序。实际子 fd 表操作、CLOEXEC 收尾与 `posix_spawn` 发布未接。
+
+私有 `spawnfilesprepare` 可在独立的目标 fd 表与 Filepool 中依次应用动作。`dup2` 可使用带 CLOEXEC 的源，同号动作清除 CLOEXEC；`open` 替换指定 fd，最后只关闭仍带 CLOEXEC 的描述符，最后一个别名交给预付关闭记录。ARM64/RV64 QEMU `runtime` 使用真实 fd 表逻辑和模拟 open 验证这些顺序与引用计数。目标凭据下的文件服务 OPEN、后端关闭和子进程发布尚未接入。
+
 `creat(path, mode)` 已导出，使用本 SDK 的 32 位 `mode_t`，与 `open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)` 共用一次打开事务。ARM64、RV64 QEMU `pipeio` 核对服务收到的三个位及原 mode，并验证截断已提交时捕获信号仍领取原结果；27 项 libc 主机测试和格式检查通过。测试使用文件服务夹具，生产磁盘接入仍待完成。
 
 stage448：libc 在 `unistd.h` 导出 `getopt(int argc, char *const argv[], const char *optstring)` 及 `optarg`、`opterr`、`optind`、`optopt`。按 [POSIX.1-2024 getopt](https://pubs.opengroup.org/onlinepubs/9799919799/functions/getopt.html) 核对短选项组、必需参数、选项终止及错误返回。支持同一参数或下一参数提供值，遇到 `--`、独立 `-` 或首个操作数停止，保持参数顺序；开头的 `+` 保持相同行为，开头的 `:` 和 `opterr=0` 可抑制诊断。诊断经 fd 2 输出，stdio 流错误指示器待流接口实现。
