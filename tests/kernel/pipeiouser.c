@@ -1678,9 +1678,9 @@ static isize
 opencomplete(Openjob *job, Vnode *node)
 {
   Openfixture *fixture = job->backend;
-  u32          attempt = fixture->completed++;
+  u32          attempt = job->reserved ? fixture->completed - 1 : fixture->completed++;
   openvalidate(job);
-  CHECK(node == &fixture->file && fixture->holds == 3 && attempt < 4);
+  CHECK(node == &fixture->file && fixture->holds == (job->reserved ? 4 : 3) && attempt < 4);
   return fsfileopen(&fixture->files, job, node, 22, 32, attempt > 1 ? 0600 : attempt ? 0400 : 0200);
 }
 
@@ -2190,7 +2190,7 @@ openserver(const Bootview *boot)
   openwritestage();
   fixture.length = 20;
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
-  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
+  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 128));
   CHECK(!txninit(&synctxn, &fixture.cache, 0));
   fixture.sync = (Syncwork){&synctxn, syncsnapshot, 1, 0};
@@ -2612,6 +2612,34 @@ open:
   goto open;
 }
 
+static isize
+publictruncate(Openjob *job, Vnode *node, u32 cancelled)
+{
+  static Journal journal;
+  static Shrink  shrink;
+  static Loadmap staged;
+  Openfixture   *fixture = job->backend;
+  Mapmeta        meta = {maprecords[0], NULL, NULL, maprecords[3], maprecords[4], maprecords[5]};
+  Journalio      io;
+  CHECK(node == &fixture->file && job->reserved && !job->reserved->pid);
+  if (!shrink.txid) {
+    if (cancelled)
+      return -EINTR;
+    CHECK(!loadwrite(&fixture->loads, node->number, &fixture->guard) &&
+          !loadmapshrink(&fixture->map, 0, &staged) && !journalinit(&journal, 128, 0) &&
+          !journalshrink(&shrink, &journal, &fixture->cache, &fixture->map, &staged, &meta));
+    return OPEN_WAIT;
+  }
+  fixture->cancelled |= cancelled;
+  if (journal.phase != JOURNAL_DONE) {
+    CHECK(!journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+    return OPEN_WAIT;
+  }
+  CHECK(!shrinkpublish(&shrink) && !loadunwrite(&fixture->loads, fixture->guard));
+  fixture->length = fixture->map.file.length;
+  return 0;
+}
+
 static void
 publicchdirserver(const Bootview *boot)
 {
@@ -2622,6 +2650,7 @@ publicchdirserver(const Bootview *boot)
   Pipetable      pipes = {0};
   Fsfile         file = {0};
   Fsref          ref = {0};
+  Cacheblock     block;
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
@@ -2642,12 +2671,16 @@ publicchdirserver(const Bootview *boot)
   Fileslot       slot;
   Msg            reply = {{(u64) -EINTR, 0, 0, 0}};
   u64            state;
+  u32            steps;
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
-  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength};
+  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
+  fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
+  fixture.length = 20;
+  CHECK(!cacheinit(&fixture.cache, &block, 1, 128));
   fixture.completed = fixture.attempts = 1;
   CHECK(!fsstep(&fs) && link.ready);
   target.target = link.watch.owner.pid;
@@ -2656,6 +2689,16 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && !file.refs && !fixture.searches); /* Unsupported mutation. */
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R &&
         file.flags == FS_OPEN_NONBLOCK && file.node == &fixture.file);
+  CHECK(!fsstep(&fs) && !file.node && !file.refs);
+  CHECK(!fsstep(&fs) && !file.refs && fixture.length == 20); /* Read-only truncation. */
+  CHECK(!fsstep(&fs) && job.reserved && !ref.pid && fixture.length == 20);
+  CHECK(!__sys_sigsend(&target, SIGNAL_USR1) &&
+        !ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
+        !ipc_rqcheck(job.call.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+  for (steps = 0; job.call.request; steps++)
+    CHECK(steps < 20 && !fsopenpump(&open));
+  CHECK(fixture.cancelled && !fixture.length && fixture.map.file.version == 2 &&
+        fixture.map.direct[0] == FS_DATA_START && ref.pid == target.target && file.refs == 1);
   CHECK(!fsstep(&fs) && !file.node && !file.refs);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.root && context.version == 1);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
@@ -2759,14 +2802,18 @@ publicchdirclient(void)
         open("/x", O_WRONLY | O_CREAT, 0600) == -1 && errno == ENOSYS);
   fd = open("/x", O_RDONLY | O_CLOEXEC | O_NONBLOCK);
   CHECK(fd == 0 && errno == ENOSYS && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
+  CHECK(open("/x", O_RDONLY | O_TRUNC) == -1 && errno == EINVAL);
+  action.sa_handler = lateopensignal;
+  action.sa_flags = SA_RESTART;
+  CHECK(!sigaction(SIGUSR1, &action, NULL));
+  fd = open("/x", O_WRONLY | O_TRUNC);
+  CHECK(fd == 0 && caught == 1 && !close(fd));
   CHECK(chdir("") == -1 && errno == ENOENT && chdir((const char *) (uintptr_t) 1) == -1 &&
         errno == EFAULT && chdir("/n") == -1 && errno == EACCES && !chdir("/d") &&
         errno == EACCES && !chdir(".") && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
-  action.sa_handler = lateopensignal;
-  action.sa_flags = SA_RESTART;
-  CHECK(!sigaction(SIGUSR1, &action, NULL) && chdir("/d") == -1 && errno == EINTR && caught == 1 &&
-        !peer->state.operations[0].phase && !peer->state.operations[1].phase);
+  CHECK(chdir("/d") == -1 && errno == EINTR && caught == 2 && !peer->state.operations[0].phase &&
+        !peer->state.operations[1].phase);
   pipeiotrace[0] = 7;
 }
 

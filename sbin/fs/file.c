@@ -66,11 +66,14 @@ isize
 fsfileoptions(const Fileslot *slot)
 {
   u64 flags = slot->args[0];
-  u64 mutation = FS_OPEN_CREAT | FS_OPEN_EXCL | FS_OPEN_TRUNC;
-  u64 known = mutation | FS_OPEN_ACCMODE | FS_OPEN_APPEND | FS_OPEN_NONBLOCK | FS_OPEN_CLOEXEC;
+  u64 mutation = FS_OPEN_CREAT | FS_OPEN_EXCL;
+  u64 known = mutation | FS_OPEN_TRUNC | FS_OPEN_ACCMODE | FS_OPEN_APPEND | FS_OPEN_NONBLOCK |
+              FS_OPEN_CLOEXEC;
   if (slot->object || (flags & ~known) || (flags & FS_OPEN_ACCMODE) == FS_OPEN_ACCMODE)
     return -EINVAL;
-  return flags & mutation ? -ENOSYS : 0;
+  if (flags & mutation)
+    return -ENOSYS;
+  return (flags & FS_OPEN_TRUNC) && !(flags & FS_OPEN_ACCMODE) ? -EINVAL : 0;
 }
 
 isize
@@ -79,10 +82,12 @@ fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 
   const Ipcmsg *call = &job->call;
   Msg           reply = {{0, job->slot.seq, 0, 0}};
   Fsfile       *file = NULL;
-  Fsref        *ref = NULL;
+  Fsref        *ref = job->reserved;
   u64           state;
   u32           i, access, flags;
   isize         error, status;
+  if (ref)
+    goto truncate;
   flags = (u32) job->slot.args[0];
   access = flags & FS_OPEN_ACCMODE;
   access = access == FS_OPEN_RDONLY   ? VACCESS_R
@@ -94,6 +99,10 @@ fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 
         node->kind != VNODE_FILE ? -EINVAL : vaccess(&job->cred, owner, group, mode, access, 0);
   if (status)
     goto respond;
+  if ((flags & FS_OPEN_TRUNC) && !table->truncate) {
+    status = -ENOSYS;
+    goto respond;
+  }
   for (i = 0; i < table->nfiles; i++)
     if (!table->files[i].node) {
       file = &table->files[i];
@@ -114,16 +123,35 @@ respond:
       return ipc_rqfinish(call->request);
     status = -EINTR;
   }
-  if (status) {
-    reply.words[0] = (u64) status;
-    return ipc_reply(call->request, &reply);
-  }
+  if (status)
+    goto reject;
   file->session = FS_FILE_SESSION | ++table->serial;
   file->node = node;
   file->access = access;
   file->flags = flags & (FS_OPEN_APPEND | FS_OPEN_NONBLOCK);
   file->refs = 1;
-  *ref = (Fsref){call->source, call->image, ++table->serial, file};
+  *ref = (Fsref){0, 0, ++table->serial, file};
+  if (flags & FS_OPEN_TRUNC) {
+    job->reserved = ref;
+  truncate:
+    error = ipc_rqcheck(call->request, &state);
+    status = table->truncate(job, node, error || state != RQ_CHECK_LIVE);
+    if (status == OPEN_WAIT)
+      return OPEN_WAIT;
+    job->reserved = NULL;
+    error = ipc_rqcheck(call->request, &state);
+    if (error || state == RQ_CHECK_DRAINING || status) {
+      drop(table, ref);
+      if (error)
+        return error;
+      if (state == RQ_CHECK_DRAINING)
+        return ipc_rqfinish(call->request);
+      goto reject;
+    }
+    file = ref->file;
+  }
+  ref->pid = call->source;
+  ref->image = call->image;
   *(volatile u64 *) (job->link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES) =
       ref->id;
   reply.words[2] = file->session;
@@ -133,6 +161,9 @@ respond:
     drop(table, ref);
   /* If the peer retired as the reply was issued, LIFE cleanup owns ref. */
   return error;
+reject:
+  reply.words[0] = (u64) status;
+  return ipc_reply(call->request, &reply);
 }
 
 isize

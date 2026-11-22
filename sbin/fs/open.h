@@ -5,15 +5,19 @@
 
 typedef struct Fsopen  Fsopen;
 typedef struct Openjob Openjob;
+struct Fsref;
+#define OPEN_WAIT 1
 struct Openjob
 {
-  Vwalk     walk;
-  Ipcmsg    call;
-  Fileslot  slot;
-  Filelink *link;
-  void     *backend;
-  Vcred     cred;
-  u32       mask, waiting, changedcwd;
+  Vwalk         walk;
+  Ipcmsg        call;
+  Fileslot      slot;
+  Filelink     *link;
+  Vnode        *node;
+  struct Fsref *reserved;
+  void         *backend;
+  Vcred         cred;
+  u32           mask, waiting, changedcwd;
 };
 struct Fsopen
 {
@@ -30,8 +34,9 @@ struct Fsopen
   /* Drain a waiting backend step without dropping its node references.
      WOULD_BLOCK keeps the whole job; backend progress must wake the loop. */
   isize (*cancel)(Openjob *);
-  /* Finish the original REQUEST, including business errors. The node is
-     borrowed during this call. Zero means the native request was finished;
+  /* Finish the original REQUEST, including business errors. OPEN_WAIT keeps
+     the resolved node and calls back even on cancel/retirement so the backend
+     can drain. Zero means the native request was finished;
      the dispatcher releases the claimed slot. A native failure must leave
      the request unconsumed and no publication outstanding. */
   isize (*complete)(Openjob *, Vnode *);

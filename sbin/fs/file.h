@@ -32,6 +32,10 @@ struct Fsfiles
   void           *backend;
   /* Current length of a pinned node, without deferring the request. */
   isize (*length)(void *, const Vnode *, u64 *);
+  /* Advance the original truncation. OPEN_WAIT retains all ownership;
+     on cancellation, return -EINTR only after draining and establishing no
+     effect. Once committed, finish with success even if cancelled. */
+  isize (*truncate)(Openjob *, Vnode *, u32 cancelled);
 };
 
 /* Check the request's captured credentials against the resolved node's

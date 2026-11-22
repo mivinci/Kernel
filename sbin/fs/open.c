@@ -36,6 +36,8 @@ advance(Fsopen *open, Openjob *job)
     error = replypath(request, job->slot.seq, job->link, 0, 1);
     goto done;
   }
+  if (job->node)
+    goto complete;
   for (;;) {
     error = ipc_rqcheck(request, &state);
     if (error)
@@ -70,17 +72,25 @@ advance(Fsopen *open, Openjob *job)
         job->changedcwd = !status;
         error = replypath(request, job->slot.seq, job->link, status, job->changedcwd);
       } else {
-        error = open->complete(job, node);
-        if (!error)
-          error = sysfilefinish(&job->link->watch.active, request);
-        else
-          error = finish(request, job->slot.seq, job->link, -EIO);
+        job->node = node;
+        goto complete;
       }
     } else if (!error)
       error = finish(request, job->slot.seq, job->link, -EINTR);
     open->ops->drop(job, node);
   } else
     error = finish(request, job->slot.seq, job->link, status);
+  goto done;
+complete:
+  error = open->complete(job, job->node);
+  if (error == OPEN_WAIT)
+    return 0;
+  open->ops->drop(job, job->node);
+  job->node = NULL;
+  if (!error)
+    error = sysfilefinish(&job->link->watch.active, request);
+  else
+    error = finish(request, job->slot.seq, job->link, -EIO);
 done:
   if (!error)
     job->call.request = 0;
@@ -121,6 +131,8 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   job->backend = open->backend;
   job->mask = context->mask;
   job->changedcwd = 0;
+  job->waiting = 0;
+  job->reserved = NULL;
   start = context->cwd;
   error = call->words[0] == FS_OPEN ? open->select(job, context, &start, &follow) : 0;
   if (!error)

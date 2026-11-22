@@ -772,6 +772,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage526：普通 `OPEN` 可将 `O_TRUNC` 交给异步截短后端。先检查目标与写权限，预留尚不可见的 File 和引用，沿原 REQUEST 等待提交；取消后仍推进已开始的事务，只有确认无效果才报 EINTR。`O_RDONLY|O_TRUNC` 返回 EINVAL。ARM64/RV64 QEMU `pipeio` 从公开 `open()` 验证权限要求、退休后发布 fd，以及信号取消后同次截短完成；43 项 FS 主机测试通过。事务运输仍由夹具提供，生产接线和后台回收待做。
+
 stage525：`journalshrink` 用单个 inode 元数据镜像提交更短的 EOF，`shrinkpublish` 在日志退休后发布长度与内容版本，保留块指针与分配位。ARM64/RV64 QEMU `pipeio` 用同一日志验证旧 EOF 在退休前仍可见、发布后不能读取旧尾部、后续回收才释放间接数据块；43 项 FS 主机测试通过。生产编码、`O_TRUNC` 分派与后台回收调度待接入。
 
 stage524：`journalreclaim` 把回收批次的位图和有变化的 inode／间接表纳入同一元数据事务。开始前核对批次仍匹配当前指针和分配位；`reclaimpublish` 等待 EMPTY 刷盘与受影响缓存绑定失效后才清除已提交分配位。ARM64/RV64 QEMU `pipeio` 用夹具验证退休前不能复用、忙缓存推迟发布、重复批次被拒及末次 FLUSH 失败保留分配；43 项 FS 主机测试通过。原始截短提交、生产元数据编码和后台调度仍待接入。
