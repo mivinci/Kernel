@@ -20,6 +20,7 @@ struct Readjob
   u32              first;
   u32              started, completed;
   isize            result;
+  Filestat         metadata;
 };
 struct Fsreads
 {
@@ -48,11 +49,17 @@ struct Fsreads
      while pending, one after durable success, or negative business errno.
      Backend completion is final even if the native reply must be retried. */
   isize (*sync)(void *, Readjob *, u64 state);
+  /* Snapshot metadata for the pinned node. Return zero when the record is
+     ready and WOULD_BLOCK while pending; other negative values must follow
+     the same drain rules as sync. A resumed job receives the exact request's
+     current state. */
+  isize (*stat)(void *, Readjob *, u64 state);
 };
 
 /* The caller has claimed the slot and checked original request state. */
 isize fsdatastart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fssyncstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
+isize fsstatstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsseekstart(Fsreads *, Fsfiles *, Fsfile *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsreadpump(Fsreads *, Fsfiles *);
 isize fsreadcomplete(Readjob *, Handle, const Cacheio *, const void *, u32);

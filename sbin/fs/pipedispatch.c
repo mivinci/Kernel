@@ -318,7 +318,6 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     return respond(link, call->request, &reply);
   case FS_STAT: {
     Fsfiles  *table = dispatch->regular;
-    Fsfile   *file;
     Filestat  stat = {0};
     const u8 *bytes = (const u8 *) &stat;
     error = sysfileargs(opcode, &slot);
@@ -327,15 +326,10 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     if (!(slot.object & FS_FILE_SESSION)) {
       error = pipefilestat(dispatch->table, call->source, call->image, slot.object, &stat);
       reply.words[0] = (u64) fileerror(error);
-    } else {
-      file = table ? fsfilefind(table, call->source, call->image, slot.object) : NULL;
-      if (!file)
-        reply.words[0] = (u64) -ESTALE;
-      else if (!table->stat)
-        reply.words[0] = (u64) -ENOTSUP;
-      else
-        reply.words[0] = (u64) table->stat(table->backend, file->node, &stat);
-    }
+    } else if (!table || !fsfilefind(table, call->source, call->image, slot.object))
+      reply.words[0] = (u64) -ESTALE;
+    else
+      return fsstatstart(dispatch->reads, table, link, call, &slot);
     if (!reply.words[0]) {
       stat.reserved = 0;
       for (i = 0; i < sizeof(stat); i++)

@@ -1660,7 +1660,7 @@ struct Openfixture
   Journalio syncio;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
-  u32       cancelgrowth, durable, dirwait, linkwait, cwdmore, linkmore;
+  u32       cancelgrowth, durable, dirwait, linkwait, cwdmore, linkmore, statwait;
 };
 
 static isize
@@ -2109,19 +2109,20 @@ openlength(void *context, const Vnode *node, u64 *length)
 }
 
 static isize
-openstat(void *context, const Vnode *node, Filestat *out)
+openstat(void *context, Readjob *job, u64 state)
 {
   Openfixture *fixture = context;
-  CHECK(node == &fixture->file);
-  *out = (Filestat){.dev = node->mount,
-                    .ino = node->number,
-                    .mode = 0100644,
-                    .nlink = 1,
-                    .size = fixture->length,
-                    .blksize = FS_BLOCK_BYTES,
-                    .atime_sec = -2,
-                    .atime_ns = 123,
-                    .reserved = UINT64_MAX};
+  CHECK(job && job->file && job->file->node == &fixture->file && state == RQ_CHECK_LIVE);
+  if (fixture->statwait)
+    return -ERR_WOULD_BLOCK;
+  job->metadata = (Filestat){.dev = job->file->node->mount,
+                             .ino = job->file->node->number,
+                             .mode = 0100644,
+                             .nlink = 1,
+                             .size = fixture->length,
+                             .blksize = FS_BLOCK_BYTES,
+                             .atime_sec = -2,
+                             .atime_ns = 123};
   return 0;
 }
 
@@ -2590,36 +2591,43 @@ openserver(const Bootview *boot)
   Cacheblock      blocks[1];
   u8              scratch[CACHE_BYTES] = {0};
   Readjob         reader[2] = {0};
-  Fsreads         reads = {
-      reader,         ARRAY_SIZE(reader), 0,       &fixture, scratch, openreadbind, openreadrelease,
-      openreadsubmit, openreadgrow,       opensync};
-  Pipetable      pipes = {0};
-  Fscontext      context = {0};
-  Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts,  &fixture.mounts, &ops,         &job, 1,    0, &fixture,
-                         openselect, opencancel,      opencomplete, NULL, &cwd, 0};
-  Fsservice      fs = {bootresource(boot, 256),
-                       bootresource(boot, BOOT_SELF_ALLOC),
-                       bootresource(boot, BOOT_SELF_SPACE),
-                       ADDRESS,
-                       &link,
-                       1,
-                       {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
-                       &open,
-                       0,
-                       NULL,
-                       NULL,
-                       NULL,
-                       NULL,
-                       0};
-  u32            i;
-  const Loadfile executable = {2, 1, 1, 20};
-  u64            load;
+  Fsreads         reads = {reader,
+                           ARRAY_SIZE(reader),
+                           0,
+                           &fixture,
+                           scratch,
+                           openreadbind,
+                           openreadrelease,
+                           openreadsubmit,
+                           openreadgrow,
+                           opensync,
+                           openstat};
+  Pipetable       pipes = {0};
+  Fscontext       context = {0};
+  Fscontexts      contexts = {&context, 1, &pin, &fixture, 0};
+  Fsopen          open = {&contexts,  &fixture.mounts, &ops,         &job, 1,    0, &fixture,
+                          openselect, opencancel,      opencomplete, NULL, &cwd, 0};
+  Fsservice       fs = {bootresource(boot, 256),
+                        bootresource(boot, BOOT_SELF_ALLOC),
+                        bootresource(boot, BOOT_SELF_SPACE),
+                        ADDRESS,
+                        &link,
+                        1,
+                        {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
+                        &open,
+                        0,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        0};
+  u32             i;
+  const Loadfile  executable = {2, 1, 1, 20};
+  u64             load;
   openwritestage();
   fixture.length = 20;
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
-  fixture.files =
-      (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL, openstat};
+  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 128));
   CHECK(!txninit(&synctxn, &fixture.cache, 0));
   fixture.sync = (Syncwork){&synctxn, syncsnapshot, 1, 0};
@@ -2658,7 +2666,18 @@ openserver(const Bootview *boot)
   CHECK(fixture.cancelled == 2 && fixture.completed == 2 && !fsstep(&fs) && file.refs == 2 &&
         refs[0].file == refs[1].file && refs[0].id != refs[1].id && !fsstep(&fs) &&
         file.refs == 1 && fixture.holds == 3);
-  CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && !file.position && file.refs == 1);
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && !file.position && file.refs == 1);
+  fixture.statwait = 1;
+  CHECK(!fsstep(&fs) && file.head == &reader[0] && file.tail == file.head && file.refs == 2 &&
+        reader[0].started && !reader[0].completed);
+  {
+    Handle request = reader[0].call.request;
+    CHECK(!fsreadpump(&reads, &fixture.files) && reader[0].call.request == request &&
+          file.refs == 2);
+  }
+  fixture.statwait = 0;
+  CHECK(!fsreadpump(&reads, &fixture.files) && !file.head && !file.tail && !file.position &&
+        file.refs == 1);
   CHECK(!fsstep(&fs) && !fsstep(&fs) && !file.position && file.refs == 1 && !file.head &&
         !fixture.fetch.block);
   for (i = 0; i < 5; i++)
@@ -2963,13 +2982,21 @@ openstatcheck(u64 session, u64 unused, isize expected)
   page->ino = 99;
   CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)) &&
-        !ipc_call(work.state.call, &request, 0, &result) && (isize) result.words[0] == expected &&
-        result.words[1] == lease.seq && !result.words[2]);
+        !ipc_call(work.state.call, &request, 0, &result));
+  CHECK((isize) result.words[0] == expected);
+  CHECK(result.words[1] == lease.seq);
+  CHECK(!result.words[2]);
   if (expected)
     CHECK(!result.words[3] && page->ino == 99);
-  else
-    CHECK(result.words[3] == sizeof(*page) && page->ino == 2 && page->mode == 0100644 &&
-          page->size == 20 && page->atime_sec == -2 && page->atime_ns == 123 && !page->reserved);
+  else {
+    CHECK(result.words[3] == sizeof(*page));
+    CHECK(page->ino == 2);
+    CHECK(page->mode == 0100644);
+    CHECK(page->size == 20);
+    CHECK(page->atime_sec == -2);
+    CHECK(page->atime_ns == 123);
+    CHECK(!page->reserved);
+  }
   CHECK(!sysconnworkrelease(&work, &cache, lease));
 }
 
@@ -3222,8 +3249,8 @@ publicchdirserver(const Bootview *boot)
   Readjob        readjob = {0};
   u8             scratch[CACHE_BYTES];
   Fsreads        reads = {
-      &readjob,     1,   0, &fixture, scratch, openreadbind, openreadrelease, openreadsubmit,
-      publicappend, NULL};
+      &readjob,     1,    0,       &fixture, scratch, openreadbind, openreadrelease, openreadsubmit,
+      publicappend, NULL, openstat};
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   const Fscwdops cwd = {openwalkhold, openwalkdrop, cwdversion, cwdname};
@@ -3255,8 +3282,7 @@ publicchdirserver(const Bootview *boot)
   fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
-  fixture.files =
-      (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate, openstat};
+  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
   fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.length = 20;
@@ -3328,12 +3354,12 @@ publicchdirserver(const Bootview *boot)
   CHECK(!ipc_reply(request.request, &reply) && !sysfilefinish(&link.watch.active, request.request));
   fixture.completed = 2;
   fixture.searches = 0;
+  fs.pipes.reads = &reads;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R && file.node == &fixture.file &&
         !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && !file.position &&
         !link.watch.active.requests[0] && !fsstep(&fs) && !file.refs);
   fixture.length = fixture.map.file.length = 1;
   opendisk[0] = 'p';
-  fs.pipes.reads = &reads;
   CHECK(!fsstep(&fs));
   CHECK(file.refs == 1);
   CHECK(file.access == (VACCESS_R | VACCESS_W));
@@ -3482,11 +3508,17 @@ publicchdirclient(void)
   {
     Fileioresult result;
     Filestat     stat;
-    CHECK(stream && sysfileimagestat(0, -1, &stat, &result) == -ERR_BAD_HANDLE &&
-          !sysfileimagestat(0, fileno(stream), (Filestat *) (uintptr_t) 1, &result) &&
-          result.native == -ERR_FAULT && !sysfileimagestat(0, fileno(stream), &stat, &result) &&
-          !result.native && !result.business && !result.count && stat.ino == 2 && !stat.size &&
-          stat.atime_sec == -2 && stat.atime_ns == 123 && !stat.reserved);
+    CHECK(stream);
+    CHECK(sysfileimagestat(0, -1, &stat, &result) == -ERR_BAD_HANDLE);
+    CHECK(!sysfileimagestat(0, fileno(stream), (Filestat *) (uintptr_t) 1, &result));
+    CHECK(result.native == -ERR_FAULT);
+    CHECK(!sysfileimagestat(0, fileno(stream), &stat, &result) && !result.native &&
+          !result.business && !result.count);
+    CHECK(stat.ino == 2);
+    CHECK(!stat.size);
+    CHECK(stat.atime_sec == -2);
+    CHECK(stat.atime_ns == 123);
+    CHECK(!stat.reserved);
   }
   CHECK(stream && fileno(stream) == 0 && fputs("x", stream) == EOF && errno == EBADF &&
         ferror(stream) && !fclose(stream) && fcntl(0, F_GETFD) == -1 && errno == EBADF);

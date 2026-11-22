@@ -59,6 +59,42 @@ replyresult(Readjob *job, u64 state, u64 value)
 }
 
 static isize
+statfile(Fsreads *reads, Readjob *job, volatile u8 *page)
+{
+  Msg       reply = {{0, job->slot.seq, 0, 0}};
+  const u8 *bytes = (const u8 *) &job->metadata;
+  u64       state;
+  u32       i;
+  isize     error = ipc_rqcheck(job->call.request, &state);
+  if (error)
+    return error;
+  if (!job->started && state != RQ_CHECK_LIVE)
+    return reject(job->link, &job->call, -EINTR);
+  if (!job->completed) {
+    job->result = reads->stat(reads->backend, job, state);
+    job->started = 1;
+    if (job->result == -ERR_WOULD_BLOCK)
+      return -ERR_WOULD_BLOCK;
+    if (job->result > 0 || (!job->result && (job->metadata.reserved ||
+                                             job->metadata.atime_ns >= UINT64_C(1000000000) ||
+                                             job->metadata.mtime_ns >= UINT64_C(1000000000) ||
+                                             job->metadata.ctime_ns >= UINT64_C(1000000000))))
+      job->result = -EIO;
+    job->completed = 1;
+  }
+  if (state != RQ_CHECK_LIVE)
+    return reject(job->link, &job->call, -EINTR);
+  reply.words[0] = (u64) job->result;
+  if (!job->result) {
+    for (i = 0; i < sizeof(job->metadata); i++)
+      page[i] = bytes[i];
+    reply.words[3] = sizeof(job->metadata);
+  }
+  error = ipc_reply(job->call.request, &reply);
+  return error ? error : sysfilefinish(&job->link->watch.active, job->call.request);
+}
+
+static isize
 syncfile(Fsreads *reads, Readjob *job)
 {
   u64   state;
@@ -115,6 +151,10 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
   }
   if (job->call.words[0] == FS_SYNC) {
     status = syncfile(reads, job);
+    goto done;
+  }
+  if (job->call.words[0] == FS_STAT) {
+    status = statfile(reads, job, page);
     goto done;
   }
   if (!job->map) {
@@ -221,6 +261,17 @@ fssyncstart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
   if (!file)
     return reject(link, call, -ESTALE);
   return reads && reads->sync ? enqueue(reads, files, file, link, call, slot)
+                              : reject(link, call, -ENOSYS);
+}
+
+isize
+fsstatstart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
+            const Fileslot *slot)
+{
+  Fsfile *file = fsfilefind(files, call->source, call->image, slot->object);
+  if (!file)
+    return reject(link, call, -ESTALE);
+  return reads && reads->stat ? enqueue(reads, files, file, link, call, slot)
                               : reject(link, call, -ENOSYS);
 }
 
