@@ -621,9 +621,9 @@ bootdrive(Rbank *bank, Connpeer self, u32 layer, Bootstrap *boot, Connclaim clai
   return 0;
 }
 
-isize
-sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
-            Bootmap *map, Rkey *active)
+static isize
+bootconnect(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
+            Bootmap *map, Rkey *active, u32 opcode)
 {
   Bootstrap *boot;
   Connclaim  claim;
@@ -658,7 +658,7 @@ sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
   if (entry.state != SYSCONN_CONNECTING || entry.owner != claim.owner ||
       entry.sequence != claim.seq || claim.tag.generation != work->state.tag.generation ||
       claim.tag.index != work->state.tag.index || entry.peer.pid != work->state.peer.pid ||
-      entry.peer.image != work->state.peer.image || boot->opcode != FS_HELLO) {
+      entry.peer.image != work->state.peer.image || boot->opcode != opcode) {
     error = -ERR_STALE;
     goto restore;
   }
@@ -679,6 +679,20 @@ sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
 restore:
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return error ? error : status;
+}
+
+isize
+sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
+            Bootmap *map, Rkey *active)
+{
+  return bootconnect(bank, layer, work, cache, space, address, map, active, FS_HELLO);
+}
+
+isize
+sysctxexecclaim(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
+                Bootmap *map, Rkey *active)
+{
+  return bootconnect(bank, layer, work, cache, space, address, map, active, FS_EXEC_CLAIM);
 }
 
 static isize

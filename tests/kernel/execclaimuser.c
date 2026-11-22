@@ -1,39 +1,49 @@
 #include <errno.h>
 #include <proto/file.h>
 #include <sys/channel.h>
+#include "private/contextipc.h"
 #include "private/start.h"
 #include "private/syscall.h"
 #include "execclaimuser.h"
+
+static Rbank     bank;
+static Connwork  work;
+static Conncache cache;
 
 int
 main(int argc, char **argv)
 {
   const Bootview *boot = sysboot();
-  Handle          call = bootresource(boot, EXEC_CLAIM_CALL), rpc, pid, parent;
+  Handle          call = bootresource(boot, EXEC_CLAIM_CALL), redundant = 0, parent;
   Handle          space = bootresource(boot, BOOT_SELF_SPACE);
-  u64             image;
-  Msg             claim = {{FS_EXEC_CLAIM, 0, 1, EXEC_CLAIM_TOKEN}};
+  Connpeer        self, peer;
+  Conntag         tag;
+  Connclaim       claim;
+  Connentry       entry;
+  Bootmap         map = {0};
+  Rkey            active = {0};
+  Msg             duplicate = {{FS_EXEC_CLAIM, 0, 2, EXEC_CLAIM_TOKEN}};
   Ipcmsg          result;
-  Maparg          map = {0, 0, EXEC_CLAIM_ADDRESS, FS_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
-  const Filehead *head = (const Filehead *) EXEC_CLAIM_ADDRESS;
   volatile u64   *marker = (volatile u64 *) (EXEC_CLAIM_ADDRESS + FS_DATA_OFFSET);
   (void) argv;
-  if (argc || __sys_getid(&pid, &image, &parent) || pid <= 1 || image != 2)
+  if (argc || __sys_getid(&self.pid, &self.image, &parent) || self.pid <= 1 || self.image != 2)
     return 71;
-  if (ipc_call(call, &claim, CALL_ASYNC | CALL_RECV_MEM, &result) || !(rpc = result.request) ||
-      ipc_rqwait(rpc, 0, &result) || result.kind != IPC_RESOURCE_REPLY || result.words[1] != 1 ||
-      result.words[2] != EXEC_CLAIM_CONNID || result.words[3] != FS_CONN_BYTES)
+  if (sysctxinit(&bank, self) || sysconninit(&cache, self) || sysconnpeer(call, &peer) ||
+      sysconnbind(&cache, peer, &tag) || sysconnworkinit(&work, &cache, tag) ||
+      sysconnworktakecall(&work, &cache, &call, &redundant) || call || redundant ||
+      sysconnbegin(&cache, tag, 1, &claim) ||
+      sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, EXEC_CLAIM_TOKEN, 0) ||
+      sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) != -ERR_STALE)
     return 72;
-  map.mem = (Handle) result.words[0];
-  if (__sys_map(space, &map) || head->magic != FS_CONN_MAGIC || head->connid != EXEC_CLAIM_CONNID ||
-      head->bytes != FS_CONN_BYTES || *marker != EXEC_CLAIM_MARKER ||
-      ipc_rqwait(rpc, RQ_FINISH, &result) || ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE))
+  if (sysctxexecclaim(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) ||
+      sysconnview(&cache, tag, &entry) || entry.state != SYSCONN_READY ||
+      entry.connid != EXEC_CLAIM_CONNID || work.state.map.address != EXEC_CLAIM_ADDRESS ||
+      !work.state.memory || work.state.bootstrap.state != SYSBOOT_FREE || map.mapped ||
+      active.sequence || *marker != EXEC_CLAIM_MARKER)
     return 73;
   *marker = ~EXEC_CLAIM_MARKER;
-  claim.words[2]++;
-  if (ipc_call(call, &claim, CALL_RECV_MEM, &result) || result.kind != IPC_NONE ||
-      (isize) result.words[0] != -ESTALE || result.words[1] != 2 ||
-      __sys_unmap(space, map.address) || __sys_free(map.mem))
+  if (ipc_call(work.state.call, &duplicate, CALL_RECV_MEM, &result) || result.kind != IPC_NONE ||
+      (isize) result.words[0] != -ESTALE || result.words[1] != 2)
     return 74;
   return 42;
 }
