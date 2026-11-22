@@ -39,6 +39,7 @@ typedef struct Reclaimscan Reclaimscan;
 typedef struct Inodemap    Inodemap;
 typedef struct Inodealloc  Inodealloc;
 typedef struct Dirinsert   Dirinsert;
+typedef struct Dirgrow     Dirgrow;
 typedef struct Shrink      Shrink;
 struct Journalmark
 {
@@ -101,12 +102,22 @@ struct Inodealloc
   struct Loadmap *live;
   Inodemap       *inodes;
   u64             txid, inode, generation;
+  const Dirgrow  *grow;
+};
+struct Dirgrow
+{
+  struct Loadmap   *parent;
+  struct Loadindex *index;
+  struct Blockmap  *allocation;
+  const u8         *bitmapimage, *indeximage;
+  u32               newindex;
 };
 struct Dirinsert
 {
-  u64          parent;
-  Journalblock directory;
-  const u8    *parentimage;
+  u64            parent;
+  Journalblock   directory;
+  const u8      *parentimage;
+  const Dirgrow *grow;
 };
 struct Shrink
 {
@@ -186,8 +197,12 @@ isize inodeallocstage(const Inodemap *, const struct Loadmap *, struct Loadmap *
    immutable encoded records. Target order: child inode table, inode bitmap,
    directory, then parent inode table if distinct. When the table is shared,
    encoded->inode contains both rows and parentimage must be NULL. This
-   path does not grow the directory. Keep the name and slot unpublished and
-   exclude readers until publication or recovery. */
+   grow, if present, appends one full directory block at EOF. The caller
+   reserves the selected directory block and optional new index block under
+   the volume writer, and keeps the descriptor and live views disjoint and
+   unchanged. The block bitmap and any changed index follow the parent in
+   the log. Keep the name and slot unpublished and exclude readers until
+   publication or recovery. */
 isize journalinodealloc(Inodealloc *, Journal *, struct Cache *, Inodemap *, struct Loadmap *,
                         const struct Loadmap *, const Mapmeta *, const Dirinsert *);
 isize inodeallocpublish(Inodealloc *);

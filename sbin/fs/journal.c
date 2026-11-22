@@ -535,13 +535,54 @@ inodeallocstage(const Inodemap *inodes, const Loadmap *live, Loadmap *out)
   return 0;
 }
 
+static isize
+dirgrowcheck(const Dirgrow *grow, u64 blocks, u32 directory, Writeplan *plan)
+{
+  const Loadmap *parent = grow->parent;
+  u64            index;
+  u32            i;
+  isize          error;
+  if (!parent || !grow->allocation || !grow->bitmapimage || directory < FS_DATA_START ||
+      directory >= blocks || parent->file.length % FS_BLOCK_BYTES ||
+      parent->file.length >= FS_FILE_BYTES)
+    return -ERR_INVALID;
+  if (!parent->file.generation || !parent->file.version || parent->file.version == UINT64_MAX)
+    return -ERR_STATE;
+  error = loadmapwrite(parent, grow->index, FS_DATA_START, (u32) blocks, parent->file.length,
+                       FS_BLOCK_BYTES, plan);
+  if (error)
+    return error;
+  if (plan->block || plan->tail || (!!grow->newindex != !!plan->newindex) ||
+      (!!grow->indeximage != (plan->logical >= LOAD_DIRECT)) || (grow->indeximage && !grow->index))
+    return -ERR_INVALID;
+  index = grow->newindex ? grow->newindex : parent->indirect;
+  if ((index && (index < FS_DATA_START || index >= blocks || index == directory)) ||
+      (grow->allocation->used[directory / 64] & (UINT64_C(1) << (directory % 64))) ||
+      (index &&
+       (!!(grow->allocation->used[index / 64] & (UINT64_C(1) << (index % 64))) != !grow->newindex)))
+    return -ERR_STATE;
+  for (i = 0; i < LOAD_DIRECT; i++)
+    if (parent->direct[i] == directory || (grow->newindex && parent->direct[i] == index))
+      return -ERR_STATE;
+  if (parent->indirect) {
+    if (!grow->index)
+      return -ERR_WOULD_BLOCK;
+    if (grow->index->block != parent->indirect)
+      return -ERR_STALE;
+    for (i = 0; i < LOAD_INDIRECT; i++)
+      if (grow->index->entries[i] == directory)
+        return -ERR_STATE;
+  }
+  return 0;
+}
+
 isize
 journalinodealloc(Inodealloc *work, Journal *journal, Cache *cache, Inodemap *inodes, Loadmap *live,
                   const Loadmap *staged, const Mapmeta *encoded, const Dirinsert *insert)
 {
-  Journalblock metadata[4];
+  Journalblock metadata[6];
   Journalplan  plan;
-  u64          blocks[4];
+  u64          blocks[6];
   u32          count = 2;
   isize        error;
   if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
@@ -577,6 +618,24 @@ journalinodealloc(Inodealloc *work, Journal *journal, Cache *cache, Inodemap *in
       metadata[count] = (Journalblock){table, insert->parentimage};
       blocks[count++] = table;
     }
+    if (insert->grow) {
+      const Dirgrow *grow = insert->grow;
+      Writeplan      append;
+      u64            index;
+      if (!grow->parent || grow->parent->file.inode != parent ||
+          insert->directory.block >= journal->blocks)
+        return -ERR_INVALID;
+      error = dirgrowcheck(grow, journal->blocks, (u32) insert->directory.block, &append);
+      if (error)
+        return error;
+      metadata[count] = (Journalblock){FS_BLOCK_MAP, grow->bitmapimage};
+      blocks[count++] = FS_BLOCK_MAP;
+      if (grow->indeximage) {
+        index = grow->newindex ? grow->newindex : grow->parent->indirect;
+        metadata[count] = (Journalblock){index, grow->indeximage};
+        blocks[count++] = index;
+      }
+    }
   }
   plan =
       (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, NULL, count, 0};
@@ -589,18 +648,25 @@ journalinodealloc(Inodealloc *work, Journal *journal, Cache *cache, Inodemap *in
     journal->phase = JOURNAL_IDLE;
     return error;
   }
-  *work = (Inodealloc){
-      journal, cache, live, inodes, journal->txid, live->file.inode, live->file.generation};
+  *work = (Inodealloc){journal,
+                       cache,
+                       live,
+                       inodes,
+                       journal->txid,
+                       live->file.inode,
+                       live->file.generation,
+                       insert ? insert->grow : NULL};
   return 0;
 }
 
 isize
 inodeallocpublish(Inodealloc *work)
 {
-  Journal *journal;
-  u64      blocks[4];
-  u32      i;
-  isize    error;
+  Journal  *journal;
+  u64       blocks[6];
+  Writeplan append;
+  u32       i;
+  isize     error;
   if (!work || !(journal = work->journal) || !work->txid || journal->txid != work->txid)
     return -ERR_STALE;
   if (journal->phase == JOURNAL_STOPPED)
@@ -616,6 +682,13 @@ inodeallocpublish(Inodealloc *work)
     return -ERR_STATE;
   for (i = 0; i < journal->metadata_count; i++)
     blocks[i] = journal->metadata[i].block;
+  if (work->grow) {
+    if (journal->metadata_count < 4)
+      return -ERR_STATE;
+    error = dirgrowcheck(work->grow, journal->blocks, (u32) blocks[2], &append);
+    if (error)
+      return error;
+  }
   error = cacheforget(work->cache, blocks, journal->metadata_count);
   if (!error)
     error = journalrelease(journal);
@@ -623,6 +696,23 @@ inodeallocpublish(Inodealloc *work)
     return error;
   work->live->file = (Loadfile){work->inode, work->generation + 1, 1, 0};
   work->inodes->used[work->inode / 64] |= UINT64_C(1) << (work->inode % 64);
+  if (work->grow) {
+    const Dirgrow *grow = work->grow;
+    u32            directory = (u32) blocks[2], index = grow->newindex;
+    grow->allocation->used[directory / 64] |= UINT64_C(1) << (directory % 64);
+    if (index) {
+      grow->allocation->used[index / 64] |= UINT64_C(1) << (index % 64);
+      grow->parent->indirect = grow->index->block = index;
+      for (i = 0; i < LOAD_INDIRECT; i++)
+        grow->index->entries[i] = 0;
+    }
+    if (append.logical < LOAD_DIRECT)
+      grow->parent->direct[append.logical] = directory;
+    else
+      grow->index->entries[append.logical - LOAD_DIRECT] = directory;
+    grow->parent->file.length = append.length;
+    grow->parent->file.version++;
+  }
   *work = (Inodealloc){0};
   return 0;
 }

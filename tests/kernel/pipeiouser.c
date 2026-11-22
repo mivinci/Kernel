@@ -1972,7 +1972,7 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   Shrink     shrink = {0};
   Inodemap   inodes = {{7}};
   Inodealloc reuse = {0};
-  Dirinsert  insert = {FS_ROOT, {110, maprecords[2]}, NULL};
+  Dirinsert  insert = {FS_ROOT, {110, maprecords[2]}, NULL, NULL};
   Loadmap    staged;
   Loadspan   span;
   Journal    journal;
@@ -2109,6 +2109,47 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
 }
 
 static void
+opendirgrow(Cache *cache)
+{
+  static Blockmap  allocation;
+  static Loadindex index;
+  static u8        bitmap[FS_BLOCK_BYTES], indeximage[FS_BLOCK_BYTES];
+  Loadmap          parent = {{FS_ROOT, 1, 1, LOAD_DIRECT * FS_BLOCK_BYTES}, {0}, 0};
+  Loadmap          child = {{3, 0, 0, 0}, {0}, 0}, staged;
+  Inodemap         inodes = {{3}};
+  Inodealloc       work = {0};
+  Journal          journal;
+  Journalio        io;
+  Dirgrow          grow = {&parent, &index, &allocation, bitmap, indeximage, 112};
+  Dirinsert        insert = {FS_ROOT, {111, maprecords[2]}, NULL, &grow};
+  const Mapmeta    meta = {maprecords[0], maprecords[1], NULL,
+                           maprecords[3], maprecords[4], maprecords[5]};
+  u32              i;
+  for (i = 0; i < LOAD_DIRECT; i++) {
+    parent.direct[i] = FS_DATA_START + i;
+    allocation.used[1] |= UINT64_C(1) << (parent.direct[i] - 64);
+  }
+  CHECK(!journalinit(&journal, cache->blocks, 0) && !inodeallocstage(&inodes, &child, &staged));
+  allocation.used[1] |= UINT64_C(1) << (112 - 64);
+  CHECK(journalinodealloc(&work, &journal, cache, &inodes, &child, &staged, &meta, &insert) ==
+        -ERR_STATE);
+  allocation.used[1] &= ~(UINT64_C(1) << (112 - 64));
+  CHECK(!journalinodealloc(&work, &journal, cache, &inodes, &child, &staged, &meta, &insert) &&
+        journal.metadata_count == 5 && !journal.data_count && journal.metadata[2].block == 111 &&
+        journal.metadata[3].block == FS_BLOCK_MAP && journal.metadata[4].block == 112);
+  for (i = 0; journal.phase != JOURNAL_DONE; i++)
+    CHECK(i < 24 && inodeallocpublish(&work) == -ERR_WOULD_BLOCK && !parent.indirect &&
+          !index.block && !child.file.generation && inodes.used[0] == 3 &&
+          !(allocation.used[1] & (UINT64_C(3) << (111 - 64))) && !journalnext(&journal, &io) &&
+          !journalcomplete(&journal, &io, 1));
+  CHECK(!inodeallocpublish(&work) && parent.indirect == 112 && index.block == 112 &&
+        index.entries[0] == 111 && !index.entries[1] &&
+        parent.file.length == (LOAD_DIRECT + 1) * FS_BLOCK_BYTES && parent.file.version == 2 &&
+        child.file.generation == 1 && inodes.used[0] == 11 &&
+        (allocation.used[1] & (UINT64_C(3) << (111 - 64))) == (UINT64_C(3) << (111 - 64)));
+}
+
+static void
 openwritestage(void)
 {
   static Writeimage  image;
@@ -2149,6 +2190,7 @@ openwritestage(void)
   openwritejournal(&map, &update, &image, &allocation);
   CHECK(!cacheinit(&cache, entries, ARRAY_SIZE(entries), 128));
   openreclaimjournal(&update.map, &update.index, &allocation, &cache);
+  opendirgrow(&cache);
 }
 
 typedef struct Loadfixture Loadfixture;
