@@ -16,6 +16,7 @@ typedef struct Blkowners   Blkowners;
 typedef struct Blkdir      Blkdir;
 typedef struct Blkmount    Blkmount;
 typedef struct Blkfind     Blkfind;
+typedef struct Blklookup   Blklookup;
 struct Blkread
 {
   Fsblk    *blk;
@@ -128,22 +129,37 @@ isize blkdirstep(Blkdir *);
 
 struct Blkfind
 {
-  Blkowners       *home;
-  const Loadmap   *map;
-  const Loadindex *index;
-  Dirdecode        decode;
-  const char      *name;
-  u32              namelen;
-  u32              found;
-  u64              offset;
-  Dirrecord        match;
-  isize            failed;
+  Blkowners  *home;
+  Dirdecode   decode;
+  const char *name;
+  u32         inode, generation;
+  u32         namelen;
+  u32         loaded, found;
+  u64         offset;
+  Dirrecord   match;
+  isize       failed;
 };
-/* Zero progress fields and supply pinned directory map/index and immutable
-   component from the same stable volume view. Own the home reader until
-   completion or external drain. Zero continues, one publishes a match;
-   absence returns -ENOENT. Output is untouched until success. */
+/* Supply the held directory identity and immutable component from the same
+   stable volume view. Zero progress fields. Own the home reader and its decoded map until
+   completion or external drain. Zero continues, one publishes a match,
+   two means absent. Output is untouched until a match is published. */
 isize blkfindstep(Blkfind *, Dirrecord *);
+struct Blklookup
+{
+  Blkowners *home;
+  Dirdecode  decode;
+  u64        mount;
+  void      *nodes;
+  isize (*acquire)(void *, const Vnode *, Vnode **);
+  Blkfind find;
+  char    name[255];
+};
+/* Vwalkops.lookup for one stable mounted volume. The namespace routes
+   mount identities, checks directory search permission separately and
+   supplies acquire to transfer one held canonical vnode on success. */
+isize blklookup(void *, const Vnode *, const char *, u32, Vnode **);
+/* Stop and drain before dropping a walk with an outstanding lookup. */
+isize blklookupcancel(Blklookup *);
 struct Blkmount
 {
   Blkprobe   *probe, *after;

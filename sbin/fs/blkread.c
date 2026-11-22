@@ -513,21 +513,16 @@ blkfindstep(Blkfind *work, Dirrecord *out)
   const Dirnode  *node;
   Blkredoload    *load;
   Loadspan        span;
+  Redoinode       inode;
   Dirrecord       match;
   isize           error, status;
   u32             bytes;
   if (!work || !out || !(home = work->home) || !(probe = home->home) || home->phase != OwnersDone ||
-      home->failed || !home->load.nodes || !work->map || !work->name || !work->namelen ||
-      work->namelen > 255 || !work->decode)
+      home->failed || !home->load.nodes || !work->name || !work->namelen || work->namelen > 255 ||
+      !work->decode || !work->inode || work->inode >= FS_INODES || !work->generation)
     return -ERR_INVALID;
   if (work->failed)
     return work->failed;
-  file = &work->map->file;
-  if (!file->inode || file->inode >= FS_INODES || work->offset > file->length)
-    return work->failed = -ERR_STATE;
-  node = &home->load.nodes[file->inode];
-  if (node->kind != VNODE_DIR || !node->links || node->generation != file->generation)
-    return work->failed = -ERR_STALE;
   load = &home->load;
   if (load->read->fill.cache) {
     error = blkreadpoll(load->read, &status);
@@ -541,15 +536,32 @@ blkfindstep(Blkfind *work, Dirrecord *out)
   if (probe->blk->stale || probe->blk->ended ||
       probe->blk->info.geometry_generation != probe->generation)
     return work->failed = -ERR_STALE;
+  node = &load->nodes[work->inode];
+  if (node->kind != VNODE_DIR || !node->links || node->generation != work->generation)
+    return work->failed = -ERR_STALE;
+  if (!work->loaded) {
+    error = loadinode(load, &home->scan, work->inode, &inode);
+    if (error == -ERR_WOULD_BLOCK)
+      return 0;
+    if (error || inode.kind != node->kind || inode.links != node->links ||
+        inode.map->file.inode != work->inode || inode.map->file.generation != work->generation) {
+      load->pending = 0;
+      return work->failed = error ? error : -ERR_STATE;
+    }
+    work->loaded = 1;
+  }
+  file = &load->map.file;
+  if (work->offset > file->length)
+    return work->failed = -ERR_STATE;
   if (work->offset == file->length) {
     if (!work->found)
-      return -ENOENT;
+      return 2;
     *out = work->match;
     return 1;
   }
   bytes = (u32) MIN(file->length - work->offset, FS_BLOCK_BYTES);
-  error = loadmapspan(file, work->map, work->index, FS_DATA_START, home->scan.blocks, work->offset,
-                      bytes, &span);
+  error = loadmapspan(file, &load->map, load->map.indirect ? &load->index : NULL, FS_DATA_START,
+                      home->scan.blocks, work->offset, bytes, &span);
   if (error || !span.first)
     return work->failed = -ERR_STATE;
   error = blkreadview(load->read, load->cache, &home->scan, span.first, CACHE_META, load->bytes);
@@ -567,6 +579,75 @@ blkfindstep(Blkfind *work, Dirrecord *out)
   }
   work->offset += bytes;
   return 0;
+}
+
+isize
+blklookupcancel(Blklookup *work)
+{
+  Blkredoload *load;
+  isize        error, status;
+  if (!work || !work->home)
+    return -ERR_INVALID;
+  if (!work->find.inode)
+    return 0;
+  load = &work->home->load;
+  if (load->read->fill.cache) {
+    error = blkreadpoll(load->read, &status);
+    if (error)
+      return error;
+  }
+  load->pending = 0;
+  work->find = (Blkfind){0};
+  return 0;
+}
+
+isize
+blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vnode **out)
+{
+  Blklookup *work = context;
+  Dirrecord  match;
+  Vnode      identity;
+  isize      result;
+  u32        i;
+  if (!work || !work->home || !work->home->load.read || !work->decode || !work->acquire ||
+      !directory || !name || !out || !bytes || bytes > sizeof(work->name))
+    return -EINVAL;
+  if (!work->mount || directory->mount != work->mount || !directory->number ||
+      directory->number >= FS_INODES || !directory->generation ||
+      directory->generation > UINT32_MAX)
+    return -ESTALE;
+  if (directory->kind != VNODE_DIR)
+    return -ENOTDIR;
+  if (!work->find.inode) {
+    if (work->home->load.pending || work->home->load.read->fill.cache)
+      return -EBUSY;
+    for (i = 0; i < bytes; i++)
+      work->name[i] = name[i];
+    work->find.home = work->home;
+    work->find.decode = work->decode;
+    work->find.name = work->name;
+    work->find.namelen = bytes;
+    work->find.inode = (u32) directory->number;
+    work->find.generation = (u32) directory->generation;
+  } else {
+    if (work->find.inode != directory->number || work->find.generation != directory->generation ||
+        work->find.namelen != bytes)
+      return -EBUSY;
+    for (i = 0; i < bytes; i++)
+      if (work->name[i] != name[i])
+        return -EBUSY;
+  }
+  result = blkfindstep(&work->find, &match);
+  if (!result)
+    return work->home->load.read->blk->rpc ? VWALK_WAIT : VWALK_MORE;
+  if (result != 1) {
+    if (blklookupcancel(work))
+      return VWALK_WAIT;
+    return result == 2 ? -ENOENT : result == -ERR_STALE ? -ESTALE : -EIO;
+  }
+  identity = (Vnode){work->mount, match.inode, match.generation, match.kind};
+  work->find = (Blkfind){0};
+  return work->acquire(work->nodes, &identity, out);
 }
 
 enum

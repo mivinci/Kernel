@@ -452,7 +452,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/load.c', 'vdev-fs-load'),
         compile_adoption(ROOT/'sbin/fs/journal.c', 'vdev-journal')], (virtio_archive,))
     vdev_image=sdk/'vdevuser.img'
-    vdev_image.write_bytes(pack(vdev_user.read_bytes(),profile['machine'],128))
+    vdev_image.write_bytes(pack(vdev_user.read_bytes(),profile['machine'],144))
     vdev_inspect=invoke('inspect-virtio-device',[tools['readelf']['path'],'-h','-l','-s',str(vdev_user)])
     vdev_rows=[line.split() for line in vdev_inspect.splitlines() if line.split() and line.split()[-1]=='vdev_trace']
     if len(vdev_rows)!=1 or int(vdev_rows[0][2])!=896:raise BuildError('virtio device trace missing')

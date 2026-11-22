@@ -1066,8 +1066,8 @@ static const u32 blkopcodes[] = {
     BLK_WRITE, BLK_WRITE, BLK_FLUSH, BLK_WRITE, BLK_FLUSH, /* replay and retire */
     BLK_READ,  BLK_READ,                                   /* re-probe home */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
-    BLK_READ,  BLK_READ,  BLK_READ,                        /* root directory */
-    BLK_READ,  BLK_READ,                                   /* directory lookup */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* root directory */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* directory lookup */
     BLK_READ                                               /* file cache fill */
 };
 
@@ -1247,7 +1247,7 @@ blkdecodeblocks(const u8 *encoded, u32 blocks, Blockmap *out)
   for (i = 0; i < FS_BLOCK_BYTES; i++)
     REQUIRE(encoded[i] == (i == 99 / 8 ? 1U << (99 % 8) : 0), 413);
   *out =
-      (Blockmap){{0, (UINT64_C(1) << (109 - 64)) | (UINT64_C(1) << (99 - 64)), UINT64_C(1) << 63}};
+      (Blockmap){{0, (UINT64_C(3) << (109 - 64)) | (UINT64_C(1) << (99 - 64)), UINT64_C(1) << 63}};
   return 0;
 }
 
@@ -1261,6 +1261,9 @@ blkdecodeinode(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
     REQUIRE(encoded[i] == (ino == 34 && i == 0), 387);
   map->file = (Loadfile){ino, 1, 1, FS_BLOCK_BYTES};
   map->direct[0] = ino == FS_ROOT ? 109 : 99;
+  map->direct[1] = ino == FS_ROOT ? 110 : 0;
+  if (ino == FS_ROOT)
+    map->file.length += PAGE_SIZE;
   map->indirect = ino == FS_ROOT ? 191 : 0;
   *kind = ino == FS_ROOT ? VNODE_DIR : VNODE_FILE;
   *links = 1;
@@ -1305,7 +1308,9 @@ blkretire(const u8 *uuid, u64 txid, u8 *bytes)
 static isize
 blkdecodedir(const u8 *bytes, Dirrecord *record)
 {
-  if (bytes[0] == 0xb1) {
+  if (bytes[0] == 5) {
+    *record = (Dirrecord){0, 0, PAGE_SIZE, 0, 0};
+  } else if (bytes[0] == 0xb1) {
     *record = (Dirrecord){0, 0, 24, 0, 0};
   } else {
     REQUIRE(bytes[0] == (u8) (0xb1 + 24 * 37), 427);
@@ -1314,14 +1319,64 @@ blkdecodedir(const u8 *bytes, Dirrecord *record)
   return 0;
 }
 
-static isize
-blklookupdecode(const u8 *bytes, Dirrecord *record)
+typedef struct Lookupnodes Lookupnodes;
+struct Lookupnodes
 {
-  if (bytes[0] == 0xb4) {
-    *record = (Dirrecord){0, 0, PAGE_SIZE, 0, 0};
-    return 0;
-  }
-  return blkdecodedir(bytes, record);
+  Vmounts *mounts;
+  Vnode    file;
+};
+
+static isize
+lookuphold(void *context, Vnode *node)
+{
+  Lookupnodes *nodes = ((Blklookup *) context)->nodes;
+  return vmounthold(nodes->mounts, node->mount);
+}
+
+static void
+lookupdrop(void *context, Vnode *node)
+{
+  Lookupnodes *nodes = ((Blklookup *) context)->nodes;
+  REQUIRE(!vmountdrop(nodes->mounts, node->mount), 476);
+}
+
+static isize
+lookupsearch(void *context, const Vnode *node)
+{
+  (void) context;
+  return node->kind == VNODE_DIR ? 0 : -ENOTDIR;
+}
+
+static isize
+lookupacquire(void *context, const Vnode *identity, Vnode **out)
+{
+  Lookupnodes *nodes = context;
+  isize        error;
+  if (!vnodesame(identity, &nodes->file) || identity->kind != nodes->file.kind)
+    return -ESTALE;
+  error = vmounthold(nodes->mounts, identity->mount);
+  if (!error)
+    *out = &nodes->file;
+  return error;
+}
+
+static isize
+lookupnoparent(void *context, const Vnode *node, Vnode **out)
+{
+  (void) context;
+  (void) node;
+  (void) out;
+  return -EIO;
+}
+
+static isize
+lookupnolink(void *context, const Vnode *node, const char **out, u64 *bytes)
+{
+  (void) context;
+  (void) node;
+  (void) out;
+  (void) bytes;
+  return -EIO;
 }
 
 static void
@@ -1497,7 +1552,7 @@ blkclient(const Bootview *boot, Handle call)
                 owners.scan.next == (i + 1) * 32 && !blk.rpc,
             367);
   REQUIRE(owners.owners.owned.used[1] == owners.allocation.used[1] &&
-              owners.owners.metadata.used[1] == (UINT64_C(1) << (109 - 64)) &&
+              owners.owners.metadata.used[1] == (UINT64_C(3) << (109 - 64)) &&
               owners.owners.owned.used[2] == owners.allocation.used[2] &&
               owners.owners.metadata.used[2] == owners.allocation.used[2],
           388);
@@ -1547,7 +1602,7 @@ blkclient(const Bootview *boot, Handle call)
       op++;
     }
   }
-  REQUIRE(op == 18 && dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
+  REQUIRE(op == 19 && dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
               recovered.last == 48 && recovered.phase == JOURNAL_IDLE && !home.scan.count &&
               home.owners.owned.used[1] == owners.owners.owned.used[1],
           429);
@@ -1574,23 +1629,34 @@ blkclient(const Bootview *boot, Handle call)
               blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
           440);
   {
-    const Loadmap map = {{FS_ROOT, 1, 1, 2 * PAGE_SIZE}, {109, 99}, 0};
-    char          name[59];
-    Blkfind       lookup = {&home, &map, NULL, blklookupdecode, name, sizeof(name), 0, 0, {0}, 0};
-    Dirrecord     found = {0};
-    isize         step = 0;
-    for (i = 0; i < sizeof(name); i++)
-      name[i] = (char) home.load.bytes[40 + i];
-    REQUIRE(!cacheinit(&cache, &storage, 1, 256), 473);
-    for (i = 0; i < 12 && !step; i++) {
-      REQUIRE(!found.inode, 473);
-      step = blkfindstep(&lookup, &found);
-      if (!step && blk.rpc)
-        REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 474);
+    static Vwalk   walk;
+    char           name[60];
+    Lookupnodes    targets = {&mounts, {root.mount, 34, 1, VNODE_FILE}};
+    Blklookup      lookup = {.home = &home,
+                             .decode = blkdecodedir,
+                             .mount = root.mount,
+                             .nodes = &targets,
+                             .acquire = lookupacquire};
+    const Vwalkops ops = {lookuphold, lookupdrop,     lookupsearch,
+                          blklookup,  lookupnoparent, lookupnolink};
+    Vnode         *found = NULL;
+    isize          step = VWALK_MORE;
+    for (i = 0; i + 1 < sizeof(name); i++)
+      name[i] = (char) (u8) (0xb1 + (40 + i) * 37);
+    name[i] = 0;
+    REQUIRE(!cacheinit(&cache, &storage, 1, 256) &&
+                !vwalkinit(&walk, &mounts, &ops, &lookup, &root, &root, name, sizeof(name), 1),
+            473);
+    for (i = 0; i < 24 && (step == VWALK_MORE || step == VWALK_WAIT); i++) {
+      REQUIRE(!found, 473);
+      step = vwalkstep(&walk, &found);
+      if (step == VWALK_WAIT)
+        REQUIRE(blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result), 474);
     }
-    REQUIRE(step == 1 && found.inode == 34 && found.generation == 1 &&
-                lookup.offset == 2 * PAGE_SIZE && !blk.rpc,
+    REQUIRE(!step && found == &targets.file && !lookup.find.inode && !blk.rpc &&
+                mounts.entries[0].uses == 1,
             475);
+    lookupdrop(&lookup, found);
   }
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
@@ -1705,7 +1771,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
     /* Exercise redo, re-probe, home bitmap and directory READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 4 == ARRAY_SIZE(blkopcodes) ||
+    if (i == 11 || i == 22 || i == 24 || i + 6 == ARRAY_SIZE(blkopcodes) ||
         i + 2 >= ARRAY_SIZE(blkopcodes)) {
       queue->configpending = 1;
       REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 448);
