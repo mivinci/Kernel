@@ -212,7 +212,7 @@ sysoppollabandon(Connwork *work, Conncache *cache, Opkey *key, Opkey *background
       !output(work, cache, background, sizeof(*background)) ||
       !separate(key, sizeof(*key), background, sizeof(*background)))
     return -ERR_INVALID;
-  if (op->phase == SYSOP_WAITING) {
+  if (op->phase == SYSOP_WAITING && !(op->flags & SYSOP_CANCEL_SENT)) {
     error = sysopcancel(work, cache, key);
     if (error)
       return error;

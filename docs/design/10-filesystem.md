@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage440：`poll()` 将本轮在途 Rq 集合挂到共享计时等待上。信号入口在进入应用 handler 前标记取消，handler 返回后由原调用移交后台排空，保留共享槽及 File pin 直至 FINISH。ARM64/RV64 QEMU `pipeio` 中，服务处理 handler 发出的独立控制 CALL 时检查原 WAIT 已标记取消，随后验证原 WAIT 收尾与 EINTR。双架构 QEMU `runtime` 回归、17 项操作账本主机测试和改动文件格式检查通过。
+
 stage439：libc 提供 `poll.h` 和 `poll()`，当前每次调用支持至多 128 个数组项，超过此限返回 EINVAL。libsys 向相关连接提交同轮查询，无就绪才登记等待；收到就绪提示后取消剩余等待并重新查询，原请求未完成时保留共享槽并在后台收尾。ARM64/RV64 QEMU `pipeio` 验证即时查询、正超时、零 fd 睡眠、忽略负 fd、POLLNVAL、可读与挂断并存，以及 SA_RESTART 下仍返回 EINTR 并排空被取消的等待。27 项操作账本和文件页主机测试及改动文件格式检查通过。生产 TTY/FS、跨后端汇总、控制故障及竞争顺序仍需专项运行验收。
 
 stage438：libsys 在原 poll 分组账本上非阻塞领取结果，等待 FINISH 后才验证和保存整组输出，再 ACK、归还共享页和 File pin。原生错误与后端业务错误分开保存，非法结果不改私有条目。ARM64/RV64 QEMU `pipeio` 验证等待中不提前领取、可写与挂断、无效会话业务失败、错误事件位整组拒绝及原 RPC 回收。27 项操作账本与文件页主机测试和改动文件格式检查通过。跨后端调度和公开 `poll()` 待接。

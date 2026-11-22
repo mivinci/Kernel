@@ -39,6 +39,8 @@ isize systimerwait(u64 deadline, u64 events, u64 mask);
 /* When restart is supplied, report the captured handler's policy on
    ERR_INTERRUPTED instead of silently continuing a restartable wait. */
 isize systimerwaitsignal(u64 deadline, u64 events, u64 mask, u32 *restart);
+/* Cancel the interrupted operation before entering the application's handler. */
+isize systimerwaitcancel(u64 deadline, u64 events, u64 mask, void (*cancel)(void *), void *context);
 /* Optional file-runtime hook. Runs under caught-signal exclusion and returns
    nonzero while original request completions can advance pending cleanup. */
 void systimerbindrq(int (*progress)(void));

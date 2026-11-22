@@ -170,6 +170,8 @@ struct Eventwait
   volatile u64 ticket;
   isize        result;
   u32          timed, restart;
+  void (*cancel)(void *);
+  void *context;
 };
 static Eventwait *eventwait;
 static isize      sleepfault;
@@ -204,13 +206,16 @@ syssleepinterrupt(void *trap, void *outer, u64 flags)
   u64        now;
   isize      error;
   if (eventwait) {
-    error = eventwait->timed ? systimercancel(&sleepheap, eventwait->ticket) : 0;
+    Eventwait *wait = eventwait;
+    eventwait = NULL;
+    error = wait->timed ? systimercancel(&sleepheap, wait->ticket) : 0;
     if (error)
       sleepfault = error;
-    eventwait->restart = !!(flags & SIGNAL_RESTART);
-    eventwait->result = error ? error : -ERR_INTERRUPTED;
-    eventwait->ticket = 0;
-    eventwait = NULL;
+    wait->restart = !!(flags & SIGNAL_RESTART);
+    wait->result = error ? error : -ERR_INTERRUPTED;
+    wait->ticket = 0;
+    if (wait->cancel)
+      wait->cancel(wait->context);
     syssleepskip(trap, begin, end, resume);
     return;
   }
@@ -228,8 +233,8 @@ syssleepinterrupt(void *trap, void *outer, u64 flags)
     syssleepskip(outer, begin, end, resume);
 }
 
-isize
-systimerwaitsignal(u64 deadline, u64 events, u64 mask, u32 *restart)
+static isize
+waitevent(u64 deadline, u64 events, u64 mask, u32 *restart, void (*cancel)(void *), void *context)
 {
   Eventwait wait = {0};
   u64       ticket = 1, ignored;
@@ -246,6 +251,8 @@ systimerwaitsignal(u64 deadline, u64 events, u64 mask, u32 *restart)
     events |= EVENT_TIMER;
   }
   wait.ticket = ticket;
+  wait.cancel = cancel;
+  wait.context = context;
   eventwait = &wait;
   error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   if (!error)
@@ -266,6 +273,19 @@ systimerwaitsignal(u64 deadline, u64 events, u64 mask, u32 *restart)
       return 0;
   }
   return wait.result;
+}
+
+isize
+systimerwaitsignal(u64 deadline, u64 events, u64 mask, u32 *restart)
+{
+  return waitevent(deadline, events, mask, restart, NULL, NULL);
+}
+
+isize
+systimerwaitcancel(u64 deadline, u64 events, u64 mask, void (*cancel)(void *), void *context)
+{
+  u32 restart;
+  return waitevent(deadline, events, mask, &restart, cancel, context);
 }
 
 isize

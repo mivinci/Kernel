@@ -243,13 +243,36 @@ pollapply(Pollfile *items, const Filepoll *rows, const u32 *indices, u32 count, 
     items[indices[i]].row.revents = ended ? FS_POLL_ERR : rows[i].revents;
 }
 
+typedef struct Pollpending Pollpending;
+struct Pollpending
+{
+  Fileimage *state;
+  Opkey     *keys;
+  u32        bits;
+};
+
+static void
+pollinterrupt(void *context)
+{
+  const Pollpending *pending = context;
+  Fileimage         *state = pending->state;
+  Conncache         *cache = sysfileimagecache(state);
+  u64                now;
+  u32                i;
+  if (systimernow(&now))
+    return;
+  for (i = 0; i < SYSCONN_COUNT; i++)
+    if (pending->bits & (1U << i))
+      (void) sysopinterrupt(&state->connections[i], cache, &pending->keys[i], now);
+}
+
 static isize
 pollround(Fileimage *state, u32 layer, Pollfile *items, u32 count, u64 opcode, u64 deadline,
           u64 mask)
 {
   Opkey      keys[SYSCONN_COUNT];
   Filepoll   rows[FS_POLL_ROWS];
-  u32        indices[FS_POLL_ROWS], pending = 0, seen = 0, i, restart;
+  u32        indices[FS_POLL_ROWS], pending = 0, seen = 0, i;
   Conncache *cache = sysfileimagecache(state);
   u64        now;
   isize      error = 0, result = 0;
@@ -309,6 +332,7 @@ pollround(Fileimage *state, u32 layer, Pollfile *items, u32 count, u64 opcode, u
       pending |= bit;
   }
   while (!error && pending) {
+    Pollpending interrupt;
     for (i = 0; i < SYSCONN_COUNT; i++) {
       Fileioresult reply;
       Connwork    *work = &state->connections[i];
@@ -360,7 +384,10 @@ pollround(Fileimage *state, u32 layer, Pollfile *items, u32 count, u64 opcode, u
         break;
       }
     }
-    error = systimerwaitsignal(deadline, EVENT_RQ_DONE, mask, &restart);
+    interrupt.state = state;
+    interrupt.keys = keys;
+    interrupt.bits = pending;
+    error = systimerwaitcancel(deadline, EVENT_RQ_DONE, mask, pollinterrupt, &interrupt);
     fileprogress(state);
   }
   if (pollcleanup(state, keys) && !error)

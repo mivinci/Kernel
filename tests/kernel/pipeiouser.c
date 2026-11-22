@@ -342,7 +342,11 @@ serviceloop(const Bootview *boot, u32 interrupt)
     CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_WAIT);
     CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && poll.request == request.request);
     CHECK(!__sys_sigsend(&target, SIGNAL_USR1));
-    CHECK(!ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST);
+    {
+      u64 flags;
+      CHECK(!ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST &&
+            !ipc_rqcheck(request.request, &flags) && flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+    }
     CHECK(!ipc_reply(gate.request, &reply));
     while (poll.request) {
       CHECK(!pipepump(&fs.pipes));
