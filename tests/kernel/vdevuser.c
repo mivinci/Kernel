@@ -1051,7 +1051,7 @@ static const u32 blkopcodes[] = {
     BLK_WRITE, BLK_WRITE, BLK_FLUSH, BLK_WRITE, BLK_FLUSH, /* replay and retire */
     BLK_READ,  BLK_READ,                                   /* re-probe home */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
-    BLK_READ                                               /* root directory */
+    BLK_READ,  BLK_READ,  BLK_READ                         /* root directory */
 };
 
 static void
@@ -1227,6 +1227,16 @@ blkdecodeindex(u32 block, const u8 *encoded, Loadindex *index)
   return 0;
 }
 
+static isize
+blkdecodedir(Dirgraph *graph, u32 inode, u64 offset, const u8 *bytes, u32 valid)
+{
+  u32 i;
+  REQUIRE(inode == FS_ROOT && !offset && valid == PAGE_SIZE, 427);
+  for (i = 0; i < valid; i++)
+    REQUIRE(bytes[i] == (u8) (0x92 + 31 + i * 37), 428);
+  return dirgraphedge(graph, inode, 34, 1, VNODE_FILE);
+}
+
 static void
 blkclient(const Bootview *boot, Handle call)
 {
@@ -1240,7 +1250,7 @@ blkclient(const Bootview *boot, Handle call)
   static Blkowners          owners;
   static Blkowners          home;
   Dirnode                   nodes[FS_INODES] = {{0}};
-  Dirgraph                  graph = {0};
+  Blkdir                    dirs = {0};
   static u8                 data[PAGE_SIZE];
   const Journalblock        block = {192, data};
   const Journalplan         plan = {NULL, NULL, NULL, NULL, &block, 0, 1};
@@ -1377,30 +1387,26 @@ blkclient(const Bootview *boot, Handle call)
               home.owners.metadata.used[2] == owners.owners.metadata.used[2] &&
               blkhomecheck(&home, owners.redo->probe, &recovered) == 1,
           424);
-  REQUIRE(blkreadview(&reader, &cache, &home.scan, 109, CACHE_META, data) == -ERR_WOULD_BLOCK &&
-              blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result),
-          425);
-  {
-    isize status;
-    REQUIRE(!blkreadpoll(&reader, &status) && !status && !blk.rpc &&
-                !blkreadview(&reader, &cache, &home.scan, 109, CACHE_META, data),
-            426);
+  dirs.home = &home;
+  dirs.decode = blkdecodedir;
+  op = 0;
+  for (i = 0; i < 2 * FS_INODES / 32 + 12; i++) {
+    isize done = blkdirstep(&dirs);
+    REQUIRE(done == 0 || done == 1, 425);
+    if (done)
+      break;
+    if (blk.rpc) {
+      REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 426);
+      op++;
+    }
   }
-  for (i = 0; i < PAGE_SIZE; i++)
-    REQUIRE(data[i] == (u8) (0x92 + 31 + i * 37), 427);
-  /* Decode the known fixture block as one ordinary name for inode 34. */
-  graph.nodes = nodes;
-  REQUIRE(dirgraphedge(&graph, FS_ROOT, 34, 2, VNODE_FILE) == -ERR_STATE && !graph.incoming[34],
-          431);
-  graph.failed = 0;
-  REQUIRE(!dirgraphedge(&graph, FS_ROOT, 34, 1, VNODE_FILE), 428);
-  for (i = 0; i < FS_INODES / 32; i++)
-    REQUIRE(dirgraphstep(&graph) == (i == FS_INODES / 32 - 1), 429);
-  REQUIRE(dirgraphedge(&graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
-  graph.next = 0;
+  REQUIRE(op == 3 && dirs.graph.incoming[34] == 1 && blkdirstep(&dirs) == 1 && !blk.rpc, 429);
+  REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
+  dirs.graph.next = 0;
   nodes[2] = nodes[3] = (Dirnode){1, VNODE_DIR, 1};
-  REQUIRE(!dirgraphedge(&graph, 2, 3, 1, VNODE_DIR) && !dirgraphedge(&graph, 3, 2, 1, VNODE_DIR) &&
-              dirgraphstep(&graph) == -ERR_STATE,
+  REQUIRE(!dirgraphedge(&dirs.graph, 2, 3, 1, VNODE_DIR) &&
+              !dirgraphedge(&dirs.graph, 3, 2, 1, VNODE_DIR) &&
+              dirgraphstep(&dirs.graph) == -ERR_STATE,
           432);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
   vdev_trace[VTEST_BLK_RPC] = 1;

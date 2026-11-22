@@ -11,6 +11,7 @@ typedef struct Blkredoload Blkredoload;
 typedef struct Blkprobe    Blkprobe;
 typedef struct Blkredo     Blkredo;
 typedef struct Blkowners   Blkowners;
+typedef struct Blkdir      Blkdir;
 struct Blkread
 {
   Fsblk    *blk;
@@ -103,6 +104,22 @@ isize blkownersstep(Blkowners *);
    replay, supply its original COMMITTED probe and released journal as a
    pair. The new marker must prove retirement on the same volume. */
 isize blkhomecheck(Blkowners *, const Blkprobe *before, const Journal *retired);
+
+struct Blkdir
+{
+  Blkowners *home;
+  Dirgraph   graph;
+  isize (*decode)(Dirgraph *, u32 inode, u64 offset, const u8 *, u32 valid);
+  u64   offset;
+  isize failed;
+  u32   inode, loaded;
+};
+
+/* After blkhomecheck succeeds, set home and decode on zeroed work. The
+   decoder consumes one block's live records synchronously, retaining its
+   per-directory validation state across blocks, and records ordinary edges.
+   One means the traversal and graph checks both completed; zero continues. */
+isize blkdirstep(Blkdir *);
 /* Admit a writable journal from that scan. The exclusive mount owner
    supplies the independently verified fault boundary and the encoded EMPTY
    record for this transaction. Keep snapshots stable through release. */

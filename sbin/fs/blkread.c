@@ -1,5 +1,6 @@
 #include "blkread.h"
 #include "crc.h"
+#include "walk.h"
 
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
@@ -364,14 +365,13 @@ blkredoadmit(const Blkowners *work, Journal *journal, u32 faultbytes, u32 faulto
                         redo->head.count, redo->crc ^ redo->finalxor, empty, &work->scan);
 }
 
-isize
-blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
+static isize
+loadinode(Blkredoload *load, const Redoscan *scan, u32 ino, Redoinode *out)
 {
-  Blkredoload *load = context;
-  isize        error;
-  u32          block;
+  isize error;
+  u32   block;
   if (!load || !scan || !scan->allocation || !out || !load->inode || !load->indirect || !ino ||
-      scan->next != ino || (load->pending && load->pending != ino))
+      (load->pending && load->pending != ino))
     return -ERR_INVALID;
   if (!load->pending) {
     error = blkreadinode(load->read, load->cache, scan, ino, load->bytes);
@@ -392,12 +392,98 @@ blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
     if (load->indirect(block, load->bytes, &load->index))
       return -ERR_STATE;
   }
-  if (load->nodes) {
+  *out = (Redoinode){&load->map, block ? &load->index : NULL, load->kind, load->links};
+  load->pending = 0;
+  return 0;
+}
+
+isize
+blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
+{
+  Blkredoload *load = context;
+  isize        error;
+  if (!scan || scan->next != ino)
+    return -ERR_INVALID;
+  error = loadinode(load, scan, ino, out);
+  if (!error && load->nodes) {
     if (!load->map.file.generation || load->map.file.generation > UINT32_MAX)
       return -ERR_STATE;
     load->nodes[ino] = (Dirnode){load->map.file.generation, load->kind, load->links};
   }
-  *out = (Redoinode){&load->map, block ? &load->index : NULL, load->kind, load->links};
-  load->pending = 0;
+  return error;
+}
+
+isize
+blkdirstep(Blkdir *work)
+{
+  Blkowners      *home;
+  Blkredoload    *load;
+  const Blkprobe *probe;
+  const Dirnode  *node;
+  Loadspan        span;
+  Redoinode       inode;
+  isize           error, status;
+  u32             valid, end;
+  if (!work || !(home = work->home) || !(probe = home->home) || !work->decode ||
+      home->phase != OwnersDone || home->failed || !home->load.nodes)
+    return -ERR_INVALID;
+  if (work->failed)
+    return work->failed;
+  load = &home->load;
+  if (load->read->fill.cache) {
+    error = blkreadpoll(load->read, &status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+    if (status)
+      return work->failed = probe->blk->stale ? -ERR_STALE : -ERR_STATE;
+  }
+  if (probe->blk->stale || probe->blk->info.geometry_generation != probe->generation)
+    return work->failed = -ERR_STALE;
+  if (!work->inode) {
+    work->graph.nodes = load->nodes;
+    work->inode = FS_ROOT;
+  }
+  if (work->inode == FS_INODES)
+    return dirgraphstep(&work->graph);
+  end = MIN(work->inode + FS_BLOCK_BYTES / FS_INODE_BYTES, FS_INODES);
+  while (work->inode < end) {
+    node = &load->nodes[work->inode];
+    if (node->kind == VNODE_DIR && node->links)
+      break;
+    work->inode++;
+  }
+  if (work->inode == end)
+    return 0;
+  node = &load->nodes[work->inode];
+  if (!work->loaded) {
+    error = loadinode(load, &home->scan, work->inode, &inode);
+    if (error == -ERR_WOULD_BLOCK)
+      return 0;
+    if (error)
+      return work->failed = error;
+    if (inode.kind != node->kind || inode.links != node->links ||
+        inode.map->file.inode != work->inode || inode.map->file.generation != node->generation)
+      return work->failed = -ERR_STATE;
+    work->loaded = 1;
+  }
+  if (work->offset == load->map.file.length) {
+    work->inode++;
+    work->loaded = 0;
+    work->offset = 0;
+    return 0;
+  }
+  valid = (u32) MIN(load->map.file.length - work->offset, FS_BLOCK_BYTES);
+  error = loadmapspan(&load->map.file, &load->map, load->map.indirect ? &load->index : NULL,
+                      FS_DATA_START, home->scan.blocks, work->offset, valid, &span);
+  if (error || !span.first)
+    return work->failed = -ERR_STATE;
+  error = blkreadview(load->read, load->cache, &home->scan, span.first, CACHE_META, load->bytes);
+  if (error == -ERR_WOULD_BLOCK)
+    return 0;
+  if (!error)
+    error = work->decode(&work->graph, work->inode, work->offset, load->bytes, valid);
+  if (error)
+    return work->failed = error < 0 ? error : -ERR_STATE;
+  work->offset += valid;
   return 0;
 }
