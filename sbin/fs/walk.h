@@ -40,7 +40,7 @@ struct Vwalk
   const Vmounts  *mounts;
   void           *context;
   Vnode          *root, *current, *link;
-  u32             phase, follow;
+  u32             phase, follow, searchlast;
 };
 
 int vnodesame(const Vnode *left, const Vnode *right);

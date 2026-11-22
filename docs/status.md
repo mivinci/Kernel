@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage517：FS 服务接入 `PATH/CHDIR`，目标目录搜索通过后才切换 cwd。双架构 QEMU `pipeio`、`runtime` 通过，公开 `chdir` 和生产目录后端待接入。
 - stage516：文件数据同步执行器沿原 REQUEST 逐项等待写入和 FLUSH，拒绝过期完成。双架构 QEMU `pipeio`、`virtiodev` 和 40 项 FS 主机测试通过。生产挂载和块服务接线待完成。
 - stage515：同步事务可按已提交文件映射捕获 EOF 内的脏数据版本。双架构 QEMU `pipeio`、`virtiodev`、`runtime` 与 40 项 FS 主机测试通过。生产同步的元数据和块运输待接入。
 - stage514：公开 `fsync`、`fdatasync` 沿原 `FS_SYNC` 等待并收尾，服务已接收后返回 EINTR 时不自动重发。双架构 QEMU `pipeio` 与 61 项主机测试通过。生产同步后端待接入。

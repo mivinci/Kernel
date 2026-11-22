@@ -8,6 +8,7 @@ enum
   WALK_SEARCH,
   WALK_LOOKUP,
   WALK_LINK,
+  WALK_LAST,
 };
 
 int
@@ -60,7 +61,17 @@ vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context
   walk->root = root;
   walk->current = start;
   walk->follow = follow;
+  walk->searchlast = 0;
   walk->phase = WALK_COMPONENT;
+  return 0;
+}
+
+static isize
+result(Vwalk *walk, Vnode **out)
+{
+  *out = walk->current;
+  walk->current = NULL;
+  vwalkdrop(walk);
   return 0;
 }
 
@@ -71,10 +82,12 @@ component(Vwalk *walk, Vnode **out)
   if (status < 0)
     return status;
   if (!status) {
-    *out = walk->current;
-    walk->current = NULL;
-    vwalkdrop(walk);
-    return 0;
+    if (!walk->searchlast)
+      return result(walk, out);
+    if (walk->current->kind != VNODE_DIR)
+      return -ENOTDIR;
+    walk->phase = WALK_LAST;
+    return VWALK_MORE;
   }
   if (walk->part.kind == PATH_ROOT) {
     if (!vnodesame(walk->current, walk->root)) {
@@ -167,6 +180,9 @@ advance(Vwalk *walk, Vnode **out)
     walk->link = NULL;
     walk->phase = WALK_COMPONENT;
     return VWALK_MORE;
+  case WALK_LAST:
+    status = walk->ops->search(walk->context, walk->current);
+    return status ? status : result(walk, out);
   default:
     return -EINVAL;
   }

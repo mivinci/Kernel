@@ -13,17 +13,17 @@ struct Openjob
   Filelink *link;
   void     *backend;
   Vcred     cred;
-  u32       mask, waiting;
+  u32       mask, waiting, changedcwd;
 };
 struct Fsopen
 {
-  const Fscontexts *contexts;
-  const Vmounts    *mounts;
-  const Vwalkops   *ops; /* Walk callbacks receive Openjob *. */
-  Openjob          *jobs;
-  u32               count;
-  u64               events;
-  void             *backend;
+  Fscontexts     *contexts;
+  const Vmounts  *mounts;
+  const Vwalkops *ops; /* Walk callbacks receive Openjob *. */
+  Openjob        *jobs;
+  u32             count;
+  u64             events;
+  void           *backend;
   /* Validate flags/mode and any directory session before lookup. Return
      negative business errno or fill the borrowed start and final-link rule. */
   isize (*select)(Openjob *, const Fscontext *, Vnode **start, u32 *follow);

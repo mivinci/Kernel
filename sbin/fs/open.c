@@ -2,7 +2,7 @@
 #include <errno.h>
 
 static isize
-finish(Handle request, u64 seq, Filelink *link, isize status)
+replypath(Handle request, u64 seq, Filelink *link, isize status, u32 committed)
 {
   Msg   reply = {{(u64) status, seq, 0, 0}};
   u64   state;
@@ -12,11 +12,17 @@ finish(Handle request, u64 seq, Filelink *link, isize status)
   if (state == RQ_CHECK_DRAINING)
     error = ipc_rqfinish(request);
   else {
-    if (state & RQ_CHECK_CANCEL)
+    if (!committed && state & RQ_CHECK_CANCEL)
       reply.words[0] = (u64) -EINTR;
     error = ipc_reply(request, &reply);
   }
   return error || !link ? error : sysfilefinish(&link->watch.active, request);
+}
+
+static isize
+finish(Handle request, u64 seq, Filelink *link, isize status)
+{
+  return replypath(request, seq, link, status, 0);
 }
 
 static isize
@@ -26,6 +32,10 @@ advance(Fsopen *open, Openjob *job)
   Vnode *node = NULL;
   u64    state;
   isize  status, error;
+  if (job->changedcwd) {
+    error = replypath(request, job->slot.seq, job->link, 0, 1);
+    goto done;
+  }
   for (;;) {
     error = ipc_rqcheck(request, &state);
     if (error)
@@ -55,16 +65,23 @@ advance(Fsopen *open, Openjob *job)
        entering the backend's publication operation. */
     error = ipc_rqcheck(request, &state);
     if (!error && state == RQ_CHECK_LIVE) {
-      error = open->complete(job, node);
-      if (!error)
-        error = sysfilefinish(&job->link->watch.active, request);
-      else
-        error = finish(request, job->slot.seq, job->link, -EIO);
+      if (job->call.words[0] == FS_PATH) {
+        status = fscontextchdir(open->contexts, job->call.source, job->call.image, node);
+        job->changedcwd = !status;
+        error = replypath(request, job->slot.seq, job->link, status, job->changedcwd);
+      } else {
+        error = open->complete(job, node);
+        if (!error)
+          error = sysfilefinish(&job->link->watch.active, request);
+        else
+          error = finish(request, job->slot.seq, job->link, -EIO);
+      }
     } else if (!error)
       error = finish(request, job->slot.seq, job->link, -EINTR);
     open->ops->drop(job, node);
   } else
     error = finish(request, job->slot.seq, job->link, status);
+done:
   if (!error)
     job->call.request = 0;
   return error;
@@ -103,11 +120,12 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   job->link = link;
   job->backend = open->backend;
   job->mask = context->mask;
+  job->changedcwd = 0;
   start = context->cwd;
-  error = open->select(job, context, &start, &follow);
+  error = call->words[0] == FS_OPEN ? open->select(job, context, &start, &follow) : 0;
   if (!error)
-    error = vopenpath(&job->walk, open->mounts, open->ops, job, context->root, start, follow,
-                      &job->cred, link, call, &slot);
+    error = vrequestpath(&job->walk, open->mounts, open->ops, job, context->root, start, follow,
+                         &job->cred, link, call, &slot);
   if (!error) {
     /* Reserve native deferred ownership before any backend can return WAIT. */
     error = ipc_defer(request);

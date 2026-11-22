@@ -1531,7 +1531,7 @@ struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file;
+  Vnode     root, file, dir, denied;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1541,7 +1541,7 @@ struct Openfixture
   Journalio syncio;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
-  u32       cancelgrowth, durable;
+  u32       cancelgrowth, durable, dirwait;
 };
 
 static isize
@@ -1581,7 +1581,15 @@ opensearch(void *context, const Vnode *node)
 {
   Openjob     *job = context;
   Openfixture *fixture = job->backend;
-  CHECK(node == &fixture->root && job->cred.uid == 22 && job->cred.gid == 32 && job->mask == 027);
+  CHECK(job->cred.uid == 22 && job->cred.gid == 32 && job->mask == 027);
+  if (job->call.words[0] == FS_PATH) {
+    if (node == &fixture->dir && fixture->dirwait) {
+      fixture->dirwait = 0;
+      return VWALK_WAIT;
+    }
+    return vaccess(&job->cred, 22, 32, node == &fixture->denied ? 0600 : 0700, VACCESS_X, 1);
+  }
+  CHECK(node == &fixture->root);
   return vaccess(&job->cred, 22, 32, fixture->searches++ == 2 ? 0010 : 0100, VACCESS_X, 1);
 }
 
@@ -1590,6 +1598,11 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
 {
   Openjob     *job = context;
   Openfixture *fixture = job->backend;
+  if (job->call.words[0] == FS_PATH) {
+    CHECK(dir == &fixture->root && bytes == 1);
+    *out = name[0] == 'd' ? &fixture->dir : name[0] == 'n' ? &fixture->denied : &fixture->file;
+    return openhold(fixture, *out);
+  }
   CHECK(dir == &fixture->root && bytes == 1 && name[0] == 'x');
   if (fixture->blocked)
     return VWALK_WAIT;
@@ -2016,6 +2029,8 @@ openserver(const Bootview *boot)
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
+  fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
+  fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fixture.holds && !fixture.searches);
   CHECK(!fscontextadd(&contexts, link.watch.owner.pid, link.watch.owner.image, &fixture.root,
                       &fixture.root, 027));
@@ -2095,7 +2110,13 @@ openserver(const Bootview *boot)
         fixture.sync.request && !fsreadpump(&reads, &fixture.files) &&
         fixture.syncio.kind == JOURNAL_FLUSH && !fsstep(&fs) && !fixture.sync.request &&
         synctxn.phase == TXN_STOPPED && blocks[0].dirty && file.position == 26 && file.refs == 1 &&
-        !fsstep(&fs) && !file.node && !file.refs &&
+        !fsstep(&fs) && !file.node && !file.refs);
+  CHECK(context.cwd == &fixture.root && context.version == 1 && !fsstep(&fs) && !fsstep(&fs) &&
+        context.cwd == &fixture.root && context.version == 1 && fixture.holds == 2);
+  fixture.dirwait = 1;
+  CHECK(!fsstep(&fs) && job.waiting && context.cwd == &fixture.root && context.version == 1 &&
+        !fsstep(&fs) && !job.call.request && context.cwd == &fixture.dir && context.version == 2 &&
+        !fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3 && fixture.holds == 2 &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -2155,6 +2176,39 @@ opensynccheck(u64 session, u64 dataonly, isize expected)
           ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_WOULD_BLOCK && !ipc_rqcancel(rpc) &&
           !ipc_rqwait(rpc, 0, &result) && !ipc_rqwait(rpc, RQ_FINISH, &drain) &&
           !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+  } else
+    CHECK(!ipc_call(work.state.call, &request, 0, &result));
+  CHECK((isize) result.words[0] == expected && result.words[1] == lease.seq && !result.words[2] &&
+        !result.words[3] && !sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
+chdircheck(const char *path, u64 bytes, isize expected, int delayed)
+{
+  Filelease lease;
+  Fileslot  slot = {0};
+  Msg       request = {{FS_PATH, work.state.map.connid, 0, 0}};
+  Ipcmsg    result;
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  request.words[2] = slot.seq = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.payload_bytes = bytes;
+  slot.args[0] = FS_PATH_CHDIR;
+  slot.args[2] = bytes;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES),
+                    path, bytes) &&
+        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)));
+  if (delayed) {
+    Msg    gate = {{FS_ATTACH, 0, 0, 0}};
+    Ipcmsg drain;
+    Handle rpc;
+    CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+    rpc = result.request;
+    CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) && !ipc_rqwait(rpc, 0, &result) &&
+          !ipc_rqwait(rpc, RQ_FINISH, &drain) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
   } else
     CHECK(!ipc_call(work.state.call, &request, 0, &result));
   CHECK((isize) result.words[0] == expected && result.words[1] == lease.seq && !result.words[2] &&
@@ -2232,6 +2286,10 @@ open:
       openseek(key.session, FS_SEEK_CUR, 0, 0, 26);
       opensynccheck(dup.session, 0, -EIO);
       CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
+      chdircheck("/x", sizeof("/x"), -ENOTDIR, 0);
+      chdircheck("/n", sizeof("/n"), -EACCES, 0);
+      chdircheck("/d", sizeof("/d"), 0, 1);
+      chdircheck(".", sizeof("."), 0, 0);
       pipeiotrace[0] = 7;
       return;
     }

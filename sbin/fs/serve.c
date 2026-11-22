@@ -95,6 +95,7 @@ fsstep(Fsservice *fs)
   case FS_HELLO:
     return hello(fs, &input);
   case FS_OPEN:
+  case FS_PATH:
     return fsopenstart(fs->open, fs->links, fs->nlinks, &input);
   case FS_PIPE:
   case FS_CLOSE:
