@@ -8,6 +8,8 @@
 #define SEEK_CUR      1
 #define SEEK_END      2
 extern char **environ;
+extern char  *optarg;
+extern int    opterr, optind, optopt;
 pid_t         getpid(void);
 pid_t         getppid(void);
 uid_t         getuid(void);
@@ -23,6 +25,7 @@ int           dup(int fd);
 int           dup2(int fd, int target);
 int           close(int fd);
 int           isatty(int fd);
+int           getopt(int argc, char *const argv[], const char *optstring);
 ssize_t       read(int fd, void *buffer, size_t count);
 ssize_t       write(int fd, const void *buffer, size_t count);
 ssize_t       pread(int fd, void *buffer, size_t count, off_t offset);

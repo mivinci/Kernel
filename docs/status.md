@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage448（2026-11-22）：公开 `getopt()` 支持 POSIX 短选项；双架构 QEMU `runtime` 验证选项组、参数和停止位置，主机探针验证诊断与短写。
 - stage447（2026-11-22）：公开 `isatty()` 接入；双架构 QEMU `pipeio` 验证终端夹具、管道、已关闭 fd，以及信号取消后可再次查询。
 - stage446（2026-11-22）：公开 `tcgetattr()` 接入。双架构 QEMU `pipeio` 验证夹具属性交付、异常回复及坏输出地址、管道 ENOTTY 和无效 fd EBADF。生产 TTY 文件连接待接。
 - stage445（2026-11-22）：TTY 共用绝对期限闹钟；双架构 QEMU `runtime` 验证定时读到期、提前唤醒不重设、取消撤销闹钟；`serial-tty` 验证 READY 与回显。生产文件请求尚未接入。

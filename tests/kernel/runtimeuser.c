@@ -19,13 +19,39 @@
 #include "stringuser.h"
 #include "envuser.h"
 #include "../../sbin/fs/pipe.h"
-volatile u64        runtime_trace[18];
-static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
+
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
       _exit(n);                                                                                    \
   } while (0)
+
+static void
+optioncheck(void)
+{
+  char *args[] = {"tool", "-abvalue", "-c", "-argument", "--", "-a", NULL};
+  char *bad[] = {"tool", "-xa", "-b", NULL};
+  char *operand[] = {"tool", "-", "-a", NULL};
+  REQUIRE(optind == 1 && opterr == 1 && getopt(6, args, "+ab:c:") == 'a' && optind == 1 &&
+              !optarg && getopt(6, args, "+ab:c:") == 'b' && optind == 2 && optarg == args[1] + 3 &&
+              getopt(6, args, "+ab:c:") == 'c' && optind == 4 && optarg == args[3] &&
+              getopt(6, args, "+ab:c:") == -1 && optind == 5,
+          280);
+  optind = 1;
+  REQUIRE(getopt(3, bad, "+:ab:") == '?' && optopt == 'x' && optind == 1 &&
+              getopt(3, bad, "+:ab:") == 'a' && optind == 2 && getopt(3, bad, "+:ab:") == ':' &&
+              optopt == 'b' && optind == 4 && !optarg,
+          281);
+  optind = 2;
+  opterr = 0;
+  REQUIRE(getopt(3, bad, "ab:") == '?' && optopt == 'b' && !optarg, 282);
+  optind = 1;
+  REQUIRE(getopt(3, operand, "a") == -1 && optind == 1, 283);
+  operand[1] = "path";
+  REQUIRE(getopt(3, operand, "a") == -1 && optind == 1 && operand[2][1] == 'a', 284);
+}
+volatile u64                             runtime_trace[18];
+static volatile u64                      initialized = UINT64_C(0x123456789abcdef0);
 __extension__ typedef long long          Testll;
 __extension__ typedef unsigned long long Testull;
 typedef struct Numbercase                Numbercase;
@@ -727,6 +753,7 @@ main(int argc, char **argv)
               strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
           176);
   sortcheck();
+  optioncheck();
   ctypecheck();
   collationcheck();
   patterncheck();
