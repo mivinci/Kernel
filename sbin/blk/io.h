@@ -4,6 +4,14 @@
 
 typedef struct Blkdma   Blkdma;
 typedef struct Blkqueue Blkqueue;
+enum
+{
+  BLKQ_OPEN = 1,
+  BLKQ_FAULT,
+  BLKQ_STOPPING,
+  BLKQ_RECLAIM,
+  BLKQ_STOPPED
+};
 struct Blkdma
 {
   Vblkhead    *header;
@@ -18,7 +26,7 @@ struct Blkqueue
   Vblkreq      *slots;
   const Blkdma *buffers;
   Vblkconfig    config;
-  u64           generation, serial;
+  u64           generation, geometry, serial;
   u32           count, state, reclaimed, configpending;
 };
 

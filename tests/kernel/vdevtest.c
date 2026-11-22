@@ -4,6 +4,7 @@
 #include <device.h>
 #include <proc.h>
 #include <abi/boot.h>
+#include <abi/observe.h>
 #include <diag.h>
 #include <irq.h>
 #include <clock.h>
@@ -34,7 +35,7 @@ load(Handle pid, Handle memory, const Dtinfo *info, u32 count, const u32 members
   struct
   {
     Boot     header;
-    Resentry resources[3 + VTEST_MEMBERS];
+    Resentry resources[4 + VTEST_MEMBERS];
   } packet;
   u64      trace[VTEST_TRACE];
   u32      i, j, slot;
@@ -46,7 +47,7 @@ load(Handle pid, Handle memory, const Dtinfo *info, u32 count, const u32 members
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = sizeof(packet);
-  packet.header.resource_count = 3 + count;
+  packet.header.resource_count = 4 + count;
   packet.header.resources_off = sizeof(Boot);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
@@ -61,6 +62,8 @@ load(Handle pid, Handle memory, const Dtinfo *info, u32 count, const u32 members
     REQUIRE(!procirqinstall(pid, info->dev[members[i]].irq[0].number, IRQ_BIT_MIN + i,
                             &packet.resources[3 + i].handle));
   }
+  packet.resources[3 + count].tag = VTEST_OBSERVE;
+  REQUIRE(!localobserve(table, OBSERVE_SOURCE, &packet.resources[3 + count].handle));
   testload(pid, vdev_image, (u64) (vdev_image_end - vdev_image), &packet, sizeof(packet));
   REQUIRE(!procinfo(pid, &process));
   for (i = 0; i < VTEST_TRACE; i++)
@@ -89,6 +92,32 @@ load(Handle pid, Handle memory, const Dtinfo *info, u32 count, const u32 members
     }
   }
   REQUIRE(!spacewrite(process.space, vdev_trace_address, trace, sizeof(trace)));
+}
+
+static void
+loadclient(Handle pid, Imageid server)
+{
+  struct
+  {
+    Boot     header;
+    Resentry resources[2];
+  } packet;
+  Rtable *table = proctable(pid);
+  u32     i;
+  for (i = 0; i < sizeof(packet); i++)
+    ((u8 *) &packet)[i] = 0;
+  packet.header.magic = BOOT_MAGIC;
+  packet.header.format = BOOT_FORMAT;
+  packet.header.bytes = sizeof(packet);
+  packet.header.resource_count = ARRAY_SIZE(packet.resources);
+  packet.header.resources_off = sizeof(Boot);
+  packet.header.user_lo = BOOT_USER_LO;
+  packet.header.user_hi = BOOT_USER_HI;
+  packet.resources[0].tag = BOOT_SELF_SPACE;
+  packet.resources[0].handle = testresource(table, LOCAL_SPACE);
+  packet.resources[1].tag = VTEST_BLK_CALL;
+  REQUIRE(!localendpoint(table, server, LOCAL_CALL, LOCAL_USE, 0, 0, &packet.resources[1].handle));
+  testloadmapped(pid, vdev_image, (u64) (vdev_image_end - vdev_image), &packet, sizeof(packet));
 }
 static void
 testsync(u64 base)
@@ -215,15 +244,15 @@ vdevtest(const Dtinfo *info)
 {
   Setid      set;
   Set        account;
-  Procinfo   process;
-  Life       life;
+  Procinfo   process, client;
+  Life       life, clientlife;
   Liferesult result;
   Pgstat     before, after;
   Device     window;
-  Handle     pid, memory;
+  Handle     pid, clientpid, memory;
   Testdma    dma[VTEST_MEMBERS];
   u64        page, members, trace[VTEST_TRACE];
-  u64        started, current, resize;
+  u64        started, current, resize, clientrpc;
   u32        devices[VTEST_MEMBERS], interrupts = 0, retired = 0, reclaimed = 0;
   u32 i, j, k, count, id, pages = 0, probes = 0, empty = 0, found = 0, negotiated = 0, resets = 0;
   u32 rng = 0, writable = 0, readonly = 0, reads = 0, writes = 0, flushes = 0;
@@ -255,13 +284,16 @@ vdevtest(const Dtinfo *info)
       }
     REQUIRE(count && !devgroup(page, members, &id));
     REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pid) && !procinfo(pid, &process));
+    REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &clientpid) && !procinfo(clientpid, &client));
     REQUIRE(!procmmioinstallgroup(pid, page, members, 3, &memory));
     load(pid, memory, info, count, devices, page, dma);
-    REQUIRE(!procpublish(pid) && !clockmono(&started));
+    loadclient(clientpid, process.identity);
+    REQUIRE(!procpublish(pid) && !procpublish(clientpid) && !clockmono(&started));
     resize = 0;
     do {
       error = procrunone();
       REQUIRE((!error || error == -ERR_WOULD_BLOCK) && !lifestat(process.life, &life));
+      REQUIRE(!lifestat(client.life, &clientlife));
       REQUIRE(!clockmono(&current) && current - started < UINT64_C(4000000000));
       if (error == -ERR_WOULD_BLOCK) {
         if (!resize) {
@@ -272,7 +304,15 @@ vdevtest(const Dtinfo *info)
         }
         REQUIRE(procidle() >= 0);
       }
-    } while (life.state != LIFE_ENDED);
+    } while (life.state != LIFE_ENDED || clientlife.state != LIFE_ENDED);
+    REQUIRE(!spaceread(client.space, vdev_trace_address, trace, sizeof(trace)));
+    if (trace[31]) {
+      putstr("VDEVCLIENT fail=");
+      puthex(trace[31]);
+      putstr("\n");
+    }
+    REQUIRE(!trace[31] && clientlife.reason == LIFE_EXIT && clientlife.code == 42);
+    clientrpc = trace[VTEST_BLK_RPC];
     REQUIRE(!spaceread(process.space, vdev_trace_address, trace, sizeof(trace)));
     if (trace[31]) {
       putstr("VDEVUSER fail=");
@@ -284,10 +324,12 @@ vdevtest(const Dtinfo *info)
     REQUIRE(trace[0] == 99 && !trace[31] && trace[12] == count && trace[13] + trace[14] == count &&
             trace[14] == trace[17] + trace[18] + trace[19] && trace[15] == trace[14] &&
             trace[16] == 2 * trace[14] + trace[18] + trace[19] &&
-            trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 34 * trace[18] &&
-            trace[3] == 25 * trace[18] && trace[38] == trace[2] + trace[3] + trace[22] &&
+            trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 35 * trace[18] &&
+            trace[3] == 26 * trace[18] &&
+            trace[38] == trace[2] + trace[3] + trace[22] + trace[VTEST_BLK_RPC] &&
             trace[39] == trace[18] + trace[19] && resize == trace[18] &&
-            trace[VTEST_CAPACITY] == 2 * trace[20] && trace[VTEST_PARALLEL] == 2 * trace[18]);
+            trace[VTEST_CAPACITY] == 2 * trace[20] && trace[VTEST_PARALLEL] == 2 * trace[18] &&
+            trace[VTEST_BLK_RPC] == trace[18] && clientrpc == trace[VTEST_BLK_RPC]);
     interrupts += (u32) trace[38];
     retired += (u32) trace[39];
     probes += (u32) trace[12];
@@ -300,7 +342,7 @@ vdevtest(const Dtinfo *info)
     readonly += (u32) trace[19];
     rwsectors += trace[20];
     rosectors += trace[21];
-    reads += (u32) (trace[22] + trace[VTEST_PARALLEL]);
+    reads += (u32) (trace[22] + trace[VTEST_PARALLEL] + trace[VTEST_BLK_RPC]);
     writes += (u32) trace[2];
     flushes += (u32) trace[3];
     pages++;
@@ -308,6 +350,9 @@ vdevtest(const Dtinfo *info)
     while ((error = procclean(pid)) > 0) {
     }
     REQUIRE(!error && !lifecollect(process.life, 1, &result));
+    while ((error = procclean(clientpid)) > 0) {
+    }
+    REQUIRE(!error && !lifecollect(client.life, 1, &result));
     for (j = 0; j < count; j++) {
       Mem   held;
       Memid cursor = {0};
@@ -357,6 +402,8 @@ vdevtest(const Dtinfo *info)
   puthex(interrupts);
   putstr(" retired=");
   puthex(retired);
+  putstr(" blkrpc=");
+  puthex(writable);
   putstr(" dmagrain=");
   puthex(hal_dma_granule());
   putstr(" dmapages=");

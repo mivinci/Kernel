@@ -109,7 +109,7 @@ stage510：blk 私有队列接受字节偏移，校验对齐后才换算成 virt
 
 stage469：serial 私有 `serialiodrained` 返回当前 TX 环代次中已离开 UART 的字节位置。UART 确认 FIFO 和移位寄存器均空后，从共享消费位置扣除仍在驱动私有缓冲中待提交的字节；忙、旧代次或无效状态不更新输出。ARM64、RV64 QEMU `packageboot/service-authority` 经真实 MMIO 核对排空位置和实际串口输出；7 项主机专项覆盖环已消费但私有缓冲未送出、UART 未排空和旧代次。尚未向 TTY 发布该位置，也未接 `tcdrain` 或排空后改模式。
 
-stage432：blk 私有队列在已提交的 WRITE 完成前不发布 FLUSH，FLUSH 排空前也不发布后续 WRITE 或 FLUSH；READ 不受这条门禁限制。上层仍负责按业务顺序提交，并在完成失败时停止该持久化序列，其中尚未提交的 FLUSH 不会在队列里自动排队。ARM64/RV64 QEMU `virtiodev` 用真实 IRQ 取到完成后，分别在 WRITE、FLUSH 尚未收尾时验证门禁；收尾后按序完成实际 FLUSH 和回读，宿主核对块设备计数与整盘内容。34 项 virtio 主机测试及改动文件格式检查通过。生产 IPC 分派和故障回报未接。
+stage432：blk 私有队列在已提交的 WRITE 完成前不发布 FLUSH，FLUSH 排空前也不发布后续 WRITE 或 FLUSH；READ 不受这条门禁限制。上层仍负责按业务顺序提交，并在完成失败时停止该持久化序列，其中尚未提交的 FLUSH 不会在队列里自动排队。ARM64/RV64 QEMU `virtiodev` 用真实 IRQ 取到完成后，分别在 WRITE、FLUSH 尚未收尾时验证门禁；收尾后按序完成实际 FLUSH 和回读，宿主核对块设备计数与整盘内容。34 项 virtio 主机测试及改动文件格式检查通过。
 
 stage382：块队列遇到中断或完成环轮询失败、提交后仍保有窗口的错误、部分完成同步失败或无效设备结果时关闭。正常的参数拒绝和队列背压保留原行为。ARM64/RV64 QEMU `virtiodev` 在真实读完成尚未收取时，让第二笔请求的 BEFORE 失败，验证后续提交与轮询均拒绝，设备中断仍待处理，两笔请求的保留窗口只在确认复位后归还。34 项 virtio 主机回归及格式通过。生产调度超时、客户端失败回报和独立恢复者仍待接。
 
@@ -202,10 +202,26 @@ UART BOOT_RESOURCE扩展、生产启动资源与控制台交接均仍按07待确
 
 依赖：13。产物：用户态块驱动、私有 DMA 缓冲、读/写/flush 协议及设备发现。
 
-生产运输候选（待确认）：init 为每个设备实例给获准的 FS 配置固定 CALL 入口和有界共享槽。首版只开放 INFO、READ、WRITE、FLUSH；共享槽用于 CPU 间交付，实际 DMA 只访问 blk 私有缓冲。FS 检查设备实例和几何后才使用该连接；恢复后重新绑定，结果未知的旧请求不自动重放。编码、槽的分配与归还、生产发权仍须定稿。
+生产运输（已冻结）：init 为每个设备实例给获准的 FS 配置固定 CALL 入口和 9 页共享连接区：前 64 字节为公共 `Protohead`，随后 8 个各 128 字节的 `Protoslot`，数据起点为第 4096 字节；每个槽独占一页。连接消息固定为 `[version/opcode, connid, seq, slot]`，版本为 1，opcode 为 HELLO=1、INFO=2、READ=3、WRITE=4、FLUSH=5。HELLO 沿用公共无槽握手，其余请求只接受单槽、`object=0`、保留字段为零。
+
+INFO 的八个 args 全为零，`payload_bytes=96`，固定 `Blkinfo` 写入槽数据页；返回 value=当前几何代次、bytes=96。READ/WRITE 的 args 为 `[offset,length,geometry_generation,0,0,0,0,0]`，`payload_bytes=length`，单笔上限 4096；READ 完成后把数据写回原槽，WRITE 在提交前从原槽复制，随后客户端修改不能改变设备输入。FLUSH 要求 offset、length 和 payload 均为零。普通完成结果固定 `words[1]=seq`：READ/WRITE 成功 value=bytes=实际字节数，FLUSH value=bytes=0；几何不匹配返回 ESTALE，容量/对齐/特性不匹配返回 EINVAL 或 ENOTSUP，设备错误返回 EIO。
+
+队列初始化产生几何代次 1；CONFIG 只有在旧 WRITE/FLUSH 排空并重新读取一致配置后才递增，序号不回绕。每个私有 `Blkjob` 固定对应一个设备队列槽；READ 只在成功完成及 DMA AFTER 后写客户端槽，队列完成必须以队列代次和 cookie 精确匹配。取消发生在提交前返回 EINTR；READ 已提交后取消仍等待真实完成，只丢弃结果并返回 EINTR；WRITE/FLUSH 已提交后取消保留实际设备结果，成功不能改写成 EINTR。WRITE 结果成功表示设备接受本次写入，FLUSH 是由上层日志定义的持久化边界。
+
+设备提交槽暂满、写入与 FLUSH 顺序限制、当前几何等候刷新时，返回 EAGAIN，设备没有接收本笔请求。几何已经换代时，旧代次请求返回 ESTALE。
+
+传输或 DMA 交接故障立即停止新准入；设备队列及固定 DMA 页保留到真实复位确认停机并完成 AFTER 回收。旧请求在旧实例上只报告 EIO/实际已取得结果，不跨实例重放，也不把未确认停止当作可复用。客户端退出后先排空其块请求，才清连接登记。FS 必须核对设备实例和几何代次；恢复后重新取得绑定，旧几何请求不能落到新设备。HELLO、共享槽注册与资源按公共文件连接协议执行，块服务不在接口中交付普通共享页给 DMA。
+
+执行顺序为先完成独立 blk 用户程序、设备发现、原生 DMA 授权/同步及生产 FS 挂载，再接上层编码。当前已实现公共槽拆分、blk wire/几何代次和 transport 核心；transport 先确认 REQUEST 可保留再提交设备，设备完成后先发布 DONE 再回覆，reply 失败时继续泵，reply 成功后的文件账本收尾也独立重试。生产 main、真实 DMA 同步接线、默认 init 资源/manifest 与 QEMU 服务链路仍待完成。磁盘端序、magic、位图/inode/目录编码及 CRC 参数未在此协议中确定。
 
 测试方法：独立测试盘测试不同边界和长度的读写及回读摘要，非法范围/整数溢出/短消息必须拒绝。
 测试多个客户端、设备特性缺失、提交/完成交错；客户端提交后死亡，观察驱动仍安全收尾。
+
+transport 主机夹具直接链接生产 `sbin/blk/io.c`、`transport.c`、`libvirtio` 队列与 `libsys` 文件账本，在 O0/O2 下执行 15 个场景，覆盖 INFO、defer 失败不触碰设备、READ/WRITE 成功与已提交后的取消、reply 和账本独立重试、draining、几何换代、队列容量、FLUSH 背压及客户端退出排空。即时完成保留原请求以重试，不增减设备在途计数；若重试仍失败，新调用在占用共享槽前收到 EAGAIN。夹具验证 INFO 重试期间另一连接的 WRITE 仍在途，之后以实际字节数完成；FLUSH 等待旧 WRITE 完成时不会通知设备，收到 EAGAIN 后可发起新调用。
+
+ARM64/RV64 QEMU `virtiodev` 用两个独立用户进程走 HELLO 的资源回复、同一共享槽的 INFO/WRITE/FLUSH/READ 和退出观察回收。三笔设备请求走 `sbin/blk/transport.c`、实际 IRQ 和 virtio-blk。客户端验证结果计数及整页读回，主机核对 QMP 读写字节数、FLUSH 次数和完整盘面，内核核对连接、DMA 固定页和账户回到基线。设备、DMA 和观察权限仍由测试加载器配置，生产 `blk` 入口、默认 init 发权及 FS 挂载待接。
+
+FS 私有 `Fsblk` 适配器在已验证连接上预留一个槽，保存原异步 RPC、序号和预期长度。等原请求 FINISH 后验证业务结果和 INFO 的设备/几何代次，将读回字节保存在私有缓冲中，ACK 成功后才交给上层并归还槽。几何过期阻止非 INFO 请求；刷新后挂载所有者仍须重验卷。两架构 `virtiodev` 的客户端使用此适配器，HELLO 的授权和映射仍由夹具提供。
 用 QEMU 设备 trace 核对通知与完成，记录实际协商特性；强制设备异常测试不得释放仍可能 DMA 的页。
 两架构QEMU用于驱动/顺序路径验收，通常不能暴露全部非一致缓存错误；另用可控缓存模型及实际支持的非一致硬件核验维护效果，未取得后者前不得宣称非一致平台已验证。
 

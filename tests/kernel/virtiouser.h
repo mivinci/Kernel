@@ -8,6 +8,9 @@
 #define VTEST_RESIZE    32
 #define VTEST_CAPACITY  33
 #define VTEST_PARALLEL  34
+#define VTEST_BLK_RPC   35
+#define VTEST_BLK_CALL  266
+#define VTEST_OBSERVE   267
 #define VTEST_DMA_TRACE 40
 #define VTEST_TRACE     (VTEST_DMA_TRACE + VTEST_MEMBERS * VTEST_PAGES)
 int  virtioread(void *context, u32 offset, u32 *out);

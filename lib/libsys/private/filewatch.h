@@ -120,6 +120,10 @@ struct Filelink
    until they can share ownership of the source cookie. */
 isize sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space,
                    u64 base, const Ipcmsg *call);
+/* Generic shared-slot handshake for services that use the common
+   Protohead/Protoslot wire layout but have their own HELLO opcode. */
+isize sysslothello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space,
+                   u64 base, u64 hello, const Ipcmsg *call);
 /* Fund an observed target's connection without delivering its MEM. The
    dispatcher first installs the target observation at index. On failure it
    owns cleanup, including any incomplete mapping or observation. */

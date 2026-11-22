@@ -492,15 +492,14 @@ sysfileprepay(Filelink *pool, u32 count, u32 index, Handle allocator, Handle spa
 }
 
 isize
-sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
-             const Ipcmsg *call)
+sysslothello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
+             u64 hello, const Ipcmsg *call)
 {
   Filelink *link;
   u32       i, slot = count;
-  if (!pool || !count || count > FS_CONN_COUNT || !base || (base & PAGE_MASK) ||
+  if (!pool || !count || count > FS_CONN_COUNT || !base || (base & PAGE_MASK) || !hello ||
       (u64) count * FS_CONN_BYTES > UINT64_MAX - base || !call || call->kind != IPC_CALL ||
-      call->words[0] != FS_HELLO || call->words[1] || !call->words[2] ||
-      call->words[3] != UINT64_MAX)
+      call->words[0] != hello || call->words[1] || !call->words[2] || call->words[3] != UINT64_MAX)
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
     link = &pool[i];
@@ -517,6 +516,13 @@ sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle 
   link->generation++;
   return linkhello(link, permit, allocator, space, base + (u64) slot * FS_CONN_BYTES,
                    (link->generation << 16) | slot, call);
+}
+
+isize
+sysfilehello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
+             const Ipcmsg *call)
+{
+  return sysslothello(pool, count, permit, allocator, space, base, FS_HELLO, call);
 }
 
 isize

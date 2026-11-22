@@ -5,7 +5,9 @@
 #include <abi/irq.h>
 #include "private/syscall.h"
 #include "private/start.h"
-#include "../../sbin/blk/io.h"
+#include "../../sbin/blk/transport.h"
+#include "../../sbin/fs/blk.h"
+#include "private/bootstrap.h"
 #include "../../sbin/fs/cache.h"
 #include "../../sbin/fs/crc.h"
 #include "../../sbin/fs/load.h"
@@ -1009,6 +1011,123 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
   vdev_trace[2]++;
   vdev_trace[3]++;
 }
+static const u32 blkopcodes[] = {BLK_WRITE, BLK_FLUSH, BLK_READ};
+
+static void
+blkcollect(Fsblk *blk, void *read, u32 bytes)
+{
+  Ipcmsg result;
+  isize  status;
+  REQUIRE(!ipc_rqwait(blk->rpc, RQ_FINISH, &result) && !fsblkpoll(blk, read, bytes, &status) &&
+              !status && !blk->rpc,
+          366);
+}
+
+static void
+blkclient(const Bootview *boot, Handle call)
+{
+  static Fsblk              blk;
+  static u8                 data[PAGE_SIZE];
+  const u64                 address = 0x2300000;
+  Handle                    space = bootresource(boot, BOOT_SELF_SPACE);
+  Msg                       message = {{BLK_WORD(BLK_HELLO), 0, 1, UINT64_MAX}};
+  Ipcmsg                    result;
+  Maparg                    mapping = {0, 0, address, PROTO_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
+  const volatile Protohead *head = (const volatile Protohead *) (uintptr_t) address;
+  Bootmap                   map;
+  u32                       i, op;
+  REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result), 360);
+  if (result.kind == IPC_NONE) {
+    REQUIRE((isize) result.words[0] == -ERR_NOTSUP && result.words[1] == message.words[2], 361);
+    return;
+  }
+  REQUIRE(result.kind == IPC_RESOURCE_REPLY && result.words[1] == 1 && result.words[2] &&
+              result.words[3] == PROTO_CONN_BYTES,
+          362);
+  mapping.mem = (Handle) result.words[0];
+  REQUIRE(!__sys_map(space, &mapping), 363);
+  map = (Bootmap){address, PROTO_CONN_BYTES, result.words[2], head->serverimage, 1, 1};
+  REQUIRE(!fsblkbind(&blk, call, &map, 1) && !fsblksubmit(&blk, BLK_INFO, 0, 0, NULL), 364);
+  blkcollect(&blk, NULL, 0);
+  REQUIRE(blk.info.geometry_generation == 2 && blk.info.capacity_bytes == 2048 * 512 &&
+              blk.info.logical_bytes == PAGE_SIZE && blk.info.flags == BLK_FLUSHABLE,
+          365);
+  for (op = 0; op < ARRAY_SIZE(blkopcodes); op++) {
+    u32 opcode = blkopcodes[op];
+    u32 bytes = opcode == BLK_FLUSH ? 0 : PAGE_SIZE;
+    if (opcode != BLK_FLUSH)
+      for (i = 0; i < PAGE_SIZE; i++)
+        data[i] = opcode == BLK_WRITE ? (u8) (0xd3 + i * 23) : 0;
+    REQUIRE(!fsblksubmit(&blk, opcode, bytes ? 192 * PAGE_SIZE : 0, bytes,
+                         opcode == BLK_WRITE ? data : NULL),
+            366);
+    blkcollect(&blk, opcode == BLK_READ ? data : NULL, opcode == BLK_READ ? bytes : 0);
+  }
+  for (i = 0; i < PAGE_SIZE; i++)
+    REQUIRE(data[i] == (u8) (0xd3 + i * 23), 367);
+  REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
+  vdev_trace[VTEST_BLK_RPC] = 1;
+}
+
+static isize
+blkdrain(void *context, Filelink *link)
+{
+  return blktransportbusy(context, link) ? -ERR_BUSY : 0;
+}
+
+static void
+blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
+{
+  const Bootview *boot = sysboot();
+  Filelink        link = {0};
+  Blkjob          jobs[2];
+  Blktransport    transport = {0};
+  Ipcmsg          input;
+  Vdone           done[VQ_BATCH];
+  u32             count, more, causes, i;
+  u64             alarm, started;
+  REQUIRE(!blktransportinit(&transport, queue, &link, 1, jobs, ARRAY_SIZE(jobs), 1, blksync,
+                            queue->device) &&
+              !blktransportreaper(&transport, &transport, blkdrain),
+          369);
+  REQUIRE(!ipc_recv(0, 0, &input) && !sysslothello(&link, 1, bootresource(boot, VTEST_OBSERVE),
+                                                   bootresource(boot, BOOT_SELF_ALLOC),
+                                                   bootresource(boot, BOOT_SELF_SPACE), 0x2300000,
+                                                   BLK_WORD(BLK_HELLO), &input),
+          370);
+  REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_INFO) &&
+              !blktransportcall(&transport, &input),
+          371);
+  for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
+    REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
+    started = now();
+    REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+                !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
+                !blktransportcall(&transport, &input) && transport.active == 1,
+            372);
+    do {
+      REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &input) &&
+                  input.kind == IPC_EVENT && input.words[0] == irqevent &&
+                  !blktransportpoll(&transport, done, &count, &more, &causes) && !more &&
+                  !(causes & VDEV_IRQ_CONFIG),
+              373);
+      if (!count)
+        REQUIRE(!__sys_irqack(binding), 374);
+    } while (!count);
+    REQUIRE(count == 1 && causes == VDEV_IRQ_USED && !transport.active &&
+                !__sys_alarmcancel(&alarm),
+            375);
+    vdev_trace[38]++;
+  }
+  REQUIRE(!ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input) && input.kind == IPC_EVENT &&
+              input.words[0] == EVENT_LIFE && !blktransportreap(&transport) && !link.ready &&
+              !link.address && !link.memory,
+          376);
+  vdev_trace[2]++;
+  vdev_trace[3]++;
+  vdev_trace[VTEST_BLK_RPC] = 1;
+}
+
 static void
 testblock(Vdev *device, const Vblkconfig *config, u32 member)
 {
@@ -1087,6 +1206,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
     testparallel(&queue, binding, irqevent, &fresh);
     testgrowth(&queue, binding, irqevent);
     testresize(&queue, binding, irqevent, &fresh);
+    blkrpc(&queue, binding, irqevent);
   }
 }
 int
@@ -1099,8 +1219,13 @@ main(int argc, char **argv)
   Vblkconfig config;
   u64        base;
   u32        i, status;
+  Handle     call = bootresource(sysboot(), VTEST_BLK_CALL);
   UNUSED(argc);
   UNUSED(argv);
+  if (call > 0) {
+    blkclient(sysboot(), call);
+    return 42;
+  }
   REQUIRE(memory > 0 && vdev_trace[1] && vdev_trace[1] <= 8, 151);
   mapping.mem = memory;
   mapping.offset = 0;
@@ -1158,6 +1283,13 @@ main(int argc, char **argv)
       testblock(&device, &config, i);
     reset(&device);
     REQUIRE(!virtioread(&base, 0x70, &status) && !status, 159);
+  }
+  if (!vdev_trace[VTEST_BLK_RPC]) {
+    Ipcmsg input;
+    Msg    reply = {{(u64) -ERR_NOTSUP, 1, 0, 0}};
+    REQUIRE(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL &&
+                input.words[0] == BLK_WORD(BLK_HELLO) && !ipc_reply(input.request, &reply),
+            377);
   }
   REQUIRE(!__sys_unmap(space, mapping.address), 160);
   vdev_trace[0] = 99;

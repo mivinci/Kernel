@@ -1,18 +1,18 @@
 #ifndef _PROTO_FILE_H
 #define _PROTO_FILE_H
-#include <types.h>
-#define FS_CONN_MAGIC       UINT64_C(0x4b434f4e4e303031)
-#define FS_CONN_SLOTS       8
-#define FS_SLOT_BYTES       4096
-#define FS_CONN_BYTES       (9 * FS_SLOT_BYTES)
-#define FS_DESC_OFFSET      64
-#define FS_DESC_BYTES       128
-#define FS_DATA_OFFSET      FS_SLOT_BYTES
+#include <proto/slot.h>
+#define FS_CONN_MAGIC       PROTO_CONN_MAGIC
+#define FS_CONN_SLOTS       PROTO_CONN_SLOTS
+#define FS_SLOT_BYTES       PROTO_SLOT_BYTES
+#define FS_CONN_BYTES       PROTO_CONN_BYTES
+#define FS_DESC_OFFSET      PROTO_DESC_OFFSET
+#define FS_DESC_BYTES       PROTO_DESC_BYTES
+#define FS_DATA_OFFSET      PROTO_DATA_OFFSET
 #define FS_CONN_COUNT       128
-#define FS_SLOT_FREE        0
-#define FS_SLOT_SUBMITTED   1
-#define FS_SLOT_DONE        2
-#define FS_SLOT_QUARANTINED 3
+#define FS_SLOT_FREE        PROTO_SLOT_FREE
+#define FS_SLOT_SUBMITTED   PROTO_SLOT_SUBMITTED
+#define FS_SLOT_DONE        PROTO_SLOT_DONE
+#define FS_SLOT_QUARANTINED PROTO_SLOT_QUARANTINED
 #define FS_HELLO            1
 #define FS_OPEN             2
 #define FS_OPEN_RDONLY      0
@@ -70,18 +70,10 @@
 #define FS_PATH_UTIMENS     12
 #define FS_PATH_GETCWD      13
 #define FS_PATH_CHDIR       14
-typedef struct Filehead    Filehead;
-typedef struct Fileslot    Fileslot;
+typedef Protohead          Filehead;
+typedef Protoslot          Fileslot;
 typedef struct Fileinherit Fileinherit;
 typedef struct Filepoll    Filepoll;
-struct Filehead
-{
-  u64 magic, bytes, connid, serverimage, slots, slotbytes, reserved[2];
-};
-struct Fileslot
-{
-  u64 seq, state, payload_bytes, object, span, reserved[3], args[8];
-};
 /* One descriptor row of a FORK/EXEC preparation snapshot. */
 struct Fileinherit
 {
@@ -95,9 +87,4 @@ STATIC_ASSERT(sizeof(Filepoll) == 32 && FS_POLL_ROWS * sizeof(Filepoll) == FS_SL
               file_poll_rows_fit_page);
 STATIC_ASSERT(offsetof(Filepoll, revents) == 24, file_poll_output_offset);
 STATIC_ASSERT(sizeof(Fileinherit) == 48, file_inherit_record);
-STATIC_ASSERT(sizeof(Filehead) == 64, file_connection_header);
-STATIC_ASSERT(sizeof(Fileslot) == FS_DESC_BYTES, file_slot_descriptor);
-STATIC_ASSERT(offsetof(Fileslot, span) == 32, file_slot_span);
-STATIC_ASSERT(offsetof(Fileslot, args) == 64, file_slot_arguments);
-STATIC_ASSERT(FS_DESC_OFFSET + FS_CONN_SLOTS * FS_DESC_BYTES <= FS_DATA_OFFSET, file_control_page);
 #endif
