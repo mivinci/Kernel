@@ -44,6 +44,7 @@ static Fdtable        fds;
 static Execfds        execfds;
 static Execsend       execsend;
 static Execmanifest   execplan;
+static Execmanifest   forksnapshot;
 static Execreserve    execreserve;
 static Rbank          contexts;
 static Rkey           active_key;
@@ -714,14 +715,13 @@ client(const Bootview *boot)
     Fileref     ref;
     Fileslot    slot = {0};
     Fileinherit rows[2];
-    Msg         prepare = {{FS_FORK_PREPARE, work.state.map.connid, 0, 0}};
+    Msg         prepare = {{FS_FORK_SNAPSHOT, work.state.map.connid, 0, 0}};
     Msg         check = {{FORKWATCH, 0, 0, 0}};
     u64         address = work.state.map.address;
+    u64         token = 0;
+    u32         attempt;
     CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked) &&
-          !sysfilerefview(&pool, work.state.self, first, &ref) &&
-          !sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
-    prepare.words[2] = slot.seq = lease.seq;
-    prepare.words[3] = lease.slot;
+          !sysfilerefview(&pool, work.state.self, first, &ref));
     slot.state = FS_SLOT_SUBMITTED;
     slot.span = 1;
     slot.payload_bytes = sizeof(rows);
@@ -736,12 +736,24 @@ client(const Bootview *boot)
     rows[1] = rows[0];
     rows[1].fd = 1;
     rows[1].flags = 0;
-    CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
-                      sizeof(rows)) &&
-          !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
-                      sizeof(slot)) &&
-          !ipc_call(work.state.call, &prepare, 0, &result) && !result.words[0] &&
-          result.words[1] == lease.seq && !sysconnworkrelease(&work, &cache, lease));
+    for (attempt = 0; attempt < 4; attempt++) {
+      CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+      prepare.words[2] = slot.seq = lease.seq;
+      prepare.words[3] = lease.slot;
+      slot.args[6] = attempt == 1 ? token + 1 : token;
+      CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
+                        sizeof(rows)) &&
+            !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
+                        sizeof(slot)) &&
+            !ipc_call(work.state.call, &prepare, 0, &result) &&
+            (isize) result.words[0] == (attempt & 1 ? -ESTALE : 0) &&
+            result.words[1] == lease.seq && !sysconnworkrelease(&work, &cache, lease));
+      if (!attempt) {
+        token = result.words[2];
+        CHECK(token && token != UINT64_MAX);
+        prepare.words[0] = FS_FORK_PREPARE;
+      }
+    }
     CHECK(!__sys_forkabort(forked.construct));
     check.words[1] = (u64) forked.pid;
     CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
@@ -1545,24 +1557,39 @@ server(const Bootview *boot, u32 recover)
       CHECK(!ipc_reply(input.request, &reply));
       continue;
     }
-    if (!recover && opcode == FS_FORK_PREPARE) {
+    if (!recover && (opcode == FS_FORK_PREPARE || opcode == FS_FORK_SNAPSHOT)) {
       Connpeer backend;
       Handle   parent, permit = bootresource(boot, 258);
       u64      key[5] = {(u64) peer.pid, peer.image, sessions[0], references[0], 0};
       CHECK(!__sys_getid(&backend.pid, &backend.image, &parent) &&
             !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &descriptor));
       data = (volatile u64 *) (link->address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES);
+      reply.words[1] = descriptor.seq;
+      if (opcode == FS_FORK_SNAPSHOT) {
+        CHECK(!sysforksnapshot(&forksnapshot, watch, &input, &descriptor, (const void *) data,
+                               backend, 0, execreference, key, 71) &&
+              key[4] == 1);
+        reply.words[2] = forksnapshot.snapshot;
+        CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
+        continue;
+      }
       CHECK(!sysforkmanifest(&execplan, watch, &input, &descriptor, (const void *) data, backend, 0,
                              execreference, key) &&
             key[4] == 1 && execplan.count == 1 && execplan.groups[0].retained == 2 &&
-            !execplan.groups[0].closed && execplan.rows[0].flags == BOOT_FD_CLOEXEC &&
-            sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image + 1) ==
-                -ERR_STALE &&
-            !child.cookie &&
-            !sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image) &&
-            child.pid == execplan.child && child.image == execplan.target_image && child.cookie &&
-            !child.reason);
-      reply.words[1] = execplan.seq;
+            !execplan.groups[0].closed && execplan.rows[0].flags == BOOT_FD_CLOEXEC);
+      status = sysforksnapshotcheck(&forksnapshot, &execplan, 0);
+      if (status == -ERR_STALE) {
+        reply.words[0] = (u64) -ESTALE;
+      } else {
+        CHECK(!status &&
+              sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image + 1) ==
+                  -ERR_STALE &&
+              !child.cookie &&
+              !sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image) &&
+              child.pid == execplan.child && child.image == execplan.target_image && child.cookie &&
+              !child.reason);
+        forksnapshot.count = 0;
+      }
       execplan.count = 0;
       CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
       continue;
