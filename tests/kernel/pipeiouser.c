@@ -19,6 +19,7 @@
 #include "private/syscall.h"
 #include "private/timer.h"
 #include "../../sbin/fs/pipefile.h"
+#include "../../sbin/fs/access.h"
 #include "../../sbin/fs/read.h"
 #include "../../sbin/fs/seek.h"
 #include "../../sbin/fs/serve.h"
@@ -126,9 +127,20 @@ server(const Bootview *boot)
   Filelink        link = {0};
   Ipcmsg          input;
   u32             attempt = 0, phase = 0, i;
-  CHECK(!ipc_recv(0, 0, &input) &&
-        !sysfilehello(&link, 1, bootresource(boot, 256), bootresource(boot, BOOT_SELF_ALLOC),
+  Vcred           real, effective, root = {0, 0};
+  CHECK(!ipc_recv(0, 0, &input) && !vcredsource(&input, 1, &real) &&
+        !vcredsource(&input, 0, &effective) && real.uid == 21 && real.gid == 31 &&
+        effective.uid == 22 && effective.gid == 32 &&
+        !vaccess(&effective, 22, 32, 0100, VACCESS_X, 1) &&
+        vaccess(&effective, 22, 32, 0010, VACCESS_X, 1) == -EACCES &&
+        !vaccess(&effective, 21, 32, 0010, VACCESS_X, 1) &&
+        vaccess(&real, 21, 32, 0010, VACCESS_X, 1) == -EACCES &&
+        !vaccess(&real, 22, 32, 0004, VACCESS_R, 0) &&
+        vaccess(&root, 22, 32, 0, VACCESS_X, 0) == -EACCES &&
+        !vaccess(&root, 22, 32, 0, VACCESS_X, 1));
+  CHECK(!sysfilehello(&link, 1, bootresource(boot, 256), bootresource(boot, BOOT_SELF_ALLOC),
                       bootresource(boot, BOOT_SELF_SPACE), ADDRESS, &input));
+  CHECK(vcredsource(&input, 0, &effective) < 0 && effective.uid == 22 && effective.gid == 32);
   filelifetime(link.watch.owner.pid, link.watch.owner.image);
   for (;;) {
     CHECK(!ipc_recv(EVENT_RQ_CANCEL | EVENT_LIFE, 0, &input));

@@ -46,6 +46,10 @@ testactors(const char *roles)
   for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
     int     client = i + 1 == count;
+    if (roles[i] == 'c') {
+      const Cred credentials = {21, 22, 31, 32};
+      CHECK(!lifecredentials(processes[i].life, &credentials));
+    }
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
     packet.header.magic = BOOT_MAGIC;

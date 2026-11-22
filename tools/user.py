@@ -304,6 +304,7 @@ def build(args):
     pipeio_elf=link_adoption('pipeiouser',[compile_adoption(ROOT/'tests/kernel/pipeiouser.c','pipeiouser'),
         compile_adoption(ROOT/'sbin/fs/pipe.c','pipe'), compile_adoption(ROOT/'sbin/fs/pipeio.c','pipeio'),
         compile_adoption(ROOT/'sbin/fs/pipefile.c','pipefile'),
+        compile_adoption(ROOT/'sbin/fs/access.c','fs-access'),
         compile_adoption(ROOT/'sbin/fs/pipedispatch.c','pipedispatch'),
         compile_adoption(ROOT/'sbin/fs/seek.c','fs-seek'),
         compile_adoption(ROOT/'sbin/fs/read.c','fs-read'),
