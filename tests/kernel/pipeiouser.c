@@ -2914,9 +2914,10 @@ publicchdirserver(const Bootview *boot)
   Cacheblock     block;
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
+  const Fscwdops cwd = {openwalkhold, openwalkdrop, cwdversion, cwdname};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
   Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,          0,
-                         &fixture,  openselect,      opencancel, opencomplete, opencreate, NULL};
+                         &fixture,  openselect,      opencancel, opencomplete, opencreate, &cwd};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
@@ -2986,6 +2987,7 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && context.cwd == &fixture.root && context.version == 1);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_PATH &&
         !sysfilelinkaccept(&link, 1, &request, &slot) && slot.args[0] == FS_PATH_CHDIR &&
         !ipc_defer(request.request));
@@ -3079,6 +3081,7 @@ publicchdirclient(void)
   Connwork        *peer;
   struct sigaction action = {0};
   int              fd;
+  char             cwd[4] = "xxx";
   CHECK(!sysfileimagefs(0, ADDRESS, &peer));
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
         open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT);
@@ -3101,6 +3104,10 @@ publicchdirclient(void)
         errno == EFAULT && chdir("/n") == -1 && errno == EACCES && !chdir("/d") &&
         errno == EACCES && !chdir(".") && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
+  CHECK(!getcwd(cwd, 0) && errno == EINVAL && !getcwd(cwd, 2) && errno == ERANGE &&
+        !strcmp(cwd, "xxx") && getcwd(cwd, 3) == cwd && errno == ERANGE && cwd[0] == '/' &&
+        cwd[1] == 'd' && !cwd[2] && !cwd[3] && !getcwd((char *) (uintptr_t) 1, 3) &&
+        errno == EFAULT);
   CHECK(chdir("/d") == -1 && errno == EINTR && caught == 3 && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
   pipeiotrace[0] = 7;

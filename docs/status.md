@@ -20,7 +20,7 @@
 
 ## 最新验证
 
-- 文件服务已处理 `PATH/GETCWD`；双架构 `pipeio` 核对成功路径和缓冲不足不写槽。生产目录反查和 libc `getcwd()` 待接。
+- libc `getcwd()` 已接到文件服务；双架构 `pipeio` 核对 `chdir` 后返回路径、缓冲不足和坏指针。生产目录反查待接。
 - inode 归属扫描经块 IPC 读取 inode 表和间接索引，优先使用日志镜像；双架构 `virtiodev` 验证单槽缓存下，只读一次 inode 表和一次索引即可完成归属扫描。解码仍为夹具。
 - FS 私有块适配器经 ARM64/RV64 QEMU `virtiodev` 验证：原异步 RPC 在 FINISH 后保存结果，ACK 后交付 READ 及归还槽；INFO、WRITE、FLUSH、READ 走真实 IPC 和块盘。生产授权和挂载待接。
 - stage571：后端退出且 PATH 回复遗失时，普通 I/O 恢复保留原请求账本；56 项主机专项与双架构 QEMU `pipeio` 通过。

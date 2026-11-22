@@ -257,6 +257,23 @@ STATIC_ASSERT(VINTR == TTY_VINTR && VQUIT == TTY_VQUIT && VERASE == TTY_VERASE &
                   VMIN == TTY_VMIN && VSUSP == TTY_VSUSP,
               termios_cc_indices);
 
+char *
+getcwd(char *buffer, size_t size)
+{
+  Fileioresult completed;
+  isize        status;
+  if (!size || !buffer) {
+    errno = !size ? EINVAL : EFAULT;
+    return NULL;
+  }
+  status = sysfileimagegetcwd(__libc_sigdepth(), buffer, size, &completed);
+  if (status == -ERR_NOTSUP) {
+    errno = ENOSYS;
+    return NULL;
+  }
+  return ioresult(FS_PATH, status, &completed) < 0 ? NULL : buffer;
+}
+
 int
 tcgetattr(int fd, struct termios *attributes)
 {

@@ -35,6 +35,7 @@ off_t         lseek(int fd, off_t offset, int whence);
 int           fsync(int fd);
 int           fdatasync(int fd);
 int           chdir(const char *path);
+char         *getcwd(char *buffer, size_t size);
 long          sysconf(int name);
 NORETURN void _exit(int status);
 #endif

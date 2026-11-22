@@ -815,7 +815,7 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
                        0, &draft);
   if (!error) {
     base = work->state.map.address;
-    if ((opcode == FS_WRITE || opcode == FS_PATH) && bytes) {
+    if ((opcode == FS_WRITE || (opcode == FS_PATH && offset != FS_PATH_GETCWD)) && bytes) {
       if (opcode == FS_WRITE && !replay)
         error = __sys_copy(snapshot, input, bytes);
       if (!error)
@@ -832,8 +832,14 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
         descriptor.args[0] = TTY_GETATTR;
         descriptor.args[4] = sizeof(Termarg);
       } else if (opcode == FS_PATH) {
-        descriptor.args[0] = FS_PATH_CHDIR;
-        descriptor.args[2] = bytes;
+        if (offset == FS_PATH_GETCWD) {
+          descriptor.args[0] = FS_PATH_GETCWD;
+          descriptor.args[1] = bytes;
+          descriptor.payload_bytes = 0;
+        } else {
+          descriptor.args[0] = FS_PATH_CHDIR;
+          descriptor.args[2] = bytes;
+        }
       } else {
         descriptor.args[0] = offset;
         descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
@@ -856,8 +862,8 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
 }
 
 static isize
-stagechdir(Fileimage *state, u32 layer, const char *path, Connwork **work, Opkey *key, u64 *bytes,
-           isize *business)
+stagepath(Fileimage *state, u32 layer, const char *path, u64 subcode, Connwork **work, Opkey *key,
+          u64 *bytes, isize *business)
 {
   isize error;
   if (layer >= RCTX_LAYERS)
@@ -866,15 +872,18 @@ stagechdir(Fileimage *state, u32 layer, const char *path, Connwork **work, Opkey
     return -ERR_BUSY;
   if (state->contexts.sequence == UINT64_MAX)
     return -ERR_OVERFLOW;
-  error = sysargstring(state->contexts.snapshots[layer], FS_SLOT_BYTES, path, bytes);
-  if (error == -ERR_LIMIT || (!error && *bytes == 1)) {
-    *business = error ? -ENAMETOOLONG : -ENOENT;
-    return 0;
+  if (subcode != FS_PATH_GETCWD) {
+    error = sysargstring(state->contexts.snapshots[layer], FS_SLOT_BYTES, path, bytes);
+    if (error == -ERR_LIMIT || (!error && *bytes == 1)) {
+      *business = error ? -ENAMETOOLONG : -ENOENT;
+      return 0;
+    }
+    if (error)
+      return error;
   }
-  if (error)
-    return error;
   error = readyfs(state, work);
-  return error ? error : iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, 0, 0, 0, key);
+  return error ? error
+               : iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, subcode, 0, 0, key);
 }
 
 static isize
@@ -1078,6 +1087,27 @@ sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
   return restartio(state, key, bytes, 0, 0);
 }
 
+static isize
+copycwd(Fileimage *state, Connwork *work, Conncache *cache, const Opkey *key, u64 bytes,
+        void *output)
+{
+  u8   *path = state->contexts.snapshots[key->lease.slot / 2];
+  u64   i;
+  u64   start = (uintptr_t) output, mapping = work->state.map.address;
+  isize error;
+  if (start < mapping + FS_CONN_BYTES && mapping < start + bytes)
+    return -ERR_FAULT;
+  error = sysopcopy(work, cache, key, 0, bytes, path);
+  if (error)
+    return error;
+  if (path[0] != '/' || path[bytes - 1])
+    return -ERR_STATE;
+  for (i = 1; i + 1 < bytes; i++)
+    if (!path[i])
+      return -ERR_STATE;
+  return __sys_copy(output, path, bytes);
+}
+
 isize
 sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fileioresult *result)
 {
@@ -1086,6 +1116,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   Slotop    *op;
   u64        file = 0, address, storage, expected, value_limit;
   isize      error;
+  u32        cwd;
   if (!state || !key || !result || !key->owner || key->connection.index >= SYSCONN_COUNT ||
       key->lease.span != 1 || bytes > FS_SLOT_BYTES)
     return -ERR_INVALID;
@@ -1096,7 +1127,10 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
     return error;
   op = &work->state.operations[key->lease.slot];
   if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
-      ((op->opcode == FS_SYNC || op->opcode == FS_PATH) && bytes))
+      (op->opcode == FS_SYNC && bytes))
+    return -ERR_INVALID;
+  cwd = op->opcode == FS_PATH && bytes;
+  if (cwd && key->lease.slot / 2 >= RCTX_LAYERS)
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (!error)
@@ -1114,6 +1148,9 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
       value_limit = 0;
       if (!op->words[0])
         expected = sizeof(Termarg);
+    } else if (cwd) {
+      value_limit = 0;
+      expected = op->words[3];
     }
     result->native = result->business = 0;
     result->count = 0;
@@ -1132,7 +1169,8 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
       }
     } else if (op->words[1] != key->lease.seq || (isize) op->words[0] > 0 ||
                (op->words[0] && (op->words[2] || op->words[3])) || op->words[2] > value_limit ||
-               op->words[3] != expected)
+               op->words[3] != expected ||
+               (cwd && !op->words[0] && (expected < 2 || expected > bytes)))
       result->native = -ERR_STATE;
     else {
       result->business = (isize) op->words[0];
@@ -1147,6 +1185,8 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
           storage = (uintptr_t) result;
           if (address < storage + sizeof(*result) && storage < address + expected)
             error = -ERR_FAULT;
+          else if (cwd)
+            error = copycwd(state, work, cache, key, expected, output);
           else
             error = sysopcopy(work, cache, key, 0, expected, output);
         }
@@ -1203,7 +1243,7 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
   fileprogress(state);
   bytes = MIN(bytes, FS_SLOT_BYTES);
   if (opcode == FS_PATH) {
-    error = stagechdir(state, layer, input, &work, &key, &bytes, &business);
+    error = stagepath(state, layer, input, offset, &work, &key, &bytes, &business);
     if (business) {
       result->native = result->count = 0;
       result->business = business;
@@ -1232,7 +1272,8 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
         error = 0; /* Fixed result takes precedence over restart. */
     }
     if (!error) {
-      error = sysfileiofinish(state, &key, output, opcode == FS_PATH ? 0 : bytes, result);
+      error = sysfileiofinish(state, &key, output,
+                              opcode == FS_PATH && offset != FS_PATH_GETCWD ? 0 : bytes, result);
       if (!error)
         break;
     }
@@ -1299,6 +1340,14 @@ isize
 sysfileimagechdir(u32 layer, const char *path, Fileioresult *result)
 {
   return imageio(layer, -1, FS_PATH, path, NULL, 0, 0, 0, result);
+}
+
+isize
+sysfileimagegetcwd(u32 layer, void *output, u64 bytes, Fileioresult *result)
+{
+  if (!bytes)
+    return -ERR_INVALID;
+  return imageio(layer, -1, FS_PATH, NULL, output, bytes, FS_PATH_GETCWD, 0, result);
 }
 
 isize
