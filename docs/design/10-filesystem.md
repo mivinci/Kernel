@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage474：`sysctxopenattach` 用已捕获的资源 OPEN token 推进 ATTACH。冷连接须核验原回复的 MEM 和共享页，再确认请求并接管 File；热连接只接受原 connid，不重复映射。映射地址冲突且未建立映射时，可换地址继续处理同一回复。双架构 QEMU `runtime` 验证真实 ATTACH 的冷路径地址冲突和热路径复用，`pipeio` 回归共用握手路径，18 项 IPC 上下文主机测试通过。后端选择、VA 预留和失败补偿仍由调用方负责，公开 `open()` 尚未接入。
+
 stage473：`sysctxopencreate` 串接 fd 预留、原请求、确认和普通 File 发布。业务失败归还 fd；收到带 CALL 的资源回复时确认原 OPEN，保留 fd、CALL 和 token 给 ATTACH/ABORT，不提前发布 fd。ARM64、RV64 QEMU `runtime` 用真实 IPC 验证普通成功、ENOENT 归还预留，以及资源回复保留 fd 到 ATTACH 后再发布；18 项 IPC 上下文主机测试通过。公开 `open()`、自动资源接入和信号重启策略仍待接。
 
 stage472：`sysctxopenio` 沿现有创建请求记录选择提交、等待和已取得结果三个阶段。每次推进复用原 OPEN 槽和 RPC，注册与交接时屏蔽捕获信号，等待时恢复调用者原掩码。ARM64、RV64 QEMU `runtime` 验证错误信号层和错误操作拒绝、一次提交后原 RPC 保持，以及 ACK 后正常发布 fd；两架构 `pipeio` 及 18 项 IPC 上下文主机回归通过。公开 `open()` 的信号重启策略和资源接入尚未贯通。

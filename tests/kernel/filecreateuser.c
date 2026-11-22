@@ -202,25 +202,29 @@ bootstrap(Bootstrap *record, Connclaim claim, Handle call, u64 options)
 static u64
 attachfirst(const Bootview *boot)
 {
-  Opkey     key;
-  Conntag   tag;
-  Connclaim claim;
-  Connpeer  peer;
-  Bootmap   mapped;
-  Handle    call;
-  u64       files[2], source = 0;
+  Opkey    key;
+  Conntag  tag;
+  Connpeer peer;
+  Bootmap  mapped = {0};
+  Rkey     active = {0};
+  Handle   space = bootresource(boot, BOOT_SELF_SPACE), rpc;
+  u64      sequence;
+  u64      files[2], source = 0;
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
   CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
   peer = work.state.creators[key.lease.slot].peer;
-  CHECK(!sysconnbind(&cache, peer, &tag) && !sysconnworkinit(&backend_work, &cache, tag) &&
-        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
-  bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
-  zero(&mapped, sizeof(mapped));
-  CHECK(!sysbootmap(&backend_work.state.bootstrap, claim, bootresource(boot, BOOT_SELF_SPACE),
-                    ADDRESS + 0x10000, peer.image, &mapped) &&
-        !sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
-                               bootresource(boot, BOOT_SELF_SPACE), &mapped, 0));
+  CHECK(!sysconnbind(&cache, peer, &tag) && !sysconnworkinit(&backend_work, &cache, tag));
+  CHECK(sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work, space, ADDRESS, 0,
+                         &mapped, &active) < 0 &&
+        !mapped.mapped && !active.sequence && backend_work.state.bootstrap.state == SYSBOOT_RESULT);
+  rpc = backend_work.state.bootstrap.rpc;
+  sequence = backend_work.state.bootstrap.claim.seq;
+  CHECK(rpc &&
+        !sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work, space,
+                          ADDRESS + 0x10000, 0, &mapped, &active) &&
+        backend_work.state.bootstrap.state == SYSBOOT_FREE && backend_work.state.map.verified &&
+        cache.entries[tag.index].sequence == sequence);
   zero(files, sizeof(files));
   CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && files[0] && !source);
   return files[0];
@@ -250,12 +254,11 @@ resourceopens(const Bootview *boot)
         !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED);
   filecreatetrace[1]++;
   key = open.operation;
-  CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED &&
-        !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
-  bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
   zero(&mapped, sizeof(mapped));
-  CHECK(!sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
-                               bootresource(boot, BOOT_SELF_SPACE), &mapped, 0));
+  CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED &&
+        !sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work,
+                          bootresource(boot, BOOT_SELF_SPACE), 0, 0, &mapped, &active) &&
+        !mapped.mapped && !mapped.verified);
   number = (int) sysfileopenfinish(&pool, &work, &cache, &fds, &open, &business);
   CHECK(number >= 0 && !business && !sysfdobserve(&fds, (u32) number, &fd) &&
         fd.flags == BOOT_FD_CLOEXEC && !sysfddetach(&fds, fd.tag, &fd));

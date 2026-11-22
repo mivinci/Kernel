@@ -553,6 +553,52 @@ sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *
 {
   return createstep(bank, self, layer, pool, work, cache, key, FS_PIPE, out);
 }
+static isize
+bootdrive(Rbank *bank, Connpeer self, u32 layer, Bootstrap *boot, Connclaim claim, Handle call,
+          Rkey *active, u64 *mask)
+{
+  Rctx *context;
+  u64   ignored;
+  isize error, status;
+  while (active->sequence || boot->state == SYSBOOT_PREPARED || boot->state == SYSBOOT_WAITING) {
+    if (!active->sequence) {
+      error = boot->state == SYSBOOT_PREPARED
+                  ? sysctxbootcall(bank, self, layer, boot, claim, call, CALL_RECV_MEM, active)
+                  : sysctxbootwait(bank, self, layer, boot, claim, active);
+      if (error)
+        return error;
+    }
+    error = sysctxlookup(bank, self, *active, &context);
+    if (error)
+      return error;
+    if (active->layer != layer || context->route.kind != RCTX_ROUTE_BOOT ||
+        context->route.bootstrap != boot || context->route.claim.seq != claim.seq ||
+        context->route.claim.owner != claim.owner ||
+        context->route.claim.tag.index != claim.tag.index ||
+        context->route.claim.tag.generation != claim.tag.generation)
+      return -ERR_STALE;
+    if (context->phase == RCTX_PREPARED) {
+      error = __sys_sigmask(SIGNAL_SETMASK, *mask, &ignored);
+      if (error)
+        return error;
+      status = sysctxinvoke(bank, self, *active);
+      error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, mask);
+      if (error)
+        return error;
+    } else
+      status = context->status;
+    error = sysctxhandoff(bank, self, *active);
+    if (!error)
+      error = sysctxfinish(bank, self, *active);
+    if (error)
+      return error;
+    active->sequence = 0;
+    if (status)
+      return status;
+  }
+  return 0;
+}
+
 isize
 sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
             Bootmap *map, Rkey *active)
@@ -561,7 +607,6 @@ sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
   Connclaim  claim;
   Connentry  entry;
   Connpeer   self;
-  Rctx      *context;
   u64        mask, ignored;
   isize      error, status = 0;
   if (layer >= RCTX_LAYERS || handlekind(space) != HANDLE_RESOURCE || (address & PAGE_MASK) ||
@@ -595,49 +640,9 @@ sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
     error = -ERR_STALE;
     goto restore;
   }
-  while (active->sequence || boot->state == SYSBOOT_PREPARED || boot->state == SYSBOOT_WAITING) {
-    if (!active->sequence) {
-      if (boot->state == SYSBOOT_PREPARED)
-        error =
-            sysctxbootcall(bank, self, layer, boot, claim, work->state.call, CALL_RECV_MEM, active);
-      else
-        error = sysctxbootwait(bank, self, layer, boot, claim, active);
-      if (error)
-        goto restore;
-    }
-    error = sysctxlookup(bank, self, *active, &context);
-    if (error)
-      goto restore;
-    if (active->layer != layer || context->route.kind != RCTX_ROUTE_BOOT ||
-        context->route.bootstrap != boot || context->route.claim.seq != claim.seq ||
-        context->route.claim.owner != claim.owner ||
-        context->route.claim.tag.index != claim.tag.index ||
-        context->route.claim.tag.generation != claim.tag.generation) {
-      error = -ERR_STALE;
-      goto restore;
-    }
-    if (context->phase == RCTX_PREPARED) {
-      error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
-      if (error)
-        return error;
-      status = sysctxinvoke(bank, self, *active);
-      error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
-      if (error)
-        return error;
-    } else
-      status = context->status;
-    error = sysctxhandoff(bank, self, *active);
-    if (!error)
-      error = sysctxfinish(bank, self, *active);
-    if (error)
-      goto restore;
-    active->sequence = 0;
-    if (status) {
-      error = status;
-      goto restore;
-    }
-  }
-  error = sysbootfinished(boot, claim);
+  error = bootdrive(bank, self, layer, boot, claim, work->state.call, active, &mask);
+  if (!error)
+    error = sysbootfinished(boot, claim);
   if (!error && !map->mapped)
     error = sysbootmap(boot, claim, space, address, work->state.peer.image, map);
   if (!error && (map->address != address || map->verified != 1))
@@ -854,6 +859,93 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
   }
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return status ? status : error;
+}
+
+isize
+sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                 const Opkey *key, Connwork *backend, Handle space, u64 address, u64 deadline,
+                 Bootmap *map, Rkey *active)
+{
+  Bootstrap *boot;
+  Createop  *create;
+  Connclaim  claim;
+  Connentry  entry;
+  Bootreply  reply;
+  Handle     call;
+  u64        mask, ignored;
+  isize      error, restored;
+  if (!bank || !backend || layer >= RCTX_LAYERS || handlekind(space) != HANDLE_RESOURCE ||
+      !separate(bank, sizeof(*bank), backend, sizeof(*backend)) ||
+      !separate(bank, sizeof(*bank), map, sizeof(*map)) ||
+      !separate(bank, sizeof(*bank), active, sizeof(*active)) ||
+      !separate(map, sizeof(*map), active, sizeof(*active)) ||
+      !separate(map, sizeof(*map), backend, sizeof(*backend)) ||
+      !separate(map, sizeof(*map), work, sizeof(*work)) ||
+      !separate(map, sizeof(*map), pool, sizeof(*pool)) ||
+      !separate(map, sizeof(*map), cache, sizeof(*cache)) ||
+      !separate(map, sizeof(*map), key, sizeof(*key)) ||
+      !separate(active, sizeof(*active), backend, sizeof(*backend)) ||
+      !separate(active, sizeof(*active), work, sizeof(*work)) ||
+      !separate(active, sizeof(*active), pool, sizeof(*pool)) ||
+      !separate(active, sizeof(*active), cache, sizeof(*cache)) ||
+      !separate(active, sizeof(*active), key, sizeof(*key)))
+    return -ERR_INVALID;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfilecreatecheck(pool, work, cache, key);
+  if (error)
+    goto restore;
+  create = &work->state.creators[key->lease.slot];
+  if (key->lease.slot / 2 != layer || create->phase != SYSFILE_CREATE_CAPTURED ||
+      work->state.operations[key->lease.slot].phase != SYSOP_ACKED ||
+      work->state.operations[key->lease.slot].kind != IPC_RESOURCE_REPLY || !create->token ||
+      backend->state.peer.pid != create->peer.pid ||
+      backend->state.peer.image != create->peer.image) {
+    error = -ERR_STALE;
+    goto restore;
+  }
+  boot = &backend->state.bootstrap;
+  if (boot->state == SYSBOOT_FREE && !active->sequence) {
+    error = sysfilecreateattachprepare(pool, work, cache, key, backend, deadline, &claim, &call);
+    if (error)
+      goto restore;
+  } else {
+    claim = boot->claim;
+    call = create->call;
+  }
+  error = sysconnview(cache, backend->state.tag, &entry);
+  if (error)
+    goto restore;
+  if (boot->opcode != FS_ATTACH || boot->token != create->token ||
+      claim.owner != create->files[0] || claim.tag.index != backend->state.tag.index ||
+      claim.tag.generation != backend->state.tag.generation || entry.sequence != claim.seq ||
+      (entry.state != SYSCONN_READY && entry.state != SYSCONN_CONNECTING) ||
+      (entry.owner != claim.owner && (entry.owner || entry.state != SYSCONN_READY ||
+                                      boot->state != SYSBOOT_ACKED || active->sequence))) {
+    error = -ERR_STALE;
+    goto restore;
+  }
+  if (!entry.owner) {
+    error = sysfilecreateattached(pool, work, cache, key, backend, claim, space, map, 0);
+    goto restore;
+  }
+  error = bootdrive(bank, work->state.self, layer, boot, claim, call, active, &mask);
+  if (!error)
+    error = sysbootfinished(boot, claim);
+  if (!error)
+    error = sysbootreply(boot, claim, entry.state == SYSCONN_READY ? entry.connid : 0, &reply);
+  if (!error && entry.state == SYSCONN_CONNECTING && !map->mapped)
+    error = sysbootmap(boot, claim, space, address, create->peer.image, map);
+  if (!error && entry.state == SYSCONN_CONNECTING && (map->address != address || !map->verified))
+    error = -ERR_INVALID;
+  if (!error && boot->state == SYSBOOT_RESULT)
+    error = sysbootack(boot, claim);
+  if (!error)
+    error = sysfilecreateattached(pool, work, cache, key, backend, claim, space, map, 0);
+restore:
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : error;
 }
 
 isize

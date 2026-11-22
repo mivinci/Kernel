@@ -83,6 +83,13 @@ struct Fdtable;
 isize sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                        struct Fdtable *table, const u64 args[8], const void *path, u64 bytes,
                        u64 flags, struct Opencreate *open, Rkey *active, int *fd, isize *business);
+/* Drive the exact captured OPEN token against an initialized backend work
+   page. A cold connection needs a caller-reserved VA; reuse needs no VA.
+   Keep map and active across retries. Errors leave outstanding ownership
+   for retry or explicit compensation. Success resolves OPEN for publication. */
+isize sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                       const Opkey *operation, Connwork *backend, Handle space, u64 address,
+                       u64 deadline, Bootmap *map, Rkey *active);
 /* Create local descriptors over an established FS connection. Both private
    records start zeroed, and remain caller-owned across interruption or
    incomplete drain (ERR_WOULD_BLOCK after submitted peer death). Re-enter

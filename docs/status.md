@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage474：资源 OPEN 可沿原 token 驱动 ATTACH，冷路径映射冲突可继续原回复，热路径复用连接。双架构 QEMU `runtime`、`pipeio` 和 18 项 IPC 主机测试通过。
 - stage473：OPEN 可完成普通 fd 发布或把已确认的资源回复交给 ATTACH/ABORT；双架构 QEMU `runtime` 和 18 项 IPC 主机测试通过。公开 `open()` 仍待接。
 - stage472：路径 OPEN 可沿同一 RPC 推进提交和等待；两架构 QEMU `runtime`、`pipeio` 及 18 项 IPC 上下文主机测试通过。公开调用仍待接。
 - stage471：libsys 路径 OPEN 可预留、撤销和发布本地 fd，保留 FD_CLOEXEC；双架构 QEMU `runtime` 和 36 项创建账本主机测试通过。公开 `open()` 尚未接入。
