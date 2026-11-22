@@ -284,8 +284,8 @@ vdevtest(const Dtinfo *info)
     REQUIRE(trace[0] == 99 && !trace[31] && trace[12] == count && trace[13] + trace[14] == count &&
             trace[14] == trace[17] + trace[18] + trace[19] && trace[15] == trace[14] &&
             trace[16] == 2 * trace[14] + trace[18] + trace[19] &&
-            trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 13 * trace[18] &&
-            trace[3] == 9 * trace[18] && trace[38] == trace[2] + trace[3] + trace[22] &&
+            trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 25 * trace[18] &&
+            trace[3] == 19 * trace[18] && trace[38] == trace[2] + trace[3] + trace[22] &&
             trace[39] == trace[18] + trace[19] && resize == trace[18] &&
             trace[VTEST_CAPACITY] == 2 * trace[20] && trace[VTEST_PARALLEL] == 2 * trace[18]);
     interrupts += (u32) trace[38];

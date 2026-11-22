@@ -340,6 +340,77 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
 static Vdone waitblock(Blkqueue *, u64);
 
 static void
+journaltransfer(Blkqueue *queue, Handle binding, u64 irqevent, const Journalio *io)
+{
+  u32   type = io->kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
+  u32   bytes = type == VBLK_WRITE ? FS_BLOCK_BYTES : 0;
+  u64   alarm, started = now();
+  Vdone done;
+  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+              !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
+              !blkqsubmitbytes(queue, 0, type, io->block * FS_BLOCK_BYTES, bytes, io->bytes,
+                               blksync, queue->device),
+          268);
+  done = waitblock(queue, irqevent);
+  REQUIRE(!blkqfinish(queue, &done, NULL, 0) && !__sys_alarmcancel(&alarm), 269);
+  vdev_trace[type == VBLK_WRITE ? 2 : 3]++;
+}
+
+static void
+testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Cache *cache,
+             Loadmap *map, Blockmap *committed, Blockmap *prepared, u8 records[][FS_BLOCK_BYTES])
+{
+  Loadmap   staged;
+  Shrink    shrink = {0};
+  Reclaimtx work = {0};
+  Reclaim   batch;
+  Blockmap  busy = {0};
+  Journalio io;
+  Mapmeta   meta = {records[0], NULL, NULL, records[2], records[3], records[4]};
+  u32       i, step;
+  u32       offset = 2 * FS_INODE_BYTES;
+  u64       before = committed->used[1], length = map->file.length;
+  /* Test inode image: retain the direct pointer in the size transaction. */
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    records[0][i] = 0;
+  records[0][offset] = 1;
+  records[0][offset + 76] = 100;
+  REQUIRE(!loadmapshrink(map, 0, &staged) &&
+              !journalshrink(&shrink, journal, cache, map, &staged, &meta),
+          286);
+  for (step = 0; journal->phase != JOURNAL_DONE; step++) {
+    REQUIRE(step < 10 && !journalnext(journal, &io) && io.txid == 49 &&
+                shrinkpublish(&shrink) == -ERR_WOULD_BLOCK && map->file.length == length &&
+                committed->used[1] == before,
+            287);
+    journaltransfer(queue, binding, irqevent, &io);
+    REQUIRE(!journalcomplete(journal, &io, 1), 288);
+  }
+  REQUIRE(step == 10 && !shrinkpublish(&shrink) && !map->file.length && map->direct[1] == 100 &&
+              committed->used[1] == before && journal->last == 49 &&
+              loadreclaim(map, NULL, FS_DATA_START, (u32) journal->blocks, &busy, prepared,
+                          &batch) == 1 &&
+              batch.count == 1 && batch.blocks[0] == 100,
+          289);
+  records[0][offset + 76] = 0;
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    records[1][i] = (u8) (prepared->used[i / 8] >> ((i % 8) * 8));
+  meta.bitmap = records[1];
+  REQUIRE(!journalreclaim(&work, journal, cache, &batch, map, NULL, committed, &meta), 290);
+  for (step = 0; journal->phase != JOURNAL_DONE; step++) {
+    REQUIRE(step < 12 && !journalnext(journal, &io) && io.txid == 50 &&
+                reclaimpublish(&work) == -ERR_WOULD_BLOCK && map->direct[1] == 100 &&
+                committed->used[1] == before,
+            291);
+    journaltransfer(queue, binding, irqevent, &io);
+    REQUIRE(!journalcomplete(journal, &io, 1), 292);
+  }
+  REQUIRE(step == 12 && !reclaimpublish(&work) && !map->direct[1] && journal->last == 50 &&
+              committed->used[1] == (UINT64_C(1) << (FS_DATA_START - 64)),
+          293);
+}
+
+static void
 testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
 {
   static Journal     journal;
@@ -352,10 +423,8 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
   Growth             work = {0};
   Cache              cache;
   Journalio          io;
-  Vdone              done;
   Mapmeta            meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
   u32                i, j, step = 0;
-  u64                alarm, started = now();
   u32                blocks = (u32) (queue->config.sectors / (FS_BLOCK_BYTES / VBLK_SECTOR));
   committed.used[1] = UINT64_C(1) << (FS_DATA_START - 64);
   reserved = committed;
@@ -377,21 +446,16 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
     type = io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
     bytes = type == VBLK_WRITE ? FS_BLOCK_BYTES : 0;
     REQUIRE(blkqsubmitbytes(queue, 0, type, 1, bytes, io.bytes, blksync, queue->device) ==
-                    -ERR_INVALID &&
-                started <= UINT64_MAX - VDEV_RESET_NS &&
-                !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
-                !blkqsubmitbytes(queue, 0, type, io.block * FS_BLOCK_BYTES, bytes, io.bytes,
-                                 blksync, queue->device),
+                -ERR_INVALID,
             268);
-    done = waitblock(queue, irqevent);
-    REQUIRE(!blkqfinish(queue, &done, NULL, 0) && !__sys_alarmcancel(&alarm), 269);
-    vdev_trace[type == VBLK_WRITE ? 2 : 3]++;
+    journaltransfer(queue, binding, irqevent, &io);
     REQUIRE(!journalcomplete(&journal, &io, 1) && ++step <= 13, 266);
   }
   REQUIRE(step == 13 && !growthpublish(&work, &map, NULL, &committed, &reserved) &&
               map.file.length == FS_BLOCK_BYTES + 5 && map.direct[1] == 100 &&
               committed.used[1] == reserved.used[1] && journal.last == 48,
           267);
+  testtruncate(queue, binding, irqevent, &journal, &cache, &map, &committed, &reserved, records);
 }
 
 static void

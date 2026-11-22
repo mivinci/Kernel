@@ -772,6 +772,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage527：ARM64/RV64 QEMU `virtiodev` 经同一真实 virtio 块队列完成增长、截短和尾块回收。截短事务只改 inode；下一事务同时清除尾块指针和位图。场景检查每笔退休前的内存状态、QMP 的写入与 FLUSH 次数，以及最终盘面中 inode、位图和原数据块的内容。日志标记由夹具提供，生产 FS/blk IPC、编码和重启恢复仍待接入。
+
 stage526：普通 `OPEN` 可将 `O_TRUNC` 交给异步截短后端。先检查目标与写权限，预留尚不可见的 File 和引用，沿原 REQUEST 等待提交；取消后仍推进已开始的事务，只有确认无效果才报 EINTR。`O_RDONLY|O_TRUNC` 返回 EINVAL。ARM64/RV64 QEMU `pipeio` 从公开 `open()` 验证权限要求、退休后发布 fd，以及信号取消后同次截短完成；43 项 FS 主机测试通过。事务运输仍由夹具提供，生产接线和后台回收待做。
 
 stage525：`journalshrink` 用单个 inode 元数据镜像提交更短的 EOF，`shrinkpublish` 在日志退休后发布长度与内容版本，保留块指针与分配位。ARM64/RV64 QEMU `pipeio` 用同一日志验证旧 EOF 在退休前仍可见、发布后不能读取旧尾部、后续回收才释放间接数据块；43 项 FS 主机测试通过。生产编码、`O_TRUNC` 分派与后台回收调度待接入。

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage527：双架构 QEMU `virtiodev` 经实际块队列执行截短、尾块回收并核对盘面与 FLUSH；生产 FS/blk IPC 待接。
 - stage526：`O_TRUNC` 沿原 OPEN 等待截短提交后才发布 fd，即使事务期间收到取消。双架构 QEMU `pipeio` 和 43 项 FS 主机测试通过；生产后端与后台回收待接。
 - stage525：截短在 inode 日志退休后发布新 EOF，原块留给后续回收。双架构 QEMU `pipeio` 和 43 项 FS 主机测试通过；`O_TRUNC` 分派与生产接线待做。
 - stage524：回收指针与位图同事务，日志退休并清除缓存绑定后才复用块。双架构 QEMU `pipeio` 和 43 项 FS 主机测试通过；生产截短提交与后台调度仍待接入。
