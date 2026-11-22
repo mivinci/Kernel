@@ -1,4 +1,4 @@
-#include "transport.h"
+#include "serve.h"
 #include "private/syscall.h"
 #include <abi/mem.h>
 #include <abi/observe.h>
@@ -52,6 +52,8 @@ static u32          requestchecks, requestdefers, requestreplies, requestfinishe
 static isize        defererror, replyerror, finishrequesterror, finishledgererror;
 static Handle       request;
 static u64          requeststate;
+static u64          recvoptions;
+static u32          configreads, configchanges;
 static Msg          result;
 
 static isize blktransporttestsysfilefinish(Fileinflight *active, Handle expected);
@@ -83,7 +85,8 @@ deviceread(void *context, u32 offset, u32 *out)
   u32       i;
   (void) context;
   if (offset == 0xfc) {
-    *out = 1;
+    *out = configreads < configchanges ? 1 + configreads : 1 + configchanges;
+    configreads++;
     return 0;
   }
   for (i = 1; i < ARRAY_SIZE(offsets); i++)
@@ -153,6 +156,7 @@ setupqueue(void)
   u32       i;
   zero(&testring, sizeof(testring));
   zero(&device, sizeof(device));
+  configreads = configchanges = 0;
   device.device = VBLK_DEVICE;
   device.features = VBLK_F_BLK_SIZE | VBLK_F_FLUSH;
   device.ops = devops;
@@ -877,6 +881,45 @@ reaptest(void)
   return 0;
 }
 
+isize
+ipc_recv(u64 mask, u64 options, Ipcmsg *out)
+{
+  (void) mask;
+  (void) out;
+  recvoptions = options;
+  return options == RECV_NONBLOCK ? -ERR_WOULD_BLOCK : -ERR_INTERRUPTED;
+}
+
+isize
+__sys_irqack(Handle binding)
+{
+  (void) binding;
+  return -ERR_STATE;
+}
+
+static int
+configretrytest(void)
+{
+  Blkservice service = {0};
+  Ipcmsg     call;
+  Fileslot   slot;
+  CHECK(!resettest());
+  service.transport = &transport;
+  request = newrequest(1);
+  preparecall(&call, &slot, 0, 0, BLK_READ, 0, 512);
+  CHECK(!blktransportcall(&transport, &call) && transport.active == 1);
+  queue.configpending = 1;
+  configreads = 0;
+  configchanges = 1;
+  CHECK(!blkservestep(&service) && !recvoptions && !configreads && queue.configpending);
+  CHECK(!complete(0, 513) && !transport.active);
+  CHECK(!blkservestep(&service) && recvoptions == RECV_NONBLOCK && configreads == 2 &&
+        queue.configpending && queue.geometry == 1);
+  CHECK(!blkservestep(&service) && !recvoptions && configreads == 4 && !queue.configpending &&
+        queue.geometry == 2);
+  return 0;
+}
+
 int
 blktransporttest(u32 scenario)
 {
@@ -913,6 +956,8 @@ blktransporttest(u32 scenario)
     return backpressuretest();
   case 15:
     return completionbatchtest();
+  case 16:
+    return configretrytest();
   default:
     return __LINE__;
   }

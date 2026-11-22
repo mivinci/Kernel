@@ -82,6 +82,7 @@ isize
 blkservestep(Blkservice *service)
 {
   Ipcmsg input;
+  u64    options;
   isize  error = blktransportpump(service->transport);
   if (error)
     return error;
@@ -91,9 +92,15 @@ blkservestep(Blkservice *service)
   error = advance(service);
   if (error)
     return error;
-  error = ipc_recv(service->irqevent | EVENT_LIFE | EVENT_RQ_CANCEL, 0, &input);
+  /* Once old jobs have drained, a mixed config snapshot needs another
+     sample. Its IRQ was already acknowledged, so a new hint is not required. */
+  options = blktransportonline(service->transport) && service->transport->queue->configpending &&
+                    !service->transport->active
+                ? RECV_NONBLOCK
+                : 0;
+  error = ipc_recv(service->irqevent | EVENT_LIFE | EVENT_RQ_CANCEL, options, &input);
   if (error)
-    return error == -ERR_INTERRUPTED ? 0 : error;
+    return error == -ERR_INTERRUPTED || (options && error == -ERR_WOULD_BLOCK) ? 0 : error;
   if (input.kind == IPC_CALL)
     return blkservicecall(service, &input);
   if (input.kind == IPC_EVENT) {

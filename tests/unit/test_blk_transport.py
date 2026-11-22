@@ -28,7 +28,7 @@ class BlkTransportTests(unittest.TestCase):
                             'sbin/blk'):
                 command += ['-I', str(ROOT / include)]
             command += ['-I', str(folder)]
-            for source in ('sbin/blk/io.c', 'sbin/blk/transport.c', 'lib/libvirtio/queue.c',
+            for source in ('sbin/blk/io.c', 'sbin/blk/transport.c', 'sbin/blk/serve.c', 'lib/libvirtio/queue.c',
                            'lib/libvirtio/ring.c', 'lib/libvirtio/block.c', 'lib/libsys/file.c',
                            'lib/libsys/filewatch.c', 'tests/unit/blktransportmock.c'):
                 command.append(str(ROOT / source))
@@ -49,7 +49,7 @@ class BlkTransportTests(unittest.TestCase):
                      'validation', 'queue capacity', 'exact link busy', 'client reap',
                      'immediate reply and ledger retry with active I/O',
                      'flush ordering and geometry backpressure',
-                     'used batch survives a request check failure')
+                     'used batch survives a request check failure', 'config retry without a new IRQ')
         for library in self.libraries:
             for index, scenario in enumerate(scenarios):
                 with self.subTest(scenario=scenario):
