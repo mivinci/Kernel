@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage546：ARM64/RV64 QEMU `pipeio` 验证独占创建在日志 COMMITTED 持久后被信号取消，返回 EINTR，保留名称且没有 File 引用泄漏。
 - stage545：公开独占创建在夹具日志退休后返回 fd，权限 000 不阻挡本次创建取得引用，重复独占创建返回 EEXIST。双架构 QEMU `pipeio` 和 46 项 FS 主机测试通过；生产盘上编码和异步创建取消待接验。
 - stage544：公开 `open(O_CREAT)` 已经真实 IPC 到达创建后端并传回 EACCES；ARM64/RV64 QEMU `pipeio` 和 46 项 FS 主机测试通过。生产事务、成功发布及异步取消待验。
 - stage543：路径遍历可向创建方交付缺失名称和父目录引用，独占模式拒绝已存在的最终链接。双架构 QEMU `pipeio` 通过，OPEN 分派待接。

@@ -784,6 +784,8 @@ stage544：OPEN 已将缺失的最终名称交给创建后端，保留原 REQUES
 
 stage545：创建后端可在提交空 inode 后用原 OPEN 发布 File 引用。该创建请求按请求的访问模式取得引用，即使新节点权限为 000；现有节点仍走普通访问检查，已创建的空文件无需再次截断。双架构 QEMU `pipeio` 以夹具提供日志镜像和完成事件，验证退休前不公布 inode 或引用，退休后 `open(O_CREAT|O_EXCL)` 返回可关闭的 fd，再次独占创建返回 EEXIST。46 项 FS 主机测试通过。生产盘上编解码及异步创建取消仍待接验。
 
+stage546：双架构 QEMU `pipeio` 在夹具日志的 COMMITTED 持久、home 尚未回写时，向阻塞的公开 `open(O_CREAT|O_EXCL)` 发送真实信号。服务端观察请求取消后继续原事务直到 EMPTY，保留目录项并释放父目录引用，未安装 File；应用收到 EINTR，再次独占创建该名称得到 EEXIST。日志 I/O 仍由夹具完成。
+
 stage539：`journalinodefree` 在孤儿引用和块指针全部清空后，用最后一笔事务清 inode 位图，保留原 inode 行的 generation 供将来复用。ARM64/RV64 QEMU `pipeio` 验证块批次未退休时拒绝、最终位图仅在日志退休后可见以及重复发布被拒；46 项 FS 主机测试通过。生产编码和 inode 再分配待接。
 
 stage538：无引用孤儿可用同一回收日志分批清除全部块，包含仍在原 EOF 内的数据；inode 槽保持分配。ARM64/RV64 QEMU `pipeio` 验证带引用时拒绝、无引用后可提交块回收，末次 FLUSH 失败时指针和位图不提前发布。46 项 FS 主机测试通过。最终 inode 槽退休和生产候选接线待做。

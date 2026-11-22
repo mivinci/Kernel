@@ -1547,7 +1547,7 @@ struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file, dir, denied, created;
+  Vnode     root, file, dir, denied, created, abandoned;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1620,10 +1620,11 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     return openhold(fixture, *out);
   }
   CHECK(dir == &fixture->root && bytes == 1);
-  if (name[0] == 'm') {
-    if (!fixture->created.number)
+  if (name[0] == 'm' || name[0] == 'q') {
+    Vnode *entry = name[0] == 'm' ? &fixture->created : &fixture->abandoned;
+    if (!entry->number)
       return -ENOENT;
-    *out = &fixture->created;
+    *out = entry;
     return openhold(fixture, *out);
   }
   CHECK(name[0] == 'x');
@@ -1759,30 +1760,37 @@ opencreate(Openjob *job, Vnode *parent, u32 abandon)
   static Journal    journal;
   static Inodealloc allocation;
   static Inodemap   inodes = {{7}};
-  static Loadmap    child = {{5, 0, 0, 0}, {0}, 0};
+  static Loadmap    child;
   Openfixture      *fixture = job->backend;
+  u32               late = job->walk.part.name[0] == 'q';
+  Vnode            *entry = late ? &fixture->abandoned : &fixture->created;
+  u64               before = late ? 39 : 7;
   openvalidate(job);
-  CHECK(!abandon && parent == &fixture->root && job->walk.part.bytes == 1 &&
-        job->walk.part.name[0] == 'm' && job->cred.uid == 22 && job->mask == 027 &&
-        !job->slot.args[1] && fixture->holds == 3 && !fixture->created.number);
+  CHECK(parent == &fixture->root && job->walk.part.bytes == 1 &&
+        (late || job->walk.part.name[0] == 'm') && job->cred.uid == 22 && job->mask == 027 &&
+        !job->slot.args[1] && fixture->holds == 3 && !entry->number &&
+        abandon == (late && fixture->durable));
   if (!allocation.txid) {
     Loadmap         staged;
     const Mapmeta   meta = {maprecords[0], maprecords[1], NULL,
                             maprecords[3], maprecords[4], maprecords[5]};
-    const Dirinsert insert = {FS_ROOT, {110, maprecords[2]}, NULL, NULL};
-    CHECK(!journalinit(&journal, 128, 0) && !inodeallocstage(&inodes, &child, &staged) &&
+    const Dirinsert insert = {FS_ROOT, {110 + late, maprecords[2]}, NULL, NULL};
+    child.file = (Loadfile){5 + late, 0, 0, 0};
+    CHECK((late || !journalinit(&journal, 128, 0)) && !inodeallocstage(&inodes, &child, &staged) &&
           !journalinodealloc(&allocation, &journal, &fixture->cache, &inodes, &child, &staged,
                              &meta, &insert));
   }
   if (journal.phase != JOURNAL_DONE) {
     Journalio io;
-    CHECK(!child.file.generation && inodes.used[0] == 7 && !fixture->files.files[0].refs &&
+    CHECK(!child.file.generation && inodes.used[0] == before && !fixture->files.files[0].refs &&
           !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+    fixture->durable = late && journal.durable;
     return OPEN_WAIT;
   }
-  CHECK(!inodeallocpublish(&allocation) && child.file.generation == 1 && inodes.used[0] == 39);
-  fixture->created = (Vnode){parent->mount, child.file.inode, child.file.generation, VNODE_FILE};
-  return fsfilecreated(&fixture->files, job, &fixture->created);
+  CHECK(!inodeallocpublish(&allocation) && child.file.generation == 1 &&
+        inodes.used[0] == (before | (UINT64_C(1) << child.file.inode)) && journal.last == 1 + late);
+  *entry = (Vnode){parent->mount, child.file.inode, child.file.generation, VNODE_FILE};
+  return fsfilecreated(&fixture->files, job, entry);
 }
 
 static void
@@ -2894,6 +2902,17 @@ publicchdirserver(const Bootview *boot)
         !job.parent && !fsstep(&fs) && !file.refs && fixture.holds == 2);
   CHECK(!fsstep(&fs) && !file.refs && !job.parent); /* Exclusive retry. */
   fixture.searches = 0;
+  CHECK(!fsstep(&fs) && job.parent && !fixture.durable);
+  for (steps = 0; !fixture.durable; steps++)
+    CHECK(steps < 20 && job.call.request && !fsopenpump(&open));
+  CHECK(!fixture.abandoned.number && !file.refs && !__sys_sigsend(&target, SIGNAL_USR1) &&
+        !ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
+        !ipc_rqcheck(job.call.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+  for (steps = 0; job.call.request; steps++)
+    CHECK(steps < 20 && !fsopenpump(&open));
+  CHECK(fixture.abandoned.number == 6 && !file.refs && !ref.id && !job.parent &&
+        fixture.holds == 2 && !fsstep(&fs) && !file.refs); /* Cancelled name still exists. */
+  fixture.searches = 0;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R &&
         file.flags == FS_OPEN_NONBLOCK && file.node == &fixture.file);
   CHECK(!fsstep(&fs) && !file.node && !file.refs);
@@ -3009,19 +3028,22 @@ publicchdirclient(void)
   fd = open("/m", O_WRONLY | O_CREAT | O_EXCL, 0U);
   CHECK(fd == 0 && !close(fd) && open("/m", O_WRONLY | O_CREAT | O_EXCL, 0U) == -1 &&
         errno == EEXIST);
+  action.sa_handler = lateopensignal;
+  CHECK(!sigaction(SIGUSR1, &action, NULL) && open("/q", O_WRONLY | O_CREAT | O_EXCL, 0U) == -1 &&
+        errno == EINTR && caught == 1 && open("/q", O_WRONLY | O_CREAT | O_EXCL, 0U) == -1 &&
+        errno == EEXIST);
   fd = open("/x", O_RDONLY | O_CLOEXEC | O_NONBLOCK);
   CHECK(fd == 0 && errno == EEXIST && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
   CHECK(open("/x", O_RDONLY | O_TRUNC) == -1 && errno == EINVAL);
-  action.sa_handler = lateopensignal;
   action.sa_flags = SA_RESTART;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
   fd = open("/x", O_WRONLY | O_TRUNC);
-  CHECK(fd == 0 && caught == 1 && !close(fd));
+  CHECK(fd == 0 && caught == 2 && !close(fd));
   CHECK(chdir("") == -1 && errno == ENOENT && chdir((const char *) (uintptr_t) 1) == -1 &&
         errno == EFAULT && chdir("/n") == -1 && errno == EACCES && !chdir("/d") &&
         errno == EACCES && !chdir(".") && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
-  CHECK(chdir("/d") == -1 && errno == EINTR && caught == 2 && !peer->state.operations[0].phase &&
+  CHECK(chdir("/d") == -1 && errno == EINTR && caught == 3 && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
   pipeiotrace[0] = 7;
 }
