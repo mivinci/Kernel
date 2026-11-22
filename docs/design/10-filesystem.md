@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage471：libsys 可为路径 OPEN 预留单个本地 fd，并在原创建请求已 ACK、后端引用已接管后发布该 fd。fd 在准备期没有可用 File，提交前撤销会归还预留位；发布时保留 FD_CLOEXEC。ARM64、RV64 QEMU `runtime` 通过真实普通 OPEN 验证撤销与复用、最终发布和精确引用收尾；36 项创建账本主机测试通过。公开 `open()`、生产 VFS 和资源交付的完整前台流程仍待接。
+
 stage466：打开可写日志统一走 `journalrecover`，移除仅按块数接收重放镜像的旧入口。EMPTY 和 COMMITTED 都须通过卷布局、设备容量、flush 与故障边界检查，前者才可开始新事务，后者才可发出 home 写入。双架构 QEMU `virtiodev` 验证超出容量、无 flush 或缺可信故障边界时拒绝开启，并保留真实回写及盘面核对；`runtime` 验证重放各步骤中断后只排空原票、不继续写。37 项 FS 主机测试通过。盘上解码、独占发权和生产挂载仍待接。
 
 stage465：`journalrecover` 接收已解码的提交记录。有效 EMPTY 不读取准备区；COMMITTED 只有在编号、校验值、镜像数量与目标顺序一致，并由分类器按整笔事务确认各目标均为元数据后，才允许回写。ARM64、RV64 QEMU `virtiodev` 用合成记录验证 EMPTY、镜像校验值不符及普通数据块拒绝，再经真实 virtio-blk 回写有效事务并核对盘上字节。10 项日志主机专项通过。此阶段未实现盘上解码、生产元数据分类或挂载。

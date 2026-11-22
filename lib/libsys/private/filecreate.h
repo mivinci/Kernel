@@ -3,6 +3,27 @@
 #include "operation.h"
 #include "fd.h"
 typedef struct Pipecreate Pipecreate;
+typedef struct Opencreate Opencreate;
+struct Opencreate
+{
+  Opkey operation;
+  Fdtag tag;
+  u64   flags;
+};
+/* Zero-initialized continuation for a pathname OPEN from cwd. The caller
+   supplies an immutable pathname snapshot including its NUL, and keeps caught
+   signals excluded during each local step. The existing creator route owns
+   submission, result validation, ACK and any resource ATTACH or ABORT. */
+isize sysfileopenprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                         u32 layer, u64 owner, const u64 args[8], const void *path, u64 bytes,
+                         u64 fdflags, Opencreate *open, Msg *message);
+isize sysfileopenabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                       Opencreate *open);
+/* Consume a resolved, ACKed creator and publish its File as the reserved fd.
+   A resolved error releases the reservation and returns status via business
+   or a native error. A success returns the new descriptor number. */
+isize sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                        Opencreate *open, isize *business);
 struct Pipecreate
 {
   Opkey operation;

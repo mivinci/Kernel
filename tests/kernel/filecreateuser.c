@@ -2317,21 +2317,38 @@ iodraft(u64 file, u64 opcode, u64 owner, Opkey *key)
 static void
 iorecoverclient(const Bootview *boot, u32 mode)
 {
-  Opkey     open, failed, success;
-  Fileclose anchor;
-  Fileref   held;
-  Rkey      invocation;
-  u64       files[2], source = 0, file, pin = 0, copied = IO_GUARD, steps = 0;
-  isize     outcome, error;
+  Opencreate open = {0};
+  const u64  args[8] = {0, 0, 0, 3};
+  Msg        message;
+  Fdview     fd;
+  Opkey      failed, success;
+  Fileclose  anchor;
+  Fileref    held;
+  Rkey       invocation;
+  u64        file, pin = 0, copied = IO_GUARD, steps = 0;
+  isize      outcome, error;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
-  open = begin(FS_OPEN, "/a", 0);
-  collect(&open);
-  CHECK(!sysfilecreateack(&pool, &work, &cache, &open) &&
-        !sysfilecreatesettle(&pool, &work, &cache, &open, 0));
-  zero(files, sizeof(files));
-  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &open, files, &source) && files[0] && !source);
-  file = files[0];
+  sysfdinit(&fds);
+  CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 99, args, "/a", 3, BOOT_FD_CLOEXEC,
+                            &open, &message) &&
+        !sysfdobserve(&fds, 0, &fd) && fd.tag.state == SYSFD_RESERVED && !fd.file &&
+        !sysfileopenabort(&pool, &work, &cache, &fds, &open) && !sysfdobserve(&fds, 0, &fd) &&
+        fd.tag.state == SYSFD_FREE);
+  CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 100, args, "/a", 3, BOOT_FD_CLOEXEC,
+                            &open, &message) &&
+        !sysctxcreatecall(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+                          &invocation) &&
+        !sysctxinvoke(&contexts, work.state.self, invocation) &&
+        !sysctxhandoff(&contexts, work.state.self, invocation) &&
+        !sysctxfinish(&contexts, work.state.self, invocation));
+  filecreatetrace[1]++;
+  collect(&open.operation);
+  CHECK(!sysfilecreateack(&pool, &work, &cache, &open.operation) &&
+        !sysfilecreatesettle(&pool, &work, &cache, &open.operation, 0) &&
+        !sysfileopenfinish(&pool, &work, &cache, &fds, &open, &outcome) && !outcome &&
+        !sysfdobserve(&fds, 0, &fd) && fd.flags == BOOT_FD_CLOEXEC);
+  file = fd.file;
   if (mode == 2)
     iodraft(file, FS_READ, 801, &success);
   iodraft(file, mode == 1 ? FS_WRITE : FS_READ, 802, &failed);
@@ -2344,7 +2361,7 @@ iorecoverclient(const Bootview *boot, u32 mode)
                                                   failed.lease.slot * FS_DESC_BYTES))
                 ->state == FS_SLOT_DONE &&
         sysopcopy(&work, &cache, &failed, 0, 8, &copied) == -ERR_STATE && copied == IO_GUARD &&
-        !sysfilerefdrop(&pool, work.state.self, file) &&
+        !sysfddetach(&fds, fd.tag, &fd) && !sysfilerefdrop(&pool, work.state.self, file) &&
         sysfilerefclose(&pool, work.state.self, file, &anchor) == -ERR_BUSY &&
         sysoprecover(&work, &cache, &failed, &pin) == -ERR_WOULD_BLOCK && !pin &&
         !sysfilerefview(&pool, work.state.self, file, &held) && held.pins == (mode == 2 ? 2U : 1U));

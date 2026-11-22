@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage471：libsys 路径 OPEN 可预留、撤销和发布本地 fd，保留 FD_CLOEXEC；双架构 QEMU `runtime` 和 36 项创建账本主机测试通过。公开 `open()` 尚未接入。
 - stage470：TTY 可固定已发布的 TX 前缀并暂停后续发布，等同代次物理排空确认。双架构 QEMU `tty` 和 32 项主机测试通过；确认仍由夹具提供。
 - stage469：serial 可确认已物理发送的 TX 前缀，区分环消费、驱动暂存和 UART 排空；双架构 QEMU `packageboot/service-authority` 和 7 项主机专项通过。TTY 尚未接收该位置。
 - stage468：TTY 即时模式切换可重新核对原挂起 READ，并只在读策略变化时更新等待条件。双架构 QEMU `runtime` 和 32 项 TTY 主机测试通过；SETATTR 线上分派与输出排空仍待接。

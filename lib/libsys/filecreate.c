@@ -911,6 +911,116 @@ sysfilecreatefinish(Filepool *pool, Connwork *work, Conncache *cache, const Opke
 }
 
 static int
+openstorage(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open)
+{
+  return external(pool, work, cache, table, sizeof(*table)) &&
+         external(pool, work, cache, open, sizeof(*open)) &&
+         separate(table, sizeof(*table), open, sizeof(*open));
+}
+
+isize
+sysfileopenprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, u32 layer,
+                   u64 owner, const u64 args[8], const void *path, u64 bytes, u64 fdflags,
+                   Opencreate *open, Msg *message)
+{
+  u64   source = 0;
+  isize error;
+  if (!openstorage(pool, work, cache, table, open) || open->operation.lease.seq ||
+      (fdflags & ~((u64) BOOT_FD_CLOEXEC)) ||
+      !separate(message, sizeof(*message), table, sizeof(*table)) ||
+      !separate(message, sizeof(*message), open, sizeof(*open)) ||
+      !separate(args, 8 * sizeof(u64), table, sizeof(*table)) ||
+      !separate(args, 8 * sizeof(u64), open, sizeof(*open)) ||
+      !separate(path, bytes, table, sizeof(*table)) || !separate(path, bytes, open, sizeof(*open)))
+    return -ERR_INVALID;
+  error = sysfdreserve(table, 0, &open->tag);
+  if (error)
+    return error;
+  error = sysfilecreateprepare(pool, work, cache, layer, owner, FS_OPEN, 0, &source, args, path,
+                               bytes, &open->operation, message);
+  if (error) {
+    (void) sysfdcancel(table, open->tag);
+    clear(open, sizeof(*open));
+  } else
+    open->flags = fdflags;
+  return error;
+}
+
+static isize
+opencheck(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open,
+          Createop **create)
+{
+  const Fdentry *fd;
+  isize          error;
+  if (!openstorage(pool, work, cache, table, open) || open->tag.index >= BOOT_FD_COUNT ||
+      open->tag.state != SYSFD_RESERVED || (open->flags & ~((u64) BOOT_FD_CLOEXEC)))
+    return -ERR_INVALID;
+  fd = &table->entries[open->tag.index];
+  if (fd->state != SYSFD_RESERVED || fd->generation != open->tag.generation)
+    return -ERR_STALE;
+  error = target(pool, work, cache, &open->operation, create);
+  if (error)
+    return error;
+  return work->state.operations[open->operation.lease.slot].opcode == FS_OPEN && !(*create)->source
+             ? 0
+             : -ERR_INVALID;
+}
+
+isize
+sysfileopenabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open)
+{
+  Createop *create;
+  u64       source = 0;
+  isize     error = opencheck(pool, work, cache, table, open, &create);
+  if (!error)
+    error = sysfilecreateabort(pool, work, cache, &open->operation, &source);
+  if (!error) {
+    error = sysfdcancel(table, open->tag);
+    clear(open, sizeof(*open));
+  }
+  return error;
+}
+
+isize
+sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                  Opencreate *open, isize *business)
+{
+  Createop *create;
+  u64       source = 0, files[2] = {0};
+  isize     status, native, number, cleanup, error;
+  error = opencheck(pool, work, cache, table, open, &create);
+  if (error)
+    return error;
+  if (!external(pool, work, cache, business, sizeof(*business)) ||
+      !separate(table, sizeof(*table), business, sizeof(*business)) ||
+      !separate(open, sizeof(*open), business, sizeof(*business)))
+    return -ERR_INVALID;
+  status = create->error;
+  native = work->state.operations[open->operation.lease.slot].status;
+  if (!status && !native && !create->files[0])
+    return -ERR_STATE;
+  error = sysfilecreatefinish(pool, work, cache, &open->operation, files, &source);
+  if (error)
+    return error;
+  number = open->tag.index;
+  if (files[0])
+    error = sysfdpublish(table, open->tag, files[0], open->flags);
+  if (!files[0] || error) {
+    cleanup = sysfdcancel(table, open->tag);
+    if (files[0]) {
+      isize drop = sysfilerefdrop(pool, work->state.self, files[0]);
+      if (!cleanup)
+        cleanup = drop;
+    }
+    if (cleanup)
+      error = cleanup;
+  }
+  *business = native ? 0 : status;
+  clear(open, sizeof(*open));
+  return error ? error : native ? native : status ? 0 : number;
+}
+
+static int
 pipestorage(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Pipecreate *pipe)
 {
   return external(pool, work, cache, table, sizeof(*table)) &&
