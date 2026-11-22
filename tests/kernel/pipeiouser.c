@@ -486,6 +486,23 @@ serviceloop(const Bootview *boot, u32 interrupt)
           CHECK(position == cursors[i] && !link.watch.active.requests[request.words[3]] &&
                 !readwork.request && !readwork.span.cache);
         }
+        {
+          const u64 offsets[] = {CACHE_BYTES + 2, 0, 256, 256, 1, 1, 257, 2, 2, CACHE_BYTES + 2};
+          for (i = 0; i < ARRAY_SIZE(offsets); i++) {
+            u64 opcode = i == 2 || i == 6 ? FS_READ : FS_SEEK;
+            CHECK(!ipc_recv(0, 0, &request) && request.words[0] == opcode &&
+                  !sysfilelinkaccept(&link, 1, &request, &row) &&
+                  row.object == file.session[PIPE_READ]);
+            page =
+                (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
+            if (opcode == FS_READ)
+              CHECK(!filedata(&readwork, &fetch, &link.watch.active, &request, &row, &map, NULL,
+                              &cache, 4, &position, scratch, page, NULL));
+            else
+              CHECK(!fileseek(&link.watch.active, &request, &row, map.file.length, &position));
+            CHECK(position == offsets[i] && !link.watch.active.requests[request.words[3]]);
+          }
+        }
       }
       for (i = 0; i < 5; i++) {
         const Termarg mode = {
@@ -848,6 +865,13 @@ interruptclient(void)
         !data[2] && read(fds[0], data, 1) == 1 && data[0] == 'C' &&
         lseek(fd, -1, SEEK_END) == CACHE_BYTES + 1 && read(fd, data, sizeof(data)) == 1 &&
         !data[0] && !read(fds[0], data, sizeof(data)));
+  {
+    off_t previous = lseek(fd, 0, SEEK_CUR);
+    CHECK(fds[0] == 0 && previous >= 0 && !lseek(fd, 0, SEEK_SET) && getchar() == 'A' &&
+          getchar() == 'B' && lseek(fd, 0, SEEK_CUR) > 2 && ungetc('X', stdin) == 'X' &&
+          !fflush(NULL) && lseek(fd, 0, SEEK_CUR) == 1 && getchar() == 'B' && !fflush(stdin) &&
+          lseek(fd, 0, SEEK_CUR) == 2 && lseek(fd, previous, SEEK_SET) == previous);
+  }
   {
     struct termios attrs = {0};
     attrs.c_iflag = UINT64_MAX;
@@ -1457,10 +1481,18 @@ brokenclient(void)
   if (fds[1] != 2)
     CHECK(!close(2));
   alias = dup(fds[1]);
-  CHECK(alias >= 0 && !close(fds[1]) && write(alias, "e", 1) == 1 && !close(alias) &&
-        poll(ready, 3, 0) == 2 && ready[0].revents == (POLLIN | POLLHUP) &&
-        ready[1].revents == POLLNVAL && !ready[2].revents && read(fds[0], &byte, 1) == 1 &&
-        byte == 'e' && read(fds[0], &byte, 1) == 0 && !close(fds[0]));
+  CHECK(fds[0] == 0 && alias >= 0 && !close(fds[1]) && write(alias, "e\n\377zq", 5) == 5 &&
+        !close(alias) && poll(ready, 3, 0) == 2 && ready[0].revents == (POLLIN | POLLHUP) &&
+        ready[1].revents == POLLNVAL && !ready[2].revents);
+  CHECK(getchar() == 'e' && ungetc('E', stdin) == 'E' && fgetc(stdin) == 'E' &&
+        ungetc('X', stdin) == 'X' && !fflush(stdin) &&
+        fgets(formatted, sizeof(formatted), stdin) == formatted && !memcmp(formatted, "\n", 2) &&
+        getc(stdin) == 255 && fread(formatted, 2, 2, stdin) == 1 && !memcmp(formatted, "zq", 2) &&
+        feof(stdin) && !ferror(stdin));
+  CHECK(ungetc('!', stdin) == '!' && !feof(stdin) && fgetc(stdin) == '!' && fgetc(stdin) == EOF &&
+        feof(stdin) && !close(fds[0]));
+  clearerr(stdin);
+  CHECK(!feof(stdin) && fgetc(stdin) == EOF && errno == EBADF && ferror(stdin) && !feof(stdin));
   CHECK(!sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
   alias = dup(fds[0]);
   CHECK(alias >= 0 && !close(fds[0]) && write(fds[1], "r", 1) == 1 && read(alias, &byte, 1) == 1 &&

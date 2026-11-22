@@ -4,17 +4,28 @@
 #include <stdarg.h>
 #define EOF (-1)
 typedef struct Stdiofile FILE;
+extern FILE *const       stdin;
 extern FILE *const       stdout;
 extern FILE *const       stderr;
-int                      fflush(FILE *stream);
-int                      ferror(FILE *stream);
-void                     clearerr(FILE *stream);
-size_t                   fwrite(const void *data, size_t size, size_t count, FILE *stream);
-int                      fputs(const char *text, FILE *stream);
-int                      fputc(int byte, FILE *stream);
-int                      putc(int byte, FILE *stream);
-int fprintf(FILE *stream, const char *format, ...) __attribute__((format(printf, 2, 3)));
-int vfprintf(FILE *stream, const char *format, va_list arguments)
+#define stdin  stdin
+#define stdout stdout
+#define stderr stderr
+int    fflush(FILE *stream);
+int    ferror(FILE *stream);
+int    feof(FILE *stream);
+void   clearerr(FILE *stream);
+size_t fread(void *data, size_t size, size_t count, FILE *stream);
+char  *fgets(char *text, int size, FILE *stream);
+int    fgetc(FILE *stream);
+int    getc(FILE *stream);
+int    getchar(void);
+int    ungetc(int byte, FILE *stream);
+size_t fwrite(const void *data, size_t size, size_t count, FILE *stream);
+int    fputs(const char *text, FILE *stream);
+int    fputc(int byte, FILE *stream);
+int    putc(int byte, FILE *stream);
+int    fprintf(FILE *stream, const char *format, ...) __attribute__((format(printf, 2, 3)));
+int    vfprintf(FILE *stream, const char *format, va_list arguments)
     __attribute__((format(printf, 2, 0)));
 int printf(const char *format, ...) __attribute__((format(printf, 1, 2)));
 int vprintf(const char *format, va_list arguments) __attribute__((format(printf, 1, 0)));

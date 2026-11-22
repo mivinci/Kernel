@@ -15,13 +15,15 @@ enum
 
 struct Stdiofile
 {
-  int    fd, mode, failed;
-  size_t used;
+  int    fd, mode, failed, ended, pushed;
+  size_t used, position;
   char   buffer[256];
 };
 
-static FILE standardout = {1, Stdiounset, 0, 0, {0}};
-static FILE standarderr = {2, Stdionone, 0, 0, {0}};
+static FILE standardin = {0, Stdiounset, 0, 0, EOF, 0, 0, {0}};
+static FILE standardout = {1, Stdiounset, 0, 0, EOF, 0, 0, {0}};
+static FILE standarderr = {2, Stdionone, 0, 0, EOF, 0, 0, {0}};
+FILE *const stdin = &standardin;
 FILE *const stdout = &standardout;
 FILE *const stderr = &standarderr;
 
@@ -46,8 +48,32 @@ int
 fflush(FILE *stream)
 {
   size_t done, count;
-  if (!stream)
-    return fflush(stdout);
+  if (!stream) {
+    int result = fflush(stdout), saved = errno;
+    if (fflush(stdin) == EOF && result != EOF)
+      return EOF;
+    errno = saved;
+    return result;
+  }
+  if (stream == stdin) {
+    int saved = errno;
+    count = stream->used - stream->position + (stream->pushed != EOF);
+    if (!count)
+      return 0;
+    if (lseek(stream->fd, -(off_t) count, SEEK_CUR) < 0) {
+      if (errno != ESPIPE) {
+        stream->failed = 1;
+        return EOF;
+      }
+      /* A pipe or terminal cannot put read-ahead back into the descriptor. */
+      stream->pushed = EOF;
+      errno = saved;
+      return 0;
+    }
+    stream->used = stream->position = 0;
+    stream->pushed = EOF;
+    return 0;
+  }
   count = stream->used;
   done = writebytes(stream, stream->buffer, count);
   /* After a failed flush, retain only the part the descriptor did not accept. */
@@ -60,7 +86,7 @@ fflush(FILE *stream)
 static void
 stdioexit(void)
 {
-  fflush(NULL);
+  fflush(stdout);
 }
 
 int
@@ -69,10 +95,145 @@ ferror(FILE *stream)
   return stream->failed;
 }
 
+int
+feof(FILE *stream)
+{
+  return stream->ended;
+}
+
 void
 clearerr(FILE *stream)
 {
-  stream->failed = 0;
+  stream->failed = stream->ended = 0;
+}
+
+static int
+readable(FILE *stream)
+{
+  if (stream == stdin)
+    return 1;
+  stream->failed = 1;
+  errno = EBADF;
+  return 0;
+}
+
+static int
+refill(FILE *stream)
+{
+  ssize_t bytes;
+  if (stream->ended)
+    return 0;
+  if (stdout->mode == Stdioline) {
+    int saved = errno;
+    fflush(stdout);
+    errno = saved;
+  }
+  bytes = read(stream->fd, stream->buffer, sizeof(stream->buffer));
+  if (bytes <= 0) {
+    if (bytes)
+      stream->failed = 1;
+    else
+      stream->ended = 1;
+    return 0;
+  }
+  stream->position = 0;
+  stream->used = (size_t) bytes;
+  return 1;
+}
+
+static size_t
+input(FILE *stream, char *data, size_t count, int *lineerror)
+{
+  size_t done = 0;
+  if (!count || !readable(stream))
+    return 0;
+  if (stream->pushed != EOF) {
+    data[done++] = (char) stream->pushed;
+    stream->pushed = EOF;
+    if (lineerror && data[0] == '\n')
+      return done;
+  }
+  while (done < count) {
+    const char *start, *newline;
+    size_t      bytes;
+    if (stream->position == stream->used && !refill(stream)) {
+      if (lineerror)
+        *lineerror = !stream->ended;
+      break;
+    }
+    start = stream->buffer + stream->position;
+    bytes = MIN(count - done, stream->used - stream->position);
+    newline = lineerror ? memchr(start, '\n', bytes) : NULL;
+    if (newline)
+      bytes = (size_t) (newline - start) + 1;
+    memcpy(data + done, start, bytes);
+    stream->position += bytes;
+    done += bytes;
+    if (newline)
+      break;
+  }
+  return done;
+}
+
+size_t
+fread(void *data, size_t size, size_t count, FILE *stream)
+{
+  if (!size || !count)
+    return 0;
+  if (count > SIZE_MAX / size) {
+    stream->failed = 1;
+    errno = EOVERFLOW;
+    return 0;
+  }
+  return input(stream, data, size * count, 0) / size;
+}
+
+char *
+fgets(char *text, int size, FILE *stream)
+{
+  size_t count;
+  int    error = 0;
+  if (size <= 0) {
+    errno = EINVAL;
+    return NULL;
+  }
+  if (size == 1) {
+    text[0] = 0;
+    return text;
+  }
+  count = input(stream, text, (size_t) size - 1, &error);
+  if (!count || error)
+    return NULL;
+  text[count] = 0;
+  return text;
+}
+
+int
+fgetc(FILE *stream)
+{
+  unsigned char byte;
+  return input(stream, (char *) &byte, 1, 0) ? byte : EOF;
+}
+
+int
+getc(FILE *stream)
+{
+  return fgetc(stream);
+}
+
+int
+getchar(void)
+{
+  return fgetc(stdin);
+}
+
+int
+ungetc(int byte, FILE *stream)
+{
+  if (byte == EOF || !readable(stream) || stream->pushed != EOF)
+    return EOF;
+  stream->ended = 0;
+  return stream->pushed = (unsigned char) byte;
 }
 
 static size_t
@@ -81,6 +242,11 @@ output(FILE *stream, const char *data, size_t count)
   size_t done = 0;
   if (!count)
     return 0;
+  if (stream == stdin) {
+    stream->failed = 1;
+    errno = EBADF;
+    return 0;
+  }
   if (stream->mode == Stdiounset) {
     int saved = errno;
     stream->mode = isatty(stream->fd) ? Stdioline : Stdiofull;
