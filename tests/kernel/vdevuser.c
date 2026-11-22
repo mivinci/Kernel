@@ -1056,6 +1056,8 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
   vdev_trace[2]++;
   vdev_trace[3]++;
 }
+#define MOUNT_TIMEOUT_GATE UINT64_C(0x6d6f756e74)
+
 static const u32 blkopcodes[] = {
     BLK_WRITE, BLK_FLUSH,                                  /* data-only transaction */
     BLK_READ,                                              /* abandoned probe */
@@ -1552,11 +1554,26 @@ blkclient(const Bootview *boot, Handle call)
               !sync.request && !syncstorage[key.index].dirty && txn.journal.last == 47 &&
               !cacheput(&dirty, &key),
           380);
-  REQUIRE(!blkmountstep(&abandoned) && blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result), 443);
   {
-    u64 seq = blk.seq;
+    const Msg gate = {{MOUNT_TIMEOUT_GATE, 0, 0, 0}};
+    u64       seq = blk.seq + 1;
+    Handle    rpc;
+    REQUIRE(blkmountwait(&abandoned, now() + UINT64_C(100000000)) == -ERR_TIMEDOUT && blk.rpc &&
+                blk.seq == seq && !probe.layout.blocks,
+            443);
+    rpc = blk.rpc;
+    REQUIRE(!blkmountstop(&abandoned, -ERR_TIMEDOUT) && blk.rpc == rpc && blk.seq == seq &&
+                !ipc_call(call, &gate, 0, &result) && result.words[0] == MOUNT_TIMEOUT_GATE &&
+                !ipc_rqwait(rpc, RQ_FINISH, &result),
+            443);
     REQUIRE(blkmountstop(&abandoned, -ERR_TIMEDOUT) == -ERR_TIMEDOUT && !blk.rpc &&
                 !probe.layout.blocks && blkmountstep(&abandoned) == -ERR_TIMEDOUT && blk.seq == seq,
+            444);
+  }
+  {
+    isize status;
+    REQUIRE(!blkreadboot(&blk, 0) && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+                !fsblkpoll(&blk, data, sizeof(data), &status) && !status,
             444);
   }
   probe = (Blkprobe){0};
@@ -2004,6 +2021,18 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   queue->configpending = 0;
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
+    if (i == 2) {
+      Ipcmsg gate;
+      u64    state;
+      REQUIRE(!ipc_defer(input.request) && !ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL &&
+                  gate.words[0] == MOUNT_TIMEOUT_GATE && gate.source == input.source &&
+                  gate.image == input.image && !ipc_rqcheck(input.request, &state) &&
+                  state == RQ_CHECK_LIVE &&
+                  !ipc_reply(gate.request, &(Msg){{MOUNT_TIMEOUT_GATE, 0, 0, 0}}) &&
+                  !ipc_reply(input.request, &(Msg){{(u64) -EAGAIN, input.words[2], 0, 0}}) &&
+                  !ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_READ),
+              443);
+    }
     /* Exercise redo, re-probe, home bitmap, directory and link READ retries. */
     if (i == 11 || i == 22 || i == 24 || i + 24 == ARRAY_SIZE(blkopcodes) ||
         i + 12 == ARRAY_SIZE(blkopcodes) || i + 10 == ARRAY_SIZE(blkopcodes) ||
