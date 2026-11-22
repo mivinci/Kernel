@@ -279,10 +279,14 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
 }
 static isize
-syncsubmit(void *context, Handle request, const Journalio *io)
+syncsubmit(void *context, Handle request, const Journalio *io, u64 offset, u32 bytes)
 {
   Journalio *pending = context;
   (void) request;
+  REQUIRE(io->kind == JOURNAL_WRITE
+              ? offset == FS_DATA_START * FS_BLOCK_BYTES && bytes == FS_BLOCK_BYTES
+              : io->kind == JOURNAL_FLUSH && !offset && !bytes,
+          298);
   *pending = *io;
   return 0;
 }

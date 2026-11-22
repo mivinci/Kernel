@@ -68,13 +68,28 @@ txnpreparefile(Txn *txn, const Loadmap *map, const Loadindex *index, void *snaps
   return error;
 }
 
+typedef struct Syncdispatch Syncdispatch;
+struct Syncdispatch
+{
+  Syncsubmit *submit;
+  void       *context;
+  Handle      request;
+};
+
+static isize
+syncdispatch(void *context, const Journalio *io, u64 offset, u32 bytes)
+{
+  Syncdispatch *dispatch = context;
+  return dispatch->submit(dispatch->context, dispatch->request, io, offset, bytes);
+}
+
 isize
 filesyncstep(Syncwork *work, Handle request, u64 state, const Loadmap *map, const Loadindex *index,
-             isize (*submit)(void *, Handle, const Journalio *), void *context)
+             Syncsubmit *submit, void *context)
 {
-  Txn      *txn;
-  Journalio io;
-  isize     error, result;
+  Syncdispatch dispatch = {submit, context, request};
+  Txn         *txn;
+  isize        error, result;
   if (!work || !(txn = work->txn) || handlekind(request) != HANDLE_REQUEST || !submit)
     return -EINVAL;
   if (work->request != request) {
@@ -93,19 +108,13 @@ filesyncstep(Syncwork *work, Handle request, u64 state, const Loadmap *map, cons
     if (txnstart(txn, NULL, NULL, NULL))
       goto release;
   }
-  while (txn->phase == TXN_RUNNING && !txn->journal.active && txn->journal.phase != JOURNAL_DONE &&
-         txn->journal.phase != JOURNAL_STOPPED) {
-    error = txnnext(txn, &io);
-    if (error) {
-      if (txnstop(txn))
-        return 0;
-      break;
-    }
-    if (submit(context, request, &io) && filesynccomplete(work, request, &io, 0))
+  if (txn->phase == TXN_RUNNING) {
+    error = journalpump(&txn->journal, syncdispatch, &dispatch);
+    if (!error)
+      return 0;
+    if (error < 0 && txn->journal.phase != JOURNAL_STOPPED && txnstop(txn))
       return 0;
   }
-  if (txn->journal.active)
-    return 0;
 release:
   result = txn->journal.phase == JOURNAL_DONE ? 1 : -EIO;
   if (txnrelease(txn))

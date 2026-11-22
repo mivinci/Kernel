@@ -1737,14 +1737,15 @@ openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
 static u8 opendisk[FS_BLOCK_BYTES];
 
 static isize
-opensyncsubmit(void *context, Handle request, const Journalio *io)
+opensyncsubmit(void *context, Handle request, const Journalio *io, u64 offset, u32 bytes)
 {
   Openfixture *fixture = context;
   CHECK(!fixture->syncio.serial && request == fixture->sync.request);
   if (io->kind == JOURNAL_WRITE)
-    CHECK(io->block == FS_DATA_START && io->bytes[3] == 'W');
+    CHECK(offset == FS_DATA_START * FS_BLOCK_BYTES && bytes == FS_BLOCK_BYTES &&
+          io->bytes[3] == 'W');
   else
-    CHECK(io->kind == JOURNAL_FLUSH && !io->bytes);
+    CHECK(io->kind == JOURNAL_FLUSH && !offset && !bytes && !io->bytes);
   fixture->syncio = *io;
   return 0;
 }
