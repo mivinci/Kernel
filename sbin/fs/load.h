@@ -41,6 +41,9 @@ struct Loadspan
    snapshot returns WOULD_BLOCK; bad block references return STATE. */
 isize loadmapspan(const Loadfile *file, const Loadmap *map, const Loadindex *index, u32 data_start,
                   u32 blocks, u64 offset, u64 bytes, Loadspan *out);
+/* Stage a shorter length while holding the inode mutation guard. Publish
+   only after committing the inode. All pointers remain for later reclaim. */
+isize loadmapshrink(const Loadmap *map, u64 length, Loadmap *out);
 
 struct Writeplan
 {

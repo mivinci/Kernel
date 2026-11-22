@@ -1968,6 +1968,8 @@ openwritestage(void)
   const Loadmap      map = {{2, 1, 1, 20}, {100}, 0};
   const u64          at = 12 * FS_BLOCK_BYTES + 3;
   Loadspan           span;
+  Loadmap            shortened;
+  Writeplan          growth;
   u32                i;
   for (i = 0; i < sizeof(tail); i++)
     tail[i] = 0xa5;
@@ -1995,6 +1997,13 @@ openwritestage(void)
     CHECK(image.taildata[i] == (i < 20 ? 0xa5 : 0) && tail[i] == 0xa5);
   }
   openwritejournal(&map, &update, &image, &allocation);
+  CHECK(!loadmapshrink(&update.map, 20, &shortened) && shortened.file.version == 3 &&
+        shortened.file.length == 20 && shortened.indirect == update.map.indirect &&
+        loadmapwrite(&shortened, &update.index, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) ==
+            -ERR_BUSY);
+  update.index.entries[0] = 0;
+  CHECK(!loadmapwrite(&shortened, &update.index, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) &&
+        !growth.block && growth.tail == 100 && growth.zerooff == 20);
 }
 
 typedef struct Loadfixture Loadfixture;

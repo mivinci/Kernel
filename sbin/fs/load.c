@@ -74,6 +74,7 @@ loadmapwrite(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, 
 {
   Writeplan plan = {0};
   u64       length;
+  u32       logical, pending;
   isize     error;
   if (!map || !out || !start || start >= blocks || !bytes || bytes > FS_SLOT_BYTES ||
       map->file.length > FS_FILE_BYTES)
@@ -92,9 +93,15 @@ loadmapwrite(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, 
   error = datablock(map, index, start, blocks, plan.logical, &plan.block);
   if (error)
     return error;
-  /* An allocated whole block beyond EOF may still belong to truncate. */
-  if (plan.block && (u64) plan.logical * CACHE_BYTES >= length)
-    return -ERR_BUSY;
+  /* Growth can expose every intervening block, not just the write target.
+     Nonzero pointers beyond the old EOF still belong to truncate cleanup. */
+  if (plan.length > length)
+    for (logical = (u32) ((length + CACHE_BYTES - 1) / CACHE_BYTES); logical <= plan.logical;
+         logical++) {
+      error = datablock(map, index, start, blocks, logical, &pending);
+      if (error || pending)
+        return error ? error : -ERR_BUSY;
+    }
   plan.newindex = plan.logical >= LOAD_DIRECT && !map->indirect;
   if (offset > length && length % CACHE_BYTES) {
     u32 logical = (u32) (length / CACHE_BYTES);
@@ -116,6 +123,23 @@ separate(const void *a, usize bytes, const void *b, usize count)
   uintptr_t x = (uintptr_t) a, y = (uintptr_t) b;
   return a && b && bytes <= UINT64_MAX - x && count <= UINT64_MAX - y &&
          (x + bytes <= y || y + count <= x);
+}
+
+isize
+loadmapshrink(const Loadmap *map, u64 length, Loadmap *out)
+{
+  if (!separate(map, sizeof(*map), out, sizeof(*out)) || !map->file.inode ||
+      !map->file.generation || !map->file.version || map->file.length > FS_FILE_BYTES ||
+      length > map->file.length)
+    return -ERR_INVALID;
+  if (length < map->file.length && map->file.version == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  *out = *map;
+  if (length < map->file.length) {
+    out->file.length = length;
+    out->file.version++;
+  }
+  return 0;
 }
 
 isize

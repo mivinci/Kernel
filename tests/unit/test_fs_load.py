@@ -65,6 +65,8 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadmapwrite.argtypes = [C.POINTER(Map), C.POINTER(Index), C.c_uint32,
                                         C.c_uint32, U, U, C.POINTER(WritePlan)]
         cls.lib.loadmapwrite.restype = I
+        cls.lib.loadmapshrink.argtypes = [C.POINTER(Map), U, C.POINTER(Map)]
+        cls.lib.loadmapshrink.restype = I
         cls.lib.loadwritestage.argtypes = [C.POINTER(WritePlan)] + [C.c_uint32] * 3 + [
             C.c_void_p] * 3 + [C.POINTER(WriteImage)]
         cls.lib.loadwritestage.restype = I
@@ -108,6 +110,31 @@ class FsLoadTests(unittest.TestCase):
         self.assertEqual(span.next, 0)
         mapping.file.version += 1
         self.assertEqual(resolve(None), -4)
+
+    def test_shrink_hides_old_blocks_and_growth_waits_for_overlapping_reclaim(self):
+        original, shortened, index, plan = Map(), Map(), Index(), WritePlan()
+        original.file = File(7, 2, 3, 14 * 4096)
+        original.direct[0], original.direct[4], original.indirect = 100, 101, 102
+        index.block, index.entries[0] = 102, 103
+        self.assertEqual(self.lib.loadmapshrink(C.byref(original), 20, C.byref(shortened)), 0)
+        self.assertEqual((shortened.file.version, shortened.file.length), (4, 20))
+        self.assertEqual((shortened.direct[0], shortened.direct[4], shortened.indirect),
+                         (100, 101, 102))
+        self.assertEqual(original.file.length, 14 * 4096)
+
+        def grow(logical):
+            return self.lib.loadmapwrite(C.byref(shortened), C.byref(index), 99, 200,
+                                         logical * 4096, 1, C.byref(plan))
+
+        self.assertEqual(grow(3), 0)  # Stale pointers outside the new range need not drain yet.
+        before = bytes(plan)
+        self.assertEqual(grow(6), -7)
+        self.assertEqual(bytes(plan), before)
+        shortened.direct[4] = 0
+        self.assertEqual(grow(14), -7)
+        index.entries[0] = 0
+        self.assertEqual(grow(14), 0)
+        self.assertEqual((plan.length, plan.tail, plan.zerooff), (14 * 4096 + 1, 100, 20))
 
     def test_growth_zeroes_newly_visible_tail_and_distinguishes_new_index(self):
         mapping, plan = Map(), WritePlan()
