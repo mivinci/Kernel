@@ -17,6 +17,8 @@ struct Readjob
   Cache           *cache;
   Loadtable       *loads;
   u32              first;
+  u32              growing, growdone;
+  isize            growresult;
 };
 struct Fsreads
 {
@@ -31,6 +33,11 @@ struct Fsreads
   /* Copy the ticket, then finish via fsreadcomplete after transport drains
      and wake the loop. Failure means no external access was started. */
   isize (*submit)(void *, Readjob *, const Readfetch *);
+  /* On the first call snapshot the input and take any needed inode guard.
+     Subsequent calls get NULL input and the original request state. Return
+     zero while pending, a positive committed byte count, or a negative
+     business errno after drain. A committed result survives cancellation. */
+  isize (*grow)(void *, Readjob *, u64 state, u64 offset, const volatile u8 *input);
 };
 
 /* The caller has claimed the slot and checked original request state. */

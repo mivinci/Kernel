@@ -49,6 +49,34 @@ seek(Fsfiles *files, Fsfile *file, Filelink *link, const Ipcmsg *call, const Fil
 }
 
 static isize
+grow(Fsreads *reads, Readjob *job, u64 state, u64 offset, const volatile u8 *input)
+{
+  Msg   reply = {{0, job->slot.seq, 0, 0}};
+  isize error;
+  if (!job->growdone) {
+    isize result = reads->grow(reads->backend, job, state, offset, job->growing ? NULL : input);
+    job->growing = 1;
+    if (!result)
+      return -ERR_WOULD_BLOCK;
+    if (result > 0) {
+      if ((u64) result > job->slot.args[1] || (u64) result > FS_FILE_BYTES - offset)
+        return -ERR_STATE;
+      if (!(job->slot.args[3] & FS_IO_POSITIONAL))
+        job->file->position = offset + (u64) result;
+    }
+    job->growresult = result;
+    job->growdone = 1;
+  }
+  if (job->growresult < 0)
+    reply.words[0] = (u64) job->growresult;
+  else
+    reply.words[2] = (u64) job->growresult;
+  error = state == RQ_CHECK_DRAINING ? ipc_rqfinish(job->call.request)
+                                     : ipc_reply(job->call.request, &reply);
+  return error ? error : sysfilefinish(&job->link->watch.active, job->call.request);
+}
+
+static isize
 advance(Fsreads *reads, Fsfiles *files, Readjob *job)
 {
   Readfetch    fetch;
@@ -67,6 +95,23 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
     status = state == RQ_CHECK_LIVE ? reads->bind(reads->backend, job) : -EINTR;
     if (status) {
       status = reject(job->link, &job->call, status);
+      goto done;
+    }
+  }
+  if (reads->grow && job->loads && job->call.words[0] == FS_WRITE && job->slot.args[1] &&
+      !job->work.request) {
+    Writeplan plan;
+    u64       state,
+        offset = job->slot.args[3] & FS_IO_POSITIONAL ? job->slot.args[0] : job->file->position;
+    status = ipc_rqcheck(job->call.request, &state);
+    if (status)
+      return status;
+    if (job->growing ||
+        (state == RQ_CHECK_LIVE && (job->slot.args[3] & FS_IO_POSITIONAL || !job->slot.args[0]) &&
+         !loadmapwrite(job->map, job->index, job->first, (u32) job->cache->blocks, offset,
+                       job->slot.args[1], &plan) &&
+         (!plan.block || plan.length != job->map->file.length))) {
+      status = grow(reads, job, state, offset, page + job->slot.args[2]);
       goto done;
     }
   }

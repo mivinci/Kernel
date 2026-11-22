@@ -1496,6 +1496,7 @@ struct Openfixture
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
+  Handle    growth;
   u32       holds, attempts, searches, completed, blocked, cancelled;
 };
 
@@ -1665,6 +1666,21 @@ openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
 }
 
 static isize
+openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile u8 *input)
+{
+  Openfixture *fixture = context;
+  CHECK(state == RQ_CHECK_LIVE && offset == 20 && job->slot.args[1] == 2);
+  if (input) {
+    CHECK(!fixture->growth && input[0] == 'W' && !input[1]);
+    fixture->growth = job->call.request;
+    return 0;
+  }
+  CHECK(fixture->growth == job->call.request);
+  fixture->growth = 0;
+  return 2;
+}
+
+static isize
 openlength(void *context, const Vnode *node, u64 *length)
 {
   Openfixture *fixture = context;
@@ -1814,25 +1830,26 @@ openserver(const Bootview *boot)
   Cacheblock      blocks[1];
   u8              scratch[CACHE_BYTES] = {0};
   Readjob         reader[2] = {0};
-  Fsreads         reads = {reader,          ARRAY_SIZE(reader), 0, &fixture, scratch, openreadbind,
-                           openreadrelease, openreadsubmit};
-  Pipetable       pipes = {0};
-  Fscontext       context = {0};
-  Fscontexts      contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen          open = {&contexts, &fixture.mounts, &ops,       &job,       1,
-                          0,         &fixture,        openselect, opencancel, opencomplete};
-  Fsservice       fs = {bootresource(boot, 256),
-                        bootresource(boot, BOOT_SELF_ALLOC),
-                        bootresource(boot, BOOT_SELF_SPACE),
-                        ADDRESS,
-                        &link,
-                        1,
-                        {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
-                        &open,
-                        0};
-  u32             i;
-  const Loadfile  executable = {2, 1, 1, 20};
-  u64             load;
+  Fsreads         reads = {
+      reader,          ARRAY_SIZE(reader), 0,           &fixture, scratch, openreadbind,
+      openreadrelease, openreadsubmit,     openreadgrow};
+  Pipetable      pipes = {0};
+  Fscontext      context = {0};
+  Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
+  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,       1,
+                         0,         &fixture,        openselect, opencancel, opencomplete};
+  Fsservice      fs = {bootresource(boot, 256),
+                       bootresource(boot, BOOT_SELF_ALLOC),
+                       bootresource(boot, BOOT_SELF_SPACE),
+                       ADDRESS,
+                       &link,
+                       1,
+                       {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
+                       &open,
+                       0};
+  u32            i;
+  const Loadfile executable = {2, 1, 1, 20};
+  u64            load;
   openwritestage();
   fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 16));
@@ -1889,7 +1906,9 @@ openserver(const Bootview *boot)
         !loadclose(&fixture.loads, load, link.watch.owner.pid, link.watch.owner.image));
   CHECK(!fsstep(&fs) && file.position == 19 && blocks[0].dirty && !fsstep(&fs) && !fsstep(&fs) &&
         file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) &&
-        file.position == 20 && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) && !file.node);
+        file.position == 20 && !fsstep(&fs) && fixture.growth && file.position == 20 &&
+        !fsstep(&fs) && !fixture.growth && file.position == 22 && !fsstep(&fs) && file.refs == 1 &&
+        !fsstep(&fs) && !file.node);
   CHECK(!fsstep(&fs) && file.access == (VACCESS_R | VACCESS_W) &&
         file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
         file.refs == 2 && !fsstep(&fs) && !file.position && !fsstep(&fs) && !file.position &&
@@ -2012,6 +2031,8 @@ open:
     openreadcheck(dup.session, 3, 1, 2, 'W');
     openreadcheck(dup.session, 19, 1, 1, 'W');
     openwritecheck(key.session, 0, FS_IO_APPEND, -EINVAL, 0);
+    openwritecheck(key.session, 0, 0, 0, 2);
+    openseek(dup.session, FS_SEEK_CUR, 0, 0, 22);
     CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
     reopened = key;
     append = 1;
