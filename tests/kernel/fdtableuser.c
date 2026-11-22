@@ -12,6 +12,7 @@ fdtableusercheck(void)
 {
   Fdtag  reserved, oldtag, other;
   Fdview value, moved, empty;
+  Fdload startup[] = {{127, 700, BOOT_FD_CLOEXEC}, {1, 700, 0}};
   u32    i;
   sysfdinit(&table);
   CHECK(!sysfdcheck(&table) && !sysfdobserve(&table, 0, &empty) && empty.tag.state == SYSFD_FREE &&
@@ -43,6 +44,21 @@ fdtableusercheck(void)
           !sysfddetach(&table, value.tag, &moved) && moved.file == 1000 + i &&
           moved.flags == (i & 1));
   }
+  CHECK(!sysfdobserve(&table, 127, &empty) && !sysfdreserve(&table, 1, &reserved) &&
+        reserved.index == 1 && sysfdload(&table, startup, ARRAY_SIZE(startup)) == -ERR_BUSY &&
+        !sysfdobserve(&table, 127, &value) && value.tag.generation == empty.tag.generation &&
+        !value.file && value.tag.state == SYSFD_FREE && !sysfdcancel(&table, reserved));
+  startup[1].fd = 127;
+  CHECK(sysfdload(&table, startup, ARRAY_SIZE(startup)) == -ERR_INVALID &&
+        !sysfdobserve(&table, 127, &value) && value.tag.generation == empty.tag.generation &&
+        !value.file);
+  startup[1].fd = 1;
+  CHECK(!sysfdload(&table, startup, ARRAY_SIZE(startup)) && !sysfdobserve(&table, 127, &value) &&
+        value.tag.generation == empty.tag.generation + 1 && value.file == 700 &&
+        value.flags == BOOT_FD_CLOEXEC && !sysfddetach(&table, value.tag, &moved) &&
+        !sysfdobserve(&table, 1, &value) && value.file == 700 && !value.flags &&
+        !sysfddetach(&table, value.tag, &moved) && !sysfdobserve(&table, 0, &value) &&
+        value.tag.state == SYSFD_FREE);
   /* White-box exhaustion is bounded evidence; no billions-of-calls loop. */
   table.entries[BOOT_FD_COUNT - 1].generation = UINT64_MAX - 1;
   CHECK(!sysfdreserve(&table, BOOT_FD_COUNT - 1, &reserved) && reserved.generation == UINT64_MAX &&

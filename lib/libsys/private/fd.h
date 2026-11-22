@@ -10,6 +10,11 @@ typedef struct Fdtag   Fdtag;
 typedef struct Fdentry Fdentry;
 typedef struct Fdview  Fdview;
 typedef struct Fdtable Fdtable;
+typedef struct Fdload  Fdload;
+struct Fdload
+{
+  u64 fd, file, flags;
+};
 struct Fdtag
 {
   u64 generation;
@@ -38,6 +43,10 @@ STATIC_ASSERT(sizeof(Fdtag) == 16, fd_tag_size);
    file is a nonzero opaque local File identity, never authority by itself. */
 void  sysfdinit(Fdtable *table);
 isize sysfdcheck(const Fdtable *table);
+/* Install resolved startup descriptors at their exact indices. The caller
+   owns one prepared File alias per row and excludes caught signals. Success
+   moves those aliases to the table; failure leaves the whole batch untouched. */
+isize sysfdload(Fdtable *table, const Fdload *rows, u64 count);
 /* Read-only fork admission: every live fd must name exactly one retained
    File, whose alias count equals its descriptor count (including CLOEXEC).
    Pin-only Files are allowed. Reserved descriptors remain owned by their

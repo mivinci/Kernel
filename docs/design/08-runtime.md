@@ -898,3 +898,5 @@ ARM64/RV64 QEMU `elf` 验证未装载拒绝发布、两个真实子进程发布�
 `make sdk-audit ARCH=arm64` 和 `ARCH=riscv` 从独立构建目录编译[普通 C 载荷](../../tests/kernel/sdkprobe.c)。只搜索 SDK 导出头与 Clang 的 freestanding 基础头，核对预处理路径及导出内容，再编译经审计的同一翻译单元。链接只输入生产 `crt0.o`、载荷对象、`libc.a`、`libsys.a` 与用户态链接脚本。两架构均得到对应机器类型的静态 ELF64/ET_EXEC，无未定义符号、解释器或动态依赖。ELF、链接映射和检查日志保存在各自 `build/<架构>/sdk/runs/` 的本次目录中。
 
 载荷通过公开 `write` 向 fd 1 输出运行时摘要，构建目标不执行载荷。普通镜像仍需接好启动 fd 和后端，才能按 [012](../issues/012-busybox-port.md) 核对串口整行及独立退出状态；当前只通过了 A1 的静态检查，A2 和 BusyBox 移植尚未验收。
+
+启动 fd 的本地发布已支持 `sysfdload`：调用方预备每行所需的一份本地 File 别名，表先验证整批，再按精确 fd 号发布；遇到占用或重复号时整批不变。同一 File 的多个描述符仍各有独立的 CLOEXEC 标志。ARM64/RV64 QEMU `runtime` 验证稀疏号码、同 File 的标志隔离以及后项冲突时首项及其代次不变；10 项主机 fd 表回归和格式检查通过。此步不解释 Bootfd、发放引用或连接终端。

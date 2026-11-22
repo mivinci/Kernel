@@ -76,6 +76,40 @@ sysfdcheck(const Fdtable *table)
   return 0;
 }
 isize
+sysfdload(Fdtable *table, const Fdload *rows, u64 count)
+{
+  u64 seen[(BOOT_FD_COUNT + 63) / 64] = {0};
+  u64 i;
+  if (!table || count > BOOT_FD_COUNT || (count && !output(table, rows, count * sizeof(*rows))))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    const Fdload  *row = &rows[i];
+    const Fdentry *entry;
+    u64            word, bit;
+    if (row->fd >= BOOT_FD_COUNT || !row->file || row->flags & ~(u64) BOOT_FD_CLOEXEC)
+      return -ERR_INVALID;
+    word = row->fd / 64;
+    bit = UINT64_C(1) << (row->fd % 64);
+    if (seen[word] & bit)
+      return -ERR_INVALID;
+    seen[word] |= bit;
+    entry = &table->entries[row->fd];
+    if (!valid(entry))
+      return -ERR_STATE;
+    if (entry->state != SYSFD_FREE)
+      return -ERR_BUSY;
+  }
+  for (i = 0; i < count; i++) {
+    const Fdload *row = &rows[i];
+    Fdentry      *entry = &table->entries[row->fd];
+    entry->generation++;
+    entry->file = row->file;
+    entry->flags = row->flags;
+    entry->state = SYSFD_LIVE;
+  }
+  return 0;
+}
+isize
 sysfdobserve(const Fdtable *table, u32 fd, Fdview *out)
 {
   if (!output(table, out, sizeof(*out)))
