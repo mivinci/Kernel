@@ -1281,6 +1281,15 @@ blkdecodeinode(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
 }
 
 static isize
+blkdecodechanged(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
+{
+  isize error = blkdecodeinode(ino, encoded, map, kind, links);
+  if (!error && ino == FS_ROOT)
+    map->file.version++;
+  return error;
+}
+
+static isize
 blkdecodelink(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
 {
   isize error = blkdecodeinode(ino, encoded, map, kind, links);
@@ -1764,7 +1773,7 @@ blkclient(const Bootview *boot, Handle call)
     }
     REQUIRE(step == 1 && !blk.rpc, 526);
     REQUIRE(waits == 3, 528);
-    REQUIRE(iter.offset == FS_BLOCK_BYTES, 529);
+    REQUIRE(iter.offset == FS_BLOCK_BYTES && iter.version == 1, 529);
     REQUIRE(item.inode == 34 && item.namelen == 59 && name && name[0] == (u8) (0xb1 + 40 * 37) &&
                 !name[item.namelen],
             530);
@@ -1774,13 +1783,33 @@ blkclient(const Bootview *boot, Handle call)
                             &(const char *){NULL}, &linkbytes) == -EBUSY &&
                 !linkbytes && !blk.rpc && item.inode == 34,
             535);
-    REQUIRE(!blkiteryield(&iter) && iter.offset == FS_BLOCK_BYTES && !iter.loaded &&
-                !home.load.reader,
+    REQUIRE(!blkiteryield(&iter) && iter.offset == FS_BLOCK_BYTES && iter.version == 1 &&
+                !iter.loaded && !home.load.reader,
             536);
     contender.generation++;
     REQUIRE(blkiterstep(&contender, &item, &name) == -ERR_STALE && !blk.rpc &&
                 !blkiterstop(&contender),
             536);
+    {
+      const u8 *oldname = name;
+      /* Simulate a new inode version on reload; the fixture disk stays read-only. */
+      home.load.inode = blkdecodechanged;
+      for (i = 0, step = 0; i < 8 && !step; i++) {
+        step = blkiterstep(&iter, &item, &name);
+        if (!step && blk.rpc) {
+          REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 531);
+          waits++;
+        }
+      }
+      REQUIRE(step == -ERR_STALE && waits == 5 && iter.offset == FS_BLOCK_BYTES &&
+                  iter.version == 1 && item.inode == 34 && name == oldname && !blk.rpc &&
+                  blkiterstep(&iter, &item, &name) == -ERR_STALE,
+              536);
+      /* Restore the unchanged view to exercise normal continuation and EOF. */
+      home.load.inode = blkdecodeinode;
+      home.load.map.file.version = 1;
+      iter.failed = 0;
+    }
     for (i = 0, step = 0; i < 8 && !step; i++) {
       u64 before = iter.offset;
       step = blkiterstep(&iter, &item, &name);

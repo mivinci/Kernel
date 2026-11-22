@@ -526,7 +526,7 @@ blkdirstep(Blkdir *work)
 
 static isize
 dirread(Blkowners *home, u32 number, u32 generation, u64 offset, u32 *loaded, u32 *bytes,
-        isize *failed)
+        u64 *version, isize *failed)
 {
   const Blkprobe *probe;
   const Loadfile *file;
@@ -565,7 +565,16 @@ dirread(Blkowners *home, u32 number, u32 generation, u64 offset, u32 *loaded, u3
     *loaded = 1;
   }
   file = &load->map.file;
-  if (file->inode != number || file->generation != generation || offset > file->length)
+  if (file->inode != number || file->generation != generation)
+    return *failed = -ERR_STATE;
+  if (version) {
+    if (!file->version)
+      return *failed = -ERR_STATE;
+    if (*version && file->version != *version)
+      return *failed = -ERR_STALE;
+    *version = file->version;
+  }
+  if (offset > file->length)
     return *failed = -ERR_STATE;
   if (offset == file->length)
     return 2;
@@ -592,7 +601,7 @@ blkfindstep(Blkfind *work, Dirrecord *out)
   if (work->failed)
     return work->failed;
   error = dirread(work->home, work->inode, work->generation, work->offset, &work->loaded, &bytes,
-                  &work->failed);
+                  NULL, &work->failed);
   if (error <= 0)
     return error;
   if (error == 2) {
@@ -669,7 +678,7 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
   if (work->failed)
     return work->failed;
   result = dirread(work->home, work->inode, work->generation, work->offset, &work->loaded, &bytes,
-                   &work->failed);
+                   &work->version, &work->failed);
   if (result == 2) {
     result = readerdrop(&work->home->load, work);
     if (result)

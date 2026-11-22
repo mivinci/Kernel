@@ -148,7 +148,7 @@ struct Blkiter
 {
   Blkowners *home;
   Dirdecode  decode;
-  u64        offset;
+  u64        offset, version;
   u32        inode, generation, loaded, state;
   isize      failed;
 };
