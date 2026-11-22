@@ -109,6 +109,13 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     }
     testload(pids[i], filecreate_image, (u64) (filecreate_image_end - filecreate_image), &packet,
              sizeof(packet));
+    /* Executable mappings keep the code alive. Leave room for resource replies
+       even when the fixture's text grows by another page. */
+    for (j = 0; j < table->count; j++) {
+      const Local *slot = &table->slots[j];
+      if (slot->subtype == LOCAL_MEM && slot->rights & VM_EXEC)
+        CHECK(!localfree(table, handlepack(HANDLE_RESOURCE, slot->generation, j)));
+    }
     config.entry = image->entry;
     config.stack = 0x3fffff0000UL;
     config.boot = 0x3fff000000UL;

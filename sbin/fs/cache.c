@@ -341,6 +341,7 @@ cachefillstart(Cachefill *fill, Cache *cache, u64 block, u32 metadata, Cacheio *
                u8 **destination)
 {
   isize error;
+  u32   i;
   if (!external(cache, fill, sizeof(*fill)) || !separate(fill, sizeof(*fill), out, sizeof(*out)) ||
       !separate(fill, sizeof(*fill), destination, sizeof(*destination)))
     return -ERR_INVALID;
@@ -348,8 +349,9 @@ cachefillstart(Cachefill *fill, Cache *cache, u64 block, u32 metadata, Cacheio *
     return -ERR_BUSY;
   error = cachefetch(cache, block, metadata, out, destination);
   if (error == 1) {
+    for (i = 0; i < sizeof(*out); i++)
+      ((volatile u8 *) &fill->ticket)[i] = ((const u8 *) out)[i];
     fill->cache = cache;
-    fill->ticket = *out;
   }
   return error;
 }

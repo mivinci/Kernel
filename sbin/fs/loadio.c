@@ -116,7 +116,7 @@ loadcachebegin(Loadcache *work, Loadio *io, Cache *cache, const Loadspan *span)
     return error;
   work->blocks[0] = span->first;
   work->blocks[1] = span->next;
-  work->next = work->inflight = work->failed = 0;
+  work->next = work->failed = 0;
   work->request = io->request;
   return 0;
 }
@@ -124,18 +124,11 @@ loadcachebegin(Loadcache *work, Loadio *io, Cache *cache, const Loadspan *span)
 isize
 loadcachecomplete(Loadcache *work, const Cacheio *ticket, u32 success)
 {
-  const Cacheio *owned;
-  isize          error;
-  if (!work || !ticket || !work->inflight)
+  isize error;
+  if (!work)
     return -ERR_STALE;
-  owned = &work->ticket;
-  if (ticket->key.index != owned->key.index || ticket->key.generation != owned->key.generation ||
-      ticket->serial != owned->serial || ticket->version != owned->version ||
-      ticket->kind != owned->kind)
-    return -ERR_STALE;
-  error = cachecomplete(work->span.cache, ticket, success);
+  error = cachefillfinish(&work->fill, ticket, success);
   if (!error) {
-    work->inflight = 0;
     work->failed = !success;
     work->next++;
   }
@@ -149,7 +142,7 @@ loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 no
   u64   state, bytes = 0;
   if (!work || !io || !out || !scratch || !work->request || work->request != io->request)
     return -ERR_INVALID;
-  if (work->inflight)
+  if (work->fill.cache)
     return -ERR_WOULD_BLOCK;
   if (work->span.cache) {
     error = ipc_rqcheck(io->request, &state);
@@ -159,12 +152,10 @@ loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 no
         !loadstatus(io->table, io->session, io->ticket, now)) {
       while (work->next < ARRAY_SIZE(work->blocks)) {
         if (work->blocks[work->next]) {
-          error = cachefetch(work->span.cache, work->blocks[work->next], CACHE_DATA, &out->ticket,
-                             &out->destination);
+          error = cachefillstart(&work->fill, work->span.cache, work->blocks[work->next],
+                                 CACHE_DATA, &out->ticket, &out->destination);
           if (error == 1) {
             out->block = work->blocks[work->next];
-            work->ticket = out->ticket;
-            work->inflight = 1;
             return 1;
           }
           if (error == -ERR_WOULD_BLOCK)

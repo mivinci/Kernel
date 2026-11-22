@@ -28,8 +28,8 @@ struct Loadfetch
 struct Loadcache
 {
   Cachespan span;
-  u32       blocks[2], next, inflight, failed;
-  Cacheio   ticket;
+  Cachefill fill;
+  u32       blocks[2], next, failed;
   Handle    request;
 };
 

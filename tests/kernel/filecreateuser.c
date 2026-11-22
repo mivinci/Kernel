@@ -1204,6 +1204,7 @@ server(const Bootview *boot, u32 recover)
       } else if (input.words[1] == 2) {
         CHECK(loadio.request && !loadioreply(&loadio, NULL, 0, 3));
       } else if (input.words[1] == 4) {
+        Cacheio previous = fetch.ticket;
         CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
         zero(loadtarget, CACHE_BYTES);
         loadtarget[CACHE_BYTES - 2] = 'E';
@@ -1212,7 +1213,9 @@ server(const Bootview *boot, u32 recover)
               cacheget(&loadcache, 110, CACHE_DATA, &competing) == -ERR_CAPACITY &&
               cachefetch(&loadcache, loadspan.first, CACHE_DATA, &duplicate, &unused) == 0 &&
               !unused && loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) == 1 &&
-              fetch.block == loadspan.next);
+              fetch.block == loadspan.next &&
+              loadcachecomplete(&loadwork, &previous, 1) == -ERR_STALE &&
+              loadcachepump(&loadwork, &loadio, &fetch, loadbytes, 3) == -ERR_WOULD_BLOCK);
         loadtarget = fetch.destination;
       } else if (input.words[1] == 5) {
         CHECK(loadio.request && loadtarget && loadio.page[loadio.dataoff] == 0xa5);
