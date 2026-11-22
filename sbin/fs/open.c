@@ -45,8 +45,9 @@ advancecwd(Fsopen *open, Openjob *job)
   Handle request = job->call.request;
   u64    state;
   isize  error;
+  u32    steps;
   Msg    reply = {{0, job->slot.seq, 0, 0}};
-  for (;;) {
+  for (steps = 0; steps < 32; steps++) {
     error = ipc_rqcheck(request, &state);
     if (error)
       return error;
@@ -78,6 +79,10 @@ advancecwd(Fsopen *open, Openjob *job)
     if (job->cwdstatus == VWALK_WAIT)
       return 0;
     job->cwdready = job->cwdstatus != VWALK_MORE;
+  }
+  if (steps == 32) {
+    open->again = 1;
+    return 0;
   }
   if (!error)
     job->call.request = 0;
@@ -360,6 +365,7 @@ fsopenpump(Fsopen *open)
   u32 i;
   if (!open)
     return 0;
+  open->again = 0;
   for (i = 0; i < open->count; i++)
     if (open->jobs[i].call.request) {
       isize error = advance(open, &open->jobs[i]);

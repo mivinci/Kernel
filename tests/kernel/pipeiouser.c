@@ -1635,7 +1635,7 @@ struct Openfixture
   Journalio syncio;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
-  u32       cancelgrowth, durable, dirwait, linkwait;
+  u32       cancelgrowth, durable, dirwait, linkwait, cwdmore;
 };
 
 static isize
@@ -1683,6 +1683,10 @@ cwdname(void *context, const Vnode *node, Vnode **parent, const char **name, u32
   Openjob     *job = context;
   Openfixture *fixture = job->backend;
   CHECK(node == &fixture->dir);
+  if (fixture->cwdmore) {
+    fixture->cwdmore--;
+    return VWALK_MORE;
+  }
   *parent = &fixture->root;
   *name = "d";
   *length = 1;
@@ -2546,8 +2550,8 @@ openserver(const Bootview *boot)
   Pipetable      pipes = {0};
   Fscontext      context = {0};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,    0,
-                         &fixture,  openselect,      opencancel, opencomplete, NULL, &cwd};
+  Fsopen         open = {&contexts,  &fixture.mounts, &ops,         &job, 1,    0, &fixture,
+                         openselect, opencancel,      opencomplete, NULL, &cwd, 0};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
@@ -3142,8 +3146,8 @@ publicchdirserver(const Bootview *boot)
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   const Fscwdops cwd = {openwalkhold, openwalkdrop, cwdversion, cwdname};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,          0,
-                         &fixture,  openselect,      opencancel, opencomplete, opencreate, &cwd};
+  Fsopen         open = {&contexts,  &fixture.mounts, &ops,         &job,       1,    0, &fixture,
+                         openselect, opencancel,      opencomplete, opencreate, &cwd, 0};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
@@ -3217,7 +3221,11 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && context.cwd == &fixture.root && context.version == 1);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
-  CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
+  fixture.cwdmore = 70;
+  CHECK(!fsstep(&fs) && job.call.request && open.again && fixture.cwdmore == 38);
+  CHECK(!fsstep(&fs) && job.call.request && open.again && fixture.cwdmore == 6);
+  CHECK(!fsstep(&fs) && fixture.cwdmore == 0);
+  CHECK(!fsstep(&fs) && fixture.holds == 2);
   CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   fixture.linkwait = 1;
   CHECK(!fsstep(&fs) && job.node == &fixture.symlink && job.waiting && fixture.holds == 3 &&

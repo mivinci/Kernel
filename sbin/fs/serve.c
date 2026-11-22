@@ -82,6 +82,7 @@ fsstep(Fsservice *fs)
   error = fsopenpump(fs->open);
   if (error)
     return error;
+  again = fs->open && fs->open->again;
   error = fsreadpump(fs->pipes.reads, fs->pipes.regular);
   if (error)
     return error;
@@ -104,9 +105,9 @@ fsstep(Fsservice *fs)
       error = reclaimstep(reclaim->work, reclaim->submit, reclaim->context);
       if (error < 0)
         return error;
-      again = error == 1;
+      again |= error == 1;
     } else
-      again = reclaim->scan && reclaim->scan->left;
+      again |= reclaim->scan && reclaim->scan->left;
   }
   deadline = fs->loads ? loaddeadline(fs->loads->table) : 0;
   if (deadline != fs->loadalarm) {

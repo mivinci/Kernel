@@ -52,6 +52,7 @@ struct Fsopen
      unpublished reference; do not undo an already committed creation. */
   isize (*create)(Openjob *, Vnode *parent, u32 abandon);
   const Fscwdops *cwdops; /* Callbacks receive Openjob *; cancel drains either lookup. */
+  u32             again;  /* The last pump left runnable work. */
 };
 
 isize fsopenstart(Fsopen *, Filelink *, u32, const Ipcmsg *);
