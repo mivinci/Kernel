@@ -642,6 +642,36 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
   return error;
 }
 
+isize
+sysfileimageopen(u32 layer, Connwork *work, const char *path, u64 flags, u64 mode, u64 fdflags,
+                 Opencreate *open, Rkey *active, int *fd, isize *business)
+{
+  Fileimage *state;
+  Conncache *cache;
+  u64        mask, ignored;
+  isize      error, restored;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  if (!fstag.generation || work != &state->connections[fstag.index])
+    return -ERR_INVALID;
+  cache = sysfileimagecache(state);
+  error = sysctxopencreate(&state->contexts, layer, &state->files, work, cache, &state->fds, path,
+                           flags, mode, fdflags, open, active, fd, business);
+  if (error != -ERR_TIMEDOUT)
+    return error;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfileopenabandon(&state->files, work, cache, &state->fds, open);
+  if (!error) {
+    draining |= 1U << work->state.tag.index;
+    fileprogress(state);
+  }
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : error ? error : -ERR_TIMEDOUT;
+}
+
 static int
 ioopcode(u64 opcode)
 {
@@ -1198,12 +1228,20 @@ fileprogress(Fileimage *state)
       u64     file = 0;
       if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) !=
               (SYSOP_BACKGROUND | SYSOP_APP_ENDED) ||
-          (!ioopcode(op->opcode) && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
+          (!ioopcode(op->opcode) && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT &&
+           op->opcode != FS_OPEN))
         continue;
       key.connection = work->state.tag;
       key.lease = op->lease;
       key.owner = 0;
-      if (sysopdrain(work, cache, &key, &file)) {
+      if (op->opcode == FS_OPEN) {
+        if (sysfileopendrain(&state->files, work, cache, &key)) {
+          draining |= bit;
+          if (op->rpc || work->state.bootstrap.rpc)
+            active = 1;
+        } else
+          closing |= bit;
+      } else if (sysopdrain(work, cache, &key, &file)) {
         draining |= bit;
         if (op->rpc)
           active = 1;

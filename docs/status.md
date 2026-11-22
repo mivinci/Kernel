@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage488：私有 OPEN 超时后由镜像事件推进收尾；双架构 QEMU `pipeio` 验证迟到成功只关闭原引用。
 - stage487：后台可按原 token 撤销迟到的资源 OPEN，目录满时也无需新连接。双架构 QEMU `runtime` 和 86 项主机测试通过。
 - stage486：已取消的 OPEN 可移交后台槽并释放 fd 预留；普通迟到成功进入 CLOSE。双架构 QEMU `runtime` 和 71 项主机测试通过。
 - stage485：私有 OPEN 在信号后沿原请求收尾，迟到成功只安装一次。双架构 QEMU `runtime` 和 65 项上下文主机测试通过。

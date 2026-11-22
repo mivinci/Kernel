@@ -1867,6 +1867,72 @@ openclient(const Bootview *boot)
   pipeiotrace[0] = 7;
 }
 
+static void
+lateopenserver(const Bootview *boot)
+{
+  Filelink link = {0};
+  Fileslot row;
+  Ipcmsg   request, gate, close;
+  Msg      reply = {{0, 0, 0, 0}};
+  Sigsel   target = {SIGNAL_SELECT_PID, 0};
+  u64      flags;
+  CHECK(!ipc_recv(0, 0, &request) &&
+        !sysfilehello(&link, 1, bootresource(boot, 256), bootresource(boot, BOOT_SELF_ALLOC),
+                      bootresource(boot, BOOT_SELF_SPACE), ADDRESS, &request));
+  CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_OPEN &&
+        !sysfilelinkaccept(&link, 1, &request, &row) && !ipc_defer(request.request));
+  target.target = request.source;
+  CHECK(!__sys_sigsend(&target, SIGNAL_USR1) && !ipc_recv(0, 0, &gate) &&
+        gate.source == target.target && gate.words[0] == PIPETEST &&
+        !ipc_rqcheck(request.request, &flags) && flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+  *(volatile u64 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES) = 123;
+  reply.words[1] = request.words[2];
+  reply.words[2] = 456;
+  reply.words[3] = sizeof(u64);
+  CHECK(!ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &reply) &&
+        !sysfilefinish(&link.watch.active, request.request) && !ipc_recv(0, 0, &close) &&
+        close.words[0] == FS_CLOSE && !sysfilelinkaccept(&link, 1, &close, &row) &&
+        row.object == 456 && row.args[0] == 123);
+  reply.words[1] = close.words[2];
+  reply.words[2] = reply.words[3] = 0;
+  CHECK(!ipc_reply(close.request, &reply) && !sysfilefinish(&link.watch.active, close.request) &&
+        !sysfilelinkclose(&link));
+  pipeiotrace[0] = 7;
+}
+
+static void
+lateopensignal(int signal)
+{
+  CHECK(signal == SIGUSR1);
+  caught++;
+}
+
+static void
+lateopenclient(void)
+{
+  Fileimage       *image;
+  Connwork        *peer;
+  Opencreate       open = {0};
+  Rkey             active = {0};
+  struct sigaction action = {0};
+  struct timespec  pause = {0, 30000000};
+  Msg              gate = {{PIPETEST, 0, 0, 0}};
+  Ipcmsg           reply;
+  Fdview           fd;
+  int              number = -2;
+  isize            business = 9;
+  action.sa_handler = lateopensignal;
+  CHECK(!sigaction(SIGUSR1, &action, NULL) && !sysfileimage(&image) &&
+        !sysfileimagefs(0, ADDRESS, &peer));
+  CHECK(sysfileimageopen(0, peer, "/late", 0, 0, 0, &open, &active, &number, &business) ==
+            -ERR_TIMEDOUT &&
+        caught == 1 && !open.operation.lease.seq && !active.sequence && number == -2 &&
+        business == 9 && !sysfdobserve(&image->fds, 0, &fd) && fd.tag.state == SYSFD_FREE &&
+        !ipc_call(peer->state.call, &gate, CALL_CONTROL, &reply) && !nanosleep(&pause, NULL) &&
+        !sysfilerefconnection(&image->files, peer->state.self, peer->state.tag));
+  pipeiotrace[0] = 7;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1878,6 +1944,10 @@ main(int argc, char **argv)
     openserver(boot);
   else if (argv[0][0] == 'o')
     openclient(boot);
+  else if (argv[0][0] == 'W')
+    lateopenserver(boot);
+  else if (argv[0][0] == 'w')
+    lateopenclient();
   else if (argv[0][0] == 'S' || argv[0][0] == 'B')
     serviceloop(boot, 0);
   else if (argv[0][0] == 'b')

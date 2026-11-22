@@ -129,6 +129,7 @@ pipeiotest(void)
 {
   testactors("sc");
   testactors("Oo");
+  testactors("Ww");
   testactors("SC");
   testactors("Ii");
   testactors("Tt");

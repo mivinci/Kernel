@@ -69,6 +69,11 @@ isize sysfileimagefs(u32 layer, u64 address, Connwork **out);
    continuation; failed copyout hands both File references to the image worker. */
 isize sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int *fds,
                        isize *business);
+/* Drive OPEN on the established FS connection. A resource success retains
+   its foreground continuation; timeout transfers the original operation to
+   the image worker and releases the unpublished descriptor. */
+isize sysfileimageopen(u32 layer, Connwork *work, const char *path, u64 flags, u64 mode,
+                       u64 fdflags, Opencreate *open, Rkey *active, int *fd, isize *business);
 /* Stage one READ/WRITE chunk on the exact live File. The caller excludes
    caught signals through Rctx registration and owns the resulting Opkey. */
 isize sysfileiostage(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 bytes,
