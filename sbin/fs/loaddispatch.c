@@ -46,8 +46,27 @@ advance(Fsloads *loads, Loadjob *job, u64 now)
 {
   Loadfetch fetch;
   isize     error;
-  if (!job->work.request)
-    return loadioreply(&job->io, NULL, 0, now);
+  if (!job->work.request) {
+    Loadspan span;
+    Cache   *cache;
+    u64      state;
+    error = ipc_rqcheck(job->io.request, &state);
+    if (error)
+      return error;
+    if (job->io.staged || state != RQ_CHECK_LIVE ||
+        loadstatus(job->io.table, job->io.session, job->io.ticket, now))
+      return loadioreply(&job->io, NULL, 0, now);
+    error = loads->resolve(loads->backend, &job->io, &cache, &span);
+    if (error == -ERR_WOULD_BLOCK)
+      return 0;
+    if (!error)
+      error = loadcachebegin(&job->work, &job->io, cache, &span);
+    if (error) {
+      job->io.reply.words[0] = (u64) loaderrno(error);
+      job->io.staged = 1;
+      return loadioreply(&job->io, NULL, 0, now);
+    }
+  }
   error = loadcachepump(&job->work, &job->io, &fetch, loads->scratch, now);
   if (error == 1) {
     error = loads->submit(loads->backend, job, &fetch);
@@ -69,8 +88,6 @@ fsloadstart(Fsloads *loads, Filelink *links, u32 count, const Ipcmsg *call)
   Fileslot     slot;
   Filelink    *link;
   Loadjob     *job;
-  Loadspan     span;
-  Cache       *cache;
   volatile u8 *page;
   u32          i;
   u64          now;
@@ -97,13 +114,6 @@ fsloadstart(Fsloads *loads, Filelink *links, u32 count, const Ipcmsg *call)
   error = ipc_defer(call->request);
   if (error)
     job->io.reply.words[0] = (u64) -EAGAIN;
-  else {
-    error = loads->resolve(loads->backend, &job->io, &cache, &span);
-    if (!error)
-      error = loadcachebegin(&job->work, &job->io, cache, &span);
-    if (error)
-      job->io.reply.words[0] = (u64) loaderrno(error);
-  }
   job->io.staged = error != 0;
   error = sysfilenow(&now);
   return error ? error : advance(loads, job, now);

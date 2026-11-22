@@ -2335,13 +2335,17 @@ struct Loadfixture
   Loadmap   map;
   Cache     cache;
   Loadfetch fetch;
-  u32       busy;
+  u32       busy, resolving;
 };
 
 static isize
 openloadresolve(void *context, const Loadio *io, Cache **cache, Loadspan *span)
 {
   Loadfixture *fixture = context;
+  if (fixture->resolving) {
+    fixture->resolving--;
+    return -ERR_WOULD_BLOCK;
+  }
   *cache = &fixture->cache;
   return loadmapspan(&io->file, &fixture->map, NULL, FS_DATA_START, 128, io->offset, io->bytes,
                      span);
@@ -2388,8 +2392,14 @@ openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
         !loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, NULL, 0) &&
         !fsloadpump(&loads) && !job.io.request && !watch->active.requests[job.io.slot]);
   fixture.busy = 1;
-  CHECK(!fsstep(fs) && job.io.request && !job.work.fill.cache && !job.work.next &&
-        !job.work.failed && !fixture.busy);
+  fixture.resolving = 1;
+  CHECK(!fsstep(fs) && job.io.request && !job.work.request && fixture.busy && !fixture.resolving &&
+        watch->active.requests[job.io.slot] == job.io.request);
+  {
+    Handle pending = job.io.request;
+    CHECK(!fsloadpump(&loads) && job.io.request == pending && job.work.request == pending &&
+          !job.work.fill.cache && !job.work.next && !job.work.failed && !fixture.busy);
+  }
   {
     Cacheio blocked = fixture.fetch.ticket;
     CHECK(!fsloadpump(&loads) && job.io.request && job.work.fill.cache &&
