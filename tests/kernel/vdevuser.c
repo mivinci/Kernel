@@ -175,21 +175,33 @@ redometa(void *context, const Journalblock *images, u32 count, u32 index)
   return count == 2 && (images[index].block == 65 || images[index].block == 66);
 }
 
-static void
-testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
-         const Testdma *dma)
+typedef struct Journaltransport Journaltransport;
+struct Journaltransport
 {
-  static Journal journal, idle;
-  static u8      images[3][JOURNAL_BYTES];
-  Journalblock   metadata[2];
-  Journalio      io;
-  Fsgeometry     geometry;
-  u32            i, j, count = 0;
-  u64            stride = JOURNAL_BYTES / VBLK_SECTOR;
-  u64            blocks = config->sectors / stride;
-  Fslayout       layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
-  Journalmark    mark = {47, 0, 0, 0};
-  Journalhead    head = {47, {65, 66}, 1, 2, 11, 12};
+  Blkqueue *queue;
+  Handle    binding;
+  u64       event, alarm;
+  Journalio ticket;
+  Journal  *journal;
+};
+static isize journalsubmit(void *, const Journalio *, u64, u32);
+static void  journaldrain(Journaltransport *, Journal *);
+
+static void
+testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config)
+{
+  static Journal   journal, idle;
+  static u8        images[3][JOURNAL_BYTES];
+  Journalblock     metadata[2];
+  Journalio        io;
+  Journaltransport transport = {queue, binding, irqevent, 0, {0}, &journal};
+  Fsgeometry       geometry;
+  u32              i, j, count = 0;
+  u64              stride = JOURNAL_BYTES / VBLK_SECTOR;
+  u64              blocks = config->sectors / stride;
+  Fslayout         layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
+  Journalmark      mark = {47, 0, 0, 0};
+  Journalhead      head = {47, {65, 66}, 1, 2, 11, 12};
   REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
   geometry.bytes = config->sectors * VBLK_SECTOR;
   geometry.logical = config->blocksize;
@@ -269,11 +281,10 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
                           redometa, NULL),
           194);
   while (journal.phase != JOURNAL_DONE) {
-    REQUIRE(count < 5 && !journalnext(&journal, &io) && io.txid == 47, 195);
-    transfer(device, ring, 2, binding, irqevent, config, dma,
-             io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH, io.block * stride, 2 + count, 0,
-             NULL, io.bytes);
-    REQUIRE(!journalcomplete(&journal, &io, 1), 196);
+    REQUIRE(count < 5 && !journalpump(&journal, journalsubmit, &transport) &&
+                transport.ticket.txid == 47 && journalrelease(&journal) == -ERR_STATE,
+            195);
+    journaldrain(&transport, &journal);
     count++;
   }
   REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
@@ -344,15 +355,6 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
 
 static Vdone waitblock(Blkqueue *, u64);
 
-typedef struct Journaltransport Journaltransport;
-struct Journaltransport
-{
-  Blkqueue *queue;
-  Handle    binding;
-  u64       event, alarm;
-  Journalio ticket;
-};
-
 static isize
 journalsubmit(void *context, const Journalio *io, u64 offset, u32 bytes)
 {
@@ -360,7 +362,15 @@ journalsubmit(void *context, const Journalio *io, u64 offset, u32 bytes)
   Blkqueue         *queue = transport->queue;
   u64               started = now();
   u32               type = io->kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
-  REQUIRE(!transport->ticket.serial && started <= UINT64_MAX - VDEV_RESET_NS &&
+  Journalio         stale = *io;
+  u64               bad_off = UINT64_MAX;
+  u32               bad_len = UINT32_MAX;
+  stale.serial--;
+  REQUIRE(journalrange(transport->journal, &stale, &bad_off, &bad_len) == -ERR_STALE &&
+              bad_off == UINT64_MAX && bad_len == UINT32_MAX && !transport->ticket.serial &&
+              started <= UINT64_MAX - VDEV_RESET_NS &&
+              blkqsubmitbytes(queue, 0, type, 1, bytes, io->bytes, blksync, queue->device) ==
+                  -ERR_INVALID &&
               !__sys_alarmset(started + VDEV_RESET_NS, &transport->alarm) &&
               !__sys_irqack(transport->binding) &&
               !blkqsubmitbytes(queue, 0, type, offset, bytes, io->bytes, blksync, queue->device),
@@ -384,27 +394,6 @@ journaldrain(Journaltransport *transport, Journal *journal)
 }
 
 static void
-journaltransfer(Blkqueue *queue, Handle binding, u64 irqevent, const Journal *journal,
-                const Journalio *io)
-{
-  u32       type = io->kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
-  u32       bytes = UINT32_MAX;
-  u64       alarm, started = now(), offset = UINT64_MAX;
-  Journalio stale = *io;
-  Vdone     done;
-  stale.serial--;
-  REQUIRE(journalrange(journal, &stale, &offset, &bytes) == -ERR_STALE && offset == UINT64_MAX &&
-              bytes == UINT32_MAX && !journalrange(journal, io, &offset, &bytes) &&
-              started <= UINT64_MAX - VDEV_RESET_NS &&
-              !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
-              !blkqsubmitbytes(queue, 0, type, offset, bytes, io->bytes, blksync, queue->device),
-          268);
-  done = waitblock(queue, irqevent);
-  REQUIRE(!blkqfinish(queue, &done, NULL, 0) && !__sys_alarmcancel(&alarm), 269);
-  vdev_trace[type == VBLK_WRITE ? 2 : 3]++;
-}
-
-static void
 testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Cache *cache,
              Loadmap *map, Blockmap *committed, Blockmap *prepared, u8 records[][FS_BLOCK_BYTES])
 {
@@ -413,7 +402,7 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
   Reclaimtx        work = {0};
   Reclaim          batch;
   Blockmap         busy = {0};
-  Journaltransport transport = {queue, binding, irqevent, 0, {0}};
+  Journaltransport transport = {queue, binding, irqevent, 0, {0}, journal};
   Mapmeta          meta = {records[0], NULL, NULL, records[2], records[3], records[4]};
   u32              i, step;
   u32              offset = 2 * FS_INODE_BYTES;
@@ -472,7 +461,7 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
   Loadmap            map = {{2, 1, 1, 0}, {0}, 0};
   Growth             work = {0};
   Cache              cache;
-  Journalio          io;
+  Journaltransport   transport = {queue, binding, irqevent, 0, {0}, &journal};
   Mapmeta            meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
   u32                i, j, step = 0;
   u32                blocks = (u32) (queue->config.sectors / (FS_BLOCK_BYTES / VBLK_SECTOR));
@@ -489,17 +478,12 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
               !journalgrowth(&work, &journal, &cache, &update, &image, &meta),
           264);
   while (journal.phase != JOURNAL_DONE) {
-    u32 type, bytes;
-    REQUIRE(!journalnext(&journal, &io) && io.txid == 48 && !map.file.length &&
+    REQUIRE(!journalpump(&journal, journalsubmit, &transport) && transport.ticket.txid == 48 &&
+                !map.file.length &&
                 growthpublish(&work, &map, NULL, &committed, &reserved) == -ERR_WOULD_BLOCK,
             265);
-    type = io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
-    bytes = type == VBLK_WRITE ? FS_BLOCK_BYTES : 0;
-    REQUIRE(blkqsubmitbytes(queue, 0, type, 1, bytes, io.bytes, blksync, queue->device) ==
-                -ERR_INVALID,
-            268);
-    journaltransfer(queue, binding, irqevent, &journal, &io);
-    REQUIRE(!journalcomplete(&journal, &io, 1) && ++step <= 13, 266);
+    journaldrain(&transport, &journal);
+    REQUIRE(++step <= 13, 266);
   }
   REQUIRE(step == 13 && !growthpublish(&work, &map, NULL, &committed, &reserved) &&
               map.file.length == FS_BLOCK_BYTES + 5 && map.direct[1] == 100 &&
@@ -797,7 +781,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
            config->readonly ? stride : 2 * stride, 1, config->readonly ? 0xa7 : 0x37, &prior, NULL);
   REQUIRE(prior.generation == 2, 192);
   if (!config->readonly) {
-    testredo(device, &ring, binding, irqevent, &fresh, &dma);
+    testredo(&queue, binding, irqevent, &fresh);
     testwriteback(device, &ring, binding, irqevent, &fresh, &dma);
     testparallel(&queue, binding, irqevent, &fresh);
     testgrowth(&queue, binding, irqevent);
