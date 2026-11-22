@@ -98,6 +98,8 @@ int lifepublish(Lifeid id);
 int lifeimage(Lifeid id, u64 *number);
 int lifecancel(Lifeid id);
 int lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault);
+int lifeendusage(Lifeid id, u32 reason, u32 code, const Lifefault *fault, u64 user, u64 kernel);
+int lifechildusage(Lifeid id, u64 *user, u64 *kernel);
 /* Trusted state ledger only; caller must separately stop/resume the Run.
    LIVE reason/code contain the latest unconsumed job report. Exit replaces it.
    Duplicate transitions do not generate a new version or parent hint. */

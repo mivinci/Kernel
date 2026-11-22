@@ -153,6 +153,8 @@ cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它�
 
 ARM64、RV64 QEMU `stats` 验证用户和系统计时都有进展、未调度期间保持不变、运行槽复用后归零，并继续核对原公开总量。双架构 `sigframe` 覆盖信号递送及返回、故障和 fork 续点经过新计时边界。
 
+退出提交把进程自己的用户、系统时间与它此前收取的子进程时间一起固定到 Life。父进程只有收取最终退出结果时才累计这份快照；停止、继续、再次收取及自动收取均不计入。快照不依赖 Run 槽，收取归当前合法父进程；计数上限饱和，不阻止 `wait` 收取。双架构 QEMU `life` 验证 Run 槽复用、孙辈时间传递及自动收取不计入。公开 `times()` 尚未接入。
+
 ### query的主体选择（交叉复核修订）
 
 query(0,kind,cursor,outptr,count)为明确的本主体查询：PROC/ACCT/LIFE只返回当前调用者自己的记录，RESOURCE只枚举当前镜像本地授权，RQ只枚举本主体作为caller或receiver实际持有的请求；不按cursor中的索引扩大到其他主体。BOOT_RESOURCE不接受authority=0。管理查询仍要求显式CONTROL QUERY或SYSTEM既定权限，只枚举其授权范围；普通CALL、PID、REQUEST等整数不能作为管理authority来补权。

@@ -63,6 +63,39 @@ jobs(void)
   REQUIRE(!setstat(budget, &account) && !account.instances && !account.charged &&
           !setclose(budget));
 }
+static void
+usagecheck(Setid group)
+{
+  Lifeid     parent, child, grandchild, reused;
+  Handle     ppid = handlepack(HANDLE_PROCESS, 1, 4), cpid = handlepack(HANDLE_PROCESS, 1, 5);
+  Handle     gpid = handlepack(HANDLE_PROCESS, 1, 6);
+  Liferesult result;
+  u64        user, kernel;
+  REQUIRE(!lifecreate(group, ppid, 1, &parent) && !lifepublish(parent) &&
+          !lifecreate(group, cpid, ppid, &child) && !lifepublish(child) &&
+          !lifecreate(group, gpid, cpid, &grandchild) && !lifepublish(grandchild));
+  REQUIRE(!lifestop(grandchild, SIGNAL_STOP) &&
+          !lifetake(grandchild, cpid, WAIT_WUNTRACED, &result) &&
+          !lifechildusage(child, &user, &kernel) && !user && !kernel);
+  REQUIRE(!lifeendusage(grandchild, LIFE_EXIT, 0, NULL, 11, 13) && !lifedetach(grandchild) &&
+          !lifechildusage(child, &user, &kernel) && !user && !kernel);
+  REQUIRE(!lifecreate(group, handlepack(HANDLE_PROCESS, 2, 6), cpid, &reused) &&
+          !lifechildusage(reused, &user, &kernel) && !user && !kernel && !lifecancel(reused) &&
+          !lifedetach(reused));
+  REQUIRE(!lifetake(grandchild, cpid, 0, &result) && !lifechildusage(child, &user, &kernel) &&
+          user == 11 && kernel == 13 && lifetake(grandchild, cpid, 0, &result) == -ERR_STALE);
+  REQUIRE(!lifeendusage(child, LIFE_EXIT, 0, NULL, 17, 19) && !lifecollect(child, ppid, &result) &&
+          !lifedetach(child) && !lifechildusage(parent, &user, &kernel) && user == 28 &&
+          kernel == 32);
+  REQUIRE(!lifechildpolicy(parent, LIFE_AUTOCHILD) &&
+          !lifecreate(group, handlepack(HANDLE_PROCESS, 2, 5), ppid, &child) &&
+          !lifepublish(child) && !lifeendusage(child, LIFE_EXIT, 0, NULL, 31, 37) &&
+          !lifedetach(child) && !lifechildusage(parent, &user, &kernel) && user == 28 &&
+          kernel == 32);
+  REQUIRE(!lifeend(parent, LIFE_EXIT, 0, NULL) && !lifecollect(parent, 1, &result) &&
+          !lifedetach(parent));
+}
+
 void
 lifetest(void)
 {
@@ -123,6 +156,7 @@ lifetest(void)
   REQUIRE(!lifecancel(fresh) && !lifedetach(fresh));
   REQUIRE(!lifeend(live, LIFE_EXIT, 7, NULL) && !lifecollect(live, 1, &result));
   REQUIRE(!lifedetach(live) && !lifecheck());
+  usagecheck(group);
   REQUIRE(!setstat(group, &set) && !set.instances && !setclose(group));
   jobs();
   pgstat(&after);

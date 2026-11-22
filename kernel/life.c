@@ -1,7 +1,20 @@
 #include <life.h>
 #include <diag.h>
 #include <abi/signal.h>
-static Life lives[LIFES];
+static Life          lives[LIFES];
+typedef struct Usage Usage;
+struct Usage
+{
+  u64 user, kernel;
+};
+/* Kept by Life until wait consumes the result, independent of Run reuse. */
+static Usage finalusage[LIFES], childusage[LIFES];
+
+static u64
+addusage(u64 a, u64 b)
+{
+  return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
 /* Cached run owner and monotonic death watermark make logical adoption O(1).
    Actual Proc constructors never reuse a full PID generation. */
 static u16    runlife[PROCS];
@@ -100,6 +113,7 @@ lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
   if (error)
     return error == AC_LIMIT ? -ERR_LIMIT : -ERR_INVALID;
   l = &lives[slot];
+  finalusage[slot] = childusage[slot] = (Usage){0, 0};
   l->generation++;
   l->pid = pid;
   l->parent = parent;
@@ -296,7 +310,7 @@ lifecontinue(Lifeid id)
   return 0;
 }
 int
-lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
+lifeendusage(Lifeid id, u32 reason, u32 code, const Lifefault *fault, u64 user, u64 kernel)
 {
   Life  *l = find(id), *parent;
   Handle owner;
@@ -320,6 +334,8 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
     panic("ended group membership");
   if (l->sequence == ~(u64) 0)
     panic("life final version");
+  finalusage[id.index].user = addusage(user, childusage[id.index].user);
+  finalusage[id.index].kernel = addusage(kernel, childusage[id.index].kernel);
   l->stopped = 0;
   l->reason = reason;
   l->code = code;
@@ -338,6 +354,22 @@ lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
     collected(l, owner);
   changed(owner);
   changed(1); /* A blocked init must also reconsider newly adopted children. */
+  return 0;
+}
+int
+lifeend(Lifeid id, u32 reason, u32 code, const Lifefault *fault)
+{
+  return lifeendusage(id, reason, code, fault, 0, 0);
+}
+int
+lifechildusage(Lifeid id, u64 *user, u64 *kernel)
+{
+  if (!find(id))
+    return -ERR_STALE;
+  if (!user || !kernel || user == kernel)
+    return -ERR_INVALID;
+  *user = childusage[id.index].user;
+  *kernel = childusage[id.index].kernel;
   return 0;
 }
 int
@@ -417,7 +449,8 @@ lifereparent(Lifeid id, Handle oldparent, Handle newparent)
 int
 lifecollect(Lifeid id, Handle parent, Liferesult *out)
 {
-  Life *l = find(id);
+  Life  *l = find(id), *owner;
+  Usage *usage;
   if (!out)
     return -ERR_INVALID;
   out->pid = 0;
@@ -435,7 +468,13 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   out->sequence = l->sequence;
   out->reason = l->reason;
   out->code = l->code;
-  collected(l, parentof(l));
+  owner = liveparent(parent);
+  if (owner) {
+    usage = &childusage[owner - lives];
+    usage->user = addusage(usage->user, finalusage[id.index].user);
+    usage->kernel = addusage(usage->kernel, finalusage[id.index].kernel);
+  }
+  collected(l, parent);
   return 0;
 }
 int

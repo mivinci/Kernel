@@ -1140,8 +1140,9 @@ end(Proc *p, u32 reason, u32 code, const Lifefault *fault)
 {
   Life  child;
   Proc *parent;
-  u64   status;
-  if (lifeend(p->life, reason, code, fault))
+  u64   status, user, kernel;
+  if (procusage(pidof(p), &user, &kernel) ||
+      lifeendusage(p->life, reason, code, fault, user, kernel))
     panic("process exit result");
   if (lifestat(p->life, &child))
     panic("committed child identity");
