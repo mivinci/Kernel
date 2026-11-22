@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
@@ -336,6 +337,20 @@ serviceloop(const Bootview *boot, u32 interrupt)
       reply.words[2] = TEST_OFFSET;
       CHECK(!ipc_reply(request.request, &reply));
     }
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY);
+    CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && !poll.request);
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_WAIT);
+    CHECK(!pipedispatch(&fs.pipes, &link, 1, &request) && poll.request == request.request);
+    CHECK(!__sys_sigsend(&target, SIGNAL_USR1));
+    CHECK(!ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST);
+    CHECK(!ipc_reply(gate.request, &reply));
+    while (poll.request) {
+      CHECK(!pipepump(&fs.pipes));
+      if (poll.request)
+        CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &gate) && gate.kind == IPC_EVENT);
+    }
+    CHECK(!ipc_recv(0, 0, &gate) && gate.source == target.target && gate.words[0] == PIPETEST &&
+          !ipc_reply(gate.request, &reply));
     {
       Fileslot  row;
       u64       position = 0;
@@ -636,6 +651,14 @@ interruptclient(void)
         data[1] == 'q' && data[2] == 0xa5 && errno == EBUSY && caught == 5);
   CHECK(pwrite(fds[1], "z", 1, TEST_OFFSET) == -1 && errno == ESPIPE && caught == 6);
   CHECK(lseek(fds[0], -3, SEEK_CUR) == TEST_OFFSET && caught == 7);
+  {
+    struct pollfd row;
+    row.fd = fds[0];
+    row.events = POLLIN;
+    row.revents = POLLPRI;
+    CHECK(poll(&row, 1, -1) == -1 && errno == EINTR && caught == 8 && row.revents == POLLPRI);
+    CHECK(!ipc_call(work->state.call, &gate, CALL_CONTROL, &result));
+  }
   release_read = 0;
   fd = dup(fds[0]);
   CHECK(fd == 2 && lseek(fds[0], -3, SEEK_END) == 17 &&
@@ -1082,12 +1105,24 @@ brokenclient(void)
   isize            business;
   int              fds[2], alias;
   char             byte = 0;
+  struct pollfd    ready[3];
+  u64              before, after;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer) &&
         !sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
+  ready[0].fd = fds[0];
+  ready[0].events = POLLIN;
+  ready[1].fd = fds[1];
+  ready[1].events = POLLOUT;
+  ready[2].fd = -1;
+  ready[2].events = POLLIN;
+  CHECK(poll(ready, 3, 0) == 1 && !ready[0].revents && ready[1].revents == POLLOUT &&
+        !ready[2].revents && !systimernow(&before) && !poll(ready, 1, 10) && !ready[0].revents &&
+        !systimernow(&after) && after - before >= 10000000 && !poll(NULL, 0, 5));
   alias = dup(fds[1]);
   CHECK(alias >= 0 && !close(fds[1]) && write(alias, "e", 1) == 1 && !close(alias) &&
-        read(fds[0], &byte, 1) == 1 && byte == 'e' && read(fds[0], &byte, 1) == 0 &&
-        !close(fds[0]));
+        poll(ready, 3, 0) == 2 && ready[0].revents == (POLLIN | POLLHUP) &&
+        ready[1].revents == POLLNVAL && !ready[2].revents && read(fds[0], &byte, 1) == 1 &&
+        byte == 'e' && read(fds[0], &byte, 1) == 0 && !close(fds[0]));
   CHECK(!sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
   alias = dup(fds[0]);
   CHECK(alias >= 0 && !close(fds[0]) && write(fds[1], "r", 1) == 1 && read(alias, &byte, 1) == 1 &&

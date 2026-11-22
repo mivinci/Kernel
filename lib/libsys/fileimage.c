@@ -209,6 +209,241 @@ sysfilepollgroup(const Pollfile *items, u32 count, Conntag connection, Filepoll 
   return used;
 }
 
+static isize
+pollcleanup(Fileimage *state, Opkey keys[SYSCONN_COUNT])
+{
+  Conncache *cache = sysfileimagecache(state);
+  isize      first = 0;
+  u32        i;
+  for (i = 0; i < SYSCONN_COUNT; i++) {
+    Opkey    *key = &keys[i];
+    Connwork *work = &state->connections[i];
+    u64       pin = 0;
+    isize     error;
+    if (!key->lease.seq)
+      continue;
+    if (work->state.operations[key->lease.slot].phase == SYSOP_PREPARED) {
+      error = sysopabort(work, cache, key, &pin);
+      if (!error)
+        error = sysfilerefunpin(&state->files, state->files.self, pin);
+    } else
+      error = sysfilepollabandon(state, key);
+    if (error && !first)
+      first = error;
+  }
+  fileprogress(state);
+  return first;
+}
+
+static void
+pollapply(Pollfile *items, const Filepoll *rows, const u32 *indices, u32 count, int ended)
+{
+  u32 i;
+  for (i = 0; i < count; i++)
+    items[indices[i]].row.revents = ended ? FS_POLL_ERR : rows[i].revents;
+}
+
+static isize
+pollround(Fileimage *state, u32 layer, Pollfile *items, u32 count, u64 opcode, u64 deadline,
+          u64 mask)
+{
+  Opkey      keys[SYSCONN_COUNT];
+  Filepoll   rows[FS_POLL_ROWS];
+  u32        indices[FS_POLL_ROWS], pending = 0, seen = 0, i, restart;
+  Conncache *cache = sysfileimagecache(state);
+  u64        now;
+  isize      error = 0, result = 0;
+  for (i = 0; i < SYSCONN_COUNT; i++)
+    keys[i].lease.seq = 0;
+  if (opcode == FS_POLL_QUERY) {
+    error = systimernow(&now);
+    if (error || now > UINT64_MAX - SYSOP_CONTROL_NS)
+      return error ? error : -ERR_OVERFLOW;
+    deadline = now + SYSOP_CONTROL_NS;
+  }
+  for (i = 0; i < count && !error; i++) {
+    Connentry entry;
+    Conntag   tag = items[i].connection;
+    Connwork *work;
+    u64       pin;
+    u32       bit;
+    isize     n;
+    if (!items[i].file)
+      continue;
+    error = sysconnview(cache, tag, &entry);
+    if (error)
+      break;
+    bit = 1U << tag.index;
+    if (seen & bit)
+      continue;
+    seen |= bit;
+    n = sysfilepollgroup(items, count, tag, rows, indices, ARRAY_SIZE(rows));
+    if (n <= 0) {
+      error = n ? n : -ERR_STATE;
+      break;
+    }
+    if (entry.state == SYSCONN_DRAINING) {
+      pollapply(items, rows, indices, (u32) n, 1);
+      continue;
+    }
+    if (entry.state != SYSCONN_READY) {
+      error = -ERR_BUSY;
+      break;
+    }
+    work = &state->connections[tag.index];
+    pin = items[i].file;
+    error = sysfilerefpin(&state->files, state->files.self, pin);
+    if (error)
+      break;
+    error = sysoppollprepare(work, cache, layer, 1, &pin, opcode, deadline, rows, (u32) n,
+                             &keys[tag.index]);
+    if (pin && sysfilerefunpin(&state->files, state->files.self, pin))
+      error = -ERR_STATE;
+    if (!error)
+      error = sysfilepollsubmit(work, cache, &keys[tag.index]);
+    if (error == -ERR_PEER && keys[tag.index].lease.seq) {
+      error = sysconninvalidate(cache, tag);
+      if (!error)
+        pollapply(items, rows, indices, (u32) n, 1);
+    } else if (!error)
+      pending |= bit;
+  }
+  while (!error && pending) {
+    for (i = 0; i < SYSCONN_COUNT; i++) {
+      Fileioresult reply;
+      Connwork    *work = &state->connections[i];
+      Opkey       *key = &keys[i];
+      u64          pin = 0;
+      isize        n;
+      if (!(pending & (1U << i)))
+        continue;
+      n = sysfilepollgroup(items, count, key->connection, rows, indices, ARRAY_SIZE(rows));
+      if (n <= 0) {
+        error = n ? n : -ERR_STATE;
+        break;
+      }
+      error = sysfilepollcollect(work, cache, key, rows, (u32) n, &reply, &pin);
+      if (error == -ERR_WOULD_BLOCK && work->state.ended) {
+        /* Invalidation is independent of FINISH. A collectable result above
+           wins; an unfinished request still owns its slot until drain. */
+        error = sysfilepollabandon(state, key);
+        reply.native = -ERR_PEER;
+        reply.business = 0;
+      }
+      if (error == -ERR_WOULD_BLOCK) {
+        error = 0;
+        continue;
+      }
+      if (pin && sysfilerefunpin(&state->files, state->files.self, pin))
+        error = -ERR_STATE;
+      if (error)
+        break;
+      pending &= ~(1U << i);
+      if (reply.native && reply.native != -ERR_PEER)
+        error = reply.native;
+      else if (reply.business)
+        error = reply.business == -EAGAIN ? -ERR_BUSY : -ERR_STATE;
+      else
+        pollapply(items, rows, indices, (u32) n, reply.native == -ERR_PEER);
+      if (error || opcode == FS_POLL_WAIT) {
+        result = 1;
+        break;
+      }
+    }
+    if (error || result || !pending)
+      break;
+    if (deadline) {
+      error = systimernow(&now);
+      if (error || now >= deadline) {
+        if (!error && opcode == FS_POLL_QUERY)
+          error = -ERR_TIMEDOUT;
+        break;
+      }
+    }
+    error = systimerwaitsignal(deadline, EVENT_RQ_DONE, mask, &restart);
+    fileprogress(state);
+  }
+  if (pollcleanup(state, keys) && !error)
+    error = -ERR_STATE;
+  return error ? error : result;
+}
+
+isize
+sysfileimagepoll(u32 layer, Pollfd *fds, u32 count, int timeout)
+{
+  Fileimage *state = NULL;
+  Pollfile   items[FS_POLL_ROWS];
+  u64        mask, ignored, limit = 0, now;
+  u32        i, restart, live = 0;
+  isize      error, restored, ready = 0;
+  if (layer >= RCTX_LAYERS || count > FS_POLL_ROWS || (count && !fds))
+    return -ERR_INVALID;
+  if (timeout > 0) {
+    u64 duration = (u64) timeout * UINT64_C(1000000);
+    error = systimernow(&now);
+    if (error || now > UINT64_MAX - duration)
+      return error ? error : -ERR_OVERFLOW;
+    limit = now + duration;
+  }
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  if (count) {
+    error = sysfileimage(&state);
+    if (!error) {
+      fileprogress(state);
+      error = sysfilepollcapture(state, fds, items, count);
+    }
+    if (error)
+      goto restore;
+    for (i = 0; i < count; i++)
+      live |= !!items[i].file;
+  }
+  for (;;) {
+    if (live)
+      error = pollround(state, layer, items, count, FS_POLL_QUERY, 0, mask);
+    if (error)
+      break;
+    ready = 0;
+    for (i = 0; i < count; i++) {
+      if (items[i].file) {
+        error = sysfilepollcurrent(state, &items[i]);
+        if (error < 0)
+          break;
+        if (!error)
+          items[i].row.revents = FS_POLL_NVAL;
+        error = 0;
+      }
+      ready += !!items[i].row.revents;
+    }
+    if (error || ready || !timeout)
+      break;
+    if (limit) {
+      error = systimernow(&now);
+      if (error || now >= limit)
+        break;
+    }
+    if (live) {
+      error = pollround(state, layer, items, count, FS_POLL_WAIT, limit, mask);
+      if (error < 0)
+        break;
+      error = 0;
+    } else {
+      error = systimerwaitsignal(limit, EVENT_RQ_DONE, mask, &restart);
+      if (error)
+        break;
+    }
+  }
+  if (count && sysfilepollrelease(state, items, count) && !error)
+    error = -ERR_STATE;
+  if (!error)
+    for (i = 0; i < count; i++)
+      fds[i].revents = (u16) items[i].row.revents;
+restore:
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : restored ? restored : ready;
+}
+
 Conncache *
 sysfileimagecache(Fileimage *state)
 {

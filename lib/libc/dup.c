@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include "private/fileimage.h"
+#include "sigdepth.h"
 
 static int
 dupresult(isize result)
@@ -76,8 +77,6 @@ close(int fd)
   errno = result == -ERR_BAD_HANDLE ? EBADF : result == -ERR_INTERRUPTED ? EINPROGRESS : EIO;
   return -1;
 }
-
-u32 __libc_sigdepth(void);
 
 static ssize_t
 ioresult(u64 opcode, isize status, const Fileioresult *completed)

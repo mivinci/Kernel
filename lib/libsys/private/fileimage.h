@@ -48,6 +48,8 @@ isize sysfilepollgroup(const Pollfile *items, u32 count, Conntag connection, Fil
 isize sysfilepollabandon(Fileimage *state, Opkey *key);
 /* Submit while caught signals are excluded. A rejected call remains PREPARED. */
 isize sysfilepollsubmit(Connwork *work, Conncache *cache, const Opkey *key);
+/* Complete a bounded poll over private descriptors. */
+isize sysfileimagepoll(u32 layer, Pollfd *fds, u32 count, int timeout);
 /* Nonblocking collection. FINISH precedes payload validation and ACK.
    Keep the same private rows and result across retries. Zero returns the
    group's pin exactly once, clears the key, and publishes its outcome. */
