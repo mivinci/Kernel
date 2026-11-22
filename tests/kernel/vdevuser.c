@@ -377,6 +377,19 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   REQUIRE(journalmetadata(&owners, metadata, 2, 1) && !journalmetadata(&owners, metadata, 2, 2),
           339);
   head.targets[1] = metadata[1].block = 109;
+  {
+    const u8 *bytes = NULL;
+    REQUIRE(!journalview(blocks, metadata, 2, 109, &bytes) && bytes == images[1] &&
+                journalview(blocks, metadata, 2, FS_LOG_START, &bytes) == -ERR_INVALID &&
+                bytes == images[1],
+            340);
+    metadata[0].block = 109;
+    REQUIRE(journalview(blocks, metadata, 2, 109, &bytes) == -ERR_STATE && bytes == images[1], 341);
+    metadata[0].block = FS_INODE_MAP;
+    REQUIRE(!journalview(blocks, metadata, 2, FS_INODE_MAP, &bytes) && bytes == images[0] &&
+                !journalview(blocks, metadata, 2, FS_BLOCK_MAP, &bytes) && !bytes,
+            342);
+  }
   geometry.faultbytes = 0;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
                          journalmetadata, &owners) == -ERR_NOTSUP &&

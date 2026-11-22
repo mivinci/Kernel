@@ -245,6 +245,10 @@ isize shrinkpublish(Shrink *);
    EMPTY certifies a readable home view; unknown or COMMITTED marks do not.
    Does not open a Journal, grant write access, or validate the root inode. */
 isize journalreadonly(const Fslayout *, const Fsgeometry *, const Journalmark *);
+/* Select bytes from the immutable, checksum-verified redo images before
+   reading a home block for the recovery scan. NULL output on success means
+   read home; errors leave output unchanged. No I/O is started. */
+isize journalview(u64 blocks, const Journalblock *images, u32 count, u64 block, const u8 **out);
 /* Classifier for data-area targets. Context is the Loadowners built from
    the complete post-transaction view for these exact images, with the log
    images taking precedence over home when decoding allocation and maps. */

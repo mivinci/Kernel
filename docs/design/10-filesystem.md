@@ -819,6 +819,8 @@ stage562：ARM64/RV64 QEMU `virtiodev` 用已解码夹具验证卷归属检查�
 
 stage563：ARM64/RV64 QEMU `virtiodev` 由已解码归属夹具分类重放目标，拒绝普通文件块及目录尾块，识别间接索引，并把目录块通过真实 virtio 写入及 FLUSH；主机核对整盘及 I/O 次数。50 项 FS 主机回归通过。生产解码和日志覆盖视图的生成仍未接。
 
+stage564：`journalview` 为恢复扫描从已验证的日志镜像选择目标块；未覆盖的合法块交由调用方读 home，重复目标或非法范围拒绝。ARM64/RV64 QEMU `virtiodev` 在同一重放夹具验证位图与目录块覆盖、home 回退及拒绝路径。生产扫描和解码仍待接。
+
 stage539：`journalinodefree` 在孤儿引用和块指针全部清空后，用最后一笔事务清 inode 位图，保留原 inode 行的 generation 供将来复用。ARM64/RV64 QEMU `pipeio` 验证块批次未退休时拒绝、最终位图仅在日志退休后可见以及重复发布被拒；46 项 FS 主机测试通过。生产编码和 inode 再分配待接。
 
 stage538：无引用孤儿可用同一回收日志分批清除全部块，包含仍在原 EOF 内的数据；inode 槽保持分配。ARM64/RV64 QEMU `pipeio` 验证带引用时拒绝、无引用后可提交块回收，末次 FLUSH 失败时指针和位图不提前发布。46 项 FS 主机测试通过。最终 inode 槽退休和生产候选接线待做。

@@ -938,6 +938,26 @@ emptyvalid(const Journalmark *mark)
 }
 
 isize
+journalview(u64 blocks, const Journalblock *images, u32 count, u64 block, const u8 **out)
+{
+  const u8 *bytes = NULL;
+  u32       i;
+  if (blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || count > JOURNAL_META ||
+      (count && !images) || !out || !home(block, blocks))
+    return -ERR_INVALID;
+  if (!hometargets(images, count, blocks))
+    return -ERR_STATE;
+  for (i = 0; i < count; i++) {
+    if (!images[i].bytes)
+      return -ERR_STATE;
+    if (images[i].block == block)
+      bytes = images[i].bytes;
+  }
+  *out = bytes;
+  return 0;
+}
+
+isize
 journalreadonly(const Fslayout *layout, const Fsgeometry *device, const Journalmark *mark)
 {
   isize error = fslayoutcheck(layout, device, 0);
