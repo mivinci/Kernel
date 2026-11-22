@@ -1496,6 +1496,7 @@ struct Openfixture
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
+  Loadmap   map;
   Handle    growth;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
@@ -1640,13 +1641,12 @@ openseek(u64 session, u64 whence, isize offset, isize status, u64 position)
 static isize
 openreadbind(void *context, Readjob *job)
 {
-  static const Loadmap map = {{2, 1, 1, 20}, {5}, 0};
-  Openfixture         *fixture = context;
+  Openfixture *fixture = context;
   CHECK(job->file->node == &fixture->file);
-  job->map = &map;
+  job->map = &fixture->map;
   job->cache = &fixture->cache;
   job->loads = &fixture->loads;
-  job->first = 4;
+  job->first = FS_DATA_START;
   return 0;
 }
 
@@ -1661,7 +1661,7 @@ static isize
 openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
 {
   Openfixture *fixture = context;
-  CHECK(!fixture->fetch.block && fetch->block == 5 && job->file->position == 19);
+  CHECK(!fixture->fetch.block && fetch->block == FS_DATA_START && job->file->position == 19);
   fixture->fetch = *fetch;
   return 0;
 }
@@ -1670,7 +1670,19 @@ static isize
 openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile u8 *input,
              u64 *start)
 {
-  Openfixture *fixture = context;
+  static Journal     journal;
+  static Growth      growth;
+  static Writeupdate update;
+  static Writeimage  image;
+  static u8          encoded[4][FS_BLOCK_BYTES], disk[FS_BLOCK_BYTES];
+  Openfixture       *fixture = context;
+  Growthmeta         meta = {encoded[0], NULL, NULL, encoded[1], encoded[2], encoded[3]};
+  Cacheio            ticket;
+  Cachekey           key = {0};
+  Journalio          io;
+  u8                *destination;
+  u8                 payload[2];
+  u32                i;
   CHECK(state == RQ_CHECK_LIVE && (offset == 20 || offset == FS_GROW_APPEND) &&
         job->slot.args[1] == 2);
   if (input) {
@@ -1678,12 +1690,40 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
     fixture->growth = job->call.request;
     CHECK(!loadwrite(job->loads, job->map->file.inode, &fixture->guard));
     fixture->growat = offset == FS_GROW_APPEND ? fixture->length : offset;
+    if (!journal.blocks)
+      CHECK(!journalinit(&journal, fixture->cache.blocks, 0));
+    CHECK(!loadwriteupdate(&fixture->map, NULL, FS_DATA_START, 128, fixture->growat, 2, 0, 0,
+                           &update));
+    /* The fixture drains prior dirty data to its simulated device. */
+    CHECK(!cacheget(&fixture->cache, FS_DATA_START, CACHE_DATA, &key));
+    if (fixture->cache.entries[key.index].dirty)
+      CHECK(!cachewritebegin(&fixture->cache, &key, disk, &ticket) &&
+            !cachecomplete(&fixture->cache, &ticket, 1));
+    CHECK(!cacheput(&fixture->cache, &key));
+    payload[0] = input[0];
+    payload[1] = input[1];
+    CHECK(!loadwritestage(&update.plan, FS_DATA_START, 128, 0, disk, NULL, payload, &image) &&
+          !journalgrowth(&growth, &journal, &fixture->cache, &update, &image, &meta));
     return 0;
   }
   CHECK(fixture->growth == job->call.request);
+  CHECK(growthpublish(&growth, &fixture->map, NULL, NULL, NULL) == -ERR_WOULD_BLOCK);
+  while (journal.phase != JOURNAL_DONE) {
+    CHECK(!journalnext(&journal, &io));
+    if (io.kind == JOURNAL_WRITE && io.block == FS_DATA_START)
+      for (i = 0; i < sizeof(disk); i++)
+        disk[i] = io.bytes[i];
+    CHECK(!journalcomplete(&journal, &io, 1));
+  }
+  CHECK(!growthpublish(&growth, &fixture->map, NULL, NULL, NULL));
+  CHECK(!cacheget(&fixture->cache, FS_DATA_START, CACHE_DATA, &key) &&
+        !cachereadbegin(&fixture->cache, &key, &ticket, &destination));
+  for (i = 0; i < sizeof(disk); i++)
+    destination[i] = disk[i];
+  CHECK(!cachecomplete(&fixture->cache, &ticket, 1) && !cacheput(&fixture->cache, &key));
   fixture->growth = 0;
   *start = fixture->growat;
-  fixture->length = *start + 2;
+  fixture->length = fixture->map.file.length;
   CHECK(!loadunwrite(job->loads, fixture->guard));
   return 2;
 }
@@ -1860,8 +1900,9 @@ openserver(const Bootview *boot)
   u64            load;
   openwritestage();
   fixture.length = 20;
+  fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
-  CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 16));
+  CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 128));
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
@@ -1916,8 +1957,8 @@ openserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && file.position == 19 && blocks[0].dirty && !fsstep(&fs) && !fsstep(&fs) &&
         file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) &&
         file.position == 20 && !fsstep(&fs) && fixture.growth && file.position == 20 &&
-        !fsstep(&fs) && !fixture.growth && file.position == 22 && !fsstep(&fs) && file.refs == 1 &&
-        !fsstep(&fs) && !file.node);
+        !fsstep(&fs) && !fixture.growth && file.position == 22 && !fsstep(&fs) &&
+        file.position == 22 && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) && !file.node);
   CHECK(!fsstep(&fs) && file.access == (VACCESS_R | VACCESS_W) &&
         file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
         file.refs == 2 && !fsstep(&fs) && !file.position && fixture.growth && !fsstep(&fs) &&
@@ -2044,6 +2085,7 @@ open:
     openwritecheck(key.session, 0, FS_IO_APPEND, -EINVAL, 0);
     openwritecheck(key.session, 0, 0, 0, 2);
     openseek(dup.session, FS_SEEK_CUR, 0, 0, 22);
+    openreadcheck(dup.session, 20, 1, 2, 'W');
     CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
     reopened = key;
     append = 1;
