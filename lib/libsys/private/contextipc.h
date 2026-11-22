@@ -69,6 +69,10 @@ isize sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Conn
    its key for retry; a native interruption leaves the original Op intact. */
 isize sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
                    Conncache *cache, const Opkey *operation, Rkey *active);
+/* Same one-action driver for pathname OPEN. A result (1) still belongs to
+   the original creator and must be ACKed and resolved before fd publication. */
+isize sysctxopenio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+                   Conncache *cache, const Opkey *operation, Rkey *active);
 struct Pipecreate;
 struct Fdtable;
 /* Create local descriptors over an established FS connection. Both private

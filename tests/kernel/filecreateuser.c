@@ -2318,6 +2318,7 @@ static void
 iorecoverclient(const Bootview *boot, u32 mode)
 {
   Opencreate open = {0};
+  Rkey       opening = {0};
   const u64  args[8] = {0, 0, 0, 3};
   Msg        message;
   Fdview     fd;
@@ -2337,13 +2338,22 @@ iorecoverclient(const Bootview *boot, u32 mode)
         fd.tag.state == SYSFD_FREE);
   CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 100, args, "/a", 3, BOOT_FD_CLOEXEC,
                             &open, &message) &&
-        !sysctxcreatecall(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
-                          &invocation) &&
-        !sysctxinvoke(&contexts, work.state.self, invocation) &&
-        !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxfinish(&contexts, work.state.self, invocation));
+        sysctxopenio(&contexts, work.state.self, 1, &pool, &work, &cache, &open.operation,
+                     &opening) == -ERR_INVALID &&
+        sysctxpipeio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+                     &opening) == -ERR_INVALID &&
+        !sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+                      &opening) &&
+        work.state.operations[open.operation.lease.slot].rpc && !opening.sequence);
   filecreatetrace[1]++;
-  collect(&open.operation);
+  {
+    Handle rpc = work.state.operations[open.operation.lease.slot].rpc;
+    CHECK(!sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+                        &opening) &&
+          sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+                       &opening) == 1 &&
+          work.state.operations[open.operation.lease.slot].rpc == rpc && !opening.sequence);
+  }
   CHECK(!sysfilecreateack(&pool, &work, &cache, &open.operation) &&
         !sysfilecreatesettle(&pool, &work, &cache, &open.operation, 0) &&
         !sysfileopenfinish(&pool, &work, &cache, &fds, &open, &outcome) && !outcome &&

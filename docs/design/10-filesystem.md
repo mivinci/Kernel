@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage472：`sysctxopenio` 沿现有创建请求记录选择提交、等待和已取得结果三个阶段。每次推进复用原 OPEN 槽和 RPC，注册与交接时屏蔽捕获信号，等待时恢复调用者原掩码。ARM64、RV64 QEMU `runtime` 验证错误信号层和错误操作拒绝、一次提交后原 RPC 保持，以及 ACK 后正常发布 fd；两架构 `pipeio` 及 18 项 IPC 上下文主机回归通过。公开 `open()` 的信号重启策略和资源接入尚未贯通。
+
 stage471：libsys 可为路径 OPEN 预留单个本地 fd，并在原创建请求已 ACK、后端引用已接管后发布该 fd。fd 在准备期没有可用 File，提交前撤销会归还预留位；发布时保留 FD_CLOEXEC。ARM64、RV64 QEMU `runtime` 通过真实普通 OPEN 验证撤销与复用、最终发布和精确引用收尾；36 项创建账本主机测试通过。公开 `open()`、生产 VFS 和资源交付的完整前台流程仍待接。
 
 stage466：打开可写日志统一走 `journalrecover`，移除仅按块数接收重放镜像的旧入口。EMPTY 和 COMMITTED 都须通过卷布局、设备容量、flush 与故障边界检查，前者才可开始新事务，后者才可发出 home 写入。双架构 QEMU `virtiodev` 验证超出容量、无 flush 或缺可信故障边界时拒绝开启，并保留真实回写及盘面核对；`runtime` 验证重放各步骤中断后只排空原票、不继续写。37 项 FS 主机测试通过。盘上解码、独占发权和生产挂载仍待接。

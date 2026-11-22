@@ -524,16 +524,16 @@ sysctxcreatewait(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork
     return -ERR_INVALID;
   return operation(bank, self, layer, pool, work, cache, key, 0, SYS_RQWAIT, out);
 }
-isize
-sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
-               Conncache *cache, const Opkey *key, Rkey *out)
+static isize
+createstep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+           const Opkey *key, u64 opcode, Rkey *out)
 {
   const Slotop *op;
   isize         error = sysfilecreatecheck(pool, work, cache, key);
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_PIPE || layer >= RCTX_LAYERS || key->lease.slot / 2 != layer)
+  if (op->opcode != opcode || layer >= RCTX_LAYERS || key->lease.slot / 2 != layer)
     return -ERR_INVALID;
   switch (op->phase) {
   case SYSOP_PREPARED:
@@ -546,6 +546,12 @@ sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *
   default:
     return -ERR_STATE;
   }
+}
+isize
+sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+               Conncache *cache, const Opkey *key, Rkey *out)
+{
+  return createstep(bank, self, layer, pool, work, cache, key, FS_PIPE, out);
 }
 isize
 sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
@@ -647,9 +653,9 @@ restore:
   return error ? error : status;
 }
 
-isize
-sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
-             Conncache *cache, const Opkey *key, Rkey *active)
+static isize
+createio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+         const Opkey *key, u64 opcode, Rkey *active)
 {
   Rctx *context;
   u64   mask, ignored;
@@ -660,8 +666,16 @@ sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *wo
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
+  error = sysfilecreatecheck(pool, work, cache, key);
+  if (error)
+    goto restore;
+  if (work->state.operations[key->lease.slot].opcode != opcode || layer >= RCTX_LAYERS ||
+      key->lease.slot / 2 != layer) {
+    error = -ERR_INVALID;
+    goto restore;
+  }
   if (!active->sequence) {
-    error = sysctxpipestep(bank, self, layer, pool, work, cache, key, active);
+    error = createstep(bank, self, layer, pool, work, cache, key, opcode, active);
     if (error)
       goto restore;
   }
@@ -698,6 +712,20 @@ sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *wo
 restore:
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return status ? status : error;
+}
+
+isize
+sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+             Conncache *cache, const Opkey *key, Rkey *active)
+{
+  return createio(bank, self, layer, pool, work, cache, key, FS_PIPE, active);
+}
+
+isize
+sysctxopenio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
+             Conncache *cache, const Opkey *key, Rkey *active)
+{
+  return createio(bank, self, layer, pool, work, cache, key, FS_OPEN, active);
 }
 
 isize
