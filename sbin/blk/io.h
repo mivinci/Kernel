@@ -27,7 +27,7 @@ struct Blkqueue
   const Blkdma *buffers;
   Vblkconfig    config;
   u64           generation, geometry, serial;
-  u32           count, state, reclaimed, configpending;
+  u32           count, state, reclaimed, ringreclaimed, configpending;
 };
 
 /* The driver owns the request and its exclusive DMA windows until completion
@@ -54,6 +54,12 @@ int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *coun
    ring pages in both address spaces. The caller owns the mappings. */
 int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
              u32 count, const u64 addresses[3]);
+/* Start queue zero on a reset, feature-negotiated block device. Validate all
+   windows before initializing the ring or exposing any addresses to hardware.
+   If device programming fails, the queue remains faulted and owns the DMA
+   windows; drive blkqrecover before releasing them. */
+int blkqstart(Blkqueue *, Vdev *, Vring *, u64 generation, void *const mapping[3],
+              const u64 addresses[3], const Vringops *, Vblkreq *, const Blkdma *, u32 count);
 /* Drain more before rearming IRQ. An observed CONFIG keeps submission
    blocked until refresh succeeds, even after the IRQ hint is cleared.
    Transport and buffer ownership faults close the queue until recovery. */

@@ -62,6 +62,9 @@ STATIC_ASSERT(sizeof(Vusedring) == 1028, virtio_used_layout);
 /* Three distinct aligned/exclusively owned DMA pages; device already stopped.
    Does not enable hardware or prove that a previous device instance stopped. */
 int vrinit(Vring *ring, u64 generation, void *desc, void *avail, void *used, const Vringops *ops);
+/* After the owner confirms device stop, return all ring pages to the CPU.
+   A retry resumes at the first page whose AFTER did not succeed. */
+int vrreclaim(Vring *ring, u32 *next);
 /* Caller validated all device addresses/domain, completed data BEFORE, and
    retains buffers. published=1 means avail.idx may be visible, even on error.
    Before publication caller must AFTER any prepared buffers before reusing.

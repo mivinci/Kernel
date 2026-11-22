@@ -54,6 +54,24 @@ vrinit(Vring *r, u64 generation, void *desc, void *avail, void *used, const Vrin
   r->initialized = 1;
   return 0;
 }
+
+int
+vrreclaim(Vring *r, u32 *next)
+{
+  int error;
+  if (!r || !r->initialized || !next || *next > VR_USED + 1)
+    return -ERR_INVALID;
+  r->queue.broken = 1;
+  while (*next <= VR_USED) {
+    error = sync(r, *next, VR_AFTER, 0, PAGE_SIZE);
+    if (error)
+      return error;
+    (*next)++;
+  }
+  r->ops.fence(r->ops.context, VR_ACQUIRE);
+  return 0;
+}
+
 int
 vrsubmit(Vring *r, const Vbuf *buffers, u32 count, u64 cookie, u32 *published)
 {

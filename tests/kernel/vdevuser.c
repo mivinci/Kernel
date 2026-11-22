@@ -18,6 +18,7 @@
 #include "../../sbin/fs/walk.h"
 #include "virtiouser.h"
 volatile u64             vdev_trace[VTEST_TRACE];
+static u32               ringafter[3], failringafter;
 typedef struct Testdma   Testdma;
 typedef struct Resetsync Resetsync;
 struct Testdma
@@ -61,9 +62,15 @@ reset(Vdev *device)
 static int
 coherentsync(void *context, u32 region, u32 phase, u64 offset, u64 length)
 {
-  UNUSED(region);
-  UNUSED(offset);
-  UNUSED(length);
+  Vdev *device = context;
+  if (phase == VR_AFTER && !offset && length == PAGE_SIZE) {
+    REQUIRE(region < ARRAY_SIZE(ringafter) && device->state == VDEV_RESET && !device->status, 467);
+    ringafter[region]++;
+    if (region == VR_AVAIL && failringafter) {
+      failringafter = 0;
+      return -ERR_BUSY;
+    }
+  }
   /* This fixture only runs on QEMU virt's coherent guest RAM. */
   virtiofence(context, phase);
   return 0;
@@ -830,9 +837,16 @@ resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
               blkqsubmit(queue, 0, VBLK_READ, 0, config->blocksize, NULL, blksync, device) ==
                   -ERR_STATE,
           229);
+  ringafter[0] = ringafter[1] = ringafter[2] = 0;
+  failringafter = 1;
   REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes &&
-              !blkqrecover(queue, now()) && sync.after == 4 && !request->active && !request->held &&
-              fault.after == 1 && !request[1].held &&
+              blkqrecover(queue, now()) == -ERR_BUSY && sync.after == 4 && !request->active &&
+              !request->held && fault.after == 1 && !request[1].held &&
+              queue->state == BLKQ_RECLAIM && ringafter[0] == 1 && ringafter[1] == 1 &&
+              !ringafter[2],
+          468);
+  REQUIRE(!blkqrecover(queue, now()) && sync.after == 4 && fault.after == 1 && ringafter[0] == 1 &&
+              ringafter[1] == 2 && ringafter[2] == 1 &&
               blkqinit(queue, device, ring, request, queue->buffers, queue->count, addresses) ==
                   -ERR_STALE,
           189);
@@ -1754,10 +1768,22 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
               fresh.flush == config->flush && fresh.blocksize == config->blocksize &&
               fresh.physical == config->physical && fresh.alignment == config->alignment,
           183);
-  startqueue(device, &ring, 2, &dma);
-  REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) &&
-              blkqmatch(&queue, &prior) == -ERR_STALE,
-          230);
+  {
+    u8      *base = (void *) dma.va;
+    void    *mapping[3] = {base, base + PAGE_SIZE, base + 2 * PAGE_SIZE};
+    Vringops ops = {device, coherentsync, virtiofence, notify};
+    buffers[1].statusaddr = ringaddr[2];
+    REQUIRE(blkqstart(&queue, device, &ring, 2, mapping, ringaddr, &ops, requests, buffers,
+                      ARRAY_SIZE(requests)) == -ERR_INVALID &&
+                !device->queues && device->state == VDEV_FEATURES && queue.state == BLKQ_STOPPED &&
+                ring.queue.generation == 1,
+            466);
+    testbuffer(&dma, 6, &buffers[1]);
+    REQUIRE(!blkqstart(&queue, device, &ring, 2, mapping, ringaddr, &ops, requests, buffers,
+                       ARRAY_SIZE(requests)) &&
+                blkqmatch(&queue, &prior) == -ERR_STALE,
+            230);
+  }
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);
   REQUIRE(prior.generation == 1, 191);
   transfer(device, &ring, 2, binding, irqevent, &fresh, &dma, VBLK_READ,

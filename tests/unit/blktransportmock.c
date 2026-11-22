@@ -497,6 +497,24 @@ vfeatures(Vdev *input, u64 wanted, u64 required)
 }
 
 int
+vqueue(Vdev *input, u32 index, u64 desc, u64 avail, u64 used)
+{
+  (void) input;
+  (void) index;
+  (void) desc;
+  (void) avail;
+  (void) used;
+  return -ERR_NOTSUP;
+}
+
+int
+vstart(Vdev *input)
+{
+  (void) input;
+  return -ERR_NOTSUP;
+}
+
+int
 vresetbegin(Vdev *input, u64 now)
 {
   (void) input;

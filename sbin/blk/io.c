@@ -101,30 +101,28 @@ windows(const Blkdma *buffer, u32 count, const u64 pages[3], u32 cpu)
   return 1;
 }
 
-int
-blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
-         u32 count, const u64 addresses[3])
+static int
+checkring(const Blkqueue *queue, const Vdev *device, u64 generation, const Vblkreq *slots,
+          const Blkdma *buffers, u32 count, const u64 addresses[3], const u64 pages[3])
 {
-  u64 pages[3];
-  u32 i;
-  int error;
-  if (!queue || !device || !ring || !ring->initialized || !slots || !buffers || !count ||
-      count > VQ_SIZE || !addresses)
+  if (!queue || !device || !generation || !slots || !buffers || !count || count > VQ_SIZE ||
+      !addresses)
     return -ERR_INVALID;
   if (queue->state && (queue->state != BLKQ_STOPPED || device != queue->device))
     return -ERR_STATE;
-  if (queue->state && ring->queue.generation <= queue->generation)
+  if (queue->state && generation <= queue->generation)
     return -ERR_STALE;
-  if (device->state != VDEV_LIVE)
-    return -ERR_STATE;
-  pages[0] = (uintptr_t) ring->desc;
-  pages[1] = (uintptr_t) ring->avail;
-  pages[2] = (uintptr_t) ring->used;
   if (!windows(buffers, count, addresses, 0) || !windows(buffers, count, pages, 1))
     return -ERR_INVALID;
-  error = vblkconfig(device, &queue->config);
-  if (error)
-    return error;
+  return 0;
+}
+
+static void
+bindring(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
+         u32 count, const Vblkconfig *config)
+{
+  u32 i;
+  queue->config = *config;
   queue->device = device;
   queue->ring = ring;
   queue->slots = slots;
@@ -134,10 +132,68 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
   queue->geometry = 1;
   queue->serial = 0;
   queue->reclaimed = 0;
+  queue->ringreclaimed = 0;
   queue->configpending = 0;
   queue->state = BLKQ_OPEN;
   for (i = 0; i < count; i++)
     slots[i].held = slots[i].active = 0;
+}
+
+int
+blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
+         u32 count, const u64 addresses[3])
+{
+  u64        pages[3];
+  Vblkconfig config;
+  int        error;
+  if (!ring || !ring->initialized)
+    return -ERR_INVALID;
+  pages[0] = (uintptr_t) ring->desc;
+  pages[1] = (uintptr_t) ring->avail;
+  pages[2] = (uintptr_t) ring->used;
+  error = checkring(queue, device, ring->queue.generation, slots, buffers, count, addresses, pages);
+  if (error)
+    return error;
+  if (device->state != VDEV_LIVE)
+    return -ERR_STATE;
+  error = vblkconfig(device, &config);
+  if (error)
+    return error;
+  bindring(queue, device, ring, slots, buffers, count, &config);
+  return 0;
+}
+
+int
+blkqstart(Blkqueue *queue, Vdev *device, Vring *ring, u64 generation, void *const mapping[3],
+          const u64 addresses[3], const Vringops *ops, Vblkreq *slots, const Blkdma *buffers,
+          u32 count)
+{
+  u64        pages[3];
+  Vblkconfig config;
+  int        error;
+  if (!ring || !mapping || !mapping[0] || !mapping[1] || !mapping[2])
+    return -ERR_INVALID;
+  pages[0] = (uintptr_t) mapping[0];
+  pages[1] = (uintptr_t) mapping[1];
+  pages[2] = (uintptr_t) mapping[2];
+  error = checkring(queue, device, generation, slots, buffers, count, addresses, pages);
+  if (error)
+    return error;
+  if (device->state != VDEV_FEATURES || device->queues)
+    return -ERR_STATE;
+  error = vblkconfig(device, &config);
+  if (!error)
+    error = vrinit(ring, generation, mapping[0], mapping[1], mapping[2], ops);
+  if (error)
+    return error;
+  bindring(queue, device, ring, slots, buffers, count, &config);
+  queue->state = BLKQ_FAULT;
+  error = vqueue(device, 0, addresses[0], addresses[1], addresses[2]);
+  if (!error)
+    error = vstart(device);
+  if (error)
+    return error;
+  queue->state = BLKQ_OPEN;
   return 0;
 }
 
@@ -291,6 +347,9 @@ blkqrecover(Blkqueue *queue, u64 now)
   }
   if (queue->reclaimed < queue->count)
     return -ERR_WOULD_BLOCK;
+  error = vrreclaim(queue->ring, &queue->ringreclaimed);
+  if (error)
+    return error;
   queue->state = BLKQ_STOPPED;
   return 0;
 }
