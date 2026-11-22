@@ -2505,6 +2505,59 @@ open:
 }
 
 static void
+publicchdirserver(const Bootview *boot)
+{
+  Filelink       link = {0};
+  Openfixture    fixture = {0};
+  Openjob        job = {0};
+  Fscontext      context = {0};
+  Pipetable      pipes = {0};
+  const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
+  const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
+  Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
+  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,       1,
+                         0,         &fixture,        openselect, opencancel, opencomplete};
+  Fsservice      fs = {bootresource(boot, 256),
+                       bootresource(boot, BOOT_SELF_ALLOC),
+                       bootresource(boot, BOOT_SELF_SPACE),
+                       ADDRESS,
+                       &link,
+                       1,
+                       {&pipes, NULL, 0, NULL, 0, NULL, NULL},
+                       &open,
+                       0,
+                       NULL};
+  Sigsel         target = {SIGNAL_SELECT_PID, 0};
+  Ipcmsg         request, event;
+  Fileslot       slot;
+  Msg            reply = {{(u64) -EINTR, 0, 0, 0}};
+  u64            state;
+  fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
+  CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
+  fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
+  fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
+  CHECK(!fsstep(&fs) && link.ready);
+  target.target = link.watch.owner.pid;
+  CHECK(!fscontextadd(&contexts, target.target, link.watch.owner.image, &fixture.root,
+                      &fixture.root, 027));
+  CHECK(!fsstep(&fs) && context.cwd == &fixture.root && context.version == 1);
+  CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
+  CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
+  CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_PATH &&
+        !sysfilelinkaccept(&link, 1, &request, &slot) && slot.args[0] == FS_PATH_CHDIR &&
+        !ipc_defer(request.request));
+  CHECK(!__sys_sigsend(&target, SIGNAL_USR1));
+  CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
+        !ipc_rqcheck(request.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+  reply.words[1] = slot.seq;
+  CHECK(!ipc_reply(request.request, &reply) &&
+        !sysfilefinish(&link.watch.active, request.request) &&
+        !fscontextremove(&contexts, target.target, link.watch.owner.image) && !fixture.holds &&
+        !sysfilelinkclose(&link));
+  pipeiotrace[0] = 7;
+}
+
+static void
 lateopenserver(const Bootview *boot)
 {
   Filelink              link = {0};
@@ -2578,6 +2631,23 @@ lateopenclient(void)
   pipeiotrace[0] = 7;
 }
 
+static void
+publicchdirclient(void)
+{
+  Connwork        *peer;
+  struct sigaction action = {0};
+  CHECK(!sysfileimagefs(0, ADDRESS, &peer));
+  CHECK(chdir("") == -1 && errno == ENOENT && chdir((const char *) (uintptr_t) 1) == -1 &&
+        errno == EFAULT && chdir("/n") == -1 && errno == EACCES && !chdir("/d") &&
+        errno == EACCES && !chdir(".") && !peer->state.operations[0].phase &&
+        !peer->state.operations[1].phase);
+  action.sa_handler = lateopensignal;
+  action.sa_flags = SA_RESTART;
+  CHECK(!sigaction(SIGUSR1, &action, NULL) && chdir("/d") == -1 && errno == EINTR && caught == 1 &&
+        !peer->state.operations[0].phase && !peer->state.operations[1].phase);
+  pipeiotrace[0] = 7;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2593,6 +2663,10 @@ main(int argc, char **argv)
     lateopenserver(boot);
   else if (argv[0][0] == 'w')
     lateopenclient();
+  else if (argv[0][0] == 'K')
+    publicchdirserver(boot);
+  else if (argv[0][0] == 'k')
+    publicchdirclient();
   else if (argv[0][0] == 'S' || argv[0][0] == 'B')
     serviceloop(boot, 0);
   else if (argv[0][0] == 'b')

@@ -52,7 +52,7 @@ match(Connwork *work, Conncache *cache, const Opkey *key, Slotop **out)
   if (!op->phase || op->lease.seq != key->lease.seq || op->lease.slot != key->lease.slot ||
       op->lease.span != key->lease.span || op->owner != key->owner)
     return -ERR_STALE;
-  if (op->phase > SYSOP_ACKED || !op->file ||
+  if (op->phase > SYSOP_ACKED || (!op->file && (op->opcode != FS_PATH || op->object)) ||
       op->flags & ~(SYSOP_BACKGROUND | SYSOP_SAVED | SYSOP_RESOURCE_MOVED | SYSOP_BAD_RESULT |
                     SYSOP_CANCEL_SENT | SYSOP_APP_ENDED | SYSOP_CREATOR) ||
       ((op->flags & SYSOP_BACKGROUND) ? op->owner != 0 : op->owner == 0) ||
@@ -88,8 +88,8 @@ sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner,
   Filelease lease;
   Slotop   *op;
   isize     error;
-  if (!owner || !output(work, cache, owned_file, sizeof(*owned_file)) || !*owned_file ||
-      !output(work, cache, out, sizeof(*out)) ||
+  if (!owner || !output(work, cache, owned_file, sizeof(*owned_file)) ||
+      (!*owned_file && (opcode != FS_PATH || object)) || !output(work, cache, out, sizeof(*out)) ||
       !separate(owned_file, sizeof(*owned_file), out, sizeof(*out)) || opcode < FS_OPEN ||
       opcode > FS_PIPE || opcode == FS_ATTACH || opcode == FS_EXEC_CLAIM || opcode == FS_ABORT ||
       (opcode >= 13 && opcode <= 15) || (context >= SYSFILE_CONTROL && opcode != FS_CLOSE) ||
@@ -302,7 +302,7 @@ interruptible(const Slotop *op)
   if (op->flags & SYSOP_BACKGROUND ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
        op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_OPEN &&
-       op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
+       op->opcode != FS_PATH && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
     return -ERR_NOTSUP;
   if (!(op->flags & SYSOP_CANCEL_SENT) && op->deadline)
     return -ERR_STATE;
@@ -432,7 +432,8 @@ sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
     return error;
   if (!(op->flags & SYSOP_APP_ENDED) || !(op->flags & SYSOP_BACKGROUND) ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && !pollopcode(op->opcode)))
+       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_PATH &&
+       !pollopcode(op->opcode)))
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_WAITING) {
     error = sysoppoll(work, cache, key);
@@ -478,7 +479,7 @@ sysoprecover(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
       entry.peer.pid != work->state.peer.pid || entry.peer.image != work->state.peer.image)
     return -ERR_STATE;
   if ((op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC) ||
+       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_PATH) ||
       op->flags & SYSOP_CREATOR)
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_PREPARED)

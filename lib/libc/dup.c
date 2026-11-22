@@ -189,6 +189,18 @@ fdatasync(int fd)
   return syncfd(fd, 1);
 }
 
+int
+chdir(const char *path)
+{
+  Fileioresult completed;
+  isize        status = sysfileimagechdir(__libc_sigdepth(), path, &completed);
+  if (status == -ERR_NOTSUP) {
+    errno = ENOSYS;
+    return -1;
+  }
+  return (int) ioresult(FS_PATH, status, &completed);
+}
+
 STATIC_ASSERT(sizeof(struct termios) == sizeof(Termarg), termios_size);
 STATIC_ASSERT(offsetof(struct termios, c_iflag) == offsetof(Termarg, iflag), termios_iflag);
 STATIC_ASSERT(offsetof(struct termios, c_oflag) == offsetof(Termarg, oflag), termios_oflag);

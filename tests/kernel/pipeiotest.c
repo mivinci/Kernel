@@ -46,7 +46,7 @@ testactors(const char *roles)
   for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
     int     client = i + 1 == count;
-    if (roles[i] == 'c' || roles[i] == 'o') {
+    if (roles[i] == 'c' || roles[i] == 'o' || roles[i] == 'K' || roles[i] == 'k') {
       const Cred credentials = {21, 22, 31, 32};
       CHECK(!lifecredentials(processes[i].life, &credentials));
     }
@@ -130,6 +130,7 @@ pipeiotest(void)
   testactors("sc");
   testactors("Oo");
   testactors("Ww");
+  testactors("Kk");
   testactors("SC");
   testactors("Ii");
   testactors("Tt");

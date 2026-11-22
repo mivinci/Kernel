@@ -1,4 +1,5 @@
 #include "private/fileimage.h"
+#include "private/argument.h"
 #include "private/close.h"
 #include "private/sigentry.h"
 #include "private/start.h"
@@ -676,7 +677,7 @@ static int
 ioopcode(u64 opcode)
 {
   return opcode == FS_READ || opcode == FS_WRITE || opcode == FS_SEEK || opcode == FS_TTYCTL ||
-         opcode == FS_SYNC;
+         opcode == FS_SYNC || opcode == FS_PATH;
 }
 
 static isize
@@ -694,8 +695,8 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
                        0, &draft);
   if (!error) {
     base = work->state.map.address;
-    if (opcode == FS_WRITE && bytes) {
-      if (!replay)
+    if ((opcode == FS_WRITE || opcode == FS_PATH) && bytes) {
+      if (opcode == FS_WRITE && !replay)
         error = __sys_copy(snapshot, input, bytes);
       if (!error)
         error = __sys_copy((void *) (base + FS_DATA_OFFSET + draft.lease.slot * FS_SLOT_BYTES),
@@ -710,6 +711,9 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
       if (opcode == FS_TTYCTL) {
         descriptor.args[0] = TTY_GETATTR;
         descriptor.args[4] = sizeof(Termarg);
+      } else if (opcode == FS_PATH) {
+        descriptor.args[0] = FS_PATH_CHDIR;
+        descriptor.args[2] = bytes;
       } else {
         descriptor.args[0] = offset;
         descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
@@ -728,7 +732,37 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
     if (sysopabort(work, cache, &draft, &pin))
       return -ERR_STATE;
   }
-  return sysfilerefunpin(&state->files, state->files.self, pin) ? -ERR_STATE : error;
+  return pin && sysfilerefunpin(&state->files, state->files.self, pin) ? -ERR_STATE : error;
+}
+
+static isize
+stagechdir(Fileimage *state, u32 layer, const char *path, Connwork **work, Opkey *key, u64 *bytes,
+           isize *business)
+{
+  Connentry entry;
+  isize     error;
+  if (layer >= RCTX_LAYERS)
+    return -ERR_INVALID;
+  if (state->contexts.contexts[layer].phase != RCTX_FREE)
+    return -ERR_BUSY;
+  if (state->contexts.sequence == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  error = sysargstring(state->contexts.snapshots[layer], FS_SLOT_BYTES, path, bytes);
+  if (error == -ERR_LIMIT || (!error && *bytes == 1)) {
+    *business = error ? -ENAMETOOLONG : -ENOENT;
+    return 0;
+  }
+  if (error)
+    return error;
+  if (!fstag.generation)
+    return -ERR_NOTSUP;
+  error = sysconnview(sysfileimagecache(state), fstag, &entry);
+  if (error)
+    return error;
+  if (entry.state != SYSCONN_READY)
+    return entry.state == SYSCONN_DRAINING ? -ERR_PEER : -ERR_NOTSUP;
+  *work = &state->connections[fstag.index];
+  return iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, 0, 0, 0, key);
 }
 
 static isize
@@ -898,10 +932,10 @@ restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
   error = sysoppoll(work, cache, key);
   if (error)
     return error;
-  /* A delivered SYNC may have started writeback even if interrupted. */
+  /* SYNC and CHDIR replay only when native cancellation proves no delivery. */
   if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT ||
       !(op->flags & SYSOP_CANCEL_SENT) || op->words[2] || op->words[3] ||
-      (op->opcode == FS_SYNC && op->status != -ERR_CANCELLED) ||
+      ((op->opcode == FS_SYNC || op->opcode == FS_PATH) && op->status != -ERR_CANCELLED) ||
       (op->status == -ERR_CANCELLED
            ? (op->words[0] || op->words[1])
            : (op->status || (isize) op->words[0] != -EINTR || op->words[1] != key->lease.seq)))
@@ -950,7 +984,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
     return error;
   op = &work->state.operations[key->lease.slot];
   if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
-      (op->opcode == FS_SYNC && bytes))
+      ((op->opcode == FS_SYNC || op->opcode == FS_PATH) && bytes))
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (!error)
@@ -1029,7 +1063,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
       return error;
   }
   error = sysopfinish(work, cache, key, &file);
-  if (!error)
+  if (!error && file)
     error = sysfilerefunpin(&state->files, work->state.self, file);
   if (!error)
     fileprogress(state);
@@ -1047,7 +1081,7 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
   Opkey      key, background;
   u64        mask, ignored, file;
   u32        restart, interrupted = 0, retry = 1;
-  isize      error, discard;
+  isize      error, discard, business = 0;
   error = sysfileimage(&state);
   if (error)
     return error;
@@ -1056,7 +1090,15 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
     return error;
   fileprogress(state);
   bytes = MIN(bytes, FS_SLOT_BYTES);
-  error = stagefd(state, layer, fd, opcode, input, bytes, offset, positional, &work, &key);
+  if (opcode == FS_PATH) {
+    error = stagechdir(state, layer, input, &work, &key, &bytes, &business);
+    if (business) {
+      result->native = result->count = 0;
+      result->business = business;
+      goto restore;
+    }
+  } else
+    error = stagefd(state, layer, fd, opcode, input, bytes, offset, positional, &work, &key);
   if (error)
     goto restore;
   cache = sysfileimagecache(state);
@@ -1078,7 +1120,7 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
         error = 0; /* Fixed result takes precedence over restart. */
     }
     if (!error) {
-      error = sysfileiofinish(state, &key, output, bytes, result);
+      error = sysfileiofinish(state, &key, output, opcode == FS_PATH ? 0 : bytes, result);
       if (!error)
         break;
     }
@@ -1087,7 +1129,7 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
     op = &work->state.operations[key.lease.slot];
     if (op->phase == SYSOP_PREPARED) {
       discard = sysopabort(work, cache, &key, &file);
-      if (!discard)
+      if (!discard && file)
         discard = sysfilerefunpin(&state->files, work->state.self, file);
       if (discard)
         error = discard;
@@ -1139,6 +1181,12 @@ isize
 sysfileimagesync(u32 layer, int fd, u32 dataonly, Fileioresult *result)
 {
   return imageio(layer, fd, FS_SYNC, NULL, NULL, 0, dataonly, 0, result);
+}
+
+isize
+sysfileimagechdir(u32 layer, const char *path, Fileioresult *result)
+{
+  return imageio(layer, -1, FS_PATH, path, NULL, 0, 0, 0, result);
 }
 
 isize
@@ -1256,7 +1304,7 @@ fileprogress(Fileimage *state)
         draining |= bit;
         if (op->rpc)
           active = 1;
-      } else
+      } else if (file)
         (void) sysfilerefunpin(&state->files, work->state.self, file);
     }
   }

@@ -25,8 +25,9 @@ struct Opkey
 STATIC_ASSERT(sizeof(Opkey) == 40, slot_operation_key_size);
 /* Caller excludes caught signals for short operations; no blocking calls.
    Read-only keys stay stable for the call and must not overlap any output.
-   File is a single already-pinned local reference, not a service authority.
-   prepare moves it into the starting slot with the full page span. Caller
+   File is a single already-pinned local reference. A path operation with
+   object zero may hold the connection slot without a File. prepare moves
+   the pin, if present, into the starting slot with the full page span. Caller
    builds/validates the actual shared descriptor/payload and submits its Rq
    before moving the returned RPC. Typed creators instead hold a reserved
    carrier with SYSOP_CREATOR; generic abort/finish cannot return it as a pin.
@@ -56,7 +57,7 @@ isize sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize sta
                    const Ipcmsg *result);
 isize sysoppoll(Connwork *work, Conncache *cache, const Opkey *key);
 isize sysopcancel(Connwork *work, Conncache *cache, const Opkey *key);
-/* Explicit foreground POSIX policy only: READ/WRITE/OPEN/POLL. Fresh policy
+/* Explicit foreground POSIX policy for file I/O, OPEN, PATH and POLL. Fresh policy
    requires deadline=0; first successful cancel stores now+CONTROL_NS, never
    resets it. Completed results win and background/transactional work refuses
    this policy. now is the runtime's monotonic nanosecond sample. */
@@ -68,13 +69,13 @@ isize sysopinterrupt(Connwork *work, Conncache *cache, const Opkey *key, u64 now
    and clears owned_key. The frontend maps ABANDONED to EIO, never EINTR or
    zero progress; this native helper does not write errno or app memory. */
 isize sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, Opkey *out);
-/* Explicitly abandoned data, seek, or poll work. Nonblocking late-result/real-finish
+/* Explicitly abandoned file I/O, path, or poll work. Nonblocking late-result/real-finish
    collection, drop any installed MEM/CALL reply, then ACK and return the
-   pinned File once. file must initially be zero. Never copies payload or
+   pinned File once, if present. file must initially be zero. Never copies payload or
    compensates OPEN/PIPE/reference-creating transactions by guessing. */
 isize sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file);
 /* Exact old backend independently ended/DRAINING, bound Rctx finished.
-   READ/WRITE only, never a creator or CLOSE. Unsubmitted work can abort;
+   File I/O or path only, never a creator or CLOSE. Unsubmitted work can abort;
    submitted work must retain an empty native PEER result and actually FINISH
    before SAVED/ACK/page release. A fixed success or different error stays
    owned for its original result path, not rewritten or replayed. Foreground
