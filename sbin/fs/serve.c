@@ -81,9 +81,15 @@ fsstep(Fsservice *fs)
   error = pipepump(&fs->pipes);
   if (error)
     return error;
+  if (fs->reclaim && fs->reclaim->work && fs->reclaim->work->txid) {
+    error = reclaimstep(fs->reclaim->work, fs->reclaim->submit, fs->reclaim->context);
+    if (error)
+      return error < 0 ? error : 0;
+  }
   error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
                        (fs->loads ? fs->loads->events : 0) |
-                       (fs->pipes.reads ? fs->pipes.reads->events : 0),
+                       (fs->pipes.reads ? fs->pipes.reads->events : 0) |
+                       (fs->reclaim ? fs->reclaim->events : 0),
                    0, &input);
   if (error)
     return error == -ERR_INTERRUPTED ? 0 : error;

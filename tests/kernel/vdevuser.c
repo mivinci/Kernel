@@ -440,14 +440,14 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
           294);
   REQUIRE(!journalreclaim(&work, journal, cache, &batch, map, NULL, committed, &meta), 290);
   for (step = 0; journal->phase != JOURNAL_DONE; step++) {
-    REQUIRE(step < 12 && !journalpump(journal, journalsubmit, &transport) &&
+    REQUIRE(step < 12 && !reclaimstep(&work, journalsubmit, &transport) &&
                 transport.ticket.txid == 50 && reclaimpublish(&work) == -ERR_WOULD_BLOCK &&
                 map->direct[1] == 100 && committed->used[1] == before,
             291);
     journaldrain(&transport, journal);
   }
-  REQUIRE(step == 12 && journalpump(journal, journalsubmit, &transport) == 1 &&
-              !reclaimpublish(&work) && !map->direct[1] && journal->last == 50 &&
+  REQUIRE(step == 12 && reclaimstep(&work, journalsubmit, &transport) == 1 && !work.txid &&
+              !map->direct[1] && journal->last == 50 &&
               committed->used[1] == (UINT64_C(1) << (FS_DATA_START - 64)),
           293);
 }

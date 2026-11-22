@@ -338,6 +338,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         {&table, &wait, 1, &poll, 1, NULL, NULL},
                         NULL,
                         0,
+                        NULL,
                         NULL};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
@@ -2187,6 +2188,7 @@ openserver(const Bootview *boot)
                        {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
                        &open,
                        0,
+                       NULL,
                        NULL};
   u32            i;
   const Loadfile executable = {2, 1, 1, 20};
@@ -2669,6 +2671,7 @@ publicchdirserver(const Bootview *boot)
                        {&pipes, NULL, 0, NULL, 0, &fixture.files, NULL},
                        &open,
                        0,
+                       NULL,
                        NULL};
   Sigsel         target = {SIGNAL_SELECT_PID, 0};
   Ipcmsg         request, event;

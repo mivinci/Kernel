@@ -477,6 +477,20 @@ reclaimpublish(Reclaimtx *work)
   return 0;
 }
 
+isize
+reclaimstep(Reclaimtx *work, isize (*submit)(void *, const Journalio *, u64, u32), void *context)
+{
+  Journal *journal;
+  isize    result;
+  if (!work || !(journal = work->journal) || !work->txid || work->txid != journal->txid)
+    return -ERR_STALE;
+  result = journalpump(journal, submit, context);
+  if (result <= 0)
+    return result;
+  result = reclaimpublish(work);
+  return result == -ERR_BUSY ? 0 : result ? result : 1;
+}
+
 static int
 shrinkmatch(const Loadmap *live, const Loadmap *staged, u64 length)
 {

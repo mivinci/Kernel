@@ -145,6 +145,10 @@ isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclai
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */
 isize reclaimpublish(Reclaimtx *);
+/* Advance an owned batch by one I/O, or publish it after retirement.
+   Return one on publication, zero while awaiting I/O or cache ownership,
+   or an error. On error retain the batch for the volume owner to recover. */
+isize reclaimstep(Reclaimtx *, isize (*submit)(void *, const Journalio *, u64, u32), void *);
 /* Prepare the next batch from the committed bitmap and current cache state.
    Add any independent transport ownership in io. Hold the inode and volume
    writer guards through encoding and submission. As with loadreclaim, zero
