@@ -1561,14 +1561,14 @@ def exercise(args, run_dir, record):
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
                                   negotiated=3,resets=8,rng=1,rwsectors=1024,rosectors=128,
-                                  reads=8,writes=35,flushes=26,interrupts=67,retired=2,blkrpc=1,
+                                  reads=9,writes=35,flushes=26,interrupts=68,retired=2,blkrpc=1,
                                   dmagrain=64 if args.arch == "arm64" else 0,charged=0,
                                   dmapages=9*len(transports),
                                   allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
                     stats = {row.get("device"): row["stats"] for row in qmp.command("query-blockstats")}
-                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 9),
+                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 10),
                                                                   ("ro", 128, 0xa7, 512, 3)):
                         disk = Path(temporary) / (name + ".raw")
                         counters = stats.get(name, {})

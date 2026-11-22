@@ -98,3 +98,36 @@ blkreadinode(Blkread *read, Cache *cache, const Redoscan *scan, u32 inode, void 
   return blkreadpart(read, cache, scan, FS_INODE_START + inode / slots, CACHE_META,
                      (inode % slots) * FS_INODE_BYTES, FS_INODE_BYTES, out);
 }
+
+isize
+blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
+{
+  Blkredoload *load = context;
+  isize        error;
+  u32          block;
+  if (!load || !scan || !scan->allocation || !out || !load->inode || !load->indirect || !ino ||
+      scan->next != ino || (load->pending && load->pending != ino))
+    return -ERR_INVALID;
+  if (!load->pending) {
+    error = blkreadinode(load->read, load->cache, scan, ino, load->bytes);
+    if (error)
+      return error;
+    if (load->inode(ino, load->bytes, &load->map, &load->kind, &load->links))
+      return -ERR_STATE;
+    load->pending = ino;
+  }
+  block = load->map.indirect;
+  if (block) {
+    if (block < FS_DATA_START || block >= scan->blocks ||
+        !(scan->allocation->used[block / 64] & (UINT64_C(1) << (block % 64))))
+      return -ERR_STATE;
+    error = blkreadview(load->read, load->cache, scan, block, CACHE_META, load->bytes);
+    if (error)
+      return error;
+    if (load->indirect(block, load->bytes, &load->index))
+      return -ERR_STATE;
+  }
+  *out = (Redoinode){&load->map, block ? &load->index : NULL, load->kind, load->links};
+  load->pending = 0;
+  return 0;
+}

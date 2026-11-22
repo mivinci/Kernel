@@ -20,7 +20,7 @@
 
 ## 最新验证
 
-- inode 归属扫描经块 IPC 读取 home inode 表并优先使用日志镜像；双架构 `virtiodev` 核对等待游标、扫描归属和设备计数，解码仍为夹具。
+- inode 归属扫描经块 IPC 读取 inode 表和间接索引，优先使用日志镜像；双架构 `virtiodev` 验证单槽缓存下，只读一次 inode 表和一次索引即可完成归属扫描。解码仍为夹具。
 - FS 私有块适配器经 ARM64/RV64 QEMU `virtiodev` 验证：原异步 RPC 在 FINISH 后保存结果，ACK 后交付 READ 及归还槽；INFO、WRITE、FLUSH、READ 走真实 IPC 和块盘。生产授权和挂载待接。
 - stage568：恢复扫描从暂停位置继续时仍按 inode 表块分批；双架构 QEMU `virtiodev` 和 50 项 FS 主机测试通过。
 - stage567：数据区重放要求同一卷大小及原镜像的完整归属扫描；双架构 QEMU `virtiodev`、`runtime` 和 50 项 FS 主机测试通过。
