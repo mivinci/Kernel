@@ -173,6 +173,11 @@ isize journalnext(Journal *journal, Journalio *out);
 /* Translate the exact outstanding ticket to a byte offset and length.
    FLUSH has zero offset and length. A stopped operation cannot be submitted. */
 isize journalrange(const Journal *, const Journalio *, u64 *offset, u32 *bytes);
+/* Drive one operation per event-loop turn. Return one at DONE, zero while
+   waiting, or an error. Submit copies the ticket before returning; a negative
+   result guarantees no lower access remains. Completion is delivered via
+   journalcomplete after drain. The owner retains snapshots and publishes. */
+isize journalpump(Journal *, isize (*submit)(void *, const Journalio *, u64, u32), void *);
 /* Call only when all lower access for this exact ticket has actually drained.
    Write success alone is not durability; only the succeeding flush advances
    that boundary. Known failure stops all new work, never implicitly retries. */

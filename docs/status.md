@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage530：截短和回收共用异步日志推进，在途 I/O 不重发；双架构 QEMU `virtiodev` 和 43 项 FS 主机测试通过。
 - stage529：日志字节范围只接受当前在途票据；双架构 QEMU `virtiodev` 和 43 项 FS 主机测试通过。
 - stage528：跨块 CRC32C 累计经双架构 QEMU `virtiodev` 验证；盘上编码仍待确认。
 - stage527：双架构 QEMU `virtiodev` 经实际块队列执行截短、尾块回收并核对盘面与 FLUSH；生产 FS/blk IPC 待接。

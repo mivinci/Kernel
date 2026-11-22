@@ -693,6 +693,32 @@ journalrange(const Journal *journal, const Journalio *ticket, u64 *offset, u32 *
 }
 
 isize
+journalpump(Journal *journal, isize (*submit)(void *, const Journalio *, u64, u32), void *context)
+{
+  Journalio io;
+  u64       offset;
+  u32       bytes;
+  isize     error;
+  if (!journal || !submit)
+    return -ERR_INVALID;
+  if (journal->active)
+    return 0;
+  if (journal->phase == JOURNAL_DONE)
+    return 1;
+  error = journalnext(journal, &io);
+  if (error)
+    return error;
+  error = journalrange(journal, &io, &offset, &bytes);
+  if (!error)
+    error = submit(context, &io, offset, bytes);
+  if (error) {
+    isize drain = journalcomplete(journal, &io, 0);
+    return drain ? drain : error;
+  }
+  return 0;
+}
+
+isize
 journalcomplete(Journal *journal, const Journalio *ticket, u32 success)
 {
   if (!journal || !external(journal, ticket, sizeof(*ticket)) || ticket->reserved || success > 1)

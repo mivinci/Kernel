@@ -772,6 +772,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage530：`journalpump` 每次推进最多一笔异步块 I/O，在途时不重复提交，已知未交付的提交失败使日志停止。ARM64/RV64 QEMU `virtiodev` 用该入口执行截短与回收，验证重复推进不会重发，实际设备完成后才推进日志；43 项 FS 主机测试通过。块服务 IPC 尚未接入。
+
 stage529：`journalrange` 只把当前未停止的精确日志票据转换成块设备字节范围。ARM64/RV64 QEMU `virtiodev` 验证旧票据不产生输出，当前 WRITE/FLUSH 经 virtio 块队列执行并核对盘面；43 项 FS 主机测试通过。生产块服务 IPC 仍待定稿和接入。
 
 stage528：`fscrc32c` 提供可跨块续算的原始 CRC32C 状态。ARM64/RV64 QEMU `virtiodev` 对回收事务的两份完整元数据镜像核对累计校验值，复验实际写入和 FLUSH。盘上编码仍待确认，夹具的初值和最终异或不构成磁盘约定。
