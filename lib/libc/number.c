@@ -2,7 +2,10 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
-typedef struct Integer Integer;
+typedef struct Integer                   Integer;
+__extension__ typedef long long          Llong;
+__extension__ typedef unsigned long long Ullong;
+STATIC_ASSERT(sizeof(long) == 8 && sizeof(Llong) == 8, number_lp64);
 struct Integer
 {
   unsigned long value;
@@ -79,4 +82,16 @@ strtoul(const char *string, char **end, int base)
 {
   Integer result = convert(string, end, base, 0);
   return result.negative && !result.overflow ? 0UL - result.value : result.value;
+}
+
+Llong
+strtoll(const char *string, char **end, int base)
+{
+  return strtol(string, end, base);
+}
+
+Ullong
+strtoull(const char *string, char **end, int base)
+{
+  return strtoul(string, end, base);
 }

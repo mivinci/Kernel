@@ -3,18 +3,20 @@
 #include <types.h>
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
-void         *malloc(size_t bytes);
-void         *calloc(size_t count, size_t bytes);
-void         *realloc(void *pointer, size_t bytes);
-void          free(void *pointer);
-int           atexit(void (*function)(void));
-NORETURN void exit(int status);
-NORETURN void abort(void);
-char         *getenv(const char *name);
-int           setenv(const char *name, const char *value, int overwrite);
-int           unsetenv(const char *name);
-long          strtol(const char *string, char **end, int base);
-unsigned long strtoul(const char *string, char **end, int base);
+void                            *malloc(size_t bytes);
+void                            *calloc(size_t count, size_t bytes);
+void                            *realloc(void *pointer, size_t bytes);
+void                             free(void *pointer);
+int                              atexit(void (*function)(void));
+NORETURN void                    exit(int status);
+NORETURN void                    abort(void);
+char                            *getenv(const char *name);
+int                              setenv(const char *name, const char *value, int overwrite);
+int                              unsetenv(const char *name);
+long                             strtol(const char *string, char **end, int base);
+unsigned long                    strtoul(const char *string, char **end, int base);
+__extension__ long long          strtoll(const char *string, char **end, int base);
+__extension__ unsigned long long strtoull(const char *string, char **end, int base);
 void  qsort(void *base, size_t count, size_t width, int (*compare)(const void *, const void *));
 void *bsearch(const void *key, const void *base, size_t count, size_t width,
               int (*compare)(const void *, const void *));

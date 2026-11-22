@@ -303,6 +303,14 @@ numbercheck(void)
     REQUIRE(strtoul(test->text, &end, test->base) == test->unsigned_value &&
                 end == test->text + test->end && errno == test->unsigned_error,
             181);
+    errno = EDOM;
+    REQUIRE(strtoll(test->text, &end, test->base) == test->signed_value &&
+                end == test->text + test->end && errno == test->signed_error,
+            180);
+    errno = EDOM;
+    REQUIRE(strtoull(test->text, &end, test->base) == test->unsigned_value &&
+                end == test->text + test->end && errno == test->unsigned_error,
+            181);
   }
   for (base = 2; base <= 36; base++) {
     errno = EDOM;
