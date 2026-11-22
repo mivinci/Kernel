@@ -1071,13 +1071,14 @@ static const u32 blkopcodes[] = {
     BLK_READ,  BLK_READ,                                   /* re-probe home */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* root directory */
-    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* directory iteration */
-    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* directory lookup */
-    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* symlink name */
-    BLK_READ,  BLK_READ,                                   /* link inode and contents */
-    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* dangling target lookup */
-    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* parent name lookup */
-    BLK_READ                                               /* file cache fill */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,
+    BLK_READ,                                  /* directory iteration across yield */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ, /* directory lookup */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ, /* symlink name */
+    BLK_READ,  BLK_READ,                       /* link inode and contents */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ, /* dangling target lookup */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ, /* parent name lookup */
+    BLK_READ                                   /* file cache fill */
 };
 
 static isize
@@ -1742,6 +1743,7 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(!cacheinit(&cache, &storage, 1, 256) && !blkiterstep(&cancelled, &item, &name) &&
                 blk.rpc,
             523);
+    REQUIRE(blkiteryield(&cancelled) == -ERR_WOULD_BLOCK && blk.rpc && !cancelled.offset, 532);
     REQUIRE(blkiterstop(&cancelled) == -ERR_WOULD_BLOCK && blk.rpc && !cancelled.offset &&
                 blkiterstep(&cancelled, &item, &name) == -ERR_CANCELLED &&
                 blkiterstep(&iter, &item, &name) == -ERR_BUSY && !item.inode && !name,
@@ -1772,6 +1774,13 @@ blkclient(const Bootview *boot, Handle call)
                             &(const char *){NULL}, &linkbytes) == -EBUSY &&
                 !linkbytes && !blk.rpc && item.inode == 34,
             535);
+    REQUIRE(!blkiteryield(&iter) && iter.offset == FS_BLOCK_BYTES && !iter.loaded &&
+                !home.load.reader,
+            536);
+    contender.generation++;
+    REQUIRE(blkiterstep(&contender, &item, &name) == -ERR_STALE && !blk.rpc &&
+                !blkiterstop(&contender),
+            536);
     for (i = 0, step = 0; i < 8 && !step; i++) {
       u64 before = iter.offset;
       step = blkiterstep(&iter, &item, &name);
@@ -1782,13 +1791,9 @@ blkclient(const Bootview *boot, Handle call)
         waits++;
       }
     }
-    REQUIRE(step == 2 && waits == 4 && !blk.rpc && iter.offset == 2 * FS_BLOCK_BYTES &&
+    REQUIRE(step == 2 && waits == 6 && !blk.rpc && iter.offset == 2 * FS_BLOCK_BYTES &&
                 item.inode == 34 && blkiterstep(&iter, &item, &name) == 2 && !blkiterstop(&iter),
             527);
-    contender.generation++;
-    REQUIRE(blkiterstep(&contender, &item, &name) == -ERR_STALE && !blk.rpc &&
-                !blkiterstop(&contender),
-            536);
   }
   {
     static Vwalk   walk;
@@ -2054,7 +2059,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
               443);
     }
     /* Exercise redo, re-probe, home bitmap, directory and link READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 24 == ARRAY_SIZE(blkopcodes) ||
+    if (i == 11 || i == 22 || i == 24 || i + 26 == ARRAY_SIZE(blkopcodes) ||
         i + 12 == ARRAY_SIZE(blkopcodes) || i + 10 == ARRAY_SIZE(blkopcodes) ||
         i + 8 == ARRAY_SIZE(blkopcodes) || i + 6 == ARRAY_SIZE(blkopcodes) ||
         i + 1 == ARRAY_SIZE(blkopcodes)) {

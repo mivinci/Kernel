@@ -688,6 +688,27 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
   return result;
 }
 
+isize
+blkiteryield(Blkiter *work)
+{
+  Blkredoload *load;
+  isize        error;
+  if (!work || !work->home || work->state != IterActive || work->failed)
+    return -ERR_INVALID;
+  load = &work->home->load;
+  if (load->reader != work)
+    return -ERR_STATE;
+  if (load->pending || load->read->fill.cache || load->read->blk->rpc)
+    return -ERR_WOULD_BLOCK;
+  error = readerdrop(load, work);
+  if (error)
+    return error;
+  /* The next reader may overwrite both the scratch map and the name. */
+  work->loaded = 0;
+  work->state = IterNew;
+  return 0;
+}
+
 static isize
 mountwait(Blkmount *work, Blkattach *attach, u64 deadline)
 {

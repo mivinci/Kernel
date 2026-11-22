@@ -152,10 +152,14 @@ struct Blkiter
   u32        inode, generation, loaded, state;
   isize      failed;
 };
-/* Keep work at a stable address and hold the reader from start until EOF or drain.
+/* Keep work at a stable address and hold the reader until yield, EOF or drain.
    Zero continues, one returns a row and a name borrowed from reader
    scratch, two is EOF. Only a row updates the record and name outputs. */
 isize blkiterstep(Blkiter *, Dirrecord *, const u8 **name);
+/* After copying a row, let other operations use the volume reader. Keep the
+   cursor, but reload scratch metadata when resuming in the same volume view.
+   Never hand off a pending fill; the original work must finish or stop it. */
+isize blkiteryield(Blkiter *);
 /* Stop producing rows immediately. Zero releases the exclusive reader;
    a retryable error retains it and the original fill until the next stop. */
 isize blkiterstop(Blkiter *);
