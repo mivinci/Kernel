@@ -292,6 +292,21 @@ loadwritealloc(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks
 }
 
 isize
+loadreclaimkind(u32 inode, u32 allocated, const Loadmap *map, u32 links, u32 refs)
+{
+  if (!inode || inode >= FS_INODES || allocated > 1)
+    return -ERR_INVALID;
+  if (!allocated)
+    return inode == FS_ROOT ? -ERR_STATE : 0;
+  if (!map || map->file.inode != inode || !map->file.generation || !map->file.version ||
+      map->file.length > FS_FILE_BYTES || (inode == FS_ROOT && !links))
+    return -ERR_STATE;
+  if (!links)
+    return refs ? -ERR_BUSY : RECLAIM_ORPHAN;
+  return RECLAIM_TAIL;
+}
+
+isize
 loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, const Blockmap *busy,
             Blockmap *allocation, Reclaim *out)
 {

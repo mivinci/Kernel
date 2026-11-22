@@ -425,6 +425,7 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
   }
   REQUIRE(step == 10 && !shrinkpublish(&shrink) && !map->file.length && map->direct[1] == 100 &&
               committed->used[1] == before && journal->last == 49 &&
+              loadreclaimkind((u32) map->file.inode, 1, map, 1, 1) == RECLAIM_TAIL &&
               reclaimprepare(journal, cache, map, NULL, &busy, committed, prepared, &batch) ==
                   -ERR_BUSY &&
               prepared->used[1] == before &&

@@ -79,6 +79,9 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadreclaim.argtypes = [C.POINTER(Map), C.POINTER(Index)] + [C.c_uint32] * 2 + [
             C.POINTER(BlockMap), C.POINTER(BlockMap), C.POINTER(Reclaim)]
         cls.lib.loadreclaim.restype = I
+        cls.lib.loadreclaimkind.argtypes = [C.c_uint32, C.c_uint32, C.POINTER(Map),
+                                            C.c_uint32, C.c_uint32]
+        cls.lib.loadreclaimkind.restype = I
         cls.lib.loadwritestage.argtypes = [C.POINTER(WritePlan)] + [C.c_uint32] * 3 + [
             C.c_void_p] * 3 + [C.POINTER(WriteImage)]
         cls.lib.loadwritestage.restype = I
@@ -147,6 +150,19 @@ class FsLoadTests(unittest.TestCase):
         index.entries[0] = 0
         self.assertEqual(grow(14), 0)
         self.assertEqual((plan.length, plan.tail, plan.zerooff), (14 * 4096 + 1, 100, 20))
+
+    def test_reclaim_candidate_uses_allocation_and_preserves_live_orphans(self):
+        mapping = Map(File(2, 1, 4, 17))
+        classify = self.lib.loadreclaimkind
+        self.assertEqual(classify(2, 0, C.byref(mapping), 0, 0), 0)
+        self.assertEqual(classify(2, 1, C.byref(mapping), 1, 4), 1)
+        self.assertEqual(classify(2, 1, C.byref(mapping), 0, 4), -7)
+        self.assertEqual(classify(2, 1, C.byref(mapping), 0, 0), 2)
+        self.assertEqual(classify(3, 1, C.byref(mapping), 0, 0), -6)
+        self.assertEqual(classify(1, 0, None, 0, 0), -6)
+        mapping.file.inode = 1
+        self.assertEqual(classify(1, 1, C.byref(mapping), 0, 0), -6)
+        self.assertEqual(classify(1, 1, C.byref(mapping), 1, 0), 1)
 
     def test_reclaim_batches_resume_from_remaining_pointers_and_skip_busy_index(self):
         mapping = Map(File(2, 1, 4, 17))

@@ -4,10 +4,12 @@
 #include <abi/base.h>
 #include "geometry.h"
 
-#define LOAD_SLOTS    32
-#define LOAD_DIRECT   12
-#define LOAD_INDIRECT 1024
-#define LOAD_RECLAIM  32
+#define LOAD_SLOTS     32
+#define LOAD_DIRECT    12
+#define LOAD_INDIRECT  1024
+#define LOAD_RECLAIM   32
+#define RECLAIM_TAIL   1
+#define RECLAIM_ORPHAN 2
 
 typedef struct Loadfile    Loadfile;
 typedef struct Loadslot    Loadslot;
@@ -115,6 +117,10 @@ struct Reclaim
    An indirect block is removed only when its committed index is empty. */
 isize loadreclaim(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks,
                   const Blockmap *busy, Blockmap *allocation, Reclaim *);
+/* Classify an inode from the committed inode bitmap and decoded metadata.
+   refs counts all live file and pending operation holds for orphan purposes.
+   ORPHAN requires separate final inode retirement after its blocks drain. */
+isize loadreclaimkind(u32 inode, u32 allocated, const Loadmap *, u32 links, u32 refs);
 struct Loadslot
 {
   Loadfile file;
