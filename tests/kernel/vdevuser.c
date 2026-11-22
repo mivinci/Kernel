@@ -455,6 +455,37 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
 }
 
 static void
+testcreate(Journaltransport *transport, Cache *cache, u8 records[][FS_BLOCK_BYTES])
+{
+  static u8       directory[FS_BLOCK_BYTES];
+  Journal        *journal = transport->journal;
+  Inodemap        inodes = {{7}};
+  Inodealloc      work = {0};
+  Loadmap         child = {{5, 0, 0, 0}, {0}, 0}, staged;
+  const Mapmeta   meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
+  const Dirinsert insert = {FS_ROOT, {110, directory}, NULL, NULL};
+  u32             i, step;
+  /* Fixture images; these bytes only distinguish the three home writes. */
+  records[0][5 * FS_INODE_BYTES] = 1;
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    records[1][i] = 0;
+  records[1][0] = 39;
+  directory[0] = 5;
+  REQUIRE(!inodeallocstage(&inodes, &child, &staged) &&
+              !journalinodealloc(&work, journal, cache, &inodes, &child, &staged, &meta, &insert),
+          309);
+  for (step = 0; journal->phase != JOURNAL_DONE; step++) {
+    REQUIRE(step < 14 && !inodeallocstep(&work, journalsubmit, transport) &&
+                transport->ticket.txid == 51 && !child.file.generation && inodes.used[0] == 7,
+            310);
+    journaldrain(transport, journal);
+  }
+  REQUIRE(step == 14 && inodeallocstep(&work, journalsubmit, transport) == 1 && !work.txid &&
+              journal->last == 51 && child.file.generation == 1 && inodes.used[0] == 39,
+          311);
+}
+
+static void
 testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
 {
   static Journal     journal;
@@ -495,6 +526,7 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
               committed.used[1] == reserved.used[1] && journal.last == 48,
           267);
   testtruncate(queue, binding, irqevent, &journal, &cache, &map, &committed, &reserved, records);
+  testcreate(&transport, &cache, records);
 }
 
 static void

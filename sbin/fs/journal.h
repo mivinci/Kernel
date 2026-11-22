@@ -206,6 +206,9 @@ isize inodeallocstage(const Inodemap *, const struct Loadmap *, struct Loadmap *
 isize journalinodealloc(Inodealloc *, Journal *, struct Cache *, Inodemap *, struct Loadmap *,
                         const struct Loadmap *, const Mapmeta *, const Dirinsert *);
 isize inodeallocpublish(Inodealloc *);
+/* Advance one asynchronous I/O, then publish after retirement. Return one
+   on publication, zero while waiting, or an error with ownership retained. */
+isize inodeallocstep(Inodealloc *, isize (*submit)(void *, const Journalio *, u64, u32), void *);
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */
 isize reclaimpublish(Reclaimtx *);

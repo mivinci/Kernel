@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage551：目录创建事务经双架构 QEMU `virtiodev` 完成真实块写入及 FLUSH，宿主整盘校验和 46 项 FS 主机测试通过；盘上镜像为夹具。
 - stage550：块队列等旧请求归还 DMA 窗口后才应用新几何，ARM64/RV64 QEMU `virtiodev` 在线扩盘通过。
 - stage549：块队列拒绝与 virtio 环页交叠的请求窗口，ARM64/RV64 QEMU `virtiodev` 通过。
 - stage548：块队列拒绝地址范围交叠的 DMA 请求窗口；ARM64/RV64 QEMU `virtiodev` 和 41 项 virtio 主机测试通过。

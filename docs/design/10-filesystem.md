@@ -788,6 +788,8 @@ stage546：双架构 QEMU `pipeio` 在夹具日志的 COMMITTED 持久、home �
 
 stage547：OPEN 分派在选择后端路径前统一检查 flags；`O_CREAT` 命中已有文件时沿普通 OPEN 的权限及引用发布路径，不要求实现创建回调。双架构 QEMU `pipeio` 验证同一无创建回调的后端能打开已有文件，而缺失的最终名称返回 ENOSYS 并归还父目录引用。
 
+stage551：创建事务可由 `inodeallocstep` 逐笔推进异步日志 I/O 并在退休后发布 inode。ARM64/RV64 QEMU `virtiodev` 经实际块队列完成 9 笔写入和 5 笔 FLUSH，核对退休前未发布、退休后新代次及占用位，并由宿主比对整盘内容。46 项 FS 主机测试通过。镜像仍由夹具提供，不代表生产盘上编码或块设备 IPC 已接。
+
 stage539：`journalinodefree` 在孤儿引用和块指针全部清空后，用最后一笔事务清 inode 位图，保留原 inode 行的 generation 供将来复用。ARM64/RV64 QEMU `pipeio` 验证块批次未退休时拒绝、最终位图仅在日志退休后可见以及重复发布被拒；46 项 FS 主机测试通过。生产编码和 inode 再分配待接。
 
 stage538：无引用孤儿可用同一回收日志分批清除全部块，包含仍在原 EOF 内的数据；inode 槽保持分配。ARM64/RV64 QEMU `pipeio` 验证带引用时拒绝、无引用后可提交块回收，末次 FLUSH 失败时指针和位图不提前发布。46 项 FS 主机测试通过。最终 inode 槽退休和生产候选接线待做。

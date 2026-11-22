@@ -718,6 +718,21 @@ inodeallocpublish(Inodealloc *work)
 }
 
 isize
+inodeallocstep(Inodealloc *work, isize (*submit)(void *, const Journalio *, u64, u32),
+               void       *context)
+{
+  Journal *journal;
+  isize    result;
+  if (!work || !(journal = work->journal) || !work->txid || work->txid != journal->txid)
+    return -ERR_STALE;
+  result = journalpump(journal, submit, context);
+  if (result <= 0)
+    return result;
+  result = inodeallocpublish(work);
+  return result == -ERR_BUSY ? 0 : result ? result : 1;
+}
+
+isize
 reclaimpublish(Reclaimtx *work)
 {
   Journal       *journal;
