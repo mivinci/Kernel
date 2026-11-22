@@ -390,6 +390,24 @@ ttyfilestart(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *
   return status == -ERR_BUSY ? filereject(active, call, -EAGAIN) : status;
 }
 
+static isize
+rxbyte(const Ttyserial *io, u8 *byte, u32 peek, u64 *end)
+{
+  isize count = peek ? serialpeek(io->rx, io->epoch, byte) : serialread(io->rx, io->epoch, byte, 1);
+  u64   flags;
+  if (count)
+    return count;
+  flags = __atomic_load_n(&io->rx->flags, __ATOMIC_ACQUIRE);
+  if (!flags)
+    return 0;
+  /* A final producer update may have landed between the empty read and
+     the flag load. Observe the position again after the flag. */
+  count = peek ? serialpeek(io->rx, io->epoch, byte) : serialread(io->rx, io->epoch, byte, 1);
+  if (!count)
+    *end = flags;
+  return count;
+}
+
 isize
 ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
               Ttyserialresult *out)
@@ -410,33 +428,26 @@ ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
     return -ERR_STATE;
   /* Reserve space for the worst case echo before advancing the RX consumer. */
   for (received = 0; received < rxlimit; received++) {
-    u64 end;
-    if ((mode->lflag & TTY_ECHO) && sizeof(io->output) - io->queued < 2 * sizeof(effect.echo)) {
-      /* A signal at the head clears staging before it adds its own echo.
-         Inspect without releasing the slot or skipping earlier input. */
-      count = serialpeek(io->rx, io->epoch, &byte);
-      if (count < 0)
-        return count;
-      if (!count || !ttyinputsignal(mode, byte)) {
-        full = 1;
-        break;
-      }
-    }
-    count = serialread(io->rx, io->epoch, &byte, 1);
-    if (!count) {
-      end = __atomic_load_n(&io->rx->flags, __ATOMIC_ACQUIRE);
-      if (!end)
-        break;
-      /* A final producer update may have landed between the empty read
-         and the flag load. Observe the position again after the flag. */
-      count = serialread(io->rx, io->epoch, &byte, 1);
-      if (!count)
-        out->end = end;
-    }
+    u32 peek =
+        (mode->lflag & TTY_ECHO) && sizeof(io->output) - io->queued < 2 * sizeof(effect.echo);
+    count = rxbyte(io, &byte, peek, &out->end);
     if (count < 0)
       return count;
     if (!count)
       break;
+    if (peek) {
+      /* A signal at the head clears staging before it adds its own echo.
+         Inspect without releasing the slot or skipping earlier input. */
+      if (!ttyinputsignal(mode, byte)) {
+        full = 1;
+        break;
+      }
+      count = serialread(io->rx, io->epoch, &byte, 1);
+      if (!count)
+        return -ERR_STATE;
+      if (count < 0)
+        return count;
+    }
     out->hints |= SERIAL_RX_ROOM;
     count = ttyinputbyte(input, mode, byte, &effect);
     if (count)

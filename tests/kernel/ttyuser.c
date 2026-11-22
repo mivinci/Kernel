@@ -41,6 +41,37 @@ ttyserialdrainchecktest(void)
 }
 
 static void
+ttyserialendcheck(void)
+{
+  Ttyserial       io;
+  Ttyserialresult result;
+  u8              newline[TTY_BATCH];
+  u64             target;
+  u32             i, final;
+  for (i = 0; i < ARRAY_SIZE(newline); i++)
+    newline[i] = '\n';
+  for (final = 0; final <= 1; final++) {
+    CHECK(!serialinit(&rx, 1) && !serialinit(&tx, 1) && !ttyinputinit(&line, 1) &&
+          !ttyserialinit(&io, &rx, &tx, 1));
+    CHECK(ttyserialoutput(&io, attr.oflag, newline, sizeof(newline)) == sizeof(newline) &&
+          !ttyserialdrainstart(&io, &target) && !target && serialwrite(&rx, 1, "a", 1) == 1 &&
+          !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && io.queued == 65);
+    CHECK(serialwrite(&rx, 1, "\n", final) == final);
+    __atomic_store_n(&rx.flags, SERIAL_EOF, __ATOMIC_RELEASE);
+    CHECK(!ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) &&
+          result.end == (final ? 0 : SERIAL_EOF) && !result.hints && !result.again &&
+          rx.consumer == 1 && !tx.producer && !line.ready);
+    if (final) {
+      ttyserialdrainend(&io);
+      CHECK(!ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && result.again &&
+            !result.end && rx.consumer == 1);
+      CHECK(!ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && result.end == SERIAL_EOF &&
+            (result.hints & SERIAL_RX_ROOM) && rx.consumer == 2 && line.ready == 2);
+    }
+  }
+}
+
+static void
 ttyserialcheck(void)
 {
   Ttyserial       io;
@@ -225,6 +256,7 @@ ttyusercheck(void)
   attr.ispeed = attr.ospeed = 115200;
   CHECK(!ttyattrcheck(&attr, 115200));
   ttyserialdrainchecktest();
+  ttyserialendcheck();
   attr.cc[31] = 1;
   CHECK(ttyattrcheck(&attr, 115200) == -ERR_NOTSUP);
   attr.cc[31] = 0;
