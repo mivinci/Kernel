@@ -164,6 +164,29 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
 }
 
 int
+blkqprepare(Vdev *device, u64 now, Vblkconfig *config)
+{
+  int error = 0;
+  if (!device || !config)
+    return -ERR_INVALID;
+  if (device->device != VBLK_DEVICE)
+    return -ERR_NOTSUP;
+  if (device->state == VDEV_FOUND)
+    error = vresetbegin(device, now);
+  else if (device->state == VDEV_RESETTING)
+    error = vresetpoll(device, now);
+  if (error)
+    return error;
+  if (device->state == VDEV_RESET)
+    error = vblkfeatures(device);
+  if (error)
+    return error;
+  if (device->state != VDEV_FEATURES || device->queues)
+    return -ERR_STATE;
+  return vblkconfig(device, config);
+}
+
+int
 blkqstart(Blkqueue *queue, Vdev *device, Vring *ring, u64 generation, void *const mapping[3],
           const u64 addresses[3], const Vringops *ops, Vblkreq *slots, const Blkdma *buffers,
           u32 count)

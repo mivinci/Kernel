@@ -54,6 +54,9 @@ int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *coun
    ring pages in both address spaces. The caller owns the mappings. */
 int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
              u32 count, const u64 addresses[3]);
+/* Advance one startup step after MMIO probe, or after a confirmed stop.
+   WOULD_BLOCK asks the owner to retry later with monotonic time. */
+int blkqprepare(Vdev *, u64 now, Vblkconfig *);
 /* Start queue zero on a reset, feature-negotiated block device. Validate all
    windows before initializing the ring or exposing any addresses to hardware.
    If device programming fails, the queue remains faulted and owns the DMA

@@ -13,8 +13,4 @@
 #define VTEST_OBSERVE   267
 #define VTEST_DMA_TRACE 40
 #define VTEST_TRACE     (VTEST_DMA_TRACE + VTEST_MEMBERS * VTEST_PAGES)
-int  virtioread(void *context, u32 offset, u32 *out);
-int  virtioreadbyte(void *context, u32 offset, u8 *out);
-int  virtiowrite(void *context, u32 offset, u32 value);
-void virtiofence(void *context, u32 phase);
 #endif

@@ -7,6 +7,7 @@
 #include "private/syscall.h"
 #include "private/start.h"
 #include "../../sbin/blk/serve.h"
+#include "private/virtio/mmio.h"
 #include "../../sbin/fs/blklog.h"
 #include "../../sbin/fs/blkread.h"
 #include "../../sbin/fs/mount.h"
@@ -58,6 +59,16 @@ reset(Vdev *device)
     error = vresetpoll(device, now());
   REQUIRE(!error && device->state == VDEV_RESET && !device->status, 162);
   vdev_trace[16]++;
+}
+
+static int
+prepareblk(Vdev *device, Vblkconfig *config)
+{
+  int error;
+  do {
+    error = blkqprepare(device, now(), config);
+  } while (error == -ERR_WOULD_BLOCK);
+  return error;
 }
 static int
 coherentsync(void *context, u32 region, u32 phase, u64 offset, u64 length)
@@ -779,19 +790,6 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
   testuncertain(&transport, &cache, records);
 }
 
-static void
-startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
-{
-  Vringops ops;
-  u8      *desc = (void *) dma->va;
-  ops.context = device;
-  ops.sync = coherentsync;
-  ops.fence = virtiofence;
-  ops.notify = notify;
-  REQUIRE(!vrinit(ring, epoch, desc, desc + PAGE_SIZE, desc + 2 * PAGE_SIZE, &ops), 170);
-  REQUIRE(!vqueue(device, 0, dma->addresses[0], dma->addresses[1], dma->addresses[2]), 171);
-  REQUIRE(!vstart(device), 172);
-}
 static void
 resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config,
              const u64 addresses[3])
@@ -1721,57 +1719,59 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   Handle     binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
   u64        irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
   u64        stride = config->blocksize / VBLK_SECTOR;
+  Vringops   ops = {device, coherentsync, virtiofence, notify};
+  void      *mapping[3];
 
   REQUIRE(binding > 0, 182);
   dma.va = VTEST_DMA_BASE + member * VTEST_PAGES * PAGE_SIZE;
   dma.addresses = &vdev_trace[VTEST_DMA_TRACE + member * VTEST_PAGES];
-  for (i = 0; i < ARRAY_SIZE(ringaddr); i++)
+  for (i = 0; i < ARRAY_SIZE(ringaddr); i++) {
     ringaddr[i] = dma.addresses[i];
-  startqueue(device, &ring, 1, &dma);
-  transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, stride, 1,
-           config->readonly ? 0xa7 : 0x51, &prior, NULL);
+    mapping[i] = (void *) (dma.va + i * PAGE_SIZE);
+  }
   testbuffer(&dma, 3, &buffers[0]);
   testbuffer(&dma, 6, &buffers[1]);
   buffers[1].statusaddr = buffers[0].dataaddr + PAGE_SIZE - 1;
-  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
-                  -ERR_INVALID &&
+  REQUIRE(blkqstart(&queue, device, &ring, 1, mapping, ringaddr, &ops, requests, buffers,
+                    ARRAY_SIZE(requests)) == -ERR_INVALID &&
               !queue.state,
           224);
   testbuffer(&dma, 6, &buffers[1]);
   buffers[1].status = buffers[0].data;
-  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
-                  -ERR_INVALID &&
+  REQUIRE(blkqstart(&queue, device, &ring, 1, mapping, ringaddr, &ops, requests, buffers,
+                    ARRAY_SIZE(requests)) == -ERR_INVALID &&
               !queue.state,
           224);
   testbuffer(&dma, 6, &buffers[1]);
   buffers[1].statusaddr = dma.addresses[2] + PAGE_SIZE - 1;
-  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
-                  -ERR_INVALID &&
+  REQUIRE(blkqstart(&queue, device, &ring, 1, mapping, ringaddr, &ops, requests, buffers,
+                    ARRAY_SIZE(requests)) == -ERR_INVALID &&
               !queue.state,
           224);
   testbuffer(&dma, 6, &buffers[1]);
-  buffers[1].status = (volatile u8 *) ring.avail;
-  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
-                  -ERR_INVALID &&
+  buffers[1].status = mapping[1];
+  REQUIRE(blkqstart(&queue, device, &ring, 1, mapping, ringaddr, &ops, requests, buffers,
+                    ARRAY_SIZE(requests)) == -ERR_INVALID &&
               !queue.state,
           224);
   testbuffer(&dma, 6, &buffers[1]);
-  REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr), 224);
+  REQUIRE(!blkqstart(&queue, device, &ring, 1, mapping, ringaddr, &ops, requests, buffers,
+                     ARRAY_SIZE(requests)),
+          224);
+  transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, stride, 1,
+           config->readonly ? 0xa7 : 0x51, &prior, NULL);
   if (!config->readonly) {
     testflush(&queue, binding, irqevent, 2 * stride);
     transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
              NULL, NULL);
   }
   resetpending(&queue, binding, irqevent, config, ringaddr);
-  REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
-              fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
-              fresh.flush == config->flush && fresh.blocksize == config->blocksize &&
-              fresh.physical == config->physical && fresh.alignment == config->alignment,
+  REQUIRE(!prepareblk(device, &fresh) && fresh.sectors == config->sectors &&
+              fresh.readonly == config->readonly && fresh.flush == config->flush &&
+              fresh.blocksize == config->blocksize && fresh.physical == config->physical &&
+              fresh.alignment == config->alignment,
           183);
   {
-    u8      *base = (void *) dma.va;
-    void    *mapping[3] = {base, base + PAGE_SIZE, base + 2 * PAGE_SIZE};
-    Vringops ops = {device, coherentsync, virtiofence, notify};
     buffers[1].statusaddr = ringaddr[2];
     REQUIRE(blkqstart(&queue, device, &ring, 2, mapping, ringaddr, &ops, requests, buffers,
                       ARRAY_SIZE(requests)) == -ERR_INVALID &&
@@ -1806,7 +1806,7 @@ main(int argc, char **argv)
   Vdev    device;
   Vdevops ops;
   Vblkconfig config;
-  u64        base;
+  Vmmio      mmio;
   u32        i, status;
   Handle     call = bootresource(sysboot(), VTEST_BLK_CALL);
   UNUSED(argc);
@@ -1823,13 +1823,15 @@ main(int argc, char **argv)
   mapping.prot = MAP_READ | MAP_WRITE;
   mapping.reserved = 0;
   REQUIRE(!__sys_map(space, &mapping) && !__sys_free(memory), 152);
-  ops.context = &base;
-  ops.read = virtioread;
-  ops.write = virtiowrite;
-  ops.readbyte = virtioreadbyte;
   for (i = 0; i < vdev_trace[1]; i++) {
     REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x100 && vdev_trace[23 + i] >= 0x100, 153);
-    base = mapping.address + vdev_trace[4 + i];
+    REQUIRE(vdev_trace[23 + i] <= PAGE_SIZE - vdev_trace[4 + i] &&
+                !vmmioinit(&mmio, &ops, mapping.address + vdev_trace[4 + i], vdev_trace[23 + i]),
+            470);
+    status = 0xf012;
+    REQUIRE(ops.read(ops.context, (u32) mmio.bytes, &status) == -ERR_INVALID && status == 0xf012 &&
+                ops.read(ops.context, 1, &status) == -ERR_INVALID && status == 0xf012,
+            471);
     REQUIRE(!vprobe(&device, &ops), 154);
     vdev_trace[12]++;
     if (!device.device) {
@@ -1840,10 +1842,10 @@ main(int argc, char **argv)
     REQUIRE((device.device == 4 || device.device == VBLK_DEVICE) && device.state == VDEV_FOUND,
             156);
     vdev_trace[14]++;
-    reset(&device);
     if (device.device == VBLK_DEVICE) {
       REQUIRE(vdev_trace[4 + i] <= PAGE_SIZE - 0x11a && vdev_trace[23 + i] >= 0x11a, 163);
-      REQUIRE(!vblkfeatures(&device) && !vblkconfig(&device, &config), 164);
+      REQUIRE(!prepareblk(&device, &config), 164);
+      vdev_trace[16]++;
       REQUIRE((device.features & VBLK_F_TOPOLOGY) && config.physical == PAGE_SIZE &&
                   !config.alignment,
               198);
@@ -1860,18 +1862,21 @@ main(int argc, char **argv)
         vdev_trace[20] = config.sectors;
       }
     } else {
+      REQUIRE(blkqprepare(&device, now(), &config) == -ERR_NOTSUP && device.state == VDEV_FOUND,
+              469);
+      reset(&device);
       REQUIRE(!vfeatures(&device, 0, 0) && device.features == VDEV_VERSION1, 157);
       vdev_trace[17]++;
     }
     REQUIRE(device.state == VDEV_FEATURES && (device.features & VDEV_VERSION1) &&
                 (device.offered & device.features) == device.features,
             167);
-    REQUIRE(!virtioread(&base, 0x70, &status) && status == 11, 158);
+    REQUIRE(!virtioread(&mmio, 0x70, &status) && status == 11, 158);
     vdev_trace[15]++;
     if (device.device == VBLK_DEVICE)
       testblock(&device, &config, i);
     reset(&device);
-    REQUIRE(!virtioread(&base, 0x70, &status) && !status, 159);
+    REQUIRE(!virtioread(&mmio, 0x70, &status) && !status, 159);
   }
   if (!vdev_trace[VTEST_BLK_RPC]) {
     Ipcmsg input;

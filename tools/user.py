@@ -78,7 +78,8 @@ def build(args):
     if temporary.exists():temporary.unlink()
     invoke('archive', [tools['ar']['path'], 'rcs', str(temporary), *[str(obj) for _, obj in units[:-1]]])
     os.replace(temporary, archive)
-    virtio_sources = [ROOT / 'lib/libvirtio' / name for name in ('queue.c', 'ring.c', 'device.c', 'block.c')]
+    virtio_sources = [ROOT / 'lib/libvirtio' / name for name in
+                      ('queue.c', 'ring.c', 'device.c', 'block.c', 'mmio.c', args.arch + '/barrier.c')]
     virtio_objects = []
     for source in virtio_sources:
         obj = sdk / 'obj/libvirtio' / source.with_suffix('.o').name
@@ -421,7 +422,6 @@ def build(args):
     (sdk/'groupimage.S').write_text('/* image sha256: '+digest(group_image)+' */\n.section .rodata\n.balign 8\n.global group_image,group_image_end,group_trace_address\ngroup_image:\n.incbin "'+str(group_image)+'"\ngroup_image_end:\n.balign 8\ngroup_trace_address:\n.quad '+str(group_address)+'\n')
     vdev_user=link_adoption('vdevuser', [
         compile_adoption(ROOT/'tests/kernel/vdevuser.c', 'vdevuser'),
-        compile_adoption(ROOT/'tests/kernel'/args.arch/'virtiommio.c', 'virtiommio'),
         compile_adoption(ROOT/'sbin/blk/io.c', 'vdev-blk-io'),
         compile_adoption(ROOT/'sbin/blk/transport.c', 'vdev-blk-transport'),
         compile_adoption(ROOT/'sbin/blk/serve.c', 'vdev-blk-serve'),
