@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage477：OPEN 的 ABORT 驱动沿同一 Rctx 保留提交时的后端身份；收到原生 PEER 后先核对终结证据，再等待原 RPC 排空。提交前后端已退出可直接结束清理；已接收的 ABORT 未排空时返回 WOULD_BLOCK，预留 fd 继续保留。两架构 QEMU `runtime` 以真实后端退出验证两条路径，已接收请求由测试管理者显式清理后才释放 fd，原 VFS 连接仍可用。54 项 IPC 上下文和创建账本主机测试通过。
+
 stage476：`sysctxopencreate` 在预留 fd 和创建请求前，按页安全读取应用路径到当前层的私有暂存区，生成 OPEN 的路径长度（含 NUL）。提交后的继续操作沿用原槽，不再读取应用地址。ARM64、RV64 QEMU `runtime` 验证坏地址与无终止符路径不发请求、不占 fd，含 NUL 恰好 4096 字节的路径能送达服务；28 项参数捕获和 IPC 上下文主机测试通过。公开 `open()` 仍待接入。
 
 stage475：`sysctxopenrevoke` 用 OPEN 持有的固定 CALL 和原 token 发控制预算 ABORT，目录满时仍可推进。它等待原 RPC 排空并核对 `[0,seq,0,0]`，确认后才撤销本地创建记录；错误或结果未知时保留清理责任。`sysfileopendiscard` 在撤销或已证明的后端终结且排空后才归还预留 fd。ATTACH 的运输清理仍独立。双架构 QEMU `runtime` 验证目录满时在 ATTACH 前取消、ATTACH 后本地接管失败及继续已准备好的 ABORT；fd 在撤销前保持预留，原有 File 可正常关闭。双架构 `pipeio` 回归及 54 项主机测试通过。公开 `open()` 尚未接入。

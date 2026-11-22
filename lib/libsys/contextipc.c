@@ -4,6 +4,14 @@
 #include <abi/signal.h>
 #include <abi/syscall.h>
 #include <proto/file.h>
+typedef struct Revokeproof Revokeproof;
+struct Revokeproof
+{
+  Filepool    *pool;
+  Connwork    *work;
+  Conncache   *cache;
+  const Opkey *key;
+};
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -555,13 +563,15 @@ sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *
 }
 static isize
 bootdrive(Rbank *bank, Connpeer self, u32 layer, Bootstrap *boot, Connclaim claim, Handle call,
-          u64 options, Rkey *active, u64 *mask)
+          u64 options, Rkey *active, u64 *mask, const Revokeproof *proof)
 {
   Rctx *context;
   u64   ignored;
   isize error, status;
   while (active->sequence || boot->state == SYSBOOT_PREPARED || boot->state == SYSBOOT_WAITING) {
     if (!active->sequence) {
+      if (proof && boot->state == SYSBOOT_WAITING)
+        return -ERR_STATE;
       error = boot->state == SYSBOOT_PREPARED
                   ? sysctxbootcall(bank, self, layer, boot, claim, call, options, active)
                   : sysctxbootwait(bank, self, layer, boot, claim, active);
@@ -588,6 +598,16 @@ bootdrive(Rbank *bank, Connpeer self, u32 layer, Bootstrap *boot, Connclaim clai
     } else
       status = context->status;
     error = sysctxhandoff(bank, self, *active);
+    if (!error && proof && boot->state == SYSBOOT_WAITING) {
+      /* Keep the submission's fixed peer across waits and signal interruption. */
+      error = sysctxrewait(bank, self, *active);
+      if (status || error)
+        return error ? error : status;
+      continue;
+    }
+    if (!error && proof && status == -ERR_PEER)
+      error = sysctxcreatepeerended(bank, self, *active, proof->pool, proof->work, proof->cache,
+                                    proof->key);
     if (!error)
       error = sysctxfinish(bank, self, *active);
     if (error)
@@ -640,7 +660,8 @@ sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
     error = -ERR_STALE;
     goto restore;
   }
-  error = bootdrive(bank, self, layer, boot, claim, work->state.call, CALL_RECV_MEM, active, &mask);
+  error = bootdrive(bank, self, layer, boot, claim, work->state.call, CALL_RECV_MEM, active, &mask,
+                    NULL);
   if (!error)
     error = sysbootfinished(boot, claim);
   if (!error && !map->mapped)
@@ -945,7 +966,8 @@ sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
     error = sysfilecreateattached(pool, work, cache, key, backend, claim, space, map, 0);
     goto restore;
   }
-  error = bootdrive(bank, work->state.self, layer, boot, claim, call, CALL_RECV_MEM, active, &mask);
+  error = bootdrive(bank, work->state.self, layer, boot, claim, call, CALL_RECV_MEM, active, &mask,
+                    NULL);
   if (!error)
     error = sysbootfinished(boot, claim);
   if (!error)
@@ -967,13 +989,14 @@ isize
 sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                  const Opkey *key, u64 deadline, Rkey *active)
 {
-  Bootstrap *boot;
-  Createop  *create;
-  Connclaim  claim;
-  Connpeer   peer;
-  Handle     call;
-  u64        mask, ignored;
-  isize      error, restored;
+  const Revokeproof proof = {pool, work, cache, key};
+  Bootstrap        *boot;
+  Createop         *create;
+  Connclaim         claim;
+  Connpeer          peer;
+  Handle            call;
+  u64               mask, ignored;
+  isize             error, restored;
   if (!bank || layer >= RCTX_LAYERS || !storage(bank, work, sizeof(*work), active) ||
       !storage(bank, pool, sizeof(*pool), active) ||
       !storage(bank, cache, sizeof(*cache), active) || !storage(bank, key, sizeof(*key), active) ||
@@ -1026,7 +1049,12 @@ sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
     }
   }
   /* An ABORT with zero extra options selects the control cleanup budget. */
-  error = bootdrive(bank, work->state.self, layer, boot, claim, call, 0, active, &mask);
+  if (!(create->flags & SYSFILE_CREATE_PEER_ENDED) || active->sequence)
+    error = bootdrive(bank, work->state.self, layer, boot, claim, call, 0, active, &mask, &proof);
+  if (!active->sequence && create->flags & SYSFILE_CREATE_PEER_ENDED) {
+    error = sysfilecreateended(pool, work, cache, key);
+    goto restore;
+  }
   if (!error)
     error = sysbootfinished(boot, claim);
   if (!error)

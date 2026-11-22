@@ -4,7 +4,7 @@
 
 ## 目标与工作约定
 
-- 长期分支 `codex/kernel-development`。用户授权持续推进完整项目（包括 net），每个本地验收通过的点提交并推送；实质未定接口再问，保留用户改动，不兼容旧 ABI。
+- 主线分支 `main`。用户授权持续推进完整项目（包括 net），每个本地验收通过的点直接提交并推送到 `main`；实质未定接口再问，保留用户改动，不兼容旧 ABI。
 - 先完成可用 POSIX sh：T1 启动包/init → T2 fd/Fix、serial/tty → T3 blk/fs → T4 完整 fork/exec、pipe/dup2、作业控制与 sh。net、图形/GPU 机制排 M3 后；系统和图形机制就绪后最后做 GUI。13 的候选线协议尚未冻结。
 - 设计、执行项和验收写对应主题；README 保持简洁，不另建 todo 文件。不得用局部 fixture、QEMU 或格式检查代替全项目、板端、CI 或性能验收。
 
@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage477：OPEN 撤销可识别固定后端退出；已提交的 ABORT 排空前保留 fd。双架构 QEMU `runtime` 和 54 项主机测试通过。
 - stage476：OPEN 先安全复制路径再预留 fd；双架构 QEMU `runtime` 验证坏地址、超长和刚好一页的路径，28 项主机测试通过。公开 `open()` 仍待接。
 - stage475：资源 OPEN 可在目录满时沿原 token 撤销；确认撤销并排空后才归还预留 fd。双架构 QEMU `runtime`、`pipeio` 和 54 项主机测试通过。公开 `open()` 仍待接。
 - stage474：资源 OPEN 可沿原 token 驱动 ATTACH，冷路径映射冲突可继续原回复，热路径复用连接。双架构 QEMU `runtime`、`pipeio` 和 18 项 IPC 主机测试通过。

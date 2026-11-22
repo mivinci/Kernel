@@ -2255,23 +2255,26 @@ deadserver(const Bootview *boot, u64 creating)
 static void
 resourceendclient(const Bootview *boot, u32 submitted)
 {
-  Opkey     key;
-  Connpeer  peer;
-  Conntag   tag;
-  Connclaim claim;
-  Connentry entry;
-  Handle    call, rpc;
-  Rkey      invocation;
-  Msg       message;
-  Ipcmsg    result;
-  u64       files[2], source = 0;
-  u32       i, steps = 0;
-  isize     error;
+  Opencreate open = {0};
+  Opkey      key;
+  Connpeer   peer;
+  Conntag    tag;
+  Connentry  entry;
+  Fdview     fd;
+  Handle     rpc;
+  Rkey       invocation = {0};
+  Msg        message;
+  Ipcmsg     result;
+  u32        i, reserved, steps = 0;
+  int        number = -2;
+  isize      error, business = 9;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
-  key = begin(FS_OPEN, "/bound", 0);
-  collect(&key);
-  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/bound", 0, 0, 0, &open,
+                         &invocation, &number, &business) == 1);
+  filecreatetrace[1]++;
+  key = open.operation;
+  reserved = open.tag.index;
   peer = work.state.creators[key.lease.slot].peer;
   for (i = 0; i < SYSCONN_COUNT - 1; i++) {
     peer.image++;
@@ -2287,34 +2290,22 @@ resourceendclient(const Bootview *boot, u32 submitted)
     CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
           !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
   }
-  CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call) &&
-        !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim, call, 0,
-                        &invocation));
+  error = sysctxopenrevoke(&contexts, 0, &pool, &work, &cache, &key, 0, &invocation);
   if (submitted) {
-    CHECK(!sysctxinvoke(&contexts, work.state.self, invocation) &&
-          !sysctxhandoff(&contexts, work.state.self, invocation) &&
-          !sysctxrewait(&contexts, work.state.self, invocation));
-  }
-  CHECK(
-      sysctxinvoke(&contexts, work.state.self, invocation) == -ERR_PEER &&
-      !sysctxhandoff(&contexts, work.state.self, invocation) &&
-      !sysctxcreatepeerended(&contexts, work.state.self, invocation, &pool, &work, &cache, &key) &&
-      !sysctxfinish(&contexts, work.state.self, invocation));
-  if (submitted) {
-    CHECK(sysfilecreateended(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK);
+    CHECK(error == -ERR_WOULD_BLOCK && !invocation.sequence &&
+          sysfileopendiscard(&pool, &work, &cache, &fds, &open) == -ERR_STATE &&
+          !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_RESERVED);
     filecreatetrace[5] = (u64) work.state.bootstrap.rpc;
     filecreatetrace[6] = 6;
     do {
       CHECK(++steps < 64 && !__sys_yield());
-      error = sysfilecreateended(&pool, &work, &cache, &key);
+      error = sysctxopenrevoke(&contexts, 0, &pool, &work, &cache, &key, 0, &invocation);
     } while (error == -ERR_WOULD_BLOCK);
-    CHECK(!error);
-  } else
-    CHECK(!sysfilecreateended(&pool, &work, &cache, &key));
-  zero(files, sizeof(files));
-  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source &&
-        !work.state.ended && !sysconnview(&cache, work.state.tag, &entry) &&
-        entry.state == SYSCONN_READY && sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
+  }
+  CHECK(!error && !invocation.sequence && !sysfileopendiscard(&pool, &work, &cache, &fds, &open) &&
+        !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_FREE && !work.state.ended &&
+        !sysconnview(&cache, work.state.tag, &entry) && entry.state == SYSCONN_READY &&
+        sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
   message.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &message, 0, &result) && !result.words[0] &&
         !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
