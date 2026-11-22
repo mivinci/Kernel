@@ -47,11 +47,138 @@ hello(Fsservice *fs, const Ipcmsg *call)
   }
 }
 
+static void
+forkdrop(Fsservice *fs, Fsfork *record)
+{
+  fsfiledropsnapshot(fs->pipes.regular, record->holds, record->manifest.count);
+  record->manifest.count = 0;
+  record->context = 0;
+}
+
+static isize
+forksweep(Fsservice *fs, const Filelink *link, u64 *deadline)
+{
+  u32   i;
+  u64   now = 0;
+  isize error;
+  if (!fs->forks)
+    return 0;
+  if (!link && (error = sysfilenow(&now)))
+    return error;
+  for (i = 0; i < fs->forks->count; i++) {
+    Fsfork             *record = &fs->forks->records[i];
+    const Execmanifest *m = &record->manifest;
+    if (!m->count)
+      continue;
+    if (link) {
+      if (m->pid == link->watch.owner.pid && m->source_image == link->watch.owner.image &&
+          m->connid == link->watch.connid)
+        forkdrop(fs, record);
+    } else if (m->deadline <= now)
+      forkdrop(fs, record);
+    else if (!*deadline || m->deadline < *deadline)
+      *deadline = m->deadline;
+  }
+  return 0;
+}
+
+static isize
+forkcapture(Fsservice *fs, const Ipcmsg *call, Filelink *link, const Fileslot *slot,
+            Fsfork **captured)
+{
+  Fsfork          *record;
+  const Fscontext *context;
+  Connpeer         self;
+  Handle           parent;
+  u64              now;
+  u32              i;
+  isize            error;
+  context = fscontextfind(fs->open->contexts, call->source, call->image);
+  if (!context)
+    return -ESTALE;
+  for (i = 0; i < fs->forks->count && fs->forks->records[i].manifest.count; i++) {
+  }
+  if (i == fs->forks->count)
+    return -EAGAIN;
+  if (fs->forks->serial == UINT64_MAX)
+    return -EOVERFLOW;
+  record = &fs->forks->records[i];
+  if (__sys_getid(&self.pid, &self.image, &parent) || sysfilenow(&now))
+    return -EIO;
+  error = sysforksnapshot(
+      &record->manifest, &link->watch, call, slot,
+      (const void *) (link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES), self, now,
+      fsfilerefcheck, fs->pipes.regular, fs->forks->serial + 1);
+  if (!error) {
+    error = fsfileholdsnapshot(fs->pipes.regular, &record->manifest, record->holds, BOOT_FD_COUNT);
+    if (!error) {
+      fs->forks->serial++;
+      record->context = context->version;
+      *captured = record;
+      return 0;
+    }
+    record->manifest.count = 0;
+  }
+  switch (error) {
+  case -ERR_INVALID:
+    return -EINVAL;
+  case -ERR_STALE:
+    return -ESTALE;
+  case -ERR_TIMEDOUT:
+    return -ETIMEDOUT;
+  case -ERR_OVERFLOW:
+    return -EOVERFLOW;
+  default:
+    return -EIO;
+  }
+}
+
+static isize
+forksnapshot(Fsservice *fs, const Ipcmsg *call)
+{
+  Filelink *link = NULL;
+  Fsfork   *record = NULL;
+  Fileslot  slot;
+  Msg       reply = {{(u64) -ENOSYS, call->words[2], 0, 0}};
+  u64       state, now;
+  isize     error;
+  if (fs->forks && fs->open && fs->pipes.regular) {
+    error = sysfilelinkaccept(fs->links, fs->nlinks, call, &slot);
+    if (!error) {
+      link = &fs->links[call->words[1] & 65535];
+      reply.words[0] = (u64) forkcapture(fs, call, link, &slot, &record);
+    } else
+      reply.words[0] = (u64) (error == -ERR_INVALID ? -EINVAL
+                              : error == -ERR_BUSY  ? -EBUSY
+                                                    : -ESTALE);
+  }
+  error = ipc_rqcheck(call->request, &state);
+  if (!error && state == RQ_CHECK_DRAINING) {
+    error = ipc_rqfinish(call->request);
+  } else if (!error) {
+    if (state & RQ_CHECK_CANCEL)
+      reply.words[0] = (u64) -EINTR;
+    if (record && state == RQ_CHECK_LIVE) {
+      if (sysfilenow(&now))
+        reply.words[0] = (u64) -EIO;
+      else if (record->manifest.deadline <= now)
+        reply.words[0] = (u64) -ETIMEDOUT;
+      else
+        reply.words[2] = record->manifest.snapshot;
+    }
+    error = ipc_reply(call->request, &reply);
+  }
+  if (record && (error || !reply.words[2]))
+    forkdrop(fs, record);
+  return error || !link ? error : sysfilefinish(&link->watch.active, call->request);
+}
+
 static isize
 drain(void *context, Filelink *link)
 {
   Fsservice *fs = context;
   isize      error;
+  forksweep(fs, link, NULL);
   if (fsloadretire(fs->loads, link) || fsopenbusy(fs->open, link) ||
       fsreadbusy(fs->pipes.reads, link)) {
     fs->retiring = 1;
@@ -116,11 +243,14 @@ fsstep(Fsservice *fs)
       again |= reclaim->scan && reclaim->scan->left;
   }
   deadline = fs->loads ? loaddeadline(fs->loads->table) : 0;
-  if (deadline != fs->loadalarm) {
+  error = forksweep(fs, NULL, &deadline);
+  if (error)
+    return error;
+  if (deadline != fs->alarm) {
     error = deadline ? __sys_alarmset(deadline, &generation) : __sys_alarmcancel(&generation);
     if (error)
       return error;
-    fs->loadalarm = deadline;
+    fs->alarm = deadline;
   }
   error = ipc_recv(
       EVENT_LIFE | EVENT_RQ_CANCEL | (deadline ? EVENT_TIMER : 0) |
@@ -144,6 +274,8 @@ fsstep(Fsservice *fs)
     return hello(fs, &input);
   case FS_LOAD:
     return fsloadstart(fs->loads, fs->links, fs->nlinks, &input);
+  case FS_FORK_SNAPSHOT:
+    return forksnapshot(fs, &input);
   case FS_OPEN:
   case FS_PATH:
     return fsopenstart(fs->open, fs->links, fs->nlinks, &input);

@@ -38,6 +38,12 @@ fsfilefind(Fsfiles *table, Handle pid, u64 image, u64 session)
 }
 
 isize
+fsfilerefcheck(void *table, Handle pid, u64 image, u64 session, u64 id)
+{
+  return find(table, pid, image, session, id) ? 0 : -ERR_STALE;
+}
+
+isize
 fsfileholdref(Fsfiles *table, Handle pid, u64 image, u64 session, u64 id, Fsfile **out)
 {
   Fsref *ref;

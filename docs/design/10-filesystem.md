@@ -541,13 +541,17 @@ FS 的私有 `fscontextinherit` 只接受与父快照相同的 PID/image 和上�
 
 私有 `sysforkmanifest` 核对原 REQUEST 占用的槽、父镜像及各行的后端与源引用，快照整份清单并把别名归并为同一引用。fork 保留所有行及其 FD_CLOEXEC 标志；只有 exec 才按该标志筛除。子镜像和快照 token 仍须分别通过准备关系和原快照验证，解析成功不授予引用。主机测试覆盖重复 fd、未占用槽及带 FD_CLOEXEC 的别名归并。
 
-服务可用 `sysforksnapshot` 将 `FORK_SNAPSHOT` 的清单存入私有记录，配上由服务分配的非零 token。`sysforksnapshotcheck` 核对 token、父镜像、原连接、目标子镜像以及完整有序清单，要求准备请求是同连接上序号更新的另一笔 REQUEST，且两份记录均未到期。校验不消费记录；准备提交后由调用方撤销原记录。主机测试覆盖身份或清单变更、超期和撤销。服务端仍需接入 token 分配、引用保留与 RPC 分派。
+服务可用 `sysforksnapshot` 将 `FORK_SNAPSHOT` 的清单存入私有记录，配上由服务分配的非零 token。`sysforksnapshotcheck` 核对 token、父镜像、原连接、目标子镜像以及完整有序清单，要求准备请求是同连接上序号更新的另一笔 REQUEST，且两份记录均未到期。校验不消费记录；准备提交后由调用方撤销原记录。主机测试覆盖身份或清单变更、超期和撤销。
 
 ARM64、RV64 QEMU `runtime` 以原父连接发送真实 `FORK_SNAPSHOT` 和 `FORK_PREPARE`，验证错误 token 不消费快照、正确 token 允许登记子镜像观察、消费后的重放被拒绝，最后由 `forkabort` 触发观察收尾。token 分配和消费由测试夹具驱动，尚未安装生产文件引用。
 
-普通文件后端可用 `fsfileholdref` 按父 PID/image、session 和 reference_id 取得独立的 File 引用。这个内部引用保留打开状态和偏移，但不允许任何新客户端发起 I/O。ARM64、RV64 QEMU `pipeio` 验证错误引用或镜像被拒绝；正确引用在父 fd 关闭后仍保留 File 和偏移，释放后归还节点。快照记录如何持有和移交这份引用仍待接入服务分派。
+普通文件后端可用 `fsfileholdref` 按父 PID/image、session 和 reference_id 取得独立的 File 引用。这个内部引用保留打开状态和偏移，但不允许任何新客户端发起 I/O。ARM64、RV64 QEMU `pipeio` 验证错误引用或镜像被拒绝；正确引用在父 fd 关闭后仍保留 File 和偏移，释放后归还节点。
 
-`fsfileholdsnapshot` 按已归并的普通文件清单批量取得引用，每组只保留一次。如果后续一组失效，逆序释放已取得的引用，留空输出。快照所有者可用 `fsfiledropsnapshot` 释放未移交的引用。ARM64、RV64 QEMU `pipeio` 验证第二组失效时回滚第一组，以及释放快照前父 fd 关闭不丢失原 File 的偏移；服务分派仍须登记快照的持有期和清理责任。
+`fsfileholdsnapshot` 按已归并的普通文件清单批量取得引用，每组只保留一次。如果后续一组失效，逆序释放已取得的引用，留空输出。快照所有者可用 `fsfiledropsnapshot` 释放未移交的引用。
+
+配置了快照表的 FS 事件循环接收 `FORK_SNAPSHOT`，从原请求槽捕获清单，记录父命名空间的当前版本并持有每组普通文件引用，然后才回复 `[0,seq,token,0]`。token 在服务镜像内单调分配，不回绕；表满返回 `EAGAIN`。若在回复前观测到取消、请求排空或到期，或回复失败，则释放新增引用。未消费记录到期后回收，并与 LOAD 共用最早期限闹钟；父连接结束时仅回收其确切 PID/image/connid 的记录。目标身份仍须由后续 `FORK_PREPARE` 观察验证，管道快照、子引用安装和领取尚未接入。
+
+ARM64、RV64 QEMU `pipeio` 通过真实 FS 连接验证已到期请求不取引用、两个 fd 别名只保留一次、表满不替换 token、父关闭后仍保留偏移、父退出后归还节点和快照槽。60 项 FS/exec 主机测试通过；此场景尚未验证已回复 token 的记录经闹钟自动回收。
 File共享不等于共享运行库 staging/订阅或清理所有权；服务在发布前准备子引用、独立连接描述及接入容量；子用户态返回只做本地修复，首次实际后端操作才领取共享区，不等待批量接入。父已有阻塞操作仍属父，偏移/数据按服务既定提交顺序变化，不要求 fork 等待其业务完成。
 准备失败释放本次新增引用和上下文，父打开状态不变；父子退出、已删除打开文件、管道最后读写端、后端故障均按各自引用和代次处理。
 

@@ -6,9 +6,24 @@
 #include "journal.h"
 #include "blk.h"
 #include "blklog.h"
+#include "private/execmanifest.h"
 
 typedef struct Fsservice Fsservice;
 typedef struct Fsreclaim Fsreclaim;
+typedef struct Fsfork    Fsfork;
+typedef struct Fsforks   Fsforks;
+struct Fsfork
+{
+  Execmanifest manifest;
+  Fsfile      *holds[BOOT_FD_COUNT];
+  u64          context;
+};
+struct Fsforks
+{
+  Fsfork *records;
+  u32     count;
+  u64     serial;
+};
 struct Fsreclaim
 {
   Reclaimtx *work;
@@ -33,8 +48,9 @@ struct Fsservice
   Blkfetch  *fetch;
   /* Optional volume journal bridge. The loop settles its ticket before
      file and reclaim workers try to submit more I/O. */
-  Blklog *log;
-  u64     loadalarm;
+  Blklog  *log;
+  u64      alarm;
+  Fsforks *forks;
 };
 
 /* The caller supplies actual authorities, an exclusive VA arena, and fixed

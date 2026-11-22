@@ -349,7 +349,8 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         NULL,
                         NULL,
                         NULL,
-                        0};
+                        0,
+                        NULL};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
   } else if (interrupt == 1) {
@@ -2567,7 +2568,7 @@ openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
                   &reply.words[2]) &&
         !ipc_reply(gate.request, &reply));
   fixture.resolving = 4;
-  CHECK(!fsstep(fs) && job.io.request && !job.work.request && fs->loadalarm == deadline &&
+  CHECK(!fsstep(fs) && job.io.request && !job.work.request && fs->alarm == deadline &&
         loadwrite(table, fixture.map.file.inode, &guard) == -ERR_BUSY);
   CHECK(!fsstep(fs) && !sysfilenow(&now) && now >= deadline && job.io.request &&
         fixture.resolving == 2 && !fsloadpump(&loads) && !job.io.request &&
@@ -2621,7 +2622,8 @@ openserver(const Bootview *boot)
                         NULL,
                         NULL,
                         NULL,
-                        0};
+                        0,
+                        NULL};
   u32             i;
   const Loadfile  executable = {2, 1, 1, 20};
   u64             load;
@@ -3239,6 +3241,8 @@ publicappend(void *context, Readjob *job, u64 state, u64 offset, const volatile 
 static void
 publicchdirserver(const Bootview *boot)
 {
+  static Fsfork  record;
+  Fsforks        forks = {&record, 1, 0};
   Filelink       link = {0};
   Openfixture    fixture = {0};
   static Openjob job;
@@ -3271,7 +3275,8 @@ publicchdirserver(const Bootview *boot)
                        NULL,
                        NULL,
                        NULL,
-                       0};
+                       0,
+                       &forks};
   Sigsel         target = {SIGNAL_SELECT_PID, 0};
   Ipcmsg         request, event;
   Fileslot       slot;
@@ -3370,7 +3375,6 @@ publicchdirserver(const Bootview *boot)
   publicappendcheck(&fixture);
   CHECK(!fsstep(&fs) && file.position == 3); /* ftello after committing the append. */
   CHECK(!fsstep(&fs) && file.position == 3); /* fseek's flush fails before seeking. */
-  CHECK(!fsstep(&fs) && file.position == 3);
   publicappendcheck(&fixture);
   {
     Fsfile *hold = NULL;
@@ -3394,16 +3398,23 @@ publicchdirserver(const Bootview *boot)
       snapshot.count = 1;
       CHECK(!fsfileholdsnapshot(&fixture.files, &snapshot, holds, ARRAY_SIZE(holds)) &&
             holds[0] == &file && file.refs == 2);
-      CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.node == &fixture.file &&
-            file.position == 3);
       fsfiledropsnapshot(&fixture.files, holds, snapshot.count);
-      CHECK(!holds[0] && !file.refs && !file.node);
+      CHECK(!holds[0] && file.refs == 1);
     }
   }
-  CHECK(context.pid == target.target && fixture.holds == 2);
+  CHECK(!fsstep(&fs) && !forks.serial && !record.manifest.count && file.refs == 1);
+  CHECK(!fsstep(&fs) && forks.serial == 1 && record.manifest.count == 1 &&
+        record.manifest.nrows == 2 && record.manifest.deadline == UINT64_MAX &&
+        record.context == context.version && record.holds[0] == &file &&
+        record.manifest.groups[0].retained == 2 && file.refs == 2);
+  CHECK(!fsstep(&fs) && fs.alarm && forks.serial == 1 && file.refs == 2);
+  CHECK(!fsstep(&fs) && file.position == 3); /* fclose's flush. */
+  CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.position == 3);
+  CHECK(context.pid == target.target && fixture.holds == 3);
   for (steps = 0; steps < 8 && link.ready; steps++)
     CHECK(!fsstep(&fs));
-  CHECK(!context.pid && !fixture.holds && !link.ready && !link.watch.owner.cookie);
+  CHECK(!context.pid && !fixture.holds && !link.ready && !link.watch.owner.cookie &&
+        !record.manifest.count && !record.holds[0] && !record.context && !file.refs && !file.node);
   pipeiotrace[0] = 7;
 }
 
@@ -3481,6 +3492,54 @@ lateopenclient(void)
 }
 
 static void
+publicforksnapshot(Connwork *peer, int fd)
+{
+  Fileimage  *image;
+  Conncache  *cache;
+  Fdview      view;
+  Fileref     ref;
+  Filelease   lease;
+  Fileslot    slot = {0};
+  Fileinherit rows[2];
+  Msg         request = {{FS_FORK_SNAPSHOT, peer->state.map.connid, 0, 0}};
+  Ipcmsg      result;
+  u64         address = peer->state.map.address;
+  u32         i;
+  const isize status[] = {-ETIMEDOUT, 0, -EAGAIN};
+  CHECK(!sysfileimage(&image) && !sysfdobserve(&image->fds, fd, &view) &&
+        !sysfilerefview(&image->files, peer->state.self, view.file, &ref));
+  cache = sysfileimagecache(image);
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.payload_bytes = sizeof(rows);
+  /* SNAPSHOT does not authorize the target; PREPARE must verify this identity. */
+  slot.args[0] = (u64) peer->state.peer.pid;
+  slot.args[1] = peer->state.peer.image;
+  slot.args[2] = peer->state.self.image;
+  slot.args[4] = ARRAY_SIZE(rows);
+  rows[0] = (Fileinherit){
+      (u64) fd,    BOOT_FD_CLOEXEC, (u64) peer->state.peer.pid, peer->state.peer.image,
+      ref.session, ref.reference};
+  rows[1] = rows[0];
+  rows[1].fd++;
+  rows[1].flags = 0;
+  for (i = 0; i < ARRAY_SIZE(status); i++) {
+    CHECK(!sysconnworkreserve(peer, cache, SYSFILE_MAIN, 1, &lease));
+    slot.args[3] = i ? UINT64_MAX : 0;
+    request.words[2] = slot.seq = lease.seq;
+    request.words[3] = lease.slot;
+    CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
+                      sizeof(rows)) &&
+          !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
+                      sizeof(slot)) &&
+          !ipc_call(peer->state.call, &request, 0, &result) &&
+          (isize) result.words[0] == status[i] && result.words[1] == lease.seq &&
+          result.words[2] == (i == 1 ? 1 : 0) && !result.words[3] &&
+          !sysconnworkrelease(peer, cache, lease));
+  }
+}
+
+static void
 publicchdirclient(void)
 {
   Connwork        *peer;
@@ -3555,8 +3614,9 @@ publicchdirclient(void)
   stream = fopen("/x", "a+e");
   CHECK(stream && fileno(stream) == 0 && fcntl(0, F_GETFD) == FD_CLOEXEC &&
         fwrite("W\0", 1, 2, stream) == 2 && ftello(stream) == 3 && fputs("XY", stream) >= 0 &&
-        fseek(stream, 0, SEEK_SET) == -1 && errno == ENOSPC && ferror(stream) &&
-        fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
+        fseek(stream, 0, SEEK_SET) == -1 && errno == ENOSPC && ferror(stream));
+  publicforksnapshot(peer, fileno(stream));
+  CHECK(fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
   pipeiotrace[0] = 7;
 }
 
