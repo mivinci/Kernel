@@ -21,6 +21,7 @@ typedef struct Writeplan   Writeplan;
 typedef struct Writeimage  Writeimage;
 typedef struct Writeupdate Writeupdate;
 typedef struct Blockmap    Blockmap;
+typedef struct Loadowners  Loadowners;
 typedef struct Reclaim     Reclaim;
 struct Loadfile
 {
@@ -94,6 +95,10 @@ struct Blockmap
 {
   u64 used[FS_MAX_BLOCKS / 64];
 };
+struct Loadowners
+{
+  Blockmap owned, metadata;
+};
 /* The single volume writer supplies its private copy of the committed map,
    with earlier reservations in the same transaction already marked. On
    success both reservations and the proposed inode update are produced;
@@ -131,12 +136,13 @@ isize loadreclaimkind(u32 inode, u32 allocated, const Loadmap *, u32 links, u32 
    The caller still validates directory records and cross-inode ownership. */
 isize loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *, const Loadindex *,
                     const Blockmap *, u32 blocks);
-/* Accumulate one allocated inode from a stable volume scan. Start with a
-   separate zeroed owners map and visit each allocated slot exactly once,
-   including orphans and their unreclaimed tails. Reject aliases with prior
-   owners. On error or WOULD_BLOCK the owners map stays unchanged. */
+/* Accumulate one allocated inode from a stable volume scan. Start with
+   separate zeroed owners storage and visit each allocated slot exactly
+   once, including orphans and their unreclaimed tails. Indirect index
+   blocks and in-range directory data are metadata. Reject aliases with
+   prior owners. On error or WOULD_BLOCK neither bitmap changes. */
 isize loadmapclaim(u32 inode, u32 kind, u32 links, const Loadmap *, const Loadindex *,
-                   const Blockmap *, u32 blocks, Blockmap *owners);
+                   const Blockmap *, u32 blocks, Loadowners *);
 struct Loadslot
 {
   Loadfile file;

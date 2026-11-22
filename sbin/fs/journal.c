@@ -946,6 +946,20 @@ journalreadonly(const Fslayout *layout, const Fsgeometry *device, const Journalm
   return emptyvalid(mark) ? 0 : -ERR_STATE;
 }
 
+int
+journalmetadata(void *context, const Journalblock *images, u32 count, u32 index)
+{
+  const Loadowners *owners = context;
+  u64               block, bit;
+  if (!owners || !images || index >= count || count > JOURNAL_META)
+    return 0;
+  block = images[index].block;
+  if (block < FS_DATA_START || block >= FS_MAX_BLOCKS)
+    return 0;
+  bit = UINT64_C(1) << (block % 64);
+  return !!(owners->owned.used[block / 64] & owners->metadata.used[block / 64] & bit);
+}
+
 isize
 journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *device,
                const Journalmark *mark, const Journalhead *head, const Journalblock *metadata,

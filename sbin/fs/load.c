@@ -360,11 +360,11 @@ loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *map, const Load
 
 isize
 loadmapclaim(u32 inode, u32 kind, u32 links, const Loadmap *map, const Loadindex *index,
-             const Blockmap *allocation, u32 blocks, Blockmap *owners)
+             const Blockmap *allocation, u32 blocks, Loadowners *owners)
 {
   Blockmap seen = {0};
   isize    error;
-  u32      i, words;
+  u32      i, words, block, eof;
   if (blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS ||
       !separate(owners, sizeof(*owners), allocation, sizeof(*allocation)) ||
       !separate(owners, sizeof(*owners), map, sizeof(*map)) ||
@@ -378,10 +378,19 @@ loadmapclaim(u32 inode, u32 kind, u32 links, const Loadmap *map, const Loadindex
     return error;
   words = (blocks + 63) / 64;
   for (i = 0; i < words; i++)
-    if (seen.used[i] & owners->used[i])
+    if (seen.used[i] & owners->owned.used[i])
       return -ERR_STATE;
   for (i = 0; i < words; i++)
-    owners->used[i] |= seen.used[i];
+    owners->owned.used[i] |= seen.used[i];
+  if (map->indirect)
+    owners->metadata.used[map->indirect / 64] |= blockbit(map->indirect);
+  if (kind == VNODE_DIR) {
+    eof = (u32) ((map->file.length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
+    for (i = 0; i < eof; i++) {
+      block = i < LOAD_DIRECT ? map->direct[i] : index->entries[i - LOAD_DIRECT];
+      owners->metadata.used[block / 64] |= blockbit(block);
+    }
+  }
   return 0;
 }
 

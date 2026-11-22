@@ -245,6 +245,10 @@ isize shrinkpublish(Shrink *);
    EMPTY certifies a readable home view; unknown or COMMITTED marks do not.
    Does not open a Journal, grant write access, or validate the root inode. */
 isize journalreadonly(const Fslayout *, const Fsgeometry *, const Journalmark *);
+/* Classifier for data-area targets. Context is the Loadowners built from
+   the complete post-transaction view for these exact images, with the log
+   images taking precedence over home when decoding allocation and maps. */
+int journalmetadata(void *, const Journalblock *, u32 count, u32 index);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state
    preserves ticket serials and the last known retired transaction. Recovery

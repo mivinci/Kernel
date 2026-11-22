@@ -1578,7 +1578,7 @@ def exercise(args, run_dir, record):
                         expected_image[blocksize:2 * blocksize] = bytes((seed + i * 37) & 0xff for i in range(blocksize))
                         if name == "rw":
                             expected_image[2 * blocksize:3 * blocksize] = bytes((0x37 + i * 37) & 0xff for i in range(blocksize))
-                            for index, block in enumerate((65, 66, 18)):
+                            for index, block in enumerate((65, 109, 18)):
                                 base = block * blocksize
                                 expected_image[base:base + blocksize] = bytes(
                                     (0x92 + index * 31 + i * 37) & 0xff for i in range(blocksize))
