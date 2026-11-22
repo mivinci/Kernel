@@ -229,6 +229,10 @@ struct Blkmount
    recovery resources are separately provided. Zero means continue or wait
    on the current RPC; one means ready to call blkmountadd. */
 isize blkmountstep(Blkmount *);
+/* Startup driver, before serving clients. Owns the image alarm for this call;
+   deadline is an absolute monotonic time. One means ready. On error the
+   caller still owns the mount and must stop/drain it before releasing storage. */
+isize blkmountwait(Blkmount *, u64 deadline);
 /* Build the unpublished root identity from the validated directory scan.
    Destination starts zero; errors leave it unchanged. The namespace owner
    still holds the backing inode through publication and use. */

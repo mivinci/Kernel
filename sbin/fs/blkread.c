@@ -1,6 +1,8 @@
 #include "blkread.h"
 #include "crc.h"
 #include "mount.h"
+#include "private/syscall.h"
+#include "private/timer.h"
 #include <errno.h>
 
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
@@ -673,6 +675,39 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
     return work->failed = result;
   work->offset += within - start;
   return result;
+}
+
+isize
+blkmountwait(Blkmount *work, u64 deadline)
+{
+  Ipcmsg event;
+  u64    now, alarm;
+  isize  result, cancelled;
+  if (!work || !work->probe || !work->probe->blk || !deadline)
+    return -ERR_INVALID;
+  result = systimernow(&now);
+  if (result || now >= deadline)
+    return result ? result : -ERR_TIMEDOUT;
+  result = __sys_alarmset(deadline, &alarm);
+  if (result)
+    return result;
+  for (;;) {
+    result = systimernow(&now);
+    if (result || now >= deadline) {
+      result = result ? result : -ERR_TIMEDOUT;
+      break;
+    }
+    result = blkmountstep(work);
+    if (result)
+      break;
+    if (!work->probe->blk->rpc)
+      continue;
+    result = ipc_recv(EVENT_RQ_DONE | EVENT_TIMER, RECV_EVENTS_ONLY, &event);
+    if (result)
+      break;
+  }
+  cancelled = __sys_alarmcancel(&alarm);
+  return result < 0 || !cancelled ? result : cancelled;
 }
 
 isize

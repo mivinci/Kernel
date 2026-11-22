@@ -1644,21 +1644,15 @@ blkclient(const Bootview *boot, Handle call)
   mounting.retire = blkretire;
   mounting.faultbytes = FS_BLOCK_BYTES;
   mounting.writable = 1;
-  op = 0;
-  for (i = 0; i < 3 * FS_INODES / 32 + 40; i++) {
-    isize done = blkmountstep(&mounting);
-    REQUIRE(done == 0 || done == 1, 425);
-    if (done)
-      break;
+  {
+    u64 seq = blk.seq;
+    REQUIRE(blkmountwait(&mounting, now()) == -ERR_TIMEDOUT && blk.seq == seq && !blk.rpc, 425);
     REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial,
             438);
     REQUIRE(blkmountroot(&mounting, &root) == -ERR_WOULD_BLOCK && !root.number, 438);
-    if (blk.rpc) {
-      REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 426);
-      op++;
-    }
+    REQUIRE(blkmountwait(&mounting, now() + VDEV_RESET_NS) == 1 && blk.seq - seq == 19, 426);
   }
-  REQUIRE(op == 19 && dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
+  REQUIRE(dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
               recovered.last == 48 && recovered.phase == JOURNAL_IDLE && !home.scan.count &&
               home.owners.owned.used[1] == owners.owners.owned.used[1],
           429);
