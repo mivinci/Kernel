@@ -164,6 +164,7 @@ class FsLoadTests(unittest.TestCase):
         self.assertEqual(classify(2, 1, C.byref(mapping), 0, 4), -7)
         self.assertEqual(classify(2, 1, C.byref(mapping), 0, 0), 2)
         self.assertEqual(classify(3, 1, C.byref(mapping), 0, 0), -6)
+        self.assertEqual(classify(1024, 0, C.byref(mapping), 0, 0), -1)
         self.assertEqual(classify(1, 0, None, 0, 0), -6)
         mapping.file.inode = 1
         self.assertEqual(classify(1, 1, C.byref(mapping), 0, 0), -6)

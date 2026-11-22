@@ -223,6 +223,11 @@ testroot(u32 blocks)
                            &owners) == -ERR_STATE &&
               owners.owned.used[FS_DATA_START / 64] == allocation.used[FS_DATA_START / 64],
           336);
+  orphan.file.inode--;
+  orphan.file.version++;
+  REQUIRE(loadmapclaim(FS_ROOT + 2, VNODE_FILE, FS_INODES + 1, &orphan, NULL, &allocation, blocks,
+                       &owners) == -ERR_STATE,
+          360);
 }
 
 typedef struct Redotest Redotest;
@@ -312,7 +317,7 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
                   -ERR_STATE &&
               !journal.last,
           249);
-  REQUIRE(journalreadonly(&layout, &geometry, &mark) == -ERR_STATE, 245);
+  REQUIRE(journalreadonly(&layout, &geometry, &mark, NULL) == -ERR_STATE, 245);
   layout.blocks = blocks;
   for (i = 0; i < ARRAY_SIZE(images); i++)
     for (j = 0; j < JOURNAL_BYTES; j++)
@@ -326,9 +331,9 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   geometry.flush = 0;
   geometry.readonly = 1;
   geometry.faultbytes = 0;
-  REQUIRE(!journalreadonly(&layout, &geometry, &mark) &&
-              !journalreadonly(&layout, &geometry, &fresh) &&
-              journalreadonly(&layout, &geometry, NULL) == -ERR_STATE &&
+  REQUIRE(journalreadonly(&layout, &geometry, &mark, NULL) == -ERR_WOULD_BLOCK &&
+              journalreadonly(&layout, &geometry, &fresh, NULL) == -ERR_WOULD_BLOCK &&
+              journalreadonly(&layout, &geometry, NULL, NULL) == -ERR_STATE &&
               journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL) ==
                   -ERR_NOTSUP &&
               !journal.last,
@@ -336,9 +341,9 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   {
     const Journalmark committed = {47, 1, 11, 12}, unknown = {47, 2, 0, 0};
     const Journalmark bad = {47, 0, 11, 0};
-    REQUIRE(journalreadonly(&layout, &geometry, &committed) == -ERR_STATE &&
-                journalreadonly(&layout, &geometry, &unknown) == -ERR_STATE &&
-                journalreadonly(&layout, &geometry, &bad) == -ERR_STATE,
+    REQUIRE(journalreadonly(&layout, &geometry, &committed, NULL) == -ERR_STATE &&
+                journalreadonly(&layout, &geometry, &unknown, NULL) == -ERR_STATE &&
+                journalreadonly(&layout, &geometry, &bad, NULL) == -ERR_STATE,
             250);
   }
   geometry.readonly = config->readonly;
@@ -464,6 +469,29 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
     count++;
   }
   REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
+  {
+    static Redoscan   home;
+    static Loadowners homeowners;
+    const Journalmark retired = {47, 0, 0, 0};
+    Redotest          reader = {NULL, 1, 0};
+    geometry.readonly = 1;
+    geometry.flush = geometry.faultbytes = 0;
+    REQUIRE(journalreadonly(&layout, &geometry, &retired, &scan) == -ERR_STATE &&
+                !redoscaninit(&home, (u32) blocks, NULL, 0, &inodes, &allocation, &homeowners) &&
+                redoscanstep(&home, redoload, &reader) == -ERR_WOULD_BLOCK &&
+                journalreadonly(&layout, &geometry, &retired, &home) == -ERR_WOULD_BLOCK,
+            357);
+    for (i = 0; i < FS_INODES / 32; i++)
+      REQUIRE(redoscanstep(&home, redoload, &reader) == (i == FS_INODES / 32 - 1), 358);
+    REQUIRE(!journalreadonly(&layout, &geometry, &retired, &home) &&
+                journalreadonly(&layout, &geometry, &mark, &home) == -ERR_STATE,
+            359);
+    home.blocks--;
+    REQUIRE(journalreadonly(&layout, &geometry, &retired, &home) == -ERR_STATE, 391);
+    home.blocks++;
+    home.failed = -ERR_FAULT;
+    REQUIRE(journalreadonly(&layout, &geometry, &retired, &home) == -ERR_FAULT, 392);
+  }
   testroot((u32) blocks);
 }
 static isize

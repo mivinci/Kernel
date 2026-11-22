@@ -371,7 +371,8 @@ loadmapclaim(u32 inode, u32 kind, u32 links, const Loadmap *map, const Loadindex
       (index && !separate(owners, sizeof(*owners), index, sizeof(*index))))
     return -ERR_INVALID;
   if ((kind != VNODE_DIR && kind != VNODE_FILE && kind != VNODE_LINK) ||
-      (inode == FS_ROOT && kind != VNODE_DIR) || loadreclaimkind(inode, 1, map, links, 0) < 0)
+      (inode == FS_ROOT && kind != VNODE_DIR) || (kind != VNODE_DIR && links > FS_INODES) ||
+      loadreclaimkind(inode, 1, map, links, 0) < 0)
     return -ERR_STATE;
   error = mapclaims(map, index, allocation, blocks, kind == VNODE_DIR, &seen);
   if (error)

@@ -259,10 +259,11 @@ isize journalshrink(Shrink *, Journal *, struct Cache *, struct Loadmap *, const
                     const Mapmeta *);
 isize shrinkpublish(Shrink *);
 /* Read-only admission after decoding and authenticating the layout and mark,
-   with older I/O isolated and the volume stable against other writers. Only
-   EMPTY certifies a readable home view; unknown or COMMITTED marks do not.
-   Does not open a Journal, grant write access, or validate the root inode. */
-isize journalreadonly(const Fslayout *, const Fsgeometry *, const Journalmark *);
+   with older I/O isolated and the volume stable against other writers. For
+   valid EMPTY, WOULD_BLOCK means the home inode and allocation scan is not
+   complete. An overlay scan cannot certify home. Does not validate directory
+   entries, open a Journal or grant write access. */
+isize journalreadonly(const Fslayout *, const Fsgeometry *, const Journalmark *, const Redoscan *);
 /* Select bytes from the immutable, checksum-verified redo images before
    reading a home block for the recovery scan. NULL output on success means
    read home; errors leave output unchanged. No I/O is started. */

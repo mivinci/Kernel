@@ -975,12 +975,21 @@ journalview(u64 blocks, const Journalblock *images, u32 count, u64 block, const 
 }
 
 isize
-journalreadonly(const Fslayout *layout, const Fsgeometry *device, const Journalmark *mark)
+journalreadonly(const Fslayout *layout, const Fsgeometry *device, const Journalmark *mark,
+                const Redoscan *scan)
 {
   isize error = fslayoutcheck(layout, device, 0);
   if (error)
     return error;
-  return emptyvalid(mark) ? 0 : -ERR_STATE;
+  if (!emptyvalid(mark))
+    return -ERR_STATE;
+  if (!scan)
+    return -ERR_WOULD_BLOCK;
+  if (scan->blocks != layout->blocks || scan->count)
+    return -ERR_STATE;
+  if (scan->failed)
+    return scan->failed;
+  return scan->next == FS_INODES ? 0 : -ERR_WOULD_BLOCK;
 }
 
 isize
