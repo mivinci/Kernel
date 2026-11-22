@@ -112,7 +112,7 @@ isize sysfileimagegetcwd(u32 layer, void *output, u64 bytes, Fileioresult *resul
 /* Duplicate a live descriptor in the current image without a service RPC. */
 isize sysfileimagedup(int fd);
 isize sysfileimagedup2(int fd, int target);
-isize sysfileimagedupfrom(int fd, int minimum);
+isize sysfileimagedupfrom(int fd, int minimum, u64 flags);
 /* Read or replace the flags on one live descriptor without changing its File. */
 isize sysfileimageflags(int fd, u32 set, u64 flags);
 isize sysfileimagegetattr(u32 layer, int fd, void *output, Fileioresult *result);

@@ -1556,7 +1556,7 @@ sysfileimageclose(int fd)
 }
 
 static isize
-duplicate(int fd, int target, u32 replace)
+duplicate(int fd, int target, u32 replace, u64 flags)
 {
   Fileimage *state;
   u64        mask, ignored, displaced = 0;
@@ -1576,7 +1576,7 @@ duplicate(int fd, int target, u32 replace)
     result = sysfddup2(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target,
                        &displaced);
   } else
-    result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target);
+    result = sysfddup(&state->fds, &state->files, state->files.self, (u32) fd, (u32) target, flags);
   if (result >= 0 && displaced)
     closing = 1;
   fileprogress(state);
@@ -1587,19 +1587,19 @@ duplicate(int fd, int target, u32 replace)
 isize
 sysfileimagedup(int fd)
 {
-  return duplicate(fd, 0, 0);
+  return duplicate(fd, 0, 0, 0);
 }
 
 isize
 sysfileimagedup2(int fd, int target)
 {
-  return duplicate(fd, target, 1);
+  return duplicate(fd, target, 1, 0);
 }
 
 isize
-sysfileimagedupfrom(int fd, int minimum)
+sysfileimagedupfrom(int fd, int minimum, u64 flags)
 {
-  return duplicate(fd, minimum, 0);
+  return duplicate(fd, minimum, 0, flags);
 }
 
 isize

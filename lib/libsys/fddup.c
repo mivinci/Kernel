@@ -16,12 +16,12 @@ sourcefile(Fdtable *table, Filepool *pool, Connpeer self, u32 source, Fdview *ol
 }
 
 isize
-sysfddup(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 minimum)
+sysfddup(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 minimum, u64 flags)
 {
   Fdview old;
   Fdtag  slot;
   isize  error;
-  if (minimum >= BOOT_FD_COUNT)
+  if (minimum >= BOOT_FD_COUNT || (flags & ~((u64) BOOT_FD_CLOEXEC)))
     return -ERR_INVALID;
   error = sourcefile(table, pool, self, source, &old);
   if (error)
@@ -31,7 +31,7 @@ sysfddup(Fdtable *table, Filepool *pool, Connpeer self, u32 source, u32 minimum)
     return error;
   error = sysfdreserve(table, minimum, &slot);
   if (!error) {
-    error = sysfdpublish(table, slot, old.file, 0);
+    error = sysfdpublish(table, slot, old.file, flags);
     if (!error)
       return slot.index;
     /* The caller keeps both tables stable, so these rollback operations

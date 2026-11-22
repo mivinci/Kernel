@@ -52,7 +52,9 @@ match(Connwork *work, Conncache *cache, const Opkey *key, Slotop **out)
   if (!op->phase || op->lease.seq != key->lease.seq || op->lease.slot != key->lease.slot ||
       op->lease.span != key->lease.span || op->owner != key->owner)
     return -ERR_STALE;
-  if (op->phase > SYSOP_ACKED || (!op->file && (op->opcode != FS_PATH || op->object)) ||
+  if (op->phase > SYSOP_ACKED ||
+      (!op->file && !(op->opcode == FS_PATH && !op->object) &&
+       !(op->opcode == FS_LOAD && op->object)) ||
       op->flags & ~(SYSOP_BACKGROUND | SYSOP_SAVED | SYSOP_RESOURCE_MOVED | SYSOP_BAD_RESULT |
                     SYSOP_CANCEL_SENT | SYSOP_APP_ENDED | SYSOP_CREATOR) ||
       ((op->flags & SYSOP_BACKGROUND) ? op->owner != 0 : op->owner == 0) ||
@@ -89,7 +91,8 @@ sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner,
   Slotop   *op;
   isize     error;
   if (!owner || !output(work, cache, owned_file, sizeof(*owned_file)) ||
-      (!*owned_file && (opcode != FS_PATH || object)) || !output(work, cache, out, sizeof(*out)) ||
+      (!*owned_file && !(opcode == FS_PATH && !object) && !(opcode == FS_LOAD && object)) ||
+      !output(work, cache, out, sizeof(*out)) ||
       !separate(owned_file, sizeof(*owned_file), out, sizeof(*out)) || opcode < FS_OPEN ||
       opcode > FS_PIPE || opcode == FS_ATTACH || opcode == FS_EXEC_CLAIM || opcode == FS_ABORT ||
       (opcode >= 13 && opcode <= 15) || (context >= SYSFILE_CONTROL && opcode != FS_CLOSE) ||
@@ -627,4 +630,101 @@ isize
 sysopabort(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
 {
   return finish(work, cache, key, file, SYSOP_PREPARED);
+}
+
+isize
+sysloadstage(Connwork *work, Conncache *cache, u32 layer, u64 owner, u64 session,
+             const u64 identity[4], u64 offset, u64 bytes, Loadrequest *load)
+{
+  Fileslot slot;
+  u64      file = 0, address;
+  u32      i;
+  isize    error;
+  if (!output(work, cache, load, sizeof(*load)) || !identity || !session || !identity[0] ||
+      !identity[1] || !identity[2] || !bytes || bytes > FS_SLOT_BYTES || offset > identity[3] ||
+      bytes > identity[3] - offset)
+    return -ERR_INVALID;
+  if (load->key.lease.seq)
+    return -ERR_BUSY;
+  for (i = 0; i < sizeof(slot); i++)
+    ((volatile u8 *) &slot)[i] = 0;
+  for (i = 0; i < 4; i++)
+    slot.args[i] = identity[i];
+  error = sysopprepare(work, cache, layer, 1, owner, &file, session, FS_LOAD, 0, &load->key);
+  if (error)
+    return error;
+  slot.seq = load->key.lease.seq;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = session;
+  slot.payload_bytes = bytes;
+  slot.args[4] = offset;
+  slot.args[5] = bytes;
+  address = work->state.map.address + FS_DESC_OFFSET + load->key.lease.slot * FS_DESC_BYTES;
+  error = __sys_copy((void *) (uintptr_t) address, &slot, sizeof(slot));
+  if (error) {
+    if (sysopabort(work, cache, &load->key, &file))
+      return -ERR_STATE;
+    load->key.lease.seq = 0;
+    return error;
+  }
+  load->bytes = bytes;
+  load->native = load->business = 0;
+  return 0;
+}
+
+isize
+sysloadcollect(Connwork *work, Conncache *cache, Loadrequest *load, void *destination)
+{
+  Slotop *op;
+  u64     file;
+  Handle  dropped;
+  isize   error;
+  if (!output(work, cache, load, sizeof(*load)) || !load->bytes || load->bytes > FS_SLOT_BYTES ||
+      !separate(load, sizeof(*load), destination, load->bytes))
+    return -ERR_INVALID;
+  error = match(work, cache, &load->key, &op);
+  if (error)
+    return error;
+  if (op->opcode != FS_LOAD || op->file || load->key.lease.span != 1)
+    return -ERR_INVALID;
+  error = sysoppoll(work, cache, &load->key);
+  if (!error)
+    error = sysopfinished(work, cache, &load->key);
+  if (error)
+    return error;
+  if (!(op->flags & SYSOP_SAVED)) {
+    if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT)
+      load->native = -ERR_STATE;
+    else if (op->status)
+      load->native =
+          op->words[0] || op->words[1] || op->words[2] || op->words[3] ? -ERR_STATE : op->status;
+    else if (op->words[1] != load->key.lease.seq || (isize) op->words[0] > 0 ||
+             (op->words[0] ? op->words[2] || op->words[3]
+                           : op->words[2] != load->bytes || op->words[3] != load->bytes))
+      load->native = -ERR_STATE;
+    else if (op->words[0])
+      load->business = (isize) op->words[0];
+    else
+      load->native = sysopcopy(work, cache, &load->key, 0, load->bytes, destination);
+    if (op->resource) {
+      error = __sys_free(op->resource);
+      if (!error)
+        error = sysopresource(work, cache, &load->key, &dropped);
+      if (error)
+        return error;
+    }
+    error = sysopsaved(work, cache, &load->key);
+    if (error)
+      return error;
+  }
+  if (op->phase != SYSOP_ACKED) {
+    error = sysopack(work, cache, &load->key);
+    if (error)
+      return error;
+  }
+  error = sysopfinish(work, cache, &load->key, &file);
+  if (!error)
+    load->key.lease.seq = 0;
+  return error;
 }

@@ -15,7 +15,8 @@
 #define SYSOP_CREATOR        64
 #define SYSOP_ABANDONED      1
 #define SYSOP_CONTROL_NS     UINT64_C(1000000000)
-typedef struct Opkey Opkey;
+typedef struct Opkey       Opkey;
+typedef struct Loadrequest Loadrequest;
 struct Opkey
 {
   Conntag   connection;
@@ -23,6 +24,19 @@ struct Opkey
   u64       owner;
 };
 STATIC_ASSERT(sizeof(Opkey) == 40, slot_operation_key_size);
+struct Loadrequest
+{
+  Opkey key;
+  u64   bytes;
+  isize native, business;
+};
+/* Stage a chunk of an existing version-pinned LOAD session. identity is
+   {inode, generation, version, length}. The caller retains that session. */
+isize sysloadstage(Connwork *, Conncache *, u32 layer, u64 owner, u64 session,
+                   const u64 identity[4], u64 offset, u64 bytes, Loadrequest *);
+/* On success the slot and RPC were released; inspect native and business.
+   Keep the same private destination across retries. */
+isize sysloadcollect(Connwork *, Conncache *, Loadrequest *, void *destination);
 /* Caller excludes caught signals for short operations; no blocking calls.
    Read-only keys stay stable for the call and must not overlap any output.
    File is a single already-pinned local reference. A path operation with

@@ -897,11 +897,17 @@ interruptclient(void)
         fcntl(4, F_GETFD) == -1 && errno == EBADF && fcntl(4, F_SETFD, 0) == -1 && errno == EBADF &&
         fcntl(fds[0], F_DUPFD, -1) == -1 && errno == EINVAL &&
         fcntl(fds[0], F_DUPFD, BOOT_FD_COUNT) == -1 && errno == EINVAL);
+  CHECK(!fcntl(fds[0], F_SETFD, 0) && fcntl(fds[0], F_DUPFD_CLOEXEC, 4) == 4 &&
+        fcntl(4, F_DUPFD_CLOEXEC, 4) == 5 && fcntl(4, F_GETFD) == FD_CLOEXEC &&
+        fcntl(5, F_GETFD) == FD_CLOEXEC && !fcntl(fds[0], F_GETFD) &&
+        !sysfdobserve(&image->fds, 5, &alias) && alias.file == original.file && !close(4) &&
+        !close(5) && !fcntl(fds[0], F_SETFD, FD_CLOEXEC));
   errno = EBUSY;
   for (fd = 2; fd < BOOT_FD_COUNT; fd++)
     CHECK(dup(fds[0]) == fd && errno == EBUSY && !sysfdobserve(&image->fds, fd, &alias) &&
           alias.file == original.file && !alias.flags);
-  CHECK(fcntl(fds[0], F_DUPFD, 4) == -1 && errno == EMFILE && dup(fds[0]) == -1 &&
+  CHECK(fcntl(fds[0], F_DUPFD_CLOEXEC, 4) == -1 && errno == EMFILE &&
+        fcntl(fds[0], F_DUPFD, 4) == -1 && errno == EMFILE && dup(fds[0]) == -1 &&
         errno == EMFILE && dup(-1) == -1 && errno == EBADF &&
         !sysfdobserve(&image->fds, fds[0], &original) && original.flags == BOOT_FD_CLOEXEC &&
         !sysfilerefview(&image->files, work->state.self, original.file, &ref) &&
@@ -2688,6 +2694,9 @@ openloadclient(void)
   volatile u8 *page;
   Handle       rpc;
   u32          attempt;
+  Loadrequest  load = {0};
+  u64          identity[4] = {2, 1, 2, 26};
+  u8           bytes[2] = {'?', '?'};
   CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result) && result.words[2]);
   slot.object = result.words[2];
   slot.state = FS_SLOT_SUBMITTED;
@@ -2699,7 +2708,7 @@ openloadclient(void)
   slot.args[4] = 3;
   slot.args[5] = 2;
   slot.args[6] = 1;
-  for (attempt = 0; attempt < 3; attempt++) {
+  for (attempt = 0; attempt < 2; attempt++) {
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
     slot.seq = request.words[2] = lease.seq;
     request.words[3] = lease.slot;
@@ -2720,14 +2729,19 @@ openloadclient(void)
     } else
       CHECK(!ipc_call(work.state.call, &request, 0, &result));
     CHECK(result.words[1] == lease.seq &&
-          (isize) result.words[0] == (attempt == 0   ? -ESTALE
-                                      : attempt == 1 ? -EINTR
-                                                     : 0) &&
-          result.words[2] == (attempt == 2 ? 2 : 0) && result.words[3] == result.words[2] &&
-          page[0] == '?' && page[1] == (attempt == 2 ? 'L' : '?') &&
-          page[2] == (attempt == 2 ? 'D' : '?') && page[3] == '?' &&
-          !sysconnworkrelease(&work, &cache, lease));
+          (isize) result.words[0] == (attempt == 0 ? -ESTALE : -EINTR) && !result.words[2] &&
+          !result.words[3] && page[0] == '?' && page[1] == '?' && page[2] == '?' &&
+          page[3] == '?' && !sysconnworkrelease(&work, &cache, lease));
   }
+  CHECK(!sysloadstage(&work, &cache, SYSFILE_MAIN, 1, slot.object, identity, 3, sizeof(bytes),
+                      &load) &&
+        !sysoprequest(&work, &cache, &load.key, &request) &&
+        !ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+  rpc = result.request;
+  CHECK(!sysopsubmitted(&work, &cache, &load.key, &result.request) &&
+        !ipc_rqwait(rpc, RQ_FINISH, &drain) && !sysloadcollect(&work, &cache, &load, bytes) &&
+        !load.key.lease.seq && !load.native && !load.business && bytes[0] == 'L' &&
+        bytes[1] == 'D' && ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_STALE);
 }
 
 static void

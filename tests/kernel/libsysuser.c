@@ -1622,12 +1622,12 @@ typedclient(const Bootview *view, Handle peer)
             !sysfdpublish(&file_descriptors, descriptor_tag, file, BOOT_FD_CLOEXEC) &&
             !sysfdreserve(&file_descriptors, BOOT_FD_COUNT - 1, &last) &&
             sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 0,
-                     BOOT_FD_COUNT - 1) == -ERR_CAPACITY &&
+                     BOOT_FD_COUNT - 1, 0) == -ERR_CAPACITY &&
             !sysfilerefview(&file_registry, connection_work.state.self, fileid, &duplicatefile) &&
             duplicatefile.aliases == 1 && !sysfdcancel(&file_descriptors, last) &&
-            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 1, 1) ==
+            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 1, 1, 0) ==
                 -ERR_BAD_HANDLE &&
-            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 0, 1) == 1 &&
+            sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 0, 1, 0) == 1 &&
             !sysfdobserve(&file_descriptors, 0, &sourcefd) && sourcefd.flags == BOOT_FD_CLOEXEC &&
             !sysfdobserve(&file_descriptors, 1, &duplicatefd) && duplicatefd.file == fileid &&
             !duplicatefd.flags &&
@@ -1751,7 +1751,8 @@ typedclient(const Bootview *view, Handle peer)
                 !sysfdclose(&file_descriptors, &file_registry, connection_work.state.self,
                             removed.tag, &displaced) &&
                 !displaced &&
-                sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 1, 0) == 0,
+                sysfddup(&file_descriptors, &file_registry, connection_work.state.self, 1, 0, 0) ==
+                    0,
             122);
     displaced = 99;
     REQUIRE(sysfdclose(&file_descriptors, &file_registry, connection_work.state.self, removed.tag,

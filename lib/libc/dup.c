@@ -57,12 +57,13 @@ fcntl(int fd, int cmd, ...)
   case F_GETFD:
     return dupresult(sysfileimageflags(fd, 0, 0));
   case F_DUPFD:
+  case F_DUPFD_CLOEXEC:
   case F_SETFD:
     va_start(args, cmd);
     value = va_arg(args, int);
     va_end(args);
-    if (cmd == F_DUPFD)
-      return dupresult(sysfileimagedupfrom(fd, value));
+    if (cmd != F_SETFD)
+      return dupresult(sysfileimagedupfrom(fd, value, cmd == F_DUPFD_CLOEXEC ? FD_CLOEXEC : 0));
     return dupresult(sysfileimageflags(fd, 1, (u64) value & FD_CLOEXEC));
   default:
     errno = EINVAL;
