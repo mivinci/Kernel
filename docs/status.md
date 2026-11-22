@@ -21,7 +21,7 @@
 ## 最新验证
 
 - `fcntl(F_DUPFD_CLOEXEC)` 原子发布带 CLOEXEC 的别名，共用原 File；双架构 QEMU `pipeio`、`libsys` 已验证，完整 exec 继承仍待接。
-- libsys 可从已授权的 `FS_LOAD` 会话精确读块；双架构 QEMU `pipeio` 核对数据和原请求释放。取得会话及 ELF 装载接线仍待做。
+- `Elfsource` 可从已授权的 `FS_LOAD` 会话精确读块；双架构 QEMU `pipeio` 核对 ELF 头、段字节与旧版本拒绝。生产会话授权和基于 FS 的镜像替换仍待接。
 - virtio MMIO 精确窗口适配器已纳入 SDK；双架构 `virtiodev` 验证越界拒绝及真实设备访问。生产库存仍只交付 UART。
 - 块设备复位、特性协商、几何读取和队列启动共用服务入口；双架构 `virtiodev` 验证只读盘、可写盘和复位后重新启动。
 - 设备复位后，块队列等待请求窗口和整个环的 AFTER 完成才进入 STOPPED；双架构 `virtiodev` 验证按失败页续跑。

@@ -35,7 +35,7 @@ struct Loadrequest
 isize sysloadstage(Connwork *, Conncache *, u32 layer, u64 owner, u64 session,
                    const u64 identity[4], u64 offset, u64 bytes, Loadrequest *);
 /* On success the slot and RPC were released; inspect native and business.
-   Keep the same private destination across retries. */
+   Keep the same private destination across retries; NULL discards the bytes. */
 isize sysloadcollect(Connwork *, Conncache *, Loadrequest *, void *destination);
 /* Caller excludes caught signals for short operations; no blocking calls.
    Read-only keys stay stable for the call and must not overlap any output.

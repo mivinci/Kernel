@@ -681,7 +681,7 @@ sysloadcollect(Connwork *work, Conncache *cache, Loadrequest *load, void *destin
   Handle  dropped;
   isize   error;
   if (!output(work, cache, load, sizeof(*load)) || !load->bytes || load->bytes > FS_SLOT_BYTES ||
-      !separate(load, sizeof(*load), destination, load->bytes))
+      (destination && !separate(load, sizeof(*load), destination, load->bytes)))
     return -ERR_INVALID;
   error = match(work, cache, &load->key, &op);
   if (error)
@@ -705,7 +705,7 @@ sysloadcollect(Connwork *work, Conncache *cache, Loadrequest *load, void *destin
       load->native = -ERR_STATE;
     else if (op->words[0])
       load->business = (isize) op->words[0];
-    else
+    else if (destination)
       load->native = sysopcopy(work, cache, &load->key, 0, load->bytes, destination);
     if (op->resource) {
       error = __sys_free(op->resource);

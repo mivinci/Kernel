@@ -12,6 +12,7 @@
 #include "private/close.h"
 #include "private/connection.h"
 #include "private/contextipc.h"
+#include "private/elfloadfs.h"
 #include "private/filecreate.h"
 #include "private/fileimage.h"
 #include "private/filewatch.h"
@@ -2362,13 +2363,17 @@ openloadsubmit(void *context, Loadjob *job, const Loadfetch *fetch)
 static void
 openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
 {
-  static Loadfixture fixture = {.map = {{2, 1, 2, 26}, {FS_DATA_START}, 0}};
-  static Cacheblock  backing;
-  static Loadjob     job;
-  Fsloads            loads = {table, &job, 1, 0, block, &fixture, openloadresolve, openloadsubmit};
-  Filewatch         *watch = &fs->links[0].watch;
-  Msg                reply = {{0, 0, 0, 0}};
-  Ipcmsg             gate, event;
+  static Loadfixture fixture = {.map = {{2, 1, 2, 130}, {FS_DATA_START}, 0}};
+  static const u8    header[120] = {
+      [0] = 0x7f, [1] = 'E', [2] = 'L',   [3] = 'F',   [4] = 2,   [5] = 1,   [6] = 1,
+      [16] = 2,   [20] = 1,  [26] = 0x40, [32] = 64,   [52] = 64, [54] = 56, [56] = 1,
+      [64] = 1,   [68] = 5,  [72] = 128,  [82] = 0x40, [96] = 2,  [104] = 2, [112] = 1};
+  static Cacheblock backing;
+  static Loadjob    job;
+  Fsloads           loads = {table, &job, 1, 0, block, &fixture, openloadresolve, openloadsubmit};
+  Filewatch        *watch = &fs->links[0].watch;
+  Msg               reply = {{0, 0, 0, 0}};
+  Ipcmsg            gate, event;
   CHECK(!cacheinit(&fixture.cache, &backing, 1, 128) && !ipc_recv(0, 0, &gate) &&
         gate.kind == IPC_CALL && gate.words[0] == FS_ATTACH &&
         !loadopen(table, &fixture.map.file, watch->owner.pid, watch->owner.image, 0, UINT64_MAX,
@@ -2398,11 +2403,16 @@ openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
           job.work.fill.cache && fixture.fetch.ticket.serial > old.serial &&
           loadcacheretry(&job.work, request, &old) == -ERR_STALE);
   }
-  block[3] = 'L';
-  block[4] = 'D';
+  memcpy(block, header, sizeof(header));
+  block[18] = elfmachine();
+  block[128] = 'L';
+  block[129] = 'D';
   CHECK(!loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, block, CACHE_BYTES) &&
-        !fsloadpump(&loads) && !job.io.request && !watch->active.requests[job.io.slot] &&
-        !loadclose(table, reply.words[2], watch->owner.pid, watch->owner.image));
+        !fsloadpump(&loads) && !job.io.request && !watch->active.requests[job.io.slot]);
+  CHECK(!fsstep(fs) && !fsloadpump(&loads) && !job.io.request);
+  CHECK(!fsstep(fs) && !fsloadpump(&loads) && !job.io.request);
+  CHECK(!fsstep(fs) && !job.io.request); /* Stale version through Elfsource. */
+  CHECK(!loadclose(table, reply.words[2], watch->owner.pid, watch->owner.image));
   fs->loads = NULL;
 }
 
@@ -2694,8 +2704,13 @@ openloadclient(void)
   volatile u8 *page;
   Handle       rpc;
   u32          attempt;
-  Loadrequest  load = {0};
-  u64          identity[4] = {2, 1, 2, 26};
+  Elfloadfs    load = {.work = &work,
+                       .cache = &cache,
+                       .identity = {2, 1, 2, 130},
+                       .owner = 1,
+                       .layer = SYSFILE_MAIN};
+  Elfsource    source = {&load, 130, elfloadfsread};
+  Elfplan      plan;
   u8           bytes[2] = {'?', '?'};
   CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result) && result.words[2]);
   slot.object = result.words[2];
@@ -2704,7 +2719,7 @@ openloadclient(void)
   slot.payload_bytes = 4;
   slot.args[0] = 2;
   slot.args[1] = 1;
-  slot.args[3] = 26;
+  slot.args[3] = source.bytes;
   slot.args[4] = 3;
   slot.args[5] = 2;
   slot.args[6] = 1;
@@ -2733,15 +2748,16 @@ openloadclient(void)
           !result.words[3] && page[0] == '?' && page[1] == '?' && page[2] == '?' &&
           page[3] == '?' && !sysconnworkrelease(&work, &cache, lease));
   }
-  CHECK(!sysloadstage(&work, &cache, SYSFILE_MAIN, 1, slot.object, identity, 3, sizeof(bytes),
-                      &load) &&
-        !sysoprequest(&work, &cache, &load.key, &request) &&
-        !ipc_call(work.state.call, &request, CALL_ASYNC, &result));
-  rpc = result.request;
-  CHECK(!sysopsubmitted(&work, &cache, &load.key, &result.request) &&
-        !ipc_rqwait(rpc, RQ_FINISH, &drain) && !sysloadcollect(&work, &cache, &load, bytes) &&
-        !load.key.lease.seq && !load.native && !load.business && bytes[0] == 'L' &&
-        bytes[1] == 'D' && ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_STALE);
+  load.session = slot.object;
+  CHECK(!elfcheck(&source, 1, &plan) && plan.count == 1 && plan.pages == 1 &&
+        plan.segments[0].filesz == sizeof(bytes) &&
+        !elfread(&source, plan.segments[0].offset, bytes, sizeof(bytes)) && bytes[0] == 'L' &&
+        bytes[1] == 'D' && !load.pending.key.lease.seq && !load.submitted && !load.business &&
+        !elfloadfsdrain(&load));
+  load.identity[2]--;
+  CHECK(elfread(&source, plan.segments[0].offset, bytes, sizeof(bytes)) == -ERR_STATE &&
+        load.business == -ESTALE && !load.pending.key.lease.seq && !load.submitted &&
+        bytes[0] == 'L' && bytes[1] == 'D');
 }
 
 static void
