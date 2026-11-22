@@ -33,6 +33,12 @@ STATIC_ASSERT(sizeof(Opkey) == 40, slot_operation_key_size);
    No app pointer or restart lives here. */
 isize sysopprepare(Connwork *work, Conncache *cache, u32 context, u32 span, u64 owner,
                    u64 *owned_file, u64 object, u64 opcode, u64 deadline, Opkey *out);
+/* Preparing a poll group moves its anchor pin only on success. */
+isize sysoppollprepare(Connwork *work, Conncache *cache, u32 context, u64 owner, u64 *owned_file,
+                       u64 opcode, u64 deadline, const Filepoll *rows, u32 count, Opkey *out);
+/* Cancel a submitted poll and transfer responsibility to its existing slot.
+   The background worker discards the result and returns the anchor pin. */
+isize sysoppollabandon(Connwork *work, Conncache *cache, Opkey *key, Opkey *background);
 isize sysopsubmitted(Connwork *work, Conncache *cache, const Opkey *key, Handle *owned_rpc);
 /* Borrow PREPARED short request or WAITING RPC, never another owner. */
 isize sysoprequest(Connwork *work, Conncache *cache, const Opkey *key, Msg *out);
@@ -62,7 +68,7 @@ isize sysopinterrupt(Connwork *work, Conncache *cache, const Opkey *key, u64 now
    and clears owned_key. The frontend maps ABANDONED to EIO, never EINTR or
    zero progress; this native helper does not write errno or app memory. */
 isize sysopresume(Connwork *work, Conncache *cache, Opkey *owned_key, u64 now, Opkey *out);
-/* Explicitly abandoned READ/WRITE only. Nonblocking late-result/real-finish
+/* Explicitly abandoned data, seek, or poll work. Nonblocking late-result/real-finish
    collection, drop any installed MEM/CALL reply, then ACK and return the
    pinned File once. file must initially be zero. Never copies payload or
    compensates OPEN/PIPE/reference-creating transactions by guessing. */

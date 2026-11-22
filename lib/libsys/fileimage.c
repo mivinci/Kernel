@@ -18,6 +18,34 @@ static int       fileprogress(Fileimage *state);
 static int       fileevents(void);
 
 isize
+sysfilepollsubmit(Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Msg    message;
+  Ipcmsg result;
+  isize  error = sysoprequest(work, cache, key, &message);
+  if (error)
+    return error;
+  if (message.words[0] != FS_POLL_QUERY && message.words[0] != FS_POLL_WAIT)
+    return -ERR_INVALID;
+  error = ipc_call(work->state.call, &message, CALL_ASYNC, &result);
+  return error ? error : sysopsubmitted(work, cache, key, &result.request);
+}
+
+isize
+sysfilepollabandon(Fileimage *state, Opkey *key)
+{
+  Opkey background;
+  u32   index = key->connection.index;
+  isize error;
+  if (index >= SYSCONN_COUNT)
+    return -ERR_INVALID;
+  error = sysoppollabandon(&state->connections[index], sysfileimagecache(state), key, &background);
+  if (!error)
+    draining |= 1U << index;
+  return error;
+}
+
+isize
 sysfilepollrelease(Fileimage *state, Pollfile *items, u32 count)
 {
   isize error = 0;
@@ -810,7 +838,8 @@ fileprogress(Fileimage *state)
       u64     file = 0;
       if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) !=
               (SYSOP_BACKGROUND | SYSOP_APP_ENDED) ||
-          (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK))
+          (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
+           op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
         continue;
       key.connection = work->state.tag;
       key.lease = op->lease;

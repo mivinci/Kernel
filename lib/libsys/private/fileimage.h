@@ -44,6 +44,10 @@ isize sysfilepollcurrent(const Fileimage *state, const Pollfile *item);
    to the original array, including repeated fds. Output capacity is in rows. */
 isize sysfilepollgroup(const Pollfile *items, u32 count, Conntag connection, Filepoll *rows,
                        u32 *indices, u32 capacity);
+/* Hand off the original group to the image's completion worker. */
+isize sysfilepollabandon(Fileimage *state, Opkey *key);
+/* Submit while caught signals are excluded. A rejected call remains PREPARED. */
+isize sysfilepollsubmit(Connwork *work, Conncache *cache, const Opkey *key);
 
 /* One shared file state per image, initialized on demand. Inherited image
    repair must be wired before these records can be used by a fork child. */

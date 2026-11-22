@@ -823,6 +823,8 @@ waitpipes(const int fds[2])
   Fileref            ref;
   Fdview             view;
   Handle             rpc;
+  Opkey              key, background;
+  u64                anchor, pin, mask, ignored;
   u32                i;
   CHECK(!sysfdobserve(&table, fds[0], &view) &&
         !sysfilerefview(&pool, work.state.self, view.file, &ref));
@@ -830,6 +832,7 @@ waitpipes(const int fds[2])
   row.fd_generation = view.tag.generation;
   row.events = FS_POLL_IN;
   row.revents = UINT64_MAX;
+  anchor = view.file;
   slot.span = 1;
   slot.state = FS_SLOT_SUBMITTED;
   slot.payload_bytes = sizeof(row);
@@ -839,15 +842,29 @@ waitpipes(const int fds[2])
   write.object = ref.session;
   write.span = write.payload_bytes = write.args[1] = 1;
   write.state = FS_SLOT_SUBMITTED;
+  CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask));
   for (i = 0; i < 2; i++) {
-    page = submitrow(FS_POLL_WAIT, &slot, &lease, &row, CALL_ASYNC, &result);
-    rpc = result.request;
+    if (!i) {
+      pin = anchor;
+      CHECK(!sysfilerefpin(&pool, pool.self, pin) &&
+            !sysoppollprepare(&work, &cache, SYSFILE_MAIN, 120, &pin, FS_POLL_WAIT, 0, &row, 1,
+                              &key) &&
+            !pin && !sysfilepollsubmit(&work, &cache, &key) &&
+            !sysoprpc(&work, &cache, &key, &rpc));
+      lease = key.lease;
+      page = (volatile Filepoll *) (work.state.map.address + FS_DATA_OFFSET +
+                                    lease.slot * FS_SLOT_BYTES);
+    } else {
+      page = submitrow(FS_POLL_WAIT, &slot, &lease, &row, CALL_ASYNC, &result);
+      rpc = result.request;
+    }
     (void) submitrow(FS_POLL_WAIT, &slot, &other, &row, 0, &result);
     CHECK((isize) result.words[0] == -EAGAIN && result.words[1] == other.seq && !result.words[2] &&
           !result.words[3] && !sysconnworkrelease(&work, &cache, other) &&
-          ipc_rqpoll(rpc, 0, &result) == -ERR_WOULD_BLOCK && page->revents == UINT64_MAX);
+          ipc_rqpoll(rpc, 0, &result) == -ERR_WOULD_BLOCK && page->revents == (i ? UINT64_MAX : 0));
     if (!i)
-      CHECK(!ipc_rqcancel(rpc));
+      CHECK(!sysoppollabandon(&work, &cache, &key, &background) && !key.lease.seq &&
+            work.state.pages.pages[lease.slot].seq == lease.seq);
     else {
       /* Only the admitted snapshot determines readiness after a defer. */
       page->session = UINT64_MAX;
@@ -858,13 +875,16 @@ waitpipes(const int fds[2])
     CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq);
     if (!i)
       CHECK((isize) result.words[0] == -EINTR && !result.words[2] && !result.words[3] &&
-            page->revents == UINT64_MAX);
+            !page->revents && !ipc_rqwait(rpc, RQ_FINISH, &result) &&
+            !sysopdrain(&work, &cache, &background, &pin) && pin == anchor &&
+            !sysfilerefunpin(&pool, pool.self, pin) && !work.state.pages.pages[lease.slot].seq);
     else
       CHECK(!result.words[0] && result.words[2] == 1 && result.words[3] == sizeof(row) &&
-            page->revents == FS_POLL_IN && page->session == UINT64_MAX && !page->events);
-    CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
-          !sysconnworkrelease(&work, &cache, lease));
+            page->revents == FS_POLL_IN && page->session == UINT64_MAX && !page->events &&
+            !ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+            !sysconnworkrelease(&work, &cache, lease));
   }
+  CHECK(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
 }
 
 static void

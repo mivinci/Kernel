@@ -172,6 +172,54 @@ sysoprpc(Connwork *work, Conncache *cache, const Opkey *key, Handle *out)
   *out = op->rpc;
   return 0;
 }
+
+static int
+pollopcode(u64 opcode)
+{
+  return opcode == FS_POLL_QUERY || opcode == FS_POLL_WAIT;
+}
+
+isize
+sysoppollprepare(Connwork *work, Conncache *cache, u32 context, u64 owner, u64 *owned_file,
+                 u64 opcode, u64 deadline, const Filepoll *rows, u32 count, Opkey *out)
+{
+  Opkey draft;
+  isize error;
+  u32   i;
+  if (!pollopcode(opcode) || !output(work, cache, out, sizeof(*out)) ||
+      !separate(owned_file, sizeof(*owned_file), out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = sysopprepare(work, cache, context, 1, owner, owned_file, 0, opcode, 0, &draft);
+  if (error)
+    return error;
+  error = sysfilepollstage((void *) (uintptr_t) work->state.map.address, work->state.map.bytes,
+                           draft.lease, rows, count, deadline, owner);
+  if (error)
+    return sysopabort(work, cache, &draft, owned_file) ? -ERR_STATE : error;
+  for (i = 0; i < sizeof(draft); i++)
+    ((volatile u8 *) out)[i] = ((const u8 *) &draft)[i];
+  return 0;
+}
+
+isize
+sysoppollabandon(Connwork *work, Conncache *cache, Opkey *key, Opkey *background)
+{
+  Slotop *op;
+  isize   error = match(work, cache, key, &op);
+  if (error)
+    return error;
+  if (!pollopcode(op->opcode) || !key->owner || op->phase == SYSOP_PREPARED ||
+      !output(work, cache, background, sizeof(*background)) ||
+      !separate(key, sizeof(*key), background, sizeof(*background)))
+    return -ERR_INVALID;
+  if (op->phase == SYSOP_WAITING) {
+    error = sysopcancel(work, cache, key);
+    if (error)
+      return error;
+  }
+  return sysopabandon(work, cache, key, background);
+}
+
 isize
 sysopcapture(Connwork *work, Conncache *cache, const Opkey *key, isize status, const Ipcmsg *result)
 {
@@ -382,7 +430,8 @@ sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
   if (error)
     return error;
   if (!(op->flags & SYSOP_APP_ENDED) || !(op->flags & SYSOP_BACKGROUND) ||
-      (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK))
+      (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
+       !pollopcode(op->opcode)))
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_WAITING) {
     error = sysoppoll(work, cache, key);
