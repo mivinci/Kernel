@@ -248,8 +248,10 @@ isize shrinkpublish(Shrink *);
    callbacks. Even EMPTY grants future
    write access, so it needs the same geometry, flush and fault guarantees.
    The decoder checks magic, padding and checksums; payloadcrc covers the complete
-   images. The classifier reads the whole immutable transaction view (positive
-   = metadata, zero/negative = reject). For COMMITTED, empty is the encoded
+   images. The validated layout identifies the bitmaps and inode table.
+   Targets in the data area require a classifier, which reads the whole
+   immutable transaction view (positive = metadata, zero/negative = reject).
+   For COMMITTED, empty is the encoded
    EMPTY record for this txid, and it and the images stay immutable until
    release. An EMPTY mark does not use the head, images or classifier. */
 isize journalrecover(Journal *, const Fslayout *, const Fsgeometry *, const Journalmark *,

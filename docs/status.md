@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage558：重放按固定布局识别位图和 inode 表，数据区目标仍须证明是元数据。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。
 - stage557：同一日志实例恢复时拒绝旧标记和已退休编号的 COMMITTED。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。
 - stage556：日志恢复须等旧快照释放，包括 txid 为零的纯数据事务。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。
 - stage555：双架构 QEMU `virtiodev` 验证真实 FLUSH 提交后注入结果未知，原 I/O 排空前不可释放，排空后不发布 inode。

@@ -961,7 +961,7 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   }
   if (mark->state != 1 || !mark->txid || !head || head->state != 1 || head->txid != mark->txid ||
       head->headercrc != mark->headercrc || head->payloadcrc != mark->payloadcrc ||
-      payloadcrc != mark->payloadcrc || !count || count != head->count || !classify ||
+      payloadcrc != mark->payloadcrc || !count || count != head->count ||
       !redosnapshots(journal, layout->blocks, metadata, count, empty))
     return -ERR_STATE;
   for (i = 0; i < JOURNAL_META; i++) {
@@ -972,7 +972,8 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
       return -ERR_STATE;
   }
   for (i = 0; i < count; i++)
-    if (classify(context, metadata, count, i) <= 0)
+    if (metadata[i].block >= layout->datastart &&
+        (!classify || classify(context, metadata, count, i) <= 0))
       return -ERR_STATE;
   journal->blocks = layout->blocks;
   journal->txid = mark->txid;

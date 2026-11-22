@@ -295,6 +295,8 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   head.targets[1] = metadata[1].block = 99;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
                          redometa, NULL) == -ERR_STATE &&
+              journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                             NULL, NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,
           248);
   head.targets[1] = metadata[1].block = 66;
@@ -305,7 +307,7 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
           251);
   geometry.faultbytes = FS_BLOCK_BYTES;
   REQUIRE(!journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                          redometa, NULL),
+                          NULL, NULL),
           194);
   while (journal.phase != JOURNAL_DONE) {
     REQUIRE(count < 5 && !journalpump(&journal, journalsubmit, &transport) &&
