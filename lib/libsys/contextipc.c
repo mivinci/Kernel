@@ -1105,17 +1105,31 @@ restore:
   return restored ? restored : error;
 }
 
+static Connwork *
+openattachwork(Connwork *connections, const Createop *create, u64 file)
+{
+  u32 i;
+  for (i = 0; i < SYSCONN_COUNT; i++) {
+    Connwork *backend = &connections[i];
+    if (backend->state.peer.pid == create->peer.pid &&
+        backend->state.peer.image == create->peer.image &&
+        backend->state.bootstrap.opcode == FS_ATTACH &&
+        backend->state.bootstrap.claim.owner == file)
+      return backend;
+  }
+  return NULL;
+}
+
 isize
 sysctxopencancel(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, Conncache *cache,
                  Fdtable *table, Opencreate *open, Handle space, Bootmap *map, Rkey *active)
 {
   const u64    bytes = SYSCONN_COUNT * sizeof(*connections);
   const Opkey *key;
-  Connwork    *source;
+  Connwork    *source, *backend;
   Slotop      *op;
   Createop    *create;
   u64          mask, ignored;
-  u32          i;
   isize        error, restored;
   if (layer >= RCTX_LAYERS || !cache || !storage(bank, connections, bytes, active) ||
       !storage(bank, open, sizeof(*open), active) || !storage(bank, map, sizeof(*map), active) ||
@@ -1145,6 +1159,26 @@ sysctxopencancel(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, 
     goto restore;
   }
   if (create->phase != SYSFILE_CREATE_RESOLVED) {
+    backend = openattachwork(connections, create, op->file);
+    if (backend) {
+      Bootstrap *boot = &backend->state.bootstrap;
+      if (boot->token != create->token) {
+        error = -ERR_STALE;
+        goto restore;
+      }
+      if (boot->state == SYSBOOT_WAITING) {
+        error = sysbootpoll(boot, boot->claim);
+        if (error)
+          goto restore;
+      }
+      /* An accepted ATTACH may still commit its reference. Keep its result
+         and wait for FINISH before asking the same peer to revoke the token. */
+      if (boot->state != SYSBOOT_PREPARED) {
+        error = sysbootfinished(boot, boot->claim);
+        if (error)
+          goto restore;
+      }
+    }
     error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
     if (error)
       return error;
@@ -1163,22 +1197,12 @@ sysctxopencancel(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, 
     error = -ERR_STATE;
     goto restore;
   }
-  for (i = 0; i < SYSCONN_COUNT; i++) {
-    Connwork  *backend = &connections[i];
+  backend = openattachwork(connections, create, op->file);
+  if (backend) {
     Bootstrap *boot = &backend->state.bootstrap;
-    if (backend->state.peer.pid != create->peer.pid ||
-        backend->state.peer.image != create->peer.image || boot->opcode != FS_ATTACH ||
-        boot->claim.owner != op->file)
-      continue;
-    if (boot->state == SYSBOOT_WAITING) {
-      error = sysbootpoll(boot, boot->claim);
-      if (error)
-        goto restore;
-    }
     error = sysfilecreateattachdiscard(pool, source, cache, key, backend, boot->claim, space, map);
     if (error)
       goto restore;
-    break;
   }
   if (map->mapped || map->verified || map->address || map->bytes || map->connid || map->serverimage)
     error = -ERR_STATE;
