@@ -22,7 +22,8 @@ struct Dirgraph
 {
   const Dirnode *nodes;
   u32            parent[FS_INODES], incoming[FS_INODES];
-  u8             reach[FS_INODES];
+  u16            dotdot[FS_INODES];
+  u8             reach[FS_INODES], dot[FS_INODES];
   u32            next;
   isize          failed;
 };

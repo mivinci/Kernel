@@ -1,6 +1,8 @@
 #include "dirgraph.h"
 #include "walk.h"
 
+STATIC_ASSERT(FS_INODES - 1 <= UINT16_MAX, directory_parent_fits);
+
 enum
 {
   DirUnknown,
@@ -91,6 +93,15 @@ dirgraphblock(Dirgraph *graph, u32 directory, const u8 *bytes, u32 valid, Dirdec
           !record.generation || target->generation != record.generation ||
           ((record.namelen == 1 || directory == FS_ROOT) && record.inode != directory))
         return graph->failed = -ERR_STATE;
+      if (record.namelen == 1) {
+        if (graph->dot[directory])
+          return graph->failed = -ERR_STATE;
+        graph->dot[directory] = 1;
+      } else {
+        if (graph->dotdot[directory])
+          return graph->failed = -ERR_STATE;
+        graph->dotdot[directory] = (u16) record.inode;
+      }
       continue;
     }
     error = dirgraphedge(graph, directory, record.inode, record.generation, record.kind);
@@ -122,8 +133,10 @@ dirgraphstep(Dirgraph *graph)
     if (!node->kind)
       continue;
     if (node->kind < VNODE_FILE || node->kind > VNODE_LINK || !node->generation ||
-        (node->kind == VNODE_DIR ? (node->links && rooted(graph, ino))
-                                 : node->links != graph->incoming[ino]))
+        (node->kind == VNODE_DIR
+             ? (node->links && ((graph->dotdot[ino] && graph->dotdot[ino] != graph->parent[ino]) ||
+                                rooted(graph, ino)))
+             : node->links != graph->incoming[ino]))
       return graph->failed = -ERR_STATE;
   }
   return graph->next == FS_INODES;

@@ -1228,6 +1228,13 @@ blkdecodeindex(u32 block, const u8 *encoded, Loadindex *index)
 }
 
 static isize
+blkdots(const u8 *bytes, Dirrecord *record)
+{
+  *record = (Dirrecord){bytes[0], 1, 24, 2, VNODE_DIR};
+  return 0;
+}
+
+static isize
 blkdecodedir(const u8 *bytes, Dirrecord *record)
 {
   if (bytes[0] == 0xb1) {
@@ -1412,6 +1419,21 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
   nodes[2] = nodes[3] = (Dirnode){1, VNODE_DIR, 1};
+  data[0] = 3;
+  data[16] = data[17] = '.';
+  data[18] = 0;
+  REQUIRE(!dirgraphblock(&dirs.graph, 2, data, 24, blkdots) &&
+              dirgraphblock(&dirs.graph, 2, data, 24, blkdots) == -ERR_STATE,
+          433);
+  dirs.graph.failed = 0;
+  REQUIRE(!dirgraphedge(&dirs.graph, FS_ROOT, 2, 1, VNODE_DIR) &&
+              !dirgraphedge(&dirs.graph, FS_ROOT, 3, 1, VNODE_DIR) &&
+              dirgraphstep(&dirs.graph) == -ERR_STATE,
+          434);
+  dirs.graph.failed = dirs.graph.next = 0;
+  dirs.graph.parent[2] = dirs.graph.parent[3] = 0;
+  dirs.graph.incoming[2] = dirs.graph.incoming[3] = 0;
+  dirs.graph.dotdot[2] = 0;
   REQUIRE(!dirgraphedge(&dirs.graph, 2, 3, 1, VNODE_DIR) &&
               !dirgraphedge(&dirs.graph, 3, 2, 1, VNODE_DIR) &&
               dirgraphstep(&dirs.graph) == -ERR_STATE,
