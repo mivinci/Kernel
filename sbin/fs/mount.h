@@ -13,7 +13,7 @@ struct Vmount
 struct Vmounts
 {
   Vmount entries[VMOUNT_COUNT];
-  u64    serial;
+  u64    serial, removed;
 };
 
 /* Serialized namespace, initially zero. The authorized caller keeps the

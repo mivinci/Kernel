@@ -192,6 +192,7 @@ def build(args, directory, run_dir):
     include_files = list((ROOT / "include").rglob("*.h")) + list((ROOT / "include").rglob("*.inc"))
     if args.case == "runtime":
         include_files += list((ROOT / "sbin/fs").rglob("*.h"))
+        include_files += [ROOT / "lib/libc/include/string.h"]
     if args.kind == "kernel" and args.case != "normal":
         include_files += list((ROOT / "tests/kernel").rglob("*.h"))
     include_files.sort()
@@ -241,6 +242,7 @@ def build(args, directory, run_dir):
             elif args.case == "runtime":
                 sources += [ROOT / "sbin/fs/cache.c", ROOT / "tests/kernel/fscachetest.c"]
                 sources += [ROOT / "sbin/fs/geometry.c", ROOT / "sbin/fs/journal.c",
+                            ROOT / "sbin/fs/load.c", ROOT / "lib/libc/string.c",
                             ROOT / "tests/kernel/fsjournaltest.c"]
                 sources += [ROOT / "sbin/fs/txn.c", ROOT / "tests/kernel/fstxntest.c"]
                 sources += [ROOT / "tests/kernel/filecreatetest.c", directory / "sdk/filecreateimage.S"]
@@ -351,7 +353,8 @@ def build(args, directory, run_dir):
     def stack_source(source):
         return kernel and source.suffix == ".c" and source != header_source
     def unit_flags(source):
-        return flags + (["-fstack-usage"] if stack_source(source) else [])
+        return flags + (["-fstack-usage"] if stack_source(source) else []) + (
+            ["-I" + str(ROOT / "lib/libc/include")] if source == ROOT / "lib/libc/string.c" else [])
     database = [
         {"directory": str(ROOT), "file": str(source), "output": str(obj),
          "arguments": [tools["cc"]["path"], *unit_flags(source), "-c", str(source), "-o", str(obj)]}

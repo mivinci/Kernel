@@ -5,6 +5,8 @@
 
 typedef struct Fscontext  Fscontext;
 typedef struct Fscontexts Fscontexts;
+typedef struct Fscwd      Fscwd;
+typedef struct Fscwdops   Fscwdops;
 struct Fscontext
 {
   Handle pid;
@@ -32,4 +34,34 @@ const Fscontext *fscontextfind(const Fscontexts *table, Handle pid, u64 image);
 /* Caller has resolved cwd in this namespace and checked search permission. */
 isize fscontextchdir(Fscontexts *table, Handle pid, u64 image, Vnode *cwd);
 isize fscontextremove(Fscontexts *table, Handle pid, u64 image);
+
+struct Fscwdops
+{
+  isize (*hold)(void *, Vnode *);
+  void (*drop)(void *, Vnode *);
+  /* A pure query; changes on every published directory relationship change,
+     without reuse. It does not invalidate the name snapshot. */
+  u64 (*version)(void *);
+  /* Returns a held parent and a borrowed name span for a live directory
+     entry. VWALK_WAIT must resume with the same node; cancellation drains
+     before fscwddrop. */
+  isize (*name)(void *, const Vnode *, Vnode **, const char **, u32 *);
+};
+struct Fscwd
+{
+  const Fscwdops *ops;
+  const Vmounts  *mounts;
+  void           *backend;
+  Vnode          *root, *start, *node;
+  u64             version, mounted, removed;
+  u32             first, retries, waiting;
+  char            path[FS_PATH_BYTES];
+};
+
+/* Capture the caller's root and cwd before yielding. Step returns VWALK_MORE,
+   VWALK_WAIT, a negative errno, or zero with the output length including NUL.
+   Output is untouched until success. */
+isize fscwdinit(Fscwd *, const Vmounts *, const Fscwdops *, void *, const Fscontext *);
+isize fscwdstep(Fscwd *, char *, u64, u32 *);
+void  fscwddrop(Fscwd *);
 #endif

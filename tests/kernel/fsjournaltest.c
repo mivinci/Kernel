@@ -91,7 +91,7 @@ testredo(void)
                           ismetadata, NULL));
     metadata[0].block = 901;
     for (i = 0; i < ARRAY_SIZE(targets); i++) {
-      CHECK(journal.durable && !journal.last && journalrelease(&journal) == -ERR_STATE &&
+      CHECK(journal.durable && journal.last == 7 && journalrelease(&journal) == -ERR_STATE &&
             !journalnext(&journal, &io) && io.txid == 47 && io.serial == serial + i + 1 &&
             io.block == targets[i] && io.bytes == (sources[i] ? bytes[sources[i]] : NULL) &&
             io.kind == (sources[i] ? JOURNAL_WRITE : JOURNAL_FLUSH));
@@ -113,7 +113,7 @@ testredo(void)
               !journalcomplete(&journal, &io, 1) &&
               journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
                              ismetadata, NULL) == -ERR_STATE &&
-              !journalrelease(&journal) && journal.phase == JOURNAL_STOPPED && !journal.last &&
+              !journalrelease(&journal) && journal.phase == JOURNAL_STOPPED && journal.last == 7 &&
               journalnext(&journal, &io) == -ERR_STATE);
         break;
       }

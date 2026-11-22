@@ -52,6 +52,7 @@ vmountdel(Vmounts *mounts, u64 id)
     if (mounts->entries[i].point && mounts->entries[i].point->mount == id)
       return -EBUSY;
   entry->root = entry->point = NULL;
+  mounts->removed++;
   return 0;
 }
 

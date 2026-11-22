@@ -11,6 +11,8 @@ struct Walktest
   u32     refs[9], pending, reads, parents, lookups, deny;
   Vmounts mounts;
   isize   error;
+  u64     version;
+  u32     cwdwait, unlinked;
 };
 struct Edge
 {
@@ -93,6 +95,36 @@ readlinkstep(void *data, const Vnode *node, const char **out, u64 *bytes)
 
 static const Vwalkops ops = {hold, drop, search, lookup, parent, readlinkstep};
 
+static u64
+cwdversion(void *data)
+{
+  return ((Walktest *) data)->version;
+}
+
+static isize
+cwdname(void *data, const Vnode *node, Vnode **out, const char **name, u32 *length)
+{
+  Walktest *test = data;
+  if (node == &test->nodes[3]) {
+    if (test->unlinked)
+      return -ENOENT;
+    *name = test->version ? "renamed" : "sub";
+    *out = &test->nodes[2];
+  } else if (node == &test->nodes[8]) {
+    if (test->cwdwait) {
+      test->cwdwait = 0;
+      return VWALK_WAIT;
+    }
+    *name = test->version ? "moved" : "mnt";
+    *out = &test->nodes[0];
+  } else
+    return -ENOENT;
+  *length = strlen(*name);
+  return hold(data, *out);
+}
+
+static const Fscwdops cwdops = {hold, drop, cwdversion, cwdname};
+
 static isize
 runwalk(Vwalk *walk, Vnode **out)
 {
@@ -113,6 +145,63 @@ unheld(const Walktest *test)
     if (test->refs[i])
       return 0;
   return !test->error;
+}
+
+static int
+cwdcheck(Walktest *test)
+{
+  Fscontext context = {0};
+  Fscwd     work = {0};
+  char      path[20] = "sentinel";
+  u32       bytes = 99, i;
+  context.root = &test->nodes[0];
+  context.cwd = &test->nodes[3];
+  test->cwdwait = 1;
+  if (fscwdinit(&work, &test->mounts, &cwdops, test, &context) ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_MORE ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_WAIT ||
+      vmountdel(&test->mounts, context.cwd->mount) != -EBUSY || strcmp(path, "sentinel") ||
+      bytes != 99)
+    return 1;
+  test->version++;
+  if (fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_MORE ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_MORE ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_MORE ||
+      fscwdstep(&work, path, sizeof(path), &bytes) || strcmp(path, "/moved/renamed") ||
+      bytes != sizeof("/moved/renamed") || !unheld(test))
+    return 2;
+  context.root = &test->nodes[2];
+  if (fscwdinit(&work, &test->mounts, &cwdops, test, &context) ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_MORE ||
+      fscwdstep(&work, path, 2, &bytes) != -ERANGE || strcmp(path, "/moved/renamed") ||
+      bytes != sizeof("/moved/renamed") || !unheld(test))
+    return 3;
+  context.root = &test->nodes[8];
+  context.cwd = &test->nodes[2];
+  if (fscwdinit(&work, &test->mounts, &cwdops, test, &context) ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != -ENOENT || !unheld(test))
+    return 7;
+  context.root = &test->nodes[2];
+  context.cwd = &test->nodes[3];
+  test->unlinked = 1;
+  if (fscwdinit(&work, &test->mounts, &cwdops, test, &context) ||
+      fscwdstep(&work, path, sizeof(path), &bytes) != -ENOENT || !unheld(test))
+    return 4;
+  context.cwd = context.root;
+  if (fscwdinit(&work, &test->mounts, &cwdops, test, &context))
+    return 5;
+  for (i = 0; i < 3; i++) {
+    test->version++;
+    if (fscwdstep(&work, path, sizeof(path), &bytes) != VWALK_MORE)
+      return 5;
+  }
+  test->version++;
+  if (fscwdstep(&work, path, sizeof(path), &bytes) != -EAGAIN || !unheld(test) ||
+      fscwdinit(&work, &test->mounts, &cwdops, test, &context) ||
+      fscwdstep(&work, path, sizeof(path), &bytes) || strcmp(path, "/") || bytes != 2 ||
+      !unheld(test))
+    return 6;
+  return 0;
 }
 
 static int
@@ -183,6 +272,9 @@ vwalkusercheck(void)
                    0,
                    UINT32_MAX,
                    {0},
+                   0,
+                   0,
+                   0,
                    0};
   Vwalk    walk = {0};
   Vmounts *mounts = &test.mounts;
@@ -242,6 +334,8 @@ vwalkusercheck(void)
     return 9;
   drop(&test, out);
   out = NULL;
+  if (cwdcheck(&test))
+    return 13;
   if (!unheld(&test) || vmountadd(mounts, &nested, child) ||
       vmountenter(mounts, point) != &nested || vmountparent(mounts, &nested, child) != child ||
       vmountdel(mounts, child->mount) != -EBUSY || vmountdel(mounts, nested.mount) ||
