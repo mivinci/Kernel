@@ -156,6 +156,8 @@ struct Blklookup
   isize (*mode)(void *, const Vnode *, u32 *owner, u32 *group, u32 *mode);
   isize (*acquire)(void *, const Vnode *, Vnode **);
   Blkfind find;
+  Vnode   link;
+  u32     linkblock, linkbytes;
   char    name[255];
 };
 /* Vwalkops.lookup for one stable mounted volume. The namespace routes
@@ -168,7 +170,10 @@ isize blksearch(void *, const Vnode *);
 /* Vwalkops.parent for a stable, validated directory graph. The namespace
    owns root clamping, mount crossing and invalidation on directory mutation. */
 isize blkparent(void *, const Vnode *, Vnode **);
-/* Stop and drain before dropping a walk with an outstanding lookup. */
+/* Vwalkops.readlink. A decoded block-backed target is returned with a NUL
+   in reader scratch, borrowed until the next operation on that reader. */
+isize blkreadlink(void *, const Vnode *, const char **, u64 *);
+/* Stop and drain before dropping a walk with outstanding block I/O. */
 isize blklookupcancel(Blklookup *);
 struct Blkmount
 {

@@ -588,7 +588,7 @@ blklookupcancel(Blklookup *work)
   isize        error, status;
   if (!work || !work->home)
     return -ERR_INVALID;
-  if (!work->find.inode)
+  if (!work->find.inode && !work->link.number)
     return 0;
   load = &work->home->load;
   if (load->read->fill.cache) {
@@ -598,6 +598,8 @@ blklookupcancel(Blklookup *work)
   }
   load->pending = 0;
   work->find = (Blkfind){0};
+  work->link = (Vnode){0};
+  work->linkblock = work->linkbytes = 0;
   return 0;
 }
 
@@ -618,6 +620,8 @@ blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vn
     return -ESTALE;
   if (directory->kind != VNODE_DIR)
     return -ENOTDIR;
+  if (work->link.number)
+    return -EBUSY;
   if (!work->find.inode) {
     if (work->home->load.pending || work->home->load.read->fill.cache)
       return -EBUSY;
@@ -648,6 +652,87 @@ blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vn
   identity = (Vnode){work->mount, match.inode, match.generation, match.kind};
   work->find = (Blkfind){0};
   return work->acquire(work->nodes, &identity, out);
+}
+
+isize
+blkreadlink(void *context, const Vnode *link, const char **out, u64 *bytes)
+{
+  Blklookup      *work = context;
+  Blkowners      *home;
+  const Blkprobe *probe;
+  Blkredoload    *load;
+  const Dirnode  *node;
+  Redoinode       inode;
+  Loadspan        span;
+  isize           error, status;
+  u32             i;
+  if (!work || !(home = work->home) || !(probe = home->home) || !link || !out || !bytes ||
+      home->phase != OwnersDone || home->failed || !home->load.nodes)
+    return -EINVAL;
+  if (work->find.inode || (work->link.number && !vnodesame(&work->link, link)))
+    return -EBUSY;
+  if (!work->mount || link->mount != work->mount || !link->number || link->number >= FS_INODES ||
+      !link->generation || link->generation > UINT32_MAX)
+    return -ESTALE;
+  if (link->kind != VNODE_LINK)
+    return -EINVAL;
+  load = &home->load;
+  if (!work->link.number) {
+    if (load->pending || load->read->fill.cache || probe->blk->rpc)
+      return -EBUSY;
+    work->link = *link;
+  }
+  if (load->read->fill.cache) {
+    if (blkreadpoll(load->read, &status))
+      return VWALK_WAIT;
+    if (status && status != -EAGAIN) {
+      error = probe->blk->stale ? -ESTALE : -EIO;
+      goto done;
+    }
+  }
+  node = &load->nodes[link->number];
+  if (probe->blk->stale || probe->blk->ended ||
+      probe->blk->info.geometry_generation != probe->generation || node->kind != VNODE_LINK ||
+      node->generation != link->generation || !node->links) {
+    error = -ESTALE;
+    goto done;
+  }
+  if (!work->linkblock) {
+    error = loadinode(load, &home->scan, link->number, &inode);
+    if (error == -ERR_WOULD_BLOCK)
+      return probe->blk->rpc ? VWALK_WAIT : VWALK_MORE;
+    if (error || inode.kind != VNODE_LINK || inode.links != node->links ||
+        inode.map->file.inode != link->number || inode.map->file.generation != link->generation ||
+        !inode.map->file.length || inode.map->file.length >= FS_PATH_BYTES ||
+        inode.map->file.length >= sizeof(load->bytes) ||
+        loadmapspan(&inode.map->file, inode.map, inode.index, FS_DATA_START, home->scan.blocks, 0,
+                    inode.map->file.length, &span) ||
+        !span.first) {
+      error = -EIO;
+      goto done;
+    }
+    work->linkblock = span.first;
+    work->linkbytes = inode.map->file.length;
+  }
+  error =
+      blkreadview(load->read, load->cache, &home->scan, work->linkblock, CACHE_DATA, load->bytes);
+  if (error == -ERR_WOULD_BLOCK)
+    return probe->blk->rpc ? VWALK_WAIT : VWALK_MORE;
+  if (error) {
+    error = -EIO;
+    goto done;
+  }
+  for (i = 0; i < work->linkbytes; i++)
+    if (!load->bytes[i]) {
+      error = -EIO;
+      goto done;
+    }
+  load->bytes[i] = 0;
+  *out = (const char *) load->bytes;
+  *bytes = i + 1;
+done:
+  blklookupcancel(work);
+  return error;
 }
 
 isize

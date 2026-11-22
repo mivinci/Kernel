@@ -1068,6 +1068,9 @@ static const u32 blkopcodes[] = {
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* root directory */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* directory lookup */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* symlink name */
+    BLK_READ,  BLK_READ,                                   /* link inode and contents */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* dangling target lookup */
     BLK_READ                                               /* file cache fill */
 };
 
@@ -1271,6 +1274,17 @@ blkdecodeinode(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
 }
 
 static isize
+blkdecodelink(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
+{
+  isize error = blkdecodeinode(ino, encoded, map, kind, links);
+  if (!error && ino == 34) {
+    *kind = VNODE_LINK;
+    map->file.length = 3;
+  }
+  return error;
+}
+
+static isize
 blkdecodeindex(u32 block, const u8 *encoded, Loadindex *index)
 {
   u32 i;
@@ -1328,6 +1342,15 @@ struct Lookupnodes
 };
 
 static isize
+blklinkdir(const u8 *bytes, Dirrecord *record)
+{
+  isize error = blkdecodedir(bytes, record);
+  if (!error && record->inode == 34)
+    record->kind = VNODE_LINK;
+  return error;
+}
+
+static isize
 lookuphold(void *context, Vnode *node)
 {
   Lookupnodes *nodes = ((Blklookup *) context)->nodes;
@@ -1366,16 +1389,6 @@ lookupacquire(void *context, const Vnode *identity, Vnode **out)
   if (!error)
     *out = node;
   return error;
-}
-
-static isize
-lookupnolink(void *context, const Vnode *node, const char **out, u64 *bytes)
-{
-  (void) context;
-  (void) node;
-  (void) out;
-  (void) bytes;
-  return -EIO;
 }
 
 static void
@@ -1640,7 +1653,7 @@ blkclient(const Bootview *boot, Handle call)
                              .cred = &cred,
                              .mode = lookupmode,
                              .acquire = lookupacquire};
-    const Vwalkops ops = {lookuphold, lookupdrop, blksearch, blklookup, blkparent, lookupnolink};
+    const Vwalkops ops = {lookuphold, lookupdrop, blksearch, blklookup, blkparent, blkreadlink};
     Vnode         *found = NULL;
     isize          step = VWALK_MORE;
     for (i = 0; i + 1 < sizeof(name); i++)
@@ -1688,6 +1701,35 @@ blkclient(const Bootview *boot, Handle call)
       lookupdrop(&lookup, found);
       nodes[2] = (Dirnode){0};
       dirs.graph.parent[2] = dirs.graph.incoming[2] = dirs.graph.reach[2] = 0;
+    }
+    {
+      Vnode       link = {root.mount, 34, 2, VNODE_LINK};
+      const char *target = NULL;
+      u64         bytes = 0;
+      nodes[34].kind = VNODE_LINK;
+      home.load.inode = blkdecodelink;
+      REQUIRE(!lookuphold(&lookup, &link) &&
+                  ops.readlink(&lookup, &link, &target, &bytes) == -ESTALE && !target && !bytes &&
+                  !blk.rpc && !lookup.link.number,
+              483);
+      lookupdrop(&lookup, &link);
+      targets.file.kind = VNODE_LINK;
+      lookup.decode = blklinkdir;
+      found = NULL;
+      REQUIRE(!vwalkinit(&walk, &mounts, &ops, &lookup, &root, &root, name, sizeof(name), 1), 484);
+      for (i = 0, step = VWALK_MORE; i < 40 && (step == VWALK_MORE || step == VWALK_WAIT); i++) {
+        step = vwalkstep(&walk, &found);
+        if (step == VWALK_WAIT)
+          REQUIRE(!found && blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result), 484);
+      }
+      REQUIRE(step == -ENOENT && !found && !blk.rpc && !lookup.link.number &&
+                  !mounts.entries[0].uses && !lookup.find.inode && walk.path.links == 1 &&
+                  walk.path.bytes == 4 && (u8) walk.path.text[0] == 0xb4 &&
+                  (u8) walk.path.text[1] == 0xd9 && (u8) walk.path.text[2] == 0xfe &&
+                  !walk.path.text[3],
+              485);
+      home.load.inode = blkdecodeinode;
+      nodes[34].kind = VNODE_FILE;
     }
   }
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
@@ -1802,9 +1844,10 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   queue->configpending = 0;
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
-    /* Exercise redo, re-probe, home bitmap and directory READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 6 == ARRAY_SIZE(blkopcodes) ||
-        i + 2 >= ARRAY_SIZE(blkopcodes)) {
+    /* Exercise redo, re-probe, home bitmap, directory and link READ retries. */
+    if (i == 11 || i == 22 || i == 24 || i + 16 == ARRAY_SIZE(blkopcodes) ||
+        i + 8 == ARRAY_SIZE(blkopcodes) || i + 6 == ARRAY_SIZE(blkopcodes) ||
+        i + 4 == ARRAY_SIZE(blkopcodes) || i + 2 >= ARRAY_SIZE(blkopcodes)) {
       queue->configpending = 1;
       REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 448);
       queue->configpending = 0;
