@@ -32,5 +32,7 @@ struct termios
   cc_t     c_cc[NCCS];
 };
 
-int tcgetattr(int fd, struct termios *attributes);
+speed_t cfgetispeed(const struct termios *attributes);
+speed_t cfgetospeed(const struct termios *attributes);
+int     tcgetattr(int fd, struct termios *attributes);
 #endif

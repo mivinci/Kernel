@@ -487,7 +487,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
       }
       for (i = 0; i < 5; i++) {
         const Termarg mode = {
-            TTY_ICRNL, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON | TTY_ECHO, 115200, 115200, {3}};
+            TTY_ICRNL, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON | TTY_ECHO, 115200, 9600, {3}};
         const u8    *bytes = (const u8 *) &mode;
         volatile u8 *page;
         Msg          attrs = {{0, 0, 0, sizeof(mode)}};
@@ -853,9 +853,9 @@ interruptclient(void)
           !attrs.c_ospeed && tcgetattr(fd, (void *) 1) == -1 && errno == EFAULT &&
           !tcgetattr(fd, &attrs) && errno == EFAULT && attrs.c_iflag == ICRNL &&
           attrs.c_oflag == (OPOST | ONLCR) && attrs.c_cflag == CS8 &&
-          attrs.c_lflag == (ICANON | ECHO) && attrs.c_ispeed == 115200 &&
-          attrs.c_ospeed == 115200 && attrs.c_cc[VINTR] == 3 && !attrs.c_cc[VQUIT] &&
-          tcgetattr(-1, &attrs) == -1 && errno == EBADF);
+          attrs.c_lflag == (ICANON | ECHO) && cfgetispeed(&attrs) == 115200 &&
+          cfgetospeed(&attrs) == 9600 && errno == EFAULT && attrs.c_cc[VINTR] == 3 &&
+          !attrs.c_cc[VQUIT] && tcgetattr(-1, &attrs) == -1 && errno == EBADF);
     action.sa_flags = 0;
     release_read = 1;
     CHECK(!sigaction(SIGUSR1, &action, NULL) && !isatty(fd) && errno == EINTR && caught == 9);

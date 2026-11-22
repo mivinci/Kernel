@@ -28,7 +28,7 @@
 | 本阶段 | wait/waitpid、sys/wait.h 状态宏 | 等待子进程/指定组，WNOHANG/WUNTRACED/WCONTINUED；区分正常退出、信号终止和停止继续 | 多子进程、重复等待、事件先后/确认、组长先退出、无匹配子进程及信号中断 |
 | 本阶段 | getpid/getppid/getpgrp/getpgid/getsid、setpgid/setsid、kill/raise | pid_t 与 Handle 同为有符号 64 位，正 PID 沿用 PROCESS_ID 身份；0、负组 ID 和特殊值仅按接口解释；组/会话对外编号与内部 Handle 分开，授权核对完整实例 | PID 分配/复用与陈旧内部引用、组信号、权限拒绝、会话边界、kill(pid,0) 存在/权限检查 |
 | 本阶段 | sigaction/sigprocmask/sigpending/sigsuspend、sigemptyset/sigfillset/sigaddset/sigdelset/sigismember | 支持信号和 SA_* 标志逐项冻结；KILL/STOP 特例、pending 合并、原子换掩码并等待、EINTR/重启按接口处理；不宣称全部信号功能 | pending 与睡眠竞态、屏蔽/解除、默认动作、嵌套及上下文恢复、异步安全允许表、SA_RESTART 场景 |
-| 本阶段 | tcgetattr/tcsetattr/tcflush/tcdrain、isatty/ttyname、tcgetpgrp/tcsetpgrp；termios.h | 行/原始模式、VMIN/VTIME、回显和特殊字符；前后台组检查；支持 termios 字段逐项列举 | 阻塞组合、模式切换、排空/刷新、后台读写、Ctrl-C/Z、前台切换与挂断 |
+| 本阶段 | tcgetattr/tcsetattr/tcflush/tcdrain、cfgetispeed/cfgetospeed、isatty/ttyname、tcgetpgrp/tcsetpgrp；termios.h | 行/原始模式、VMIN/VTIME、回显和特殊字符；前后台组检查；支持 termios 字段逐项列举 | 阻塞组合、模式切换、排空/刷新、后台读写、Ctrl-C/Z、前台切换与挂断 |
 | 本阶段 | clock_gettime/clock_getres、nanosleep；time.h | CLOCK_MONOTONIC 与 CLOCK_REALTIME 分开；明确实时时钟来源/未校时策略、分辨率、溢出与剩余睡眠时间 | 两架构频率换算、单调性、信号中断剩余时间、校时不改变单调截止时间 |
 | 本阶段 | sysconf/pathconf/fpathconf、limits.h、sys/types.h | 报告实际容量/选项和规定的“不确定/不支持”结果；统一 off_t/time_t/ssize_t/pid_t 等 ABI，pid_t 沿用已定 Handle 表示，其他类型不借用其布局 | 宏与运行查询一致、边界溢出、两架构布局断言；不虚报 _POSIX_* 功能版本 |
 | 本阶段（net 阶段） | socket/bind/connect/listen/accept/send/recv/sendto/recvfrom/shutdown、getsockname/getpeername、getsockopt/setsockopt、getaddrinfo/freeaddrinfo；sys/socket.h 等 | 先 AF_INET 的 TCP/UDP 与明确选项，阻塞/非阻塞/poll 一致；DNS 错误使用 EAI_*；不承诺 AF_UNIX、IPv6 或所有 socket 选项 | 回环/双端、连接失败、部分发送、半关闭、UDP 边界、名称解析、超时取消和服务重启 |
@@ -151,6 +151,8 @@ stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [PO
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。
 
 stage446：`int tcgetattr(int fd, struct termios *attributes)` 由 libc 提供，头文件为 `termios.h`。按 [POSIX.1-2024 tcgetattr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcgetattr.html) 核对原型、成功返回 0、无效 fd 的 EBADF 和非终端的 ENOTTY。首版公开字段对应 11 篇的标志、控制字符和输入/输出速率，布局与 `Termarg` 一致。libsys 固定原 File，通过同一连接发送 `TTYCTL/GETATTR`，只在原请求完成且序号、返回值和 80 字节长度匹配后写入应用对象。管道后端经会话校验后返回 ENOTTY；坏输出地址返回 EFAULT，格式错误的回复返回 EIO。请求沿原账本处理取消与回收。
+
+`cfgetispeed` 和 `cfgetospeed` 从调用者持有的 `struct termios` 分别读取输入、输出速率，不读设备或改动 `errno`。双架构 QEMU `pipeio` 用同一份经公开 `tcgetattr` 取得的夹具回复核对两个不同值；生产串口速率发现或修改未接入。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证夹具返回属性、坏长度保留输出、坏输出地址后可再次查询，以及管道 ENOTTY 和无效 fd EBADF。17 项请求账本主机测试和格式检查通过。成功属性由测试服务提供，生产 TTY 文件连接仍待接入。
 
