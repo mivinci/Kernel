@@ -1573,15 +1573,14 @@ server(const Bootview *boot, u32 recover)
         CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
         continue;
       }
-      CHECK(!sysforkmanifest(&execplan, watch, &input, &descriptor, (const void *) data, backend, 0,
-                             execreference, key) &&
-            key[4] == 1 && execplan.count == 1 && execplan.groups[0].retained == 2 &&
-            !execplan.groups[0].closed && execplan.rows[0].flags == BOOT_FD_CLOEXEC);
-      status = sysforksnapshotcheck(&forksnapshot, &execplan, 0);
+      status = sysforkprepare(&execplan, &forksnapshot, watch, &input, &descriptor,
+                              (const void *) data, backend, 0);
       if (status == -ERR_STALE) {
+        CHECK(!execplan.count);
         reply.words[0] = (u64) -ESTALE;
       } else {
-        CHECK(!status &&
+        CHECK(!status && execplan.count == 1 && execplan.groups[0].retained == 2 &&
+              !execplan.groups[0].closed && execplan.rows[0].flags == BOOT_FD_CLOEXEC &&
               sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image + 1) ==
                   -ERR_STALE &&
               !child.cookie &&

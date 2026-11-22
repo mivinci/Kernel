@@ -72,7 +72,7 @@ static isize lookup(void *ctx, Handle pid, u64 image, u64 session, u64 reference
   (void) ctx; (void) pid;
   return image == 1 && (session == 13 || session == 14) && reference == 17 ? 0 : -ERR_STALE;
 }
-isize forkmanifest(u64 scenario, Execmanifest *out) {
+isize forkmanifest(u64 scenario, Execmanifest *out, const Execmanifest *snapshot) {
   Handle parent = ((u64) HANDLE_PROCESS << 59) | (1U << 16) | 2;
   Ipcmsg call = {IPC_CALL, parent, ((u64) HANDLE_REQUEST << 59) | (1U << 16),
                  {FS_FORK_PREPARE, 29, 3, 0}, 1};
@@ -95,6 +95,11 @@ isize forkmanifest(u64 scenario, Execmanifest *out) {
     call.words[2] = slot.seq = 2;
     slot.args[6] = 0;
     return sysforksnapshot(out, &watch, &call, &slot, page, backend, 99, lookup, 0, 71);
+  }
+  if (snapshot) {
+    if (scenario == 5) rows[0].flags = 0;
+    if (scenario == 6) rows[0].reference_id++;
+    return sysforkprepare(out, snapshot, &watch, &call, &slot, page, backend, 99);
   }
   return sysforkmanifest(out, &watch, &call, &slot, page, backend, 99, lookup, 0);
 }
@@ -188,15 +193,15 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.claim.restype = C.c_int64
         cls.lib.forkobserve.argtypes = [U, C.POINTER(Owner)]
         cls.lib.forkobserve.restype = C.c_int64
-        cls.lib.forkmanifest.argtypes = [U, C.POINTER(Plan)]
+        cls.lib.forkmanifest.argtypes = [U, C.POINTER(Plan), C.POINTER(Plan)]
         cls.lib.forkmanifest.restype = C.c_int64
         cls.lib.sysforksnapshotcheck.argtypes = [C.POINTER(Plan), C.POINTER(Plan), U]
         cls.lib.sysforksnapshotcheck.restype = C.c_int64
 
     def test_snapshot_matches_original_connection_target_and_rows(self):
         snapshot, prepare = Plan(), Plan()
-        self.assertEqual(self.lib.forkmanifest(3, C.byref(snapshot)), 0)
-        self.assertEqual(self.lib.forkmanifest(0, C.byref(prepare)), 0)
+        self.assertEqual(self.lib.forkmanifest(3, C.byref(snapshot), None), 0)
+        self.assertEqual(self.lib.forkmanifest(0, C.byref(prepare), None), 0)
         check = self.lib.sysforksnapshotcheck
         self.assertEqual(check(C.byref(snapshot), C.byref(prepare), 99), 0)
         self.assertLess(check(C.byref(snapshot), C.byref(prepare), 100), 0)
@@ -214,9 +219,9 @@ class ExecStateTests(unittest.TestCase):
     def test_fork_manifest_retains_cloexec_aliases_and_requires_original_slot(self):
         plan = Plan()
         for scenario in (1, 2):
-            self.assertLess(self.lib.forkmanifest(scenario, C.byref(plan)), 0)
+            self.assertLess(self.lib.forkmanifest(scenario, C.byref(plan), None), 0)
             self.assertEqual((plan.count, plan.child, plan.snapshot), (0, 0, 0))
-        self.assertEqual(self.lib.forkmanifest(0, C.byref(plan)), 0)
+        self.assertEqual(self.lib.forkmanifest(0, C.byref(plan), None), 0)
         self.assertEqual((plan.child, plan.target_image, plan.snapshot), (plan.pid + 1, 1, 71))
         self.assertEqual((plan.count, plan.groups[0].retained, plan.groups[0].closed), (1, 2, 0))
         self.assertEqual(plan.rows[0][1], 1)
@@ -233,10 +238,23 @@ class ExecStateTests(unittest.TestCase):
 
     def test_equal_reference_numbers_in_distinct_sessions_do_not_alias(self):
         plan = Plan()
-        self.assertEqual(self.lib.forkmanifest(4, C.byref(plan)), 0)
+        self.assertEqual(self.lib.forkmanifest(4, C.byref(plan), None), 0)
         self.assertEqual(plan.count, 2)
         self.assertEqual([(g.session, g.reference, g.retained) for g in plan.groups[:2]],
                          [(13, 17, 1), (14, 17, 1)])
+
+    def test_prepare_accepts_held_snapshot_and_keeps_it_after_rejection(self):
+        snapshot, prepare = Plan(), Plan()
+        parse = self.lib.forkmanifest
+        self.assertEqual(parse(3, C.byref(snapshot), None), 0)
+        original = bytes(snapshot)
+        for scenario in (5, 6):
+            self.assertLess(parse(scenario, C.byref(prepare), C.byref(snapshot)), 0)
+            self.assertEqual(prepare.count, 0)
+            self.assertEqual(bytes(snapshot), original)
+        self.assertEqual(parse(0, C.byref(prepare), C.byref(snapshot)), 0)
+        self.assertEqual(prepare.groups[0].retained, 2)
+        self.assertEqual(bytes(snapshot), original)
 
     def test_retire_even_if_target_exited_without_claiming_but_not_after_abort(self):
         for reason in (1, 2):

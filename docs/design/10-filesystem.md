@@ -543,6 +543,8 @@ FS 的私有 `fscontextinherit` 只接受与父快照相同的 PID/image 和上�
 
 服务可用 `sysforksnapshot` 将 `FORK_SNAPSHOT` 的清单存入私有记录，配上由服务分配的非零 token。`sysforksnapshotcheck` 核对 token、父镜像、原连接、目标子镜像以及完整有序清单，要求准备请求是同连接上序号更新的另一笔 REQUEST，且两份记录均未到期。校验不消费记录；准备提交后由调用方撤销原记录。主机测试覆盖身份或清单变更、超期和撤销。
 
+`sysforkprepare` 从已接收的原 `FORK_PREPARE` 槽解析请求，以服务仍持有的 `FORK_SNAPSHOT` 核对每组来源和完整有序清单。父关闭原引用不影响已持有的快照。错误不发布准备计划、不消费快照；成功仍须经 `OBS_CHILD` 验证子身份并完成资源预付，才能回复准备成功。ARM64、RV64 QEMU `runtime` 在真实 IPC 夹具上验证 token 核对和子观察；12 项主机测试通过，其中覆盖篡改标志、改变引用后拒绝且仍可用原快照重试。
+
 ARM64、RV64 QEMU `runtime` 以原父连接发送真实 `FORK_SNAPSHOT` 和 `FORK_PREPARE`，验证错误 token 不消费快照、正确 token 允许登记子镜像观察、消费后的重放被拒绝，最后由 `forkabort` 触发观察收尾。token 分配和消费由测试夹具驱动，尚未安装生产文件引用。
 
 普通文件后端可用 `fsfileholdref` 按父 PID/image、session 和 reference_id 取得独立的 File 引用。这个内部引用保留打开状态和偏移，但不允许任何新客户端发起 I/O。ARM64、RV64 QEMU `pipeio` 验证错误引用或镜像被拒绝；正确引用在父 fd 关闭后仍保留 File 和偏移，释放后归还节点。

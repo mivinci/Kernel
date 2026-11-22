@@ -72,6 +72,13 @@ isize sysforksnapshot(Execmanifest *out, const Filewatch *watch, const Ipcmsg *c
 /* Read-only preflight. A successful commit invalidates the original record
    (clear count) after target holds and their cleanup have been recorded. */
 isize sysforksnapshotcheck(const Execmanifest *snapshot, const Execmanifest *prepare, u64 now);
+/* Decode the admitted PREPARE against the backend's still-owned snapshot.
+   The original refs may be closed; only the captured groups and ordered
+   rows are accepted. Failure leaves no plan and does not consume the
+   snapshot. The caller must still verify the target with OBS_CHILD. */
+isize sysforkprepare(Execmanifest *out, const Execmanifest *snapshot, const Filewatch *watch,
+                     const Ipcmsg *call, const Fileslot *slot, const void *page, Connpeer backend,
+                     u64 now);
 /* Acquire the target observation through the original accepted REQUEST. The
    dispatcher owns and shares one Fileowner per target image; use the normal
    owner read/close path to retire the cookie after dependent work ends. */

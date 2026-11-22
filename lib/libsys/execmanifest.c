@@ -153,6 +153,38 @@ sysforksnapshotcheck(const Execmanifest *snapshot, const Execmanifest *prepare, 
 }
 
 static isize
+snapshotref(void *context, Handle pid, u64 image, u64 session, u64 reference)
+{
+  const Execmanifest *snapshot = *(const Execmanifest **) context;
+  u32                 i;
+  if (snapshot->pid != pid || snapshot->source_image != image)
+    return -ERR_STALE;
+  for (i = 0; i < snapshot->count; i++)
+    if (snapshot->groups[i].session == session && snapshot->groups[i].reference == reference)
+      return 0;
+  return -ERR_STALE;
+}
+
+isize
+sysforkprepare(Execmanifest *out, const Execmanifest *snapshot, const Filewatch *watch,
+               const Ipcmsg *call, const Fileslot *slot, const void *page, Connpeer backend,
+               u64 now)
+{
+  isize error;
+  if (!separate(out, snapshot, sizeof(*snapshot)))
+    return -ERR_INVALID;
+  if (!snapshot->count || snapshot->count > BOOT_FD_COUNT || !snapshot->captured)
+    return -ERR_STALE;
+  error = sysforkmanifest(out, watch, call, slot, page, backend, now, snapshotref, &snapshot);
+  if (error)
+    return error;
+  error = sysforksnapshotcheck(snapshot, out, now);
+  if (error)
+    out->count = 0;
+  return error;
+}
+
+static isize
 observeprepared(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 relation, Handle pid,
                 u64 image)
 {

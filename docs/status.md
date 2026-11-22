@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- `FORK_PREPARE` 的私有校验已改用服务持有的快照，不要求父引用仍然开放。ARM64、RV64 QEMU `runtime` 验证原 IPC 的 token 核对和子观察；实际子引用和 Bootfd 交付仍待接。
 - FS 事件循环已接普通文件和管道的 `FORK_SNAPSHOT`。双架构 QEMU `pipeio` 验证父关闭后保留文件偏移，管道读端等待快照到期才收到 EOF。子引用准备和领取待接。
 - [012 A1/A2](issues/012-busybox-port.md) 的静态构建已通过 ARM64/RV64：用公开 SDK 分别链接普通 C 程序和固定版本的上游 miniz，核对头来源、ELF 架构、符号和动态依赖。普通镜像的 stdout、串口整行和退出码尚未验收。
 - VFS 普通名称、`..` 和符号链接已接块卷回调。双架构 QEMU `virtiodev` 验证实际块上的相对链接展开和悬挂目标；`pipeio` 从公开 `readlink()` 验证不跟随最终链接、短缓冲区截断、不写 NUL 和等待恢复。生产凭据接线与盘上解码待接。
