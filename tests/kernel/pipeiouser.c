@@ -2,6 +2,8 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <termios.h>
+#include <proto/tty.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
 #include <time.h>
@@ -418,7 +420,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
       }
       {
         static Cacheblock blocks[2];
-        static u8         scratch[CACHE_BYTES];
+        u8                scratch[CACHE_BYTES];
         const Loadmap     map = {{7, 1, 1, CACHE_BYTES + 2}, {5}, 0};
         const u64         cursors[] = {2, 2, 3, CACHE_BYTES + 1, CACHE_BYTES + 2, CACHE_BYTES + 2};
         Cache             cache = {0};
@@ -456,6 +458,27 @@ serviceloop(const Bootview *boot, u32 interrupt)
           CHECK(position == cursors[i] && !link.watch.active.requests[request.words[3]] &&
                 !readwork.request && !readwork.span.cache);
         }
+      }
+      for (i = 0; i < 3; i++) {
+        const Termarg mode = {
+            TTY_ICRNL, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON | TTY_ECHO, 115200, 115200, {3}};
+        const u8    *bytes = (const u8 *) &mode;
+        volatile u8 *page;
+        Msg          attrs = {{0, 0, 0, sizeof(mode)}};
+        u32          j;
+        CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_TTYCTL &&
+              !sysfilelinkaccept(&link, 1, &request, &row) &&
+              row.object == file.session[PIPE_READ] && row.args[0] == TTY_GETATTR && !row.args[1] &&
+              !row.args[2] && !row.args[3] && row.args[4] == sizeof(mode) &&
+              row.payload_bytes == sizeof(mode));
+        page = (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
+        for (j = 0; j < sizeof(mode); j++)
+          page[j] = bytes[j];
+        attrs.words[1] = row.seq;
+        if (!i)
+          attrs.words[3]--;
+        CHECK(!ipc_reply(request.request, &attrs) &&
+              !sysfilefinish(&link.watch.active, request.request));
       }
     }
   } else if (interrupt == 6) {
@@ -745,7 +768,19 @@ interruptclient(void)
         pread(fds[0], data, sizeof(data), CACHE_BYTES - 1) == 3 && data[0] == 'Z' && !data[1] &&
         !data[2] && read(fds[0], data, 1) == 1 && data[0] == 'C' &&
         lseek(fd, -1, SEEK_END) == CACHE_BYTES + 1 && read(fd, data, sizeof(data)) == 1 &&
-        !data[0] && !read(fds[0], data, sizeof(data)) && !close(fd));
+        !data[0] && !read(fds[0], data, sizeof(data)));
+  {
+    struct termios attrs = {0};
+    attrs.c_iflag = UINT64_MAX;
+    CHECK(tcgetattr(fd, &attrs) == -1 && errno == EIO && attrs.c_iflag == UINT64_MAX &&
+          !attrs.c_ospeed && tcgetattr(fd, (void *) 1) == -1 && errno == EFAULT &&
+          !tcgetattr(fd, &attrs) && errno == EFAULT && attrs.c_iflag == ICRNL &&
+          attrs.c_oflag == (OPOST | ONLCR) && attrs.c_cflag == CS8 &&
+          attrs.c_lflag == (ICANON | ECHO) && attrs.c_ispeed == 115200 &&
+          attrs.c_ospeed == 115200 && attrs.c_cc[VINTR] == 3 && !attrs.c_cc[VQUIT] &&
+          tcgetattr(fds[0], &attrs) == -1 && errno == ENOTTY && attrs.c_ispeed == 115200 &&
+          tcgetattr(-1, &attrs) == -1 && errno == EBADF && !close(fd));
+  }
   data[0] = 'p';
   data[1] = 'q';
   data[2] = 0xa5;

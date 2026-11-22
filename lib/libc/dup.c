@@ -2,7 +2,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <termios.h>
 #include <unistd.h>
+#include <proto/tty.h>
 #include "private/fileimage.h"
 #include "sigdepth.h"
 
@@ -165,4 +167,28 @@ lseek(int fd, off_t offset, int whence)
   Fileioresult completed;
   isize        status = sysfileimageseek(__libc_sigdepth(), fd, offset, whence, &completed);
   return ioresult(FS_SEEK, status, &completed);
+}
+
+STATIC_ASSERT(sizeof(struct termios) == sizeof(Termarg), termios_size);
+STATIC_ASSERT(offsetof(struct termios, c_iflag) == offsetof(Termarg, iflag), termios_iflag);
+STATIC_ASSERT(offsetof(struct termios, c_oflag) == offsetof(Termarg, oflag), termios_oflag);
+STATIC_ASSERT(offsetof(struct termios, c_cflag) == offsetof(Termarg, cflag), termios_cflag);
+STATIC_ASSERT(offsetof(struct termios, c_lflag) == offsetof(Termarg, lflag), termios_lflag);
+STATIC_ASSERT(offsetof(struct termios, c_ispeed) == offsetof(Termarg, ispeed), termios_ispeed);
+STATIC_ASSERT(offsetof(struct termios, c_ospeed) == offsetof(Termarg, ospeed), termios_ospeed);
+STATIC_ASSERT(offsetof(struct termios, c_cc) == offsetof(Termarg, cc), termios_cc);
+STATIC_ASSERT(ICRNL == TTY_ICRNL && OPOST == TTY_OPOST && ONLCR == TTY_ONLCR && CS8 == TTY_CS8 &&
+                  ICANON == TTY_ICANON && ECHO == TTY_ECHO && ISIG == TTY_ISIG,
+              termios_flags);
+STATIC_ASSERT(VINTR == TTY_VINTR && VQUIT == TTY_VQUIT && VERASE == TTY_VERASE &&
+                  VKILL == TTY_VKILL && VEOF == TTY_VEOF && VTIME == TTY_VTIME &&
+                  VMIN == TTY_VMIN && VSUSP == TTY_VSUSP,
+              termios_cc_indices);
+
+int
+tcgetattr(int fd, struct termios *attributes)
+{
+  Fileioresult completed;
+  isize        status = sysfileimagegetattr(__libc_sigdepth(), fd, attributes, &completed);
+  return (int) ioresult(FS_TTYCTL, status, &completed);
 }

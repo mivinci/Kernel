@@ -102,6 +102,7 @@ isize sysfileimagedup2(int fd, int target);
 isize sysfileimagedupfrom(int fd, int minimum);
 /* Read or replace the flags on one live descriptor without changing its File. */
 isize sysfileimageflags(int fd, u32 set, u64 flags);
+isize sysfileimagegetattr(u32 layer, int fd, void *output, Fileioresult *result);
 /* ERR_INTERRUPTED means the fd was detached and cleanup still owns the File. */
 isize sysfileimageclose(int fd);
 #endif

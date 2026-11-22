@@ -7,6 +7,7 @@
 #include <abi/signal.h>
 #include <errno.h>
 #include <proto/file.h>
+#include <proto/tty.h>
 
 static Fileimage image;
 static Conntag   fstag;
@@ -641,6 +642,12 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
   return error;
 }
 
+static int
+ioopcode(u64 opcode)
+{
+  return opcode == FS_READ || opcode == FS_WRITE || opcode == FS_SEEK || opcode == FS_TTYCTL;
+}
+
 static isize
 iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 opcode,
         const void *input, u64 bytes, u64 offset, u32 positional, u32 replay, Opkey *key)
@@ -669,9 +676,14 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
       descriptor.seq = draft.lease.seq;
       descriptor.state = FS_SLOT_SUBMITTED;
       descriptor.payload_bytes = bytes;
-      descriptor.args[0] = offset;
-      descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
-      descriptor.args[3] = opcode != FS_SEEK && positional ? FS_IO_POSITIONAL : 0;
+      if (opcode == FS_TTYCTL) {
+        descriptor.args[0] = TTY_GETATTR;
+        descriptor.args[4] = sizeof(Termarg);
+      } else {
+        descriptor.args[0] = offset;
+        descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
+        descriptor.args[3] = opcode != FS_SEEK && positional ? FS_IO_POSITIONAL : 0;
+      }
       descriptor.object = session;
       descriptor.span = 1;
       error = __sys_copy((void *) (base + FS_DESC_OFFSET + draft.lease.slot * FS_DESC_BYTES),
@@ -697,7 +709,7 @@ stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 
   Connwork *work;
   isize     error;
   if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
-      (opcode != FS_READ && opcode != FS_WRITE && opcode != FS_SEEK))
+      !ioopcode(opcode) || (opcode == FS_TTYCTL && bytes != sizeof(Termarg)))
     return -ERR_INVALID;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
     return -ERR_BAD_HANDLE;
@@ -753,7 +765,7 @@ sysfileiowait(Fileimage *state, u32 layer, const Opkey *key, u64 mask, u32 *rest
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK)
+  if (!ioopcode(op->opcode))
     return -ERR_INVALID;
   if (op->phase == SYSOP_PREPARED) {
     error = sysctxopcall(&state->contexts, self, layer, work, cache, key, 0, &context);
@@ -816,9 +828,7 @@ sysfileioresume(Fileimage *state, Opkey *key)
   error = sysopcheck(work, sysfileimagecache(state), key);
   if (error)
     return error;
-  if (work->state.operations[key->lease.slot].opcode != FS_READ &&
-      work->state.operations[key->lease.slot].opcode != FS_WRITE &&
-      work->state.operations[key->lease.slot].opcode != FS_SEEK)
+  if (!ioopcode(work->state.operations[key->lease.slot].opcode))
     return -ERR_INVALID;
   error = systimernow(&now);
   if (!error)
@@ -851,7 +861,7 @@ restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK)
+  if (!ioopcode(op->opcode))
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (error)
@@ -894,7 +904,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   Conncache *cache;
   Connwork  *work;
   Slotop    *op;
-  u64        file = 0, address, storage;
+  u64        file = 0, address, storage, expected, value_limit;
   isize      error;
   if (!state || !key || !result || !key->owner || key->connection.index >= SYSCONN_COUNT ||
       key->lease.span != 1 || bytes > FS_SLOT_BYTES)
@@ -905,7 +915,7 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK)
+  if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)))
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (!error)
@@ -913,6 +923,17 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (error)
     return error;
   if (!(op->flags & SYSOP_SAVED)) {
+    expected = 0;
+    value_limit = bytes;
+    if (op->opcode == FS_READ)
+      expected = op->words[2];
+    else if (op->opcode == FS_SEEK)
+      value_limit = INT64_MAX;
+    else if (op->opcode == FS_TTYCTL) {
+      value_limit = 0;
+      if (!op->words[0])
+        expected = sizeof(Termarg);
+    }
     result->native = result->business = 0;
     result->count = 0;
     if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT)
@@ -929,9 +950,8 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
         result->native = op->status;
       }
     } else if (op->words[1] != key->lease.seq || (isize) op->words[0] > 0 ||
-               (op->words[0] && (op->words[2] || op->words[3])) ||
-               op->words[2] > (op->opcode == FS_SEEK ? (u64) INT64_MAX : bytes) ||
-               op->words[3] != (op->opcode == FS_READ ? op->words[2] : 0))
+               (op->words[0] && (op->words[2] || op->words[3])) || op->words[2] > value_limit ||
+               op->words[3] != expected)
       result->native = -ERR_STATE;
     else {
       result->business = (isize) op->words[0];
@@ -939,15 +959,15 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
       if (op->words[3]) {
         address = (uintptr_t) output;
         storage = (uintptr_t) state;
-        if (address > UINT64_MAX - result->count ||
-            (address < storage + sizeof(*state) && storage < address + result->count))
+        if (address > UINT64_MAX - expected ||
+            (address < storage + sizeof(*state) && storage < address + expected))
           error = -ERR_FAULT;
         else {
           storage = (uintptr_t) result;
-          if (address < storage + sizeof(*result) && storage < address + result->count)
+          if (address < storage + sizeof(*result) && storage < address + expected)
             error = -ERR_FAULT;
           else
-            error = sysopcopy(work, cache, key, 0, result->count, output);
+            error = sysopcopy(work, cache, key, 0, expected, output);
         }
         if (error) {
           result->native = error == -ERR_INVALID ? -ERR_FAULT : error;
@@ -1081,6 +1101,12 @@ sysfileimageseek(u32 layer, int fd, int64_t offset, int whence, Fileioresult *re
 }
 
 isize
+sysfileimagegetattr(u32 layer, int fd, void *output, Fileioresult *result)
+{
+  return imageio(layer, fd, FS_TTYCTL, NULL, output, sizeof(Termarg), 0, 0, result);
+}
+
+isize
 sysfileclosewait(Filepool *pool, Connwork *work, Conncache *cache, const Fileclose *anchor,
                  Opkey *key, Opkey *background, u64 mask)
 {
@@ -1172,8 +1198,7 @@ fileprogress(Fileimage *state)
       u64     file = 0;
       if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) !=
               (SYSOP_BACKGROUND | SYSOP_APP_ENDED) ||
-          (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-           op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
+          (!ioopcode(op->opcode) && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
         continue;
       key.connection = work->state.tag;
       key.lease = op->lease;

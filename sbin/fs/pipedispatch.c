@@ -264,6 +264,10 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
       error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
     reply.words[0] = (u64) (error ? fileerror(error) : -ESPIPE);
     return respond(link, call->request, &reply);
+  case FS_TTYCTL:
+    error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
+    reply.words[0] = (u64) (error ? fileerror(error) : -ENOTTY);
+    return respond(link, call->request, &reply);
   case FS_READ:
   case FS_WRITE:
     error = sysfileargs(opcode, &slot);

@@ -134,6 +134,10 @@ T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与�
 
 ## 执行与验收
 
+stage446：`int tcgetattr(int fd, struct termios *attributes)` 由 libc 提供，头文件为 `termios.h`。按 [POSIX.1-2024 tcgetattr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcgetattr.html) 核对原型、成功返回 0、无效 fd 的 EBADF 和非终端的 ENOTTY。首版公开字段对应 11 篇的标志、控制字符和输入/输出速率，布局与 `Termarg` 一致。libsys 固定原 File，通过同一连接发送 `TTYCTL/GETATTR`，只在原请求完成且序号、返回值和 80 字节长度匹配后写入应用对象。管道后端经会话校验后返回 ENOTTY；坏输出地址返回 EFAULT，格式错误的回复返回 EIO。请求沿原账本处理取消与回收。
+
+ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证夹具返回属性、坏长度保留输出、坏输出地址后可再次查询，以及管道 ENOTTY 和无效 fd EBADF。17 项请求账本主机测试和格式检查通过。成功属性由测试服务提供，生产 TTY 文件连接仍待接入。
+
 全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 兼容清单执行项
