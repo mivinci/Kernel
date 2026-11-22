@@ -315,6 +315,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/load.c','fs-load'),
         compile_adoption(ROOT/'sbin/fs/journal.c','fs-journal'),
         compile_adoption(ROOT/'sbin/fs/txn.c','fs-txn'),
+        compile_adoption(ROOT/'sbin/fs/sync.c','fs-sync'),
         compile_adoption(ROOT/'sbin/fs/cache.c','fs-cache'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
@@ -415,6 +416,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/cache.c', 'vdev-fs-cache'),
         compile_adoption(ROOT/'sbin/fs/geometry.c', 'vdev-fs-geometry'),
         compile_adoption(ROOT/'sbin/fs/txn.c', 'vdev-fs-txn'),
+        compile_adoption(ROOT/'sbin/fs/sync.c', 'vdev-fs-sync'),
         compile_adoption(ROOT/'sbin/fs/load.c', 'vdev-fs-load'),
         compile_adoption(ROOT/'sbin/fs/journal.c', 'vdev-journal')], (virtio_archive,))
     vdev_image=sdk/'vdevuser.img'

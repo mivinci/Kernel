@@ -290,6 +290,7 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
   Journalio         io;
   u8               *destination;
   u8                later = 0x73;
+  const Loadmap     map = {{2, 1, 1, CACHE_BYTES}, {FS_DATA_START}, 0};
   u32               i;
   u64               stride = CACHE_BYTES / VBLK_SECTOR;
   REQUIRE(!cacheinit(&cache, &entry, 1, config->sectors / stride) && !txninit(&txn, &cache, 47) &&
@@ -300,8 +301,9 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
   for (i = 0; i < CACHE_BYTES; i++)
     image[i] = (u8) (0xb4 + i * 37);
   REQUIRE(!cacheedit(&cache, &key, 0, image, CACHE_BYTES) &&
-              !txnprepare(&txn, NULL, 0, &key, 1, snapshot) && !txnstart(&txn, NULL, NULL, NULL) &&
-              !txnnext(&txn, &io) && io.kind == JOURNAL_WRITE && io.block == FS_DATA_START &&
+              txnpreparefile(&txn, &map, NULL, snapshot, 1) == 1 &&
+              !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &io) &&
+              io.kind == JOURNAL_WRITE && io.block == FS_DATA_START &&
               !cacheedit(&cache, &key, 0, &later, 1),
           261);
   transfer(device, ring, 2, binding, irqevent, config, dma, VBLK_WRITE, io.block * stride, 40, 0,
@@ -312,9 +314,10 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
   transfer(device, ring, 2, binding, irqevent, config, dma, VBLK_FLUSH, 0, 41, 0, NULL, NULL);
   REQUIRE(!txncomplete(&txn, &io, 1) && txn.journal.durable && !txnrelease(&txn) && entry.dirty &&
               entry.data[0] == later && txn.journal.last == 47 &&
-              !txnprepare(&txn, NULL, 0, &key, 1, snapshot) && !txnstart(&txn, NULL, NULL, NULL) &&
-              !txnnext(&txn, &io) && !txnstop(&txn) && txnrelease(&txn) == -ERR_WOULD_BLOCK &&
-              !txncomplete(&txn, &io, 0) && !txnrelease(&txn) && entry.dirty &&
+              txnpreparefile(&txn, &map, NULL, snapshot, 1) == 1 &&
+              !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &io) && !txnstop(&txn) &&
+              txnrelease(&txn) == -ERR_WOULD_BLOCK && !txncomplete(&txn, &io, 0) &&
+              !txnrelease(&txn) && entry.dirty &&
               txnprepare(&txn, NULL, 0, &key, 1, snapshot) == -ERR_STATE && !cacheput(&cache, &key),
           263);
 }

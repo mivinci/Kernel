@@ -29,6 +29,15 @@ isize txninit(Txn *txn, Cache *cache, u64 last);
    using these captured targets/bytes and journal.last+1, not current cache. */
 isize txnprepare(Txn *txn, const Cachekey *metadata, u32 metadata_count, const Cachekey *data,
                  u32 data_count, void *snapshots);
+/* Capture dirty data reachable within EOF of a pinned committed file map.
+   The caller keeps the mapped blocks allocated and holds the volume writer
+   through release. The map and index need only stay stable during selection.
+   Return one for PREPARED, zero for no matching dirty data, or an error.
+   Each snapshot slot holds one full block. A short buffer captures nothing.
+   This syncs data only. The caller separately accounts for needed metadata
+   and volume errors before reporting file sync success. */
+isize txnpreparefile(Txn *, const struct Loadmap *, const struct Loadindex *, void *snapshots,
+                     u32 slots);
 /* Already validated metadata classification and encoded records required.
    Invalid records/storage leave PREPARED captures for repair or release.
    For a data-only batch all three record pointers must be null. */

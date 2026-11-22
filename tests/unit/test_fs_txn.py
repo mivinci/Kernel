@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from test_fs_cache import Key, Ticket as Cacheio, Block as Cacheblock, Cache
 from test_fs_journal import Journal, Block as Journalblock, Ticket as Journalio
+from test_fs_load import File, Index, Map
 
 ROOT=Path(__file__).resolve().parents[2]
 MAX=(1<<64)-1
@@ -24,7 +25,7 @@ class FsTxnTests(unittest.TestCase):
         for level in ('O0','O2'):
             path=folder/(level+'.so')
             cmd=['clang','-std=c89','-'+level,'-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror',
-                 '-shared','-fPIC','-I'+str(ROOT/'include')]+[str(ROOT/'sbin/fs'/(name+'.c')) for name in ('cache','geometry','journal','txn')]+['-o',str(path)]
+                 '-shared','-fPIC','-I'+str(ROOT/'include')]+[str(ROOT/'sbin/fs'/(name+'.c')) for name in ('cache','geometry','journal','load','sync','txn')]+['-o',str(path)]
             if sys.platform=='darwin':
                 sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip();cmd+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
             subprocess.run(cmd,check=True,capture_output=True);lib=C.CDLL(str(path))
@@ -38,6 +39,7 @@ class FsTxnTests(unittest.TestCase):
                 'cachecapturefinish':[cp,ip,C.c_uint32],
                 'txninit':[tp,cp,C.c_uint64],
                 'txnprepare':[tp,kp,C.c_uint32,kp,C.c_uint32,C.c_void_p],
+                'txnpreparefile':[tp,C.POINTER(Map),C.POINTER(Index),C.c_void_p,C.c_uint32],
                 'txnstart':[tp,C.c_void_p,C.c_void_p,C.c_void_p],
                 'txnnext':[tp,jp],'txncomplete':[tp,jp,C.c_uint32],
                 'txnstop':[tp],'txnrelease':[tp]}
@@ -98,6 +100,29 @@ class FsTxnTests(unittest.TestCase):
             self.assertTrue(all(entry.dirty==0 and entry.io==0 for entry in self.storage))
             self.assertEqual((self.txn.phase,self.txn.count,self.txn.journal.last),(0,0,8))
             self.assertEqual(lib.cacheget(self.c,900,0,C.byref(Key())),0)
+
+    def test_file_sync_captures_only_mapped_dirty_data_before_eof(self):
+        for lib in self.libs:
+            self.init(lib, data=4)
+            filemap = Map(File(2, 1, 1, 12 * 4096 + 1), (C.c_uint32 * 12)(200), 204)
+            index = Index(204, (C.c_uint32 * 1024)(201, 202))
+            before = bytes(self.txn), bytes(self.storage), bytes(self.snapshots)
+            self.assertEqual(lib.txnpreparefile(self.t, C.byref(filemap), None,
+                                                self.snapshots, 2), -11)
+            self.assertEqual(lib.txnpreparefile(self.t, C.byref(filemap), C.byref(index),
+                                                self.snapshots, 1), -9)
+            self.assertEqual((bytes(self.txn), bytes(self.storage), bytes(self.snapshots)), before)
+            self.assertEqual(lib.txnpreparefile(self.t, C.byref(filemap), C.byref(index),
+                                                self.snapshots, 2), 1)
+            self.assertEqual(lib.txnstart(self.t, None, None, None), 0)
+            for kind, block in ((1, 200), (1, 201), (2, 0)):
+                io = self.next()
+                self.assertEqual((io.kind, io.block), (kind, block))
+                self.complete(io)
+            self.assertEqual(lib.txnrelease(self.t), 0)
+            self.assertEqual([entry.dirty for entry in self.storage], [1, 0, 0, 1, 1])
+            self.assertEqual(lib.txnpreparefile(self.t, C.byref(filemap), C.byref(index),
+                                                None, 0), 0)
 
     def test_edits_after_capture_cannot_change_logged_or_home_bytes_or_be_cleaned(self):
         for lib in self.libs:

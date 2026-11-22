@@ -1715,14 +1715,12 @@ opensync(void *context, Readjob *job, u64 state)
   static u8        snapshot[FS_BLOCK_BYTES];
   static Journalio flush;
   Openfixture     *fixture = context;
-  Cachekey         key = {0};
   Journalio        write;
   u32              i, success = (u32) job->slot.args[0];
   CHECK(job->file->node == &fixture->file && fixture->cache.entries[0].dirty);
   if (!job->started) {
     CHECK(state == RQ_CHECK_LIVE && !fixture->syncing && !txninit(&txn, &fixture->cache, 0) &&
-          !cacheget(&fixture->cache, FS_DATA_START, CACHE_DATA, &key) &&
-          !txnprepare(&txn, NULL, 0, &key, 1, snapshot) && !cacheput(&fixture->cache, &key) &&
+          txnpreparefile(&txn, &fixture->map, NULL, snapshot, 1) == 1 &&
           !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &write) &&
           write.kind == JOURNAL_WRITE && write.block == FS_DATA_START);
     CHECK(write.bytes[3] == 'W');
