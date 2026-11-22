@@ -14,6 +14,7 @@ typedef struct Cacheblock Cacheblock;
 typedef struct Cachekey   Cachekey;
 typedef struct Cacheio    Cacheio;
 typedef struct Cachespan  Cachespan;
+typedef struct Cachefill  Cachefill;
 struct Cachekey
 {
   u64 generation;
@@ -42,6 +43,11 @@ struct Cachespan
   Cache   *cache;
   Cachekey keys[2];
   u32      offset, bytes;
+};
+struct Cachefill
+{
+  Cache  *cache;
+  Cacheio ticket;
 };
 STATIC_ASSERT(sizeof(Cachekey) == 16 && sizeof(Cacheio) == 40, cache_ticket_size);
 STATIC_ASSERT(sizeof(Cacheblock) == CACHE_BYTES + 72 && sizeof(Cache) == 24, cache_storage_size);
@@ -74,6 +80,11 @@ isize cachereadbegin(Cache *cache, const Cachekey *key, Cacheio *out, u8 **desti
    transfers a new read ticket and destination. WOULD_BLOCK means an existing
    read owns the destination. Only the ticket owner completes the read. */
 isize cachefetch(Cache *cache, u64 block, u32 metadata, Cacheio *out, u8 **destination);
+/* Retain one outstanding read in a zero-initialized caller record. Release
+   the record only on the exact completion, after transport has drained. */
+isize cachefillstart(Cachefill *fill, Cache *cache, u64 block, u32 metadata, Cacheio *out,
+                     u8 **destination);
+isize cachefillfinish(Cachefill *fill, const Cacheio *ticket, u32 success);
 isize cachewritebegin(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out);
 /* success means a known finished IO, never cancellation/result-only/timeout.
    Unknown IO keeps its ticket active. This does not prove flush or DMA stop. */

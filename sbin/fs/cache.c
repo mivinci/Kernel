@@ -337,6 +337,42 @@ cachefetch(Cache *cache, u64 block, u32 metadata, Cacheio *out, u8 **destination
 }
 
 isize
+cachefillstart(Cachefill *fill, Cache *cache, u64 block, u32 metadata, Cacheio *out,
+               u8 **destination)
+{
+  isize error;
+  if (!external(cache, fill, sizeof(*fill)) || !separate(fill, sizeof(*fill), out, sizeof(*out)) ||
+      !separate(fill, sizeof(*fill), destination, sizeof(*destination)))
+    return -ERR_INVALID;
+  if (fill->cache)
+    return -ERR_BUSY;
+  error = cachefetch(cache, block, metadata, out, destination);
+  if (error == 1) {
+    fill->cache = cache;
+    fill->ticket = *out;
+  }
+  return error;
+}
+
+isize
+cachefillfinish(Cachefill *fill, const Cacheio *ticket, u32 success)
+{
+  const Cacheio *owned;
+  isize          error;
+  if (!fill || !ticket || !fill->cache)
+    return -ERR_STALE;
+  owned = &fill->ticket;
+  if (ticket->key.index != owned->key.index || ticket->key.generation != owned->key.generation ||
+      ticket->serial != owned->serial || ticket->version != owned->version ||
+      ticket->kind != owned->kind)
+    return -ERR_STALE;
+  error = cachecomplete(fill->cache, ticket, success);
+  if (!error)
+    fill->cache = NULL;
+  return error;
+}
+
+isize
 cachewritebegin(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out)
 {
   Cacheblock  *entry;

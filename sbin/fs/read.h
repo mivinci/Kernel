@@ -15,9 +15,9 @@ struct Readfetch
 struct Readwork
 {
   Cachespan span;
-  Cacheio   ticket;
+  Cachefill fill;
   Handle    request;
-  u32       inflight, failed;
+  u32       failed;
 };
 
 /* The serialized dispatcher has authorized a readable regular File and

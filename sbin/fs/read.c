@@ -4,20 +4,12 @@
 isize
 filereadcomplete(Readwork *work, const Cacheio *ticket, u32 success)
 {
-  const Cacheio *owned;
-  isize          error;
-  if (!work || !ticket || !work->inflight)
+  isize error;
+  if (!work)
     return -ERR_STALE;
-  owned = &work->ticket;
-  if (ticket->key.index != owned->key.index || ticket->key.generation != owned->key.generation ||
-      ticket->serial != owned->serial || ticket->version != owned->version ||
-      ticket->kind != owned->kind)
-    return -ERR_STALE;
-  error = cachecomplete(work->span.cache, ticket, success);
-  if (!error) {
-    work->inflight = 0;
+  error = cachefillfinish(&work->fill, ticket, success);
+  if (!error)
     work->failed = !success;
-  }
   return error;
 }
 
@@ -43,7 +35,7 @@ fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *c
   if (work->request &&
       (work->request != call->request || (work->span.cache && work->span.cache != cache)))
     return -ERR_BUSY;
-  if (work->inflight)
+  if (work->fill.cache)
     return -ERR_WOULD_BLOCK;
   error = ipc_rqcheck(call->request, &state);
   if (error)
@@ -79,11 +71,10 @@ fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *c
       for (i = 0; i < ARRAY_SIZE(blocks); i++) {
         if (!blocks[i])
           continue;
-        error = cachefetch(cache, blocks[i], CACHE_DATA, &fetch->ticket, &fetch->destination);
+        error = cachefillstart(&work->fill, cache, blocks[i], CACHE_DATA, &fetch->ticket,
+                               &fetch->destination);
         if (error == 1) {
           fetch->block = blocks[i];
-          work->ticket = fetch->ticket;
-          work->inflight = 1;
           return 1;
         }
         if (error == -ERR_WOULD_BLOCK)

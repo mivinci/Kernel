@@ -347,6 +347,7 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   static Cacheblock storage[2];
   Cache             cache = {0};
   Cachespan         span = {0};
+  Cachefill         fills[2] = {{0}};
   Cacheio           tickets[2], duplicate;
   Cachekey          competing = {0};
   u8               *destinations[2], *unused = NULL;
@@ -358,13 +359,14 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   u64               alarm, started = now();
   u32               count, causes, more, i, j, seen = 0;
   int               slot;
-  REQUIRE(config->blocksize == CACHE_BYTES &&
-              !cacheinit(&cache, storage, ARRAY_SIZE(storage), config->sectors / stride) &&
-              !cachespanbegin(&cache, 1, 2, CACHE_BYTES - 2, sizeof(staged), &span) &&
-              cachefetch(&cache, 1, CACHE_DATA, &tickets[0], &destinations[0]) == 1 &&
-              cachefetch(&cache, 2, CACHE_DATA, &tickets[1], &destinations[1]) == 1 &&
-              cachefetch(&cache, 1, CACHE_DATA, &duplicate, &unused) == -ERR_WOULD_BLOCK && !unused,
-          237);
+  REQUIRE(
+      config->blocksize == CACHE_BYTES &&
+          !cacheinit(&cache, storage, ARRAY_SIZE(storage), config->sectors / stride) &&
+          !cachespanbegin(&cache, 1, 2, CACHE_BYTES - 2, sizeof(staged), &span) &&
+          cachefillstart(&fills[0], &cache, 1, CACHE_DATA, &tickets[0], &destinations[0]) == 1 &&
+          cachefillstart(&fills[1], &cache, 2, CACHE_DATA, &tickets[1], &destinations[1]) == 1 &&
+          cachefetch(&cache, 1, CACHE_DATA, &duplicate, &unused) == -ERR_WOULD_BLOCK && !unused,
+      237);
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
           215);
@@ -390,7 +392,9 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
       REQUIRE(blkqmatch(queue, &stale) == -ERR_STALE &&
                   !blkqfinish(queue, &done[i], destinations[slot], CACHE_BYTES) &&
                   blkqmatch(queue, &done[i]) == -ERR_STALE &&
-                  !cachecomplete(&cache, &tickets[slot], 1),
+                  cachefillfinish(&fills[slot], &tickets[slot ^ 1], 1) == -ERR_STALE &&
+                  !cachefillfinish(&fills[slot], &tickets[slot], 1) &&
+                  cachefillfinish(&fills[slot], &tickets[slot], 1) == -ERR_STALE,
               220);
       for (j = 0; j < config->blocksize; j++)
         REQUIRE(destinations[slot][j] == (u8) ((slot ? 0x37 : 0x51) + j * 37), 221);
