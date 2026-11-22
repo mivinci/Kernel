@@ -6,6 +6,8 @@
 
 typedef struct Fileimage    Fileimage;
 typedef struct Fileioresult Fileioresult;
+typedef struct Pollfd       Pollfd;
+typedef struct Pollfile     Pollfile;
 struct Fileimage
 {
   Connwork connections[SYSCONN_COUNT];
@@ -18,6 +20,30 @@ struct Fileioresult
   isize native, business;
   u64   count;
 };
+struct Pollfd
+{
+  int fd;
+  u16 events, revents;
+};
+struct Pollfile
+{
+  Filepoll row;
+  Conntag  connection;
+  u64      file;
+  int      fd;
+};
+
+/* Caller excludes caught signals and supplies disjoint private arrays.
+   Each live item holds a File pin until release; invalid and negative fds
+   have local results and need no transport. Failure returns all acquired pins. */
+isize sysfilepollcapture(Fileimage *state, const Pollfd *fds, Pollfile *items, u32 count);
+isize sysfilepollrelease(Fileimage *state, Pollfile *items, u32 count);
+/* Recheck the saved descriptor identity without following a replacement. */
+isize sysfilepollcurrent(const Fileimage *state, const Pollfile *item);
+/* Build one wire group from the captured entries. Indices map the reply back
+   to the original array, including repeated fds. Output capacity is in rows. */
+isize sysfilepollgroup(const Pollfile *items, u32 count, Conntag connection, Filepoll *rows,
+                       u32 *indices, u32 capacity);
 
 /* One shared file state per image, initialized on demand. Inherited image
    repair must be wired before these records can be used by a fork child. */

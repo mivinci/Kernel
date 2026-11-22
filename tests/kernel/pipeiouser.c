@@ -498,6 +498,41 @@ seekpipes(Fileimage *image, Connwork *work, int fd)
 }
 
 static void
+pollsnapshot(Fileimage *image, Connwork *work, const int fds[2])
+{
+  Pollfd   input[] = {{fds[0], FS_POLL_IN, 0},
+                      {-1, FS_POLL_OUT, 0},
+                      {BOOT_FD_COUNT, FS_POLL_IN, 0},
+                      {2, FS_POLL_OUT | FS_POLL_HUP, 0},
+                      {fds[0], FS_POLL_PRI, 0}};
+  Pollfile items[ARRAY_SIZE(input)];
+  Filepoll rows[3];
+  u32      indices[ARRAY_SIZE(rows)];
+  u64      mask, ignored, file;
+  Conntag  stale = work->state.tag;
+  Fileref  ref;
+  CHECK(dup(fds[0]) == 2 && !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
+        !sysfilepollcapture(image, input, items, ARRAY_SIZE(items)) && !items[1].row.revents &&
+        items[2].row.revents == FS_POLL_NVAL && items[3].row.events == FS_POLL_OUT &&
+        items[0].file == items[3].file && items[0].file == items[4].file &&
+        !sysfilerefview(&image->files, image->files.self, items[0].file, &ref) && ref.pins == 3 &&
+        sysfilepollgroup(items, ARRAY_SIZE(items), stale, rows, indices, ARRAY_SIZE(rows)) == 3 &&
+        indices[0] == 0 && indices[1] == 3 && indices[2] == 4 &&
+        rows[0].session == rows[1].session && rows[0].session == rows[2].session &&
+        sysfilepollcurrent(image, &items[3]) == 1);
+  stale.generation++;
+  file = items[0].file;
+  CHECK(!sysfilepollgroup(items, ARRAY_SIZE(items), stale, rows, indices, ARRAY_SIZE(rows)) &&
+        dup2(fds[1], 2) == 2 && !sysfilepollcurrent(image, &items[3]) &&
+        sysfilepollcurrent(image, &items[0]) == 1 &&
+        !sysfilerefview(&image->files, image->files.self, items[0].file, &ref) && ref.pins == 3 &&
+        !sysfilepollrelease(image, items, ARRAY_SIZE(items)) &&
+        !sysfilepollrelease(image, items, ARRAY_SIZE(items)) &&
+        !sysfilerefview(&image->files, image->files.self, file, &ref) && !ref.pins);
+  CHECK(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) && !close(2));
+}
+
+static void
 interruptclient(void)
 {
   Fileimage            *image;
@@ -545,6 +580,7 @@ interruptclient(void)
         !sysfilerefconnection(&image->files, work->state.self, work->state.tag));
   CHECK(!sysfileimagepipe(0, work, &pipe, &active, fds, &business) && !pipe.operation.lease.seq &&
         !active.sequence && !business && fds[0] == 0 && fds[1] == 1 && caught == 1);
+  pollsnapshot(image, work, fds);
   CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
         sysfileiostage(image, 0, 2, FS_WRITE, data, 1, &draftpeer, &draft) == -ERR_BAD_HANDLE &&
         sysfileiostage(image, 0, fds[1], FS_WRITE, (const void *) 1, 1, &draftpeer, &draft) ==

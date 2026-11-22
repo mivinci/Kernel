@@ -17,6 +17,100 @@ static void      closeprogress(Fileimage *state);
 static int       fileprogress(Fileimage *state);
 static int       fileevents(void);
 
+isize
+sysfilepollrelease(Fileimage *state, Pollfile *items, u32 count)
+{
+  isize error = 0;
+  u32   i;
+  for (i = 0; i < count; i++) {
+    isize status;
+    if (!items[i].file)
+      continue;
+    status = sysfilerefunpin(&state->files, state->files.self, items[i].file);
+    if (!status)
+      items[i].file = 0;
+    else if (!error)
+      error = status;
+  }
+  return error;
+}
+
+isize
+sysfilepollcapture(Fileimage *state, const Pollfd *fds, Pollfile *items, u32 count)
+{
+  Fdview  view;
+  Fileref ref;
+  isize   error = 0;
+  u32     i;
+  if (!state || (count && (!fds || !items)))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    Pollfile *item = &items[i];
+    item->fd = fds[i].fd;
+    item->file = 0;
+    item->connection.generation = 0;
+    item->connection.index = item->connection.reserved = 0;
+    item->row.session = item->row.fd_generation = item->row.revents = 0;
+    item->row.events = fds[i].events & (FS_POLL_IN | FS_POLL_PRI | FS_POLL_OUT);
+    if (item->fd < 0)
+      continue;
+    if ((u32) item->fd < BOOT_FD_COUNT) {
+      error = sysfdobserve(&state->fds, (u32) item->fd, &view);
+      if (error)
+        break;
+      if (view.tag.state == SYSFD_LIVE) {
+        error = sysfilerefview(&state->files, state->files.self, view.file, &ref);
+        if (!error)
+          error = sysfilerefpin(&state->files, state->files.self, view.file);
+        if (error)
+          break;
+        item->file = view.file;
+        item->connection = ref.connection;
+        item->row.session = ref.session;
+        item->row.fd_generation = view.tag.generation;
+        continue;
+      }
+    }
+    item->row.revents = FS_POLL_NVAL;
+  }
+  if (error && sysfilepollrelease(state, items, i))
+    return -ERR_STATE;
+  return error;
+}
+
+isize
+sysfilepollcurrent(const Fileimage *state, const Pollfile *item)
+{
+  Fdview view;
+  isize  error;
+  if (!item->file)
+    return 0;
+  error = sysfdobserve(&state->fds, (u32) item->fd, &view);
+  if (error)
+    return error;
+  return view.tag.state == SYSFD_LIVE && view.tag.generation == item->row.fd_generation &&
+         view.file == item->file;
+}
+
+isize
+sysfilepollgroup(const Pollfile *items, u32 count, Conntag connection, Filepoll *rows, u32 *indices,
+                 u32 capacity)
+{
+  u32 i, used = 0;
+  if (!connection.generation || connection.index >= SYSCONN_COUNT || connection.reserved || !rows ||
+      !indices || (count && !items))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++)
+    if (items[i].file && items[i].connection.index == connection.index &&
+        items[i].connection.generation == connection.generation) {
+      if (used == MIN(capacity, FS_POLL_ROWS))
+        return -ERR_CAPACITY;
+      rows[used] = items[i].row;
+      indices[used++] = i;
+    }
+  return used;
+}
+
 Conncache *
 sysfileimagecache(Fileimage *state)
 {
