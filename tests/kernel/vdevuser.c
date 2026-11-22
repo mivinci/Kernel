@@ -166,6 +166,13 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   else
     vdev_trace[3]++;
 }
+static int
+redometa(void *context, const Journalblock *images, u32 count, u32 index)
+{
+  (void) context;
+  return count == 2 && (images[index].block == 65 || images[index].block == 66);
+}
+
 static void
 testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
          const Testdma *dma)
@@ -179,6 +186,8 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   u64            stride = JOURNAL_BYTES / VBLK_SECTOR;
   u64            blocks = config->sectors / stride;
   Fslayout       layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
+  Journalmark    mark = {47, 0, 0, 0};
+  Journalhead    head = {47, {65, 66}, 1, 2, 11, 12};
   REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
   geometry.bytes = config->sectors * VBLK_SECTOR;
   geometry.logical = config->blocksize;
@@ -221,7 +230,23 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   metadata[1].bytes = images[1];
   /* Synthetic snapshots exercise transport and ordering before a disk
      codec exists. The independent host census checks the written bytes. */
-  REQUIRE(!journalredo(&journal, blocks, 47, metadata, 2, images[2]), 194);
+  REQUIRE(!journalrecover(&journal, blocks, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
+              journal.last == 47 && journalnext(&journal, &io) == -ERR_STATE,
+          246);
+  mark = (Journalmark){47, 1, 11, 12};
+  REQUIRE(journalrecover(&journal, blocks, &mark, &head, metadata, 2, 13, images[2], redometa,
+                         NULL) == -ERR_STATE &&
+              journalnext(&journal, &io) == -ERR_STATE,
+          247);
+  head.targets[1] = metadata[1].block = 99;
+  REQUIRE(journalrecover(&journal, blocks, &mark, &head, metadata, 2, 12, images[2], redometa,
+                         NULL) == -ERR_STATE &&
+              journalnext(&journal, &io) == -ERR_STATE,
+          248);
+  head.targets[1] = metadata[1].block = 66;
+  REQUIRE(
+      !journalrecover(&journal, blocks, &mark, &head, metadata, 2, 12, images[2], redometa, NULL),
+      194);
   while (journal.phase != JOURNAL_DONE) {
     REQUIRE(count < 5 && !journalnext(&journal, &io) && io.txid == 47, 195);
     transfer(device, ring, 2, binding, irqevent, config, dma,

@@ -23,6 +23,18 @@ typedef struct Journal      Journal;
 typedef struct Journalblock Journalblock;
 typedef struct Journalplan  Journalplan;
 typedef struct Journalio    Journalio;
+typedef struct Journalmark  Journalmark;
+typedef struct Journalhead  Journalhead;
+struct Journalmark
+{
+  u64 txid;
+  u32 state, headercrc, payloadcrc;
+};
+struct Journalhead
+{
+  u64 txid, targets[JOURNAL_META];
+  u32 state, count, headercrc, payloadcrc;
+};
 struct Journalblock
 {
   u64       block;
@@ -70,6 +82,15 @@ isize journalbegin(Journal *journal, const Journalplan *plan);
    immutable through release. Only successful retirement permits reuse. */
 isize journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
                   const u8 *empty);
+/* Start with fresh state after isolating old I/O and callbacks. The decoder
+   checks record magic, padding and checksums; payloadcrc covers the complete
+   images. The classifier reads the whole immutable transaction view (positive
+   = metadata, zero/negative = reject). For COMMITTED, empty is the encoded
+   EMPTY record for this txid, and it and the images stay immutable until
+   release. An EMPTY mark does not use the head, images or classifier. */
+isize journalrecover(Journal *, u64            blocks, const Journalmark *, const Journalhead *,
+                     const Journalblock *, u32 count, u32 payloadcrc, const u8 *empty,
+                     int (*classify)(void *, const Journalblock *, u32, u32), void *);
 /* One outstanding operation. This reserves an IO anchor but does not submit
    it. Submission failure with no lower references may complete with success=0.
    Repeated next while outstanding returns BUSY, never a second submission. */

@@ -153,28 +153,34 @@ journalbegin(Journal *journal, const Journalplan *plan)
   journal->cursor = journal->durable = 0;
   return 0;
 }
-isize
-journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
-            const u8 *empty)
+static int
+redosnapshots(const Journal *journal, u64 blocks, const Journalblock *metadata, u32 count,
+              const u8 *empty)
 {
   u32 i, j;
   u64 descriptors = (u64) count * sizeof(*metadata);
-  if (blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || !txid || !count ||
-      count > JOURNAL_META || !external(journal, metadata, descriptors) ||
-      !external(journal, empty, JOURNAL_BYTES) ||
+  if (blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || !count || count > JOURNAL_META ||
+      !external(journal, metadata, descriptors) || !external(journal, empty, JOURNAL_BYTES) ||
       !separate(metadata, descriptors, empty, JOURNAL_BYTES) ||
       !hometargets(metadata, count, blocks))
-    return -ERR_INVALID;
+    return 0;
   for (i = 0; i < count; i++) {
     const u8 *bytes = metadata[i].bytes;
     if (!external(journal, bytes, JOURNAL_BYTES) ||
         !separate(metadata, descriptors, bytes, JOURNAL_BYTES) ||
         !separate(empty, JOURNAL_BYTES, bytes, JOURNAL_BYTES))
-      return -ERR_INVALID;
+      return 0;
     for (j = 0; j < i; j++)
       if (!separate(metadata[j].bytes, JOURNAL_BYTES, bytes, JOURNAL_BYTES))
-        return -ERR_INVALID;
+        return 0;
   }
+  return 1;
+}
+
+static void
+redostart(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
+          const u8 *empty)
+{
   /* The previous EMPTY number is immaterial until this log is retired. */
   journalinit(journal, blocks, 0);
   journal->txid = txid;
@@ -182,8 +188,50 @@ journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata
   copymetadata(journal, metadata, count);
   journal->durable = 1;
   journal->phase = JOURNAL_HOME_WRITE;
+}
+
+isize
+journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
+            const u8 *empty)
+{
+  if (!txid || !redosnapshots(journal, blocks, metadata, count, empty))
+    return -ERR_INVALID;
+  redostart(journal, blocks, txid, metadata, count, empty);
   return 0;
 }
+
+isize
+journalrecover(Journal *journal, u64 blocks, const Journalmark *mark, const Journalhead *head,
+               const Journalblock *metadata, u32 count, u32 payloadcrc, const u8 *empty,
+               int (*classify)(void *, const Journalblock *, u32, u32), void *context)
+{
+  u32 i;
+  if (!journal || !mark || blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS)
+    return -ERR_INVALID;
+  if (!mark->state) {
+    if (mark->headercrc || mark->payloadcrc)
+      return -ERR_STATE;
+    return journalinit(journal, blocks, mark->txid);
+  }
+  if (mark->state != 1 || !mark->txid || !head || head->state != 1 || head->txid != mark->txid ||
+      head->headercrc != mark->headercrc || head->payloadcrc != mark->payloadcrc ||
+      payloadcrc != mark->payloadcrc || !count || count != head->count || !classify ||
+      !redosnapshots(journal, blocks, metadata, count, empty))
+    return -ERR_STATE;
+  for (i = 0; i < JOURNAL_META; i++) {
+    if (i < count) {
+      if (head->targets[i] != metadata[i].block)
+        return -ERR_STATE;
+    } else if (head->targets[i])
+      return -ERR_STATE;
+  }
+  for (i = 0; i < count; i++)
+    if (classify(context, metadata, count, i) <= 0)
+      return -ERR_STATE;
+  redostart(journal, blocks, mark->txid, metadata, count, empty);
+  return 0;
+}
+
 static int
 output(const Journal *journal, const void *out, u64 bytes)
 {
