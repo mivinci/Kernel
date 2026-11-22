@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <endian.h>
 #include <fnmatch.h>
 #include <getopt.h>
 #include <stdlib.h>
@@ -184,6 +185,25 @@ pathwalkcheck(void)
   for (i = 0; i < FS_PATH_LINKS; i++)
     REQUIRE(fspathnext(&walk, &part) == 1 && !fspathexpand(&walk, "link", 5), 292);
   REQUIRE(fspathnext(&walk, &part) == 1 && fspathexpand(&walk, "link", 5) == -ELOOP, 293);
+}
+
+static void
+endiancheck(void)
+{
+  volatile u32 value = UINT32_C(0x01234567);
+  u32          big = htobe32(value++);
+  const u8    *bytes = (const u8 *) &big;
+  u64          wide = UINT64_C(0x0123456789abcdef);
+  REQUIRE(BYTE_ORDER == LITTLE_ENDIAN && value == UINT32_C(0x01234568) && bytes[0] == 1 &&
+              bytes[1] == 0x23 && bytes[2] == 0x45 && bytes[3] == 0x67 &&
+              be32toh(big) == UINT32_C(0x01234567),
+          280);
+  REQUIRE(bswap_16(0x1234) == 0x3412 && bswap_32(value) == UINT32_C(0x68452301) &&
+              bswap_64(wide) == UINT64_C(0xefcdab8967452301) &&
+              be16toh(htobe16(0x1234)) == 0x1234 && be64toh(htobe64(wide)) == wide &&
+              le16toh(htole16(0x1234)) == 0x1234 && le32toh(htole32(value)) == value &&
+              le64toh(htole64(wide)) == wide,
+          281);
 }
 
 static void
@@ -967,6 +987,7 @@ main(int argc, char **argv)
           176);
   sortcheck();
   optioncheck();
+  endiancheck();
   longoptioncheck();
   pathwalkcheck();
   REQUIRE(!vwalkusercheck(), 294);

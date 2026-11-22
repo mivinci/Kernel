@@ -37,6 +37,8 @@ M3 的 sh 目标（对齐 POSIX.1-2024 与 dash）目前只有设计，`sbin/` �
 
 补齐编译前置头（`stdint.h`、`limits.h`、`float.h`、`math.h`、`locale.h`），并按 BusyBox 实际引用清单补函数（stdio 全量、`getopt_long`、`fnmatch`、`regex` 子集）。补什么由编译错误驱动，不预判、不批量搬运。
 
+首次上游探针使用 [BusyBox 1.37.0](https://busybox.net/downloads/busybox-1.37.0.tar.bz2)（SHA-256 `3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4`）。从 `make allnoconfig` 启用下文 applet 和静态构建，经 `make oldconfig` 生成 `include/autoconf.h`。在两套公开 SDK 上分别用 Clang `-std=gnu99 -ffreestanding -nostdinc -fsyntax-only` 检查 `libbb/xatonum.c` 和 `shell/ash.c`，头路径仅含上游 `include`、SDK 与 Clang 基础头。补上字节序头后，`xatonum.c` 的首个错误推进到缺少 `<dirent.h>`；`ash.c` 的首个错误是缺少 `<sys/times.h>`。这些是编译探针结果，阶段 B 尚未通过。
+
 **阶段 C：最小 applet 集合跑通**
 
 只编无网络、无 `/proc` 依赖的 applet：`sh`(ash)、`cat`、`ls`、`echo`、`mkdir`、`rm`、`mv`、`cp`、`test`、`sleep`。判据见下节。
