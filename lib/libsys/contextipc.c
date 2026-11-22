@@ -628,9 +628,11 @@ bootconnect(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
   Bootstrap *boot;
   Connclaim  claim;
   Connentry  entry;
+  Bootreply  reply;
   Connpeer   self;
   u64        mask, ignored;
   isize      error, status = 0;
+  int        reuse;
   if (layer >= RCTX_LAYERS || handlekind(space) != HANDLE_RESOURCE || (address & PAGE_MASK) ||
       address < BOOT_USER_LO || address >= BOOT_USER_HI || FS_CONN_BYTES > BOOT_USER_HI - address ||
       !separate(bank, sizeof(*bank), work, sizeof(*work)) ||
@@ -655,25 +657,34 @@ bootconnect(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
     error = sysconnview(cache, work->state.tag, &entry);
   if (error)
     goto restore;
-  if (entry.state != SYSCONN_CONNECTING || entry.owner != claim.owner ||
+  reuse = opcode == FS_EXEC_CLAIM && entry.state == SYSCONN_READY;
+  if ((!reuse && entry.state != SYSCONN_CONNECTING) || entry.owner != claim.owner ||
       entry.sequence != claim.seq || claim.tag.generation != work->state.tag.generation ||
       claim.tag.index != work->state.tag.index || entry.peer.pid != work->state.peer.pid ||
       entry.peer.image != work->state.peer.image || boot->opcode != opcode) {
     error = -ERR_STALE;
     goto restore;
   }
+  if (reuse && (work->state.space != space || work->state.map.address != address || map->mapped ||
+                map->verified || map->address || map->bytes || map->connid || map->serverimage)) {
+    error = -ERR_INVALID;
+    goto restore;
+  }
   error = bootdrive(bank, self, layer, boot, claim, work->state.call, CALL_RECV_MEM, active, &mask,
                     NULL);
   if (!error)
     error = sysbootfinished(boot, claim);
-  if (!error && !map->mapped)
+  if (!error && reuse)
+    error = sysbootreply(boot, claim, entry.connid, &reply);
+  if (!error && !reuse && !map->mapped)
     error = sysbootmap(boot, claim, space, address, work->state.peer.image, map);
-  if (!error && (map->address != address || map->verified != 1))
+  if (!error && !reuse && (map->address != address || map->verified != 1))
     error = -ERR_INVALID;
   if (!error && boot->state == SYSBOOT_RESULT)
     error = sysbootack(boot, claim);
   if (!error)
-    error = sysconnworkadopt(work, cache, claim, space, map);
+    error = reuse ? sysconnworkreuse(work, cache, claim)
+                  : sysconnworkadopt(work, cache, claim, space, map);
   if (!error)
     error = sysbootfinish(boot, claim);
 restore:

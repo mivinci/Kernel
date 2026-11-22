@@ -969,7 +969,7 @@ claimelfread(void *context, u64 offset, void *data, u64 bytes)
 }
 
 static void
-claimsource(const Bootview *boot)
+claimsource(const Bootview *boot, int reuse)
 {
   typedef struct Claimboot Claimboot;
   struct Claimboot
@@ -1023,7 +1023,7 @@ claimsource(const Bootview *boot)
   packet.header.user_hi = BOOT_USER_HI;
   packet.resources[0].tag = BOOT_SELF_SPACE;
   packet.resources[1].tag = BOOT_SELF_ALLOC;
-  packet.resources[2].tag = EXEC_CLAIM_CALL;
+  packet.resources[2].tag = reuse ? EXEC_CLAIM_READY : EXEC_CLAIM_CALL;
   packet.resources[2].handle = work.state.call;
   CHECK(!sysexecfill(&next, &source, &plan, &packet, sizeof(packet)));
   CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
@@ -1097,7 +1097,7 @@ claimretire(void *context, const Fileowner *source, const Execgroup *group)
 }
 
 static void
-claimbackend(const Bootview *boot)
+claimbackend(const Bootview *boot, int reuse)
 {
   Filelink   links[2] = {0};
   Filewatch *old = &links[0].watch;
@@ -1111,7 +1111,7 @@ claimbackend(const Bootview *boot)
   Claimrefs  refs = {0};
   u32        i, pending_slot;
   volatile u64 *marker;
-  Msg           stale = {{(u64) -ESTALE, 2, 0, 0}};
+  Msg           stale = {{(u64) -ESTALE, 0, 0, 0}};
   Msg           seen = {{0, 0, 0, 0}};
   CHECK(!__sys_getid(&self.pid, &self.image, &parent) && !ipc_recv(0, 0, &input) &&
         !sysfilehello(links, ARRAY_SIZE(links), permit, alloc, space, ADDRESS, &input) &&
@@ -1161,6 +1161,22 @@ claimbackend(const Bootview *boot)
         !sysopenclose(refs.refs, ARRAY_SIZE(refs.refs), old->owner.pid, 1, 100, 1000, claimclose,
                       &refs) &&
         refs.steps == 4);
+  if (reuse) {
+    Resreply delivery = {links[1].memory,
+                         MAP_READ | MAP_WRITE,
+                         0,
+                         FS_CONN_BYTES,
+                         {1, EXEC_CLAIM_CONNID, FS_CONN_BYTES}};
+    /* The fixture publishes the prepaid link first to exercise the ordinary
+       EXEC_CLAIM reply on an existing mapping. */
+    CHECK(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL && input.source == target->pid &&
+          input.image == target->image && input.words[0] == FS_HELLO && !input.words[1] &&
+          input.words[2] == 1 && input.words[3] == UINT64_MAX &&
+          !ipc_reply_resource(input.request, &delivery));
+    links[1].ready = 1;
+    links[1].prepaid = 0;
+  }
+  stale.words[1] = reuse ? 3 : 2;
   CHECK(!ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
         old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held &&
         !ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
@@ -2949,7 +2965,7 @@ main(int argc, char **argv)
 {
   CHECK(argc == 1 &&
         ((argv[0][0] >= '0' && argv[0][0] <= '9') || (argv[0][0] >= 'a' && argv[0][0] <= 'z') ||
-         (argv[0][0] >= 'A' && argv[0][0] <= 'S')) &&
+         (argv[0][0] >= 'A' && argv[0][0] <= 'U')) &&
         !argv[0][1]);
   filecreatetrace[0] = 1;
   if (argv[0][0] == '0')
@@ -3026,10 +3042,10 @@ main(int argc, char **argv)
     server(sysboot(), 14);
   else if (argv[0][0] == 'Q')
     backend(sysboot(), 10);
-  else if (argv[0][0] == 'R')
-    claimsource(sysboot());
-  else if (argv[0][0] == 'S')
-    claimbackend(sysboot());
+  else if (argv[0][0] == 'R' || argv[0][0] == 'T')
+    claimsource(sysboot(), argv[0][0] == 'T');
+  else if (argv[0][0] == 'S' || argv[0][0] == 'U')
+    claimbackend(sysboot(), argv[0][0] == 'U');
   else
     backend(sysboot(), argv[0][0] == 'w' ? 6 : argv[0][0] == 'z' ? 7 : 8);
   return 42;

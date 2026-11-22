@@ -14,8 +14,10 @@ int
 main(int argc, char **argv)
 {
   const Bootview *boot = sysboot();
-  Handle          call = bootresource(boot, EXEC_CLAIM_CALL), redundant = 0, parent;
+  Handle          ready = bootresource(boot, EXEC_CLAIM_READY);
+  Handle          call = ready ? ready : bootresource(boot, EXEC_CLAIM_CALL), redundant = 0, parent;
   Handle          space = bootresource(boot, BOOT_SELF_SPACE);
+  Handle          memory = 0;
   Connpeer        self, peer;
   Conntag         tag;
   Connclaim       claim;
@@ -31,19 +33,29 @@ main(int argc, char **argv)
   if (sysctxinit(&bank, self) || sysconninit(&cache, self) || sysconnpeer(call, &peer) ||
       sysconnbind(&cache, peer, &tag) || sysconnworkinit(&work, &cache, tag) ||
       sysconnworktakecall(&work, &cache, &call, &redundant) || call || redundant ||
-      sysconnbegin(&cache, tag, 1, &claim) ||
-      sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, EXEC_CLAIM_TOKEN, 0) ||
+      sysconnbegin(&cache, tag, 1, &claim))
+    return 72;
+  if (ready) {
+    if (sysbootprepare(&work.state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0) ||
+        sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) ||
+        !(memory = work.state.memory) || *marker != EXEC_CLAIM_MARKER ||
+        sysconnreusebegin(&cache, tag, 2, &claim))
+      return 75;
+  }
+  if (sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, EXEC_CLAIM_TOKEN, 0) ||
       sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) != -ERR_STALE)
     return 72;
   if (sysctxexecclaim(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) ||
       sysconnview(&cache, tag, &entry) || entry.state != SYSCONN_READY ||
       entry.connid != EXEC_CLAIM_CONNID || work.state.map.address != EXEC_CLAIM_ADDRESS ||
       !work.state.memory || work.state.bootstrap.state != SYSBOOT_FREE || map.mapped ||
-      active.sequence || *marker != EXEC_CLAIM_MARKER)
+      entry.owner || active.sequence || *marker != EXEC_CLAIM_MARKER ||
+      (ready && memory != work.state.memory))
     return 73;
   *marker = ~EXEC_CLAIM_MARKER;
+  duplicate.words[2] = claim.seq + 1;
   if (ipc_call(work.state.call, &duplicate, CALL_RECV_MEM, &result) || result.kind != IPC_NONE ||
-      (isize) result.words[0] != -ESTALE || result.words[1] != 2)
+      (isize) result.words[0] != -ESTALE || result.words[1] != duplicate.words[2])
     return 74;
   return 42;
 }

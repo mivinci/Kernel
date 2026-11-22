@@ -26,7 +26,7 @@ static void      bootpeertest(u32 mode);
 static void      creatorbackendtest(u32 mode);
 static void      datarecoverytest(u32 mode);
 static void      filewatchexittest(u32 vfs);
-static void      execclaimtest(void);
+static void      execclaimtest(int reuse);
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -75,7 +75,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
     CHECK(!localendpoint(table, processes[peer].identity, LOCAL_CALL, LOCAL_USE, 0,
-                         roles[i] == 'R' ? LOCAL_EXEC : 0, &call));
+                         roles[i] == 'R' || roles[i] == 'T' ? LOCAL_EXEC : 0, &call));
     packet.header.magic = BOOT_MAGIC;
     packet.header.format = BOOT_FORMAT;
     packet.header.bytes = sizeof(packet);
@@ -102,7 +102,9 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     }
     if (i) {
       CHECK(!localobserve(
-          table, OBSERVE_SOURCE | (roles[i] == '1' || roles[i] == 'S' ? OBSERVE_FUTURE : 0),
+          table,
+          OBSERVE_SOURCE |
+              (roles[i] == '1' || roles[i] == 'S' || roles[i] == 'U' ? OBSERVE_FUTURE : 0),
           &call));
       packet.resources[packet.header.resource_count].tag = 258;
       packet.resources[packet.header.resource_count++].handle = call;
@@ -237,11 +239,12 @@ filecreatetest(void)
   filewatchexittest(0);
   filewatchexittest(1);
   filewatchexittest(2);
-  execclaimtest();
+  execclaimtest(0);
+  execclaimtest(1);
 }
 
 static void
-execclaimtest(void)
+execclaimtest(int reuse)
 {
   Setid      set;
   Set        budget;
@@ -257,7 +260,7 @@ execclaimtest(void)
   pgstat(&before);
   CHECK(!setcreate(2048, 4096, 2, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
-  loadroles(set, &image, pid, proc, "RS", 2);
+  loadroles(set, &image, pid, proc, reuse ? "TU" : "RS", 2);
   for (i = 0; i < 2; i++) {
     CHECK(!procinfo(pid[i], &proc[i]));
     while (proc[i].state != PROC_EXITING) {
@@ -296,7 +299,8 @@ execclaimtest(void)
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&
         !acctcheck() && !lifecheck());
-  putstr("EXECCLAIMCHECK mapped=1 duplicate_rejected=1 charged=0\n");
+  putstr(reuse ? "EXECCLAIMCHECK reused=1 duplicate_rejected=1 charged=0\n"
+               : "EXECCLAIMCHECK mapped=1 duplicate_rejected=1 charged=0\n");
 }
 static void
 filewatchexittest(u32 vfs)

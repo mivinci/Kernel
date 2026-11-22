@@ -41,11 +41,13 @@ isize sysctxbootcall(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, C
                      Handle call, u64 options, Rkey *out);
 isize sysctxbootwait(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, Connclaim claim,
                      Rkey *out);
-/* Resume an already prepared HELLO or cold EXEC_CLAIM, respectively.
-   The caller owns the exclusive CONNECTING claim,
+/* Resume an already prepared HELLO or EXEC_CLAIM, respectively.
+   The caller owns the exclusive CONNECTING or READY reuse claim,
    VA range, and the initially zero map and key until completion or discard.
    A native wait interruption keeps the same RPC; a mapped but unverified
-   alias is retained for discard. Success publishes READY and ends bootstrap. */
+   alias is retained for discard. Success publishes READY and ends bootstrap.
+   READY reuse is only for EXEC_CLAIM: space/address match the installed map,
+   the external map stays empty, and an ordinary reply keeps the old mapping. */
 isize sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space,
                   u64 address, Bootmap *map, Rkey *active);
 isize sysctxexecclaim(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space,

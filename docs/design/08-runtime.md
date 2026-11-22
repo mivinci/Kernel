@@ -905,6 +905,8 @@ ELF 装载器按目标资源槽合并多个 Bootfd 引用的同一个 CALL；同
 
 首次 `EXEC_CLAIM` 复用 `HELLO` 的原请求续点：核对连接预留，完成原 RPC，验证共享映射并 ACK，再把映射和 MEM 一起移交给 READY 连接。两个入口各自核对请求类型。ARM64/RV64 QEMU `runtime` 在真实 exec 换图后验证首次领取、共享内存双向可见、重复领取被拒绝及退出后费用归零。测试由载荷准备连接，尚未从 Bootfd 生成待接入描述符，也未验证已有 READY 连接上的复用。
 
+`EXEC_CLAIM` 也可在已有 READY 连接上继续：核对原空间与地址，只接受与原 connid 匹配的普通回复；完成原 RPC 并 ACK 后清除本次预留，保留已有 MEM 和共享映射。双架构 QEMU `runtime` 在真实 exec 换图后，由夹具先交付预付连接，再调用实际服务端领取逻辑，核对同一 MEM、地址及数据可见性、重复领取被拒绝与退出后费用归零。生产启动描述符和 TTY 分派仍待接入。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。
