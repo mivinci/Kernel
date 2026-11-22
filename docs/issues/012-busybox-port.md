@@ -37,6 +37,10 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 在 ARM64、RV64 两套公开 SDK 上分别用 Clang `-std=gnu99 -ffreestanding -nostdinc -fsyntax-only` 检查，头路径仅含上游 `include`、SDK 与 Clang 基础头。切换到上述配置后，两套 SDK 的首个错误仍相同：`shell/ash.c` 缺 `<sys/times.h>`；`libbb/xatonum.c` 缺 `<dirent.h>`。此前 `echo`、`cat`、`sleep`、`test` 的翻译单元也都经公共 `libbb.h` 遇到缺失的 `<dirent.h>`。因此目录头是共用构建前置，不只影响 `ls`。这是首错探针，阶段 B 尚未通过。
 
+准备工具还用 `HOSTCC`（默认 `cc`）编译并运行上游的 applet 表生成器。干净归档上生成的表恰含配置指定的 11 个入口（包括指向 `ash` 的 `sh`），没有编译宿主版 applet。ARM64 和 RV64 目标预处理都从上游生成目录解析 `NUM_APPLETS.h`。
+
+用同样的包含路径和目标架构，对 `shell/ash.c`、`libbb/xatonum.c` 加 `-include include/autoconf.h -M -MG`，可在首个缺失头之后继续收集依赖。两架构均报告以下未解析的系统头：`dirent.h`、`grp.h`、`libgen.h`、`mntent.h`、`paths.h`、`pwd.h`、`sys/ioctl.h`、`sys/mman.h`、`sys/param.h`、`sys/resource.h`、`sys/stat.h`、`sys/statfs.h`、`sys/sysmacros.h`、`sys/time.h`、`sys/times.h`、`sys/utsname.h`、`arpa/inet.h`、`netdb.h`、`sys/socket.h`。这是预处理依赖。上游 `libbb.h` 的公共声明需要套接字类型，而且 `inet_common.o`、`xconnect.o` 等在 `libbb/Kbuild` 中无条件构建；仅关闭网络 applet 不会去掉这些依赖。移植应隔离未使用的声明和对象，再复查启用的 applet 是否仍引用网络代码。补齐头之后仍需检查编译、链接及运行，不能用 `-M -MG` 代替这些验收。
+
 **阶段 C：最小 applet 集合跑通**
 
 只编无网络、无 `/proc` 依赖的 applet：`sh`(ash)、`cat`、`ls`、`echo`、`mkdir`、`rm`、`mv`、`cp`、`test`、`sleep`。判据见下节。
