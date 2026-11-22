@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage511：ARM64/RV64 QEMU `pipeio` 验证增长写在日志提交标记持久化后收到取消，仍沿原请求返回实际写入字节数，排空后复用槽，偏移只推进一次。块完成由夹具提供。
 - stage510：双架构 QEMU `virtiodev` 通过 blk 队列字节偏移入口完成增长日志 WRITE/FLUSH，并核对未对齐请求拒绝。
 - stage509：双架构 QEMU `virtiodev` 经实际块设备完成稀疏增长事务，核对镜像数据和 FLUSH；生产编码与 FS/blk IPC 待接。
 - stage508：双架构 QEMU `pipeio` 从原 IPC 写请求推进日志增长和追加，并读回增长字节；块设备完成仍由夹具提供。

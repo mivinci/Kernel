@@ -1500,6 +1500,7 @@ struct Openfixture
   Handle    growth;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
+  u32       cancelgrowth, durable;
 };
 
 static isize
@@ -1683,10 +1684,9 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
   u8                *destination;
   u8                 payload[2];
   u32                i;
-  CHECK(state == RQ_CHECK_LIVE && (offset == 20 || offset == FS_GROW_APPEND) &&
-        job->slot.args[1] == 2);
+  CHECK((offset == 20 || offset == FS_GROW_APPEND) && job->slot.args[1] == 2);
   if (input) {
-    CHECK(!fixture->growth && input[0] == 'W' && !input[1]);
+    CHECK(state == RQ_CHECK_LIVE && !fixture->growth && input[0] == 'W' && !input[1]);
     fixture->growth = job->call.request;
     CHECK(!loadwrite(job->loads, job->map->file.inode, &fixture->guard));
     fixture->growat = offset == FS_GROW_APPEND ? fixture->length : offset;
@@ -1707,8 +1707,15 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
     return 0;
   }
   CHECK(fixture->growth == job->call.request);
+  CHECK(state == RQ_CHECK_LIVE ||
+        (state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) && fixture->cancelgrowth && fixture->durable));
   CHECK(growthpublish(&growth, &fixture->map, NULL, NULL, NULL) == -ERR_WOULD_BLOCK);
   while (journal.phase != JOURNAL_DONE) {
+    if (fixture->cancelgrowth && journal.durable) {
+      fixture->durable = 1;
+      if (state == RQ_CHECK_LIVE)
+        return 0;
+    }
     CHECK(!journalnext(&journal, &io));
     if (io.kind == JOURNAL_WRITE && io.block == FS_DATA_START)
       for (i = 0; i < sizeof(disk); i++)
@@ -1738,7 +1745,7 @@ openlength(void *context, const Vnode *node, u64 *length)
 }
 
 static void
-openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
+openwrite(u64 session, u64 offset, u64 flags, isize expected, u64 accepted, int cancel)
 {
   Filelease    lease;
   Fileslot     slot = {0};
@@ -1760,11 +1767,29 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
   page[FS_SLOT_BYTES - 2] = 'W';
   page[FS_SLOT_BYTES - 1] = 0;
   CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
-                    &slot, sizeof(slot)) &&
-        !ipc_call(work.state.call, &request, 0, &result) && (isize) result.words[0] == expected &&
-        result.words[1] == lease.seq && result.words[2] == accepted && !result.words[3] &&
-        page[FS_SLOT_BYTES - 2] == 'W' && !page[FS_SLOT_BYTES - 1] &&
-        !sysconnworkrelease(&work, &cache, lease));
+                    &slot, sizeof(slot)));
+  if (cancel) {
+    Msg    gate = {{FS_ATTACH, 0, 0, 0}};
+    Ipcmsg drain;
+    Handle rpc;
+    CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+    rpc = result.request;
+    CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) &&
+          (isize) drain.words[0] == -ENOSYS &&
+          ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_WOULD_BLOCK && !ipc_rqcancel(rpc) &&
+          !ipc_rqwait(rpc, 0, &result) && !ipc_rqwait(rpc, RQ_FINISH, &drain) &&
+          !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+  } else
+    CHECK(!ipc_call(work.state.call, &request, 0, &result));
+  CHECK((isize) result.words[0] == expected && result.words[1] == lease.seq &&
+        result.words[2] == accepted && !result.words[3] && page[FS_SLOT_BYTES - 2] == 'W' &&
+        !page[FS_SLOT_BYTES - 1] && !sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
+openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
+{
+  openwrite(session, offset, flags, expected, accepted, 0);
 }
 
 static void
@@ -1955,10 +1980,19 @@ openserver(const Bootview *boot)
         !fsstep(&fs) && file.position == 19 && !blocks[0].dirty &&
         !loadclose(&fixture.loads, load, link.watch.owner.pid, link.watch.owner.image));
   CHECK(!fsstep(&fs) && file.position == 19 && blocks[0].dirty && !fsstep(&fs) && !fsstep(&fs) &&
-        file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) &&
-        file.position == 20 && !fsstep(&fs) && fixture.growth && file.position == 20 &&
-        !fsstep(&fs) && !fixture.growth && file.position == 22 && !fsstep(&fs) &&
-        file.position == 22 && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) && !file.node);
+        file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && file.position == 20);
+  fixture.cancelgrowth = 1;
+  CHECK(!fsstep(&fs) && fixture.growth && file.position == 20 && !fsstep(&fs) && fixture.durable &&
+        fixture.growth && fixture.length == 20 && file.position == 20);
+  {
+    Ipcmsg event;
+    CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
+          !fsreadpump(&reads, &fixture.files) && !fixture.growth && fixture.length == 22 &&
+          file.position == 22 && !file.head);
+  }
+  fixture.cancelgrowth = 0;
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && file.position == 22 && !fsstep(&fs) && file.refs == 1 &&
+        !fsstep(&fs) && !file.node);
   CHECK(!fsstep(&fs) && file.access == (VACCESS_R | VACCESS_W) &&
         file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
         file.refs == 2 && !fsstep(&fs) && !file.position && fixture.growth && !fsstep(&fs) &&
@@ -2083,7 +2117,7 @@ open:
     openreadcheck(dup.session, 3, 1, 2, 'W');
     openreadcheck(dup.session, 19, 1, 1, 'W');
     openwritecheck(key.session, 0, FS_IO_APPEND, -EINVAL, 0);
-    openwritecheck(key.session, 0, 0, 0, 2);
+    openwrite(key.session, 0, 0, 0, 2, 1);
     openseek(dup.session, FS_SEEK_CUR, 0, 0, 22);
     openreadcheck(dup.session, 20, 1, 2, 'W');
     CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
