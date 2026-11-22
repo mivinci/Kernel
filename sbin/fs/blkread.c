@@ -529,6 +529,60 @@ enum
   MountDirectories
 };
 
+static isize
+mountdrain(Blkmount *work, Fsblk *blk)
+{
+  Blkowners *owner = work->phase == MountOverlay ? work->overlay : work->dirs->home;
+  Blkread   *read = owner ? owner->load.read : NULL;
+  Journal   *journal = work->log.journal;
+  isize      error, status;
+  if (work->log.ticket.serial) {
+    error = blklogpoll(&work->log);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+  } else if (blk->rpc) {
+    u8 *discard = blk->opcode == BLK_READ ? work->probe->bytes : NULL;
+    error = fsblkpoll(blk, discard, discard ? FS_BLOCK_BYTES : 0, &status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+  }
+  if (read && read->fill.cache) {
+    Cacheio ticket = read->fill.ticket;
+    error = cachefillfinish(&read->fill, &ticket, 0);
+    if (error)
+      return error;
+    read->collected = 0;
+  }
+  if (work->phase == MountReplay && journal && journal->txid &&
+      (journal->phase == JOURNAL_STOPPED || journal->phase == JOURNAL_DONE)) {
+    error = journalrelease(journal);
+    if (error)
+      return error;
+  }
+  return work->failed;
+}
+
+isize
+blkmountstop(Blkmount *work, isize reason)
+{
+  Journal *journal;
+  if (!work || !work->probe || !work->probe->blk || !work->dirs || reason >= 0)
+    return -ERR_INVALID;
+  if (work->dirs->published)
+    return -ERR_STATE;
+  if (!work->stopped) {
+    journal = work->log.journal;
+    if (work->phase == MountReplay && journal && journal->phase != JOURNAL_DONE &&
+        journal->phase != JOURNAL_IDLE)
+      journalstop(journal);
+    if (!work->failed)
+      work->failed = reason;
+    work->dirs->failed = work->failed;
+    work->stopped = 1;
+  }
+  return mountdrain(work, work->probe->blk);
+}
+
 isize
 blkmountstep(Blkmount *work)
 {
@@ -540,6 +594,8 @@ blkmountstep(Blkmount *work)
   if (!work || !(probe = work->probe) || !(blk = probe->blk) || !work->dirs ||
       !(home = work->dirs->home) || !work->storage || !work->layout || !work->mark)
     return -ERR_INVALID;
+  if (work->stopped)
+    return mountdrain(work, blk);
   if (work->failed)
     return work->failed;
   after = work->after;

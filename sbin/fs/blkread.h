@@ -141,6 +141,7 @@ struct Blkmount
   isize (*retire)(const u8 *uuid, u64 txid, u8 *);
   u32   capacity, faultbytes, faultoffset, phase;
   isize failed;
+  u32   stopped;
 };
 
 /* Own the block connection from INFO to publication. Supply separate work
@@ -148,6 +149,9 @@ struct Blkmount
    Zero means continue or wait on the current RPC; one means ready to call
    blkmountadd. If an error leaves an RPC, keep the work and resume its drain. */
 isize blkmountstep(Blkmount *);
+/* Stop an unpublished mount. Further steps only drain outstanding work;
+   the original failure is returned once no request or snapshot is held. */
+isize blkmountstop(Blkmount *, isize reason);
 /* Admit a writable journal from that scan. The exclusive mount owner
    supplies the independently verified fault boundary and the encoded EMPTY
    record for this transaction. Keep snapshots stable through release. */

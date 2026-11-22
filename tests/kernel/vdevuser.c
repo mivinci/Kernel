@@ -1043,6 +1043,7 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
 }
 static const u32 blkopcodes[] = {
     BLK_WRITE, BLK_FLUSH,                                  /* data-only transaction */
+    BLK_READ,                                              /* abandoned probe */
     BLK_READ,  BLK_READ,                                   /* EMPTY probe */
     BLK_READ,  BLK_READ,                                   /* COMMITTED probe */
     BLK_READ,                                              /* duplicate targets */
@@ -1279,6 +1280,7 @@ blkclient(const Bootview *boot, Handle call)
   Dirnode                   nodes[FS_INODES] = {{0}};
   Blkdir                    dirs = {0};
   Blkmount                  mounting = {0};
+  Blkmount                  abandoned = {0};
   Vmounts                   mounts = {0};
   Vnode                     root = {0, FS_ROOT, 1, VNODE_DIR};
   u8                        namebytes[256];
@@ -1331,6 +1333,22 @@ blkclient(const Bootview *boot, Handle call)
               !journalrelease(&journal) && journal.last == 47,
           380);
   probe.blk = &blk;
+  abandoned.probe = &probe;
+  abandoned.dirs = &dirs;
+  abandoned.storage = &storage;
+  abandoned.layout = blksuper;
+  abandoned.mark = blkmark;
+  dirs.home = &home;
+  REQUIRE(!blkmountstep(&abandoned) && blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result), 443);
+  {
+    u64 seq = blk.seq;
+    REQUIRE(blkmountstop(&abandoned, -ERR_TIMEDOUT) == -ERR_TIMEDOUT && !blk.rpc &&
+                !probe.layout.blocks && blkmountstep(&abandoned) == -ERR_TIMEDOUT && blk.seq == seq,
+            444);
+  }
+  probe = (Blkprobe){0};
+  probe.blk = &blk;
+  dirs.failed = 0;
   REQUIRE(blkreadboot(&blk, JOURNAL_MARK_BLOCK + 1) == -ERR_INVALID && !blk.rpc &&
               !blkprobestep(&probe, blksuper, blkmark) && blk.rpc && !probe.layout.blocks,
           393);
