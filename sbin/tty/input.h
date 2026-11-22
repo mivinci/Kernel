@@ -25,6 +25,11 @@ struct Ttyeffect
 /* Fresh private storage, before use; mode changes and live SETATTR are a
    separate service transaction. No allocation or backend references. */
 isize ttyinputinit(Ttyinput *input, u32 canonical);
+/* Commit the input side of an already authorized mode change. Real bytes
+   keep their order and are never reinterpreted as control characters. An
+   existing raw prefix becomes readable as a single canonical record. The
+   service separately owns the mode, waiting reads and backend output. */
+isize ttyinputmode(Ttyinput *input, u32 canonical);
 /* Classify a raw byte under the accepted mode, including input translation. */
 u32 ttyinputsignal(const Termarg *mode, u8 byte);
 /* One byte, accepted mode snapshot. All pointers are disjoint private ordinary

@@ -27,6 +27,34 @@ ttyinputinit(Ttyinput *input, u32 canonical)
 }
 
 isize
+ttyinputmode(Ttyinput *input, u32 canonical)
+{
+  u32 i, kept = 0;
+  u16 token;
+  if (canonical > 1)
+    return -ERR_INVALID;
+  if (!valid(input))
+    return -ERR_STATE;
+  if (input->canonical == canonical)
+    return 0;
+  if (canonical) {
+    /* No synthetic byte is needed, even when the raw ring is full. */
+    if (input->used)
+      input->data[(input->head + input->used - 1) % TTY_INPUT_CAPACITY] |= INPUT_END;
+  } else {
+    for (i = 0; i < input->used; i++) {
+      token = input->data[(input->head + i) % TTY_INPUT_CAPACITY];
+      if (!(token & INPUT_EOF))
+        input->data[(input->head + kept++) % TTY_INPUT_CAPACITY] = (u8) token;
+    }
+    input->used = kept;
+  }
+  input->ready = input->used;
+  input->canonical = canonical;
+  return 0;
+}
+
+isize
 ttyinputflush(Ttyinput *input)
 {
   if (!valid(input))

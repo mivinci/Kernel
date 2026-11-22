@@ -42,6 +42,8 @@ class TtyInputTests(unittest.TestCase):
             lib = C.CDLL(str(path))
             lib.ttyinputinit.argtypes = [C.c_void_p, C.c_uint32]
             lib.ttyinputinit.restype = C.c_int64
+            lib.ttyinputmode.argtypes = [C.c_void_p, C.c_uint32]
+            lib.ttyinputmode.restype = C.c_int64
             lib.ttyinputbyte.argtypes = [C.c_void_p, C.c_void_p, C.c_ubyte, C.c_void_p]
             lib.ttyinputbyte.restype = C.c_int64
             lib.ttyinputread.argtypes = [C.c_void_p, C.c_void_p, C.c_uint32, C.c_void_p]
@@ -87,6 +89,24 @@ class TtyInputTests(unittest.TestCase):
         self.assertEqual(bytes(target), before)
         self.assertEqual(ended.value, 99)
         return result
+
+    def test_mode_change_preserves_bytes_across_a_wrapped_full_ring(self):
+        for lib in self.libs:
+            state, raw = self.fresh(lib, False), mode(False, False, False)
+            self.feed(lib, state, raw, b'a' * 31)
+            self.read(lib, state, 31)
+            data = bytes(range(256)) * (CAPACITY // 256)
+            raw.iflag = 0
+            self.feed(lib, state, raw, data)
+            self.assertEqual(lib.ttyinputmode(C.byref(state), 1), 0)
+            for offset in range(0, CAPACITY, 32):
+                self.assertEqual(self.read(lib, state), data[offset:offset + 32])
+                self.assertEqual(self.last_boundary, int(offset + 32 == CAPACITY))
+            canonical = mode(True, False, False)
+            self.feed(lib, state, canonical, b'\x04a\n\x04bc')
+            self.assertEqual(lib.ttyinputmode(C.byref(state), 0), 0)
+            self.assertEqual(self.read(lib, state), b'a\nbc')
+            self.read(lib, state, status=-11)
 
     def test_canonical_partial_reads_wait_for_delimiter_and_never_cross_lines(self):
         for lib in self.libs:

@@ -81,4 +81,20 @@ ttyinputusercheck(Serialring *rx)
           !ended);
   }
   CHECK(!ttyinputflush(&input) && !input.used && !input.ready);
+  for (i = 0; i < sizeof(text); i++)
+    CHECK(!ttyinputbyte(&input, &mode, text[i], &effect));
+  CHECK(!ttyinputmode(&input, 1));
+  mode.lflag = TTY_ICANON;
+  CHECK(!ttyinputbyte(&input, &mode, 'p', &effect));
+  CHECK(ttyinputread(&input, buffer, sizeof(buffer), &ended) == sizeof(text) && ended);
+  for (i = 0; i < sizeof(text); i++)
+    CHECK(buffer[i] == text[i]);
+  CHECK(ttyinputread(&input, buffer, sizeof(buffer), &ended) == -ERR_WOULD_BLOCK);
+  CHECK(!ttyinputbyte(&input, &mode, '\n', &effect) &&
+        !ttyinputbyte(&input, &mode, mode.cc[TTY_VEOF], &effect) &&
+        !ttyinputbyte(&input, &mode, 'q', &effect));
+  CHECK(!ttyinputmode(&input, 0));
+  CHECK(ttyinputread(&input, buffer, sizeof(buffer), &ended) == 3 && !ended && buffer[0] == 'p' &&
+        buffer[1] == '\n' && buffer[2] == 'q');
+  CHECK(ttyinputread(&input, buffer, sizeof(buffer), &ended) == -ERR_WOULD_BLOCK);
 }
