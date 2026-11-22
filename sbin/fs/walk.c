@@ -62,6 +62,7 @@ vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context
   walk->current = start;
   walk->follow = follow;
   walk->searchlast = 0;
+  walk->create = VWALK_LOOKUP;
   walk->phase = WALK_COMPONENT;
   return 0;
 }
@@ -69,6 +70,8 @@ vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context
 static isize
 result(Vwalk *walk, Vnode **out)
 {
+  if (walk->create == VWALK_EXCLUSIVE)
+    return -EEXIST;
   *out = walk->current;
   walk->current = NULL;
   vwalkdrop(walk);
@@ -106,7 +109,7 @@ component(Vwalk *walk, Vnode **out)
 }
 
 static isize
-lookup(Vwalk *walk)
+lookup(Vwalk *walk, Vnode **out)
 {
   Vnode *node = NULL, *visible;
   isize  status;
@@ -120,10 +123,21 @@ lookup(Vwalk *walk)
   } else
     status =
         walk->ops->lookup(walk->context, walk->current, walk->part.name, walk->part.bytes, &node);
+  if (status == -ENOENT && walk->create && walk->part.kind == PATH_NAME && walk->part.final &&
+      !walk->part.directory) {
+    *out = walk->current;
+    walk->current = NULL;
+    vwalkdrop(walk);
+    return VWALK_MISSING;
+  }
   if (status)
     return status;
   if (!node)
     return -EIO;
+  if (walk->part.kind == PATH_NAME && walk->part.final && walk->create == VWALK_EXCLUSIVE) {
+    walk->ops->drop(walk->context, node);
+    return -EEXIST;
+  }
   if (walk->part.kind == PATH_NAME) {
     visible = vmountenter(walk->mounts, node);
     if (visible != node) {
@@ -169,7 +183,7 @@ advance(Vwalk *walk, Vnode **out)
                       : WALK_LOOKUP;
     return VWALK_MORE;
   case WALK_LOOKUP:
-    return lookup(walk);
+    return lookup(walk, out);
   case WALK_LINK:
     status = walk->ops->readlink(walk->context, walk->link, &target, &bytes);
     if (!status)

@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <string.h>
 #include <termios.h>
 #include <proto/tty.h>
 #include <sys/boot.h>
@@ -1657,6 +1658,65 @@ openvalidate(const Openjob *job)
 }
 
 static isize
+createlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode **out)
+{
+  Openjob     *job = context;
+  Openfixture *fixture = job->backend;
+  CHECK(dir == &fixture->root && bytes == 1);
+  if (name[0] != 'l')
+    return -ENOENT;
+  *out = &fixture->file;
+  return openhold(fixture, *out);
+}
+
+static isize
+createlink(void *context, const Vnode *node, const char **target, u64 *bytes)
+{
+  Openjob     *job = context;
+  Openfixture *fixture = job->backend;
+  CHECK(node == &fixture->file);
+  *target = "m";
+  *bytes = 2;
+  return 0;
+}
+
+static void
+opencreatewalk(Openfixture *fixture)
+{
+  static const char *const paths[] = {"l", "l", "m/x", "m/", "."};
+  static const isize       expected[] = {VWALK_MISSING, -EEXIST, -ENOENT, -ENOENT, -EEXIST};
+  const Vwalkops           ops = {openwalkhold, openwalkdrop, opensearch,
+                                  createlookup, openparent,   createlink};
+  Openjob                  job = {0};
+  u32                      i, kind = fixture->file.kind;
+  fixture->file.kind = VNODE_LINK;
+  job.backend = fixture;
+  job.cred.uid = 22;
+  job.cred.gid = 32;
+  job.mask = 027;
+  job.call.words[0] = FS_PATH;
+  for (i = 0; i < ARRAY_SIZE(paths); i++) {
+    Vnode *out = NULL;
+    isize  status;
+    CHECK(!vwalkinit(&job.walk, &fixture->mounts, &ops, &job, &fixture->root, &fixture->root,
+                     paths[i], strlen(paths[i]) + 1, 1));
+    job.walk.create = i == 1 || i == 4 ? VWALK_EXCLUSIVE : VWALK_CREATE;
+    do {
+      status = vwalkstep(&job.walk, &out);
+    } while (status == VWALK_MORE);
+    CHECK(status == expected[i] && !job.walk.phase);
+    if (status == VWALK_MISSING) {
+      CHECK(out == &fixture->root && fixture->holds == 1 && job.walk.part.bytes == 1 &&
+            job.walk.part.name[0] == 'm');
+      openwalkdrop(&job, out);
+    } else
+      CHECK(!out);
+    CHECK(!fixture->holds);
+  }
+  fixture->file.kind = kind;
+}
+
+static isize
 openselect(Openjob *job, const Fscontext *context, Vnode **start, u32 *follow)
 {
   CHECK(*start == context->cwd && *follow == 1);
@@ -2300,6 +2360,7 @@ openserver(const Bootview *boot)
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
   fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
+  opencreatewalk(&fixture);
   CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fixture.holds && !fixture.searches);
   CHECK(!fscontextadd(&contexts, link.watch.owner.pid, link.watch.owner.image, &fixture.root,
                       &fixture.root, 027));

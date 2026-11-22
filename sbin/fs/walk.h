@@ -17,6 +17,13 @@ enum
 {
   VWALK_MORE = 1,
   VWALK_WAIT,
+  VWALK_MISSING,
+};
+enum
+{
+  VWALK_LOOKUP = 0,
+  VWALK_CREATE,
+  VWALK_EXCLUSIVE,
 };
 struct Vnode
 {
@@ -40,7 +47,7 @@ struct Vwalk
   const Vmounts  *mounts;
   void           *context;
   Vnode          *root, *current, *link;
-  u32             phase, follow, searchlast;
+  u32             phase, follow, searchlast, create;
 };
 
 int vnodesame(const Vnode *left, const Vnode *right);
@@ -54,7 +61,11 @@ int vnodesame(const Vnode *left, const Vnode *right);
 isize vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context, Vnode *root,
                 Vnode *start, const volatile char *path, u64 bytes, u32 follow);
 /* Advance one step. Zero transfers the result reference. MORE can run
-   again immediately, WAIT needs backend progress, and errors drop refs. */
+   again immediately, WAIT needs backend progress, and errors drop refs.
+   Setting create to CREATE or EXCLUSIVE after init enables MISSING:
+   transfers the searched parent in out and leaves the final name in part
+   until the walk is reused. The caller must recheck absence under the
+   backend's mutation guard before creating. */
 isize vwalkstep(Vwalk *walk, Vnode **out);
 /* After any pending backend operation has been cancelled or drained. */
 void vwalkdrop(Vwalk *walk);
