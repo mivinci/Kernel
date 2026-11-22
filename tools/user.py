@@ -418,6 +418,7 @@ def build(args):
     vdev_inspect=invoke('inspect-virtio-device',[tools['readelf']['path'],'-h','-l','-s',str(vdev_user)])
     vdev_rows=[line.split() for line in vdev_inspect.splitlines() if line.split() and line.split()[-1]=='vdev_trace']
     if len(vdev_rows)!=1 or int(vdev_rows[0][2])!=896:raise BuildError('virtio device trace missing')
+        compile_adoption(ROOT/'sbin/fs/txn.c', 'vdev-fs-txn'),
     vdev_address=int(vdev_rows[0][1],16)
     (sdk/'vdevimage.S').write_text('/* image sha256: '+digest(vdev_image)+' */\n.section .rodata\n.balign 8\n.global vdev_image,vdev_image_end,vdev_trace_address\nvdev_image:\n.incbin "'+str(vdev_image)+'"\nvdev_image_end:\n.balign 8\nvdev_trace_address:\n.quad '+str(vdev_address)+'\n')
     heap_user=link_adoption('heapuser',[compile_adoption(ROOT/'tests/kernel/heapuser.c','heapuser')])

@@ -7,7 +7,7 @@
 #include "private/start.h"
 #include "../../sbin/blk/io.h"
 #include "../../sbin/fs/cache.h"
-#include "../../sbin/fs/journal.h"
+#include "../../sbin/fs/txn.h"
 #include "virtiouser.h"
 volatile u64             vdev_trace[VTEST_TRACE];
 typedef struct Testdma   Testdma;
@@ -275,6 +275,48 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   }
   REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
 }
+static void
+testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
+              const Testdma *dma)
+{
+  static Txn        txn;
+  static Cacheblock entry;
+  static u8         image[CACHE_BYTES], snapshot[CACHE_BYTES];
+  Cache             cache;
+  Cachekey          key = {0};
+  Cacheio           fill;
+  Journalio         io;
+  u8               *destination;
+  u8                later = 0x73;
+  u32               i;
+  u64               stride = CACHE_BYTES / VBLK_SECTOR;
+  REQUIRE(!cacheinit(&cache, &entry, 1, config->sectors / stride) && !txninit(&txn, &cache, 47) &&
+              !cacheget(&cache, FS_DATA_START, CACHE_DATA, &key) &&
+              !cachereadbegin(&cache, &key, &fill, &destination) &&
+              !cachecomplete(&cache, &fill, 1),
+          260);
+  for (i = 0; i < CACHE_BYTES; i++)
+    image[i] = (u8) (0xb4 + i * 37);
+  REQUIRE(!cacheedit(&cache, &key, 0, image, CACHE_BYTES) &&
+              !txnprepare(&txn, NULL, 0, &key, 1, snapshot) && !txnstart(&txn, NULL, NULL, NULL) &&
+              !txnnext(&txn, &io) && io.kind == JOURNAL_WRITE && io.block == FS_DATA_START &&
+              !cacheedit(&cache, &key, 0, &later, 1),
+          261);
+  transfer(device, ring, 2, binding, irqevent, config, dma, VBLK_WRITE, io.block * stride, 40, 0,
+           NULL, io.bytes);
+  REQUIRE(!txncomplete(&txn, &io, 1) && entry.dirty && !txn.journal.durable &&
+              txnrelease(&txn) == -ERR_STATE && !txnnext(&txn, &io) && io.kind == JOURNAL_FLUSH,
+          262);
+  transfer(device, ring, 2, binding, irqevent, config, dma, VBLK_FLUSH, 0, 41, 0, NULL, NULL);
+  REQUIRE(!txncomplete(&txn, &io, 1) && txn.journal.durable && !txnrelease(&txn) && entry.dirty &&
+              entry.data[0] == later && txn.journal.last == 47 &&
+              !txnprepare(&txn, NULL, 0, &key, 1, snapshot) && !txnstart(&txn, NULL, NULL, NULL) &&
+              !txnnext(&txn, &io) && !txnstop(&txn) && txnrelease(&txn) == -ERR_WOULD_BLOCK &&
+              !txncomplete(&txn, &io, 0) && !txnrelease(&txn) && entry.dirty &&
+              txnprepare(&txn, NULL, 0, &key, 1, snapshot) == -ERR_STATE && !cacheput(&cache, &key),
+          263);
+}
+
 static void
 startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
 {
@@ -565,6 +607,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   REQUIRE(prior.generation == 2, 192);
   if (!config->readonly) {
     testredo(device, &ring, binding, irqevent, &fresh, &dma);
+    testwriteback(device, &ring, binding, irqevent, &fresh, &dma);
     testparallel(&queue, binding, irqevent, &fresh);
     testresize(&queue, binding, irqevent, &fresh);
   }

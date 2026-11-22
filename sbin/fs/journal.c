@@ -77,8 +77,9 @@ snapshot(const Journal *journal, const Journalplan *plan, const void *bytes)
 {
   return external(journal, bytes, JOURNAL_BYTES) &&
          separate(plan, sizeof(*plan), bytes, JOURNAL_BYTES) &&
-         separate(plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata), bytes,
-                  JOURNAL_BYTES) &&
+         (!plan->metadata_count ||
+          separate(plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata), bytes,
+                   JOURNAL_BYTES)) &&
          (!plan->data_count ||
           separate(plan->data, (u64) plan->data_count * sizeof(*plan->data), bytes, JOURNAL_BYTES));
 }
@@ -100,23 +101,29 @@ isize
 journalbegin(Journal *journal, const Journalplan *plan)
 {
   u32 i, j, count;
+  u32 records;
   if (!journal || journal->blocks <= FS_DATA_START || journal->blocks > FS_MAX_BLOCKS ||
       journal->reserved[0] || journal->reserved[1])
     return -ERR_INVALID;
   if (journal->phase != JOURNAL_IDLE || journal->active || journal->txid)
     return -ERR_STATE;
-  if (journal->last == UINT64_MAX)
-    return -ERR_OVERFLOW;
-  if (!external(journal, plan, sizeof(*plan)) || !plan->metadata_count ||
+  if (!external(journal, plan, sizeof(*plan)) || (!plan->metadata_count && !plan->data_count) ||
       plan->metadata_count > JOURNAL_META || plan->data_count > JOURNAL_DATA ||
-      !external(journal, plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata)) ||
-      !separate(plan, sizeof(*plan), plan->metadata,
-                (u64) plan->metadata_count * sizeof(*plan->metadata)) ||
+      (plan->metadata_count &&
+       (!external(journal, plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata)) ||
+        !separate(plan, sizeof(*plan), plan->metadata,
+                  (u64) plan->metadata_count * sizeof(*plan->metadata)))) ||
       (plan->data_count &&
        (!external(journal, plan->data, (u64) plan->data_count * sizeof(*plan->data)) ||
         !separate(plan, sizeof(*plan), plan->data, (u64) plan->data_count * sizeof(*plan->data)) ||
-        !separate(plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata), plan->data,
-                  (u64) plan->data_count * sizeof(*plan->data)))))
+        (plan->metadata_count &&
+         !separate(plan->metadata, (u64) plan->metadata_count * sizeof(*plan->metadata), plan->data,
+                   (u64) plan->data_count * sizeof(*plan->data))))))
+    return -ERR_INVALID;
+  records = plan->metadata_count ? 3 : 0;
+  if (records && journal->last == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  if (!records && (plan->header || plan->committed || plan->empty))
     return -ERR_INVALID;
   if (!hometargets(plan->metadata, plan->metadata_count, journal->blocks))
     return -ERR_INVALID;
@@ -131,15 +138,15 @@ journalbegin(Journal *journal, const Journalplan *plan)
         return -ERR_INVALID;
   }
   count = 3 + plan->metadata_count + plan->data_count;
-  for (i = 0; i < count; i++) {
+  for (i = 3 - records; i < count; i++) {
     const u8 *bytes = bytesat(plan, i);
     if (!snapshot(journal, plan, bytes))
       return -ERR_INVALID;
-    for (j = 0; j < i; j++)
+    for (j = 3 - records; j < i; j++)
       if (!separate(bytes, JOURNAL_BYTES, bytesat(plan, j), JOURNAL_BYTES))
         return -ERR_INVALID;
   }
-  journal->txid = journal->last + 1;
+  journal->txid = journal->last + !!records;
   journal->header = plan->header;
   journal->committed = plan->committed;
   journal->empty = plan->empty;
@@ -234,7 +241,7 @@ output(const Journal *journal, const void *out, u64 bytes)
   if (!external(journal, out, bytes) ||
       (journal->header && !separate(journal->header, JOURNAL_BYTES, out, bytes)) ||
       (journal->committed && !separate(journal->committed, JOURNAL_BYTES, out, bytes)) ||
-      !separate(journal->empty, JOURNAL_BYTES, out, bytes))
+      (journal->empty && !separate(journal->empty, JOURNAL_BYTES, out, bytes)))
     return 0;
   for (i = 0; i < journal->metadata_count; i++)
     if (!separate(journal->metadata[i].bytes, JOURNAL_BYTES, out, bytes))
@@ -333,6 +340,14 @@ journalcomplete(Journal *journal, const Journalio *ticket, u32 success)
   case JOURNAL_MARK_FLUSH:
     journal->durable = 1;
     journal->phase = JOURNAL_HOME_WRITE;
+    break;
+  case JOURNAL_DATA_FLUSH:
+    if (journal->metadata_count)
+      journal->phase = JOURNAL_LOG_WRITE;
+    else {
+      journal->durable = 1;
+      journal->phase = JOURNAL_DONE;
+    }
     break;
   default:
     journal->phase++;

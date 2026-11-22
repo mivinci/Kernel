@@ -53,20 +53,22 @@ txnprepare(Txn *txn, const Cachekey *metadata, u32 metadata_count, const Cacheke
     return -ERR_INVALID;
   if (txn->phase != TXN_IDLE || txn->journal.phase != JOURNAL_IDLE || txn->count)
     return -ERR_STATE;
-  if (txn->journal.last == UINT64_MAX)
+  if (metadata_count && txn->journal.last == UINT64_MAX)
     return -ERR_OVERFLOW;
-  if (!metadata_count || metadata_count > JOURNAL_META || data_count > JOURNAL_DATA ||
-      data_count > CACHE_MAX - metadata_count)
+  if ((!metadata_count && !data_count) || metadata_count > JOURNAL_META ||
+      data_count > JOURNAL_DATA || data_count > CACHE_MAX - metadata_count)
     return -ERR_INVALID;
   count = metadata_count + data_count;
   bytes = (u64) count * CACHE_BYTES;
   if (count > txn->cache->capacity || !external(txn, snapshots, bytes) ||
-      !external(txn, metadata, (u64) metadata_count * sizeof(*metadata)) ||
-      !separate(metadata, (u64) metadata_count * sizeof(*metadata), snapshots, bytes) ||
-      (data_count && (!external(txn, data, (u64) data_count * sizeof(*data)) ||
-                      !separate(data, (u64) data_count * sizeof(*data), snapshots, bytes) ||
-                      !separate(metadata, (u64) metadata_count * sizeof(*metadata), data,
-                                (u64) data_count * sizeof(*data)))))
+      (metadata_count &&
+       (!external(txn, metadata, (u64) metadata_count * sizeof(*metadata)) ||
+        !separate(metadata, (u64) metadata_count * sizeof(*metadata), snapshots, bytes))) ||
+      (data_count &&
+       (!external(txn, data, (u64) data_count * sizeof(*data)) ||
+        !separate(data, (u64) data_count * sizeof(*data), snapshots, bytes) ||
+        (metadata_count && !separate(metadata, (u64) metadata_count * sizeof(*metadata), data,
+                                     (u64) data_count * sizeof(*data))))))
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
     key = keyat(metadata, metadata_count, data, i);
@@ -75,7 +77,7 @@ txnprepare(Txn *txn, const Cachekey *metadata, u32 metadata_count, const Cacheke
       return error;
     entry = &txn->cache->entries[key->index];
     if (!entry->dirty || entry->metadata != (u32) (i < metadata_count) ||
-        entry->block < (i < metadata_count ? 65U : 99U))
+        entry->block < (i < metadata_count ? FS_INODE_MAP : FS_DATA_START))
       return -ERR_STATE;
     if (entry->io)
       return -ERR_BUSY;
@@ -111,8 +113,9 @@ txnstart(Txn *txn, const void *header, const void *committed, const void *empty)
   isize       error;
   if (!txn || txn->phase != TXN_PREPARED || txn->count != txn->metadata_count + txn->data_count)
     return -ERR_STATE;
-  if (!external(txn, header, JOURNAL_BYTES) || !external(txn, committed, JOURNAL_BYTES) ||
-      !external(txn, empty, JOURNAL_BYTES))
+  if (txn->metadata_count &&
+      (!external(txn, header, JOURNAL_BYTES) || !external(txn, committed, JOURNAL_BYTES) ||
+       !external(txn, empty, JOURNAL_BYTES)))
     return -ERR_INVALID;
   plan.header = header;
   plan.committed = committed;

@@ -24,12 +24,14 @@ isize txninit(Txn *txn, Cache *cache, u64 last);
    exact versions independently. Metadata keys precede data in snapshots,
    which is independent prepaid (metadata_count+data_count)*4096 storage.
    Only dirty, valid, idle entries of the matching class may participate.
+   With no metadata, capture only overwrites of already committed data blocks.
    No IO is submitted. Caller next encodes/validates the header and markers
    using these captured targets/bytes and journal.last+1, not current cache. */
 isize txnprepare(Txn *txn, const Cachekey *metadata, u32 metadata_count, const Cachekey *data,
                  u32 data_count, void *snapshots);
 /* Already validated metadata classification and encoded records required.
-   Invalid records/storage leave PREPARED captures for repair or release. */
+   Invalid records/storage leave PREPARED captures for repair or release.
+   For a data-only batch all three record pointers must be null. */
 isize txnstart(Txn *txn, const void *header, const void *committed, const void *empty);
 isize txnnext(Txn *txn, Journalio *out);
 isize txncomplete(Txn *txn, const Journalio *ticket, u32 success);

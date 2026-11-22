@@ -74,7 +74,9 @@ isize journalinit(Journal *journal, u64 blocks, u64 last);
    last+1, and a complete validated metadata transaction view. Numeric target
    checks here cannot classify directory/index blocks. Descriptors are copied;
    every independent 4KiB snapshot stays immutable, owned and alive through
-   release. Source storage must not overlap state, descriptors or snapshots. */
+   release. Source storage must not overlap state, descriptors or snapshots.
+   A nonempty data-only batch uses no records, ends after data FLUSH and
+   leaves last unchanged. Use only for overwrites of committed data blocks. */
 isize journalbegin(Journal *journal, const Journalplan *plan);
 /* Open the journal for writes on the exclusively owned device, with fresh
    state after isolating old I/O and callbacks. Even EMPTY grants future
