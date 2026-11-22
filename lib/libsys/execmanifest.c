@@ -236,26 +236,52 @@ ownerstate(const Fileowner *owner, u64 *state, u64 *reason)
   return pid == owner->pid && image == owner->image ? 0 : -ERR_STALE;
 }
 
+static isize
+targetstate(const Fileowner *target, u64 *reason)
+{
+  u64   state;
+  isize error;
+  if (!target || !target->cookie || !target->image)
+    return -ERR_INVALID;
+  error = ownerstate(target, &state, reason);
+  if (error)
+    return error;
+  if (state == OBS_PREPARING && !*reason)
+    return SYSEXEC_PENDING;
+  if (state == OBS_ENDED && (*reason == OBS_ABORT || *reason == OBS_TIMEOUT))
+    return SYSEXEC_ABORTED;
+  if (state == OBS_ACTIVE && !*reason)
+    return SYSEXEC_ACTIVE;
+  if (state == OBS_ENDED && (*reason == OBS_EXIT || *reason == OBS_EXEC))
+    return SYSEXEC_ENDED;
+  return -ERR_STATE;
+}
+
+isize
+sysforktarget(Fileowner *child)
+{
+  u64   reason;
+  isize state = targetstate(child, &reason);
+  if (state == SYSEXEC_ABORTED || state == SYSEXEC_ENDED)
+    child->reason = reason;
+  return state;
+}
+
 isize
 sysexecstate(Fileowner *source, Fileowner *target)
 {
-  u64   next, nextreason, old, oldreason;
-  isize error;
-  if (!source || !target || !source->cookie || !target->cookie || source->pid != target->pid ||
-      !source->image || target->image <= source->image)
+  u64   nextreason, old, oldreason;
+  isize state, error;
+  if (!source || !target || !source->cookie || source->pid != target->pid || !source->image ||
+      target->image <= source->image)
     return -ERR_INVALID;
-  error = ownerstate(target, &next, &nextreason);
-  if (error)
-    return error;
-  if (next == OBS_PREPARING && !nextreason)
-    return SYSEXEC_PENDING;
-  if (next == OBS_ENDED && (nextreason == OBS_ABORT || nextreason == OBS_TIMEOUT)) {
+  state = targetstate(target, &nextreason);
+  if (state <= SYSEXEC_PENDING)
+    return state;
+  if (state == SYSEXEC_ABORTED) {
     target->reason = nextreason;
-    return SYSEXEC_ABORTED;
+    return state;
   }
-  if ((next != OBS_ACTIVE || nextreason) &&
-      (next != OBS_ENDED || (nextreason != OBS_EXIT && nextreason != OBS_EXEC)))
-    return -ERR_STATE;
   /* Read the target first: its publication precedes any valid ACTIVE sample. */
   error = ownerstate(source, &old, &oldreason);
   if (error)
@@ -263,10 +289,9 @@ sysexecstate(Fileowner *source, Fileowner *target)
   if (old != OBS_ENDED || oldreason != OBS_EXEC)
     return -ERR_STATE;
   source->reason = oldreason;
-  if (next == OBS_ACTIVE)
-    return SYSEXEC_ACTIVE;
-  target->reason = nextreason;
-  return SYSEXEC_ENDED;
+  if (state == SYSEXEC_ENDED)
+    target->reason = nextreason;
+  return state;
 }
 
 static isize

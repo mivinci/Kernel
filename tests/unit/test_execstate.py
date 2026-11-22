@@ -180,6 +180,8 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.observed.argtypes, cls.lib.observed.restype = [U], U
         cls.lib.sysexecstate.argtypes = [C.POINTER(Owner), C.POINTER(Owner)]
         cls.lib.sysexecstate.restype = C.c_int64
+        cls.lib.sysforktarget.argtypes = [C.POINTER(Owner)]
+        cls.lib.sysforktarget.restype = C.c_int64
         cls.lib.sysexecreserve.argtypes = [C.POINTER(Reserve), C.POINTER(Plan), C.POINTER(Owner),
                                           C.POINTER(Owner), TAKE, DROP, C.c_void_p]
         cls.lib.sysexecreserve.restype = C.c_int64
@@ -235,6 +237,22 @@ class ExecStateTests(unittest.TestCase):
         self.assertEqual(self.lib.forkobserve(0, C.byref(owner)), 0)
         self.assertEqual((owner.image, owner.cookie, owner.reason), (2, 71, 0))
         self.assertLess(self.lib.forkobserve(0, C.byref(owner)), 0)
+
+    def test_fork_target_classifies_publication_even_if_active_was_never_observed(self):
+        read = self.lib.sysforktarget
+        for state, reason, result in ((1, 0, 1), (2, 0, 2), (3, 2, 3), (3, 4, 3),
+                                      (3, 1, 4), (3, 3, 4)):
+            with self.subTest(state=state, reason=reason):
+                owner = Owner(1, 8, 1, 0)
+                self.lib.sample(0, state, reason, 8)
+                self.assertEqual(read(C.byref(owner)), result)
+                self.assertEqual(owner.reason, reason)
+        owner = Owner(1, 8, 1, 0)
+        self.lib.sample(0, 3, 1, 9)
+        self.assertLess(read(C.byref(owner)), 0)
+        self.lib.sample(0, 2, 1, 8)
+        self.assertLess(read(C.byref(owner)), 0)
+        self.assertEqual(owner.reason, 0)
 
     def test_equal_reference_numbers_in_distinct_sessions_do_not_alias(self):
         plan = Plan()

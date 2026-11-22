@@ -545,6 +545,8 @@ FS 的私有 `fscontextinherit` 只接受与父快照相同的 PID/image 和上�
 
 `sysforkprepare` 从已接收的原 `FORK_PREPARE` 槽解析请求，以服务仍持有的 `FORK_SNAPSHOT` 核对每组来源和完整有序清单。父关闭原引用不影响已持有的快照。错误不发布准备计划、不消费快照；成功仍须经 `OBS_CHILD` 验证子身份并完成资源预付，才能回复准备成功。ARM64、RV64 QEMU `runtime` 在真实 IPC 夹具上验证 token 核对和子观察；12 项主机测试通过，其中覆盖篡改标志、改变引用后拒绝且仍可用原快照重试。
 
+`sysforktarget` 核对观察返回的精确子 PID/image，只凭该观察区分仍在准备、已发布、准备撤销和发布后结束；父退出或准备截止本身不能判定子归属。即使首次读取已经是 EXIT/EXEC，也能识别为发布后结束。仅终结状态记录原因，供释放子引用后 ACK；读取不释放引用或观察。ARM64、RV64 QEMU `runtime` 用原准备请求取得观察，实测 PREPARING 和 forkabort 后的 ABORT；ACTIVE、TIMEOUT、EXIT/EXEC 与身份不匹配由 13 项主机专项覆盖。
+
 ARM64、RV64 QEMU `runtime` 以原父连接发送真实 `FORK_SNAPSHOT` 和 `FORK_PREPARE`，验证错误 token 不消费快照、正确 token 允许登记子镜像观察、消费后的重放被拒绝，最后由 `forkabort` 触发观察收尾。token 分配和消费由测试夹具驱动，尚未安装生产文件引用。
 
 普通文件后端可用 `fsfileholdref` 按父 PID/image、session 和 reference_id 取得独立的 File 引用。这个内部引用保留打开状态和偏移，但不允许任何新客户端发起 I/O。ARM64、RV64 QEMU `pipeio` 验证错误引用或镜像被拒绝；正确引用在父 fd 关闭后仍保留 File 和偏移，释放后归还节点。

@@ -1586,7 +1586,7 @@ server(const Bootview *boot, u32 recover)
               !child.cookie &&
               !sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image) &&
               child.pid == execplan.child && child.image == execplan.target_image && child.cookie &&
-              !child.reason);
+              sysforktarget(&child) == SYSEXEC_PENDING && !child.reason);
         forksnapshot.count = 0;
       }
       execplan.count = 0;
@@ -1594,7 +1594,7 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (!recover && opcode == FORKWATCH) {
-      CHECK(child.pid == (Handle) input.words[1] && !sysfileownerread(&child) &&
+      CHECK(child.pid == (Handle) input.words[1] && sysforktarget(&child) == SYSEXEC_ABORTED &&
             child.reason == OBS_ABORT && !sysfileownerclose(&child) && !child.cookie &&
             !ipc_reply(input.request, &reply));
       continue;
