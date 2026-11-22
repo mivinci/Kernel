@@ -569,9 +569,9 @@ testresize(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *old)
 {
   static u8  staged[PAGE_SIZE];
   Vdev      *device = queue->device;
-  Vblkconfig refreshed;
+  Vblkconfig refreshed = {0};
   Ipcmsg     event;
-  Vdone      done[VQ_BATCH];
+  Vdone      done[VQ_BATCH], pending;
   u32        count, more, causes, i;
   u64        alarm, started = now();
   REQUIRE(blkqsubmit(queue, 0, VBLK_READ, old->sectors, old->blocksize, NULL, blksync, device) ==
@@ -580,6 +580,18 @@ testresize(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *old)
   REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding),
           208);
+  REQUIRE(!blkqsubmit(queue, 0, VBLK_READ, 0, old->blocksize, NULL, blksync, device), 208);
+  for (;;) {
+    REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) &&
+                event.kind == IPC_EVENT && event.words[0] == irqevent &&
+                !blkqpoll(queue, done, &count, &more, &causes) && !more,
+            209);
+    REQUIRE(!__sys_irqack(binding), 226);
+    if (count)
+      break;
+  }
+  REQUIRE(count == 1, 209);
+  pending = done[0];
   vdev_trace[VTEST_RESIZE] = 1;
   for (;;) {
     REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) &&
@@ -593,6 +605,10 @@ testresize(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *old)
   REQUIRE(!blkqpoll(queue, done, &count, &more, &causes) && !count && !more && !causes &&
               blkqsubmit(queue, 0, VBLK_READ, 0, old->blocksize, NULL, blksync, device) ==
                   -ERR_WOULD_BLOCK,
+          213);
+  REQUIRE(blkqrefresh(queue, &refreshed) == -ERR_WOULD_BLOCK && !refreshed.sectors &&
+              queue->config.sectors == old->sectors && queue->configpending &&
+              !blkqfinish(queue, &pending, NULL, 0),
           213);
   REQUIRE(!blkqrefresh(queue, &refreshed) && refreshed.sectors == 2 * old->sectors &&
               refreshed.blocksize == old->blocksize && refreshed.physical == old->physical &&

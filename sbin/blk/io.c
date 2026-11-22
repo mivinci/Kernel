@@ -171,6 +171,7 @@ blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes)
 int
 blkqrefresh(Blkqueue *queue, Vblkconfig *config)
 {
+  u32 i;
   int error;
   if (!queue || !config)
     return -ERR_INVALID;
@@ -179,6 +180,9 @@ blkqrefresh(Blkqueue *queue, Vblkconfig *config)
   if (queue->ring->queue.generation != queue->generation)
     return -ERR_STALE;
   if (queue->configpending) {
+    for (i = 0; i < queue->count; i++)
+      if (queue->slots[i].active || queue->slots[i].held)
+        return -ERR_WOULD_BLOCK;
     error = vblkconfig(queue->device, &queue->config);
     if (error)
       return error;

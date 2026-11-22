@@ -50,6 +50,8 @@ int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const B
    blocked until refresh succeeds, even after the IRQ hint is cleared.
    Transport and buffer ownership faults close the queue until recovery. */
 int blkqpoll(Blkqueue *queue, Vdone *done, u32 *count, u32 *more, u32 *causes);
+/* A pending configuration takes effect only once old requests are drained.
+   WOULD_BLOCK leaves the output and the admission gate unchanged. */
 int blkqrefresh(Blkqueue *queue, Vblkconfig *config);
 /* FLUSH waits for submitted writes to finish. While FLUSH is active, later
    writes and flushes wait. The caller orders requests before submission and
