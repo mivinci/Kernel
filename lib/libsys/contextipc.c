@@ -555,7 +555,7 @@ sysctxpipestep(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *
 }
 static isize
 bootdrive(Rbank *bank, Connpeer self, u32 layer, Bootstrap *boot, Connclaim claim, Handle call,
-          Rkey *active, u64 *mask)
+          u64 options, Rkey *active, u64 *mask)
 {
   Rctx *context;
   u64   ignored;
@@ -563,7 +563,7 @@ bootdrive(Rbank *bank, Connpeer self, u32 layer, Bootstrap *boot, Connclaim clai
   while (active->sequence || boot->state == SYSBOOT_PREPARED || boot->state == SYSBOOT_WAITING) {
     if (!active->sequence) {
       error = boot->state == SYSBOOT_PREPARED
-                  ? sysctxbootcall(bank, self, layer, boot, claim, call, CALL_RECV_MEM, active)
+                  ? sysctxbootcall(bank, self, layer, boot, claim, call, options, active)
                   : sysctxbootwait(bank, self, layer, boot, claim, active);
       if (error)
         return error;
@@ -640,7 +640,7 @@ sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle spa
     error = -ERR_STALE;
     goto restore;
   }
-  error = bootdrive(bank, self, layer, boot, claim, work->state.call, active, &mask);
+  error = bootdrive(bank, self, layer, boot, claim, work->state.call, CALL_RECV_MEM, active, &mask);
   if (!error)
     error = sysbootfinished(boot, claim);
   if (!error && !map->mapped)
@@ -930,7 +930,7 @@ sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
     error = sysfilecreateattached(pool, work, cache, key, backend, claim, space, map, 0);
     goto restore;
   }
-  error = bootdrive(bank, work->state.self, layer, boot, claim, call, active, &mask);
+  error = bootdrive(bank, work->state.self, layer, boot, claim, call, CALL_RECV_MEM, active, &mask);
   if (!error)
     error = sysbootfinished(boot, claim);
   if (!error)
@@ -943,6 +943,83 @@ sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
     error = sysbootack(boot, claim);
   if (!error)
     error = sysfilecreateattached(pool, work, cache, key, backend, claim, space, map, 0);
+restore:
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : error;
+}
+
+isize
+sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                 const Opkey *key, u64 deadline, Rkey *active)
+{
+  Bootstrap *boot;
+  Createop  *create;
+  Connclaim  claim;
+  Connpeer   peer;
+  Handle     call;
+  u64        mask, ignored;
+  isize      error, restored;
+  if (!bank || layer >= RCTX_LAYERS || !storage(bank, work, sizeof(*work), active) ||
+      !storage(bank, pool, sizeof(*pool), active) ||
+      !storage(bank, cache, sizeof(*cache), active) || !storage(bank, key, sizeof(*key), active) ||
+      !separate(bank, sizeof(*bank), active, sizeof(*active)))
+    return -ERR_INVALID;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfilecreatecheck(pool, work, cache, key);
+  if (error)
+    goto restore;
+  create = &work->state.creators[key->lease.slot];
+  boot = &work->state.bootstrap;
+  if (key->lease.slot / 2 != layer || create->phase != SYSFILE_CREATE_CAPTURED ||
+      work->state.operations[key->lease.slot].phase != SYSOP_ACKED ||
+      work->state.operations[key->lease.slot].kind != IPC_RESOURCE_REPLY || !create->token) {
+    error = -ERR_STALE;
+    goto restore;
+  }
+  call = create->call;
+  if (boot->state == SYSBOOT_FREE && !active->sequence) {
+    error = sysfilecreaterevokeprepare(pool, work, cache, key, call, deadline, &claim, &call);
+    if (error)
+      goto restore;
+  } else {
+    claim = boot->claim;
+  }
+  if (sysbootcheck(boot) || boot->opcode != FS_ABORT || boot->token != create->token ||
+      claim.owner != create->files[0] || claim.tag.index != SYSCONN_COUNT || claim.tag.generation) {
+    error = -ERR_STALE;
+    goto restore;
+  }
+  if (boot->state == SYSBOOT_PREPARED) {
+    error = sysconnpeer(call, &peer);
+    if (error)
+      goto restore;
+    if (peer.pid != create->peer.pid || peer.image != create->peer.image) {
+      error = -ERR_DENIED;
+      goto restore;
+    }
+    if (active->sequence) {
+      Rctx *context;
+      error = sysctxlookup(bank, work->state.self, *active, &context);
+      if (error)
+        goto restore;
+      if (context->number != SYS_CALL || context->args[0] != (u64) call) {
+        error = -ERR_STALE;
+        goto restore;
+      }
+    }
+  }
+  /* An ABORT with zero extra options selects the control cleanup budget. */
+  error = bootdrive(bank, work->state.self, layer, boot, claim, call, 0, active, &mask);
+  if (!error)
+    error = sysbootfinished(boot, claim);
+  if (!error)
+    error = sysbootabortreply(boot, claim);
+  if (!error && boot->state == SYSBOOT_RESULT)
+    error = sysbootack(boot, claim);
+  if (!error)
+    error = sysfilecreaterevoked(pool, work, cache, key, claim);
 restore:
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return restored ? restored : error;

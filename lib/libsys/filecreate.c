@@ -982,6 +982,27 @@ sysfileopenabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tabl
 }
 
 isize
+sysfileopendiscard(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                   Opencreate *open)
+{
+  Createop *create;
+  u64       source = 0, files[2] = {0};
+  isize     error = opencheck(pool, work, cache, table, open, &create);
+  if (error)
+    return error;
+  if (create->phase != SYSFILE_CREATE_RESOLVED || create->files[0] || create->files[1] ||
+      (create->disposition != SYSFILE_RESULT_REVOKED &&
+       create->disposition != SYSFILE_RESULT_ENDED))
+    return -ERR_STATE;
+  error = sysfilecreatefinish(pool, work, cache, &open->operation, files, &source);
+  if (!error) {
+    error = sysfdcancel(table, open->tag);
+    clear(open, sizeof(*open));
+  }
+  return error;
+}
+
+isize
 sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                   Opencreate *open, isize *business)
 {

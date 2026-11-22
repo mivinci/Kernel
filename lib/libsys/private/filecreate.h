@@ -19,6 +19,10 @@ isize sysfileopenprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtab
                          u64 fdflags, Opencreate *open, Msg *message);
 isize sysfileopenabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                        Opencreate *open);
+/* Release just the fd reservation after confirmed token revocation or the
+   original backend's proved termination and drain. */
+isize sysfileopendiscard(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                         Opencreate *open);
 /* Consume a resolved, ACKed creator and publish its File as the reserved fd.
    A resolved error releases the reservation and returns status via business
    or a native error. A success returns the new descriptor number. */

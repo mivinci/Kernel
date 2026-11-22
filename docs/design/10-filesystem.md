@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage475：`sysctxopenrevoke` 用 OPEN 持有的固定 CALL 和原 token 发控制预算 ABORT，目录满时仍可推进。它等待原 RPC 排空并核对 `[0,seq,0,0]`，确认后才撤销本地创建记录；错误或结果未知时保留清理责任。`sysfileopendiscard` 在撤销或已证明的后端终结且排空后才归还预留 fd。ATTACH 的运输清理仍独立。双架构 QEMU `runtime` 验证目录满时在 ATTACH 前取消、ATTACH 后本地接管失败及继续已准备好的 ABORT；fd 在撤销前保持预留，原有 File 可正常关闭。双架构 `pipeio` 回归及 54 项主机测试通过。公开 `open()` 尚未接入。
+
 stage474：`sysctxopenattach` 用已捕获的资源 OPEN token 推进 ATTACH。冷连接须核验原回复的 MEM 和共享页，再确认请求并接管 File；热连接只接受原 connid，不重复映射。映射地址冲突且未建立映射时，可换地址继续处理同一回复。双架构 QEMU `runtime` 验证真实 ATTACH 的冷路径地址冲突和热路径复用，`pipeio` 回归共用握手路径，18 项 IPC 上下文主机测试通过。后端选择、VA 预留和失败补偿仍由调用方负责，公开 `open()` 尚未接入。
 
 stage473：`sysctxopencreate` 串接 fd 预留、原请求、确认和普通 File 发布。业务失败归还 fd；收到带 CALL 的资源回复时确认原 OPEN，保留 fd、CALL 和 token 给 ATTACH/ABORT，不提前发布 fd。ARM64、RV64 QEMU `runtime` 用真实 IPC 验证普通成功、ENOENT 归还预留，以及资源回复保留 fd 到 ATTACH 后再发布；18 项 IPC 上下文主机测试通过。公开 `open()`、自动资源接入和信号重启策略仍待接。

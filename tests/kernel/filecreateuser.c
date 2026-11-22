@@ -235,6 +235,7 @@ resourceopens(const Bootview *boot)
   Opencreate open = {0};
   Rkey       active = {0};
   const u64  args[8] = {0, 0, 0, 7};
+  const u64  cancelargs[8] = {0, 0, 0, 8};
   Fdview     fd;
   int        number = -2;
   isize      business = 9;
@@ -244,8 +245,8 @@ resourceopens(const Bootview *boot)
   Connpeer   peer;
   Bootmap    mapped;
   Handle     call;
-  u64        files[2], source = 0, bound, reused, token;
-  u32        i;
+  u64        bound, reused, token;
+  u32        i, reserved;
   bound = attachfirst(boot);
   CHECK(!sysconnpeer(backend_work.state.call, &peer));
   CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/reuse", 7,
@@ -270,9 +271,12 @@ resourceopens(const Bootview *boot)
   peer.image++;
   CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
   for (i = 0; i < 2; i++) {
-    key = begin(FS_OPEN, i ? "/failed" : "/cancel", 0);
-    collect(&key);
-    CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
+    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, cancelargs,
+                           i ? "/failed" : "/cancel", 8, 0, &open, &active, &number,
+                           &business) == 1);
+    filecreatetrace[1]++;
+    key = open.operation;
+    reserved = open.tag.index;
     token = work.state.creators[key.lease.slot].token;
     if (i) {
       CHECK(
@@ -285,12 +289,17 @@ resourceopens(const Bootview *boot)
                                   0) == -ERR_INVALID &&
             !sysconnworkreuse(&backend_work, &cache, claim) &&
             !sysbootfinish(&backend_work.state.bootstrap, claim));
+      CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call) &&
+            !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim, call, 0,
+                            &active));
     }
-    CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call));
-    bootstrap(&work.state.bootstrap, claim, call, CALL_CONTROL);
-    CHECK(!sysfilecreaterevoked(&pool, &work, &cache, &key, claim));
-    zero(files, sizeof(files));
-    CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && !files[0] && !source);
+    CHECK(sysfileopendiscard(&pool, &work, &cache, &fds, &open) == -ERR_STATE &&
+          !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_RESERVED &&
+          !sysctxopenrevoke(&contexts, 0, &pool, &work, &cache, &key, 0, &active) &&
+          !active.sequence && work.state.bootstrap.state == SYSBOOT_FREE &&
+          !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_RESERVED &&
+          !sysfileopendiscard(&pool, &work, &cache, &fds, &open) && !open.operation.lease.seq &&
+          !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_FREE);
     filecreatetrace[4]++;
     if (i) {
       CHECK(!sysconnabortbegin(&cache, 999, &claim) &&

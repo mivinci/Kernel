@@ -90,6 +90,11 @@ isize sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, C
 isize sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                        const Opkey *operation, Connwork *backend, Handle space, u64 address,
                        u64 deadline, Bootmap *map, Rkey *active);
+/* Revoke the exact OPEN token over the creator-owned CALL without a directory
+   entry. Retain active across interruption. ATTACH transport cleanup is separate;
+   success resolves the creator so its fd reservation can be discarded. */
+isize sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                       const Opkey *operation, u64 deadline, Rkey *active);
 /* Create local descriptors over an established FS connection. Both private
    records start zeroed, and remain caller-owned across interruption or
    incomplete drain (ERR_WOULD_BLOCK after submitted peer death). Re-enter
