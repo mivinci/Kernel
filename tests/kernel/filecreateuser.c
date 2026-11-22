@@ -293,12 +293,12 @@ resourceopens(const Bootview *boot)
           !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_FREE);
     key.owner = 0;
     do {
-      progress = sysfileopendrain(&pool, &work, &cache, &key);
+      progress = sysfilecreatordrain(&pool, &work, &cache, &key);
       if (progress == -ERR_WOULD_BLOCK)
         CHECK(!ipc_recv(EVENT_RQ_DONE, RECV_EVENTS_ONLY, &result));
     } while (progress == -ERR_WOULD_BLOCK);
     CHECK(!progress && work.state.bootstrap.state == SYSBOOT_FREE &&
-          sysfileopendrain(&pool, &work, &cache, &key) == -ERR_STALE);
+          sysfilecreatordrain(&pool, &work, &cache, &key) == -ERR_STALE);
     filecreatetrace[1]++;
     filecreatetrace[4]++;
   }
@@ -763,7 +763,7 @@ client(const Bootview *boot)
   key.owner = 0;
   CHECK(!sysfdreserve(&fds, detached.tag.index, &fd) && fd.index == detached.tag.index &&
         fd.generation != detached.tag.generation &&
-        sysfileopendrain(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK &&
+        sysfilecreatordrain(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK &&
         !sysoprpc(&work, &cache, &key, &rpc) && rpc == original);
   gate.words[0] = GATE;
   gate.words[1] = gate.words[2] = gate.words[3] = 0;
@@ -771,8 +771,8 @@ client(const Bootview *boot)
   rpc = result.request;
   CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
         !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
-  CHECK(!sysfileopendrain(&pool, &work, &cache, &key) &&
-        sysfileopendrain(&pool, &work, &cache, &key) == -ERR_STALE && !sysfdcancel(&fds, fd));
+  CHECK(!sysfilecreatordrain(&pool, &work, &cache, &key) &&
+        sysfilecreatordrain(&pool, &work, &cache, &key) == -ERR_STALE && !sysfdcancel(&fds, fd));
   closefile(ids[0], 0);
   filecreatetrace[3] = 1;
   {

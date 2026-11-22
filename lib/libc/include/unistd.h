@@ -23,6 +23,7 @@ int           setpgid(pid_t pid, pid_t pgid);
 pid_t         setsid(void);
 int           dup(int fd);
 int           dup2(int fd, int target);
+int           pipe(int fds[2]);
 int           close(int fd);
 int           isatty(int fd);
 int           getopt(int argc, char *const argv[], const char *optstring);

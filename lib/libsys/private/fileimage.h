@@ -69,6 +69,9 @@ isize sysfileimagefs(u32 layer, u64 address, Connwork **out);
    continuation; failed copyout hands both File references to the image worker. */
 isize sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int *fds,
                        isize *business);
+/* Publish a pair through the ready FS connection, retaining the original
+   creation across caught signals. */
+isize sysfileimagepipepair(u32 layer, int *fds, isize *business);
 /* Drive OPEN on the established FS connection. A resource success retains
    its foreground continuation; timeout transfers the original operation to
    the image worker and releases the unpublished descriptor. */

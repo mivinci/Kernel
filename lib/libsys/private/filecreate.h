@@ -44,10 +44,10 @@ isize sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtab
    precede creator ACK and any ATTACH. */
 isize sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                          Opencreate *open);
-/* With caught signals blocked, advance an abandoned OPEN without waiting or
-   publishing a descriptor. Ordinary success enters the close ledger; a
-   resource success is compensated with ABORT by exact token before release. */
-isize sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
+/* With caught signals blocked, advance an abandoned OPEN or PIPE without
+   publishing descriptors. Ordinary success enters the close ledger; a
+   resource OPEN is compensated with ABORT by exact token before release. */
+isize sysfilecreatordrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 struct Pipecreate
 {
   Opkey operation;
@@ -60,6 +60,9 @@ isize sysfilepipeprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtab
                          u32 layer, u64 owner, Pipecreate *pipe, Msg *message);
 isize sysfilepipeabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                        Pipecreate *pipe);
+/* Give the submitted creation to the completion worker and release fd reservations. */
+isize sysfilepipeabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                         Pipecreate *pipe);
 /* Native errors before consuming the operation preserve the continuation.
    On completion, business contains the reply status, or zero; a checked
    output fault queues both closes and returns the native copy error. Native

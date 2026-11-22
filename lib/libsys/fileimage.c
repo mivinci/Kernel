@@ -616,6 +616,23 @@ restore:
   return error ? error : restored;
 }
 
+/* Inspect the directory while caught signals are blocked. */
+static isize
+readyfs(Fileimage *state, Connwork **out)
+{
+  Connentry entry;
+  isize     error;
+  if (!fstag.generation)
+    return -ERR_NOTSUP;
+  error = sysconnview(sysfileimagecache(state), fstag, &entry);
+  if (error)
+    return error;
+  if (entry.state != SYSCONN_READY)
+    return entry.state == SYSCONN_DRAINING ? -ERR_PEER : -ERR_NOTSUP;
+  *out = &state->connections[fstag.index];
+  return 0;
+}
+
 isize
 sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int *fds,
                  isize *business)
@@ -636,6 +653,54 @@ sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active, int 
   if (!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask)) {
     closing = 1;
     fileprogress(state);
+    restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+    if (restored)
+      return restored;
+  }
+  return error;
+}
+
+isize
+sysfileimagepipepair(u32 layer, int *fds, isize *business)
+{
+  Fileimage *state;
+  Conncache *cache;
+  Connwork  *work;
+  Pipecreate pipe;
+  Rkey       active = {0};
+  u64        mask, ignored;
+  u32        i;
+  isize      error, restored;
+  if (!fds)
+    return -ERR_FAULT;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  fileprogress(state);
+  error = readyfs(state, &work);
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (error || restored)
+    return error ? error : restored;
+
+  cache = sysfileimagecache(state);
+  for (i = 0; i < sizeof(pipe); i++)
+    ((volatile u8 *) &pipe)[i] = 0;
+  do {
+    /* The handler may run, but the continuation still owns the original pair. */
+    error = sysfileimagepipe(layer, work, &pipe, &active, fds, business);
+  } while (error == -ERR_INTERRUPTED);
+  if (!error || !pipe.operation.lease.seq || active.sequence)
+    return error;
+
+  /* A late result cannot publish descriptors after the caller returns. */
+  if (!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask)) {
+    if (!sysfilepipeabandon(&state->files, work, cache, &state->fds, &pipe)) {
+      draining |= 1U << work->state.tag.index;
+      fileprogress(state);
+    }
     restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
     if (restored)
       return restored;
@@ -739,8 +804,7 @@ static isize
 stagechdir(Fileimage *state, u32 layer, const char *path, Connwork **work, Opkey *key, u64 *bytes,
            isize *business)
 {
-  Connentry entry;
-  isize     error;
+  isize error;
   if (layer >= RCTX_LAYERS)
     return -ERR_INVALID;
   if (state->contexts.contexts[layer].phase != RCTX_FREE)
@@ -754,15 +818,8 @@ stagechdir(Fileimage *state, u32 layer, const char *path, Connwork **work, Opkey
   }
   if (error)
     return error;
-  if (!fstag.generation)
-    return -ERR_NOTSUP;
-  error = sysconnview(sysfileimagecache(state), fstag, &entry);
-  if (error)
-    return error;
-  if (entry.state != SYSCONN_READY)
-    return entry.state == SYSCONN_DRAINING ? -ERR_PEER : -ERR_NOTSUP;
-  *work = &state->connections[fstag.index];
-  return iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, 0, 0, 0, key);
+  error = readyfs(state, work);
+  return error ? error : iostage(state, layer, *work, 0, 0, FS_PATH, NULL, *bytes, 0, 0, 0, key);
 }
 
 static isize
@@ -1288,13 +1345,13 @@ fileprogress(Fileimage *state)
       if ((op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) !=
               (SYSOP_BACKGROUND | SYSOP_APP_ENDED) ||
           (!ioopcode(op->opcode) && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT &&
-           op->opcode != FS_OPEN))
+           op->opcode != FS_OPEN && op->opcode != FS_PIPE))
         continue;
       key.connection = work->state.tag;
       key.lease = op->lease;
       key.owner = 0;
-      if (op->opcode == FS_OPEN) {
-        if (sysfileopendrain(&state->files, work, cache, &key)) {
+      if (op->opcode == FS_OPEN || op->opcode == FS_PIPE) {
+        if (sysfilecreatordrain(&state->files, work, cache, &key)) {
           draining |= bit;
           if (op->rpc || work->state.bootstrap.rpc)
             active = 1;

@@ -1123,7 +1123,7 @@ sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
 }
 
 static isize
-openack(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+creatorack(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
 {
   Slotop *op;
   isize   error = sysoppoll(work, cache, key);
@@ -1218,7 +1218,7 @@ openaborttoken(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *ke
 }
 
 isize
-sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+sysfilecreatordrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
 {
   Createop *create;
   Slotop   *op;
@@ -1227,10 +1227,10 @@ sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (op->opcode != FS_OPEN || key->owner ||
+  if ((op->opcode != FS_OPEN && op->opcode != FS_PIPE) || key->owner ||
       (op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) != (SYSOP_BACKGROUND | SYSOP_APP_ENDED))
     return -ERR_STATE;
-  error = openack(pool, work, cache, key);
+  error = creatorack(pool, work, cache, key);
   if (error)
     return error;
   if (create->token)
@@ -1258,7 +1258,7 @@ sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
       !separate(business, sizeof(*business), open, sizeof(*open)))
     return -ERR_INVALID;
   key = &open->operation;
-  error = openack(pool, work, cache, key);
+  error = creatorack(pool, work, cache, key);
   if (error)
     return error;
   if (create->token)
@@ -1299,6 +1299,8 @@ sysfilepipeprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
   if (error) {
     (void) sysfdcancelpair(table, pipe->tags);
     clear(pipe, sizeof(*pipe));
+    if (error == -ERR_CAPACITY)
+      error = -ERR_NOMEM;
   }
   return error;
 }
@@ -1326,6 +1328,25 @@ sysfilepipeabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tabl
   isize     error = pipecheck(pool, work, cache, table, pipe, &create);
   if (!error)
     error = sysfilecreateabort(pool, work, cache, &pipe->operation, &source);
+  if (!error) {
+    error = sysfdcancelpair(table, pipe->tags);
+    clear(pipe, sizeof(*pipe));
+  }
+  return error;
+}
+
+isize
+sysfilepipeabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                   Pipecreate *pipe)
+{
+  Createop *create;
+  Opkey     background;
+  isize     error = pipecheck(pool, work, cache, table, pipe, &create);
+  if (error)
+    return error;
+  error = create->phase == SYSFILE_CREATE_RESOLVED
+              ? -ERR_STATE
+              : sysopabandon(work, cache, &pipe->operation, &background);
   if (!error) {
     error = sysfdcancelpair(table, pipe->tags);
     clear(pipe, sizeof(*pipe));

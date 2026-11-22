@@ -5,6 +5,7 @@ import test_bootstrap as bootstrap
 import test_connection_work as support
 import test_operation as ops
 from test_fileref import Pool, Ref, Stage, Value, Close
+from test_fdtable import Table, Tag
 
 
 class Creator(C.Structure):
@@ -16,6 +17,10 @@ class Creator(C.Structure):
 
 class Words(C.Structure):
     _fields_ = [('words',C.c_uint64*4)]
+
+
+class Pipecreate(C.Structure):
+    _fields_ = [('operation', ops.Key), ('tags', Tag*2)]
 
 
 class FileCreatorTests(unittest.TestCase):
@@ -66,6 +71,10 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
             'sysfilecreateended':[pool,work,cache,key],
             'sysfilecreatefinish':[pool,work,cache,key,C.POINTER(C.c_uint64),C.POINTER(C.c_uint64)],
             'sysfilecreateabort':[pool,work,cache,key,C.POINTER(C.c_uint64)],
+            'sysfilepipeprepare':[pool,work,cache,C.POINTER(Table),C.c_uint32,C.c_uint64,
+                                  C.POINTER(Pipecreate),C.POINTER(Words)],
+            'sysfilepipeabandon':[pool,work,cache,C.POINTER(Table),C.POINTER(Pipecreate)],
+            'sysfilecreatordrain':[pool,work,cache,key],
             'sysopsubmitted':[work,cache,key,C.POINTER(C.c_int64)],
             'sysopsaved':[work,cache,key], 'sysopack':[work,cache,key],
             'sysopabort':[work,cache,key,C.POINTER(C.c_uint64)],
@@ -165,14 +174,27 @@ isize __sys_copy(void *out,const void *from,u64 bytes){u64 a=(u64)(uintptr_t)out
         self.assertEqual([(self.pool.entries[f&255].session,self.pool.entries[f&255].reference) for f in files],[(77,56),(78,79)])
 
     def test_abandoned_success_becomes_close_responsibility_and_never_returns_fd_candidates(self):
-        key=self.prepare(24);ids=tuple(self.create(key).files);self.submit(key)
-        background=ops.Key()
-        self.assertEqual(self.lib.sysopabandon(self.w,self.c,C.byref(key),C.byref(background)),0)
-        self.reply(background,24);self.capture(background)
-        self.assertEqual(self.lib.sysfilecreatesettle(self.p,self.w,self.c,C.byref(background),0),-6)
-        files,source=self.complete(background,1)
-        self.assertEqual((files,source),((0,0),0))
-        self.assertEqual([(self.pool.entries[f&255].state,self.pool.entries[f&255].aliases) for f in ids],[(2,0),(2,0)])
+        table, pipe, message = Table(), Pipecreate(), Words()
+        self.assertEqual(self.lib.sysfilepipeprepare(self.p, self.w, self.c, C.byref(table),
+                                                    0, 501, C.byref(pipe), C.byref(message)), 0)
+        background = ops.Key.from_buffer_copy(pipe.operation)
+        background.owner = 0
+        ids = tuple(self.create(pipe.operation).files)
+        self.submit(pipe.operation)
+        self.assertEqual(self.lib.sysfilepipeabandon(self.p, self.w, self.c, C.byref(table),
+                                                    C.byref(pipe)), 0)
+        self.assertEqual([entry.state for entry in table.entries[:2]], [0, 0])
+        self.reply(background, 24)
+        self.lib.testfinish(1)
+        self.assertEqual(self.lib.sysfilecreatordrain(self.p, self.w, self.c, C.byref(background)), -11)
+        self.assertEqual([self.pool.entries[file&255].state for file in ids], [4, 4])
+        self.assertEqual(self.op(background).rpc, self.rpc)
+        self.lib.testfinish(0)
+        self.assertEqual(self.lib.sysfilecreatordrain(self.p, self.w, self.c, C.byref(background)), 0)
+        refs = [self.pool.entries[file&255] for file in ids]
+        self.assertEqual([(ref.state, ref.aliases, ref.reference) for ref in refs],
+                         [(2, 0, 56), (2, 0, 79)])
+        self.assertEqual(self.op(background).phase, 0)
 
     def test_negative_business_result_releases_only_uncreated_prospective_references(self):
         key=self.prepare();self.submit(key);self.reply(key,error=-2);self.capture(key)

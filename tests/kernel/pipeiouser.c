@@ -354,6 +354,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
           !ipc_reply(gate.request, &reply) && !pipedispatch(&fs.pipes, &link, 1, &request) &&
           table.serial == 4);
     CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && table.serial == 8);
+    CHECK(!fsstep(&fs) && table.serial == 8);
     for (i = 0; i < 2; i++)
       CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_READ &&
             !pipedispatch(&fs.pipes, &link, 1, &request) && wait.io.request == request.request &&
@@ -613,7 +614,12 @@ oninterrupt(int signal)
           work == interruptedwork && !sysfdobserve(&image->fds, 0, &readend) &&
           readend.tag.state == SYSFD_RESERVED && !sysfdobserve(&image->fds, 1, &writeend) &&
           writeend.tag.state == SYSFD_RESERVED && dup(0) == -1 && errno == EBADF);
-    caught++;
+    {
+      Msg    gate = {{PIPETEST, 0, 0, 0}};
+      Ipcmsg reply;
+      caught++;
+      CHECK(!ipc_call(work->state.call, &gate, CALL_CONTROL, &reply));
+    }
   }
 }
 
@@ -706,6 +712,20 @@ pollsnapshot(Fileimage *image, Connwork *work, const int fds[2])
 }
 
 static void
+pipefull(Fdtable *table)
+{
+  Fdtag tags[BOOT_FD_COUNT - 2];
+  int   fds[2] = {-7, -8};
+  u32   i;
+  for (i = 0; i < ARRAY_SIZE(tags); i += 2)
+    CHECK(!sysfdreservepair(table, &tags[i]));
+  CHECK(pipe(fds) == -1 && errno == EMFILE && fds[0] == -7 && fds[1] == -8);
+  for (i = 0; i < ARRAY_SIZE(tags); i += 2)
+    CHECK(!sysfdcancelpair(table, &tags[i]));
+  CHECK(pipe(fds) == -1 && errno == ENFILE && fds[0] == -7 && fds[1] == -8);
+}
+
+static void
 interruptclient(void)
 {
   Fileimage            *image;
@@ -713,12 +733,9 @@ interruptclient(void)
   Conncache            *cache;
   struct sigaction      action = {0};
   const struct timespec pause = {0, 30000000};
-  Pipecreate            pipe = {0};
-  Rkey                  active = {0};
   Msg                   gate = {{PIPETEST, 0, 0, 0}};
   Ipcmsg                result;
   Handle                rpc;
-  isize                 business;
   int                   fds[2] = {-1, -1};
   int                   fd;
   Fdview                original, alias, displaced;
@@ -741,18 +758,13 @@ interruptclient(void)
   action.sa_handler = oninterrupt;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
   errno = EBUSY;
-  CHECK(sysfileimagepipe(0, work, &pipe, &active, fds, &business) == -ERR_INTERRUPTED &&
-        caught == 1 && errno == EBUSY && !active.sequence &&
-        !sysoprpc(work, cache, &pipe.operation, &rpc) && rpc &&
-        !sysfdcheckpair(&image->fds, pipe.tags) && fds[0] == -1 && fds[1] == -1 &&
-        !ipc_call(work->state.call, &gate, CALL_CONTROL, &result));
-  CHECK(sysfileimagepipe(0, work, &pipe, &active, (int *) 1, &business) == -ERR_FAULT &&
-        !pipe.operation.lease.seq && !business && !sysfdobserve(&image->fds, 0, &original) &&
+  CHECK(pipe((int *) 1) == -1 && errno == EFAULT && caught == 1 &&
+        !work->state.operations[0].phase && !sysfdobserve(&image->fds, 0, &original) &&
         original.tag.state == SYSFD_FREE && !sysfdobserve(&image->fds, 1, &alias) &&
         alias.tag.state == SYSFD_FREE && !nanosleep(&pause, NULL) &&
         !sysfilerefconnection(&image->files, work->state.self, work->state.tag));
-  CHECK(!sysfileimagepipe(0, work, &pipe, &active, fds, &business) && !pipe.operation.lease.seq &&
-        !active.sequence && !business && fds[0] == 0 && fds[1] == 1 && caught == 1);
+  CHECK(!pipe(fds) && errno == EFAULT && fds[0] == 0 && fds[1] == 1 && caught == 1);
+  pipefull(&image->fds);
   pollsnapshot(image, work, fds);
   CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
         sysfileiostage(image, 0, 2, FS_WRITE, data, 1, &draftpeer, &draft) == -ERR_BAD_HANDLE &&

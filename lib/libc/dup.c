@@ -169,6 +169,20 @@ lseek(int fd, off_t offset, int whence)
   return ioresult(FS_SEEK, status, &completed);
 }
 
+int
+pipe(int fds[2])
+{
+  Fileioresult completed = {0};
+  isize        status = sysfileimagepipepair(__libc_sigdepth(), fds, &completed.business);
+  if (status == -ERR_CAPACITY)
+    completed.business = -EMFILE;
+  else if (status == -ERR_NOTSUP)
+    completed.business = -ENOSYS;
+  else
+    return (int) ioresult(FS_PIPE, status, &completed);
+  return (int) ioresult(FS_PIPE, 0, &completed);
+}
+
 static int
 syncfd(int fd, u32 dataonly)
 {

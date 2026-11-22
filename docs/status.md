@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage520：公开 `pipe()` 经已就绪的 FS 连接成对发布 fd。双架构 QEMU `pipeio` 和 93 项主机测试通过；首次建连和生产 FS 待接入。
 - stage519：公开 `chdir()` 经已就绪的 FS 连接执行 `PATH/CHDIR`。双架构 QEMU `pipeio` 和 57 项主机测试通过；首次建连地址分配和生产目录后端待接入。
 - stage518：`fsstep` 接入已授权会话的 `FS_LOAD`。双架构 QEMU `pipeio` 验证错误版本、冷缓存读取及取消后排空，40 项 FS 主机测试通过。生产会话授权和块服务接线待做。
 - stage517：FS 服务接入 `PATH/CHDIR`，目标目录搜索通过后才切换 cwd。双架构 QEMU `pipeio`、`runtime` 通过，公开 `chdir` 和生产目录后端待接入。
