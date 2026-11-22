@@ -1,4 +1,5 @@
 #include "pipefile.h"
+#include "file.h"
 
 static int
 owner(const Piperef *ref, Handle pid, u64 image, u64 session)
@@ -36,7 +37,7 @@ pipefilecreate(Pipetable *table, Handle pid, u64 image, u32 nonblock, Pipekey ke
   u32       i, n = 0;
   if (handlekind(pid) != HANDLE_PROCESS || !image || nonblock > 1)
     return -ERR_INVALID;
-  if (table->serial > UINT64_MAX - 4)
+  if (table->serial > FS_FILE_SESSION - 5)
     return -ERR_OVERFLOW;
   for (i = 0; i < table->nfiles; i++)
     if (!table->files[i].stream.refs[PIPE_READ] && !table->files[i].stream.refs[PIPE_WRITE]) {
@@ -76,7 +77,7 @@ pipefiledup(Pipetable *table, Handle pid, u64 image, Pipekey source, u64 *refere
     return -ERR_STALE;
   if (!free)
     return -ERR_CAPACITY;
-  if (table->serial == UINT64_MAX)
+  if (table->serial == FS_FILE_SESSION - 1)
     return -ERR_OVERFLOW;
   error = pipehold(&file->stream, end);
   if (error)

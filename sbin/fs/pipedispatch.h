@@ -2,6 +2,7 @@
 #define _FS_PIPEDISPATCH_H
 #include "pipefile.h"
 #include "pipeio.h"
+#include "file.h"
 #include "private/filewatch.h"
 
 typedef struct Pipewait     Pipewait;
@@ -28,6 +29,7 @@ struct Pipedispatch
   u32        count;
   Pipepoll  *polls;
   u32        npolls;
+  Fsfiles   *regular;
 };
 
 /* Serialized FS loop; waits are preallocated and initially zero. Dispatch

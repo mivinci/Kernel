@@ -123,7 +123,7 @@ server(const Bootview *boot)
   static Pipewait waits[2];
   Piperef         refs[3] = {{0}};
   Pipetable       table = {files, refs, ARRAY_SIZE(files), ARRAY_SIZE(refs), 0};
-  Pipedispatch    dispatch = {&table, waits, ARRAY_SIZE(waits), NULL, 0};
+  Pipedispatch    dispatch = {&table, waits, ARRAY_SIZE(waits), NULL, 0, NULL};
   Pipekey         keys[2];
   Pipe           *pipe = &files[0].stream;
   Filelink        link = {0};
@@ -333,7 +333,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         ADDRESS,
                         &link,
                         1,
-                        {&table, &wait, 1, &poll, 1},
+                        {&table, &wait, 1, &poll, 1, NULL},
                         NULL,
                         0};
   if (interrupt >= 8) {
@@ -1484,13 +1484,14 @@ run(const Bootview *boot)
         !ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
 }
 
-static const isize openerrors[] = {-ESTALE, -ENOSYS, -EACCES, -EINVAL, -EINVAL, -EINVAL, -EINTR};
+static const isize openerrors[] = {-ESTALE, 0, -EACCES, -EINVAL, -EINVAL, -EINVAL, -EINTR};
 
 typedef struct Openfixture Openfixture;
 struct Openfixture
 {
   Vmounts mounts;
   Vnode   root, file;
+  Fsfiles files;
   u32     holds, attempts, searches, completed, blocked, cancelled;
 };
 
@@ -1592,7 +1593,7 @@ opencancel(Openjob *job)
 {
   Openfixture *fixture = job->backend;
   openvalidate(job);
-  CHECK(fixture->blocked && fixture->holds == 4);
+  CHECK(fixture->blocked && fixture->holds == 5);
   if (!fixture->cancelled++)
     return -ERR_WOULD_BLOCK;
   return 0;
@@ -1602,10 +1603,10 @@ static isize
 opencomplete(Openjob *job, Vnode *node)
 {
   Openfixture *fixture = job->backend;
-  Msg          reply = {{(u64) -ENOSYS, job->slot.seq, 0, 0}};
   openvalidate(job);
   CHECK(node == &fixture->file && fixture->holds == 3 && !fixture->completed++);
-  return ipc_reply(job->call.request, &reply);
+  CHECK(!vaccess(&job->cred, 22, 32, 0400, VACCESS_R, 0));
+  return fsfileopen(&fixture->files, job, node, VACCESS_R);
 }
 
 static void
@@ -1616,6 +1617,9 @@ openserver(const Bootview *boot)
   Openfixture     fixture = {0};
   const Vwalkops  ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops  pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
+  Fsfile          file = {0};
+  Fsref           refs[2] = {{0}};
+  Pipetable       pipes = {0};
   Fscontext       context = {0};
   Fscontexts      contexts = {&context, 1, &pin, &fixture, 0};
   Fsopen          open = {&contexts, &fixture.mounts, &ops,       &job,       1,
@@ -1626,10 +1630,11 @@ openserver(const Bootview *boot)
                         ADDRESS,
                         &link,
                         1,
-                        {0},
+                        {&pipes, NULL, 0, NULL, 0, &fixture.files},
                         &open,
                         0};
   u32             i;
+  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture};
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
@@ -1638,12 +1643,15 @@ openserver(const Bootview *boot)
                       &fixture.root, 027));
   for (i = 1; i + 1 < ARRAY_SIZE(openerrors); i++)
     CHECK(!fsstep(&fs));
-  CHECK(fixture.completed == 1 && fixture.holds == 2 && fixture.attempts == 2);
+  CHECK(fixture.completed == 1 && fixture.holds == 3 && fixture.attempts == 2 && file.refs == 1 &&
+        file.node == &fixture.file && file.access == VACCESS_R);
   fixture.blocked = 1;
-  CHECK(!fsstep(&fs) && job.waiting && fixture.holds == 4);
+  CHECK(!fsstep(&fs) && job.waiting && fixture.holds == 5);
   while (job.call.request)
     CHECK(!fsstep(&fs));
-  CHECK(fixture.cancelled == 2 && fixture.completed == 1 &&
+  CHECK(fixture.cancelled == 2 && fixture.completed == 1 && !fsstep(&fs) && file.refs == 2 &&
+        refs[0].file == refs[1].file && refs[0].id != refs[1].id && !fsstep(&fs) &&
+        file.refs == 1 && fixture.holds == 3 && !fsstep(&fs) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -1652,7 +1660,8 @@ openserver(const Bootview *boot)
 static void
 openclient(const Bootview *boot)
 {
-  u32 i;
+  u32     i;
+  Pipekey key = {0}, dup;
   setup(boot, &work, &cache, &bank);
   for (i = 0; i < ARRAY_SIZE(openerrors); i++) {
     Filelease      lease;
@@ -1689,9 +1698,20 @@ openclient(const Bootview *boot)
             !ipc_call(work.state.call, &gate, CALL_CONTROL, &drain));
     } else
       CHECK(!ipc_call(work.state.call, &request, 0, &result));
-    CHECK((isize) result.words[0] == openerrors[i] && result.words[1] == lease.seq &&
-          !result.words[2] && !result.words[3] && !sysconnworkrelease(&work, &cache, lease));
+    CHECK((isize) result.words[0] == openerrors[i] && result.words[1] == lease.seq);
+    if (!openerrors[i]) {
+      CHECK((result.words[2] & FS_FILE_SESSION) && result.words[3] == sizeof(u64));
+      key.session = result.words[2];
+      key.reference = *(const volatile u64 *) page;
+      CHECK(key.reference);
+    } else
+      CHECK(!result.words[2] && !result.words[3]);
+    CHECK(!sysconnworkrelease(&work, &cache, lease));
   }
+  dup.session = key.session;
+  dup.reference = refcall(&work, &cache, FS_DUPREF, key);
+  CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key) &&
+        !refcall(&work, &cache, FS_CLOSE, dup));
   pipeiotrace[0] = 7;
 }
 

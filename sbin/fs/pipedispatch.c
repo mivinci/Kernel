@@ -165,7 +165,11 @@ pipedrain(void *context, Filelink *link)
   Pipedispatch *dispatch = context;
   u32           i;
   isize         error;
-  error = pipefileretire(dispatch->table, link->watch.owner.pid, link->watch.owner.image);
+  if (dispatch->regular)
+    fsfileretire(dispatch->regular, link->watch.owner.pid, link->watch.owner.image);
+  error = dispatch->table
+              ? pipefileretire(dispatch->table, link->watch.owner.pid, link->watch.owner.image)
+              : 0;
   if (error)
     return error;
   for (i = 0; i < dispatch->npolls; i++) {
@@ -253,7 +257,16 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
       break;
     key.session = slot.object;
     key.reference = slot.args[0];
-    if (opcode == FS_CLOSE)
+    if (dispatch->regular && (key.session & FS_FILE_SESSION)) {
+      if (opcode == FS_CLOSE)
+        error =
+            fsfileclose(dispatch->regular, call->source, call->image, key.session, key.reference);
+      else
+        error = fsfiledup(dispatch->regular, call->source, call->image, key.session, key.reference,
+                          &reply.words[2]);
+    } else if (!dispatch->table)
+      error = -ERR_STALE;
+    else if (opcode == FS_CLOSE)
       error = pipefileclose(dispatch->table, call->source, call->image, key);
     else
       error = pipefiledup(dispatch->table, call->source, call->image, key, &reply.words[2]);
