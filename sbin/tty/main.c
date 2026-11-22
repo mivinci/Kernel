@@ -168,13 +168,12 @@ now(void)
 }
 
 static void
-readyresult(u64 deadline, u64 number, u64 image)
+readyresult(Ttyalarm *alarm, u64 number, u64 image)
 {
   Ipcmsg reply;
-  u64    generation;
   isize  error = ipc_rqpoll(ready, 0, &reply);
   if (error == -ERR_WOULD_BLOCK) {
-    if (now() >= deadline)
+    if (now() >= alarm->deadline)
       failed(106, -ERR_TIMEDOUT);
     return;
   }
@@ -185,7 +184,7 @@ readyresult(u64 deadline, u64 number, u64 image)
   if (error)
     failed(105, error);
   ready = 0;
-  error = __sys_alarmcancel(&generation);
+  error = ttyalarmset(alarm, 0);
   if (error)
     failed(105, error);
   ttystate.phase = 3;
@@ -217,7 +216,8 @@ main(int argc, char **argv)
   Ipcmsg          message;
   Msg             report;
   Ttyserialresult result;
-  u64             number, image, deadline, generation;
+  Ttyalarm        alarm = {0};
+  u64             number, image, deadline;
   isize           error;
   (void) argc;
   (void) argv;
@@ -249,7 +249,7 @@ main(int argc, char **argv)
   if (deadline > UINT64_MAX - READY_NS)
     failed(104, -ERR_OVERFLOW);
   deadline += READY_NS;
-  error = __sys_alarmset(deadline, &generation);
+  error = ttyalarmset(&alarm, deadline);
   if (error)
     failed(104, error);
   report = (Msg){{INIT_WORD(INIT_READY), 1, number, image}};
@@ -261,7 +261,7 @@ main(int argc, char **argv)
   for (;;) {
     u32 again = 0;
     if (ready)
-      readyresult(deadline, number, image);
+      readyresult(&alarm, number, image);
     if (!ready) {
       error = ttyserialpump(&transport, &input, &mode, SERIAL_BATCH, handles[TtyNotify], &result);
       if (error || result.end)

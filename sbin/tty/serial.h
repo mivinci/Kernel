@@ -10,6 +10,7 @@
 typedef struct Ttyserial       Ttyserial;
 typedef struct Ttyserialresult Ttyserialresult;
 typedef struct Ttypending      Ttypending;
+typedef struct Ttyalarm        Ttyalarm;
 struct Ttyserial
 {
   Serialring *rx, *tx;
@@ -30,6 +31,14 @@ struct Ttypending
   Ttywait      wait;
   u32          timed;
 };
+struct Ttyalarm
+{
+  u64 deadline, generation;
+};
+/* The event loop supplies its earliest absolute deadline (zero to disarm).
+   A TIMER event is a hint to recheck monotonic time and the original request.
+   Initialize to zero and update only through this function. */
+isize ttyalarmset(Ttyalarm *alarm, u64 deadline);
 /* Borrow distinct coherent rings for the lifetime of this attachment. */
 isize ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch);
 /* Accept a bounded logical output prefix into private staging. Returns the

@@ -1,6 +1,24 @@
 #include "serial.h"
 #include "private/serial.h"
+#include "private/syscall.h"
 #include <errno.h>
+
+isize
+ttyalarmset(Ttyalarm *alarm, u64 deadline)
+{
+  u64   generation;
+  isize error;
+  if (!alarm)
+    return -ERR_INVALID;
+  if (alarm->deadline == deadline)
+    return 0;
+  error = deadline ? __sys_alarmset(deadline, &generation) : __sys_alarmcancel(&generation);
+  if (!error) {
+    alarm->deadline = deadline;
+    alarm->generation = generation;
+  }
+  return error;
+}
 
 isize
 ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch)
