@@ -6,6 +6,13 @@
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
 
+static int
+volumestale(const Blkprobe *probe)
+{
+  return probe->blk->stale || probe->blk->ended ||
+         probe->blk->info.geometry_generation != probe->generation;
+}
+
 isize
 blkreadboot(Fsblk *blk, u32 block)
 {
@@ -43,10 +50,10 @@ blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
     probe->sequence = 0;
     if (status == -EAGAIN)
       goto submit;
-    if (status)
-      return probe->failed = blk->stale ? -ERR_STALE : -ERR_STATE;
-    if (blk->stale || info->geometry_generation != probe->generation)
+    if (volumestale(probe))
       return probe->failed = -ERR_STALE;
+    if (status)
+      return probe->failed = -ERR_STATE;
     if (probe->phase == ProbeSuper) {
       error = layout(probe->bytes, &probe->layout, probe->uuid);
       if (!error)
@@ -62,8 +69,8 @@ blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
     }
   }
 submit:
-  if (blk->stale || !info->geometry_generation ||
-      (probe->generation && info->geometry_generation != probe->generation))
+  if (!info->geometry_generation || blk->ended || blk->stale ||
+      (probe->generation && volumestale(probe)))
     return probe->failed = -ERR_STALE;
   if (probe->phase == ProbeDone)
     return 1;
@@ -110,7 +117,7 @@ blkredostep(Blkredo *redo)
     if (error)
       return error == -ERR_WOULD_BLOCK ? 0 : error;
     redo->sequence = 0;
-    if (blk->stale || blk->info.geometry_generation != probe->generation)
+    if (volumestale(probe))
       return redo->failed = -ERR_STALE;
     if (status == -EAGAIN)
       goto submit;
@@ -133,7 +140,7 @@ blkredostep(Blkredo *redo)
     }
   }
 submit:
-  if (blk->stale || blk->info.geometry_generation != probe->generation)
+  if (volumestale(probe))
     return redo->failed = -ERR_STALE;
   if (!probe->mark.state || (redo->read && redo->read == redo->head.count + 1))
     return 1;
@@ -290,9 +297,9 @@ blkownersstep(Blkowners *work)
     if (status == -EAGAIN)
       return 0;
     if (status)
-      return work->failed = probe->blk->stale ? -ERR_STALE : -ERR_STATE;
+      return work->failed = volumestale(probe) ? -ERR_STALE : -ERR_STATE;
   }
-  if (probe->blk->stale || probe->blk->info.geometry_generation != probe->generation)
+  if (volumestale(probe))
     return work->failed = -ERR_STALE;
   if (work->phase == OwnersDone)
     return 1;
@@ -365,7 +372,7 @@ blkredoadmit(const Blkowners *work, Journal *journal, u32 faultbytes, u32 faulto
     return work->failed ? work->failed : redo->failed;
   if (work->phase != OwnersDone || probe->blk->rpc)
     return -ERR_WOULD_BLOCK;
-  if (probe->blk->stale || probe->blk->info.geometry_generation != probe->generation)
+  if (volumestale(probe))
     return -ERR_STALE;
   geometry = probe->geometry;
   geometry.faultbytes = faultbytes;
@@ -446,9 +453,9 @@ blkdirstep(Blkdir *work)
     if (status == -EAGAIN)
       return 0;
     if (status)
-      return work->failed = probe->blk->stale ? -ERR_STALE : -ERR_STATE;
+      return work->failed = volumestale(probe) ? -ERR_STALE : -ERR_STATE;
   }
-  if (probe->blk->stale || probe->blk->info.geometry_generation != probe->generation)
+  if (volumestale(probe))
     return work->failed = -ERR_STALE;
   if (!work->inode) {
     work->graph.nodes = load->nodes;
@@ -526,10 +533,9 @@ dirread(Blkowners *home, u32 number, u32 generation, u64 offset, u32 *loaded, u3
     if (status == -EAGAIN)
       return 0;
     if (status)
-      return *failed = probe->blk->stale ? -ERR_STALE : -EIO;
+      return *failed = volumestale(probe) ? -ERR_STALE : -EIO;
   }
-  if (probe->blk->stale || probe->blk->ended ||
-      probe->blk->info.geometry_generation != probe->generation)
+  if (volumestale(probe))
     return *failed = -ERR_STALE;
   node = &load->nodes[number];
   if (node->kind != VNODE_DIR || !node->links || node->generation != generation)
@@ -790,14 +796,13 @@ blkreadlink(void *context, const Vnode *link, const char **out, u64 *bytes)
     if (blkreadpoll(load->read, &status))
       return VWALK_WAIT;
     if (status && status != -EAGAIN) {
-      error = probe->blk->stale ? -ESTALE : -EIO;
+      error = volumestale(probe) ? -ESTALE : -EIO;
       goto done;
     }
   }
   node = &load->nodes[link->number];
-  if (probe->blk->stale || probe->blk->ended ||
-      probe->blk->info.geometry_generation != probe->generation || node->kind != VNODE_LINK ||
-      node->generation != link->generation || !node->links) {
+  if (volumestale(probe) || node->kind != VNODE_LINK || node->generation != link->generation ||
+      !node->links) {
     error = -ESTALE;
     goto done;
   }
@@ -1003,8 +1008,7 @@ mountroot(const Blkmount *mount, const Dirnode **out)
     return -ERR_STATE;
   if (probe->blk->rpc)
     return -ERR_WOULD_BLOCK;
-  if (probe->blk->stale || probe->blk->ended ||
-      probe->blk->info.geometry_generation != probe->generation)
+  if (volumestale(probe))
     return -ERR_STALE;
   *out = &work->graph.nodes[FS_ROOT];
   return 0;
@@ -1190,7 +1194,7 @@ blkmountstep(Blkmount *work)
         return 0;
       break;
     }
-    if (blk->stale || blk->ended || blk->info.geometry_generation != probe->generation) {
+    if (volumestale(probe)) {
       journalstop(journal);
       return work->failed = -ERR_STALE;
     }

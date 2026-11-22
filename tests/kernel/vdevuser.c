@@ -1666,6 +1666,15 @@ blkclient(const Bootview *boot, Handle call)
                   -ERR_WOULD_BLOCK &&
               !mounts.serial && !root.mount,
           446);
+  /* Completed cached scans must not qualify after the block peer ends. */
+  blk.ended = 1;
+  REQUIRE(blkownersstep(&home) == -ERR_STALE && !blk.rpc, 441);
+  home.failed = 0;
+  REQUIRE(blkdirstep(&dirs) == -ERR_STALE && !blk.rpc && !mounts.serial, 441);
+  dirs.failed = 0;
+  REQUIRE(blkprobestep(&homeprobe, blksuper, blkretired) == -ERR_STALE && !blk.rpc, 441);
+  homeprobe.failed = 0;
+  blk.ended = 0;
   blk.stale = 1;
   REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
               !root.mount && blkmountroot(&mounting, &root) == -ERR_STALE && !root.number,
