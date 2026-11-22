@@ -48,6 +48,8 @@
 
 补充本阶段接口：clock_settime（time.h），仅支持受明确校时授权限制的 CLOCK_REALTIME；clock_getres 返回实际分辨率。时间来源/可信校准状态属于原生扩展，不因成功设置时间自动成立。具体契约及用例见 [时间接口](05-events.md)，当前未实现。
 
+`libgen.h` 的 `char *dirname(char *path)` 与 `char *basename(char *path)` 由 libc 执行纯文本路径分解。BusyBox 的公共头无条件包含 `libgen.h`；`cp --parents` 会调用 `dirname`，但该选项在当前最小配置中未启用。不访问文件系统，不折叠中间的 `..`，按本系统路径规则将全斜线和根目录结果统一为 `/`（包括 `//`）。NULL 或空串返回 `.`。调用者应允许修改输入；返回值可能指向输入或只读常量，成功保留 `errno`。按 [dirname](https://pubs.opengroup.org/onlinepubs/9799919799/functions/dirname.html)、[basename](https://pubs.opengroup.org/onlinepubs/9799919799/functions/basename.html) 核对；验收覆盖相对路径、根、尾随与连续斜线及 `..` 保留。
+
 `unistd.h` 的 `long sysconf(int name)` 首先支持 `_SC_PAGESIZE` 与同义 `_SC_PAGE_SIZE`。返回目标内核构建采用的基础虚拟内存页字节数（RV64、ARM64 均为 4096），成功保留 `errno`。未知选择器返回 `-1/EINVAL`；其他配置名暂不导出，不报告尚未交付的功能。`pathconf` 和 `fpathconf` 待接。
 
 stage282：两架构 QEMU `runtime` 的五个正常启动用例均验证两个名称的返回值、成功时 `errno` 保持不变以及未知选择器的 `EINVAL`；格式检查通过。
@@ -154,6 +156,8 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 为 BusyBox 移植新增 `<getopt.h>` 和 GNU 扩展 `getopt_long`。长选项支持精确名、无歧义前缀、必需和可选参数、`flag` 及 `longindex`。默认稳定重排选项和操作数；`+` 或 `POSIXLY_CORRECT` 在首个操作数停止，前导 `-` 按原顺序返回操作数。ARM64、RV64 QEMU `runtime` 核对重排、`--`、短选项组混用、歧义、错误参数、可选参数及短选项旧行为。尚未运行 BusyBox 构建。
 
 公开 SDK 提供 `<endian.h>` 的 16、32、64 位双向主机字节序转换，以及 BusyBox 平台头引用的 `<byteswap.h>`。转换只求值一次，不依赖主机头或库符号。ARM64、RV64 QEMU `runtime` 核对实际字节布局、交换与往返转换；直接编译 BusyBox 1.37.0 上游源码的进度见 [012](../issues/012-busybox-port.md)。
+
+公开 SDK 已导出 `<libgen.h>`、`dirname` 和 `basename`。ARM64、RV64 QEMU `runtime` 验证 NULL、空串、根、重复斜线、普通相对路径和 `..` 分量，成功保持 `errno`。两套 SDK 均核对了导出的头与静态库符号。BusyBox 本身仍未完成构建。
 
 `<inttypes.h>` 提供整数输出的 `PRI*` 格式宏及 `strtoimax`、`strtoumax`。格式宏跟随 Clang 的目标类型，两个 LP64 目标的转换沿用原解析器的范围、错误码及停止位置。ARM64、RV64 QEMU `runtime` 验证从定宽、最小、快速、最大和指针整数类型格式化的实际字符串，并核对转换边界；6 项整数主机回归通过。扫描宏和宽字符接口仍待实现。
 

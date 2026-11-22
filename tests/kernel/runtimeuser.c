@@ -3,6 +3,7 @@
 #include <fnmatch.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <libgen.h>
 #include <setjmp.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -533,6 +534,24 @@ sigdescriptioncheck(void)
               !strcmp(strsignal(INT_MIN), "Unknown signal") &&
               !strcmp(strsignal(INT_MAX), "Unknown signal"),
           310);
+}
+static void
+libgencheck(void)
+{
+  const char *const cases[][3] = {
+      {"", ".", "."},    {"name", ".", "name"},       {"//", "/", "/"},
+      {"///", "/", "/"}, {"///name///", "/", "name"}, {"a//../b//", "a//..", "b"},
+      {"a/b", "a", "b"}, {"a///", ".", "a"}};
+  char  path[24];
+  usize i;
+  errno = EDOM;
+  REQUIRE(!strcmp(dirname(NULL), ".") && !strcmp(basename(NULL), "."), 311);
+  for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+    strcpy(path, cases[i][0]);
+    REQUIRE(!strcmp(dirname(path), cases[i][1]), 312);
+    strcpy(path, cases[i][0]);
+    REQUIRE(!strcmp(basename(path), cases[i][2]) && errno == EDOM, 313);
+  }
 }
 static void
 patterncheck(void)
@@ -1094,6 +1113,7 @@ main(int argc, char **argv)
   ctypecheck();
   collationcheck();
   sigdescriptioncheck();
+  libgencheck();
   patterncheck();
   tokencheck();
   runtime_trace[8] = numbercheck();

@@ -41,6 +41,8 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 用同样的包含路径和目标架构，对 `shell/ash.c`、`libbb/xatonum.c` 加 `-include include/autoconf.h -M -MG`，可在首个缺失头之后继续收集依赖。两架构均报告以下未解析的系统头：`dirent.h`、`grp.h`、`libgen.h`、`mntent.h`、`paths.h`、`pwd.h`、`sys/ioctl.h`、`sys/mman.h`、`sys/param.h`、`sys/resource.h`、`sys/stat.h`、`sys/statfs.h`、`sys/sysmacros.h`、`sys/time.h`、`sys/times.h`、`sys/utsname.h`、`arpa/inet.h`、`netdb.h`、`sys/socket.h`。这是预处理依赖。上游 `libbb.h` 的公共声明需要套接字类型，而且 `inet_common.o`、`xconnect.o` 等在 `libbb/Kbuild` 中无条件构建；仅关闭网络 applet 不会去掉这些依赖。移植应隔离未使用的声明和对象，再复查启用的 applet 是否仍引用网络代码。补齐头之后仍需检查编译、链接及运行，不能用 `-M -MG` 代替这些验收。
 
+上述扫描之后，公开 SDK 已补齐 `libgen.h`，见 [POSIX 验收记录](../design/15-posix.md#执行与验收)。
+
 **阶段 C：最小 applet 集合跑通**
 
 只编无网络、无 `/proc` 依赖的 applet：`sh`(ash)、`cat`、`ls`、`echo`、`mkdir`、`rm`、`mv`、`cp`、`test`、`sleep`。判据见下节。
