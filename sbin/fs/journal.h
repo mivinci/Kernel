@@ -32,6 +32,7 @@ struct Writeimage;
 struct Loadmap;
 struct Loadindex;
 struct Blockmap;
+struct Loadowners;
 struct Cache;
 struct Reclaim;
 typedef struct Mapmeta     Mapmeta;
@@ -43,6 +44,8 @@ typedef struct Inodealloc  Inodealloc;
 typedef struct Dirinsert   Dirinsert;
 typedef struct Dirgrow     Dirgrow;
 typedef struct Shrink      Shrink;
+typedef struct Redoscan    Redoscan;
+typedef struct Redoinode   Redoinode;
 struct Journalmark
 {
   u64 txid;
@@ -96,6 +99,21 @@ struct Reclaimtx
 struct Inodemap
 {
   u64 used[FS_INODES / 64];
+};
+struct Redoscan
+{
+  Journalblock           images[JOURNAL_META];
+  const Inodemap        *inodes;
+  const struct Blockmap *allocation;
+  struct Loadowners     *owners;
+  u32                    blocks, count, next;
+  isize                  failed;
+};
+struct Redoinode
+{
+  const struct Loadmap   *map;
+  const struct Loadindex *index;
+  u32                     kind, links;
 };
 struct Inodealloc
 {
@@ -249,9 +267,16 @@ isize journalreadonly(const Fslayout *, const Fsgeometry *, const Journalmark *)
    reading a home block for the recovery scan. NULL output on success means
    read home; errors leave output unchanged. No I/O is started. */
 isize journalview(u64 blocks, const Journalblock *images, u32 count, u64 block, const u8 **out);
-/* Classifier for data-area targets. Context is the Loadowners built from
-   the complete post-transaction view for these exact images, with the log
-   images taking precedence over home when decoding allocation and maps. */
+/* Begin on fresh zeroed scan and owners storage. The bitmaps must already
+   be decoded from the same stable overlay. All inputs stay pinned. */
+isize redoscaninit(Redoscan *, u32 blocks, const Journalblock *, u32 count, const Inodemap *,
+                   const struct Blockmap *, struct Loadowners *);
+/* Visit at most one inode-table block's worth of slots. The loader uses the
+   scan's images with journalview, including for the indirect block. Its
+   returned snapshots are borrowed until the next load. Return one when
+   done, zero for more work, WOULD_BLOCK to resume, or a sticky error. */
+isize redoscanstep(Redoscan *, isize (*load)(void *, const Redoscan *, u32, Redoinode *), void *);
+/* Data-area classifier for a completed Redoscan and its exact images. */
 int journalmetadata(void *, const Journalblock *, u32 count, u32 index);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state

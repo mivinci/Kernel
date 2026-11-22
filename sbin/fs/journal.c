@@ -966,18 +966,76 @@ journalreadonly(const Fslayout *layout, const Fsgeometry *device, const Journalm
   return emptyvalid(mark) ? 0 : -ERR_STATE;
 }
 
+isize
+redoscaninit(Redoscan *scan, u32 blocks, const Journalblock *images, u32 count,
+             const Inodemap *inodes, const Blockmap *allocation, Loadowners *owners)
+{
+  const u8 *ignored;
+  u32       i;
+  isize     error;
+  if (!scan || scan->next || !inodes || !allocation || !owners)
+    return -ERR_INVALID;
+  error = journalview(blocks, images, count, FS_INODE_MAP, &ignored);
+  if (error)
+    return error;
+  if ((inodes->used[0] & 3) != 2)
+    return -ERR_STATE;
+  for (i = 0; i < count; i++)
+    scan->images[i] = images[i];
+  scan->inodes = inodes;
+  scan->allocation = allocation;
+  scan->owners = owners;
+  scan->blocks = blocks;
+  scan->count = count;
+  scan->next = FS_ROOT;
+  return 0;
+}
+
+isize
+redoscanstep(Redoscan *scan, isize (*load)(void *, const Redoscan *, u32, Redoinode *), void *ctx)
+{
+  u32 i, end;
+  if (!scan || !scan->next || !load)
+    return -ERR_INVALID;
+  if (scan->failed)
+    return scan->failed;
+  end = MIN(scan->next + FS_BLOCK_BYTES / FS_INODE_BYTES, FS_INODES);
+  while ((i = scan->next) < end) {
+    if (scan->inodes->used[i / 64] & (UINT64_C(1) << (i % 64))) {
+      Redoinode node = {0};
+      isize     error = load(ctx, scan, i, &node);
+      if (!error)
+        error = loadmapclaim(i, node.kind, node.links, node.map, node.index, scan->allocation,
+                             scan->blocks, scan->owners);
+      if (error == -ERR_WOULD_BLOCK)
+        return error;
+      if (error) {
+        scan->failed = error < 0 ? error : -ERR_STATE;
+        return scan->failed;
+      }
+    }
+    scan->next++;
+  }
+  return scan->next == FS_INODES;
+}
+
 int
 journalmetadata(void *context, const Journalblock *images, u32 count, u32 index)
 {
-  const Loadowners *owners = context;
-  u64               block, bit;
-  if (!owners || !images || index >= count || count > JOURNAL_META)
+  const Redoscan *scan = context;
+  u64             block, bit;
+  u32             i;
+  if (!scan || scan->next != FS_INODES || scan->failed || !images || index >= count ||
+      count != scan->count)
     return 0;
+  for (i = 0; i < count; i++)
+    if (images[i].block != scan->images[i].block || images[i].bytes != scan->images[i].bytes)
+      return 0;
   block = images[index].block;
-  if (block < FS_DATA_START || block >= FS_MAX_BLOCKS)
+  if (block < FS_DATA_START || block >= scan->blocks)
     return 0;
   bit = UINT64_C(1) << (block % 64);
-  return !!(owners->owned.used[block / 64] & owners->metadata.used[block / 64] & bit);
+  return !!(scan->owners->owned.used[block / 64] & scan->owners->metadata.used[block / 64] & bit);
 }
 
 isize

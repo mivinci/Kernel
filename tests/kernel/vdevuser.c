@@ -229,27 +229,56 @@ testroot(u32 blocks)
           336);
 }
 
+typedef struct Redotest Redotest;
+struct Redotest
+{
+  const u8 *bitmap;
+  u32       waiting, bad;
+};
+
+static isize
+redoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
+{
+  static const Loadmap   root = {{FS_ROOT, 1, 1, FS_BLOCK_BYTES}, {109}, 0};
+  static const Loadmap   file = {{FS_ROOT + 1, 1, 1, FS_BLOCK_BYTES}, {99}, 108};
+  static const Loadindex index = {108, {0}};
+  Redotest              *test = context;
+  const u8              *bytes;
+  if (journalview(scan->blocks, scan->images, scan->count, FS_INODE_MAP, &bytes) ||
+      bytes != test->bitmap)
+    return -ERR_STATE;
+  if (ino == FS_ROOT) {
+    *out = (Redoinode){&root, NULL, VNODE_DIR, 1};
+    return 0;
+  }
+  if (ino != FS_ROOT + 1 || test->bad)
+    return -ERR_STATE;
+  *out = (Redoinode){&file, test->waiting ? NULL : &index, VNODE_FILE, 1};
+  test->waiting = 0;
+  return 0;
+}
+
 static void
 testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config)
 {
-  static Journal    journal, idle;
-  static Loadowners owners;
-  static Blockmap   allocation;
-  static Loadindex  index = {108, {0}};
-  const Loadmap     root = {{FS_ROOT, 1, 1, FS_BLOCK_BYTES}, {109, 107}, 0};
-  const Loadmap     file = {{FS_ROOT + 1, 1, 1, FS_BLOCK_BYTES}, {99}, 108};
-  static u8         images[3][JOURNAL_BYTES];
-  Journalblock      metadata[2];
-  Journalio         io;
-  Journaltransport  transport = {queue, binding, irqevent, 0, {0}, &journal};
-  Fsgeometry        geometry;
-  u32               i, j, count = 0;
-  u64               stride = JOURNAL_BYTES / VBLK_SECTOR;
-  u64               blocks = config->sectors / stride;
-  Fslayout          layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
-  Journalmark       mark = {47, 0, 0, 0};
-  const Journalmark fresh = {0, 0, 0, 0};
-  Journalhead       head = {47, {65, 66}, 1, 2, 11, 12};
+  static Journal        journal, idle;
+  static Redoscan       scan, broken;
+  static Loadowners     owners, partial;
+  static Blockmap       allocation;
+  static const Inodemap inodes = {{6}};
+  static u8             images[3][JOURNAL_BYTES];
+  Redotest              fixture = {images[0], 1, 0};
+  Journalblock          metadata[2];
+  Journalio             io;
+  Journaltransport      transport = {queue, binding, irqevent, 0, {0}, &journal};
+  Fsgeometry            geometry;
+  u32                   i, j, count = 0;
+  u64                   stride = JOURNAL_BYTES / VBLK_SECTOR;
+  u64                   blocks = config->sectors / stride;
+  Fslayout              layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
+  Journalmark           mark = {47, 0, 0, 0};
+  const Journalmark     fresh = {0, 0, 0, 0};
+  Journalhead           head = {47, {65, 66}, 1, 2, 11, 12};
   REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
   geometry.bytes = config->sectors * VBLK_SECTOR;
   geometry.logical = config->blocksize;
@@ -356,26 +385,12 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
               journalnext(&journal, &io) == -ERR_STATE,
           247);
   head.targets[1] = metadata[1].block = 99;
-  allocation.used[1] = (UINT64_C(1) << (99 - 64)) | (UINT64_C(7) << (107 - 64));
-  REQUIRE(!loadmapclaim(FS_ROOT, VNODE_DIR, 1, &root, NULL, &allocation, (u32) blocks, &owners) &&
-              !loadmapclaim(FS_ROOT + 1, VNODE_FILE, 1, &file, &index, &allocation, (u32) blocks,
-                            &owners) &&
-              journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                             journalmetadata, &owners) == -ERR_STATE,
-          337);
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
                          redometa, NULL) == -ERR_STATE &&
               journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
                              NULL, NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,
           248);
-  head.targets[1] = metadata[1].block = 107;
-  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                         journalmetadata, &owners) == -ERR_STATE,
-          338);
-  head.targets[1] = metadata[1].block = 108;
-  REQUIRE(journalmetadata(&owners, metadata, 2, 1) && !journalmetadata(&owners, metadata, 2, 2),
-          339);
   head.targets[1] = metadata[1].block = 109;
   {
     const u8 *bytes = NULL;
@@ -390,14 +405,33 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
                 !journalview(blocks, metadata, 2, FS_BLOCK_MAP, &bytes) && !bytes,
             342);
   }
+  allocation.used[1] = (UINT64_C(1) << (99 - 64)) | (UINT64_C(3) << (108 - 64));
+  REQUIRE(!redoscaninit(&scan, (u32) blocks, metadata, 2, &inodes, &allocation, &owners) &&
+              redoscanstep(&scan, redoload, &fixture) == -ERR_WOULD_BLOCK && scan.next == 2 &&
+              !journalmetadata(&scan, metadata, 2, 1),
+          337);
+  for (i = 0; i < FS_INODES / 32; i++)
+    REQUIRE(redoscanstep(&scan, redoload, &fixture) == (i == FS_INODES / 32 - 1), 338);
+  REQUIRE(journalmetadata(&scan, metadata, 2, 1), 339);
+  metadata[1].block = 99;
+  REQUIRE(!journalmetadata(&scan, metadata, 2, 1), 343);
+  metadata[1].block = 109;
+  fixture.bad = 1;
+  REQUIRE(!redoscaninit(&broken, (u32) blocks, metadata, 2, &inodes, &allocation, &partial) &&
+              redoscanstep(&broken, redoload, &fixture) == -ERR_STATE,
+          344);
+  fixture.bad = 0;
+  REQUIRE(redoscanstep(&broken, redoload, &fixture) == -ERR_STATE &&
+              !journalmetadata(&broken, metadata, 2, 1),
+          345);
   geometry.faultbytes = 0;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                         journalmetadata, &owners) == -ERR_NOTSUP &&
+                         journalmetadata, &scan) == -ERR_NOTSUP &&
               !journal.last && journalnext(&journal, &io) == -ERR_STATE,
           251);
   geometry.faultbytes = FS_BLOCK_BYTES;
   REQUIRE(!journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                          journalmetadata, &owners),
+                          journalmetadata, &scan),
           194);
   while (journal.phase != JOURNAL_DONE) {
     REQUIRE(count < 5 && !journalpump(&journal, journalsubmit, &transport) &&

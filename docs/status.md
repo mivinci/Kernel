@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage565：恢复扫描分批检查 inode，原槽等待可续跑；数据区分类须扫描完成且镜像匹配。双架构 QEMU `virtiodev` 和 50 项 FS 主机测试通过。
 - stage564：恢复扫描可优先取日志镜像，未覆盖块回退读 home；双架构 QEMU `virtiodev` 验证选择逻辑。
 - stage563：重放按已解码归属区分目录块、索引块和文件数据；双架构 QEMU `virtiodev` 验证目录块真实写入，50 项 FS 主机测试通过。
 - stage562：卷归属检查拒绝跨 inode 共享块，覆盖孤儿尾块和间接索引冲突；双架构 QEMU `virtiodev` 与 50 项 FS 主机测试通过。
