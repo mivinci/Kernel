@@ -224,6 +224,29 @@ class FsJournalTests(unittest.TestCase):
             self.assertEqual(lib.journalrelease(self.j), 0)
             self.assertEqual(len(requests), 1)
 
+    def test_pump_retries_only_unsubmitted_backpressure_with_a_new_ticket(self):
+        for lib in self.libs:
+            self.init(lib)
+            self.begin()
+            requests = []
+            phase, cursor = self.journal.phase, self.journal.cursor
+
+            @Submit
+            def submit(_, ticket, offset, size):
+                requests.append(Ticket.from_buffer_copy(bytes(ticket.contents)))
+                return -11 if len(requests) == 1 else 0
+
+            self.assertEqual(lib.journalpump(self.j, submit, None), 0)
+            self.assertEqual((self.journal.phase, self.journal.cursor, self.journal.active),
+                             (phase, cursor, 0))
+            self.assertEqual(lib.journalpump(self.j, submit, None), 0)
+            old, new = requests
+            self.assertEqual((old.txid, old.block, old.bytes, old.kind),
+                             (new.txid, new.block, new.bytes, new.kind))
+            self.assertGreater(new.serial, old.serial)
+            self.assertEqual(lib.journalcomplete(self.j, C.byref(old), 1), -4)
+            self.complete(new)
+
     def test_begin_rejects_invalid_geometry_targets_counts_and_aliases_atomically(self):
         for lib in self.libs:
             self.init(lib);self.assertEqual(lib.journalinit(C.byref(Journal()),99,0),-1)

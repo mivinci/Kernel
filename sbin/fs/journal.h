@@ -261,7 +261,10 @@ isize journalnext(Journal *journal, Journalio *out);
 isize journalrange(const Journal *, const Journalio *, u64 *offset, u32 *bytes);
 /* Drive one operation per event-loop turn. Return one at DONE, zero while
    waiting, or an error. Submit copies the ticket before returning; a negative
-   result guarantees no lower access remains. Completion is delivered via
+   result guarantees no lower access remains. WOULD_BLOCK means temporary
+   backpressure before submission: the cursor stays put and the owner
+   retries on readiness with a fresh ticket. Other failures stop the run.
+   Completion is delivered via
    journalcomplete after drain. A stopped journal reports STATE even while
    its last ticket is still held; that error does not release ownership.
    The owner retains snapshots and publishes or hands off to recovery. */

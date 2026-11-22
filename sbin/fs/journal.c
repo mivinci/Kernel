@@ -1103,8 +1103,15 @@ journalpump(Journal *journal, isize (*submit)(void *, const Journalio *, u64, u3
   if (error)
     return error;
   error = journalrange(journal, &io, &offset, &bytes);
-  if (!error)
+  if (!error) {
     error = submit(context, &io, offset, bytes);
+    if (error == -ERR_WOULD_BLOCK && journal->phase != JOURNAL_STOPPED &&
+        pendingmatch(journal, &io)) {
+      /* No lower I/O was started. Keep the cursor but burn the ticket. */
+      journal->active = 0;
+      return 0;
+    }
+  }
   if (error) {
     isize drain = journalcomplete(journal, &io, 0);
     return drain ? drain : error;
