@@ -11,7 +11,7 @@ struct Packet
 {
   Boot     header;
   Strref   arg;
-  Resentry resources[3];
+  Resentry resources[4];
   char     role[2];
 };
 
@@ -26,25 +26,26 @@ struct Packet
   } while (0)
 
 static void
-testpair(const char *roles)
+testactors(const char *roles)
 {
   Setid      set;
   Set        budget;
-  Handle     pids[2];
-  Procinfo   processes[2];
+  Handle     pids[3];
+  Procinfo   processes[3];
   Pgstat     before, after;
   Packet     packet;
   Life       life;
   Liferesult result;
   u64        trace[2];
-  u32        i, j, ended, turns = 0;
+  u32        i, j, ended, turns = 0, count = roles[2] ? 3 : 2;
   int        error;
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set));
-  for (i = 0; i < 2; i++)
+  for (i = 0; i < count; i++)
     CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
-  for (i = 0; i < 2; i++) {
+  for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
+    int     client = i + 1 == count;
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
     packet.header.magic = BOOT_MAGIC;
@@ -52,7 +53,7 @@ testpair(const char *roles)
     packet.header.bytes = sizeof(packet);
     packet.header.argc = 1;
     packet.header.argv_off = offsetof(Packet, arg);
-    packet.header.resource_count = ARRAY_SIZE(packet.resources);
+    packet.header.resource_count = count == 3 && i ? 4 : 3;
     packet.header.resources_off = offsetof(Packet, resources);
     packet.header.user_lo = BOOT_USER_LO;
     packet.header.user_hi = BOOT_USER_HI;
@@ -63,36 +64,47 @@ testpair(const char *roles)
     packet.resources[0].handle = testresource(table, LOCAL_SPACE);
     packet.resources[1].tag = BOOT_SELF_ALLOC;
     packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
-    packet.resources[2].tag = i ? BOOT_FS_CALL : 256;
-    if (i)
+    packet.resources[2].tag = client ? BOOT_FS_CALL : 256;
+    if (client)
       CHECK(!localendpoint(table, processes[0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[2].handle));
     else
       CHECK(!localobserve(table, OBSERVE_SOURCE, &packet.resources[2].handle));
+    if (packet.header.resource_count == 4) {
+      packet.resources[3].tag = 257;
+      CHECK(!localendpoint(table, processes[client ? 1 : 0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
+                           &packet.resources[3].handle));
+    }
     testload(pids[i], pipeio_image, (u64) (pipeio_image_end - pipeio_image), &packet,
              sizeof(packet));
+    /* The loaded mappings hold their own references. Leave Local slots for HELLO. */
+    for (j = 0; j < table->count; j++)
+      if (table->slots[j].subtype == LOCAL_MEM)
+        CHECK(!localfree(table, handlepack(HANDLE_RESOURCE, table->slots[j].generation, j)));
     CHECK(!procpublish(pids[i]));
   }
   for (;;) {
     ended = 0;
-    for (i = 0; i < 2; i++) {
-      u32 reason = i && roles[i] == 'b' ? LIFE_SIGNAL : LIFE_EXIT;
+    for (i = 0; i < count; i++) {
+      u32 reason = roles[i] == 'b' ? LIFE_SIGNAL : LIFE_EXIT;
       u32 code = reason == LIFE_SIGNAL ? SIGNAL_PIPE : 42;
       CHECK(!lifestat(processes[i].life, &life));
       if (life.state != LIFE_ENDED)
         continue;
       CHECK(!spaceread(processes[i].space, pipeio_trace_address, trace, sizeof(trace)));
       if (life.reason != reason || life.code != code || trace[1]) {
-        putstr(i ? "PIPEIOCLIENT line=" : "PIPEIOSERVER line=");
+        putstr(i + 1 == count ? "PIPEIOCLIENT line=" : "PIPEIOSERVER line=");
         puthex(trace[1]);
         putstr(" code=");
         puthex(life.code);
+        putstr(" detail=");
+        puthex(trace[0]);
         putstr("\n");
       }
       CHECK(life.reason == reason && life.code == code && trace[0] == 7 && !trace[1]);
       ended++;
     }
-    if (ended == 2)
+    if (ended == count)
       break;
     CHECK(++turns < 320);
     error = procrunone();
@@ -101,7 +113,7 @@ testpair(const char *roles)
     else
       CHECK(!error);
   }
-  for (i = 0; i < 2; i++) {
+  for (i = 0; i < count; i++) {
     while ((error = procclean(pids[i])) > 0) {
     }
     CHECK(!error && !lifecollect(processes[i].life, 1, &result));
@@ -115,14 +127,15 @@ testpair(const char *roles)
 void
 pipeiotest(void)
 {
-  testpair("sc");
-  testpair("SC");
-  testpair("Ii");
-  testpair("Tt");
-  testpair("Uu");
-  testpair("Rr");
-  testpair("Bb");
-  testpair("Dd");
-  testpair("Ff");
-  testpair("Gg");
+  testactors("sc");
+  testactors("SC");
+  testactors("Ii");
+  testactors("Tt");
+  testactors("Uu");
+  testactors("Rr");
+  testactors("Bb");
+  testactors("Dd");
+  testactors("Ff");
+  testactors("Gg");
+  testactors("HJh");
 }

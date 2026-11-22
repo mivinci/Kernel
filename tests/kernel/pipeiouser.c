@@ -255,6 +255,54 @@ createpipe(Connwork *work, Conncache *cache, Pipekey keys[2])
 }
 
 static void
+pollserverscript(const Bootview *boot, Fsservice *fs, Pipefile *file, int writer)
+{
+  Pipepoll *wait = fs->pipes.polls;
+  Filelink *link = fs->links;
+  Ipcmsg    request, gate, result;
+  Msg       message = {{PIPETEST, 0, 0, 0}}, reply = {{0, 0, 0, 0}};
+  u64       flags;
+  u8        byte = 'r';
+  u32       i;
+  CHECK(!fsstep(fs) && link->ready && !fsstep(fs) && file->session[PIPE_READ]);
+  for (i = 0; i < 2; i++) {
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY &&
+          !pipedispatch(&fs->pipes, link, 1, &request));
+  }
+  CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_WAIT &&
+        !pipedispatch(&fs->pipes, link, 1, &request) && wait->request == request.request);
+  if (writer) {
+    CHECK(!ipc_recv(0, 0, &gate) && gate.words[0] == PIPETEST && !ipc_reply(gate.request, &reply) &&
+          pipewrite(&file->stream, &byte, 1) == 1 && !pipepump(&fs->pipes) && !wait->request);
+  } else {
+    Handle old = request.request;
+    u64    slot = request.words[3];
+    CHECK(!ipc_call(bootresource(boot, 257), &message, 0, &result));
+    /* A fresh query must have its own slot while the cancelled WAIT still owns its page. */
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY &&
+          request.words[3] != slot && !ipc_rqcheck(old, &flags) &&
+          flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
+          !pipedispatch(&fs->pipes, link, 1, &request) && !pipepump(&fs->pipes) && !wait->request);
+  }
+  if (writer)
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY &&
+          !pipedispatch(&fs->pipes, link, 1, &request));
+  CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_POLL_QUERY);
+  if (writer) {
+    CHECK(file->stream.bytes == 1 && !pipedispatch(&fs->pipes, link, 1, &request));
+  } else {
+    CHECK(!ipc_defer(request.request) && !ipc_recv(0, 0, &gate) && gate.source == request.source &&
+          gate.words[0] == PIPETEST && !ipc_rqcheck(request.request, &flags) &&
+          flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
+    reply.words[0] = (u64) -EINTR;
+    reply.words[1] = request.words[2];
+    CHECK(!ipc_reply(request.request, &reply));
+    reply.words[0] = reply.words[1] = 0;
+    CHECK(!ipc_reply(gate.request, &reply));
+  }
+}
+
+static void
 serviceloop(const Bootview *boot, u32 interrupt)
 {
   static Filelink link;
@@ -270,7 +318,9 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         &link,
                         1,
                         {&table, &wait, 1, &poll, 1}};
-  if (interrupt == 1) {
+  if (interrupt >= 8) {
+    pollserverscript(boot, &fs, &file, interrupt == 8);
+  } else if (interrupt == 1) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
     Msg    reply = {{0, 0, 0, 0}};
@@ -1121,6 +1171,67 @@ brokenpipe(int signal)
 }
 
 static void
+pollbothclient(const Bootview *boot)
+{
+  Fileimage    *image;
+  Connwork     *first, *second;
+  Conncache    *cache;
+  Connpeer      peer;
+  Conntag       tag;
+  Connclaim     claim;
+  Bootmap       map = {0};
+  Pipecreate    pipe = {0};
+  Rkey          active = {0};
+  struct pollfd rows[3];
+  Ipcmsg        result;
+  Msg           gate = {{PIPETEST, 0, 0, 0}};
+  int           left[2], right[2];
+  isize         business;
+  Handle        call = bootresource(boot, 257), redundant = 0;
+  CHECK(!sysfileimage(&image));
+  pipeiotrace[0] = sysfileimagefs(0, ADDRESS, &first);
+  CHECK(!pipeiotrace[0]);
+  CHECK(!sysfileimagepipe(0, first, &pipe, &active, left, &business));
+  CHECK(!business);
+  cache = sysfileimagecache(image);
+  CHECK(!sysconnpeer(call, &peer) && !sysconnbind(cache, peer, &tag));
+  second = &image->connections[tag.index];
+  CHECK(first != second && !sysconnworkinit(second, cache, tag));
+  CHECK(!sysconnworktakecall(second, cache, &call, &redundant) && !call && !redundant);
+  CHECK(!sysconnbegin(cache, tag, image->contexts.sequence + 1, &claim) &&
+        !sysbootprepare(&second->state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0));
+  CHECK(!sysctxhello(&image->contexts, 0, second, cache, bootresource(boot, BOOT_SELF_SPACE),
+                     ADDRESS + FS_CONN_BYTES, &map, &active));
+  CHECK(!sysctxpipecreate(&image->contexts, 0, &image->files, second, cache, &image->fds, &pipe,
+                          &active, right, &business) &&
+        !business);
+
+  rows[0].fd = right[1];
+  rows[0].events = POLLOUT;
+  rows[0].revents = 0;
+  rows[1].fd = left[1];
+  rows[1].events = POLLOUT;
+  rows[1].revents = 0;
+  rows[2] = rows[0];
+  CHECK(poll(rows, ARRAY_SIZE(rows), 0) == 3 && rows[0].revents == POLLOUT &&
+        rows[1].revents == POLLOUT && rows[2].revents == POLLOUT);
+  rows[0].fd = right[0];
+  rows[0].events = POLLIN;
+  rows[1].fd = left[0];
+  rows[1].events = POLLIN;
+  rows[2] = rows[0];
+  CHECK(poll(rows, ARRAY_SIZE(rows), 250) == 1 && !rows[0].revents && rows[1].revents == POLLIN &&
+        !rows[2].revents);
+
+  rows[0].revents = rows[1].revents = rows[2].revents = POLLPRI;
+  CHECK(poll(rows, ARRAY_SIZE(rows), 0) == -1 && errno == EIO && rows[0].revents == POLLPRI &&
+        rows[1].revents == POLLPRI && rows[2].revents == POLLPRI &&
+        !ipc_call(second->state.call, &gate, CALL_CONTROL, &result));
+  CHECK(!close(left[0]) && !close(left[1]) && !close(right[0]) && !close(right[1]));
+  pipeiotrace[0] = 7;
+}
+
+static void
 pollfaultclient(int pending)
 {
   Fileimage    *image;
@@ -1328,6 +1439,10 @@ main(int argc, char **argv)
     serviceloop(boot, 7);
   else if (argv[0][0] == 'g')
     pollfaultclient(0);
+  else if (argv[0][0] == 'H' || argv[0][0] == 'J')
+    serviceloop(boot, argv[0][0] == 'H' ? 8 : 9);
+  else if (argv[0][0] == 'h')
+    pollbothclient(boot);
   else if (argv[0][0] == 'I')
     serviceloop(boot, 1);
   else if (argv[0][0] == 'i')
