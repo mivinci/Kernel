@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
 #include <proto/tty.h>
@@ -283,16 +284,25 @@ getcwd(char *buffer, size_t size)
 {
   Fileioresult completed;
   isize        status;
-  if (!size || !buffer) {
-    errno = !size ? EINVAL : EFAULT;
+  char        *allocated = NULL;
+  if (buffer && !size) {
+    errno = EINVAL;
     return NULL;
+  }
+  if (!buffer) {
+    if (!size)
+      size = FS_SLOT_BYTES;
+    allocated = buffer = malloc(size);
+    if (!buffer)
+      return NULL;
   }
   status = sysfileimagegetcwd(__libc_sigdepth(), buffer, size, &completed);
-  if (status == -ERR_NOTSUP) {
+  if (status == -ERR_NOTSUP)
     errno = ENOSYS;
-    return NULL;
-  }
-  return ioresult(FS_PATH, status, &completed) < 0 ? NULL : buffer;
+  else if (ioresult(FS_PATH, status, &completed) >= 0)
+    return buffer;
+  free(allocated);
+  return NULL;
 }
 
 int

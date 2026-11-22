@@ -3,6 +3,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <termios.h>
 #include <proto/tty.h>
@@ -3128,6 +3129,7 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
   CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
   CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   fixture.linkwait = 1;
   CHECK(!fsstep(&fs) && job.node == &fixture.symlink && job.waiting && fixture.holds == 3 &&
         !fsopenpump(&open) && !job.call.request && fixture.holds == 2 && !fsstep(&fs) &&
@@ -3227,6 +3229,7 @@ publicchdirclient(void)
   int              fd;
   char             cwd[4] = "xxx";
   char             link[9] = "????????";
+  char            *owned;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer));
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
         open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT);
@@ -3253,6 +3256,13 @@ publicchdirclient(void)
         !strcmp(cwd, "xxx") && getcwd(cwd, 3) == cwd && errno == ERANGE && cwd[0] == '/' &&
         cwd[1] == 'd' && !cwd[2] && !cwd[3] && !getcwd((char *) (uintptr_t) 1, 3) &&
         errno == EFAULT);
+  owned = getcwd(NULL, 0);
+  CHECK(owned && !strcmp(owned, "/d") && errno == EFAULT);
+  free(owned);
+  CHECK(!getcwd(NULL, 2) && errno == ERANGE);
+  owned = getcwd(NULL, 3);
+  CHECK(owned && !strcmp(owned, "/d") && errno == ERANGE);
+  free(owned);
   CHECK(readlink("/l", link, 3) == 3 && !strcmp(link, "../?????") &&
         readlink("/l", link, sizeof(link)) == 7 && !strcmp(link, "../data?") &&
         readlink("/x", link, sizeof(link)) == -1 && errno == EINVAL && !strcmp(link, "../data?") &&

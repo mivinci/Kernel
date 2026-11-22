@@ -163,6 +163,10 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 
 公开 SDK 的 `<strings.h>` 提供 `strcasecmp` 和 `strncasecmp`，供 BusyBox 的 `sleep` 参数和信号名称解析使用。按 C locale 折叠 ASCII 大写字母，其余字节按无符号值比较；有界版本不读超出长度的输入。ARM64、RV64 QEMU `runtime` 验证混合大小写、提前遇到 NUL、无 NUL 的限长输入、零长度及高位字节。BusyBox 完整构建仍待 [012](../issues/012-busybox-port.md) 的前置接口。
 
+BusyBox `ash` 直接调用 `getcwd(NULL, 0)`。libc 支持这个扩展：用现有 GETCWD 的单槽容量分配缓冲，非零长度则按指定大小分配，成功后由调用者 `free()`；失败由 libc 释放并保留错误。传入调用者缓冲且长度为零仍返回 `EINVAL`。ARM64、RV64 QEMU `pipeio` 验证自动分配、显式容量足够或不足，以及成功时保留 `errno`。路径始终由文件服务返回，无新增线上操作。
+
+`<string.h>` 提供 `strsignal()`，用本系统的公开信号编号取得 C locale 描述，可用于 `ash` 的作业状态显示。描述不分配、不会被后续调用覆盖，应用不得修改；未知编号返回 `Unknown signal`，不修改 `errno`。ARM64、RV64 QEMU `runtime` 核对停止、终止、未知编号及结果的生命周期。
+
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。

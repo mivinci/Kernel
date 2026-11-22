@@ -522,6 +522,19 @@ collationcheck(void)
           308);
 }
 static void
+sigdescriptioncheck(void)
+{
+  const char *interrupt = strsignal(SIGINT);
+  errno = EDOM;
+  REQUIRE(!strcmp(strsignal(SIGTSTP), "Stopped") && !strcmp(strsignal(SIGTERM), "Terminated") &&
+              !strcmp(interrupt, "Interrupt") && errno == EDOM,
+          309);
+  REQUIRE(!strcmp(strsignal(0), "Unknown signal") &&
+              !strcmp(strsignal(INT_MIN), "Unknown signal") &&
+              !strcmp(strsignal(INT_MAX), "Unknown signal"),
+          310);
+}
+static void
 patterncheck(void)
 {
   REQUIRE(!fnmatch("a**b?c*d", "abbxcyd", 0) && fnmatch("a**b?c*d", "abxcye", 0) == FNM_NOMATCH &&
@@ -1080,6 +1093,7 @@ main(int argc, char **argv)
   REQUIRE(!vwalkusercheck(), 294);
   ctypecheck();
   collationcheck();
+  sigdescriptioncheck();
   patterncheck();
   tokencheck();
   runtime_trace[8] = numbercheck();
