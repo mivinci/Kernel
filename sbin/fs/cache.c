@@ -146,6 +146,36 @@ cacheinvalidate(Cache *cache, Cachekey *owned)
   return 0;
 }
 isize
+cacheforget(Cache *cache, const u64 *blocks, u32 count)
+{
+  u32 i, j;
+  if (!count || count > CACHE_MAX || !external(cache, blocks, (u64) count * sizeof(*blocks)))
+    return -ERR_INVALID;
+  for (j = 0; j < count; j++)
+    if (blocks[j] >= cache->blocks)
+      return -ERR_INVALID;
+  for (i = 0; i < cache->capacity; i++) {
+    Cacheblock *entry = &cache->entries[i];
+    if (!valid(entry))
+      return -ERR_STATE;
+    if (entry->bound && (entry->references || entry->io || entry->dirty))
+      for (j = 0; j < count; j++)
+        if (entry->block == blocks[j])
+          return -ERR_BUSY;
+  }
+  for (i = 0; i < cache->capacity; i++) {
+    Cacheblock *entry = &cache->entries[i];
+    if (entry->bound)
+      for (j = 0; j < count; j++)
+        if (entry->block == blocks[j]) {
+          bindingclear(entry);
+          break;
+        }
+  }
+  return 0;
+}
+
+isize
 cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version)
 {
   Cacheblock *entry;

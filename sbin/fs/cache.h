@@ -59,6 +59,10 @@ isize cacheinit(Cache *cache, Cacheblock *storage, u32 count, u64 blocks);
 isize cacheget(Cache *cache, u64 block, u32 metadata, Cachekey *out);
 isize cacheput(Cache *cache, Cachekey *owned);
 isize cacheinvalidate(Cache *cache, Cachekey *owned);
+/* Forget a batch of home blocks changed by a separate transaction. Validate
+   the whole batch before dropping any binding. Flush dirty blocks and drain
+   references/I/O before starting that transaction. */
+isize cacheforget(Cache *, const u64 *blocks, u32 count);
 isize cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version);
 /* Snapshot at most one page of file data, possibly spanning two blocks.
    The caller resolves blocks from the pinned file version; zero is a hole.

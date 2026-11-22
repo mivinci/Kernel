@@ -30,6 +30,7 @@ struct Writeimage;
 struct Loadmap;
 struct Loadindex;
 struct Blockmap;
+struct Cache;
 typedef struct Growthmeta Growthmeta;
 typedef struct Growth     Growth;
 struct Journalmark
@@ -67,6 +68,7 @@ struct Growthmeta
 struct Growth
 {
   Journal                  *journal;
+  struct Cache             *cache;
   const struct Writeupdate *update;
   u64                       txid;
 };
@@ -100,10 +102,11 @@ isize journalbegin(Journal *journal, const Journalplan *plan);
    and already encoded/validated metadata. The header's targets must follow
    inode, bitmap if allocated, then index if edited. Keep the inode guard,
    reservations and images through completion; publish only after commit. */
-isize journalgrowth(Growth *, Journal *, const struct Writeupdate *, const struct Writeimage *,
-                    const Growthmeta *);
+isize journalgrowth(Growth *, Journal *, struct Cache *, const struct Writeupdate *,
+                    const struct Writeimage *, const Growthmeta *);
 /* Consume the exact completed growth and retire its journal, once. All
-   views are independent. For an allocation, prepared is the private view
+   views are independent. Cached home blocks are invalidated before the new
+   map is visible. For an allocation, prepared is the private view
    encoded in bitmap. Keep the inode guard and volume writer, and coordinate
    cache visibility before releasing them. Do not retire the journal first.
    A stopped growth is discarded only after I/O drains and recovery owns it. */

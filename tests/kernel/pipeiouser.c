@@ -1707,20 +1707,26 @@ static void
 openwritejournal(const Loadmap *original, const Writeupdate *update, const Writeimage *image,
                  const Blockmap *prepared)
 {
-  static Journal   journal;
-  static u8        snapshots[6][FS_BLOCK_BYTES];
-  static Loadindex index;
-  static Blockmap  allocation;
-  Growth           work = {0};
-  Loadmap          live = *original;
+  static Journal    journal;
+  static u8         snapshots[6][FS_BLOCK_BYTES];
+  static Loadindex  index;
+  static Blockmap   allocation;
+  static Cacheblock entries[2];
+  Cache             cache;
+  Cachekey          key = {0};
+  Cacheio           fill;
+  u8               *bytes;
+  Growth            work = {0};
+  Loadmap           live = *original;
   Growthmeta meta = {snapshots[0], NULL, snapshots[2], snapshots[3], snapshots[4], snapshots[5]};
   Journalio  io;
   u32        i;
   CHECK(!journalinit(&journal, 128, 7));
-  CHECK(journalgrowth(&work, &journal, update, image, &meta) == -ERR_INVALID &&
+  CHECK(!cacheinit(&cache, entries, ARRAY_SIZE(entries), 128));
+  CHECK(journalgrowth(&work, &journal, &cache, update, image, &meta) == -ERR_INVALID &&
         journal.phase == JOURNAL_IDLE);
   meta.bitmap = snapshots[1];
-  CHECK(!journalgrowth(&work, &journal, update, image, &meta) && journal.txid == 8 &&
+  CHECK(!journalgrowth(&work, &journal, &cache, update, image, &meta) && journal.txid == 8 &&
         journal.metadata_count == 3 && journal.metadata[0].block == FS_INODE_START &&
         journal.metadata[1].block == FS_BLOCK_MAP && journal.metadata[2].block == 102);
   CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && io.block == 101 &&
@@ -1737,11 +1743,18 @@ openwritejournal(const Loadmap *original, const Writeupdate *update, const Write
   live.file.version++;
   CHECK(growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_STALE);
   live.file.version--;
+  CHECK(!cacheget(&cache, 100, CACHE_DATA, &key) && !cachereadbegin(&cache, &key, &fill, &bytes));
+  bytes[20] = 0xa5;
+  CHECK(!cachecomplete(&cache, &fill, 1) &&
+        growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_BUSY &&
+        live.file.length == original->file.length && !cacheput(&cache, &key));
   CHECK(!growthpublish(&work, &live, &index, &allocation, prepared) && journal.last == 8 &&
         live.file.length == update->map.file.length && index.block == update->index.block &&
         allocation.used[1] == prepared->used[1] &&
         growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_STALE &&
-        !journalgrowth(&work, &journal, update, image, &meta));
+        cachefetch(&cache, 100, CACHE_DATA, &fill, &bytes) == 1 &&
+        !cachecomplete(&cache, &fill, 0) &&
+        !journalgrowth(&work, &journal, &cache, update, image, &meta));
   CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && !journal.durable &&
         !journalstop(&journal) && journalrelease(&journal) == -ERR_WOULD_BLOCK &&
         growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_STATE &&

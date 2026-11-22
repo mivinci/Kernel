@@ -154,7 +154,7 @@ class FsTxnTests(unittest.TestCase):
                 before=(bytes(self.txn),bytes(self.storage))
                 self.assertEqual(lib.txnprepare(self.t,meta,m,data,d,self.snapshots if snap is None else snap),expected)
                 self.assertEqual((bytes(self.txn),bytes(self.storage)),before)
-            rejected(m=0);rejected(m=17);rejected(d=128)
+            rejected(m=0,d=0);rejected(m=17);rejected(d=128)
             rejected(meta=self.data,data=self.meta,expected=-6)
             rejected(snap=C.byref(self.txn));rejected(snap=self.storage)
             duplicate=(Key*2)(self.meta[0],self.meta[0]);rejected(meta=duplicate,m=2,d=0)

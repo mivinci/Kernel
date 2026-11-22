@@ -1,5 +1,6 @@
 #include "journal.h"
 #include "load.h"
+#include "cache.h"
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -161,16 +162,29 @@ journalbegin(Journal *journal, const Journalplan *plan)
   journal->cursor = journal->durable = 0;
   return 0;
 }
+static isize
+forgetgrowth(const Journal *journal, Cache *cache)
+{
+  u64 blocks[5];
+  u32 i, count = 0;
+  for (i = 0; i < journal->metadata_count; i++)
+    blocks[count++] = journal->metadata[i].block;
+  for (i = 0; i < journal->data_count; i++)
+    blocks[count++] = journal->data[i].block;
+  return cacheforget(cache, blocks, count);
+}
+
 isize
-journalgrowth(Growth *work, Journal *journal, const Writeupdate *update, const Writeimage *image,
-              const Growthmeta *encoded)
+journalgrowth(Growth *work, Journal *journal, Cache *cache, const Writeupdate *update,
+              const Writeimage *image, const Growthmeta *encoded)
 {
   Journalblock metadata[3], data[2];
   Journalplan  plan;
   u64          inode;
   u32          block, tail, count = 0;
   isize        error;
-  if (!external(journal, work, sizeof(*work)) || !update || !image || !encoded || !encoded->inode)
+  if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
+      !update || !image || !encoded || !encoded->inode)
     return -ERR_INVALID;
   if (work->journal || work->update || work->txid)
     return -ERR_BUSY;
@@ -201,7 +215,14 @@ journalgrowth(Growth *work, Journal *journal, const Writeupdate *update, const W
                        count,           tail ? 2 : 1};
   error = journalbegin(journal, &plan);
   if (!error) {
+    error = forgetgrowth(journal, cache);
+    if (error) {
+      clear(journal);
+      journal->phase = JOURNAL_IDLE;
+      return error;
+    }
     work->journal = journal;
+    work->cache = cache;
     work->update = update;
     work->txid = journal->txid;
   }
@@ -231,6 +252,9 @@ growthpublish(Growth *work, Loadmap *live, Loadindex *index, Blockmap *allocatio
       live->file.generation != update->map.file.generation || !update->map.file.version ||
       live->file.version != update->map.file.version - 1)
     return -ERR_STALE;
+  error = forgetgrowth(journal, work->cache);
+  if (error)
+    return error;
   error = journalrelease(journal);
   if (error)
     return error;
