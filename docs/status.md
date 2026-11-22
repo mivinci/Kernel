@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage495：双架构 QEMU `pipeio` 验证普通文件定位读保留共享偏移，后续短读和 EOF 正确。
 - stage494：普通 WRITE 检查会话引用和打开权限；双架构 QEMU `pipeio` 验证拒绝时不改变偏移。
 - stage493：普通 OPEN 发布前检查目标节点权限；双架构 QEMU `pipeio` 验证拒绝不分配引用。
 - stage492：资源 OPEN 安装失败可按原 token 补偿并返回原错误；双架构 QEMU `runtime` 和 71 项主机测试通过。

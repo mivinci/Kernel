@@ -1606,7 +1606,7 @@ opencomplete(Openjob *job, Vnode *node)
 {
   Openfixture *fixture = job->backend;
   openvalidate(job);
-  CHECK(node == &fixture->file && fixture->holds == 3 && fixture->completed < 2);
+  CHECK(node == &fixture->file && fixture->holds == 3 && fixture->completed < 3);
   return fsfileopen(&fixture->files, job, node, VACCESS_R, 22, 32,
                     fixture->completed++ ? 0400 : 0200);
 }
@@ -1756,25 +1756,60 @@ openserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs) && file.refs == 2 &&
         file.node);
   scratch[19] = 'R';
+  scratch[3] = 'P';
   CHECK(fsreadcomplete(&reader[0], reader[1].call.request, &fixture.fetch.ticket, scratch,
                        sizeof(scratch)) == -ERR_STALE &&
         fsreadcomplete(&reader[0], reader[0].call.request, &fixture.fetch.ticket, scratch, 19) ==
             -ERR_INVALID &&
         !fsreadcomplete(&reader[0], reader[0].call.request, &fixture.fetch.ticket, scratch,
                         sizeof(scratch)) &&
-        !fsreadpump(&reads, &fixture.files) && !file.node && !file.refs &&
+        !fsreadpump(&reads, &fixture.files) && !file.node && !file.refs);
+  fixture.blocked = 0;
+  CHECK(!fsstep(&fs) && file.refs == 1 && !file.position && !fsstep(&fs) && file.refs == 2);
+  CHECK(!fsstep(&fs) && file.position == 19 && !fsstep(&fs) && file.position == 19 &&
+        !fsstep(&fs) && file.position == 19 && !fsstep(&fs) && file.position == 20 &&
+        !fsstep(&fs) && file.position == 20 && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) &&
+        !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
 }
 
 static void
+openreadcheck(u64 session, u64 offset, int positional, u64 bytes, char first)
+{
+  Filelease      lease;
+  Fileslot       slot = {0};
+  Ipcmsg         result;
+  Msg            request = {{FS_READ, work.state.map.connid, 0, 0}};
+  volatile char *page;
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  request.words[2] = slot.seq = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = session;
+  slot.payload_bytes = slot.args[1] = 2;
+  slot.args[0] = offset;
+  slot.args[3] = positional ? FS_IO_POSITIONAL : 0;
+  page = (volatile char *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+  page[0] = page[1] = '?';
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &request, 0, &result) && !result.words[0] &&
+        result.words[1] == lease.seq && result.words[2] == bytes && result.words[3] == bytes &&
+        page[0] == first && page[1] == (bytes == 2 ? 0 : '?') &&
+        !sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
 openclient(const Bootview *boot)
 {
   u32     i;
-  Pipekey key = {0}, dup;
+  Pipekey key = {0}, dup, reopened = {0};
   setup(boot, &work, &cache, &bank);
-  for (i = 0; i < ARRAY_SIZE(openerrors); i++) {
+open:
+  for (i = reopened.reference ? 1 : 0; i < ARRAY_SIZE(openerrors); i++) {
     Filelease      lease;
     Ipcmsg         result;
     Fileslot       slot = {0};
@@ -1796,7 +1831,7 @@ openclient(const Bootview *boot)
     CHECK(
         !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)));
-    if (i + 1 == ARRAY_SIZE(openerrors)) {
+    if (!reopened.reference && i + 1 == ARRAY_SIZE(openerrors)) {
       Msg    gate = {{FS_ATTACH, 0, 0, 0}};
       Ipcmsg drain;
       Handle rpc;
@@ -1809,8 +1844,9 @@ openclient(const Bootview *boot)
             !ipc_call(work.state.call, &gate, CALL_CONTROL, &drain));
     } else
       CHECK(!ipc_call(work.state.call, &request, 0, &result));
-    CHECK((isize) result.words[0] == openerrors[i] && result.words[1] == lease.seq);
-    if (!openerrors[i]) {
+    CHECK((isize) result.words[0] == (reopened.reference ? 0 : openerrors[i]) &&
+          result.words[1] == lease.seq);
+    if (reopened.reference || !openerrors[i]) {
       CHECK((result.words[2] & FS_FILE_SESSION) && result.words[3] == sizeof(u64));
       key.session = result.words[2];
       key.reference = *(const volatile u64 *) page;
@@ -1818,8 +1854,23 @@ openclient(const Bootview *boot)
     } else
       CHECK(!result.words[2] && !result.words[3]);
     CHECK(!sysconnworkrelease(&work, &cache, lease));
+    if (reopened.reference)
+      break;
   }
   dup.session = key.session;
+  if (reopened.reference) {
+    CHECK(key.session != reopened.session);
+    dup.reference = refcall(&work, &cache, FS_DUPREF, key);
+    CHECK(dup.reference && dup.reference != key.reference);
+    openseek(key.session, FS_SEEK_SET, 19, 0, 19);
+    openreadcheck(dup.session, 3, 1, 2, 'P');
+    openseek(key.session, FS_SEEK_CUR, 0, 0, 19);
+    openreadcheck(key.session, 0, 0, 1, 'R');
+    openreadcheck(dup.session, 0, 0, 0, '?');
+    CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
+    pipeiotrace[0] = 7;
+    return;
+  }
   dup.reference = refcall(&work, &cache, FS_DUPREF, key);
   CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key));
   openwritecheck(dup.session + 1, -ESTALE);
@@ -1889,7 +1940,8 @@ openclient(const Bootview *boot)
           !ipc_rqack(seekrpc, ACK_RESULT | ACK_RELEASE) &&
           !sysconnworkrelease(&work, &cache, queued));
   }
-  pipeiotrace[0] = 7;
+  reopened = key;
+  goto open;
 }
 
 static void
