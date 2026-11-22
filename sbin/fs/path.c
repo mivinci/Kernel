@@ -13,14 +13,21 @@ pathcheck(const char *path, u64 bytes)
 }
 
 isize
-fspathinit(Fspath *walk, const char *path, u64 bytes)
+fspathinit(Fspath *walk, const volatile char *path, u64 bytes)
 {
-  isize error = pathcheck(path, bytes);
-  if (!walk || error)
-    return !walk ? -EINVAL : error;
-  memmove(walk->text, path, (size_t) bytes);
+  u64   i;
+  isize error;
+  if (!walk || !path || !bytes)
+    return -EINVAL;
+  if (bytes > FS_PATH_BYTES)
+    return -ENAMETOOLONG;
+  walk->bytes = walk->cursor = walk->links = walk->expandable = 0;
+  for (i = 0; i < bytes; i++)
+    walk->text[i] = path[i];
+  error = pathcheck(walk->text, bytes);
+  if (error)
+    return error;
   walk->bytes = (u32) bytes;
-  walk->cursor = walk->links = walk->expandable = 0;
   return 0;
 }
 

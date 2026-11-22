@@ -46,7 +46,7 @@ testactors(const char *roles)
   for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
     int     client = i + 1 == count;
-    if (roles[i] == 'c') {
+    if (roles[i] == 'c' || roles[i] == 'o') {
       const Cred credentials = {21, 22, 31, 32};
       CHECK(!lifecredentials(processes[i].life, &credentials));
     }
@@ -79,12 +79,8 @@ testactors(const char *roles)
       CHECK(!localendpoint(table, processes[client ? 1 : 0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[3].handle));
     }
-    testload(pids[i], pipeio_image, (u64) (pipeio_image_end - pipeio_image), &packet,
-             sizeof(packet));
-    /* The loaded mappings hold their own references. Leave Local slots for HELLO. */
-    for (j = 0; j < table->count; j++)
-      if (table->slots[j].subtype == LOCAL_MEM)
-        CHECK(!localfree(table, handlepack(HANDLE_RESOURCE, table->slots[j].generation, j)));
+    testloadmapped(pids[i], pipeio_image, (u64) (pipeio_image_end - pipeio_image), &packet,
+                   sizeof(packet));
     CHECK(!procpublish(pids[i]));
   }
   for (;;) {
@@ -132,6 +128,7 @@ void
 pipeiotest(void)
 {
   testactors("sc");
+  testactors("Oo");
   testactors("SC");
   testactors("Ii");
   testactors("Tt");

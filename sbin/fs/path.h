@@ -26,9 +26,9 @@ struct Pathpart
   u32         bytes, kind, final, directory;
 };
 
-/* Strings are private snapshots, including the terminating NUL. The link
-   target must not alias the walk. Errors are negative filesystem errno. */
-isize fspathinit(Fspath *walk, const char *path, u64 bytes);
+/* Copy the input, including its NUL, before validating it. The link target
+   must be private and must not alias the walk. Errors are negative errno. */
+isize fspathinit(Fspath *walk, const volatile char *path, u64 bytes);
 /* Returns one component, zero at end, or an error. The name is borrowed until
    the next mutation. PATH_ROOT means reset to the caller's root. The caller
    does directory search checks and resolves each component before advancing. */

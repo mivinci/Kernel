@@ -15,8 +15,8 @@ testresource(Rtable *table, u32 kind)
       return handlepack(HANDLE_RESOURCE, table->slots[i].generation, i);
   panic("missing test boot resource");
 }
-void
-testload(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
+static void
+load(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes, int mappedonly)
 {
   Rtable   *table = proctable(pid);
   Bootimage image;
@@ -46,6 +46,8 @@ testload(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
       REQUIRE(!localmap(table, space, memory, 0, segment->va + page, PAGE_SIZE, segment->prot));
       REQUIRE(spacelookup(table->space, segment->va + page, &pte) &&
               pte.prot == (segment->prot | VM_USER) && pte.attr == VM_NORMAL);
+      if (mappedonly)
+        REQUIRE(!localfree(table, memory));
     }
   }
   args.bytes = 65536;
@@ -56,10 +58,24 @@ testload(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
   REQUIRE(!localalloc(table, allocator, &args, &startup));
   REQUIRE(!localwrite(table, startup, 0, boot, bootbytes));
   REQUIRE(!localmap(table, space, startup, 0, 0x3fff000000UL, args.bytes, VM_READ));
+  if (mappedonly)
+    REQUIRE(!localfree(table, startup) && !localfree(table, stack));
   config.entry = image.entry;
   config.stack = 0x3fffff0000UL;
   config.boot = 0x3fff000000UL;
   config.bootsz = bootbytes;
   config.sigmask = config.sigdefault = 0;
   REQUIRE(!procconfigure(pid, &config, 0));
+}
+
+void
+testload(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
+{
+  load(pid, data, bytes, boot, bootbytes, 0);
+}
+
+void
+testloadmapped(Handle pid, const u8 *data, u64 bytes, const void *boot, u64 bootbytes)
+{
+  load(pid, data, bytes, boot, bootbytes, 1);
 }

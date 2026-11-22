@@ -32,7 +32,7 @@ vwalkdrop(Vwalk *walk)
 
 isize
 vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context, Vnode *root,
-          Vnode *start, const char *path, u64 bytes, u32 follow)
+          Vnode *start, const volatile char *path, u64 bytes, u32 follow)
 {
   isize error;
   if (!walk || walk->phase || !mounts || !ops || !ops->hold || !ops->drop || !ops->search ||
