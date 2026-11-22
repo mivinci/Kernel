@@ -17,6 +17,7 @@ typedef struct Loadspan    Loadspan;
 typedef struct Writeplan   Writeplan;
 typedef struct Writeimage  Writeimage;
 typedef struct Writeupdate Writeupdate;
+typedef struct Blockmap    Blockmap;
 struct Loadfile
 {
   u64 inode, generation, version, length;
@@ -80,6 +81,18 @@ struct Writeupdate
    indexdirty set is part of the update. This does not publish or allocate. */
 isize loadwriteupdate(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks, u64 offset,
                       u64 bytes, u32 data, u32 indirect, Writeupdate *);
+
+/* Decoded transaction-local allocation view. Native words, not disk bytes. */
+struct Blockmap
+{
+  u64 used[FS_MAX_BLOCKS / 64];
+};
+/* The single volume writer supplies its private copy of the committed map,
+   with earlier reservations in the same transaction already marked. On
+   success both reservations and the proposed inode update are produced;
+   on failure both outputs stay unchanged. Publish only after commit. */
+isize loadwritealloc(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks, u64 offset,
+                     u64 bytes, Blockmap *, Writeupdate *);
 struct Loadslot
 {
   Loadfile file;

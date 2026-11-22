@@ -155,22 +155,17 @@ loadwritestage(const Writeplan *plan, u32 start, u32 blocks, u32 reserved, const
   return 0;
 }
 
-isize
-loadwriteupdate(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, u64 offset,
-                u64 bytes, u32 data, u32 indirect, Writeupdate *out)
+static isize
+writeupdate(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks,
+            const Writeplan *plan, u32 data, u32 indirect, Writeupdate *out)
 {
-  Writeplan plan;
-  u32       i, indexdirty;
-  isize     error;
+  u32 i, indexdirty;
   if (!separate(map, sizeof(*map), out, sizeof(*out)) ||
       (index && !separate(index, sizeof(*index), out, sizeof(*out))))
     return -ERR_INVALID;
-  error = loadmapwrite(map, index, start, blocks, offset, bytes, &plan);
-  if (error)
-    return error;
   if (!map->file.version || map->file.version == UINT64_MAX)
     return -ERR_OVERFLOW;
-  if ((!!data == !!plan.block) || (!!indirect != !!plan.newindex) ||
+  if ((!!data == !!plan->block) || (!!indirect != !!plan->newindex) ||
       (data && (data < start || data >= blocks || data == map->indirect)) ||
       (indirect && (indirect < start || indirect >= blocks || indirect == data)))
     return -ERR_INVALID;
@@ -187,11 +182,11 @@ loadwriteupdate(const Loadmap *map, const Loadindex *index, u32 start, u32 block
     for (i = 0; i < LOAD_DIRECT; i++)
       if (map->direct[i] == data || (indirect && map->direct[i] == indirect))
         return -ERR_STATE;
-  indexdirty = data && plan.logical >= LOAD_DIRECT;
-  out->plan = plan;
+  indexdirty = data && plan->logical >= LOAD_DIRECT;
+  out->plan = *plan;
   out->map = *map;
   out->map.file.version++;
-  out->map.file.length = plan.length;
+  out->map.file.length = plan->length;
   out->indexdirty = indexdirty;
   if (indexdirty) {
     if (indirect) {
@@ -201,9 +196,74 @@ loadwriteupdate(const Loadmap *map, const Loadindex *index, u32 start, u32 block
         out->index.entries[i] = 0;
     } else
       out->index = *index;
-    out->index.entries[plan.logical - LOAD_DIRECT] = data;
+    out->index.entries[plan->logical - LOAD_DIRECT] = data;
   } else if (data)
-    out->map.direct[plan.logical] = data;
+    out->map.direct[plan->logical] = data;
+  return 0;
+}
+
+isize
+loadwriteupdate(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, u64 offset,
+                u64 bytes, u32 data, u32 indirect, Writeupdate *out)
+{
+  Writeplan plan;
+  isize     error = loadmapwrite(map, index, start, blocks, offset, bytes, &plan);
+  return error ? error : writeupdate(map, index, start, blocks, &plan, data, indirect, out);
+}
+
+static u64
+blockbit(u32 block)
+{
+  return UINT64_C(1) << (block % 64);
+}
+
+static int
+blockused(const Blockmap *allocation, u32 block)
+{
+  return !!(allocation->used[block / 64] & blockbit(block));
+}
+
+isize
+loadwritealloc(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, u64 offset,
+               u64 bytes, Blockmap *allocation, Writeupdate *out)
+{
+  Writeplan plan;
+  u32       data = 0, indirect = 0, i;
+  isize     error;
+  if (blocks > FS_MAX_BLOCKS || !separate(allocation, sizeof(*allocation), out, sizeof(*out)) ||
+      !separate(allocation, sizeof(*allocation), map, sizeof(*map)) ||
+      (index && !separate(allocation, sizeof(*allocation), index, sizeof(*index))))
+    return -ERR_INVALID;
+  error = loadmapwrite(map, index, start, blocks, offset, bytes, &plan);
+  if (error)
+    return error;
+  if ((plan.block && !blockused(allocation, plan.block)) ||
+      (plan.tail && !blockused(allocation, plan.tail)) ||
+      (map->indirect && !blockused(allocation, map->indirect)))
+    return -ERR_STATE;
+  if (!plan.block) {
+    for (i = start; i < blocks; i++) {
+      if (blockused(allocation, i))
+        continue;
+      if (!data) {
+        data = i;
+        if (!plan.newindex)
+          break;
+      } else {
+        indirect = i;
+        break;
+      }
+    }
+    if (!data || (plan.newindex && !indirect))
+      return -ERR_CAPACITY;
+  }
+  error = writeupdate(map, index, start, blocks, &plan, data, indirect, out);
+  if (error)
+    return error;
+  if (data)
+    allocation->used[data / 64] |= blockbit(data);
+  if (indirect)
+    allocation->used[indirect / 64] |= blockbit(indirect);
   return 0;
 }
 

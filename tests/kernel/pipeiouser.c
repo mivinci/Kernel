@@ -1707,6 +1707,7 @@ openwritestage(void)
 {
   static Writeimage  image;
   static Writeupdate update;
+  static Blockmap    allocation;
   static u8          tail[FS_BLOCK_BYTES];
   const Loadmap      map = {{2, 1, 1, 20}, {5}, 0};
   const u64          at = 12 * FS_BLOCK_BYTES + 3;
@@ -1716,9 +1717,14 @@ openwritestage(void)
     tail[i] = 0xa5;
   CHECK(loadwriteupdate(&map, NULL, 4, 16, at, 2, 6, 5, &update) == -ERR_STATE &&
         !update.map.file.length);
-  CHECK(!loadwriteupdate(&map, NULL, 4, 16, at, 2, 6, 7, &update) && update.indexdirty &&
-        update.map.file.length == at + 2 && update.map.file.version == 2 &&
-        update.map.indirect == 7 && update.map.direct[0] == 5 && !map.indirect &&
+  allocation.used[0] = UINT64_MAX ^ (UINT64_C(1) << 6);
+  CHECK(loadwritealloc(&map, NULL, 4, 16, at, 2, &allocation, &update) == -ERR_CAPACITY &&
+        allocation.used[0] == (UINT64_MAX ^ (UINT64_C(1) << 6)) && !update.map.file.length);
+  allocation.used[0] ^= UINT64_C(1) << 7;
+  CHECK(!loadwritealloc(&map, NULL, 4, 16, at, 2, &allocation, &update) &&
+        allocation.used[0] == UINT64_MAX && update.indexdirty && update.map.file.length == at + 2 &&
+        update.map.file.version == 2 && update.map.indirect == 7 && update.map.direct[0] == 5 &&
+        !map.indirect &&
         !loadmapspan(&update.map.file, &update.map, &update.index, 4, 16, at, 2, &span) &&
         span.first == 6 && span.offset == 3);
   for (i = 1; i < LOAD_INDIRECT; i++)
