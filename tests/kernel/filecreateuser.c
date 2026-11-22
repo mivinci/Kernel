@@ -1246,28 +1246,6 @@ claimbackend(const Bootview *boot, int reuse)
   filecreatetrace[0] = 2;
 }
 
-typedef struct Ttyfixture Ttyfixture;
-struct Ttyfixture
-{
-  Connpeer   peer;
-  const u64 *sessions, *references;
-  u64        count;
-};
-
-static isize
-ttyauthorize(void *context, Handle pid, u64 image, u64 session, u64 opcode)
-{
-  const Ttyfixture *fixture = context;
-  u64               i;
-  CHECK(opcode == FS_TTYCTL);
-  if (fixture->peer.pid != pid || fixture->peer.image != image)
-    return -EACCES;
-  for (i = 0; i < fixture->count; i++)
-    if (fixture->references[i] && fixture->sessions[i] == session)
-      return 0;
-  return -EBADF;
-}
-
 static void
 server(const Bootview *boot, u32 recover)
 {
@@ -1285,6 +1263,9 @@ server(const Bootview *boot, u32 recover)
   Fileowner  child = {0};
   u64        held = 0;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
+  Openprep   ttyrefs[8] = {{0}};
+  u32        ttyflags[8] = {0};
+  Ttyopens   ttyopens = {ttyrefs, ttyflags, ARRAY_SIZE(ttyrefs)};
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
   u32        wakeopen = 0;
   volatile u64   *data;
@@ -1743,9 +1724,8 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (!recover && opcode == FS_TTYCTL) {
-      Ttyfixture authority = {peer, sessions, references, created};
       CHECK(!ttyfiledispatch(&ttyio, &ttyline, &ttymode, &watch->active, &input, &descriptor,
-                             (volatile u8 *) data, ttyauthorize, &authority, 0, NULL, &ttyalarm) &&
+                             (volatile u8 *) data, ttyopenaccess, &ttyopens, 0, NULL, &ttyalarm) &&
             !ttyalarm);
       continue;
     }
@@ -1867,6 +1847,7 @@ server(const Bootview *boot, u32 recover)
       for (i = 0; i < created; i++)
         if (sessions[i] == descriptor.object && references[i] == descriptor.args[0]) {
           references[i] = 0;
+          sysopenretire(&ttyrefs[i]);
           found++;
         }
       CHECK(found == 1);
@@ -1931,13 +1912,24 @@ server(const Bootview *boot, u32 recover)
         if (opcode == FS_DUPREF) {
           found = 0;
           for (slot = 0; slot < created; slot++)
-            if (sessions[slot] == descriptor.object && references[slot] == descriptor.args[0])
+            if (sessions[slot] == descriptor.object && references[slot] == descriptor.args[0]) {
+              ttyflags[created] = ttyflags[slot];
               found++;
+            }
           CHECK(found == 1);
           sessions[created] = descriptor.object;
         } else
           sessions[created] = nextsession++;
         references[created] = nextref++;
+        if (!recover && opcode != FS_PIPE) {
+          ttyrefs[created].client = input.source;
+          ttyrefs[created].client_image = input.image;
+          ttyrefs[created].session = sessions[created];
+          ttyrefs[created].reference = references[created];
+          if (opcode == FS_OPEN)
+            ttyflags[created] = (u32) descriptor.args[0];
+          sysopencommit(&ttyrefs[created]);
+        }
         if (opcode == FS_PIPE) {
           data[i * 2] = sessions[created];
           data[i * 2 + 1] = references[created];

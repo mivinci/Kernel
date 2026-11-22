@@ -421,6 +421,44 @@ ttyfilestart(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *
   return status == -ERR_BUSY ? filereject(active, call, -EAGAIN) : status;
 }
 
+isize
+ttyopenaccess(void *context, Handle pid, u64 image, u64 session, u64 opcode)
+{
+  const Ttyopens *opens = context;
+  u32             i, flags = 0;
+  int             found = 0;
+  if (!opens || !opens->refs || !opens->flags || opens->count > SYSOPEN_POOL_MAX ||
+      handlekind(pid) != HANDLE_PROCESS || !image || !session)
+    return -EINVAL;
+  for (i = 0; i < opens->count; i++) {
+    const Openprep *ref = &opens->refs[i];
+    if (ref->state != Openattached || ref->client != pid || ref->client_image != image ||
+        ref->session != session)
+      continue;
+    if (found && flags != opens->flags[i])
+      return -EIO;
+    flags = opens->flags[i];
+    found = 1;
+  }
+  if (!found)
+    return -EBADF;
+  switch (flags & FS_OPEN_ACCMODE) {
+  case FS_OPEN_RDONLY:
+    if (opcode == FS_WRITE)
+      return -EBADF;
+    break;
+  case FS_OPEN_WRONLY:
+    if (opcode == FS_READ)
+      return -EBADF;
+    break;
+  case FS_OPEN_RDWR:
+    break;
+  default:
+    return -EIO;
+  }
+  return !!(flags & FS_OPEN_NONBLOCK);
+}
+
 static isize
 fileaccess(const Ipcmsg *call, const Fileslot *slot, Ttyauthorize authorize, void *context)
 {

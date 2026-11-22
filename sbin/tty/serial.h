@@ -5,15 +5,25 @@
 #include <proto/serial.h>
 #include <proto/file.h>
 #include "private/file.h"
+#include "private/filewatch.h"
 #include <sys/channel.h>
 
 typedef struct Ttyserial       Ttyserial;
 typedef struct Ttyserialresult Ttyserialresult;
 typedef struct Ttypending      Ttypending;
 typedef struct Ttyalarm        Ttyalarm;
+typedef struct Ttyopens        Ttyopens;
 /* Resolve the opened terminal using the admitted caller and session. Return
    a negative errno on denial, or the File's nonblocking flag (0 or 1). */
 typedef isize (*Ttyauthorize)(void *, Handle, u64, u64, u64);
+struct Ttyopens
+{
+  const Openprep *refs;
+  const u32      *flags;
+  u32             count;
+};
+/* flags are the service-owned open flags for the corresponding references. */
+isize ttyopenaccess(void *context, Handle pid, u64 image, u64 session, u64 opcode);
 struct Ttyserial
 {
   Serialring *rx, *tx;

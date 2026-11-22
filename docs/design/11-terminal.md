@@ -404,6 +404,8 @@ stage443：`ttyfilestart` 将已授权且占有原槽的 READ、WRITE 与 GETATT
 
 私有 `ttyfiledispatch` 在访问数据页前，用已接收的真实 PID/image、槽内会话和操作码查询会话授权，并取得打开实例的非阻塞标志。授权拒绝沿原 REQUEST 回复并释放服务槽，不写响应页。在双架构 `runtime` 中，GETATTR 夹具验证坏会话不改响应区，合法会话仍可读取，越界参数仍被拒绝。生产会话表和首次发权尚未接入。
 
+`ttyopenaccess` 可从已有 OPEN/ATTACH 生命周期表核对会话。只有同一 PID/image 已接入的引用才计入授权，READ/WRITE 仍分别检查打开方向；非阻塞标志取服务保存的打开状态。会话还有另一份引用时，关闭其中一份不会中断该会话；最后一份关闭后拒绝后续请求。ARM64、RV64 QEMU `tty` 验证准备态、跨镜像访问、打开方向及最后引用关闭；`runtime` 经真实 IPC 使用同一核验入口处理 GETATTR，拒绝未知会话且不改共享响应区。生产发权与接入分派仍待完成。
+
 终端关系实现接续（2026-11-19，可信核心已本地验收）：kernel/terminal.c以64项固定池保存精确owner Image、session/group引用与epoch，每条56字节，使用现有TERMINAL类别身份；新建从epoch1起，首次关联仅安装同会话约束，成功前台提交才递增。每次新操作检查owner处于PREPARING/ACTIVE，结束后仅允许drop清理旧引用，不跟随新镜像。同一会话旧关联仍占清理引用时拒绝另一终端抢占，最后drop后才释放会话/前台组/Image引用。该机制不自行投递HUP/CONT，不把保留引用称为挂断处理已经完成。
 
 7项host以真实group核心和模拟Image边界检查STALE提交无修改、相同组提交推进版本、跨会话拒绝、槽复用/满池、结束后引用释放，以及UINT64_MAX epoch/u32引用计数耗尽、imagehold失败不发布/不改输出和坏身份拒绝。测试直接设置私有边界值，没有新增生产故障开关。CASE=images链接相同terminal.c，真实Life发布/旧Image EXEC结束并detach/新Image激活，验证旧终端立即拒绝、新终端不接管旧关联、两次drop后旧Image实际回收及新终端可关联；64项满池/代次复用、关系引用与Life/Set/物理页回到基线，两架构专项已通过。ARM64整体结构快照引入隐式memcpy已改为逐字段赋值，失败构建日志保留。

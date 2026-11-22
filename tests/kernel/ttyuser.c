@@ -3,6 +3,7 @@
 #include "../../sbin/tty/term.h"
 #include "../../sbin/tty/serial.h"
 #include "private/serial.h"
+#include <errno.h>
 #include <unistd.h>
 
 static Serialring rx, tx;
@@ -242,6 +243,30 @@ ttytimedcheck(void)
         ttyinputread(&line, bytes, sizeof(bytes), &ended) == 1 && bytes[0] == 'c');
 }
 
+static void
+ttyopencheck(void)
+{
+  Openprep refs[3] = {{0}};
+  u32      flags[3] = {FS_OPEN_RDONLY | FS_OPEN_NONBLOCK, FS_OPEN_RDONLY | FS_OPEN_NONBLOCK,
+                       FS_OPEN_WRONLY};
+  Ttyopens opens = {refs, flags, ARRAY_SIZE(refs)};
+  Handle   client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  refs[0] = (Openprep){.client = client, .client_image = 2, .session = 3, .state = Openpending};
+  CHECK(ttyopenaccess(&opens, client, 2, 3, FS_READ) == -EBADF);
+  sysopencommit(&refs[0]);
+  refs[1] = refs[0];
+  refs[2] = refs[0];
+  refs[2].client_image--;
+  CHECK(ttyopenaccess(&opens, client, 2, 3, FS_READ) == 1 &&
+        ttyopenaccess(&opens, client, 2, 3, FS_WRITE) == -EBADF &&
+        ttyopenaccess(&opens, client, 1, 3, FS_READ) == -EBADF &&
+        !ttyopenaccess(&opens, client, 1, 3, FS_WRITE));
+  sysopenretire(&refs[0]);
+  CHECK(ttyopenaccess(&opens, client, 2, 3, FS_TTYCTL) == 1);
+  sysopenretire(&refs[1]);
+  CHECK(ttyopenaccess(&opens, client, 2, 3, FS_TTYCTL) == -EBADF);
+}
+
 void
 ttyusercheck(void)
 {
@@ -300,4 +325,5 @@ ttyusercheck(void)
   ttyserialsignalcheck();
   ttyfilereadcheck();
   ttytimedcheck();
+  ttyopencheck();
 }
