@@ -26,13 +26,13 @@ struct Stdiofile
   int    fd, mode, failed, ended, pushed;
   size_t used, position;
   char   buffer[256];
-  int    access, reading;
+  int    access, reading, append;
   FILE  *next;
 };
 
-static FILE  standardin = {0, Stdiounset, 0, 0, EOF, 0, 0, {0}, Stdioread, 1, NULL};
-static FILE  standardout = {1, Stdiounset, 0, 0, EOF, 0, 0, {0}, Stdiowrite, 0, NULL};
-static FILE  standarderr = {2, Stdionone, 0, 0, EOF, 0, 0, {0}, Stdiowrite, 0, NULL};
+static FILE  standardin = {0, Stdiounset, 0, 0, EOF, 0, 0, {0}, Stdioread, 1, 0, NULL};
+static FILE  standardout = {1, Stdiounset, 0, 0, EOF, 0, 0, {0}, Stdiowrite, 0, 0, NULL};
+static FILE  standarderr = {2, Stdionone, 0, 0, EOF, 0, 0, {0}, Stdiowrite, 0, 0, NULL};
 static FILE *opened;
 FILE *const  stdin = &standardin;
 FILE *const  stdout = &standardout;
@@ -94,6 +94,7 @@ fopen(const char *path, const char *mode)
   stream->fd = fd;
   stream->access = access;
   stream->reading = initial == 'r';
+  stream->append = initial == 'a';
   stream->pushed = EOF;
   stream->next = opened;
   opened = stream;
@@ -178,6 +179,78 @@ fflush(FILE *stream)
   if (done && stream->used)
     memmove(stream->buffer, stream->buffer + done, stream->used);
   return done == count ? 0 : EOF;
+}
+
+static off_t
+unread(const FILE *stream)
+{
+  return (off_t) (stream->used - stream->position + (stream->pushed != EOF));
+}
+
+int
+fseeko(FILE *stream, off_t offset, int whence)
+{
+  off_t ahead;
+  if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (stream->reading && whence == SEEK_CUR) {
+    ahead = unread(stream);
+    if (offset < INT64_MIN + ahead) {
+      errno = EOVERFLOW;
+      return -1;
+    }
+    offset -= ahead;
+  } else if (!stream->reading && stream->used && fflush(stream) == EOF)
+    return -1;
+  if (lseek(stream->fd, offset, whence) < 0)
+    return -1;
+  stream->used = stream->position = 0;
+  stream->ended = 0;
+  stream->pushed = EOF;
+  return 0;
+}
+
+off_t
+ftello(FILE *stream)
+{
+  off_t position, change;
+  /* The server chooses the append position at write commit. */
+  if (!stream->reading && stream->append && stream->used && fflush(stream) == EOF)
+    return -1;
+  position = lseek(stream->fd, 0, SEEK_CUR);
+  if (position < 0)
+    return -1;
+  change = stream->reading ? -unread(stream) : (off_t) stream->used;
+  if (change < -position || (change > 0 && position > INT64_MAX - change)) {
+    errno = EOVERFLOW;
+    return -1;
+  }
+  return position + change;
+}
+
+int
+fseek(FILE *stream, long offset, int whence)
+{
+  return fseeko(stream, (off_t) offset, whence);
+}
+
+long
+ftell(FILE *stream)
+{
+  int   saved = errno;
+  off_t position = ftello(stream);
+  if (position >= 0)
+    errno = saved;
+  return (long) position;
+}
+
+void
+rewind(FILE *stream)
+{
+  (void) fseeko(stream, 0, SEEK_SET);
+  stream->failed = 0;
 }
 
 static void

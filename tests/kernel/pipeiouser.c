@@ -487,9 +487,10 @@ serviceloop(const Bootview *boot, u32 interrupt)
                 !readwork.request && !readwork.span.cache);
         }
         {
-          const u64 offsets[] = {CACHE_BYTES + 2, 0, 256, 256, 1, 1, 257, 2, 2, CACHE_BYTES + 2};
+          const u64 offsets[] = {CACHE_BYTES + 2, 0, 256, 256, 256, 1, 1, 257, 2, 2, 0, 0,
+                                 CACHE_BYTES + 2};
           for (i = 0; i < ARRAY_SIZE(offsets); i++) {
-            u64 opcode = i == 2 || i == 6 ? FS_READ : FS_SEEK;
+            u64 opcode = i == 2 || i == 7 ? FS_READ : FS_SEEK;
             CHECK(!ipc_recv(0, 0, &request) && request.words[0] == opcode &&
                   !sysfilelinkaccept(&link, 1, &request, &row) &&
                   row.object == file.session[PIPE_READ]);
@@ -867,10 +868,15 @@ interruptclient(void)
         !data[0] && !read(fds[0], data, sizeof(data)));
   {
     off_t previous = lseek(fd, 0, SEEK_CUR);
+    errno = EDOM;
     CHECK(fds[0] == 0 && previous >= 0 && !lseek(fd, 0, SEEK_SET) && getchar() == 'A' &&
-          getchar() == 'B' && lseek(fd, 0, SEEK_CUR) > 2 && ungetc('X', stdin) == 'X' &&
-          !fflush(NULL) && lseek(fd, 0, SEEK_CUR) == 1 && getchar() == 'B' && !fflush(stdin) &&
-          lseek(fd, 0, SEEK_CUR) == 2 && lseek(fd, previous, SEEK_SET) == previous);
+          getchar() == 'B' && ftell(stdin) == 2 && errno == EDOM && ungetc('X', stdin) == 'X' &&
+          ftello(stdin) == 1 && fseeko(stdin, INT64_MIN, SEEK_CUR) == -1 && errno == EOVERFLOW &&
+          !fflush(NULL) && lseek(fd, 0, SEEK_CUR) == 1 && getchar() == 'B' &&
+          !fseek(stdin, 0, SEEK_CUR) && lseek(fd, 0, SEEK_CUR) == 2 && fputc('X', stdin) == EOF &&
+          ferror(stdin));
+    rewind(stdin);
+    CHECK(!ferror(stdin) && ftello(stdin) == 0 && !fseeko(stdin, previous, SEEK_SET));
   }
   {
     struct termios attrs = {0};
@@ -3237,6 +3243,8 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && !file.position && fixture.length == 1); /* Terminal probe. */
   CHECK(!fsstep(&fs) && file.position == 3);
   publicappendcheck(&fixture);
+  CHECK(!fsstep(&fs) && file.position == 3); /* ftello after committing the append. */
+  CHECK(!fsstep(&fs) && file.position == 3); /* fseek's flush fails before seeking. */
   CHECK(!fsstep(&fs) && file.position == 3);
   publicappendcheck(&fixture);
   CHECK(!fsstep(&fs) && !file.refs);
@@ -3373,7 +3381,8 @@ publicchdirclient(void)
         ferror(stream) && !fclose(stream) && fcntl(0, F_GETFD) == -1 && errno == EBADF);
   stream = fopen("/x", "a+e");
   CHECK(stream && fileno(stream) == 0 && fcntl(0, F_GETFD) == FD_CLOEXEC &&
-        fwrite("W\0", 1, 2, stream) == 2 && !fflush(NULL) && fputs("XY", stream) >= 0 &&
+        fwrite("W\0", 1, 2, stream) == 2 && ftello(stream) == 3 && fputs("XY", stream) >= 0 &&
+        fseek(stream, 0, SEEK_SET) == -1 && errno == ENOSPC && ferror(stream) &&
         fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
   pipeiotrace[0] = 7;
 }

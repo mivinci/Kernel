@@ -106,7 +106,7 @@ testactors(const char *roles)
     }
     if (ended == count)
       break;
-    CHECK(++turns < 320);
+    CHECK(++turns < 384);
     error = procrunone();
     if (error == -ERR_WOULD_BLOCK)
       CHECK(procidle() >= 0);

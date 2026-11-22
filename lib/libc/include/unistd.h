@@ -2,11 +2,9 @@
 #define _UNISTD_H
 #include <types.h>
 #include <sys/types.h>
+#include <sys/seek.h>
 #define _SC_PAGESIZE  1
 #define _SC_PAGE_SIZE _SC_PAGESIZE
-#define SEEK_SET      0
-#define SEEK_CUR      1
-#define SEEK_END      2
 extern char **environ;
 extern char  *optarg;
 extern int    opterr, optind, optopt;

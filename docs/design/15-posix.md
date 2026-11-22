@@ -52,7 +52,9 @@
 
 `stdin` 绑定 fd 0，提供 `fgetc`/`getc`/`getchar`、`fgets`、`fread`、`ungetc` 和 `feof`。固定缓冲按需预读；EOF 与 I/O 错误分开，`clearerr` 同时清除两种指示。允许回推一字节并清除 EOF。刷新可定位输入时，把 fd 偏移调回流的逻辑位置并丢弃回推；对管道等不可定位流，保留预读的真实字节并丢弃回推。`fflush(NULL)` 同时处理输出和输入。核对规范：[fflush](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fflush.html)、[fgets](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fgets.html)、[ungetc](https://pubs.opengroup.org/onlinepubs/9799919799/functions/ungetc.html)。
 
-`fopen(path, mode)` 用一次 `open` 建立并持有 fd；支持 `r`、`w`、`a` 和 `+`、`b`、`e`、`x` 修饰，`x` 仅接受创建模式并映射原子排他创建。新文件以 `0666` 交给文件服务应用创建掩码。先分配流再打开，失败不留 fd 或内存；`fileno` 借出 fd，`fclose` 即使刷新失败也关闭 fd 和释放流，保留第一个错误。全局刷新遍历所有打开流，正常退出刷新输出。依据 [fopen](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fopen.html) 和 [fclose](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fclose.html)。`fdopen`、流定位和自选缓冲尚未接入。
+`fopen(path, mode)` 用一次 `open` 建立并持有 fd；支持 `r`、`w`、`a` 和 `+`、`b`、`e`、`x` 修饰，`x` 仅接受创建模式并映射原子排他创建。新文件以 `0666` 交给文件服务应用创建掩码。先分配流再打开，失败不留 fd 或内存；`fileno` 借出 fd，`fclose` 即使刷新失败也关闭 fd 和释放流，保留第一个错误。全局刷新遍历所有打开流，正常退出刷新输出。依据 [fopen](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fopen.html) 和 [fclose](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fclose.html)。`fdopen` 和自选缓冲尚未接入。
+
+`fseek`/`fseeko`、`ftell`/`ftello` 和 `rewind` 使用流的逻辑位置。读侧扣除预读与回推；成功定位后丢弃预读和回推并清除 EOF。写侧定位前刷新；查询普通写流位置时计入尚未写出的字节，查询有待写数据的追加流时先提交追加，由服务端确定真实位置。`rewind` 另清除错误指示，`ftell` 成功保留 `errno`。见 [fseek](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fseek.html)、[ftell](https://pubs.opengroup.org/onlinepubs/9799919799/functions/ftell.html)。
 
 `unistd.h` 的 `unsigned int sleep(unsigned int seconds)` 复用 libc `nanosleep` 的单调截止与信号交接，不使用 SIGALRM。零秒立即成功；到期返回 0；信号中断返回中断时剩余秒数向上取整，既不重新等待也不扣除 handler 执行时间。保留 `errno`；定时设施无法建立等待时返回原请求秒数。按 [POSIX sleep](https://pubs.opengroup.org/onlinepubs/9799919799/functions/sleep.html) 核对，供 BusyBox `sleep` 使用。
 
@@ -173,7 +175,9 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 
 标准输入流已接入。ARM64、RV64 QEMU `pipeio` 验证 fd 0 上的管道预读、回推和刷新、读行、无符号字节、`fread` 的元素计数、EOF 和关闭 fd 后的 EBADF。以可定位文件夹具验证了 `fflush(NULL)` 和 `fflush(stdin)` 在预读后恢复逻辑偏移，另一个共享打开状态的 fd 可见该变化。生产标准 fd 交付与交互式终端仍待验收。
 
-ARM64、RV64 QEMU `pipeio` 验证 `fopen("rb")` 与 `fopen("a+e")` 经文件服务获得正确的访问模式、追加和 CLOEXEC 标志，拒绝无效模式及只读流写入。`fflush(NULL)` 将含 NUL 的缓冲接到已有内容末尾；继续写入时，存储夹具返回 ENOSPC，`fclose` 保留该错误并归还客户端 fd 与服务端引用。该场景使用真实文件 IPC 和内存存储夹具，未验收生产磁盘。
+ARM64、RV64 QEMU `pipeio` 验证 `ftell`/`ftello` 报告预读和回推后的逻辑偏移，`ftell` 成功保留 `errno`，偏移下溢不发送定位请求，`fseek(SEEK_CUR)` 和 `fseeko(SEEK_SET)` 更新共享描述符位置。`rewind` 回到起点并清除流错误；追加流 `ftello` 先提交缓冲再报告服务端位置，写入遇 ENOSPC 时 `fseek` 保留错误且不发送定位请求。
+
+ARM64、RV64 QEMU `pipeio` 验证 `fopen("rb")` 与 `fopen("a+e")` 经文件服务获得正确的访问模式、追加和 CLOEXEC 标志，拒绝无效模式及只读流写入。追加将含 NUL 的缓冲接到已有内容末尾；继续写入时，存储夹具返回 ENOSPC，`fclose` 保留该错误并归还客户端 fd 与服务端引用。该场景使用真实文件 IPC 和内存存储夹具，未验收生产磁盘。
 
 `<inttypes.h>` 提供整数输出的 `PRI*` 格式宏及 `strtoimax`、`strtoumax`。格式宏跟随 Clang 的目标类型，两个 LP64 目标的转换沿用原解析器的范围、错误码及停止位置。ARM64、RV64 QEMU `runtime` 验证从定宽、最小、快速、最大和指针整数类型格式化的实际字符串，并核对转换边界；6 项整数主机回归通过。扫描宏和宽字符接口仍待实现。
 

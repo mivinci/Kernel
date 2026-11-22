@@ -2,6 +2,8 @@
 #define _STDIO_H
 #include <stddef.h>
 #include <stdarg.h>
+#include <sys/types.h>
+#include <sys/seek.h>
 #define EOF (-1)
 typedef struct Stdiofile FILE;
 extern FILE *const       stdin;
@@ -13,6 +15,11 @@ extern FILE *const       stderr;
 FILE  *fopen(const char *path, const char *mode);
 int    fclose(FILE *stream);
 int    fileno(FILE *stream);
+int    fseeko(FILE *stream, off_t offset, int whence);
+off_t  ftello(FILE *stream);
+int    fseek(FILE *stream, long offset, int whence);
+long   ftell(FILE *stream);
+void   rewind(FILE *stream);
 int    fflush(FILE *stream);
 int    ferror(FILE *stream);
 int    feof(FILE *stream);
