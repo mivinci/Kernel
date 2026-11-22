@@ -52,13 +52,85 @@ rooted(Dirgraph *graph, u32 ino)
   return 0;
 }
 
+static isize
+addname(Dirnames *names, const u8 *name, u32 length)
+{
+  u32 i;
+  if (names->next || names->heap)
+    return -ERR_STATE;
+  if (names->count == names->slots || length + 1 > names->capacity - names->used)
+    return -ERR_LIMIT;
+  names->offsets[names->count++] = names->used;
+  for (i = 0; i <= length; i++)
+    names->bytes[names->used++] = name[i];
+  return 0;
+}
+
+static int
+namecmp(const Dirnames *names, u32 a, u32 b)
+{
+  const u8 *left = names->bytes + a, *right = names->bytes + b;
+  while (*left && *left == *right) {
+    left++;
+    right++;
+  }
+  return (int) *left - (int) *right;
+}
+
+static void
+namesift(Dirnames *names, u32 root)
+{
+  u32 *order = names->offsets;
+  u32  item = order[root], child;
+  while ((child = root * 2 + 1) < names->heap) {
+    if (child + 1 < names->heap && namecmp(names, order[child], order[child + 1]) < 0)
+      child++;
+    if (namecmp(names, item, order[child]) >= 0)
+      break;
+    order[root] = order[child];
+    root = child;
+  }
+  order[root] = item;
+}
+
 isize
-dirgraphblock(Dirgraph *graph, u32 directory, const u8 *bytes, u32 valid, Dirdecode decode)
+dirnamesstep(Dirnames *names)
+{
+  u32 i;
+  if (!names || !names->bytes || !names->offsets)
+    return -ERR_INVALID;
+  if (names->count < 2 || names->heap == 1)
+    return 1;
+  if (!names->heap) {
+    names->heap = names->count;
+    names->next = names->count / 2;
+  }
+  for (i = 0; i < 64 && names->heap > 1; i++) {
+    u32 largest;
+    if (names->next) {
+      namesift(names, --names->next);
+      continue;
+    }
+    largest = names->offsets[0];
+    if (names->heap < names->count && !namecmp(names, largest, names->offsets[names->heap]))
+      return -ERR_STATE;
+    if (names->heap == 2 && !namecmp(names, names->offsets[1], largest))
+      return -ERR_STATE;
+    names->offsets[0] = names->offsets[--names->heap];
+    names->offsets[names->heap] = largest;
+    namesift(names, 0);
+  }
+  return names->heap == 1;
+}
+
+isize
+dirgraphblock(Dirgraph *graph, Dirnames *names, u32 directory, const u8 *bytes, u32 valid,
+              Dirdecode decode)
 {
   const Dirnode *from;
   u32            offset = 0;
-  if (!graph || !graph->nodes || !bytes || !decode || !directory || directory >= FS_INODES ||
-      !valid || valid > FS_BLOCK_BYTES)
+  if (!graph || !graph->nodes || !names || !names->bytes || !names->offsets || !bytes || !decode ||
+      !directory || directory >= FS_INODES || !valid || valid > FS_BLOCK_BYTES)
     return -ERR_INVALID;
   if (graph->failed)
     return graph->failed;
@@ -104,9 +176,11 @@ dirgraphblock(Dirgraph *graph, u32 directory, const u8 *bytes, u32 valid, Dirdec
       }
       continue;
     }
-    error = dirgraphedge(graph, directory, record.inode, record.generation, record.kind);
+    error = addname(names, name, record.namelen);
+    if (!error)
+      error = dirgraphedge(graph, directory, record.inode, record.generation, record.kind);
     if (error)
-      return error;
+      return graph->failed = error;
   }
   return 0;
 }

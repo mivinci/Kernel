@@ -5,6 +5,7 @@
 typedef struct Dirnode   Dirnode;
 typedef struct Dirgraph  Dirgraph;
 typedef struct Dirrecord Dirrecord;
+typedef struct Dirnames  Dirnames;
 typedef isize (*Dirdecode)(const u8 *, Dirrecord *);
 
 /* Normalized values from the 16-byte record header, not disk layout. */
@@ -28,6 +29,15 @@ struct Dirgraph
   isize          failed;
 };
 
+/* Reusable scratch for a single directory. A full-size directory needs at
+   most FS_FILE_BYTES name bytes and FS_FILE_BYTES / 24 offsets. */
+struct Dirnames
+{
+  u8  *bytes;
+  u32 *offsets;
+  u32  capacity, slots, used, count, heap, next;
+};
+
 /* Supply an immutable, decoded FS_INODES table from the stable home view.
    Kind zero denotes a free slot. A fresh graph starts with only nodes set. */
 /* Record each live, ordinary name once, after record and name validation.
@@ -35,7 +45,9 @@ struct Dirgraph
 isize dirgraphedge(Dirgraph *, u32 directory, u32 target, u32 generation, u32 kind);
 /* Decode only a complete header. The walker checks bounds before inspecting
    the name and does not advance past malformed records. */
-isize dirgraphblock(Dirgraph *, u32 directory, const u8 *, u32 bytes, Dirdecode);
+isize dirgraphblock(Dirgraph *, Dirnames *, u32 directory, const u8 *, u32 bytes, Dirdecode);
+/* Seal the collected names and check exact duplicates in bounded batches. */
+isize dirnamesstep(Dirnames *);
 /* After all directories have been read, seal input and check a batch.
    Returns one when the whole graph has been checked, zero to continue. */
 isize dirgraphstep(Dirgraph *);

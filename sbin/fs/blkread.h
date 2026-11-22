@@ -109,6 +109,7 @@ struct Blkdir
 {
   Blkowners *home;
   Dirgraph   graph;
+  Dirnames   names;
   Dirdecode  decode;
   u64        offset;
   isize      failed;

@@ -467,9 +467,13 @@ blkdirstep(Blkdir *work)
     work->loaded = 1;
   }
   if (work->offset == load->map.file.length) {
+    error = dirnamesstep(&work->names);
+    if (error != 1)
+      return error < 0 ? (work->failed = error) : 0;
     work->inode++;
     work->loaded = 0;
     work->offset = 0;
+    work->names.used = work->names.count = work->names.heap = work->names.next = 0;
     return 0;
   }
   valid = (u32) MIN(load->map.file.length - work->offset, FS_BLOCK_BYTES);
@@ -481,7 +485,8 @@ blkdirstep(Blkdir *work)
   if (error == -ERR_WOULD_BLOCK)
     return 0;
   if (!error)
-    error = dirgraphblock(&work->graph, work->inode, load->bytes, valid, work->decode);
+    error =
+        dirgraphblock(&work->graph, &work->names, work->inode, load->bytes, valid, work->decode);
   if (error)
     return work->failed = error < 0 ? error : -ERR_STATE;
   work->offset += valid;

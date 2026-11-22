@@ -1235,6 +1235,13 @@ blkdots(const u8 *bytes, Dirrecord *record)
 }
 
 static isize
+blknamed(const u8 *bytes, Dirrecord *record)
+{
+  *record = (Dirrecord){bytes[0], 1, 24, bytes[1], VNODE_FILE};
+  return 0;
+}
+
+static isize
 blkdecodedir(const u8 *bytes, Dirrecord *record)
 {
   if (bytes[0] == 0xb1) {
@@ -1260,6 +1267,8 @@ blkclient(const Bootview *boot, Handle call)
   static Blkowners          home;
   Dirnode                   nodes[FS_INODES] = {{0}};
   Blkdir                    dirs = {0};
+  u8                        namebytes[256];
+  u32                       nameoffsets[8];
   static u8                 data[PAGE_SIZE];
   const Journalblock        block = {192, data};
   const Journalplan         plan = {NULL, NULL, NULL, NULL, &block, 0, 1};
@@ -1398,9 +1407,11 @@ blkclient(const Bootview *boot, Handle call)
           424);
   dirs.home = &home;
   dirs.decode = blkdecodedir;
+  dirs.names =
+      (Dirnames){namebytes, nameoffsets, sizeof(namebytes), ARRAY_SIZE(nameoffsets), 0, 0, 0, 0};
   dirs.graph.nodes = nodes;
   data[0] = 0xb1;
-  REQUIRE(dirgraphblock(&dirs.graph, FS_ROOT, data, 16, blkdecodedir) == -ERR_STATE &&
+  REQUIRE(dirgraphblock(&dirs.graph, &dirs.names, FS_ROOT, data, 16, blkdecodedir) == -ERR_STATE &&
               !dirs.graph.incoming[34],
           431);
   dirs.graph.failed = 0;
@@ -1418,12 +1429,24 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(op == 3 && dirs.graph.incoming[34] == 1 && blkdirstep(&dirs) == 1 && !blk.rpc, 429);
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
+  nodes[35] = nodes[36] = (Dirnode){1, VNODE_FILE, 1};
+  data[0] = 35;
+  data[1] = 1;
+  data[16] = 'a';
+  data[17] = 0;
+  REQUIRE(!dirgraphblock(&dirs.graph, &dirs.names, FS_ROOT, data, 24, blknamed), 435);
+  data[0] = 36;
+  REQUIRE(!dirgraphblock(&dirs.graph, &dirs.names, FS_ROOT, data, 24, blknamed) &&
+              dirnamesstep(&dirs.names) == -ERR_STATE,
+          436);
+  dirs.names.bytes[dirs.names.offsets[1]] = 'b';
+  REQUIRE(dirnamesstep(&dirs.names) == 1, 437);
   nodes[2] = nodes[3] = (Dirnode){1, VNODE_DIR, 1};
   data[0] = 3;
   data[16] = data[17] = '.';
   data[18] = 0;
-  REQUIRE(!dirgraphblock(&dirs.graph, 2, data, 24, blkdots) &&
-              dirgraphblock(&dirs.graph, 2, data, 24, blkdots) == -ERR_STATE,
+  REQUIRE(!dirgraphblock(&dirs.graph, &dirs.names, 2, data, 24, blkdots) &&
+              dirgraphblock(&dirs.graph, &dirs.names, 2, data, 24, blkdots) == -ERR_STATE,
           433);
   dirs.graph.failed = 0;
   REQUIRE(!dirgraphedge(&dirs.graph, FS_ROOT, 2, 1, VNODE_DIR) &&
