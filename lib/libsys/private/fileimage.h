@@ -48,6 +48,11 @@ isize sysfilepollgroup(const Pollfile *items, u32 count, Conntag connection, Fil
 isize sysfilepollabandon(Fileimage *state, Opkey *key);
 /* Submit while caught signals are excluded. A rejected call remains PREPARED. */
 isize sysfilepollsubmit(Connwork *work, Conncache *cache, const Opkey *key);
+/* Nonblocking collection. FINISH precedes payload validation and ACK.
+   Keep the same private rows and result across retries. Zero returns the
+   group's pin exactly once, clears the key, and publishes its outcome. */
+isize sysfilepollcollect(Connwork *work, Conncache *cache, Opkey *key, Filepoll *rows, u32 count,
+                         Fileioresult *result, u64 *pin);
 
 /* One shared file state per image, initialized on demand. Inherited image
    repair must be wired before these records can be used by a fork child. */

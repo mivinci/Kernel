@@ -189,7 +189,7 @@ sysoppollprepare(Connwork *work, Conncache *cache, u32 context, u64 owner, u64 *
   if (!pollopcode(opcode) || !output(work, cache, out, sizeof(*out)) ||
       !separate(owned_file, sizeof(*owned_file), out, sizeof(*out)))
     return -ERR_INVALID;
-  error = sysopprepare(work, cache, context, 1, owner, owned_file, 0, opcode, 0, &draft);
+  error = sysopprepare(work, cache, context, 1, owner, owned_file, count, opcode, 0, &draft);
   if (error)
     return error;
   error = sysfilepollstage((void *) (uintptr_t) work->state.map.address, work->state.map.bytes,

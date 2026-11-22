@@ -32,6 +32,76 @@ sysfilepollsubmit(Connwork *work, Conncache *cache, const Opkey *key)
 }
 
 isize
+sysfilepollcollect(Connwork *work, Conncache *cache, Opkey *key, Filepoll *rows, u32 count,
+                   Fileioresult *result, u64 *pin)
+{
+  Slotop *op;
+  isize   error;
+  if (!key || !key->owner || !result || !pin || *pin || !rows || !count || count > FS_POLL_ROWS)
+    return -ERR_INVALID;
+  error = sysopcheck(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if ((op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT) || op->object != count)
+    return -ERR_INVALID;
+  error = sysoppoll(work, cache, key);
+  if (error)
+    return error;
+  if (op->status == -ERR_PEER && !(op->flags & SYSOP_BAD_RESULT) && !op->kind && !op->words[0] &&
+      !op->words[1] && !op->words[2] && !op->words[3] && !work->state.ended) {
+    error = sysoppeerended(work, cache, key);
+    if (error)
+      return error;
+  }
+  error = sysopfinished(work, cache, key);
+  if (error)
+    return error;
+  if (!(op->flags & SYSOP_SAVED)) {
+    result->native = result->business = 0;
+    result->count = 0;
+    if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT)
+      result->native = -ERR_STATE;
+    else if (op->status) {
+      result->native =
+          op->words[0] || op->words[1] || op->words[2] || op->words[3] ? -ERR_STATE : op->status;
+    } else if (op->words[0]) {
+      if (op->words[1] != key->lease.seq || (isize) op->words[0] > 0 || op->words[2] ||
+          op->words[3])
+        result->native = -ERR_STATE;
+      else
+        result->business = (isize) op->words[0];
+    } else {
+      error = sysfilepollresult((const void *) (uintptr_t) work->state.map.address,
+                                work->state.map.bytes, key->lease, op->words, rows, count);
+      if (error < 0)
+        result->native = error;
+      else
+        result->count = (u64) error;
+    }
+    if (op->resource) {
+      error = __sys_free(op->resource);
+      if (error)
+        return error;
+      op->resource = 0;
+      op->flags |= SYSOP_RESOURCE_MOVED;
+    }
+    error = sysopsaved(work, cache, key);
+    if (error)
+      return error;
+  }
+  if (op->phase != SYSOP_ACKED) {
+    error = sysopack(work, cache, key);
+    if (error)
+      return error;
+  }
+  error = sysopfinish(work, cache, key, pin);
+  if (!error)
+    key->lease.seq = 0;
+  return error;
+}
+
+isize
 sysfilepollabandon(Fileimage *state, Opkey *key)
 {
   Opkey background;
