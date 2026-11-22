@@ -10,15 +10,16 @@ separate(const Execmanifest *out, const void *input, u64 bytes)
          (a + sizeof(*out) <= b || b + bytes <= a);
 }
 
-isize
-sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fileslot *slot,
-                const void *page, Connpeer backend, u64 now, Execsource lookup, void *context)
+static isize
+manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fileslot *slot,
+         const void *page, Connpeer backend, u64 now, Execsource lookup, void *context, u32 opcode)
 {
   u64          count, bytes, span, index, i, j, used[2] = {0, 0};
   u32          groups = 0;
   isize        error;
   Fileinherit *row;
   Execgroup   *group;
+  int          fork = opcode == FS_FORK_PREPARE;
   if (!lookup || !separate(out, watch, sizeof(*watch)) || !separate(out, call, sizeof(*call)) ||
       !separate(out, slot, sizeof(*slot)) || handlekind(backend.pid) != HANDLE_PROCESS ||
       !backend.image)
@@ -26,15 +27,18 @@ sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
   if (out->count)
     return -ERR_BUSY;
   index = call->words[3];
-  if (call->kind != IPC_CALL || call->words[0] != FS_EXEC_PREPARE ||
+  if (call->kind != IPC_CALL || call->words[0] != opcode ||
       handlekind(call->request) != HANDLE_REQUEST || call->source != watch->owner.pid ||
       call->image != watch->owner.image || !watch->connid || call->words[1] != watch->connid ||
       !slot->seq || slot->seq != call->words[2])
     return -ERR_STALE;
   count = slot->args[4];
-  if (!count || count > BOOT_FD_COUNT || slot->args[5] || slot->args[6] || slot->args[7] ||
-      slot->object || slot->args[0] != (u64) call->source || slot->args[1] <= call->image ||
+  if (!count || count > BOOT_FD_COUNT || slot->args[5] || slot->args[7] || slot->object ||
       slot->args[2] != call->image)
+    return -ERR_INVALID;
+  if (fork ? handlekind((Handle) slot->args[0]) != HANDLE_PROCESS ||
+                 slot->args[0] == (u64) call->source || !slot->args[1]
+           : slot->args[6] || slot->args[0] != (u64) call->source || slot->args[1] <= call->image)
     return -ERR_INVALID;
   bytes = count * sizeof(*row);
   span = bytes > FS_SLOT_BYTES ? 2 : 1;
@@ -72,7 +76,7 @@ sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
       groups++;
     } else if (group->session != row->session)
       return -ERR_STALE;
-    if (row->flags & BOOT_FD_CLOEXEC)
+    if (!fork && (row->flags & BOOT_FD_CLOEXEC))
       group->closed++;
     else
       group->retained++;
@@ -85,8 +89,24 @@ sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
   out->seq = slot->seq;
   out->slot = index;
   out->deadline = slot->args[3];
+  out->child = fork ? (Handle) slot->args[0] : 0;
+  out->snapshot = slot->args[6];
   out->count = groups;
   return 0;
+}
+
+isize
+sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fileslot *slot,
+                const void *page, Connpeer backend, u64 now, Execsource lookup, void *context)
+{
+  return manifest(out, watch, call, slot, page, backend, now, lookup, context, FS_EXEC_PREPARE);
+}
+
+isize
+sysforkmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fileslot *slot,
+                const void *page, Connpeer backend, u64 now, Execsource lookup, void *context)
+{
+  return manifest(out, watch, call, slot, page, backend, now, lookup, context, FS_FORK_PREPARE);
 }
 
 static isize
@@ -203,7 +223,7 @@ sysexecreserve(Execreserve *out, const Execmanifest *plan, Fileowner *source, Fi
   const Execgroup *group;
   isize            error, cleanup;
   u32              i;
-  if (!plan || !take || !drop || !plan->count || plan->count > BOOT_FD_COUNT ||
+  if (!plan || plan->child || !take || !drop || !plan->count || plan->count > BOOT_FD_COUNT ||
       !separate(plan, out, sizeof(*out)))
     return -ERR_INVALID;
   if (out->count || out->ready || out->source || out->target)

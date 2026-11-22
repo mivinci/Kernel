@@ -20,7 +20,8 @@ class Group(C.Structure):
 class Plan(C.Structure):
     _fields_ = [('rows', (U * 6) * 128), ('groups', Group * 128), ('pid', C.c_int64),
                 ('source_image', U), ('target_image', U), ('request', C.c_int64),
-                ('connid', U), ('seq', U), ('slot', U), ('deadline', U), ('count', C.c_uint32)]
+                ('connid', U), ('seq', U), ('slot', U), ('deadline', U), ('count', C.c_uint32),
+                ('child', C.c_int64), ('snapshot', U)]
 
 
 class Hold(C.Structure):
@@ -62,7 +63,31 @@ isize __sys_obsread(u64 cookie, u64 *state, u64 *reason, Handle *pid, u64 *image
   return 0;
 }
 isize __sys_copy(void *to, const void *from, u64 bytes) {
-  (void) to; (void) from; (void) bytes; return -ERR_NOSYS;
+  u64 i;
+  for (i = 0; i < bytes; i++) ((u8 *) to)[i] = ((const u8 *) from)[i];
+  return 0;
+}
+static isize lookup(void *ctx, Handle pid, u64 image, u64 session, u64 reference) {
+  (void) ctx; (void) pid;
+  return image == 1 && session == 13 && reference == 17 ? 0 : -ERR_STALE;
+}
+isize forkmanifest(u64 scenario, Execmanifest *out) {
+  Handle parent = ((u64) HANDLE_PROCESS << 59) | (1U << 16) | 2;
+  Ipcmsg call = {IPC_CALL, parent, ((u64) HANDLE_REQUEST << 59) | (1U << 16),
+                 {FS_FORK_PREPARE, 29, 3, 0}, 1};
+  Connpeer backend = {parent + 2, 4};
+  Filewatch watch = {0};
+  Fileslot slot = {0};
+  u64 page[FS_SLOT_BYTES / sizeof(u64)] = {0};
+  Fileinherit *rows = (Fileinherit *) page;
+  watch.owner.pid = parent; watch.owner.image = 1; watch.connid = 29;
+  watch.active.requests[0] = scenario == 2 ? 0 : call.request;
+  slot.seq = 3; slot.span = 1; slot.payload_bytes = 2 * sizeof(*rows);
+  slot.args[0] = parent + 1; slot.args[1] = 1; slot.args[2] = 1;
+  slot.args[3] = 100; slot.args[4] = 2; slot.args[6] = 71;
+  rows[0] = (Fileinherit){0, BOOT_FD_CLOEXEC, backend.pid, 4, 13, 17};
+  rows[1] = (Fileinherit){scenario == 1 ? 0 : 1, 0, backend.pid, 4, 13, 17};
+  return sysforkmanifest(out, &watch, &call, &slot, page, backend, 99, lookup, 0);
 }
 isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 image,
                     u64 *cookie, u64 *state, u64 *reason) {
@@ -154,6 +179,18 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.claim.restype = C.c_int64
         cls.lib.forkobserve.argtypes = [U, C.POINTER(Owner)]
         cls.lib.forkobserve.restype = C.c_int64
+        cls.lib.forkmanifest.argtypes = [U, C.POINTER(Plan)]
+        cls.lib.forkmanifest.restype = C.c_int64
+
+    def test_fork_manifest_retains_cloexec_aliases_and_requires_original_slot(self):
+        plan = Plan()
+        for scenario in (1, 2):
+            self.assertLess(self.lib.forkmanifest(scenario, C.byref(plan)), 0)
+            self.assertEqual((plan.count, plan.child, plan.snapshot), (0, 0, 0))
+        self.assertEqual(self.lib.forkmanifest(0, C.byref(plan)), 0)
+        self.assertEqual((plan.child, plan.target_image, plan.snapshot), (plan.pid + 1, 1, 71))
+        self.assertEqual((plan.count, plan.groups[0].retained, plan.groups[0].closed), (1, 2, 0))
+        self.assertEqual(plan.rows[0][1], 1)
 
     def test_fork_observe_installs_only_a_verified_preparing_child(self):
         owner = Owner()

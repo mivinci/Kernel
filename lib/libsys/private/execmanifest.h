@@ -32,6 +32,8 @@ struct Execmanifest
   Handle      request;
   u64         connid, seq, slot, deadline;
   u32         count;
+  Handle      child;
+  u64         snapshot;
 };
 struct Exechold
 {
@@ -53,6 +55,12 @@ struct Execreserve
    one group per source reference; retained=0 means CLOEXEC-only. This does
    not authorize the target Image or acquire/allocate a target reference. */
 isize sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call,
+                      const Fileslot *slot, const void *page, Connpeer backend, u64 now,
+                      Execsource lookup, void *context);
+/* Validate and group FORK_PREPARE rows. Fork retains every descriptor;
+   child and snapshot are untrusted until checked against the live request
+   and the original snapshot record. */
+isize sysforkmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call,
                       const Fileslot *slot, const void *page, Connpeer backend, u64 now,
                       Execsource lookup, void *context);
 /* Acquire the target observation through the original accepted REQUEST. The
