@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <errno.h>
 #include "private/syscall.h"
 static u32
 credential(u32 index)
@@ -29,4 +30,16 @@ gid_t
 getegid(void)
 {
   return credential(3);
+}
+
+int
+getgroups(int size, gid_t list[])
+{
+  (void) list;
+  if (size < 0) {
+    errno = EINVAL;
+    return -1;
+  }
+  /* The real and effective GIDs are separate from supplementary groups. */
+  return 0;
 }

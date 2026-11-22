@@ -14,6 +14,7 @@ uid_t         getuid(void);
 uid_t         geteuid(void);
 gid_t         getgid(void);
 gid_t         getegid(void);
+int           getgroups(int size, gid_t list[]);
 pid_t         getpgrp(void);
 pid_t         getpgid(pid_t pid);
 pid_t         getsid(pid_t pid);

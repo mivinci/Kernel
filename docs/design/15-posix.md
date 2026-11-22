@@ -203,6 +203,8 @@ ARM64、RV64 QEMU `pipeio` 验证 `fopen("rb")` 与 `fopen("a+e")` 经文件服�
 
 `<inttypes.h>` 提供整数输出的 `PRI*` 格式宏及 `strtoimax`、`strtoumax`。格式宏跟随 Clang 的目标类型，两个 LP64 目标的转换沿用原解析器的范围、错误码及停止位置。ARM64、RV64 QEMU `runtime` 验证从定宽、最小、快速、最大和指针整数类型格式化的实际字符串，并核对转换边界；6 项整数主机回归通过。扫描宏和宽字符接口仍待实现。
 
+公开 `getgroups()` 为 BusyBox `test` 等调用者提供补充组列表。当前系统不支持补充组，成功返回 0，不把真实或有效 GID 放进列表；主组仍可用 `getgid()` 和 `getegid()` 查询。ARM64、RV64 QEMU `elf` 核对零长度查询、输出缓冲区及成功时的 `errno` 均不变，以及负长度返回 `EINVAL`。未引入 `setgroups()` 或新的内核接口。
+
 `<setjmp.h>` 提供同一活动信号上下文内的 `setjmp`/`longjmp`。保存 SDK 调用约定要求的寄存器、栈指针和续点；不改变信号掩码。ARM64、RV64 QEMU `runtime` 验证从更深调用恢复到两个不同续点、跳转值 0 转为 1，以及保留负值。跨 libc 信号层的跳转会调用 `abort`，因为直接改栈会绕过内核信号帧和原请求交接。此实现不包含 `siglongjmp`，也不支持 ash 从 SIGINT handler 直接跳回命令循环。
 
 `<locale.h>` 提供固定 C locale 下的 `setlocale` 和 `localeconv`。接受 `C` 和 `POSIX`；空名称按 `LC_ALL`、对应类别、`LANG` 选取，遇到不支持的名称返回空指针并保持原 locale。`localeconv` 返回小数点 `.`、空分组/货币串及未定义货币字段的 `CHAR_MAX`。ARM64、RV64 QEMU `runtime` 核对环境优先级、失败后查询及格式约定。其他 locale、locale 对象和宽字符接口仍不支持。

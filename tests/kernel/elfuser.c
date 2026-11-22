@@ -112,6 +112,7 @@ main(int argc, char **argv)
   Handle          create, space, allocator, pid, control, collected, occupied = 0;
   u64             written, next, kind, code, sequence, mask;
   u32             ids[4], scenario, count = 0, retries = 0;
+  gid_t           group = 42;
   isize           error;
   int             status;
   REQUIRE(argc == 0 && argv && !argv[0] && getpid() > 1 && getppid() == 1, 181);
@@ -123,6 +124,9 @@ main(int argc, char **argv)
   errno = EDOM;
   REQUIRE(getuid() == ids[0] && geteuid() == ids[1] && getgid() == ids[2] && getegid() == ids[3] &&
               errno == EDOM,
+          183);
+  REQUIRE(!getgroups(0, NULL) && !getgroups(1, &group) && group == 42 && errno == EDOM &&
+              getgroups(-1, &group) == -1 && group == 42 && errno == EINVAL,
           183);
   source.context = &reader;
   source.bytes = (u64) (payload_elf_end - payload_elf);
