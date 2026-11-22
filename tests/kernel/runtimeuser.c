@@ -1132,6 +1132,14 @@ main(int argc, char **argv)
   }
   sortcheck();
   {
+    char  text[8] = "xxxxxxx";
+    char *end = mempcpy(text, "a\0b", 3);
+    REQUIRE(end == text + 3 && mempcpy(end, "cd", 2) == text + 5 &&
+                mempcpy(text + sizeof(text), "", 0) == text + sizeof(text) &&
+                !memcmp(text, "a\0bcdxx", sizeof(text)),
+            176);
+  }
+  {
     char text[8] = "xxxxxxx";
     REQUIRE(stpcpy(text, "ab") == text + 2 && !memcmp(text, "ab\0x", 4) &&
                 stpncpy(text, "a", 4) == text + 1 && !memcmp(text, "a\0\0\0x", 5) &&

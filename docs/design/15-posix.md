@@ -153,9 +153,13 @@ ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实
 
 公开 SDK 的 `<limits.h>` 在保留 Clang 整数限制的基础上提供 `PATH_MAX=4096`（含 NUL）和 `NAME_MAX=255`（不含 NUL）。VFS 路径解析和 SDK 共用 `proto/path.h` 中的定义。ARM64、RV64 均用 SDK 与 Clang 基础头独立检查了这些宏，未引入宿主系统头。
 
+公开 SDK 的 `<paths.h>` 提供 ash 作业控制所用的 `_PATH_TTY`，取 10 篇规定的 `/dev/tty`。双架构 BusyBox 依赖探针均解析到目标 SDK 的头。该宏只公布路径，控制终端的实际解析仍由 devfs 实现。
+
 公开 SDK 提供 BusyBox ash 用到的 `<string.h>` 扩展 `strchrnul`：按无符号字节查找，未匹配时返回结尾 NUL 的地址。它无需分配或系统调用。
 
 `stpcpy` 和 `stpncpy` 与现有字符串复制共用实现，供 ash 拼接作业状态和目录项名称。`stpcpy` 返回写入的结尾 NUL；`stpncpy` 最多复制指定字节数，短串补零并返回首个零字节，截断时返回目标区间末尾。
+
+公开 SDK 也提供 ash 展开和拼接变量时使用的 GNU 扩展 `mempcpy`。复制规则与 `memcpy` 相同，返回写入区间之后的地址；长度为零时返回原目标地址。已核对 ARM64/RV64 SDK 的公开声明和归档符号，并在两架构 QEMU `runtime` 验证含 NUL 的二进制复制、按返回地址继续写入及零长度不写入。
 
 `asprintf` / `vasprintf` 复用 `vsnprintf` 的格式子集。先计算字节数，再分配含结尾 NUL 的缓冲区；成功返回不含 NUL 的字节数，由调用者 `free`。失败返回 -1，保留调用者原输出指针；成功保留 `errno`。BusyBox 的 `xasprintf` 可使用同一 SDK 入口，不引入新的内核接口。
 

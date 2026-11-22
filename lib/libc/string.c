@@ -11,6 +11,13 @@ memcpy(void *destination, const void *source, size_t bytes)
   return destination;
 }
 void *
+mempcpy(void *destination, const void *source, size_t bytes)
+{
+  if (!bytes)
+    return destination;
+  return (u8 *) memcpy(destination, source, bytes) + bytes;
+}
+void *
 memmove(void *destination, const void *source, size_t bytes)
 {
   u8       *to = destination;

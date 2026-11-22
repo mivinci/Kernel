@@ -2,6 +2,7 @@
 #define _STRING_H
 #include <stddef.h>
 void  *memcpy(void *destination, const void *source, size_t bytes);
+void  *mempcpy(void *destination, const void *source, size_t bytes);
 void  *memmove(void *destination, const void *source, size_t bytes);
 void  *memset(void *destination, int byte, size_t bytes);
 int    memcmp(const void *a, const void *b, size_t bytes);
