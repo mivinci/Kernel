@@ -1482,6 +1482,8 @@ brokenclient(void)
         !memcmp(formatted, "out:7\n", 6));
   CHECK(fwrite("a\0bc", 2, 2, stdout) == 2 && !fflush(stdout) && read(fds[0], formatted, 4) == 4 &&
         !memcmp(formatted, "a\0bc", 4));
+  CHECK(puts("line") >= 0 && putchar(-1) == 255 && puts("") >= 0 && !fflush(stdout) &&
+        read(fds[0], formatted, 7) == 7 && !memcmp(formatted, "line\n\377\n", 7));
   if (fds[1] != 1)
     CHECK(!close(1));
   if (fds[1] != 2)

@@ -34,6 +34,8 @@ size_t fwrite(const void *data, size_t size, size_t count, FILE *stream);
 int    fputs(const char *text, FILE *stream);
 int    fputc(int byte, FILE *stream);
 int    putc(int byte, FILE *stream);
+int    putchar(int byte);
+int    puts(const char *text);
 int    fprintf(FILE *stream, const char *format, ...) __attribute__((format(printf, 2, 3)));
 int    vfprintf(FILE *stream, const char *format, va_list arguments)
     __attribute__((format(printf, 2, 0)));

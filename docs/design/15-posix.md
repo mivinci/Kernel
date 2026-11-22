@@ -151,6 +151,8 @@ T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与�
 
 ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实时时钟、输出秒数和规范化微秒，成功保留 `errno`，拒绝不支持的时区输出和无效地址。此验收不覆盖 `times()` 的进程 CPU 计时。
 
+公开 SDK 的 `<limits.h>` 在保留 Clang 整数限制的基础上提供 `PATH_MAX=4096`（含 NUL）和 `NAME_MAX=255`（不含 NUL）。VFS 路径解析和 SDK 共用 `proto/path.h` 中的定义。ARM64、RV64 均用 SDK 与 Clang 基础头独立检查了这些宏，未引入宿主系统头。
+
 libc 的私有 `pathsearch` 实现按固定 PATH 快照查找命令的顺序，供后续 `posix_spawnp` 与 sh 共用：名称含 `/` 时直接尝试；空路径分量从 cwd 尝试；ENOENT、ENOTDIR 继续搜索，遇 EACCES 记下并继续，没有成功项时优先返回 EACCES。ENOEXEC 原样返回，不启动脚本替代。最多 32 个分量，PATH 和单个候选路径各最多 4096 字节（含 NUL），不截断。4 项主机测试用回调核对候选顺序、失败归并和容量边界，ARM64/RV64 SDK 构建通过。此处尚未调用文件系统或发布进程。
 
 `<spawn.h>` 提供 `posix_spawn_file_actions_init/destroy/addopen/addclose/adddup2`。列表按登记顺序保存最多 128 项；`addopen` 自持路径副本，登记不打开文件。私有遍历器在首个动作错误处停止；未来 spawn 调用者须先捕获稳定列表，再将动作应用到未发布的子进程，并在出错时撤销准备。ARM64/RV64 QEMU `runtime` 验证路径副本、无效 fd、动作顺序、失败后不执行下一项、释放列表及 PATH 候选顺序。实际子 fd 表操作、CLOEXEC 收尾与 `posix_spawn` 发布未接。
@@ -176,6 +178,8 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 公开 `sleep()` 已接入。ARM64、RV64 QEMU `runtime` 验证零秒立即返回、完整一秒不提前返回，以及原生等待被配置了 `SA_RESTART` 的 SIGUSR1 handler 中断后返回向上取整的剩余秒数；三条路径均保持 `errno`。这里验收的是 libc 入口，BusyBox `sleep` 仍待整体构建和运行。
 
 标准输出流已接入。ARM64、RV64 QEMU `pipeio` 用真实管道验证非终端 stdout 缓冲、stderr 直写、`fflush(NULL)`、含 NUL 的 `fwrite` 及断管错误指示的清除。8 项 libc 主机测试通过，其中退出测试核对析构后刷新以及直接、递归退出跳过刷新。终端行缓冲、生产 Bootfd、第三方程序的串口输出与退出码仍待联合验收。
+
+`puts(const char *)` 和 `putchar(int)` 复用 stdout 的缓冲和错误规则。ARM64、RV64 QEMU `pipeio` 验证普通串和空串各追加一个换行，`putchar(-1)` 作为无符号字节写出并返回 255。
 
 标准输入流已接入。ARM64、RV64 QEMU `pipeio` 验证 fd 0 上的管道预读、回推和刷新、读行、无符号字节、`fread` 的元素计数、EOF 和关闭 fd 后的 EBADF。以可定位文件夹具验证了 `fflush(NULL)` 和 `fflush(stdin)` 在预读后恢复逻辑偏移，另一个共享打开状态的 fd 可见该变化。生产标准 fd 交付与交互式终端仍待验收。
 

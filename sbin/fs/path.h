@@ -1,9 +1,8 @@
 #ifndef _FS_PATH_H
 #define _FS_PATH_H
+#include <proto/path.h>
 #include <types.h>
 
-#define FS_PATH_BYTES 4096
-#define FS_NAME_BYTES 255
 #define FS_PATH_LINKS 40
 
 typedef struct Fspath   Fspath;

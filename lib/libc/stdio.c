@@ -518,6 +518,20 @@ putc(int byte, FILE *stream)
   return fputc(byte, stream);
 }
 
+int
+putchar(int byte)
+{
+  return fputc(byte, stdout);
+}
+
+int
+puts(const char *text)
+{
+  if (fputs(text, stdout) == EOF || putchar('\n') == EOF)
+    return EOF;
+  return 0;
+}
+
 static int
 emit(void *context, const char *text, char fill, size_t count)
 {
