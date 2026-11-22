@@ -1,5 +1,5 @@
 #include "blkread.h"
-#include "journal.h"
+#include "crc.h"
 
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
@@ -81,6 +81,61 @@ blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
   error = blkreadboot(blk, probe->phase == ProbeSuper ? 0 : JOURNAL_MARK_BLOCK);
   if (!error)
     probe->sequence = blk->seq;
+  return error;
+}
+
+isize
+blkredostep(Blkredo *redo)
+{
+  const Blkprobe *probe;
+  Fsblk          *blk;
+  u8             *bytes;
+  isize           error, status;
+  u32             i;
+  if (!redo || !(probe = redo->probe) || probe->phase != ProbeDone || !probe->blk)
+    return -ERR_INVALID;
+  if (redo->failed)
+    return redo->failed;
+  blk = probe->blk;
+  if (redo->sequence) {
+    if (!blk->rpc || blk->seq != redo->sequence || blk->opcode != BLK_READ)
+      return redo->failed = -ERR_STATE;
+    bytes = redo->bytes[redo->read ? redo->read - 1 : 0];
+    error = fsblkpoll(blk, bytes, FS_BLOCK_BYTES, &status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+    redo->sequence = 0;
+    if (blk->stale || blk->info.geometry_generation != probe->generation)
+      return redo->failed = -ERR_STALE;
+    if (status)
+      return redo->failed = -ERR_STATE;
+    if (!redo->read) {
+      if (redo->decode(bytes, &redo->head) ||
+          !journalheadvalid(probe->layout.blocks, &probe->mark, &redo->head))
+        return redo->failed = -ERR_STATE;
+      redo->crc = redo->initial;
+    } else {
+      redo->crc = fscrc32c(redo->crc, bytes, FS_BLOCK_BYTES);
+    }
+    redo->read++;
+    if (redo->read == redo->head.count + 1) {
+      if ((redo->crc ^ redo->finalxor) != probe->mark.payloadcrc)
+        return redo->failed = -ERR_STATE;
+      for (i = 0; i < redo->head.count; i++)
+        redo->images[i] = (Journalblock){redo->head.targets[i], redo->bytes[i]};
+    }
+  }
+  if (blk->stale || blk->info.geometry_generation != probe->generation)
+    return redo->failed = -ERR_STALE;
+  if (!probe->mark.state || (redo->read && redo->read == redo->head.count + 1))
+    return 1;
+  if (!redo->decode)
+    return -ERR_INVALID;
+  if (blk->rpc)
+    return -ERR_BUSY;
+  error = blkreadboot(blk, FS_LOG_START + redo->read);
+  if (!error)
+    redo->sequence = blk->seq;
   return error;
 }
 

@@ -1066,6 +1066,27 @@ journalmetadata(const Redoscan *scan, const Journalblock *images, u32 count, u32
   return !!(scan->owners->owned.used[block / 64] & scan->owners->metadata.used[block / 64] & bit);
 }
 
+int
+journalheadvalid(u64 blocks, const Journalmark *mark, const Journalhead *head)
+{
+  u32 i, j;
+  if (!mark || mark->state != 1 || !mark->txid || !head || head->state != 1 ||
+      head->txid != mark->txid || head->headercrc != mark->headercrc ||
+      head->payloadcrc != mark->payloadcrc || !head->count || head->count > JOURNAL_META)
+    return 0;
+  for (i = 0; i < head->count; i++) {
+    if (!home(head->targets[i], blocks))
+      return 0;
+    for (j = 0; j < i; j++)
+      if (head->targets[i] == head->targets[j])
+        return 0;
+  }
+  for (; i < JOURNAL_META; i++)
+    if (head->targets[i])
+      return 0;
+  return 1;
+}
+
 isize
 journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *device,
                const Journalmark *mark, const Journalhead *head, const Journalblock *metadata,
@@ -1093,18 +1114,12 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
     journal->phase = JOURNAL_IDLE;
     return 0;
   }
-  if (mark->state != 1 || !mark->txid || !head || head->state != 1 || head->txid != mark->txid ||
-      head->headercrc != mark->headercrc || head->payloadcrc != mark->payloadcrc ||
-      payloadcrc != mark->payloadcrc || !count || count != head->count ||
-      !redosnapshots(journal, layout->blocks, metadata, count, empty))
+  if (!journalheadvalid(layout->blocks, mark, head) || payloadcrc != mark->payloadcrc ||
+      count != head->count || !redosnapshots(journal, layout->blocks, metadata, count, empty))
     return -ERR_STATE;
-  for (i = 0; i < JOURNAL_META; i++) {
-    if (i < count) {
-      if (head->targets[i] != metadata[i].block)
-        return -ERR_STATE;
-    } else if (head->targets[i])
+  for (i = 0; i < count; i++)
+    if (head->targets[i] != metadata[i].block)
       return -ERR_STATE;
-  }
   for (i = 0; i < count; i++)
     if (metadata[i].block >= layout->datastart &&
         (!scan || scan->blocks != layout->blocks || !journalmetadata(scan, metadata, count, i)))

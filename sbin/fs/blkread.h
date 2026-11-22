@@ -8,6 +8,7 @@
 typedef struct Blkread     Blkread;
 typedef struct Blkredoload Blkredoload;
 typedef struct Blkprobe    Blkprobe;
+typedef struct Blkredo     Blkredo;
 struct Blkread
 {
   Fsblk    *blk;
@@ -54,6 +55,26 @@ struct Blkprobe
    pending poll error retains the original request for the next step. */
 isize blkprobestep(Blkprobe *, isize (*layout)(const u8 *, Fslayout *, u8 *),
                    isize (*mark)(const u8 *, const u8 *, Journalmark *));
+
+struct Blkredo
+{
+  const Blkprobe *probe;
+  isize (*decode)(const u8 *, Journalhead *);
+  u32          initial, finalxor;
+  Journalhead  head;
+  Journalblock images[JOURNAL_META];
+  u64          sequence;
+  isize        failed;
+  u32          read, crc;
+  u8           bytes[JOURNAL_META][FS_BLOCK_BYTES];
+};
+
+/* After a successful probe, retain exclusive device access and its geometry.
+   Zero the work except probe, decoder and CRC policy. The decoder authenticates
+   the complete header. One means no redo for EMPTY, or a verified COMMITTED
+   payload. Only then may the owner use images, and must keep the work alive
+   and unchanged through scan, replay and release. Zero means I/O pending. */
+isize blkredostep(Blkredo *);
 
 /* Fresh zeroed read state with blk set. The serialized volume owner
    reserves the connection through completion. Zero is a cache hit;

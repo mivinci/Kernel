@@ -1040,7 +1040,15 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
   vdev_trace[2]++;
   vdev_trace[3]++;
 }
-static const u32 blkopcodes[] = {BLK_WRITE, BLK_FLUSH, BLK_READ, BLK_READ, BLK_READ, BLK_READ};
+static const u32 blkopcodes[] = {
+    BLK_WRITE, BLK_FLUSH,           /* data-only transaction */
+    BLK_READ,  BLK_READ,            /* EMPTY probe */
+    BLK_READ,  BLK_READ,            /* COMMITTED probe */
+    BLK_READ,                       /* duplicate targets */
+    BLK_READ,  BLK_READ,  BLK_READ, /* corrupt payload */
+    BLK_READ,  BLK_READ,  BLK_READ, /* valid header and payload */
+    BLK_READ,  BLK_READ             /* ownership scan */
+};
 
 static void
 blkcollect(Fsblk *blk, void *read, u32 bytes)
@@ -1074,6 +1082,83 @@ blkmark(const u8 *bytes, const u8 *uuid, Journalmark *mark)
     REQUIRE(bytes[i] == (u8) (0xc1 + 4 * 7 + i * 19), 396);
   *mark = (Journalmark){47, 0, 0, 0};
   return 0;
+}
+
+static u8
+blkimagebyte(u32 image, u32 offset)
+{
+  if (!image)
+    return offset == 2 * FS_INODE_BYTES || offset == 5 * FS_INODE_BYTES;
+  return offset == 0 ? 39 : 0;
+}
+
+static isize
+blkcommitted(const u8 *bytes, const u8 *uuid, Journalmark *mark)
+{
+  REQUIRE(!blkmark(bytes, uuid, mark), 399);
+  *mark = (Journalmark){48, 1, 12, 0x4807289b};
+  return 0;
+}
+
+static isize
+blkhead(const u8 *bytes, Journalhead *head)
+{
+  u32 i;
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    REQUIRE(bytes[i] == (u8) (0xc1 + 2 * 7 + i * 19), 400);
+  *head = (Journalhead){48, {FS_INODE_START, FS_INODE_MAP}, 1, 2, 12, 0x4807289b};
+  return 0;
+}
+
+static isize
+blkheadduplicate(const u8 *bytes, Journalhead *head)
+{
+  REQUIRE(!blkhead(bytes, head), 402);
+  head->targets[1] = head->targets[0];
+  return 0;
+}
+
+static void
+blkclientredo(Fsblk *blk, const Blkprobe *empty)
+{
+  static Blkprobe probe;
+  static Blkredo  work;
+  Ipcmsg          result;
+  u32             i, j, k;
+  work.probe = empty;
+  REQUIRE(blkredostep(&work) == 1 && !blk->rpc && !work.read, 403);
+  probe.blk = blk;
+  REQUIRE(!blkprobestep(&probe, blksuper, blkcommitted) && blk->rpc &&
+              !ipc_rqwait(blk->rpc, RQ_FINISH, &result) &&
+              !blkprobestep(&probe, blksuper, blkcommitted) && blk->rpc &&
+              !ipc_rqwait(blk->rpc, RQ_FINISH, &result) &&
+              blkprobestep(&probe, blksuper, blkcommitted) == 1 && !blk->rpc && probe.mark.state,
+          404);
+  for (i = 0; i < 3; i++) {
+    Blkredo *redo = &work;
+    redo->probe = &probe;
+    redo->decode = i ? blkhead : blkheadduplicate;
+    /* Neither rejected case publishes image pointers or owns a request. */
+    redo->failed = redo->read = redo->crc = 0;
+    redo->initial = 17;
+    redo->finalxor = i == 1 ? 4 : 5;
+    REQUIRE(!blkredostep(redo) && blk->rpc && !redo->images[0].bytes, 405);
+    for (j = 0; j < (i ? 3U : 1U); j++) {
+      u64   sequence = redo->sequence;
+      isize status = j < 2 && i ? 0 : i == 2 ? 1 : -ERR_STATE;
+      REQUIRE(sequence && sequence == blk->seq && !ipc_rqwait(blk->rpc, RQ_FINISH, &result) &&
+                  blkredostep(redo) == status &&
+                  (status ? !blk->rpc && !redo->sequence : blk->rpc && redo->sequence > sequence),
+              406);
+      if (status != 1)
+        REQUIRE(!redo->images[0].bytes, 407);
+    }
+    REQUIRE(blkredostep(redo) == (i == 2 ? 1 : -ERR_STATE) && !blk->rpc, 408);
+  }
+  REQUIRE(work.images[0].block == FS_INODE_START && work.images[1].block == FS_INODE_MAP, 409);
+  for (j = 0; j < 2; j++)
+    for (k = 0; k < FS_BLOCK_BYTES; k++)
+      REQUIRE(work.images[j].bytes[k] == blkimagebyte(j, k), 410);
 }
 
 static isize
@@ -1178,6 +1263,7 @@ blkclient(const Bootview *boot, Handle call)
               !probe.mark.state && !probe.geometry.faultbytes &&
               blkprobestep(&probe, blksuper, blkmark) == 1 && !blk.rpc,
           398);
+  blkclientredo(&blk, &probe);
   for (i = 0; i < PAGE_SIZE; i++)
     data[i] ^= 0xff;
   reader.blk = &blk;

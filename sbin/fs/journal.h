@@ -295,6 +295,7 @@ int journalmetadata(const Redoscan *, const Journalblock *, u32 count, u32 index
    For COMMITTED, empty is the encoded
    EMPTY record for this txid, and it and the images stay immutable until
    release. An EMPTY mark does not use the head, images or scan. */
+int   journalheadvalid(u64 blocks, const Journalmark *, const Journalhead *);
 isize journalrecover(Journal *, const Fslayout *, const Fsgeometry *, const Journalmark *,
                      const Journalhead *, const Journalblock *, u32 count, u32 payloadcrc,
                      const u8 *empty, const Redoscan *);
