@@ -507,6 +507,7 @@ blkdirstep(Blkdir *work)
 enum
 {
   MountProbe,
+  MountInfo,
   MountOverlay,
   MountReplay,
   MountReprobe,
@@ -515,14 +516,12 @@ enum
   MountReady
 };
 
-isize
-blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
+static isize
+mountroot(const Blkmount *mount, const Dirnode **out)
 {
-  Blkdir         *work;
+  const Blkdir   *work;
   const Blkprobe *probe;
-  const Dirnode  *node;
-  isize           error;
-  if (!mount || !(work = mount->dirs) || !mount->probe || !mount->probe->blk || !mounts || !root)
+  if (!mount || !(work = mount->dirs) || !mount->probe || !mount->probe->blk)
     return -ERR_INVALID;
   if (mount->failed)
     return mount->failed;
@@ -540,12 +539,43 @@ blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
   if (probe->blk->stale || probe->blk->ended ||
       probe->blk->info.geometry_generation != probe->generation)
     return -ERR_STALE;
-  node = &work->graph.nodes[FS_ROOT];
+  *out = &work->graph.nodes[FS_ROOT];
+  return 0;
+}
+
+isize
+blkmountroot(const Blkmount *mount, Vnode *root)
+{
+  const Dirnode *node;
+  isize          error;
+  if (!root || root->mount || root->number || root->generation || root->kind)
+    return -ERR_INVALID;
+  error = mountroot(mount, &node);
+  if (error)
+    return error;
+  if (!node->generation || node->kind != VNODE_DIR)
+    return -ERR_STATE;
+  root->number = FS_ROOT;
+  root->generation = node->generation;
+  root->kind = node->kind;
+  return 0;
+}
+
+isize
+blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
+{
+  const Dirnode *node;
+  isize          error;
+  if (!mounts || !root)
+    return -ERR_INVALID;
+  error = mountroot(mount, &node);
+  if (error)
+    return error;
   if (root->number != FS_ROOT || root->generation != node->generation || root->kind != node->kind)
     return -ERR_STALE;
   error = vmountadd(mounts, root, point);
   if (!error)
-    work->published = 1;
+    mount->dirs->published = 1;
   return error;
 }
 
@@ -631,7 +661,25 @@ blkmountstep(Blkmount *work)
   after = work->after;
   journal = work->log.journal;
   switch (work->phase) {
+  case MountInfo: {
+    isize status;
+    result = fsblkpoll(blk, NULL, 0, &status);
+    if (result == -ERR_WOULD_BLOCK)
+      return 0;
+    if (result)
+      break;
+    if (status)
+      return work->failed = status;
+    work->phase = MountProbe;
+    return 0;
+  }
   case MountProbe:
+    if (!probe->phase && (!blk->info.geometry_generation || blk->stale)) {
+      result = fsblksubmit(blk, BLK_INFO, 0, 0, NULL);
+      if (!result)
+        work->phase = MountInfo;
+      break;
+    }
     result = blkprobestep(probe, work->layout, work->mark);
     if (result != 1)
       break;

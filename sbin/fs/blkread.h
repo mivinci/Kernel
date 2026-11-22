@@ -140,13 +140,18 @@ struct Blkmount
   u32   stopped;
 };
 
-/* Own the block connection from INFO to publication. Supply separate work
+/* Own the attached block connection through publication. If usable geometry
+   is absent, submit and drain INFO before reading the superblock. Supply separate work
    for the overlay and home scans; they may share cache and reader storage.
    For writable publication set writable=1 and supply the journal and trusted
    fault boundary even for EMPTY. A read-only mount may only replay if these
    recovery resources are separately provided. Zero means continue or wait
    on the current RPC; one means ready to call blkmountadd. */
 isize blkmountstep(Blkmount *);
+/* Build the unpublished root identity from the validated directory scan.
+   Destination starts zero; errors leave it unchanged. The namespace owner
+   still holds the backing inode through publication and use. */
+isize blkmountroot(const Blkmount *, Vnode *root);
 /* Publish the ready mount once. The authorized namespace owner holds
    the volume, root and covering point through insertion. */
 isize blkmountadd(Blkmount *, Vmounts *, Vnode *root, Vnode *point);

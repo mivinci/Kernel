@@ -1108,16 +1108,6 @@ blkfillcheck(Fsblk *blk, Cache *cache)
   REQUIRE(!cacheput(cache, &key), 454);
 }
 
-static void
-blkcollect(Fsblk *blk, void *read, u32 bytes)
-{
-  Ipcmsg result;
-  isize  status;
-  REQUIRE(!ipc_rqwait(blk->rpc, RQ_FINISH, &result) && !fsblkpoll(blk, read, bytes, &status) &&
-              !status && !blk->rpc,
-          366);
-}
-
 static isize
 blksuper(const u8 *bytes, Fslayout *layout, u8 *uuid)
 {
@@ -1342,7 +1332,7 @@ blkclient(const Bootview *boot, Handle call)
   Blkmount          mounting = {0};
   Blkmount          abandoned = {0};
   Vmounts           mounts = {0};
-  Vnode             root = {0, FS_ROOT, 1, VNODE_DIR};
+  Vnode             root = {0};
   u8                namebytes[256];
   u32               nameoffsets[8];
   static u8         data[PAGE_SIZE];
@@ -1394,8 +1384,17 @@ blkclient(const Bootview *boot, Handle call)
               (isize) result.words[0] == -EINVAL && result.words[1] == 1 && !result.words[2] &&
               !result.words[3],
           456);
-  REQUIRE(!fsblksubmit(&blk, BLK_INFO, 0, 0, NULL), 364);
-  blkcollect(&blk, NULL, 0);
+  probe.blk = &blk;
+  abandoned.probe = &probe;
+  abandoned.dirs = &dirs;
+  abandoned.storage = &storage;
+  abandoned.layout = blksuper;
+  abandoned.mark = blkmark;
+  dirs.home = &home;
+  REQUIRE(!blkmountstep(&abandoned) && blk.rpc && blk.opcode == BLK_INFO && !probe.layout.blocks &&
+              !blk.info.geometry_generation && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+              !blkmountstep(&abandoned) && !blk.rpc && !probe.layout.blocks && blk.seq == 2,
+          364);
   REQUIRE(blk.info.geometry_generation == 2 && blk.info.capacity_bytes == 2048 * 512 &&
               blk.info.logical_bytes == PAGE_SIZE && blk.info.flags == BLK_FLUSHABLE,
           365);
@@ -1431,13 +1430,6 @@ blkclient(const Bootview *boot, Handle call)
               !sync.request && !syncstorage[key.index].dirty && txn.journal.last == 47 &&
               !cacheput(&dirty, &key),
           380);
-  probe.blk = &blk;
-  abandoned.probe = &probe;
-  abandoned.dirs = &dirs;
-  abandoned.storage = &storage;
-  abandoned.layout = blksuper;
-  abandoned.mark = blkmark;
-  dirs.home = &home;
   REQUIRE(!blkmountstep(&abandoned) && blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result), 443);
   {
     u64 seq = blk.seq;
@@ -1538,6 +1530,7 @@ blkclient(const Bootview *boot, Handle call)
       break;
     REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial,
             438);
+    REQUIRE(blkmountroot(&mounting, &root) == -ERR_WOULD_BLOCK && !root.number, 438);
     if (blk.rpc) {
       REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 426);
       op++;
@@ -1553,9 +1546,13 @@ blkclient(const Bootview *boot, Handle call)
           446);
   blk.stale = 1;
   REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
-              !root.mount,
+              !root.mount && blkmountroot(&mounting, &root) == -ERR_STALE && !root.number,
           441);
   blk.stale = 0;
+  REQUIRE(!blkmountroot(&mounting, &root) && root.number == FS_ROOT &&
+              root.generation == nodes[FS_ROOT].generation && root.kind == VNODE_DIR &&
+              !root.mount && !mounts.serial,
+          439);
   root.generation++;
   REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
               !root.mount,
