@@ -16,6 +16,9 @@ struct Blklog
 /* Bind a zeroed bridge to its volume's block connection and journal.
    The serialized caller reserves the connection while a ticket is held. */
 isize blklogsubmit(void *, const Journalio *, u64 offset, u32 bytes);
+/* Syncsubmit adapter. filesyncstep owns the upper request and its captured
+   transaction until the journal bridge has drained its original ticket. */
+isize blklogsync(void *, Handle request, const Journalio *, u64 offset, u32 bytes);
 /* Consume at most one completion. Zero means the ticket was settled;
    a later journalpump may advance or retry once the device is ready. */
 isize blklogpoll(Blklog *);

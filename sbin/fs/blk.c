@@ -1,4 +1,5 @@
 #include "blk.h"
+#include "journal.h"
 #include "private/bootstrap.h"
 #include "private/file.h"
 #include <errno.h>
@@ -186,6 +187,10 @@ blkfetchstart(Blkfetch *work, void *job, Handle request, const Cacheio *ticket, 
   if (!work || !work->blk || !job || !request || !ticket || !ticket->serial || !done)
     return -ERR_INVALID;
   if (work->job || work->blk->rpc)
+    return -ERR_WOULD_BLOCK;
+  /* A started transaction has all its I/O inputs captured. Let it advance
+     after the current read drains, even when more reads are queued. */
+  if (work->journal && work->journal->phase > JOURNAL_IDLE && work->journal->phase < JOURNAL_DONE)
     return -ERR_WOULD_BLOCK;
   error = fsblksubmit(work->blk, BLK_READ, (u64) block * CACHE_BYTES, CACHE_BYTES, NULL);
   if (error)

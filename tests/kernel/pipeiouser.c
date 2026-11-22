@@ -341,6 +341,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         0,
                         NULL,
                         NULL,
+                        NULL,
                         NULL};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
@@ -2434,6 +2435,7 @@ openserver(const Bootview *boot)
                        0,
                        NULL,
                        NULL,
+                       NULL,
                        NULL};
   u32            i;
   const Loadfile executable = {2, 1, 1, 20};
@@ -2961,6 +2963,7 @@ publicchdirserver(const Bootview *boot)
                        {&pipes, NULL, 0, NULL, 0, &fixture.files, NULL},
                        &open,
                        0,
+                       NULL,
                        NULL,
                        NULL,
                        NULL};

@@ -5,6 +5,7 @@
 #include "loaddispatch.h"
 #include "journal.h"
 #include "blk.h"
+#include "blklog.h"
 
 typedef struct Fsservice Fsservice;
 typedef struct Fsreclaim Fsreclaim;
@@ -30,6 +31,9 @@ struct Fsservice
   /* Volume owner supplies a started batch and signals after lower drain. */
   Fsreclaim *reclaim;
   Blkfetch  *fetch;
+  /* Optional volume journal bridge. The loop settles its ticket before
+     file and reclaim workers try to submit more I/O. */
+  Blklog *log;
 };
 
 /* The caller supplies actual authorities, an exclusive VA arena, and fixed

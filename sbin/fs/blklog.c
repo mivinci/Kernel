@@ -25,6 +25,14 @@ blklogsubmit(void *context, const Journalio *ticket, u64 offset, u32 bytes)
 }
 
 isize
+blklogsync(void *context, Handle request, const Journalio *ticket, u64 offset, u32 bytes)
+{
+  if (handlekind(request) != HANDLE_REQUEST)
+    return -ERR_INVALID;
+  return blklogsubmit(context, ticket, offset, bytes);
+}
+
+isize
 blklogpoll(Blklog *log)
 {
   isize error;

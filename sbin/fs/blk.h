@@ -10,6 +10,7 @@ struct Readjob;
 struct Readfetch;
 struct Loadjob;
 struct Loadfetch;
+struct Journal;
 typedef isize (*Blkfetchdone)(void *, Handle, const Cacheio *, isize, const void *);
 struct Bootmap;
 struct Fsblk
@@ -37,15 +38,16 @@ isize fsblkpoll(Fsblk *, void *read, u32 capacity, isize *status);
 
 struct Blkfetch
 {
-  Fsblk       *blk;
-  Blkfetchdone done;
-  void        *job;
-  Handle       request, rpc;
-  Cacheio      ticket;
-  u64          sequence;
-  isize        status;
-  u32          collected;
-  u8           data[CACHE_BYTES];
+  Fsblk                *blk;
+  const struct Journal *journal;
+  Blkfetchdone          done;
+  void                 *job;
+  Handle                request, rpc;
+  Cacheio               ticket;
+  u64                   sequence;
+  isize                 status;
+  u32                   collected;
+  u8                    data[CACHE_BYTES];
 };
 
 /* One lower read at a time. The caller keeps the upper job and cache ticket

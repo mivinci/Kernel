@@ -1319,7 +1319,9 @@ blkclient(const Bootview *boot, Handle call)
   static Blkprobe           homeprobe;
   static Blkread            reader;
   static Cacheblock         storage;
-  static Journal            journal;
+  static Txn                txn;
+  static Cacheblock         syncstorage[2];
+  static Blkfetch           fetch;
   static Journal            recovered;
   static Blkowners          owners;
   static Blkowners          home;
@@ -1332,9 +1334,16 @@ blkclient(const Bootview *boot, Handle call)
   u8                        namebytes[256];
   u32                       nameoffsets[8];
   static u8                 data[PAGE_SIZE];
-  const Journalblock        block = {192, data};
-  const Journalplan         plan = {NULL, NULL, NULL, NULL, &block, 0, 1};
-  Blklog                    log = {&blk, &journal, {0}, 0, 0};
+  static u8                 snapshot[PAGE_SIZE];
+  const Loadmap             file = {{2, 1, 1, PAGE_SIZE}, {192}, 0};
+  const Handle              request = ((u64) HANDLE_REQUEST << 59) | (1U << 16);
+  Syncwork                  sync = {&txn, snapshot, 1, 0};
+  Blklog                    log = {&blk, &txn.journal, {0}, 0, 0};
+  Cache                     dirty = {0};
+  Cachekey                  key = {0};
+  Cachefill                 waiting = {0};
+  Cacheio                   ticket;
+  u8                       *dst;
   const u64                 address = 0x2300000;
   Handle                    space = bootresource(boot, BOOT_SELF_SPACE);
   Msg                       message = {{BLK_WORD(BLK_HELLO), 0, 1, UINT64_MAX}};
@@ -1362,21 +1371,35 @@ blkclient(const Bootview *boot, Handle call)
           365);
   for (i = 0; i < PAGE_SIZE; i++)
     data[i] = (u8) (0xd3 + i * 23);
-  REQUIRE(!journalinit(&journal, blk.info.capacity_bytes / PAGE_SIZE, 47) &&
-              !journalbegin(&journal, &plan),
+  fetch.blk = &blk;
+  fetch.journal = &txn.journal;
+  REQUIRE(!cacheinit(&dirty, syncstorage, ARRAY_SIZE(syncstorage),
+                     blk.info.capacity_bytes / PAGE_SIZE) &&
+              !txninit(&txn, &dirty, 47) && !cacheget(&dirty, 192, CACHE_DATA, &key) &&
+              !cachereadbegin(&dirty, &key, &ticket, &dst) && !cachecomplete(&dirty, &ticket, 1) &&
+              !cacheedit(&dirty, &key, 0, data, PAGE_SIZE),
           378);
-  REQUIRE(!journalpump(&journal, blklogsubmit, &log) && log.ticket.serial == 1 &&
-              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blklogpoll(&log) && !log.ticket.serial &&
-              !blk.rpc && journal.phase == JOURNAL_DATA_WRITE && !journal.active &&
-              !journal.durable,
+  REQUIRE(!filesyncstep(&sync, request, RQ_CHECK_LIVE, &file, NULL, blklogsync, &log) &&
+              log.ticket.serial == 1 && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+              !blklogpoll(&log) && !log.ticket.serial && !blk.rpc &&
+              txn.journal.phase == JOURNAL_DATA_WRITE && !txn.journal.active &&
+              !txn.journal.durable && sync.request == request,
           381);
+  REQUIRE(cachefillstart(&waiting, &dirty, 193, CACHE_DATA, &ticket, &dst) == 1 &&
+              blkfetchstart(&fetch, &waiting, 1, &ticket, 193, blkfilldone) == -ERR_WOULD_BLOCK &&
+              !blk.rpc && !cachefillfinish(&waiting, &ticket, 0),
+          455);
   for (op = 0; op < 2; op++)
-    REQUIRE(!journalpump(&journal, blklogsubmit, &log) && log.ticket.serial == op + 2 &&
-                !journal.durable && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blklogpoll(&log) &&
+    REQUIRE(!filesyncstep(&sync, request, RQ_CHECK_LIVE, &file, NULL, blklogsync, &log) &&
+                log.ticket.serial == op + 2 && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+                !filesyncstep(&sync, request, RQ_CHECK_LIVE, &file, NULL, blklogsync, &log) &&
+                sync.request == request && !txn.journal.durable && !blklogpoll(&log) &&
                 !log.ticket.serial && !blk.rpc,
             379);
-  REQUIRE(journal.durable && journalpump(&journal, blklogsubmit, &log) == 1 &&
-              !journalrelease(&journal) && journal.last == 47,
+  REQUIRE(txn.journal.durable &&
+              filesyncstep(&sync, request, RQ_CHECK_LIVE, &file, NULL, blklogsync, &log) == 1 &&
+              !sync.request && !syncstorage[key.index].dirty && txn.journal.last == 47 &&
+              !cacheput(&dirty, &key),
           380);
   probe.blk = &blk;
   abandoned.probe = &probe;

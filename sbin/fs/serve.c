@@ -65,6 +65,13 @@ fsstep(Fsservice *fs)
   isize      error;
   u32        again = 0;
   Fsreclaim *reclaim = fs->reclaim;
+  if (fs->fetch && fs->log && fs->fetch->blk == fs->log->blk)
+    fs->fetch->journal = fs->log->journal;
+  if (fs->log && fs->log->ticket.serial) {
+    error = blklogpoll(fs->log);
+    if (error && error != -ERR_WOULD_BLOCK)
+      return error;
+  }
   if (fs->fetch && (error = blkfetchpoll(fs->fetch)))
     return error;
   error = fsloadpump(fs->loads);
@@ -99,11 +106,11 @@ fsstep(Fsservice *fs)
     } else
       again = reclaim->scan && reclaim->scan->left;
   }
-  error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
-                       (fs->fetch ? EVENT_RQ_DONE : 0) | (fs->loads ? fs->loads->events : 0) |
-                       (fs->pipes.reads ? fs->pipes.reads->events : 0) |
-                       (fs->reclaim ? fs->reclaim->events : 0),
-                   again ? RECV_NONBLOCK : 0, &input);
+  error = ipc_recv(
+      EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
+          (fs->fetch || fs->log ? EVENT_RQ_DONE : 0) | (fs->loads ? fs->loads->events : 0) |
+          (fs->pipes.reads ? fs->pipes.reads->events : 0) | (fs->reclaim ? fs->reclaim->events : 0),
+      again ? RECV_NONBLOCK : 0, &input);
   if (error)
     return error == -ERR_INTERRUPTED || (again && error == -ERR_WOULD_BLOCK) ? 0 : error;
   if (input.kind == IPC_EVENT) {

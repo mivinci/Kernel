@@ -320,6 +320,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/sync.c','fs-sync'),
         compile_adoption(ROOT/'sbin/fs/cache.c','fs-cache'),
         compile_adoption(ROOT/'sbin/fs/blk.c','fs-blk'),
+        compile_adoption(ROOT/'sbin/fs/blklog.c','fs-blklog'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
     pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],196))
