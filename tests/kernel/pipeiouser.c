@@ -2520,7 +2520,22 @@ openserver(const Bootview *boot)
   opencreatewalk(&fixture);
   CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fixture.holds && !fixture.searches);
   CHECK(!fscontextadd(&contexts, link.watch.owner.pid, link.watch.owner.image, &fixture.root,
-                      &fixture.root, 027));
+                      &fixture.root, 022));
+  {
+    Handle           pid = link.watch.owner.pid;
+    u64              image = link.watch.owner.image, version = contexts.serial;
+    const Fscontext *entry = fscontextfind(&contexts, pid, image);
+    CHECK(entry && fscontextumask(&contexts, pid, image + 1, 077) == -ESTALE &&
+          entry->mask == 022 && entry->version == version && contexts.serial == version);
+    CHECK(fscontextumask(&contexts, pid, image, 010027) == 022 && entry->mask == 027 &&
+          entry->version == version + 1 && contexts.serial == version + 1 &&
+          entry->root == &fixture.root && entry->cwd == &fixture.root && fixture.holds == 2);
+    contexts.serial = UINT64_MAX;
+    CHECK(fscontextumask(&contexts, pid, image, 027) == 027 &&
+          fscontextumask(&contexts, pid, image, 0) == -EOVERFLOW && entry->mask == 027 &&
+          entry->version == version + 1);
+    contexts.serial = version + 1;
+  }
   for (i = 1; i + 1 < ARRAY_SIZE(openerrors); i++)
     CHECK(!fsstep(&fs));
   CHECK(fixture.completed == 2 && fixture.holds == 3 && fixture.attempts == 3 && file.refs == 1 &&
@@ -2608,12 +2623,12 @@ openserver(const Bootview *boot)
         fixture.syncio.kind == JOURNAL_FLUSH && !fsstep(&fs) && !fixture.sync.request &&
         synctxn.phase == TXN_STOPPED && blocks[0].dirty && file.position == 26 && file.refs == 1 &&
         !fsstep(&fs) && !file.node && !file.refs);
-  CHECK(context.cwd == &fixture.root && context.version == 1 && !fsstep(&fs) && !fsstep(&fs) &&
-        context.cwd == &fixture.root && context.version == 1 && fixture.holds == 2);
+  CHECK(context.cwd == &fixture.root && context.version == 2 && !fsstep(&fs) && !fsstep(&fs) &&
+        context.cwd == &fixture.root && context.version == 2 && fixture.holds == 2);
   fixture.dirwait = 1;
-  CHECK(!fsstep(&fs) && job.waiting && context.cwd == &fixture.root && context.version == 1 &&
-        !fsstep(&fs) && !job.call.request && context.cwd == &fixture.dir && context.version == 2 &&
-        !fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3 && fixture.holds == 2 &&
+  CHECK(!fsstep(&fs) && job.waiting && context.cwd == &fixture.root && context.version == 2 &&
+        !fsstep(&fs) && !job.call.request && context.cwd == &fixture.dir && context.version == 3 &&
+        !fsstep(&fs) && context.cwd == &fixture.dir && context.version == 4 && fixture.holds == 2 &&
         !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2 &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);

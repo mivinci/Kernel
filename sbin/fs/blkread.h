@@ -152,13 +152,16 @@ struct Blkiter
   Blkowners *home;
   Dirdecode  decode;
   u64        offset;
-  u32        inode, generation, loaded;
+  u32        inode, generation, loaded, state;
   isize      failed;
 };
 /* One stable view and exclusive reader from start until EOF or drain.
    Zero continues, one returns a row and a name borrowed from reader
    scratch, two is EOF. Only a row updates the record and name outputs. */
 isize blkiterstep(Blkiter *, Dirrecord *, const u8 **name);
+/* Stop producing rows immediately. Zero releases the exclusive reader;
+   a retryable error retains it and the original fill until the next stop. */
+isize blkiterstop(Blkiter *);
 struct Blklookup
 {
   Blkowners      *home;

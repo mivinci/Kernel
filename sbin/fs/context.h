@@ -33,6 +33,9 @@ isize fscontextadd(Fscontexts *table, Handle pid, u64 image, Vnode *root, Vnode 
 const Fscontext *fscontextfind(const Fscontexts *table, Handle pid, u64 image);
 /* Caller has resolved cwd in this namespace and checked search permission. */
 isize fscontextchdir(Fscontexts *table, Handle pid, u64 image, Vnode *cwd);
+/* Replace the creation mask for the verified caller and return the old one.
+   Ignore bits outside the permission mask; errors leave the entry unchanged. */
+isize fscontextumask(Fscontexts *table, Handle pid, u64 image, u32 mask);
 isize fscontextremove(Fscontexts *table, Handle pid, u64 image);
 
 struct Fscwdops

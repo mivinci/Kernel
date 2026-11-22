@@ -1646,16 +1646,28 @@ blkclient(const Bootview *boot, Handle call)
                       .decode = blkdecodedir,
                       .inode = (u32) root.number,
                       .generation = (u32) root.generation};
+    Blkiter   cancelled = iter;
     Dirrecord item = {0};
     const u8 *name = NULL;
     isize     step = 0;
-    u32       waits = 0;
-    REQUIRE(!cacheinit(&cache, &storage, 1, 256), 523);
+    u32       waits = 1;
+    REQUIRE(!cacheinit(&cache, &storage, 1, 256) && !blkiterstep(&cancelled, &item, &name) &&
+                blk.rpc,
+            523);
+    REQUIRE(blkiterstop(&cancelled) == -ERR_WOULD_BLOCK && blk.rpc && !cancelled.offset &&
+                blkiterstep(&cancelled, &item, &name) == -ERR_CANCELLED &&
+                blkiterstep(&iter, &item, &name) == -ERR_BUSY && !item.inode && !name,
+            532);
+    REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blkiterstop(&cancelled) && !blk.rpc &&
+                !cancelled.offset && !item.inode && !name,
+            533);
     for (i = 0; i < 24 && !step; i++) {
       u64 before = iter.offset;
       step = blkiterstep(&iter, &item, &name);
       if (!step && blk.rpc) {
+        Handle pending = blk.rpc;
         REQUIRE(iter.offset == before && !item.inode && !name, 524);
+        REQUIRE(!blkiterstop(&cancelled) && blk.rpc == pending, 534);
         REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 525);
         waits++;
       }
@@ -1677,7 +1689,7 @@ blkclient(const Bootview *boot, Handle call)
       }
     }
     REQUIRE(step == 2 && waits == 4 && !blk.rpc && iter.offset == 2 * FS_BLOCK_BYTES &&
-                item.inode == 34,
+                item.inode == 34 && blkiterstep(&iter, &item, &name) == 2 && !blkiterstop(&iter),
             527);
   }
   {

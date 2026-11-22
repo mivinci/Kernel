@@ -594,17 +594,39 @@ blkfindstep(Blkfind *work, Dirrecord *out)
   return 0;
 }
 
+enum
+{
+  IterNew,
+  IterActive,
+  IterDone,
+  IterStopping,
+  IterStopped
+};
+
 isize
 blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
 {
   isize result;
   u32   bytes, within, start;
-  if (!work || !out || !name || !work->decode)
+  if (!work || !out || !name || !work->decode || !work->home || !work->home->load.read ||
+      !work->home->load.read->blk)
     return -ERR_INVALID;
+  if (work->state == IterStopping || work->state == IterStopped)
+    return -ERR_CANCELLED;
+  if (work->state == IterDone)
+    return 2;
+  if (work->state == IterNew) {
+    Blkredoload *load = &work->home->load;
+    if (load->pending || load->read->fill.cache || load->read->blk->rpc)
+      return -ERR_BUSY;
+    work->state = IterActive;
+  }
   if (work->failed)
     return work->failed;
   result = dirread(work->home, work->inode, work->generation, work->offset, &work->loaded, &bytes,
                    &work->failed);
+  if (result == 2)
+    work->state = IterDone;
   if (result != 1)
     return result;
   start = within = (u32) (work->offset % FS_BLOCK_BYTES);
@@ -614,6 +636,29 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
     return work->failed = result;
   work->offset += within - start;
   return result;
+}
+
+isize
+blkiterstop(Blkiter *work)
+{
+  Blkredoload *load;
+  isize        error, status;
+  if (!work)
+    return -ERR_INVALID;
+  if (work->state == IterNew || work->state == IterDone || work->state == IterStopped) {
+    work->state = IterStopped;
+    return 0;
+  }
+  load = &work->home->load;
+  work->state = IterStopping;
+  if (load->read->fill.cache) {
+    error = blkreadpoll(load->read, &status);
+    if (error)
+      return error;
+  }
+  load->pending = 0;
+  work->state = IterStopped;
+  return 0;
 }
 
 isize

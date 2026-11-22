@@ -77,6 +77,24 @@ fscontextchdir(Fscontexts *table, Handle pid, u64 image, Vnode *cwd)
 }
 
 isize
+fscontextumask(Fscontexts *table, Handle pid, u64 image, u32 mask)
+{
+  Fscontext *entry = find(table, pid, image);
+  u32        previous;
+  if (!entry)
+    return -ESTALE;
+  previous = entry->mask;
+  mask &= 0777U;
+  if (mask == previous)
+    return previous;
+  if (table->serial == UINT64_MAX)
+    return -EOVERFLOW;
+  entry->mask = mask;
+  entry->version = ++table->serial;
+  return previous;
+}
+
+isize
 fscontextremove(Fscontexts *table, Handle pid, u64 image)
 {
   Fscontext *entry = find(table, pid, image);
