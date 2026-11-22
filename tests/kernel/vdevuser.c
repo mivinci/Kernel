@@ -7,6 +7,7 @@
 #include "private/start.h"
 #include "../../sbin/blk/io.h"
 #include "../../sbin/fs/cache.h"
+#include "../../sbin/fs/load.h"
 #include "../../sbin/fs/txn.h"
 #include "virtiouser.h"
 volatile u64             vdev_trace[VTEST_TRACE];
@@ -318,6 +319,51 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
 }
 
 static void
+testgrowth(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
+           const Testdma *dma)
+{
+  static Journal     journal;
+  static Cacheblock  entry;
+  static Writeupdate update;
+  static Writeimage  image;
+  static Blockmap    committed, reserved;
+  static u8          records[5][FS_BLOCK_BYTES];
+  Loadmap            map = {{2, 1, 1, 0}, {0}, 0};
+  Growth             work = {0};
+  Cache              cache;
+  Journalio          io;
+  Growthmeta         meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
+  u32                i, j, step = 0;
+  u64                stride = FS_BLOCK_BYTES / VBLK_SECTOR;
+  u32                blocks = (u32) (config->sectors / stride);
+  committed.used[1] = UINT64_C(1) << (FS_DATA_START - 64);
+  reserved = committed;
+  for (i = 0; i < ARRAY_SIZE(records); i++)
+    for (j = 0; j < FS_BLOCK_BYTES; j++)
+      records[i][j] = (u8) (0xc1 + i * 7 + j * 19);
+  REQUIRE(!cacheinit(&cache, &entry, 1, blocks) && !journalinit(&journal, blocks, 47) &&
+              !loadwritealloc(&map, NULL, FS_DATA_START, blocks, FS_BLOCK_BYTES + 3, 2, &reserved,
+                              &update) &&
+              !loadwritestage(&update.plan, FS_DATA_START, blocks, update.map.direct[1], NULL, NULL,
+                              "xy", &image) &&
+              !journalgrowth(&work, &journal, &cache, &update, &image, &meta),
+          264);
+  while (journal.phase != JOURNAL_DONE) {
+    REQUIRE(!journalnext(&journal, &io) && io.txid == 48 && !map.file.length &&
+                growthpublish(&work, &map, NULL, &committed, &reserved) == -ERR_WOULD_BLOCK,
+            265);
+    transfer(device, ring, 2, binding, irqevent, config, dma,
+             io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH, io.block * stride, 50 + step, 0,
+             NULL, io.bytes);
+    REQUIRE(!journalcomplete(&journal, &io, 1) && ++step <= 13, 266);
+  }
+  REQUIRE(step == 13 && !growthpublish(&work, &map, NULL, &committed, &reserved) &&
+              map.file.length == FS_BLOCK_BYTES + 5 && map.direct[1] == 100 &&
+              committed.used[1] == reserved.used[1] && journal.last == 48,
+          267);
+}
+
+static void
 startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
 {
   Vringops ops;
@@ -609,6 +655,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
     testredo(device, &ring, binding, irqevent, &fresh, &dma);
     testwriteback(device, &ring, binding, irqevent, &fresh, &dma);
     testparallel(&queue, binding, irqevent, &fresh);
+    testgrowth(device, &ring, binding, irqevent, &fresh, &dma);
     testresize(&queue, binding, irqevent, &fresh);
   }
 }

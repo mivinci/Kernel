@@ -414,6 +414,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/cache.c', 'vdev-fs-cache'),
         compile_adoption(ROOT/'sbin/fs/geometry.c', 'vdev-fs-geometry'),
         compile_adoption(ROOT/'sbin/fs/txn.c', 'vdev-fs-txn'),
+        compile_adoption(ROOT/'sbin/fs/load.c', 'vdev-fs-load'),
         compile_adoption(ROOT/'sbin/fs/journal.c', 'vdev-journal')], (virtio_archive,))
     vdev_image=sdk/'vdevuser.img'
     vdev_image.write_bytes(pack(vdev_user.read_bytes(),profile['machine'],128))
