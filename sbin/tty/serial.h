@@ -86,6 +86,12 @@ isize ttyserialtimedstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, Tt
    the request and returns the next deadline and any ring/signal effects. */
 isize ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
                        Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out);
+/* One bounded event-loop turn for the selected pending request, or just the
+   rings when pending is NULL. Settle a due or cancelled request before
+   stepping the rings. Return zero also when still waiting; next is the
+   absolute deadline or zero, and again indicates remaining local work. */
+isize ttyfileadvance(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
+                     Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out);
 /* Run a step and publish its hints on the exact serial peer's NOTIFY handle. */
 isize ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
                     Ttyserialresult *out);

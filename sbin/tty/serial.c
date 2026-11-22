@@ -414,14 +414,45 @@ ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Term
     return -ERR_INVALID;
   *out = (Ttyserialresult){0};
   status = ttyfileresume(pending, io, input, 0, active, now, next);
-  if (status != -ERR_WOULD_BLOCK)
+  if (status != -ERR_WOULD_BLOCK) {
+    out->again = !status;
     return status;
+  }
   status = ttyserialtimedstep(io, input, mode, &pending->wait, now, next, out);
   if (status < 0)
     return status;
   if (!status || out->signal)
     return -ERR_WOULD_BLOCK;
   return ttyfileresume(pending, io, input, 0, active, now, next);
+}
+
+isize
+ttyfileadvance(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
+               Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out)
+{
+  isize status;
+  if (!io || !input || !mode || !next || !out)
+    return -ERR_INVALID;
+  *next = 0;
+  *out = (Ttyserialresult){0};
+  if (!pending || !pending->call.request)
+    return ttyserialstep(io, input, mode, SERIAL_BATCH, out);
+  if (pending->timed && !pending->wait.canonical && pending->wait.minimum && pending->wait.time) {
+    status = ttyfileinterbyte(pending, io, input, mode, active, now, next, out);
+    return status == -ERR_WOULD_BLOCK ? 0 : status;
+  }
+  status = ttyfileresume(pending, io, input, mode->oflag, active, now, next);
+  if (status != -ERR_WOULD_BLOCK) {
+    out->again = !status;
+    return status;
+  }
+  status = ttyserialstep(io, input, mode, SERIAL_BATCH, out);
+  if (status || out->signal || out->end)
+    return status;
+  status = ttyfileresume(pending, io, input, mode->oflag, active, now, next);
+  if (!status && io->queued)
+    out->again = 1;
+  return status == -ERR_WOULD_BLOCK ? 0 : status;
 }
 
 isize
