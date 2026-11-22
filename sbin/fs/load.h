@@ -8,14 +8,15 @@
 #define LOAD_DIRECT   12
 #define LOAD_INDIRECT 1024
 
-typedef struct Loadfile   Loadfile;
-typedef struct Loadslot   Loadslot;
-typedef struct Loadtable  Loadtable;
-typedef struct Loadmap    Loadmap;
-typedef struct Loadindex  Loadindex;
-typedef struct Loadspan   Loadspan;
-typedef struct Writeplan  Writeplan;
-typedef struct Writeimage Writeimage;
+typedef struct Loadfile    Loadfile;
+typedef struct Loadslot    Loadslot;
+typedef struct Loadtable   Loadtable;
+typedef struct Loadmap     Loadmap;
+typedef struct Loadindex   Loadindex;
+typedef struct Loadspan    Loadspan;
+typedef struct Writeplan   Writeplan;
+typedef struct Writeimage  Writeimage;
+typedef struct Writeupdate Writeupdate;
 struct Loadfile
 {
   u64 inode, generation, version, length;
@@ -65,6 +66,20 @@ struct Writeimage
    tail. A shared target/tail is written as one image. No cache or map edit. */
 isize loadwritestage(const Writeplan *, u32 data_start, u32 blocks, u32 reserved,
                      const void *olddata, const void *oldtail, const void *input, Writeimage *);
+
+struct Writeupdate
+{
+  Writeplan plan;
+  Loadmap   map;
+  Loadindex index;
+  u32       indexdirty;
+};
+/* Build a private metadata view for one write. Both reserved blocks, when
+   required, belong to the same allocation transaction. Hold the inode
+   guard and settle truncate cleanup before extending. Only an index with
+   indexdirty set is part of the update. This does not publish or allocate. */
+isize loadwriteupdate(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks, u64 offset,
+                      u64 bytes, u32 data, u32 indirect, Writeupdate *);
 struct Loadslot
 {
   Loadfile file;

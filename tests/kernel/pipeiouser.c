@@ -1705,17 +1705,27 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
 static void
 openwritestage(void)
 {
-  static Writeimage image;
-  static u8         tail[FS_BLOCK_BYTES];
-  const Loadmap     map = {{2, 1, 1, 20}, {5}, 0};
-  Writeplan         plan;
-  u32               i;
+  static Writeimage  image;
+  static Writeupdate update;
+  static u8          tail[FS_BLOCK_BYTES];
+  const Loadmap      map = {{2, 1, 1, 20}, {5}, 0};
+  const u64          at = 12 * FS_BLOCK_BYTES + 3;
+  Loadspan           span;
+  u32                i;
   for (i = 0; i < sizeof(tail); i++)
     tail[i] = 0xa5;
-  CHECK(!loadmapwrite(&map, NULL, 4, 16, 2 * FS_BLOCK_BYTES + 3, 2, &plan));
-  CHECK(loadwritestage(&plan, 4, 16, 5, NULL, tail, "xy", &image) == -ERR_INVALID && !image.block &&
-        !image.tail);
-  CHECK(!loadwritestage(&plan, 4, 16, 6, NULL, tail, "xy", &image) && image.block == 6 &&
+  CHECK(loadwriteupdate(&map, NULL, 4, 16, at, 2, 6, 5, &update) == -ERR_STATE &&
+        !update.map.file.length);
+  CHECK(!loadwriteupdate(&map, NULL, 4, 16, at, 2, 6, 7, &update) && update.indexdirty &&
+        update.map.file.length == at + 2 && update.map.file.version == 2 &&
+        update.map.indirect == 7 && update.map.direct[0] == 5 && !map.indirect &&
+        !loadmapspan(&update.map.file, &update.map, &update.index, 4, 16, at, 2, &span) &&
+        span.first == 6 && span.offset == 3);
+  for (i = 1; i < LOAD_INDIRECT; i++)
+    CHECK(!update.index.entries[i]);
+  CHECK(loadwritestage(&update.plan, 4, 16, 5, NULL, tail, "xy", &image) == -ERR_INVALID &&
+        !image.block && !image.tail);
+  CHECK(!loadwritestage(&update.plan, 4, 16, 6, NULL, tail, "xy", &image) && image.block == 6 &&
         image.tail == 5);
   for (i = 0; i < FS_BLOCK_BYTES; i++) {
     CHECK(image.data[i] == (i == 3 ? 'x' : i == 4 ? 'y' : 0));

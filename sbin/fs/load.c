@@ -155,6 +155,58 @@ loadwritestage(const Writeplan *plan, u32 start, u32 blocks, u32 reserved, const
   return 0;
 }
 
+isize
+loadwriteupdate(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, u64 offset,
+                u64 bytes, u32 data, u32 indirect, Writeupdate *out)
+{
+  Writeplan plan;
+  u32       i, indexdirty;
+  isize     error;
+  if (!separate(map, sizeof(*map), out, sizeof(*out)) ||
+      (index && !separate(index, sizeof(*index), out, sizeof(*out))))
+    return -ERR_INVALID;
+  error = loadmapwrite(map, index, start, blocks, offset, bytes, &plan);
+  if (error)
+    return error;
+  if (!map->file.version || map->file.version == UINT64_MAX)
+    return -ERR_OVERFLOW;
+  if ((!!data == !!plan.block) || (!!indirect != !!plan.newindex) ||
+      (data && (data < start || data >= blocks || data == map->indirect)) ||
+      (indirect && (indirect < start || indirect >= blocks || indirect == data)))
+    return -ERR_INVALID;
+  if (data && map->indirect) {
+    if (!index)
+      return -ERR_WOULD_BLOCK;
+    if (index->block != map->indirect)
+      return -ERR_STALE;
+    for (i = 0; i < LOAD_INDIRECT; i++)
+      if (index->entries[i] == data)
+        return -ERR_STATE;
+  }
+  if (data)
+    for (i = 0; i < LOAD_DIRECT; i++)
+      if (map->direct[i] == data || (indirect && map->direct[i] == indirect))
+        return -ERR_STATE;
+  indexdirty = data && plan.logical >= LOAD_DIRECT;
+  out->plan = plan;
+  out->map = *map;
+  out->map.file.version++;
+  out->map.file.length = plan.length;
+  out->indexdirty = indexdirty;
+  if (indexdirty) {
+    if (indirect) {
+      out->map.indirect = indirect;
+      out->index.block = indirect;
+      for (i = 0; i < LOAD_INDIRECT; i++)
+        out->index.entries[i] = 0;
+    } else
+      out->index = *index;
+    out->index.entries[plan.logical - LOAD_DIRECT] = data;
+  } else if (data)
+    out->map.direct[plan.logical] = data;
+  return 0;
+}
+
 static isize
 reserve(Loadtable *table, u64 inode, const Loadfile *file, Loadslot **out)
 {
