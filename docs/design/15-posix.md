@@ -161,6 +161,8 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 
 `<locale.h>` 提供固定 C locale 下的 `setlocale` 和 `localeconv`。接受 `C` 和 `POSIX`；空名称按 `LC_ALL`、对应类别、`LANG` 选取，遇到不支持的名称返回空指针并保持原 locale。`localeconv` 返回小数点 `.`、空分组/货币串及未定义货币字段的 `CHAR_MAX`。ARM64、RV64 QEMU `runtime` 核对环境优先级、失败后查询及格式约定。其他 locale、locale 对象和宽字符接口仍不支持。
 
+公开 SDK 的 `<strings.h>` 提供 `strcasecmp` 和 `strncasecmp`，供 BusyBox 的 `sleep` 参数和信号名称解析使用。按 C locale 折叠 ASCII 大写字母，其余字节按无符号值比较；有界版本不读超出长度的输入。ARM64、RV64 QEMU `runtime` 验证混合大小写、提前遇到 NUL、无 NUL 的限长输入、零长度及高位字节。BusyBox 完整构建仍待 [012](../issues/012-busybox-port.md) 的前置接口。
+
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。

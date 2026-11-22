@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/channel.h>
 #include <time.h>
 #include <signal.h>
@@ -500,7 +501,8 @@ ctypecheck(void)
 static void
 collationcheck(void)
 {
-  char key[] = "zzzz", other[] = "zzzz";
+  char       key[] = "zzzz", other[] = "zzzz";
+  const char prefix[] = {'I', 'N', 'F'};
 
   errno = EDOM;
   REQUIRE(strxfrm(NULL, "\377a", 0) == 2 && strxfrm(key, "\377a", 2) == 2 && !strcmp(key, "zzzz"),
@@ -512,6 +514,12 @@ collationcheck(void)
               strcoll("", "a") < 0,
           250);
   REQUIRE(strxfrm(other, "", 1) == 0 && !other[0] && errno == EDOM, 251);
+  REQUIRE(!strcasecmp("sIgInT", "SIGINT") && strcasecmp("INT", "InTa") < 0 &&
+              strcasecmp("\377a", "\200A") > 0,
+          307);
+  REQUIRE(!strncasecmp(prefix, "inf", sizeof(prefix)) && strncasecmp("in", "INF", 3) < 0 &&
+              !strncasecmp("X", "Y", 0) && errno == EDOM,
+          308);
 }
 static void
 patterncheck(void)

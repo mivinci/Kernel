@@ -4,11 +4,7 @@
 
 ## 现象
 
-M3 的 sh 目标（对齐 POSIX.1-2024 与 dash）目前只有设计，`sbin/` 已交付 blk/fs/init/serial/tty，**没有 sh**。更关键的是缺少一类验收手段：
-
-- 现有全部 guest 载荷（`tests/kernel/`）由我们自己编写，与我们的 libc 互为假设，**无法发现"头文件、ABI、启动代码能否支撑外来 C 程序"这类问题**；
-- `lib/libc/include/` 目前只有 15 个头，缺 `stdint.h`、`limits.h`、`float.h`、`math.h`、`locale.h`——这类缺口只有在真正编译第三方源码时才会集中暴露；
-- 15 篇声明"软件需使用本系统 SDK 重新编译，不承诺 Linux 二进制兼容"，但至今**没有编译过任何一个外部 C 程序**来验证这句声明。
+M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以发现真实第三方源码对公开头、ABI 和启动代码的要求。现在两套 SDK 都已通过最小普通程序和上游 miniz 的静态构建检查，仍缺普通进程运行验收和 BusyBox 的完整构建与运行验收。
 
 ## 影响
 
@@ -35,9 +31,9 @@ M3 的 sh 目标（对齐 POSIX.1-2024 与 dash）目前只有设计，`sbin/` �
 
 **阶段 B：libc 广度**
 
-补齐编译前置头（`stdint.h`、`limits.h`、`float.h`、`math.h`、`locale.h`），并按 BusyBox 实际引用清单补函数（stdio 全量、`getopt_long`、`fnmatch`、`regex` 子集）。补什么由编译错误驱动，不预判、不批量搬运。
+以目标配置实际引用的头和符号为准，逐步补齐公开 SDK。`locale.h`、`getopt_long`、`fnmatch` 等已有独立验收，BusyBox 仍须通过上游源码编译与链接来证明这些接口足够。
 
-首次上游探针使用 [BusyBox 1.37.0](https://busybox.net/downloads/busybox-1.37.0.tar.bz2)（SHA-256 `3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4`）。从 `make allnoconfig` 启用下文 applet 和静态构建，经 `make oldconfig` 生成 `include/autoconf.h`。在两套公开 SDK 上分别用 Clang `-std=gnu99 -ffreestanding -nostdinc -fsyntax-only` 检查 `libbb/xatonum.c` 和 `shell/ash.c`，头路径仅含上游 `include`、SDK 与 Clang 基础头。补上字节序头后，`xatonum.c` 的首个错误推进到缺少 `<dirent.h>`；`ash.c` 的首个错误是缺少 `<sys/times.h>`。这些是编译探针结果，阶段 B 尚未通过。
+上游探针使用 [BusyBox 1.37.0](https://busybox.net/downloads/busybox-1.37.0.tar.bz2)（SHA-256 `3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4`）。从 `make allnoconfig` 启用下文 applet 和静态构建，经 `make oldconfig` 生成 `include/autoconf.h`。在 ARM64、RV64 两套公开 SDK 上分别用 Clang `-std=gnu99 -ffreestanding -nostdinc -fsyntax-only` 检查，头路径仅含上游 `include`、SDK 与 Clang 基础头。两套 SDK 的首个错误相同：`shell/ash.c` 缺 `<sys/times.h>`；`libbb/xatonum.c` 与 `echo`、`cat`、`sleep`、`test` 的翻译单元都经公共 `libbb.h` 遇到缺失的 `<dirent.h>`。因此目录头是共用构建前置，不只影响 `ls`。这是首错探针，阶段 B 尚未通过。
 
 **阶段 C：最小 applet 集合跑通**
 
@@ -96,7 +92,7 @@ A2 固定使用 [miniz 3.1.2](https://github.com/richgel999/miniz/tree/3.1.2) �
 
 ## 前置依赖
 
-以下不满足则阶段 C 阻塞（阶段 A/B 不受影响）：
+以下是阶段 C 的系统前置。阶段 A 的运行另需普通进程的 stdout 和退出观察；阶段 B 不需要服务上线，但仍需满足上游源码引用的公开头与链接符号。
 
 1. **原生 `fork`/`execve` 公开入口**——15 篇标"设计已冻结，未实现"，内核侧 `execprep`/`execcommit` 已有；
 2. **可挂载的生产 FS**——10 篇盘上编解码仍为夹具，`init` 尚未拉起 fs/blk；
