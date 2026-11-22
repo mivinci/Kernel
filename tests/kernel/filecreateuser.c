@@ -228,27 +228,38 @@ attachfirst(const Bootview *boot)
 static void
 resourceopens(const Bootview *boot)
 {
-  Opkey     key;
-  Conntag   tag;
-  Connclaim claim;
-  Connpeer  peer;
-  Bootmap   mapped;
-  Handle    call;
-  u64       files[2], source = 0, bound, reused, token;
-  u32       i;
+  Opencreate open = {0};
+  Rkey       active = {0};
+  const u64  args[8] = {0, 0, 0, 7};
+  Fdview     fd;
+  int        number = -2;
+  isize      business = 9;
+  Opkey      key;
+  Conntag    tag;
+  Connclaim  claim;
+  Connpeer   peer;
+  Bootmap    mapped;
+  Handle     call;
+  u64        files[2], source = 0, bound, reused, token;
+  u32        i;
   bound = attachfirst(boot);
   CHECK(!sysconnpeer(backend_work.state.call, &peer));
-  key = begin(FS_OPEN, "/reuse", 0);
-  collect(&key);
-  CHECK(!sysfilecreateack(&pool, &work, &cache, &key) &&
+  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/reuse", 7,
+                         BOOT_FD_CLOEXEC, &open, &active, &number, &business) == 1 &&
+        number == -2 && business == 9 && !active.sequence &&
+        !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED);
+  filecreatetrace[1]++;
+  key = open.operation;
+  CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED &&
         !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
   bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
   zero(&mapped, sizeof(mapped));
   CHECK(!sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
                                bootresource(boot, BOOT_SELF_SPACE), &mapped, 0));
-  zero(files, sizeof(files));
-  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && files[0] && !source);
-  reused = files[0];
+  number = (int) sysfileopenfinish(&pool, &work, &cache, &fds, &open, &business);
+  CHECK(number >= 0 && !business && !sysfdobserve(&fds, (u32) number, &fd) &&
+        fd.flags == BOOT_FD_CLOEXEC && !sysfddetach(&fds, fd.tag, &fd));
+  reused = fd.file;
   for (i = 0; i < SYSCONN_COUNT - 2; i++) {
     peer.image++;
     CHECK(!sysconnbind(&cache, peer, &tag));
@@ -700,12 +711,18 @@ client(const Bootview *boot)
   CHECK(!files[0] && !files[1] && !source);
   closefile(ids[0], 0);
   filecreatetrace[3] = 1;
-  key = begin(FS_OPEN, "/missing", 0);
-  collect(&key);
-  CHECK(work.state.creators[key.lease.slot].error == -2);
-  zero(files, sizeof(files));
-  complete(&key, 0, files, &source);
-  CHECK(!files[0] && !files[1] && !source);
+  {
+    Opencreate missing = {0};
+    Rkey       active = {0};
+    const u64  args[8] = {0, 0, 0, 9};
+    int        number = -2;
+    isize      business;
+    CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/missing", 9, 0,
+                            &missing, &active, &number, &business) &&
+          number == -1 && business == -ENOENT && !missing.operation.lease.seq &&
+          !sysfdobserve(&fds, 2, &detached) && detached.tag.state == SYSFD_FREE);
+    filecreatetrace[1]++;
+  }
   CHECK(!__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) &&
         !sysfdobserve(&fds, 1, &detached) && detached.file == second &&
         sysfddup2(&fds, &pool, work.state.self, 0, 1, &displaced) == 1 && displaced == second &&
@@ -2328,6 +2345,7 @@ iorecoverclient(const Bootview *boot, u32 mode)
   Rkey       invocation;
   u64        file, pin = 0, copied = IO_GUARD, steps = 0;
   isize      outcome, error;
+  int        number = -2;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
   sysfdinit(&fds);
@@ -2336,28 +2354,11 @@ iorecoverclient(const Bootview *boot, u32 mode)
         !sysfdobserve(&fds, 0, &fd) && fd.tag.state == SYSFD_RESERVED && !fd.file &&
         !sysfileopenabort(&pool, &work, &cache, &fds, &open) && !sysfdobserve(&fds, 0, &fd) &&
         fd.tag.state == SYSFD_FREE);
-  CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 100, args, "/a", 3, BOOT_FD_CLOEXEC,
-                            &open, &message) &&
-        sysctxopenio(&contexts, work.state.self, 1, &pool, &work, &cache, &open.operation,
-                     &opening) == -ERR_INVALID &&
-        sysctxpipeio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
-                     &opening) == -ERR_INVALID &&
-        !sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
-                      &opening) &&
-        work.state.operations[open.operation.lease.slot].rpc && !opening.sequence);
-  filecreatetrace[1]++;
-  {
-    Handle rpc = work.state.operations[open.operation.lease.slot].rpc;
-    CHECK(!sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
-                        &opening) &&
-          sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
-                       &opening) == 1 &&
-          work.state.operations[open.operation.lease.slot].rpc == rpc && !opening.sequence);
-  }
-  CHECK(!sysfilecreateack(&pool, &work, &cache, &open.operation) &&
-        !sysfilecreatesettle(&pool, &work, &cache, &open.operation, 0) &&
-        !sysfileopenfinish(&pool, &work, &cache, &fds, &open, &outcome) && !outcome &&
+  CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/a", 3, BOOT_FD_CLOEXEC,
+                          &open, &opening, &number, &outcome) &&
+        !number && !outcome && !open.operation.lease.seq && !opening.sequence &&
         !sysfdobserve(&fds, 0, &fd) && fd.flags == BOOT_FD_CLOEXEC);
+  filecreatetrace[1]++;
   file = fd.file;
   if (mode == 2)
     iodraft(file, FS_READ, 801, &success);

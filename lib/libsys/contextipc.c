@@ -778,6 +778,85 @@ sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
 }
 
 isize
+sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                 Fdtable *table, const u64 args[8], const void *path, u64 bytes, u64 flags,
+                 Opencreate *open, Rkey *active, int *fd, isize *business)
+{
+  Connpeer self;
+  Msg      message;
+  u64      mask, ignored;
+  isize    error, status;
+  if (!bank || !work || !open || !active || layer >= RCTX_LAYERS ||
+      !separate(open, sizeof(*open), active, sizeof(*active)) ||
+      !separate(fd, sizeof(*fd), business, sizeof(*business)) ||
+      !separate(fd, sizeof(*fd), bank, sizeof(*bank)) ||
+      !separate(fd, sizeof(*fd), open, sizeof(*open)) ||
+      !separate(fd, sizeof(*fd), active, sizeof(*active)) ||
+      !separate(fd, sizeof(*fd), table, sizeof(*table)) ||
+      !separate(fd, sizeof(*fd), pool, sizeof(*pool)) ||
+      !separate(fd, sizeof(*fd), work, sizeof(*work)) ||
+      !separate(fd, sizeof(*fd), cache, sizeof(*cache)) ||
+      !separate(business, sizeof(*business), bank, sizeof(*bank)) ||
+      !separate(business, sizeof(*business), active, sizeof(*active)))
+    return -ERR_INVALID;
+  self = work->state.self;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  if (!open->operation.lease.seq) {
+    if (active->sequence || bank->contexts[layer].phase != RCTX_FREE)
+      error = -ERR_BUSY;
+    else if (bank->sequence == UINT64_MAX)
+      error = -ERR_OVERFLOW;
+    else
+      error = sysfileopenprepare(pool, work, cache, table, layer, bank->sequence + 1, args, path,
+                                 bytes, flags, open, &message);
+  }
+  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (error || status)
+    return error ? error : status;
+  do {
+    error = sysctxopenio(bank, self, layer, pool, work, cache, &open->operation, active);
+  } while (!error);
+  if (active->sequence)
+    return error;
+  status = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (status)
+    return status;
+  if (!sysfilecreatecheck(pool, work, cache, &open->operation)) {
+    Slotop *op = &work->state.operations[open->operation.lease.slot];
+    if (error == 1 || error == -ERR_CANCELLED ||
+        (error == -ERR_PEER && op->phase == SYSOP_RESULT)) {
+      if (op->status == -ERR_PEER) {
+        error = work->state.ended ? 0 : sysoppeerended(work, cache, &open->operation);
+        if (!error)
+          error = sysfilecreatefailed(pool, work, cache, &open->operation);
+      } else
+        error = 0;
+      if (!error)
+        error = sysfilecreateack(pool, work, cache, &open->operation);
+      if (!error && work->state.creators[open->operation.lease.slot].token)
+        error = 1;
+      if (!error)
+        error = sysfilecreatesettle(pool, work, cache, &open->operation, 0);
+      if (!error) {
+        error = sysfileopenfinish(pool, work, cache, table, open, business);
+        if (error >= 0) {
+          *fd = *business ? -1 : (int) error;
+          error = 0;
+        }
+      }
+    } else if (op->phase == SYSOP_PREPARED) {
+      status = sysfileopenabort(pool, work, cache, table, open);
+      if (status)
+        error = status;
+    }
+  }
+  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return status ? status : error;
+}
+
+isize
 sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx   *context;

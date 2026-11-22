@@ -74,7 +74,15 @@ isize sysctxpipeio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwo
 isize sysctxopenio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work,
                    Conncache *cache, const Opkey *operation, Rkey *active);
 struct Pipecreate;
+struct Opencreate;
 struct Fdtable;
+/* Drive OPEN using an established FS connection and a private path snapshot.
+   Zero means a completed ordinary result (fd is -1 on business failure).
+   One transfers the ACKed resource result to the caller's ATTACH/ABORT path;
+   neither output changes. Retain both continuations across interruption. */
+isize sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
+                       struct Fdtable *table, const u64 args[8], const void *path, u64 bytes,
+                       u64 flags, struct Opencreate *open, Rkey *active, int *fd, isize *business);
 /* Create local descriptors over an established FS connection. Both private
    records start zeroed, and remain caller-owned across interruption or
    incomplete drain (ERR_WOULD_BLOCK after submitted peer death). Re-enter
