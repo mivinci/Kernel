@@ -562,7 +562,7 @@ dirread(Blkowners *home, u32 number, u32 generation, u64 offset, u32 *loaded, u3
   return error ? (*failed = error) : 1;
 }
 
-isize
+static isize
 blkfindstep(Blkfind *work, Dirrecord *out)
 {
   Dirrecord match;
@@ -603,6 +603,31 @@ enum
   IterStopped
 };
 
+static int
+readerhold(Blkredoload *load, const void *owner)
+{
+  if (load->reader || load->pending || load->read->fill.cache || load->read->blk->rpc)
+    return 0;
+  load->reader = owner;
+  return 1;
+}
+
+static isize
+readerdrop(Blkredoload *load, const void *owner)
+{
+  isize error, status;
+  if (load->reader != owner)
+    return -ERR_STATE;
+  if (load->read->fill.cache) {
+    error = blkreadpoll(load->read, &status);
+    if (error)
+      return error;
+  }
+  load->pending = 0;
+  load->reader = NULL;
+  return 0;
+}
+
 isize
 blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
 {
@@ -616,17 +641,23 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
   if (work->state == IterDone)
     return 2;
   if (work->state == IterNew) {
-    Blkredoload *load = &work->home->load;
-    if (load->pending || load->read->fill.cache || load->read->blk->rpc)
+    if (!readerhold(&work->home->load, work))
       return -ERR_BUSY;
     work->state = IterActive;
   }
+  if (work->home->load.reader != work)
+    return -ERR_STATE;
   if (work->failed)
     return work->failed;
   result = dirread(work->home, work->inode, work->generation, work->offset, &work->loaded, &bytes,
                    &work->failed);
-  if (result == 2)
+  if (result == 2) {
+    result = readerdrop(&work->home->load, work);
+    if (result)
+      return result;
     work->state = IterDone;
+    return 2;
+  }
   if (result != 1)
     return result;
   start = within = (u32) (work->offset % FS_BLOCK_BYTES);
@@ -641,22 +672,17 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
 isize
 blkiterstop(Blkiter *work)
 {
-  Blkredoload *load;
-  isize        error, status;
+  isize error;
   if (!work)
     return -ERR_INVALID;
   if (work->state == IterNew || work->state == IterDone || work->state == IterStopped) {
     work->state = IterStopped;
     return 0;
   }
-  load = &work->home->load;
   work->state = IterStopping;
-  if (load->read->fill.cache) {
-    error = blkreadpoll(load->read, &status);
-    if (error)
-      return error;
-  }
-  load->pending = 0;
+  error = readerdrop(&work->home->load, work);
+  if (error)
+    return error;
   work->state = IterStopped;
   return 0;
 }
@@ -664,19 +690,14 @@ blkiterstop(Blkiter *work)
 isize
 blklookupcancel(Blklookup *work)
 {
-  Blkredoload *load;
-  isize        error, status;
+  isize error;
   if (!work || !work->home)
     return -ERR_INVALID;
   if (!work->find.inode && !work->link.number)
     return 0;
-  load = &work->home->load;
-  if (load->read->fill.cache) {
-    error = blkreadpoll(load->read, &status);
-    if (error)
-      return error;
-  }
-  load->pending = 0;
+  error = readerdrop(&work->home->load, work);
+  if (error)
+    return error;
   work->find = (Blkfind){0};
   work->link = (Vnode){0};
   work->linkblock = work->linkbytes = 0;
@@ -691,8 +712,9 @@ blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vn
   Vnode      identity;
   isize      result;
   u32        i;
-  if (!work || !work->home || !work->home->load.read || !work->decode || !work->acquire ||
-      !directory || !name || !out || !bytes || bytes > sizeof(work->name))
+  if (!work || !work->home || !work->home->load.read || !work->home->load.read->blk ||
+      !work->decode || !work->acquire || !directory || !name || !out || !bytes ||
+      bytes > sizeof(work->name))
     return -EINVAL;
   if (!work->mount || directory->mount != work->mount || !directory->number ||
       directory->number >= FS_INODES || !directory->generation ||
@@ -703,7 +725,7 @@ blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vn
   if (work->link.number)
     return -EBUSY;
   if (!work->find.inode) {
-    if (work->home->load.pending || work->home->load.read->fill.cache)
+    if (!readerhold(&work->home->load, work))
       return -EBUSY;
     for (i = 0; i < bytes; i++)
       work->name[i] = name[i];
@@ -730,7 +752,8 @@ blklookup(void *context, const Vnode *directory, const char *name, u32 bytes, Vn
     return result == 2 ? -ENOENT : result == -ERR_STALE ? -ESTALE : -EIO;
   }
   identity = (Vnode){work->mount, match.inode, match.generation, match.kind};
-  work->find = (Blkfind){0};
+  if (blklookupcancel(work))
+    return VWALK_WAIT;
   return work->acquire(work->nodes, &identity, out);
 }
 
@@ -747,7 +770,8 @@ blkreadlink(void *context, const Vnode *link, const char **out, u64 *bytes)
   isize           error, status;
   u32             i;
   if (!work || !(home = work->home) || !(probe = home->home) || !link || !out || !bytes ||
-      home->phase != OwnersDone || home->failed || !home->load.nodes)
+      home->phase != OwnersDone || home->failed || !home->load.nodes || !home->load.read ||
+      home->load.read->blk != probe->blk)
     return -EINVAL;
   if (work->find.inode || (work->link.number && !vnodesame(&work->link, link)))
     return -EBUSY;
@@ -758,7 +782,7 @@ blkreadlink(void *context, const Vnode *link, const char **out, u64 *bytes)
     return -EINVAL;
   load = &home->load;
   if (!work->link.number) {
-    if (load->pending || load->read->fill.cache || probe->blk->rpc)
+    if (!readerhold(load, work))
       return -EBUSY;
     work->link = *link;
   }

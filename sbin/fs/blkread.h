@@ -32,8 +32,9 @@ struct Blkread
    the encoded input, and fully initialize outputs on validated success. */
 struct Blkredoload
 {
-  Blkread *read;
-  Cache   *cache;
+  Blkread    *read;
+  Cache      *cache;
+  const void *reader; /* Active directory iterator, lookup or link reader. */
   isize (*inode)(u32, const u8 *, Loadmap *, u32 *, u32 *);
   isize (*indirect)(u32, const u8 *, Loadindex *);
   Loadmap   map;
@@ -141,12 +142,6 @@ struct Blkfind
   Dirrecord   match;
   isize       failed;
 };
-/* Supply the held directory identity and immutable component from the same
-   stable volume view. Zero progress fields. Own the home reader and its decoded map until
-   completion or external drain. Zero continues, one publishes a match,
-   two means absent. Output is untouched until a match is published. */
-isize blkfindstep(Blkfind *, Dirrecord *);
-
 struct Blkiter
 {
   Blkowners *home;
@@ -155,7 +150,7 @@ struct Blkiter
   u32        inode, generation, loaded, state;
   isize      failed;
 };
-/* One stable view and exclusive reader from start until EOF or drain.
+/* Keep work at a stable address and hold the reader from start until EOF or drain.
    Zero continues, one returns a row and a name borrowed from reader
    scratch, two is EOF. Only a row updates the record and name outputs. */
 isize blkiterstep(Blkiter *, Dirrecord *, const u8 **name);
@@ -177,7 +172,8 @@ struct Blklookup
   u32     linkblock, linkbytes;
   char    name[255];
 };
-/* Vwalkops.lookup for one stable mounted volume. The namespace routes
+/* Vwalkops.lookup for one stable mounted volume. Keep work at a stable
+   address until completion or drain. The namespace routes
    mount identities, checks directory search permission separately and
    supplies acquire to transfer one held canonical vnode on success. */
 isize blklookup(void *, const Vnode *, const char *, u32, Vnode **);

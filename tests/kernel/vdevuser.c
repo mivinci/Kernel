@@ -1647,8 +1647,13 @@ blkclient(const Bootview *boot, Handle call)
                       .inode = (u32) root.number,
                       .generation = (u32) root.generation};
     Blkiter   cancelled = iter;
+    Blkiter   contender = iter;
+    Blklookup competing = {
+        .home = &home, .decode = blkdecodedir, .mount = root.mount, .acquire = lookupacquire};
     Dirrecord item = {0};
     const u8 *name = NULL;
+    Vnode    *other = NULL;
+    u64       linkbytes = 0;
     isize     step = 0;
     u32       waits = 1;
     REQUIRE(!cacheinit(&cache, &storage, 1, 256) && !blkiterstep(&cancelled, &item, &name) &&
@@ -1678,6 +1683,12 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(item.inode == 34 && item.namelen == 59 && name && name[0] == (u8) (0xb1 + 40 * 37) &&
                 !name[item.namelen],
             530);
+    REQUIRE(blkiterstep(&contender, &item, &name) == -ERR_BUSY &&
+                blklookup(&competing, &root, "other", 5, &other) == -EBUSY && !other &&
+                blkreadlink(&competing, &(Vnode){root.mount, 34, 1, VNODE_LINK},
+                            &(const char *){NULL}, &linkbytes) == -EBUSY &&
+                !linkbytes && !blk.rpc && item.inode == 34,
+            535);
     for (i = 0, step = 0; i < 8 && !step; i++) {
       u64 before = iter.offset;
       step = blkiterstep(&iter, &item, &name);
@@ -1691,6 +1702,10 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(step == 2 && waits == 4 && !blk.rpc && iter.offset == 2 * FS_BLOCK_BYTES &&
                 item.inode == 34 && blkiterstep(&iter, &item, &name) == 2 && !blkiterstop(&iter),
             527);
+    contender.generation++;
+    REQUIRE(blkiterstep(&contender, &item, &name) == -ERR_STALE && !blk.rpc &&
+                !blkiterstop(&contender),
+            536);
   }
   {
     static Vwalk   walk;
