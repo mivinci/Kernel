@@ -37,6 +37,7 @@ typedef struct Growth      Growth;
 typedef struct Reclaimtx   Reclaimtx;
 typedef struct Reclaimscan Reclaimscan;
 typedef struct Inodemap    Inodemap;
+typedef struct Inodealloc  Inodealloc;
 typedef struct Shrink      Shrink;
 struct Journalmark
 {
@@ -91,6 +92,14 @@ struct Reclaimtx
 struct Inodemap
 {
   u64 used[FS_INODES / 64];
+};
+struct Inodealloc
+{
+  Journal        *journal;
+  struct Cache   *cache;
+  struct Loadmap *live;
+  Inodemap       *inodes;
+  u64             txid, inode, generation;
 };
 struct Shrink
 {
@@ -161,6 +170,15 @@ isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclai
    and retain all views through publication or recovery. */
 isize journalinodefree(Reclaimtx *, Journal *, struct Cache *, struct Loadmap *, Inodemap *,
                        u32 links, u32 refs, const Mapmeta *);
+/* Stage an empty inode from an unallocated decoded row. Generation 0 is a
+   never-used slot; UINT32_MAX is exhausted. The root is never allocated here. */
+isize inodeallocstage(const Inodemap *, const struct Loadmap *, struct Loadmap *);
+/* Commit the inode row and bitmap together. The caller holds the volume
+   writer, keeps the slot unpublished and supplies immutable encoded records.
+   The new identity becomes available only after the durable EMPTY record. */
+isize journalinodealloc(Inodealloc *, Journal *, struct Cache *, Inodemap *, struct Loadmap *,
+                        const struct Loadmap *, const Mapmeta *);
+isize inodeallocpublish(Inodealloc *);
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */
 isize reclaimpublish(Reclaimtx *);

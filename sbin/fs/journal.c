@@ -443,20 +443,24 @@ journalreclaim(Reclaimtx *work, Journal *journal, Cache *cache, const Reclaim *b
   return 0;
 }
 
+static int
+inodehasblocks(const Loadmap *map)
+{
+  u32 i;
+  for (i = 0; i < LOAD_DIRECT; i++)
+    if (map->direct[i])
+      return 1;
+  return !!map->indirect;
+}
+
 static isize
 inodefreecheck(const Loadmap *live, const Inodemap *inodes)
 {
   u64 inode = live->file.inode;
-  u32 i;
   if (inode <= FS_ROOT || inode >= FS_INODES || !live->file.generation ||
       !(inodes->used[inode / 64] & (UINT64_C(1) << (inode % 64))))
     return -ERR_STALE;
-  if (live->indirect)
-    return -ERR_BUSY;
-  for (i = 0; i < LOAD_DIRECT; i++)
-    if (live->direct[i])
-      return -ERR_BUSY;
-  return 0;
+  return inodehasblocks(live) ? -ERR_BUSY : 0;
 }
 
 static isize
@@ -498,6 +502,107 @@ journalinodefree(Reclaimtx *work, Journal *journal, Cache *cache, Loadmap *live,
   }
   next.txid = journal->txid;
   *work = next;
+  return 0;
+}
+
+static isize
+inodealloccheck(const Inodemap *inodes, const Loadmap *live)
+{
+  u64 inode = live->file.inode;
+  if (inode <= FS_ROOT || inode >= FS_INODES || live->file.generation > UINT32_MAX ||
+      inodehasblocks(live))
+    return -ERR_STATE;
+  if (inodes->used[inode / 64] & (UINT64_C(1) << (inode % 64)))
+    return -ERR_BUSY;
+  return live->file.generation == UINT32_MAX ? -ERR_OVERFLOW : 0;
+}
+
+isize
+inodeallocstage(const Inodemap *inodes, const Loadmap *live, Loadmap *out)
+{
+  isize error;
+  u32   i;
+  if (!separate(inodes, sizeof(*inodes), out, sizeof(*out)) ||
+      !separate(live, sizeof(*live), out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = inodealloccheck(inodes, live);
+  if (error)
+    return error;
+  out->file = (Loadfile){live->file.inode, live->file.generation + 1, 1, 0};
+  out->indirect = 0;
+  for (i = 0; i < LOAD_DIRECT; i++)
+    out->direct[i] = 0;
+  return 0;
+}
+
+isize
+journalinodealloc(Inodealloc *work, Journal *journal, Cache *cache, Inodemap *inodes, Loadmap *live,
+                  const Loadmap *staged, const Mapmeta *encoded)
+{
+  Journalblock metadata[2];
+  Journalplan  plan;
+  u64          blocks[2];
+  isize        error;
+  if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
+      !separate(live, sizeof(*live), inodes, sizeof(*inodes)) ||
+      !separate(live, sizeof(*live), staged, sizeof(*staged)) || !encoded || !encoded->inode ||
+      !encoded->bitmap || encoded->index)
+    return -ERR_INVALID;
+  if (work->journal || work->txid)
+    return -ERR_BUSY;
+  error = inodealloccheck(inodes, live);
+  if (error)
+    return error;
+  if (staged->file.inode != live->file.inode ||
+      staged->file.generation != live->file.generation + 1 || staged->file.version != 1 ||
+      staged->file.length || inodehasblocks(staged))
+    return -ERR_STALE;
+  blocks[0] = FS_INODE_START + live->file.inode / (FS_BLOCK_BYTES / FS_INODE_BYTES);
+  blocks[1] = FS_INODE_MAP;
+  metadata[0] = (Journalblock){blocks[0], encoded->inode};
+  metadata[1] = (Journalblock){blocks[1], encoded->bitmap};
+  plan = (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, NULL, 2, 0};
+  error = journalbegin(journal, &plan);
+  if (error)
+    return error;
+  error = cacheforget(cache, blocks, 2);
+  if (error) {
+    clear(journal);
+    journal->phase = JOURNAL_IDLE;
+    return error;
+  }
+  *work = (Inodealloc){
+      journal, cache, live, inodes, journal->txid, live->file.inode, live->file.generation};
+  return 0;
+}
+
+isize
+inodeallocpublish(Inodealloc *work)
+{
+  Journal *journal;
+  u64      blocks[2];
+  isize    error;
+  if (!work || !(journal = work->journal) || !work->txid || journal->txid != work->txid)
+    return -ERR_STALE;
+  if (journal->phase == JOURNAL_STOPPED)
+    return -ERR_STATE;
+  if (journal->phase != JOURNAL_DONE || !journal->durable)
+    return -ERR_WOULD_BLOCK;
+  if (work->live->file.inode != work->inode || work->live->file.generation != work->generation)
+    return -ERR_STALE;
+  error = inodealloccheck(work->inodes, work->live);
+  if (error)
+    return error;
+  blocks[0] = journal->metadata[0].block;
+  blocks[1] = journal->metadata[1].block;
+  error = cacheforget(work->cache, blocks, 2);
+  if (!error)
+    error = journalrelease(journal);
+  if (error)
+    return error;
+  work->live->file = (Loadfile){work->inode, work->generation + 1, 1, 0};
+  work->inodes->used[work->inode / 64] |= UINT64_C(1) << (work->inode % 64);
+  *work = (Inodealloc){0};
   return 0;
 }
 

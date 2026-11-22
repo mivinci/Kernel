@@ -1968,19 +1968,20 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   Blockmap prepared = *allocation;
   Blockmap busy;
   Reclaim  batch;
-  Reclaimtx work = {0};
-  Shrink    shrink = {0};
-  Inodemap  inodes = {{7}};
-  Loadmap   staged;
-  Loadspan  span;
-  Journal   journal;
-  Journalio io;
-  Cachekey  key = {0};
-  Cacheio   fill;
-  u8       *bytes;
-  u64       original = allocation->used[1];
-  u64       oldlength = shortened->file.length;
-  u32       steps;
+  Reclaimtx  work = {0};
+  Shrink     shrink = {0};
+  Inodemap   inodes = {{7}};
+  Inodealloc reuse = {0};
+  Loadmap    staged;
+  Loadspan   span;
+  Journal    journal;
+  Journalio  io;
+  Cachekey   key = {0};
+  Cacheio    fill;
+  u8        *bytes;
+  u64        original = allocation->used[1];
+  u64        oldlength = shortened->file.length;
+  u32        steps;
   CHECK(!journalinit(&journal, 128, 0) && !loadmapshrink(shortened, 20, &staged) &&
         !cachebusy(cache, &busy) &&
         !loadreclaim(shortened, index, 99, 128, &busy, &prepared, &batch));
@@ -2062,6 +2063,23 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
           !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
   CHECK(!reclaimpublish(&work) && journal.last == 4 && inodes.used[0] == 3 &&
         shortened->file.generation == 1 && reclaimpublish(&work) == -ERR_STALE);
+  shortened->file.generation = UINT32_MAX;
+  CHECK(inodeallocstage(&inodes, shortened, &staged) == -ERR_OVERFLOW);
+  shortened->file.generation = 1;
+  CHECK(!inodeallocstage(&inodes, shortened, &staged) && staged.file.generation == 2 &&
+        !staged.file.length && staged.file.version == 1);
+  meta.inode = maprecords[0];
+  CHECK(!journalinodealloc(&reuse, &journal, cache, &inodes, shortened, &staged, &meta) &&
+        journal.metadata_count == 2 && journal.metadata[0].block == FS_INODE_START &&
+        journal.metadata[1].block == FS_INODE_MAP);
+  for (steps = 0; journal.phase != JOURNAL_DONE; steps++)
+    CHECK(steps < 20 && inodes.used[0] == 3 && shortened->file.generation == 1 &&
+          inodeallocpublish(&reuse) == -ERR_WOULD_BLOCK && !journalnext(&journal, &io) &&
+          !journalcomplete(&journal, &io, 1));
+  CHECK(!inodeallocpublish(&reuse) && journal.last == 5 && inodes.used[0] == 7 &&
+        shortened->file.generation == 2 && !shortened->file.length &&
+        inodeallocpublish(&reuse) == -ERR_STALE &&
+        inodeallocstage(&inodes, shortened, &staged) == -ERR_BUSY);
 }
 
 static void

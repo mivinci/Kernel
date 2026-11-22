@@ -772,6 +772,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage540：空闲 inode 槽可用旧 generation 加一准备空文件视图；耗尽时报 OVERFLOW，根和已占用槽不复用。新 inode 行和占用位同一事务写入，退休后才发布新代次。ARM64/RV64 QEMU `pipeio` 验证孤儿退休后复用、退休前代次不变及拒绝回绕；46 项 FS 主机测试通过。生产目录创建仍需把目录项与新 inode 纳入同一事务。
+
 stage539：`journalinodefree` 在孤儿引用和块指针全部清空后，用最后一笔事务清 inode 位图，保留原 inode 行的 generation 供将来复用。ARM64/RV64 QEMU `pipeio` 验证块批次未退休时拒绝、最终位图仅在日志退休后可见以及重复发布被拒；46 项 FS 主机测试通过。生产编码和 inode 再分配待接。
 
 stage538：无引用孤儿可用同一回收日志分批清除全部块，包含仍在原 EOF 内的数据；inode 槽保持分配。ARM64/RV64 QEMU `pipeio` 验证带引用时拒绝、无引用后可提交块回收，末次 FLUSH 失败时指针和位图不提前发布。46 项 FS 主机测试通过。最终 inode 槽退休和生产候选接线待做。
