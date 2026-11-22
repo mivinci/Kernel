@@ -24,4 +24,9 @@ isize serialioinit(Serialio *io, Uart *uart, Serialring *rx, Serialring *tx, u64
    ACK belongs to the caller after consuming and servicing an IRQ event.
    Failure masks device IRQs; it does not unmap/reset/free either live ring. */
 isize serialiostep(Serialio *io, u64 *hints, u32 *again);
+/* Sample a transmitted prefix of this TX ring's epoch. On success, bytes
+   below *position have left the UART. The shared consumer alone includes
+   bytes still in private staging. WOULD_BLOCK leaves the output untouched;
+   the caller schedules the next check outside this function. */
+isize serialiodrained(const Serialio *io, u64 *position);
 #endif

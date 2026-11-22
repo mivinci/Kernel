@@ -49,6 +49,8 @@ class SerialIoTests(unittest.TestCase):
             lib.serialioinit.restype = C.c_int64
             lib.serialiostep.argtypes = [C.POINTER(Serialio), C.POINTER(C.c_uint64), C.POINTER(C.c_uint32)]
             lib.serialiostep.restype = C.c_int64
+            lib.serialiodrained.argtypes = [C.POINTER(Serialio), C.POINTER(C.c_uint64)]
+            lib.serialiodrained.restype = C.c_int64
             cls.libs.append(lib)
 
     @classmethod
@@ -127,6 +129,10 @@ class SerialIoTests(unittest.TestCase):
                 self.assertEqual(self.step(lib, io), (0, 0))
                 self.assertEqual(bytes(io.pending), saved)
                 self.assertEqual(tx.consumer, 32)
+                device.advance()
+                position = C.c_uint64(123)
+                self.assertEqual(lib.serialiodrained(C.byref(io), C.byref(position)), 0)
+                self.assertEqual(position.value, 0)
                 for _ in range(64):
                     device.advance()
                     self.step(lib, io)
@@ -134,10 +140,13 @@ class SerialIoTests(unittest.TestCase):
                         break
                 else:
                     self.fail('bounded queued output made no progress')
-                self.assertEqual(lib.uartdrained(C.byref(uart)), 0)
+                position = C.c_uint64(123)
+                self.assertEqual(lib.serialiodrained(C.byref(io), C.byref(position)), -11)
+                self.assertEqual(position.value, 123)
                 device.advance()
                 self.assertEqual(bytes(device.sent), bytes([0xaa]) * device.depth + packet)
-                self.assertEqual(lib.uartdrained(C.byref(uart)), 1)
+                self.assertEqual(lib.serialiodrained(C.byref(io), C.byref(position)), 0)
+                self.assertEqual(position.value, len(packet))
                 self.assertEqual(uart.mask, 5 if kind == 1 else 0x7d0)
 
     def test_one_batch_then_more_requires_continuation_and_tx_still_runs(self):
@@ -164,6 +173,9 @@ class SerialIoTests(unittest.TestCase):
             old = bytes(io)
             tx.epoch = 2
             rings = bytes(rx), bytes(tx)
+            position = C.c_uint64(123)
+            self.assertEqual(lib.serialiodrained(C.byref(io), C.byref(position)), -4)
+            self.assertEqual(position.value, 123)
             self.assertEqual(self.step(lib, io, -4), (0, 0))
             self.assertEqual(uart.mask, 0)
             self.assertEqual(bytes(io), old)

@@ -35,6 +35,30 @@ serialioinit(Serialio *io, Uart *uart, Serialring *rx, Serialring *tx, u64 epoch
 }
 
 isize
+serialiodrained(const Serialio *io, u64 *position)
+{
+  u64   past;
+  u32   pending;
+  isize status;
+  if (!io || !io->uart || !io->tx || !position)
+    return -ERR_INVALID;
+  if (io->offset > io->count || io->count > SERIAL_BATCH)
+    return -ERR_STATE;
+  status = serialread(io->tx, io->epoch, NULL, 0);
+  if (status)
+    return status;
+  past = __atomic_load_n(&io->tx->consumer, __ATOMIC_RELAXED);
+  pending = io->count - io->offset;
+  if (past < pending)
+    return -ERR_STATE;
+  status = uartdrained(io->uart);
+  if (status <= 0)
+    return status ? status : -ERR_WOULD_BLOCK;
+  *position = past - pending;
+  return 0;
+}
+
+isize
 serialiostep(Serialio *io, u64 *hints, u32 *again)
 {
   u8    data[SERIAL_BATCH];

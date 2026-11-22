@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage469：serial 可确认已物理发送的 TX 前缀，区分环消费、驱动暂存和 UART 排空；双架构 QEMU `packageboot/service-authority` 和 7 项主机专项通过。TTY 尚未接收该位置。
 - stage468：TTY 即时模式切换可重新核对原挂起 READ，并只在读策略变化时更新等待条件。双架构 QEMU `runtime` 和 32 项 TTY 主机测试通过；SETATTR 线上分派与输出排空仍待接。
 - stage467：TTY 输入队列支持保留未读字节的规范／非规范切换；双架构 QEMU `tty` 和 32 项主机测试通过。SETATTR 服务事务仍待接。
 - stage466：可写 EMPTY 和 COMMITTED 重放统一校验卷与设备写入条件；两架构 `virtiodev`、`runtime` 和 37 项 FS 主机测试通过。盘上解码和生产挂载仍待接。

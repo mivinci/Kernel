@@ -29,7 +29,7 @@ pumpcheck(const Serialboot *boot)
 {
   Serialio io;
   Uart     uart;
-  u64      hints, seen = 0;
+  u64      hints, drained, seen = 0;
   u32      again, turns;
   isize    error;
   for (turns = 0; turns < 64; turns++) {
@@ -44,6 +44,7 @@ pumpcheck(const Serialboot *boot)
             !serialioinit(&io, &uart, &pumprx, &pumptx, 1),
         211);
   CHECK(serialwrite(&pumptx, 1, "\n", 1) == 1, 212);
+  CHECK(!serialiodrained(&io, &drained) && !drained, 236);
   for (turns = 0; turns < 64; turns++) {
     CHECK(!serialiostep(&io, &hints, &again), 213);
     seen |= hints;
@@ -57,6 +58,13 @@ pumpcheck(const Serialboot *boot)
   CHECK(!serialiostep(&io, &hints, &again) && !hints && !again &&
             uart.mask == (boot->kind == BOOT_UART_NS16550 ? 5U : 0x7d0U),
         216);
+  for (turns = 0; turns < 64; turns++) {
+    error = serialiodrained(&io, &drained);
+    if (!error)
+      break;
+    CHECK(error == -ERR_WOULD_BLOCK && !drained && !__sys_yield(), 237);
+  }
+  CHECK(turns < 64 && drained == 1, 238);
   CHECK(!uartmask(&uart, 0, 0), 217);
   return 0;
 }
