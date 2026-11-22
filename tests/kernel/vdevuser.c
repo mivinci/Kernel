@@ -352,6 +352,7 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   Cachekey          competing = {0};
   u8               *destinations[2], *unused = NULL;
   u8                staged[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+  u8                transfer[CACHE_BYTES];
   Vdev             *device = queue->device;
   Ipcmsg            event;
   Vdone             done[VQ_BATCH], stale;
@@ -390,11 +391,16 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
       stale = done[i];
       stale.cookie += VQ_SIZE;
       REQUIRE(blkqmatch(queue, &stale) == -ERR_STALE &&
-                  !blkqfinish(queue, &done[i], destinations[slot], CACHE_BYTES) &&
+                  !blkqfinish(queue, &done[i], transfer, sizeof(transfer)) &&
                   blkqmatch(queue, &done[i]) == -ERR_STALE &&
-                  cachefillfinish(&fills[slot], &tickets[slot ^ 1], 1) == -ERR_STALE &&
-                  !cachefillfinish(&fills[slot], &tickets[slot], 1) &&
-                  cachefillfinish(&fills[slot], &tickets[slot], 1) == -ERR_STALE,
+                  cachefillcopy(&fills[slot], &tickets[slot ^ 1], transfer, sizeof(transfer)) ==
+                      -ERR_STALE &&
+                  cachefillcopy(&fills[slot], &tickets[slot], transfer, CACHE_BYTES - 1) ==
+                      -ERR_INVALID &&
+                  cachespancopy(&span, staged) == -ERR_WOULD_BLOCK &&
+                  !cachefillcopy(&fills[slot], &tickets[slot], transfer, sizeof(transfer)) &&
+                  cachefillcopy(&fills[slot], &tickets[slot], transfer, sizeof(transfer)) ==
+                      -ERR_STALE,
               220);
       for (j = 0; j < config->blocksize; j++)
         REQUIRE(destinations[slot][j] == (u8) ((slot ? 0x37 : 0x51) + j * 37), 221);

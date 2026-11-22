@@ -85,6 +85,9 @@ isize cachefetch(Cache *cache, u64 block, u32 metadata, Cacheio *out, u8 **desti
 isize cachefillstart(Cachefill *fill, Cache *cache, u64 block, u32 metadata, Cacheio *out,
                      u8 **destination);
 isize cachefillfinish(Cachefill *fill, const Cacheio *ticket, u32 success);
+/* Commit one full block from independent, drained transport storage. A bad
+   ticket or length leaves both the cache and the outstanding fill intact. */
+isize cachefillcopy(Cachefill *fill, const Cacheio *ticket, const void *block, u32 bytes);
 isize cachewritebegin(Cache *cache, const Cachekey *key, void *snapshot, Cacheio *out);
 /* success means a known finished IO, never cancellation/result-only/timeout.
    Unknown IO keeps its ticket active. This does not prove flush or DMA stop. */

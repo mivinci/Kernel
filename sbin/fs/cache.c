@@ -356,17 +356,23 @@ cachefillstart(Cachefill *fill, Cache *cache, u64 block, u32 metadata, Cacheio *
   return error;
 }
 
+static int
+fillmatches(const Cachefill *fill, const Cacheio *ticket)
+{
+  const Cacheio *owned;
+  if (!fill || !ticket || !fill->cache)
+    return 0;
+  owned = &fill->ticket;
+  return ticket->key.index == owned->key.index && ticket->key.generation == owned->key.generation &&
+         ticket->serial == owned->serial && ticket->version == owned->version &&
+         ticket->kind == owned->kind;
+}
+
 isize
 cachefillfinish(Cachefill *fill, const Cacheio *ticket, u32 success)
 {
-  const Cacheio *owned;
-  isize          error;
-  if (!fill || !ticket || !fill->cache)
-    return -ERR_STALE;
-  owned = &fill->ticket;
-  if (ticket->key.index != owned->key.index || ticket->key.generation != owned->key.generation ||
-      ticket->serial != owned->serial || ticket->version != owned->version ||
-      ticket->kind != owned->kind)
+  isize error;
+  if (!fillmatches(fill, ticket))
     return -ERR_STALE;
   error = cachecomplete(fill->cache, ticket, success);
   if (!error)
@@ -411,6 +417,28 @@ ticketentry(Cache *cache, const Cacheio *ticket, Cacheblock **entry, u32 success
     return -ERR_STALE;
   return 0;
 }
+
+isize
+cachefillcopy(Cachefill *fill, const Cacheio *ticket, const void *block, u32 bytes)
+{
+  Cacheblock *entry;
+  const u8   *source = block;
+  u32         i;
+  isize       error;
+  if (!fillmatches(fill, ticket))
+    return -ERR_STALE;
+  if (bytes != CACHE_BYTES || !external(fill->cache, block, bytes))
+    return -ERR_INVALID;
+  error = ticketentry(fill->cache, ticket, &entry, 1);
+  if (error)
+    return error;
+  if (entry->io != CACHE_READ)
+    return -ERR_STATE;
+  for (i = 0; i < bytes; i++)
+    entry->data[i] = source[i];
+  return cachefillfinish(fill, ticket, 1);
+}
+
 isize
 cachecomplete(Cache *cache, const Cacheio *ticket, u32 success)
 {
