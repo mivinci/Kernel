@@ -186,15 +186,19 @@ forksnapshot(Fsservice *fs, const Ipcmsg *call)
   isize     error;
   if (fs->forks && fs->open) {
     error = sysfilelinkaccept(fs->links, fs->nlinks, call, &slot);
-    if (!error) {
+    if (!error)
       link = &fs->links[call->words[1] & 65535];
-      reply.words[0] = (u64) forkcapture(fs, call, link, &slot, &record);
-    } else
+    else
       reply.words[0] = (u64) (error == -ERR_INVALID ? -EINVAL
                               : error == -ERR_BUSY  ? -EBUSY
                                                     : -ESTALE);
   }
   error = ipc_rqcheck(call->request, &state);
+  if (!error && link && state == RQ_CHECK_LIVE) {
+    reply.words[0] = (u64) forkcapture(fs, call, link, &slot, &record);
+    /* Shared-slot capture can be preempted by cancellation or image exit. */
+    error = ipc_rqcheck(call->request, &state);
+  }
   if (!error && state == RQ_CHECK_DRAINING) {
     error = ipc_rqfinish(call->request);
   } else if (!error) {

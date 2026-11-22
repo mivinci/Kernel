@@ -3243,8 +3243,8 @@ publicappend(void *context, Readjob *job, u64 state, u64 offset, const volatile 
 static void
 publicchdirserver(const Bootview *boot)
 {
-  static Fsfork  record;
-  Fsforks        forks = {&record, 1, 0};
+  static Fsfork  records[2];
+  Fsforks        forks = {records, ARRAY_SIZE(records), 0};
   Piperef        refs[2] = {0};
   Filelink       link = {0};
   Openfixture    fixture = {0};
@@ -3406,22 +3406,30 @@ publicchdirserver(const Bootview *boot)
     }
   }
   CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 1); /* PIPE */
-  CHECK(!fsstep(&fs) && !forks.serial && !record.manifest.count && file.refs == 1);
-  CHECK(!fsstep(&fs) && forks.serial == 1 && record.manifest.count == 2 &&
-        record.manifest.nrows == 3 && record.context == context.version &&
-        record.holds[0].file == &file && record.holds[1].pipe == &servicepipe &&
-        record.manifest.groups[0].retained == 2 && file.refs == 2 &&
+  CHECK(!fsstep(&fs) && !forks.serial && !records[0].manifest.count && file.refs == 1);
+  CHECK(!fsstep(&fs) && forks.serial == 1 && records[0].manifest.count == 2 &&
+        records[0].manifest.nrows == 3 && records[0].context == context.version &&
+        records[0].holds[0].file == &file && records[0].holds[1].pipe == &servicepipe &&
+        records[0].manifest.groups[0].retained == 2 && file.refs == 2 &&
         servicepipe.stream.refs[PIPE_WRITE] == 2);
-  CHECK(!fsstep(&fs) && fs.alarm && forks.serial == 1 && file.refs == 2);
-  CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 1); /* CLOSE write end. */
+  CHECK(!fsstep(&fs) && fs.alarm && forks.serial == 2 && file.refs == 3 &&
+        records[1].manifest.snapshot == 2 && records[1].context == context.version &&
+        records[0].manifest.child == records[1].manifest.child &&
+        records[0].manifest.target_image != records[1].manifest.target_image &&
+        servicepipe.stream.refs[PIPE_WRITE] == 3);
+  CHECK(!fsstep(&fs) && forks.serial == 2 && file.refs == 3);      /* Table full. */
+  CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 2); /* CLOSE write end. */
   CHECK(!fsstep(&fs) && file.position == 3);                       /* fclose's flush. */
-  CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.position == 3);
+  CHECK(!fsstep(&fs) && !ref.file && file.refs == 2 && file.position == 3);
   CHECK(context.pid == target.target && fixture.holds == 3);
-  CHECK(!fsstep(&fs) && servicewait.io.request && servicepipe.stream.refs[PIPE_WRITE] == 1);
-  /* No request can arrive from the blocked client until the alarm drops the
-     writer, the loop pumps the original READ, and the client closes its fd. */
-  CHECK(!fsstep(&fs) && servicewait.io.request && !fsstep(&fs));
-  CHECK(!record.manifest.count && !record.holds[0].file && !record.holds[1].pipe &&
+  CHECK(!fsstep(&fs) && servicewait.io.request && servicepipe.stream.refs[PIPE_WRITE] == 2);
+  /* The first timer wakes the loop, but only expiry of the final writer may
+     complete the original READ. The client cannot issue anything meanwhile. */
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && !records[0].manifest.count && !records[0].holds[0].file &&
+        !records[0].holds[1].pipe && records[1].manifest.count == 2 && file.refs == 1 &&
+        servicewait.io.request && servicepipe.stream.refs[PIPE_WRITE] == 1);
+  CHECK(!fsstep(&fs));
+  CHECK(!records[1].manifest.count && !records[1].holds[0].file && !records[1].holds[1].pipe &&
         !servicewait.io.request && !servicepipe.stream.refs[PIPE_WRITE] &&
         !servicepipe.stream.refs[PIPE_READ] && !file.refs && !file.node);
   for (steps = 0; steps < 8 && link.ready; steps++)
@@ -3517,7 +3525,7 @@ publicforksnapshot(Connwork *peer, int fd, int writer)
   Ipcmsg      result;
   u64         address = peer->state.map.address, now;
   u32         i;
-  const isize status[] = {-ETIMEDOUT, 0, -EAGAIN};
+  const isize status[] = {-ETIMEDOUT, 0, 0, -EAGAIN};
   CHECK(!sysfileimage(&image) && !sysfdobserve(&image->fds, fd, &view) &&
         !sysfilerefview(&image->files, peer->state.self, view.file, &ref));
   cache = sysfileimagecache(image);
@@ -3541,7 +3549,8 @@ publicforksnapshot(Connwork *peer, int fd, int writer)
                           peer->state.peer.image, ref.session, ref.reference};
   for (i = 0; i < ARRAY_SIZE(status); i++) {
     CHECK(!sysconnworkreserve(peer, cache, SYSFILE_MAIN, 1, &lease));
-    slot.args[3] = i ? now + UINT64_C(1000000000) : 0;
+    slot.args[1] = peer->state.peer.image + (i == 2);
+    slot.args[3] = i ? now + (i == 2 ? UINT64_C(2000000000) : UINT64_C(1000000000)) : 0;
     request.words[2] = slot.seq = lease.seq;
     request.words[3] = lease.slot;
     CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
@@ -3550,7 +3559,7 @@ publicforksnapshot(Connwork *peer, int fd, int writer)
                       sizeof(slot)) &&
           !ipc_call(peer->state.call, &request, 0, &result) &&
           (isize) result.words[0] == status[i] && result.words[1] == lease.seq &&
-          result.words[2] == (i == 1 ? 1 : 0) && !result.words[3] &&
+          result.words[2] == (i == 1 || i == 2 ? i : 0) && !result.words[3] &&
           !sysconnworkrelease(peer, cache, lease));
   }
 }
