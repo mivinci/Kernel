@@ -485,6 +485,41 @@ testcreate(Journaltransport *transport, Cache *cache, u8 records[][FS_BLOCK_BYTE
           311);
 }
 
+static isize
+journaluncertain(void *context, const Journalio *io, u64 offset, u32 bytes)
+{
+  isize error = journalsubmit(context, io, offset, bytes);
+  return error ? error : JOURNAL_SUBMIT_UNCERTAIN;
+}
+
+static void
+testuncertain(Journaltransport *transport, Cache *cache, u8 records[][FS_BLOCK_BYTES])
+{
+  Journal      *journal = transport->journal;
+  Inodemap      inodes = {{39}};
+  Inodealloc    work = {0};
+  Loadmap       child = {{6, 0, 0, 0}, {0}, 0}, staged;
+  const Mapmeta meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
+  Journalio    *ticket = &transport->ticket;
+  Vdone         done;
+  REQUIRE(!inodeallocstage(&inodes, &child, &staged) &&
+              !journalinodealloc(&work, journal, cache, &inodes, &child, &staged, &meta, NULL) &&
+              inodeallocstep(&work, journaluncertain, transport) == -ERR_STATE &&
+              journal->phase == JOURNAL_STOPPED && journal->active && ticket->txid == 52 &&
+              ticket->kind == JOURNAL_FLUSH && journal->header == meta.header &&
+              inodeallocstep(&work, journaluncertain, transport) == -ERR_STATE &&
+              journalrelease(journal) == -ERR_WOULD_BLOCK,
+          312);
+  done = waitblock(transport->queue, transport->event);
+  REQUIRE(!blkqfinish(transport->queue, &done, NULL, 0) && !__sys_alarmcancel(&transport->alarm) &&
+              !journalcomplete(journal, ticket, 1) && inodeallocpublish(&work) == -ERR_STATE &&
+              !child.file.generation && inodes.used[0] == 39 && !journalrelease(journal) &&
+              journal->last == 51 && journal->phase == JOURNAL_STOPPED,
+          313);
+  vdev_trace[3]++;
+  ticket->serial = 0;
+}
+
 static void
 testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
 {
@@ -527,6 +562,7 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
           267);
   testtruncate(queue, binding, irqevent, &journal, &cache, &map, &committed, &reserved, records);
   testcreate(&transport, &cache, records);
+  testuncertain(&transport, &cache, records);
 }
 
 static void

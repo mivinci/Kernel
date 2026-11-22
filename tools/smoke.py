@@ -1561,7 +1561,7 @@ def exercise(args, run_dir, record):
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
                                   negotiated=3,resets=8,rng=1,rwsectors=1024,rosectors=128,
-                                  reads=7,writes=34,flushes=24,interrupts=63,retired=2,
+                                  reads=7,writes=34,flushes=25,interrupts=64,retired=2,
                                   dmagrain=64 if args.arch == "arm64" else 0,charged=0,
                                   dmapages=9*len(transports),
                                   allocated=transition["tables"])
@@ -1605,7 +1605,7 @@ def exercise(args, run_dir, record):
                                 base = block * blocksize
                                 expected_image[base:base + blocksize] = bytes(blocksize)
                                 expected_image[base + 99 // 8] = 1 << (99 % 8)
-                            if counters.get("wr_bytes") != 34 * blocksize or counters.get("flush_operations") != 24:
+                            if counters.get("wr_bytes") != 34 * blocksize or counters.get("flush_operations") != 25:
                                 raise SmokeError(f"virtio backing write/flush count mismatch: {counters}")
                         if disk.read_bytes() != expected_image:
                             raise SmokeError(f"virtio backing image mismatch: {name}")
