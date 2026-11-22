@@ -10,6 +10,9 @@ extern FILE *const       stderr;
 #define stdin  stdin
 #define stdout stdout
 #define stderr stderr
+FILE  *fopen(const char *path, const char *mode);
+int    fclose(FILE *stream);
+int    fileno(FILE *stream);
 int    fflush(FILE *stream);
 int    ferror(FILE *stream);
 int    feof(FILE *stream);

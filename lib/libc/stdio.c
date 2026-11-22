@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include "private/format.h"
@@ -13,19 +15,102 @@ enum
   Stdiofull
 };
 
+enum
+{
+  Stdioread = 1,
+  Stdiowrite = 2
+};
+
 struct Stdiofile
 {
   int    fd, mode, failed, ended, pushed;
   size_t used, position;
   char   buffer[256];
+  int    access, reading;
+  FILE  *next;
 };
 
-static FILE standardin = {0, Stdiounset, 0, 0, EOF, 0, 0, {0}};
-static FILE standardout = {1, Stdiounset, 0, 0, EOF, 0, 0, {0}};
-static FILE standarderr = {2, Stdionone, 0, 0, EOF, 0, 0, {0}};
-FILE *const stdin = &standardin;
-FILE *const stdout = &standardout;
-FILE *const stderr = &standarderr;
+static FILE  standardin = {0, Stdiounset, 0, 0, EOF, 0, 0, {0}, Stdioread, 1, NULL};
+static FILE  standardout = {1, Stdiounset, 0, 0, EOF, 0, 0, {0}, Stdiowrite, 0, NULL};
+static FILE  standarderr = {2, Stdionone, 0, 0, EOF, 0, 0, {0}, Stdiowrite, 0, NULL};
+static FILE *opened;
+FILE *const  stdin = &standardin;
+FILE *const  stdout = &standardout;
+FILE *const  stderr = &standarderr;
+
+static void stdioexit(void);
+
+FILE *
+fopen(const char *path, const char *mode)
+{
+  FILE *stream;
+  int   access, flags, binary = 0, update = 0, exclusive = 0, cloexec = 0, fd, saved;
+  char  initial = *mode++;
+  switch (initial) {
+  case 'r':
+    flags = 0;
+    access = Stdioread;
+    break;
+  case 'w':
+    flags = O_CREAT | O_TRUNC;
+    access = Stdiowrite;
+    break;
+  case 'a':
+    flags = O_CREAT | O_APPEND;
+    access = Stdiowrite;
+    break;
+  default:
+    goto invalid;
+  }
+  for (; *mode; mode++) {
+    if (*mode == 'b' && !binary)
+      binary = 1;
+    else if (*mode == '+' && !update)
+      update = 1;
+    else if (*mode == 'x' && initial != 'r' && !exclusive)
+      exclusive = 1;
+    else if (*mode == 'e' && !cloexec)
+      cloexec = 1;
+    else
+      goto invalid;
+  }
+  if (exclusive)
+    flags |= O_EXCL;
+  if (cloexec)
+    flags |= O_CLOEXEC;
+  if (update)
+    access = Stdioread | Stdiowrite;
+  flags |= update ? O_RDWR : initial == 'r' ? O_RDONLY : O_WRONLY;
+  stream = calloc(1, sizeof(*stream));
+  if (!stream)
+    return NULL;
+  fd = open(path, flags, (mode_t) 0666);
+  if (fd < 0) {
+    saved = errno;
+    free(stream);
+    errno = saved;
+    return NULL;
+  }
+  stream->fd = fd;
+  stream->access = access;
+  stream->reading = initial == 'r';
+  stream->pushed = EOF;
+  stream->next = opened;
+  opened = stream;
+  libcexitflush(stdioexit);
+  return stream;
+invalid:
+  errno = EINVAL;
+  return NULL;
+}
+
+int
+fileno(FILE *stream)
+{
+  if (stream->fd < 0)
+    errno = EBADF;
+  return stream->fd;
+}
 
 static size_t
 writebytes(FILE *stream, const char *data, size_t count)
@@ -49,13 +134,25 @@ fflush(FILE *stream)
 {
   size_t done, count;
   if (!stream) {
-    int result = fflush(stdout), saved = errno;
-    if (fflush(stdin) == EOF && result != EOF)
-      return EOF;
-    errno = saved;
-    return result;
+    FILE *item;
+    int   error = 0;
+    if (stdout->fd >= 0 && fflush(stdout) == EOF)
+      error = errno;
+    if (stdin->fd >= 0 && fflush(stdin) == EOF && !error)
+      error = errno;
+    for (item = opened; item; item = item->next)
+      if (fflush(item) == EOF && !error)
+        error = errno;
+    if (error)
+      errno = error;
+    return error ? EOF : 0;
   }
-  if (stream == stdin) {
+  if (stream->fd < 0) {
+    stream->failed = 1;
+    errno = EBADF;
+    return EOF;
+  }
+  if (stream->reading) {
     int saved = errno;
     count = stream->used - stream->position + (stream->pushed != EOF);
     if (!count)
@@ -86,7 +183,37 @@ fflush(FILE *stream)
 static void
 stdioexit(void)
 {
-  fflush(stdout);
+  FILE *stream;
+  if (stdout->fd >= 0)
+    fflush(stdout);
+  for (stream = opened; stream; stream = stream->next)
+    if (!stream->reading)
+      fflush(stream);
+}
+
+int
+fclose(FILE *stream)
+{
+  FILE **link;
+  int    error = 0;
+  if (stream->fd < 0) {
+    errno = EBADF;
+    return EOF;
+  }
+  if (fflush(stream) == EOF)
+    error = errno;
+  if (close(stream->fd) && !error)
+    error = errno;
+  stream->fd = -1;
+  for (link = &opened; *link; link = &(*link)->next)
+    if (*link == stream) {
+      *link = stream->next;
+      free(stream);
+      break;
+    }
+  if (error)
+    errno = error;
+  return error ? EOF : 0;
 }
 
 int
@@ -110,8 +237,12 @@ clearerr(FILE *stream)
 static int
 readable(FILE *stream)
 {
-  if (stream == stdin)
+  if (stream->fd >= 0 && (stream->access & Stdioread)) {
+    if (!stream->reading && fflush(stream) == EOF)
+      return 0;
+    stream->reading = 1;
     return 1;
+  }
   stream->failed = 1;
   errno = EBADF;
   return 0;
@@ -242,10 +373,17 @@ output(FILE *stream, const char *data, size_t count)
   size_t done = 0;
   if (!count)
     return 0;
-  if (stream == stdin) {
+  if (stream->fd < 0 || !(stream->access & Stdiowrite)) {
     stream->failed = 1;
     errno = EBADF;
     return 0;
+  }
+  if (stream->reading) {
+    if (fflush(stream) == EOF)
+      return 0;
+    stream->used = stream->position = 0;
+    stream->pushed = EOF;
+    stream->ended = stream->reading = 0;
   }
   if (stream->mode == Stdiounset) {
     int saved = errno;

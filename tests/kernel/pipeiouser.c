@@ -3090,6 +3090,31 @@ publictruncate(Openjob *job, Vnode *node, u32 cancelled)
 }
 
 static void
+publicappendcheck(const Openfixture *fixture)
+{
+  CHECK(fixture->length == 3 && opendisk[0] == 'p' && opendisk[1] == 'W' && !opendisk[2]);
+}
+
+static isize
+publicappend(void *context, Readjob *job, u64 state, u64 offset, const volatile u8 *input,
+             u64 *start)
+{
+  Openfixture *fixture = context;
+  CHECK(state == RQ_CHECK_LIVE && offset == FS_GROW_APPEND && input && job->slot.args[1] == 2);
+  if (fixture->length == 3) {
+    CHECK(input[0] == 'X' && input[1] == 'Y');
+    publicappendcheck(fixture);
+    return -ENOSPC;
+  }
+  CHECK(fixture->length == 1 && input[0] == 'W' && !input[1]);
+  *start = fixture->length;
+  opendisk[fixture->length++] = input[0];
+  opendisk[fixture->length++] = input[1];
+  fixture->map.file.length = fixture->length;
+  return 2;
+}
+
+static void
 publicchdirserver(const Bootview *boot)
 {
   Filelink       link = {0};
@@ -3100,6 +3125,11 @@ publicchdirserver(const Bootview *boot)
   Fsfile         file = {0};
   Fsref          ref = {0};
   Cacheblock     block;
+  Readjob        readjob = {0};
+  u8             scratch[CACHE_BYTES];
+  Fsreads        reads = {
+      &readjob,     1,   0, &fixture, scratch, openreadbind, openreadrelease, openreadsubmit,
+      publicappend, NULL};
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   const Fscwdops cwd = {openwalkhold, openwalkdrop, cwdversion, cwdname};
@@ -3192,9 +3222,25 @@ publicchdirserver(const Bootview *boot)
   CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
         !ipc_rqcheck(request.request, &state) && state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL));
   reply.words[1] = slot.seq;
-  CHECK(!ipc_reply(request.request, &reply) &&
-        !sysfilefinish(&link.watch.active, request.request) &&
-        !fscontextremove(&contexts, target.target, link.watch.owner.image) && !fixture.holds &&
+  CHECK(!ipc_reply(request.request, &reply) && !sysfilefinish(&link.watch.active, request.request));
+  fixture.completed = 2;
+  fixture.searches = 0;
+  CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R && file.node == &fixture.file &&
+        !fsstep(&fs) && !file.refs);
+  fixture.length = fixture.map.file.length = 1;
+  opendisk[0] = 'p';
+  fs.pipes.reads = &reads;
+  CHECK(!fsstep(&fs));
+  CHECK(file.refs == 1);
+  CHECK(file.access == (VACCESS_R | VACCESS_W));
+  CHECK(file.flags == FS_OPEN_APPEND);
+  CHECK(!fsstep(&fs) && !file.position && fixture.length == 1); /* Terminal probe. */
+  CHECK(!fsstep(&fs) && file.position == 3);
+  publicappendcheck(&fixture);
+  CHECK(!fsstep(&fs) && file.position == 3);
+  publicappendcheck(&fixture);
+  CHECK(!fsstep(&fs) && !file.refs);
+  CHECK(!fscontextremove(&contexts, target.target, link.watch.owner.image) && !fixture.holds &&
         !sysfilelinkclose(&link));
   pipeiotrace[0] = 7;
 }
@@ -3276,6 +3322,7 @@ static void
 publicchdirclient(void)
 {
   Connwork        *peer;
+  FILE            *stream;
   struct sigaction action = {0};
   int              fd;
   char             cwd[4] = "xxx";
@@ -3320,6 +3367,14 @@ publicchdirclient(void)
         readlink("/l", (char *) (uintptr_t) 1, 3) == -1 && errno == EFAULT);
   CHECK(chdir("/d") == -1 && errno == EINTR && caught == 3 && !peer->state.operations[0].phase &&
         !peer->state.operations[1].phase);
+  CHECK(!fopen("/x", "rr") && errno == EINVAL);
+  stream = fopen("/x", "rb");
+  CHECK(stream && fileno(stream) == 0 && fputs("x", stream) == EOF && errno == EBADF &&
+        ferror(stream) && !fclose(stream) && fcntl(0, F_GETFD) == -1 && errno == EBADF);
+  stream = fopen("/x", "a+e");
+  CHECK(stream && fileno(stream) == 0 && fcntl(0, F_GETFD) == FD_CLOEXEC &&
+        fwrite("W\0", 1, 2, stream) == 2 && !fflush(NULL) && fputs("XY", stream) >= 0 &&
+        fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
   pipeiotrace[0] = 7;
 }
 
