@@ -2,6 +2,7 @@
 #include "journal.h"
 
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
+STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
 
 isize
 blkreadstart(Blkread *read, Cache *cache, u64 block, u32 metadata)
@@ -47,8 +48,9 @@ blkreadpoll(Blkread *read, isize *status)
   return error;
 }
 
-isize
-blkreadview(Blkread *read, Cache *cache, const Redoscan *scan, u64 block, u32 metadata, void *out)
+static isize
+blkreadpart(Blkread *read, Cache *cache, const Redoscan *scan, u64 block, u32 metadata, u32 offset,
+            u32 bytes, void *out)
 {
   Cachekey  key = {0};
   const u8 *source;
@@ -76,7 +78,23 @@ blkreadview(Blkread *read, Cache *cache, const Redoscan *scan, u64 block, u32 me
       return release ? release : error;
     }
   }
-  for (i = 0; i < CACHE_BYTES; i++)
-    ((u8 *) out)[i] = source[i];
+  for (i = 0; i < bytes; i++)
+    ((u8 *) out)[i] = source[offset + i];
   return key.generation ? cacheput(cache, &key) : 0;
+}
+
+isize
+blkreadview(Blkread *read, Cache *cache, const Redoscan *scan, u64 block, u32 metadata, void *out)
+{
+  return blkreadpart(read, cache, scan, block, metadata, 0, CACHE_BYTES, out);
+}
+
+isize
+blkreadinode(Blkread *read, Cache *cache, const Redoscan *scan, u32 inode, void *out)
+{
+  const u32 slots = FS_BLOCK_BYTES / FS_INODE_BYTES;
+  if (!inode || inode >= FS_INODES)
+    return -ERR_INVALID;
+  return blkreadpart(read, cache, scan, FS_INODE_START + inode / slots, CACHE_META,
+                     (inode % slots) * FS_INODE_BYTES, FS_INODE_BYTES, out);
 }

@@ -26,4 +26,6 @@ isize blkreadpoll(Blkread *, isize *status);
    RPC with blkreadpoll before trying again. Output is private caller storage
    of CACHE_BYTES, disjoint from overlay, cache and transport storage. */
 isize blkreadview(Blkread *, Cache *, const struct Redoscan *, u64 block, u32 metadata, void *out);
+/* Same view, copying only the selected inode slot into FS_INODE_BYTES. */
+isize blkreadinode(Blkread *, Cache *, const struct Redoscan *, u32 inode, void *out);
 #endif

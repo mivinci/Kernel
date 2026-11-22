@@ -1024,17 +1024,52 @@ blkcollect(Fsblk *blk, void *read, u32 bytes)
           366);
 }
 
+typedef struct Blkredo Blkredo;
+struct Blkredo
+{
+  Blkread *reader;
+  Cache   *cache;
+};
+
+static isize
+blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
+{
+  static const Loadmap root = {{FS_ROOT, 1, 1, FS_BLOCK_BYTES}, {109}, 0};
+  static const Loadmap file = {{32, 1, 1, FS_BLOCK_BYTES}, {99}, 0};
+  Blkredo             *redo = context;
+  u8                   encoded[FS_INODE_BYTES];
+  u32                  i;
+  isize                error;
+  encoded[0] = 0xff;
+  error = blkreadinode(redo->reader, redo->cache, scan, ino, encoded);
+  if (error) {
+    REQUIRE(encoded[0] == 0xff, 385);
+    return error;
+  }
+  /* Fixture records distinguish the home and overlay paths without a disk codec. */
+  REQUIRE(ino == FS_ROOT || ino == 32, 386);
+  for (i = 0; i < sizeof(encoded); i++)
+    REQUIRE(encoded[i] == (ino == FS_ROOT ? 0 : (u8) ~(0xd3 + i * 23)), 387);
+  *out = ino == FS_ROOT ? (Redoinode){&root, NULL, VNODE_DIR, 1}
+                        : (Redoinode){&file, NULL, VNODE_FILE, 1};
+  return 0;
+}
+
 static void
 blkclient(const Bootview *boot, Handle call)
 {
+  static const Blockmap allocation = {
+      {0, (UINT64_C(1) << (109 - 64)) | (UINT64_C(1) << (99 - 64))}};
   static Fsblk              blk;
   static Blkread            reader;
   static Cacheblock         storage;
   static Journal            journal;
   static Redoscan           scan;
-  static u8                 recovered[PAGE_SIZE];
+  static Loadowners         owners;
+  static const Inodemap     inodes = {{(UINT64_C(1) << 32) | (UINT64_C(1) << FS_ROOT)}};
   static u8                 data[PAGE_SIZE];
   const Journalblock        block = {192, data};
+  const Journalblock        images[] = {{FS_INODE_START + 1, data}};
   const Journalplan         plan = {NULL, NULL, NULL, NULL, &block, 0, 1};
   Blklog                    log = {&blk, &journal, {0}, 0, 0};
   const u64                 address = 0x2300000;
@@ -1045,6 +1080,7 @@ blkclient(const Bootview *boot, Handle call)
   const volatile Protohead *head = (const volatile Protohead *) (uintptr_t) address;
   Bootmap                   map;
   Cache                     cache = {0};
+  Blkredo                   redo = {&reader, &cache};
   isize                     status;
   u32                       i, op;
   REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result), 360);
@@ -1081,29 +1117,23 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(journal.durable && journalpump(&journal, blklogsubmit, &log) == 1 &&
               !journalrelease(&journal) && journal.last == 47,
           380);
-  reader.blk = &blk;
-  scan.blocks = (u32) (blk.info.capacity_bytes / PAGE_SIZE);
-  REQUIRE(!cacheinit(&cache, &storage, 1, blk.info.capacity_bytes / PAGE_SIZE) &&
-              blkreadview(&reader, &cache, &scan, block.block, CACHE_META, recovered) ==
-                  -ERR_WOULD_BLOCK &&
-              !recovered[0] && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
-              !blkreadpoll(&reader, &status) && !status && !blk.rpc &&
-              !blkreadview(&reader, &cache, &scan, block.block, CACHE_META, recovered),
-          384);
-  for (i = 0; i < PAGE_SIZE; i++)
-    REQUIRE(recovered[i] == (u8) (0xd3 + i * 23), 367);
   for (i = 0; i < PAGE_SIZE; i++)
     data[i] ^= 0xff;
-  scan.images[0] = block;
-  scan.count = 1;
-  REQUIRE(!blkreadview(&reader, &cache, &scan, block.block, CACHE_META, recovered) && !blk.rpc,
-          385);
-  for (i = 0; i < PAGE_SIZE; i++)
-    REQUIRE(recovered[i] == data[i], 386);
-  scan.count = 0;
-  REQUIRE(!blkreadview(&reader, &cache, &scan, block.block, CACHE_META, recovered) && !blk.rpc &&
-              recovered[0] == 0xd3,
-          387);
+  reader.blk = &blk;
+  REQUIRE(!cacheinit(&cache, &storage, 1, blk.info.capacity_bytes / PAGE_SIZE) &&
+              !redoscaninit(&scan, (u32) cache.blocks, images, ARRAY_SIZE(images), &inodes,
+                            &allocation, &owners) &&
+              redoscanstep(&scan, blkredoload, &redo) == -ERR_WOULD_BLOCK && scan.next == FS_ROOT &&
+              !owners.owned.used[1] && !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+              !blkreadpoll(&reader, &status) && !status && !blk.rpc,
+          384);
+  for (i = 0; i < FS_INODES / 32; i++)
+    REQUIRE(redoscanstep(&scan, blkredoload, &redo) == (i == FS_INODES / 32 - 1) &&
+                scan.next == (i + 1) * 32 && !blk.rpc,
+            367);
+  REQUIRE(owners.owned.used[1] == allocation.used[1] &&
+              owners.metadata.used[1] == (UINT64_C(1) << (109 - 64)),
+          388);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
