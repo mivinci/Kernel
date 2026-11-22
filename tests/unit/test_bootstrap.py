@@ -35,6 +35,7 @@ u64 testget(u32 key){return key==0?polls:key==1?acks:key==2?cancels:(u64)seen;}
 isize ipc_rqpoll(Handle rpc,u64 options,Ipcmsg *out){u32 i;const u8 *p=(const u8*)&result;u8 *q=(u8*)out;polls++;seen=rpc;if(options)return -ERR_INVALID;for(i=0;i<sizeof(result);i++)q[i]=p[i];return polling;}
 isize ipc_rqack(Handle rpc,u64 options){acks++;seen=rpc;return options==3?acking:-ERR_INVALID;}
 isize ipc_rqcancel(Handle rpc){cancels++;seen=rpc;return cancelling;}
+isize ipc_call(Handle target,const Msg *msg,u64 options,Ipcmsg *out){(void)target;(void)msg;(void)options;(void)out;__builtin_trap();}
 static Handle memid;
 static u64 rights,offset,length,kind,maps,unmaps;
 static isize queryerror,maperror,copyerror,unmaperror;

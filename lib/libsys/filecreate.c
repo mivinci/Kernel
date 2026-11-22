@@ -1142,7 +1142,8 @@ sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
   if (error)
     return error;
   op = &work->state.operations[open->operation.lease.slot];
-  if (!(op->flags & SYSOP_CANCEL_SENT) || create->phase == SYSFILE_CREATE_RESOLVED)
+  if (!(op->flags & SYSOP_CANCEL_SENT) || op->phase == SYSOP_ACKED ||
+      create->phase == SYSFILE_CREATE_RESOLVED)
     return -ERR_STATE;
   error = sysopabandon(work, cache, &open->operation, &background);
   if (!error) {
@@ -1150,6 +1151,63 @@ sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
     clear(open, sizeof(*open));
   }
   return error;
+}
+
+static isize
+openaborttoken(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key, Createop *create)
+{
+  Bootstrap *boot = &work->state.bootstrap;
+  Connclaim  claim;
+  Connpeer   peer;
+  Handle     call = create->call;
+  Msg        message;
+  Ipcmsg     result;
+  isize      error;
+  if (boot->state == SYSBOOT_FREE) {
+    error = sysfilecreaterevokeprepare(pool, work, cache, key, call, 0, &claim, &call);
+    if (error)
+      return error;
+  } else {
+    claim = boot->claim;
+    if (sysbootcheck(boot) || boot->opcode != FS_ABORT || boot->token != create->token ||
+        claim.owner != create->files[0] || claim.tag.generation || claim.tag.index != SYSCONN_COUNT)
+      return -ERR_BUSY;
+  }
+  if (create->flags & SYSFILE_CREATE_PEER_ENDED)
+    return sysfilecreateended(pool, work, cache, key);
+  if (boot->state == SYSBOOT_PREPARED) {
+    error = sysconnpeer(call, &peer);
+    if (error || !samepeer(peer, create->peer))
+      return error ? error : -ERR_DENIED;
+    error = sysbootrequest(boot, claim, &message);
+    if (error)
+      return error;
+    error = ipc_call(call, &message, CALL_ASYNC | CALL_CONTROL, &result);
+    if (error == -ERR_PEER) {
+      create->flags |= SYSFILE_CREATE_PEER_ENDED;
+      return sysfilecreateended(pool, work, cache, key);
+    }
+    if (error)
+      return error;
+    error = sysbootsubmitted(boot, claim, &result.request);
+    if (error)
+      return error;
+  }
+  if (boot->state == SYSBOOT_WAITING) {
+    error = sysbootpoll(boot, claim);
+    if (error)
+      return error;
+  }
+  if (boot->status == -ERR_PEER) {
+    create->flags |= SYSFILE_CREATE_PEER_ENDED;
+    return sysfilecreateended(pool, work, cache, key);
+  }
+  error = sysbootfinished(boot, claim);
+  if (!error)
+    error = sysbootabortreply(boot, claim);
+  if (!error && boot->state == SYSBOOT_RESULT)
+    error = sysbootack(boot, claim);
+  return error ? error : sysfilecreaterevoked(pool, work, cache, key, claim);
 }
 
 isize
@@ -1169,8 +1227,9 @@ sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *
   if (error)
     return error;
   if (create->token)
-    return 1;
-  error = sysfilecreatesettle(pool, work, cache, key, 1);
+    error = openaborttoken(pool, work, cache, key, create);
+  else if (create->phase != SYSFILE_CREATE_RESOLVED)
+    error = sysfilecreatesettle(pool, work, cache, key, 1);
   return error ? error : sysfilecreatefinish(pool, work, cache, key, files, &source);
 }
 

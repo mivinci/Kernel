@@ -38,11 +38,13 @@ isize sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtabl
 isize sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                          Opencreate *open, int *fd, isize *business);
 /* After the caller stops waiting for a cancelled OPEN, give the slot to
-   background cleanup and release the unpublished fd reservation. */
+   background cleanup and release the unpublished fd reservation. This must
+   precede creator ACK and any ATTACH. */
 isize sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                          Opencreate *open);
-/* Advance an abandoned OPEN without publishing a descriptor. Ordinary success
-   enters the close ledger; one leaves an ACKed resource token for ABORT. */
+/* With caught signals blocked, advance an abandoned OPEN without waiting or
+   publishing a descriptor. Ordinary success enters the close ledger; a
+   resource success is compensated with ABORT by exact token before release. */
 isize sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 struct Pipecreate
 {

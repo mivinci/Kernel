@@ -276,15 +276,42 @@ resourceopens(const Bootview *boot)
   }
   peer.image++;
   CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
-  for (i = 0; i < 2; i++) {
-    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, i ? "/failed" : "/cancel", 0,
-                           0, 0, &open, &active, &number, &business) == 1);
+  {
+    const u64 args[8] = {0, 0, 0, 8};
+    Msg       message;
+    Ipcmsg    result;
+    Handle    rpc;
+    isize     progress;
+    CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, contexts.sequence + 1, args, "/cancel",
+                              8, 0, &open, &message) &&
+          !sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+                        &active));
+    key = open.operation;
+    reserved = open.tag.index;
+    CHECK(!sysoprpc(&work, &cache, &key, &rpc) && !ipc_rqwait(rpc, RQ_FINISH, &result) &&
+          !sysfileopeninterrupt(&pool, &work, &cache, &fds, &open, 1) &&
+          !sysfileopenabandon(&pool, &work, &cache, &fds, &open) &&
+          !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_FREE);
+    key.owner = 0;
+    do {
+      progress = sysfileopendrain(&pool, &work, &cache, &key);
+      if (progress == -ERR_WOULD_BLOCK)
+        CHECK(!ipc_recv(EVENT_RQ_DONE, RECV_EVENTS_ONLY, &result));
+    } while (progress == -ERR_WOULD_BLOCK);
+    CHECK(!progress && work.state.bootstrap.state == SYSBOOT_FREE &&
+          sysfileopendrain(&pool, &work, &cache, &key) == -ERR_STALE);
+    filecreatetrace[1]++;
+    filecreatetrace[4]++;
+  }
+  {
+    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/failed", 0, 0, 0, &open,
+                           &active, &number, &business) == 1);
     filecreatetrace[1]++;
     key = open.operation;
     reserved = open.tag.index;
     token = work.state.creators[key.lease.slot].token;
     zero(&mapped, sizeof(mapped));
-    if (i) {
+    {
       CHECK(
           !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
       bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
@@ -304,7 +331,7 @@ resourceopens(const Bootview *boot)
           backend_work.state.bootstrap.state == SYSBOOT_FREE && !open.operation.lease.seq &&
           !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_FREE);
     filecreatetrace[4]++;
-    if (i) {
+    {
       CHECK(!sysconnabortbegin(&cache, 999, &claim) &&
             !sysbootprepare(&work.state.bootstrap, claim, FS_ABORT, token, 0));
       bootstrap(&work.state.bootstrap, claim, backend_work.state.call, CALL_CONTROL);
