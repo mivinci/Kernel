@@ -7,6 +7,7 @@
 #include "private/start.h"
 #include "../../sbin/blk/io.h"
 #include "../../sbin/fs/cache.h"
+#include "../../sbin/fs/crc.h"
 #include "../../sbin/fs/load.h"
 #include "../../sbin/fs/sync.h"
 #include "virtiouser.h"
@@ -396,6 +397,9 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
   for (i = 0; i < FS_BLOCK_BYTES; i++)
     records[1][i] = (u8) (prepared->used[i / 8] >> ((i % 8) * 8));
   meta.bitmap = records[1];
+  REQUIRE((fscrc32c(fscrc32c(UINT32_MAX, records[0], FS_BLOCK_BYTES), records[1], FS_BLOCK_BYTES) ^
+           UINT32_MAX) == UINT32_C(0xbcec0885),
+          294);
   REQUIRE(!journalreclaim(&work, journal, cache, &batch, map, NULL, committed, &meta), 290);
   for (step = 0; journal->phase != JOURNAL_DONE; step++) {
     REQUIRE(step < 12 && !journalnext(journal, &io) && io.txid == 50 &&

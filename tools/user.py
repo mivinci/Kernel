@@ -417,6 +417,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/blk/io.c', 'vdev-blk-io'),
         compile_adoption(ROOT/'sbin/fs/cache.c', 'vdev-fs-cache'),
         compile_adoption(ROOT/'sbin/fs/geometry.c', 'vdev-fs-geometry'),
+        compile_adoption(ROOT/'sbin/fs/crc.c', 'vdev-fs-crc'),
         compile_adoption(ROOT/'sbin/fs/txn.c', 'vdev-fs-txn'),
         compile_adoption(ROOT/'sbin/fs/sync.c', 'vdev-fs-sync'),
         compile_adoption(ROOT/'sbin/fs/load.c', 'vdev-fs-load'),
