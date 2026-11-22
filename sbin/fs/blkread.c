@@ -251,7 +251,10 @@ blkownersstep(Blkowners *work)
   Redoscan       *scan;
   isize           error, status;
   u32             i;
-  if (!work || !work->redo || !(probe = work->redo->probe) || !work->inodemap || !work->blockmap)
+  if (!work || !!work->redo == !!work->home || !work->inodemap || !work->blockmap)
+    return -ERR_INVALID;
+  probe = work->redo ? work->redo->probe : work->home;
+  if (!probe || !probe->blk || probe->phase != ProbeDone || (work->home && probe->mark.state))
     return -ERR_INVALID;
   load = &work->load;
   scan = &work->scan;
@@ -261,13 +264,15 @@ blkownersstep(Blkowners *work)
   if (work->failed)
     return work->failed;
   if (work->phase == OwnersRedo) {
-    error = blkredostep(work->redo);
-    if (error != 1)
-      return error;
+    if (work->redo) {
+      error = blkredostep(work->redo);
+      if (error != 1)
+        return error;
+      scan->count = work->redo->head.count;
+      for (i = 0; i < scan->count; i++)
+        scan->images[i] = work->redo->images[i];
+    }
     scan->blocks = (u32) probe->layout.blocks;
-    scan->count = work->redo->head.count;
-    for (i = 0; i < scan->count; i++)
-      scan->images[i] = work->redo->images[i];
     work->phase = OwnersInodes;
   }
   if (load->read->fill.cache) {
@@ -294,8 +299,8 @@ blkownersstep(Blkowners *work)
       return work->failed = error < 0 ? error : -ERR_STATE;
     if (++work->phase < OwnersScan)
       return 0;
-    error = redoscaninit(scan, scan->blocks, work->redo->images, scan->count, &work->inodes,
-                         &work->allocation, &work->owners);
+    error = redoscaninit(scan, scan->blocks, work->redo ? work->redo->images : NULL, scan->count,
+                         &work->inodes, &work->allocation, &work->owners);
   } else {
     error = redoscanstep(scan, blkredoload, load);
     if (error == -ERR_WOULD_BLOCK)
@@ -306,6 +311,35 @@ blkownersstep(Blkowners *work)
   if (error < 0)
     work->failed = error;
   return error;
+}
+
+isize
+blkhomecheck(Blkowners *work, const Blkprobe *before, const Journal *retired)
+{
+  const Blkprobe *home;
+  isize           error;
+  u32             i;
+  if (!work || work->redo || !(home = work->home) || !!before != !!retired)
+    return -ERR_INVALID;
+  if (home->phase != ProbeDone || home->failed || home->mark.state)
+    return -ERR_STATE;
+  if (before) {
+    if (before->phase != ProbeDone || before->failed || before->mark.state != 1 ||
+        retired->phase != JOURNAL_IDLE || retired->active || retired->txid ||
+        retired->last != before->mark.txid || retired->blocks != before->layout.blocks)
+      return -ERR_STATE;
+    if (home->blk != before->blk || home->generation != before->generation ||
+        home->layout.blocks != before->layout.blocks || home->mark.txid != retired->last)
+      return -ERR_STALE;
+    for (i = 0; i < sizeof(home->uuid); i++)
+      if (home->uuid[i] != before->uuid[i])
+        return -ERR_STALE;
+  }
+  error = blkownersstep(work);
+  if (error != 1)
+    return error;
+  error = journalreadonly(&home->layout, &home->geometry, &home->mark, &work->scan);
+  return error ? error : 1;
 }
 
 isize

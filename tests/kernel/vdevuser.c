@@ -1041,14 +1041,16 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
   vdev_trace[3]++;
 }
 static const u32 blkopcodes[] = {
-    BLK_WRITE, BLK_FLUSH,                                 /* data-only transaction */
-    BLK_READ,  BLK_READ,                                  /* EMPTY probe */
-    BLK_READ,  BLK_READ,                                  /* COMMITTED probe */
-    BLK_READ,                                             /* duplicate targets */
-    BLK_READ,  BLK_READ,  BLK_READ,                       /* corrupt payload */
-    BLK_READ,  BLK_READ,  BLK_READ,                       /* valid header and payload */
-    BLK_READ,  BLK_READ,  BLK_READ,                       /* ownership scan */
-    BLK_WRITE, BLK_WRITE, BLK_FLUSH, BLK_WRITE, BLK_FLUSH /* replay and retire */
+    BLK_WRITE, BLK_FLUSH,                                  /* data-only transaction */
+    BLK_READ,  BLK_READ,                                   /* EMPTY probe */
+    BLK_READ,  BLK_READ,                                   /* COMMITTED probe */
+    BLK_READ,                                              /* duplicate targets */
+    BLK_READ,  BLK_READ,  BLK_READ,                        /* corrupt payload */
+    BLK_READ,  BLK_READ,  BLK_READ,                        /* valid header and payload */
+    BLK_READ,  BLK_READ,  BLK_READ,                        /* ownership scan */
+    BLK_WRITE, BLK_WRITE, BLK_FLUSH, BLK_WRITE, BLK_FLUSH, /* replay and retire */
+    BLK_READ,  BLK_READ,                                   /* re-probe home */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ   /* home-only scan */
 };
 
 static void
@@ -1164,6 +1166,18 @@ blkclientredo(Fsblk *blk, const Blkprobe *empty)
 }
 
 static isize
+blkretired(const u8 *bytes, const u8 *uuid, Journalmark *mark)
+{
+  u32 i;
+  for (i = 0; i < 16; i++)
+    REQUIRE(uuid[i] == i + 3, 417);
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    REQUIRE(bytes[i] == 0x5a, 418);
+  *mark = (Journalmark){48, 0, 0, 0};
+  return 0;
+}
+
+static isize
 blkdecodeinodes(const u8 *encoded, Inodemap *out)
 {
   u32 i;
@@ -1217,11 +1231,13 @@ blkclient(const Bootview *boot, Handle call)
 {
   static Fsblk              blk;
   static Blkprobe           probe;
+  static Blkprobe           homeprobe;
   static Blkread            reader;
   static Cacheblock         storage;
   static Journal            journal;
   static Journal            recovered;
   static Blkowners          owners;
+  static Blkowners          home;
   static u8                 data[PAGE_SIZE];
   const Journalblock        block = {192, data};
   const Journalplan         plan = {NULL, NULL, NULL, NULL, &block, 0, 1};
@@ -1323,6 +1339,40 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(journalpump(&recovered, blklogsubmit, &log) == 1 && !journalrelease(&recovered) &&
               recovered.last == 48 && recovered.phase == JOURNAL_IDLE,
           416);
+  home.home = &probe;
+  REQUIRE(blkhomecheck(&home, owners.redo->probe, &recovered) == -ERR_STALE && !blk.rpc, 419);
+  homeprobe.blk = &blk;
+  REQUIRE(!blkprobestep(&homeprobe, blksuper, blkretired) && blk.rpc &&
+              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+              !blkprobestep(&homeprobe, blksuper, blkretired) && blk.rpc &&
+              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+              blkprobestep(&homeprobe, blksuper, blkretired) == 1 && !blk.rpc &&
+              homeprobe.mark.txid == recovered.last && !homeprobe.mark.state,
+          420);
+  home.home = &homeprobe;
+  home.load.read = &reader;
+  home.load.cache = &cache;
+  home.load.inode = blkdecodeinode;
+  home.load.indirect = blkdecodeindex;
+  home.inodemap = blkdecodeinodes;
+  home.blockmap = blkdecodeblocks;
+  REQUIRE(!cacheinit(&cache, &storage, 1, 256), 421);
+  op = 0;
+  for (i = 0; i < FS_INODES / 32 + 10; i++) {
+    isize done = blkhomecheck(&home, owners.redo->probe, &recovered);
+    REQUIRE(done == 0 || done == 1, 422);
+    if (done)
+      break;
+    if (blk.rpc) {
+      REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 423);
+      op++;
+    }
+  }
+  REQUIRE(op == 5 && !blk.rpc && !home.scan.count && home.scan.next == FS_INODES &&
+              home.owners.owned.used[1] == owners.owners.owned.used[1] &&
+              home.owners.metadata.used[2] == owners.owners.metadata.used[2] &&
+              blkhomecheck(&home, owners.redo->probe, &recovered) == 1,
+          424);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }

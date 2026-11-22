@@ -79,8 +79,9 @@ isize blkredostep(Blkredo *);
 
 struct Blkowners
 {
-  Blkredo    *redo;
-  Blkredoload load;
+  Blkredo        *redo;
+  const Blkprobe *home;
+  Blkredoload     load;
   isize (*inodemap)(const u8 *, Inodemap *);
   isize (*blockmap)(const u8 *, u32, Blockmap *);
   Inodemap   inodes;
@@ -96,6 +97,10 @@ struct Blkowners
    both bitmaps and one inode-table batch per call. One means the ownership
    scan is complete. Zero means continue now or wait for blk->rpc if present. */
 isize blkownersstep(Blkowners *);
+/* Admit a home-only view from a fresh EMPTY probe and cold cache. After
+   replay, supply its original COMMITTED probe and released journal as a
+   pair. The new marker must prove retirement on the same volume. */
+isize blkhomecheck(Blkowners *, const Blkprobe *before, const Journal *retired);
 /* Admit a writable journal from that scan. The exclusive mount owner
    supplies the independently verified fault boundary and the encoded EMPTY
    record for this transaction. Keep snapshots stable through release. */

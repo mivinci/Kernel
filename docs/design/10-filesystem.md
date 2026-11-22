@@ -1749,3 +1749,5 @@ stage332：RV64、ARM64 QEMU `runtime` 用真实 CALL/REQUEST、已观察的连�
 `blkredostep` 在同一设备几何代次处理已验证的提交标记。EMPTY 跳过准备区；COMMITTED 先读日志头，以 `journalheadvalid` 核对头与标记一致、目标在卷内且不重复，再按顺序读取至多 16 个镜像。每次沿原块 IPC 请求收尾后才推进，整笔 CRC 校验成功才交付镜像描述符。ARM64、RV64 QEMU `virtiodev` 通过真实设备验证 EMPTY 零额外读、重复目标不读镜像、CRC 不匹配不交付，以及合法镜像的地址和字节；宿主核对设备操作计数及整盘内容。50 项 FS 主机测试和格式检查通过。头和标记解码及 CRC 初末参数由夹具提供；生产编码、归属扫描与重放的挂载串接仍未完成。
 
 `blkownersstep` 使用已验证的日志覆盖视图读取两个位图，再分批扫描 inode 与间接索引。扫描完成前 `blkredoadmit` 不开启任何写入；完成后仍要求同一设备几何代次及独立可信的故障边界。ARM64、RV64 QEMU `virtiodev` 经块 IPC 验证 inode 位图及 inode 表优先使用日志镜像、其余块从 home 读取，并以两次 home WRITE、FLUSH、EMPTY WRITE、FLUSH 退休原事务。宿主核对完整磁盘及操作计数。盘上编解码和故障边界由夹具提供，生产挂载和发布尚未接入。
+
+`blkhomecheck` 从有效 EMPTY 建立无日志覆盖的归属视图。若此前执行了重放，它还要求已释放的日志与重新读到的卷 UUID、几何代次及 EMPTY 事务编号一致。ARM64、RV64 QEMU `virtiodev` 验证旧 EMPTY 被拒绝，并从冷缓存经真实块 IPC 重新读取已退休的提交块、两个位图、inode 表和间接索引。50 项 FS 主机测试和格式检查通过。盘上解码仍由夹具提供；目录关系检查和挂载发布未接。
