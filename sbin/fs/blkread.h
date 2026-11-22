@@ -233,12 +233,9 @@ isize blkmountstep(Blkmount *);
    deadline is an absolute monotonic time. One means ready. On error the
    caller still owns the mount and must stop/drain it before releasing storage. */
 isize blkmountwait(Blkmount *, u64 deadline);
-/* Build the unpublished root identity from the validated directory scan.
-   Destination starts zero; errors leave it unchanged. The namespace owner
-   still holds the backing inode through publication and use. */
-isize blkmountroot(const Blkmount *, Vnode *root);
-/* Publish the ready mount once. The authorized namespace owner holds
-   the volume, root and covering point through insertion. */
+/* Publish the ready mount once, filling zeroed, stable root storage from
+   the validated scan. An error preserves root and the mount table. The
+   namespace owner holds the volume and covering point through insertion. */
 isize blkmountadd(Blkmount *, Vmounts *, Vnode *root, Vnode *point);
 /* Stop an unpublished mount. Further steps only drain outstanding work;
    the original failure is returned once no request or snapshot is held. */

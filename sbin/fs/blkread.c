@@ -1050,24 +1050,6 @@ mountroot(const Blkmount *mount, const Dirnode **out)
 }
 
 isize
-blkmountroot(const Blkmount *mount, Vnode *root)
-{
-  const Dirnode *node;
-  isize          error;
-  if (!root || root->mount || root->number || root->generation || root->kind)
-    return -ERR_INVALID;
-  error = mountroot(mount, &node);
-  if (error)
-    return error;
-  if (!node->generation || node->kind != VNODE_DIR)
-    return -ERR_STATE;
-  root->number = FS_ROOT;
-  root->generation = node->generation;
-  root->kind = node->kind;
-  return 0;
-}
-
-isize
 blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
 {
   const Dirnode *node;
@@ -1077,12 +1059,18 @@ blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
   error = mountroot(mount, &node);
   if (error)
     return error;
-  if (root->number != FS_ROOT || root->generation != node->generation || root->kind != node->kind)
-    return -ERR_STALE;
+  if (root->mount || root->number || root->generation || root->kind || point == root)
+    return -ERR_INVALID;
+  if (!node->generation || node->kind != VNODE_DIR || !node->links)
+    return -ERR_STATE;
+  *root = (Vnode){0, FS_ROOT, node->generation, node->kind};
   error = vmountadd(mounts, root, point);
-  if (!error)
-    mount->dirs->published = 1;
-  return error;
+  if (error) {
+    *root = (Vnode){0};
+    return error;
+  }
+  mount->dirs->published = 1;
+  return 0;
 }
 
 static Fsgeometry

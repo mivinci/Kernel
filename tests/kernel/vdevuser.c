@@ -1666,7 +1666,7 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(blkmountwait(&mounting, now()) == -ERR_TIMEDOUT && blk.seq == seq && !blk.rpc, 425);
     REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial,
             438);
-    REQUIRE(blkmountroot(&mounting, &root) == -ERR_WOULD_BLOCK && !root.number, 438);
+    REQUIRE(!root.number, 438);
     REQUIRE(blkmountwait(&mounting, now() + VDEV_RESET_NS) == 1 && blk.seq - seq == 19, 426);
   }
   REQUIRE(dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
@@ -1688,20 +1688,18 @@ blkclient(const Bootview *boot, Handle call)
   blk.ended = 0;
   blk.stale = 1;
   REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
-              !root.mount && blkmountroot(&mounting, &root) == -ERR_STALE && !root.number,
+              !root.mount && !root.number,
           441);
   blk.stale = 0;
-  REQUIRE(!blkmountroot(&mounting, &root) && root.number == FS_ROOT &&
-              root.generation == nodes[FS_ROOT].generation && root.kind == VNODE_DIR &&
-              !root.mount && !mounts.serial,
-          439);
-  root.generation++;
-  REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
-              !root.mount,
-          439);
-  root.generation--;
+  {
+    Vnode point = {1, 2, 1, VNODE_DIR};
+    REQUIRE(blkmountadd(&mounting, &mounts, &root, &point) == -EINVAL && !mounts.serial &&
+                !root.mount && !root.number && !root.generation && !root.kind && !dirs.published,
+            439);
+  }
   REQUIRE(!blkmountadd(&mounting, &mounts, &root, NULL) && root.mount == 1 && mounts.serial == 1 &&
-              mounts.entries[0].root == &root &&
+              mounts.entries[0].root == &root && root.number == FS_ROOT &&
+              root.generation == nodes[FS_ROOT].generation && root.kind == VNODE_DIR &&
               blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
           440);
   {
