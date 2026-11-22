@@ -15,8 +15,11 @@ blkservicecall(Blkservice *service, const Ipcmsg *call)
   if (error)
     return error;
   if (state == RQ_CHECK_LIVE) {
-    status = sysslothello(transport->links, transport->nlinks, service->observe, service->allocator,
-                          service->space, service->arena, BLK_WORD(BLK_HELLO), call);
+    status = blktransportonline(transport)
+                 ? sysslothello(transport->links, transport->nlinks, service->observe,
+                                service->allocator, service->space, service->arena,
+                                BLK_WORD(BLK_HELLO), call)
+                 : -ERR_STATE;
     if (!status)
       return 0;
     error = ipc_rqcheck(call->request, &state);
@@ -60,7 +63,7 @@ advance(Blkservice *service)
       service->pending = 0;
     }
   }
-  if (transport->queue->configpending) {
+  if (blktransportonline(transport) && transport->queue->configpending) {
     Vblkconfig config;
     error = blkqrefresh(transport->queue, &config);
     if (error && error != -ERR_WOULD_BLOCK)
@@ -94,11 +97,18 @@ blkservestep(Blkservice *service)
   if (input.kind == IPC_CALL)
     return blkservicecall(service, &input);
   if (input.kind == IPC_EVENT) {
-    if (input.words[0] & service->irqevent)
+    if ((input.words[0] & service->irqevent) && blktransportonline(service->transport))
       service->pending = 1;
     if (input.words[0] & EVENT_LIFE)
       service->retiring = 1;
     return advance(service);
   }
   return 0;
+}
+
+isize
+blkservestop(Blkservice *service, u64 now)
+{
+  service->pending = 0;
+  return blktransportrecover(service->transport, now);
 }

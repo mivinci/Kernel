@@ -273,11 +273,10 @@ descriptor(u32 link, u32 slot)
 }
 
 static int
-complete(u32 queue_slot, u32 length)
+publishused(u32 queue_slot, u32 length)
 {
-  Vdone done;
-  u32   count, more, causes, head;
-  u16   ring_slot = testring.used.index % VQ_SIZE;
+  u32 head;
+  u16 ring_slot = testring.used.index % VQ_SIZE;
   for (head = 0; head < VQ_SIZE; head++)
     if (testring.ring.queue.slots[head].state == VQ_PUBLISHED &&
         testring.ring.queue.slots[head].cookie == queue.slots[queue_slot].cookie)
@@ -287,7 +286,16 @@ complete(u32 queue_slot, u32 length)
   testring.used.ring[ring_slot].id = head;
   testring.used.ring[ring_slot].length = length;
   testring.used.index++;
-  CHECK(!blktransportpoll(&transport, &done, &count, &more, &causes));
+  return 0;
+}
+
+static int
+complete(u32 queue_slot, u32 length)
+{
+  Vdone done[VQ_BATCH];
+  u32   count, more, causes;
+  CHECK(!publishused(queue_slot, length));
+  CHECK(!blktransportpoll(&transport, done, &count, &more, &causes));
   CHECK(count == 1 && !more);
   return 0;
 }
@@ -753,6 +761,33 @@ queuetest(void)
 }
 
 static int
+completionbatchtest(void)
+{
+  Ipcmsg   first, second;
+  Fileslot slot;
+  Vdone    done[VQ_BATCH];
+  u32      count, more, causes;
+  CHECK(!resettest());
+  request = newrequest(1);
+  preparecall(&first, &slot, 0, 0, BLK_WRITE, 0, 512);
+  CHECK(!blktransportcall(&transport, &first));
+  request = newrequest(2);
+  preparecall(&second, &slot, 1, 1, BLK_WRITE, 512, 512);
+  CHECK(!blktransportcall(&transport, &second));
+  CHECK(!publishused(0, 1) && !publishused(1, 1));
+  /* The mock lets request checks succeed for only one handle at a time. */
+  CHECK(blktransportpoll(&transport, done, &count, &more, &causes) == -ERR_STALE);
+  CHECK(jobs[0].pending && queue.slots[0].active && transport.active == 1 &&
+        descriptor(0, 0)->state == PROTO_SLOT_SUBMITTED && !jobs[1].request &&
+        descriptor(1, 1)->state == PROTO_SLOT_DONE && result.words[1] == second.words[2]);
+  request = first.request;
+  CHECK(!blktransportpump(&transport) && !transport.active && !queue.slots[0].active &&
+        !jobs[0].request && descriptor(0, 0)->state == PROTO_SLOT_DONE &&
+        result.words[1] == first.words[2] && requestreplies == 2 && ledgerfinishes == 2);
+  return 0;
+}
+
+static int
 backpressuretest(void)
 {
   Ipcmsg   write, flush;
@@ -868,6 +903,8 @@ blktransporttest(u32 scenario)
     return immediateretrytest();
   case 14:
     return backpressuretest();
+  case 15:
+    return completionbatchtest();
   default:
     return __LINE__;
   }

@@ -15,7 +15,8 @@ struct Blkjob
   u64    seq, offset;
   u32    length, type, protocol_slot, queue_slot, link;
   u64    status, value, bytes;
-  u32    completed, replied, slotdone;
+  Vdone  done;
+  u32    pending, completed, replied, slotdone;
 };
 struct Blktransport
 {
@@ -45,11 +46,8 @@ isize blktransportreaper(Blktransport *transport, void *context, Blkdrainlink dr
    If an earlier immediate completion still needs retry, reject the new CALL
    with EAGAIN before claiming its slot. HELLO uses sysslothello separately. */
 isize blktransportcall(Blktransport *transport, const Ipcmsg *call);
-/* Retry immediate and device completions, including file-ledger release. */
+/* Retry captured device completions, replies, and file-ledger release. */
 isize blktransportpump(Blktransport *transport);
-/* Consume one completion accepted by this queue. READ is copied only after a
-   successful device completion and DMA AFTER; cancellation degrades to discard. */
-isize blktransportfinish(Blktransport *transport, const Vdone *done);
 /* Control and recovery paths finish an already-drained job without pretending
    that a device result was known. An in-flight job keeps its recorded error. */
 isize blktransportabort(Blktransport *transport, Blkjob *job, isize status);
@@ -61,6 +59,7 @@ isize blktransportfail(Blktransport *transport, isize error);
 /* Advance reset/reclaim without admitting new I/O. Zero means old windows are
    safe and the caller may bind a newer queue generation. */
 isize blktransportrecover(Blktransport *transport, u64 now);
+int   blktransportonline(const Blktransport *transport);
 /* Sweep ended clients only after their block jobs have drained. */
 isize blktransportreap(Blktransport *transport);
 int   blktransportbusy(const Blktransport *transport, const Filelink *link);

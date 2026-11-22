@@ -48,7 +48,8 @@ class BlkTransportTests(unittest.TestCase):
                      'cancelled read', 'reply retry', 'ledger retry', 'draining request',
                      'validation', 'queue capacity', 'exact link busy', 'client reap',
                      'immediate reply and ledger retry with active I/O',
-                     'flush ordering and geometry backpressure')
+                     'flush ordering and geometry backpressure',
+                     'used batch survives a request check failure')
         for library in self.libraries:
             for index, scenario in enumerate(scenarios):
                 with self.subTest(scenario=scenario):

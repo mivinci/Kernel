@@ -324,7 +324,7 @@ blktransportcall(Blktransport *transport, const Ipcmsg *call)
     return rejectunadmitted(call, -ERR_STALE);
   link = &transport->links[index];
   linkslot = index;
-  if (transport->state != BLKTRANSPORT_OPEN)
+  if (!blktransportonline(transport))
     return rejectunadmitted(call, -EIO);
   error = sysfilelinkaccept(transport->links, transport->nlinks, call, &slot);
   if (error)
@@ -366,48 +366,14 @@ blktransportcall(Blktransport *transport, const Ipcmsg *call)
   }
 }
 
-isize
-blktransportpump(Blktransport *transport)
+static isize
+complete(Blktransport *transport, Blkjob *job)
 {
-  u32   i;
-  isize error;
-  if (!transport)
-    return -ERR_INVALID;
-  if (transport->immediate.request) {
-    error = deliver(transport, &transport->immediate);
-    if (error)
-      return error;
-  }
-  for (i = 0; i < transport->njobs; i++)
-    if (transport->jobs[i].request && transport->jobs[i].completed) {
-      isize error = finishrequest(transport, &transport->jobs[i]);
-      if (error)
-        return error;
-    }
-  return 0;
-}
-
-isize
-blktransportfinish(Blktransport *transport, const Vdone *done)
-{
-  Blkjob   *job;
   Filelink *link;
   u8       *page;
   u64       offset, state;
-  int       index, result;
+  int       result;
   isize     error;
-  if (!transport || !done ||
-      (transport->state != BLKTRANSPORT_OPEN && transport->state != BLKTRANSPORT_FAILED))
-    return -ERR_STATE;
-  index = blkqmatch(transport->queue, done);
-  if (index < 0)
-    return index;
-  if ((u32) index >= transport->njobs || !transport->jobs[index].request)
-    return -ERR_STALE;
-  job = &transport->jobs[index];
-  if (job->queue_slot != (u32) index || job->link >= transport->nlinks ||
-      job->protocol_slot >= PROTO_CONN_SLOTS)
-    return -ERR_STATE;
   link = &transport->links[job->link];
   error = ipc_rqcheck(job->request, &state);
   if (error)
@@ -419,7 +385,7 @@ blktransportfinish(Blktransport *transport, const Vdone *done)
   page = job->type == VBLK_READ && state == RQ_CHECK_LIVE && link->address
              ? (u8 *) (uintptr_t) (link->address + offset)
              : NULL;
-  result = blkqfinish(transport->queue, done,
+  result = blkqfinish(transport->queue, &job->done,
                       job->type == VBLK_READ && state == RQ_CHECK_LIVE ? page : NULL,
                       job->type == VBLK_READ && state == RQ_CHECK_LIVE ? job->length : 0);
   if (result < 0) {
@@ -439,9 +405,41 @@ blktransportfinish(Blktransport *transport, const Vdone *done)
     job->status = (u64) -EIO;
   else
     job->status = (u64) -ENOTSUP;
+  job->pending = 0;
   job->completed = 1;
   error = finishrequest(transport, job);
   return error && transport->state == BLKTRANSPORT_FAILED ? error : 0;
+}
+
+static isize
+drain(Blktransport *transport, int retry)
+{
+  u32   i;
+  isize first = 0, error;
+  for (i = 0; i < transport->njobs; i++) {
+    Blkjob *job = &transport->jobs[i];
+    if (job->pending)
+      error = complete(transport, job);
+    else if (retry && job->completed)
+      error = finishrequest(transport, job);
+    else
+      continue;
+    if (error && !first)
+      first = error;
+  }
+  return first;
+}
+
+isize
+blktransportpump(Blktransport *transport)
+{
+  isize first = 0, error;
+  if (!transport)
+    return -ERR_INVALID;
+  if (transport->immediate.request)
+    first = deliver(transport, &transport->immediate);
+  error = drain(transport, 1);
+  return first ? first : error;
 }
 
 isize
@@ -463,6 +461,7 @@ blktransportabort(Blktransport *transport, Blkjob *job, isize status)
     return finishrequest(transport, job);
   job->status = (u64) status;
   job->value = job->bytes = 0;
+  job->pending = 0;
   job->completed = 1;
   return finishrequest(transport, job);
 }
@@ -483,20 +482,34 @@ blktransportpoll(Blktransport *transport, Vdone *done, u32 *count, u32 *more, u3
     transport->state = BLKTRANSPORT_FAILED;
     return error;
   }
-  if (n > transport->njobs)
+  if (n > transport->njobs) {
+    transport->state = BLKTRANSPORT_FAILED;
     return -ERR_STATE;
+  }
   for (i = 0; i < n; i++) {
     int index = blkqmatch(transport->queue, &done[i]);
     if (index < 0 || (u32) index >= transport->njobs) {
       transport->state = BLKTRANSPORT_FAILED;
       return index < 0 ? index : -ERR_STATE;
     }
+    if (!transport->jobs[index].request || transport->jobs[index].pending ||
+        transport->jobs[index].queue_slot != (u32) index ||
+        transport->jobs[index].link >= transport->nlinks ||
+        transport->jobs[index].protocol_slot >= PROTO_CONN_SLOTS) {
+      transport->state = BLKTRANSPORT_FAILED;
+      return -ERR_STATE;
+    }
   }
+  /* The used ring has advanced. Keep every result before checking any IPC
+     request so a retry can never lose this or a later completion. */
   for (i = 0; i < n; i++) {
-    error = blktransportfinish(transport, &done[i]);
-    if (error)
-      return error;
+    int index = blkqmatch(transport->queue, &done[i]);
+    transport->jobs[index].done = done[i];
+    transport->jobs[index].pending = 1;
   }
+  error = drain(transport, 0);
+  if (error)
+    return error;
   *count = n;
   return 0;
 }
@@ -575,6 +588,12 @@ blktransportreap(Blktransport *transport)
   if (!transport || !transport->links || !transport->drain || !transport->reaper)
     return -ERR_INVALID;
   return sysfilelinksweep(transport->links, transport->nlinks, transport->drain, transport->reaper);
+}
+
+int
+blktransportonline(const Blktransport *transport)
+{
+  return transport->state == BLKTRANSPORT_OPEN && transport->queue->state == BLKQ_OPEN;
 }
 
 u64

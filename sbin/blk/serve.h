@@ -16,4 +16,7 @@ struct Blkservice
    the transport and DMA storage so it can retry or run device recovery. */
 isize blkservestep(Blkservice *);
 isize blkservicecall(Blkservice *, const Ipcmsg *);
+/* Stop this instance without rearming its IRQ. Retry with monotonic time
+   until reset, DMA handback and original requests have all settled. */
+isize blkservestop(Blkservice *, u64 now);
 #endif

@@ -1575,6 +1575,17 @@ blkclient(const Bootview *boot, Handle call)
               dirgraphstep(&dirs.graph) == -ERR_STATE,
           432);
   blkfillcheck(&blk, &cache);
+  REQUIRE(!fsblksubmit(&blk, BLK_READ, 192 * PAGE_SIZE, PAGE_SIZE, NULL) &&
+              !ipc_rqwait(blk.rpc, RQ_FINISH, &result),
+          460);
+  {
+    isize status;
+    data[0] = 0x61;
+    REQUIRE(!fsblkpoll(&blk, data, PAGE_SIZE, &status) && status == -EIO && data[0] == 0x61, 461);
+  }
+  REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result) && result.kind == IPC_NONE &&
+              (isize) result.words[0] == -EIO && result.words[1] == message.words[2],
+          462);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
@@ -1652,6 +1663,25 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
                 !__sys_alarmcancel(&alarm),
             375);
     vdev_trace[38]++;
+  }
+  {
+    Resetsync fault = {queue->device, 0, 1};
+    isize     error;
+    u64       state;
+    transport.sync = resetsync;
+    transport.syncctx = &fault;
+    REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_READ) &&
+                blkservicecall(&service, &input) == -ERR_FAULT && transport.active == 1 &&
+                !blktransportonline(&transport) && queue->slots[0].held == 1 && !fault.after &&
+                !ipc_rqcheck(input.request, &state) && state == RQ_CHECK_LIVE,
+            463);
+    do {
+      error = blkservestop(&service, now());
+    } while (error == -ERR_WOULD_BLOCK);
+    REQUIRE(!error && fault.after == 1 && !queue->slots[0].held && !transport.active &&
+                !service.pending && !blktransportonline(&transport),
+            464);
+    REQUIRE(!blkservestep(&service) && link.generation == 1 && link.ready, 465);
   }
   while (link.ready)
     REQUIRE(!blkservestep(&service), 376);
