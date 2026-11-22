@@ -170,6 +170,9 @@ isize journalrecover(Journal *, const Fslayout *, const Fsgeometry *, const Jour
    it. Submission failure with no lower references may complete with success=0.
    Repeated next while outstanding returns BUSY, never a second submission. */
 isize journalnext(Journal *journal, Journalio *out);
+/* Translate the exact outstanding ticket to a byte offset and length.
+   FLUSH has zero offset and length. A stopped operation cannot be submitted. */
+isize journalrange(const Journal *, const Journalio *, u64 *offset, u32 *bytes);
 /* Call only when all lower access for this exact ticket has actually drained.
    Write success alone is not durability; only the succeeding flush advances
    that boundary. Known failure stops all new work, never implicitly retries. */

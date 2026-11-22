@@ -341,16 +341,20 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
 static Vdone waitblock(Blkqueue *, u64);
 
 static void
-journaltransfer(Blkqueue *queue, Handle binding, u64 irqevent, const Journalio *io)
+journaltransfer(Blkqueue *queue, Handle binding, u64 irqevent, const Journal *journal,
+                const Journalio *io)
 {
-  u32   type = io->kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
-  u32   bytes = type == VBLK_WRITE ? FS_BLOCK_BYTES : 0;
-  u64   alarm, started = now();
-  Vdone done;
-  REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
+  u32       type = io->kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
+  u32       bytes = UINT32_MAX;
+  u64       alarm, started = now(), offset = UINT64_MAX;
+  Journalio stale = *io;
+  Vdone     done;
+  stale.serial--;
+  REQUIRE(journalrange(journal, &stale, &offset, &bytes) == -ERR_STALE && offset == UINT64_MAX &&
+              bytes == UINT32_MAX && !journalrange(journal, io, &offset, &bytes) &&
+              started <= UINT64_MAX - VDEV_RESET_NS &&
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
-              !blkqsubmitbytes(queue, 0, type, io->block * FS_BLOCK_BYTES, bytes, io->bytes,
-                               blksync, queue->device),
+              !blkqsubmitbytes(queue, 0, type, offset, bytes, io->bytes, blksync, queue->device),
           268);
   done = waitblock(queue, irqevent);
   REQUIRE(!blkqfinish(queue, &done, NULL, 0) && !__sys_alarmcancel(&alarm), 269);
@@ -384,7 +388,7 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
                 shrinkpublish(&shrink) == -ERR_WOULD_BLOCK && map->file.length == length &&
                 committed->used[1] == before,
             287);
-    journaltransfer(queue, binding, irqevent, &io);
+    journaltransfer(queue, binding, irqevent, journal, &io);
     REQUIRE(!journalcomplete(journal, &io, 1), 288);
   }
   REQUIRE(step == 10 && !shrinkpublish(&shrink) && !map->file.length && map->direct[1] == 100 &&
@@ -406,7 +410,7 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
                 reclaimpublish(&work) == -ERR_WOULD_BLOCK && map->direct[1] == 100 &&
                 committed->used[1] == before,
             291);
-    journaltransfer(queue, binding, irqevent, &io);
+    journaltransfer(queue, binding, irqevent, journal, &io);
     REQUIRE(!journalcomplete(journal, &io, 1), 292);
   }
   REQUIRE(step == 12 && !reclaimpublish(&work) && !map->direct[1] && journal->last == 50 &&
@@ -452,7 +456,7 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
     REQUIRE(blkqsubmitbytes(queue, 0, type, 1, bytes, io.bytes, blksync, queue->device) ==
                 -ERR_INVALID,
             268);
-    journaltransfer(queue, binding, irqevent, &io);
+    journaltransfer(queue, binding, irqevent, &journal, &io);
     REQUIRE(!journalcomplete(&journal, &io, 1) && ++step <= 13, 266);
   }
   REQUIRE(step == 13 && !growthpublish(&work, &map, NULL, &committed, &reserved) &&

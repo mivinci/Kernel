@@ -656,16 +656,48 @@ journalnext(Journal *journal, Journalio *out)
   *out = io;
   return 0;
 }
+static int
+pendingmatch(const Journal *journal, const Journalio *ticket)
+{
+  const Journalio *pending = &journal->pending;
+  return journal->active && ticket->serial == pending->serial && ticket->txid == pending->txid &&
+         ticket->block == pending->block && ticket->bytes == pending->bytes &&
+         ticket->kind == pending->kind;
+}
+
+isize
+journalrange(const Journal *journal, const Journalio *ticket, u64 *offset, u32 *bytes)
+{
+  if (!output(journal, offset, sizeof(*offset)) || !output(journal, bytes, sizeof(*bytes)) ||
+      !external(journal, ticket, sizeof(*ticket)) || ticket->reserved ||
+      !separate(ticket, sizeof(*ticket), offset, sizeof(*offset)) ||
+      !separate(ticket, sizeof(*ticket), bytes, sizeof(*bytes)) ||
+      !separate(offset, sizeof(*offset), bytes, sizeof(*bytes)))
+    return -ERR_INVALID;
+  if (!pendingmatch(journal, ticket))
+    return -ERR_STALE;
+  if (journal->phase == JOURNAL_STOPPED)
+    return -ERR_STATE;
+  if (ticket->kind == JOURNAL_WRITE) {
+    if (!ticket->bytes || ticket->block >= journal->blocks || journal->blocks > FS_MAX_BLOCKS)
+      return -ERR_STATE;
+    *offset = ticket->block * FS_BLOCK_BYTES;
+    *bytes = FS_BLOCK_BYTES;
+  } else {
+    if (ticket->kind != JOURNAL_FLUSH || ticket->bytes || ticket->block)
+      return -ERR_STATE;
+    *offset = 0;
+    *bytes = 0;
+  }
+  return 0;
+}
+
 isize
 journalcomplete(Journal *journal, const Journalio *ticket, u32 success)
 {
-  const Journalio *pending;
   if (!journal || !external(journal, ticket, sizeof(*ticket)) || ticket->reserved || success > 1)
     return -ERR_INVALID;
-  pending = &journal->pending;
-  if (!journal->active || ticket->serial != pending->serial || ticket->txid != pending->txid ||
-      ticket->block != pending->block || ticket->bytes != pending->bytes ||
-      ticket->kind != pending->kind)
+  if (!pendingmatch(journal, ticket))
     return -ERR_STALE;
   journal->active = 0;
   if (!success || journal->phase == JOURNAL_STOPPED) {

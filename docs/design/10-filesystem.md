@@ -772,6 +772,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage529：`journalrange` 只把当前未停止的精确日志票据转换成块设备字节范围。ARM64/RV64 QEMU `virtiodev` 验证旧票据不产生输出，当前 WRITE/FLUSH 经 virtio 块队列执行并核对盘面；43 项 FS 主机测试通过。生产块服务 IPC 仍待定稿和接入。
+
 stage528：`fscrc32c` 提供可跨块续算的原始 CRC32C 状态。ARM64/RV64 QEMU `virtiodev` 对回收事务的两份完整元数据镜像核对累计校验值，复验实际写入和 FLUSH。盘上编码仍待确认，夹具的初值和最终异或不构成磁盘约定。
 
 stage527：ARM64/RV64 QEMU `virtiodev` 经同一真实 virtio 块队列完成增长、截短和尾块回收。截短事务只改 inode；下一事务同时清除尾块指针和位图。场景检查每笔退休前的内存状态、QMP 的写入与 FLUSH 次数，以及最终盘面中 inode、位图和原数据块的内容。日志标记由夹具提供，生产 FS/blk IPC、编码和重启恢复仍待接入。
