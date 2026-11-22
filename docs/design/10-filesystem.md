@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage485：私有 `sysctxopencreate` 提交后以事件等待原 OPEN。信号处理器返回后先查原结果；仍挂起才请求协作取消，并沿首次取消的期限等待。超时保留原请求和 fd 预留供继续收尾，不重发路径。ARM64/RV64 QEMU `runtime` 验证处理器运行时 fd 仍预留，服务端收到取消后仍可用原请求回复成功，客户端只安装一次；65 项上下文主机测试通过。公开 `open()` 的零副作用重启和超时后的后台收尾还未接入。
+
 stage484：`sysfileopencollect` 在 Rctx 移交后非阻塞查询原 OPEN RPC。未完成时保留 fd 预留及原输出；完成后确认原结果，发布普通 OPEN，或保留资源回复供后续 ATTACH/ABORT。同一逻辑也用于正常等待返回的结果。双架构 QEMU `runtime` 验证延迟 OPEN 未完成时保留预留和输出，并回归普通及资源 OPEN；54 项创建账本和 IPC 上下文主机测试通过。公开 `open()` 的信号恢复仍待接入。
 
 stage483：调用方移交已提交 OPEN 的 Rctx 后，可用 `sysfileopeninterrupt` 对原 RPC 请求协作取消。重复调用保留首次取消期限；不释放 fd，也不把已接收请求当作无副作用。双架构 QEMU `runtime` 验证延迟回复的 OPEN 保留原 RPC 和预留 fd，迟到成功沿旧记录接管并关闭；36 项创建账本主机测试通过。公开 `open()` 中的信号重启策略还未接入。

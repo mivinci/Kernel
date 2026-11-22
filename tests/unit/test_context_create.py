@@ -13,7 +13,7 @@ isize testcapturestatus(Rbank *bank,u32 layer){return bank->contexts[layer].rout
 
 
 class ContextCreatorTests(unittest.TestCase):
-    extra_sources = creators.FileCreatorTests.extra_sources + ('context.c', 'contextipc.c')
+    extra_sources = creators.FileCreatorTests.extra_sources + ('argument.c', 'boot.c', 'context.c', 'contextipc.c')
     tearDownClass = classmethod(creators.FileCreatorTests.tearDownClass.__func__)
     result = creators.FileCreatorTests.result
     adopt = creators.FileCreatorTests.adopt

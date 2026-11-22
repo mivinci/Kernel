@@ -169,11 +169,11 @@ filecreatetest(void)
     }
     CHECK(trace[0] == 2);
     if (!i)
-      CHECK(trace[1] == 11 && trace[2] == 9 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1 &&
+      CHECK(trace[1] == 12 && trace[2] == 10 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1 &&
             trace[10] == 2 && trace[11] == 1 && trace[12] == 1 && trace[13] == 5 &&
             trace[14] == BOOT_FD_COUNT + 1 && injected == 6);
     else if (i == 1)
-      CHECK(trace[1] == 7 && trace[2] == 7 && trace[4] == 4);
+      CHECK(trace[1] == 8 && trace[2] == 8 && trace[4] == 4);
     else
       CHECK(trace[1] == 4 && trace[2] == 4 && trace[3] == 3 && trace[4] == 3);
     while ((error = procclean(pids[i])) > 0) {

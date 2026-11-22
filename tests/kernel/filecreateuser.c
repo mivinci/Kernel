@@ -374,12 +374,23 @@ creatorhandler(int signum)
   filecreatetrace[10]++;
 }
 static void
+openhandler(int signum)
+{
+  Fdview fd;
+  CHECK(signum == SIGUSR2 && !sysfdobserve(&fds, 2, &fd) && fd.tag.state == SYSFD_RESERVED &&
+        work.state.operations[0].phase == SYSOP_WAITING);
+}
+
+static void
 creatorsignals(void)
 {
   struct sigaction action = {0};
   CHECK(!sysctxinit(&contexts, work.state.self) && !sysctxsigbind(&contexts));
   action.sa_handler = creatorhandler;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
+  action.sa_handler = openhandler;
+  action.sa_flags = SA_RESTART;
+  CHECK(!sigaction(SIGUSR2, &action, NULL));
   filecreatetrace[7] = (u64) (uintptr_t) __sys_ctxreturn_begin;
   filecreatetrace[8] = (u64) (uintptr_t) __sys_ctxresume;
 }
@@ -745,6 +756,18 @@ client(const Bootview *boot)
   closefile(ids[0], 0);
   filecreatetrace[3] = 1;
   {
+    Opencreate open = {0};
+    Rkey       active = {0};
+    int        number = -2;
+    isize      business = 9;
+    CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/wake", 0, 0, 0, &open,
+                            &active, &number, &business) &&
+          number == 2 && !business && !active.sequence && !open.operation.lease.seq &&
+          !sysfdobserve(&fds, number, &detached) && !sysfddetach(&fds, detached.tag, &detached));
+    filecreatetrace[1]++;
+    closefile(detached.file, 1);
+  }
+  {
     Opencreate missing = {0};
     Rkey       active = {0};
     char       longpath[FS_SLOT_BYTES];
@@ -804,7 +827,7 @@ client(const Bootview *boot)
   gate.words[0] = STOP;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
   rpc = result.request;
-  CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[0] == 7 && result.words[1] == 7 &&
+  CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[0] == 8 && result.words[1] == 8 &&
         !result.words[2] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
         !sysconninvalidate(&cache, work.state.tag) && !sysfileconnclean(&pool, &work, &cache));
   filecreatetrace[0] = 2;
@@ -1121,6 +1144,7 @@ server(const Bootview *boot, u32 recover)
   u64        held = 0;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   u64        slot, seq, opcode, i, found, number, resourcepath, firsttoken = 0;
+  u32        wakeopen = 0;
   volatile u64   *data;
   isize           status;
   const Termarg   ttymode = {0, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON, 0, 0, {0}};
@@ -1165,7 +1189,7 @@ server(const Bootview *boot, u32 recover)
   zero(references, sizeof(references));
   for (;;) {
     u64 events = readalarm.deadline ? EVENT_TIMER : 0;
-    if (readalarm.deadline && ttyseen == 8)
+    if ((readalarm.deadline && ttyseen == 8) || wakeopen)
       events |= EVENT_RQ_CANCEL;
     CHECK(!ipc_recv(recover == 12 ? EVENT_LIFE : events, 0, &input));
     if (input.kind == IPC_EVENT && (input.words[0] & EVENT_TIMER)) {
@@ -1182,6 +1206,20 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (input.kind == IPC_EVENT && (input.words[0] & EVENT_RQ_CANCEL)) {
+      if (wakeopen) {
+        u64 state;
+        CHECK(!ipc_rqcheck(pending, &state));
+        if (state & RQ_CHECK_CANCEL) {
+          reply.words[0] = 0;
+          reply.words[1] = filecreatetrace[7];
+          reply.words[2] = filecreatetrace[8];
+          reply.words[3] = 8;
+          CHECK(!ipc_reply(pending, &reply) && !sysfilefinish(&watch->active, pending));
+          pending = 0;
+          wakeopen = 0;
+        }
+        continue;
+      }
       Termarg raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
       raw.cc[TTY_VTIME] = 50;
       generation = readalarm.generation;
@@ -1224,7 +1262,7 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (opcode == STOP) {
-      CHECK(!pending && created == (recover ? 0 : 7) && closed == (recover ? 0 : 7));
+      CHECK(!pending && created == (recover ? 0 : 8) && closed == (recover ? 0 : 8));
       CHECK(!loadsession && !loadio.request);
       for (i = 0; i < FS_CONN_SLOTS; i++)
         CHECK(!watch->active.requests[i]);
@@ -1621,6 +1659,7 @@ server(const Bootview *boot, u32 recover)
       CHECK(found == 1);
       closed++;
     } else if (opcode == FS_OPEN || opcode == FS_DUPREF || opcode == FS_PIPE) {
+      u32 wakepath = 0;
       resourcepath = 0;
       if (opcode == FS_OPEN) {
         const volatile char *path = (const volatile char *) data;
@@ -1632,6 +1671,7 @@ server(const Bootview *boot, u32 recover)
           continue;
         }
         resourcepath = path[1] == 'b' || path[1] == 'c' || path[1] == 'f' || path[1] == 'r';
+        wakepath = !recover && descriptor.payload_bytes == 6 && path[1] == 'w';
       }
       if (resourcepath) {
         Msg    prepare;
@@ -1702,6 +1742,11 @@ server(const Bootview *boot, u32 recover)
         deferred = input;
         filecreatetrace[7] = seq;
         filecreatetrace[8] = reply.words[2];
+        if (wakepath) {
+          Sigsel selector = {SIGNAL_SELECT_PID, peer.pid};
+          wakeopen = 1;
+          CHECK(!__sys_sigsend(&selector, SIGNAL_USR2));
+        }
         continue;
       }
     } else

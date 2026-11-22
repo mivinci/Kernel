@@ -14,6 +14,8 @@ const u8 __sys_ctxreturn_begin[4]={0},__sys_ctxreturn_end[4]={0},__sys_ctxresume
 isize __sys_ctxenter(Rctx *context){(void)context;return 0;}
 isize __sys_sigmask(u64 how,u64 mask,u64 *old){(void)how;(void)mask;*old=0;return 0;}
 isize sysctxdecode(Rctx *context,void *trap,u64 begin,u64 end,u64 resume){(void)context;(void)trap;(void)begin;(void)end;(void)resume;return 0;}
+isize systimernow(u64 *out){*out=0;return 0;}
+isize systimerwaitsignal(u64 deadline,u64 events,u64 mask,u32 *restart){(void)deadline;(void)events;(void)mask;(void)restart;return -1;}
 '''
 
 

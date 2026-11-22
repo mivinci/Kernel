@@ -1,6 +1,7 @@
 #include "private/contextipc.h"
 #include "private/filecreate.h"
 #include "private/syscall.h"
+#include "private/timer.h"
 #include <abi/signal.h>
 #include <abi/syscall.h>
 #include <proto/file.h>
@@ -803,6 +804,38 @@ sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
   return error ? error : status;
 }
 
+static isize
+openwait(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open,
+         u64 mask, int *fd, isize *business)
+{
+  u32   interrupted = 0, restart;
+  u64   now, deadline;
+  isize error, waited = 0;
+  for (;;) {
+    error = sysfileopencollect(pool, work, cache, table, open, fd, business);
+    if (error != -ERR_WOULD_BLOCK)
+      return error;
+    if (waited && waited != -ERR_INTERRUPTED)
+      return waited;
+    if (interrupted) {
+      error = systimernow(&now);
+      if (!error)
+        error = sysfileopeninterrupt(pool, work, cache, table, open, now);
+      if (error)
+        return error;
+    }
+    deadline = work->state.operations[open->operation.lease.slot].deadline;
+    if (deadline) {
+      error = systimernow(&now);
+      if (error || now >= deadline)
+        return error ? error : -ERR_TIMEDOUT;
+    }
+    waited = systimerwaitsignal(deadline, EVENT_RQ_DONE, mask, &restart);
+    if (waited == -ERR_INTERRUPTED)
+      interrupted = 1;
+  }
+}
+
 isize
 sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                  Fdtable *table, const char *path, u64 flags, u64 mode, u64 fdflags,
@@ -853,27 +886,29 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
                                    snapshot, args[3], fdflags, open, &message);
     }
   }
-  status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
-  if (error || status)
-    return error ? error : status;
-  do {
+  if (!error)
+    error = sysfilecreatecheck(pool, work, cache, &open->operation);
+  if (error)
+    goto restore;
+  /* Keep signals blocked from reservation through submission. openwait
+     arms the signal-aware wait before restoring the caller's mask. */
+  if (active->sequence ||
+      work->state.operations[open->operation.lease.slot].phase == SYSOP_PREPARED)
     error = sysctxopenio(bank, self, layer, pool, work, cache, &open->operation, active);
-  } while (!error);
   if (active->sequence)
-    return error;
-  status = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
-  if (status)
-    return status;
+    goto restore;
   if (!sysfilecreatecheck(pool, work, cache, &open->operation)) {
     Slotop *op = &work->state.operations[open->operation.lease.slot];
-    if (error == 1 || error == -ERR_CANCELLED || (error == -ERR_PEER && op->phase == SYSOP_RESULT))
-      error = sysfileopencollect(pool, work, cache, table, open, fd, business);
+    if (!error || error == 1 || error == -ERR_CANCELLED ||
+        ((error == -ERR_PEER || error == -ERR_INTERRUPTED) && op->phase != SYSOP_PREPARED))
+      error = openwait(pool, work, cache, table, open, mask, fd, business);
     else if (op->phase == SYSOP_PREPARED) {
       status = sysfileopenabort(pool, work, cache, table, open);
       if (status)
         error = status;
     }
   }
+restore:
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return status ? status : error;
 }
