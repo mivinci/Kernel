@@ -7,7 +7,7 @@ typedef struct Fsreads Fsreads;
 struct Readjob
 {
   Readwork         work;
-  Readjob         *next;
+  Readjob         *prev, *next;
   Fsfile          *file;
   Filelink        *link;
   Ipcmsg           call;

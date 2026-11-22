@@ -1722,7 +1722,15 @@ openserver(const Bootview *boot)
   for (i = 0; i < 5; i++)
     CHECK(!fsstep(&fs));
   CHECK(file.position == 19 && !fsstep(&fs) && fixture.fetch.destination && file.refs == 2 &&
-        !fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs) && file.refs == 2 &&
+        !fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs));
+  {
+    Ipcmsg event;
+    CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
+          !fsreadpump(&reads, &fixture.files) && file.position == 19 && file.refs == 2 &&
+          file.head == &reader[0] && file.tail == file.head && reader[0].work.fill.cache &&
+          !reader[1].file);
+  }
+  CHECK(!fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs) && file.refs == 2 &&
         file.node);
   fixture.fetch.destination[19] = 'R';
   CHECK(!filereadcomplete(&reader[0].work, &fixture.fetch.ticket, 1) &&
@@ -1819,6 +1827,23 @@ openclient(const Bootview *boot)
     slot.payload_bytes = 0;
     slot.args[0] = 3;
     slot.args[1] = FS_SEEK_CUR;
+    CHECK(!__sys_copy(
+              (void *) (work.state.map.address + FS_DESC_OFFSET + queued.slot * FS_DESC_BYTES),
+              &slot, sizeof(slot)) &&
+          !ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+    seekrpc = result.request;
+    {
+      Msg gate = {{FS_ATTACH, 0, 0, 0}};
+      CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) && !ipc_rqcancel(seekrpc) &&
+            !ipc_rqwait(seekrpc, 0, &result) && (isize) result.words[0] == -EINTR &&
+            result.words[1] == queued.seq && !ipc_rqwait(seekrpc, RQ_FINISH, &drain) &&
+            !ipc_rqack(seekrpc, ACK_RESULT | ACK_RELEASE) &&
+            ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_WOULD_BLOCK && page[0] == 'P' &&
+            !sysconnworkrelease(&work, &cache, queued));
+    }
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &queued));
+    request.words[2] = slot.seq = queued.seq;
+    request.words[3] = queued.slot;
     CHECK(!__sys_copy(
               (void *) (work.state.map.address + FS_DESC_OFFSET + queued.slot * FS_DESC_BYTES),
               &slot, sizeof(slot)) &&

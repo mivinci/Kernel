@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage460：取消或退役的非队首 READ/SEEK 可独立出队，归还原槽和 File 引用，无须等待队首读票。仍存活的任务保持原顺序；队首已有下游访问时仍须排空。ARM64、RV64 QEMU `pipeio` 验证真实 IPC 下排队 SEEK 先以 EINTR 收尾，原 READ 仍持有读票且输出和偏移未变；复用空位提交的下一次 SEEK 在原 READ 完成后返回正确偏移。
+
 stage459：普通文件 READ 与 SEEK 使用同一 File 的有界 FIFO。任务持有原请求、槽和 File；仅队首绑定读快照或计算偏移，关闭业务引用不取消已受理任务。队列或原生延期名额耗尽时返回 EAGAIN，其他 File 可继续推进。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证缺块 READ 从偏移 19 读取一字节，随后排队的 SEEK_CUR(+3) 返回 23；两份任务在最后 CLOSE 后仍能按序结束并释放节点。块完成仍由夹具提供。

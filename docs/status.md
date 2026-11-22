@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage460（2026-11-22）：取消的排队 READ/SEEK 可独立收尾；双架构 QEMU `pipeio` 验证 SEEK 取消、名额复用和原 READ 读票保留。
 - stage459（2026-11-22）：同一 File 的 READ/SEEK 按受理顺序推进；双架构 QEMU `pipeio` 验证缺块读取后按新偏移定位及最后 CLOSE 后排空。
 - stage458（2026-11-22）：普通 READ 接入已发布 File 会话；双架构 QEMU `pipeio` 验证缺块挂起、偏移保护与最后 CLOSE 后续读。生产块运输和偏移排队待接。
 - stage457（2026-11-22）：普通文件 SEEK 接入已发布会话和共享偏移；双架构 QEMU `pipeio` 验证三种定位及非法位移保留原偏移。普通 READ 待接。

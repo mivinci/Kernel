@@ -21,9 +21,14 @@ release(Fsreads *reads, Fsfiles *files, Readjob *job)
 {
   if (job->map)
     reads->release(reads->backend, job);
-  job->file->head = job->next;
-  if (!job->next)
-    job->file->tail = NULL;
+  if (job->prev)
+    job->prev->next = job->next;
+  else
+    job->file->head = job->next;
+  if (job->next)
+    job->next->prev = job->prev;
+  else
+    job->file->tail = job->prev;
   fsfiledrop(files, job->file);
   *job = (Readjob){0};
 }
@@ -102,6 +107,7 @@ enqueue(Fsreads *reads, Fsfiles *files, Fsfile *file, Filelink *link, const Ipcm
   job->link = link;
   job->call = *call;
   job->slot = *slot;
+  job->prev = file->tail;
   if (file->tail)
     file->tail->next = job;
   else
@@ -137,9 +143,22 @@ fsreadpump(Fsreads *reads, Fsfiles *files)
   do {
     progress = 0;
     for (i = 0; i < reads->count; i++)
-      if (reads->jobs[i].file && reads->jobs[i].file->head == &reads->jobs[i]) {
+      if (reads->jobs[i].file) {
         Readjob *job = &reads->jobs[i];
-        isize    error = advance(reads, files, job);
+        isize    error;
+        if (job->prev) {
+          u64 state;
+          error = ipc_rqcheck(job->call.request, &state);
+          if (error)
+            return error;
+          if (state == RQ_CHECK_LIVE)
+            continue;
+          /* Only the head may own a backend binding or a read ticket. */
+          error = reject(job->link, &job->call, -EINTR);
+          if (!error)
+            release(reads, files, job);
+        } else
+          error = advance(reads, files, job);
         if (error)
           return error;
         progress |= !job->file;
