@@ -493,19 +493,38 @@ blkdirstep(Blkdir *work)
   return 0;
 }
 
-isize
-blkmountadd(Blkdir *work, Vmounts *mounts, Vnode *root, Vnode *point)
+enum
 {
+  MountProbe,
+  MountOverlay,
+  MountReplay,
+  MountReprobe,
+  MountHome,
+  MountDirectories,
+  MountReady
+};
+
+isize
+blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
+{
+  Blkdir         *work;
   const Blkprobe *probe;
   const Dirnode  *node;
   isize           error;
-  if (!work || !work->home || !(probe = work->home->home) || !probe->blk || !mounts || !root)
+  if (!mount || !(work = mount->dirs) || !mount->probe || !mount->probe->blk || !mounts || !root)
     return -ERR_INVALID;
+  if (mount->failed)
+    return mount->failed;
   if (work->failed || work->graph.failed)
     return work->failed ? work->failed : work->graph.failed;
   if (work->published)
     return -ERR_STATE;
-  if (work->inode != FS_INODES || work->graph.next != FS_INODES || probe->blk->rpc)
+  if (mount->phase != MountReady)
+    return -ERR_WOULD_BLOCK;
+  if (!work->home || !(probe = work->home->home) || probe->blk != mount->probe->blk ||
+      work->inode != FS_INODES || work->graph.next != FS_INODES || !work->graph.nodes)
+    return -ERR_STATE;
+  if (probe->blk->rpc)
     return -ERR_WOULD_BLOCK;
   if (probe->blk->stale || probe->blk->ended ||
       probe->blk->info.geometry_generation != probe->generation)
@@ -518,17 +537,6 @@ blkmountadd(Blkdir *work, Vmounts *mounts, Vnode *root, Vnode *point)
     work->published = 1;
   return error;
 }
-
-enum
-{
-  MountProbe,
-  MountOverlay,
-  MountReplay,
-  MountReprobe,
-  MountHome,
-  MountDirectories,
-  MountReady
-};
 
 static Fsgeometry
 mountgeometry(const Blkmount *work, const Blkprobe *probe)
@@ -696,8 +704,7 @@ blkmountstep(Blkmount *work)
     work->phase = MountReady;
     return 1;
   case MountReady:
-    result = blkdirstep(work->dirs);
-    break;
+    return 1;
   default:
     return -ERR_STATE;
   }

@@ -124,10 +124,6 @@ struct Blkdir
    and records ordinary edges.
    One means the traversal and graph checks both completed; zero continues. */
 isize blkdirstep(Blkdir *);
-/* Publish the checked root once. The authorized namespace owner holds
-   the volume, root and covering point through insertion. */
-isize blkmountadd(Blkdir *, Vmounts *, Vnode *root, Vnode *point);
-
 struct Blkmount
 {
   Blkprobe   *probe, *after;
@@ -151,6 +147,9 @@ struct Blkmount
    recovery resources are separately provided. Zero means continue or wait
    on the current RPC; one means ready to call blkmountadd. */
 isize blkmountstep(Blkmount *);
+/* Publish the ready mount once. The authorized namespace owner holds
+   the volume, root and covering point through insertion. */
+isize blkmountadd(Blkmount *, Vmounts *, Vnode *root, Vnode *point);
 /* Stop an unpublished mount. Further steps only drain outstanding work;
    the original failure is returned once no request or snapshot is held. */
 isize blkmountstop(Blkmount *, isize reason);

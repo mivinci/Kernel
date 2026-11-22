@@ -1368,7 +1368,8 @@ blkclient(const Bootview *boot, Handle call)
   mounting.log.blk = &blk;
   mounting.log.journal = &recovered;
   mounting.writable = 1;
-  REQUIRE(blkmountstep(&mounting) == -ERR_NOTSUP && !blk.rpc && !recovered.blocks && !home.home,
+  REQUIRE(blkmountstep(&mounting) == -ERR_NOTSUP && !blk.rpc && !recovered.blocks && !home.home &&
+              blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_NOTSUP && !mounts.serial,
           445);
   mounting = (Blkmount){0};
   owners.redo = blkclientredo(&blk, &probe);
@@ -1436,8 +1437,8 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(done == 0 || done == 1, 425);
     if (done)
       break;
-    if (home.home)
-      REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial, 438);
+    REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_WOULD_BLOCK && !mounts.serial,
+            438);
     if (blk.rpc) {
       REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 426);
       op++;
@@ -1447,17 +1448,23 @@ blkclient(const Bootview *boot, Handle call)
               recovered.last == 48 && recovered.phase == JOURNAL_IDLE && !home.scan.count &&
               home.owners.owned.used[1] == owners.owners.owned.used[1],
           429);
+  REQUIRE(blkmountadd(&(Blkmount){.probe = mounting.probe, .dirs = &dirs}, &mounts, &root, NULL) ==
+                  -ERR_WOULD_BLOCK &&
+              !mounts.serial && !root.mount,
+          446);
   blk.stale = 1;
-  REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial && !root.mount,
+  REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
+              !root.mount,
           441);
   blk.stale = 0;
   root.generation++;
-  REQUIRE(blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial && !root.mount,
+  REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
+              !root.mount,
           439);
   root.generation--;
-  REQUIRE(!blkmountadd(&dirs, &mounts, &root, NULL) && root.mount == 1 && mounts.serial == 1 &&
+  REQUIRE(!blkmountadd(&mounting, &mounts, &root, NULL) && root.mount == 1 && mounts.serial == 1 &&
               mounts.entries[0].root == &root &&
-              blkmountadd(&dirs, &mounts, &root, NULL) == -ERR_STATE,
+              blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
           440);
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
