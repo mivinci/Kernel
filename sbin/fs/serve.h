@@ -1,6 +1,7 @@
 #ifndef _FS_SERVE_H
 #define _FS_SERVE_H
 #include "pipedispatch.h"
+#include "open.h"
 
 typedef struct Fsservice Fsservice;
 struct Fsservice
@@ -10,6 +11,8 @@ struct Fsservice
   Filelink    *links;
   u32          nlinks;
   Pipedispatch pipes;
+  Fsopen      *open;
+  u32          retiring;
 };
 
 /* The caller supplies actual authorities, an exclusive VA arena, and fixed

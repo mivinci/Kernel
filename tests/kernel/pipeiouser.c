@@ -333,7 +333,9 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         ADDRESS,
                         &link,
                         1,
-                        {&table, &wait, 1, &poll, 1}};
+                        {&table, &wait, 1, &poll, 1},
+                        NULL,
+                        0};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
   } else if (interrupt == 1) {
@@ -1482,15 +1484,14 @@ run(const Bootview *boot)
         !ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
 }
 
-static const isize openerrors[] = {-ENOSYS, -EACCES, -EINVAL, -EINVAL, -EINVAL};
+static const isize openerrors[] = {-ESTALE, -ENOSYS, -EACCES, -EINVAL, -EINVAL, -EINVAL, -EINTR};
 
 typedef struct Openfixture Openfixture;
 struct Openfixture
 {
   Vmounts mounts;
   Vnode   root, file;
-  Vcred   cred;
-  u32     holds, attempts, deny;
+  u32     holds, attempts, searches, completed, blocked, cancelled;
 };
 
 static isize
@@ -1512,21 +1513,43 @@ opendrop(void *context, Vnode *node)
 }
 
 static isize
+openwalkhold(void *context, Vnode *node)
+{
+  Openjob *job = context;
+  return openhold(job->backend, node);
+}
+
+static void
+openwalkdrop(void *context, Vnode *node)
+{
+  Openjob *job = context;
+  opendrop(job->backend, node);
+}
+
+static isize
 opensearch(void *context, const Vnode *node)
 {
-  Openfixture *fixture = context;
-  CHECK(node == &fixture->root);
-  return vaccess(&fixture->cred, 22, 32, fixture->deny ? 0010 : 0100, VACCESS_X, 1);
+  Openjob     *job = context;
+  Openfixture *fixture = job->backend;
+  CHECK(node == &fixture->root && job->cred.uid == 22 && job->cred.gid == 32 && job->mask == 027);
+  return vaccess(&job->cred, 22, 32, fixture->searches++ == 1 ? 0010 : 0100, VACCESS_X, 1);
 }
 
 static isize
 openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode **out)
 {
-  Openfixture *fixture = context;
+  Openjob     *job = context;
+  Openfixture *fixture = job->backend;
   CHECK(dir == &fixture->root && bytes == 1 && name[0] == 'x');
-  if (!fixture->attempts++)
+  if (fixture->blocked)
     return VWALK_WAIT;
-  CHECK(!openhold(context, &fixture->file));
+  if (!fixture->attempts++) {
+    volatile char *page = (volatile char *) (job->link->address + FS_DATA_OFFSET +
+                                             job->call.words[3] * FS_SLOT_BYTES);
+    page[FS_SLOT_BYTES - 2] = 'y';
+    return VWALK_WAIT;
+  }
+  CHECK(!openhold(fixture, &fixture->file));
   *out = &fixture->file;
   return 0;
 }
@@ -1551,50 +1574,78 @@ openlink(void *context, const Vnode *node, const char **target, u64 *bytes)
 }
 
 static void
+openvalidate(const Openjob *job)
+{
+  CHECK(job->link->watch.active.requests[job->call.words[3]] == job->call.request);
+}
+
+static isize
+openselect(Openjob *job, const Fscontext *context, Vnode **start, u32 *follow)
+{
+  CHECK(*start == context->cwd && *follow == 1);
+  openvalidate(job);
+  return job->slot.object || job->slot.args[0] || job->slot.args[1] ? -EINVAL : 0;
+}
+
+static isize
+opencancel(Openjob *job)
+{
+  Openfixture *fixture = job->backend;
+  openvalidate(job);
+  CHECK(fixture->blocked && fixture->holds == 4);
+  if (!fixture->cancelled++)
+    return -ERR_WOULD_BLOCK;
+  return 0;
+}
+
+static isize
+opencomplete(Openjob *job, Vnode *node)
+{
+  Openfixture *fixture = job->backend;
+  Msg          reply = {{(u64) -ENOSYS, job->slot.seq, 0, 0}};
+  openvalidate(job);
+  CHECK(node == &fixture->file && fixture->holds == 3 && !fixture->completed++);
+  return ipc_reply(job->call.request, &reply);
+}
+
+static void
 openserver(const Bootview *boot)
 {
   static Filelink link;
-  Vwalk           walk = {0};
+  Openjob         job = {0};
   Openfixture     fixture = {0};
-  const Vwalkops  ops = {openhold, opendrop, opensearch, openlookup, openparent, openlink};
-  Ipcmsg          call;
+  const Vwalkops  ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
+  const Vwalkops  pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
+  Fscontext       context = {0};
+  Fscontexts      contexts = {&context, 1, &pin, &fixture, 0};
+  Fsopen          open = {&contexts, &fixture.mounts, &ops,       &job,       1,
+                          0,         &fixture,        openselect, opencancel, opencomplete};
+  Fsservice       fs = {bootresource(boot, 256),
+                        bootresource(boot, BOOT_SELF_ALLOC),
+                        bootresource(boot, BOOT_SELF_SPACE),
+                        ADDRESS,
+                        &link,
+                        1,
+                        {0},
+                        &open,
+                        0};
   u32             i;
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
-  CHECK(!ipc_recv(0, 0, &call) &&
-        !sysfilehello(&link, 1, bootresource(boot, 256), bootresource(boot, BOOT_SELF_ALLOC),
-                      bootresource(boot, BOOT_SELF_SPACE), ADDRESS, &call));
-  for (i = 0; i < ARRAY_SIZE(openerrors); i++) {
-    Fileslot slot;
-    Vnode   *result = NULL;
-    isize    status;
-    Msg      reply = {{0}};
-    CHECK(!ipc_recv(0, 0, &call) && !sysfilelinkaccept(&link, 1, &call, &slot));
-    fixture.deny = i == 1;
-    status = vopenpath(&walk, &fixture.mounts, &ops, &fixture, &fixture.root, NULL, 1,
-                       &fixture.cred, &link, &call, &slot);
-    if (!status) {
-      CHECK(i < 2 && fixture.cred.uid == 22 && fixture.cred.gid == 32);
-      while ((status = vwalkstep(&walk, &result)) == VWALK_MORE) {
-      }
-      if (!i) {
-        volatile char *page =
-            (volatile char *) (link.address + FS_DATA_OFFSET + call.words[3] * FS_SLOT_BYTES);
-        CHECK(status == VWALK_WAIT && !result);
-        page[FS_SLOT_BYTES - 2] = 'y';
-        while ((status = vwalkstep(&walk, &result)) == VWALK_MORE) {
-        }
-        CHECK(!status && result == &fixture.file && fixture.holds == 1);
-        opendrop(&fixture, result);
-        status = -ENOSYS; /* Lookup only; no File reference is published. */
-      }
-    }
-    CHECK(status == openerrors[i] && !fixture.holds && !walk.phase);
-    reply.words[0] = (u64) status;
-    reply.words[1] = slot.seq;
-    CHECK(!ipc_reply(call.request, &reply) && !sysfilefinish(&link.watch.active, call.request));
-  }
+  CHECK(!fsstep(&fs) && link.ready && !fsstep(&fs) && !fixture.holds && !fixture.searches);
+  CHECK(!fscontextadd(&contexts, link.watch.owner.pid, link.watch.owner.image, &fixture.root,
+                      &fixture.root, 027));
+  for (i = 1; i + 1 < ARRAY_SIZE(openerrors); i++)
+    CHECK(!fsstep(&fs));
+  CHECK(fixture.completed == 1 && fixture.holds == 2 && fixture.attempts == 2);
+  fixture.blocked = 1;
+  CHECK(!fsstep(&fs) && job.waiting && fixture.holds == 4);
+  while (job.call.request)
+    CHECK(!fsstep(&fs));
+  CHECK(fixture.cancelled == 2 && fixture.completed == 1 &&
+        !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
+        !fixture.holds);
   pipeiotrace[0] = 7;
 }
 
@@ -1615,19 +1666,31 @@ openclient(const Bootview *boot)
     slot.state = FS_SLOT_SUBMITTED;
     slot.span = 1;
     slot.payload_bytes = FS_SLOT_BYTES;
-    slot.args[2] = i == 2 ? UINT64_MAX : FS_SLOT_BYTES - 3;
+    slot.args[2] = i == 3 ? UINT64_MAX : FS_SLOT_BYTES - 3;
     slot.args[3] = 3;
-    slot.args[4] = i == 4;
+    slot.args[4] = i == 5;
     page = (volatile char *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
-    page[FS_SLOT_BYTES - 3] = i == 3 ? 0 : '/';
+    page[FS_SLOT_BYTES - 3] = i == 4 ? 0 : '/';
     page[FS_SLOT_BYTES - 2] = 'x';
     page[FS_SLOT_BYTES - 1] = 0;
     CHECK(
         !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
-                    &slot, sizeof(slot)) &&
-        !ipc_call(work.state.call, &request, 0, &result) &&
-        (isize) result.words[0] == openerrors[i] && result.words[1] == lease.seq &&
-        !result.words[2] && !result.words[3] && !sysconnworkrelease(&work, &cache, lease));
+                    &slot, sizeof(slot)));
+    if (i + 1 == ARRAY_SIZE(openerrors)) {
+      Msg    gate = {{FS_ATTACH, 0, 0, 0}};
+      Ipcmsg drain;
+      Handle rpc;
+      CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+      rpc = result.request;
+      CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) && !ipc_rqcancel(rpc) &&
+            !ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) &&
+            !ipc_rqwait(rpc, 0, &result) && !ipc_rqwait(rpc, RQ_FINISH, &drain) &&
+            !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+            !ipc_call(work.state.call, &gate, CALL_CONTROL, &drain));
+    } else
+      CHECK(!ipc_call(work.state.call, &request, 0, &result));
+    CHECK((isize) result.words[0] == openerrors[i] && result.words[1] == lease.seq &&
+          !result.words[2] && !result.words[3] && !sysconnworkrelease(&work, &cache, lease));
   }
   pipeiotrace[0] = 7;
 }
