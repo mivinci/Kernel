@@ -15,16 +15,21 @@ AR := llvm-ar
 endif
 AR ?= llvm-ar
 READELF ?= llvm-readelf
+ifeq ($(origin NM),default)
+NM := llvm-nm
+endif
+NM ?= llvm-nm
 ARCH ?=
 KEEP ?= 20
 GRACE_HOURS ?= 24
 SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
 
-.PHONY: all help build hardware compdb sdk bootpkg clean clean-runs fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
+.PHONY: all help build hardware compdb sdk sdk-audit bootpkg clean clean-runs fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
 	@echo "make sdk ARCH=...     : 构建独立 libsys SDK 与用户 ELF"
+	@echo "make sdk-audit ARCH=... : 从公开 SDK 构建并检查 A1 静态 ELF"
 	@echo "make unit             : 主机驱动测试"
 	@echo "make test-memory      : 两架构512 MiB/2 GiB/8 GiB pages与normal（需OPENSBI）"
 	@echo "make test-cpus        : 两架构四核单主核启动/真实IRQ/自停放（需OPENSBI）"
@@ -36,6 +41,8 @@ build:
 	$(PYTHON) tools/build.py --kind kernel --case "$(if $(CASE),$(CASE),normal)" --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 sdk:
 	$(PYTHON) tools/user.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
+sdk-audit: sdk
+	$(PYTHON) tests/sdkaudit.py --arch "$(ARCH)" --cc "$(CC)" --ld "$(LD)" --readelf "$(READELF)" --nm "$(NM)"
 bootpkg: sdk
 	$(PYTHON) tools/bootpkg.py pack --arch "$(ARCH)" --init sbin/init --entry "sbin/init=build/$(ARCH)/sbin/init.elf" --entry "sbin/serial=build/$(ARCH)/sbin/serial.elf" --entry "sbin/tty=build/$(ARCH)/sbin/tty.elf" --output "build/$(ARCH)/boot.pkg"
 compdb: build
