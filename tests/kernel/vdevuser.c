@@ -178,6 +178,7 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   u32            i, j, count = 0;
   u64            stride = JOURNAL_BYTES / VBLK_SECTOR;
   u64            blocks = config->sectors / stride;
+  Fslayout       layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
   REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
   geometry.bytes = config->sectors * VBLK_SECTOR;
   geometry.logical = config->blocksize;
@@ -202,6 +203,15 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
           203);
   geometry.flush = config->flush;
   REQUIRE(!fsgeometry(&geometry, blocks, 1), 202);
+  REQUIRE(!fslayoutcheck(&layout, &geometry, 1), 242);
+  layout.blockmap = layout.inodemap;
+  REQUIRE(fslayoutcheck(&layout, &geometry, 0) == -ERR_STATE, 243);
+  layout.blockmap = 66;
+  layout.root = 0;
+  REQUIRE(fslayoutcheck(&layout, &geometry, 0) == -ERR_STATE, 244);
+  layout.root = 1;
+  layout.blocks++;
+  REQUIRE(fslayoutcheck(&layout, &geometry, 0) == -ERR_STATE, 245);
   for (i = 0; i < ARRAY_SIZE(images); i++)
     for (j = 0; j < JOURNAL_BYTES; j++)
       images[i][j] = (u8) (0x92 + i * 31 + j * 37);

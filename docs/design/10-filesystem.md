@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage464：`fslayoutcheck` 核对已解码的固定卷布局，并复用设备几何、容量和写入门禁。双架构 QEMU `virtiodev` 使用真实设备的容量与几何，拒绝重叠位图、非法根 inode 和超出设备的卷。10 项日志主机专项通过。盘上 magic、CRC、端序及解码未接入；QEMU 的故障边界仍由夹具显式提供。
+
 stage463：LOAD 缺块提交只交付块号与读票，完成时从独立缓冲接收完整块。双架构 QEMU `runtime` 验证错请求、短块及第一块的迟到完成均不推进当前读票，两块有效完成后才回复原 LOAD；8 项主机 LOAD 专项通过。生产块 IPC 未接入。
 
 stage462：普通 READ 的缺块提交只交付块号和读票，完成时须匹配原 REQUEST 与读票，再从已排空的独立缓冲提交完整块。ARM64、RV64 QEMU `pipeio` 验证错请求和短块保留原读票，正确完成后原 READ 与后续 SEEK 按序回复。生产块运输仍待接入。

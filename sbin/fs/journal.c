@@ -14,7 +14,7 @@ external(const Journal *journal, const void *out, u64 bytes)
 static int
 home(u64 block, u64 blocks)
 {
-  return block >= 65 && block < blocks;
+  return block >= FS_INODE_MAP && block < blocks;
 }
 static int
 hometargets(const Journalblock *metadata, u32 count, u64 blocks)
