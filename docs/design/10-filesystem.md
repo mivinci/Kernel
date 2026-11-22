@@ -729,6 +729,8 @@ FORK_SNAPSHOT/FORK_PREPARE/EXEC_PREPARE固定参数占args的64字节[pid,image,
 
 TTYCTL子码GETATTR=1、SETATTR=2、DRAIN=3、FLUSH=4、GETSIZE=5、SETSIZE=6；Termarg=80字节[iflag,oflag,cflag,lflag,ispeed,ospeed,cc[32]]，前6个u64，cc字节数组32；只接受11列出的位与控制字符，cflag首版8位/无奇偶/1停止位，未知组合ENOTSUP，速度只支持启动设备既定速率。尺寸四u32 rows/cols/xpixel/ypixel，总16；PTY后续扩展沿此TTY接口，不让term持设备权限。
 
+`proto/file.h` 的 `Filestat` 对应上述 128 字节线记录，时间的秒字段有符号。现有记录没有公开 `struct stat` 所需的 `st_rdev`，用于描述字符或块设备节点自身的设备号。候选使用最后一个保留字表示 `rdev`，普通节点写零，`dev` 仍表示节点所在卷；确认前保留原布局与字段含义，不接入公开接口。
+
 GETATTR 的 arg0/arg1 为零，data_bytes 为 80，data_off 指向一页内预留的输出。成功回复 `[0,seq,0,80]`，原数据页只改写这 80 字节。
 
 磁盘格式1只支持4 KiB块、最大128 MiB、1024个128字节inode：block0超级块，1日志头，2..17最多16个日志镜像，18提交块，19..64保留；65 inode位图，66块位图，67..98 inode表，99起数据。inode0无效、inode1根目录。超级块首128字节：magic(u64)、format(u32)=1、blocksize(u32)=4096、blocks(u64)、inodes(u32)=1024、root(u32)=1、log_start(u64)=1、log_blocks(u64)=64、inode_bitmap(u64)=65、block_bitmap(u64)=66、inode_start(u64)=67、data_start(u64)=99、uuid[16]、crc32c(u32)@96、reserved[28]；CRC32C覆盖首128字节并将crc字段置0，余块必须0。

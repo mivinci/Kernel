@@ -35,6 +35,7 @@
 #define FS_SEEK_CUR         1
 #define FS_SEEK_END         2
 #define FS_STAT             9
+#define FS_STAT_BYTES       128
 #define FS_PATH             10
 #define FS_POLL_QUERY       11
 #define FS_POLL_WAIT        12
@@ -74,6 +75,7 @@ typedef Protohead          Filehead;
 typedef Protoslot          Fileslot;
 typedef struct Fileinherit Fileinherit;
 typedef struct Filepoll    Filepoll;
+typedef struct Filestat    Filestat;
 /* One descriptor row of a FORK/EXEC preparation snapshot. */
 struct Fileinherit
 {
@@ -83,6 +85,20 @@ struct Filepoll
 {
   u64 session, fd_generation, events, revents;
 };
+/* Wire result for STAT. This type is separate from the public struct stat. */
+struct Filestat
+{
+  u64     dev, ino, mode, nlink, uid, gid, size, blksize, blocks;
+  int64_t atime_sec;
+  u64     atime_ns;
+  int64_t mtime_sec;
+  u64     mtime_ns;
+  int64_t ctime_sec;
+  u64     ctime_ns, reserved;
+};
+STATIC_ASSERT(sizeof(Filestat) == FS_STAT_BYTES, file_stat_size);
+STATIC_ASSERT(offsetof(Filestat, atime_sec) == 72, file_stat_atime);
+STATIC_ASSERT(offsetof(Filestat, reserved) == 120, file_stat_reserved);
 STATIC_ASSERT(sizeof(Filepoll) == 32 && FS_POLL_ROWS * sizeof(Filepoll) == FS_SLOT_BYTES,
               file_poll_rows_fit_page);
 STATIC_ASSERT(offsetof(Filepoll, revents) == 24, file_poll_output_offset);
