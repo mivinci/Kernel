@@ -38,6 +38,7 @@ typedef struct Reclaimtx   Reclaimtx;
 typedef struct Reclaimscan Reclaimscan;
 typedef struct Inodemap    Inodemap;
 typedef struct Inodealloc  Inodealloc;
+typedef struct Dirinsert   Dirinsert;
 typedef struct Shrink      Shrink;
 struct Journalmark
 {
@@ -100,6 +101,12 @@ struct Inodealloc
   struct Loadmap *live;
   Inodemap       *inodes;
   u64             txid, inode, generation;
+};
+struct Dirinsert
+{
+  u64          parent;
+  Journalblock directory;
+  const u8    *parentimage;
 };
 struct Shrink
 {
@@ -173,11 +180,16 @@ isize journalinodefree(Reclaimtx *, Journal *, struct Cache *, struct Loadmap *,
 /* Stage an empty inode from an unallocated decoded row. Generation 0 is a
    never-used slot; UINT32_MAX is exhausted. The root is never allocated here. */
 isize inodeallocstage(const Inodemap *, const struct Loadmap *, struct Loadmap *);
-/* Commit the inode row and bitmap together. The caller holds the volume
-   writer, keeps the slot unpublished and supplies immutable encoded records.
-   The new identity becomes available only after the durable EMPTY record. */
+/* Commit the inode row and bitmap together, optionally with an insertion
+   into an existing directory block. The caller holds the volume writer and
+   namespace guards, validates absence and directory ownership, and supplies
+   immutable encoded records. Target order: child inode table, inode bitmap,
+   directory, then parent inode table if distinct. When the table is shared,
+   encoded->inode contains both rows and parentimage must be NULL. This
+   path does not grow the directory. Keep the name and slot unpublished and
+   exclude readers until publication or recovery. */
 isize journalinodealloc(Inodealloc *, Journal *, struct Cache *, Inodemap *, struct Loadmap *,
-                        const struct Loadmap *, const Mapmeta *);
+                        const struct Loadmap *, const Mapmeta *, const Dirinsert *);
 isize inodeallocpublish(Inodealloc *);
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */

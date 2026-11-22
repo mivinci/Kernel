@@ -1972,6 +1972,7 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   Shrink     shrink = {0};
   Inodemap   inodes = {{7}};
   Inodealloc reuse = {0};
+  Dirinsert  insert = {FS_ROOT, {110, maprecords[2]}, NULL};
   Loadmap    staged;
   Loadspan   span;
   Journal    journal;
@@ -2069,17 +2070,42 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   CHECK(!inodeallocstage(&inodes, shortened, &staged) && staged.file.generation == 2 &&
         !staged.file.length && staged.file.version == 1);
   meta.inode = maprecords[0];
-  CHECK(!journalinodealloc(&reuse, &journal, cache, &inodes, shortened, &staged, &meta) &&
-        journal.metadata_count == 2 && journal.metadata[0].block == FS_INODE_START &&
-        journal.metadata[1].block == FS_INODE_MAP);
+  CHECK(cachefetch(cache, 110, CACHE_META, &fill, &bytes) == 1 && !cachecomplete(cache, &fill, 1) &&
+        !cacheget(cache, 110, CACHE_META, &key) &&
+        journalinodealloc(&reuse, &journal, cache, &inodes, shortened, &staged, &meta, &insert) ==
+            -ERR_BUSY &&
+        journal.phase == JOURNAL_IDLE && !reuse.txid && !cacheput(cache, &key));
+  CHECK(!journalinodealloc(&reuse, &journal, cache, &inodes, shortened, &staged, &meta, &insert) &&
+        journal.metadata_count == 3 && journal.metadata[0].block == FS_INODE_START &&
+        journal.metadata[1].block == FS_INODE_MAP && journal.metadata[2].block == 110);
   for (steps = 0; journal.phase != JOURNAL_DONE; steps++)
     CHECK(steps < 20 && inodes.used[0] == 3 && shortened->file.generation == 1 &&
           inodeallocpublish(&reuse) == -ERR_WOULD_BLOCK && !journalnext(&journal, &io) &&
           !journalcomplete(&journal, &io, 1));
+  CHECK(cachefetch(cache, 110, CACHE_META, &fill, &bytes) == 1 && !cachecomplete(cache, &fill, 1) &&
+        !cacheget(cache, 110, CACHE_META, &key) && inodeallocpublish(&reuse) == -ERR_BUSY &&
+        inodes.used[0] == 3 && shortened->file.generation == 1 && !cacheput(cache, &key));
   CHECK(!inodeallocpublish(&reuse) && journal.last == 5 && inodes.used[0] == 7 &&
         shortened->file.generation == 2 && !shortened->file.length &&
         inodeallocpublish(&reuse) == -ERR_STALE &&
         inodeallocstage(&inodes, shortened, &staged) == -ERR_BUSY);
+  {
+    static u8 parentimage[FS_BLOCK_BYTES];
+    Loadmap   child = {{32, 0, 0, 0}, {0}, 0};
+    CHECK(!inodeallocstage(&inodes, &child, &staged) &&
+          journalinodealloc(&reuse, &journal, cache, &inodes, &child, &staged, &meta, &insert) ==
+              -ERR_INVALID);
+    insert.parentimage = parentimage;
+    CHECK(!journalinodealloc(&reuse, &journal, cache, &inodes, &child, &staged, &meta, &insert) &&
+          journal.metadata_count == 4 && journal.metadata[0].block == FS_INODE_START + 1 &&
+          journal.metadata[1].block == FS_INODE_MAP && journal.metadata[2].block == 110 &&
+          journal.metadata[3].block == FS_INODE_START && journal.metadata[3].bytes == parentimage);
+    for (steps = 0; journal.phase != JOURNAL_HOME_WRITE; steps++)
+      CHECK(steps < 20 && !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+    CHECK(!journalnext(&journal, &io) && !journalcomplete(&journal, &io, 0) &&
+          inodeallocpublish(&reuse) == -ERR_STATE && journal.last == 5 && !child.file.generation &&
+          inodes.used[0] == 7);
+  }
 }
 
 static void

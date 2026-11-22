@@ -537,11 +537,12 @@ inodeallocstage(const Inodemap *inodes, const Loadmap *live, Loadmap *out)
 
 isize
 journalinodealloc(Inodealloc *work, Journal *journal, Cache *cache, Inodemap *inodes, Loadmap *live,
-                  const Loadmap *staged, const Mapmeta *encoded)
+                  const Loadmap *staged, const Mapmeta *encoded, const Dirinsert *insert)
 {
-  Journalblock metadata[2];
+  Journalblock metadata[4];
   Journalplan  plan;
-  u64          blocks[2];
+  u64          blocks[4];
+  u32          count = 2;
   isize        error;
   if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
       !separate(live, sizeof(*live), inodes, sizeof(*inodes)) ||
@@ -561,11 +562,28 @@ journalinodealloc(Inodealloc *work, Journal *journal, Cache *cache, Inodemap *in
   blocks[1] = FS_INODE_MAP;
   metadata[0] = (Journalblock){blocks[0], encoded->inode};
   metadata[1] = (Journalblock){blocks[1], encoded->bitmap};
-  plan = (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, NULL, 2, 0};
+  if (insert) {
+    u64 parent = insert->parent, table;
+    if (parent < FS_ROOT || parent >= FS_INODES ||
+        !(inodes->used[parent / 64] & (UINT64_C(1) << (parent % 64))) ||
+        insert->directory.block < FS_DATA_START)
+      return -ERR_INVALID;
+    table = FS_INODE_START + parent / (FS_BLOCK_BYTES / FS_INODE_BYTES);
+    if ((table != blocks[0]) != !!insert->parentimage)
+      return -ERR_INVALID;
+    metadata[count] = insert->directory;
+    blocks[count++] = insert->directory.block;
+    if (table != blocks[0]) {
+      metadata[count] = (Journalblock){table, insert->parentimage};
+      blocks[count++] = table;
+    }
+  }
+  plan =
+      (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, NULL, count, 0};
   error = journalbegin(journal, &plan);
   if (error)
     return error;
-  error = cacheforget(cache, blocks, 2);
+  error = cacheforget(cache, blocks, count);
   if (error) {
     clear(journal);
     journal->phase = JOURNAL_IDLE;
@@ -580,7 +598,8 @@ isize
 inodeallocpublish(Inodealloc *work)
 {
   Journal *journal;
-  u64      blocks[2];
+  u64      blocks[4];
+  u32      i;
   isize    error;
   if (!work || !(journal = work->journal) || !work->txid || journal->txid != work->txid)
     return -ERR_STALE;
@@ -593,9 +612,11 @@ inodeallocpublish(Inodealloc *work)
   error = inodealloccheck(work->inodes, work->live);
   if (error)
     return error;
-  blocks[0] = journal->metadata[0].block;
-  blocks[1] = journal->metadata[1].block;
-  error = cacheforget(work->cache, blocks, 2);
+  if (journal->metadata_count < 2 || journal->metadata_count > sizeof(blocks) / sizeof(*blocks))
+    return -ERR_STATE;
+  for (i = 0; i < journal->metadata_count; i++)
+    blocks[i] = journal->metadata[i].block;
+  error = cacheforget(work->cache, blocks, journal->metadata_count);
   if (!error)
     error = journalrelease(journal);
   if (error)
