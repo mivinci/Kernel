@@ -794,6 +794,8 @@ stage552：异步日志推进在 STOPPED 时立即返回 STATE，即使原 I/O �
 
 stage553：下层明确未提交且返回 WOULD_BLOCK 时，异步日志保持当前阶段与游标，作废本次票据并等下层就绪后用新序号重试。已提交或结果未知的请求不经此路径。48 项 FS 主机测试验证临时背压、精确重试和旧票据拒绝；双架构 QEMU `virtiodev` 通过正常块 I/O 回归。
 
+stage554：提交回调无法证明设备没有取得请求时，可显式返回 `JOURNAL_SUBMIT_UNCERTAIN`。日志立即停止，原票据和快照保留到下层实际排空；排空不恢复事务，也不推进最后退休编号。49 项 FS 主机测试覆盖此分支，ARM64/RV64 QEMU `virtiodev` 正常块 I/O 回归通过；QEMU 未注入提交结果未知。
+
 stage539：`journalinodefree` 在孤儿引用和块指针全部清空后，用最后一笔事务清 inode 位图，保留原 inode 行的 generation 供将来复用。ARM64/RV64 QEMU `pipeio` 验证块批次未退休时拒绝、最终位图仅在日志退休后可见以及重复发布被拒；46 项 FS 主机测试通过。生产编码和 inode 再分配待接。
 
 stage538：无引用孤儿可用同一回收日志分批清除全部块，包含仍在原 EOF 内的数据；inode 槽保持分配。ARM64/RV64 QEMU `pipeio` 验证带引用时拒绝、无引用后可提交块回收，末次 FLUSH 失败时指针和位图不提前发布。46 项 FS 主机测试通过。最终 inode 槽退休和生产候选接线待做。

@@ -1105,6 +1105,11 @@ journalpump(Journal *journal, isize (*submit)(void *, const Journalio *, u64, u3
   error = journalrange(journal, &io, &offset, &bytes);
   if (!error) {
     error = submit(context, &io, offset, bytes);
+    if (error > 0) {
+      /* Conservatively retain ownership even for an invalid positive result. */
+      journalstop(journal);
+      return -ERR_STATE;
+    }
     if (error == -ERR_WOULD_BLOCK && journal->phase != JOURNAL_STOPPED &&
         pendingmatch(journal, &io)) {
       /* No lower I/O was started. Keep the cursor but burn the ticket. */

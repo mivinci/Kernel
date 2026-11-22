@@ -247,6 +247,27 @@ class FsJournalTests(unittest.TestCase):
             self.assertEqual(lib.journalcomplete(self.j, C.byref(old), 1), -4)
             self.complete(new)
 
+    def test_unknown_submission_keeps_snapshot_until_original_ticket_drains(self):
+        for lib in self.libs:
+            self.init(lib)
+            self.begin()
+            requests = []
+
+            @Submit
+            def uncertain(_, ticket, offset, size):
+                requests.append(Ticket.from_buffer_copy(bytes(ticket.contents)))
+                return 1
+
+            self.assertEqual(lib.journalpump(self.j, uncertain, None), -6)
+            self.assertEqual((self.journal.phase, self.journal.active), (STOPPED, 1))
+            self.assertTrue(self.journal.header)
+            self.assertEqual(lib.journalpump(self.j, uncertain, None), -6)
+            self.assertEqual(lib.journalrelease(self.j), -11)
+            self.assertEqual(len(requests), 1)
+            self.complete(requests[0])
+            self.assertEqual(lib.journalrelease(self.j), 0)
+            self.assertEqual((self.journal.phase, self.journal.last), (STOPPED, 7))
+
     def test_begin_rejects_invalid_geometry_targets_counts_and_aliases_atomically(self):
         for lib in self.libs:
             self.init(lib);self.assertEqual(lib.journalinit(C.byref(Journal()),99,0),-1)

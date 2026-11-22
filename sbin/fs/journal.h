@@ -19,6 +19,8 @@
 #define JOURNAL_EMPTY_FLUSH 10
 #define JOURNAL_DONE        11
 #define JOURNAL_STOPPED     12
+
+#define JOURNAL_SUBMIT_UNCERTAIN 1
 typedef struct Journal      Journal;
 typedef struct Journalblock Journalblock;
 typedef struct Journalplan  Journalplan;
@@ -264,9 +266,11 @@ isize journalrange(const Journal *, const Journalio *, u64 *offset, u32 *bytes);
    result guarantees no lower access remains. WOULD_BLOCK means temporary
    backpressure before submission: the cursor stays put and the owner
    retries on readiness with a fresh ticket. Other failures stop the run.
-   Completion is delivered via
-   journalcomplete after drain. A stopped journal reports STATE even while
-   its last ticket is still held; that error does not release ownership.
+   If the transport cannot prove there is no lower access, it copies the
+   ticket and returns JOURNAL_SUBMIT_UNCERTAIN; the pump returns STATE and
+   retains the outstanding ticket. Complete only after drain. A stopped
+   journal reports STATE even while its last ticket is still held;
+   that error does not release ownership.
    The owner retains snapshots and publishes or hands off to recovery. */
 isize journalpump(Journal *, isize (*submit)(void *, const Journalio *, u64, u32), void *);
 /* Call only when all lower access for this exact ticket has actually drained.
