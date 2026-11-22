@@ -10,7 +10,8 @@ struct timespec
   long   tv_nsec;
 };
 
-int clock_gettime(clockid_t clock, struct timespec *value);
-int clock_getres(clockid_t clock, struct timespec *value);
-int nanosleep(const struct timespec *request, struct timespec *remaining);
+int    clock_gettime(clockid_t clock, struct timespec *value);
+int    clock_getres(clockid_t clock, struct timespec *value);
+int    nanosleep(const struct timespec *request, struct timespec *remaining);
+time_t time(time_t *result);
 #endif

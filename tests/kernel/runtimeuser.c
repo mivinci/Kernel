@@ -14,6 +14,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/channel.h>
+#include <sys/time.h>
 #include <time.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -775,6 +776,19 @@ timecheck(void)
   TCHECK(!clock_gettime(CLOCK_REALTIME, &before) && errno == EDOM && before.tv_nsec < 1000000000,
          265);
 #undef TCHECK
+  {
+    struct timeval wall;
+    time_t         seconds = -1, value;
+    REQUIRE(!gettimeofday(&wall, NULL) && wall.tv_usec >= 0 && wall.tv_usec < 1000000 &&
+                wall.tv_sec >= before.tv_sec && errno == EDOM,
+            317);
+    value = time(&seconds);
+    REQUIRE(value == seconds && value >= wall.tv_sec && time(NULL) >= value && errno == EDOM, 318);
+    REQUIRE(gettimeofday(&wall, &seconds) == -1 && errno == EINVAL &&
+                gettimeofday(NULL, NULL) == -1 && errno == EFAULT &&
+                time((time_t *) (uintptr_t) 1) == -1 && errno == EFAULT,
+            319);
+  }
   return checks;
 }
 static void

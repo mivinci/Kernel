@@ -48,6 +48,8 @@
 
 补充本阶段接口：clock_settime（time.h），仅支持受明确校时授权限制的 CLOCK_REALTIME；clock_getres 返回实际分辨率。时间来源/可信校准状态属于原生扩展，不因成功设置时间自动成立。具体契约及用例见 [时间接口](05-events.md)，当前未实现。
 
+`time(time_t *)` 与 BusyBox 兼容接口 `gettimeofday(struct timeval *, void *)` 共用既有 CLOCK_REALTIME 和未校时策略。`time` 返回并可选写出有符号 64 位秒数；`gettimeofday` 截断纳秒到微秒，第二参数须为 NULL，不输出历史时区结构。坏输出地址返回 EFAULT；成功保留 `errno`。`gettimeofday` 属于源码兼容接口，`times()` 的进程 CPU 计时是独立 ABI。
+
 标准输出由 libc 的不透明 `FILE` 绑定 fd 1/2。`stdout` 首次写入时按终端检测选择行缓冲或全缓冲；`stderr` 不缓冲。先开放 `fwrite`、`fputs`、`fputc`/`putc`、`fflush`、`ferror`/`clearerr` 及 `printf`/`fprintf` 和其 `va_list` 形式。I/O 失败记住流错误，`clearerr` 清除。正常退出在回调和析构之后刷新输出；`_exit` 不刷新。
 
 `stdin` 绑定 fd 0，提供 `fgetc`/`getc`/`getchar`、`fgets`、`fread`、`ungetc` 和 `feof`。固定缓冲按需预读；EOF 与 I/O 错误分开，`clearerr` 同时清除两种指示。允许回推一字节并清除 EOF。刷新可定位输入时，把 fd 偏移调回流的逻辑位置并丢弃回推；对管道等不可定位流，保留预读的真实字节并丢弃回推。`fflush(NULL)` 同时处理输出和输入。核对规范：[fflush](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fflush.html)、[fgets](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fgets.html)、[ungetc](https://pubs.opengroup.org/onlinepubs/9799919799/functions/ungetc.html)。
@@ -146,6 +148,8 @@ T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与�
 不以本里程碑声明 POSIX shell 或完整 POSIX 已达标。
 
 ## 执行与验收
+
+ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实时时钟、输出秒数和规范化微秒，成功保留 `errno`，拒绝不支持的时区输出和无效地址。此验收不覆盖 `times()` 的进程 CPU 计时。
 
 libc 的私有 `pathsearch` 实现按固定 PATH 快照查找命令的顺序，供后续 `posix_spawnp` 与 sh 共用：名称含 `/` 时直接尝试；空路径分量从 cwd 尝试；ENOENT、ENOTDIR 继续搜索，遇 EACCES 记下并继续，没有成功项时优先返回 EACCES。ENOEXEC 原样返回，不启动脚本替代。最多 32 个分量，PATH 和单个候选路径各最多 4096 字节（含 NUL），不截断。4 项主机测试用回调核对候选顺序、失败归并和容量边界，ARM64/RV64 SDK 构建通过。此处尚未调用文件系统或发布进程。
 

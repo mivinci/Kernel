@@ -41,7 +41,9 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 用同样的包含路径和目标架构，对 `shell/ash.c`、`libbb/xatonum.c` 加 `-include include/autoconf.h -M -MG`，可在首个缺失头之后继续收集依赖。两架构均报告以下未解析的系统头：`dirent.h`、`grp.h`、`libgen.h`、`mntent.h`、`paths.h`、`pwd.h`、`sys/ioctl.h`、`sys/mman.h`、`sys/param.h`、`sys/resource.h`、`sys/stat.h`、`sys/statfs.h`、`sys/sysmacros.h`、`sys/time.h`、`sys/times.h`、`sys/utsname.h`、`arpa/inet.h`、`netdb.h`、`sys/socket.h`。这是预处理依赖。上游 `libbb.h` 的公共声明需要套接字类型，而且 `inet_common.o`、`xconnect.o` 等在 `libbb/Kbuild` 中无条件构建；仅关闭网络 applet 不会去掉这些依赖。移植应隔离未使用的声明和对象，再复查启用的 applet 是否仍引用网络代码。补齐头之后仍需检查编译、链接及运行，不能用 `-M -MG` 代替这些验收。
 
-上述扫描之后，公开 SDK 已补齐 `libgen.h`，见 [POSIX 验收记录](../design/15-posix.md#执行与验收)。
+上述扫描之后，公开 SDK 已补齐 `libgen.h` 和 `sys/time.h`，见 [POSIX 验收记录](../design/15-posix.md#执行与验收)。`sys/times.h` 仍待进程 CPU 计时 ABI 收口。
+
+准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，另外各十个单元均在 `dirent.h` 停住；依赖日志确认 `sys/time.h` 已从目标 SDK 解析。探针不执行完整构建或链接。
 
 **阶段 C：最小 applet 集合跑通**
 

@@ -18,6 +18,9 @@ SHA256 = '3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4'
 HERE = Path(__file__).resolve().parent
 OPTION = re.compile(r'(?:# )?(CONFIG_[A-Z0-9_]+)(?:=.*| is not set)')
 APPLETS = ('ash', 'cat', 'cp', 'echo', 'ls', 'mkdir', 'mv', 'rm', 'sh', 'sleep', 'test')
+TARGETS = {'arm64': 'aarch64-none-elf', 'riscv': 'riscv64-none-elf'}
+PROBES = ('shell/ash.c', 'libbb/xatonum.c',
+          *(f'coreutils/{name}.c' for name in APPLETS if name not in ('ash', 'sh')))
 
 
 def options(lines):
@@ -99,13 +102,54 @@ def prepare(archive, out):
     return source
 
 
+def probe(source, out, sdk, clang):
+    resource = subprocess.check_output([clang, '-print-resource-dir'], text=True, timeout=10)
+    builtin = Path(resource.strip()).resolve() / 'include'
+    if not (builtin / 'stdarg.h').is_file():
+        raise ValueError(f'Clang builtin headers missing: {builtin}')
+    passed = True
+    for arch, directory in sdk.items():
+        included = Path(directory).resolve() / 'include'
+        if not (included / 'unistd.h').is_file():
+            raise ValueError(f'public SDK headers missing: {included}')
+        command = [clang, f'--target={TARGETS[arch]}', '-std=gnu99', '-ffreestanding',
+                   '-nostdinc', '-I', 'include', '-isystem', str(included),
+                   '-isystem', str(builtin), '-include', 'include/autoconf.h']
+        with (out / f'{arch}-deps.log').open('x') as log:
+            subprocess.run([*command, '-M', '-MG', *PROBES], cwd=source, stdout=log,
+                           stderr=subprocess.STDOUT, timeout=120, check=True)
+        for unit in PROBES:
+            logpath = out / f'{arch}-{unit.replace("/", "-")}.log'
+            with logpath.open('x') as log:
+                args = [*command, '-fsyntax-only', unit]
+                log.write(shlex.join(args) + '\n')
+                log.flush()
+                result = subprocess.run(args, cwd=source, stdout=log,
+                                        stderr=subprocess.STDOUT, timeout=30)
+            if result.returncode:
+                print(f'{arch}: {unit} did not compile: {logpath}', file=sys.stderr)
+                passed = False
+    return passed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('archive', type=Path)
     parser.add_argument('out', type=Path, help='new directory for source and logs')
+    parser.add_argument('--probe-sdk', action='append', nargs=2, metavar=('ARCH', 'SDK'),
+                        default=[], help='check selected sources against a public SDK')
+    parser.add_argument('--clang', default='clang', help='Clang used by the target probe')
     args = parser.parse_args()
     try:
-        print(prepare(args.archive, args.out.resolve()))
+        sdks = dict(args.probe_sdk)
+        if len(sdks) != len(args.probe_sdk) or sdks.keys() - TARGETS.keys():
+            raise ValueError('specify each probe SDK architecture once: arm64, riscv')
+        out = args.out.resolve()
+        source = prepare(args.archive, out)
+        print(source, flush=True)
+        clang = str(Path(args.clang).resolve()) if '/' in args.clang else args.clang
+        if sdks and not probe(source, out, sdks, clang):
+            return 1
     except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError) as error:
         print(error, file=sys.stderr)
         return 1

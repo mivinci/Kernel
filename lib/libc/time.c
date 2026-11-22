@@ -1,4 +1,5 @@
 #include <time.h>
+#include <sys/time.h>
 #include <errno.h>
 #include "private/syscall.h"
 
@@ -44,4 +45,37 @@ int
 clock_getres(clockid_t clock, struct timespec *value)
 {
   return clockread(clock, value, 1);
+}
+
+int
+gettimeofday(struct timeval *value, void *timezone)
+{
+  struct timespec now;
+  struct timeval  local;
+  if (timezone) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (clock_gettime(CLOCK_REALTIME, &now))
+    return -1;
+  local.tv_sec = now.tv_sec;
+  local.tv_usec = now.tv_nsec / 1000;
+  if (__sys_copy(value, &local, sizeof(local))) {
+    errno = EFAULT;
+    return -1;
+  }
+  return 0;
+}
+
+time_t
+time(time_t *result)
+{
+  struct timespec now;
+  if (clock_gettime(CLOCK_REALTIME, &now))
+    return (time_t) -1;
+  if (result && __sys_copy(result, &now.tv_sec, sizeof(now.tv_sec))) {
+    errno = EFAULT;
+    return (time_t) -1;
+  }
+  return now.tv_sec;
 }
