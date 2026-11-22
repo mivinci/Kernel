@@ -459,7 +459,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                 !readwork.request && !readwork.span.cache);
         }
       }
-      for (i = 0; i < 3; i++) {
+      for (i = 0; i < 5; i++) {
         const Termarg mode = {
             TTY_ICRNL, TTY_OPOST | TTY_ONLCR, TTY_CS8, TTY_ICANON | TTY_ECHO, 115200, 115200, {3}};
         const u8    *bytes = (const u8 *) &mode;
@@ -471,12 +471,22 @@ serviceloop(const Bootview *boot, u32 interrupt)
               row.object == file.session[PIPE_READ] && row.args[0] == TTY_GETATTR && !row.args[1] &&
               !row.args[2] && !row.args[3] && row.args[4] == sizeof(mode) &&
               row.payload_bytes == sizeof(mode));
-        page = (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
-        for (j = 0; j < sizeof(mode); j++)
-          page[j] = bytes[j];
         attrs.words[1] = row.seq;
-        if (!i)
-          attrs.words[3]--;
+        if (i == 3) {
+          u64 state;
+          CHECK(!ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1));
+          CHECK(!ipc_recv(0, 0, &gate) && gate.source == target.target &&
+                gate.words[0] == PIPETEST && !ipc_rqcheck(request.request, &state) &&
+                state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) && !ipc_reply(gate.request, &reply));
+          attrs.words[0] = (u64) -EINTR;
+          attrs.words[3] = 0;
+        } else {
+          page = (volatile u8 *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES);
+          for (j = 0; j < sizeof(mode); j++)
+            page[j] = bytes[j];
+          if (!i)
+            attrs.words[3]--;
+        }
         CHECK(!ipc_reply(request.request, &attrs) &&
               !sysfilefinish(&link.watch.active, request.request));
       }
@@ -778,8 +788,15 @@ interruptclient(void)
           attrs.c_oflag == (OPOST | ONLCR) && attrs.c_cflag == CS8 &&
           attrs.c_lflag == (ICANON | ECHO) && attrs.c_ispeed == 115200 &&
           attrs.c_ospeed == 115200 && attrs.c_cc[VINTR] == 3 && !attrs.c_cc[VQUIT] &&
+          tcgetattr(-1, &attrs) == -1 && errno == EBADF);
+    action.sa_flags = 0;
+    release_read = 1;
+    CHECK(!sigaction(SIGUSR1, &action, NULL) && !isatty(fd) && errno == EINTR && caught == 9);
+    release_read = 0;
+    errno = EBUSY;
+    CHECK(isatty(fd) == 1 && errno == EBUSY && !isatty(fds[0]) && errno == ENOTTY &&
           tcgetattr(fds[0], &attrs) == -1 && errno == ENOTTY && attrs.c_ispeed == 115200 &&
-          tcgetattr(-1, &attrs) == -1 && errno == EBADF && !close(fd));
+          !close(fd) && !isatty(fd) && errno == EBADF);
   }
   data[0] = 'p';
   data[1] = 'q';

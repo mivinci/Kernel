@@ -134,6 +134,10 @@ T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与�
 
 ## 执行与验收
 
+stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
+
+ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。
+
 stage446：`int tcgetattr(int fd, struct termios *attributes)` 由 libc 提供，头文件为 `termios.h`。按 [POSIX.1-2024 tcgetattr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcgetattr.html) 核对原型、成功返回 0、无效 fd 的 EBADF 和非终端的 ENOTTY。首版公开字段对应 11 篇的标志、控制字符和输入/输出速率，布局与 `Termarg` 一致。libsys 固定原 File，通过同一连接发送 `TTYCTL/GETATTR`，只在原请求完成且序号、返回值和 80 字节长度匹配后写入应用对象。管道后端经会话校验后返回 ENOTTY；坏输出地址返回 EFAULT，格式错误的回复返回 EIO。请求沿原账本处理取消与回收。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证夹具返回属性、坏长度保留输出、坏输出地址后可再次查询，以及管道 ENOTTY 和无效 fd EBADF。17 项请求账本主机测试和格式检查通过。成功属性由测试服务提供，生产 TTY 文件连接仍待接入。

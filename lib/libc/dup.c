@@ -192,3 +192,10 @@ tcgetattr(int fd, struct termios *attributes)
   isize        status = sysfileimagegetattr(__libc_sigdepth(), fd, attributes, &completed);
   return (int) ioresult(FS_TTYCTL, status, &completed);
 }
+
+int
+isatty(int fd)
+{
+  struct termios attributes;
+  return tcgetattr(fd, &attributes) == 0;
+}
