@@ -2,6 +2,7 @@
 #define _FS_BLKREAD_H
 #include "blk.h"
 #include "cache.h"
+#include "dirgraph.h"
 #include "journal.h"
 #include "load.h"
 
@@ -29,6 +30,7 @@ struct Blkredoload
   isize (*indirect)(u32, const u8 *, Loadindex *);
   Loadmap   map;
   Loadindex index;
+  Dirnode  *nodes;
   u32       pending, kind, links;
   u8        bytes[CACHE_BYTES];
 };

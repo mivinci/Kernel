@@ -392,6 +392,11 @@ blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
     if (load->indirect(block, load->bytes, &load->index))
       return -ERR_STATE;
   }
+  if (load->nodes) {
+    if (!load->map.file.generation || load->map.file.generation > UINT32_MAX)
+      return -ERR_STATE;
+    load->nodes[ino] = (Dirnode){load->map.file.generation, load->kind, load->links};
+  }
   *out = (Redoinode){&load->map, block ? &load->index : NULL, load->kind, load->links};
   load->pending = 0;
   return 0;
