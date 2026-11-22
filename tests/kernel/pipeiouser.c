@@ -1784,7 +1784,7 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
   static Writeimage  image;
   static u8          encoded[4][FS_BLOCK_BYTES];
   Openfixture       *fixture = context;
-  Growthmeta         meta = {encoded[0], NULL, NULL, encoded[1], encoded[2], encoded[3]};
+  Mapmeta            meta = {encoded[0], NULL, NULL, encoded[1], encoded[2], encoded[3]};
   Cacheio            ticket;
   Cachekey           key = {0};
   Journalio          io;
@@ -1899,12 +1899,13 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
   openwrite(session, offset, flags, expected, accepted, 0);
 }
 
+static u8 maprecords[6][FS_BLOCK_BYTES];
+
 static void
 openwritejournal(const Loadmap *original, const Writeupdate *update, const Writeimage *image,
                  const Blockmap *prepared)
 {
   static Journal    journal;
-  static u8         snapshots[6][FS_BLOCK_BYTES];
   static Loadindex  index;
   static Blockmap   allocation;
   static Cacheblock entries[2];
@@ -1914,14 +1915,14 @@ openwritejournal(const Loadmap *original, const Writeupdate *update, const Write
   u8               *bytes;
   Growth            work = {0};
   Loadmap           live = *original;
-  Growthmeta meta = {snapshots[0], NULL, snapshots[2], snapshots[3], snapshots[4], snapshots[5]};
-  Journalio  io;
-  u32        i;
+  Mapmeta meta = {maprecords[0], NULL, maprecords[2], maprecords[3], maprecords[4], maprecords[5]};
+  Journalio io;
+  u32       i;
   CHECK(!journalinit(&journal, 128, 7));
   CHECK(!cacheinit(&cache, entries, ARRAY_SIZE(entries), 128));
   CHECK(journalgrowth(&work, &journal, &cache, update, image, &meta) == -ERR_INVALID &&
         journal.phase == JOURNAL_IDLE);
-  meta.bitmap = snapshots[1];
+  meta.bitmap = maprecords[1];
   CHECK(!journalgrowth(&work, &journal, &cache, update, image, &meta) && journal.txid == 8 &&
         journal.metadata_count == 3 && journal.metadata[0].block == FS_INODE_START &&
         journal.metadata[1].block == FS_BLOCK_MAP && journal.metadata[2].block == 102);
@@ -1959,13 +1960,69 @@ openwritejournal(const Loadmap *original, const Writeupdate *update, const Write
 }
 
 static void
+openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, Cache *cache,
+                   const Blockmap *busy)
+{
+  Mapmeta  meta = {NULL, maprecords[1], maprecords[2], maprecords[3], maprecords[4], maprecords[5]};
+  Blockmap prepared = *allocation;
+  Reclaim  batch;
+  Reclaimtx work = {0};
+  Journal   journal;
+  Journalio io;
+  Cachekey  key = {0};
+  Cacheio   fill;
+  u8       *bytes;
+  u64       original = allocation->used[1];
+  u32       steps;
+  CHECK(!journalinit(&journal, 128, 0) &&
+        loadreclaim(shortened, index, 99, 128, busy, &prepared, &batch) == 1 && batch.count == 1 &&
+        batch.blocks[0] == 101 && batch.indexdirty && !batch.index.entries[0] &&
+        batch.map.indirect == 102 && index->entries[0] == 101);
+  CHECK(!cacheget(cache, 101, CACHE_DATA, &key) &&
+        journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) ==
+            -ERR_BUSY &&
+        journal.phase == JOURNAL_IDLE && !work.txid && !cacheput(cache, &key));
+  CHECK(!journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) &&
+        !journal.data_count && journal.metadata_count == 2 &&
+        journal.metadata[0].block == FS_BLOCK_MAP && journal.metadata[1].block == 102);
+  for (steps = 0; journal.phase != JOURNAL_DONE; steps++) {
+    CHECK(steps < 20 && reclaimpublish(&work) == -ERR_WOULD_BLOCK &&
+          allocation->used[1] == original && index->entries[0] == 101 &&
+          !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+  }
+  CHECK(!cacheget(cache, 101, CACHE_DATA, &key) && reclaimpublish(&work) == -ERR_BUSY &&
+        journal.phase == JOURNAL_DONE && allocation->used[1] == original &&
+        !cacheput(cache, &key) && !reclaimpublish(&work) && journal.last == 1 &&
+        allocation->used[1] == prepared.used[1] && !index->entries[0] &&
+        shortened->indirect == 102 && reclaimpublish(&work) == -ERR_STALE &&
+        cachefetch(cache, 101, CACHE_DATA, &fill, &bytes) == 1 && !cachecomplete(cache, &fill, 0));
+  CHECK(journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) ==
+        -ERR_STALE);
+
+  CHECK(loadreclaim(shortened, index, 99, 128, busy, &prepared, &batch) == 1 && batch.count == 1 &&
+        batch.blocks[0] == 102 && !batch.indexdirty && !batch.map.indirect);
+  meta.inode = maprecords[0];
+  meta.index = NULL;
+  CHECK(!journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) &&
+        journal.metadata_count == 2 && journal.metadata[0].block == FS_INODE_START &&
+        journal.metadata[1].block == FS_BLOCK_MAP);
+  for (steps = 0; journal.phase != JOURNAL_EMPTY_FLUSH; steps++)
+    CHECK(steps < 20 && !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+  CHECK(journal.durable && !journalnext(&journal, &io) &&
+        reclaimpublish(&work) == -ERR_WOULD_BLOCK && !journalcomplete(&journal, &io, 0) &&
+        reclaimpublish(&work) == -ERR_STATE && !journalrelease(&journal) && journal.last == 1 &&
+        shortened->indirect == 102 && index->block == 102 &&
+        allocation->used[1] == (original ^ (UINT64_C(1) << (101 - 64))));
+}
+
+static void
 openwritestage(void)
 {
   static Writeimage  image;
   static Writeupdate update;
   static Blockmap    allocation;
   static Blockmap    busy;
-  static Reclaim     first, second;
+  static Reclaim     blocked;
   static Cacheblock  entries[2];
   static u8          tail[FS_BLOCK_BYTES];
   const Loadmap      map = {{2, 1, 1, 20}, {100}, 0};
@@ -2011,18 +2068,13 @@ openwritestage(void)
   CHECK(!cacheinit(&cache, entries, ARRAY_SIZE(entries), 128) &&
         !cacheget(&cache, 101, CACHE_DATA, &key) && !cachereadbegin(&cache, &key, &fill, &bytes) &&
         !cacheput(&cache, &key) && !cachebusy(&cache, &busy) &&
-        loadreclaim(&shortened, &update.index, 99, 128, &busy, &allocation, &first) == -ERR_BUSY &&
-        !first.count && allocation.used[1] == UINT64_MAX);
-  CHECK(!cachecomplete(&cache, &fill, 1) && !cachebusy(&cache, &busy) &&
-        loadreclaim(&shortened, &update.index, 99, 128, &busy, &allocation, &first) == 1 &&
-        first.count == 1 && first.blocks[0] == 101 && first.indexdirty && !first.index.entries[0] &&
-        first.map.indirect == 102 && shortened.indirect == 102 && update.index.entries[0] == 101);
-  CHECK(loadreclaim(&first.map, &first.index, 99, 128, &busy, &allocation, &second) == 1 &&
-        second.count == 1 && second.blocks[0] == 102 && !second.indexdirty &&
-        !second.map.indirect && second.map.direct[0] == 100 &&
-        allocation.used[1] == (UINT64_MAX ^ (UINT64_C(3) << (101 - 64))) &&
-        !loadmapwrite(&second.map, NULL, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) &&
-        !growth.block && growth.newindex && growth.tail == 100 && growth.zerooff == 20);
+        loadreclaim(&shortened, &update.index, 99, 128, &busy, &allocation, &blocked) ==
+            -ERR_BUSY &&
+        !blocked.count && allocation.used[1] == UINT64_MAX);
+  CHECK(!cachecomplete(&cache, &fill, 1) && !cachebusy(&cache, &busy));
+  openreclaimjournal(&shortened, &update.index, &allocation, &cache, &busy);
+  CHECK(!loadmapwrite(&shortened, &update.index, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) &&
+        !growth.block && !growth.newindex && growth.tail == 100 && growth.zerooff == 20);
 }
 
 typedef struct Loadfixture Loadfixture;

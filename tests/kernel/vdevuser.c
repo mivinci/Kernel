@@ -353,7 +353,7 @@ testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
   Cache              cache;
   Journalio          io;
   Vdone              done;
-  Growthmeta         meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
+  Mapmeta            meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
   u32                i, j, step = 0;
   u64                alarm, started = now();
   u32                blocks = (u32) (queue->config.sectors / (FS_BLOCK_BYTES / VBLK_SECTOR));

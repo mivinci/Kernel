@@ -31,8 +31,10 @@ struct Loadmap;
 struct Loadindex;
 struct Blockmap;
 struct Cache;
-typedef struct Growthmeta Growthmeta;
-typedef struct Growth     Growth;
+struct Reclaim;
+typedef struct Mapmeta   Mapmeta;
+typedef struct Growth    Growth;
+typedef struct Reclaimtx Reclaimtx;
 struct Journalmark
 {
   u64 txid;
@@ -60,7 +62,7 @@ struct Journalio
   const u8 *bytes;
   u32       kind, reserved;
 };
-struct Growthmeta
+struct Mapmeta
 {
   const u8 *inode, *bitmap, *index;
   const u8 *header, *committed, *empty;
@@ -71,6 +73,16 @@ struct Growth
   struct Cache             *cache;
   const struct Writeupdate *update;
   u64                       txid;
+};
+struct Reclaimtx
+{
+  Journal              *journal;
+  struct Cache         *cache;
+  const struct Reclaim *batch;
+  struct Loadmap       *live;
+  struct Loadindex     *index;
+  struct Blockmap      *allocation;
+  u64                   txid;
 };
 struct Journal
 {
@@ -103,7 +115,7 @@ isize journalbegin(Journal *journal, const Journalplan *plan);
    inode, bitmap if allocated, then index if edited. Keep the inode guard,
    reservations and images through completion; publish only after commit. */
 isize journalgrowth(Growth *, Journal *, struct Cache *, const struct Writeupdate *,
-                    const struct Writeimage *, const Growthmeta *);
+                    const struct Writeimage *, const Mapmeta *);
 /* Consume the exact completed growth and retire its journal, once. All
    views are independent. Cached home blocks are invalidated before the new
    map is visible. For an allocation, prepared is the private view
@@ -112,6 +124,18 @@ isize journalgrowth(Growth *, Journal *, struct Cache *, const struct Writeupdat
    A stopped growth is discarded only after I/O drains and recovery owns it. */
 isize growthpublish(Growth *, struct Loadmap *, struct Loadindex *, struct Blockmap *,
                     const struct Blockmap *prepared);
+/* Begin a metadata-only transaction for a loadreclaim batch. Encode the
+   inode iff its pointers change, always encode the new bitmap, and encode
+   the index iff its entries change (target order: inode, bitmap, index).
+   The trusted caller holds the inode and volume writer guards, keeps all
+   storage disjoint and snapshots immutable, and excludes new accesses to
+   the affected blocks until retirement and publication. On stop, drain I/O
+   and discard the transaction only when recovery takes ownership. */
+isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclaim *,
+                     struct Loadmap *, struct Loadindex *, struct Blockmap *, const Mapmeta *);
+/* After durable EMPTY, forget the affected cache bindings and consume the
+   transaction once, updating live pointers and returning blocks to the allocator. */
+isize reclaimpublish(Reclaimtx *);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state
    preserves ticket serials. The caller must first isolate old I/O and

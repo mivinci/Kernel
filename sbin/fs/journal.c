@@ -176,7 +176,7 @@ forgetgrowth(const Journal *journal, Cache *cache)
 
 isize
 journalgrowth(Growth *work, Journal *journal, Cache *cache, const Writeupdate *update,
-              const Writeimage *image, const Growthmeta *encoded)
+              const Writeimage *image, const Mapmeta *encoded)
 {
   Journalblock metadata[3], data[2];
   Journalplan  plan;
@@ -276,6 +276,168 @@ growthpublish(Growth *work, Loadmap *live, Loadindex *index, Blockmap *allocatio
     live->direct[i] = update->map.direct[i];
   live->indirect = update->map.indirect;
   *work = (Growth){0};
+  return 0;
+}
+
+static int
+reclaimblock(const Reclaim *batch, u32 block, u32 *matched)
+{
+  u32 i;
+  for (i = 0; i < batch->count; i++) {
+    u32 bit = (u32) 1 << i;
+    if (batch->blocks[i] == block && !(*matched & bit)) {
+      *matched |= bit;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static isize
+reclaimcheck(const Reclaimtx *work, u32 *inodechanged)
+{
+  const Reclaim   *batch = work->batch;
+  const Loadmap   *live = work->live;
+  const Loadindex *index = work->index;
+  const Loadfile  *file = &live->file, *after = &batch->map.file;
+  u32              i, eof, matched = 0, inode = 0, indexdirty = 0;
+  if (file->inode != after->inode || file->generation != after->generation ||
+      file->version != after->version || file->length != after->length)
+    return -ERR_STALE;
+  if (!file->inode || file->inode >= FS_INODES || file->length > FS_FILE_BYTES || !batch->count ||
+      batch->count > LOAD_RECLAIM || batch->indexdirty > 1 ||
+      (live->indirect &&
+       (!index || index->block != live->indirect || live->indirect < FS_DATA_START ||
+        live->indirect >= work->journal->blocks)))
+    return -ERR_INVALID;
+  for (i = 0; i < batch->count; i++) {
+    u64 block = batch->blocks[i];
+    if (block < FS_DATA_START || block >= work->journal->blocks ||
+        !(work->allocation->used[block / 64] & (UINT64_C(1) << (block % 64))))
+      return -ERR_STALE;
+  }
+  eof = (u32) ((file->length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
+  for (i = 0; i < LOAD_DIRECT; i++)
+    if (live->direct[i] != batch->map.direct[i]) {
+      if (i < eof || batch->map.direct[i] || !reclaimblock(batch, live->direct[i], &matched))
+        return -ERR_STALE;
+      inode = 1;
+    }
+  if (live->indirect != batch->map.indirect) {
+    if (batch->map.indirect || !reclaimblock(batch, live->indirect, &matched))
+      return -ERR_STALE;
+    for (i = 0; i < LOAD_INDIRECT; i++)
+      if (index->entries[i])
+        return -ERR_STALE;
+    inode = 1;
+  } else if (live->indirect) {
+    for (i = 0; i < LOAD_INDIRECT; i++)
+      if (index->entries[i] != batch->index.entries[i]) {
+        if (i + LOAD_DIRECT < eof || batch->index.entries[i] ||
+            !reclaimblock(batch, index->entries[i], &matched))
+          return -ERR_STALE;
+        indexdirty = 1;
+      }
+  }
+  if (batch->index.block != batch->map.indirect || batch->indexdirty != indexdirty ||
+      matched != (u32) ((UINT64_C(1) << batch->count) - 1))
+    return -ERR_STALE;
+  *inodechanged = inode;
+  return 0;
+}
+
+static isize
+forgetreclaim(const Reclaimtx *work)
+{
+  u64 blocks[LOAD_RECLAIM + 3];
+  u32 i, count = 0;
+  for (i = 0; i < work->journal->metadata_count; i++)
+    blocks[count++] = work->journal->metadata[i].block;
+  for (i = 0; i < work->batch->count; i++)
+    blocks[count++] = work->batch->blocks[i];
+  return cacheforget(work->cache, blocks, count);
+}
+
+isize
+journalreclaim(Reclaimtx *work, Journal *journal, Cache *cache, const Reclaim *batch, Loadmap *live,
+               Loadindex *index, Blockmap *allocation, const Mapmeta *encoded)
+{
+  Journalblock metadata[3];
+  Journalplan  plan;
+  Reclaimtx    next = {journal, cache, batch, live, index, allocation, 0};
+  u32          inode, count = 0;
+  isize        error;
+  if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
+      journal->blocks <= FS_DATA_START || journal->blocks > FS_MAX_BLOCKS || !batch || !live ||
+      !allocation || !encoded || !encoded->bitmap)
+    return -ERR_INVALID;
+  if (work->journal || work->txid)
+    return -ERR_BUSY;
+  error = reclaimcheck(&next, &inode);
+  if (error)
+    return error;
+  if (!!encoded->inode != inode || !!encoded->index != batch->indexdirty)
+    return -ERR_INVALID;
+  if (inode)
+    metadata[count++] = (Journalblock){
+        FS_INODE_START + live->file.inode / (FS_BLOCK_BYTES / FS_INODE_BYTES), encoded->inode};
+  metadata[count++] = (Journalblock){FS_BLOCK_MAP, encoded->bitmap};
+  if (encoded->index)
+    metadata[count++] = (Journalblock){live->indirect, encoded->index};
+  plan =
+      (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, NULL, count, 0};
+  error = journalbegin(journal, &plan);
+  if (error)
+    return error;
+  error = forgetreclaim(&next);
+  if (error) {
+    clear(journal);
+    journal->phase = JOURNAL_IDLE;
+    return error;
+  }
+  next.txid = journal->txid;
+  *work = next;
+  return 0;
+}
+
+isize
+reclaimpublish(Reclaimtx *work)
+{
+  Journal       *journal;
+  const Reclaim *batch;
+  u32            inode, i;
+  isize          error;
+  if (!work || !(journal = work->journal) || !work->txid || journal->txid != work->txid)
+    return -ERR_STALE;
+  if (journal->phase == JOURNAL_STOPPED)
+    return -ERR_STATE;
+  if (journal->phase != JOURNAL_DONE || !journal->durable)
+    return -ERR_WOULD_BLOCK;
+  error = reclaimcheck(work, &inode);
+  if (error)
+    return error;
+  error = forgetreclaim(work);
+  if (error)
+    return error;
+  error = journalrelease(journal);
+  if (error)
+    return error;
+  batch = work->batch;
+  if (batch->indexdirty)
+    for (i = 0; i < LOAD_INDIRECT; i++)
+      work->index->entries[i] = batch->index.entries[i];
+  if (inode) {
+    if (work->live->indirect && !batch->map.indirect)
+      work->index->block = 0;
+    work->live->indirect = batch->map.indirect;
+    for (i = 0; i < LOAD_DIRECT; i++)
+      work->live->direct[i] = batch->map.direct[i];
+  }
+  for (i = 0; i < batch->count; i++) {
+    u64 block = batch->blocks[i];
+    work->allocation->used[block / 64] &= ~(UINT64_C(1) << (block % 64));
+  }
+  *work = (Reclaimtx){0};
   return 0;
 }
 
