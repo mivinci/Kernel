@@ -3,6 +3,7 @@
 #include "path.h"
 
 typedef struct Vnode    Vnode;
+typedef struct Vmounts  Vmounts;
 typedef struct Vwalk    Vwalk;
 typedef struct Vwalkops Vwalkops;
 
@@ -36,19 +37,22 @@ struct Vwalk
   Fspath          path;
   Pathpart        part;
   const Vwalkops *ops;
+  const Vmounts  *mounts;
   void           *context;
   Vnode          *root, *current, *link;
   u32             phase, follow;
 };
 
+int vnodesame(const Vnode *left, const Vnode *right);
+
 /* The walk starts zeroed and stays at the same address while active. Hold
-   and drop are synchronous and also pin and unpin the node's mount. Lookup and parent use the
-   VFS namespace and transfer one node reference on success. Search uses the
+   and drop are synchronous and also pin and unpin the node's mount. Lookup
+   and parent transfer one backend node reference on success. Search uses the
    original operation's credentials in context. A pending operation returns
    VWALK_WAIT and is resumed with the same arguments. The ready link text
    is borrowed only until the next backend call. */
-isize vwalkinit(Vwalk *walk, const Vwalkops *ops, void *context, Vnode *root, Vnode *start,
-                const char *path, u64 bytes, u32 follow);
+isize vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context, Vnode *root,
+                Vnode *start, const char *path, u64 bytes, u32 follow);
 /* Advance one step. Zero transfers the result reference. MORE can run
    again immediately, WAIT needs backend progress, and errors drop refs. */
 isize vwalkstep(Vwalk *walk, Vnode **out);

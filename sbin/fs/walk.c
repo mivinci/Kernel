@@ -1,4 +1,5 @@
 #include "walk.h"
+#include "mount.h"
 #include <errno.h>
 
 enum
@@ -9,8 +10,8 @@ enum
   WALK_LINK,
 };
 
-static int
-same(const Vnode *left, const Vnode *right)
+int
+vnodesame(const Vnode *left, const Vnode *right)
 {
   return left->mount == right->mount && left->number == right->number &&
          left->generation == right->generation;
@@ -30,12 +31,13 @@ vwalkdrop(Vwalk *walk)
 }
 
 isize
-vwalkinit(Vwalk *walk, const Vwalkops *ops, void *context, Vnode *root, Vnode *start,
-          const char *path, u64 bytes, u32 follow)
+vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context, Vnode *root,
+          Vnode *start, const char *path, u64 bytes, u32 follow)
 {
   isize error;
-  if (!walk || walk->phase || !ops || !ops->hold || !ops->drop || !ops->search || !ops->lookup ||
-      !ops->parent || !ops->readlink || !root || root->kind != VNODE_DIR || follow > 1)
+  if (!walk || walk->phase || !mounts || !ops || !ops->hold || !ops->drop || !ops->search ||
+      !ops->lookup || !ops->parent || !ops->readlink || !root || root->kind != VNODE_DIR ||
+      follow > 1)
     return -EINVAL;
   error = fspathinit(&walk->path, path, bytes);
   if (error)
@@ -53,6 +55,7 @@ vwalkinit(Vwalk *walk, const Vwalkops *ops, void *context, Vnode *root, Vnode *s
     return error;
   }
   walk->ops = ops;
+  walk->mounts = mounts;
   walk->context = context;
   walk->root = root;
   walk->current = start;
@@ -74,7 +77,7 @@ component(Vwalk *walk, Vnode **out)
     return 0;
   }
   if (walk->part.kind == PATH_ROOT) {
-    if (!same(walk->current, walk->root)) {
+    if (!vnodesame(walk->current, walk->root)) {
       status = walk->ops->hold(walk->context, walk->root);
       if (status)
         return status;
@@ -92,17 +95,32 @@ component(Vwalk *walk, Vnode **out)
 static isize
 lookup(Vwalk *walk)
 {
-  Vnode *node = NULL;
+  Vnode *node = NULL, *visible;
   isize  status;
-  if (walk->part.kind == PATH_PARENT)
-    status = walk->ops->parent(walk->context, walk->current, &node);
-  else
+  if (walk->part.kind == PATH_PARENT) {
+    const Vnode *origin = vmountparent(walk->mounts, walk->current, walk->root);
+    if (vnodesame(origin, walk->root)) {
+      node = walk->root;
+      status = walk->ops->hold(walk->context, node);
+    } else
+      status = walk->ops->parent(walk->context, origin, &node);
+  } else
     status =
         walk->ops->lookup(walk->context, walk->current, walk->part.name, walk->part.bytes, &node);
   if (status)
     return status;
   if (!node)
     return -EIO;
+  if (walk->part.kind == PATH_NAME) {
+    visible = vmountenter(walk->mounts, node);
+    if (visible != node) {
+      status = walk->ops->hold(walk->context, visible);
+      walk->ops->drop(walk->context, node);
+      if (status)
+        return status;
+      node = visible;
+    }
+  }
   if (node->kind == VNODE_LINK && walk->part.kind == PATH_NAME &&
       (!walk->part.final || walk->follow)) {
     walk->link = node;
@@ -133,7 +151,7 @@ advance(Vwalk *walk, Vnode **out)
     if (status)
       return status;
     walk->phase = walk->part.kind == PATH_DOT ||
-                          (walk->part.kind == PATH_PARENT && same(walk->current, walk->root))
+                          (walk->part.kind == PATH_PARENT && vnodesame(walk->current, walk->root))
                       ? WALK_COMPONENT
                       : WALK_LOOKUP;
     return VWALK_MORE;
