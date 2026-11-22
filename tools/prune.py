@@ -67,6 +67,8 @@ def jsonfiles(directory):
 
 def completion(directory):
     """Unknown/failed records stay intact, including interrupted build commands."""
+    # The SDK writes commands incrementally, before publishing its artifacts.
+    sdk = directory.parent.name == 'runs' and directory.parent.parent.name == 'sdk'
     terminal = False
     for p in jsonfiles(directory):
         if p.name == 'failure.json':
@@ -80,7 +82,8 @@ def completion(directory):
         records = value if isinstance(value, list) else [value]
         if not records or any(not isinstance(r, dict) or r.get('ok') is not True for r in records):
             return 'failed-or-incomplete'
-        terminal = True
+        if not sdk or p == directory / 'result.json':
+            terminal = True
     return None if terminal else 'incomplete'
 
 

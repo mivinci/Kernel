@@ -98,6 +98,20 @@ class PruneTest(unittest.TestCase):
         self.write('build/host/stage2/evidence.json', {'result': str(suite / 'good/result.json')})
         self.assertEqual(self.kept(self.report()), {logs, suite})
 
+    def test_sdk_requires_published_result_after_successful_commands(self):
+        complete = self.fixture(1, 'arm64/sdk/runs')
+        interrupted = self.fixture(2, 'arm64/sdk/runs')
+        failed = self.fixture(3, 'arm64/sdk/runs')
+        for run in (complete, interrupted, failed):
+            self.write(str((run / 'commands.json').relative_to(self.root)),
+                       [{'ok': run != failed}])
+        (interrupted / 'result.json').unlink()
+        (interrupted / 'result.json').symlink_to(complete / 'result.json')
+
+        report = self.report()
+        self.assertEqual(self.kept(report), {interrupted, failed})
+        self.assertEqual(prune.apply(self.root, report), [str(complete.relative_to(self.root))])
+
     def test_symlinks_do_not_escape_build(self):
         outside = self.root / 'outside'
         outside.mkdir()

@@ -29,7 +29,7 @@ def build(args):
     tools = {}
     def invoke(label, command):
         result = run_command(command, run / (label + '.log'), args.timeout, cwd=ROOT)
-        commands.append(asdict(result))
+        commands.append(dict(asdict(result), ok=result.ok))
         (run / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
         if not result.ok:
             raise BuildError('%s failed: %s' % (label, result.log))
@@ -519,6 +519,7 @@ def build(args):
                     no_undefined_symbols=True, runtime='custom libsys-only entry and csu/libc main', guest_executed=False)
     (sdk / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (sdk / 'last-run.json').write_text(json.dumps(dict(ok=True, run_log=str(run.relative_to(ROOT)))) + '\n')
+    (run / 'result.json').write_text(json.dumps(dict(ok=True)) + '\n')
     print(args.arch + ': ' + str(artifact.relative_to(ROOT)))
 
 
