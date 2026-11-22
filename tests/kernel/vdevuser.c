@@ -1474,6 +1474,7 @@ blkclient(const Bootview *boot, Handle call)
   Cache             cache = {0};
   u32               i, op;
   Msg               badhello = {{BLK_WORD(BLK_HELLO), 0, 1, 0}};
+  probe.blk = &blk;
   {
     isize status = 1;
     REQUIRE(!fsblkhello(&attaching, call, space, address, 1, 1) &&
@@ -1486,9 +1487,11 @@ blkclient(const Bootview *boot, Handle call)
       Maparg   overlap = {0, 0, address, PAGE_SIZE, MAP_READ | MAP_WRITE, 0};
       REQUIRE(!__sys_alloc(bootresource(boot, BOOT_SELF_ALLOC), &reserve, &overlap.mem) &&
                   !__sys_map(space, &overlap) &&
-                  fsblkattached(&attaching, &blk, &status) == -ERR_STATE && status == 1 &&
-                  !blk.address && !attaching.boot.rpc && attaching.boot.resource &&
-                  !attaching.map.mapped && !__sys_unmap(space, address) && !__sys_free(overlap.mem),
+                  blkmountstartup(&(Blkmount){.probe = &probe}, &attaching, &mounts, &root,
+                                  now() + VDEV_RESET_NS) == -ERR_STATE &&
+                  !mounts.serial && !root.number && !blk.address && !attaching.boot.rpc &&
+                  attaching.boot.resource && !attaching.map.mapped &&
+                  !__sys_unmap(space, address) && !__sys_free(overlap.mem),
               363);
     }
     REQUIRE(!fsblkattached(&attaching, &blk, &status), 360);
@@ -1697,10 +1700,10 @@ blkclient(const Bootview *boot, Handle call)
                 !root.mount && !root.number && !root.generation && !root.kind && !dirs.published,
             439);
   }
-  REQUIRE(!blkmountadd(&mounting, &mounts, &root, NULL) && root.mount == 1 && mounts.serial == 1 &&
-              mounts.entries[0].root == &root && root.number == FS_ROOT &&
-              root.generation == nodes[FS_ROOT].generation && root.kind == VNODE_DIR &&
-              blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
+  REQUIRE(!blkmountstartup(&mounting, &attaching, &mounts, &root, now() + VDEV_RESET_NS) &&
+              root.mount == 1 && mounts.serial == 1 && mounts.entries[0].root == &root &&
+              root.number == FS_ROOT && root.generation == nodes[FS_ROOT].generation &&
+              root.kind == VNODE_DIR && blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
           440);
   {
     Blkiter   iter = {.home = &home,

@@ -677,14 +677,16 @@ blkiterstep(Blkiter *work, Dirrecord *out, const u8 **name)
   return result;
 }
 
-isize
-blkmountwait(Blkmount *work, u64 deadline)
+static isize
+mountwait(Blkmount *work, Blkattach *attach, u64 deadline)
 {
   Ipcmsg event;
   u64    now, alarm;
   isize  result, cancelled;
+  Fsblk *blk;
   if (!work || !work->probe || !work->probe->blk || !deadline)
     return -ERR_INVALID;
+  blk = work->probe->blk;
   result = systimernow(&now);
   if (result || now >= deadline)
     return result ? result : -ERR_TIMEDOUT;
@@ -697,17 +699,36 @@ blkmountwait(Blkmount *work, u64 deadline)
       result = result ? result : -ERR_TIMEDOUT;
       break;
     }
-    result = blkmountstep(work);
-    if (result)
-      break;
-    if (!work->probe->blk->rpc)
-      continue;
+    if (attach && !blk->address) {
+      isize status;
+      result = fsblkattached(attach, blk, &status);
+      if (!result && status) {
+        result = status;
+        break;
+      }
+      if (result && result != -ERR_WOULD_BLOCK)
+        break;
+      if (!result)
+        continue;
+    } else {
+      result = blkmountstep(work);
+      if (result)
+        break;
+      if (!blk->rpc)
+        continue;
+    }
     result = ipc_recv(EVENT_RQ_DONE | EVENT_TIMER, RECV_EVENTS_ONLY, &event);
     if (result)
       break;
   }
   cancelled = __sys_alarmcancel(&alarm);
   return result < 0 || !cancelled ? result : cancelled;
+}
+
+isize
+blkmountwait(Blkmount *work, u64 deadline)
+{
+  return mountwait(work, NULL, deadline);
 }
 
 isize
@@ -1071,6 +1092,20 @@ blkmountadd(Blkmount *mount, Vmounts *mounts, Vnode *root, Vnode *point)
   }
   mount->dirs->published = 1;
   return 0;
+}
+
+isize
+blkmountstartup(Blkmount *work, Blkattach *attach, Vmounts *mounts, Vnode *root, u64 deadline)
+{
+  isize result;
+  if (!attach || !attach->call || !work || !work->probe || !work->probe->blk || !mounts || !root ||
+      root->mount || root->number || root->generation || root->kind || mounts->serial)
+    return -ERR_INVALID;
+  if (work->probe->blk->address &&
+      (work->probe->blk->address != attach->map.address || work->probe->blk->call != attach->call))
+    return -ERR_INVALID;
+  result = mountwait(work, attach, deadline);
+  return result == 1 ? blkmountadd(work, mounts, root, NULL) : result;
 }
 
 static Fsgeometry

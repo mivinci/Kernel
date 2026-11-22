@@ -237,6 +237,10 @@ isize blkmountwait(Blkmount *, u64 deadline);
    the validated scan. An error preserves root and the mount table. The
    namespace owner holds the volume and covering point through insertion. */
 isize blkmountadd(Blkmount *, Vmounts *, Vnode *root, Vnode *point);
+/* Start with a submitted HELLO or its attached connection. Use one deadline
+   through bootstrap and mount validation, then publish the initial root.
+   Zero means published; on failure the owner still owns both work records. */
+isize blkmountstartup(Blkmount *, Blkattach *, Vmounts *, Vnode *root, u64 deadline);
 /* Stop an unpublished mount. Further steps only drain outstanding work;
    the original failure is returned once no request or snapshot is held. */
 isize blkmountstop(Blkmount *, isize reason);
