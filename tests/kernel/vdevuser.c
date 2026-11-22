@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <errno.h>
+#include <string.h>
 #include <sys/channel.h>
 #include <abi/time.h>
 #include <abi/syscall.h>
@@ -10,6 +11,7 @@
 #include "private/virtio/mmio.h"
 #include "../../sbin/fs/blklog.h"
 #include "../../sbin/fs/blkread.h"
+#include "../../sbin/fs/context.h"
 #include "../../sbin/fs/mount.h"
 #include "private/bootstrap.h"
 #include "../../sbin/fs/cache.h"
@@ -1072,6 +1074,7 @@ static const u32 blkopcodes[] = {
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* symlink name */
     BLK_READ,  BLK_READ,                                   /* link inode and contents */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* dangling target lookup */
+    BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* parent name lookup */
     BLK_READ                                               /* file cache fill */
 };
 
@@ -1352,6 +1355,15 @@ blklinkdir(const u8 *bytes, Dirrecord *record)
 }
 
 static isize
+blkchilddir(const u8 *bytes, Dirrecord *record)
+{
+  isize error = blkdecodedir(bytes, record);
+  if (!error && record->inode == 34)
+    record->kind = VNODE_DIR;
+  return error;
+}
+
+static isize
 lookuphold(void *context, Vnode *node)
 {
   Lookupnodes *nodes = ((Blklookup *) context)->nodes;
@@ -1390,6 +1402,33 @@ lookupacquire(void *context, const Vnode *identity, Vnode **out)
   if (!error)
     *out = node;
   return error;
+}
+
+static isize
+cwdhold(void *context, Vnode *node)
+{
+  Lookupnodes *nodes = ((Blkname *) context)->view->nodes;
+  return vmounthold(nodes->mounts, node->mount);
+}
+
+static void
+cwddrop(void *context, Vnode *node)
+{
+  Lookupnodes *nodes = ((Blkname *) context)->view->nodes;
+  REQUIRE(!vmountdrop(nodes->mounts, node->mount), 537);
+}
+
+static u64
+cwdversion(void *context)
+{
+  (void) context;
+  return 1;
+}
+
+static isize
+cwdname(void *context, const Vnode *node, Vnode **parent, const char **name, u32 *length)
+{
+  return blkdirname(context, node, parent, name, length);
 }
 
 static void
@@ -1798,6 +1837,36 @@ blkclient(const Bootview *boot, Handle call)
       home.load.inode = blkdecodeinode;
       nodes[34].kind = VNODE_FILE;
     }
+    {
+      static Fscwd   cwd;
+      Blkname        reverse = {.view = &lookup};
+      const Fscwdops ops = {cwdhold, cwddrop, cwdversion, cwdname};
+      Fscontext      context = {.root = &root, .cwd = &targets.file};
+      char           path[61] = {0};
+      u32            bytes = 0, waits = 0;
+      nodes[34].kind = targets.file.kind = VNODE_DIR;
+      dirs.graph.parent[34] = FS_ROOT;
+      lookup.decode = blkchilddir;
+      REQUIRE(!cacheinit(&cache, &storage, 1, 256) &&
+                  !fscwdinit(&cwd, &mounts, &ops, &reverse, &context),
+              538);
+      for (i = 0, step = VWALK_MORE; i < 24 && (step == VWALK_MORE || step == VWALK_WAIT); i++) {
+        REQUIRE(!bytes && !path[0], 539);
+        step = fscwdstep(&cwd, path, sizeof(path), &bytes);
+        if (step == VWALK_WAIT) {
+          REQUIRE(blk.rpc && !ipc_rqwait(blk.rpc, RQ_FINISH, &result), 540);
+          waits++;
+        }
+      }
+      REQUIRE(!step, 541);
+      REQUIRE(waits == 4, 542);
+      REQUIRE(bytes == sizeof(path) && path[0] == '/' && !memcmp(path + 1, name, sizeof(name)),
+              543);
+      REQUIRE(!mounts.entries[0].uses && !reverse.child.number && !home.load.reader && !blk.rpc,
+              544);
+      nodes[34].kind = VNODE_FILE;
+      dirs.graph.parent[34] = 0;
+    }
   }
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
@@ -1933,9 +2002,10 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
     /* Exercise redo, re-probe, home bitmap, directory and link READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 20 == ARRAY_SIZE(blkopcodes) ||
+    if (i == 11 || i == 22 || i == 24 || i + 24 == ARRAY_SIZE(blkopcodes) ||
+        i + 12 == ARRAY_SIZE(blkopcodes) || i + 10 == ARRAY_SIZE(blkopcodes) ||
         i + 8 == ARRAY_SIZE(blkopcodes) || i + 6 == ARRAY_SIZE(blkopcodes) ||
-        i + 4 == ARRAY_SIZE(blkopcodes) || i + 2 >= ARRAY_SIZE(blkopcodes)) {
+        i + 1 == ARRAY_SIZE(blkopcodes)) {
       queue->configpending = 1;
       REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 448);
       queue->configpending = 0;

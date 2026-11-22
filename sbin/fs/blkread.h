@@ -19,6 +19,7 @@ typedef struct Blkmount    Blkmount;
 typedef struct Blkfind     Blkfind;
 typedef struct Blkiter     Blkiter;
 typedef struct Blklookup   Blklookup;
+typedef struct Blkname     Blkname;
 struct Blkread
 {
   Fsblk    *blk;
@@ -188,6 +189,22 @@ isize blkparent(void *, const Vnode *, Vnode **);
 isize blkreadlink(void *, const Vnode *, const char **, u64 *);
 /* Stop and drain before dropping a walk with outstanding block I/O. */
 isize blklookupcancel(Blklookup *);
+
+struct Blkname
+{
+  const Blklookup *view;
+  Blkiter          iter;
+  Vnode            child, parent;
+  u32              length;
+  isize            failed;
+  char             name[FS_NAME_BYTES];
+};
+/* Fscwdops.name on a stable, validated volume. The caller pins the child
+   and keeps work at a stable address. On success, name remains borrowed
+   until the next operation; the returned parent is held. */
+isize blkdirname(Blkname *, const Vnode *, Vnode **, const char **, u32 *);
+isize blkdirnamecancel(Blkname *);
+
 struct Blkmount
 {
   Blkprobe   *probe, *after;

@@ -46,7 +46,7 @@ struct Fscwdops
      without reuse. It does not invalidate the name snapshot. */
   u64 (*version)(void *);
   /* Returns a held parent and a borrowed name span for a live directory
-     entry. VWALK_WAIT must resume with the same node; cancellation drains
+     entry. MORE and WAIT resume with the same node; cancellation drains
      before fscwddrop. */
   isize (*name)(void *, const Vnode *, Vnode **, const char **, u32 *);
 };

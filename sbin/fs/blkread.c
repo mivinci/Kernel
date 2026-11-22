@@ -856,15 +856,13 @@ blksearch(void *context, const Vnode *directory)
   return error ? error : vaccess(work->cred, owner, group, mode, VACCESS_X, 1);
 }
 
-isize
-blkparent(void *context, const Vnode *directory, Vnode **out)
+static isize
+blkparentid(const Blklookup *work, const Vnode *directory, Vnode *identity)
 {
-  const Blklookup *work = context;
-  const Dirgraph  *graph;
-  const Dirnode   *node;
-  Vnode            identity;
-  u32              parent;
-  if (!work || !(graph = work->graph) || !graph->nodes || !work->acquire || !directory || !out)
+  const Dirgraph *graph;
+  const Dirnode  *node;
+  u32             parent;
+  if (!work || !(graph = work->graph) || !graph->nodes || !work->acquire || !directory)
     return -EINVAL;
   if (!work->mount || directory->mount != work->mount || !directory->number ||
       directory->number >= FS_INODES || !directory->generation)
@@ -882,8 +880,95 @@ blkparent(void *context, const Vnode *directory, Vnode **out)
   node = &graph->nodes[parent];
   if (!node->links || node->kind != VNODE_DIR || !node->generation)
     return -EIO;
-  identity = (Vnode){work->mount, parent, node->generation, VNODE_DIR};
-  return work->acquire(work->nodes, &identity, out);
+  *identity = (Vnode){work->mount, parent, node->generation, VNODE_DIR};
+  return 0;
+}
+
+isize
+blkparent(void *context, const Vnode *directory, Vnode **out)
+{
+  const Blklookup *work = context;
+  Vnode            identity;
+  isize            error;
+  if (!out)
+    return -EINVAL;
+  error = blkparentid(work, directory, &identity);
+  return error ? error : work->acquire(work->nodes, &identity, out);
+}
+
+isize
+blkdirnamecancel(Blkname *work)
+{
+  isize error;
+  if (!work)
+    return -ERR_INVALID;
+  if (!work->child.number)
+    return 0;
+  error = blkiterstop(&work->iter);
+  if (error)
+    return error;
+  work->iter = (Blkiter){0};
+  work->child.number = 0;
+  return 0;
+}
+
+isize
+blkdirname(Blkname *work, const Vnode *child, Vnode **out, const char **name, u32 *length)
+{
+  const Blklookup *view;
+  const u8        *entry;
+  Dirrecord        record;
+  isize            step, error;
+  u32              i;
+  if (!work || !(view = work->view) || !view->home || !view->home->load.read ||
+      !view->home->load.read->blk || !view->decode || !child || !out || !name || !length)
+    return -EINVAL;
+  if (!work->child.number) {
+    error = blkparentid(view, child, &work->parent);
+    if (error)
+      return error;
+    if (vnodesame(child, &work->parent))
+      return -ENOENT;
+    work->child = *child;
+    work->iter = (Blkiter){.home = view->home,
+                           .decode = view->decode,
+                           .inode = work->parent.number,
+                           .generation = work->parent.generation};
+    work->length = 0;
+    work->failed = 0;
+  } else if (!vnodesame(child, &work->child))
+    return -EBUSY;
+
+  if (!work->failed) {
+    step = blkiterstep(&work->iter, &record, &entry);
+    if (!step)
+      return view->home->load.read->blk->rpc ? VWALK_WAIT : VWALK_MORE;
+    if (step == 1) {
+      if (record.inode != child->number || record.generation != child->generation ||
+          record.kind != VNODE_DIR ||
+          (entry[0] == '.' && (record.namelen == 1 || (record.namelen == 2 && entry[1] == '.'))))
+        return VWALK_MORE;
+      if (!work->length) {
+        for (i = 0; i < record.namelen; i++)
+          work->name[i] = (char) entry[i];
+        work->length = record.namelen;
+        return VWALK_MORE;
+      }
+    }
+    work->failed = step == 2 ? 0 : step == -ERR_BUSY ? -EBUSY : step == -ERR_STALE ? -ESTALE : -EIO;
+  }
+  if (blkdirnamecancel(work))
+    return VWALK_WAIT;
+  if (work->failed)
+    return work->failed;
+  if (!work->length)
+    return -ENOENT;
+  error = view->acquire(view->nodes, &work->parent, out);
+  if (!error) {
+    *name = work->name;
+    *length = work->length;
+  }
+  return error;
 }
 
 enum

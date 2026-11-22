@@ -450,6 +450,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/access.c', 'vdev-fs-access'),
         compile_adoption(ROOT/'sbin/fs/dirgraph.c', 'vdev-fs-dirgraph'),
         compile_adoption(ROOT/'sbin/fs/mount.c', 'vdev-fs-mount'),
+        compile_adoption(ROOT/'sbin/fs/context.c', 'vdev-fs-context'),
         compile_adoption(ROOT/'sbin/fs/walk.c', 'vdev-fs-walk'),
         compile_adoption(ROOT/'sbin/fs/path.c', 'vdev-fs-path'),
         compile_adoption(ROOT/'sbin/fs/cache.c', 'vdev-fs-cache'),

@@ -211,9 +211,9 @@ cwdstep(Fscwd *work, char *out, u64 capacity, u32 *bytes)
   if (vnodesame(origin, work->root))
     return -ENOENT;
   error = ops->name(work->backend, origin, &parent, &name, &length);
-  work->waiting = error == VWALK_WAIT;
+  work->waiting = error == VWALK_WAIT || error == VWALK_MORE;
   if (work->waiting)
-    return VWALK_WAIT;
+    return error;
   if (cwdchanged(work)) {
     if (!error && parent)
       ops->drop(work->backend, parent);
