@@ -157,6 +157,8 @@ ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实
 
 `asprintf` / `vasprintf` 复用 `vsnprintf` 的格式子集。先计算字节数，再分配含结尾 NUL 的缓冲区；成功返回不含 NUL 的字节数，由调用者 `free`。失败返回 -1，保留调用者原输出指针；成功保留 `errno`。BusyBox 的 `xasprintf` 可使用同一 SDK 入口，不引入新的内核接口。
 
+`sprintf` / `vsprintf` 同样复用现有格式子集，用于 ash 的作业 PID 和错误文本格式化。调用者须提供足够的缓冲空间；成功写入结尾 NUL 并返回不含 NUL 的字节数。
+
 libc 的私有 `pathsearch` 实现按固定 PATH 快照查找命令的顺序，供后续 `posix_spawnp` 与 sh 共用：名称含 `/` 时直接尝试；空路径分量从 cwd 尝试；ENOENT、ENOTDIR 继续搜索，遇 EACCES 记下并继续，没有成功项时优先返回 EACCES。ENOEXEC 原样返回，不启动脚本替代。最多 32 个分量，PATH 和单个候选路径各最多 4096 字节（含 NUL），不截断。4 项主机测试用回调核对候选顺序、失败归并和容量边界，ARM64/RV64 SDK 构建通过。此处尚未调用文件系统或发布进程。
 
 `<spawn.h>` 提供 `posix_spawn_file_actions_init/destroy/addopen/addclose/adddup2`。列表按登记顺序保存最多 128 项；`addopen` 自持路径副本，登记不打开文件。私有遍历器在首个动作错误处停止；未来 spawn 调用者须先捕获稳定列表，再将动作应用到未发布的子进程，并在出错时撤销准备。ARM64/RV64 QEMU `runtime` 验证路径副本、无效 fd、动作顺序、失败后不执行下一项、释放列表及 PATH 候选顺序。实际子 fd 表操作、CLOEXEC 收尾与 `posix_spawn` 发布未接。

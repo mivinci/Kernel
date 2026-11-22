@@ -1147,6 +1147,15 @@ main(int argc, char **argv)
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
   {
+    char text[64];
+    int  first;
+    errno = EDOM;
+    first = sprintf(text, " -%lld", (Testll) INT64_C(4294967297));
+    REQUIRE(first == 12 && sprintf(text + first, " %d", 3) == 2 &&
+                !strcmp(text, " -4294967297 3") && errno == EDOM,
+            190);
+  }
+  {
     char *text = NULL;
     errno = EDOM;
     REQUIRE(asprintf(&text, "%s:%03d", "ash", 7) == 7 && !strcmp(text, "ash:007") && errno == EDOM,

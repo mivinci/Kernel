@@ -327,3 +327,20 @@ snprintf(char *buffer, size_t size, const char *format, ...)
   va_end(arguments);
   return result;
 }
+
+int
+vsprintf(char *buffer, const char *format, va_list arguments)
+{
+  return vsnprintf(buffer, (size_t) INT_MAX + 1, format, arguments);
+}
+
+int
+sprintf(char *buffer, const char *format, ...)
+{
+  va_list arguments;
+  int     result;
+  va_start(arguments, format);
+  result = vsprintf(buffer, format, arguments);
+  va_end(arguments);
+  return result;
+}
