@@ -159,6 +159,8 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 
 `<setjmp.h>` 提供同一活动信号上下文内的 `setjmp`/`longjmp`。保存 SDK 调用约定要求的寄存器、栈指针和续点；不改变信号掩码。ARM64、RV64 QEMU `runtime` 验证从更深调用恢复到两个不同续点、跳转值 0 转为 1，以及保留负值。跨 libc 信号层的跳转会调用 `abort`，因为直接改栈会绕过内核信号帧和原请求交接。此实现不包含 `siglongjmp`，也不支持 ash 从 SIGINT handler 直接跳回命令循环。
 
+`<locale.h>` 提供固定 C locale 下的 `setlocale` 和 `localeconv`。接受 `C` 和 `POSIX`；空名称按 `LC_ALL`、对应类别、`LANG` 选取，遇到不支持的名称返回空指针并保持原 locale。`localeconv` 返回小数点 `.`、空分组/货币串及未定义货币字段的 `CHAR_MAX`。ARM64、RV64 QEMU `runtime` 核对环境优先级、失败后查询及格式约定。其他 locale、locale 对象和宽字符接口仍不支持。
+
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。

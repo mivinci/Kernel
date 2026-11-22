@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#include <locale.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -221,6 +222,30 @@ jumpcheck(void)
     return;
   }
   REQUIRE(0, 283);
+}
+
+static void
+localecheck(void)
+{
+  char        **saved = environ;
+  char         *env[] = {"LC_ALL=", "LC_NUMERIC=POSIX", "LANG=unsupported", NULL};
+  struct lconv *conventions = localeconv();
+  REQUIRE(!strcmp(setlocale(LC_ALL, NULL), "C") && !strcmp(setlocale(LC_ALL, "POSIX"), "C") &&
+              !setlocale(LC_ALL, "C.UTF-8") && !setlocale(-1, "C"),
+          280);
+  environ = env;
+  REQUIRE(!strcmp(setlocale(LC_NUMERIC, ""), "C") && !setlocale(LC_CTYPE, "") &&
+              !setlocale(LC_ALL, ""),
+          281);
+  env[0] = "LC_ALL=C";
+  REQUIRE(!strcmp(setlocale(LC_ALL, ""), "C"), 282);
+  env[0] = "LC_ALL=unsupported";
+  REQUIRE(!setlocale(LC_NUMERIC, "") && !strcmp(setlocale(LC_NUMERIC, NULL), "C"), 283);
+  environ = saved;
+  REQUIRE(!strcmp(conventions->decimal_point, ".") && !*conventions->thousands_sep &&
+              !*conventions->mon_grouping && conventions->frac_digits == CHAR_MAX &&
+              conventions->int_n_sign_posn == CHAR_MAX,
+          284);
 }
 
 static void
@@ -1041,6 +1066,7 @@ main(int argc, char **argv)
   optioncheck();
   jumpcheck();
   endiancheck();
+  localecheck();
   longoptioncheck();
   pathwalkcheck();
   REQUIRE(!vwalkusercheck(), 294);
