@@ -12,7 +12,7 @@ fail()
 }
 
 (
-    exec "$shell" -c 'echo "$$ $PPID"; exit 37'
+    exec "$shell" -c 'kill -0 "$$" && kill -0 "$PPID" || exit 38; echo "$$ $PPID"; exit 37'
 ) > "$scratch/pids" &
 child=$!
 status=0
@@ -25,7 +25,8 @@ read -r reported_child reported_parent < "$scratch/pids" || fail 'missing child 
 # A host smoke run can check the script but cannot prove wide PID preservation.
 if [ "${3:-wide}" = wide ]; then
     case "$child" in
-        ???????????*) ;;
+        [1-9]??????????*) ;;
+        ??????????) [ "$child" -gt 4294967295 ] || fail "expected a child PID wider than 32 bits, got $child" ;;
         *) fail "expected a child PID wider than 32 bits, got $child" ;;
     esac
 fi

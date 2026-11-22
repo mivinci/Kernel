@@ -47,7 +47,7 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 [平台补丁](../../bin/sh/busybox-1.37.0-platform.patch) 移除上游对 `<mntent.h>` 和 `<sys/statfs.h>` 可用性的默认假设。最小配置未启用挂载或磁盘用量工具；两架构的预处理依赖均不再包含这两个头。该调整没有提供挂载查询接口。
 
-准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，另外各十个单元均在 `dirent.h` 停住；依赖日志确认 `sys/time.h` 已从目标 SDK 解析。探针不执行完整构建或链接。
+准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。探针包含 `procps/kill.c`，因为 ash 的作业控制即使关闭独立 `kill` applet 也会编入该单元。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，`kill.c` 和其余十个单元均在 `dirent.h` 停住。`sys/time.h` 从目标 SDK 解析；`sys/utsname.h` 只由未启用的 Bash 兼容模式使用，已从最小配置的依赖日志中消失。探针不执行完整构建或链接。
 
 **阶段 C：最小 applet 集合跑通**
 
@@ -118,7 +118,7 @@ A2 固定使用 [miniz 3.1.2](https://github.com/richgel999/miniz/tree/3.1.2) �
 - 阶段 A：A1 与 A2 各自满足源码约束、五项构建检查与运行断言（见[阶段 A 判据](#阶段-a-判据细化)）；不引入 QEMU 专属手段（01#3、01#4）。
 - 阶段 B：BusyBox 目标配置编译通过且无未定义符号；既有 host 测试与双架构矩阵不回归。
 - 阶段 C：串口脚本化验证——`echo hi | cat`、`ls /`、`cd` 后 `pwd`、重定向写读、`Ctrl-C` 中断前台命令、`Ctrl-Z` 停止后 `fg` 恢复、前台组切换后后台读被拒。
-- 阶段 C 还须验证 64 位 `pid_t` 的完整往返：在空的测试目录上用目标 ash 执行 [busybox-pid.sh](../../tests/fixtures/busybox-pid.sh)。它用 `$!` 收取退出码 37，再比对新 shell 报告的 `$$` 和 `PPID`，并要求确实遇到宽 PID。宿主执行只检查脚本，不能取代目标运行。
+- 阶段 C 还须验证 64 位 `pid_t` 的完整往返：在空的测试目录上用目标 ash 执行 [busybox-pid.sh](../../tests/fixtures/busybox-pid.sh)。新 shell 用 `kill -0` 检查 `$$` 和 `PPID`；父 shell 用 `$!` 收取退出码 37，再比对报告的两个完整 PID，并用十进制边界检查确实遇到宽 PID。宿主执行只检查脚本，不能取代目标运行。
 - **不以"能编过"替代"能跑"**；各阶段结论分别记录，不用阶段 A 的成功推断阶段 C 可用。
 
 BusyBox 1.37.0 的 PID 审查发现，`ash` 的 `rootpid`、`initialpgrp`、`forkshell`、`waitproc`/`waitone` 及若干调用点会把完整 PID/PGID 收窄为 `int`；`$$`/`$!` 展开、`PPID`、`jobs` 输出和 `wait`/`kill` 数字参数也有收窄路径。特别是 `waitone` 会用收窄后的值匹配 `procstat` 的 `pid_t`，可能收取了结果却找不到作业。移植时须对这些路径保留完整 `pid_t`，并扩大 PID 文本缓冲；普通退出码、信号号及作业编号仍使用原类型。此缺口不修改 15 篇已经确定的系统 PID ABI。
