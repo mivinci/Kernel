@@ -764,6 +764,18 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
            config->readonly ? 0xa7 : 0x51, &prior, NULL);
   testbuffer(&dma, 3, &buffers[0]);
   testbuffer(&dma, 6, &buffers[1]);
+  buffers[1].statusaddr = buffers[0].dataaddr + PAGE_SIZE - 1;
+  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)) ==
+                  -ERR_INVALID &&
+              !queue.state,
+          224);
+  testbuffer(&dma, 6, &buffers[1]);
+  buffers[1].status = buffers[0].data;
+  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)) ==
+                  -ERR_INVALID &&
+              !queue.state,
+          224);
+  testbuffer(&dma, 6, &buffers[1]);
   REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)), 224);
   if (!config->readonly) {
     testflush(&queue, binding, irqevent, 2 * stride);

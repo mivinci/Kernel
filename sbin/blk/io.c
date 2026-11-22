@@ -67,6 +67,38 @@ blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u
   return error ? error : vrpoll(ring, generation, done, count, more);
 }
 
+static int
+windows(const Blkdma *buffer, u32 count, u32 cpu)
+{
+  u32 i, j, k, l;
+  for (i = 0; i < count; i++) {
+    const Blkdma *a = &buffer[i];
+    const u64     base[] = {cpu ? (uintptr_t) a->header : a->headaddr,
+                        cpu ? (uintptr_t) a->data : a->dataaddr,
+                        cpu ? (uintptr_t) a->status : a->statusaddr};
+    const u64 size[] = {sizeof(*a->header), a->capacity, 1};
+    if (!a->header || !a->status || (a->capacity && !a->data))
+      return 0;
+    for (k = 0; k < ARRAY_SIZE(base); k++) {
+      if (size[k] > UINT64_MAX - base[k])
+        return 0;
+      if (!size[k])
+        continue;
+      for (j = 0; j <= i; j++) {
+        const Blkdma *b = &buffer[j];
+        const u64     other[] = {cpu ? (uintptr_t) b->header : b->headaddr,
+                             cpu ? (uintptr_t) b->data : b->dataaddr,
+                             cpu ? (uintptr_t) b->status : b->statusaddr};
+        const u64 length[] = {sizeof(*b->header), b->capacity, 1};
+        for (l = 0; l < (i == j ? k : ARRAY_SIZE(other)); l++)
+          if (length[l] && base[k] < other[l] + length[l] && other[l] < base[k] + size[k])
+            return 0;
+      }
+    }
+  }
+  return 1;
+}
+
 int
 blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
          u32 count)
@@ -82,6 +114,8 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
     return -ERR_STALE;
   if (device->state != VDEV_LIVE)
     return -ERR_STATE;
+  if (!windows(buffers, count, 0) || !windows(buffers, count, 1))
+    return -ERR_INVALID;
   error = vblkconfig(device, &queue->config);
   if (error)
     return error;

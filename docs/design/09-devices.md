@@ -99,6 +99,8 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 ## 执行与验收
 
+stage548：块队列绑定前检查所有请求槽的头、数据和状态窗口，同一槽及不同槽之间的 CPU 虚拟地址范围和设备地址范围均不得重叠或溢出。拒绝时不启用队列。ARM64/RV64 QEMU `virtiodev` 验证两种地址的跨槽重叠拒绝，修正配置后继续真实设备读写和复位；41 项 virtio 主机测试通过。调用者仍负责映射与环存储隔离、缓存维护粒度及生产 IPC 发权。
+
 stage510：blk 私有队列接受字节偏移，校验对齐后才换算成 virtio 扇区，FLUSH 的偏移必须为零。ARM64/RV64 QEMU `virtiodev` 用此入口提交稀疏增长日志的所有 WRITE/FLUSH，逐笔等待队列完成，宿主核对设备计数与全盘镜像。该入口属于进程内驱动接口，服务间消息编码与发权仍待定稿。
 
 stage469：serial 私有 `serialiodrained` 返回当前 TX 环代次中已离开 UART 的字节位置。UART 确认 FIFO 和移位寄存器均空后，从共享消费位置扣除仍在驱动私有缓冲中待提交的字节；忙、旧代次或无效状态不更新输出。ARM64、RV64 QEMU `packageboot/service-authority` 经真实 MMIO 核对排空位置和实际串口输出；7 项主机专项覆盖环已消费但私有缓冲未送出、UART 未排空和旧代次。尚未向 TTY 发布该位置，也未接 `tcdrain` 或排空后改模式。

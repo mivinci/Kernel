@@ -40,7 +40,9 @@ int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *coun
 /* Zero the queue before first use. Bind a live device and take ownership
    of its configured ring. Reinitialize only after recovery, with a newer
    generation on the same device. The event loop serializes operations and
-   stops polling the old ring when recovery starts. Keep buffers immutable. */
+   stops polling the old ring when recovery starts. Keep buffers immutable.
+   Request windows must be disjoint in CPU and device address space; the
+   caller also owns the mappings and isolates them from ring storage. */
 int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
              u32 count);
 /* Drain more before rearming IRQ. An observed CONFIG keeps submission
