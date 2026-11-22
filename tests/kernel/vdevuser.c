@@ -178,7 +178,7 @@ static void
 testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
          const Testdma *dma)
 {
-  static Journal journal;
+  static Journal journal, idle;
   static u8      images[3][JOURNAL_BYTES];
   Journalblock   metadata[2];
   Journalio      io;
@@ -242,10 +242,11 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
               !journal.last,
           250);
   geometry.flush = config->flush;
-  REQUIRE(
-      !journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
-          journal.last == 47 && journalnext(&journal, &io) == -ERR_STATE,
-      246);
+  REQUIRE(!journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
+              idle.last == 47 && journalnext(&idle, &io) == -ERR_STATE &&
+              journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL,
+                             NULL) == -ERR_STATE,
+          246);
   mark = (Journalmark){47, 1, 11, 12};
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 13, images[2],
                          redometa, NULL) == -ERR_STATE &&
@@ -260,7 +261,7 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   geometry.faultbytes = 0;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
                          redometa, NULL) == -ERR_NOTSUP &&
-              journal.last == 47 && journalnext(&journal, &io) == -ERR_STATE,
+              !journal.last && journalnext(&journal, &io) == -ERR_STATE,
           251);
   geometry.faultbytes = FS_BLOCK_BYTES;
   REQUIRE(!journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage512：日志恢复拒绝覆盖未排空、未释放或已打开的状态；重放同一事务保留 I/O 序号，旧票据不能推进新重放。双架构 QEMU `runtime`、`virtiodev`、`pipeio` 与 39 项 FS 主机测试通过。
 - stage511：ARM64/RV64 QEMU `pipeio` 验证增长写在日志提交标记持久化后收到取消，仍沿原请求返回实际写入字节数，排空后复用槽，偏移只推进一次。块完成由夹具提供。
 - stage510：双架构 QEMU `virtiodev` 通过 blk 队列字节偏移入口完成增长日志 WRITE/FLUSH，并核对未对齐请求拒绝。
 - stage509：双架构 QEMU `virtiodev` 经实际块设备完成稀疏增长事务，核对镜像数据和 FLUSH；生产编码与 FS/blk IPC 待接。

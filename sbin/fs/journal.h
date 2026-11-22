@@ -112,8 +112,10 @@ isize journalgrowth(Growth *, Journal *, struct Cache *, const struct Writeupdat
    A stopped growth is discarded only after I/O drains and recovery owns it. */
 isize growthpublish(Growth *, struct Loadmap *, struct Loadindex *, struct Blockmap *,
                     const struct Blockmap *prepared);
-/* Open the journal for writes on the exclusively owned device, with fresh
-   state after isolating old I/O and callbacks. Even EMPTY grants future
+/* Open the journal for writes on the exclusively owned device. State must
+   be zero initialized or STOPPED and released. Reusing released state
+   preserves ticket serials. The caller must first isolate old I/O and
+   callbacks. Even EMPTY grants future
    write access, so it needs the same geometry, flush and fault guarantees.
    The decoder checks magic, padding and checksums; payloadcrc covers the complete
    images. The classifier reads the whole immutable transaction view (positive

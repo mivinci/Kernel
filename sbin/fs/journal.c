@@ -236,6 +236,7 @@ growthpublish(Growth *work, Loadmap *live, Loadindex *index, Blockmap *allocatio
   const Writeupdate *update;
   Journal           *journal;
   isize              error;
+  u32                i;
   if (!work || !(journal = work->journal) || !(update = work->update) || !work->txid)
     return -ERR_STALE;
   if (journal->txid != work->txid)
@@ -258,11 +259,22 @@ growthpublish(Growth *work, Loadmap *live, Loadindex *index, Blockmap *allocatio
   error = journalrelease(journal);
   if (error)
     return error;
+  /* This code also links into freestanding journal tests without libc. */
   if (!update->plan.block)
-    *allocation = *prepared;
-  if (update->indexdirty)
-    *index = update->index;
-  *live = update->map;
+    for (i = 0; i < ARRAY_SIZE(allocation->used); i++)
+      allocation->used[i] = prepared->used[i];
+  if (update->indexdirty) {
+    index->block = update->index.block;
+    for (i = 0; i < LOAD_INDIRECT; i++)
+      index->entries[i] = update->index.entries[i];
+  }
+  live->file.inode = update->map.file.inode;
+  live->file.generation = update->map.file.generation;
+  live->file.version = update->map.file.version;
+  live->file.length = update->map.file.length;
+  for (i = 0; i < LOAD_DIRECT; i++)
+    live->direct[i] = update->map.direct[i];
+  live->indirect = update->map.indirect;
   *work = (Growth){0};
   return 0;
 }
@@ -291,19 +303,6 @@ redosnapshots(const Journal *journal, u64 blocks, const Journalblock *metadata, 
   return 1;
 }
 
-static void
-redostart(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
-          const u8 *empty)
-{
-  /* The previous EMPTY number is immaterial until this log is retired. */
-  journalinit(journal, blocks, 0);
-  journal->txid = txid;
-  journal->empty = empty;
-  copymetadata(journal, metadata, count);
-  journal->durable = 1;
-  journal->phase = JOURNAL_HOME_WRITE;
-}
-
 isize
 journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *device,
                const Journalmark *mark, const Journalhead *head, const Journalblock *metadata,
@@ -314,13 +313,18 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   u32   i;
   if (!journal || !mark)
     return -ERR_INVALID;
+  if (journal->active || journal->txid || (journal->blocks && journal->phase != JOURNAL_STOPPED))
+    return -ERR_STATE;
   error = fslayoutcheck(layout, device, 1);
   if (error)
     return error;
   if (!mark->state) {
     if (mark->headercrc || mark->payloadcrc)
       return -ERR_STATE;
-    return journalinit(journal, layout->blocks, mark->txid);
+    journal->blocks = layout->blocks;
+    journal->last = mark->txid;
+    journal->phase = JOURNAL_IDLE;
+    return 0;
   }
   if (mark->state != 1 || !mark->txid || !head || head->state != 1 || head->txid != mark->txid ||
       head->headercrc != mark->headercrc || head->payloadcrc != mark->payloadcrc ||
@@ -337,7 +341,14 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   for (i = 0; i < count; i++)
     if (classify(context, metadata, count, i) <= 0)
       return -ERR_STATE;
-  redostart(journal, layout->blocks, mark->txid, metadata, count, empty);
+  journal->blocks = layout->blocks;
+  /* The previous EMPTY number is immaterial until this log is retired. */
+  journal->last = 0;
+  journal->txid = mark->txid;
+  journal->empty = empty;
+  copymetadata(journal, metadata, count);
+  journal->durable = 1;
+  journal->phase = JOURNAL_HOME_WRITE;
   return 0;
 }
 
