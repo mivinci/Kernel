@@ -2057,6 +2057,7 @@ backend(const Bootview *boot, u32 recover)
   Fileslot        descriptor;
   Fileowner       preparer = {0};
   Filewatch       watch = {0};
+  Filelink        links[2] = {{0}};
   Handle          memory = 0, space = bootresource(boot, BOOT_SELF_SPACE), waiter = 0;
   Filehead       *head = (Filehead *) ADDRESS;
   Openprep        preps[4] = {{0}};
@@ -2070,6 +2071,7 @@ backend(const Bootview *boot, u32 recover)
   wanted = recover == 4 ? 1 : recover == 2 ? 2 : recover == 5 ? 3 : 4;
   attached = recover == 4 ? 1 : recover == 2 ? 2 : 3;
   aborted = recover == 4 || recover == 2 ? 1 : recover == 5 ? 2 : 3;
+  links[0].generation = UINT64_MAX >> 16;
   CHECK(!sysconnpeer(bootresource(boot, 256), &clientpeer) &&
         !sysconnpeer(bootresource(boot, 257), &vfspeer));
   for (;;) {
@@ -2218,6 +2220,24 @@ backend(const Bootview *boot, u32 recover)
         CHECK(!ipc_reply(input.request, &reply));
         continue;
       }
+      if (!recover && !memory) {
+        Filelink failed = {0};
+        CHECK(sysopenfirst(prep, links, 1, bootresource(boot, 258),
+                           bootresource(boot, BOOT_SELF_ALLOC), space, ADDRESS - FS_CONN_BYTES,
+                           &input, now) == -ERR_CAPACITY &&
+              prep->state == Openpending && !links[0].memory && !links[0].watch.owner.cookie);
+        CHECK(sysopenfirst(prep, &failed, 1, bootresource(boot, 258), 0, space, ADDRESS, &input,
+                           now) == -ERR_BAD_HANDLE &&
+              prep->state == Openpending && !failed.ready && !failed.address && !failed.memory &&
+              !failed.watch.owner.cookie);
+        CHECK(!sysopenfirst(prep, links, ARRAY_SIZE(links), bootresource(boot, 258),
+                            bootresource(boot, BOOT_SELF_ALLOC), space, ADDRESS - FS_CONN_BYTES,
+                            &input, now) &&
+              prep->state == Openattached && links[1].ready && links[1].watch.connid == CONNID &&
+              links[1].address == ADDRESS && links[1].memory);
+        memory = links[1].memory;
+        continue;
+      }
       if (!memory) {
         Handle pid, parent;
         u64    image;
@@ -2259,6 +2279,15 @@ backend(const Bootview *boot, u32 recover)
         transfer.business[1] = CONNID;
         transfer.business[2] = FS_CONN_BYTES;
         CHECK(!ipc_reply_resource(input.request, &transfer));
+      } else if (!recover && prep->session != 204) {
+        Filelink wrong = {0};
+        wrong.watch = links[1].watch;
+        CHECK(sysopenreuse(prep, &wrong, &input, now) == -ERR_STALE && prep->state == Openpending);
+        wrong.ready = 1;
+        wrong.watch.owner.image++;
+        CHECK(sysopenreuse(prep, &wrong, &input, now) == -ERR_STALE && prep->state == Openpending &&
+              !sysopenreuse(prep, &links[1], &input, now) && prep->state == Openattached);
+        continue;
       } else {
         reply.words[2] = !recover && prep->session == 204 ? CONNID + 1 : CONNID;
         reply.words[3] = FS_CONN_BYTES;
@@ -2287,8 +2316,12 @@ backend(const Bootview *boot, u32 recover)
     if (recover >= 9)
       CHECK(!sysfilefinish(&watch.active, input.request));
   }
-  CHECK(memory && !__sys_unmap(space, ADDRESS) && !__sys_free(memory) &&
-        !__sys_free(bootresource(boot, 256)) && !__sys_free(bootresource(boot, 257)));
+  CHECK(memory);
+  if (!recover)
+    CHECK(!sysfilelinkclose(&links[1]));
+  else
+    CHECK(!__sys_unmap(space, ADDRESS) && !__sys_free(memory));
+  CHECK(!__sys_free(bootresource(boot, 256)) && !__sys_free(bootresource(boot, 257)));
   if (recover != 9)
     CHECK(!sysfileownerclose(&preparer));
   filecreatetrace[1] = created;

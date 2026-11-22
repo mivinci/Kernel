@@ -2,6 +2,7 @@
 #include "private/syscall.h"
 #include <abi/observe.h>
 #include <abi/time.h>
+#include <errno.h>
 
 isize
 sysopenreserve(Openprep *pool, u32 count, Openlimit limit, const Fileowner *owner, Handle client,
@@ -97,6 +98,38 @@ sysopencommit(Openprep *prep)
 {
   prep->deadline = 0;
   prep->state = Openattached;
+}
+
+isize
+sysopenreuse(Openprep *prep, const Filelink *link, const Ipcmsg *call, u64 now)
+{
+  Msg   reply = {{0, 0, 0, 0}};
+  u64   state;
+  isize status = sysopenattach(prep, call, now);
+  if (status)
+    return status;
+  if (!link || !link->ready || !link->watch.connid || !link->watch.owner.cookie ||
+      link->watch.owner.reason || link->watch.owner.pid != call->source ||
+      link->watch.owner.image != call->image)
+    return -ERR_STALE;
+  status = ipc_rqcheck(call->request, &state);
+  if (status)
+    return status;
+  if (state == RQ_CHECK_DRAINING)
+    return ipc_rqfinish(call->request);
+  reply.words[1] = call->words[2];
+  if (state & RQ_CHECK_CANCEL) {
+    reply.words[0] = (u64) -EINTR;
+    return ipc_reply(call->request, &reply);
+  }
+  if (state != RQ_CHECK_LIVE)
+    return -ERR_STATE;
+  reply.words[2] = link->watch.connid;
+  reply.words[3] = FS_CONN_BYTES;
+  status = ipc_reply(call->request, &reply);
+  if (!status)
+    sysopencommit(prep);
+  return status;
 }
 
 static Openprep *
@@ -491,15 +524,14 @@ sysfileprepay(Filelink *pool, u32 count, u32 index, Handle allocator, Handle spa
   return status;
 }
 
-isize
-sysslothello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
-             u64 hello, const Ipcmsg *call)
+static isize
+linkconnect(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
+            const Ipcmsg *call)
 {
   Filelink *link;
   u32       i, slot = count;
-  if (!pool || !count || count > FS_CONN_COUNT || !base || (base & PAGE_MASK) || !hello ||
-      (u64) count * FS_CONN_BYTES > UINT64_MAX - base || !call || call->kind != IPC_CALL ||
-      call->words[0] != hello || call->words[1] || !call->words[2] || call->words[3] != UINT64_MAX)
+  if (!pool || !count || count > FS_CONN_COUNT || !base || (base & PAGE_MASK) ||
+      (u64) count * FS_CONN_BYTES > UINT64_MAX - base)
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
     link = &pool[i];
@@ -516,6 +548,42 @@ sysslothello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle 
   link->generation++;
   return linkhello(link, permit, allocator, space, base + (u64) slot * FS_CONN_BYTES,
                    (link->generation << 16) | slot, call);
+}
+
+isize
+sysopenfirst(Openprep *prep, Filelink *pool, u32 count, Handle permit, Handle allocator,
+             Handle space, u64 base, const Ipcmsg *call, u64 now)
+{
+  Msg   reply = {{(u64) -EINTR, 0, 0, 0}};
+  u64   state;
+  isize status = sysopenattach(prep, call, now);
+  if (status)
+    return status;
+  status = ipc_rqcheck(call->request, &state);
+  if (status)
+    return status;
+  if (state == RQ_CHECK_DRAINING)
+    return ipc_rqfinish(call->request);
+  if (state & RQ_CHECK_CANCEL) {
+    reply.words[1] = call->words[2];
+    return ipc_reply(call->request, &reply);
+  }
+  if (state != RQ_CHECK_LIVE)
+    return -ERR_STATE;
+  status = linkconnect(pool, count, permit, allocator, space, base, call);
+  if (!status)
+    sysopencommit(prep);
+  return status;
+}
+
+isize
+sysslothello(Filelink *pool, u32 count, Handle permit, Handle allocator, Handle space, u64 base,
+             u64 hello, const Ipcmsg *call)
+{
+  if (!hello || !call || call->kind != IPC_CALL || call->words[0] != hello || call->words[1] ||
+      !call->words[2] || call->words[3] != UINT64_MAX)
+    return -ERR_INVALID;
+  return linkconnect(pool, count, permit, allocator, space, base, call);
 }
 
 isize

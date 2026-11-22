@@ -45,6 +45,9 @@ isize     sysopenrelease(Openprep *pool, u32 count, u64 token);
 /* Serialize the check, resource reply and commit in the service loop. */
 isize sysopenattach(const Openprep *prep, const Ipcmsg *call, u64 now);
 void  sysopencommit(Openprep *prep);
+/* Confirm ATTACH over an already delivered connection without sending MEM.
+   On zero the REQUEST was settled; cancellation/drain does not commit prep. */
+isize sysopenreuse(Openprep *prep, const Filelink *link, const Ipcmsg *call, u64 now);
 /* Resolve only a live attached reference after connection and slot validation.
    The caller still owns logical close and any downstream drain. */
 Openprep *sysopenref(Openprep *pool, u32 count, const Ipcmsg *call, const Fileslot *slot);
@@ -114,6 +117,11 @@ struct Filelink
   u64       address, serverimage, generation;
   u32       ready, prepaid;
 };
+
+/* First ATTACH: verify the prepared reference, observe the source, then
+   deliver a new slot mapping. Only successful delivery commits the prep. */
+isize sysopenfirst(Openprep *prep, Filelink *pool, u32 count, Handle permit, Handle allocator,
+                   Handle space, u64 base, const Ipcmsg *call, u64 now);
 
 /* Use a fixed zeroed pool and an exclusive VA arena in the service's own
    Space. Serialize requests and keep other observation dependencies separate

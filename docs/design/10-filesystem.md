@@ -696,6 +696,10 @@ HELLO/ATTACH/EXEC_CLAIM的参数全部来自寄存器快照和服务私有准备
 
 VFS OPEN交付后端CALL时，资源reply业务三字固定为[seq,session,prepare_token]。客户端持该session和token，向后端发送无槽ATTACH；首次MEM交付得到connid/region_bytes后才map；普通复用确认仅核对已经持有的同一映射，不执行第二次安装/map，随后才能使用该会话。连接头connid/bytes必须与本次资源回复匹配；不能把旧镜像connid或token当新连接connid。普通FS OPEN已经有HELLO连接，不需要再建立一次共享区，成功普通reply中的value为新session。
 
+后端的私有 `sysopenfirst` 先核对准备 token 与真实客户端 PID/image，再沿 HELLO 的路径建立连接、登记镜像观察、分配并映射共享区，经原 ATTACH 资源回复交付 MEM。`sysopenreuse` 另核对服务私有连接已就绪、观察仍有效且属于同一 PID/image，经原 ATTACH 普通回复连接号和长度。两条路径都在回复成功后提交准备引用；检查时已看到取消或请求正在排空，则只收尾，准备引用仍归原撤销路径。分配或资源回复失败时归还首次建连的本地责任；若强制终结先于回复提交，内核不会向新镜像安装 MEM，后端按镜像观察清理旧连接和引用。生产 TTY 的首次连接发权仍待接入。
+
+ARM64、RV64 QEMU `runtime` 验证：容量不足和分配授权无效时保持准备记录待领取，并归还本地观察；同一原请求仍可完成首次 MEM 交付。复用拒绝未就绪连接和错误镜像，再经同一原请求确认正确连接，不重复交付 MEM。客户端关闭或撤销对应引用后，服务释放连接映射、MEM 和观察。
+
 创建类新引用返回格式已于2026-11-20确认：普通OPEN的value=session、bytes=8，VFS资源OPEN保留上述三字，两者均在原槽输出u64 reference_id；DUPREF的value=新reference_id、bytes=0且session不变；PIPE的value=2、bytes=32，原槽依读端/写端顺序输出两条{session:u64,reference_id:u64}。原RPC排空后保存、ACK前接管；free CALL不能代替关闭远端引用。实现与验收边界见文末。
 
 业务取消通过原RPC的rqcancel，结果通过同一RPC的rqpoll/rqwait/rqack处理，不发送文件层控制查询或确认。槽/活动操作键含服务PID/image、客户端PID/image、connid、seq及原REQUEST；seq匹配原槽和返回，不是跨新Rq恢复业务的凭证。ABORT只撤销明确token对应的准备或上述普通OPEN引用，不取消或查询已提交I/O。
