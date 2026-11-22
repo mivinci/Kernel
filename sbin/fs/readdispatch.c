@@ -5,17 +5,42 @@ static isize
 reject(Filelink *link, const Ipcmsg *call, isize status)
 {
   Msg   reply = {{(u64) status, call->words[2], 0, 0}};
-  isize error = ipc_reply(call->request, &reply);
+  u64   state;
+  isize error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state & RQ_CHECK_CANCEL)
+    reply.words[0] = (u64) -EINTR;
+  error =
+      state == RQ_CHECK_DRAINING ? ipc_rqfinish(call->request) : ipc_reply(call->request, &reply);
   return error ? error : sysfilefinish(&link->watch.active, call->request);
 }
 
 static void
 release(Fsreads *reads, Fsfiles *files, Readjob *job)
 {
-  reads->release(reads->backend, job);
-  job->file->read = 0;
+  if (job->map)
+    reads->release(reads->backend, job);
+  job->file->head = job->next;
+  if (!job->next)
+    job->file->tail = NULL;
   fsfiledrop(files, job->file);
   *job = (Readjob){0};
+}
+
+static isize
+seek(Fsfiles *files, Fsfile *file, Filelink *link, const Ipcmsg *call, const Fileslot *slot)
+{
+  u64   length = 0, state;
+  isize error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_LIVE && slot->args[1] == FS_SEEK_END) {
+    error = files->length ? files->length(files->backend, file->node, &length) : -ENOSYS;
+    if (error)
+      return reject(link, call, error);
+  }
+  return fileseek(&link->watch.active, call, slot, length, &file->position);
 }
 
 static isize
@@ -25,6 +50,21 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
   isize        status;
   volatile u8 *page =
       (volatile u8 *) (job->link->address + FS_DATA_OFFSET + job->call.words[3] * FS_SLOT_BYTES);
+  if (job->call.words[0] == FS_SEEK) {
+    status = seek(files, job->file, job->link, &job->call, &job->slot);
+    goto done;
+  }
+  if (!job->map) {
+    u64 state;
+    status = ipc_rqcheck(job->call.request, &state);
+    if (status)
+      return status;
+    status = state == RQ_CHECK_LIVE ? reads->bind(reads->backend, job) : -EINTR;
+    if (status) {
+      status = reject(job->link, &job->call, status);
+      goto done;
+    }
+  }
   for (;;) {
     status =
         fileread(&job->work, &fetch, &job->link->watch.active, &job->call, &job->slot, job->map,
@@ -37,58 +77,74 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
     if (status)
       return status;
   }
+done:
   if (!status)
     release(reads, files, job);
   return status == -ERR_WOULD_BLOCK ? 0 : status;
+}
+
+static isize
+enqueue(Fsreads *reads, Fsfiles *files, Fsfile *file, Filelink *link, const Ipcmsg *call,
+        const Fileslot *slot)
+{
+  Readjob *job;
+  u32      i;
+  for (i = 0; i < reads->count && reads->jobs[i].file; i++) {
+  }
+  if (i == reads->count || fsfilehold(file))
+    return reject(link, call, -EAGAIN);
+  if (ipc_defer(call->request)) {
+    fsfiledrop(files, file);
+    return reject(link, call, -EAGAIN);
+  }
+  job = &reads->jobs[i];
+  job->file = file;
+  job->link = link;
+  job->call = *call;
+  job->slot = *slot;
+  if (file->tail)
+    file->tail->next = job;
+  else
+    file->head = job;
+  file->tail = job;
+  return file->head == job ? advance(reads, files, job) : 0;
 }
 
 isize
 fsreadstart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
             const Fileslot *slot)
 {
-  Fsfile  *file = fsfilefind(files, call->source, call->image, slot->object);
-  Readjob *job;
-  u32      i;
-  isize    error;
+  Fsfile *file = fsfilefind(files, call->source, call->image, slot->object);
   if (!file || !(file->access & VACCESS_R))
     return reject(link, call, file ? -EBADF : -ESTALE);
-  if (!reads)
-    return reject(link, call, -ENOSYS);
-  for (i = 0; i < reads->count && reads->jobs[i].file; i++) {
-  }
-  if (file->read || i == reads->count || fsfilehold(file))
-    return reject(link, call, -EAGAIN);
-  job = &reads->jobs[i];
-  job->file = file;
-  job->link = link;
-  job->call = *call;
-  job->slot = *slot;
-  file->read = call->request;
-  error = reads->bind(reads->backend, job);
-  if (error) {
-    file->read = 0;
-    fsfiledrop(files, file);
-    *job = (Readjob){0};
-    return reject(link, call, error);
-  }
-  if (ipc_defer(call->request)) {
-    release(reads, files, job);
-    return reject(link, call, -EAGAIN);
-  }
-  return advance(reads, files, job);
+  return reads ? enqueue(reads, files, file, link, call, slot) : reject(link, call, -ENOSYS);
+}
+
+isize
+fsseekstart(Fsreads *reads, Fsfiles *files, Fsfile *file, Filelink *link, const Ipcmsg *call,
+            const Fileslot *slot)
+{
+  return file->head ? enqueue(reads, files, file, link, call, slot)
+                    : seek(files, file, link, call, slot);
 }
 
 isize
 fsreadpump(Fsreads *reads, Fsfiles *files)
 {
-  u32 i;
-  if (reads)
+  u32 i, progress;
+  if (!reads)
+    return 0;
+  do {
+    progress = 0;
     for (i = 0; i < reads->count; i++)
-      if (reads->jobs[i].file) {
-        isize error = advance(reads, files, &reads->jobs[i]);
+      if (reads->jobs[i].file && reads->jobs[i].file->head == &reads->jobs[i]) {
+        Readjob *job = &reads->jobs[i];
+        isize    error = advance(reads, files, job);
         if (error)
           return error;
+        progress |= !job->file;
       }
+  } while (progress);
   return 0;
 }
 

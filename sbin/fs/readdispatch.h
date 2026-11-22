@@ -4,10 +4,10 @@
 #include "read.h"
 
 typedef struct Fsreads Fsreads;
-typedef struct Readjob Readjob;
 struct Readjob
 {
   Readwork         work;
+  Readjob         *next;
   Fsfile          *file;
   Filelink        *link;
   Ipcmsg           call;
@@ -33,6 +33,7 @@ struct Fsreads
 
 /* The caller has claimed the slot and checked original request state. */
 isize fsreadstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
+isize fsseekstart(Fsreads *, Fsfiles *, Fsfile *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsreadpump(Fsreads *, Fsfiles *);
 int   fsreadbusy(const Fsreads *, const Filelink *);
 #endif

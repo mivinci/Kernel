@@ -8,12 +8,13 @@
 typedef struct Fsfile  Fsfile;
 typedef struct Fsref   Fsref;
 typedef struct Fsfiles Fsfiles;
+typedef struct Readjob Readjob;
 struct Fsfile
 {
-  Vnode *node;
-  u64    session, position;
-  u32    access, refs;
-  Handle read;
+  Vnode   *node;
+  u64      session, position;
+  u32      access, refs;
+  Readjob *head, *tail;
 };
 struct Fsref
 {

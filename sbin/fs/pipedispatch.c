@@ -277,23 +277,11 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     if (!error && dispatch->regular && (slot.object & FS_FILE_SESSION)) {
       Fsfiles *table = dispatch->regular;
       Fsfile  *file = fsfilefind(table, call->source, call->image, slot.object);
-      u64      length = 0;
       if (!file) {
         error = -ERR_STALE;
         break;
       }
-      if (file->read) {
-        reply.words[0] = (u64) -EAGAIN;
-        return respond(link, call->request, &reply);
-      }
-      if (slot.args[1] == FS_SEEK_END) {
-        isize status = table->length ? table->length(table->backend, file->node, &length) : -ENOSYS;
-        if (status) {
-          reply.words[0] = (u64) status;
-          return respond(link, call->request, &reply);
-        }
-      }
-      return fileseek(&link->watch.active, call, &slot, length, &file->position);
+      return fsseekstart(dispatch->reads, table, file, link, call, &slot);
     }
     if (!error)
       error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);

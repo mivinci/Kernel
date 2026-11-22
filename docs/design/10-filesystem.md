@@ -770,6 +770,10 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage459：普通文件 READ 与 SEEK 使用同一 File 的有界 FIFO。任务持有原请求、槽和 File；仅队首绑定读快照或计算偏移，关闭业务引用不取消已受理任务。队列或原生延期名额耗尽时返回 EAGAIN，其他 File 可继续推进。
+
+ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证缺块 READ 从偏移 19 读取一字节，随后排队的 SEEK_CUR(+3) 返回 23；两份任务在最后 CLOSE 后仍能按序结束并释放节点。块完成仍由夹具提供。
+
 stage458：普通文件 READ 经 FS 事件循环校验会话和读取权限，缺块时保留原 REQUEST、槽、File 引用与后端快照。读票未排空时不能释放这些引用；同一 File 的并发 READ/SEEK 当前返回 EAGAIN，其他会话仍可运行。关闭最后一份业务引用不会中止已受理的读取。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证缺块期间输出和偏移不变、并发 SEEK 被拒、最后 CLOSE 后节点仍由原 READ 持有，精确读票完成后交付数据并释放节点。块完成由夹具提供，生产 FS↔blk 运输与并发偏移操作排队尚未接通。
