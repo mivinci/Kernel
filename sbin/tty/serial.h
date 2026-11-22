@@ -66,11 +66,17 @@ isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active,
    GETATTR publishes the current private mode in the original data page. */
 isize ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call,
                  const Fileslot *slot, volatile u8 *page);
-/* Commit an authorized immediate mode change, after the service settles any
-   already due/cancelled read. pending is the selected original READ, if any.
-   On success the event loop rechecks it at now and updates its alarm. */
+/* Commit an authorized ready mode change after settling any due/cancelled
+   read. For flush, the caller has already drained output and owns the
+   backend input cutoff; this commit discards locally unread input. Pending
+   is the selected original READ, if any. Recheck it and update the alarm. */
 isize ttyfilemode(Ttyinput *input, Termarg *mode, const Termarg *requested, Ttypending *pending,
-                  u64 now);
+                  u64 now, u32 flush);
+/* Once output drain is confirmed, discard unread local input and the RX
+   prefix visible at commit, leaving later publications for the new mode.
+   Caller sends returned RX_ROOM and rechecks the original pending read. */
+isize ttyserialflushmode(Ttyserial *io, Ttyinput *input, Termarg *mode, const Termarg *requested,
+                         Ttypending *pending, u64 now, u64 *hints);
 /* Start one authorized request on an admitted slot. The dispatcher supplies
    the File's nonblock flag and a free pending record if it has one. When a
    blocking request is deferred, next holds its absolute deadline or zero.

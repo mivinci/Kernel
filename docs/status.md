@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- TTY 切换模式时可丢弃本地队列和 RX 环截点前的未读输入；串口终结时收尾仍阻塞的原请求。双架构 `runtime` 验证已到期时不丢输入、终结唤醒 READ 并归还原槽。物理输出排空与公开 `tcsetattr` 待接。
 - `FS_LOAD` 等待块映射时保留原请求；双架构 `pipeio` 验证同一请求可恢复，以及无新 IPC 或磁盘完成时也会按期返回 ETIMEDOUT。
 - `fcntl(F_DUPFD_CLOEXEC)` 原子发布带 CLOEXEC 的别名，共用原 File；双架构 QEMU `pipeio`、`libsys` 已验证，完整 exec 继承仍待接。
 - `Elfsource` 可从已授权的 `FS_LOAD` 会话精确读块；双架构 QEMU `pipeio` 核对 ELF 头、段字节与旧版本拒绝。生产会话授权和基于 FS 的镜像替换仍待接。
@@ -320,6 +321,7 @@
 
 ## 待确认与接续
 
+- 待确认：串口物理排空证明候选复用 TX 环头首个保留字，按环 epoch 记录已真正发完的前缀并复用 `TX_ROOM` 唤醒；环布局及发权未改。
 - 待确认：只有执行权限的文件不能通过旧镜像可读的共享槽交付；候选由独立可信加载器持有会话，按原调用者凭据检查并直接装入准备中的新镜像。生产授权尚未接入。
 - 待确认：生产 TTY/VFS 首次发放 `OBSERVE_SOURCE` 的方式，见[文件连接观察](design/10-filesystem.md)；目前仅夹具接通。
 - 待确认：后端继承引用的 `reference_id` 命名空间及 Bootfd 交付格式，见[文件继承](design/10-filesystem.md)和[Boot](design/07-boot.md)；实际启动文件表仍未接通。

@@ -258,12 +258,13 @@ ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call, const 
 }
 
 isize
-ttyfilemode(Ttyinput *input, Termarg *mode, const Termarg *requested, Ttypending *pending, u64 now)
+ttyfilemode(Ttyinput *input, Termarg *mode, const Termarg *requested, Ttypending *pending, u64 now,
+            u32 flush)
 {
   Ttywait wait;
   u32     canonical, reset = 0;
   isize   error;
-  if (!input || !mode || !IS_ALIGNED((usize) input, 8) || !IS_ALIGNED((usize) mode, 8))
+  if (!input || !mode || flush > 1 || !IS_ALIGNED((usize) input, 8) || !IS_ALIGNED((usize) mode, 8))
     return -ERR_INVALID;
   error = ttyattrcheck(mode, mode->ispeed);
   if (error)
@@ -282,20 +283,50 @@ ttyfilemode(Ttyinput *input, Termarg *mode, const Termarg *requested, Ttypending
     reset = canonical != input->canonical ||
             (!canonical &&
              (pending->wait.time != requested->cc[TTY_VTIME] ||
-              pending->wait.minimum != MIN(requested->cc[TTY_VMIN], pending->wait.length)));
+              pending->wait.minimum != MIN(requested->cc[TTY_VMIN], pending->wait.length) ||
+              (flush && pending->wait.minimum && pending->wait.time)));
     if (reset) {
       error = ttywaitinit(&wait, requested, pending->wait.length, 0,
-                          !canonical && ttyinputhasbytes(input), now);
+                          !flush && !canonical && ttyinputhasbytes(input), now);
       if (error)
         return error;
     }
   }
-  error = ttyinputmode(input, canonical);
+  if (flush) {
+    error = ttyinputflush(input);
+    if (!error)
+      input->canonical = canonical;
+  } else
+    error = ttyinputmode(input, canonical);
   if (error)
     return error;
   *mode = *requested;
   if (reset)
     pending->wait = wait;
+  return 0;
+}
+
+isize
+ttyserialflushmode(Ttyserial *io, Ttyinput *input, Termarg *mode, const Termarg *requested,
+                   Ttypending *pending, u64 now, u64 *hints)
+{
+  u64   cutoff, consumer;
+  isize error;
+  if (!io || !io->rx || !hints)
+    return -ERR_INVALID;
+  error = serialread(io->rx, io->epoch, NULL, 0);
+  if (error)
+    return error;
+  consumer = __atomic_load_n(&io->rx->consumer, __ATOMIC_RELAXED);
+  cutoff = __atomic_load_n(&io->rx->producer, __ATOMIC_ACQUIRE);
+  if (cutoff < consumer || cutoff - consumer > SERIAL_CAPACITY)
+    return -ERR_PEER;
+  error = ttyfilemode(input, mode, requested, pending, now, 1);
+  if (error)
+    return error;
+  /* New producer publications are beyond the cutoff and stay readable. */
+  __atomic_store_n(&io->rx->consumer, cutoff, __ATOMIC_RELEASE);
+  *hints = cutoff != consumer ? SERIAL_RX_ROOM : 0;
   return 0;
 }
 
@@ -511,6 +542,22 @@ ttyserialtimedstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, Ttywait 
   return ttywaitcheck(wait, input->ready, now, next);
 }
 
+static isize
+hangup(Ttypending *pending, Fileinflight *active, u64 *next)
+{
+  isize error;
+  if (!fileowns(active, &pending->call, &pending->slot))
+    return -ERR_STALE;
+  error = filereject(active, &pending->call, -EIO);
+  if (!error) {
+    pending->call.request = 0;
+    pending->page = NULL;
+    pending->timed = 0;
+    *next = 0;
+  }
+  return error;
+}
+
 isize
 ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
                  Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out)
@@ -528,6 +575,8 @@ ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Term
   status = ttyserialtimedstep(io, input, mode, &pending->wait, now, next, out);
   if (status < 0)
     return status;
+  if (out->end && !status)
+    return hangup(pending, active, next);
   if (!status || out->signal)
     return -ERR_WOULD_BLOCK;
   return ttyfileresume(pending, io, input, 0, active, now, next);
@@ -554,9 +603,13 @@ ttyfileadvance(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termar
     return status;
   }
   status = ttyserialstep(io, input, mode, SERIAL_BATCH, out);
-  if (status || out->signal || out->end)
+  if (status || out->signal)
     return status;
+  if (out->end && pending->call.words[0] != FS_READ)
+    return hangup(pending, active, next);
   status = ttyfileresume(pending, io, input, mode->oflag, active, now, next);
+  if (status == -ERR_WOULD_BLOCK && out->end)
+    return hangup(pending, active, next);
   if (!status && io->queued)
     out->again = 1;
   return status == -ERR_WOULD_BLOCK ? 0 : status;

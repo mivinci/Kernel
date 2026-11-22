@@ -452,7 +452,10 @@ ttyiocall(u64 file, u64 opcode, u32 cancel)
     CHECK(!ipc_call(work.state.call, &seen, CALL_CONTROL, &result) && !result.words[0] &&
           !ipc_rqcancel(rpc));
   CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq);
-  if (cancel == 4)
+  if (cancel == 6)
+    CHECK((isize) result.words[0] == -EIO && !result.words[2] && !result.words[3] &&
+          page[0] == 0xa5 && page[1] == 0xa5);
+  else if (cancel == 4)
     CHECK((isize) result.words[0] == -EAGAIN && !result.words[2] && !result.words[3] &&
           page[0] == (opcode == FS_WRITE ? 'x' : 0xa5) &&
           page[1] == (opcode == FS_WRITE ? '\n' : 0xa5));
@@ -713,6 +716,7 @@ client(const Bootview *boot)
   ttyiocall(first, FS_READ, 2);
   ttyiocall(first, FS_READ, 3);
   ttyiocall(first, FS_READ, 5);
+  ttyiocall(first, FS_READ, 6);
   CHECK(first && !files[1] && !source && !sysfdreserve(&fds, 0, &fd) &&
         !sysfdpublish(&fds, fd, first, 0) && !sysfilerefpin(&pool, work.state.self, first));
   key = begin(FS_DUPREF, 0, first);
@@ -1351,22 +1355,39 @@ server(const Bootview *boot, u32 recover)
           updated.cc[TTY_VTIME] = 50;
           generation = readalarm.generation;
           CHECK(ttydeferred.call.request && !sysfilenow(&ttynow) && ttynow < readalarm.deadline &&
-                ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, readalarm.deadline) ==
+                ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, readalarm.deadline, 0) ==
                     -ERR_BUSY &&
-                !raw.oflag && !ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow) &&
+                !raw.oflag && !ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow, 0) &&
                 raw.oflag == TTY_OPOST &&
                 !ttyfileadvance(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttynow,
                                 &ttyalarm, &ttyresult) &&
                 ttydeferred.call.request && ttyalarm == readalarm.deadline &&
                 !ttyalarmset(&readalarm, ttyalarm) && readalarm.generation == generation);
           updated.cc[TTY_VTIME] = 49;
-          CHECK(!ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow) &&
+          CHECK(!ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow, 0) &&
                 ttydeferred.call.request == original &&
                 !ttyfileadvance(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttynow,
                                 &ttyalarm, &ttyresult) &&
                 ttydeferred.call.request == original && ttyalarm == ttynow + UINT64_C(4900000000) &&
-                !ttyalarmset(&readalarm, ttyalarm) && readalarm.generation > generation &&
-                !ipc_reply(input.request, &reply));
+                !ttyalarmset(&readalarm, ttyalarm) && readalarm.generation > generation);
+          {
+            Ttyeffect effect;
+            u64       hints = 0;
+            updated.cc[TTY_VMIN] = 1;
+            CHECK(!ttyinputbyte(&ttyline, &raw, 'x', &effect) && ttyline.ready == 1 &&
+                  serialwrite(&ttyrx, 1, "y", 1) == 1 &&
+                  ttyserialflushmode(&ttyio, &ttyline, &raw, &updated, &ttydeferred,
+                                     ttydeferred.wait.deadline, &hints) == -ERR_BUSY &&
+                  ttyline.ready == 1 && ttyrx.producer - ttyrx.consumer == 1 && !hints &&
+                  !ttyserialflushmode(&ttyio, &ttyline, &raw, &updated, &ttydeferred, ttynow,
+                                      &hints) &&
+                  hints == SERIAL_RX_ROOM && ttyrx.producer == ttyrx.consumer && !ttyline.ready &&
+                  !ttyline.used && ttydeferred.call.request == original &&
+                  !ttydeferred.wait.started && !ttydeferred.wait.deadline);
+            updated.cc[TTY_VMIN] = 0;
+            CHECK(!ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow, 0) &&
+                  ttydeferred.wait.deadline == ttyalarm && !ipc_reply(input.request, &reply));
+          }
           continue;
         }
         if (ttyseen == 4 && !ttydeferred.call.request) {
@@ -1603,6 +1624,22 @@ server(const Bootview *boot, u32 recover)
         if (references[i] && sessions[i] == descriptor.object)
           found++;
       CHECK(found == 1);
+      if (ttyseen == 8 && !ttydeferred.call.request) {
+        Termarg raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
+        raw.cc[TTY_VMIN] = 2;
+        raw.cc[TTY_VTIME] = 1;
+        CHECK(opcode == FS_READ && !sysfilenow(&ttynow) && !readalarm.deadline &&
+              !ttyfilestart(&ttyio, &ttyline, &raw, &watch->active, &input, &descriptor,
+                            (volatile u8 *) data, 0, ttynow, &ttydeferred, &ttyalarm) &&
+              ttydeferred.call.request == input.request && !ttyalarm);
+        __atomic_store_n(&ttyrx.flags, SERIAL_EOF, __ATOMIC_RELEASE);
+        CHECK(!ttyfileadvance(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttynow,
+                              &ttyalarm, &ttyresult) &&
+              ttyresult.end == SERIAL_EOF && !ttyalarm && !ttydeferred.call.request &&
+              !watch->active.requests[slot]);
+        ttyseen++;
+        continue;
+      }
       if (ttydeferred.call.request) {
         Handle original = ttydeferred.call.request;
         CHECK(ttyseen == (opcode == FS_READ ? 1 : 3) &&
