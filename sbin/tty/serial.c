@@ -422,6 +422,38 @@ ttyfilestart(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *
 }
 
 static isize
+fileaccess(const Ipcmsg *call, const Fileslot *slot, Ttyauthorize authorize, void *context)
+{
+  switch (call->words[0]) {
+  case FS_READ:
+  case FS_WRITE:
+  case FS_TTYCTL:
+    return slot->object
+               ? authorize(context, call->source, call->image, slot->object, call->words[0])
+               : -EINVAL;
+  default:
+    return -ENOTSUP;
+  }
+}
+
+isize
+ttyfiledispatch(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *active,
+                const Ipcmsg *call, const Fileslot *slot, volatile u8 *page, Ttyauthorize authorize,
+                void *context, u64 now, Ttypending *pending, u64 *next)
+{
+  isize access;
+  if (!fileowns(active, call, slot) || !authorize || !next)
+    return -ERR_INVALID;
+  *next = 0;
+  access = fileaccess(call, slot, authorize, context);
+  if (access < 0)
+    return filereject(active, call, access);
+  if (access > 1)
+    return -ERR_STATE;
+  return ttyfilestart(io, input, mode, active, call, slot, page, (u32) access, now, pending, next);
+}
+
+static isize
 rxbyte(const Ttyserial *io, u8 *byte, u32 peek, u64 *end)
 {
   isize count = peek ? serialpeek(io->rx, io->epoch, byte) : serialread(io->rx, io->epoch, byte, 1);
@@ -615,16 +647,33 @@ ttyfileadvance(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termar
   return status == -ERR_WOULD_BLOCK ? 0 : status;
 }
 
+static isize
+sendhints(Handle notify, const Ttyserialresult *out, isize error)
+{
+  isize notified = out->hints ? ipc_notify(notify, out->hints) : 0;
+  return error ? error : notified;
+}
+
+isize
+ttyfilepump(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
+            Fileinflight *active, u64 now, u64 *next, Handle notify, Ttyserialresult *out)
+{
+  isize error;
+  if (!out || notify <= 0)
+    return -ERR_INVALID;
+  *out = (Ttyserialresult){0};
+  error = ttyfileadvance(pending, io, input, mode, active, now, next, out);
+  return sendhints(notify, out, error);
+}
+
 isize
 ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
               Ttyserialresult *out)
 {
-  isize error, notified = 0;
+  isize error;
   if (!out || notify <= 0)
     return -ERR_INVALID;
   *out = (Ttyserialresult){0};
   error = ttyserialstep(io, input, mode, rxlimit, out);
-  if (out->hints)
-    notified = ipc_notify(notify, out->hints);
-  return error ? error : notified;
+  return sendhints(notify, out, error);
 }

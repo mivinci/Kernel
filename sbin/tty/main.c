@@ -262,9 +262,13 @@ main(int argc, char **argv)
     if (ready)
       readyresult(&alarm, number, image);
     if (!ready) {
-      error = ttyserialpump(&transport, &input, &mode, SERIAL_BATCH, handles[TtyNotify], &result);
+      error = ttyfilepump(NULL, &transport, &input, &mode, NULL, 0, &deadline, handles[TtyNotify],
+                          &result);
       if (error || result.end)
         failed(107, error ? error : -ERR_PEER);
+      error = ttyalarmset(&alarm, deadline);
+      if (error)
+        failed(107, error);
       ttystate.received = __atomic_load_n(&transport.rx->consumer, __ATOMIC_RELAXED);
       ttystate.dropped = input.dropped;
       again = result.again;

@@ -639,10 +639,11 @@ ttygetattr(u64 file)
   slot.payload_bytes = FS_SLOT_BYTES;
   slot.args[0] = TTY_GETATTR;
   slot.args[4] = sizeof(expected);
-  for (attempt = 0; attempt < 2; attempt++) {
+  for (attempt = 0; attempt < 3; attempt++) {
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
     slot.seq = call.words[2] = lease.seq;
     call.words[3] = lease.slot;
+    slot.object = attempt == 2 ? UINT64_MAX : ref.session;
     slot.args[3] = FS_SLOT_BYTES - sizeof(expected) + (attempt == 0);
     page = (volatile u8 *) (uintptr_t) (work.state.map.address + FS_DATA_OFFSET +
                                         lease.slot * FS_SLOT_BYTES);
@@ -653,10 +654,12 @@ ttygetattr(u64 file)
                       &slot, sizeof(slot)) &&
           !ipc_call(work.state.call, &call, 0, &result) && result.words[1] == lease.seq &&
           !result.words[2] && page[FS_SLOT_BYTES - sizeof(expected) - 1] == 0xa5);
-    CHECK((isize) result.words[0] == (attempt ? 0 : -EINVAL) &&
-          result.words[3] == (attempt ? sizeof(expected) : 0));
+    CHECK((isize) result.words[0] == (attempt == 2   ? -EBADF
+                                      : attempt == 1 ? 0
+                                                     : -EINVAL) &&
+          result.words[3] == (attempt == 1 ? sizeof(expected) : 0));
     for (i = 0; i < sizeof(expected); i++)
-      CHECK(page[FS_SLOT_BYTES - sizeof(expected) + i] == (attempt ? bytes[i] : 0xa5));
+      CHECK(page[FS_SLOT_BYTES - sizeof(expected) + i] == (attempt == 1 ? bytes[i] : 0xa5));
     CHECK(!sysconnworkrelease(&work, &cache, lease));
   }
 }
@@ -1243,6 +1246,28 @@ claimbackend(const Bootview *boot, int reuse)
   filecreatetrace[0] = 2;
 }
 
+typedef struct Ttyfixture Ttyfixture;
+struct Ttyfixture
+{
+  Connpeer   peer;
+  const u64 *sessions, *references;
+  u64        count;
+};
+
+static isize
+ttyauthorize(void *context, Handle pid, u64 image, u64 session, u64 opcode)
+{
+  const Ttyfixture *fixture = context;
+  u64               i;
+  CHECK(opcode == FS_TTYCTL);
+  if (fixture->peer.pid != pid || fixture->peer.image != image)
+    return -EACCES;
+  for (i = 0; i < fixture->count; i++)
+    if (fixture->references[i] && fixture->sessions[i] == session)
+      return 0;
+  return -EBADF;
+}
+
 static void
 server(const Bootview *boot, u32 recover)
 {
@@ -1718,13 +1743,9 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (!recover && opcode == FS_TTYCTL) {
-      found = 0;
-      for (i = 0; i < created; i++)
-        if (references[i] && sessions[i] == descriptor.object)
-          found++;
-      CHECK(found == 1 &&
-            !ttyfilestart(&ttyio, &ttyline, &ttymode, &watch->active, &input, &descriptor,
-                          (volatile u8 *) data, 0, 0, NULL, &ttyalarm) &&
+      Ttyfixture authority = {peer, sessions, references, created};
+      CHECK(!ttyfiledispatch(&ttyio, &ttyline, &ttymode, &watch->active, &input, &descriptor,
+                             (volatile u8 *) data, ttyauthorize, &authority, 0, NULL, &ttyalarm) &&
             !ttyalarm);
       continue;
     }

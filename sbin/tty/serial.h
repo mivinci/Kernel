@@ -11,6 +11,9 @@ typedef struct Ttyserial       Ttyserial;
 typedef struct Ttyserialresult Ttyserialresult;
 typedef struct Ttypending      Ttypending;
 typedef struct Ttyalarm        Ttyalarm;
+/* Resolve the opened terminal using the admitted caller and session. Return
+   a negative errno on denial, or the File's nonblocking flag (0 or 1). */
+typedef isize (*Ttyauthorize)(void *, Handle, u64, u64, u64);
 struct Ttyserial
 {
   Serialring *rx, *tx;
@@ -84,6 +87,12 @@ isize ttyserialflushmode(Ttyserial *io, Ttyinput *input, Termarg *mode, const Te
 isize ttyfilestart(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *active,
                    const Ipcmsg *call, const Fileslot *slot, volatile u8 *page, u32 nonblock,
                    u64 now, Ttypending *pending, u64 *next);
+/* Check session authority before accessing the submitted data page. The
+   caller has already admitted the exact REQUEST and slot. */
+isize ttyfiledispatch(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *active,
+                      const Ipcmsg *call, const Fileslot *slot, volatile u8 *page,
+                      Ttyauthorize authorize, void *context, u64 now, Ttypending *pending,
+                      u64 *next);
 /* After blocking I/O returned WOULD_BLOCK, snapshot the original request
    and optional READ wait state. Initialize pending to zero and keep the
    ledger and mapping alive until resume settles it. For a timed READ pass
@@ -120,6 +129,9 @@ isize ttyfileinterbyte(Ttypending *pending, Ttyserial *io, Ttyinput *input, cons
    absolute deadline or zero, and again indicates remaining local work. */
 isize ttyfileadvance(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
                      Fileinflight *active, u64 now, u64 *next, Ttyserialresult *out);
+/* Advance one request and publish any ring hints to the bound serial peer. */
+isize ttyfilepump(Ttypending *pending, Ttyserial *io, Ttyinput *input, const Termarg *mode,
+                  Fileinflight *active, u64 now, u64 *next, Handle notify, Ttyserialresult *out);
 /* Run a step and publish its hints on the exact serial peer's NOTIFY handle. */
 isize ttyserialpump(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit, Handle notify,
                     Ttyserialresult *out);
