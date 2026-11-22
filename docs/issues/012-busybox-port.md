@@ -33,7 +33,9 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 以目标配置实际引用的头和符号为准，逐步补齐公开 SDK。`locale.h`、`getopt_long`、`fnmatch` 等已有独立验收，BusyBox 仍须通过上游源码编译与链接来证明这些接口足够。
 
-上游探针使用 [BusyBox 1.37.0](https://busybox.net/downloads/busybox-1.37.0.tar.bz2)（SHA-256 `3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4`）。从 `make allnoconfig` 启用下文 applet 和静态构建，经 `make oldconfig` 生成 `include/autoconf.h`。在 ARM64、RV64 两套公开 SDK 上分别用 Clang `-std=gnu99 -ffreestanding -nostdinc -fsyntax-only` 检查，头路径仅含上游 `include`、SDK 与 Clang 基础头。两套 SDK 的首个错误相同：`shell/ash.c` 缺 `<sys/times.h>`；`libbb/xatonum.c` 与 `echo`、`cat`、`sleep`、`test` 的翻译单元都经公共 `libbb.h` 遇到缺失的 `<dirent.h>`。因此目录头是共用构建前置，不只影响 `ls`。这是首错探针，阶段 B 尚未通过。
+上游探针使用 [BusyBox 1.37.0](https://busybox.net/downloads/busybox-1.37.0.tar.bz2)（SHA-256 `3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4`）。在仓库根目录执行 `python3 bin/sh/prepare.py /path/to/busybox-1.37.0.tar.bz2 /path/to/new-run`。它校验固定归档，应用移植补丁，从 `make allnoconfig` 合入[项目配置片段](../../bin/sh/busybox.config)后运行 `make oldconfig`，并核对 `.config` 与 `include/autoconf.h` 都保留了所需选项。成功打印源码路径，运行日志留在新目录。BusyBox 1.37.0 直接以 `KCONFIG_ALLCONFIG` 传片段时实测未能保留这些开关。
+
+在 ARM64、RV64 两套公开 SDK 上分别用 Clang `-std=gnu99 -ffreestanding -nostdinc -fsyntax-only` 检查，头路径仅含上游 `include`、SDK 与 Clang 基础头。切换到上述配置后，两套 SDK 的首个错误仍相同：`shell/ash.c` 缺 `<sys/times.h>`；`libbb/xatonum.c` 缺 `<dirent.h>`。此前 `echo`、`cat`、`sleep`、`test` 的翻译单元也都经公共 `libbb.h` 遇到缺失的 `<dirent.h>`。因此目录头是共用构建前置，不只影响 `ls`。这是首错探针，阶段 B 尚未通过。
 
 **阶段 C：最小 applet 集合跑通**
 
@@ -104,7 +106,12 @@ A2 固定使用 [miniz 3.1.2](https://github.com/richgel999/miniz/tree/3.1.2) �
 - 阶段 A：A1 与 A2 各自满足源码约束、五项构建检查与运行断言（见[阶段 A 判据](#阶段-a-判据细化)）；不引入 QEMU 专属手段（01#3、01#4）。
 - 阶段 B：BusyBox 目标配置编译通过且无未定义符号；既有 host 测试与双架构矩阵不回归。
 - 阶段 C：串口脚本化验证——`echo hi | cat`、`ls /`、`cd` 后 `pwd`、重定向写读、`Ctrl-C` 中断前台命令、`Ctrl-Z` 停止后 `fg` 恢复、前台组切换后后台读被拒。
+- 阶段 C 还须验证 64 位 `pid_t` 的完整往返：在空的测试目录上用目标 ash 执行 [busybox-pid.sh](../../tests/fixtures/busybox-pid.sh)。它用 `$!` 收取退出码 37，再比对新 shell 报告的 `$$` 和 `PPID`，并要求确实遇到宽 PID。宿主执行只检查脚本，不能取代目标运行。
 - **不以"能编过"替代"能跑"**；各阶段结论分别记录，不用阶段 A 的成功推断阶段 C 可用。
+
+BusyBox 1.37.0 的 PID 审查发现，`ash` 的 `rootpid`、`initialpgrp`、`forkshell`、`waitproc`/`waitone` 及若干调用点会把完整 PID/PGID 收窄为 `int`；`$$`/`$!` 展开、`PPID`、`jobs` 输出和 `wait`/`kill` 数字参数也有收窄路径。特别是 `waitone` 会用收窄后的值匹配 `procstat` 的 `pid_t`，可能收取了结果却找不到作业。移植时须对这些路径保留完整 `pid_t`，并扩大 PID 文本缓冲；普通退出码、信号号及作业编号仍使用原类型。此缺口不修改 15 篇已经确定的系统 PID ABI。
+
+[BusyBox 1.37.0 PID 补丁](../../bin/sh/busybox-1.37.0-pid.patch) 已接上这些路径，由 `bin/sh/prepare.py` 应用到干净源码；已核对补丁可从固定上游归档重放。目标构建仍受上述公开头限制，尚不能算宽 PID 的运行验收。
 
 ## 明确不进范围
 
