@@ -1053,6 +1053,30 @@ blkcollect(Fsblk *blk, void *read, u32 bytes)
 }
 
 static isize
+blksuper(const u8 *bytes, Fslayout *layout, u8 *uuid)
+{
+  u32 i;
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    REQUIRE(!bytes[i], 394);
+  *layout = (Fslayout){256, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
+  for (i = 0; i < 16; i++)
+    uuid[i] = (u8) (i + 3);
+  return 0;
+}
+
+static isize
+blkmark(const u8 *bytes, const u8 *uuid, Journalmark *mark)
+{
+  u32 i;
+  for (i = 0; i < 16; i++)
+    REQUIRE(uuid[i] == i + 3, 395);
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    REQUIRE(bytes[i] == (u8) (0xc1 + 4 * 7 + i * 19), 396);
+  *mark = (Journalmark){47, 0, 0, 0};
+  return 0;
+}
+
+static isize
 blkdecodeinode(u32 ino, const u8 *encoded, Loadmap *map, u32 *kind, u32 *links)
 {
   u32 i;
@@ -1085,6 +1109,7 @@ blkclient(const Bootview *boot, Handle call)
   static const Blockmap allocation = {
       {0, (UINT64_C(1) << (109 - 64)) | (UINT64_C(1) << (99 - 64)), UINT64_C(1) << 63}};
   static Fsblk              blk;
+  static Blkprobe           probe;
   static Blkread            reader;
   static Cacheblock         storage;
   static Journal            journal;
@@ -1141,16 +1166,18 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(journal.durable && journalpump(&journal, blklogsubmit, &log) == 1 &&
               !journalrelease(&journal) && journal.last == 47,
           380);
+  probe.blk = &blk;
   REQUIRE(blkreadboot(&blk, JOURNAL_MARK_BLOCK + 1) == -ERR_INVALID && !blk.rpc &&
-              !blkreadboot(&blk, 0),
+              !blkprobestep(&probe, blksuper, blkmark) && blk.rpc && !probe.layout.blocks,
           393);
-  blkcollect(&blk, redo.bytes, sizeof(redo.bytes));
-  for (i = 0; i < PAGE_SIZE; i++)
-    REQUIRE(!redo.bytes[i], 394);
-  REQUIRE(!blkreadboot(&blk, JOURNAL_MARK_BLOCK), 395);
-  blkcollect(&blk, redo.bytes, sizeof(redo.bytes));
-  for (i = 0; i < PAGE_SIZE; i++)
-    REQUIRE(redo.bytes[i] == (u8) (0xc1 + 4 * 7 + i * 19), 396);
+  REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blkprobestep(&probe, blksuper, blkmark) &&
+              blk.rpc && probe.layout.blocks == 256 && !probe.mark.txid,
+          397);
+  REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result) &&
+              blkprobestep(&probe, blksuper, blkmark) == 1 && !blk.rpc && probe.mark.txid == 47 &&
+              !probe.mark.state && !probe.geometry.faultbytes &&
+              blkprobestep(&probe, blksuper, blkmark) == 1 && !blk.rpc,
+          398);
   for (i = 0; i < PAGE_SIZE; i++)
     data[i] ^= 0xff;
   reader.blk = &blk;

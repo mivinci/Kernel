@@ -12,6 +12,78 @@ blkreadboot(Fsblk *blk, u32 block)
   return fsblksubmit(blk, BLK_READ, (u64) block * FS_BLOCK_BYTES, FS_BLOCK_BYTES, NULL);
 }
 
+enum
+{
+  ProbeSuper,
+  ProbeMark,
+  ProbeDone
+};
+
+isize
+blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
+             isize (*mark)(const u8 *, const u8 *, Journalmark *))
+{
+  Fsblk   *blk;
+  Blkinfo *info;
+  isize    error, status;
+  if (!probe || !probe->blk || !layout || !mark)
+    return -ERR_INVALID;
+  blk = probe->blk;
+  info = &blk->info;
+  if (probe->failed)
+    return probe->failed;
+  if (probe->sequence) {
+    if (!blk->rpc || blk->seq != probe->sequence || blk->opcode != BLK_READ)
+      return probe->failed = -ERR_STATE;
+    error = fsblkpoll(blk, probe->bytes, sizeof(probe->bytes), &status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+    probe->sequence = 0;
+    if (status)
+      return probe->failed = blk->stale ? -ERR_STALE : -ERR_STATE;
+    if (blk->stale || info->geometry_generation != probe->generation)
+      return probe->failed = -ERR_STALE;
+    if (probe->phase == ProbeSuper) {
+      error = layout(probe->bytes, &probe->layout, probe->uuid);
+      if (!error)
+        error = fslayoutcheck(&probe->layout, &probe->geometry, 0);
+      if (error)
+        return probe->failed = error < 0 ? error : -ERR_STATE;
+      probe->phase = ProbeMark;
+    } else {
+      if (mark(probe->bytes, probe->uuid, &probe->mark) || probe->mark.state > 1 ||
+          (probe->mark.state ? !probe->mark.txid : probe->mark.headercrc || probe->mark.payloadcrc))
+        return probe->failed = -ERR_STATE;
+      probe->phase = ProbeDone;
+    }
+  }
+  if (blk->stale || !info->geometry_generation ||
+      (probe->generation && info->geometry_generation != probe->generation))
+    return probe->failed = -ERR_STALE;
+  if (probe->phase == ProbeDone)
+    return 1;
+  if (blk->rpc)
+    return -ERR_BUSY;
+  if (!probe->generation) {
+    if (info->logical_bytes > UINT32_MAX || info->physical_bytes > UINT32_MAX ||
+        info->alignment_bytes > UINT32_MAX)
+      return probe->failed = -ERR_NOTSUP;
+    probe->generation = info->geometry_generation;
+    probe->geometry = (Fsgeometry){info->capacity_bytes,
+                                   info->logical_bytes,
+                                   info->physical_bytes,
+                                   info->alignment_bytes,
+                                   !!(info->flags & BLK_READONLY),
+                                   !!(info->flags & BLK_FLUSHABLE),
+                                   0,
+                                   0};
+  }
+  error = blkreadboot(blk, probe->phase == ProbeSuper ? 0 : JOURNAL_MARK_BLOCK);
+  if (!error)
+    probe->sequence = blk->seq;
+  return error;
+}
+
 isize
 blkreadstart(Blkread *read, Cache *cache, u64 block, u32 metadata)
 {

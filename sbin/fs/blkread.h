@@ -2,12 +2,12 @@
 #define _FS_BLKREAD_H
 #include "blk.h"
 #include "cache.h"
+#include "journal.h"
 #include "load.h"
 
 typedef struct Blkread     Blkread;
 typedef struct Blkredoload Blkredoload;
-struct Redoscan;
-struct Redoinode;
+typedef struct Blkprobe    Blkprobe;
 struct Blkread
 {
   Fsblk    *blk;
@@ -35,6 +35,25 @@ struct Blkredoload
    After INFO, submit in the mount owner's chosen order; use fsblkpoll for
    the exact completion. The result is raw and never enters the home cache. */
 isize blkreadboot(Fsblk *, u32 block);
+
+struct Blkprobe
+{
+  Fsblk      *blk;
+  Fslayout    layout;
+  Fsgeometry  geometry;
+  Journalmark mark;
+  u64         generation, sequence;
+  isize       failed;
+  u32         phase;
+  u8          uuid[16], bytes[FS_BLOCK_BYTES];
+};
+
+/* Zeroed work and exclusive use of blk after INFO. Synchronous decoders
+   authenticate complete blocks and initialize all outputs. Returns one
+   when layout and mark are valid, zero while reading, or an error. A
+   pending poll error retains the original request for the next step. */
+isize blkprobestep(Blkprobe *, isize (*layout)(const u8 *, Fslayout *, u8 *),
+                   isize (*mark)(const u8 *, const u8 *, Journalmark *));
 
 /* Fresh zeroed read state with blk set. The serialized volume owner
    reserves the connection through completion. Zero is a cache hit;

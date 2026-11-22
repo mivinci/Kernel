@@ -20,7 +20,7 @@
 
 ## 最新验证
 
-- 恢复阶段可经块 IPC 直接读超级块和日志区；双架构 `virtiodev` 核对超级块与提交块的原始字节。盘上解码待接。
+- 挂载探测经块 IPC 先校验卷布局，再读提交标记；双架构 `virtiodev` 核对原请求顺序与 UUID 传递。盘上解码待接。
 - libc `getcwd()` 已接到文件服务；双架构 `pipeio` 核对 `chdir` 后返回路径、缓冲不足和坏指针。生产目录反查待接。
 - inode 归属扫描经块 IPC 读取 inode 表和间接索引，优先使用日志镜像；双架构 `virtiodev` 验证单槽缓存下，只读一次 inode 表和一次索引即可完成归属扫描。解码仍为夹具。
 - FS 私有块适配器经 ARM64/RV64 QEMU `virtiodev` 验证：原异步 RPC 在 FINISH 后保存结果，ACK 后交付 READ 及归还槽；INFO、WRITE、FLUSH、READ 走真实 IPC 和块盘。生产授权和挂载待接。
