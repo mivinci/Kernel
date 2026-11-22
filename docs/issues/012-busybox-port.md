@@ -47,6 +47,10 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 [平台补丁](../../bin/sh/busybox-1.37.0-platform.patch) 移除上游对 `<mntent.h>` 和 `<sys/statfs.h>` 可用性的默认假设。最小配置未启用挂载或磁盘用量工具；两架构的预处理依赖均不再包含这两个头。该调整没有提供挂载查询接口。
 
+相同补丁去掉 `libbb.h` 中无条件引入的 `<sys/param.h>`。通用 `MIN`/`MAX` 已有上游局部定义，`setbit`/`clrbit` 使用 `platform.h` 自带的实现。两架构从固定归档重跑后，所探测的 12 个翻译单元均不再把此头列为依赖；语法探针首错仍为 `sys/times.h` 或 `dirent.h`。
+
+最小配置保留 ash 的 `echo` 内建，与 15 篇的 sh 目标一致，独立 `echo` applet 也仍在生成表中。平台补丁关闭 unlocked stdio 的可选宏替换，让 BusyBox 使用 SDK 已提供的普通 `getc`、`fgets`、`fputs` 等入口。固定归档的重新配置核对了 `ENABLE_ASH_ECHO=1` 和原有 11 个 applet；上述缺头仍阻止目标语法检查和链接验收。
+
 准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。探针包含 `procps/kill.c`，因为 ash 的作业控制即使关闭独立 `kill` applet 也会编入该单元。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，`kill.c` 和其余十个单元均在 `dirent.h` 停住。`sys/time.h` 从目标 SDK 解析；`sys/utsname.h` 只由未启用的 Bash 兼容模式使用，已从最小配置的依赖日志中消失。探针不执行完整构建或链接。
 
 准备工具也运行上游的 `generate_BUFSIZ.sh`，按配置使用普通静态缓冲区，为 `cat` 和 `ls` 生成真实的 `common_bufsiz.h`。每架构的 `*-missing-headers.log` 把未解析的头与引用它的翻译单元并列，帮助区分公共头缺口和单个 applet 的依赖；例如 `sys/times.h` 来自 ash，`regex.h` 来自 `test`。这份依赖报告不代表每个头里的接口都被链接引用。
