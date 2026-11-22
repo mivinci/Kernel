@@ -1131,6 +1131,14 @@ main(int argc, char **argv)
             176);
   }
   sortcheck();
+  {
+    char text[8] = "xxxxxxx";
+    REQUIRE(stpcpy(text, "ab") == text + 2 && !memcmp(text, "ab\0x", 4) &&
+                stpncpy(text, "a", 4) == text + 1 && !memcmp(text, "a\0\0\0x", 5) &&
+                stpncpy(text, "abcde", 4) == text + 4 && !memcmp(text, "abcdx", 5) &&
+                stpncpy(text, "", 0) == text && text[0] == 'a',
+            176);
+  }
   optioncheck();
   jumpcheck();
   endiancheck();

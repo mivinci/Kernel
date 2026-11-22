@@ -177,21 +177,34 @@ strpbrk(const char *string, const char *accepted)
 char *
 strcpy(char *destination, const char *source)
 {
+  stpcpy(destination, source);
+  return destination;
+}
+char *
+stpcpy(char *destination, const char *source)
+{
   size_t i;
   for (i = 0; source[i]; i++)
     destination[i] = source[i];
   destination[i] = 0;
-  return destination;
+  return destination + i;
 }
 char *
 strncpy(char *destination, const char *source, size_t bytes)
 {
-  size_t i;
+  stpncpy(destination, source, bytes);
+  return destination;
+}
+char *
+stpncpy(char *destination, const char *source, size_t bytes)
+{
+  size_t i, end;
   for (i = 0; i < bytes && source[i]; i++)
     destination[i] = source[i];
+  end = i;
   for (; i < bytes; i++)
     destination[i] = 0;
-  return destination;
+  return destination + end;
 }
 char *
 strcat(char *destination, const char *source)

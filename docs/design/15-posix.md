@@ -155,6 +155,8 @@ ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实
 
 公开 SDK 提供 BusyBox ash 用到的 `<string.h>` 扩展 `strchrnul`：按无符号字节查找，未匹配时返回结尾 NUL 的地址。它无需分配或系统调用。
 
+`stpcpy` 和 `stpncpy` 与现有字符串复制共用实现，供 ash 拼接作业状态和目录项名称。`stpcpy` 返回写入的结尾 NUL；`stpncpy` 最多复制指定字节数，短串补零并返回首个零字节，截断时返回目标区间末尾。
+
 `asprintf` / `vasprintf` 复用 `vsnprintf` 的格式子集。先计算字节数，再分配含结尾 NUL 的缓冲区；成功返回不含 NUL 的字节数，由调用者 `free`。失败返回 -1，保留调用者原输出指针；成功保留 `errno`。BusyBox 的 `xasprintf` 可使用同一 SDK 入口，不引入新的内核接口。
 
 `sprintf` / `vsprintf` 同样复用现有格式子集，用于 ash 的作业 PID 和错误文本格式化。调用者须提供足够的缓冲空间；成功写入结尾 NUL 并返回不含 NUL 的字节数。

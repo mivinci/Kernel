@@ -21,6 +21,8 @@ size_t strcspn(const char *string, const char *rejected);
 char  *strpbrk(const char *string, const char *accepted);
 char  *strcpy(char *destination, const char *source);
 char  *strncpy(char *destination, const char *source, size_t bytes);
+char  *stpcpy(char *destination, const char *source);
+char  *stpncpy(char *destination, const char *source, size_t bytes);
 char  *strdup(const char *source);
 char  *strndup(const char *source, size_t limit);
 char  *strcat(char *destination, const char *source);
