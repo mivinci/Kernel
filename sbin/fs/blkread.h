@@ -139,15 +139,17 @@ struct Blkmount
   isize (*layout)(const u8 *, Fslayout *, u8 *);
   isize (*mark)(const u8 *, const u8 *, Journalmark *);
   isize (*retire)(const u8 *uuid, u64 txid, u8 *);
-  u32   capacity, faultbytes, faultoffset, phase;
+  u32   capacity, faultbytes, faultoffset, phase, writable;
   isize failed;
   u32   stopped;
 };
 
 /* Own the block connection from INFO to publication. Supply separate work
    for the overlay and home scans; they may share cache and reader storage.
-   Zero means continue or wait on the current RPC; one means ready to call
-   blkmountadd. If an error leaves an RPC, keep the work and resume its drain. */
+   For writable publication set writable=1 and supply the journal and trusted
+   fault boundary even for EMPTY. A read-only mount may only replay if these
+   recovery resources are separately provided. Zero means continue or wait
+   on the current RPC; one means ready to call blkmountadd. */
 isize blkmountstep(Blkmount *);
 /* Stop an unpublished mount. Further steps only drain outstanding work;
    the original failure is returned once no request or snapshot is held. */

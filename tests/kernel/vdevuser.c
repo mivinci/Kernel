@@ -1360,6 +1360,17 @@ blkclient(const Bootview *boot, Handle call)
               !probe.mark.state && !probe.geometry.faultbytes &&
               blkprobestep(&probe, blksuper, blkmark) == 1 && !blk.rpc,
           398);
+  mounting.probe = &probe;
+  mounting.dirs = &dirs;
+  mounting.storage = &storage;
+  mounting.layout = blksuper;
+  mounting.mark = blkmark;
+  mounting.log.blk = &blk;
+  mounting.log.journal = &recovered;
+  mounting.writable = 1;
+  REQUIRE(blkmountstep(&mounting) == -ERR_NOTSUP && !blk.rpc && !recovered.blocks && !home.home,
+          445);
+  mounting = (Blkmount){0};
   owners.redo = blkclientredo(&blk, &probe);
   reader.blk = &blk;
   owners.load.read = &reader;
@@ -1418,6 +1429,7 @@ blkclient(const Bootview *boot, Handle call)
   mounting.mark = blkretired;
   mounting.retire = blkretire;
   mounting.faultbytes = FS_BLOCK_BYTES;
+  mounting.writable = 1;
   op = 0;
   for (i = 0; i < 3 * FS_INODES / 32 + 40; i++) {
     isize done = blkmountstep(&mounting);

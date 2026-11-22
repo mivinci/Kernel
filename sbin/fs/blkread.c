@@ -526,8 +526,18 @@ enum
   MountReplay,
   MountReprobe,
   MountHome,
-  MountDirectories
+  MountDirectories,
+  MountReady
 };
+
+static Fsgeometry
+mountgeometry(const Blkmount *work, const Blkprobe *probe)
+{
+  Fsgeometry geometry = probe->geometry;
+  geometry.faultbytes = work->faultbytes;
+  geometry.faultoffset = work->faultoffset;
+  return geometry;
+}
 
 static isize
 mountdrain(Blkmount *work, Fsblk *blk)
@@ -592,7 +602,8 @@ blkmountstep(Blkmount *work)
   Journal   *journal;
   isize      result;
   if (!work || !(probe = work->probe) || !(blk = probe->blk) || !work->dirs ||
-      !(home = work->dirs->home) || !work->storage || !work->layout || !work->mark)
+      !(home = work->dirs->home) || !work->storage || !work->layout || !work->mark ||
+      work->writable > 1)
     return -ERR_INVALID;
   if (work->stopped)
     return mountdrain(work, blk);
@@ -605,24 +616,23 @@ blkmountstep(Blkmount *work)
     result = blkprobestep(probe, work->layout, work->mark);
     if (result != 1)
       break;
+    if (work->writable || probe->mark.state) {
+      Fsgeometry geometry = mountgeometry(work, probe);
+      if (!journal || work->log.blk != blk)
+        return work->failed = -ERR_INVALID;
+      result = fslayoutcheck(&probe->layout, &geometry, 1);
+      if (result)
+        break;
+    }
     if (!probe->mark.state) {
       home->home = probe;
       result = cacheinit(home->load.cache, work->storage, work->capacity, probe->layout.blocks);
       work->phase = MountHome;
       break;
     }
-    if (!after || after == probe || !journal || work->log.blk != blk || !work->empty ||
-        !work->retire || !work->overlay || work->overlay == home || !work->overlay->redo ||
-        work->overlay->redo->probe != probe)
+    if (!after || after == probe || !work->empty || !work->retire || !work->overlay ||
+        work->overlay == home || !work->overlay->redo || work->overlay->redo->probe != probe)
       return work->failed = -ERR_INVALID;
-    {
-      Fsgeometry geometry = probe->geometry;
-      geometry.faultbytes = work->faultbytes;
-      geometry.faultoffset = work->faultoffset;
-      result = fslayoutcheck(&probe->layout, &geometry, 1);
-    }
-    if (result)
-      break;
     result =
         cacheinit(work->overlay->load.cache, work->storage, work->capacity, probe->layout.blocks);
     work->phase = MountOverlay;
@@ -671,6 +681,21 @@ blkmountstep(Blkmount *work)
     work->phase = MountDirectories;
     return 0;
   case MountDirectories:
+    result = blkdirstep(work->dirs);
+    if (result != 1)
+      break;
+    if (work->writable && !probe->mark.state) {
+      Fsgeometry geometry = mountgeometry(work, probe);
+      result = journalrecover(journal, &probe->layout, &geometry, &probe->mark, NULL, NULL, 0, 0,
+                              NULL, NULL);
+      if (result) {
+        work->dirs->failed = result;
+        break;
+      }
+    }
+    work->phase = MountReady;
+    return 1;
+  case MountReady:
     result = blkdirstep(work->dirs);
     break;
   default:
