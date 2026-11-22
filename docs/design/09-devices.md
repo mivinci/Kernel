@@ -99,6 +99,8 @@ dmaaddr只返回DMA域合法连续区间的设备地址；dma_sync的phase、dir
 
 ## 执行与验收
 
+stage510：blk 私有队列接受字节偏移，校验对齐后才换算成 virtio 扇区，FLUSH 的偏移必须为零。ARM64/RV64 QEMU `virtiodev` 用此入口提交稀疏增长日志的所有 WRITE/FLUSH，逐笔等待队列完成，宿主核对设备计数与全盘镜像。该入口属于进程内驱动接口，服务间消息编码与发权仍待定稿。
+
 stage469：serial 私有 `serialiodrained` 返回当前 TX 环代次中已离开 UART 的字节位置。UART 确认 FIFO 和移位寄存器均空后，从共享消费位置扣除仍在驱动私有缓冲中待提交的字节；忙、旧代次或无效状态不更新输出。ARM64、RV64 QEMU `packageboot/service-authority` 经真实 MMIO 核对排空位置和实际串口输出；7 项主机专项覆盖环已消费但私有缓冲未送出、UART 未排空和旧代次。尚未向 TTY 发布该位置，也未接 `tcdrain` 或排空后改模式。
 
 stage432：blk 私有队列在已提交的 WRITE 完成前不发布 FLUSH，FLUSH 排空前也不发布后续 WRITE 或 FLUSH；READ 不受这条门禁限制。上层仍负责按业务顺序提交，并在完成失败时停止该持久化序列，其中尚未提交的 FLUSH 不会在队列里自动排队。ARM64/RV64 QEMU `virtiodev` 用真实 IRQ 取到完成后，分别在 WRITE、FLUSH 尚未收尾时验证门禁；收尾后按序完成实际 FLUSH 和回读，宿主核对块设备计数与整盘内容。34 项 virtio 主机测试及改动文件格式检查通过。生产 IPC 分派和故障回报未接。

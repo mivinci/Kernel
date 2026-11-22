@@ -318,9 +318,10 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
           263);
 }
 
+static Vdone waitblock(Blkqueue *, u64);
+
 static void
-testgrowth(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
-           const Testdma *dma)
+testgrowth(Blkqueue *queue, Handle binding, u64 irqevent)
 {
   static Journal     journal;
   static Cacheblock  entry;
@@ -332,10 +333,11 @@ testgrowth(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkco
   Growth             work = {0};
   Cache              cache;
   Journalio          io;
+  Vdone              done;
   Growthmeta         meta = {records[0], records[1], NULL, records[2], records[3], records[4]};
   u32                i, j, step = 0;
-  u64                stride = FS_BLOCK_BYTES / VBLK_SECTOR;
-  u32                blocks = (u32) (config->sectors / stride);
+  u64                alarm, started = now();
+  u32                blocks = (u32) (queue->config.sectors / (FS_BLOCK_BYTES / VBLK_SECTOR));
   committed.used[1] = UINT64_C(1) << (FS_DATA_START - 64);
   reserved = committed;
   for (i = 0; i < ARRAY_SIZE(records); i++)
@@ -349,12 +351,22 @@ testgrowth(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkco
               !journalgrowth(&work, &journal, &cache, &update, &image, &meta),
           264);
   while (journal.phase != JOURNAL_DONE) {
+    u32 type, bytes;
     REQUIRE(!journalnext(&journal, &io) && io.txid == 48 && !map.file.length &&
                 growthpublish(&work, &map, NULL, &committed, &reserved) == -ERR_WOULD_BLOCK,
             265);
-    transfer(device, ring, 2, binding, irqevent, config, dma,
-             io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH, io.block * stride, 50 + step, 0,
-             NULL, io.bytes);
+    type = io.kind == JOURNAL_WRITE ? VBLK_WRITE : VBLK_FLUSH;
+    bytes = type == VBLK_WRITE ? FS_BLOCK_BYTES : 0;
+    REQUIRE(blkqsubmitbytes(queue, 0, type, 1, bytes, io.bytes, blksync, queue->device) ==
+                    -ERR_INVALID &&
+                started <= UINT64_MAX - VDEV_RESET_NS &&
+                !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
+                !blkqsubmitbytes(queue, 0, type, io.block * FS_BLOCK_BYTES, bytes, io.bytes,
+                                 blksync, queue->device),
+            268);
+    done = waitblock(queue, irqevent);
+    REQUIRE(!blkqfinish(queue, &done, NULL, 0) && !__sys_alarmcancel(&alarm), 269);
+    vdev_trace[type == VBLK_WRITE ? 2 : 3]++;
     REQUIRE(!journalcomplete(&journal, &io, 1) && ++step <= 13, 266);
   }
   REQUIRE(step == 13 && !growthpublish(&work, &map, NULL, &committed, &reserved) &&
@@ -655,7 +667,7 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
     testredo(device, &ring, binding, irqevent, &fresh, &dma);
     testwriteback(device, &ring, binding, irqevent, &fresh, &dma);
     testparallel(&queue, binding, irqevent, &fresh);
-    testgrowth(device, &ring, binding, irqevent, &fresh, &dma);
+    testgrowth(&queue, binding, irqevent);
     testresize(&queue, binding, irqevent, &fresh);
   }
 }

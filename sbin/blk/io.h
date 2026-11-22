@@ -53,6 +53,10 @@ int blkqrefresh(Blkqueue *queue, Vblkconfig *config);
    handles completion failures before advancing a durability sequence. */
 int blkqsubmit(Blkqueue *queue, u32 slot, u32 type, u64 sector, u32 bytes, const void *source,
                Vblksync sync, void *context);
+/* CPU-side service boundary uses byte offsets. Convert only after checking
+   representability; the queue checks the active device's logical geometry. */
+int blkqsubmitbytes(Blkqueue *, u32 slot, u32 type, u64 offset, u32 bytes, const void *source,
+                    Vblksync, void *context);
 /* Return the exact active slot for a completion, or a native error. */
 int blkqmatch(const Blkqueue *queue, const Vdone *done);
 int blkqfinish(Blkqueue *queue, const Vdone *done, void *destination, u32 capacity);

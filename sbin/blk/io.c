@@ -177,6 +177,15 @@ blkqsubmit(Blkqueue *queue, u32 index, u32 type, u64 sector, u32 bytes, const vo
 }
 
 int
+blkqsubmitbytes(Blkqueue *queue, u32 slot, u32 type, u64 offset, u32 bytes, const void *source,
+                Vblksync sync, void *context)
+{
+  if (offset % VBLK_SECTOR || (type == VBLK_FLUSH && offset))
+    return -ERR_INVALID;
+  return blkqsubmit(queue, slot, type, offset / VBLK_SECTOR, bytes, source, sync, context);
+}
+
+int
 blkqmatch(const Blkqueue *queue, const Vdone *done)
 {
   const Vblkreq *slot;
