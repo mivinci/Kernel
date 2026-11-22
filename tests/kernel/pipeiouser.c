@@ -26,6 +26,7 @@
 #include "../../sbin/fs/read.h"
 #include "../../sbin/fs/seek.h"
 #include "../../sbin/fs/serve.h"
+#include "../../sbin/fs/txn.h"
 
 #define ADDRESS     0x1600000UL
 #define PIPETEST    0xf008
@@ -1497,7 +1498,7 @@ struct Openfixture
   Cache     cache;
   Readfetch fetch;
   Loadmap   map;
-  Handle    growth;
+  Handle    growth, syncing;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
   u32       cancelgrowth, durable;
@@ -1667,6 +1668,46 @@ openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
   return 0;
 }
 
+static u8 opendisk[FS_BLOCK_BYTES];
+
+static isize
+opensync(void *context, Readjob *job, u64 state)
+{
+  static Txn       txn;
+  static u8        snapshot[FS_BLOCK_BYTES];
+  static Journalio flush;
+  Openfixture     *fixture = context;
+  Cachekey         key = {0};
+  Journalio        write;
+  u32              i, success = (u32) job->slot.args[0];
+  CHECK(job->file->node == &fixture->file && fixture->cache.entries[0].dirty);
+  if (!job->started) {
+    CHECK(state == RQ_CHECK_LIVE && !fixture->syncing && !txninit(&txn, &fixture->cache, 0) &&
+          !cacheget(&fixture->cache, FS_DATA_START, CACHE_DATA, &key) &&
+          !txnprepare(&txn, NULL, 0, &key, 1, snapshot) && !cacheput(&fixture->cache, &key) &&
+          !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &write) &&
+          write.kind == JOURNAL_WRITE && write.block == FS_DATA_START);
+    CHECK(write.bytes[3] == 'W');
+    CHECK(!txncomplete(&txn, &write, 1) && !txnnext(&txn, &flush) && flush.kind == JOURNAL_FLUSH &&
+          !txn.journal.durable);
+    fixture->syncing = job->call.request;
+    return 0;
+  }
+  CHECK(fixture->syncing == job->call.request);
+  if (success && state == RQ_CHECK_LIVE)
+    return 0;
+  CHECK(state == (success ? RQ_CHECK_LIVE | RQ_CHECK_CANCEL : RQ_CHECK_LIVE) &&
+        !txncomplete(&txn, &flush, success) && txn.journal.durable == success &&
+        !txnrelease(&txn) && fixture->cache.entries[0].dirty == !success);
+  if (success) {
+    for (i = 0; i < FS_BLOCK_BYTES; i++)
+      opendisk[i] = snapshot[i];
+    CHECK(opendisk[3] == 'W' && opendisk[19] == 'W');
+  }
+  fixture->syncing = 0;
+  return success ? 1 : -EIO;
+}
+
 static isize
 openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile u8 *input,
              u64 *start)
@@ -1675,7 +1716,7 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
   static Growth      growth;
   static Writeupdate update;
   static Writeimage  image;
-  static u8          encoded[4][FS_BLOCK_BYTES], disk[FS_BLOCK_BYTES];
+  static u8          encoded[4][FS_BLOCK_BYTES];
   Openfixture       *fixture = context;
   Growthmeta         meta = {encoded[0], NULL, NULL, encoded[1], encoded[2], encoded[3]};
   Cacheio            ticket;
@@ -1697,12 +1738,12 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
     /* The fixture drains prior dirty data to its simulated device. */
     CHECK(!cacheget(&fixture->cache, FS_DATA_START, CACHE_DATA, &key));
     if (fixture->cache.entries[key.index].dirty)
-      CHECK(!cachewritebegin(&fixture->cache, &key, disk, &ticket) &&
+      CHECK(!cachewritebegin(&fixture->cache, &key, opendisk, &ticket) &&
             !cachecomplete(&fixture->cache, &ticket, 1));
     CHECK(!cacheput(&fixture->cache, &key));
     payload[0] = input[0];
     payload[1] = input[1];
-    CHECK(!loadwritestage(&update.plan, FS_DATA_START, 128, 0, disk, NULL, payload, &image) &&
+    CHECK(!loadwritestage(&update.plan, FS_DATA_START, 128, 0, opendisk, NULL, payload, &image) &&
           !journalgrowth(&growth, &journal, &fixture->cache, &update, &image, &meta));
     return 0;
   }
@@ -1718,15 +1759,15 @@ openreadgrow(void *context, Readjob *job, u64 state, u64 offset, const volatile 
     }
     CHECK(!journalnext(&journal, &io));
     if (io.kind == JOURNAL_WRITE && io.block == FS_DATA_START)
-      for (i = 0; i < sizeof(disk); i++)
-        disk[i] = io.bytes[i];
+      for (i = 0; i < sizeof(opendisk); i++)
+        opendisk[i] = io.bytes[i];
     CHECK(!journalcomplete(&journal, &io, 1));
   }
   CHECK(!growthpublish(&growth, &fixture->map, NULL, NULL, NULL));
   CHECK(!cacheget(&fixture->cache, FS_DATA_START, CACHE_DATA, &key) &&
         !cachereadbegin(&fixture->cache, &key, &ticket, &destination));
-  for (i = 0; i < sizeof(disk); i++)
-    destination[i] = disk[i];
+  for (i = 0; i < sizeof(opendisk); i++)
+    destination[i] = opendisk[i];
   CHECK(!cachecomplete(&fixture->cache, &ticket, 1) && !cacheput(&fixture->cache, &key));
   fixture->growth = 0;
   *start = fixture->growat;
@@ -1904,8 +1945,8 @@ openserver(const Bootview *boot)
   u8              scratch[CACHE_BYTES] = {0};
   Readjob         reader[2] = {0};
   Fsreads         reads = {
-      reader,          ARRAY_SIZE(reader), 0,           &fixture, scratch, openreadbind,
-      openreadrelease, openreadsubmit,     openreadgrow};
+      reader,         ARRAY_SIZE(reader), 0,       &fixture, scratch, openreadbind, openreadrelease,
+      openreadsubmit, openreadgrow,       opensync};
   Pipetable      pipes = {0};
   Fscontext      context = {0};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
@@ -1981,6 +2022,14 @@ openserver(const Bootview *boot)
         !loadclose(&fixture.loads, load, link.watch.owner.pid, link.watch.owner.image));
   CHECK(!fsstep(&fs) && file.position == 19 && blocks[0].dirty && !fsstep(&fs) && !fsstep(&fs) &&
         file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && file.position == 20);
+  CHECK(!fsstep(&fs) && !fixture.syncing && !fsstep(&fs) && fixture.syncing && !fsstep(&fs) &&
+        fixture.syncing && blocks[0].dirty && file.position == 20);
+  {
+    Ipcmsg event;
+    CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
+          !fsreadpump(&reads, &fixture.files) && !fixture.syncing && !blocks[0].dirty &&
+          file.position == 20 && !file.head);
+  }
   fixture.cancelgrowth = 1;
   CHECK(!fsstep(&fs) && fixture.growth && file.position == 20 && !fsstep(&fs) && fixture.durable &&
         fixture.growth && fixture.length == 20 && file.position == 20);
@@ -1997,8 +2046,9 @@ openserver(const Bootview *boot)
         file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
         file.refs == 2 && !fsstep(&fs) && !file.position && fixture.growth && !fsstep(&fs) &&
         file.position == 24 && fixture.growth && !fsstep(&fs) && file.position == 26 &&
-        !fixture.growth && !fsstep(&fs) && file.position == 26 && !fsstep(&fs) && file.refs == 1 &&
-        !fsstep(&fs) && !file.node && !file.refs &&
+        !fixture.growth && !fsstep(&fs) && file.position == 26 && !fsstep(&fs) && fixture.syncing &&
+        !fsstep(&fs) && !fixture.syncing && blocks[0].dirty && file.position == 26 &&
+        file.refs == 1 && !fsstep(&fs) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -2029,6 +2079,39 @@ openreadcheck(u64 session, u64 offset, int positional, u64 bytes, char first)
         result.words[1] == lease.seq && result.words[2] == bytes && result.words[3] == bytes &&
         page[0] == first && page[1] == (bytes == 2 ? 0 : '?') &&
         !sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
+opensynccheck(u64 session, u64 dataonly, isize expected)
+{
+  Filelease lease;
+  Fileslot  slot = {0};
+  Ipcmsg    result;
+  Msg       request = {{FS_SYNC, work.state.map.connid, 0, 0}};
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  request.words[2] = slot.seq = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = session;
+  slot.args[0] = dataonly;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)));
+  if (dataonly == 1) {
+    Msg    gate = {{FS_ATTACH, 0, 0, 0}};
+    Ipcmsg drain;
+    Handle rpc;
+    CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+    rpc = result.request;
+    CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) &&
+          (isize) drain.words[0] == -ENOSYS &&
+          ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_WOULD_BLOCK && !ipc_rqcancel(rpc) &&
+          !ipc_rqwait(rpc, 0, &result) && !ipc_rqwait(rpc, RQ_FINISH, &drain) &&
+          !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+  } else
+    CHECK(!ipc_call(work.state.call, &request, 0, &result));
+  CHECK((isize) result.words[0] == expected && result.words[1] == lease.seq && !result.words[2] &&
+        !result.words[3] && !sysconnworkrelease(&work, &cache, lease));
 }
 
 static void
@@ -2100,6 +2183,7 @@ open:
       openwritecheck(key.session, 0, FS_IO_APPEND, 0, 2);
       openwritecheck(dup.session, 3, FS_IO_POSITIONAL, 0, 2);
       openseek(key.session, FS_SEEK_CUR, 0, 0, 26);
+      opensynccheck(dup.session, 0, -EIO);
       CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
       pipeiotrace[0] = 7;
       return;
@@ -2117,6 +2201,8 @@ open:
     openreadcheck(dup.session, 3, 1, 2, 'W');
     openreadcheck(dup.session, 19, 1, 1, 'W');
     openwritecheck(key.session, 0, FS_IO_APPEND, -EINVAL, 0);
+    opensynccheck(key.session, 2, -EINVAL);
+    opensynccheck(dup.session, 1, 0);
     openwrite(key.session, 0, 0, 0, 2, 1);
     openseek(dup.session, FS_SEEK_CUR, 0, 0, 22);
     openreadcheck(dup.session, 20, 1, 2, 'W');

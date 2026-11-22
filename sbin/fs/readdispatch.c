@@ -49,15 +49,43 @@ seek(Fsfiles *files, Fsfile *file, Filelink *link, const Ipcmsg *call, const Fil
 }
 
 static isize
+replyresult(Readjob *job, u64 state, u64 value)
+{
+  Msg   reply = {{job->result < 0 ? (u64) job->result : 0, job->slot.seq, value, 0}};
+  isize error = state == RQ_CHECK_DRAINING ? ipc_rqfinish(job->call.request)
+                                           : ipc_reply(job->call.request, &reply);
+  return error ? error : sysfilefinish(&job->link->watch.active, job->call.request);
+}
+
+static isize
+syncfile(Fsreads *reads, Readjob *job)
+{
+  u64   state;
+  isize error = ipc_rqcheck(job->call.request, &state);
+  if (error)
+    return error;
+  if (!job->started && state != RQ_CHECK_LIVE)
+    return reject(job->link, &job->call, -EINTR);
+  if (!job->completed) {
+    job->result = reads->sync(reads->backend, job, state);
+    job->started = 1;
+    if (!job->result)
+      return -ERR_WOULD_BLOCK;
+    if (job->result > 1)
+      return -ERR_STATE;
+    job->completed = 1;
+  }
+  return replyresult(job, state, 0);
+}
+
+static isize
 grow(Fsreads *reads, Readjob *job, u64 state, u64 offset, const volatile u8 *input)
 {
-  Msg   reply = {{0, job->slot.seq, 0, 0}};
-  isize error;
-  if (!job->growdone) {
+  if (!job->completed) {
     u64   start = offset;
     isize result =
-        reads->grow(reads->backend, job, state, offset, job->growing ? NULL : input, &start);
-    job->growing = 1;
+        reads->grow(reads->backend, job, state, offset, job->started ? NULL : input, &start);
+    job->started = 1;
     if (!result)
       return -ERR_WOULD_BLOCK;
     if (result > 0) {
@@ -67,16 +95,10 @@ grow(Fsreads *reads, Readjob *job, u64 state, u64 offset, const volatile u8 *inp
       if (!(job->slot.args[3] & FS_IO_POSITIONAL))
         job->file->position = start + (u64) result;
     }
-    job->growresult = result;
-    job->growdone = 1;
+    job->result = result;
+    job->completed = 1;
   }
-  if (job->growresult < 0)
-    reply.words[0] = (u64) job->growresult;
-  else
-    reply.words[2] = (u64) job->growresult;
-  error = state == RQ_CHECK_DRAINING ? ipc_rqfinish(job->call.request)
-                                     : ipc_reply(job->call.request, &reply);
-  return error ? error : sysfilefinish(&job->link->watch.active, job->call.request);
+  return replyresult(job, state, job->result > 0 ? (u64) job->result : 0);
 }
 
 static isize
@@ -88,6 +110,10 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
       (volatile u8 *) (job->link->address + FS_DATA_OFFSET + job->call.words[3] * FS_SLOT_BYTES);
   if (job->call.words[0] == FS_SEEK) {
     status = seek(files, job->file, job->link, &job->call, &job->slot);
+    goto done;
+  }
+  if (job->call.words[0] == FS_SYNC) {
+    status = syncfile(reads, job);
     goto done;
   }
   if (!job->map) {
@@ -110,7 +136,7 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
     status = ipc_rqcheck(job->call.request, &state);
     if (status)
       return status;
-    if (job->growing ||
+    if (job->started ||
         (state == RQ_CHECK_LIVE && (job->slot.args[3] & FS_IO_POSITIONAL || !job->slot.args[0]) &&
          (append || (!loadmapwrite(job->map, job->index, job->first, (u32) job->cache->blocks,
                                    offset, job->slot.args[1], &plan) &&
@@ -181,6 +207,17 @@ fsdatastart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
       return reject(link, call, -ENOSYS);
   }
   return reads ? enqueue(reads, files, file, link, call, slot) : reject(link, call, -ENOSYS);
+}
+
+isize
+fssyncstart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
+            const Fileslot *slot)
+{
+  Fsfile *file = fsfilefind(files, call->source, call->image, slot->object);
+  if (!file)
+    return reject(link, call, -ESTALE);
+  return reads && reads->sync ? enqueue(reads, files, file, link, call, slot)
+                              : reject(link, call, -ENOSYS);
 }
 
 isize

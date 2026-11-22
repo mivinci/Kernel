@@ -69,7 +69,7 @@ sysfileargs(u64 opcode, const Fileslot *slot)
   u32 used, i;
   if (opcode == FS_READ || opcode == FS_WRITE)
     used = 4;
-  else if (opcode == FS_CLOSE || opcode == FS_DUPREF)
+  else if (opcode == FS_CLOSE || opcode == FS_DUPREF || opcode == FS_SYNC)
     used = 1;
   else if (opcode == FS_SEEK)
     used = 2;
@@ -80,6 +80,8 @@ sysfileargs(u64 opcode, const Fileslot *slot)
   for (i = used; i < ARRAY_SIZE(slot->args); i++)
     if (slot->args[i])
       return -ERR_INVALID;
+  if (opcode == FS_SYNC)
+    return !slot->payload_bytes && slot->args[0] <= 1 ? 0 : -ERR_INVALID;
   if (used == 1)
     return slot->args[0] && !slot->payload_bytes ? 0 : -ERR_INVALID;
   if (opcode == FS_SEEK)

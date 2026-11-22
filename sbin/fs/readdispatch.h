@@ -18,8 +18,8 @@ struct Readjob
   Cache           *cache;
   Loadtable       *loads;
   u32              first;
-  u32              growing, growdone;
-  isize            growresult;
+  u32              started, completed;
+  isize            result;
 };
 struct Fsreads
 {
@@ -41,10 +41,17 @@ struct Fsreads
      inode guard and report that starting offset with the committed result.
      A committed result survives cancellation. */
   isize (*grow)(void *, Readjob *, u64 state, u64 offset, const volatile u8 *input, u64 *start);
+  /* Synchronize this File and its required metadata. The descriptor's
+     first argument selects data-only sync. Start only on LIVE; resume with
+     the actual request state until all lower accesses drain. Return zero
+     while pending, one after durable success, or negative business errno.
+     Backend completion is final even if the native reply must be retried. */
+  isize (*sync)(void *, Readjob *, u64 state);
 };
 
 /* The caller has claimed the slot and checked original request state. */
 isize fsdatastart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
+isize fssyncstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsseekstart(Fsreads *, Fsfiles *, Fsfile *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsreadpump(Fsreads *, Fsfiles *);
 isize fsreadcomplete(Readjob *, Handle, const Cacheio *, const void *, u32);

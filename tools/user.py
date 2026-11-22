@@ -314,10 +314,11 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/readdispatch.c','fs-readdispatch'),
         compile_adoption(ROOT/'sbin/fs/load.c','fs-load'),
         compile_adoption(ROOT/'sbin/fs/journal.c','fs-journal'),
+        compile_adoption(ROOT/'sbin/fs/txn.c','fs-txn'),
         compile_adoption(ROOT/'sbin/fs/cache.c','fs-cache'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
-    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],160))
+    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],168))
     pipeio_inspect=invoke('inspect-pipeio',[tools['readelf']['path'],'-s',str(pipeio_elf)])
     pipeio_rows=[line.split() for line in pipeio_inspect.splitlines() if line.split() and line.split()[-1]=='pipeiotrace']
     if len(pipeio_rows)!=1 or int(pipeio_rows[0][2])!=16:raise BuildError('pipe I/O trace missing')

@@ -771,6 +771,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage513：常规文件的 `FS_SYNC` 校验原会话和单槽 `data_only` 参数后，进入与 WRITE、READ、SEEK 共用的 File 队列。同步保留原 REQUEST 和 File 引用，后端结束后才回复或收尾，且不修改共享偏移。双架构 QEMU `pipeio` 用真实 IPC 和纯数据 Txn 验证 FLUSH 前请求仍挂起，结果成功时即使已经请求取消也正常回复，FLUSH 失败则返回 EIO 并保留脏数据。另覆盖非法 `data_only`。49 项主机测试通过。块完成由夹具提供，生产脏块选择、必要元数据同步及公开 `fsync` 待接入。
+
 stage512：`journalrecover` 拒绝覆盖已打开或尚未释放的日志状态。ARM64/RV64 QEMU `runtime` 在重放的五个步骤逐一停止，验证排空和释放前恢复均被拒，重放同一事务时旧票据返回 STALE。`virtiodev` 回归真实设备回写及 flush，`pipeio` 回归增长发布。39 项 FS 主机测试通过。盘上解码和生产挂载仍待接入。
 
 stage511：ARM64/RV64 QEMU `pipeio` 用真实异步 WRITE 和取消验证提交后的结果。夹具在日志提交标记 FLUSH 完成后暂停，此时原请求尚未结束，公开长度和共享偏移仍是 20。收到取消后，服务沿原 REQUEST 退休日志，发布长度 22 并成功回复写入 2 字节。客户端确认 FINISH、ACK 并归还槽，再通过另一引用查询偏移并读回数据；块 I/O 完成由夹具提供。
