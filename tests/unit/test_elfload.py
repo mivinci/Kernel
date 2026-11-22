@@ -52,7 +52,7 @@ class ElfLoaderTests(unittest.TestCase):
                 ('sysforkpublish',[C.POINTER(Work),C.c_uint64,C.c_void_p,C.c_uint64],C.c_int64),
                 ('sysforkcancel',[C.POINTER(Work)],C.c_int64),
                 ('mock_fork_fail',[C.c_int64,C.c_int64],None),
-                ('mock_fd_call',[C.c_uint64,C.c_uint64],None),
+                ('mock_fd_call',[C.c_uint64]*4,None),
                 ('elfclean',[C.POINTER(Work)],C.c_int64),('mock_reset',[C.c_uint64],None),
                 ('mock_fail',[C.c_uint32],None),('mock_cleanup_fail',[C.c_uint32,C.c_uint32],None),
                 ('mock_peek',[C.c_uint64,C.c_void_p,C.c_uint64,C.POINTER(C.c_uint64)],C.c_int)):
@@ -176,13 +176,17 @@ class ElfLoaderTests(unittest.TestCase):
     def test_inherited_fd_requires_exact_callable_handle_in_target_table(self):
         call = (2 << 59) | (7 << 16) | 3
         for machine, lib in self.libs:
-            for handle, rights, image, expected in ((call, 1, 1, 0), (call, 0, 1, -5),
-                                                    (call, 1, 0, -3), (call, 1, 2, -6),
-                                                    (call + (1 << 16), 1, 1, -3)):
-                with self.subTest(machine=machine, handle=handle, rights=rights, image=image):
+            for other, rights, image, peer, peer_image, expected in (
+                    (call, 1, 1, 1, 1, 0), (call, 0, 1, 1, 1, -5),
+                    (call, 1, 0, 1, 1, -3), (call, 1, 2, 1, 1, -6),
+                    (call + (1 << 16), 1, 1, 1, 1, -3),
+                    (call + 125, 1, 1, 1, 1, -3),
+                    (call, 1, 1, call, 1, -6), (call, 1, 1, 1, 0, -6)):
+                with self.subTest(machine=machine, other=other, rights=rights, image=image,
+                                  peer=peer, peer_image=peer_image):
                     source, parsed, work, template, config = self.setup_load(machine, lib)
-                    lib.mock_fd_call(rights, image)
-                    entries = struct.pack('<12Q', 0, 0, handle, 31, 9, 0, 7, 1, handle, 31, 9, 0)
+                    lib.mock_fd_call(rights, image, peer, peer_image)
+                    entries = struct.pack('<12Q', 0, 0, call, 31, 9, 0, 7, 1, other, 31, 9, 0)
                     data = bytearray(template.raw[:-1] + entries)
                     struct.pack_into('<Q', data, 16, len(data))
                     struct.pack_into('<2Q', data, 80, 2, len(data) - len(entries))

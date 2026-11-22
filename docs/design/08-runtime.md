@@ -901,6 +901,8 @@ ARM64/RV64 QEMU `elf` 验证未装载拒绝发布、两个真实子进程发布�
 
 启动 fd 的本地发布已支持 `sysfdload`：调用方预备每行所需的一份本地 File 别名，表先验证整批，再按精确 fd 号发布；遇到占用或重复号时整批不变。同一 File 的多个描述符仍各有独立的 CLOEXEC 标志。ARM64/RV64 QEMU `runtime` 验证稀疏号码、同 File 的标志隔离以及后项冲突时首项及其代次不变；10 项主机 fd 表回归和格式检查通过。此步不解释 Bootfd、发放引用或连接终端。
 
+ELF 装载器按目标资源槽合并多个 Bootfd 引用的同一个 CALL；同槽不同代次或超出目标资源表的槽号直接拒绝。每个不同的完整 Handle 只需匹配一次目标准备表，且条目须是带 USE 的 CALL，并携带有效进程身份与非零镜像代次。主机回归覆盖别名、旧代次、超界、缺权限及坏对端身份；ARM64/RV64 QEMU `elf` 继续验证实际目标资源表里的非 CALL 被拒绝并回收临时装载资源。此校验不领取准备 token 或安装启动描述符。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。

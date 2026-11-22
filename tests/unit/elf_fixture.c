@@ -33,12 +33,14 @@ static Mapping targets[TARGETS];
 static u64     scratch;
 static u32     alias_id, step, fail_step, unmap_failures, free_failures, bad_free;
 static isize   commit_error, abort_error;
-static u64     fd_call_rights, fd_call_image;
+static u64     fd_call_rights, fd_call_image, fd_peer, fd_peer_image;
 void
-mock_fd_call(u64 rights, u64 image)
+mock_fd_call(u64 rights, u64 image, u64 peer, u64 peer_image)
 {
   fd_call_rights = rights;
   fd_call_image = image;
+  fd_peer = peer;
+  fd_peer_image = peer_image;
 }
 static int
 fault(void)
@@ -56,7 +58,7 @@ __sys_copy(void *destination, const void *source, u64 bytes)
 void
 mock_reset(u64 window)
 {
-  mock_fd_call(0, 0);
+  mock_fd_call(0, 0, 0, 0);
   memset(memories, 0, sizeof(memories));
   memset(targets, 0, sizeof(targets));
   scratch = window;
@@ -176,6 +178,8 @@ __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count
     records[0].data[0] = (2UL << 59) | (7UL << 16) | 3;
     records[0].data[1] = RESOURCE_CALL;
     records[0].data[2] = fd_call_rights;
+    records[0].data[6] = fd_peer;
+    records[0].data[7] = fd_peer_image;
     *written = 1;
     *next = 0;
     return 0;

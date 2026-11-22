@@ -171,11 +171,23 @@ static isize
 fdcalls(Elfwork *work, const Bootview *boot)
 {
   Queryrec records[4];
-  u64      found[(BOOT_FD_COUNT + 63) / 64] = {0};
-  u64      left = boot->header->fd_count, cursor = 0, written, next, i, j, bit, total = 0;
+  Handle   needed[BOOT_RESOURCE_COUNT];
+  u64      left = 0, cursor = 0, written, next, i, total = 0;
   isize    error;
-  if (!left)
+  if (!boot->header->fd_count)
     return 0;
+  for (i = 0; i < ARRAY_SIZE(needed); i++)
+    ((volatile Handle *) needed)[i] = 0;
+  for (i = 0; i < boot->header->fd_count; i++) {
+    Handle call = boot->fds[i].backend_call;
+    u32    slot = (u64) call & UINT16_MAX;
+    if (slot >= ARRAY_SIZE(needed) || (needed[slot] && needed[slot] != call))
+      return -ERR_BAD_HANDLE;
+    if (!needed[slot]) {
+      needed[slot] = call;
+      left++;
+    }
+  }
   do {
     error = resourcepage(work, cursor, records, ARRAY_SIZE(records), &written, &next);
     if (error)
@@ -185,17 +197,17 @@ fdcalls(Elfwork *work, const Bootview *boot)
       return -ERR_STATE;
     for (i = 0; i < written; i++) {
       const Queryrec *record = &records[i];
-      for (j = 0; j < boot->header->fd_count; j++) {
-        bit = UINT64_C(1) << (j % 64);
-        if ((found[j / 64] & bit) || (Handle) record->data[0] != boot->fds[j].backend_call)
-          continue;
-        if (record->data[1] != RESOURCE_CALL)
-          return -ERR_BAD_HANDLE;
-        if (!(record->data[2] & RESOURCE_USE))
-          return -ERR_DENIED;
-        found[j / 64] |= bit;
-        left--;
-      }
+      u32             slot = record->data[0] & UINT16_MAX;
+      if (slot >= ARRAY_SIZE(needed) || !needed[slot] || needed[slot] != (Handle) record->data[0])
+        continue;
+      if (record->data[1] != RESOURCE_CALL)
+        return -ERR_BAD_HANDLE;
+      if (!(record->data[2] & RESOURCE_USE))
+        return -ERR_DENIED;
+      if (handlekind((Handle) record->data[6]) != HANDLE_PROCESS || !record->data[7])
+        return -ERR_STATE;
+      needed[slot] = 0;
+      left--;
     }
     cursor = next;
   } while (left && cursor);
