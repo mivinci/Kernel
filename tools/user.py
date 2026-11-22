@@ -56,7 +56,7 @@ def build(args):
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
     sources = [ROOT / 'lib/libsys' / x for x in ('syscall.c', 'memory.c', 'vm.c', 'channel.c', 'boot.c', 'fd.c', 'fddup.c', 'file.c', 'filewatch.c', 'conn.c', 'bootstrap.c', 'connection.c', 'operation.c', 'fileref.c', 'forkstate.c', 'fork.c', 'forkfinish.c', 'forkrepair.c', 'forkresume.c', 'filecreate.c', 'close.c', 'context.c', 'contextipc.c', 'contextarg.c', 'argument.c', 'start.c', 'elf.c', 'load.c', 'process.c', 'signal.c', 'sigentry.c', 'serial.c', args.arch + '/elf.c', args.arch + '/context.c', args.arch + '/ctxcall.S', args.arch + '/syscall.S', args.arch + '/io.S')]
-    sources.extend(ROOT / 'lib/libsys' / name for name in ('elfloadfs.c', 'exec.c', 'execfd.c', 'execsend.c', 'execmanifest.c'))
+    sources.extend(ROOT / 'lib/libsys' / name for name in ('elfloadfs.c', 'spawn.c', 'exec.c', 'execfd.c', 'execsend.c', 'execmanifest.c'))
     sources.append(ROOT / 'lib/libsys/timer.c')
     sources.append(ROOT / 'lib/libsys/fileimage.c')
     units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o')) for source in sources]
@@ -230,10 +230,20 @@ def build(args):
     (sdk / 'runtimeimage.S').write_text('/* image sha256: ' + digest(runtime_image) + ' */\n.section .rodata\n.balign 8\n'
         '.global runtime_image,runtime_image_end,runtime_trace_address\nruntime_image:\n.incbin "' + str(runtime_image) +
         '"\nruntime_image_end:\n.balign 8\nruntime_trace_address:\n.quad ' + str(trace_address) + '\n')
-    # Embed a real child ELF in the user loader's immutable read-only source.
+    # Keep the loader payload independent of the growing runtime test suite.
+    child_source = ROOT / 'tests/kernel/elfchild.c'
+    child_object = sdk / 'obj/elfchild.o'
+    child = sdk / 'elfchild.elf'
+    command = [tools['cc']['path'],*flags,'-c',str(child_source),'-o',str(child_object)]
+    invoke('compile-elfchild',command)
+    entries.append(dict(directory=str(ROOT),file=str(child_source),output=str(child_object),arguments=command))
+    invoke('link-elfchild',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),
+                           '--gc-sections','--build-id=none',str(crt),str(child_object),
+                           str(libc_archive),str(archive),'-o',str(child)])
+    read_elf(child,profile['machine'],kind=2)
     payload_source = sdk / 'payloadelf.S'
-    payload_source.write_text('/* payload sha256: ' + digest(runtime) + ' */\n.section .rodata\n.balign 8\n'
-        '.global payload_elf,payload_elf_end\npayload_elf:\n.incbin "' + str(runtime) + '"\npayload_elf_end:\n')
+    payload_source.write_text('/* payload sha256: ' + digest(child) + ' */\n.section .rodata\n.balign 8\n'
+        '.global payload_elf,payload_elf_end\npayload_elf:\n.incbin "' + str(child) + '"\npayload_elf_end:\n')
     parent_source = ROOT / 'tests/kernel/elfuser.c'
     parent_units = [(parent_source,sdk / 'obj/elfuser.o'),(payload_source,sdk / 'obj/payloadelf.o')]
     for i,(source,obj) in enumerate(parent_units):

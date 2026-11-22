@@ -884,3 +884,9 @@ stage335：`sysexecfdmanifest` 从固定快照按完整后端 PID/image 打包 E
 stage336：`sysexecfdbegin` 将固定清单写入同一后端连接的普通页或页对，独立 File pin 和槽一起登记到原 Op。多页先清续页描述符，再写负载，最后写首槽描述符；提交前复制失败归还槽及原 pin。RV64、ARM64 QEMU `runtime` 用真实 CALL 发送单页 CLOEXEC 清单：服务验证源和文件身份后回复 ENOTSUP，客户端保存原结果、确认 FINISH/ACK 并归还槽和 pin，已提交的 Op 不能再生成 CALL。14 项主机回归及格式通过。双页实传、后端准备成功/token 交付及目标 Boot 尚未接。
 
 stage337：RV64、ARM64 QEMU `runtime` 在单页实传之外，用一个原 RPC 发送满 128 条记录的 6144 字节 `EXEC_PREPARE` 清单。服务验证跨页记录和混合 CLOEXEC 标志，续页旧描述符被清除，私有账本把两槽都绑定到原 REQUEST。客户端在该页对占用时不能再借普通槽，原 RPC 收尾后两页可一并复用，最终页和账户费用守恒。7 项专项及格式通过。首轮测试误期待 CAPACITY，已按原槽接口使用 BUSY 并复验；后端仍只验收传输并回复 ENOTSUP。
+
+### 私有 spawn 接入原生子进程装载（2026-11-22）
+
+`sysspawnprepare` 采样调用者当前信号掩码，调用 `create` 取得精确准备视图和 PID。调用者持视图准备目标 Boot 和服务引用，再用 `elfload` 装载；若创建服务得到独立的 CONTROL，调用者负责其生命周期。`sysspawnpublish` 在临时装载资源已释放、装载成功后配置并启动孩子，成功消耗视图并返回 PID。失败保留准备责任；`sysspawncancel` 先清理父侧临时资源，再撤销目标。父侧清理未完成时保留责任供重试。
+
+ARM64/RV64 QEMU `elf` 验证未装载拒绝发布、两个真实子进程发布与等待、四条装载失败路径撤销、同 PID exec 以及页和额度守恒；15 项 ELF 主机回归和变更文件格式检查通过。场景使用独立的小 ELF，避免整套运行库回归程序的增长挤占装载夹具的预算；子载荷核对构造函数、参数与环境副本，以及目标 SELF 资源。生产路径解析、凭据下的文件动作、服务端引用准备和公开 `posix_spawn` 尚未接入。

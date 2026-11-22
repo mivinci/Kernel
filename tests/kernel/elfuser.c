@@ -130,7 +130,8 @@ main(int argc, char **argv)
     elf_trace[0] = scenario + 1;
     reader.fail_after = ~(u64) 0;
     reader.malformed = reader.reads = 0;
-    REQUIRE(!elfcheck(&source, 64, &plan) && plan.pages > 3 && plan.segments[0].filesz > PAGE_SIZE,
+    REQUIRE(!elfcheck(&source, 64, &plan) && plan.pages > 3 && plan.count > 1 &&
+                plan.segments[1].filesz,
             184);
     memset(&args, 0, sizeof(args));
     /* Success fixtures fund the selected ELF plus stack/Boot/kernel metadata;
@@ -144,13 +145,14 @@ main(int argc, char **argv)
     args.rgid = ids[2];
     args.egid = ids[3];
     memset(&work, 0, sizeof(work));
-    REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, 0, &work.sigmask), 214);
-    REQUIRE(!__sys_create(create, &args, &work.view, &pid, &control) && pid > 0 && !control, 185);
-    work.pid = pid;
-    work.image = 1;
     work.parent_space = space;
     work.scratch = 0x2000000;
     work.scratch_bytes = BOOT_MAX_BYTES;
+    config.entry = 0;
+    REQUIRE(!sysspawnprepare(&work, create, &args, &control) && work.pid > 0 && !control &&
+                sysspawnpublish(&work, &config) == -ERR_STATE,
+            185);
+    pid = work.pid;
     elf_trace[8 + scenario] = (u64) pid;
     REQUIRE(!__sys_yield(), 186);
     REQUIRE(!__sys_query(work.view, QUERY_RESOURCE, 0, resources, 4, &written, &next) &&
@@ -169,7 +171,7 @@ main(int argc, char **argv)
       REQUIRE(!__sys_free(pressure[--count]), 190);
     }
     if (scenario == 3)
-      reader.fail_after = plan.segments[0].offset + PAGE_SIZE;
+      reader.fail_after = plan.segments[1].offset;
     if (scenario == 4) {
       REQUIRE(!__sys_alloc(allocator, &alloc, &occupied), 191);
       memset(&map, 0, sizeof(map));
@@ -194,7 +196,7 @@ main(int argc, char **argv)
     elf_trace[6]++;
     if (scenario <= 1) {
       REQUIRE(!error && !work.failure, 194);
-      REQUIRE(!__sys_configure(work.view, &config, 0) && !__sys_start(work.view), 195);
+      REQUIRE(sysspawnpublish(&work, &config) == pid && !work.view, 195);
       status = 0x12345678;
       errno = EDOM;
       REQUIRE(waitpid(pid, &status, WNOHANG) == 0 && status == 0x12345678 && errno == EDOM, 196);
@@ -218,7 +220,7 @@ main(int argc, char **argv)
                                         : -ERR_INVALID),
               198);
       REQUIRE(work.failure == error && !config.entry, 199);
-      REQUIRE(!__sys_destroy(work.view), 200);
+      REQUIRE(!sysspawncancel(&work) && !work.view, 200);
       REQUIRE(__sys_wait(pid, WAIT_WNOHANG, &collected, &kind, &code, &sequence) == -ERR_CHILD &&
                   !collected,
               201);
@@ -243,7 +245,7 @@ main(int argc, char **argv)
   replacement.elf.parent_space = space;
   replacement.elf.scratch = 0x2000000;
   replacement.elf.scratch_bytes = BOOT_MAX_BYTES;
-  reader.fail_after = plan.segments[0].offset + PAGE_SIZE;
+  reader.fail_after = plan.segments[1].offset;
   REQUIRE(!sysexecprepare(&replacement, 0) && sysexecpublish(&replacement) == -ERR_STATE &&
               sysexecfill(&replacement, &source, &plan, &packet, packet.header.bytes) ==
                   -ERR_FAULT &&

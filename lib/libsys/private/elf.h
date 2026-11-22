@@ -57,6 +57,13 @@ isize elfcheck(const Elfsource *source, u64 max_pages, Elfplan *out);
 isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
               Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
+/* Native child preparation around elfload. A successful prepare gives the
+   caller the exact view and PID for service/Boot preparation. Any returned
+   CONTROL is independently owned by the caller. Publish consumes the view
+   and returns the PID. Cancel is retryable if temporary cleanup fails. */
+isize sysspawnprepare(Elfwork *work, Handle create, const Createarg *args, Handle *control);
+isize sysspawnpublish(Elfwork *work, const Config *config);
+isize sysspawncancel(Elfwork *work);
 /* Zero-initialize the record and set elf.parent_space and the private scratch
    window. The view and target image become available before Boot is built.
    An accepted preparation remains owned until commit or explicit cancel. */
