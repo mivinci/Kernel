@@ -35,6 +35,7 @@ struct Reclaim;
 typedef struct Mapmeta   Mapmeta;
 typedef struct Growth    Growth;
 typedef struct Reclaimtx Reclaimtx;
+typedef struct Shrink    Shrink;
 struct Journalmark
 {
   u64 txid;
@@ -83,6 +84,14 @@ struct Reclaimtx
   struct Loadindex     *index;
   struct Blockmap      *allocation;
   u64                   txid;
+};
+struct Shrink
+{
+  Journal              *journal;
+  struct Cache         *cache;
+  struct Loadmap       *live;
+  const struct Loadmap *staged;
+  u64                   txid, length;
 };
 struct Journal
 {
@@ -136,6 +145,13 @@ isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclai
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */
 isize reclaimpublish(Reclaimtx *);
+/* Commit the inode image encoded from loadmapshrink. Equal lengths need
+   no transaction. Keep distinct, immutable staging/record storage and hold
+   the inode mutation guard and volume writer until publication or recovery.
+   Exclude cache accesses to the inode home block during the transaction. */
+isize journalshrink(Shrink *, Journal *, struct Cache *, struct Loadmap *, const struct Loadmap *,
+                    const Mapmeta *);
+isize shrinkpublish(Shrink *);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state
    preserves ticket serials. The caller must first isolate old I/O and

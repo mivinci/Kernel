@@ -442,6 +442,80 @@ reclaimpublish(Reclaimtx *work)
 }
 
 static int
+shrinkmatch(const Loadmap *live, const Loadmap *staged, u64 length)
+{
+  u32 i;
+  if (!live->file.inode || live->file.inode >= FS_INODES || !live->file.generation ||
+      !live->file.version || live->file.version == UINT64_MAX || live->file.length != length ||
+      length > FS_FILE_BYTES || staged->file.length >= length ||
+      staged->file.inode != live->file.inode || staged->file.generation != live->file.generation ||
+      staged->file.version != live->file.version + 1 || staged->indirect != live->indirect)
+    return 0;
+  for (i = 0; i < LOAD_DIRECT; i++)
+    if (staged->direct[i] != live->direct[i])
+      return 0;
+  return 1;
+}
+
+isize
+journalshrink(Shrink *work, Journal *journal, Cache *cache, Loadmap *live, const Loadmap *staged,
+              const Mapmeta *encoded)
+{
+  Journalblock metadata;
+  Journalplan  plan;
+  isize        error;
+  if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
+      !separate(live, sizeof(*live), staged, sizeof(*staged)) || !encoded || !encoded->inode ||
+      encoded->bitmap || encoded->index)
+    return -ERR_INVALID;
+  if (work->journal || work->txid)
+    return -ERR_BUSY;
+  if (!shrinkmatch(live, staged, live->file.length))
+    return -ERR_STALE;
+  metadata.block = FS_INODE_START + live->file.inode / (FS_BLOCK_BYTES / FS_INODE_BYTES);
+  metadata.bytes = encoded->inode;
+  plan = (Journalplan){encoded->header, encoded->committed, encoded->empty, &metadata, NULL, 1, 0};
+  error = journalbegin(journal, &plan);
+  if (error)
+    return error;
+  error = cacheforget(cache, &metadata.block, 1);
+  if (error) {
+    clear(journal);
+    journal->phase = JOURNAL_IDLE;
+    return error;
+  }
+  *work = (Shrink){journal, cache, live, staged, journal->txid, live->file.length};
+  return 0;
+}
+
+isize
+shrinkpublish(Shrink *work)
+{
+  Journal *journal;
+  u64      block;
+  isize    error;
+  if (!work || !(journal = work->journal) || !work->txid || journal->txid != work->txid)
+    return -ERR_STALE;
+  if (journal->phase == JOURNAL_STOPPED)
+    return -ERR_STATE;
+  if (journal->phase != JOURNAL_DONE || !journal->durable)
+    return -ERR_WOULD_BLOCK;
+  if (!shrinkmatch(work->live, work->staged, work->length))
+    return -ERR_STALE;
+  block = journal->metadata[0].block;
+  error = cacheforget(work->cache, &block, 1);
+  if (error)
+    return error;
+  error = journalrelease(journal);
+  if (error)
+    return error;
+  work->live->file.length = work->staged->file.length;
+  work->live->file.version = work->staged->file.version;
+  *work = (Shrink){0};
+  return 0;
+}
+
+static int
 redosnapshots(const Journal *journal, u64 blocks, const Journalblock *metadata, u32 count,
               const u8 *empty)
 {
