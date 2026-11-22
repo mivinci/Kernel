@@ -2,10 +2,12 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
+#include <inttypes.h>
 typedef struct Integer                   Integer;
 __extension__ typedef long long          Llong;
 __extension__ typedef unsigned long long Ullong;
 STATIC_ASSERT(sizeof(long) == 8 && sizeof(Llong) == 8, number_lp64);
+STATIC_ASSERT(INTMAX_MAX == LONG_MAX && UINTMAX_MAX == ULONG_MAX, number_intmax_range);
 struct Integer
 {
   unsigned long value;
@@ -92,6 +94,18 @@ strtoll(const char *string, char **end, int base)
 
 Ullong
 strtoull(const char *string, char **end, int base)
+{
+  return strtoul(string, end, base);
+}
+
+intmax_t
+strtoimax(const char *string, char **end, int base)
+{
+  return strtol(string, end, base);
+}
+
+uintmax_t
+strtoumax(const char *string, char **end, int base)
 {
   return strtoul(string, end, base);
 }

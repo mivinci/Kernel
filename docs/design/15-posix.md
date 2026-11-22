@@ -155,6 +155,8 @@ ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个�
 
 公开 SDK 提供 `<endian.h>` 的 16、32、64 位双向主机字节序转换，以及 BusyBox 平台头引用的 `<byteswap.h>`。转换只求值一次，不依赖主机头或库符号。ARM64、RV64 QEMU `runtime` 核对实际字节布局、交换与往返转换；直接编译 BusyBox 1.37.0 上游源码的进度见 [012](../issues/012-busybox-port.md)。
 
+`<inttypes.h>` 提供整数输出的 `PRI*` 格式宏及 `strtoimax`、`strtoumax`。格式宏跟随 Clang 的目标类型，两个 LP64 目标的转换沿用原解析器的范围、错误码及停止位置。ARM64、RV64 QEMU `runtime` 验证从定宽、最小、快速、最大和指针整数类型格式化的实际字符串，并核对转换边界；6 项整数主机回归通过。扫描宏和宽字符接口仍待实现。
+
 stage447：`int isatty(int fd)` 由 libc 提供，声明在 `unistd.h`。按 [POSIX.1-2024 isatty](https://pubs.opengroup.org/onlinepubs/9799919799/functions/isatty.html) 核对返回约定：以原 fd 的 `GETATTR` 查询判定，成功返回 1 并保留 `errno`，失败返回 0 并沿用 `tcgetattr` 错误。管道返回 ENOTTY，关闭后的 fd 返回 EBADF。信号中断沿原请求取消和收尾；未自动重启时返回 0/EINTR。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭 fd，以及服务挂起查询时捕获信号，原请求取消后可再次查询。格式检查通过。成功判定仍由测试服务提供属性。

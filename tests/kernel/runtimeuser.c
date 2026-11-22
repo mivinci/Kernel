@@ -2,6 +2,7 @@
 #include <endian.h>
 #include <fnmatch.h>
 #include <getopt.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -356,6 +357,7 @@ static u32
 numbercheck(void)
 {
   char       *end;
+  char        formatted[64];
   u32         i;
   int         base;
   const char *text = "10!";
@@ -377,7 +379,22 @@ numbercheck(void)
     REQUIRE(strtoull(test->text, &end, test->base) == test->unsigned_value &&
                 end == test->text + test->end && errno == test->unsigned_error,
             181);
+    errno = EDOM;
+    REQUIRE(strtoimax(test->text, &end, test->base) == test->signed_value &&
+                end == test->text + test->end && errno == test->signed_error,
+            180);
+    errno = EDOM;
+    REQUIRE(strtoumax(test->text, &end, test->base) == test->unsigned_value &&
+                end == test->text + test->end && errno == test->unsigned_error,
+            181);
   }
+  REQUIRE(snprintf(formatted, sizeof(formatted),
+                   "%" PRId8 "/%" PRIXLEAST16 "/%" PRIuFAST32 "/%" PRIdMAX "/%" PRIxPTR,
+                   (int8_t) -7, (uint_least16_t) 0xbeef, (uint_fast32_t) 4000000000U, INTMAX_MIN,
+                   (uintptr_t) 0x123) ==
+                  sizeof("-7/BEEF/4000000000/-9223372036854775808/123") - 1 &&
+              !strcmp(formatted, "-7/BEEF/4000000000/-9223372036854775808/123"),
+          182);
   for (base = 2; base <= 36; base++) {
     errno = EDOM;
     REQUIRE(strtol(text, &end, base) == base && end == text + 2 && errno == EDOM, 182);
