@@ -83,6 +83,24 @@ fileowns(const Fileinflight *active, const Ipcmsg *call, const Fileslot *slot)
 }
 
 static isize
+filereject(Fileinflight *active, const Ipcmsg *call, isize business)
+{
+  Msg   reply = {{(u64) business, call->words[2], 0, 0}};
+  u64   state;
+  isize error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_DRAINING)
+    error = ipc_rqfinish(call->request);
+  else {
+    if (state & RQ_CHECK_CANCEL)
+      reply.words[0] = (u64) -EINTR;
+    error = ipc_reply(call->request, &reply);
+  }
+  return error ? error : sysfilefinish(active, call->request);
+}
+
+static isize
 fileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active, const Ipcmsg *call,
        const Fileslot *slot, volatile u8 *page, u32 nonblock, Ttywait *wait, u64 now, u64 *next)
 {
@@ -235,6 +253,45 @@ ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call, const
   if (!call || call->words[0] != FS_READ || !wait || !next)
     return -ERR_INVALID;
   return fileio(NULL, input, 0, active, call, slot, page, wait->nonblock, wait, now, next);
+}
+
+isize
+ttyfilestart(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *active,
+             const Ipcmsg *call, const Fileslot *slot, volatile u8 *page, u32 nonblock, u64 now,
+             Ttypending *pending, u64 *next)
+{
+  Ttywait  read;
+  Ttywait *wait = NULL;
+  isize    status;
+  if (!fileowns(active, call, slot) || !mode || !input || !page || !next || nonblock > 1)
+    return -ERR_INVALID;
+  *next = 0;
+  switch (call->words[0]) {
+  case FS_READ:
+    if (sysfileargs(FS_READ, slot))
+      return filereject(active, call, -EINVAL);
+    if (slot->args[3] & FS_IO_POSITIONAL)
+      return filereject(active, call, -ESPIPE);
+    status = ttywaitinit(&read, mode, (u32) slot->args[1], nonblock, input->ready, now);
+    if (status)
+      return filereject(active, call, -EIO);
+    wait = &read;
+    status = ttyfilereadwait(input, active, call, slot, page, wait, now, next);
+    break;
+  case FS_WRITE:
+    status = ttyfileio(io, input, mode->oflag, active, call, slot, page, nonblock);
+    break;
+  case FS_TTYCTL:
+    return ttyfilectl(mode, active, call, slot, page);
+  default:
+    return filereject(active, call, -ENOTSUP);
+  }
+  if (status != -ERR_WOULD_BLOCK)
+    return status;
+  status = pending ? ttyfiledefer(pending, active, call, slot, page, wait) : -ERR_BUSY;
+  if (status)
+    *next = 0;
+  return status == -ERR_BUSY ? filereject(active, call, -EAGAIN) : status;
 }
 
 isize

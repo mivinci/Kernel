@@ -382,6 +382,8 @@ T4 的 sh 要求作业控制可用，故 STOP/CONT、前台组切换与控制终
 
 ## 执行与验收
 
+stage443：`ttyfilestart` 将已授权且占有原槽的 READ、WRITE 与 GETATTR 接入同一分派。READ 在接收时保存模式及计时参数，阻塞请求转入原请求的挂起记录并给出单调期限。无等待名额时，可立即完成的请求仍可提交，需要等待的请求沿原槽回复 EAGAIN。ARM64、RV64 QEMU `runtime` 经真实 IPC 验证规范读、写入背压、等待名额不足时保留旧请求、取消后输入和输出保持、GETATTR 和非规范读期限。31 项 TTY 主机回归及格式检查通过。会话授权、客户端连接建立与生产 TTY 事件循环接入仍待完成。
+
 终端关系实现接续（2026-11-19，可信核心已本地验收）：kernel/terminal.c以64项固定池保存精确owner Image、session/group引用与epoch，每条56字节，使用现有TERMINAL类别身份；新建从epoch1起，首次关联仅安装同会话约束，成功前台提交才递增。每次新操作检查owner处于PREPARING/ACTIVE，结束后仅允许drop清理旧引用，不跟随新镜像。同一会话旧关联仍占清理引用时拒绝另一终端抢占，最后drop后才释放会话/前台组/Image引用。该机制不自行投递HUP/CONT，不把保留引用称为挂断处理已经完成。
 
 7项host以真实group核心和模拟Image边界检查STALE提交无修改、相同组提交推进版本、跨会话拒绝、槽复用/满池、结束后引用释放，以及UINT64_MAX epoch/u32引用计数耗尽、imagehold失败不发布/不改输出和坏身份拒绝。测试直接设置私有边界值，没有新增生产故障开关。CASE=images链接相同terminal.c，真实Life发布/旧Image EXEC结束并detach/新Image激活，验证旧终端立即拒绝、新终端不接管旧关联、两次drop后旧Image实际回收及新终端可关联；64项满池/代次复用、关系引用与Life/Set/物理页回到基线，两架构专项已通过。ARM64整体结构快照引入隐式memcpy已改为逐字段赋值，失败构建日志保留。

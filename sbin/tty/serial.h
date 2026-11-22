@@ -49,6 +49,13 @@ isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active,
    GETATTR publishes the current private mode in the original data page. */
 isize ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call,
                  const Fileslot *slot, volatile u8 *page);
+/* Start one authorized request on an admitted slot. The dispatcher supplies
+   the File's nonblock flag and a free pending record if it has one. When a
+   blocking request is deferred, next holds its absolute deadline or zero.
+   A ready request can complete even when there is no free pending record. */
+isize ttyfilestart(Ttyserial *io, Ttyinput *input, const Termarg *mode, Fileinflight *active,
+                   const Ipcmsg *call, const Fileslot *slot, volatile u8 *page, u32 nonblock,
+                   u64 now, Ttypending *pending, u64 *next);
 /* After blocking I/O returned WOULD_BLOCK, snapshot the original request
    and optional READ wait state. Initialize pending to zero and keep the
    ledger and mapping alive until resume settles it. For a timed READ pass
