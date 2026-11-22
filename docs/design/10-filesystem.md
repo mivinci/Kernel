@@ -800,6 +800,8 @@ stage555：双架构 QEMU `virtiodev` 在真实 FLUSH 已提交后注入提交�
 
 stage556：恢复入口拒绝接管仍持有旧快照的日志。即使是 EMPTY(0) 上停止的纯数据事务，txid 为零且无在途 I/O，也须先显式释放旧快照。ARM64/RV64 QEMU `virtiodev` 验证提前恢复被拒、原快照仍在、释放后可重新打开日志；49 项 FS 主机测试通过。
 
+stage557：同一日志实例恢复时保留最后已退休编号，拒绝更旧的标记和同编号的 COMMITTED；同编号的 EMPTY 可以重新打开日志。ARM64/RV64 QEMU `virtiodev` 验证两种拒绝保留原状态，并通过正常重放回归；49 项 FS 主机测试通过。冷启动仍依赖盘上标记的完整性校验。
+
 stage539：`journalinodefree` 在孤儿引用和块指针全部清空后，用最后一笔事务清 inode 位图，保留原 inode 行的 generation 供将来复用。ARM64/RV64 QEMU `pipeio` 验证块批次未退休时拒绝、最终位图仅在日志退休后可见以及重复发布被拒；46 项 FS 主机测试通过。生产编码和 inode 再分配待接。
 
 stage538：无引用孤儿可用同一回收日志分批清除全部块，包含仍在原 EOF 内的数据；inode 槽保持分配。ARM64/RV64 QEMU `pipeio` 验证带引用时拒绝、无引用后可提交块回收，末次 FLUSH 失败时指针和位图不提前发布。46 项 FS 主机测试通过。最终 inode 槽退休和生产候选接线待做。

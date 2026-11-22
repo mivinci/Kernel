@@ -242,7 +242,9 @@ isize journalshrink(Shrink *, Journal *, struct Cache *, struct Loadmap *, const
 isize shrinkpublish(Shrink *);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state
-   preserves ticket serials. The caller must first isolate old I/O and
+   preserves ticket serials and the last known retired transaction. Recovery
+   rejects an older mark or a COMMITTED mark for an already retired number.
+   The caller must first isolate old I/O and
    callbacks. Even EMPTY grants future
    write access, so it needs the same geometry, flush and fault guarantees.
    The decoder checks magic, padding and checksums; payloadcrc covers the complete

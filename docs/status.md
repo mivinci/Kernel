@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage557：同一日志实例恢复时拒绝旧标记和已退休编号的 COMMITTED。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。
 - stage556：日志恢复须等旧快照释放，包括 txid 为零的纯数据事务。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。
 - stage555：双架构 QEMU `virtiodev` 验证真实 FLUSH 提交后注入结果未知，原 I/O 排空前不可释放，排空后不发布 inode。
 - stage554：提交结果未知时日志停止，保留原票据和快照直到排空。49 项 FS 主机测试及双架构 QEMU `virtiodev` 正常 I/O 回归通过。

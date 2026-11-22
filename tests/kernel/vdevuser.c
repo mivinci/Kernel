@@ -273,6 +273,21 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
                              NULL) == -ERR_STATE,
           246);
   mark = (Journalmark){47, 1, 11, 12};
+  {
+    const Journalmark retired = {47, 0, 0, 0};
+    Journalblock      data = {FS_DATA_START, images[0]};
+    Journalplan       plan = {NULL, NULL, NULL, NULL, &data, 0, 1};
+    REQUIRE(!journalbegin(&idle, &plan) && !journalstop(&idle) && !journalrelease(&idle) &&
+                journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL,
+                               NULL) == -ERR_STATE &&
+                journalrecover(&idle, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                               redometa, NULL) == -ERR_STATE &&
+                idle.last == 47 && idle.phase == JOURNAL_STOPPED &&
+                !journalrecover(&idle, &layout, &geometry, &retired, NULL, NULL, 0, 0, NULL, NULL,
+                                NULL) &&
+                idle.last == 47,
+            246);
+  }
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 13, images[2],
                          redometa, NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,

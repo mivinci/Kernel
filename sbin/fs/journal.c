@@ -949,6 +949,8 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   error = fslayoutcheck(layout, device, 1);
   if (error)
     return error;
+  if (mark->txid < journal->last || (mark->state && mark->txid == journal->last))
+    return -ERR_STATE;
   if (!mark->state) {
     if (mark->headercrc || mark->payloadcrc)
       return -ERR_STATE;
@@ -973,8 +975,6 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
     if (classify(context, metadata, count, i) <= 0)
       return -ERR_STATE;
   journal->blocks = layout->blocks;
-  /* The previous EMPTY number is immaterial until this log is retired. */
-  journal->last = 0;
   journal->txid = mark->txid;
   journal->empty = empty;
   copymetadata(journal, metadata, count);
