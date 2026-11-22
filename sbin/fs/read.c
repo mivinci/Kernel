@@ -17,19 +17,20 @@ filereadcomplete(Readwork *work, const Cacheio *ticket, const void *block, u32 b
 }
 
 isize
-fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *call,
+filedata(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *call,
          const Fileslot *slot, const Loadmap *map, const Loadindex *index, Cache *cache, u32 first,
-         u64 *position, void *scratch, volatile u8 *page)
+         u64 *position, void *scratch, volatile u8 *page, Loadtable *loads)
 {
   Msg       reply = {{0, 0, 0, 0}};
   Loadspan  span;
   u64       state, at, offset, bytes = 0, i;
   const u8 *data = scratch;
-  u32       positional, blocks[2];
+  u32       positional, writing, blocks[2];
   isize     error;
   if (!work || !fetch || !active || !call || !slot || !map || !cache ||
       cache->blocks > UINT32_MAX || !position || !scratch || !page || call->kind != IPC_CALL ||
-      call->words[0] != FS_READ || handlekind(call->request) != HANDLE_REQUEST)
+      (call->words[0] != FS_READ && call->words[0] != FS_WRITE) ||
+      handlekind(call->request) != HANDLE_REQUEST)
     return -ERR_INVALID;
   at = call->words[3];
   if (at >= FS_CONN_SLOTS || active->requests[at] != call->request || !slot->seq ||
@@ -52,20 +53,36 @@ fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *c
   if (state != RQ_CHECK_LIVE && state != (RQ_CHECK_LIVE | RQ_CHECK_CANCEL))
     return -ERR_STATE;
   positional = !!(slot->args[3] & FS_IO_POSITIONAL);
+  writing = call->words[0] == FS_WRITE;
   offset = positional ? slot->args[0] : *position;
   reply.words[1] = slot->seq;
-  if (state & RQ_CHECK_CANCEL)
+  if (work->written)
+    bytes = work->written;
+  else if (state & RQ_CHECK_CANCEL)
     reply.words[0] = (u64) -EINTR;
   else if (work->failed)
     reply.words[0] = (u64) -EIO;
-  else if (sysfileargs(FS_READ, slot) || offset > (u64) INT64_MAX || (!positional && slot->args[0]))
+  else if (sysfileargs(call->words[0], slot) || offset > (u64) INT64_MAX ||
+           (!positional && slot->args[0]))
     reply.words[0] = (u64) -EINVAL;
+  else if (writing && (!loads || (slot->args[3] & FS_IO_APPEND) ||
+                       (slot->args[1] && offset >= map->file.length)))
+    reply.words[0] = (u64) -ENOSYS;
   else if (offset < map->file.length && slot->args[1]) {
     bytes = MIN(slot->args[1], map->file.length - offset);
+    /* In-place writes commit one existing block at a time. Growth, hole
+       allocation and atomic append require the metadata transaction path. */
+    if (writing)
+      bytes = MIN(bytes, CACHE_BYTES - offset % CACHE_BYTES);
     error = loadmapspan(&map->file, map, index, first, (u32) cache->blocks, offset, bytes, &span);
+    if (!error && writing && !span.first) {
+      reply.words[0] = (u64) -ENOSYS;
+      bytes = 0;
+      goto respond;
+    }
     if (!error && !work->span.cache)
       error = cachespanbegin(cache, span.first, span.next, span.offset, (u32) bytes, &work->span);
-    if (error == -ERR_WOULD_BLOCK || error == -ERR_CAPACITY)
+    if (error == -ERR_WOULD_BLOCK || (!writing && error == -ERR_CAPACITY))
       return -ERR_WOULD_BLOCK;
     if (!error) {
       work->request = call->request;
@@ -86,21 +103,43 @@ fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *c
         if (error)
           break;
       }
-      if (!error)
+      if (!error && writing) {
+        u64 guard;
+        error = loadwrite(loads, map->file.inode, &guard);
+        if (!error) {
+          u8 *input = scratch;
+          for (i = 0; i < bytes; i++)
+            input[i] = page[slot->args[2] + i];
+          error = cacheedit(cache, &work->span.keys[0], span.offset, input, (u32) bytes);
+          if (!error) {
+            work->written = (u32) bytes;
+            if (!positional)
+              *position = offset + bytes;
+          }
+          if (loadunwrite(loads, guard))
+            return -ERR_STATE;
+        }
+      } else if (!error)
         error = cachespancopy(&work->span, scratch);
     }
     if (error) {
       bytes = 0;
-      reply.words[0] = (u64) -EIO;
+      reply.words[0] = (u64) (writing && error == -ERR_BUSY       ? -ETXTBSY
+                              : writing && error == -ERR_CAPACITY ? -EAGAIN
+                                                                  : -EIO);
     }
   }
-  for (i = 0; i < bytes; i++)
-    page[slot->args[2] + i] = data[i];
-  reply.words[2] = reply.words[3] = bytes;
+respond:
+  if (!writing) {
+    for (i = 0; i < bytes; i++)
+      page[slot->args[2] + i] = data[i];
+    reply.words[3] = bytes;
+  }
+  reply.words[2] = bytes;
   error = ipc_reply(call->request, &reply);
   if (error)
     return error;
-  if (!positional && bytes)
+  if (!writing && !positional && bytes)
     *position = offset + bytes;
   if (work->span.cache)
     error = cachespanend(&work->span);
@@ -108,6 +147,6 @@ finished:
   if (!error)
     error = sysfilefinish(active, call->request);
   if (!error)
-    work->request = work->failed = 0;
+    work->request = work->failed = work->written = 0;
   return error;
 }

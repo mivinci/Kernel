@@ -15,6 +15,7 @@ struct Readjob
   const Loadmap   *map;
   const Loadindex *index;
   Cache           *cache;
+  Loadtable       *loads;
   u32              first;
 };
 struct Fsreads
@@ -23,7 +24,8 @@ struct Fsreads
   u32      count;
   u64      events;
   void    *backend, *scratch;
-  /* Supply a stable map and indirect snapshot through release. */
+  /* Supply a stable map and indirect snapshot through release. In-place
+     writes also require the mount's LOAD exclusion table. */
   isize (*bind)(void *, Readjob *);
   void (*release)(void *, Readjob *);
   /* Copy the ticket, then finish via fsreadcomplete after transport drains
@@ -32,7 +34,7 @@ struct Fsreads
 };
 
 /* The caller has claimed the slot and checked original request state. */
-isize fsreadstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
+isize fsdatastart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsseekstart(Fsreads *, Fsfiles *, Fsfile *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsreadpump(Fsreads *, Fsfiles *);
 isize fsreadcomplete(Readjob *, Handle, const Cacheio *, const void *, u32);

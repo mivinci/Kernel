@@ -71,9 +71,9 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
     }
   }
   for (;;) {
-    status =
-        fileread(&job->work, &fetch, &job->link->watch.active, &job->call, &job->slot, job->map,
-                 job->index, job->cache, job->first, &job->file->position, reads->scratch, page);
+    status = filedata(&job->work, &fetch, &job->link->watch.active, &job->call, &job->slot,
+                      job->map, job->index, job->cache, job->first, &job->file->position,
+                      reads->scratch, page, job->loads);
     if (status != 1)
       break;
     if (!reads->submit(reads->backend, job, &fetch))
@@ -117,11 +117,12 @@ enqueue(Fsreads *reads, Fsfiles *files, Fsfile *file, Filelink *link, const Ipcm
 }
 
 isize
-fsreadstart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
+fsdatastart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
             const Fileslot *slot)
 {
   Fsfile *file = fsfilefind(files, call->source, call->image, slot->object);
-  if (!file || !(file->access & VACCESS_R))
+  u32     access = call->words[0] == FS_WRITE ? VACCESS_W : VACCESS_R;
+  if (!file || !(file->access & access))
     return reject(link, call, file ? -EBADF : -ESTALE);
   return reads ? enqueue(reads, files, file, link, call, slot) : reject(link, call, -ENOSYS);
 }

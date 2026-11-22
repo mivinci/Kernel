@@ -296,14 +296,8 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     error = sysfileargs(opcode, &slot);
     if (error)
       break;
-    if (dispatch->regular && (slot.object & FS_FILE_SESSION)) {
-      Fsfile *file;
-      if (opcode == FS_READ)
-        return fsreadstart(dispatch->reads, dispatch->regular, link, call, &slot);
-      file = fsfilefind(dispatch->regular, call->source, call->image, slot.object);
-      reply.words[0] = (u64) (!file ? -ESTALE : !(file->access & VACCESS_W) ? -EBADF : -ENOSYS);
-      return respond(link, call->request, &reply);
-    }
+    if (dispatch->regular && (slot.object & FS_FILE_SESSION))
+      return fsdatastart(dispatch->reads, dispatch->regular, link, call, &slot);
     end = opcode == FS_READ ? PIPE_READ : PIPE_WRITE;
     for (i = 0; i < dispatch->count && dispatch->waits[i].io.request; i++) {
     }

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage496：双架构 QEMU `pipeio` 验证普通文件缓存写入、定位写保留偏移、EOF 前短写和活动 LOAD 拒绝写入。生产持久化待接。
 - stage495：双架构 QEMU `pipeio` 验证普通文件定位读保留共享偏移，后续短读和 EOF 正确。
 - stage494：普通 WRITE 检查会话引用和打开权限；双架构 QEMU `pipeio` 验证拒绝时不改变偏移。
 - stage493：普通 OPEN 发布前检查目标节点权限；双架构 QEMU `pipeio` 验证拒绝不分配引用。
