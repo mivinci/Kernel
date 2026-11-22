@@ -1,0 +1,23 @@
+#ifndef _FS_BLKREAD_H
+#define _FS_BLKREAD_H
+#include "blk.h"
+#include "cache.h"
+
+typedef struct Blkread Blkread;
+struct Blkread
+{
+  Fsblk    *blk;
+  Cachefill fill;
+  isize     status;
+  u32       collected;
+  u8        data[CACHE_BYTES];
+};
+
+/* Fresh zeroed read state with blk set. The serialized volume owner
+   reserves the connection through completion. Zero is a cache hit;
+   one starts a read; a negative result starts no external access. */
+isize blkreadstart(Blkread *, Cache *, u64 block, u32 metadata);
+/* Read into private storage; only a full, drained success becomes visible
+   in the cache. Return a native progress error while retaining ownership. */
+isize blkreadpoll(Blkread *, isize *status);
+#endif

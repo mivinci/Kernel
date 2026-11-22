@@ -7,6 +7,7 @@
 #include "private/start.h"
 #include "../../sbin/blk/transport.h"
 #include "../../sbin/fs/blklog.h"
+#include "../../sbin/fs/blkread.h"
 #include "private/bootstrap.h"
 #include "../../sbin/fs/cache.h"
 #include "../../sbin/fs/crc.h"
@@ -1027,6 +1028,8 @@ static void
 blkclient(const Bootview *boot, Handle call)
 {
   static Fsblk              blk;
+  static Blkread            reader;
+  static Cacheblock         storage;
   static Journal            journal;
   static u8                 data[PAGE_SIZE];
   const Journalblock        block = {192, data};
@@ -1039,6 +1042,11 @@ blkclient(const Bootview *boot, Handle call)
   Maparg                    mapping = {0, 0, address, PROTO_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
   const volatile Protohead *head = (const volatile Protohead *) (uintptr_t) address;
   Bootmap                   map;
+  Cache                     cache = {0};
+  Cachekey                  key = {0};
+  const u8                 *view;
+  u64                       version;
+  isize                     status;
   u32                       i, op;
   REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result), 360);
   if (result.kind == IPC_NONE) {
@@ -1074,12 +1082,18 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(journal.durable && journalpump(&journal, blklogsubmit, &log) == 1 &&
               !journalrelease(&journal) && journal.last == 47,
           380);
+  reader.blk = &blk;
+  REQUIRE(!cacheinit(&cache, &storage, 1, blk.info.capacity_bytes / PAGE_SIZE) &&
+              !cacheget(&cache, block.block, CACHE_DATA, &key) &&
+              blkreadstart(&reader, &cache, block.block, CACHE_DATA) == 1 &&
+              cacheview(&cache, &key, &view, &version) != 0 &&
+              !ipc_rqwait(blk.rpc, RQ_FINISH, &result) && !blkreadpoll(&reader, &status) &&
+              !status && !blk.rpc && !cacheview(&cache, &key, &view, &version) &&
+              !blkreadstart(&reader, &cache, block.block, CACHE_DATA),
+          384);
   for (i = 0; i < PAGE_SIZE; i++)
-    data[i] = 0;
-  REQUIRE(!fsblksubmit(&blk, BLK_READ, 192 * PAGE_SIZE, PAGE_SIZE, NULL), 366);
-  blkcollect(&blk, data, PAGE_SIZE);
-  for (i = 0; i < PAGE_SIZE; i++)
-    REQUIRE(data[i] == (u8) (0xd3 + i * 23), 367);
+    REQUIRE(view[i] == (u8) (0xd3 + i * 23), 367);
+  REQUIRE(!cacheput(&cache, &key), 385);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
