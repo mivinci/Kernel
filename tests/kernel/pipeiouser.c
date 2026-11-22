@@ -20,6 +20,7 @@
 #include "private/timer.h"
 #include "../../sbin/fs/pipefile.h"
 #include "../../sbin/fs/access.h"
+#include "../../sbin/fs/journal.h"
 #include "../../sbin/fs/mount.h"
 #include "../../sbin/fs/openpath.h"
 #include "../../sbin/fs/read.h"
@@ -1703,40 +1704,73 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
 }
 
 static void
+openwritejournal(const Writeupdate *update, const Writeimage *image)
+{
+  static Journal journal;
+  static u8      snapshots[6][FS_BLOCK_BYTES];
+  Growthmeta meta = {snapshots[0], NULL, snapshots[2], snapshots[3], snapshots[4], snapshots[5]};
+  Journalio  io;
+  u32        i;
+  CHECK(!journalinit(&journal, 128, 7));
+  CHECK(journalgrowth(&journal, update, image, &meta) == -ERR_INVALID &&
+        journal.phase == JOURNAL_IDLE);
+  meta.bitmap = snapshots[1];
+  CHECK(!journalgrowth(&journal, update, image, &meta) && journal.txid == 8 &&
+        journal.metadata_count == 3 && journal.metadata[0].block == FS_INODE_START &&
+        journal.metadata[1].block == FS_BLOCK_MAP && journal.metadata[2].block == 102);
+  CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && io.block == 101 &&
+        io.bytes == image->data && !journalcomplete(&journal, &io, 1));
+  CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && io.block == 100 &&
+        io.bytes == image->taildata && !journalcomplete(&journal, &io, 1));
+  CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_FLUSH && !journal.durable &&
+        !journalcomplete(&journal, &io, 1) && journal.phase == JOURNAL_LOG_WRITE);
+  for (i = 0; i < 13; i++)
+    CHECK(!journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+  CHECK(journal.phase == JOURNAL_DONE && journal.durable && !journalrelease(&journal) &&
+        journal.last == 8 && !journalgrowth(&journal, update, image, &meta));
+  CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && !journal.durable &&
+        !journalstop(&journal) && journalrelease(&journal) == -ERR_WOULD_BLOCK &&
+        !journalcomplete(&journal, &io, 0) && !journalrelease(&journal) && journal.last == 8 &&
+        journal.phase == JOURNAL_STOPPED);
+}
+
+static void
 openwritestage(void)
 {
   static Writeimage  image;
   static Writeupdate update;
   static Blockmap    allocation;
   static u8          tail[FS_BLOCK_BYTES];
-  const Loadmap      map = {{2, 1, 1, 20}, {5}, 0};
+  const Loadmap      map = {{2, 1, 1, 20}, {100}, 0};
   const u64          at = 12 * FS_BLOCK_BYTES + 3;
   Loadspan           span;
   u32                i;
   for (i = 0; i < sizeof(tail); i++)
     tail[i] = 0xa5;
-  CHECK(loadwriteupdate(&map, NULL, 4, 16, at, 2, 6, 5, &update) == -ERR_STATE &&
+  CHECK(loadwriteupdate(&map, NULL, 99, 128, at, 2, 101, 100, &update) == -ERR_STATE &&
         !update.map.file.length);
-  allocation.used[0] = UINT64_MAX ^ (UINT64_C(1) << 6);
-  CHECK(loadwritealloc(&map, NULL, 4, 16, at, 2, &allocation, &update) == -ERR_CAPACITY &&
-        allocation.used[0] == (UINT64_MAX ^ (UINT64_C(1) << 6)) && !update.map.file.length);
-  allocation.used[0] ^= UINT64_C(1) << 7;
-  CHECK(!loadwritealloc(&map, NULL, 4, 16, at, 2, &allocation, &update) &&
-        allocation.used[0] == UINT64_MAX && update.indexdirty && update.map.file.length == at + 2 &&
-        update.map.file.version == 2 && update.map.indirect == 7 && update.map.direct[0] == 5 &&
+  allocation.used[1] = UINT64_MAX ^ (UINT64_C(1) << (101 - 64));
+  CHECK(loadwritealloc(&map, NULL, 99, 128, at, 2, &allocation, &update) == -ERR_CAPACITY &&
+        allocation.used[1] == (UINT64_MAX ^ (UINT64_C(1) << (101 - 64))) &&
+        !update.map.file.length);
+  allocation.used[1] ^= UINT64_C(1) << (102 - 64);
+  CHECK(!loadwritealloc(&map, NULL, 99, 128, at, 2, &allocation, &update) &&
+        allocation.used[1] == UINT64_MAX && update.indexdirty && update.map.file.length == at + 2 &&
+        update.map.file.version == 2 && update.map.indirect == 102 && update.map.direct[0] == 100 &&
         !map.indirect &&
-        !loadmapspan(&update.map.file, &update.map, &update.index, 4, 16, at, 2, &span) &&
-        span.first == 6 && span.offset == 3);
+        !loadmapspan(&update.map.file, &update.map, &update.index, 99, 128, at, 2, &span) &&
+        span.first == 101 && span.offset == 3);
   for (i = 1; i < LOAD_INDIRECT; i++)
     CHECK(!update.index.entries[i]);
-  CHECK(loadwritestage(&update.plan, 4, 16, 5, NULL, tail, "xy", &image) == -ERR_INVALID &&
+  CHECK(loadwritestage(&update.plan, 99, 128, 100, NULL, tail, "xy", &image) == -ERR_INVALID &&
         !image.block && !image.tail);
-  CHECK(!loadwritestage(&update.plan, 4, 16, 6, NULL, tail, "xy", &image) && image.block == 6 &&
-        image.tail == 5);
+  CHECK(!loadwritestage(&update.plan, 99, 128, 101, NULL, tail, "xy", &image) &&
+        image.block == 101 && image.tail == 100);
   for (i = 0; i < FS_BLOCK_BYTES; i++) {
     CHECK(image.data[i] == (i == 3 ? 'x' : i == 4 ? 'y' : 0));
     CHECK(image.taildata[i] == (i < 20 ? 0xa5 : 0) && tail[i] == 0xa5);
   }
+  openwritejournal(&update, &image);
 }
 
 static void

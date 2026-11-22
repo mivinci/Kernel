@@ -9,6 +9,7 @@
 #define FS_MAX_BLOCKS  32768
 #define FS_FORMAT      1
 #define FS_INODES      1024
+#define FS_INODE_BYTES 128
 #define FS_ROOT        1
 #define FS_LOG_START   1
 #define FS_LOG_BLOCKS  64

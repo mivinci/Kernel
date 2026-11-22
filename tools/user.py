@@ -313,10 +313,11 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/read.c','fs-read'),
         compile_adoption(ROOT/'sbin/fs/readdispatch.c','fs-readdispatch'),
         compile_adoption(ROOT/'sbin/fs/load.c','fs-load'),
+        compile_adoption(ROOT/'sbin/fs/journal.c','fs-journal'),
         compile_adoption(ROOT/'sbin/fs/cache.c','fs-cache'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
-    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],144))
+    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],160))
     pipeio_inspect=invoke('inspect-pipeio',[tools['readelf']['path'],'-s',str(pipeio_elf)])
     pipeio_rows=[line.split() for line in pipeio_inspect.splitlines() if line.split() and line.split()[-1]=='pipeiotrace']
     if len(pipeio_rows)!=1 or int(pipeio_rows[0][2])!=16:raise BuildError('pipe I/O trace missing')
@@ -412,13 +413,13 @@ def build(args):
         compile_adoption(ROOT/'sbin/blk/io.c', 'vdev-blk-io'),
         compile_adoption(ROOT/'sbin/fs/cache.c', 'vdev-fs-cache'),
         compile_adoption(ROOT/'sbin/fs/geometry.c', 'vdev-fs-geometry'),
+        compile_adoption(ROOT/'sbin/fs/txn.c', 'vdev-fs-txn'),
         compile_adoption(ROOT/'sbin/fs/journal.c', 'vdev-journal')], (virtio_archive,))
     vdev_image=sdk/'vdevuser.img'
     vdev_image.write_bytes(pack(vdev_user.read_bytes(),profile['machine'],128))
     vdev_inspect=invoke('inspect-virtio-device',[tools['readelf']['path'],'-h','-l','-s',str(vdev_user)])
     vdev_rows=[line.split() for line in vdev_inspect.splitlines() if line.split() and line.split()[-1]=='vdev_trace']
     if len(vdev_rows)!=1 or int(vdev_rows[0][2])!=896:raise BuildError('virtio device trace missing')
-        compile_adoption(ROOT/'sbin/fs/txn.c', 'vdev-fs-txn'),
     vdev_address=int(vdev_rows[0][1],16)
     (sdk/'vdevimage.S').write_text('/* image sha256: '+digest(vdev_image)+' */\n.section .rodata\n.balign 8\n.global vdev_image,vdev_image_end,vdev_trace_address\nvdev_image:\n.incbin "'+str(vdev_image)+'"\nvdev_image_end:\n.balign 8\nvdev_trace_address:\n.quad '+str(vdev_address)+'\n')
     heap_user=link_adoption('heapuser',[compile_adoption(ROOT/'tests/kernel/heapuser.c','heapuser')])

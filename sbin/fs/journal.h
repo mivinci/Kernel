@@ -25,6 +25,9 @@ typedef struct Journalplan  Journalplan;
 typedef struct Journalio    Journalio;
 typedef struct Journalmark  Journalmark;
 typedef struct Journalhead  Journalhead;
+struct Writeupdate;
+struct Writeimage;
+typedef struct Growthmeta Growthmeta;
 struct Journalmark
 {
   u64 txid;
@@ -52,6 +55,11 @@ struct Journalio
   const u8 *bytes;
   u32       kind, reserved;
 };
+struct Growthmeta
+{
+  const u8 *inode, *bitmap, *index;
+  const u8 *header, *committed, *empty;
+};
 struct Journal
 {
   u64          blocks, last, txid, serial;
@@ -78,6 +86,12 @@ isize journalinit(Journal *journal, u64 blocks, u64 last);
    A nonempty data-only batch uses no records, ends after data FLUSH and
    leaves last unchanged. Use only for overwrites of committed data blocks. */
 isize journalbegin(Journal *journal, const Journalplan *plan);
+/* Start a growth or hole-allocation transaction from immutable data images
+   and already encoded/validated metadata. The header's targets must follow
+   inode, bitmap if allocated, then index if edited. Keep the inode guard,
+   reservations and images through completion; publish only after commit. */
+isize journalgrowth(Journal *, const struct Writeupdate *, const struct Writeimage *,
+                    const Growthmeta *);
 /* Open the journal for writes on the exclusively owned device, with fresh
    state after isolating old I/O and callbacks. Even EMPTY grants future
    write access, so it needs the same geometry, flush and fault guarantees.

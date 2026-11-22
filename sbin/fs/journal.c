@@ -1,4 +1,5 @@
 #include "journal.h"
+#include "load.h"
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -160,6 +161,44 @@ journalbegin(Journal *journal, const Journalplan *plan)
   journal->cursor = journal->durable = 0;
   return 0;
 }
+isize
+journalgrowth(Journal *journal, const Writeupdate *update, const Writeimage *image,
+              const Growthmeta *encoded)
+{
+  Journalblock metadata[3], data[2];
+  Journalplan  plan;
+  u64          inode;
+  u32          block, tail, count = 0;
+  if (!update || !image || !encoded || !encoded->inode)
+    return -ERR_INVALID;
+  inode = update->map.file.inode;
+  block = update->plan.block;
+  tail = update->plan.tail == block ? 0 : update->plan.tail;
+  if (!inode || inode >= FS_INODES || update->plan.length != update->map.file.length ||
+      !update->plan.bytes || update->plan.logical >= LOAD_DIRECT + LOAD_INDIRECT ||
+      (block && block != image->block) || image->tail != tail || (!!encoded->bitmap != !block) ||
+      (!!encoded->index != !!update->indexdirty))
+    return -ERR_INVALID;
+  if (update->plan.logical < LOAD_DIRECT) {
+    if (update->indexdirty || update->map.direct[update->plan.logical] != image->block)
+      return -ERR_STATE;
+  } else if (!block && (!update->indexdirty || update->index.block != update->map.indirect ||
+                        update->index.entries[update->plan.logical - LOAD_DIRECT] != image->block))
+    return -ERR_STATE;
+  metadata[count++] =
+      (Journalblock){FS_INODE_START + inode / (FS_BLOCK_BYTES / FS_INODE_BYTES), encoded->inode};
+  if (encoded->bitmap)
+    metadata[count++] = (Journalblock){FS_BLOCK_MAP, encoded->bitmap};
+  if (encoded->index)
+    metadata[count++] = (Journalblock){update->map.indirect, encoded->index};
+  data[0] = (Journalblock){image->block, image->data};
+  if (tail)
+    data[1] = (Journalblock){tail, image->taildata};
+  plan = (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, data,
+                       count,           tail ? 2 : 1};
+  return journalbegin(journal, &plan);
+}
+
 static int
 redosnapshots(const Journal *journal, u64 blocks, const Journalblock *metadata, u32 count,
               const u8 *empty)
