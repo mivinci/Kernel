@@ -13,6 +13,7 @@ typedef struct Loadtable Loadtable;
 typedef struct Loadmap   Loadmap;
 typedef struct Loadindex Loadindex;
 typedef struct Loadspan  Loadspan;
+typedef struct Writeplan Writeplan;
 struct Loadfile
 {
   u64 inode, generation, version, length;
@@ -36,6 +37,20 @@ struct Loadspan
    snapshot returns WOULD_BLOCK; bad block references return STATE. */
 isize loadmapspan(const Loadfile *file, const Loadmap *map, const Loadindex *index, u32 data_start,
                   u32 blocks, u64 offset, u64 bytes, Loadspan *out);
+
+struct Writeplan
+{
+  u64 length;
+  u32 logical, block, offset, bytes;
+  u32 tail, zerooff, zerobytes, newindex;
+};
+/* Plan one short write against the pinned decoded map. Allocate and zero a
+   missing target before overlaying input; newindex requires a fresh indirect
+   block as well. The tail range zeros part of the existing last block;
+   intervening unmapped blocks remain holes. Settle truncate cleanup before
+   extending and hold inode mutation authority from EOF selection to commit. */
+isize loadmapwrite(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks, u64 offset,
+                   u64 bytes, Writeplan *);
 struct Loadslot
 {
   Loadfile file;

@@ -1,5 +1,6 @@
 #include "load.h"
 #include "cache.h"
+#include "geometry.h"
 #include <proto/file.h>
 
 static Loadslot *
@@ -48,7 +49,7 @@ loadmapspan(const Loadfile *file, const Loadmap *map, const Loadindex *index, u3
   u32   first, next = 0, logical;
   isize error;
   if (!file || !map || !out || !data_start || data_start >= blocks || !bytes ||
-      bytes > FS_SLOT_BYTES || file->length > 4 * 1024 * 1024 || offset > file->length ||
+      bytes > FS_SLOT_BYTES || file->length > FS_FILE_BYTES || offset > file->length ||
       bytes > file->length - offset)
     return -ERR_INVALID;
   if (!samefile(file, &map->file))
@@ -64,6 +65,48 @@ loadmapspan(const Loadfile *file, const Loadmap *map, const Loadindex *index, u3
   out->first = first;
   out->next = next;
   out->offset = (u32) (offset % CACHE_BYTES);
+  return 0;
+}
+
+isize
+loadmapwrite(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, u64 offset,
+             u64 bytes, Writeplan *out)
+{
+  Writeplan plan = {0};
+  u64       length;
+  isize     error;
+  if (!map || !out || !start || start >= blocks || !bytes || bytes > FS_SLOT_BYTES ||
+      map->file.length > FS_FILE_BYTES)
+    return -ERR_INVALID;
+  if (offset >= FS_FILE_BYTES)
+    return -ERR_OVERFLOW;
+  if (map->indirect && (map->indirect < start || map->indirect >= blocks))
+    return -ERR_STATE;
+  length = map->file.length;
+  plan.logical = (u32) (offset / CACHE_BYTES);
+  plan.offset = (u32) (offset % CACHE_BYTES);
+  plan.bytes = (u32) MIN(bytes, CACHE_BYTES - plan.offset);
+  if (offset < length)
+    plan.bytes = (u32) MIN(plan.bytes, length - offset);
+  plan.length = MAX(length, offset + plan.bytes);
+  error = datablock(map, index, start, blocks, plan.logical, &plan.block);
+  if (error)
+    return error;
+  /* An allocated whole block beyond EOF may still belong to truncate. */
+  if (plan.block && (u64) plan.logical * CACHE_BYTES >= length)
+    return -ERR_BUSY;
+  plan.newindex = plan.logical >= LOAD_DIRECT && !map->indirect;
+  if (offset > length && length % CACHE_BYTES) {
+    u32 logical = (u32) (length / CACHE_BYTES);
+    error = datablock(map, index, start, blocks, logical, &plan.tail);
+    if (error)
+      return error;
+    if (plan.tail) {
+      plan.zerooff = (u32) (length % CACHE_BYTES);
+      plan.zerobytes = (u32) MIN(offset - length, CACHE_BYTES - plan.zerooff);
+    }
+  }
+  *out = plan;
   return 0;
 }
 

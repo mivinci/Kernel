@@ -26,6 +26,11 @@ class Span(C.Structure):
     _fields_ = [(name, C.c_uint32) for name in ('first', 'next', 'offset')]
 
 
+class WritePlan(C.Structure):
+    _fields_ = [('length', U)] + [(name, C.c_uint32) for name in (
+        'logical', 'block', 'offset', 'bytes', 'tail', 'zerooff', 'zerobytes', 'newindex')]
+
+
 class Slot(C.Structure):
     _fields_ = [('file', File)] + [(name, U) for name in ('id', 'image', 'deadline', 'read')] + [
         ('pid', I), ('stopped', I)]
@@ -52,6 +57,9 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadmapspan.argtypes = [C.POINTER(File), C.POINTER(Map), C.POINTER(Index),
                                        C.c_uint32, C.c_uint32, U, U, C.POINTER(Span)]
         cls.lib.loadmapspan.restype = I
+        cls.lib.loadmapwrite.argtypes = [C.POINTER(Map), C.POINTER(Index), C.c_uint32,
+                                        C.c_uint32, U, U, C.POINTER(WritePlan)]
+        cls.lib.loadmapwrite.restype = I
         args = {
             'loadopen': [C.POINTER(File), I, U, U, U, C.POINTER(U)],
             'loadread': [U, I, U, C.POINTER(File), U, U, U, C.POINTER(U)],
@@ -92,6 +100,34 @@ class FsLoadTests(unittest.TestCase):
         self.assertEqual(span.next, 0)
         mapping.file.version += 1
         self.assertEqual(resolve(None), -4)
+
+    def test_growth_zeroes_newly_visible_tail_and_distinguishes_new_index(self):
+        mapping, plan = Map(), WritePlan()
+        mapping.file, mapping.direct[11] = File(7, 2, 3, 12 * 4096 - 8), 101
+
+        def resolve(offset, count=12, index=None):
+            return self.lib.loadmapwrite(C.byref(mapping), index, 99, 200,
+                                         offset, count, C.byref(plan))
+
+        end = mapping.file.length
+        self.assertEqual(resolve(end - 2), 0)
+        self.assertEqual((plan.block, plan.bytes, plan.length), (101, 2, end))
+        self.assertEqual(resolve(end + 2), 0)
+        self.assertEqual((plan.block, plan.bytes, plan.length, plan.tail, plan.zerobytes),
+                         (101, 6, 12 * 4096, 101, 2))
+        self.assertEqual(resolve(13 * 4096 + 2), 0)
+        self.assertEqual((plan.block, plan.logical, plan.newindex, plan.length),
+                         (0, 13, 1, 13 * 4096 + 14))
+        self.assertEqual((plan.tail, plan.zerooff, plan.zerobytes), (101, 4088, 8))
+        snapshot = bytes(plan)
+        mapping.indirect = 100
+        self.assertEqual(resolve(13 * 4096), -11)
+        self.assertEqual(bytes(plan), snapshot)
+        index = Index()
+        index.block, index.entries[1] = 100, 104
+        self.assertEqual(resolve(13 * 4096, index=C.byref(index)), -7)
+        self.assertEqual(bytes(plan), snapshot)
+        self.assertEqual(resolve(4 * 1024 * 1024), -20)
 
     def open(self, file=None, pid=5, image=11, now=1, deadline=10, status=0):
         session = U()

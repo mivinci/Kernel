@@ -4,6 +4,7 @@
 #include <abi/base.h>
 
 #define FS_BLOCK_BYTES 4096
+#define FS_FILE_BYTES  (4 * 1024 * 1024)
 #define FS_DATA_START  99
 #define FS_MAX_BLOCKS  32768
 #define FS_FORMAT      1

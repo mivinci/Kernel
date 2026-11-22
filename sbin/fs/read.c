@@ -65,20 +65,24 @@ filedata(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *c
   else if (sysfileargs(call->words[0], slot) || offset > (u64) INT64_MAX ||
            (!positional && slot->args[0]))
     reply.words[0] = (u64) -EINVAL;
-  else if (writing && (!loads || (slot->args[3] & FS_IO_APPEND) ||
-                       (slot->args[1] && offset >= map->file.length)))
+  else if (writing && (!loads || (slot->args[3] & FS_IO_APPEND)))
     reply.words[0] = (u64) -ENOSYS;
-  else if (offset < map->file.length && slot->args[1]) {
-    bytes = MIN(slot->args[1], map->file.length - offset);
-    /* In-place writes commit one existing block at a time. Growth, hole
-       allocation and atomic append require the metadata transaction path. */
-    if (writing)
-      bytes = MIN(bytes, CACHE_BYTES - offset % CACHE_BYTES);
-    error = loadmapspan(&map->file, map, index, first, (u32) cache->blocks, offset, bytes, &span);
-    if (!error && writing && !span.first) {
-      reply.words[0] = (u64) -ENOSYS;
-      bytes = 0;
-      goto respond;
+  else if (slot->args[1] && (writing || offset < map->file.length)) {
+    if (writing) {
+      Writeplan plan;
+      error = loadmapwrite(map, index, first, (u32) cache->blocks, offset, slot->args[1], &plan);
+      if (error == -ERR_OVERFLOW || error == -ERR_BUSY ||
+          (!error && (!plan.block || plan.length != map->file.length))) {
+        reply.words[0] = (u64) (error == -ERR_OVERFLOW ? -EFBIG : -ENOSYS);
+        goto respond;
+      }
+      if (!error) {
+        span = (Loadspan){plan.block, 0, plan.offset};
+        bytes = plan.bytes;
+      }
+    } else {
+      bytes = MIN(slot->args[1], map->file.length - offset);
+      error = loadmapspan(&map->file, map, index, first, (u32) cache->blocks, offset, bytes, &span);
     }
     if (!error && !work->span.cache)
       error = cachespanbegin(cache, span.first, span.next, span.offset, (u32) bytes, &work->span);
