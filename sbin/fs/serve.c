@@ -145,6 +145,7 @@ fsstep(Fsservice *fs)
   case FS_CLOSE:
   case FS_DUPREF:
   case FS_SEEK:
+  case FS_STAT:
   case FS_SYNC:
   case FS_TTYCTL:
   case FS_POLL_QUERY:

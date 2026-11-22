@@ -299,6 +299,34 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
     reply.words[0] = (u64) (error ? fileerror(error) : -ENOTTY);
     return respond(link, call->request, &reply);
+  case FS_STAT: {
+    Fsfiles  *table = dispatch->regular;
+    Fsfile   *file;
+    Filestat  stat = {0};
+    const u8 *bytes = (const u8 *) &stat;
+    error = sysfileargs(opcode, &slot);
+    if (error)
+      break;
+    if (!(slot.object & FS_FILE_SESSION)) {
+      error = pipefilecheck(dispatch->table, call->source, call->image, slot.object);
+      reply.words[0] = (u64) (error ? fileerror(error) : -ENOTSUP);
+    } else {
+      file = table ? fsfilefind(table, call->source, call->image, slot.object) : NULL;
+      if (!file)
+        reply.words[0] = (u64) -ESTALE;
+      else if (!table->stat)
+        reply.words[0] = (u64) -ENOTSUP;
+      else
+        reply.words[0] = (u64) table->stat(table->backend, file->node, &stat);
+    }
+    if (!reply.words[0]) {
+      stat.reserved = 0;
+      for (i = 0; i < sizeof(stat); i++)
+        page[i] = bytes[i];
+      reply.words[3] = sizeof(stat);
+    }
+    return respond(link, call->request, &reply);
+  }
   case FS_READ:
   case FS_WRITE:
     error = sysfileargs(opcode, &slot);

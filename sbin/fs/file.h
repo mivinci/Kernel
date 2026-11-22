@@ -36,6 +36,9 @@ struct Fsfiles
      on cancellation, return -EINTR only after draining and establishing no
      effect. Once committed, finish with success even if cancelled. */
   isize (*truncate)(Openjob *, Vnode *, u32 cancelled);
+  /* Snapshot current metadata for a pinned node without waiting. Return
+     zero or a negative errno; the dispatcher owns the output record. */
+  isize (*stat)(void *, const Vnode *, Filestat *);
 };
 
 /* Check the request's captured credentials against the resolved node's

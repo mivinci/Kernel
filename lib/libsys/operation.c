@@ -305,8 +305,9 @@ interruptible(const Slotop *op)
   /* CLOSE keeps its mandatory cleanup path after the descriptor is detached. */
   if (op->flags & SYSOP_BACKGROUND ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_OPEN &&
-       op->opcode != FS_PATH && op->opcode != FS_POLL_QUERY && op->opcode != FS_POLL_WAIT))
+       op->opcode != FS_TTYCTL && op->opcode != FS_STAT && op->opcode != FS_SYNC &&
+       op->opcode != FS_OPEN && op->opcode != FS_PATH && op->opcode != FS_POLL_QUERY &&
+       op->opcode != FS_POLL_WAIT))
     return -ERR_NOTSUP;
   if (!(op->flags & SYSOP_CANCEL_SENT) && op->deadline)
     return -ERR_STATE;
@@ -436,8 +437,8 @@ sysopdrain(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
     return error;
   if (!(op->flags & SYSOP_APP_ENDED) || !(op->flags & SYSOP_BACKGROUND) ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_PATH &&
-       !pollopcode(op->opcode)))
+       op->opcode != FS_TTYCTL && op->opcode != FS_STAT && op->opcode != FS_SYNC &&
+       op->opcode != FS_PATH && !pollopcode(op->opcode)))
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_WAITING) {
     error = sysoppoll(work, cache, key);
@@ -484,7 +485,7 @@ sysoprecover(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
     return -ERR_STATE;
   /* A lost PATH reply cannot tell us whether a namespace change committed. */
   if ((op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC) ||
+       op->opcode != FS_TTYCTL && op->opcode != FS_STAT && op->opcode != FS_SYNC) ||
       op->flags & SYSOP_CREATOR)
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_PREPARED)

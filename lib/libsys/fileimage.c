@@ -797,7 +797,7 @@ static int
 ioopcode(u64 opcode)
 {
   return opcode == FS_READ || opcode == FS_WRITE || opcode == FS_SEEK || opcode == FS_TTYCTL ||
-         opcode == FS_SYNC || opcode == FS_PATH;
+         opcode == FS_SYNC || opcode == FS_STAT || opcode == FS_PATH;
 }
 
 static isize
@@ -845,7 +845,7 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
           descriptor.args[0] = FS_PATH_CHDIR;
           descriptor.args[2] = bytes;
         }
-      } else {
+      } else if (opcode != FS_STAT) {
         descriptor.args[0] = offset;
         descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
         descriptor.args[3] = opcode != FS_SEEK && positional ? FS_IO_POSITIONAL : 0;
@@ -902,7 +902,8 @@ stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 
   isize     error;
   if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
       !ioopcode(opcode) || (opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
-      (opcode == FS_SYNC && (bytes || offset > 1 || positional)))
+      (opcode == FS_SYNC && (bytes || offset > 1 || positional)) ||
+      (opcode == FS_STAT && (bytes != FS_STAT_BYTES || offset || positional)))
     return -ERR_INVALID;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
     return -ERR_BAD_HANDLE;
@@ -1134,7 +1135,7 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
     return error;
   op = &work->state.operations[key->lease.slot];
   if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
-      (op->opcode == FS_SYNC && bytes))
+      (op->opcode == FS_SYNC && bytes) || (op->opcode == FS_STAT && bytes != FS_STAT_BYTES))
     return -ERR_INVALID;
   cwd = op->opcode == FS_PATH && subcode == FS_PATH_GETCWD;
   readlink = op->opcode == FS_PATH && subcode == FS_PATH_READLINK;
@@ -1154,10 +1155,10 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
       expected = op->words[2];
     else if (op->opcode == FS_SEEK)
       value_limit = INT64_MAX;
-    else if (op->opcode == FS_TTYCTL) {
+    else if (op->opcode == FS_TTYCTL || op->opcode == FS_STAT) {
       value_limit = 0;
       if (!op->words[0])
-        expected = sizeof(Termarg);
+        expected = bytes;
     } else if (cwd || readlink) {
       value_limit = 0;
       expected = op->words[3];
@@ -1198,7 +1199,22 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
             error = -ERR_FAULT;
           else if (cwd)
             error = copycwd(state, work, cache, key, expected, output);
-          else
+          else if (op->opcode == FS_STAT) {
+            Filestat record;
+            error = sysopcopy(work, cache, key, 0, sizeof(record), &record);
+            storage = work->state.map.address;
+            if (!error && address < storage + FS_CONN_BYTES && storage < address + expected)
+              error = -ERR_FAULT;
+            storage = (uintptr_t) key;
+            if (!error && address < storage + sizeof(*key) && storage < address + expected)
+              error = -ERR_FAULT;
+            if (!error && (record.reserved || record.atime_ns >= UINT64_C(1000000000) ||
+                           record.mtime_ns >= UINT64_C(1000000000) ||
+                           record.ctime_ns >= UINT64_C(1000000000)))
+              error = -ERR_STATE;
+            if (!error)
+              error = __sys_copy(output, &record, sizeof(record));
+          } else
             error = sysopcopy(work, cache, key, 0, expected, output);
         }
         if (error) {
@@ -1353,6 +1369,12 @@ isize
 sysfileimagesync(u32 layer, int fd, u32 dataonly, Fileioresult *result)
 {
   return imageio(layer, fd, FS_SYNC, NULL, NULL, 0, dataonly, 0, result);
+}
+
+isize
+sysfileimagestat(u32 layer, int fd, Filestat *output, Fileioresult *result)
+{
+  return imageio(layer, fd, FS_STAT, NULL, output, FS_STAT_BYTES, 0, 0, result);
 }
 
 isize

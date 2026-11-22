@@ -106,6 +106,7 @@ isize sysfileimageposio(u32 layer, int fd, u64 opcode, const void *input, void *
                         int64_t offset, Fileioresult *result);
 isize sysfileimageseek(u32 layer, int fd, int64_t offset, int whence, Fileioresult *result);
 isize sysfileimagesync(u32 layer, int fd, u32 dataonly, Fileioresult *result);
+isize sysfileimagestat(u32 layer, int fd, Filestat *output, Fileioresult *result);
 /* Change cwd through the ready, Boot-selected FS connection. */
 isize sysfileimagechdir(u32 layer, const char *path, Fileioresult *result);
 isize sysfileimagereadlink(u32 layer, const char *path, char *buffer, u64 bytes,

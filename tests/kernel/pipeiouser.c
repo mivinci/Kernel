@@ -2096,6 +2096,23 @@ openlength(void *context, const Vnode *node, u64 *length)
   return 0;
 }
 
+static isize
+openstat(void *context, const Vnode *node, Filestat *out)
+{
+  Openfixture *fixture = context;
+  CHECK(node == &fixture->file);
+  *out = (Filestat){.dev = node->mount,
+                    .ino = node->number,
+                    .mode = 0100644,
+                    .nlink = 1,
+                    .size = fixture->length,
+                    .blksize = FS_BLOCK_BYTES,
+                    .atime_sec = -2,
+                    .atime_ns = 123,
+                    .reserved = UINT64_MAX};
+  return 0;
+}
+
 static void
 openwrite(u64 session, u64 offset, u64 flags, isize expected, u64 accepted, int cancel)
 {
@@ -2589,7 +2606,8 @@ openserver(const Bootview *boot)
   openwritestage();
   fixture.length = 20;
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
-  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL};
+  fixture.files =
+      (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL, openstat};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 128));
   CHECK(!txninit(&synctxn, &fixture.cache, 0));
   fixture.sync = (Syncwork){&synctxn, syncsnapshot, 1, 0};
@@ -2628,6 +2646,7 @@ openserver(const Bootview *boot)
   CHECK(fixture.cancelled == 2 && fixture.completed == 2 && !fsstep(&fs) && file.refs == 2 &&
         refs[0].file == refs[1].file && refs[0].id != refs[1].id && !fsstep(&fs) &&
         file.refs == 1 && fixture.holds == 3);
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && !file.position && file.refs == 1);
   CHECK(!fsstep(&fs) && !fsstep(&fs) && !file.position && file.refs == 1 && !file.head &&
         !fixture.fetch.block);
   for (i = 0; i < 5; i++)
@@ -2912,6 +2931,37 @@ openloadclient(void)
 }
 
 static void
+openstatcheck(u64 session, u64 unused, isize expected)
+{
+  Filelease          lease;
+  Fileslot           slot = {0};
+  Msg                request = {{FS_STAT, work.state.map.connid, 0, 0}};
+  Ipcmsg             result;
+  volatile Filestat *page;
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  request.words[2] = slot.seq = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = session;
+  slot.payload_bytes = FS_STAT_BYTES;
+  slot.args[0] = unused;
+  page =
+      (volatile Filestat *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+  page->ino = 99;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &request, 0, &result) && (isize) result.words[0] == expected &&
+        result.words[1] == lease.seq && !result.words[2]);
+  if (expected)
+    CHECK(!result.words[3] && page->ino == 99);
+  else
+    CHECK(result.words[3] == sizeof(*page) && page->ino == 2 && page->mode == 0100644 &&
+          page->size == 20 && page->atime_sec == -2 && page->atime_ns == 123 && !page->reserved);
+  CHECK(!sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
 openclient(const Bootview *boot)
 {
   u32     i;
@@ -3017,6 +3067,9 @@ open:
   }
   dup.reference = refcall(&work, &cache, FS_DUPREF, key);
   CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key));
+  openstatcheck(dup.session + 1, 0, -ESTALE);
+  openstatcheck(dup.session, 1, -EINVAL);
+  openstatcheck(dup.session, 0, 0);
   openwritecheck(dup.session + 1, 0, 0, -ESTALE, 0);
   openwritecheck(dup.session, 0, 0, -EBADF, 0);
   openseek(dup.session, FS_SEEK_SET, 9, 0, 9);
@@ -3190,7 +3243,8 @@ publicchdirserver(const Bootview *boot)
   fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
-  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
+  fixture.files =
+      (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate, openstat};
   fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.length = 20;
@@ -3263,6 +3317,7 @@ publicchdirserver(const Bootview *boot)
   fixture.completed = 2;
   fixture.searches = 0;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R && file.node == &fixture.file &&
+        !fsstep(&fs) && !fsstep(&fs) && !file.position && !link.watch.active.requests[0] &&
         !fsstep(&fs) && !file.refs);
   fixture.length = fixture.map.file.length = 1;
   opendisk[0] = 'p';
@@ -3408,6 +3463,15 @@ publicchdirclient(void)
         !peer->state.operations[1].phase);
   CHECK(!fopen("/x", "rr") && errno == EINVAL);
   stream = fopen("/x", "rb");
+  {
+    Fileioresult result;
+    Filestat     stat;
+    CHECK(stream && sysfileimagestat(0, -1, &stat, &result) == -ERR_BAD_HANDLE &&
+          !sysfileimagestat(0, fileno(stream), (Filestat *) (uintptr_t) 1, &result) &&
+          result.native == -ERR_FAULT && !sysfileimagestat(0, fileno(stream), &stat, &result) &&
+          !result.native && !result.business && !result.count && stat.ino == 2 && !stat.size &&
+          stat.atime_sec == -2 && stat.atime_ns == 123 && !stat.reserved);
+  }
   CHECK(stream && fileno(stream) == 0 && fputs("x", stream) == EOF && errno == EBADF &&
         ferror(stream) && !fclose(stream) && fcntl(0, F_GETFD) == -1 && errno == EBADF);
   stream = fopen("/x", "a+e");
