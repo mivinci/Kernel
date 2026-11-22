@@ -1039,11 +1039,10 @@ redoscanstep(Redoscan *scan, isize (*load)(void *, const Redoscan *, u32, Redoin
 }
 
 int
-journalmetadata(void *context, const Journalblock *images, u32 count, u32 index)
+journalmetadata(const Redoscan *scan, const Journalblock *images, u32 count, u32 index)
 {
-  const Redoscan *scan = context;
-  u64             block, bit;
-  u32             i;
+  u64 block, bit;
+  u32 i;
   if (!scan || scan->next != FS_INODES || scan->failed || !images || index >= count ||
       count != scan->count)
     return 0;
@@ -1060,8 +1059,7 @@ journalmetadata(void *context, const Journalblock *images, u32 count, u32 index)
 isize
 journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *device,
                const Journalmark *mark, const Journalhead *head, const Journalblock *metadata,
-               u32 count, u32 payloadcrc, const u8 *empty,
-               int (*classify)(void *, const Journalblock *, u32, u32), void *context)
+               u32 count, u32 payloadcrc, const u8 *empty, const Redoscan *scan)
 {
   isize error;
   u32   i;
@@ -1099,7 +1097,7 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   }
   for (i = 0; i < count; i++)
     if (metadata[i].block >= layout->datastart &&
-        (!classify || classify(context, metadata, count, i) <= 0))
+        (!scan || scan->blocks != layout->blocks || !journalmetadata(scan, metadata, count, i)))
       return -ERR_STATE;
   journal->blocks = layout->blocks;
   journal->txid = mark->txid;

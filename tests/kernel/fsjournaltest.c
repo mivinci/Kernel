@@ -59,12 +59,6 @@ next(u32 index, Journalio *io)
         io->block == blocks[index]);
   CHECK(io->kind == JOURNAL_FLUSH ? !io->bytes : io->bytes == bytes[sources[index]]);
 }
-static int
-ismetadata(void *context, const Journalblock *images, u32 count, u32 index)
-{
-  (void) context;
-  return count == 2 && images[index].block == FS_INODE_MAP + index;
-}
 static u32
 testredo(void)
 {
@@ -83,12 +77,12 @@ testredo(void)
     metadata[0].block = 65;
     metadata[1].block = 65;
     CHECK(journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
-                         ismetadata, NULL) == -ERR_STATE);
+                         NULL) == -ERR_STATE);
     metadata[1].block = 66;
-    CHECK(journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[3],
-                         ismetadata, NULL) == -ERR_STATE &&
-          !journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
-                          ismetadata, NULL));
+    CHECK(
+        journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[3], NULL) ==
+            -ERR_STATE &&
+        !journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2], NULL));
     metadata[0].block = 901;
     for (i = 0; i < ARRAY_SIZE(targets); i++) {
       CHECK(journal.durable && journal.last == 7 && journalrelease(&journal) == -ERR_STATE &&
@@ -106,13 +100,13 @@ testredo(void)
         old.serial++;
         CHECK(!journalstop(&journal) && journalrelease(&journal) == -ERR_WOULD_BLOCK &&
               journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
-                             ismetadata, NULL) == -ERR_STATE &&
-              journalrecover(&journal, &layout, &device, &empty, NULL, NULL, 0, 0, NULL, NULL,
                              NULL) == -ERR_STATE &&
+              journalrecover(&journal, &layout, &device, &empty, NULL, NULL, 0, 0, NULL, NULL) ==
+                  -ERR_STATE &&
               journalcomplete(&journal, &old, 1) == -ERR_STALE &&
               !journalcomplete(&journal, &io, 1) &&
               journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
-                             ismetadata, NULL) == -ERR_STATE &&
+                             NULL) == -ERR_STATE &&
               !journalrelease(&journal) && journal.phase == JOURNAL_STOPPED && journal.last == 7 &&
               journalnext(&journal, &io) == -ERR_STATE);
         break;

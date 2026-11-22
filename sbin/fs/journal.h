@@ -278,7 +278,7 @@ isize redoscaninit(Redoscan *, u32 blocks, const Journalblock *, u32 count, cons
    zero for more work, WOULD_BLOCK to resume, or a sticky error. */
 isize redoscanstep(Redoscan *, isize (*load)(void *, const Redoscan *, u32, Redoinode *), void *);
 /* Data-area classifier for a completed Redoscan and its exact images. */
-int journalmetadata(void *, const Journalblock *, u32 count, u32 index);
+int journalmetadata(const Redoscan *, const Journalblock *, u32 count, u32 index);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state
    preserves ticket serials and the last known retired transaction. Recovery
@@ -288,15 +288,14 @@ int journalmetadata(void *, const Journalblock *, u32 count, u32 index);
    write access, so it needs the same geometry, flush and fault guarantees.
    The decoder checks magic, padding and checksums; payloadcrc covers the complete
    images. The validated layout identifies the bitmaps and inode table.
-   Targets in the data area require a classifier, which reads the whole
-   immutable transaction view (positive = metadata, zero/negative = reject).
+   Targets in the data area require a completed scan of the immutable
+   transaction view for this volume and these exact images.
    For COMMITTED, empty is the encoded
    EMPTY record for this txid, and it and the images stay immutable until
-   release. An EMPTY mark does not use the head, images or classifier. */
+   release. An EMPTY mark does not use the head, images or scan. */
 isize journalrecover(Journal *, const Fslayout *, const Fsgeometry *, const Journalmark *,
                      const Journalhead *, const Journalblock *, u32 count, u32 payloadcrc,
-                     const u8 *empty, int (*classify)(void *, const Journalblock *, u32, u32),
-                     void *);
+                     const u8 *empty, const Redoscan *);
 /* One outstanding operation. This reserves an IO anchor but does not submit
    it. Submission failure with no lower references may complete with success=0.
    Repeated next while outstanding returns BUSY, never a second submission. */

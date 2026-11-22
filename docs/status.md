@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage567：数据区重放要求同一卷大小及原镜像的完整归属扫描；双架构 QEMU `virtiodev`、`runtime` 和 50 项 FS 主机测试通过。
 - stage566：重放扫描拒绝有分配但无归属的数据块。双架构 QEMU `virtiodev` 和 50 项 FS 主机测试通过；生产磁盘解码仍待接。
 - stage565：恢复扫描分批检查 inode，原槽等待可续跑；数据区分类须扫描完成且镜像匹配。双架构 QEMU `virtiodev` 和 50 项 FS 主机测试通过。
 - stage564：恢复扫描可优先取日志镜像，未覆盖块回退读 home；双架构 QEMU `virtiodev` 验证选择逻辑。

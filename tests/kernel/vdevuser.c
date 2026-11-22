@@ -169,13 +169,6 @@ transfer(Vdev *device, Vring *ring, u64 epoch, Handle binding, u64 irqevent,
   else
     vdev_trace[3]++;
 }
-static int
-redometa(void *context, const Journalblock *images, u32 count, u32 index)
-{
-  (void) context;
-  return count == 2 && (images[index].block == 65 || images[index].block == 66);
-}
-
 typedef struct Journaltransport Journaltransport;
 struct Journaltransport
 {
@@ -312,7 +305,7 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   layout.root = 1;
   layout.blocks++;
   REQUIRE(fslayoutcheck(&layout, &geometry, 0) == -ERR_STATE, 245);
-  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) ==
+  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL) ==
                   -ERR_STATE &&
               !journal.last,
           249);
@@ -333,8 +326,8 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   REQUIRE(!journalreadonly(&layout, &geometry, &mark) &&
               !journalreadonly(&layout, &geometry, &fresh) &&
               journalreadonly(&layout, &geometry, NULL) == -ERR_STATE &&
-              journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL,
-                             NULL) == -ERR_NOTSUP &&
+              journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL) ==
+                  -ERR_NOTSUP &&
               !journal.last,
           250);
   {
@@ -351,44 +344,41 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   {
     Journalblock data = {FS_DATA_START, images[0]};
     Journalplan  plan = {NULL, NULL, NULL, NULL, &data, 0, 1};
-    REQUIRE(
-        !journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
-            !journalbegin(&idle, &plan) && !idle.txid && !journalstop(&idle) &&
-            journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL, NULL) ==
-                -ERR_STATE &&
-            idle.data_count == 1 && idle.data[0].bytes == images[0] && !journalrelease(&idle),
-        246);
+    REQUIRE(!journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL) &&
+                !journalbegin(&idle, &plan) && !idle.txid && !journalstop(&idle) &&
+                journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL) ==
+                    -ERR_STATE &&
+                idle.data_count == 1 && idle.data[0].bytes == images[0] && !journalrelease(&idle),
+            246);
   }
-  REQUIRE(!journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
+  REQUIRE(!journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL) &&
               idle.last == 47 && journalnext(&idle, &io) == -ERR_STATE &&
-              journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL,
-                             NULL) == -ERR_STATE,
+              journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL) ==
+                  -ERR_STATE,
           246);
   mark = (Journalmark){47, 1, 11, 12};
   {
     const Journalmark retired = {47, 0, 0, 0};
     Journalblock      data = {FS_DATA_START, images[0]};
     Journalplan       plan = {NULL, NULL, NULL, NULL, &data, 0, 1};
-    REQUIRE(!journalbegin(&idle, &plan) && !journalstop(&idle) && !journalrelease(&idle) &&
-                journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL,
-                               NULL) == -ERR_STATE &&
-                journalrecover(&idle, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                               redometa, NULL) == -ERR_STATE &&
-                idle.last == 47 && idle.phase == JOURNAL_STOPPED &&
-                !journalrecover(&idle, &layout, &geometry, &retired, NULL, NULL, 0, 0, NULL, NULL,
-                                NULL) &&
-                idle.last == 47,
-            246);
+    REQUIRE(
+        !journalbegin(&idle, &plan) && !journalstop(&idle) && !journalrelease(&idle) &&
+            journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL) ==
+                -ERR_STATE &&
+            journalrecover(&idle, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                           NULL) == -ERR_STATE &&
+            idle.last == 47 && idle.phase == JOURNAL_STOPPED &&
+            !journalrecover(&idle, &layout, &geometry, &retired, NULL, NULL, 0, 0, NULL, NULL) &&
+            idle.last == 47,
+        246);
   }
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 13, images[2],
-                         redometa, NULL) == -ERR_STATE &&
+                         NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,
           247);
   head.targets[1] = metadata[1].block = 99;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                         redometa, NULL) == -ERR_STATE &&
-              journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                             NULL, NULL) == -ERR_STATE &&
+                         NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,
           248);
   head.targets[1] = metadata[1].block = 109;
@@ -440,19 +430,26 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
                   (i == FS_INODES / 32 - 1 ? -ERR_STATE : 0),
               348);
     REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                           journalmetadata, &leaked) == -ERR_STATE &&
+                           &leaked) == -ERR_STATE &&
                 journalnext(&journal, &io) == -ERR_STATE,
             349);
     REQUIRE(redoscanstep(&leaked, redoload, &fixture) == -ERR_STATE, 350);
   }
   geometry.faultbytes = 0;
   REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                         journalmetadata, &scan) == -ERR_NOTSUP &&
+                         &scan) == -ERR_NOTSUP &&
               !journal.last && journalnext(&journal, &io) == -ERR_STATE,
           251);
   geometry.faultbytes = FS_BLOCK_BYTES;
+  layout.blocks--;
+  REQUIRE(!fslayoutcheck(&layout, &geometry, 1) &&
+              journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                             &scan) == -ERR_STATE &&
+              journalnext(&journal, &io) == -ERR_STATE,
+          354);
+  layout.blocks = blocks;
   REQUIRE(!journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
-                          journalmetadata, &scan),
+                          &scan),
           194);
   while (journal.phase != JOURNAL_DONE) {
     REQUIRE(count < 5 && !journalpump(&journal, journalsubmit, &transport) &&
@@ -528,7 +525,7 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
           263);
 }
 
-static Vdone waitblock(Blkqueue *, u64);
+static Vdone waitblock(Blkqueue *, Handle, u64);
 
 static isize
 journalsubmit(void *context, const Journalio *io, u64 offset, u32 bytes)
@@ -560,7 +557,7 @@ journaldrain(Journaltransport *transport, Journal *journal)
   Journalio *io = &transport->ticket;
   Vdone      done;
   REQUIRE(io->serial && !journalpump(journal, journalsubmit, transport), 296);
-  done = waitblock(transport->queue, transport->event);
+  done = waitblock(transport->queue, transport->binding, transport->event);
   REQUIRE(!blkqfinish(transport->queue, &done, NULL, 0) && !__sys_alarmcancel(&transport->alarm) &&
               !journalcomplete(journal, io, 1),
           297);
@@ -685,7 +682,7 @@ testuncertain(Journaltransport *transport, Cache *cache, u8 records[][FS_BLOCK_B
               inodeallocstep(&work, journaluncertain, transport) == -ERR_STATE &&
               journalrelease(journal) == -ERR_WOULD_BLOCK,
           312);
-  done = waitblock(transport->queue, transport->event);
+  done = waitblock(transport->queue, transport->binding, transport->event);
   REQUIRE(!blkqfinish(transport->queue, &done, NULL, 0) && !__sys_alarmcancel(&transport->alarm) &&
               !journalcomplete(journal, ticket, 1) && inodeallocpublish(&work) == -ERR_STATE &&
               !child.file.generation && inodes.used[0] == 39 && !journalrelease(journal) &&
@@ -962,16 +959,23 @@ testparallel(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
   vdev_trace[VTEST_PARALLEL] = 2;
 }
 static Vdone
-waitblock(Blkqueue *queue, u64 irqevent)
+waitblock(Blkqueue *queue, Handle binding, u64 irqevent)
 {
   Vdone  done[VQ_BATCH];
   Ipcmsg event;
   u32    count, more, causes;
-  REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT,
-          241);
-  REQUIRE(event.words[0] == irqevent, 351);
-  REQUIRE(!blkqpoll(queue, done, &count, &more, &causes), 352);
-  REQUIRE(count == 1 && !more && causes == VDEV_IRQ_USED, 353);
+  for (;;) {
+    REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &event) && event.kind == IPC_EVENT,
+            241);
+    REQUIRE(event.words[0] == irqevent, 351);
+    REQUIRE(!blkqpoll(queue, done, &count, &more, &causes), 352);
+    REQUIRE(count <= 1 && !more && !(causes & VDEV_IRQ_CONFIG), 353);
+    if (count)
+      break;
+    /* A level IRQ can be delivered again after the prior completion drained. */
+    REQUIRE(!__sys_irqack(binding), 355);
+  }
+  REQUIRE(causes == VDEV_IRQ_USED, 356);
   vdev_trace[38]++;
   return done[0];
 }
@@ -989,12 +993,12 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
               !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
               !blkqsubmit(queue, 0, VBLK_WRITE, sector, sizeof(source), source, blksync, device),
           242);
-  done = waitblock(queue, irqevent);
+  done = waitblock(queue, binding, irqevent);
   REQUIRE(blkqsubmit(queue, 1, VBLK_FLUSH, 0, 0, NULL, blksync, device) == -ERR_WOULD_BLOCK &&
               !blkqfinish(queue, &done, NULL, 0) && !__sys_irqack(binding) &&
               !blkqsubmit(queue, 1, VBLK_FLUSH, 0, 0, NULL, blksync, device),
           243);
-  done = waitblock(queue, irqevent);
+  done = waitblock(queue, binding, irqevent);
   REQUIRE(blkqsubmit(queue, 0, VBLK_WRITE, sector, sizeof(source), source, blksync, device) ==
                   -ERR_WOULD_BLOCK &&
               blkqsubmit(queue, 0, VBLK_FLUSH, 0, 0, NULL, blksync, device) == -ERR_WOULD_BLOCK &&
