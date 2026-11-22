@@ -32,6 +32,11 @@ isize sysfileopendiscard(Filepool *pool, Connwork *work, Conncache *cache, Fdtab
    or a native error. A success returns the new descriptor number. */
 isize sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                         Opencreate *open, isize *business);
+/* Nonblocking collection of the submitted OPEN after Rctx handoff, with
+   caught signals blocked. Zero publishes the ordinary outcome, one retains
+   an ACKed resource OPEN, and WOULD_BLOCK retains the original operation. */
+isize sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                         Opencreate *open, int *fd, isize *business);
 struct Pipecreate
 {
   Opkey operation;

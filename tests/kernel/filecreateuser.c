@@ -644,6 +644,8 @@ client(const Bootview *boot)
   Ipcmsg             result;
   Handle             rpc, original;
   isize              closeprogress;
+  isize              latebusiness = 9;
+  int                latefd = -2;
   Msg                hello = {{FS_HELLO, 0, 1, UINT64_MAX}};
   Msg                stale = {{FS_READ, 0x10000, 1, 0}};
   volatile Filehead *head;
@@ -725,8 +727,10 @@ client(const Bootview *boot)
         !sysfileopeninterrupt(&pool, &work, &cache, &fds, &late, 2) &&
         !sysoprpc(&work, &cache, &key, &rpc) && rpc == original &&
         work.state.operations[key.lease.slot].deadline == 1 + SYSOP_CONTROL_NS &&
-        !sysfdobserve(&fds, late.tag.index, &detached) && detached.tag.state == SYSFD_RESERVED &&
-        !sysopabandon(&work, &cache, &key, &background));
+        sysfileopencollect(&pool, &work, &cache, &fds, &late, &latefd, &latebusiness) ==
+            -ERR_WOULD_BLOCK &&
+        latefd == -2 && latebusiness == 9 && !sysfdobserve(&fds, late.tag.index, &detached) &&
+        detached.tag.state == SYSFD_RESERVED && !sysopabandon(&work, &cache, &key, &background));
   gate.words[0] = GATE;
   gate.words[1] = gate.words[2] = gate.words[3] = 0;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC | CALL_CONTROL, &result));

@@ -866,28 +866,9 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
     return status;
   if (!sysfilecreatecheck(pool, work, cache, &open->operation)) {
     Slotop *op = &work->state.operations[open->operation.lease.slot];
-    if (error == 1 || error == -ERR_CANCELLED ||
-        (error == -ERR_PEER && op->phase == SYSOP_RESULT)) {
-      if (op->status == -ERR_PEER) {
-        error = work->state.ended ? 0 : sysoppeerended(work, cache, &open->operation);
-        if (!error)
-          error = sysfilecreatefailed(pool, work, cache, &open->operation);
-      } else
-        error = 0;
-      if (!error)
-        error = sysfilecreateack(pool, work, cache, &open->operation);
-      if (!error && work->state.creators[open->operation.lease.slot].token)
-        error = 1;
-      if (!error)
-        error = sysfilecreatesettle(pool, work, cache, &open->operation, 0);
-      if (!error) {
-        error = sysfileopenfinish(pool, work, cache, table, open, business);
-        if (error >= 0) {
-          *fd = *business ? -1 : (int) error;
-          error = 0;
-        }
-      }
-    } else if (op->phase == SYSOP_PREPARED) {
+    if (error == 1 || error == -ERR_CANCELLED || (error == -ERR_PEER && op->phase == SYSOP_RESULT))
+      error = sysfileopencollect(pool, work, cache, table, open, fd, business);
+    else if (op->phase == SYSOP_PREPARED) {
       status = sysfileopenabort(pool, work, cache, table, open);
       if (status)
         error = status;

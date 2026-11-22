@@ -1115,6 +1115,49 @@ sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
   return error ? error : native ? native : status ? 0 : number;
 }
 
+isize
+sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                   Opencreate *open, int *fd, isize *business)
+{
+  Createop    *create;
+  const Opkey *key;
+  Slotop      *op;
+  isize        error = opencheck(pool, work, cache, table, open, &create);
+  if (error)
+    return error;
+  if (!external(pool, work, cache, fd, sizeof(*fd)) ||
+      !external(pool, work, cache, business, sizeof(*business)) ||
+      !separate(fd, sizeof(*fd), business, sizeof(*business)) ||
+      !separate(fd, sizeof(*fd), table, sizeof(*table)) ||
+      !separate(fd, sizeof(*fd), open, sizeof(*open)) ||
+      !separate(business, sizeof(*business), table, sizeof(*table)) ||
+      !separate(business, sizeof(*business), open, sizeof(*open)))
+    return -ERR_INVALID;
+  key = &open->operation;
+  error = sysoppoll(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->status == -ERR_PEER) {
+    error = work->state.ended ? 0 : sysoppeerended(work, cache, key);
+    if (!error)
+      error = sysfilecreatefailed(pool, work, cache, key);
+  }
+  if (!error)
+    error = sysfilecreateack(pool, work, cache, key);
+  if (error)
+    return error;
+  if (create->token)
+    return 1;
+  error = sysfilecreatesettle(pool, work, cache, key, 0);
+  if (!error)
+    error = sysfileopenfinish(pool, work, cache, table, open, business);
+  if (error < 0)
+    return error;
+  *fd = *business ? -1 : (int) error;
+  return 0;
+}
+
 static int
 pipestorage(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Pipecreate *pipe)
 {
