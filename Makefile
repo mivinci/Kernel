@@ -42,7 +42,7 @@ build:
 sdk:
 	$(PYTHON) tools/user.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 sdk-audit: sdk
-	$(PYTHON) tests/sdkaudit.py --arch "$(ARCH)" --cc "$(CC)" --ld "$(LD)" --readelf "$(READELF)" --nm "$(NM)"
+	$(PYTHON) tests/sdkaudit.py --arch "$(ARCH)" --cc "$(CC)" --ld "$(LD)" --readelf "$(READELF)" --nm "$(NM)" $(if $(MINIZ_ARCHIVE),--miniz-archive "$(MINIZ_ARCHIVE)")
 bootpkg: sdk
 	$(PYTHON) tools/bootpkg.py pack --arch "$(ARCH)" --init sbin/init --entry "sbin/init=build/$(ARCH)/sbin/init.elf" --entry "sbin/serial=build/$(ARCH)/sbin/serial.elf" --entry "sbin/tty=build/$(ARCH)/sbin/tty.elf" --output "build/$(ARCH)/boot.pkg"
 compdb: build

@@ -900,3 +900,9 @@ ARM64/RV64 QEMU `elf` 验证未装载拒绝发布、两个真实子进程发布�
 载荷通过公开 `write` 向 fd 1 输出运行时摘要，构建目标不执行载荷。普通镜像仍需接好启动 fd 和后端，才能按 [012](../issues/012-busybox-port.md) 核对串口整行及独立退出状态；当前只通过了 A1 的静态检查，A2 和 BusyBox 移植尚未验收。
 
 启动 fd 的本地发布已支持 `sysfdload`：调用方预备每行所需的一份本地 File 别名，表先验证整批，再按精确 fd 号发布；遇到占用或重复号时整批不变。同一 File 的多个描述符仍各有独立的 CLOEXEC 标志。ARM64/RV64 QEMU `runtime` 验证稀疏号码、同 File 的标志隔离以及后项冲突时首项及其代次不变；10 项主机 fd 表回归和格式检查通过。此步不解释 Bootfd、发放引用或连接终端。
+
+### A2 第三方压缩库静态构建验收
+
+从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。
+
+两架构均产出包含 `mz_compress`、`mz_uncompress`、`mz_crc32` 的静态 ELF，无未定义符号或动态依赖。载荷运行时逐字节核对解压结果及独立计算的 CRC32 常量，预期 stdout 为 `sdk-a2 miniz bytes=120 crc32=1f77b35c`，退出码为 0。尚未在 guest 执行，不计 A2 运行验收。
