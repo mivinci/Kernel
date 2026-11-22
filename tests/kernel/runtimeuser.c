@@ -1146,6 +1146,17 @@ main(int argc, char **argv)
   tokencheck();
   runtime_trace[8] = numbercheck();
   runtime_trace[9] = formatcheck();
+  {
+    char *text = NULL;
+    errno = EDOM;
+    REQUIRE(asprintf(&text, "%s:%03d", "ash", 7) == 7 && !strcmp(text, "ash:007") && errno == EDOM,
+            190);
+    free(text);
+    REQUIRE(asprintf(&text, "%.*s", 0, "ash") == 0 && !*text && errno == EDOM, 190);
+    free(text);
+    text = NULL;
+    REQUIRE(asprintf(&text, "%f", 1.0) == -1 && !text && errno == EINVAL, 190);
+  }
   runtime_trace[10] = groupcheck();
   runtime_trace[11] = queuecheck();
   runtime_trace[12] = ringusercheck();
