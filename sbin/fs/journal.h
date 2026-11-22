@@ -143,7 +143,9 @@ isize growthpublish(Growth *, struct Loadmap *, struct Loadindex *, struct Block
    the index iff its entries change (target order: inode, bitmap, index).
    The trusted caller holds the inode and volume writer guards, keeps all
    storage disjoint and snapshots immutable, and excludes new accesses to
-   the affected blocks until retirement and publication. On stop, drain I/O
+   the affected blocks until retirement and publication. An orphan batch
+   also requires the inode to remain unlinked and free of all references.
+   On stop, drain I/O
    and discard the transaction only when recovery takes ownership. */
 isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclaim *,
                      struct Loadmap *, struct Loadindex *, struct Blockmap *, const Mapmeta *);
@@ -162,11 +164,12 @@ void reclaimscanwake(Reclaimscan *);
    or WOULD_BLOCK to skip for this sweep, or another error to stop. */
 isize reclaimscanstep(Reclaimscan *, Reclaimtx *, isize (*candidate)(void *, u32), void *);
 /* Prepare the next batch from the committed bitmap and current cache state.
+   Pass the kind from loadreclaimkind while holding inode mutation authority.
    Add any independent transport ownership in io. Hold the inode and volume
    writer guards through encoding and submission. As with loadreclaim, zero
    or error leaves the proposed outputs unchanged. */
 isize reclaimprepare(const Journal *, struct Cache *, const struct Loadmap *,
-                     const struct Loadindex *, const struct Blockmap *io,
+                     const struct Loadindex *, u32 kind, const struct Blockmap *io,
                      const struct Blockmap *committed, struct Blockmap *prepared, struct Reclaim *);
 /* Commit the inode image encoded from loadmapshrink. Equal lengths need
    no transaction. Keep distinct, immutable staging/record storage and hold

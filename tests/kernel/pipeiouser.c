@@ -2036,8 +2036,12 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   CHECK(journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) ==
         -ERR_STALE);
 
-  CHECK(loadreclaim(shortened, index, 99, 128, &busy, &prepared, &batch) == 1 && batch.count == 1 &&
-        batch.blocks[0] == 102 && !batch.indexdirty && !batch.map.indirect);
+  CHECK(loadreclaimkind((u32) shortened->file.inode, 1, shortened, 0, 1) == -ERR_BUSY &&
+        loadreclaimkind((u32) shortened->file.inode, 1, shortened, 0, 0) == RECLAIM_ORPHAN &&
+        reclaimprepare(&journal, cache, shortened, index, RECLAIM_ORPHAN, NULL, allocation,
+                       &prepared, &batch) == 1 &&
+        batch.count == 2 && batch.blocks[0] == 100 && batch.blocks[1] == 102 && !batch.indexdirty &&
+        !batch.map.indirect);
   meta.inode = maprecords[0];
   meta.index = NULL;
   CHECK(!journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) &&
@@ -2048,7 +2052,7 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   CHECK(journal.durable && !journalnext(&journal, &io) &&
         reclaimpublish(&work) == -ERR_WOULD_BLOCK && !journalcomplete(&journal, &io, 0) &&
         reclaimpublish(&work) == -ERR_STATE && !journalrelease(&journal) && journal.last == 2 &&
-        shortened->indirect == 102 && index->block == 102 &&
+        shortened->direct[0] == 100 && shortened->indirect == 102 && index->block == 102 &&
         allocation->used[1] == (original ^ (UINT64_C(1) << (101 - 64))));
 }
 

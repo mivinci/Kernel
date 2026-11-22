@@ -305,7 +305,8 @@ reclaimcheck(const Reclaimtx *work, u32 *inodechanged)
       file->version != after->version || file->length != after->length)
     return -ERR_STALE;
   if (!file->inode || file->inode >= FS_INODES || file->length > FS_FILE_BYTES || !batch->count ||
-      batch->count > LOAD_RECLAIM || batch->indexdirty > 1 ||
+      batch->count > LOAD_RECLAIM || batch->indexdirty > 1 || batch->orphan > 1 ||
+      (batch->orphan && file->inode == FS_ROOT) ||
       (live->indirect &&
        (!index || index->block != live->indirect || live->indirect < FS_DATA_START ||
         live->indirect >= work->journal->blocks)))
@@ -316,7 +317,7 @@ reclaimcheck(const Reclaimtx *work, u32 *inodechanged)
         !(work->allocation->used[block / 64] & (UINT64_C(1) << (block % 64))))
       return -ERR_STALE;
   }
-  eof = (u32) ((file->length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
+  eof = batch->orphan ? 0 : (u32) ((file->length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
   for (i = 0; i < LOAD_DIRECT; i++)
     if (live->direct[i] != batch->map.direct[i]) {
       if (i < eof || batch->map.direct[i] || !reclaimblock(batch, live->direct[i], &matched))
@@ -365,12 +366,14 @@ forgetreclaim(const Reclaimtx *work)
 
 isize
 reclaimprepare(const Journal *journal, Cache *cache, const Loadmap *map, const Loadindex *index,
-               const Blockmap *io, const Blockmap *committed, Blockmap *prepared, Reclaim *batch)
+               u32 kind, const Blockmap *io, const Blockmap *committed, Blockmap *prepared,
+               Reclaim *batch)
 {
   Blockmap allocation, busy;
   u32      i;
   isize    error;
-  if (!cache || !journal || cache->blocks != journal->blocks || journal->blocks > FS_MAX_BLOCKS ||
+  if ((kind != RECLAIM_TAIL && kind != RECLAIM_ORPHAN) || !cache || !journal ||
+      cache->blocks != journal->blocks || journal->blocks > FS_MAX_BLOCKS ||
       !separate(committed, sizeof(*committed), prepared, sizeof(*prepared)) ||
       !separate(committed, sizeof(*committed), batch, sizeof(*batch)) ||
       !separate(prepared, sizeof(*prepared), batch, sizeof(*batch)) ||
@@ -388,7 +391,11 @@ reclaimprepare(const Journal *journal, Cache *cache, const Loadmap *map, const L
     for (i = 0; i < ARRAY_SIZE(busy.used); i++)
       busy.used[i] |= io->used[i];
   allocation = *committed;
-  error = loadreclaim(map, index, FS_DATA_START, (u32) journal->blocks, &busy, &allocation, batch);
+  if (kind == RECLAIM_ORPHAN)
+    error = loadorphan(map, index, FS_DATA_START, (u32) journal->blocks, &busy, &allocation, batch);
+  else
+    error =
+        loadreclaim(map, index, FS_DATA_START, (u32) journal->blocks, &busy, &allocation, batch);
   if (error == 1)
     *prepared = allocation;
   return error;

@@ -28,7 +28,7 @@ class BlockMap(C.Structure):
 
 class Reclaim(C.Structure):
     _fields_ = [('map', Map), ('index', Index), ('blocks', U * 32),
-                ('count', C.c_uint32), ('indexdirty', C.c_uint32)]
+                ('count', C.c_uint32), ('indexdirty', C.c_uint32), ('orphan', C.c_uint32)]
 
 
 class Span(C.Structure):
@@ -79,6 +79,8 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadreclaim.argtypes = [C.POINTER(Map), C.POINTER(Index)] + [C.c_uint32] * 2 + [
             C.POINTER(BlockMap), C.POINTER(BlockMap), C.POINTER(Reclaim)]
         cls.lib.loadreclaim.restype = I
+        cls.lib.loadorphan.argtypes = cls.lib.loadreclaim.argtypes
+        cls.lib.loadorphan.restype = I
         cls.lib.loadreclaimkind.argtypes = [C.c_uint32, C.c_uint32, C.POINTER(Map),
                                             C.c_uint32, C.c_uint32]
         cls.lib.loadreclaimkind.restype = I
@@ -163,6 +165,21 @@ class FsLoadTests(unittest.TestCase):
         mapping.file.inode = 1
         self.assertEqual(classify(1, 1, C.byref(mapping), 0, 0), -6)
         self.assertEqual(classify(1, 1, C.byref(mapping), 1, 0), 1)
+
+    def test_orphan_reclaims_inside_eof_without_releasing_busy_blocks(self):
+        mapping = Map(File(2, 1, 4, 2 * 4096))
+        mapping.direct[0], mapping.direct[1] = 100, 101
+        busy, allocation, batch = BlockMap(), BlockMap(), Reclaim()
+        busy.used[1] = 1 << (100 - 64)
+        allocation.used[1] = 3 << (100 - 64)
+        args = (C.byref(mapping), None, 99, 200, C.byref(busy), C.byref(allocation),
+                C.byref(batch))
+        self.assertEqual(self.lib.loadreclaim(*args), 0)
+        self.assertEqual(self.lib.loadorphan(*args), 1)
+        self.assertEqual((batch.orphan, batch.count, batch.blocks[0]), (1, 1, 101))
+        self.assertEqual(batch.map.direct[:2], [100, 0])
+        self.assertEqual(batch.map.file.length, 8192)
+        self.assertEqual(allocation.used[1], 1 << (100 - 64))
 
     def test_reclaim_batches_resume_from_remaining_pointers_and_skip_busy_index(self):
         mapping = Map(File(2, 1, 4, 17))

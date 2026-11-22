@@ -106,7 +106,7 @@ struct Reclaim
   Loadmap   map;
   Loadindex index;
   u64       blocks[LOAD_RECLAIM];
-  u32       count, indexdirty;
+  u32       count, indexdirty, orphan;
 };
 /* Select one batch from a committed shorter inode. The caller holds the
    inode and volume writer guards and supplies a snapshot of blocks still
@@ -117,6 +117,10 @@ struct Reclaim
    An indirect block is removed only when its committed index is empty. */
 isize loadreclaim(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks,
                   const Blockmap *busy, Blockmap *allocation, Reclaim *);
+/* Same batching, but all blocks are eligible regardless of EOF. Use only
+   after loadreclaimkind returns ORPHAN and while new references are barred. */
+isize loadorphan(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks,
+                 const Blockmap *busy, Blockmap *allocation, Reclaim *);
 /* Classify an inode from the committed inode bitmap and decoded metadata.
    refs counts all live file and pending operation holds for orphan purposes.
    ORPHAN requires separate final inode retirement after its blocks drain. */

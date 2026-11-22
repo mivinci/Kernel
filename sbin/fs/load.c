@@ -306,9 +306,9 @@ loadreclaimkind(u32 inode, u32 allocated, const Loadmap *map, u32 links, u32 ref
   return RECLAIM_TAIL;
 }
 
-isize
-loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, const Blockmap *busy,
-            Blockmap *allocation, Reclaim *out)
+static isize
+reclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, const Blockmap *busy,
+        Blockmap *allocation, Reclaim *out, u32 orphan)
 {
   Blockmap seen = {0};
   u32      logical, limit, eof, block, pending = 0, indirect = 0, count = 0;
@@ -323,7 +323,8 @@ loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, c
       (index && (!separate(index, sizeof(*index), out, sizeof(*out)) ||
                  !separate(index, sizeof(*index), allocation, sizeof(*allocation)))) ||
       !map->file.inode || map->file.inode >= FS_INODES || !map->file.generation ||
-      !map->file.version || map->file.length > FS_FILE_BYTES)
+      !map->file.version || map->file.length > FS_FILE_BYTES ||
+      (orphan && map->file.inode == FS_ROOT))
     return -ERR_INVALID;
   limit = LOAD_DIRECT;
   if (map->indirect) {
@@ -332,7 +333,7 @@ loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, c
       return -ERR_STATE;
     limit += LOAD_INDIRECT;
   }
-  eof = (u32) ((map->file.length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
+  eof = orphan ? 0 : (u32) ((map->file.length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
   /* Validate live and truncated pointers together before clearing any bit. */
   for (logical = 0; logical < limit; logical++) {
     error = datablock(map, index, start, blocks, logical, &block);
@@ -383,7 +384,22 @@ loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, c
     out->blocks[logical] = block;
   }
   out->count = count;
+  out->orphan = orphan;
   return 1;
+}
+
+isize
+loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, const Blockmap *busy,
+            Blockmap *allocation, Reclaim *out)
+{
+  return reclaim(map, index, start, blocks, busy, allocation, out, 0);
+}
+
+isize
+loadorphan(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, const Blockmap *busy,
+           Blockmap *allocation, Reclaim *out)
+{
+  return reclaim(map, index, start, blocks, busy, allocation, out, 1);
 }
 
 static isize
