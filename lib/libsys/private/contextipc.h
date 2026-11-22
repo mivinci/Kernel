@@ -104,6 +104,11 @@ isize sysctxopenconnect(Rbank *bank, u32 layer, Filepool *pool, Connwork *connec
    ATTACH transport cleanup is separate. Success permits discarding the fd. */
 isize sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                        const Opkey *operation, u64 deadline, Rkey *active);
+/* Finish any ATTACH continuation before entering. Keep the OPEN and ABORT
+   continuations and the original Bootmap until cancellation succeeds. */
+isize sysctxopencancel(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
+                       Conncache *cache, struct Fdtable *table, struct Opencreate *open,
+                       Handle space, Bootmap *map, Rkey *active);
 /* Create local descriptors over an established FS connection. Both private
    records start zeroed, and remain caller-owned across interruption or
    incomplete drain (ERR_WOULD_BLOCK after submitted peer death). Re-enter

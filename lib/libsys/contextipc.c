@@ -1106,6 +1106,90 @@ restore:
 }
 
 isize
+sysctxopencancel(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, Conncache *cache,
+                 Fdtable *table, Opencreate *open, Handle space, Bootmap *map, Rkey *active)
+{
+  const u64    bytes = SYSCONN_COUNT * sizeof(*connections);
+  const Opkey *key;
+  Connwork    *source;
+  Slotop      *op;
+  Createop    *create;
+  u64          mask, ignored;
+  u32          i;
+  isize        error, restored;
+  if (layer >= RCTX_LAYERS || !cache || !storage(bank, connections, bytes, active) ||
+      !storage(bank, open, sizeof(*open), active) || !storage(bank, map, sizeof(*map), active) ||
+      !storage(bank, table, sizeof(*table), active) ||
+      !separate(map, sizeof(*map), open, sizeof(*open)) ||
+      !separate(map, sizeof(*map), table, sizeof(*table)) ||
+      !separate(map, sizeof(*map), pool, sizeof(*pool)) ||
+      !separate(map, sizeof(*map), cache, sizeof(*cache)) ||
+      !separate(connections, bytes, open, sizeof(*open)) ||
+      !separate(connections, bytes, map, sizeof(*map)))
+    return -ERR_INVALID;
+  key = &open->operation;
+  if (key->connection.index >= SYSCONN_COUNT || key->lease.slot / 2 != layer)
+    return -ERR_INVALID;
+  source = &connections[key->connection.index];
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfilecreatecheck(pool, source, cache, key);
+  if (error)
+    goto restore;
+  op = &source->state.operations[key->lease.slot];
+  create = &source->state.creators[key->lease.slot];
+  if (op->opcode != FS_OPEN || op->kind != IPC_RESOURCE_REPLY ||
+      (!active->sequence && bank->contexts[layer].phase != RCTX_FREE)) {
+    error = -ERR_STATE;
+    goto restore;
+  }
+  if (create->phase != SYSFILE_CREATE_RESOLVED) {
+    error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+    if (error)
+      return error;
+    error = sysctxopenrevoke(bank, layer, pool, source, cache, key, 0, active);
+    if (error)
+      return error;
+    error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+    if (error)
+      return error;
+  } else if (active->sequence) {
+    error = -ERR_BUSY;
+    goto restore;
+  }
+  if (create->disposition != SYSFILE_RESULT_REVOKED &&
+      create->disposition != SYSFILE_RESULT_ENDED) {
+    error = -ERR_STATE;
+    goto restore;
+  }
+  for (i = 0; i < SYSCONN_COUNT; i++) {
+    Connwork  *backend = &connections[i];
+    Bootstrap *boot = &backend->state.bootstrap;
+    if (backend->state.peer.pid != create->peer.pid ||
+        backend->state.peer.image != create->peer.image || boot->opcode != FS_ATTACH ||
+        boot->claim.owner != op->file)
+      continue;
+    if (boot->state == SYSBOOT_WAITING) {
+      error = sysbootpoll(boot, boot->claim);
+      if (error)
+        goto restore;
+    }
+    error = sysfilecreateattachdiscard(pool, source, cache, key, backend, boot->claim, space, map);
+    if (error)
+      goto restore;
+    break;
+  }
+  if (map->mapped || map->verified || map->address || map->bytes || map->connid || map->serverimage)
+    error = -ERR_STATE;
+  else
+    error = sysfileopendiscard(pool, source, cache, table, open);
+restore:
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return error ? error : restored;
+}
+
+isize
 sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx   *context;

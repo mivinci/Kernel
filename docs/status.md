@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage481：资源 OPEN 的取消串接原 token 撤销和 ATTACH 清理，完成后才归还 fd。双架构 QEMU `runtime` 和 54 项主机测试通过。
 - stage480：资源 OPEN 确认撤销后按原 claim 清理 ATTACH，复用失败保留原连接。双架构 QEMU `runtime` 和 49 项主机测试通过。
 - stage479：资源 OPEN 可从镜像连接表选择工作页、继续原 ATTACH 并复用已有映射。双架构 QEMU `runtime` 和 18 项主机测试通过。
 - stage478：资源 OPEN 按固定后端镜像查找或预留目录项，支持连接复用、忙时拒绝和满目录补偿。双架构 QEMU `runtime` 和 51 项主机测试通过。

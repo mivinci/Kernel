@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage481：`sysctxopencancel` 把资源 OPEN 的 token 撤销、原 ATTACH 运输清理和预留 fd 归还串成可继续的私有流程。引用已撤销但 ATTACH 尚未排空时保留原记录供重试；已就绪连接失去的只有本次 ATTACH。双架构 QEMU `runtime` 验证目录满时在 ATTACH 前取消、复用接入失败后取消以及旧 File 仍可关闭；54 项 IPC 上下文与创建账本主机测试通过。公开 `open()` 尚未接入。
+
 stage480：`sysfilecreateattachdiscard` 在资源 OPEN 的引用已撤销或后端已确认终结后，按原创建记录绑定的 File ID 与完整 claim 清理 ATTACH。首次接入失败归还临时映射和回复资源；复用失败只清本次运输，保留旧连接。双架构 QEMU `runtime` 验证拒绝提前清理与错 claim，以及两条清理路径；49 项创建账本和连接工作页主机测试通过。
 
 stage479：`sysctxopenconnect` 用原 OPEN 的连接键定位源工作页，按已捕获的后端身份从同一目录选择目标工作页。只初始化新代次的未接入页，已有工作页继续持有原 ATTACH 和映射。双架构 QEMU `runtime` 验证首次接入时地址冲突可换址继续同一回复，以及第二次 OPEN 复用同一工作页；18 项 IPC 上下文主机测试通过。调用方仍提供预留地址，公开 `open()` 尚未接入。

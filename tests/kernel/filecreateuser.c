@@ -283,27 +283,25 @@ resourceopens(const Bootview *boot)
     key = open.operation;
     reserved = open.tag.index;
     token = work.state.creators[key.lease.slot].token;
+    zero(&mapped, sizeof(mapped));
     if (i) {
       CHECK(
           !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
       bootstrap(&backend_work.state.bootstrap, claim, call, CALL_RECV_MEM);
-      zero(&mapped, sizeof(mapped));
       mapped.address = ADDRESS;
       CHECK(sysfilecreateattached(&pool, &work, &cache, &key, &backend_work, claim,
-                                  bootresource(boot, BOOT_SELF_SPACE), &mapped,
-                                  0) == -ERR_INVALID &&
-            !sysconnworkreuse(&backend_work, &cache, claim) &&
-            !sysbootfinish(&backend_work.state.bootstrap, claim));
+                                  bootresource(boot, BOOT_SELF_SPACE), &mapped, 0) == -ERR_INVALID);
+      zero(&mapped, sizeof(mapped));
       CHECK(!sysfilecreaterevokeprepare(&pool, &work, &cache, &key, 0, 0, &claim, &call) &&
             !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim, call, 0,
                             &active));
     }
     CHECK(sysfileopendiscard(&pool, &work, &cache, &fds, &open) == -ERR_STATE &&
           !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_RESERVED &&
-          !sysctxopenrevoke(&contexts, 0, &pool, &work, &cache, &key, 0, &active) &&
+          !sysctxopencancel(&contexts, 0, &pool, connections, &cache, &fds, &open,
+                            bootresource(boot, BOOT_SELF_SPACE), &mapped, &active) &&
           !active.sequence && work.state.bootstrap.state == SYSBOOT_FREE &&
-          !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_RESERVED &&
-          !sysfileopendiscard(&pool, &work, &cache, &fds, &open) && !open.operation.lease.seq &&
+          backend_work.state.bootstrap.state == SYSBOOT_FREE && !open.operation.lease.seq &&
           !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_FREE);
     filecreatetrace[4]++;
     if (i) {
