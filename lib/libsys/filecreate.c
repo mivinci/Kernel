@@ -1030,6 +1030,17 @@ opencheck(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Open
 }
 
 isize
+sysfileopeninterrupt(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                     Opencreate *open, u64 now)
+{
+  Createop *create;
+  isize     error = opencheck(pool, work, cache, table, open, &create);
+  if (error)
+    return error;
+  return sysopinterrupt(work, cache, &open->operation, now);
+}
+
+isize
 sysfileopenabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open)
 {
   Createop *create;

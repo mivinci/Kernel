@@ -633,13 +633,16 @@ static void
 client(const Bootview *boot)
 {
   Opkey              key, background;
+  Opencreate         late = {0};
+  Rkey               latectx = {0};
+  const u64          lateargs[8] = {0, 0, 0, 6};
   Fdtag              fd;
   Fdview             detached, replaced;
   Fileref            reference;
   u64                files[2], source = 0, first, second, ids[2], mask, ignored, displaced;
   Msg                gate;
   Ipcmsg             result;
-  Handle             rpc;
+  Handle             rpc, original;
   isize              closeprogress;
   Msg                hello = {{FS_HELLO, 0, 1, UINT64_MAX}};
   Msg                stale = {{FS_READ, 0x10000, 1, 0}};
@@ -700,19 +703,30 @@ client(const Bootview *boot)
   CHECK(!files[0] && !files[1] && !source);
   closefile(ids[0], 0);
   closefile(ids[1], 0);
-  key = begin(FS_OPEN, "/late", 0);
+  CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 100 + filecreatetrace[1], lateargs,
+                            "/late", 6, 0, &late, &gate) &&
+        !sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &late.operation,
+                      &latectx));
+  filecreatetrace[1]++;
+  key = late.operation;
   ids[0] = work.state.creators[key.lease.slot].files[0];
-  CHECK(!sysopabandon(&work, &cache, &key, &background));
+  CHECK(!sysoprpc(&work, &cache, &key, &original));
   /* A distinct request tries to reuse the exact deferred OPEN's slot. */
   gate.words[0] = FS_OPEN;
   gate.words[1] = work.state.map.connid;
-  gate.words[2] = background.lease.seq;
-  gate.words[3] = background.lease.slot;
+  gate.words[2] = key.lease.seq;
+  gate.words[3] = key.lease.slot;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC, &result));
   rpc = result.request;
   CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqwait(rpc, 0, &result) &&
-        (isize) result.words[0] == -EBUSY && result.words[1] == background.lease.seq &&
-        !result.words[2] && !result.words[3] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+        (isize) result.words[0] == -EBUSY && result.words[1] == key.lease.seq && !result.words[2] &&
+        !result.words[3] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+  CHECK(!sysfileopeninterrupt(&pool, &work, &cache, &fds, &late, 1) &&
+        !sysfileopeninterrupt(&pool, &work, &cache, &fds, &late, 2) &&
+        !sysoprpc(&work, &cache, &key, &rpc) && rpc == original &&
+        work.state.operations[key.lease.slot].deadline == 1 + SYSOP_CONTROL_NS &&
+        !sysfdobserve(&fds, late.tag.index, &detached) && detached.tag.state == SYSFD_RESERVED &&
+        !sysopabandon(&work, &cache, &key, &background));
   gate.words[0] = GATE;
   gate.words[1] = gate.words[2] = gate.words[3] = 0;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC | CALL_CONTROL, &result));
@@ -723,7 +737,7 @@ client(const Bootview *boot)
   zero(files, sizeof(files));
   CHECK(sysfilecreatesettle(&pool, &work, &cache, &background, 0) == -ERR_STATE);
   complete(&background, 1, files, &source);
-  CHECK(!files[0] && !files[1] && !source);
+  CHECK(!files[0] && !files[1] && !source && !sysfdcancel(&fds, late.tag));
   closefile(ids[0], 0);
   filecreatetrace[3] = 1;
   {

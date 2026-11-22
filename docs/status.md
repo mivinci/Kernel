@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage483：OPEN 可对原 RPC 请求协作取消，重复取消不重置期限。双架构 QEMU `runtime` 和 36 项创建账本主机测试通过。
 - stage482：OPEN 取消先等待已提交的 ATTACH 排空，再发 token ABORT。双架构 QEMU `runtime` 和 18 项主机测试通过。
 - stage481：资源 OPEN 的取消串接原 token 撤销和 ATTACH 清理，完成后才归还 fd。双架构 QEMU `runtime` 和 54 项主机测试通过。
 - stage480：资源 OPEN 确认撤销后按原 claim 清理 ATTACH，复用失败保留原连接。双架构 QEMU `runtime` 和 49 项主机测试通过。

@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage483：调用方移交已提交 OPEN 的 Rctx 后，可用 `sysfileopeninterrupt` 对原 RPC 请求协作取消。重复调用保留首次取消期限；不释放 fd，也不把已接收请求当作无副作用。双架构 QEMU `runtime` 验证延迟回复的 OPEN 保留原 RPC 和预留 fd，迟到成功沿旧记录接管并关闭；36 项创建账本主机测试通过。公开 `open()` 中的信号重启策略还未接入。
+
 stage482：取消资源 OPEN 时，如原 ATTACH 已经提交，先领取其结果并确认 `RQ_FINISH`，再发 token ABORT，避免撤销与仍可能提交的 ATTACH 交错。尚未提交的 ATTACH 无需等 RPC。回复资源仍在确认撤销后清理。双架构 QEMU `runtime` 回归原 ATTACH 后的取消和共享连接复用，18 项 IPC 上下文主机测试通过。
 
 stage481：`sysctxopencancel` 把资源 OPEN 的 token 撤销、原 ATTACH 运输清理和预留 fd 归还串成可继续的私有流程。引用已撤销但 ATTACH 尚未排空时保留原记录供重试；已就绪连接失去的只有本次 ATTACH。双架构 QEMU `runtime` 验证目录满时在 ATTACH 前取消、复用接入失败后取消以及旧 File 仍可关闭；54 项 IPC 上下文与创建账本主机测试通过。公开 `open()` 尚未接入。
