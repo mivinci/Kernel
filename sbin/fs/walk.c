@@ -29,6 +29,14 @@ vwalkdrop(Vwalk *walk)
     walk->ops->drop(walk->context, walk->root);
   walk->link = walk->current = walk->root = NULL;
   walk->phase = 0;
+  walk->pending = 0;
+}
+
+static isize
+backendstep(Vwalk *walk, isize status)
+{
+  walk->pending = status == VWALK_MORE || status == VWALK_WAIT;
+  return status;
 }
 
 isize
@@ -131,7 +139,7 @@ lookup(Vwalk *walk, Vnode **out)
     return VWALK_MISSING;
   }
   if (status)
-    return status;
+    return backendstep(walk, status);
   if (!node)
     return -EIO;
   if (walk->part.kind == PATH_NAME && walk->part.final && walk->create == VWALK_EXCLUSIVE) {
@@ -176,7 +184,7 @@ advance(Vwalk *walk, Vnode **out)
   case WALK_SEARCH:
     status = walk->ops->search(walk->context, walk->current);
     if (status)
-      return status;
+      return backendstep(walk, status);
     walk->phase = walk->part.kind == PATH_DOT ||
                           (walk->part.kind == PATH_PARENT && vnodesame(walk->current, walk->root))
                       ? WALK_COMPONENT
@@ -186,8 +194,9 @@ advance(Vwalk *walk, Vnode **out)
     return lookup(walk, out);
   case WALK_LINK:
     status = walk->ops->readlink(walk->context, walk->link, &target, &bytes);
-    if (!status)
-      status = fspathexpand(&walk->path, target, bytes);
+    if (status)
+      return backendstep(walk, status);
+    status = fspathexpand(&walk->path, target, bytes);
     if (status)
       return status;
     walk->ops->drop(walk->context, walk->link);
@@ -196,7 +205,7 @@ advance(Vwalk *walk, Vnode **out)
     return VWALK_MORE;
   case WALK_LAST:
     status = walk->ops->search(walk->context, walk->current);
-    return status ? status : result(walk, out);
+    return status ? backendstep(walk, status) : result(walk, out);
   default:
     return -EINVAL;
   }
@@ -208,6 +217,7 @@ vwalkstep(Vwalk *walk, Vnode **out)
   isize status;
   if (!walk || !walk->phase || !out || *out)
     return -EINVAL;
+  walk->pending = 0;
   status = advance(walk, out);
   if (status < 0)
     vwalkdrop(walk);

@@ -1635,7 +1635,7 @@ struct Openfixture
   Journalio syncio;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
-  u32       cancelgrowth, durable, dirwait, linkwait, cwdmore;
+  u32       cancelgrowth, durable, dirwait, linkwait, cwdmore, linkmore;
 };
 
 static isize
@@ -1764,6 +1764,10 @@ openlink(void *context, const Vnode *node, const char **target, u64 *bytes)
   Openfixture *fixture = job->backend;
   if (job->call.words[0] == FS_PATH && job->slot.args[0] == FS_PATH_READLINK) {
     CHECK(node == &fixture->symlink && fixture->holds == 3);
+    if (fixture->linkmore) {
+      fixture->linkmore--;
+      return VWALK_MORE;
+    }
     if (fixture->linkwait) {
       fixture->linkwait = 0;
       return VWALK_WAIT;
@@ -3228,8 +3232,12 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && fixture.holds == 2);
   CHECK(!fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   fixture.linkwait = 1;
-  CHECK(!fsstep(&fs) && job.node == &fixture.symlink && job.waiting && fixture.holds == 3 &&
-        !fsopenpump(&open) && !job.call.request && fixture.holds == 2 && !fsstep(&fs) &&
+  fixture.linkmore = 70;
+  CHECK(!fsstep(&fs) && open.again && job.node == &fixture.symlink && job.waiting &&
+        fixture.holds == 3 && fixture.linkmore > 38);
+  CHECK(!fsopenpump(&open) && open.again && job.waiting && fixture.linkmore);
+  CHECK(!fsopenpump(&open) && !open.again && job.waiting && !fixture.linkmore && !fixture.linkwait);
+  CHECK(!fsopenpump(&open) && !job.call.request && fixture.holds == 2 && !fsstep(&fs) &&
         !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_PATH &&
         !sysfilelinkaccept(&link, 1, &request, &slot) && slot.args[0] == FS_PATH_CHDIR &&

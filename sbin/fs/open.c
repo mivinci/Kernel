@@ -39,6 +39,8 @@ finish(Handle request, u64 seq, Filelink *link, isize status)
   return replypath(request, seq, link, status, 0);
 }
 
+#define PATH_STEPS 32
+
 static isize
 advancecwd(Fsopen *open, Openjob *job)
 {
@@ -47,7 +49,7 @@ advancecwd(Fsopen *open, Openjob *job)
   isize  error;
   u32    steps;
   Msg    reply = {{0, job->slot.seq, 0, 0}};
-  for (steps = 0; steps < 32; steps++) {
+  for (steps = 0; steps < PATH_STEPS; steps++) {
     error = ipc_rqcheck(request, &state);
     if (error)
       return error;
@@ -80,7 +82,7 @@ advancecwd(Fsopen *open, Openjob *job)
       return 0;
     job->cwdready = job->cwdstatus != VWALK_MORE;
   }
-  if (steps == 32) {
+  if (steps == PATH_STEPS) {
     open->again = 1;
     return 0;
   }
@@ -96,7 +98,8 @@ advancelink(Fsopen *open, Openjob *job)
   const char *target;
   u64         targetbytes, state;
   isize       status, error;
-  for (;;) {
+  u32         steps;
+  for (steps = 0; steps < PATH_STEPS; steps++) {
     error = ipc_rqcheck(request, &state);
     if (error)
       return error;
@@ -115,8 +118,8 @@ advancelink(Fsopen *open, Openjob *job)
     }
     if (!job->node) {
       status = vwalkstep(&job->walk, &job->node);
-      job->waiting = status == VWALK_WAIT;
-      if (job->waiting)
+      job->waiting = job->walk.pending;
+      if (status == VWALK_WAIT)
         return 0;
       if (status == VWALK_MORE || job->node)
         continue;
@@ -129,8 +132,8 @@ advancelink(Fsopen *open, Openjob *job)
     target = NULL;
     targetbytes = 0;
     status = open->ops->readlink(job, job->node, &target, &targetbytes);
-    job->waiting = status == VWALK_WAIT;
-    if (job->waiting)
+    job->waiting = status == VWALK_WAIT || status == VWALK_MORE;
+    if (status == VWALK_WAIT)
       return 0;
     if (status == VWALK_MORE)
       continue;
@@ -157,6 +160,10 @@ advancelink(Fsopen *open, Openjob *job)
     status = -EINTR;
     break;
   }
+  if (steps == PATH_STEPS) {
+    open->again = 1;
+    return 0;
+  }
   error = finish(request, job->slot.seq, job->link, status);
 done:
   if (job->node) {
@@ -175,6 +182,7 @@ advance(Fsopen *open, Openjob *job)
   Vnode *node = NULL;
   u64    state;
   isize  status, error;
+  u32    steps;
   if (getcwdcall(&job->call, &job->slot))
     return advancecwd(open, job);
   if (readlinkcall(&job->call, &job->slot))
@@ -187,7 +195,7 @@ advance(Fsopen *open, Openjob *job)
     goto complete;
   if (job->parent)
     goto create;
-  for (;;) {
+  for (steps = 0; steps < PATH_STEPS; steps++) {
     error = ipc_rqcheck(request, &state);
     if (error)
       return error;
@@ -205,11 +213,15 @@ advance(Fsopen *open, Openjob *job)
       break;
     }
     status = vwalkstep(&job->walk, &node);
-    job->waiting = status == VWALK_WAIT;
-    if (job->waiting)
+    job->waiting = job->walk.pending;
+    if (status == VWALK_WAIT)
       return 0;
     if (status != VWALK_MORE)
       break;
+  }
+  if (steps == PATH_STEPS) {
+    open->again = 1;
+    return 0;
   }
   if (node) {
     /* A backend step may have crossed a syscall boundary. Recheck before

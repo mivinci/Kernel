@@ -47,7 +47,7 @@ struct Vwalk
   const Vmounts  *mounts;
   void           *context;
   Vnode          *root, *current, *link;
-  u32             phase, follow, searchlast, create;
+  u32             phase, follow, searchlast, create, pending;
 };
 
 int vnodesame(const Vnode *left, const Vnode *right);
@@ -56,12 +56,13 @@ int vnodesame(const Vnode *left, const Vnode *right);
    and drop are synchronous and also pin and unpin the node's mount. Lookup
    and parent transfer one backend node reference on success. Search uses the
    original operation's credentials in context. A pending operation returns
-   VWALK_WAIT and is resumed with the same arguments. The ready link text
+   VWALK_MORE or VWALK_WAIT and is resumed with the same arguments. The ready link text
    is borrowed only until the next backend call. */
 isize vwalkinit(Vwalk *walk, const Vmounts *mounts, const Vwalkops *ops, void *context, Vnode *root,
                 Vnode *start, const volatile char *path, u64 bytes, u32 follow);
 /* Advance one step. Zero transfers the result reference. MORE can run
    again immediately, WAIT needs backend progress, and errors drop refs.
+   pending distinguishes an unfinished callback from local walk progress.
    Setting create to CREATE or EXCLUSIVE after init enables MISSING:
    transfers the searched parent in out and leaves the final name in part
    until the walk is reused. The caller must recheck absence under the
