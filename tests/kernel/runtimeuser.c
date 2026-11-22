@@ -21,6 +21,8 @@
 #include "../../sbin/fs/path.h"
 #include "../../sbin/fs/pipe.h"
 
+int vwalkusercheck(void);
+
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -804,6 +806,7 @@ main(int argc, char **argv)
   sortcheck();
   optioncheck();
   pathwalkcheck();
+  REQUIRE(!vwalkusercheck(), 294);
   ctypecheck();
   collationcheck();
   patterncheck();

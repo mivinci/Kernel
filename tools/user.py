@@ -197,6 +197,7 @@ def build(args):
     runtime_objects = []
     runtime_support.append(ROOT/'sbin/fs/pipe.c')
     runtime_support.append(ROOT/'sbin/fs/path.c')
+    runtime_support.extend([ROOT/'sbin/fs/walk.c', ROOT/'tests/kernel/vwalkuser.c'])
     for source in runtime_support:
         obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
         obj.parent.mkdir(parents=True,exist_ok=True)
