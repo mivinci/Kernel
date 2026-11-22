@@ -93,6 +93,11 @@ isize sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, C
 isize sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                        const Opkey *operation, Connwork *backend, Handle space, u64 address,
                        u64 deadline, Bootmap *map, Rkey *active);
+/* Select the work page from the Image directory and drive the original ATTACH.
+   Caller retains the VA reservation and continuation across retries. */
+isize sysctxopenconnect(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
+                        Conncache *cache, const Opkey *operation, Handle space, u64 address,
+                        u64 deadline, Bootmap *map, Rkey *active);
 /* Revoke the exact OPEN token over the creator-owned CALL without a directory
    entry. Retain active across interruption. ERR_WOULD_BLOCK can mean the original
    peer ended with an accepted ABORT still draining; retry without resubmitting.

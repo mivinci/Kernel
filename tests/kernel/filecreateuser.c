@@ -34,8 +34,10 @@
 #define IO_WRITE  UINT64_C(0x8877665544332211)
 #define IO_GHOST  UINT64_C(0xdeadbeef5a5a5a5a)
 #define IO_GUARD  UINT64_C(0x2468ace013579bdf)
-static Connwork work, backend_work;
-#define cache (*(Conncache *) (void *) work.reserved)
+static Connwork connections[SYSCONN_COUNT];
+#define work         (connections[0])
+#define backend_work (connections[1])
+#define cache        (*(Conncache *) (void *) work.reserved)
 static Filepool       pool;
 static Fdtable        fds;
 static Execfds        execfds;
@@ -212,17 +214,16 @@ attachfirst(const Bootview *boot)
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
   CHECK(sysfilecreatebackend(&pool, &work, &cache, &key, &tag) == -ERR_STATE &&
-        !sysfilecreateack(&pool, &work, &cache, &key) &&
-        !sysfilecreatebackend(&pool, &work, &cache, &key, &tag) &&
-        !sysconnworkinit(&backend_work, &cache, tag));
-  CHECK(sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work, space, ADDRESS, 0,
-                         &mapped, &active) < 0 &&
+        !sysfilecreateack(&pool, &work, &cache, &key));
+  CHECK(sysctxopenconnect(&contexts, 0, &pool, connections, &cache, &key, space, ADDRESS, 0,
+                          &mapped, &active) < 0 &&
         !mapped.mapped && !active.sequence && backend_work.state.bootstrap.state == SYSBOOT_RESULT);
+  tag = backend_work.state.tag;
   rpc = backend_work.state.bootstrap.rpc;
   sequence = backend_work.state.bootstrap.claim.seq;
   CHECK(rpc &&
-        !sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work, space,
-                          ADDRESS + 0x10000, 0, &mapped, &active) &&
+        !sysctxopenconnect(&contexts, 0, &pool, connections, &cache, &key, space, ADDRESS + 0x10000,
+                           0, &mapped, &active) &&
         backend_work.state.bootstrap.state == SYSBOOT_FREE && backend_work.state.map.verified &&
         cache.entries[tag.index].sequence == sequence);
   zero(files, sizeof(files));
@@ -262,8 +263,8 @@ resourceopens(const Bootview *boot)
         tag.index == backend_work.state.tag.index);
   zero(&mapped, sizeof(mapped));
   CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED &&
-        !sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work,
-                          bootresource(boot, BOOT_SELF_SPACE), 0, 0, &mapped, &active) &&
+        !sysctxopenconnect(&contexts, 0, &pool, connections, &cache, &key,
+                           bootresource(boot, BOOT_SELF_SPACE), 0, 0, &mapped, &active) &&
         !mapped.mapped && !mapped.verified);
   number = (int) sysfileopenfinish(&pool, &work, &cache, &fds, &open, &business);
   CHECK(number >= 0 && !business && !sysfdobserve(&fds, (u32) number, &fd) &&

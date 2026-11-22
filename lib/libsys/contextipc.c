@@ -986,6 +986,43 @@ restore:
 }
 
 isize
+sysctxopenconnect(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, Conncache *cache,
+                  const Opkey *key, Handle space, u64 address, u64 deadline, Bootmap *map,
+                  Rkey *active)
+{
+  const u64 bytes = SYSCONN_COUNT * sizeof(*connections);
+  Connentry entry;
+  Conntag   tag;
+  Connwork *source, *backend;
+  u64       mask, ignored;
+  isize     error, restored;
+  if (!cache || !key || layer >= RCTX_LAYERS || key->lease.slot / 2 != layer ||
+      key->connection.index >= SYSCONN_COUNT || handlekind(space) != HANDLE_RESOURCE ||
+      !storage(bank, connections, bytes, active) ||
+      !separate(connections, bytes, map, sizeof(*map)) ||
+      !separate(connections, bytes, key, sizeof(*key)) ||
+      !separate(connections, bytes, pool, sizeof(*pool)))
+    return -ERR_INVALID;
+  source = &connections[key->connection.index];
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfilecreatebackend(pool, source, cache, key, &tag);
+  if (!error)
+    error = sysconnview(cache, tag, &entry);
+  if (!error) {
+    backend = &connections[tag.index];
+    if (entry.state == SYSCONN_UNCLAIMED && backend->state.tag.generation != tag.generation)
+      error = sysconnworkinit(backend, cache, tag);
+  }
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (error || restored)
+    return error ? error : restored;
+  return sysctxopenattach(bank, layer, pool, source, cache, key, backend, space, address, deadline,
+                          map, active);
+}
+
+isize
 sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                  const Opkey *key, u64 deadline, Rkey *active)
 {
