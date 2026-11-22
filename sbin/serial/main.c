@@ -235,6 +235,7 @@ main(int argc, char **argv)
     if (error && error != -ERR_WOULD_BLOCK && error != -ERR_INTERRUPTED)
       failed(124, error);
     if (!error && message.kind == IPC_CALL) {
+      readyresult(deadline);
       command(&message, ready == 0);
     } else if (!error && message.kind == IPC_EVENT) {
       if (message.words[0] & SERIAL_IRQ_EVENT) {

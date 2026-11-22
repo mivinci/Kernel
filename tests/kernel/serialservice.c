@@ -5,6 +5,7 @@
 #include <proto/init.h>
 #include <proto/file.h>
 #include <errno.h>
+#include <proto/tty.h>
 #include <abi/resource.h>
 #include <abi/system.h>
 #include <abi/time.h>
@@ -14,7 +15,6 @@
 #include "private/syscall.h"
 #include "private/serial.h"
 #include "private/elf.h"
-#include "../../sbin/tty/start.h"
 
 extern const u8 serial_service[], serial_service_end[], serial_peer[], serial_peer_end[];
 extern const u8 tty_service[], tty_service_end[];

@@ -7,6 +7,7 @@
 #define INITCFG_SERVICES   16
 #define INITCFG_NAME_BYTES 64
 #define INITCFG_SERIAL     1
+#define INITCFG_TTY        2
 #define INITCFG_REQUIRED   1
 #define INITCFG_RECORD     160
 #define INITCFG_MAX_PAGES  4096

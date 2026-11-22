@@ -4,6 +4,7 @@
 #include "private/serial.h"
 #include "private/syscall.h"
 #include <proto/init.h>
+#include <proto/tty.h>
 #include <abi/resource.h>
 #include <abi/system.h>
 #include <abi/observe.h>
@@ -30,6 +31,8 @@ struct Work
   u64             wake;
   u64             observation;
   Msg             request, reply;
+  Handle          bindrpc, bindcall, bindnotify;
+  u32             bindcancelled, bindwait;
 };
 enum
 {
@@ -40,7 +43,8 @@ enum
   StageLoad,
   StageStart,
   StageReady,
-  StageRunning
+  StageRunning,
+  StageBind
 };
 #define READY_NS UINT64_C(10000000000)
 #define RETRY_NS UINT64_C(1000000)
@@ -57,6 +61,7 @@ static const Manifest *policy;
 static const Package  *catalog;
 static Handle          space, allocator, creator, system, listener, observer, mmio, irqsource;
 static u64             ownimage, uartkind, uartoffset, uartbytes, uartshift, uartwidth, mapbytes;
+static u32             serialindex;
 
 static isize
 account(Handle control, Queryrec *out)
@@ -117,6 +122,10 @@ arguments(Packet *packet, u32 index)
   argv[5] = number(numbers[3], uartshift);
   argv[6] = number(numbers[4], uartwidth);
   argv[7] = 0;
+  if (policy->service[index].kind == INITCFG_TTY) {
+    argv[1] = argv[4];
+    argv[2] = 0;
+  }
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
     return error;
@@ -147,6 +156,13 @@ cleanup(u32 index, u64 now)
   u64           written, next, address = SERVICE_RING_LO + (u64) index * SERVICE_STRIDE;
   u32           i;
   isize         error;
+  work->bindwait = 0;
+  if (work->bindrpc && !work->bindcancelled) {
+    error = ipc_rqcancel(work->bindrpc);
+    if (error)
+      return error;
+    work->bindcancelled = 1;
+  }
   if (state->view) {
     if (work->observation) {
       error = __sys_obsdrop(work->observation);
@@ -194,6 +210,26 @@ cleanup(u32 index, u64 now)
       return 0;
     }
   }
+  if (work->bindrpc) {
+    Ipcmsg result;
+    error = ipc_rqpoll(work->bindrpc, RQ_FINISH, &result);
+    if (error == -ERR_WOULD_BLOCK) {
+      work->wake = 0;
+      work->bindwait = 1;
+      return 0;
+    }
+    if (!error)
+      error = ipc_rqack(work->bindrpc, ACK_RESULT | ACK_RELEASE);
+    if (error)
+      return error;
+    work->bindrpc = 0;
+  }
+  if (work->bindcall) {
+    error = __sys_free(work->bindcall);
+    if (error)
+      return error;
+    work->bindcall = 0;
+  }
   for (i = 0; i < 2; i++) {
     if (state->flags & (MAP_RX << i)) {
       Serialring *ring = (Serialring *) (address + (u64) i * SERVICE_TX_OFF);
@@ -211,6 +247,15 @@ cleanup(u32 index, u64 now)
     }
   }
   if (state->control) {
+    /* The exact old serial authority must outlive an unfinished BIND. */
+    if (index == serialindex) {
+      for (i = 0; i < policy->count; i++)
+        if (operations[i].bindrpc) {
+          work->wake = 0;
+          work->bindwait = 1;
+          return 0;
+        }
+    }
     error = __sys_free(state->control);
     if (error)
       return error;
@@ -224,12 +269,10 @@ cleanup(u32 index, u64 now)
 }
 
 static isize
-resources(u32 index)
+serialresources(u32 index, Handle handles[5])
 {
   Servicestate *state = &servicestate[index];
-  Packet       *packet = &operations[index].packet;
   Allocarg      alloc;
-  Handle        handles[5];
   u64           address = SERVICE_RING_LO + (u64) index * SERVICE_STRIDE;
   u32           i;
   isize         error;
@@ -255,23 +298,129 @@ resources(u32 index)
   for (i = 0; !error && i < 2; i++)
     error = __sys_grant(state->view, state->rings[i], MAP_READ | MAP_WRITE, 0, SERIAL_RING_BYTES, 0,
                         &handles[3 + i]);
+  return error;
+}
+
+static isize
+ttyresources(Handle view, Handle handles[5])
+{
+  const Servicestate *serial = &servicestate[serialindex];
+  Handle              notify;
+  isize               error, release;
+  u32                 i;
+  error = __sys_grant(view, listener, RESOURCE_USE, 0, 0, 0, &handles[0]);
+  for (i = 0; !error && i < 2; i++)
+    error = __sys_grant(view, serial->rings[i], MAP_READ | MAP_WRITE, 0, SERIAL_RING_BYTES, 0,
+                        &handles[1 + i]);
+  if (!error)
+    error = __sys_connect(serial->control, CONNECT_NOTIFY, RESOURCE_USE | RESOURCE_GRANT,
+                          SERIAL_RX_ROOM | SERIAL_TX_READY, &notify);
+  if (error)
+    return error;
+  error = __sys_grant(view, notify, RESOURCE_USE, 0, 0, 0, &handles[3]);
+  release = __sys_free(notify);
+  return error ? error : release;
+}
+
+static isize
+resources(u32 index)
+{
+  Packet          *packet = &operations[index].packet;
+  Handle           handles[5];
+  static const u64 ttytags[] = {TTY_INIT_CALL, TTY_RX_RING, TTY_TX_RING, TTY_SERIAL_NOTIFY};
+  u32              tty = policy->service[index].kind == INITCFG_TTY;
+  u32              i, count = tty ? ARRAY_SIZE(ttytags) : ARRAY_SIZE(handles);
+  isize            error =
+      tty ? ttyresources(servicestate[index].view, handles) : serialresources(index, handles);
   if (error)
     return error;
   memset(packet, 0, sizeof(*packet));
   packet->header.magic = BOOT_MAGIC;
   packet->header.format = BOOT_FORMAT;
-  packet->header.bytes = offsetof(Packet, arguments);
-  packet->header.resource_count = ARRAY_SIZE(packet->resources);
+  packet->header.bytes = offsetof(Packet, resources) + (count + 2) * sizeof(Resentry);
+  packet->header.resource_count = count + 2;
   packet->header.resources_off = offsetof(Packet, resources);
   packet->header.user_lo = BOOT_USER_LO;
   packet->header.user_hi = BOOT_USER_HI;
   packet->resources[0].tag = BOOT_SELF_SPACE;
   packet->resources[1].tag = BOOT_SELF_ALLOC;
-  for (i = 0; i < 5; i++) {
-    packet->resources[2 + i].tag = SERIAL_INIT_CALL + i;
+  for (i = 0; i < count; i++) {
+    packet->resources[2 + i].tag = tty ? ttytags[i] : SERIAL_INIT_CALL + i;
     packet->resources[2 + i].handle = handles[i];
   }
   return arguments(packet, index);
+}
+
+static isize
+bindtty(u32 index, u64 now)
+{
+  Servicestate *tty = &servicestate[index], *serial = &servicestate[serialindex];
+  Work         *work = &operations[index];
+  Ipcmsg        result;
+  Queryrec      row;
+  u64           written, next;
+  Handle        notify;
+  isize         error, release;
+  Msg           request;
+  if (now >= tty->deadline)
+    return -ERR_TIMEDOUT;
+  if (!work->bindrpc) {
+    error = __sys_connect(tty->control, CONNECT_NOTIFY, RESOURCE_USE | RESOURCE_GRANT,
+                          SERIAL_RX_READY | SERIAL_TX_ROOM, &notify);
+    if (error)
+      return error;
+    error = __sys_grant(serial->control, notify, RESOURCE_USE, 0, 0, 0, &work->bindnotify);
+    release = __sys_free(notify);
+    if (error || release)
+      return error ? error : release;
+    error = __sys_connect(serial->control, CONNECT_CALL, RESOURCE_USE, 0, &work->bindcall);
+    if (error)
+      return error;
+    request = (Msg){{SERIAL_WORD(SERIAL_BIND), 1, (u64) work->bindnotify, tty->image}};
+    error = ipc_call(work->bindcall, &request, CALL_ASYNC | CALL_CONTROL, &result);
+    work->bindrpc = result.request;
+    return error ? error : work->bindrpc ? 0 : -ERR_STATE;
+  }
+  error = ipc_rqpoll(work->bindrpc, RQ_FINISH, &result);
+  if (error == -ERR_WOULD_BLOCK)
+    return 0;
+  if (error)
+    return error;
+  error = ipc_rqpoll(work->bindrpc, 0, &result);
+  if (!error &&
+      (result.kind || result.source || result.request || result.image || result.words[1] != 1))
+    error = -ERR_STATE;
+  if (!error &&
+      ((isize) result.words[0] > 0 || (result.words[0] && (result.words[2] || result.words[3]))))
+    error = -ERR_STATE;
+  if (!error)
+    error = (isize) result.words[0];
+  if (!error && (result.words[2] != (u64) tty->pid || result.words[3] != tty->image))
+    error = -ERR_PEER;
+  release = ipc_rqack(work->bindrpc, ACK_RESULT | ACK_RELEASE);
+  if (release)
+    return release;
+  work->bindrpc = 0;
+  release = __sys_free(work->bindcall);
+  if (release)
+    return release;
+  work->bindcall = 0;
+  if (!error) {
+    error = __sys_query(tty->control, QUERY_PROC, 0, &row, 1, &written, &next);
+    if (!error && (written != 1 || next || row.pid != tty->pid || row.image != tty->image ||
+                   row.data[3] == PROCESS_EXITING))
+      error = -ERR_PEER;
+  }
+  if (error) {
+    release = __sys_revoke(serial->control, work->bindnotify);
+    if (release && release != -ERR_STALE)
+      return release;
+    return error;
+  }
+  tty->state = SERVICE_READY;
+  tty->stage = StageRunning;
+  tty->deadline = 0;
+  return 0;
 }
 
 isize
@@ -352,6 +501,8 @@ serviceinit(const Manifest *manifest, const Package *package, const Bootview *bo
     servicestate[i].number = policy->service[i].number;
     servicestate[i].state = SERVICE_STARTING;
     servicestate[i].stage = StageImage;
+    if (policy->service[i].kind == INITCFG_SERIAL)
+      serialindex = (u32) i;
   }
   return 0;
 }
@@ -359,7 +510,7 @@ serviceinit(const Manifest *manifest, const Package *package, const Bootview *bo
 isize
 servicestep(u64 now, u32 *work, u64 *next)
 {
-  u32   i;
+  u32   i, j;
   isize error;
   *work = 0;
   *next = 0;
@@ -367,6 +518,7 @@ servicestep(u64 now, u32 *work, u64 *next)
     Servicestate     *state = &servicestate[i];
     Work             *operation = &operations[i];
     const Servicecfg *configuration = &policy->service[i];
+    u32               tty = configuration->kind == INITCFG_TTY;
     error = 0;
     if (operation->observation && state->state != SERVICE_STOPPING) {
       u64    status, reason, image;
@@ -384,10 +536,15 @@ servicestep(u64 now, u32 *work, u64 *next)
         return -ERR_STATE;
     }
     if (state->state == SERVICE_STOPPING) {
+      Handle binding = operation->bindrpc;
       error = cleanup(i, now);
       if (error)
         return error;
-    } else if (state->state == SERVICE_STARTING && operation->wake <= now) {
+      /* An earlier serial pass may still be holding CONTROL for this request. */
+      if (binding && !operation->bindrpc)
+        *work = 1;
+    } else if (state->state == SERVICE_STARTING && operation->wake <= now &&
+               (!tty || servicestate[serialindex].state == SERVICE_READY)) {
       switch (state->stage) {
       case StageImage:
         operation->item = packagefind(catalog, (const char *) configuration->image);
@@ -403,7 +560,9 @@ servicestep(u64 now, u32 *work, u64 *next)
           if (now > UINT64_MAX - READY_NS)
             return -ERR_OVERFLOW;
           state->deadline = now + READY_NS;
-          state->stage = StageHandoff;
+          state->stage = tty ? StageCreate : StageHandoff;
+          if (tty)
+            state->deadline = 0;
         }
         break;
       case StageHandoff:
@@ -487,16 +646,27 @@ servicestep(u64 now, u32 *work, u64 *next)
         if (now >= state->deadline)
           error = -ERR_TIMEDOUT;
         break;
+      case StageBind:
+        error = bindtty(i, now);
+        break;
       default:
         return -ERR_STATE;
       }
       if (error)
         stop(i, error);
     }
+    if (state->state == SERVICE_STOPPING || state->state == SERVICE_FAILED)
+      for (j = 0; j < policy->count; j++)
+        if (servicestate[j].state == SERVICE_STARTING || servicestate[j].state == SERVICE_READY) {
+          stop(j, -ERR_PEER);
+          *work = 1;
+        }
     if (state->state == SERVICE_STOPPING)
-      *work |= operation->wake <= now;
+      *work |= !operation->bindwait && operation->wake <= now;
     if (state->state == SERVICE_STARTING) {
-      *work |= state->stage != StageReady && operation->wake <= now;
+      if (!tty || servicestate[serialindex].state == SERVICE_READY)
+        *work |= state->stage != StageReady && (state->stage != StageBind || !operation->bindrpc) &&
+                 operation->wake <= now;
       if (state->deadline && (!*next || state->deadline < *next))
         *next = state->deadline;
     }
@@ -595,9 +765,14 @@ servicemessage(const Ipcmsg *message, u64 now)
       status = -ERR_PEER;
       stop(i, status);
     } else {
-      state->state = SERVICE_READY;
-      state->stage = StageRunning;
-      state->deadline = 0;
+      if (policy->service[i].kind == INITCFG_TTY) {
+        state->stage = StageBind;
+        state->deadline = now + MIN(READY_NS, UINT64_MAX - now);
+      } else {
+        state->state = SERVICE_READY;
+        state->stage = StageRunning;
+        state->deadline = 0;
+      }
       words.words[2] = state->number;
       words.words[3] = state->image;
       status = 0;

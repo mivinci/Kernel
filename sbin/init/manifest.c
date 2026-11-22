@@ -16,7 +16,7 @@ manifestopen(const void *input, u64 bytes, u64 machine, Manifest *out)
 {
   const u8 *data = input, *row;
   Manifest  checked;
-  u64       count, hash = UINT64_C(0xcbf29ce484222325), mask = 0, done = 0, before, i, j, k;
+  u64       count, hash = UINT64_C(0xcbf29ce484222325), mask = 0, serial = 0, tty = 0, i, j, k;
   if (!input || !out || bytes < 64 || (machine != BOOTPKG_ARM64 && machine != BOOTPKG_RISCV))
     return -ERR_INVALID;
   count = read64(data + 32);
@@ -51,11 +51,11 @@ manifestopen(const void *input, u64 bytes, u64 machine, Manifest *out)
     for (j = 0; j < 3; j++)
       service->reserved[j] = read64(row + 136 + j * 8);
     if (!service->number || service->number > INITCFG_SERVICES ||
-        mask & (UINT64_C(1) << (service->number - 1)) || service->kind != INITCFG_SERIAL ||
-        service->flags != INITCFG_REQUIRED || service->creator != BOOT_CREATE ||
-        !service->memlimit || service->memlimit > INITCFG_MAX_PAGES ||
-        service->exec_limit < service->memlimit || service->exec_limit > INITCFG_MAX_EXEC ||
-        service->resources < 9 || service->resources > BOOT_RESOURCE_COUNT || !service->pending ||
+        mask & (UINT64_C(1) << (service->number - 1)) || service->flags != INITCFG_REQUIRED ||
+        service->creator != BOOT_CREATE || !service->memlimit ||
+        service->memlimit > INITCFG_MAX_PAGES || service->exec_limit < service->memlimit ||
+        service->exec_limit > INITCFG_MAX_EXEC || service->resources < 9 ||
+        service->resources > BOOT_RESOURCE_COUNT || !service->pending ||
         service->pending > INITCFG_PENDING ||
         service->dependencies & ~((UINT64_C(1) << INITCFG_SERVICES) - 1) || service->reserved[0] ||
         service->reserved[1] || service->reserved[2])
@@ -68,23 +68,15 @@ manifestopen(const void *input, u64 bytes, u64 machine, Manifest *out)
       if (service->image[k])
         return -ERR_INVALID;
     mask |= UINT64_C(1) << (service->number - 1);
-  }
-  for (i = 0; i < count; i++)
-    if (checked.service[i].dependencies & ~mask)
-      return -ERR_INVALID;
-  for (k = 0; k < count; k++) {
-    before = done;
-    for (i = 0; i < count; i++)
-      if (!(checked.service[i].dependencies & ~done))
-        done |= UINT64_C(1) << (checked.service[i].number - 1);
-    if (done == mask)
-      break;
-    if (done == before)
+    if (service->kind == INITCFG_SERIAL && !serial && !service->dependencies)
+      serial = UINT64_C(1) << (service->number - 1);
+    else if (service->kind == INITCFG_TTY && !tty)
+      tty = service->dependencies;
+    else
       return -ERR_INVALID;
   }
-  /* Only the selected console UART exists in the first inventory contract. */
-  if (count != 1)
-    return -ERR_NOTSUP;
+  if (!serial || (count == 2 && tty != serial) || count > 2)
+    return -ERR_INVALID;
   *out = checked;
   return 0;
 }

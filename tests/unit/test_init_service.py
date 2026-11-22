@@ -35,7 +35,9 @@ class InitServiceTests(unittest.TestCase):
         image = directory / 'serial.elf'
         image.write_bytes(executable(243))
         cls.config = directory / 'init.cfg'
-        cls.config.write_bytes(initcfg.generate(json.loads((ROOT / 'config/boot.json').read_text()),
+        configuration = json.loads((ROOT / 'config/boot.json').read_text())
+        configuration['services'] = [s for s in configuration['services'] if s['kind'] == 'serial']
+        cls.config.write_bytes(initcfg.generate(configuration,
                                               {'sbin/serial': image}, 243))
         cls.package = directory / 'input.pkg'
         cls.package.write_bytes(bootpkg.pack([('sbin/init', executable(243)),

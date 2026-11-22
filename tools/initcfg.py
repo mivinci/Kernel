@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def constants():
     text = (ROOT / 'sbin/init/manifest.h').read_text()
     result = {}
-    for name in ('MAGIC', 'FORMAT', 'SERVICES', 'NAME_BYTES', 'SERIAL', 'REQUIRED',
+    for name in ('MAGIC', 'FORMAT', 'SERVICES', 'NAME_BYTES', 'SERIAL', 'TTY', 'REQUIRED',
                  'RECORD', 'MAX_PAGES', 'MAX_EXEC', 'PENDING'):
         match = re.search(r'^#define\s+INITCFG_' + name +
                           r'\s+(?:UINT64_C\((0x[0-9a-fA-F]+|[0-9]+)\)|(0x[0-9a-fA-F]+|[0-9]+))\s*$', text, re.M)
@@ -57,7 +57,7 @@ def generate(configuration, images, machine):
         if number in ids:
             raise ValueError('duplicate service id')
         ids.add(number)
-        if (service['kind'] != 'serial' or service['creator'] != 'default-service' or
+        if (service['kind'] not in ('serial', 'tty') or service['creator'] != 'default-service' or
                 service['required'] is not True):
             raise ValueError('unsupported service kind, creator or failure policy')
         name = service['image']
@@ -82,7 +82,7 @@ def generate(configuration, images, machine):
         if name not in images:
             raise ValueError('missing configured image: ' + name)
         plan(Path(images[name]).read_bytes(), machine, memory)
-        records.append(dict(number=number, name=encoded, memory=memory, peak=peak,
+        records.append(dict(number=number, kind=service['kind'], name=encoded, memory=memory, peak=peak,
                             slots=slots, pending=pending, dependencies=dependencies))
     mask = sum(1 << (value - 1) for value in ids)
     done = 0
@@ -98,14 +98,17 @@ def generate(configuration, images, machine):
             break
         if done == before:
             raise ValueError('cyclic service dependencies')
-    if len(records) != 1:
-        raise ValueError('only one selected console UART is currently supported')
+    serial = [r for r in records if r['kind'] == 'serial']
+    tty = [r for r in records if r['kind'] == 'tty']
+    if len(serial) != 1 or serial[0]['dependencies'] or len(tty) > 1 or (
+            tty and tty[0]['dependencies'] != 1 << (serial[0]['number'] - 1)):
+        raise ValueError('expected one serial and at most one tty depending on it')
     records.sort(key=lambda record: record['number'])
     payload = bytearray(HEADER.pack(WIRE['MAGIC'], WIRE['FORMAT'],
                                     HEADER.size + len(records) * RECORD.size, machine,
                                     len(records), HEADER.size, RECORD.size, 0))
     for record in records:
-        payload += RECORD.pack(record['number'], WIRE['SERIAL'], WIRE['REQUIRED'],
+        payload += RECORD.pack(record['number'], WIRE[record['kind'].upper()], WIRE['REQUIRED'],
                                _bootconstant('BOOT_CREATE'), record['memory'], record['peak'],
                                record['slots'], record['pending'], record['dependencies'],
                                record['name'], 0, 0, 0)

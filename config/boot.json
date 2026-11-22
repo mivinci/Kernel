@@ -12,6 +12,18 @@
       "resources": 16,
       "pending": 4,
       "depends": []
+    },
+    {
+      "id": 2,
+      "kind": "tty",
+      "image": "sbin/tty",
+      "creator": "default-service",
+      "required": true,
+      "memory_pages": 64,
+      "exec_pages": 128,
+      "resources": 16,
+      "pending": 4,
+      "depends": [1]
     }
   ]
 }

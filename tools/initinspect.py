@@ -1,4 +1,4 @@
-"""Stopped-guest inspection of the first production init/serial pair.
+"""Stopped-guest inspection of production init, serial and tty.
 
 Private kernel layouts are checked against actual symbol extents. They are
 debugger knowledge, never a userspace ABI or a source of native authority.
@@ -13,6 +13,7 @@ from run import run_command
 SPACE = struct.Struct('<3Q2IQ6I')
 ACCOUNT = struct.Struct('<6Q4I')
 STACK = struct.Struct('<2Q2I5Q2I')
+REQUEST = struct.Struct('<Q48x4Q72xqII16x')
 
 
 def invalidate_ring(qmp, gdb, directory, args, root, delta):
@@ -104,6 +105,32 @@ class Memory:
         return tables, leaves
 
 
+def bind_timeout(qmp, directory, args, names, registry):
+    """Verify the stalled BIND owns a retired kernel request after both waits."""
+    serial, tty = registry[:16], registry[16:]
+    if (serial[9:11] != [1, 265] or tty[9:11] != [1, 265] or
+            not serial[5] or tty[1:3] != [3, 9] or tty[8] != (1 << 64) - 21):
+        raise ValueError('bind timeout did not reap both services and retain the old serial CONTROL')
+    rows = [line.split() for line in (directory / 'symbols.log').read_text().splitlines()
+            if line.split() and line.split()[-1] == 'requests']
+    if len(rows) != 1 or int(rows[0][2]) != REQUEST.size * 1024:
+        raise ValueError('private request inspection layout drift')
+    raw = Memory(qmp, directory, args).dump('bind-timeout-requests.bin', names['requests'],
+                                            REQUEST.size * 1024)
+    requests = [(slot, row) for slot, row in enumerate(REQUEST.iter_unpack(raw))
+                if row[1:5] == (1, serial[3], 1, serial[4]) and row[-2]]
+    if len(requests) != 1:
+        raise ValueError('expected one live PID1 request to the retired serial image')
+    slot, (generation, caller, server, caller_image, server_image, status, state, flags) = requests[0]
+    orphan, deferred, settled = 512, 16, 7
+    if (not generation or status != -14 or state != 3 or flags & (orphan | deferred) != orphan | deferred
+            or flags & settled):
+        raise ValueError('stalled BIND was not retained as a deferred, unfinished request')
+    return dict(stamp=generation << 16 | slot, caller=caller, caller_image=caller_image,
+                server=server, server_image=server_image, status=status,
+                deferred=True, retired=True, finished=False)
+
+
 def prepare(qmp, directory, args, record, names, retained):
     memory = Memory(qmp, directory, args)
     text = (directory / 'symbols.log').read_text()
@@ -160,30 +187,38 @@ def prepare(qmp, directory, args, record, names, retained):
     if 'initstate' not in symbols or 'servicestate' not in symbols:
         raise ValueError('production init registry is missing')
     state = struct.unpack('<8Q', memory.read(root, symbols['initstate'], 64))
-    registry = struct.unpack('<16Q', memory.read(root, symbols['servicestate'], 128))
+    registry, tty = struct.iter_unpack('<16Q', memory.read(root, symbols['servicestate'], 256))
     children = [s for s in spaces if s['root'] != root]
     if args.init_exit is None:
-        if state[0] != 1 or state[7] or len(children) != 1 or registry[0:3] != (1, 2, 8):
-            raise ValueError('default init did not commit its required serial READY')
-        if registry[3] >> 59 != 1 or registry[4] != 1 or not registry[5] or any(registry[6:11]) or registry[11:13] != (1, 0) or not all(registry[13:15]) or registry[15] != 7:
-            raise ValueError('READY registry owns an invalid preparation/deadline/result')
+        if state[0] != 1 or state[7] or len(children) != 2:
+            raise ValueError('default init did not commit both services')
+        for number, row in enumerate((registry, tty), 1):
+            if (row[:3] != (number, 2, 8) or row[3] >> 59 != 1 or row[4] != 1
+                    or not row[5] or any(row[6:11]) or row[11:13] != (1, 0)):
+                raise ValueError('READY registry owns an invalid preparation/deadline/result')
+        if not all(registry[13:15]) or registry[15] != 7 or any(tty[13:15]) or tty[15] != 4:
+            raise ValueError('serial does not have sole ring ownership')
     else:
         if state[0] != 2 or state[7] != args.init_exit or children:
             raise ValueError('fatal init left a child Space or incorrect failure state')
-        if args.init_exit == 110 and (registry[0:2] != (1, 4) or not registry[8] or registry[12] != 1 or any(registry[5:8]) or any(registry[13:15]) or registry[15] & 3):
-            raise ValueError('required serial failure preceded actual cleanup')
+        if args.init_exit == 110:
+            for number, row in enumerate((registry, tty), 1):
+                if (row[:2] != (number, 4) or not row[8] or row[12] != 1 or
+                        any(row[5:8]) or any(row[13:15]) or row[15] & 3):
+                    raise ValueError('required service failure preceded actual cleanup')
     if state[7] not in (105, 106):
         own = struct.unpack('<24Q', memory.read(root, symbols['initaccount'], 192))
         if own[0:3] != (3, 1, 0) or own[7] != parent[0]['charged'] or own[8]:
             raise ValueError('init account snapshot differs from physical account')
     if children:
-        account = struct.unpack('<24Q', memory.read(root, symbols['serviceaccounts'], 192))
-        if account[0:3] != (3, registry[3], 0) or account[5:9] != (children[0]['limit'], children[0]['peak'], children[0]['charged'], 0):
-            raise ValueError('service account snapshot differs from physical account')
+        snapshots = struct.iter_unpack('<24Q', memory.read(root, symbols['serviceaccounts'], 384))
+        for row, child, account in zip((registry, tty), children, snapshots):
+            if account[0:3] != (3, row[3], 0) or account[5:9] != (child['limit'], child['peak'], child['charged'], 0):
+                raise ValueError('service account snapshot differs from physical account')
     retained['initial_charged'] = retained['charged']
     retained['charged'] = parent[0]['charged']
     retained['extra_stacks'] = [s for s in stacks if s['acct'] != retained['acct']]
-    record['production_init'] = dict(state=list(state), service=list(registry),
+    record['production_init'] = dict(state=list(state), service=list(registry), tty_registry=list(tty),
                                      parent=parent[0], children=children,
                                      elf_sha256=digest(artifact), cleanup_before_fatal=args.init_exit == 110)
 
@@ -193,12 +228,20 @@ def audit_child(qmp, directory, args, record, kernel_root, parent_leaves, data, 
     if not production['children']:
         return
     memory = Memory(qmp, directory, args)
-    child = production['children'][0]
-    row = next(item for item in package['items'] if item['name'] == b'sbin/serial')
+    for index, name in enumerate(('serial', 'tty')):
+        audit_service(memory, directory, args, record, kernel_root, parent_leaves, data, package,
+                      production['children'][index], name)
+
+
+def audit_service(memory, directory, args, record, kernel_root, parent_leaves, data, package, child, name):
+    production = record['production_init']
+    tty = name == 'tty'
+    registry = production['tty_registry' if tty else 'service']
+    row = next(item for item in package['items'] if item['name'] == ('sbin/' + name).encode())
     raw = data[row['elf_off']:row['elf_off'] + row['elf_bytes']]
-    artifact = ROOT / 'build' / args.arch / 'sbin/serial.elf'
+    artifact = ROOT / 'build' / args.arch / 'sbin' / (name + '.elf')
     if raw != artifact.read_bytes():
-        raise ValueError('default package serial differs from production service ELF')
+        raise ValueError('default package differs from production ' + name + ' ELF')
     _, image = elfplan(raw, PROFILES[args.arch]['machine'], 4096)
     tables, leaves = memory.walk(child['root'], kernel_root)
     expected = {va: dict(prot=p['prot'], kind='image', data=bytes(p['data'])) for va, p in image.items()}
@@ -209,8 +252,9 @@ def audit_child(qmp, directory, args, record, kernel_root, parent_leaves, data, 
             expected[child_base + offset] = dict(prot=3, kind='shared', pa=parent_leaves[parent_base + offset][0])
     uart = next(d for d in record['discovery']['devices'] if d['kind'] in (1, 2))['mmio'][0]
     base = uart['base'] & ~4095
-    for offset in range(0, (uart['base'] - base + uart['size'] + 4095) & ~4095, 4096):
-        expected[0x2000000 + offset] = dict(prot=3, kind='device', pa=base + offset)
+    if not tty:
+        for offset in range(0, (uart['base'] - base + uart['size'] + 4095) & ~4095, 4096):
+            expected[0x2000000 + offset] = dict(prot=3, kind='device', pa=base + offset)
     if set(leaves) != set(expected) or len(tables) != child['tables']:
         raise ValueError('unexpected or missing service mapping/table')
     private = set()
@@ -229,7 +273,7 @@ def audit_child(qmp, directory, args, record, kernel_root, parent_leaves, data, 
             raise ValueError('service private memory aliases another allocation')
         private.add(pa)
         if item['kind'] == 'image' and not prot & 2 and memory.page(pa) != item['data']:
-            raise ValueError('immutable serial bytes differ from actual ELF')
+            raise ValueError('immutable service bytes differ from actual ELF')
     stack = child['stack']
     owned = tables | private | {s['pa'] for s in stack['stacks']} | {stack['stack_table']}
     if len(owned) != len(tables) + len(private) + 5 or len(owned) != child['charged']:
@@ -250,43 +294,54 @@ def audit_child(qmp, directory, args, record, kernel_root, parent_leaves, data, 
         raise ValueError('unmapped or incorrectly funded service physical pages')
     symbols = {}
     # The service's own state binds the inspected Space to its actual PID/image.
-    inspection = run_command([record['build']['tools']['readelf']['path'], '-s', str(artifact)], directory / 'serial-symbols.log', args.timeout)
+    inspection = run_command([record['build']['tools']['readelf']['path'], '-s', str(artifact)], directory / (name + '-symbols.log'), args.timeout)
     if not inspection.ok:
-        raise ValueError('cannot inspect production serial symbols')
-    for line in (directory / 'serial-symbols.log').read_text().splitlines():
+        raise ValueError('cannot inspect production ' + name + ' symbols')
+    for line in (directory / (name + '-symbols.log')).read_text().splitlines():
         parts = line.split()
         if len(parts) >= 8 and parts[0].endswith(':') and parts[0][:-1].isdigit():
             symbols[parts[-1]] = int(parts[1], 16)
-    state = struct.unpack('<16Q', memory.read(child['root'], symbols['serialstate'], 128))
-    if state[0:5] != (3, production['service'][3], 1, 1, 1) or not state[13] or any(state[8:12]) or any(state[14:]):
-        raise ValueError('serial did not acknowledge READY or used the wrong PID/image')
-    incoming = record.get('production_uart_input')
-    if not incoming or state[6] != incoming['bytes'] or not state[5] or state[7]:
-        raise ValueError('production UART input did not pass through the real IRQ-driven serial process')
+    incoming = record['production_uart_input']
+    if tty:
+        state = struct.unpack('<8Q', memory.read(child['root'], symbols['ttystate'], 64))
+        if state != (3, registry[3], 1, registry[0], 0, 0, incoming['bytes'], 0):
+            raise ValueError('tty did not acknowledge READY and consume the UART input')
+        tags = (1, 2, 0x110, 0x111, 0x112, 0x113)
+        expected_args = ('sbin/tty', str(registry[0]))
+        io = dict(received=state[6])
+    else:
+        state = struct.unpack('<16Q', memory.read(child['root'], symbols['serialstate'], 128))
+        if (state[:5] != (4, registry[3], 1, 1, registry[0]) or not state[13] or
+                state[8:12] != (production['tty_registry'][3], 1, 0, 0) or any(state[14:])):
+            raise ValueError('serial did not bind the exact tty image')
+        if state[6:8] != (incoming['bytes'], incoming['echo_bytes']) or not state[5]:
+            raise ValueError('UART input and echo did not pass through the IRQ-driven serial process')
+        tags = (1, 2, 0x100, 0x101, 0x102, 0x103, 0x104)
+        expected_args = ('sbin/serial', 'ns16550' if args.arch == 'riscv' else 'pl011',
+                         str(uart['base'] - base), str(uart['size']), str(registry[0]),
+                         '0', '1' if args.arch == 'riscv' else '4')
+        io = dict(received=state[6], transmitted=state[7], irq_events=state[5], peer=state[8])
     boot = struct.unpack('<18Q', memory.read(child['root'], 0x3fff000000, 144))
     if (boot[0:2] != (0x4b424f4f54303031, 2) or not 144 <= boot[2] <= 4096 or
-            boot[3:8] != (0, 7, 368, 0, 0) or boot[8:10] != (7, 144) or
+            boot[3:8] != (0, len(expected_args), 144 + len(tags) * 32, 0, 0) or
+            boot[8:10] != (len(tags), 144) or
             any(boot[10:14]) or boot[14:16] != (0x10000, 0x4000000000) or any(boot[16:])):
-        raise ValueError('serial Boot differs from the native private resource contract')
+        raise ValueError('service Boot differs from the native private resource contract')
     startup = memory.read(child['root'], 0x3fff000000, boot[2])
-    for i, tag in enumerate((1, 2, 0x100, 0x101, 0x102, 0x103, 0x104)):
+    for i, tag in enumerate(tags):
         resource = struct.unpack_from('<4Q', startup, boot[9] + i * 32)
         if resource[0] != tag or resource[1] >> 59 != 2 or any(resource[2:]):
-            raise ValueError('serial Boot did not receive real least-rights resources')
-    expected_args = ('sbin/serial', 'ns16550' if args.arch == 'riscv' else 'pl011',
-                     str(uart['base'] - base), str(uart['size']), str(production['service'][0]),
-                     '0', '1' if args.arch == 'riscv' else '4')
-    end = boot[5] + 7 * 8
+            raise ValueError('service Boot did not receive real least-rights resources')
+    end = boot[5] + len(expected_args) * 8
     for i, text in enumerate(expected_args):
         offset, length = struct.unpack_from('<2I', startup, boot[5] + i * 8)
         encoded = text.encode() + b'\0'
         if offset != end or length != len(encoded) or startup[offset:offset + length] != encoded:
-            raise ValueError('serial Boot arguments differ from the accepted device/service configuration')
+            raise ValueError('service Boot arguments differ from the accepted configuration')
         end += length
     if boot[2] != end + 16 or startup[end:] != bytes(16):
-        raise ValueError('serial Boot did not retain the argument NULL-vector budget')
-    production['serial'] = dict(pid=state[1], image=state[2], ready=True, phase=state[0],
-                                received=state[6], transmitted=state[7], irq_events=state[5],
+        raise ValueError('service Boot did not retain the argument NULL-vector budget')
+    production[name] = dict(pid=state[1], image=state[2], ready=True, phase=state[0], **io,
                                 table_pages=len(tables), private_pages=len(private),
                                 charged=len(owned), complete_pte_audit=True,
                                 shared_aliases_checked=True, physical_owner_audit=True,

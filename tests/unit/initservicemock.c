@@ -316,6 +316,54 @@ ipc_rqcheck(Handle request, u64 *state)
   *state = rqstate;
   return 0;
 }
+/* This fixture selects the serial-only profile. */
+isize
+__sys_connect(Handle authority, u64 kind, u64 rights, u64 bits, Handle *out)
+{
+  (void) authority;
+  (void) kind;
+  (void) rights;
+  (void) bits;
+  (void) out;
+  return -ERR_NOTSUP;
+}
+isize
+__sys_revoke(Handle target, Handle resource)
+{
+  (void) target;
+  (void) resource;
+  return -ERR_NOTSUP;
+}
+isize
+ipc_call(Handle target, const Msg *words, u64 options, Ipcmsg *out)
+{
+  (void) target;
+  (void) words;
+  (void) options;
+  (void) out;
+  return -ERR_NOTSUP;
+}
+isize
+ipc_rqpoll(Handle rpc, u64 options, Ipcmsg *out)
+{
+  (void) rpc;
+  (void) options;
+  (void) out;
+  return -ERR_NOTSUP;
+}
+isize
+ipc_rqack(Handle rpc, u64 options)
+{
+  (void) rpc;
+  (void) options;
+  return -ERR_NOTSUP;
+}
+isize
+ipc_rqcancel(Handle rpc)
+{
+  (void) rpc;
+  return -ERR_NOTSUP;
+}
 isize
 ipc_rqfinish(Handle request)
 {

@@ -49,10 +49,13 @@ class InitManifestTests(unittest.TestCase):
         self.addCleanup(self.work.cleanup)
         self.image = Path(self.work.name) / 'serial.elf'
         self.configuration = json.loads((ROOT / 'config/boot.json').read_text())
+        self.default = copy.deepcopy(self.configuration)
+        self.configuration['services'] = self.configuration['services'][:1]
 
     def sample(self, machine=243, configuration=None):
         self.image.write_bytes(executable(machine))
-        return initcfg.generate(configuration or self.configuration, {'sbin/serial': self.image}, machine)
+        return initcfg.generate(configuration or self.configuration,
+                                {'sbin/serial': self.image, 'sbin/tty': self.image}, machine)
 
     def mutate(self, data, offset, value):
         changed = bytearray(data)
@@ -103,6 +106,15 @@ class InitManifestTests(unittest.TestCase):
             self.reject(changed)
         self.reject(data, machine=0)
 
+    def test_default_tty_requires_the_exact_serial_dependency(self):
+        data = self.sample(configuration=self.default)
+        for parsed in self.parse(data):
+            self.assertEqual(parsed.count, 2)
+            self.assertEqual((parsed.service[1].number, parsed.service[1].kind,
+                              parsed.service[1].dependencies), (2, 2, 1))
+        for invalid in (0, 2, 3, 4):
+            self.reject(self.mutate(data, 288, invalid))
+
     def test_budget_rights_tags_reserved_padding_and_empty_name_fail_without_output(self):
         data = self.sample()
         for offset, value in ((64, 0), (64, 17), (72, 2), (80, 0), (80, 3),
@@ -129,7 +141,7 @@ class InitManifestTests(unittest.TestCase):
         self.reject(self.mutate(two, 56, 0))
         struct.pack_into('<Q', two, 128, 0)
         struct.pack_into('<Q', two, 288, 0)
-        self.reject(self.mutate(two, 56, 0), -18)
+        self.reject(self.mutate(two, 56, 0))
 
     def test_host_schema_refuses_unknown_fields_types_and_out_of_profile_values(self):
         self.image.write_bytes(executable(243))

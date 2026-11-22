@@ -345,6 +345,8 @@ rqclean(owner, request) 仅由持有专门清理授权的 init 使用；owner �
 
 具体编码候选待用户确认（2026-11-21）：保留0x1b，CONTROL增加专用CLEAN=0x80，仅精确初始init镜像创建服务时取得，其他SERVICE创建保留原0x7f；CLEAN位不转授、不继承。第二参数采用完整REQUEST Handle，由已有QUERY_RQ的stamp按既定类别/代次/索引编码取得；查询不自动获得清理权。内核须核对CONTROL绑定旧Life、请求原接收PID/image、旧镜像结束及CPU/空间清理阶段，init另确认下游/DMA；原失败结果保持。06旧表目前写control,rpc，与本节request尚未收口；该候选尚非冻结ABI，CONTROL_RIGHTS仍为0x7f，未据此实现原生管理入口。
 
+默认 init 的 serial/tty 晚绑定已经遇到这个依赖。serial 接收并暂存控制请求后不回覆，init 到期终止两个服务；两个孩子的 wait 状态均已收取，旧接收者的请求仍在退役链，`RQ_FINISH` 无法完成。BIND 是无下游、无 DMA 的首个代收尾调用者。init 保存原 RPC 与旧 serial CONTROL，可用查询记录的同一请求代次定位 REQUEST；失败结果和实际服务收尾依旧分别管理。两架构的反例和启动接续见 [07](07-boot.md#默认-init-启动并绑定-tty)。
+
 #### 示例：fs 死亡但 blk 仍工作
 
 fs 持 READ 等待 blk 时崩溃，内核冻结原归属并向客户端发布失败；init 查询旧 fs 尚未收尾请求，协调 blk 排空旧连接/区域后 rqclean(owner, request)。客户端再观察 RQ_FINISH，按协议归还槽并释放跟踪。

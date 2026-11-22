@@ -1317,6 +1317,19 @@ def exercise(args, run_dir, record):
                 if args.bootpkg_error:
                     expected = 'PANIC initrd missing\n' if args.bootpkg_error == 'missing' else 'PANIC boot package\n'
                 while True:
+                    if getattr(args,'bind_stall',False) and time.monotonic() + 0.5 >= deadline and proc.poll() is None:
+                        qmp.command('stop')
+                        record['bind_timeout_registry']=probe_package_init(
+                            qmp,run_dir,args,record,'bind-timeout-registry','servicestate',32)
+                        record['bind_timeout_request']=initinspect.bind_timeout(
+                            qmp,run_dir,args,names,record['bind_timeout_registry'])
+                        qmp.command('quit')
+                        proc.wait(timeout=2)
+                        if proc.returncode != 0 or _group_exists(proc.pid):
+                            raise SmokeError('QEMU exited unsuccessfully or left descendants')
+                        record['returncode'] = proc.returncode
+                        record['guest_executed'] = True
+                        return
                     if proc.poll() is not None or time.monotonic() >= deadline:
                         raise SmokeError("QEMU exited/timed out before expected diagnostic")
                     text = serial.read_text(errors="replace").replace("\r", "") if serial.exists() else ""
@@ -1404,19 +1417,21 @@ def exercise(args, run_dir, record):
                     observed_pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)
                     if not observed_pc or not idle_lo<=int(observed_pc[1],16)<=idle_hi:
                         raise SmokeError('production services did not block before external UART input')
-                    payload=b'init-rx'
+                    payload=b'init-rx\r'
+                    echo=b'init-rx\r\n'
                     if os.write(input_fd,payload)!=len(payload):
                         raise SmokeError('short production UART input injection')
                     while True:
                         qmp.command('cont');time.sleep(.01);qmp.command('stop')
                         received=probe_package_init(qmp,run_dir,args,record,'production-rx-ring',words=12,address=0x3000000)
-                        if received[3]==len(payload):
-                            if received[:3]!=[0x4b5352494e473031,8192,1] or any(received[4:8]) or struct.pack('<4Q',*received[8:])[:len(payload)]!=payload:
+                        if received[4]==len(payload) and echo in serial.read_bytes():
+                            if received[:5]!=[0x4b5352494e473031,8192,1,len(payload),len(payload)] or any(received[5:8]) or struct.pack('<4Q',*received[8:])[:len(payload)]!=payload:
                                 raise SmokeError('production serial lost or changed external input')
                             break
                         if received[3]>len(payload) or time.monotonic()>=deadline:
                             raise SmokeError('production serial did not deliver external UART input')
-                    record['production_uart_input']=dict(bytes=len(payload),hex=payload.hex(),blocked_before_injection=True)
+                    record['production_uart_input']=dict(bytes=len(payload),hex=payload.hex(),
+                        echo_bytes=len(echo),echo_hex=echo.hex(),blocked_before_injection=True)
                     registers=qmp.command('human-monitor-command',{'command-line':'info registers'})
                     for retry in range(20):
                         observed_pc=re.search(r'\bpc\s+([0-9a-f]+)',registers,re.I) if args.arch=='riscv' else re.search(r'\bPC=([0-9a-f]+)',registers)

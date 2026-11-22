@@ -4,6 +4,12 @@
 
 #define TTY_GETATTR 1
 
+/* Private init-to-tty Boot tags. argv[1] is the manifest service number. */
+#define TTY_INIT_CALL     0x110
+#define TTY_RX_RING       0x111
+#define TTY_TX_RING       0x112
+#define TTY_SERIAL_NOTIFY 0x113
+
 #define TTY_ICRNL  1
 #define TTY_OPOST  1
 #define TTY_ONLCR  2

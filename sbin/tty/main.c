@@ -1,11 +1,10 @@
 #include "serial.h"
-#include "start.h"
 #include "private/start.h"
 #include "private/syscall.h"
 #include <abi/resource.h>
 #include <abi/time.h>
-#include <errno.h>
 #include <proto/init.h>
+#include <errno.h>
 #include <sys/channel.h>
 #include <unistd.h>
 
@@ -63,7 +62,7 @@ ttyboot(const Bootview *boot, u64 *number)
   if (!boot || !boot->header || boot->header->argc != 2 || boot->argv[0].length < 2)
     return -ERR_INVALID;
   text = bootarg(boot, 1, 0);
-  for (i = 0; text[i]; i++) {
+  for (i = 0; i + 1 < boot->argv[1].length; i++) {
     if (text[i] < '0' || text[i] > '9')
       return -ERR_INVALID;
     digit = (u32) (text[i] - '0');

@@ -155,7 +155,7 @@ isize __sys_wait(Handle selector,u64 options,Handle *pid,u64 *kind,u64 *code,u64
   return -ERR_CHILD;
 }
 isize ipc_recv(u64 mask,u64 options,Ipcmsg *out){
-  receives++;if(mask!=(EVENT_CHILD|EVENT_LIFE|EVENT_TIMER|EVENT_RQ_CANCEL)||
+  receives++;if(mask!=(EVENT_CHILD|EVENT_LIFE|EVENT_TIMER|EVENT_RQ_CANCEL|EVENT_RQ_DONE)||
     options!=(scenario==10?RECV_NONBLOCK:0)||!out)mock_exit(241);
   if(scenario==5&&receives==1)return -ERR_INTERRUPTED;
   if(scenario==4)return -ERR_STATE;

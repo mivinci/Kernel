@@ -100,7 +100,7 @@ main(int argc, char **argv)
     error = next ? __sys_alarmset(next, &generation) : __sys_alarmcancel(&generation);
     if (error)
       failed(109);
-    error = ipc_recv(EVENT_CHILD | EVENT_LIFE | EVENT_TIMER | EVENT_RQ_CANCEL,
+    error = ipc_recv(EVENT_CHILD | EVENT_LIFE | EVENT_TIMER | EVENT_RQ_CANCEL | EVENT_RQ_DONE,
                      work || reapwork ? RECV_NONBLOCK : 0, &message);
     if (error == -ERR_WOULD_BLOCK || error == -ERR_INTERRUPTED) {
       if (__sys_yield())

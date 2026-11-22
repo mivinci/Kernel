@@ -13,10 +13,10 @@
 - [01 硬件](design/01-hardware.md)：RV64/ARM64 启动/DTB、单主核调度及约 5ms timer、GICv2/PLIC、Device/IRQ/EVENT、其余核固件停放。RV 非零 hart/动态 PLIC S 上下文与四核矩阵已验；不是 SMP。真实板、PSCI SMC/EL2 降级、非一致 DMA/RV 物理缓存仍待验。
 - [02 内存](design/02-memory.md)：预算/页/Space/Mem/Mmap、W^X/guard、SHARED/Device、COW 承诺/克隆/写分离、完整整数/FP现场。fork 快照、回滚与长操作检查点已局部验证；完整 exec 仍待接。
 - [03 进程](design/03-process.md)／[04 IPC](design/04-ipc.md)／[05 事件](design/05-events.md)：原生创建/准备装载/发布/撤销、forkprep/forkcommit/forkabort、固定 CONTROL/凭据/组会话/父 wait、生命周期观察、预付 Rq/取消/ACK/独立收尾、事件/闹钟、原生资源 reply。内核不解析文件/终端业务。
-- [07 启动](design/07-boot.md)：T1.1..T1.5 默认生产 init 从真实包装载独立 serial、READY/监督，失败清理后诊断停机；实际 UART/双环/PIO/IRQ、控制台交接与有界日志已验。其他服务、完整 SYSTEM/设备发权、端点恢复与生产 DMA 仍待接。
+- [07 启动](design/07-boot.md)：默认 init 装载并监督 serial、tty，异步完成晚绑定。双架构默认包验证 UART 回显、绑定拒绝与未接收超时的清理停机。BIND 被接收后超时的诊断停机仍依赖原生 rqclean。
 - [11 信号/终端](design/11-terminal.md)：HANDLER/两层帧/cookie/sigreturn/sigsuspend、STOP/CONT、USER/CHILD/同步FAULT来源、原生sigsend与libc raise、普通等待中断、阻塞 waitpid 的 SA_RESTART、ttycreate/ttybind/getfg 已接。公开 sigaction 支持单参数、SA_SIGINFO、已绑定 Rbank 的 Rctx 前置和私有 fork 返回的子 Fix 前置。kill、setfg/ttysignal、完整终端关联/挂断/孤儿策略仍待接。
 - [08 运行库](design/08-runtime.md)／[10 文件](design/10-filesystem.md)：独立libsys/csu、基础libc、静态装载及本地fd/File/连接/原RPC记录已接。HELLO/ATTACH/共享READ/控制CLOSE仍为独立fixture；Rctx/快照/IO/关闭worker、参数捕获及目标Boot打包已局部验证。公开POSIX前端、生产FS/TTY/File观察、标准fd API、完整exec路径/Fix尚未完成。
-- 独立 `sbin/tty` 已构建，异步 READY、规范行与双环回显已在启动包夹具中验证；默认 init 上线、终端授权和文件协议仍待接。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
+- 独立 `sbin/tty` 已构建并随默认包上线。终端授权、前台信号和客户端文件协议仍待接；BIND 已接收后的超时诊断停机待原生 rqclean。virtio 基础库不代表已有生产 DMA/blk/net；完整 sh、net、图形/GPU 与 GUI 均未交付。
 
 ## 最新验证
 

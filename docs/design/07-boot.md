@@ -649,3 +649,15 @@ serial启动参数改由sysargcopy接受到有界私有快照，再用sysargboot
 最终1003项完整host、格式及195次双架构QEMU通过，168份journal、16次生产启动和10条生产失败清理均另核对；覆盖不同内存容量、四核/非零RV启动hart、真实UART输入、READY/监督、失败实际halt及完整PTE/Acct/物理owner。两架构新init实际链接并调用通用捕获/打包器，生产serial与stage151逐字节相同；真实孩子Boot分别为RV64的472字节和ARM64的471字节，参数/资源按新布局逐项核验。原生ELF测试的6份参数包与两成功/四回滚、libsys输入/信号窗口/关闭worker继续通过，实际嵌入载荷与当前SDK一致，clangd切回RV64/libsys。
 
 证据build/host/stage152-init-arguments/的test-all.log、test-qemu.log、host-focused.log、verify.py和evidence.json。初次test-all完成host/格式后，新增主机观测误用另一函数局部registry而NameError中断，已改为读取当前production记录；失败日志保留，正常启动复验后完整重跑test-qemu并成功退出。不是一次完整make test-all成功，也没有修改guest状态机迁就观测。无CI、板端或性能结果；此点不代表生产tty/fs/blk、公开exec/Fix、sh/net或GUI完成。
+
+### 默认 init 启动并绑定 tty
+
+stage257：默认包携带 init、serial、tty 三个静态 ELF。清单由构建工具与 init 分别验证，允许单一 serial，或一个 serial 和一个只依赖它的 tty。默认把两者都列为必需服务。init 等 serial READY 后才准备 tty，将同一对环的读写映射权和反向 NOTIFY 减权授给 tty。UART 和 IRQ 仍由 serial 持有。
+
+tty 的 READY 回复确认其启动报告，init 另设最多 10 秒完成绑定。它保存唯一异步控制 RPC，按 `EVENT_RQ_DONE` 和绝对期限推进，查到接收方收尾后收取结果、ACK 并释放暂用 CALL。回复须回显原序号和精确 tty PID/image，init 再检查该镜像仍在运行记录中，才将 tty 标为就绪。明确失败时撤销安装到 serial 的 NOTIFY。期限到达或服务退出时停止两者并取消原绑定。若 serial 已接收绑定但未回复，退出只发布失败结果，原请求仍在退役链中等待管理收尾。双架构超时反例重现此路径，停机前的完整回收依赖 [04 的原生 rqclean](04-ipc.md#rqclean-管理代收尾已确定)；具体授权与 ABI 尚待确认。
+
+init 持有旧 serial 的固定 CONTROL，直到原绑定 RPC 完成收尾。两边进程退休后，init 等请求完成事件，停止用短周期闹钟轮询。绑定只操作通知与普通一致内存，不启动下游请求或 DMA；后续代收尾须先核对旧 serial 已停止、进程地址空间已退休，并通过原 RPC 对应的查询代次精确定位接收者 REQUEST。
+
+ARM64/RV64 的补充反例区分两种超时。serial 从未接收 BIND 时，两个孩子均被收取，原 RPC 完成，PID1 费用回基线，再诊断停机。serial 接收并推迟回复时，停住的 guest 保留两个 wait 结果及旧 serial CONTROL，主机从内核请求数组核对原代次及接收者，直接确认 `TERMINAL/PEER` 已发布而 `RQ_FINISHED` 仍为零。
+
+启动包回归对后一个反例单独核对保留状态；只有读到两个精确 wait 结果和旧接收者唯一未收尾的请求才通过。此场景的通过不表示 guest 已停机或原请求已经回收。

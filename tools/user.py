@@ -185,21 +185,22 @@ def build(args):
     serial_headers = [ROOT/'sbin/serial'/name for name in ('start.h','uart.h','io.h','control.h')]
     serial_elf = program('serial',serial_sources,serial_headers)
     tty_service_sources = [ROOT/'sbin/tty'/name for name in ('main.c','term.c','input.c','serial.c','wait.c')]
-    tty_service_headers = [ROOT/'sbin/tty'/name for name in ('start.h','term.h','input.h','serial.h','wait.h')]
+    tty_service_headers = [ROOT/'sbin/tty'/name for name in ('term.h','input.h','serial.h','wait.h')]
     tty_service = program('tty',tty_service_sources,tty_service_headers)
     init_configuration = ROOT/'config/boot.json'
     init_config = sdk/'init.cfg'
-    init_config.write_bytes(initcfg.generate(json.loads(init_configuration.read_text()),
-                                            {'sbin/serial':serial_elf},profile['machine']))
+    configuration = json.loads(init_configuration.read_text())
+    init_config.write_bytes(initcfg.generate(configuration,
+                                            {'sbin/serial':serial_elf,'sbin/tty':tty_service},profile['machine']))
     init_elf = program('init',init_sources,[ROOT/'sbin/init'/name for name in ('package.h','manifest.h','service.h')],init_config)
     ringuser_source = ROOT / 'tests/kernel/ringuser.c'
     runtime_support = [ringuser_source, ROOT/'tests/kernel/fdtableuser.c', ROOT/'tests/kernel/fileuser.c']
-    runtime_objects = []
     runtime_support.append(ROOT/'sbin/fs/pipe.c')
     runtime_support.append(ROOT/'sbin/fs/path.c')
     runtime_support.extend([ROOT/'sbin/fs/walk.c', ROOT/'tests/kernel/vwalkuser.c'])
     runtime_support.append(ROOT/'sbin/fs/mount.c')
     runtime_support.append(ROOT/'sbin/fs/context.c')
+    runtime_objects = []
     for source in runtime_support:
         obj = sdk/'obj'/source.relative_to(ROOT).with_suffix('.o')
         obj.parent.mkdir(parents=True,exist_ok=True)
@@ -301,7 +302,6 @@ def build(args):
     filecreate_rows=[line.split() for line in filecreate_inspect.splitlines() if line.split() and line.split()[-1]=='filecreatetrace']
     if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')
     (sdk/'filecreateimage.S').write_text('/* image sha256: '+digest(filecreate_image)+' */\n.section .rodata\n.balign 8\n.global filecreate_image,filecreate_image_end,filecreate_trace_address\nfilecreate_image:\n.incbin '+json.dumps(str(filecreate_image))+'\nfilecreate_image_end:\n.balign 8\nfilecreate_trace_address:\n.quad '+str(int(filecreate_rows[0][1],16))+'\n')
-    job_elf=link_adoption('jobuser',[compile_adoption(ROOT/'tests/kernel/jobuser.c','jobuser')])
     pipeio_elf=link_adoption('pipeiouser',[compile_adoption(ROOT/'tests/kernel/pipeiouser.c','pipeiouser'),
         compile_adoption(ROOT/'sbin/fs/pipe.c','pipe'), compile_adoption(ROOT/'sbin/fs/pipeio.c','pipeio'),
         compile_adoption(ROOT/'sbin/fs/pipefile.c','pipefile'),
@@ -326,6 +326,7 @@ def build(args):
     pipeio_rows=[line.split() for line in pipeio_inspect.splitlines() if line.split() and line.split()[-1]=='pipeiotrace']
     if len(pipeio_rows)!=1 or int(pipeio_rows[0][2])!=16:raise BuildError('pipe I/O trace missing')
     (sdk/'pipeioimage.S').write_text('/* image sha256: '+digest(pipeio_image)+' */\n.section .rodata\n.balign 8\n.global pipeio_image,pipeio_image_end,pipeio_trace_address\npipeio_image:\n.incbin '+json.dumps(str(pipeio_image))+'\npipeio_image_end:\n.balign 8\npipeio_trace_address:\n.quad '+str(int(pipeio_rows[0][1],16))+'\n')
+    job_elf=link_adoption('jobuser',[compile_adoption(ROOT/'tests/kernel/jobuser.c','jobuser')])
     job_image=sdk/'jobuser.img'
     job_image.write_bytes(pack(job_elf.read_bytes(),profile['machine'],128))
     inspection=invoke('inspect-jobs',[tools['readelf']['path'],'-s',str(job_elf)])
@@ -349,9 +350,14 @@ def build(args):
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.parent == ROOT/'sbin/tty']])
     serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer'),embedded_elf(tty_service,'tty_service')])
     init_service_sources=[ROOT/'sbin/init'/name for name in ('service.c','manifest.c','package.c')]
+    serial_config = sdk/'init-serial.cfg'
+    serial_config.write_bytes(initcfg.generate(dict(configuration, services=[
+        service for service in configuration['services'] if service['kind'] == 'serial']),
+        {'sbin/serial':serial_elf},profile['machine']))
     init_service_test=link_adoption('initservices',[compile_adoption(ROOT/'tests/kernel/initservices.c','initservices'),
-        *[compile_adoption(source,'init-manager-'+source.stem) for source in init_service_sources],embedded_config(init_config)])
+        *[compile_adoption(source,'init-manager-'+source.stem) for source in init_service_sources],embedded_config(serial_config)])
     no_ready=link_adoption('noready',[compile_adoption(ROOT/'tests/kernel/noready.c','noready'),compile_adoption(serial_start_source,'noready-start')])
+    bind_failure=link_adoption('serialbindfail',[compile_adoption(ROOT/'tests/kernel/serialbindfail.c','serialbindfail'),sdk/'obj/noready-start.o'])
     leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
     helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
     parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
@@ -488,6 +494,7 @@ def build(args):
                     tty_service_artifact=str(tty_service.relative_to(ROOT)),tty_service_sha256=digest(tty_service),
                     serial_service_test=str(serial_service_test.relative_to(ROOT)),serial_peer_artifact=str(serial_peer.relative_to(ROOT)),
                     init_service_test=str(init_service_test.relative_to(ROOT)),no_ready_artifact=str(no_ready.relative_to(ROOT)),
+                    bind_failure_artifact=str(bind_failure.relative_to(ROOT)),
                     init_config_artifact=str(init_config.relative_to(ROOT)),init_config_sha256=digest(init_config),
                     init_config_source=str(init_configuration.relative_to(ROOT)),init_config_source_sha256=digest(init_configuration),
                     package_exit_artifact=str(package_exit.relative_to(ROOT)),
