@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage478：`sysfilecreatebackend` 从已确认的资源 OPEN 读取固定后端 PID/image，在原目录查找或预留连接项。已有连接复用原代次；其他操作占有接入时返回 BUSY，目录满且没有匹配连接时保留原 token 给补偿清理。双架构 QEMU `runtime` 使用真实资源回复验证 ACK 前拒绝、首次接入、忙时保持、复用和满目录后仍能清理；51 项目录及创建账本主机测试通过。连接地址预留及公开 `open()` 尚未接入。
+
 stage477：OPEN 的 ABORT 驱动沿同一 Rctx 保留提交时的后端身份；收到原生 PEER 后先核对终结证据，再等待原 RPC 排空。提交前后端已退出可直接结束清理；已接收的 ABORT 未排空时返回 WOULD_BLOCK，预留 fd 继续保留。两架构 QEMU `runtime` 以真实后端退出验证两条路径，已接收请求由测试管理者显式清理后才释放 fd，原 VFS 连接仍可用。54 项 IPC 上下文和创建账本主机测试通过。
 
 stage476：`sysctxopencreate` 在预留 fd 和创建请求前，按页安全读取应用路径到当前层的私有暂存区，生成 OPEN 的路径长度（含 NUL）。提交后的继续操作沿用原槽，不再读取应用地址。ARM64、RV64 QEMU `runtime` 验证坏地址与无终止符路径不发请求、不占 fd，含 NUL 恰好 4096 字节的路径能送达服务；28 项参数捕获和 IPC 上下文主机测试通过。公开 `open()` 仍待接入。

@@ -202,19 +202,19 @@ bootstrap(Bootstrap *record, Connclaim claim, Handle call, u64 options)
 static u64
 attachfirst(const Bootview *boot)
 {
-  Opkey    key;
-  Conntag  tag;
-  Connpeer peer;
-  Bootmap  mapped = {0};
-  Rkey     active = {0};
-  Handle   space = bootresource(boot, BOOT_SELF_SPACE), rpc;
-  u64      sequence;
-  u64      files[2], source = 0;
+  Opkey   key;
+  Conntag tag;
+  Bootmap mapped = {0};
+  Rkey    active = {0};
+  Handle  space = bootresource(boot, BOOT_SELF_SPACE), rpc;
+  u64     sequence;
+  u64     files[2], source = 0;
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
-  CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
-  peer = work.state.creators[key.lease.slot].peer;
-  CHECK(!sysconnbind(&cache, peer, &tag) && !sysconnworkinit(&backend_work, &cache, tag));
+  CHECK(sysfilecreatebackend(&pool, &work, &cache, &key, &tag) == -ERR_STATE &&
+        !sysfilecreateack(&pool, &work, &cache, &key) &&
+        !sysfilecreatebackend(&pool, &work, &cache, &key, &tag) &&
+        !sysconnworkinit(&backend_work, &cache, tag));
   CHECK(sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work, space, ADDRESS, 0,
                          &mapped, &active) < 0 &&
         !mapped.mapped && !active.sequence && backend_work.state.bootstrap.state == SYSBOOT_RESULT);
@@ -253,6 +253,13 @@ resourceopens(const Bootview *boot)
         !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED);
   filecreatetrace[1]++;
   key = open.operation;
+  tag = backend_work.state.tag;
+  CHECK(!sysconnreusebegin(&cache, tag, UINT64_MAX, &claim) &&
+        sysfilecreatebackend(&pool, &work, &cache, &key, &tag) == -ERR_BUSY &&
+        !sysconnrollback(&cache, claim) &&
+        !sysfilecreatebackend(&pool, &work, &cache, &key, &tag) &&
+        tag.generation == backend_work.state.tag.generation &&
+        tag.index == backend_work.state.tag.index);
   zero(&mapped, sizeof(mapped));
   CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED &&
         !sysctxopenattach(&contexts, 0, &pool, &work, &cache, &key, &backend_work,
@@ -2281,7 +2288,7 @@ resourceendclient(const Bootview *boot, u32 submitted)
     CHECK(!sysconnbind(&cache, peer, &tag));
   }
   peer = work.state.creators[key.lease.slot].peer;
-  CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
+  CHECK(sysfilecreatebackend(&pool, &work, &cache, &key, &tag) == -ERR_CAPACITY);
   message.words[0] = ENDPEER;
   message.words[1] = message.words[2] = message.words[3] = 0;
   if (!submitted) {

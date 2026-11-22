@@ -87,6 +87,10 @@ isize sysfilecreatesettle(Filepool *pool, Connwork *work, Conncache *cache, cons
    free. Binds that record to the prospective File ID and original token;
    outputs a borrowed CALL and claim for the existing Rctx bootstrap path.
    No remote call or mapping occurs here. */
+/* Match or reserve a directory tag using the captured backend's exact Image.
+   Caller excludes caught signals and initializes an unclaimed work page. */
+isize sysfilecreatebackend(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                           Conntag *out);
 isize sysfilecreateattachprepare(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
                                  Connwork *backend, u64 deadline, Connclaim *claim, Handle *call);
 /* Positive ACKED ATTACH transport, before mapping/publication. Moves the

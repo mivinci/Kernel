@@ -465,6 +465,31 @@ backendentry(Filepool *pool, Connwork *work, Conncache *cache, Createop *create,
     return -ERR_STALE;
   return 0;
 }
+isize
+sysfilecreatebackend(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key,
+                     Conntag *out)
+{
+  Createop *create;
+  Connentry entry;
+  Conntag   tag;
+  isize     error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  if (!external(pool, work, cache, out, sizeof(*out)) ||
+      !separate(key, sizeof(*key), out, sizeof(*out)))
+    return -ERR_INVALID;
+  error = resource(create, &work->state.operations[key->lease.slot]);
+  if (!error)
+    error = sysconnbind(cache, create->peer, &tag);
+  if (!error)
+    error = sysconnview(cache, tag, &entry);
+  if (error)
+    return error;
+  if (entry.owner && entry.owner != create->files[0])
+    return -ERR_BUSY;
+  copy(out, &tag, sizeof(tag));
+  return 0;
+}
 static isize
 backendview(Filepool *pool, Connwork *work, Conncache *cache, Createop *create, Connwork *backend,
             Connentry *entry)

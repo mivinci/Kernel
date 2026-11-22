@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage478：资源 OPEN 按固定后端镜像查找或预留目录项，支持连接复用、忙时拒绝和满目录补偿。双架构 QEMU `runtime` 和 51 项主机测试通过。
 - stage477：OPEN 撤销可识别固定后端退出；已提交的 ABORT 排空前保留 fd。双架构 QEMU `runtime` 和 54 项主机测试通过。
 - stage476：OPEN 先安全复制路径再预留 fd；双架构 QEMU `runtime` 验证坏地址、超长和刚好一页的路径，28 项主机测试通过。公开 `open()` 仍待接。
 - stage475：资源 OPEN 可在目录满时沿原 token 撤销；确认撤销并排空后才归还预留 fd。双架构 QEMU `runtime`、`pipeio` 和 54 项主机测试通过。公开 `open()` 仍待接。
