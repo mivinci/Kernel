@@ -771,6 +771,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage514：libc 提供 `fsync` 和 `fdatasync`，从调用时固定的 fd/File 发送无 payload 的 `FS_SYNC`，`data_only` 分别为 0 和 1。原 RPC 排空后才释放页和 File 引用，成功只接受普通回复 `[0,seq,0,0]`。有 `SA_RESTART` 时，仅在原生状态确认未交付取消后才重发。服务已接收后返回 EINTR 则直接交给调用者。双架构 QEMU `pipeio` 用真实 IPC 和夹具回复覆盖公开入口、两种请求参数、EIO、畸形回复及信号，并验证实际管道分派拒绝同步。61 项主机测试通过，生产同步后端仍待接入。
+
 stage513：常规文件的 `FS_SYNC` 校验原会话和单槽 `data_only` 参数后，进入与 WRITE、READ、SEEK 共用的 File 队列。同步保留原 REQUEST 和 File 引用，后端结束后才回复或收尾，且不修改共享偏移。双架构 QEMU `pipeio` 用真实 IPC 和纯数据 Txn 验证 FLUSH 前请求仍挂起，结果成功时即使已经请求取消也正常回复，FLUSH 失败则返回 EIO 并保留脏数据。另覆盖非法 `data_only`。49 项主机测试通过。块完成由夹具提供，生产脏块选择、必要元数据同步及公开 `fsync` 待接入。
 
 stage512：`journalrecover` 拒绝覆盖已打开或尚未释放的日志状态。ARM64/RV64 QEMU `runtime` 在重放的五个步骤逐一停止，验证排空和释放前恢复均被拒，重放同一事务时旧票据返回 STALE。`virtiodev` 回归真实设备回写及 flush，`pipeio` 回归增长发布。39 项 FS 主机测试通过。盘上解码和生产挂载仍待接入。

@@ -675,7 +675,8 @@ sysfileimageopen(u32 layer, Connwork *work, const char *path, u64 flags, u64 mod
 static int
 ioopcode(u64 opcode)
 {
-  return opcode == FS_READ || opcode == FS_WRITE || opcode == FS_SEEK || opcode == FS_TTYCTL;
+  return opcode == FS_READ || opcode == FS_WRITE || opcode == FS_SEEK || opcode == FS_TTYCTL ||
+         opcode == FS_SYNC;
 }
 
 static isize
@@ -739,7 +740,8 @@ stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 
   Connwork *work;
   isize     error;
   if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
-      !ioopcode(opcode) || (opcode == FS_TTYCTL && bytes != sizeof(Termarg)))
+      !ioopcode(opcode) || (opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
+      (opcode == FS_SYNC && (bytes || offset > 1 || positional)))
     return -ERR_INVALID;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
     return -ERR_BAD_HANDLE;
@@ -896,8 +898,10 @@ restartio(Fileimage *state, Opkey *key, u64 bytes, u64 offset, u32 positional)
   error = sysoppoll(work, cache, key);
   if (error)
     return error;
+  /* A delivered SYNC may have started writeback even if interrupted. */
   if (op->kind != IPC_NONE || op->resource || op->flags & SYSOP_BAD_RESULT ||
       !(op->flags & SYSOP_CANCEL_SENT) || op->words[2] || op->words[3] ||
+      (op->opcode == FS_SYNC && op->status != -ERR_CANCELLED) ||
       (op->status == -ERR_CANCELLED
            ? (op->words[0] || op->words[1])
            : (op->status || (isize) op->words[0] != -EINTR || op->words[1] != key->lease.seq)))
@@ -945,7 +949,8 @@ sysfileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, Fil
   if (error)
     return error;
   op = &work->state.operations[key->lease.slot];
-  if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)))
+  if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
+      (op->opcode == FS_SYNC && bytes))
     return -ERR_INVALID;
   error = sysoppoll(work, cache, key);
   if (!error)
@@ -1128,6 +1133,12 @@ sysfileimageseek(u32 layer, int fd, int64_t offset, int whence, Fileioresult *re
   if ((u32) whence > FS_SEEK_END)
     return -ERR_INVALID;
   return imageio(layer, fd, FS_SEEK, NULL, NULL, 0, (u64) offset, (u32) whence, result);
+}
+
+isize
+sysfileimagesync(u32 layer, int fd, u32 dataonly, Fileioresult *result)
+{
+  return imageio(layer, fd, FS_SYNC, NULL, NULL, 0, dataonly, 0, result);
 }
 
 isize

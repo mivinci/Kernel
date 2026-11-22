@@ -169,6 +169,26 @@ lseek(int fd, off_t offset, int whence)
   return ioresult(FS_SEEK, status, &completed);
 }
 
+static int
+syncfd(int fd, u32 dataonly)
+{
+  Fileioresult completed;
+  isize        status = sysfileimagesync(__libc_sigdepth(), fd, dataonly, &completed);
+  return (int) ioresult(FS_SYNC, status, &completed);
+}
+
+int
+fsync(int fd)
+{
+  return syncfd(fd, 0);
+}
+
+int
+fdatasync(int fd)
+{
+  return syncfd(fd, 1);
+}
+
 STATIC_ASSERT(sizeof(struct termios) == sizeof(Termarg), termios_size);
 STATIC_ASSERT(offsetof(struct termios, c_iflag) == offsetof(Termarg, iflag), termios_iflag);
 STATIC_ASSERT(offsetof(struct termios, c_oflag) == offsetof(Termarg, oflag), termios_oflag);

@@ -508,6 +508,36 @@ serviceloop(const Bootview *boot, u32 interrupt)
         CHECK(!ipc_reply(request.request, &attrs) &&
               !sysfilefinish(&link.watch.active, request.request));
       }
+      /* isatty and tcgetattr both probe the pipe through the regular dispatcher. */
+      for (i = 0; i < 2; i++)
+        CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_TTYCTL &&
+              !pipedispatch(&fs.pipes, &link, 1, &request));
+      for (i = 0; i < 4; i++) {
+        Msg synced = {{0, 0, 0, 0}};
+        CHECK(!ipc_recv(0, 0, &request));
+        pipeiotrace[0] = (u64) i << 32 | request.words[0];
+        CHECK(request.words[0] == FS_SYNC);
+        CHECK(!sysfilelinkaccept(&link, 1, &request, &row) && !sysfileargs(FS_SYNC, &row));
+        CHECK(row.object == file.session[PIPE_READ] && row.args[0] == (i == 1));
+        synced.words[1] = row.seq;
+        if (i == 1)
+          synced.words[0] = (u64) -EIO;
+        if (i == 2)
+          synced.words[2] = 1;
+        if (i == 3) {
+          u64 state;
+          CHECK(!ipc_defer(request.request) && !__sys_sigsend(&target, SIGNAL_USR1) &&
+                !ipc_recv(0, 0, &gate) && gate.source == target.target &&
+                gate.words[0] == PIPETEST && !ipc_rqcheck(request.request, &state) &&
+                state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) && !ipc_reply(gate.request, &reply));
+          synced.words[0] = (u64) -EINTR;
+        }
+        CHECK(!ipc_reply(request.request, &synced) &&
+              !sysfilefinish(&link.watch.active, request.request));
+      }
+      pipeiotrace[0] = 0;
+      CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_SYNC &&
+            !pipedispatch(&fs.pipes, &link, 1, &request));
     }
   } else if (interrupt == 6) {
     Ipcmsg request, gate;
@@ -816,6 +846,14 @@ interruptclient(void)
           tcgetattr(fds[0], &attrs) == -1 && errno == ENOTTY && attrs.c_ispeed == 115200 &&
           !close(fd) && !isatty(fd) && errno == EBADF);
   }
+  CHECK(fsync(-1) == -1 && errno == EBADF && !fsync(fds[0]) && errno == EBADF &&
+        fdatasync(fds[0]) == -1 && errno == EIO && fsync(fds[0]) == -1 && errno == EIO);
+  action.sa_flags = SA_RESTART;
+  release_read = 1;
+  CHECK(!sigaction(SIGUSR1, &action, NULL) && fsync(fds[0]) == -1 && errno == EINTR &&
+        caught == 10);
+  release_read = 0;
+  CHECK(fdatasync(fds[1]) == -1 && errno == EINVAL);
   data[0] = 'p';
   data[1] = 'q';
   data[2] = 0xa5;
