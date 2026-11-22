@@ -1,4 +1,5 @@
 #include "../../sbin/fs/mount.h"
+#include "../../sbin/fs/context.h"
 #include <errno.h>
 #include <string.h>
 
@@ -114,6 +115,55 @@ unheld(const Walktest *test)
   return !test->error;
 }
 
+static int
+contextcheck(Walktest *test)
+{
+  Fscontext        entries[1] = {{0}};
+  Fscontexts       table = {entries, ARRAY_SIZE(entries), &ops, test, 0};
+  const Fscontext *entry;
+  Vnode           *root = &test->nodes[0], *cwd = &test->nodes[2], *out = NULL;
+  Vnode            stale = {UINT64_MAX, 1, 1, VNODE_DIR};
+  Vwalk            walk = {0};
+  u64              version;
+  const Handle     pid = (UINT64_C(1) << 59) | (UINT64_C(1) << 16) | 2;
+  const Handle     reused = pid + (UINT64_C(1) << 16);
+  if (fscontextfind(&table, pid, 1) || fscontextadd(&table, pid, 1, root, &stale, 027) != -ESTALE ||
+      !unheld(test) || fscontextadd(&table, pid, 1, root, root, 027))
+    return 1;
+  entry = fscontextfind(&table, pid, 1);
+  if (!entry || entry->root != root || entry->cwd != root || entry->mask != 027 ||
+      test->refs[0] != 2 || fscontextfind(&table, pid, 2) || fscontextfind(&table, reused, 1) ||
+      fscontextremove(&table, pid, 2) != -ESTALE ||
+      fscontextadd(&table, pid, 1, root, root, 0) != -EEXIST ||
+      fscontextadd(&table, reused, 1, root, root, 0) != -ENFILE)
+    return 2;
+  version = entry->version;
+  if (fscontextchdir(&table, pid, 1, &stale) != -ESTALE || entry->version != version ||
+      entry->cwd != root || fscontextchdir(&table, pid, 1, cwd) || entry->version <= version ||
+      entry->cwd != cwd || test->refs[0] != 1 || test->refs[2] != 1 ||
+      vmountdel(&test->mounts, cwd->mount) != -EBUSY)
+    return 3;
+  if (vwalkinit(&walk, &test->mounts, &ops, test, entry->root, entry->cwd, ".", sizeof("."), 1) ||
+      runwalk(&walk, &out) || out != cwd)
+    return 4;
+  drop(test, out);
+  out = NULL;
+  /* Start an absolute traversal, then drop the context before stepping it. */
+  version = entry->version;
+  if (vwalkinit(&walk, &test->mounts, &ops, test, entry->root, entry->cwd, "/../", sizeof("/../"),
+                1) ||
+      fscontextremove(&table, pid, 1) || fscontextfind(&table, pid, 1) || runwalk(&walk, &out) ||
+      out != root || test->refs[2])
+    return 5;
+  drop(test, out);
+  if (!unheld(test) || fscontextadd(&table, reused, 1, &test->nodes[0], &test->nodes[0], 077) ||
+      fscontextfind(&table, pid, 1) || !(entry = fscontextfind(&table, reused, 1)) ||
+      entry->version <= version || entry->mask != 077 || fscontextremove(&table, reused, 1) ||
+      !unheld(test))
+    return 6;
+  return 0;
+}
+
 int
 vwalkusercheck(void)
 {
@@ -150,6 +200,8 @@ vwalkusercheck(void)
     return 2;
   drop(&test, out);
   out = NULL;
+  if (contextcheck(&test))
+    return 12;
   if (!unheld(&test) ||
       vwalkinit(&walk, mounts, &ops, &test, root, start, "rel/file", sizeof("rel/file"), 1) ||
       runwalk(&walk, &out) || out != &test.nodes[6] || test.parents != 2)
