@@ -1165,7 +1165,7 @@ journalnext(Journal *journal, Journalio *out)
     io.bytes = journal->cursor ? journal->metadata[journal->cursor - 1].bytes : journal->header;
     break;
   case JOURNAL_MARK_WRITE:
-    io.block = 18;
+    io.block = JOURNAL_MARK_BLOCK;
     io.bytes = journal->committed;
     break;
   case JOURNAL_HOME_WRITE:
@@ -1173,7 +1173,7 @@ journalnext(Journal *journal, Journalio *out)
     io.bytes = journal->metadata[journal->cursor].bytes;
     break;
   case JOURNAL_EMPTY_WRITE:
-    io.block = 18;
+    io.block = JOURNAL_MARK_BLOCK;
     io.bytes = journal->empty;
     break;
   default:

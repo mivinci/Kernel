@@ -31,6 +31,11 @@ struct Blkredoload
   u8        bytes[CACHE_BYTES];
 };
 
+/* Read the superblock or a log block directly before a home view exists.
+   After INFO, submit in the mount owner's chosen order; use fsblkpoll for
+   the exact completion. The result is raw and never enters the home cache. */
+isize blkreadboot(Fsblk *, u32 block);
+
 /* Fresh zeroed read state with blk set. The serialized volume owner
    reserves the connection through completion. Zero is a cache hit;
    one starts a read; a negative result starts no external access. */

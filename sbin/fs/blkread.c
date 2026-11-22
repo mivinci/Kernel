@@ -5,6 +5,14 @@ STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
 
 isize
+blkreadboot(Fsblk *blk, u32 block)
+{
+  if (block > JOURNAL_MARK_BLOCK)
+    return -ERR_INVALID;
+  return fsblksubmit(blk, BLK_READ, (u64) block * FS_BLOCK_BYTES, FS_BLOCK_BYTES, NULL);
+}
+
+isize
 blkreadstart(Blkread *read, Cache *cache, u64 block, u32 metadata)
 {
   Cacheio ticket;

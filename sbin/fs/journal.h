@@ -3,6 +3,7 @@
 #include "geometry.h"
 #define JOURNAL_BYTES       FS_BLOCK_BYTES
 #define JOURNAL_META        16
+#define JOURNAL_MARK_BLOCK  (FS_LOG_START + 1 + JOURNAL_META)
 #define JOURNAL_DATA        128
 #define JOURNAL_WRITE       1
 #define JOURNAL_FLUSH       2

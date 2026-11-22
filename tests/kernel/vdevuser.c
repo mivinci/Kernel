@@ -1040,7 +1040,7 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
   vdev_trace[2]++;
   vdev_trace[3]++;
 }
-static const u32 blkopcodes[] = {BLK_WRITE, BLK_FLUSH, BLK_READ, BLK_READ};
+static const u32 blkopcodes[] = {BLK_WRITE, BLK_FLUSH, BLK_READ, BLK_READ, BLK_READ, BLK_READ};
 
 static void
 blkcollect(Fsblk *blk, void *read, u32 bytes)
@@ -1141,6 +1141,16 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(journal.durable && journalpump(&journal, blklogsubmit, &log) == 1 &&
               !journalrelease(&journal) && journal.last == 47,
           380);
+  REQUIRE(blkreadboot(&blk, JOURNAL_MARK_BLOCK + 1) == -ERR_INVALID && !blk.rpc &&
+              !blkreadboot(&blk, 0),
+          393);
+  blkcollect(&blk, redo.bytes, sizeof(redo.bytes));
+  for (i = 0; i < PAGE_SIZE; i++)
+    REQUIRE(!redo.bytes[i], 394);
+  REQUIRE(!blkreadboot(&blk, JOURNAL_MARK_BLOCK), 395);
+  blkcollect(&blk, redo.bytes, sizeof(redo.bytes));
+  for (i = 0; i < PAGE_SIZE; i++)
+    REQUIRE(redo.bytes[i] == (u8) (0xc1 + 4 * 7 + i * 19), 396);
   for (i = 0; i < PAGE_SIZE; i++)
     data[i] ^= 0xff;
   reader.blk = &blk;
