@@ -1542,11 +1542,12 @@ run(const Bootview *boot)
 static const isize openerrors[] = {-ESTALE, -EACCES, 0, -EACCES, -EINVAL, -EINVAL, -EINVAL, -EINTR};
 
 typedef struct Openfixture Openfixture;
+static u8                  maprecords[6][FS_BLOCK_BYTES];
 struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file, dir, denied;
+  Vnode     root, file, dir, denied, created;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1619,8 +1620,12 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     return openhold(fixture, *out);
   }
   CHECK(dir == &fixture->root && bytes == 1);
-  if (name[0] == 'm')
-    return -ENOENT;
+  if (name[0] == 'm') {
+    if (!fixture->created.number)
+      return -ENOENT;
+    *out = &fixture->created;
+    return openhold(fixture, *out);
+  }
   CHECK(name[0] == 'x');
   if (fixture->blocked)
     return VWALK_WAIT;
@@ -1751,13 +1756,33 @@ opencomplete(Openjob *job, Vnode *node)
 static isize
 opencreate(Openjob *job, Vnode *parent, u32 abandon)
 {
-  Openfixture *fixture = job->backend;
-  Msg          reply = {{(u64) -EACCES, job->slot.seq, 0, 0}};
+  static Journal    journal;
+  static Inodealloc allocation;
+  static Inodemap   inodes = {{7}};
+  static Loadmap    child = {{5, 0, 0, 0}, {0}, 0};
+  Openfixture      *fixture = job->backend;
   openvalidate(job);
   CHECK(!abandon && parent == &fixture->root && job->walk.part.bytes == 1 &&
         job->walk.part.name[0] == 'm' && job->cred.uid == 22 && job->mask == 027 &&
-        job->slot.args[1] == 0600 && fixture->holds == 3);
-  return ipc_reply(job->call.request, &reply);
+        !job->slot.args[1] && fixture->holds == 3 && !fixture->created.number);
+  if (!allocation.txid) {
+    Loadmap         staged;
+    const Mapmeta   meta = {maprecords[0], maprecords[1], NULL,
+                            maprecords[3], maprecords[4], maprecords[5]};
+    const Dirinsert insert = {FS_ROOT, {110, maprecords[2]}, NULL, NULL};
+    CHECK(!journalinit(&journal, 128, 0) && !inodeallocstage(&inodes, &child, &staged) &&
+          !journalinodealloc(&allocation, &journal, &fixture->cache, &inodes, &child, &staged,
+                             &meta, &insert));
+  }
+  if (journal.phase != JOURNAL_DONE) {
+    Journalio io;
+    CHECK(!child.file.generation && inodes.used[0] == 7 && !fixture->files.files[0].refs &&
+          !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+    return OPEN_WAIT;
+  }
+  CHECK(!inodeallocpublish(&allocation) && child.file.generation == 1 && inodes.used[0] == 39);
+  fixture->created = (Vnode){parent->mount, child.file.inode, child.file.generation, VNODE_FILE};
+  return fsfilecreated(&fixture->files, job, &fixture->created);
 }
 
 static void
@@ -1975,8 +2000,6 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
 {
   openwrite(session, offset, flags, expected, accepted, 0);
 }
-
-static u8 maprecords[6][FS_BLOCK_BYTES];
 
 static void
 openwritejournal(const Loadmap *original, const Writeupdate *update, const Writeimage *image,
@@ -2864,7 +2887,12 @@ publicchdirserver(const Bootview *boot)
   target.target = link.watch.owner.pid;
   CHECK(!fscontextadd(&contexts, target.target, link.watch.owner.image, &fixture.root,
                       &fixture.root, 027));
-  CHECK(!fsstep(&fs) && !file.refs && fixture.searches == 1 && !job.parent && fixture.holds == 2);
+  CHECK(!fsstep(&fs) && !file.refs && fixture.searches == 1 && job.parent && fixture.holds == 3);
+  for (steps = 0; job.call.request; steps++)
+    CHECK(steps < 20 && !fsopenpump(&open));
+  CHECK(file.refs == 1 && file.node == &fixture.created && file.access == VACCESS_W &&
+        !job.parent && !fsstep(&fs) && !file.refs && fixture.holds == 2);
+  CHECK(!fsstep(&fs) && !file.refs && !job.parent); /* Exclusive retry. */
   fixture.searches = 0;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R &&
         file.flags == FS_OPEN_NONBLOCK && file.node == &fixture.file);
@@ -2977,10 +3005,12 @@ publicchdirclient(void)
   int              fd;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer));
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
-        open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT &&
-        open("/m", O_WRONLY | O_CREAT, 0600) == -1 && errno == EACCES);
+        open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT);
+  fd = open("/m", O_WRONLY | O_CREAT | O_EXCL, 0U);
+  CHECK(fd == 0 && !close(fd) && open("/m", O_WRONLY | O_CREAT | O_EXCL, 0U) == -1 &&
+        errno == EEXIST);
   fd = open("/x", O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  CHECK(fd == 0 && errno == EACCES && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
+  CHECK(fd == 0 && errno == EEXIST && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
   CHECK(open("/x", O_RDONLY | O_TRUNC) == -1 && errno == EINVAL);
   action.sa_handler = lateopensignal;
   action.sa_flags = SA_RESTART;

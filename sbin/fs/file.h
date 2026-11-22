@@ -42,6 +42,9 @@ struct Fsfiles
    metadata before publishing an ordinary File with its own offset. */
 isize fsfileoptions(const Fileslot *);
 isize fsfileopen(Fsfiles *, Openjob *, Vnode *, u32 owner, u32 group, u32 mode);
+/* Only the creator of a committed empty inode may skip existing-file access
+   and truncation checks; a name found during the recheck uses fsfileopen. */
+isize fsfilecreated(Fsfiles *, Openjob *, Vnode *);
 isize fsfileclose(Fsfiles *, Handle, u64 image, u64 session, u64 ref);
 isize fsfiledup(Fsfiles *, Handle, u64 image, u64 session, u64 ref, u64 *out);
 /* Borrow while the serialized loop handles a synchronous operation. */

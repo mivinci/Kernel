@@ -76,8 +76,8 @@ fsfileoptions(const Fileslot *slot)
   return (flags & FS_OPEN_TRUNC) && !(flags & FS_OPEN_ACCMODE) ? -EINVAL : 0;
 }
 
-isize
-fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 mode)
+static isize
+fileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 mode, u32 created)
 {
   const Ipcmsg *call = &job->call;
   Msg           reply = {{0, job->slot.seq, 0, 0}};
@@ -94,12 +94,13 @@ fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 
            : access == FS_OPEN_WRONLY ? VACCESS_W
                                       : VACCESS_R | VACCESS_W;
   status = fsfileoptions(&job->slot);
-  if (!status)
-    status =
-        node->kind != VNODE_FILE ? -EINVAL : vaccess(&job->cred, owner, group, mode, access, 0);
+  if (!status && node->kind != VNODE_FILE)
+    status = -EINVAL;
+  if (!status && !created)
+    status = vaccess(&job->cred, owner, group, mode, access, 0);
   if (status)
     goto respond;
-  if ((flags & FS_OPEN_TRUNC) && !table->truncate) {
+  if (!created && (flags & FS_OPEN_TRUNC) && !table->truncate) {
     status = -ENOSYS;
     goto respond;
   }
@@ -131,7 +132,7 @@ respond:
   file->flags = flags & (FS_OPEN_APPEND | FS_OPEN_NONBLOCK);
   file->refs = 1;
   *ref = (Fsref){0, 0, ++table->serial, file};
-  if (flags & FS_OPEN_TRUNC) {
+  if (!created && (flags & FS_OPEN_TRUNC)) {
     job->reserved = ref;
   truncate:
     error = ipc_rqcheck(call->request, &state);
@@ -164,6 +165,20 @@ respond:
 reject:
   reply.words[0] = (u64) status;
   return ipc_reply(call->request, &reply);
+}
+
+isize
+fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 mode)
+{
+  return fileopen(table, job, node, owner, group, mode, 0);
+}
+
+isize
+fsfilecreated(Fsfiles *table, Openjob *job, Vnode *node)
+{
+  if (!job->parent || job->reserved || !(job->slot.args[0] & FS_OPEN_CREAT))
+    return -ERR_STATE;
+  return fileopen(table, job, node, 0, 0, 0, 1);
 }
 
 isize
