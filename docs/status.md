@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage560：只读准入只接受有效 EMPTY，避免读取尚未重放的 home 块。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过；实际挂载待接。
 - stage559：FS 可按节点重建 cwd 路径，跨挂载、改名重试与错误不写输出通过双架构 QEMU `runtime`；`GETCWD` IPC 待接。
 - stage558：重放按固定布局识别位图和 inode 表，数据区目标仍须证明是元数据。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。
 - stage557：同一日志实例恢复时拒绝旧标记和已退休编号的 COMMITTED。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过。

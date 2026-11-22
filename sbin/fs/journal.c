@@ -931,6 +931,21 @@ redosnapshots(const Journal *journal, u64 blocks, const Journalblock *metadata, 
   return 1;
 }
 
+static int
+emptyvalid(const Journalmark *mark)
+{
+  return mark && !mark->state && !mark->headercrc && !mark->payloadcrc;
+}
+
+isize
+journalreadonly(const Fslayout *layout, const Fsgeometry *device, const Journalmark *mark)
+{
+  isize error = fslayoutcheck(layout, device, 0);
+  if (error)
+    return error;
+  return emptyvalid(mark) ? 0 : -ERR_STATE;
+}
+
 isize
 journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *device,
                const Journalmark *mark, const Journalhead *head, const Journalblock *metadata,
@@ -952,7 +967,7 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   if (mark->txid < journal->last || (mark->state && mark->txid == journal->last))
     return -ERR_STATE;
   if (!mark->state) {
-    if (mark->headercrc || mark->payloadcrc)
+    if (!emptyvalid(mark))
       return -ERR_STATE;
     journal->blocks = layout->blocks;
     journal->last = mark->txid;

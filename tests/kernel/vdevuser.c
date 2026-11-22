@@ -240,6 +240,7 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
                   -ERR_STATE &&
               !journal.last,
           249);
+  REQUIRE(journalreadonly(&layout, &geometry, &mark) == -ERR_STATE, 245);
   layout.blocks = blocks;
   for (i = 0; i < ARRAY_SIZE(images); i++)
     for (j = 0; j < JOURNAL_BYTES; j++)
@@ -251,10 +252,25 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
   /* Synthetic snapshots exercise transport and ordering before a disk
      codec exists. The independent host census checks the written bytes. */
   geometry.flush = 0;
-  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) ==
-                  -ERR_NOTSUP &&
+  geometry.readonly = 1;
+  geometry.faultbytes = 0;
+  REQUIRE(!journalreadonly(&layout, &geometry, &mark) &&
+              !journalreadonly(&layout, &geometry, &fresh) &&
+              journalreadonly(&layout, &geometry, NULL) == -ERR_STATE &&
+              journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL,
+                             NULL) == -ERR_NOTSUP &&
               !journal.last,
           250);
+  {
+    const Journalmark committed = {47, 1, 11, 12}, unknown = {47, 2, 0, 0};
+    const Journalmark bad = {47, 0, 11, 0};
+    REQUIRE(journalreadonly(&layout, &geometry, &committed) == -ERR_STATE &&
+                journalreadonly(&layout, &geometry, &unknown) == -ERR_STATE &&
+                journalreadonly(&layout, &geometry, &bad) == -ERR_STATE,
+            250);
+  }
+  geometry.readonly = config->readonly;
+  geometry.faultbytes = FS_BLOCK_BYTES;
   geometry.flush = config->flush;
   {
     Journalblock data = {FS_DATA_START, images[0]};

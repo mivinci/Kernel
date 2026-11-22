@@ -240,6 +240,11 @@ isize reclaimprepare(const Journal *, struct Cache *, const struct Loadmap *,
 isize journalshrink(Shrink *, Journal *, struct Cache *, struct Loadmap *, const struct Loadmap *,
                     const Mapmeta *);
 isize shrinkpublish(Shrink *);
+/* Read-only admission after decoding and authenticating the layout and mark,
+   with older I/O isolated and the volume stable against other writers. Only
+   EMPTY certifies a readable home view; unknown or COMMITTED marks do not.
+   Does not open a Journal, grant write access, or validate the root inode. */
+isize journalreadonly(const Fslayout *, const Fsgeometry *, const Journalmark *);
 /* Open the journal for writes on the exclusively owned device. State must
    be zero initialized or STOPPED and released. Reusing released state
    preserves ticket serials and the last known retired transaction. Recovery
