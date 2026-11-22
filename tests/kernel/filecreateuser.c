@@ -709,15 +709,41 @@ client(const Bootview *boot)
   execmanifest(boot, first, 1);
   execmanifest(boot, first, BOOT_FD_COUNT);
   {
-    Forkret forked;
-    Msg     check = {{FORKWATCH, 0, 0, 0}};
-    /* Fixture carries the target alongside the genuine accepted REQUEST. */
-    CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked));
-    check.words[0] = FS_FORK_PREPARE;
-    check.words[1] = (u64) forked.pid;
-    CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
+    Forkret     forked;
+    Filelease   lease;
+    Fileref     ref;
+    Fileslot    slot = {0};
+    Fileinherit rows[2];
+    Msg         prepare = {{FS_FORK_PREPARE, work.state.map.connid, 0, 0}};
+    Msg         check = {{FORKWATCH, 0, 0, 0}};
+    u64         address = work.state.map.address;
+    CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked) &&
+          !sysfilerefview(&pool, work.state.self, first, &ref) &&
+          !sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    prepare.words[2] = slot.seq = lease.seq;
+    prepare.words[3] = lease.slot;
+    slot.state = FS_SLOT_SUBMITTED;
+    slot.span = 1;
+    slot.payload_bytes = sizeof(rows);
+    slot.args[0] = (u64) forked.pid;
+    slot.args[1] = 1;
+    slot.args[2] = work.state.self.image;
+    slot.args[3] = UINT64_MAX;
+    slot.args[4] = ARRAY_SIZE(rows);
+    rows[0] = (Fileinherit){
+        0,           BOOT_FD_CLOEXEC, (u64) work.state.peer.pid, work.state.peer.image,
+        ref.session, ref.reference};
+    rows[1] = rows[0];
+    rows[1].fd = 1;
+    rows[1].flags = 0;
+    CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
+                      sizeof(rows)) &&
+          !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
+                      sizeof(slot)) &&
+          !ipc_call(work.state.call, &prepare, 0, &result) && !result.words[0] &&
+          result.words[1] == lease.seq && !sysconnworkrelease(&work, &cache, lease));
     CHECK(!__sys_forkabort(forked.construct));
-    check.words[0] = FORKWATCH;
+    check.words[1] = (u64) forked.pid;
     CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
   }
   loadreads();
@@ -1520,11 +1546,25 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (!recover && opcode == FS_FORK_PREPARE) {
-      Handle permit = bootresource(boot, 258);
-      Handle pid = (Handle) input.words[1];
-      CHECK(sysforkobserve(&child, permit, &input, pid, 2) == -ERR_STALE && !child.cookie &&
-            !sysforkobserve(&child, permit, &input, pid, 1) && child.pid == pid &&
-            child.image == 1 && child.cookie && !child.reason && !ipc_reply(input.request, &reply));
+      Connpeer backend;
+      Handle   parent, permit = bootresource(boot, 258);
+      u64      key[5] = {(u64) peer.pid, peer.image, sessions[0], references[0], 0};
+      CHECK(!__sys_getid(&backend.pid, &backend.image, &parent) &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &descriptor));
+      data = (volatile u64 *) (link->address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES);
+      CHECK(!sysforkmanifest(&execplan, watch, &input, &descriptor, (const void *) data, backend, 0,
+                             execreference, key) &&
+            key[4] == 1 && execplan.count == 1 && execplan.groups[0].retained == 2 &&
+            !execplan.groups[0].closed && execplan.rows[0].flags == BOOT_FD_CLOEXEC &&
+            sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image + 1) ==
+                -ERR_STALE &&
+            !child.cookie &&
+            !sysforkobserve(&child, permit, &input, execplan.child, execplan.target_image) &&
+            child.pid == execplan.child && child.image == execplan.target_image && child.cookie &&
+            !child.reason);
+      reply.words[1] = execplan.seq;
+      execplan.count = 0;
+      CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&watch->active, input.request));
       continue;
     }
     if (!recover && opcode == FORKWATCH) {
