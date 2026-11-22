@@ -51,12 +51,18 @@ static isize
 drain(void *context, Filelink *link)
 {
   Fsservice *fs = context;
+  isize      error;
   if (fsloadretire(fs->loads, link) || fsopenbusy(fs->open, link) ||
       fsreadbusy(fs->pipes.reads, link)) {
     fs->retiring = 1;
     return -ERR_WOULD_BLOCK;
   }
-  return pipedrain(&fs->pipes, link);
+  error = pipedrain(&fs->pipes, link);
+  if (error || !fs->open || !fs->open->contexts)
+    return error;
+  /* Drop only the ended image's namespace after its jobs have drained. */
+  error = fscontextremove(fs->open->contexts, link->watch.owner.pid, link->watch.owner.image);
+  return error == -ESTALE ? 0 : error;
 }
 
 isize

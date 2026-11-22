@@ -3372,8 +3372,10 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && file.position == 3);
   publicappendcheck(&fixture);
   CHECK(!fsstep(&fs) && !file.refs);
-  CHECK(!fscontextremove(&contexts, target.target, link.watch.owner.image) && !fixture.holds &&
-        !sysfilelinkclose(&link));
+  CHECK(context.pid == target.target && fixture.holds == 2);
+  for (steps = 0; steps < 8 && link.ready; steps++)
+    CHECK(!fsstep(&fs));
+  CHECK(!context.pid && !fixture.holds && !link.ready && !link.watch.owner.cookie);
   pipeiotrace[0] = 7;
 }
 
