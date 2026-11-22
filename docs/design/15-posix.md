@@ -134,6 +134,8 @@ T4 的 sh 以 POSIX.1-2024 sh 与 dash 行为为准，至少覆盖：引号与�
 
 ## 执行与验收
 
+`creat(path, mode)` 已导出，使用本 SDK 的 32 位 `mode_t`，与 `open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)` 共用一次打开事务。ARM64、RV64 QEMU `pipeio` 核对服务收到的三个位及原 mode，并验证截断已提交时捕获信号仍领取原结果；27 项 libc 主机测试和格式检查通过。测试使用文件服务夹具，生产磁盘接入仍待完成。
+
 stage448：libc 在 `unistd.h` 导出 `getopt(int argc, char *const argv[], const char *optstring)` 及 `optarg`、`opterr`、`optind`、`optopt`。按 [POSIX.1-2024 getopt](https://pubs.opengroup.org/onlinepubs/9799919799/functions/getopt.html) 核对短选项组、必需参数、选项终止及错误返回。支持同一参数或下一参数提供值，遇到 `--`、独立 `-` 或首个操作数停止，保持参数顺序；开头的 `+` 保持相同行为，开头的 `:` 和 `opterr=0` 可抑制诊断。诊断经 fd 2 输出，stdio 流错误指示器待流接口实现。
 
 ARM64、RV64 QEMU `runtime` 验证组合选项、附带与独立参数、三个终止条件、未知选项和缺少参数。主机探针验证诊断内容、短写、EINTR 重试及静默模式，格式检查通过。

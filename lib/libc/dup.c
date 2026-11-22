@@ -125,18 +125,11 @@ ioresult(u64 opcode, isize status, const Fileioresult *completed)
   return -1;
 }
 
-int
-open(const char *path, int flags, ...)
+static int
+openpath(const char *path, int flags, mode_t mode)
 {
   Fileioresult completed = {0};
-  va_list      args;
-  u32          mode = 0;
   isize        status;
-  if (flags & O_CREAT) {
-    va_start(args, flags);
-    mode = va_arg(args, unsigned int);
-    va_end(args);
-  }
   status = sysfileimageopenpath(__libc_sigdepth(), path, (u32) flags, mode, &completed.business);
   if (status >= 0)
     completed.count = (u64) status;
@@ -149,6 +142,25 @@ open(const char *path, int flags, ...)
   else
     return (int) ioresult(FS_OPEN, status, &completed);
   return (int) ioresult(FS_OPEN, 0, &completed);
+}
+
+int
+open(const char *path, int flags, ...)
+{
+  va_list args;
+  mode_t  mode = 0;
+  if (flags & O_CREAT) {
+    va_start(args, flags);
+    mode = va_arg(args, mode_t);
+    va_end(args);
+  }
+  return openpath(path, flags, mode);
+}
+
+int
+creat(const char *path, mode_t mode)
+{
+  return openpath(path, O_WRONLY | O_CREAT | O_TRUNC, mode);
 }
 
 static ssize_t

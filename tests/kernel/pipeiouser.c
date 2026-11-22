@@ -2883,6 +2883,8 @@ publictruncate(Openjob *job, Vnode *node, u32 cancelled)
   Mapmeta        meta = {maprecords[0], NULL, NULL, maprecords[3], maprecords[4], maprecords[5]};
   Journalio      io;
   CHECK(node == &fixture->file && job->reserved && !job->reserved->pid);
+  CHECK(job->slot.args[0] == (FS_OPEN_WRONLY | FS_OPEN_CREAT | FS_OPEN_TRUNC) &&
+        job->slot.args[1] == 0640);
   if (!shrink.txid) {
     if (cancelled)
       return -EINTR;
@@ -3098,7 +3100,7 @@ publicchdirclient(void)
   CHECK(open("/x", O_RDONLY | O_TRUNC) == -1 && errno == EINVAL);
   action.sa_flags = SA_RESTART;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
-  fd = open("/x", O_WRONLY | O_TRUNC);
+  fd = creat("/x", 0640);
   CHECK(fd == 0 && caught == 2 && !close(fd));
   CHECK(chdir("") == -1 && errno == ENOENT && chdir((const char *) (uintptr_t) 1) == -1 &&
         errno == EFAULT && chdir("/n") == -1 && errno == EACCES && !chdir("/d") &&

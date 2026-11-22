@@ -2,6 +2,7 @@
 #define _LIBC_FCNTL_H
 #include <abi/boot.h>
 #include <proto/file.h>
+#include <sys/types.h>
 
 #define F_DUPFD    0
 #define F_GETFD    1
@@ -20,4 +21,5 @@
 
 int fcntl(int fd, int cmd, ...);
 int open(const char *path, int flags, ...);
+int creat(const char *path, mode_t mode);
 #endif
