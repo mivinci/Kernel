@@ -771,6 +771,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage516：`Syncwork` 把文件的数据同步批次、原 REQUEST 和精确下游票据绑定到卷的 Txn。每次只允许一笔块 I/O，竞争请求等待，旧票据不能推进新批次。批次开始后可在取消标记出现时继续收尾，FLUSH 成功且释放快照后才报告数据同步成功，失败保留脏版本。ARM64/RV64 QEMU `pipeio` 验证原 `FS_SYNC` 在取消和失败时的回复，`virtiodev` 通过同一执行器驱动真实 WRITE/FLUSH。40 项 FS 主机测试通过。生产同步仍需挂载所有者接入元数据与卷错误处理，并连接块服务。
+
 stage515：`txnpreparefile` 从固定的已提交文件映射选取 EOF 内的脏数据块并捕获其精确版本。支持直接、一级间接和稀疏映射。快照空间不足或缺少必要的间接表时不留下引用和部分事务。ARM64/RV64 QEMU `pipeio` 经同步 IPC 使用该入口，`virtiodev` 经真实设备写块并 FLUSH，期间新编辑仍保持脏状态。双架构 `runtime` 回归及 40 项 FS 主机测试通过。必要元数据、卷错误和生产块运输仍需由挂载所有者接入。
 
 stage514：libc 提供 `fsync` 和 `fdatasync`，从调用时固定的 fd/File 发送无 payload 的 `FS_SYNC`，`data_only` 分别为 0 和 1。原 RPC 排空后才释放页和 File 引用，成功只接受普通回复 `[0,seq,0,0]`。有 `SA_RESTART` 时，仅在原生状态确认未交付取消后才重发。服务已接收后返回 EINTR 则直接交给调用者。双架构 QEMU `pipeio` 用真实 IPC 和夹具回复覆盖公开入口、两种请求参数、EIO、畸形回复及信号，并验证实际管道分派拒绝同步。61 项主机测试通过，生产同步后端仍待接入。

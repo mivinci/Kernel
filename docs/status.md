@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage516：文件数据同步执行器沿原 REQUEST 逐项等待写入和 FLUSH，拒绝过期完成。双架构 QEMU `pipeio`、`virtiodev` 和 40 项 FS 主机测试通过。生产挂载和块服务接线待完成。
 - stage515：同步事务可按已提交文件映射捕获 EOF 内的脏数据版本。双架构 QEMU `pipeio`、`virtiodev`、`runtime` 与 40 项 FS 主机测试通过。生产同步的元数据和块运输待接入。
 - stage514：公开 `fsync`、`fdatasync` 沿原 `FS_SYNC` 等待并收尾，服务已接收后返回 EINTR 时不自动重发。双架构 QEMU `pipeio` 与 61 项主机测试通过。生产同步后端待接入。
 - stage513：常规文件 `FS_SYNC` 进入同一 File 队列并沿原请求收尾。双架构 QEMU `pipeio` 验证等待 FLUSH、取消后的实际结果和失败时保留脏块；49 项主机测试通过。生产同步后端和公开 `fsync` 待接入。

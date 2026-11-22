@@ -8,7 +8,7 @@
 #include "../../sbin/blk/io.h"
 #include "../../sbin/fs/cache.h"
 #include "../../sbin/fs/load.h"
-#include "../../sbin/fs/txn.h"
+#include "../../sbin/fs/sync.h"
 #include "virtiouser.h"
 volatile u64             vdev_trace[VTEST_TRACE];
 typedef struct Testdma   Testdma;
@@ -277,6 +277,15 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   }
   REQUIRE(count == 5 && !journalrelease(&journal) && journal.last == 47, 197);
 }
+static isize
+syncsubmit(void *context, Handle request, const Journalio *io)
+{
+  Journalio *pending = context;
+  (void) request;
+  *pending = *io;
+  return 0;
+}
+
 static void
 testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconfig *config,
               const Testdma *dma)
@@ -291,6 +300,8 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
   u8               *destination;
   u8                later = 0x73;
   const Loadmap     map = {{2, 1, 1, CACHE_BYTES}, {FS_DATA_START}, 0};
+  const Handle      request = ((u64) HANDLE_REQUEST << 59) | (1U << 16);
+  Syncwork          work = {&txn, snapshot, 1, 0};
   u32               i;
   u64               stride = CACHE_BYTES / VBLK_SECTOR;
   REQUIRE(!cacheinit(&cache, &entry, 1, config->sectors / stride) && !txninit(&txn, &cache, 47) &&
@@ -301,19 +312,23 @@ testwriteback(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vbl
   for (i = 0; i < CACHE_BYTES; i++)
     image[i] = (u8) (0xb4 + i * 37);
   REQUIRE(!cacheedit(&cache, &key, 0, image, CACHE_BYTES) &&
-              txnpreparefile(&txn, &map, NULL, snapshot, 1) == 1 &&
-              !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &io) &&
-              io.kind == JOURNAL_WRITE && io.block == FS_DATA_START &&
-              !cacheedit(&cache, &key, 0, &later, 1),
+              !filesyncstep(&work, request, RQ_CHECK_LIVE, &map, NULL, syncsubmit, &io) &&
+              work.request == request &&
+              !filesyncstep(&work, request + 1, RQ_CHECK_LIVE, &map, NULL, syncsubmit, &io) &&
+              work.request == request && io.serial == 1 && io.kind == JOURNAL_WRITE &&
+              io.block == FS_DATA_START && !cacheedit(&cache, &key, 0, &later, 1),
           261);
   transfer(device, ring, 2, binding, irqevent, config, dma, VBLK_WRITE, io.block * stride, 40, 0,
            NULL, io.bytes);
-  REQUIRE(!txncomplete(&txn, &io, 1) && entry.dirty && !txn.journal.durable &&
-              txnrelease(&txn) == -ERR_STATE && !txnnext(&txn, &io) && io.kind == JOURNAL_FLUSH,
+  REQUIRE(filesynccomplete(&work, request + 1, &io, 1) == -ERR_STALE &&
+              !filesynccomplete(&work, request, &io, 1) && entry.dirty && !txn.journal.durable &&
+              !filesyncstep(&work, request, RQ_CHECK_LIVE, &map, NULL, syncsubmit, &io) &&
+              io.kind == JOURNAL_FLUSH && io.serial == 2,
           262);
   transfer(device, ring, 2, binding, irqevent, config, dma, VBLK_FLUSH, 0, 41, 0, NULL, NULL);
-  REQUIRE(!txncomplete(&txn, &io, 1) && txn.journal.durable && !txnrelease(&txn) && entry.dirty &&
-              entry.data[0] == later && txn.journal.last == 47 &&
+  REQUIRE(!filesynccomplete(&work, request, &io, 1) && txn.journal.durable &&
+              filesyncstep(&work, request, RQ_CHECK_LIVE, &map, NULL, syncsubmit, &io) == 1 &&
+              !work.request && entry.dirty && entry.data[0] == later && txn.journal.last == 47 &&
               txnpreparefile(&txn, &map, NULL, snapshot, 1) == 1 &&
               !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &io) && !txnstop(&txn) &&
               txnrelease(&txn) == -ERR_WOULD_BLOCK && !txncomplete(&txn, &io, 0) &&

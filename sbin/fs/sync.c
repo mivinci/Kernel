@@ -1,5 +1,7 @@
 #include "load.h"
-#include "txn.h"
+#include "sync.h"
+#include <abi/ipc.h>
+#include <errno.h>
 
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
@@ -64,4 +66,58 @@ txnpreparefile(Txn *txn, const Loadmap *map, const Loadindex *index, void *snaps
     if (cacheput(cache, &keys[--count]))
       error = -ERR_STATE;
   return error;
+}
+
+isize
+filesyncstep(Syncwork *work, Handle request, u64 state, const Loadmap *map, const Loadindex *index,
+             isize (*submit)(void *, Handle, const Journalio *), void *context)
+{
+  Txn      *txn;
+  Journalio io;
+  isize     error, result;
+  if (!work || !(txn = work->txn) || handlekind(request) != HANDLE_REQUEST || !submit)
+    return -EINVAL;
+  if (work->request != request) {
+    if (state != RQ_CHECK_LIVE)
+      return -EINTR;
+    if (work->request || txn->phase == TXN_PREPARED || txn->phase == TXN_RUNNING)
+      return 0;
+    error = txnpreparefile(txn, map, index, work->snapshots, work->slots);
+    if (!error)
+      return 1;
+    if (error == -ERR_BUSY)
+      return 0;
+    if (error < 0)
+      return error == -ERR_CAPACITY ? -EAGAIN : -EIO;
+    work->request = request;
+    if (txnstart(txn, NULL, NULL, NULL))
+      goto release;
+  }
+  while (txn->phase == TXN_RUNNING && !txn->journal.active && txn->journal.phase != JOURNAL_DONE &&
+         txn->journal.phase != JOURNAL_STOPPED) {
+    error = txnnext(txn, &io);
+    if (error) {
+      if (txnstop(txn))
+        return 0;
+      break;
+    }
+    if (submit(context, request, &io) && filesynccomplete(work, request, &io, 0))
+      return 0;
+  }
+  if (txn->journal.active)
+    return 0;
+release:
+  result = txn->journal.phase == JOURNAL_DONE ? 1 : -EIO;
+  if (txnrelease(txn))
+    return 0;
+  work->request = 0;
+  return result;
+}
+
+isize
+filesynccomplete(Syncwork *work, Handle request, const Journalio *io, u32 success)
+{
+  if (!work || !request || work->request != request)
+    return -ERR_STALE;
+  return txncomplete(work->txn, io, success);
 }

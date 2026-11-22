@@ -26,7 +26,7 @@
 #include "../../sbin/fs/read.h"
 #include "../../sbin/fs/seek.h"
 #include "../../sbin/fs/serve.h"
-#include "../../sbin/fs/txn.h"
+#include "../../sbin/fs/sync.h"
 
 #define ADDRESS     0x1600000UL
 #define PIPETEST    0xf008
@@ -1536,7 +1536,9 @@ struct Openfixture
   Cache     cache;
   Readfetch fetch;
   Loadmap   map;
-  Handle    growth, syncing;
+  Handle    growth;
+  Syncwork  sync;
+  Journalio syncio;
   u64       length, growat, guard;
   u32       holds, attempts, searches, completed, blocked, cancelled;
   u32       cancelgrowth, durable;
@@ -1709,39 +1711,41 @@ openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
 static u8 opendisk[FS_BLOCK_BYTES];
 
 static isize
+opensyncsubmit(void *context, Handle request, const Journalio *io)
+{
+  Openfixture *fixture = context;
+  CHECK(!fixture->syncio.serial && request == fixture->sync.request);
+  if (io->kind == JOURNAL_WRITE)
+    CHECK(io->block == FS_DATA_START && io->bytes[3] == 'W');
+  else
+    CHECK(io->kind == JOURNAL_FLUSH && !io->bytes);
+  fixture->syncio = *io;
+  return 0;
+}
+
+static isize
 opensync(void *context, Readjob *job, u64 state)
 {
-  static Txn       txn;
-  static u8        snapshot[FS_BLOCK_BYTES];
-  static Journalio flush;
-  Openfixture     *fixture = context;
-  Journalio        write;
-  u32              i, success = (u32) job->slot.args[0];
+  Openfixture *fixture = context;
+  Syncwork    *sync = &fixture->sync;
+  Journalio   *io = &fixture->syncio;
+  u32          i, success = (u32) job->slot.args[0];
   CHECK(job->file->node == &fixture->file && fixture->cache.entries[0].dirty);
-  if (!job->started) {
-    CHECK(state == RQ_CHECK_LIVE && !fixture->syncing && !txninit(&txn, &fixture->cache, 0) &&
-          txnpreparefile(&txn, &fixture->map, NULL, snapshot, 1) == 1 &&
-          !txnstart(&txn, NULL, NULL, NULL) && !txnnext(&txn, &write) &&
-          write.kind == JOURNAL_WRITE && write.block == FS_DATA_START);
-    CHECK(write.bytes[3] == 'W');
-    CHECK(!txncomplete(&txn, &write, 1) && !txnnext(&txn, &flush) && flush.kind == JOURNAL_FLUSH &&
-          !txn.journal.durable);
-    fixture->syncing = job->call.request;
-    return 0;
+  if (io->serial && (io->kind == JOURNAL_WRITE || !success || state & RQ_CHECK_CANCEL)) {
+    Journalio stale = *io;
+    stale.serial++;
+    CHECK(filesynccomplete(sync, 0, io, 1) == -ERR_STALE &&
+          filesynccomplete(sync, job->call.request, &stale, 1) == -ERR_STALE);
+    if (io->kind == JOURNAL_FLUSH && success) {
+      const u8 *snapshot = sync->snapshots;
+      for (i = 0; i < FS_BLOCK_BYTES; i++)
+        opendisk[i] = snapshot[i];
+      CHECK(opendisk[3] == 'W' && opendisk[19] == 'W');
+    }
+    CHECK(!filesynccomplete(sync, job->call.request, io, io->kind == JOURNAL_WRITE || success));
+    io->serial = 0;
   }
-  CHECK(fixture->syncing == job->call.request);
-  if (success && state == RQ_CHECK_LIVE)
-    return 0;
-  CHECK(state == (success ? RQ_CHECK_LIVE | RQ_CHECK_CANCEL : RQ_CHECK_LIVE) &&
-        !txncomplete(&txn, &flush, success) && txn.journal.durable == success &&
-        !txnrelease(&txn) && fixture->cache.entries[0].dirty == !success);
-  if (success) {
-    for (i = 0; i < FS_BLOCK_BYTES; i++)
-      opendisk[i] = snapshot[i];
-    CHECK(opendisk[3] == 'W' && opendisk[19] == 'W');
-  }
-  fixture->syncing = 0;
-  return success ? 1 : -EIO;
+  return filesyncstep(sync, job->call.request, state, &fixture->map, NULL, opensyncsubmit, fixture);
 }
 
 static isize
@@ -1971,6 +1975,8 @@ static void
 openserver(const Bootview *boot)
 {
   static Filelink link;
+  static Txn      synctxn;
+  static u8       syncsnapshot[FS_BLOCK_BYTES];
   Openjob         job = {0};
   Openfixture     fixture = {0};
   const Vwalkops  ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
@@ -2005,6 +2011,8 @@ openserver(const Bootview *boot)
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 128));
+  CHECK(!txninit(&synctxn, &fixture.cache, 0));
+  fixture.sync = (Syncwork){&synctxn, syncsnapshot, 1, 0};
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
@@ -2058,12 +2066,13 @@ openserver(const Bootview *boot)
         !loadclose(&fixture.loads, load, link.watch.owner.pid, link.watch.owner.image));
   CHECK(!fsstep(&fs) && file.position == 19 && blocks[0].dirty && !fsstep(&fs) && !fsstep(&fs) &&
         file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && file.position == 20);
-  CHECK(!fsstep(&fs) && !fixture.syncing && !fsstep(&fs) && fixture.syncing && !fsstep(&fs) &&
-        fixture.syncing && blocks[0].dirty && file.position == 20);
+  CHECK(!fsstep(&fs) && !fixture.sync.request && !fsstep(&fs) && fixture.sync.request &&
+        !fsstep(&fs) && fixture.sync.request && fixture.syncio.kind == JOURNAL_FLUSH &&
+        blocks[0].dirty && file.position == 20);
   {
     Ipcmsg event;
     CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) &&
-          !fsreadpump(&reads, &fixture.files) && !fixture.syncing && !blocks[0].dirty &&
+          !fsreadpump(&reads, &fixture.files) && !fixture.sync.request && !blocks[0].dirty &&
           file.position == 20 && !file.head);
   }
   fixture.cancelgrowth = 1;
@@ -2082,9 +2091,11 @@ openserver(const Bootview *boot)
         file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
         file.refs == 2 && !fsstep(&fs) && !file.position && fixture.growth && !fsstep(&fs) &&
         file.position == 24 && fixture.growth && !fsstep(&fs) && file.position == 26 &&
-        !fixture.growth && !fsstep(&fs) && file.position == 26 && !fsstep(&fs) && fixture.syncing &&
-        !fsstep(&fs) && !fixture.syncing && blocks[0].dirty && file.position == 26 &&
-        file.refs == 1 && !fsstep(&fs) && !file.node && !file.refs &&
+        !fixture.growth && !fsstep(&fs) && file.position == 26 && !fsstep(&fs) &&
+        fixture.sync.request && !fsreadpump(&reads, &fixture.files) &&
+        fixture.syncio.kind == JOURNAL_FLUSH && !fsstep(&fs) && !fixture.sync.request &&
+        synctxn.phase == TXN_STOPPED && blocks[0].dirty && file.position == 26 && file.refs == 1 &&
+        !fsstep(&fs) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
