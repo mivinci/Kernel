@@ -424,6 +424,7 @@ def build(args):
         compile_adoption(ROOT/'tests/kernel'/args.arch/'virtiommio.c', 'virtiommio'),
         compile_adoption(ROOT/'sbin/blk/io.c', 'vdev-blk-io'),
         compile_adoption(ROOT/'sbin/blk/transport.c', 'vdev-blk-transport'),
+        compile_adoption(ROOT/'sbin/blk/serve.c', 'vdev-blk-serve'),
         compile_adoption(ROOT/'sbin/fs/blk.c', 'vdev-fs-blk'),
         compile_adoption(ROOT/'sbin/fs/blklog.c', 'vdev-fs-blklog'),
         compile_adoption(ROOT/'sbin/fs/blkread.c', 'vdev-fs-blkread'),

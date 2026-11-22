@@ -6,7 +6,7 @@
 #include <abi/irq.h>
 #include "private/syscall.h"
 #include "private/start.h"
-#include "../../sbin/blk/transport.h"
+#include "../../sbin/blk/serve.h"
 #include "../../sbin/fs/blklog.h"
 #include "../../sbin/fs/blkread.h"
 #include "../../sbin/fs/mount.h"
@@ -1353,6 +1353,7 @@ blkclient(const Bootview *boot, Handle call)
   Bootmap                   map;
   Cache                     cache = {0};
   u32                       i, op;
+  Msg                       badhello = {{BLK_WORD(BLK_HELLO), 0, 1, 0}};
   REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result), 360);
   if (result.kind == IPC_NONE) {
     REQUIRE((isize) result.words[0] == -ERR_NOTSUP && result.words[1] == message.words[2], 361);
@@ -1364,6 +1365,10 @@ blkclient(const Bootview *boot, Handle call)
   mapping.mem = (Handle) result.words[0];
   REQUIRE(!__sys_map(space, &mapping), 363);
   map = (Bootmap){address, PROTO_CONN_BYTES, result.words[2], head->serverimage, 1, 1};
+  REQUIRE(!ipc_call(call, &badhello, 0, &result) && result.kind == IPC_NONE &&
+              (isize) result.words[0] == -EINVAL && result.words[1] == 1 && !result.words[2] &&
+              !result.words[3],
+          456);
   REQUIRE(!fsblkbind(&blk, call, &map, 1) && !fsblksubmit(&blk, BLK_INFO, 0, 0, NULL), 364);
   blkcollect(&blk, NULL, 0);
   REQUIRE(blk.info.geometry_generation == 2 && blk.info.capacity_bytes == 2048 * 512 &&
@@ -1587,6 +1592,15 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   Filelink        link = {0};
   Blkjob          jobs[2];
   Blktransport    transport = {0};
+  Blkservice      service = {&transport,
+                             bootresource(boot, VTEST_OBSERVE),
+                             bootresource(boot, BOOT_SELF_ALLOC),
+                             bootresource(boot, BOOT_SELF_SPACE),
+                             binding,
+                             0x2300000,
+                             irqevent,
+                             0,
+                             0};
   Ipcmsg          input;
   Vdone           done[VQ_BATCH];
   u32             count, more, causes, i;
@@ -1595,14 +1609,10 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
                             queue->device) &&
               !blktransportreaper(&transport, &transport, blkdrain),
           369);
-  REQUIRE(!ipc_recv(0, 0, &input) && !sysslothello(&link, 1, bootresource(boot, VTEST_OBSERVE),
-                                                   bootresource(boot, BOOT_SELF_ALLOC),
-                                                   bootresource(boot, BOOT_SELF_SPACE), 0x2300000,
-                                                   BLK_WORD(BLK_HELLO), &input),
+  REQUIRE(!blkservestep(&service) && link.ready && !blkservestep(&service) && link.ready &&
+              link.generation == 1,
           370);
-  REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_INFO) &&
-              !blktransportcall(&transport, &input),
-          371);
+  REQUIRE(!blkservestep(&service), 371);
   REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_WRITE), 382);
   /* Hold admission at the same geometry for the first WRITE only. */
   queue->configpending = 1;
@@ -1620,8 +1630,15 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
     started = now();
     REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
                 !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
-                !blktransportcall(&transport, &input) && transport.active == 1,
+                !blkservicecall(&service, &input) && transport.active == 1,
             372);
+    if (i + 1 == ARRAY_SIZE(blkopcodes)) {
+      while (transport.active)
+        REQUIRE(!blkservestep(&service), 457);
+      REQUIRE(!service.pending && !__sys_alarmcancel(&alarm), 458);
+      vdev_trace[38]++;
+      break;
+    }
     do {
       REQUIRE(!ipc_recv(irqevent | EVENT_TIMER, RECV_EVENTS_ONLY, &input) &&
                   input.kind == IPC_EVENT && input.words[0] == irqevent &&
@@ -1636,10 +1653,9 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
             375);
     vdev_trace[38]++;
   }
-  REQUIRE(!ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input) && input.kind == IPC_EVENT &&
-              input.words[0] == EVENT_LIFE && !blktransportreap(&transport) && !link.ready &&
-              !link.address && !link.memory,
-          376);
+  while (link.ready)
+    REQUIRE(!blkservestep(&service), 376);
+  REQUIRE(!link.address && !link.memory && !service.retiring, 459);
   vdev_trace[2] += 4;
   vdev_trace[3] += 3;
   vdev_trace[VTEST_BLK_RPC] = 1;
