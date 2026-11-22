@@ -34,6 +34,7 @@ struct Execmanifest
   u32         count;
   Handle      child;
   u64         snapshot;
+  u32         nrows, captured;
 };
 struct Exechold
 {
@@ -63,6 +64,14 @@ isize sysexecmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *c
 isize sysforkmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call,
                       const Fileslot *slot, const void *page, Connpeer backend, u64 now,
                       Execsource lookup, void *context);
+/* Capture the original FORK_SNAPSHOT into private persistent storage. The
+   owner supplies a fresh token from its own allocator. No holds are taken. */
+isize sysforksnapshot(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call,
+                      const Fileslot *slot, const void *page, Connpeer backend, u64 now,
+                      Execsource lookup, void *context, u64 token);
+/* Read-only preflight. A successful commit invalidates the original record
+   (clear count) after target holds and their cleanup have been recorded. */
+isize sysforksnapshotcheck(const Execmanifest *snapshot, const Execmanifest *prepare, u64 now);
 /* Acquire the target observation through the original accepted REQUEST. The
    dispatcher owns and shares one Fileowner per target image; use the normal
    owner read/close path to retire the cookie after dependent work ends. */

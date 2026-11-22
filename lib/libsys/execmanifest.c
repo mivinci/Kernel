@@ -19,7 +19,7 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
   isize        error;
   Fileinherit *row;
   Execgroup   *group;
-  int          fork = opcode == FS_FORK_PREPARE;
+  int          fork = opcode != FS_EXEC_PREPARE;
   if (!lookup || !separate(out, watch, sizeof(*watch)) || !separate(out, call, sizeof(*call)) ||
       !separate(out, slot, sizeof(*slot)) || handlekind(backend.pid) != HANDLE_PROCESS ||
       !backend.image)
@@ -34,7 +34,7 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
     return -ERR_STALE;
   count = slot->args[4];
   if (!count || count > BOOT_FD_COUNT || slot->args[5] || slot->args[7] || slot->object ||
-      slot->args[2] != call->image)
+      slot->args[2] != call->image || (opcode == FS_FORK_SNAPSHOT && slot->args[6]))
     return -ERR_INVALID;
   if (fork ? handlekind((Handle) slot->args[0]) != HANDLE_PROCESS ||
                  slot->args[0] == (u64) call->source || !slot->args[1]
@@ -91,6 +91,8 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
   out->deadline = slot->args[3];
   out->child = fork ? (Handle) slot->args[0] : 0;
   out->snapshot = slot->args[6];
+  out->nrows = (u32) count;
+  out->captured = opcode == FS_FORK_SNAPSHOT;
   out->count = groups;
   return 0;
 }
@@ -107,6 +109,46 @@ sysforkmanifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, c
                 const void *page, Connpeer backend, u64 now, Execsource lookup, void *context)
 {
   return manifest(out, watch, call, slot, page, backend, now, lookup, context, FS_FORK_PREPARE);
+}
+
+isize
+sysforksnapshot(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fileslot *slot,
+                const void *page, Connpeer backend, u64 now, Execsource lookup, void *context,
+                u64 token)
+{
+  isize error;
+  if (!token)
+    return -ERR_INVALID;
+  error = manifest(out, watch, call, slot, page, backend, now, lookup, context, FS_FORK_SNAPSHOT);
+  if (!error)
+    out->snapshot = token;
+  return error;
+}
+
+isize
+sysforksnapshotcheck(const Execmanifest *snapshot, const Execmanifest *prepare, u64 now)
+{
+  u32 i;
+  if (!snapshot || !prepare || snapshot == prepare)
+    return -ERR_INVALID;
+  if (!snapshot->count || !prepare->count || !snapshot->captured || prepare->captured ||
+      !snapshot->snapshot || !snapshot->child || snapshot->snapshot != prepare->snapshot ||
+      snapshot->pid != prepare->pid || snapshot->source_image != prepare->source_image ||
+      snapshot->connid != prepare->connid || snapshot->child != prepare->child ||
+      snapshot->target_image != prepare->target_image || snapshot->request == prepare->request ||
+      snapshot->seq >= prepare->seq || !snapshot->nrows || snapshot->nrows > BOOT_FD_COUNT ||
+      snapshot->nrows != prepare->nrows)
+    return -ERR_STALE;
+  if (snapshot->deadline <= now || prepare->deadline <= now)
+    return -ERR_TIMEDOUT;
+  for (i = 0; i < snapshot->nrows; i++) {
+    const Fileinherit *a = &snapshot->rows[i], *b = &prepare->rows[i];
+    if (a->fd != b->fd || a->flags != b->flags || a->backend_pid != b->backend_pid ||
+        a->backend_image != b->backend_image || a->session != b->session ||
+        a->reference_id != b->reference_id)
+      return -ERR_STALE;
+  }
+  return 0;
 }
 
 static isize

@@ -21,7 +21,8 @@ class Plan(C.Structure):
     _fields_ = [('rows', (U * 6) * 128), ('groups', Group * 128), ('pid', C.c_int64),
                 ('source_image', U), ('target_image', U), ('request', C.c_int64),
                 ('connid', U), ('seq', U), ('slot', U), ('deadline', U), ('count', C.c_uint32),
-                ('child', C.c_int64), ('snapshot', U)]
+                ('child', C.c_int64), ('snapshot', U), ('nrows', C.c_uint32),
+                ('captured', C.c_uint32)]
 
 
 class Hold(C.Structure):
@@ -87,6 +88,14 @@ isize forkmanifest(u64 scenario, Execmanifest *out) {
   slot.args[3] = 100; slot.args[4] = 2; slot.args[6] = 71;
   rows[0] = (Fileinherit){0, BOOT_FD_CLOEXEC, backend.pid, 4, 13, 17};
   rows[1] = (Fileinherit){scenario == 1 ? 0 : 1, 0, backend.pid, 4, 13, 17};
+  if (scenario == 3) {
+    call.request++;
+    call.words[0] = FS_FORK_SNAPSHOT;
+    watch.active.requests[0] = call.request;
+    call.words[2] = slot.seq = 2;
+    slot.args[6] = 0;
+    return sysforksnapshot(out, &watch, &call, &slot, page, backend, 99, lookup, 0, 71);
+  }
   return sysforkmanifest(out, &watch, &call, &slot, page, backend, 99, lookup, 0);
 }
 isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 image,
@@ -181,6 +190,26 @@ class ExecStateTests(unittest.TestCase):
         cls.lib.forkobserve.restype = C.c_int64
         cls.lib.forkmanifest.argtypes = [U, C.POINTER(Plan)]
         cls.lib.forkmanifest.restype = C.c_int64
+        cls.lib.sysforksnapshotcheck.argtypes = [C.POINTER(Plan), C.POINTER(Plan), U]
+        cls.lib.sysforksnapshotcheck.restype = C.c_int64
+
+    def test_snapshot_matches_original_connection_target_and_rows(self):
+        snapshot, prepare = Plan(), Plan()
+        self.assertEqual(self.lib.forkmanifest(3, C.byref(snapshot)), 0)
+        self.assertEqual(self.lib.forkmanifest(0, C.byref(prepare)), 0)
+        check = self.lib.sysforksnapshotcheck
+        self.assertEqual(check(C.byref(snapshot), C.byref(prepare), 99), 0)
+        self.assertLess(check(C.byref(snapshot), C.byref(prepare), 100), 0)
+        for field in ('snapshot', 'child', 'connid', 'source_image', 'target_image', 'pid'):
+            original = getattr(prepare, field)
+            setattr(prepare, field, original + 1)
+            self.assertLess(check(C.byref(snapshot), C.byref(prepare), 99), 0, field)
+            setattr(prepare, field, original)
+        prepare.rows[0][1] = 0
+        self.assertLess(check(C.byref(snapshot), C.byref(prepare), 99), 0)
+        prepare.rows[0][1] = 1
+        snapshot.count = 0
+        self.assertLess(check(C.byref(snapshot), C.byref(prepare), 99), 0)
 
     def test_fork_manifest_retains_cloexec_aliases_and_requires_original_slot(self):
         plan = Plan()
