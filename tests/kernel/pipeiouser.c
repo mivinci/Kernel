@@ -1620,6 +1620,8 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     return openhold(fixture, *out);
   }
   CHECK(dir == &fixture->root && bytes == 1);
+  if (name[0] == 'z')
+    return -ENOENT;
   if (name[0] == 'm' || name[0] == 'q') {
     Vnode *entry = name[0] == 'm' ? &fixture->created : &fixture->abandoned;
     if (!entry->number)
@@ -1730,7 +1732,7 @@ openselect(Openjob *job, const Fscontext *context, Vnode **start, u32 *follow)
 {
   CHECK(*start == context->cwd && *follow == 1);
   openvalidate(job);
-  return fsfileoptions(&job->slot);
+  return 0;
 }
 
 static isize
@@ -2913,9 +2915,13 @@ publicchdirserver(const Bootview *boot)
   CHECK(fixture.abandoned.number == 6 && !file.refs && !ref.id && !job.parent &&
         fixture.holds == 2 && !fsstep(&fs) && !file.refs); /* Cancelled name still exists. */
   fixture.searches = 0;
+  open.create = NULL;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R &&
         file.flags == FS_OPEN_NONBLOCK && file.node == &fixture.file);
   CHECK(!fsstep(&fs) && !file.node && !file.refs);
+  CHECK(!fsstep(&fs) && !file.refs && !job.parent && fixture.holds == 2); /* Missing. */
+  fixture.searches = 0;
+  open.create = opencreate;
   CHECK(!fsstep(&fs) && !file.refs && fixture.length == 20); /* Read-only truncation. */
   CHECK(!fsstep(&fs) && job.reserved && !ref.pid && fixture.length == 20);
   CHECK(!__sys_sigsend(&target, SIGNAL_USR1) &&
@@ -3032,8 +3038,9 @@ publicchdirclient(void)
   CHECK(!sigaction(SIGUSR1, &action, NULL) && open("/q", O_WRONLY | O_CREAT | O_EXCL, 0U) == -1 &&
         errno == EINTR && caught == 1 && open("/q", O_WRONLY | O_CREAT | O_EXCL, 0U) == -1 &&
         errno == EEXIST);
-  fd = open("/x", O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  fd = open("/x", O_RDONLY | O_CREAT | O_CLOEXEC | O_NONBLOCK, 0600U);
   CHECK(fd == 0 && errno == EEXIST && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
+  CHECK(open("/z", O_WRONLY | O_CREAT, 0600U) == -1 && errno == ENOSYS);
   CHECK(open("/x", O_RDONLY | O_TRUNC) == -1 && errno == EINVAL);
   action.sa_flags = SA_RESTART;
   CHECK(!sigaction(SIGUSR1, &action, NULL));

@@ -1,4 +1,5 @@
 #include "open.h"
+#include "file.h"
 #include <errno.h>
 
 static isize
@@ -74,8 +75,11 @@ advance(Fsopen *open, Openjob *job)
         job->changedcwd = !status;
         error = replypath(request, job->slot.seq, job->link, status, job->changedcwd);
       } else if (status == VWALK_MISSING) {
-        job->parent = node;
-        goto create;
+        if (open->create) {
+          job->parent = node;
+          goto create;
+        }
+        error = finish(request, job->slot.seq, job->link, -ENOSYS);
       } else {
         job->node = node;
         goto complete;
@@ -151,9 +155,12 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   job->reserved = NULL;
   job->node = job->parent = NULL;
   start = context->cwd;
-  error = call->words[0] == FS_OPEN ? open->select(job, context, &start, &follow) : 0;
-  if (!error && call->words[0] == FS_OPEN && (slot.args[0] & FS_OPEN_CREAT) && !open->create)
-    error = -ENOSYS;
+  error = 0;
+  if (call->words[0] == FS_OPEN) {
+    error = fsfileoptions(&slot);
+    if (!error)
+      error = open->select(job, context, &start, &follow);
+  }
   if (!error)
     error = vrequestpath(&job->walk, open->mounts, open->ops, job, context->root, start, follow,
                          &job->cred, link, call, &slot);

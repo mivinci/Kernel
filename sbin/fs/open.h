@@ -29,8 +29,9 @@ struct Fsopen
   u32             count;
   u64             events;
   void           *backend;
-  /* Validate flags/mode and any directory session before lookup. Return
-     negative business errno or fill the borrowed start and final-link rule. */
+  /* After common flag checks, validate any backend-specific mode policy
+     and directory session. Return negative business errno or fill the
+     borrowed start and final-link rule. */
   isize (*select)(Openjob *, const Fscontext *, Vnode **start, u32 *follow);
   /* Drain a waiting backend step without dropping its node references.
      WOULD_BLOCK keeps the whole job; backend progress must wake the loop. */
