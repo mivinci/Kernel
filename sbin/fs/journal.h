@@ -27,7 +27,11 @@ typedef struct Journalmark  Journalmark;
 typedef struct Journalhead  Journalhead;
 struct Writeupdate;
 struct Writeimage;
+struct Loadmap;
+struct Loadindex;
+struct Blockmap;
 typedef struct Growthmeta Growthmeta;
+typedef struct Growth     Growth;
 struct Journalmark
 {
   u64 txid;
@@ -60,6 +64,12 @@ struct Growthmeta
   const u8 *inode, *bitmap, *index;
   const u8 *header, *committed, *empty;
 };
+struct Growth
+{
+  Journal                  *journal;
+  const struct Writeupdate *update;
+  u64                       txid;
+};
 struct Journal
 {
   u64          blocks, last, txid, serial;
@@ -90,8 +100,15 @@ isize journalbegin(Journal *journal, const Journalplan *plan);
    and already encoded/validated metadata. The header's targets must follow
    inode, bitmap if allocated, then index if edited. Keep the inode guard,
    reservations and images through completion; publish only after commit. */
-isize journalgrowth(Journal *, const struct Writeupdate *, const struct Writeimage *,
+isize journalgrowth(Growth *, Journal *, const struct Writeupdate *, const struct Writeimage *,
                     const Growthmeta *);
+/* Consume the exact completed growth and retire its journal, once. All
+   views are independent. For an allocation, prepared is the private view
+   encoded in bitmap. Keep the inode guard and volume writer, and coordinate
+   cache visibility before releasing them. Do not retire the journal first.
+   A stopped growth is discarded only after I/O drains and recovery owns it. */
+isize growthpublish(Growth *, struct Loadmap *, struct Loadindex *, struct Blockmap *,
+                    const struct Blockmap *prepared);
 /* Open the journal for writes on the exclusively owned device, with fresh
    state after isolating old I/O and callbacks. Even EMPTY grants future
    write access, so it needs the same geometry, flush and fault guarantees.

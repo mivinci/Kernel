@@ -1704,18 +1704,23 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
 }
 
 static void
-openwritejournal(const Writeupdate *update, const Writeimage *image)
+openwritejournal(const Loadmap *original, const Writeupdate *update, const Writeimage *image,
+                 const Blockmap *prepared)
 {
-  static Journal journal;
-  static u8      snapshots[6][FS_BLOCK_BYTES];
+  static Journal   journal;
+  static u8        snapshots[6][FS_BLOCK_BYTES];
+  static Loadindex index;
+  static Blockmap  allocation;
+  Growth           work = {0};
+  Loadmap          live = *original;
   Growthmeta meta = {snapshots[0], NULL, snapshots[2], snapshots[3], snapshots[4], snapshots[5]};
   Journalio  io;
   u32        i;
   CHECK(!journalinit(&journal, 128, 7));
-  CHECK(journalgrowth(&journal, update, image, &meta) == -ERR_INVALID &&
+  CHECK(journalgrowth(&work, &journal, update, image, &meta) == -ERR_INVALID &&
         journal.phase == JOURNAL_IDLE);
   meta.bitmap = snapshots[1];
-  CHECK(!journalgrowth(&journal, update, image, &meta) && journal.txid == 8 &&
+  CHECK(!journalgrowth(&work, &journal, update, image, &meta) && journal.txid == 8 &&
         journal.metadata_count == 3 && journal.metadata[0].block == FS_INODE_START &&
         journal.metadata[1].block == FS_BLOCK_MAP && journal.metadata[2].block == 102);
   CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && io.block == 101 &&
@@ -1724,12 +1729,22 @@ openwritejournal(const Writeupdate *update, const Writeimage *image)
         io.bytes == image->taildata && !journalcomplete(&journal, &io, 1));
   CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_FLUSH && !journal.durable &&
         !journalcomplete(&journal, &io, 1) && journal.phase == JOURNAL_LOG_WRITE);
-  for (i = 0; i < 13; i++)
+  for (i = 0; i < 13; i++) {
+    CHECK(growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_WOULD_BLOCK &&
+          live.file.length == original->file.length && !index.block && !allocation.used[1]);
     CHECK(!journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
-  CHECK(journal.phase == JOURNAL_DONE && journal.durable && !journalrelease(&journal) &&
-        journal.last == 8 && !journalgrowth(&journal, update, image, &meta));
+  }
+  live.file.version++;
+  CHECK(growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_STALE);
+  live.file.version--;
+  CHECK(!growthpublish(&work, &live, &index, &allocation, prepared) && journal.last == 8 &&
+        live.file.length == update->map.file.length && index.block == update->index.block &&
+        allocation.used[1] == prepared->used[1] &&
+        growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_STALE &&
+        !journalgrowth(&work, &journal, update, image, &meta));
   CHECK(!journalnext(&journal, &io) && io.kind == JOURNAL_WRITE && !journal.durable &&
         !journalstop(&journal) && journalrelease(&journal) == -ERR_WOULD_BLOCK &&
+        growthpublish(&work, &live, &index, &allocation, prepared) == -ERR_STATE &&
         !journalcomplete(&journal, &io, 0) && !journalrelease(&journal) && journal.last == 8 &&
         journal.phase == JOURNAL_STOPPED);
 }
@@ -1770,7 +1785,7 @@ openwritestage(void)
     CHECK(image.data[i] == (i == 3 ? 'x' : i == 4 ? 'y' : 0));
     CHECK(image.taildata[i] == (i < 20 ? 0xa5 : 0) && tail[i] == 0xa5);
   }
-  openwritejournal(&update, &image);
+  openwritejournal(&map, &update, &image, &allocation);
 }
 
 static void

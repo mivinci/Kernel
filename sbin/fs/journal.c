@@ -162,15 +162,18 @@ journalbegin(Journal *journal, const Journalplan *plan)
   return 0;
 }
 isize
-journalgrowth(Journal *journal, const Writeupdate *update, const Writeimage *image,
+journalgrowth(Growth *work, Journal *journal, const Writeupdate *update, const Writeimage *image,
               const Growthmeta *encoded)
 {
   Journalblock metadata[3], data[2];
   Journalplan  plan;
   u64          inode;
   u32          block, tail, count = 0;
-  if (!update || !image || !encoded || !encoded->inode)
+  isize        error;
+  if (!external(journal, work, sizeof(*work)) || !update || !image || !encoded || !encoded->inode)
     return -ERR_INVALID;
+  if (work->journal || work->update || work->txid)
+    return -ERR_BUSY;
   inode = update->map.file.inode;
   block = update->plan.block;
   tail = update->plan.tail == block ? 0 : update->plan.tail;
@@ -196,7 +199,48 @@ journalgrowth(Journal *journal, const Writeupdate *update, const Writeimage *ima
     data[1] = (Journalblock){tail, image->taildata};
   plan = (Journalplan){encoded->header, encoded->committed, encoded->empty, metadata, data,
                        count,           tail ? 2 : 1};
-  return journalbegin(journal, &plan);
+  error = journalbegin(journal, &plan);
+  if (!error) {
+    work->journal = journal;
+    work->update = update;
+    work->txid = journal->txid;
+  }
+  return error;
+}
+
+isize
+growthpublish(Growth *work, Loadmap *live, Loadindex *index, Blockmap *allocation,
+              const Blockmap *prepared)
+{
+  const Writeupdate *update;
+  Journal           *journal;
+  isize              error;
+  if (!work || !(journal = work->journal) || !(update = work->update) || !work->txid)
+    return -ERR_STALE;
+  if (journal->txid != work->txid)
+    return -ERR_STALE;
+  if (journal->phase == JOURNAL_STOPPED)
+    return -ERR_STATE;
+  if (journal->phase != JOURNAL_DONE || !journal->durable)
+    return -ERR_WOULD_BLOCK;
+  if (!live || (update->indexdirty && !index) ||
+      (!update->plan.block &&
+       !separate(allocation, sizeof(*allocation), prepared, sizeof(*prepared))))
+    return -ERR_INVALID;
+  if (live->file.inode != update->map.file.inode ||
+      live->file.generation != update->map.file.generation || !update->map.file.version ||
+      live->file.version != update->map.file.version - 1)
+    return -ERR_STALE;
+  error = journalrelease(journal);
+  if (error)
+    return error;
+  if (!update->plan.block)
+    *allocation = *prepared;
+  if (update->indexdirty)
+    *index = update->index;
+  *live = update->map;
+  *work = (Growth){0};
+  return 0;
 }
 
 static int
