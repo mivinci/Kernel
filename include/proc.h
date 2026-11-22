@@ -30,6 +30,10 @@ struct Procinfo
   u64      image;
   u32      state, configured, phase, resources;
 };
+/* Trusted split accounting; the public QUERY_PROC total stays unchanged. */
+int  procusage(Handle pid, u64 *user_ns, u64 *kernel_ns);
+void procusertrap(struct Hctx *context);
+void procuserenter(struct Hctx *context);
 /* Trusted boot/test constructor. Native create first validates its fixed Set,
    limits and credentials; raw PID construction is not exported to userspace. */
 int procnew(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, Handle *out);

@@ -105,7 +105,9 @@ struct Execimage
   Imageid identity;
   Prepid  prep;
 };
-static Proc      processes[PROCS];
+static Proc processes[PROCS];
+/* Per Run slot, kept outside the 512-byte scheduler record. */
+static u64       user_ns[PROCS];
 static Local     entries[PROCS][LOCALS];
 static Rtable    tables[PROCS];
 static Execimage execimages[PROCS];
@@ -115,6 +117,8 @@ static u32       vm_paused, timer_enabled;
 static u64       cow_faults;
 static u64       timer_interval, timer_ticks, kernel_ticks;
 static u64       dispatched;
+static u64       user_started;
+static int       user_running;
 static u32       reschedule_requested;
 static u32       readyhead = PG_NONE, readytail = PG_NONE;
 
@@ -351,6 +355,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   p = &processes[slot];
   p->state = PROC_BUILDING;
   p->cpu_ns = 0;
+  user_ns[slot] = 0;
   p->wait_cursor = 0;
   p->generation++;
   pid = booting ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
@@ -1022,6 +1027,53 @@ cputime(const Proc *p, u64 *out)
   *out += elapsed;
   return 0;
 }
+
+int
+procusage(Handle pid, u64 *user, u64 *kernel)
+{
+  Proc *p = find(pid);
+  u64   total, usage;
+  int   error;
+  if (!p)
+    return -ERR_STALE;
+  if (!user || !kernel || user == kernel || (p == current && user_running))
+    return -ERR_STATE;
+  error = cputime(p, &total);
+  if (error)
+    return error;
+  usage = user_ns[p - processes];
+  if (usage > total)
+    return -ERR_STATE;
+  *user = usage;
+  *kernel = total - usage;
+  return 0;
+}
+
+void
+procusertrap(Hctx *context)
+{
+  u64 now, *usage;
+  if (!user_running || !proccurrent(context))
+    return;
+  usage = &user_ns[current - processes];
+  if (clockmono(&now) || now < user_started || now - user_started > UINT64_MAX - *usage)
+    panic("user CPU accounting range");
+  *usage += now - user_started;
+  user_running = 0;
+}
+
+void
+procuserenter(Hctx *context)
+{
+  if (!proccurrent(context))
+    return;
+  if (user_running)
+    panic("duplicate user accounting entry");
+  if (clockmono(&user_started))
+    panic("user entry clock range");
+  user_running = 1;
+}
+
 int
 procrunone(void)
 {
@@ -1071,6 +1123,8 @@ procrunone(void)
   if (clockmono(&dispatched))
     panic("dispatch clock range");
   hal_ctx_switch(&cpu, &p->kernel);
+  if (user_running)
+    panic("process left user accounting active");
   if (vm_paused)
     panic("process left paused VM on CPU");
   if (cputime(p, &p->cpu_ns))

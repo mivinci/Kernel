@@ -4,6 +4,11 @@
 .option norelax
 .global hal_user_enter
 hal_user_enter:
+ addi sp, sp, -16
+ sd a0, 0(sp)
+ call procuserenter
+ ld a0, 0(sp)
+ addi sp, sp, 16
  mv t6, a0
  csrw sscratch, a0
  la t0, userentry

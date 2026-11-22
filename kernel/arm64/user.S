@@ -3,6 +3,9 @@
 .section .text,"ax"
 .global hal_user_enter
 hal_user_enter:
+ str x0, [sp, #-16]!
+ bl procuserenter
+ ldr x0, [sp], #16
  mov x30, x0
  mov sp, x0
  mrs x9, cpacr_el1

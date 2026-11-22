@@ -121,7 +121,7 @@ statstest(void)
   Rtable  *observer;
   Acct     account;
   Pgstat   before, after;
-  u64      marker, replacement[3];
+  u64      marker, replacement[3], user, kernel, blocked_user, blocked_kernel;
   u32      turns = 0;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, 8, &set));
@@ -133,14 +133,18 @@ statstest(void)
   REQUIRE(!procpublish(pids[0]) && !procrunone());
   turns++;
   REQUIRE(!spaceread(info[0].space, 0x40080, &marker, sizeof(marker)) && marker == 1);
-  REQUIRE(!procpublish(pids[1]));
+  REQUIRE(!procusage(pids[0], &blocked_user, &blocked_kernel) && blocked_user && blocked_kernel);
+  REQUIRE(!procpublish(pids[1]) && !procusage(pids[0], &user, &kernel) && user == blocked_user &&
+          kernel == blocked_kernel);
   while (marker != 2) {
     REQUIRE(!procrunone() && ++turns < 10);
     REQUIRE(!spaceread(info[0].space, 0x40080, &marker, sizeof(marker)));
   }
+  REQUIRE(!procusage(pids[1], &user, &kernel) && user && kernel);
   collect(pids[1], info[1].life);
   REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[2]) && !procinfo(pids[2], &info[2]));
   REQUIRE(handleindex(pids[2]) == handleindex(pids[1]) && pids[2] != pids[1]);
+  REQUIRE(!procusage(pids[2], &user, &kernel) && !user && !kernel);
   REQUIRE(!localcontrol(observer, info[2].life, CONTROL_QUERY, (Handle *) &replacement[0]));
   replacement[1] = (u64) pids[2];
   REQUIRE(!acctstat(info[2].acct, &account));

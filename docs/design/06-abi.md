@@ -147,7 +147,11 @@ query kind固定PROC=1、RQ=2、ACCT=3、LIFE=4、RESOURCE=5、BOOT_RESOURCE=6�
 
 PROC的state固定CONSTRUCT=1、READY=2、RUNNING=3、BLOCKED=4、EXITING=5、STOPPED=6；可信Run停放已产生STOPPED，不输出内部BUILDING或恢复状态编号，原生发信生产/授权仍待接。仅返回仍有运行记录的目标；原运行记录回收后为0条，旧CONTROL不会读到同槽新PID。PROC为整实例单条，cursor只接受0，next=0，image为当前/清理中的镜像，stamp为运行身份代次而非内容版本。
 
-cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；不拆user/sys，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端。wait_kind为0无等待、1接收、2请求结果、3独立收尾、4构造撤销续点、5父wait、6信号等待；READY但尚未恢复的续点仍显示其等待种类。父wait的wait_selector_kind为0任意孩子、1完整PID、2冻结组，wait_selector对应0/PID/公开PGID；不暴露内部GROUP Handle。其他等待的selector两字0，其余保留字0。
+cpu_ns为该进程实际被调度选中期间的累计单调纳秒，包含它的用户/内核工作与该窗口内IRQ开销，不包含阻塞、其他进程及CPU空闲时间；该字段仍只交付总量，也不表示硬件性能。当前进程查询包含尚未切走的本次片段，运行槽复用重置为0。waitpid仅在强结果/收尾阻塞且仍有可调度强等待边时为该边对端完整PID；对端已结束而仅等待独立收尾、recv/就绪/运行/退出为0，原请求目标仍从RQ记录查询。resource_count为本地尚占用授权槽数，map_count为成功提交且尚未解除的完整Mmap条数，rq_count为当前PID/image仍实际保有caller/receiver责任的请求数，同一自请求只计一次，不计空闲预付槽。tty=0表示未关联终端。wait_kind为0无等待、1接收、2请求结果、3独立收尾、4构造撤销续点、5父wait、6信号等待；READY但尚未恢复的续点仍显示其等待种类。父wait的wait_selector_kind为0任意孩子、1完整PID、2冻结组，wait_selector对应0/PID/公开PGID；不暴露内部GROUP Handle。其他等待的selector两字0，其余保留字0。
+
+内核按实际用户态入口与用户陷入边界另行累计用户时间；受信内部查询以原调度总量减去用户区间得到系统时间。汇编保存和恢复现场附近的开销按测量边界归属，IRQ 处理计入系统区间。统计随同一 Run 持续，复用槽时归零；本步不增加 `QUERY_PROC` 字段，不累计已收取子进程的时间，也不提供公开 `times()`。
+
+ARM64、RV64 QEMU `stats` 验证用户和系统计时都有进展、未调度期间保持不变、运行槽复用后归零，并继续核对原公开总量。双架构 `sigframe` 覆盖信号递送及返回、故障和 fork 续点经过新计时边界。
 
 ### query的主体选择（交叉复核修订）
 

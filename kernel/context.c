@@ -10,6 +10,8 @@ usertrap(Hctx *context)
 {
   Htrap trap;
   hal_trap_decode(context, &trap);
+  if (trap.fromuser)
+    procusertrap(context);
   if (trap.fromuser && (trap.kind == HT_TIMER || trap.kind == HT_IRQ))
     procinterrupttrap(context);
 #if BOOT_CASE == 16
