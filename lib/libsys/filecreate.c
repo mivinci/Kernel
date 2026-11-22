@@ -1115,13 +1115,71 @@ sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *tab
   return error ? error : native ? native : status ? 0 : number;
 }
 
+static isize
+openack(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Slotop *op;
+  isize   error = sysoppoll(work, cache, key);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->status == -ERR_PEER) {
+    error = work->state.ended ? 0 : sysoppeerended(work, cache, key);
+    if (!error)
+      error = sysfilecreatefailed(pool, work, cache, key);
+  }
+  return error ? error : sysfilecreateack(pool, work, cache, key);
+}
+
+isize
+sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                   Opencreate *open)
+{
+  Createop *create;
+  Slotop   *op;
+  Opkey     background;
+  isize     error = opencheck(pool, work, cache, table, open, &create);
+  if (error)
+    return error;
+  op = &work->state.operations[open->operation.lease.slot];
+  if (!(op->flags & SYSOP_CANCEL_SENT) || create->phase == SYSFILE_CREATE_RESOLVED)
+    return -ERR_STATE;
+  error = sysopabandon(work, cache, &open->operation, &background);
+  if (!error) {
+    error = sysfdcancel(table, open->tag);
+    clear(open, sizeof(*open));
+  }
+  return error;
+}
+
+isize
+sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key)
+{
+  Createop *create;
+  Slotop   *op;
+  u64       files[2] = {0}, source = 0;
+  isize     error = target(pool, work, cache, key, &create);
+  if (error)
+    return error;
+  op = &work->state.operations[key->lease.slot];
+  if (op->opcode != FS_OPEN || key->owner ||
+      (op->flags & (SYSOP_BACKGROUND | SYSOP_APP_ENDED)) != (SYSOP_BACKGROUND | SYSOP_APP_ENDED))
+    return -ERR_STATE;
+  error = openack(pool, work, cache, key);
+  if (error)
+    return error;
+  if (create->token)
+    return 1;
+  error = sysfilecreatesettle(pool, work, cache, key, 1);
+  return error ? error : sysfilecreatefinish(pool, work, cache, key, files, &source);
+}
+
 isize
 sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                    Opencreate *open, int *fd, isize *business)
 {
   Createop    *create;
   const Opkey *key;
-  Slotop      *op;
   isize        error = opencheck(pool, work, cache, table, open, &create);
   if (error)
     return error;
@@ -1134,17 +1192,7 @@ sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *ta
       !separate(business, sizeof(*business), open, sizeof(*open)))
     return -ERR_INVALID;
   key = &open->operation;
-  error = sysoppoll(work, cache, key);
-  if (error)
-    return error;
-  op = &work->state.operations[key->lease.slot];
-  if (op->status == -ERR_PEER) {
-    error = work->state.ended ? 0 : sysoppeerended(work, cache, key);
-    if (!error)
-      error = sysfilecreatefailed(pool, work, cache, key);
-  }
-  if (!error)
-    error = sysfilecreateack(pool, work, cache, key);
+  error = openack(pool, work, cache, key);
   if (error)
     return error;
   if (create->token)

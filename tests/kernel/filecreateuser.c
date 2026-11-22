@@ -643,7 +643,7 @@ ttygetattr(u64 file)
 static void
 client(const Bootview *boot)
 {
-  Opkey              key, background;
+  Opkey              key;
   Opencreate         late = {0};
   Rkey               latectx = {0};
   const u64          lateargs[8] = {0, 0, 0, 6};
@@ -734,25 +734,29 @@ client(const Bootview *boot)
   CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqwait(rpc, 0, &result) &&
         (isize) result.words[0] == -EBUSY && result.words[1] == key.lease.seq && !result.words[2] &&
         !result.words[3] && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
-  CHECK(!sysfileopeninterrupt(&pool, &work, &cache, &fds, &late, 1) &&
+  CHECK(sysfileopenabandon(&pool, &work, &cache, &fds, &late) == -ERR_STATE &&
+        !sysfileopeninterrupt(&pool, &work, &cache, &fds, &late, 1) &&
         !sysfileopeninterrupt(&pool, &work, &cache, &fds, &late, 2) &&
         !sysoprpc(&work, &cache, &key, &rpc) && rpc == original &&
         work.state.operations[key.lease.slot].deadline == 1 + SYSOP_CONTROL_NS &&
         sysfileopencollect(&pool, &work, &cache, &fds, &late, &latefd, &latebusiness) ==
             -ERR_WOULD_BLOCK &&
         latefd == -2 && latebusiness == 9 && !sysfdobserve(&fds, late.tag.index, &detached) &&
-        detached.tag.state == SYSFD_RESERVED && !sysopabandon(&work, &cache, &key, &background));
+        detached.tag.state == SYSFD_RESERVED &&
+        !sysfileopenabandon(&pool, &work, &cache, &fds, &late) && !late.operation.lease.seq);
+  key.owner = 0;
+  CHECK(!sysfdreserve(&fds, detached.tag.index, &fd) && fd.index == detached.tag.index &&
+        fd.generation != detached.tag.generation &&
+        sysfileopendrain(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK &&
+        !sysoprpc(&work, &cache, &key, &rpc) && rpc == original);
   gate.words[0] = GATE;
   gate.words[1] = gate.words[2] = gate.words[3] = 0;
   CHECK(!ipc_call(work.state.call, &gate, CALL_ASYNC | CALL_CONTROL, &result));
   rpc = result.request;
   CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
         !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
-  collect(&background);
-  zero(files, sizeof(files));
-  CHECK(sysfilecreatesettle(&pool, &work, &cache, &background, 0) == -ERR_STATE);
-  complete(&background, 1, files, &source);
-  CHECK(!files[0] && !files[1] && !source && !sysfdcancel(&fds, late.tag));
+  CHECK(!sysfileopendrain(&pool, &work, &cache, &key) &&
+        sysfileopendrain(&pool, &work, &cache, &key) == -ERR_STALE && !sysfdcancel(&fds, fd));
   closefile(ids[0], 0);
   filecreatetrace[3] = 1;
   {

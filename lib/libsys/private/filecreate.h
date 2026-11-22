@@ -37,6 +37,13 @@ isize sysfileopenfinish(Filepool *pool, Connwork *work, Conncache *cache, Fdtabl
    an ACKed resource OPEN, and WOULD_BLOCK retains the original operation. */
 isize sysfileopencollect(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                          Opencreate *open, int *fd, isize *business);
+/* After the caller stops waiting for a cancelled OPEN, give the slot to
+   background cleanup and release the unpublished fd reservation. */
+isize sysfileopenabandon(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                         Opencreate *open);
+/* Advance an abandoned OPEN without publishing a descriptor. Ordinary success
+   enters the close ledger; one leaves an ACKed resource token for ABORT. */
+isize sysfileopendrain(Filepool *pool, Connwork *work, Conncache *cache, const Opkey *key);
 struct Pipecreate
 {
   Opkey operation;
