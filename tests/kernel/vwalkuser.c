@@ -348,5 +348,12 @@ vwalkusercheck(void)
       replacement.mount <= nested.mount || vmountenter(mounts, point) != &replacement ||
       vmountdel(mounts, replacement.mount))
     return 11;
+  out = NULL;
+  if (vwalkinit(&walk, mounts, &ops, &test, root, start, "rel/", sizeof("rel/"), 0) ||
+      runwalk(&walk, &out) || out != point)
+    return 14;
+  drop(&test, out);
+  if (!unheld(&test))
+    return 14;
   return 0;
 }

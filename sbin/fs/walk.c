@@ -149,7 +149,7 @@ lookup(Vwalk *walk, Vnode **out)
     }
   }
   if (node->kind == VNODE_LINK && walk->part.kind == PATH_NAME &&
-      (!walk->part.final || walk->follow)) {
+      (!walk->part.final || walk->part.directory || walk->follow)) {
     walk->link = node;
     walk->phase = WALK_LINK;
     return VWALK_MORE;
