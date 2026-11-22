@@ -297,9 +297,11 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     if (error)
       break;
     if (dispatch->regular && (slot.object & FS_FILE_SESSION)) {
+      Fsfile *file;
       if (opcode == FS_READ)
         return fsreadstart(dispatch->reads, dispatch->regular, link, call, &slot);
-      reply.words[0] = (u64) -ENOSYS;
+      file = fsfilefind(dispatch->regular, call->source, call->image, slot.object);
+      reply.words[0] = (u64) (!file ? -ESTALE : !(file->access & VACCESS_W) ? -EBADF : -ENOSYS);
       return respond(link, call->request, &reply);
     }
     end = opcode == FS_READ ? PIPE_READ : PIPE_WRITE;

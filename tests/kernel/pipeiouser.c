@@ -1671,6 +1671,27 @@ openlength(void *context, const Vnode *node, u64 *length)
 }
 
 static void
+openwritecheck(u64 session, isize expected)
+{
+  Filelease lease;
+  Fileslot  slot = {0};
+  Ipcmsg    result;
+  Msg       request = {{FS_WRITE, work.state.map.connid, 0, 0}};
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  request.words[2] = slot.seq = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = session;
+  slot.payload_bytes = slot.args[1] = 1;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &request, 0, &result) && (isize) result.words[0] == expected &&
+        result.words[1] == lease.seq && !result.words[2] && !result.words[3] &&
+        !sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
 openserver(const Bootview *boot)
 {
   static Filelink link;
@@ -1719,6 +1740,8 @@ openserver(const Bootview *boot)
   CHECK(fixture.cancelled == 2 && fixture.completed == 2 && !fsstep(&fs) && file.refs == 2 &&
         refs[0].file == refs[1].file && refs[0].id != refs[1].id && !fsstep(&fs) &&
         file.refs == 1 && fixture.holds == 3);
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && !file.position && file.refs == 1 && !file.head &&
+        !fixture.fetch.block);
   for (i = 0; i < 5; i++)
     CHECK(!fsstep(&fs));
   CHECK(file.position == 19 && !fsstep(&fs) && fixture.fetch.block && file.refs == 2 &&
@@ -1799,6 +1822,8 @@ openclient(const Bootview *boot)
   dup.session = key.session;
   dup.reference = refcall(&work, &cache, FS_DUPREF, key);
   CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key));
+  openwritecheck(dup.session + 1, -ESTALE);
+  openwritecheck(dup.session, -EBADF);
   openseek(dup.session, FS_SEEK_SET, 9, 0, 9);
   openseek(dup.session, FS_SEEK_CUR, 3, 0, 12);
   openseek(dup.session, FS_SEEK_END, -1, 0, 19);
