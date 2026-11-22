@@ -13,6 +13,7 @@ int    strcoll(const char *a, const char *b);
 size_t strxfrm(char *destination, const char *source, size_t bytes);
 int    strncmp(const char *a, const char *b, size_t bytes);
 char  *strchr(const char *string, int byte);
+char  *strchrnul(const char *string, int byte);
 char  *strrchr(const char *string, int byte);
 char  *strstr(const char *string, const char *pattern);
 size_t strspn(const char *string, const char *accepted);

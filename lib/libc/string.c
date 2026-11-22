@@ -83,6 +83,13 @@ strchr(const char *string, int byte)
     string++;
   }
 }
+char *
+strchrnul(const char *string, int byte)
+{
+  while (*string && (u8) *string != (u8) byte)
+    string++;
+  return (char *) string;
+}
 void *
 memchr(const void *memory, int byte, size_t bytes)
 {

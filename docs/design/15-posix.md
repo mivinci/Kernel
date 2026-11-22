@@ -153,6 +153,8 @@ ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实
 
 公开 SDK 的 `<limits.h>` 在保留 Clang 整数限制的基础上提供 `PATH_MAX=4096`（含 NUL）和 `NAME_MAX=255`（不含 NUL）。VFS 路径解析和 SDK 共用 `proto/path.h` 中的定义。ARM64、RV64 均用 SDK 与 Clang 基础头独立检查了这些宏，未引入宿主系统头。
 
+公开 SDK 提供 BusyBox ash 用到的 `<string.h>` 扩展 `strchrnul`：按无符号字节查找，未匹配时返回结尾 NUL 的地址。它无需分配或系统调用。
+
 libc 的私有 `pathsearch` 实现按固定 PATH 快照查找命令的顺序，供后续 `posix_spawnp` 与 sh 共用：名称含 `/` 时直接尝试；空路径分量从 cwd 尝试；ENOENT、ENOTDIR 继续搜索，遇 EACCES 记下并继续，没有成功项时优先返回 EACCES。ENOEXEC 原样返回，不启动脚本替代。最多 32 个分量，PATH 和单个候选路径各最多 4096 字节（含 NUL），不截断。4 项主机测试用回调核对候选顺序、失败归并和容量边界，ARM64/RV64 SDK 构建通过。此处尚未调用文件系统或发布进程。
 
 `<spawn.h>` 提供 `posix_spawn_file_actions_init/destroy/addopen/addclose/adddup2`。列表按登记顺序保存最多 128 项；`addopen` 自持路径副本，登记不打开文件。私有遍历器在首个动作错误处停止；未来 spawn 调用者须先捕获稳定列表，再将动作应用到未发布的子进程，并在出错时撤销准备。ARM64/RV64 QEMU `runtime` 验证路径副本、无效 fd、动作顺序、失败后不执行下一项、释放列表及 PATH 候选顺序。实际子 fd 表操作、CLOEXEC 收尾与 `posix_spawn` 发布未接。

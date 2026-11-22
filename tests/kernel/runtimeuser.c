@@ -1124,6 +1124,12 @@ main(int argc, char **argv)
   REQUIRE(!memcmp(scratch, "abcdef", 6) && strchr("abc", 'b')[0] == 'b' &&
               strchr("abc", 0)[0] == 0 && !strchr("abc", 'z') && strcmp("\377", "a") > 0,
           176);
+  {
+    const char text[] = "a\377b";
+    REQUIRE(strchrnul(text, -1) == text + 1 && strchrnul(text, 'z') == text + 3 &&
+                strchrnul(text, 0) == text + 3 && strchrnul(text + 3, 'a') == text + 3,
+            176);
+  }
   sortcheck();
   optioncheck();
   jumpcheck();
