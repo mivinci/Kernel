@@ -407,7 +407,7 @@ journalreclaim(Reclaimtx *work, Journal *journal, Cache *cache, const Reclaim *b
 {
   Journalblock metadata[3];
   Journalplan  plan;
-  Reclaimtx    next = {journal, cache, batch, live, index, allocation, 0};
+  Reclaimtx    next = {journal, cache, batch, live, index, allocation, 0, NULL};
   u32          inode, count = 0;
   isize        error;
   if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
@@ -443,6 +443,64 @@ journalreclaim(Reclaimtx *work, Journal *journal, Cache *cache, const Reclaim *b
   return 0;
 }
 
+static isize
+inodefreecheck(const Loadmap *live, const Inodemap *inodes)
+{
+  u64 inode = live->file.inode;
+  u32 i;
+  if (inode <= FS_ROOT || inode >= FS_INODES || !live->file.generation ||
+      !(inodes->used[inode / 64] & (UINT64_C(1) << (inode % 64))))
+    return -ERR_STALE;
+  if (live->indirect)
+    return -ERR_BUSY;
+  for (i = 0; i < LOAD_DIRECT; i++)
+    if (live->direct[i])
+      return -ERR_BUSY;
+  return 0;
+}
+
+static isize
+forgetinodefree(const Reclaimtx *work)
+{
+  u64 blocks[2];
+  blocks[0] = FS_INODE_MAP;
+  blocks[1] = FS_INODE_START + work->live->file.inode / (FS_BLOCK_BYTES / FS_INODE_BYTES);
+  return cacheforget(work->cache, blocks, 2);
+}
+
+isize
+journalinodefree(Reclaimtx *work, Journal *journal, Cache *cache, Loadmap *live, Inodemap *inodes,
+                 u32 links, u32 refs, const Mapmeta *encoded)
+{
+  Journalblock metadata;
+  Journalplan  plan;
+  Reclaimtx    next = {journal, cache, NULL, live, NULL, NULL, 0, inodes};
+  isize        error;
+  if (!external(journal, work, sizeof(*work)) || !cache || cache->blocks != journal->blocks ||
+      !separate(live, sizeof(*live), inodes, sizeof(*inodes)) || !encoded || !encoded->bitmap ||
+      encoded->inode || encoded->index || links)
+    return -ERR_INVALID;
+  if (work->journal || work->txid || refs)
+    return -ERR_BUSY;
+  error = inodefreecheck(live, inodes);
+  if (error)
+    return error;
+  metadata = (Journalblock){FS_INODE_MAP, encoded->bitmap};
+  plan = (Journalplan){encoded->header, encoded->committed, encoded->empty, &metadata, NULL, 1, 0};
+  error = journalbegin(journal, &plan);
+  if (error)
+    return error;
+  error = forgetinodefree(&next);
+  if (error) {
+    clear(journal);
+    journal->phase = JOURNAL_IDLE;
+    return error;
+  }
+  next.txid = journal->txid;
+  *work = next;
+  return 0;
+}
+
 isize
 reclaimpublish(Reclaimtx *work)
 {
@@ -456,6 +514,19 @@ reclaimpublish(Reclaimtx *work)
     return -ERR_STATE;
   if (journal->phase != JOURNAL_DONE || !journal->durable)
     return -ERR_WOULD_BLOCK;
+  if (work->inodes) {
+    u64 number = work->live->file.inode;
+    error = inodefreecheck(work->live, work->inodes);
+    if (!error)
+      error = forgetinodefree(work);
+    if (!error)
+      error = journalrelease(journal);
+    if (error)
+      return error;
+    work->inodes->used[number / 64] &= ~(UINT64_C(1) << (number % 64));
+    *work = (Reclaimtx){0};
+    return 0;
+  }
   error = reclaimcheck(work, &inode);
   if (error)
     return error;

@@ -36,6 +36,7 @@ typedef struct Mapmeta     Mapmeta;
 typedef struct Growth      Growth;
 typedef struct Reclaimtx   Reclaimtx;
 typedef struct Reclaimscan Reclaimscan;
+typedef struct Inodemap    Inodemap;
 typedef struct Shrink      Shrink;
 struct Journalmark
 {
@@ -85,6 +86,11 @@ struct Reclaimtx
   struct Loadindex     *index;
   struct Blockmap      *allocation;
   u64                   txid;
+  Inodemap             *inodes;
+};
+struct Inodemap
+{
+  u64 used[FS_INODES / 64];
 };
 struct Shrink
 {
@@ -149,6 +155,12 @@ isize growthpublish(Growth *, struct Loadmap *, struct Loadindex *, struct Block
    and discard the transaction only when recovery takes ownership. */
 isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclaim *,
                      struct Loadmap *, struct Loadindex *, struct Blockmap *, const Mapmeta *);
+/* Final retirement of an unlinked and unreferenced inode with no block
+   pointers. Encode only the inode bitmap (Mapmeta.bitmap); keep the old
+   generation in the inode row. Hold the inode and volume writer guards
+   and retain all views through publication or recovery. */
+isize journalinodefree(Reclaimtx *, Journal *, struct Cache *, struct Loadmap *, Inodemap *,
+                       u32 links, u32 refs, const Mapmeta *);
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */
 isize reclaimpublish(Reclaimtx *);

@@ -38,7 +38,8 @@ class ReclaimScan(C.Structure):
 
 class ReclaimTx(C.Structure):
     _fields_ = [(name, C.c_void_p) for name in ('journal', 'cache', 'batch', 'live', 'index',
-                                               'allocation')] + [('txid', C.c_uint64)]
+                                               'allocation')] + [('txid', C.c_uint64),
+                                                                   ('inodes', C.c_void_p)]
 
 
 Candidate = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.c_uint32)

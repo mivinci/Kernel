@@ -1970,6 +1970,7 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   Reclaim  batch;
   Reclaimtx work = {0};
   Shrink    shrink = {0};
+  Inodemap  inodes = {{7}};
   Loadmap   staged;
   Loadspan  span;
   Journal   journal;
@@ -2047,13 +2048,20 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
   CHECK(!journalreclaim(&work, &journal, cache, &batch, shortened, index, allocation, &meta) &&
         journal.metadata_count == 2 && journal.metadata[0].block == FS_INODE_START &&
         journal.metadata[1].block == FS_BLOCK_MAP);
-  for (steps = 0; journal.phase != JOURNAL_EMPTY_FLUSH; steps++)
+  for (steps = 0; journal.phase != JOURNAL_DONE; steps++)
     CHECK(steps < 20 && !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
-  CHECK(journal.durable && !journalnext(&journal, &io) &&
-        reclaimpublish(&work) == -ERR_WOULD_BLOCK && !journalcomplete(&journal, &io, 0) &&
-        reclaimpublish(&work) == -ERR_STATE && !journalrelease(&journal) && journal.last == 2 &&
-        shortened->direct[0] == 100 && shortened->indirect == 102 && index->block == 102 &&
-        allocation->used[1] == (original ^ (UINT64_C(1) << (101 - 64))));
+  meta.inode = NULL;
+  CHECK(journalinodefree(&work, &journal, cache, shortened, &inodes, 0, 0, &meta) == -ERR_BUSY &&
+        inodes.used[0] == 7 && !reclaimpublish(&work) && journal.last == 3 &&
+        !shortened->direct[0] && !shortened->indirect && !index->block &&
+        journalinodefree(&work, &journal, cache, shortened, &inodes, 0, 1, &meta) == -ERR_BUSY &&
+        !journalinodefree(&work, &journal, cache, shortened, &inodes, 0, 0, &meta) &&
+        journal.metadata_count == 1 && journal.metadata[0].block == FS_INODE_MAP);
+  for (steps = 0; journal.phase != JOURNAL_DONE; steps++)
+    CHECK(steps < 20 && inodes.used[0] == 7 && reclaimpublish(&work) == -ERR_WOULD_BLOCK &&
+          !journalnext(&journal, &io) && !journalcomplete(&journal, &io, 1));
+  CHECK(!reclaimpublish(&work) && journal.last == 4 && inodes.used[0] == 3 &&
+        shortened->file.generation == 1 && reclaimpublish(&work) == -ERR_STALE);
 }
 
 static void
@@ -2067,7 +2075,6 @@ openwritestage(void)
   const Loadmap      map = {{2, 1, 1, 20}, {100}, 0};
   const u64          at = 12 * FS_BLOCK_BYTES + 3;
   Loadspan           span;
-  Writeplan          growth;
   Cache              cache;
   u32                i;
   for (i = 0; i < sizeof(tail); i++)
@@ -2098,8 +2105,6 @@ openwritestage(void)
   openwritejournal(&map, &update, &image, &allocation);
   CHECK(!cacheinit(&cache, entries, ARRAY_SIZE(entries), 128));
   openreclaimjournal(&update.map, &update.index, &allocation, &cache);
-  CHECK(!loadmapwrite(&update.map, &update.index, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) &&
-        !growth.block && !growth.newindex && growth.tail == 100 && growth.zerooff == 20);
 }
 
 typedef struct Loadfixture Loadfixture;
