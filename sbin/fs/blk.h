@@ -37,6 +37,7 @@ struct Fsblk
    Fsblk or a validated negative business status. */
 isize fsblkhello(Blkattach *, Handle call, Handle space, u64 address, u64 device, u64 seq);
 isize fsblkattached(Blkattach *, Fsblk *, isize *status);
+int   fsblkbound(const Blkattach *, const Fsblk *);
 /* Settle the original bootstrap and release the local mapping and MEM.
    The owner must first stop using Fsblk and drain its I/O. This does not
    close the server's peer entry; it stays owned by the client image. */

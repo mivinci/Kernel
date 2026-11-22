@@ -1101,8 +1101,7 @@ blkmountstartup(Blkmount *work, Blkattach *attach, Vmounts *mounts, Vnode *root,
   if (!attach || !attach->call || !work || !work->probe || !work->probe->blk || !mounts || !root ||
       root->mount || root->number || root->generation || root->kind || mounts->serial)
     return -ERR_INVALID;
-  if (work->probe->blk->address &&
-      (work->probe->blk->address != attach->map.address || work->probe->blk->call != attach->call))
+  if (work->probe->blk->address && !fsblkbound(attach, work->probe->blk))
     return -ERR_INVALID;
   result = mountwait(work, attach, deadline);
   return result == 1 ? blkmountadd(work, mounts, root, NULL) : result;

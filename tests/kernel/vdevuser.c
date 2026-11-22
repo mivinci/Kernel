@@ -1700,6 +1700,15 @@ blkclient(const Bootview *boot, Handle call)
                 !root.mount && !root.number && !root.generation && !root.kind && !dirs.published,
             439);
   }
+  {
+    Blkattach other = attaching;
+    other.map.connid ^= 1;
+    REQUIRE(blkmountstartup(&mounting, &other, &mounts, &root, now() + VDEV_RESET_NS) ==
+                    -ERR_INVALID &&
+                fsblkdetach(&other, &blk) == -ERR_INVALID && blk.address == address &&
+                other.memory == attaching.memory && !mounts.serial && !root.mount,
+            545);
+  }
   REQUIRE(!blkmountstartup(&mounting, &attaching, &mounts, &root, now() + VDEV_RESET_NS) &&
               root.mount == 1 && mounts.serial == 1 && mounts.entries[0].root == &root &&
               root.number == FS_ROOT && root.generation == nodes[FS_ROOT].generation &&

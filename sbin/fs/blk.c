@@ -136,7 +136,7 @@ fsblkdetach(Blkattach *work, Fsblk *blk)
   Bootstrap *boot;
   Connclaim  claim;
   isize      error;
-  if (!work || !blk || !work->call || (blk->address && blk->address != work->map.address))
+  if (!work || !blk || !work->call || (blk->address && !fsblkbound(work, blk)))
     return -ERR_INVALID;
   if (blk->rpc)
     return -ERR_BUSY;
@@ -171,6 +171,14 @@ fsblkdetach(Blkattach *work, Fsblk *blk)
   }
   work->call = 0;
   return 0;
+}
+
+int
+fsblkbound(const Blkattach *work, const Fsblk *blk)
+{
+  return work && blk && work->memory && work->map.mapped && work->map.verified && blk->address &&
+         blk->address == work->map.address && blk->call == work->call &&
+         blk->connid == work->map.connid && blk->device == work->device;
 }
 
 isize
