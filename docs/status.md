@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage518：`fsstep` 接入已授权会话的 `FS_LOAD`。双架构 QEMU `pipeio` 验证错误版本、冷缓存读取及取消后排空，40 项 FS 主机测试通过。生产会话授权和块服务接线待做。
 - stage517：FS 服务接入 `PATH/CHDIR`，目标目录搜索通过后才切换 cwd。双架构 QEMU `pipeio`、`runtime` 通过，公开 `chdir` 和生产目录后端待接入。
 - stage516：文件数据同步执行器沿原 REQUEST 逐项等待写入和 FLUSH，拒绝过期完成。双架构 QEMU `pipeio`、`virtiodev` 和 40 项 FS 主机测试通过。生产挂载和块服务接线待完成。
 - stage515：同步事务可按已提交文件映射捕获 EOF 内的脏数据版本。双架构 QEMU `pipeio`、`virtiodev`、`runtime` 与 40 项 FS 主机测试通过。生产同步的元数据和块运输待接入。

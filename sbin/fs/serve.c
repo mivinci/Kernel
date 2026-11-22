@@ -50,7 +50,8 @@ static isize
 drain(void *context, Filelink *link)
 {
   Fsservice *fs = context;
-  if (fsopenbusy(fs->open, link) || fsreadbusy(fs->pipes.reads, link)) {
+  if (fsloadretire(fs->loads, link) || fsopenbusy(fs->open, link) ||
+      fsreadbusy(fs->pipes.reads, link)) {
     fs->retiring = 1;
     return -ERR_WOULD_BLOCK;
   }
@@ -62,6 +63,9 @@ fsstep(Fsservice *fs)
 {
   Ipcmsg input;
   isize  error;
+  error = fsloadpump(fs->loads);
+  if (error)
+    return error;
   error = fsopenpump(fs->open);
   if (error)
     return error;
@@ -78,6 +82,7 @@ fsstep(Fsservice *fs)
   if (error)
     return error;
   error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
+                       (fs->loads ? fs->loads->events : 0) |
                        (fs->pipes.reads ? fs->pipes.reads->events : 0),
                    0, &input);
   if (error)
@@ -94,6 +99,8 @@ fsstep(Fsservice *fs)
   switch (input.words[0]) {
   case FS_HELLO:
     return hello(fs, &input);
+  case FS_LOAD:
+    return fsloadstart(fs->loads, fs->links, fs->nlinks, &input);
   case FS_OPEN:
   case FS_PATH:
     return fsopenstart(fs->open, fs->links, fs->nlinks, &input);

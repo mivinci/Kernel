@@ -337,7 +337,8 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         1,
                         {&table, &wait, 1, &poll, 1, NULL, NULL},
                         NULL,
-                        0};
+                        0,
+                        NULL};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
   } else if (interrupt == 1) {
@@ -1984,6 +1985,64 @@ openwritestage(void)
   openwritejournal(&map, &update, &image, &allocation);
 }
 
+typedef struct Loadfixture Loadfixture;
+struct Loadfixture
+{
+  Loadmap   map;
+  Cache     cache;
+  Loadfetch fetch;
+};
+
+static isize
+openloadresolve(void *context, const Loadio *io, Cache **cache, Loadspan *span)
+{
+  Loadfixture *fixture = context;
+  *cache = &fixture->cache;
+  return loadmapspan(&io->file, &fixture->map, NULL, FS_DATA_START, 128, io->offset, io->bytes,
+                     span);
+}
+
+static isize
+openloadsubmit(void *context, Loadjob *job, const Loadfetch *fetch)
+{
+  Loadfixture *fixture = context;
+  CHECK(job->io.request && job->work.fill.cache && fetch->block == FS_DATA_START);
+  fixture->fetch = *fetch;
+  return 0;
+}
+
+static void
+openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
+{
+  static Loadfixture fixture = {.map = {{2, 1, 2, 26}, {FS_DATA_START}, 0}};
+  static Cacheblock  backing;
+  static Loadjob     job;
+  Fsloads            loads = {table, &job, 1, 0, block, &fixture, openloadresolve, openloadsubmit};
+  Filewatch         *watch = &fs->links[0].watch;
+  Msg                reply = {{0, 0, 0, 0}};
+  Ipcmsg             gate, event;
+  CHECK(!cacheinit(&fixture.cache, &backing, 1, 128) && !ipc_recv(0, 0, &gate) &&
+        gate.kind == IPC_CALL && gate.words[0] == FS_ATTACH &&
+        !loadopen(table, &fixture.map.file, watch->owner.pid, watch->owner.image, 0, UINT64_MAX,
+                  &reply.words[2]) &&
+        !ipc_reply(gate.request, &reply));
+  fs->loads = &loads;
+  CHECK(!fsstep(fs) && !job.io.request && !fixture.fetch.block); /* Stale version. */
+  CHECK(!fsstep(fs) && job.io.request && job.work.fill.cache && !fsstep(fs));
+  CHECK(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &event) && !fsloadpump(&loads) &&
+        job.io.request && job.work.fill.cache &&
+        watch->active.requests[job.io.slot] == job.io.request &&
+        !loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, NULL, 0) &&
+        !fsloadpump(&loads) && !job.io.request && !watch->active.requests[job.io.slot]);
+  CHECK(!fsstep(fs) && job.io.request && job.work.fill.cache);
+  block[3] = 'L';
+  block[4] = 'D';
+  CHECK(!loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, block, CACHE_BYTES) &&
+        !fsloadpump(&loads) && !job.io.request && !watch->active.requests[job.io.slot] &&
+        !loadclose(table, reply.words[2], watch->owner.pid, watch->owner.image));
+  fs->loads = NULL;
+}
+
 static void
 openserver(const Bootview *boot)
 {
@@ -2015,7 +2074,8 @@ openserver(const Bootview *boot)
                        1,
                        {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
                        &open,
-                       0};
+                       0,
+                       NULL};
   u32            i;
   const Loadfile executable = {2, 1, 1, 20};
   u64            load;
@@ -2119,6 +2179,7 @@ openserver(const Bootview *boot)
         !fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3 && fixture.holds == 2 &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
+  openloadserver(&fs, &fixture.loads, scratch);
   pipeiotrace[0] = 7;
 }
 
@@ -2216,6 +2277,59 @@ chdircheck(const char *path, u64 bytes, isize expected, int delayed)
 }
 
 static void
+openloadclient(void)
+{
+  Msg          gate = {{FS_ATTACH, 0, 0, 0}};
+  Msg          request = {{FS_LOAD, work.state.map.connid, 0, 0}};
+  Ipcmsg       result, drain;
+  Filelease    lease;
+  Fileslot     slot = {0};
+  volatile u8 *page;
+  Handle       rpc;
+  u32          attempt;
+  CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result) && result.words[2]);
+  slot.object = result.words[2];
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.payload_bytes = 4;
+  slot.args[0] = 2;
+  slot.args[1] = 1;
+  slot.args[3] = 26;
+  slot.args[4] = 3;
+  slot.args[5] = 2;
+  slot.args[6] = 1;
+  for (attempt = 0; attempt < 3; attempt++) {
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    slot.seq = request.words[2] = lease.seq;
+    request.words[3] = lease.slot;
+    slot.args[2] = attempt ? 2 : 1;
+    page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+    page[0] = page[1] = page[2] = page[3] = '?';
+    CHECK(
+        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)));
+    if (attempt == 1) {
+      CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+      rpc = result.request;
+      CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) &&
+            (isize) drain.words[0] == -ENOSYS &&
+            ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_WOULD_BLOCK && !ipc_rqcancel(rpc) &&
+            !ipc_rqwait(rpc, 0, &result) && !ipc_rqwait(rpc, RQ_FINISH, &drain) &&
+            !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
+    } else
+      CHECK(!ipc_call(work.state.call, &request, 0, &result));
+    CHECK(result.words[1] == lease.seq &&
+          (isize) result.words[0] == (attempt == 0   ? -ESTALE
+                                      : attempt == 1 ? -EINTR
+                                                     : 0) &&
+          result.words[2] == (attempt == 2 ? 2 : 0) && result.words[3] == result.words[2] &&
+          page[0] == '?' && page[1] == (attempt == 2 ? 'L' : '?') &&
+          page[2] == (attempt == 2 ? 'D' : '?') && page[3] == '?' &&
+          !sysconnworkrelease(&work, &cache, lease));
+  }
+}
+
+static void
 openclient(const Bootview *boot)
 {
   u32     i;
@@ -2290,6 +2404,7 @@ open:
       chdircheck("/n", sizeof("/n"), -EACCES, 0);
       chdircheck("/d", sizeof("/d"), 0, 1);
       chdircheck(".", sizeof("."), 0, 0);
+      openloadclient();
       pipeiotrace[0] = 7;
       return;
     }
