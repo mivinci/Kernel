@@ -49,6 +49,8 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。探针包含 `procps/kill.c`，因为 ash 的作业控制即使关闭独立 `kill` applet 也会编入该单元。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，`kill.c` 和其余十个单元均在 `dirent.h` 停住。`sys/time.h` 从目标 SDK 解析；`sys/utsname.h` 只由未启用的 Bash 兼容模式使用，已从最小配置的依赖日志中消失。探针不执行完整构建或链接。
 
+准备工具也运行上游的 `generate_BUFSIZ.sh`，按配置使用普通静态缓冲区，为 `cat` 和 `ls` 生成真实的 `common_bufsiz.h`。每架构的 `*-missing-headers.log` 把未解析的头与引用它的翻译单元并列，帮助区分公共头缺口和单个 applet 的依赖；例如 `sys/times.h` 来自 ash，`regex.h` 来自 `test`。这份依赖报告不代表每个头里的接口都被链接引用。
+
 **阶段 C：最小 applet 集合跑通**
 
 只编无网络、无 `/proc` 依赖的 applet：`sh`(ash)、`cat`、`ls`、`echo`、`mkdir`、`rm`、`mv`、`cp`、`test`、`sleep`。判据见下节。

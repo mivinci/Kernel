@@ -102,6 +102,9 @@ def prepare(archive, out):
     run('platform-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-platform.patch').read_bytes())
     configure(source, run)
     generate_applets(source, run, out)
+    run('common-buffer', ['sh', 'scripts/generate_BUFSIZ.sh', 'include/common_bufsiz.h'])
+    if (source / 'include/common_bufsiz.h.method').read_text().strip() != 'std':
+        raise ValueError('upstream common buffer requires an unexpected target layout')
     return source
 
 
@@ -118,9 +121,22 @@ def probe(source, out, sdk, clang):
         command = [clang, f'--target={TARGETS[arch]}', '-std=gnu99', '-ffreestanding',
                    '-nostdinc', '-I', 'include', '-isystem', str(included),
                    '-isystem', str(builtin), '-include', 'include/autoconf.h']
+        missing = {}
         with (out / f'{arch}-deps.log').open('x') as log:
-            subprocess.run([*command, '-M', '-MG', *PROBES], cwd=source, stdout=log,
-                           stderr=subprocess.STDOUT, timeout=120, check=True)
+            for unit in PROBES:
+                result = subprocess.run([*command, '-M', '-MG', '-MT', 'probe', unit], cwd=source,
+                                        capture_output=True, text=True, timeout=30)
+                log.write(result.stderr + result.stdout)
+                result.check_returncode()
+                # -MG emits unresolved headers as written in the include. Existing
+                # dependencies can be absolute SDK paths or relative source paths.
+                rule = result.stdout.replace('\\\n', ' ').removeprefix('probe:')
+                for name in shlex.split(rule):
+                    if not (source / name).is_file():
+                        missing.setdefault(name, set()).add(unit)
+        with (out / f'{arch}-missing-headers.log').open('x') as log:
+            for name, units in sorted(missing.items()):
+                log.write(f'{name}: {", ".join(sorted(units))}\n')
         for unit in PROBES:
             logpath = out / f'{arch}-{unit.replace("/", "-")}.log'
             with logpath.open('x') as log:
