@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage493：普通 OPEN 发布前检查目标节点权限；双架构 QEMU `pipeio` 验证拒绝不分配引用。
 - stage492：资源 OPEN 安装失败可按原 token 补偿并返回原错误；双架构 QEMU `runtime` 和 71 项主机测试通过。
 - stage491：资源 OPEN 在 ATTACH 成功后才发布 fd；双架构 QEMU `runtime` 验证换址和复用，71 项主机测试通过。
 - stage490：定时事件等待可推进文件后台收尾；双架构 QEMU `pipeio` 验证迟到 OPEN 引用在等待期限前关闭。

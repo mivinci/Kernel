@@ -34,9 +34,9 @@ struct Fsfiles
   isize (*length)(void *, const Vnode *, u64 *);
 };
 
-/* Complete an admitted and authorized ordinary OPEN. Each independent
-   OPEN owns its node and offset. The table and its storage are serialized. */
-isize fsfileopen(Fsfiles *, Openjob *, Vnode *, u32 access);
+/* Check the request's captured credentials against the resolved node's
+   metadata before publishing an ordinary File with its own offset. */
+isize fsfileopen(Fsfiles *, Openjob *, Vnode *, u32 access, u32 owner, u32 group, u32 mode);
 isize fsfileclose(Fsfiles *, Handle, u64 image, u64 session, u64 ref);
 isize fsfiledup(Fsfiles *, Handle, u64 image, u64 session, u64 ref, u64 *out);
 /* Borrow while the serialized loop handles a synchronous operation. */

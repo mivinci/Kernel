@@ -63,7 +63,7 @@ drop(Fsfiles *table, Fsref *ref)
 }
 
 isize
-fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 access)
+fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 access, u32 owner, u32 group, u32 mode)
 {
   const Ipcmsg *call = &job->call;
   Msg           reply = {{0, job->slot.seq, 0, 0}};
@@ -72,17 +72,21 @@ fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 access)
   u64           state;
   u32           i;
   isize         error, status;
+  status = node->kind != VNODE_FILE || !access || (access & ~(VACCESS_R | VACCESS_W))
+               ? -EINVAL
+               : vaccess(&job->cred, owner, group, mode, access, 0);
+  if (status)
+    goto respond;
   for (i = 0; i < table->nfiles; i++)
     if (!table->files[i].node) {
       file = &table->files[i];
       break;
     }
   ref = refslot(table);
-  status = node->kind != VNODE_FILE                         ? -EINVAL
-           : !access || (access & ~(VACCESS_R | VACCESS_W)) ? -EINVAL
-           : !file || !ref                                  ? -ENFILE
-           : table->serial > FS_FILE_SESSION - 3            ? -EOVERFLOW
+  status = !file || !ref                         ? -ENFILE
+           : table->serial > FS_FILE_SESSION - 3 ? -EOVERFLOW
                                                  : table->pins->hold(table->backend, node);
+respond:
   error = ipc_rqcheck(call->request, &state);
   if (error || state != RQ_CHECK_LIVE) {
     if (!status)

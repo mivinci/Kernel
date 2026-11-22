@@ -1484,7 +1484,7 @@ run(const Bootview *boot)
         !ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
 }
 
-static const isize openerrors[] = {-ESTALE, 0, -EACCES, -EINVAL, -EINVAL, -EINVAL, -EINTR};
+static const isize openerrors[] = {-ESTALE, -EACCES, 0, -EACCES, -EINVAL, -EINVAL, -EINVAL, -EINTR};
 
 typedef struct Openfixture Openfixture;
 struct Openfixture
@@ -1535,7 +1535,7 @@ opensearch(void *context, const Vnode *node)
   Openjob     *job = context;
   Openfixture *fixture = job->backend;
   CHECK(node == &fixture->root && job->cred.uid == 22 && job->cred.gid == 32 && job->mask == 027);
-  return vaccess(&job->cred, 22, 32, fixture->searches++ == 1 ? 0010 : 0100, VACCESS_X, 1);
+  return vaccess(&job->cred, 22, 32, fixture->searches++ == 2 ? 0010 : 0100, VACCESS_X, 1);
 }
 
 static isize
@@ -1606,9 +1606,9 @@ opencomplete(Openjob *job, Vnode *node)
 {
   Openfixture *fixture = job->backend;
   openvalidate(job);
-  CHECK(node == &fixture->file && fixture->holds == 3 && !fixture->completed++);
-  CHECK(!vaccess(&job->cred, 22, 32, 0400, VACCESS_R, 0));
-  return fsfileopen(&fixture->files, job, node, VACCESS_R);
+  CHECK(node == &fixture->file && fixture->holds == 3 && fixture->completed < 2);
+  return fsfileopen(&fixture->files, job, node, VACCESS_R, 22, 32,
+                    fixture->completed++ ? 0400 : 0200);
 }
 
 static void
@@ -1710,13 +1710,13 @@ openserver(const Bootview *boot)
                       &fixture.root, 027));
   for (i = 1; i + 1 < ARRAY_SIZE(openerrors); i++)
     CHECK(!fsstep(&fs));
-  CHECK(fixture.completed == 1 && fixture.holds == 3 && fixture.attempts == 2 && file.refs == 1 &&
-        file.node == &fixture.file && file.access == VACCESS_R);
+  CHECK(fixture.completed == 2 && fixture.holds == 3 && fixture.attempts == 3 && file.refs == 1 &&
+        fixture.files.serial == 2 && file.node == &fixture.file && file.access == VACCESS_R);
   fixture.blocked = 1;
   CHECK(!fsstep(&fs) && job.waiting && fixture.holds == 5);
   while (job.call.request)
     CHECK(!fsstep(&fs));
-  CHECK(fixture.cancelled == 2 && fixture.completed == 1 && !fsstep(&fs) && file.refs == 2 &&
+  CHECK(fixture.cancelled == 2 && fixture.completed == 2 && !fsstep(&fs) && file.refs == 2 &&
         refs[0].file == refs[1].file && refs[0].id != refs[1].id && !fsstep(&fs) &&
         file.refs == 1 && fixture.holds == 3);
   for (i = 0; i < 5; i++)
@@ -1763,11 +1763,11 @@ openclient(const Bootview *boot)
     slot.state = FS_SLOT_SUBMITTED;
     slot.span = 1;
     slot.payload_bytes = FS_SLOT_BYTES;
-    slot.args[2] = i == 3 ? UINT64_MAX : FS_SLOT_BYTES - 3;
+    slot.args[2] = i == 4 ? UINT64_MAX : FS_SLOT_BYTES - 3;
     slot.args[3] = 3;
-    slot.args[4] = i == 5;
+    slot.args[4] = i == 6;
     page = (volatile char *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
-    page[FS_SLOT_BYTES - 3] = i == 4 ? 0 : '/';
+    page[FS_SLOT_BYTES - 3] = i == 5 ? 0 : '/';
     page[FS_SLOT_BYTES - 2] = 'x';
     page[FS_SLOT_BYTES - 1] = 0;
     CHECK(
