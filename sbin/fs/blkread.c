@@ -1,6 +1,7 @@
 #include "blkread.h"
 #include "crc.h"
 #include "mount.h"
+#include <errno.h>
 
 STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
@@ -40,6 +41,8 @@ blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
     if (error)
       return error == -ERR_WOULD_BLOCK ? 0 : error;
     probe->sequence = 0;
+    if (status == -EAGAIN)
+      goto submit;
     if (status)
       return probe->failed = blk->stale ? -ERR_STALE : -ERR_STATE;
     if (blk->stale || info->geometry_generation != probe->generation)
@@ -58,6 +61,7 @@ blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
       probe->phase = ProbeDone;
     }
   }
+submit:
   if (blk->stale || !info->geometry_generation ||
       (probe->generation && info->geometry_generation != probe->generation))
     return probe->failed = -ERR_STALE;
@@ -108,6 +112,8 @@ blkredostep(Blkredo *redo)
     redo->sequence = 0;
     if (blk->stale || blk->info.geometry_generation != probe->generation)
       return redo->failed = -ERR_STALE;
+    if (status == -EAGAIN)
+      goto submit;
     if (status)
       return redo->failed = -ERR_STATE;
     if (!redo->read) {
@@ -126,6 +132,7 @@ blkredostep(Blkredo *redo)
         redo->images[i] = (Journalblock){redo->head.targets[i], redo->bytes[i]};
     }
   }
+submit:
   if (blk->stale || blk->info.geometry_generation != probe->generation)
     return redo->failed = -ERR_STALE;
   if (!probe->mark.state || (redo->read && redo->read == redo->head.count + 1))
@@ -280,6 +287,8 @@ blkownersstep(Blkowners *work)
     error = blkreadpoll(load->read, &status);
     if (error)
       return error == -ERR_WOULD_BLOCK ? 0 : error;
+    if (status == -EAGAIN)
+      return 0;
     if (status)
       return work->failed = probe->blk->stale ? -ERR_STALE : -ERR_STATE;
   }
@@ -434,6 +443,8 @@ blkdirstep(Blkdir *work)
     error = blkreadpoll(load->read, &status);
     if (error)
       return error == -ERR_WOULD_BLOCK ? 0 : error;
+    if (status == -EAGAIN)
+      return 0;
     if (status)
       return work->failed = probe->blk->stale ? -ERR_STALE : -ERR_STATE;
   }

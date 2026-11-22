@@ -1149,6 +1149,12 @@ blkclientredo(Fsblk *blk, const Blkprobe *empty)
     redo->initial = 17;
     redo->finalxor = i == 1 ? 4 : 5;
     REQUIRE(!blkredostep(redo) && blk->rpc && !redo->images[0].bytes, 405);
+    if (i == 2) {
+      u64 sequence = redo->sequence;
+      REQUIRE(!ipc_rqwait(blk->rpc, RQ_FINISH, &result) && !blkredostep(redo) && blk->rpc &&
+                  redo->sequence > sequence && !redo->read && !redo->crc && !redo->images[0].bytes,
+              447);
+    }
     for (j = 0; j < (i ? 3U : 1U); j++) {
       u64   sequence = redo->sequence;
       isize status = j < 2 && i ? 0 : i == 2 ? 1 : -ERR_STATE;
@@ -1444,7 +1450,7 @@ blkclient(const Bootview *boot, Handle call)
       op++;
     }
   }
-  REQUIRE(op == 15 && dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
+  REQUIRE(op == 18 && dirs.graph.incoming[34] == 1 && blkmountstep(&mounting) == 1 && !blk.rpc &&
               recovered.last == 48 && recovered.phase == JOURNAL_IDLE && !home.scan.count &&
               home.owners.owned.used[1] == owners.owners.owned.used[1],
           429);
@@ -1540,6 +1546,13 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   queue->configpending = 0;
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
+    /* Exercise redo, re-probe, home bitmap and directory READ retries. */
+    if (i == 11 || i == 22 || i == 24 || i + 1 == ARRAY_SIZE(blkopcodes)) {
+      queue->configpending = 1;
+      REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 448);
+      queue->configpending = 0;
+      REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(BLK_READ), 449);
+    }
     started = now();
     REQUIRE(started <= UINT64_MAX - VDEV_RESET_NS &&
                 !__sys_alarmset(started + VDEV_RESET_NS, &alarm) && !__sys_irqack(binding) &&
