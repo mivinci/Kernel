@@ -30,6 +30,8 @@ isize ttyinputinit(Ttyinput *input, u32 canonical);
    existing raw prefix becomes readable as a single canonical record. The
    service separately owns the mode, waiting reads and backend output. */
 isize ttyinputmode(Ttyinput *input, u32 canonical);
+/* Whether real bytes would remain after switching to noncanonical mode. */
+int ttyinputhasbytes(const Ttyinput *input);
 /* Classify a raw byte under the accepted mode, including input translation. */
 u32 ttyinputsignal(const Termarg *mode, u8 byte);
 /* One byte, accepted mode snapshot. All pointers are disjoint private ordinary

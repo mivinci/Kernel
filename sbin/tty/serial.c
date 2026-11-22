@@ -222,6 +222,48 @@ ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call, const 
 }
 
 isize
+ttyfilemode(Ttyinput *input, Termarg *mode, const Termarg *requested, Ttypending *pending, u64 now)
+{
+  Ttywait wait;
+  u32     canonical, reset = 0;
+  isize   error;
+  if (!input || !mode || !IS_ALIGNED((usize) input, 8) || !IS_ALIGNED((usize) mode, 8))
+    return -ERR_INVALID;
+  error = ttyattrcheck(mode, mode->ispeed);
+  if (error)
+    return error;
+  error = ttyattrcheck(requested, mode->ispeed);
+  if (error)
+    return error;
+  if (input->canonical != !!(mode->lflag & TTY_ICANON))
+    return -ERR_STATE;
+  canonical = !!(requested->lflag & TTY_ICANON);
+  if (pending && pending->call.request && pending->call.words[0] == FS_READ) {
+    if (!pending->timed || pending->wait.canonical != input->canonical || now < pending->wait.last)
+      return -ERR_STATE;
+    if (pending->wait.deadline && now >= pending->wait.deadline)
+      return -ERR_BUSY;
+    reset = canonical != input->canonical ||
+            (!canonical &&
+             (pending->wait.time != requested->cc[TTY_VTIME] ||
+              pending->wait.minimum != MIN(requested->cc[TTY_VMIN], pending->wait.length)));
+    if (reset) {
+      error = ttywaitinit(&wait, requested, pending->wait.length, 0,
+                          !canonical && ttyinputhasbytes(input), now);
+      if (error)
+        return error;
+    }
+  }
+  error = ttyinputmode(input, canonical);
+  if (error)
+    return error;
+  *mode = *requested;
+  if (reset)
+    pending->wait = wait;
+  return 0;
+}
+
+isize
 ttyfiledefer(Ttypending *pending, const Fileinflight *active, const Ipcmsg *call,
              const Fileslot *slot, volatile u8 *page, const Ttywait *wait)
 {

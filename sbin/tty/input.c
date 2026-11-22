@@ -26,6 +26,20 @@ ttyinputinit(Ttyinput *input, u32 canonical)
   return 0;
 }
 
+int
+ttyinputhasbytes(const Ttyinput *input)
+{
+  u32 i;
+  if (!valid(input))
+    return 0;
+  if (!input->canonical || input->used > input->ready)
+    return input->used != 0;
+  for (i = 0; i < input->used; i++)
+    if (!(input->data[(input->head + i) % TTY_INPUT_CAPACITY] & INPUT_EOF))
+      return 1;
+  return 0;
+}
+
 isize
 ttyinputmode(Ttyinput *input, u32 canonical)
 {

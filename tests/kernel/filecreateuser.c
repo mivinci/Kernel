@@ -1199,13 +1199,27 @@ server(const Bootview *boot, u32 recover)
       if (!recover) {
         if (ttyseen == 8) {
           Termarg raw = {0, 0, TTY_CS8, 0, 0, 0, {0}};
+          Termarg updated = {0, TTY_OPOST, TTY_CS8, 0, 0, 0, {0}};
+          Handle  original = ttydeferred.call.request;
           raw.cc[TTY_VTIME] = 50;
+          updated.cc[TTY_VTIME] = 50;
           generation = readalarm.generation;
           CHECK(ttydeferred.call.request && !sysfilenow(&ttynow) && ttynow < readalarm.deadline &&
+                ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, readalarm.deadline) ==
+                    -ERR_BUSY &&
+                !raw.oflag && !ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow) &&
+                raw.oflag == TTY_OPOST &&
                 !ttyfileadvance(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttynow,
                                 &ttyalarm, &ttyresult) &&
                 ttydeferred.call.request && ttyalarm == readalarm.deadline &&
-                !ttyalarmset(&readalarm, ttyalarm) && readalarm.generation == generation &&
+                !ttyalarmset(&readalarm, ttyalarm) && readalarm.generation == generation);
+          updated.cc[TTY_VTIME] = 49;
+          CHECK(!ttyfilemode(&ttyline, &raw, &updated, &ttydeferred, ttynow) &&
+                ttydeferred.call.request == original &&
+                !ttyfileadvance(&ttydeferred, &ttyio, &ttyline, &raw, &watch->active, ttynow,
+                                &ttyalarm, &ttyresult) &&
+                ttydeferred.call.request == original && ttyalarm == ttynow + UINT64_C(4900000000) &&
+                !ttyalarmset(&readalarm, ttyalarm) && readalarm.generation > generation &&
                 !ipc_reply(input.request, &reply));
           continue;
         }

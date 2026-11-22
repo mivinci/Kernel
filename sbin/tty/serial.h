@@ -58,6 +58,11 @@ isize ttyfileio(Ttyserial *io, Ttyinput *input, u64 oflag, Fileinflight *active,
    GETATTR publishes the current private mode in the original data page. */
 isize ttyfilectl(const Termarg *mode, Fileinflight *active, const Ipcmsg *call,
                  const Fileslot *slot, volatile u8 *page);
+/* Commit an authorized immediate mode change, after the service settles any
+   already due/cancelled read. pending is the selected original READ, if any.
+   On success the event loop rechecks it at now and updates its alarm. */
+isize ttyfilemode(Ttyinput *input, Termarg *mode, const Termarg *requested, Ttypending *pending,
+                  u64 now);
 /* Start one authorized request on an admitted slot. The dispatcher supplies
    the File's nonblock flag and a free pending record if it has one. When a
    blocking request is deferred, next holds its absolute deadline or zero.
