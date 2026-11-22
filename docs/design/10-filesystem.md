@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage457：普通文件 SEEK 使用原请求 PID/image 查找已开放会话，并在 File 上更新共享偏移。SEEK_END 从持有的 Vnode 查询当前长度；SET/CUR 无需后端长度。双架构 QEMU `pipeio` 验证 DUPREF 后关闭原引用仍可定位、三种起点和非法位移不改变原偏移。普通 READ 分派与生产后端仍待接。
+
 stage456：普通文件 OPEN 完成函数可在原槽写入 8 字节 `reference_id`，并用原 REQUEST 返回独立 File 的 session。File 持有 Vnode、访问模式和从零开始的共享偏移。DUPREF 验证原引用后为同一 File 发新编号；CLOSE 只释放精确 PID/image/session/reference 对应的一份引用，最后一份归还节点。连接退役按同一身份清理引用；普通 File 与管道的 opaque session 编号不重叠。
 
 ARM64、RV64 QEMU `pipeio` 用节点夹具经真实 IPC 完成 OPEN → DUPREF → 两次 CLOSE，检查引用共享、首次 CLOSE 保留节点、最终 CLOSE 归还节点，并保留挂起取消及管道回归。生产挂载和普通文件 READ/SEEK 分派仍待接入。

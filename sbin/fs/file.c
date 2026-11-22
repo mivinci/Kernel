@@ -24,6 +24,18 @@ refslot(Fsfiles *table)
   return NULL;
 }
 
+Fsfile *
+fsfilefind(Fsfiles *table, Handle pid, u64 image, u64 session)
+{
+  u32 i;
+  for (i = 0; i < table->nrefs; i++) {
+    Fsref *ref = &table->refs[i];
+    if (ref->file && ref->pid == pid && ref->image == image && ref->file->session == session)
+      return ref->file;
+  }
+  return NULL;
+}
+
 static void
 drop(Fsfiles *table, Fsref *ref)
 {

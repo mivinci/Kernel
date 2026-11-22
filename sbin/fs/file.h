@@ -28,6 +28,8 @@ struct Fsfiles
   u64             serial;
   const Vwalkops *pins;
   void           *backend;
+  /* Current length of a pinned node, without deferring the request. */
+  isize (*length)(void *, const Vnode *, u64 *);
 };
 
 /* Complete an admitted and authorized ordinary OPEN. Each independent
@@ -35,5 +37,7 @@ struct Fsfiles
 isize fsfileopen(Fsfiles *, Openjob *, Vnode *, u32 access);
 isize fsfileclose(Fsfiles *, Handle, u64 image, u64 session, u64 ref);
 isize fsfiledup(Fsfiles *, Handle, u64 image, u64 session, u64 ref, u64 *out);
-void  fsfileretire(Fsfiles *, Handle, u64 image);
+/* Borrow while the serialized loop handles a synchronous operation. */
+Fsfile *fsfilefind(Fsfiles *, Handle, u64 image, u64 session);
+void    fsfileretire(Fsfiles *, Handle, u64 image);
 #endif

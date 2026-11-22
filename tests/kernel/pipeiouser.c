@@ -1610,6 +1610,45 @@ opencomplete(Openjob *job, Vnode *node)
 }
 
 static void
+openseeks(u64 session)
+{
+  const u64   whence[] = {FS_SEEK_SET, FS_SEEK_CUR, FS_SEEK_END, FS_SEEK_CUR, FS_SEEK_CUR};
+  const isize offsets[] = {9, 3, -1, -40, 0};
+  const u64   positions[] = {9, 12, 19, 0, 19};
+  u32         i;
+  for (i = 0; i < ARRAY_SIZE(whence); i++) {
+    Filelease lease;
+    Fileslot  slot = {0};
+    Ipcmsg    result;
+    Msg       request = {{FS_SEEK, work.state.map.connid, 0, 0}};
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    slot.seq = request.words[2] = lease.seq;
+    request.words[3] = lease.slot;
+    slot.state = FS_SLOT_SUBMITTED;
+    slot.span = 1;
+    slot.object = session;
+    slot.args[0] = (u64) offsets[i];
+    slot.args[1] = whence[i];
+    CHECK(
+        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &request, 0, &result) &&
+        (isize) result.words[0] == (i == 3 ? -EINVAL : 0) && result.words[1] == lease.seq &&
+        result.words[2] == positions[i] && !result.words[3] &&
+        !sysconnworkrelease(&work, &cache, lease));
+  }
+}
+
+static isize
+openlength(void *context, const Vnode *node, u64 *length)
+{
+  Openfixture *fixture = context;
+  CHECK(node == &fixture->file);
+  *length = 20;
+  return 0;
+}
+
+static void
 openserver(const Bootview *boot)
 {
   static Filelink link;
@@ -1634,7 +1673,7 @@ openserver(const Bootview *boot)
                         &open,
                         0};
   u32             i;
-  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture};
+  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
@@ -1651,7 +1690,10 @@ openserver(const Bootview *boot)
     CHECK(!fsstep(&fs));
   CHECK(fixture.cancelled == 2 && fixture.completed == 1 && !fsstep(&fs) && file.refs == 2 &&
         refs[0].file == refs[1].file && refs[0].id != refs[1].id && !fsstep(&fs) &&
-        file.refs == 1 && fixture.holds == 3 && !fsstep(&fs) && !file.node && !file.refs &&
+        file.refs == 1 && fixture.holds == 3);
+  for (i = 0; i < 5; i++)
+    CHECK(!fsstep(&fs));
+  CHECK(file.position == 19 && !fsstep(&fs) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -1710,8 +1752,9 @@ openclient(const Bootview *boot)
   }
   dup.session = key.session;
   dup.reference = refcall(&work, &cache, FS_DUPREF, key);
-  CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key) &&
-        !refcall(&work, &cache, FS_CLOSE, dup));
+  CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key));
+  openseeks(dup.session);
+  CHECK(!refcall(&work, &cache, FS_CLOSE, dup));
   pipeiotrace[0] = 7;
 }
 
