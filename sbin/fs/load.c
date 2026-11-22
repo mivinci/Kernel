@@ -291,6 +291,86 @@ loadwritealloc(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks
   return 0;
 }
 
+isize
+loadreclaim(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, const Blockmap *busy,
+            Blockmap *allocation, Reclaim *out)
+{
+  Blockmap seen = {0};
+  u32      logical, limit, eof, block, pending = 0, indirect = 0, count = 0;
+  u32      chosen[LOAD_RECLAIM];
+  isize    error;
+  if (!start || start >= blocks || blocks > FS_MAX_BLOCKS ||
+      !separate(map, sizeof(*map), out, sizeof(*out)) ||
+      !separate(busy, sizeof(*busy), out, sizeof(*out)) ||
+      !separate(allocation, sizeof(*allocation), out, sizeof(*out)) ||
+      !separate(allocation, sizeof(*allocation), map, sizeof(*map)) ||
+      !separate(allocation, sizeof(*allocation), busy, sizeof(*busy)) ||
+      (index && (!separate(index, sizeof(*index), out, sizeof(*out)) ||
+                 !separate(index, sizeof(*index), allocation, sizeof(*allocation)))) ||
+      !map->file.inode || map->file.inode >= FS_INODES || !map->file.generation ||
+      !map->file.version || map->file.length > FS_FILE_BYTES)
+    return -ERR_INVALID;
+  limit = LOAD_DIRECT;
+  if (map->indirect) {
+    block = map->indirect;
+    if (block < start || block >= blocks || !blockused(allocation, block))
+      return -ERR_STATE;
+    limit += LOAD_INDIRECT;
+  }
+  eof = (u32) ((map->file.length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
+  /* Validate live and truncated pointers together before clearing any bit. */
+  for (logical = 0; logical < limit; logical++) {
+    error = datablock(map, index, start, blocks, logical, &block);
+    if (error)
+      return error;
+    if (!block)
+      continue;
+    if (blockused(&seen, block) || !blockused(allocation, block))
+      return -ERR_STATE;
+    seen.used[block / 64] |= blockbit(block);
+    if (logical >= LOAD_DIRECT)
+      indirect++;
+    if (logical >= eof) {
+      pending++;
+      /* An in-use indirect home block cannot be replaced by a log image. */
+      if (count < LOAD_RECLAIM && !blockused(busy, block) &&
+          (logical < LOAD_DIRECT || !blockused(busy, map->indirect)))
+        chosen[count++] = logical;
+    }
+  }
+  if (map->indirect && !indirect) {
+    pending++;
+    if (count < LOAD_RECLAIM && !blockused(busy, map->indirect))
+      chosen[count++] = limit;
+  }
+  if (!count)
+    return pending ? -ERR_BUSY : 0;
+  out->map = *map;
+  out->indexdirty = 0;
+  if (map->indirect)
+    out->index = *index;
+  else
+    out->index = (Loadindex){0};
+  for (logical = 0; logical < count; logical++) {
+    u32 at = chosen[logical];
+    if (at == limit) {
+      block = out->map.indirect;
+      out->map.indirect = out->index.block = 0;
+    } else if (at < LOAD_DIRECT) {
+      block = out->map.direct[at];
+      out->map.direct[at] = 0;
+    } else {
+      block = out->index.entries[at - LOAD_DIRECT];
+      out->index.entries[at - LOAD_DIRECT] = 0;
+      out->indexdirty = 1;
+    }
+    allocation->used[block / 64] &= ~blockbit(block);
+    out->blocks[logical] = block;
+  }
+  out->count = count;
+  return 1;
+}
+
 static isize
 reserve(Loadtable *table, u64 inode, const Loadfile *file, Loadslot **out)
 {

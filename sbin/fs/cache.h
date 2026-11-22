@@ -15,6 +15,7 @@ typedef struct Cachekey   Cachekey;
 typedef struct Cacheio    Cacheio;
 typedef struct Cachespan  Cachespan;
 typedef struct Cachefill  Cachefill;
+struct Blockmap;
 struct Cachekey
 {
   u64 generation;
@@ -63,6 +64,9 @@ isize cacheinvalidate(Cache *cache, Cachekey *owned);
    the whole batch before dropping any binding. Flush dirty blocks and drain
    references/I/O before starting that transaction. */
 isize cacheforget(Cache *, const u64 *blocks, u32 count);
+/* Replace the snapshot with all referenced, dirty or I/O-owned blocks.
+   The volume writer adds any independent device ownership before reclaim. */
+isize cachebusy(Cache *, struct Blockmap *);
 isize cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version);
 /* Snapshot at most one page of file data, possibly spanning two blocks.
    The caller resolves blocks from the pinned file version; zero is a hole.

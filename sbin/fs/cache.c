@@ -1,4 +1,5 @@
 #include "cache.h"
+#include "load.h"
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)
 {
@@ -58,6 +59,28 @@ find(Cache *cache, const Cachekey *key, Cacheblock **out, u32 pinned)
   *out = entry;
   return 0;
 }
+
+isize
+cachebusy(Cache *cache, Blockmap *out)
+{
+  u32 i;
+  if (!external(cache, out, sizeof(*out)) || cache->blocks > FS_MAX_BLOCKS)
+    return -ERR_INVALID;
+  for (i = 0; i < cache->capacity; i++) {
+    const Cacheblock *entry = &cache->entries[i];
+    if (!valid(entry) || (entry->bound && entry->block >= cache->blocks))
+      return -ERR_STATE;
+  }
+  for (i = 0; i < ARRAY_SIZE(out->used); i++)
+    out->used[i] = 0;
+  for (i = 0; i < cache->capacity; i++) {
+    const Cacheblock *entry = &cache->entries[i];
+    if (entry->bound && (entry->references || entry->dirty || entry->io))
+      out->used[entry->block / 64] |= UINT64_C(1) << (entry->block % 64);
+  }
+  return 0;
+}
+
 isize
 cacheinit(Cache *cache, Cacheblock *storage, u32 count, u64 blocks)
 {

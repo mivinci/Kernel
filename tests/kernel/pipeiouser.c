@@ -1964,12 +1964,19 @@ openwritestage(void)
   static Writeimage  image;
   static Writeupdate update;
   static Blockmap    allocation;
+  static Blockmap    busy;
+  static Reclaim     first, second;
+  static Cacheblock  entries[2];
   static u8          tail[FS_BLOCK_BYTES];
   const Loadmap      map = {{2, 1, 1, 20}, {100}, 0};
   const u64          at = 12 * FS_BLOCK_BYTES + 3;
   Loadspan           span;
   Loadmap            shortened;
   Writeplan          growth;
+  Cache              cache;
+  Cachekey           key = {0};
+  Cacheio            fill;
+  u8                *bytes;
   u32                i;
   for (i = 0; i < sizeof(tail); i++)
     tail[i] = 0xa5;
@@ -2001,9 +2008,21 @@ openwritestage(void)
         shortened.file.length == 20 && shortened.indirect == update.map.indirect &&
         loadmapwrite(&shortened, &update.index, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) ==
             -ERR_BUSY);
-  update.index.entries[0] = 0;
-  CHECK(!loadmapwrite(&shortened, &update.index, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) &&
-        !growth.block && growth.tail == 100 && growth.zerooff == 20);
+  CHECK(!cacheinit(&cache, entries, ARRAY_SIZE(entries), 128) &&
+        !cacheget(&cache, 101, CACHE_DATA, &key) && !cachereadbegin(&cache, &key, &fill, &bytes) &&
+        !cacheput(&cache, &key) && !cachebusy(&cache, &busy) &&
+        loadreclaim(&shortened, &update.index, 99, 128, &busy, &allocation, &first) == -ERR_BUSY &&
+        !first.count && allocation.used[1] == UINT64_MAX);
+  CHECK(!cachecomplete(&cache, &fill, 1) && !cachebusy(&cache, &busy) &&
+        loadreclaim(&shortened, &update.index, 99, 128, &busy, &allocation, &first) == 1 &&
+        first.count == 1 && first.blocks[0] == 101 && first.indexdirty && !first.index.entries[0] &&
+        first.map.indirect == 102 && shortened.indirect == 102 && update.index.entries[0] == 101);
+  CHECK(loadreclaim(&first.map, &first.index, 99, 128, &busy, &allocation, &second) == 1 &&
+        second.count == 1 && second.blocks[0] == 102 && !second.indexdirty &&
+        !second.map.indirect && second.map.direct[0] == 100 &&
+        allocation.used[1] == (UINT64_MAX ^ (UINT64_C(3) << (101 - 64))) &&
+        !loadmapwrite(&second.map, NULL, 99, 128, at + FS_BLOCK_BYTES, 2, &growth) &&
+        !growth.block && growth.newindex && growth.tail == 100 && growth.zerooff == 20);
 }
 
 typedef struct Loadfixture Loadfixture;

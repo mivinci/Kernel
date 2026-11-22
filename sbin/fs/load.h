@@ -7,6 +7,7 @@
 #define LOAD_SLOTS    32
 #define LOAD_DIRECT   12
 #define LOAD_INDIRECT 1024
+#define LOAD_RECLAIM  32
 
 typedef struct Loadfile    Loadfile;
 typedef struct Loadslot    Loadslot;
@@ -18,6 +19,7 @@ typedef struct Writeplan   Writeplan;
 typedef struct Writeimage  Writeimage;
 typedef struct Writeupdate Writeupdate;
 typedef struct Blockmap    Blockmap;
+typedef struct Reclaim     Reclaim;
 struct Loadfile
 {
   u64 inode, generation, version, length;
@@ -96,6 +98,23 @@ struct Blockmap
    on failure both outputs stay unchanged. Publish only after commit. */
 isize loadwritealloc(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks, u64 offset,
                      u64 bytes, Blockmap *, Writeupdate *);
+
+struct Reclaim
+{
+  Loadmap   map;
+  Loadindex index;
+  u64       blocks[LOAD_RECLAIM];
+  u32       count, indexdirty;
+};
+/* Select one batch from a committed shorter inode. The caller holds the
+   inode and volume writer guards and supplies a snapshot of blocks still
+   owned by cache or I/O. Use a fresh private allocation view per batch;
+   the cleared bits must only become allocatable after journal retirement.
+   Return one for a prepared batch, zero for no tail to reclaim, or BUSY
+   if all remaining work is pinned. Nothing changes on zero or error.
+   An indirect block is removed only when its committed index is empty. */
+isize loadreclaim(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks,
+                  const Blockmap *busy, Blockmap *allocation, Reclaim *);
 struct Loadslot
 {
   Loadfile file;

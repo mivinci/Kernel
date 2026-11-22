@@ -22,6 +22,15 @@ class Index(C.Structure):
     _fields_ = [('block', C.c_uint32), ('entries', C.c_uint32 * 1024)]
 
 
+class BlockMap(C.Structure):
+    _fields_ = [('used', U * 512)]
+
+
+class Reclaim(C.Structure):
+    _fields_ = [('map', Map), ('index', Index), ('blocks', U * 32),
+                ('count', C.c_uint32), ('indexdirty', C.c_uint32)]
+
+
 class Span(C.Structure):
     _fields_ = [(name, C.c_uint32) for name in ('first', 'next', 'offset')]
 
@@ -67,6 +76,9 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadmapwrite.restype = I
         cls.lib.loadmapshrink.argtypes = [C.POINTER(Map), U, C.POINTER(Map)]
         cls.lib.loadmapshrink.restype = I
+        cls.lib.loadreclaim.argtypes = [C.POINTER(Map), C.POINTER(Index)] + [C.c_uint32] * 2 + [
+            C.POINTER(BlockMap), C.POINTER(BlockMap), C.POINTER(Reclaim)]
+        cls.lib.loadreclaim.restype = I
         cls.lib.loadwritestage.argtypes = [C.POINTER(WritePlan)] + [C.c_uint32] * 3 + [
             C.c_void_p] * 3 + [C.POINTER(WriteImage)]
         cls.lib.loadwritestage.restype = I
@@ -135,6 +147,50 @@ class FsLoadTests(unittest.TestCase):
         index.entries[0] = 0
         self.assertEqual(grow(14), 0)
         self.assertEqual((plan.length, plan.tail, plan.zerooff), (14 * 4096 + 1, 100, 20))
+
+    def test_reclaim_batches_resume_from_remaining_pointers_and_skip_busy_index(self):
+        mapping = Map(File(2, 1, 4, 17))
+        index, busy, allocation = Index(), BlockMap(), BlockMap()
+        direct, first, second, last = Reclaim(), Reclaim(), Reclaim(), Reclaim()
+        mapping.direct[0], mapping.direct[2], mapping.indirect = 100, 101, 102
+        index.block = 102
+        for i in range(35):
+            index.entries[i] = 103 + i
+        for block in range(100, 138):
+            allocation.used[block // 64] |= 1 << (block % 64)
+
+        def plan(mapping, index, output):
+            return self.lib.loadreclaim(C.byref(mapping), C.byref(index), 99, 200,
+                                        C.byref(busy), C.byref(allocation), C.byref(output))
+
+        busy.used[1] = 1 << (102 - 64)
+        self.assertEqual(plan(mapping, index, direct), 1)
+        self.assertEqual((direct.count, direct.blocks[0], direct.indexdirty), (1, 101, 0))
+        self.assertEqual(plan(direct.map, direct.index, first), -7)
+        busy.used[1] = 0
+        self.assertEqual(plan(direct.map, direct.index, first), 1)
+        self.assertEqual(first.blocks[:first.count], list(range(103, 135)))
+        self.assertEqual(plan(first.map, first.index, second), 1)
+        self.assertEqual(second.blocks[:second.count], [135, 136, 137])
+        self.assertEqual((second.map.indirect, second.indexdirty), (102, 1))
+        self.assertEqual(plan(second.map, second.index, last), 1)
+        self.assertEqual((last.blocks[0], last.map.indirect, last.indexdirty), (102, 0, 0))
+        self.assertEqual((last.map.direct[0], last.map.file.version), (100, 4))
+        self.assertEqual(allocation.used[1:3], [1 << (100 - 64), 0])
+        self.assertEqual(plan(last.map, last.index, first), 0)
+
+    def test_reclaim_rejects_corrupt_allocation_without_clearing_any_pointer(self):
+        mapping = Map(File(2, 1, 4, 17))
+        busy, allocation, output = BlockMap(), BlockMap(), Reclaim()
+        mapping.direct[0], mapping.direct[2], mapping.direct[3] = 100, 101, 100
+        allocation.used[1] = (1 << (100 - 64)) | (1 << (101 - 64))
+        for invalid in (100, 98, 102):
+            mapping.direct[3] = invalid
+            before = bytes(mapping), bytes(allocation), bytes(output)
+            self.assertEqual(self.lib.loadreclaim(C.byref(mapping), None, 99, 200,
+                                                 C.byref(busy), C.byref(allocation),
+                                                 C.byref(output)), -6)
+            self.assertEqual((bytes(mapping), bytes(allocation), bytes(output)), before)
 
     def test_growth_zeroes_newly_visible_tail_and_distinguishes_new_index(self):
         mapping, plan = Map(), WritePlan()
