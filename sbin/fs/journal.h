@@ -76,21 +76,18 @@ isize journalinit(Journal *journal, u64 blocks, u64 last);
    every independent 4KiB snapshot stays immutable, owned and alive through
    release. Source storage must not overlap state, descriptors or snapshots. */
 isize journalbegin(Journal *journal, const Journalplan *plan);
-/* Start recovery in fresh state after isolating and draining old IO. The
-   owner supplies the validated COMMITTED txid, every verified and classified
-   home image, and the encoded EMPTY marker for txid. Keep the snapshots
-   immutable through release. Only successful retirement permits reuse. */
-isize journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
-                  const u8 *empty);
-/* Start with fresh state after isolating old I/O and callbacks. The decoder
-   checks record magic, padding and checksums; payloadcrc covers the complete
+/* Open the journal for writes on the exclusively owned device, with fresh
+   state after isolating old I/O and callbacks. Even EMPTY grants future
+   write access, so it needs the same geometry, flush and fault guarantees.
+   The decoder checks magic, padding and checksums; payloadcrc covers the complete
    images. The classifier reads the whole immutable transaction view (positive
    = metadata, zero/negative = reject). For COMMITTED, empty is the encoded
    EMPTY record for this txid, and it and the images stay immutable until
    release. An EMPTY mark does not use the head, images or classifier. */
-isize journalrecover(Journal *, u64            blocks, const Journalmark *, const Journalhead *,
-                     const Journalblock *, u32 count, u32 payloadcrc, const u8 *empty,
-                     int (*classify)(void *, const Journalblock *, u32, u32), void *);
+isize journalrecover(Journal *, const Fslayout *, const Fsgeometry *, const Journalmark *,
+                     const Journalhead *, const Journalblock *, u32 count, u32 payloadcrc,
+                     const u8 *empty, int (*classify)(void *, const Journalblock *, u32, u32),
+                     void *);
 /* One outstanding operation. This reserves an IO anchor but does not submit
    it. Submission failure with no lower references may complete with success=0.
    Repeated next while outstanding returns BUSY, never a second submission. */

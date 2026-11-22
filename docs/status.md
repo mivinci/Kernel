@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage466：可写 EMPTY 和 COMMITTED 重放统一校验卷与设备写入条件；两架构 `virtiodev`、`runtime` 和 37 项 FS 主机测试通过。盘上解码和生产挂载仍待接。
 - stage465：已解码的提交记录通过 EMPTY/COMMITTED 恢复门禁；双架构 QEMU `virtiodev` 用合成记录验证拒绝路径及真实块回写，10 项日志主机专项通过。盘上解码和生产挂载未接入。
 - stage464：已解码的卷布局可在恢复前与设备几何一起核验；双架构 QEMU `virtiodev` 和 10 项日志主机专项通过。盘上解码仍待定稿。
 - stage463：LOAD 缺块也从独立缓冲提交，按原 REQUEST 和读票核验；双架构 QEMU `runtime` 与 8 项主机专项通过。

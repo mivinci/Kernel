@@ -59,21 +59,34 @@ next(u32 index, Journalio *io)
         io->block == blocks[index]);
   CHECK(io->kind == JOURNAL_FLUSH ? !io->bytes : io->bytes == bytes[sources[index]]);
 }
+static int
+ismetadata(void *context, const Journalblock *images, u32 count, u32 index)
+{
+  (void) context;
+  return count == 2 && images[index].block == FS_INODE_MAP + index;
+}
 static u32
 testredo(void)
 {
-  static const u64 targets[] = {65, 66, 0, 18, 0};
-  static const u32 sources[] = {3, 4, 0, 2, 0};
-  Journalio        io, old;
-  Journalplan      plan;
-  u32              i, edge;
+  static const u64         targets[] = {65, 66, 0, 18, 0};
+  static const u32         sources[] = {3, 4, 0, 2, 0};
+  static const Fslayout    layout = {1024, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
+  static const Fsgeometry  device = {1024 * 4096, 512, 4096, 0, 0, 1, 4096, 0};
+  static const Journalmark mark = {47, 1, 11, 12};
+  static const Journalhead head = {47, {65, 66}, 1, 2, 11, 12};
+  Journalio                io, old;
+  Journalplan              plan;
+  u32                      i, edge;
   for (edge = 0; edge <= ARRAY_SIZE(targets); edge++) {
     metadata[0].block = 65;
     metadata[1].block = 65;
-    CHECK(journalredo(&journal, 1024, 47, metadata, 2, bytes[2]) == -ERR_INVALID);
+    CHECK(journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
+                         ismetadata, NULL) == -ERR_STATE);
     metadata[1].block = 66;
-    CHECK(journalredo(&journal, 1024, 47, metadata, 2, bytes[3]) == -ERR_INVALID &&
-          !journalredo(&journal, 1024, 47, metadata, 2, bytes[2]));
+    CHECK(journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[3],
+                         ismetadata, NULL) == -ERR_STATE &&
+          !journalrecover(&journal, &layout, &device, &mark, &head, metadata, 2, 12, bytes[2],
+                          ismetadata, NULL));
     metadata[0].block = 901;
     for (i = 0; i < ARRAY_SIZE(targets); i++) {
       CHECK(journal.durable && !journal.last && journalrelease(&journal) == -ERR_STATE &&

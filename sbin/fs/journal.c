@@ -191,32 +191,27 @@ redostart(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, 
 }
 
 isize
-journalredo(Journal *journal, u64 blocks, u64 txid, const Journalblock *metadata, u32 count,
-            const u8 *empty)
-{
-  if (!txid || !redosnapshots(journal, blocks, metadata, count, empty))
-    return -ERR_INVALID;
-  redostart(journal, blocks, txid, metadata, count, empty);
-  return 0;
-}
-
-isize
-journalrecover(Journal *journal, u64 blocks, const Journalmark *mark, const Journalhead *head,
-               const Journalblock *metadata, u32 count, u32 payloadcrc, const u8 *empty,
+journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *device,
+               const Journalmark *mark, const Journalhead *head, const Journalblock *metadata,
+               u32 count, u32 payloadcrc, const u8 *empty,
                int (*classify)(void *, const Journalblock *, u32, u32), void *context)
 {
-  u32 i;
-  if (!journal || !mark || blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS)
+  isize error;
+  u32   i;
+  if (!journal || !mark)
     return -ERR_INVALID;
+  error = fslayoutcheck(layout, device, 1);
+  if (error)
+    return error;
   if (!mark->state) {
     if (mark->headercrc || mark->payloadcrc)
       return -ERR_STATE;
-    return journalinit(journal, blocks, mark->txid);
+    return journalinit(journal, layout->blocks, mark->txid);
   }
   if (mark->state != 1 || !mark->txid || !head || head->state != 1 || head->txid != mark->txid ||
       head->headercrc != mark->headercrc || head->payloadcrc != mark->payloadcrc ||
       payloadcrc != mark->payloadcrc || !count || count != head->count || !classify ||
-      !redosnapshots(journal, blocks, metadata, count, empty))
+      !redosnapshots(journal, layout->blocks, metadata, count, empty))
     return -ERR_STATE;
   for (i = 0; i < JOURNAL_META; i++) {
     if (i < count) {
@@ -228,7 +223,7 @@ journalrecover(Journal *journal, u64 blocks, const Journalmark *mark, const Jour
   for (i = 0; i < count; i++)
     if (classify(context, metadata, count, i) <= 0)
       return -ERR_STATE;
-  redostart(journal, blocks, mark->txid, metadata, count, empty);
+  redostart(journal, layout->blocks, mark->txid, metadata, count, empty);
   return 0;
 }
 

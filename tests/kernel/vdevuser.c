@@ -221,6 +221,11 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   layout.root = 1;
   layout.blocks++;
   REQUIRE(fslayoutcheck(&layout, &geometry, 0) == -ERR_STATE, 245);
+  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) ==
+                  -ERR_STATE &&
+              !journal.last,
+          249);
+  layout.blocks = blocks;
   for (i = 0; i < ARRAY_SIZE(images); i++)
     for (j = 0; j < JOURNAL_BYTES; j++)
       images[i][j] = (u8) (0x92 + i * 31 + j * 37);
@@ -230,23 +235,36 @@ testredo(Vdev *device, Vring *ring, Handle binding, u64 irqevent, const Vblkconf
   metadata[1].bytes = images[1];
   /* Synthetic snapshots exercise transport and ordering before a disk
      codec exists. The independent host census checks the written bytes. */
-  REQUIRE(!journalrecover(&journal, blocks, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
-              journal.last == 47 && journalnext(&journal, &io) == -ERR_STATE,
-          246);
+  geometry.flush = 0;
+  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) ==
+                  -ERR_NOTSUP &&
+              !journal.last,
+          250);
+  geometry.flush = config->flush;
+  REQUIRE(
+      !journalrecover(&journal, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
+          journal.last == 47 && journalnext(&journal, &io) == -ERR_STATE,
+      246);
   mark = (Journalmark){47, 1, 11, 12};
-  REQUIRE(journalrecover(&journal, blocks, &mark, &head, metadata, 2, 13, images[2], redometa,
-                         NULL) == -ERR_STATE &&
+  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 13, images[2],
+                         redometa, NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,
           247);
   head.targets[1] = metadata[1].block = 99;
-  REQUIRE(journalrecover(&journal, blocks, &mark, &head, metadata, 2, 12, images[2], redometa,
-                         NULL) == -ERR_STATE &&
+  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                         redometa, NULL) == -ERR_STATE &&
               journalnext(&journal, &io) == -ERR_STATE,
           248);
   head.targets[1] = metadata[1].block = 66;
-  REQUIRE(
-      !journalrecover(&journal, blocks, &mark, &head, metadata, 2, 12, images[2], redometa, NULL),
-      194);
+  geometry.faultbytes = 0;
+  REQUIRE(journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                         redometa, NULL) == -ERR_NOTSUP &&
+              journal.last == 47 && journalnext(&journal, &io) == -ERR_STATE,
+          251);
+  geometry.faultbytes = FS_BLOCK_BYTES;
+  REQUIRE(!journalrecover(&journal, &layout, &geometry, &mark, &head, metadata, 2, 12, images[2],
+                          redometa, NULL),
+          194);
   while (journal.phase != JOURNAL_DONE) {
     REQUIRE(count < 5 && !journalnext(&journal, &io) && io.txid == 47, 195);
     transfer(device, ring, 2, binding, irqevent, config, dma,

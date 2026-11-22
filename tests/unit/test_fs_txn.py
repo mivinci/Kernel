@@ -24,7 +24,7 @@ class FsTxnTests(unittest.TestCase):
         for level in ('O0','O2'):
             path=folder/(level+'.so')
             cmd=['clang','-std=c89','-'+level,'-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror',
-                 '-shared','-fPIC','-I'+str(ROOT/'include')]+[str(ROOT/'sbin/fs'/(name+'.c')) for name in ('cache','journal','txn')]+['-o',str(path)]
+                 '-shared','-fPIC','-I'+str(ROOT/'include')]+[str(ROOT/'sbin/fs'/(name+'.c')) for name in ('cache','geometry','journal','txn')]+['-o',str(path)]
             if sys.platform=='darwin':
                 sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip();cmd+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
             subprocess.run(cmd,check=True,capture_output=True);lib=C.CDLL(str(path))

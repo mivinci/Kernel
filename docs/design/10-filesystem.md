@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage466：打开可写日志统一走 `journalrecover`，移除仅按块数接收重放镜像的旧入口。EMPTY 和 COMMITTED 都须通过卷布局、设备容量、flush 与故障边界检查，前者才可开始新事务，后者才可发出 home 写入。双架构 QEMU `virtiodev` 验证超出容量、无 flush 或缺可信故障边界时拒绝开启，并保留真实回写及盘面核对；`runtime` 验证重放各步骤中断后只排空原票、不继续写。37 项 FS 主机测试通过。盘上解码、独占发权和生产挂载仍待接。
+
 stage465：`journalrecover` 接收已解码的提交记录。有效 EMPTY 不读取准备区；COMMITTED 只有在编号、校验值、镜像数量与目标顺序一致，并由分类器按整笔事务确认各目标均为元数据后，才允许回写。ARM64、RV64 QEMU `virtiodev` 用合成记录验证 EMPTY、镜像校验值不符及普通数据块拒绝，再经真实 virtio-blk 回写有效事务并核对盘上字节。10 项日志主机专项通过。此阶段未实现盘上解码、生产元数据分类或挂载。
 
 stage464：`fslayoutcheck` 核对已解码的固定卷布局，并复用设备几何、容量和写入门禁。双架构 QEMU `virtiodev` 使用真实设备的容量与几何，拒绝重叠位图、非法根 inode 和超出设备的卷。10 项日志主机专项通过。盘上 magic、CRC、端序及解码未接入；QEMU 的故障边界仍由夹具显式提供。
