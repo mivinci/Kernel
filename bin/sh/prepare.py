@@ -97,6 +97,7 @@ def prepare(archive, out):
             raise ValueError(f'{name} failed: {log}')
 
     run('pid-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-pid.patch').read_bytes())
+    run('network-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-network.patch').read_bytes())
     configure(source, run)
     generate_applets(source, run, out)
     return source

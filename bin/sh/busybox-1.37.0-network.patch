@@ -1,0 +1,143 @@
+--- a/include/libbb.h
++++ b/include/libbb.h
+@@ -10,6 +10,9 @@
+ #ifndef LIBBB_H
+ #define LIBBB_H 1
+ 
++/* The initial Kernel applet set has no socket or resolver dependency. */
++#define KERNEL_BUSYBOX_NO_NETWORK 1
++
+ #include "platform.h"
+ 
+ #include <ctype.h>
+@@ -17,7 +20,6 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <inttypes.h>
+-#include <netdb.h>
+ #include <setjmp.h>
+ #include <signal.h>
+ #include <paths.h>
+@@ -42,7 +44,6 @@
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
+ #include <sys/resource.h>
+-#include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <sys/time.h>
+ #include <sys/types.h>
+@@ -138,6 +139,9 @@
+ #ifndef _PATH_GSHADOW
+ #define _PATH_GSHADOW "/etc/gshadow"
+ #endif
++#ifndef KERNEL_BUSYBOX_NO_NETWORK
++#include <netdb.h>
++#include <sys/socket.h>
+ #if defined __FreeBSD__ || defined __OpenBSD__
+ # include <netinet/in.h>
+ # include <arpa/inet.h>
+@@ -158,6 +162,7 @@
+ //  ifdef SPECIFIC_BROKEN_LIBC_CHECK / typedef socklen_t / endif
+ //in platform.h instead!
+ #endif
++#endif
+ #ifndef HAVE_CLEARENV
+ # define clearenv() do { if (environ) environ[0] = NULL; } while (0)
+ #endif
+@@ -687,6 +692,7 @@
+ #define piped_pair(pair)  pipe(&((pair).rd))
+ #define xpiped_pair(pair) xpipe(&((pair).rd))
+ 
++#ifndef KERNEL_BUSYBOX_NO_NETWORK
+ /* Useful for having small structure members/global variables */
+ typedef int8_t socktype_t;
+ typedef int8_t family_t;
+@@ -715,6 +721,7 @@
+ };
+ 
+ 
++#endif
+ int parse_datestr(const char *date_str, struct tm *ptm) FAST_FUNC;
+ time_t validate_tm_time(const char *date_str, struct tm *ptm) FAST_FUNC;
+ char *strftime_HHMMSS(char *buf, unsigned len, time_t *tp) FAST_FUNC;
+@@ -723,6 +730,7 @@
+ void xsettimeofday(const struct timeval *tv) FAST_FUNC;
+ 
+ 
++#ifndef KERNEL_BUSYBOX_NO_NETWORK
+ int xsocket(int domain, int type, int protocol) FAST_FUNC;
+ void xbind(int sockfd, struct sockaddr *my_addr, socklen_t addrlen) FAST_FUNC;
+ void xlisten(int s, int backlog) FAST_FUNC;
+@@ -838,6 +846,7 @@
+ struct hostent *xgethostbyname(const char *name) FAST_FUNC;
+ // Also mount.c and inetd.c are using gethostbyname(),
+ // + inet_common.c has additional IPv4-only stuff
++#endif
+ 
+ 
+ struct tls_aes {
+@@ -907,6 +916,7 @@
+ void tls_run_copy_loop(tls_state_t *tls, unsigned flags) FAST_FUNC;
+ 
+ 
++#ifndef KERNEL_BUSYBOX_NO_NETWORK
+ void socket_want_pktinfo(int fd) FAST_FUNC;
+ ssize_t send_to_from(int fd, void *buf, size_t len, int flags,
+ 		const struct sockaddr *to,
+@@ -919,6 +929,7 @@
+ 
+ uint16_t inet_cksum(const void *addr, int len) FAST_FUNC;
+ int parse_pasv_epsv(char *buf) FAST_FUNC;
++#endif
+ 
+ /* 0 if argv[0] is NULL: */
+ unsigned string_array_len(char **argv) FAST_FUNC;
+@@ -1567,6 +1578,7 @@
+ int print_numbered_lines(struct number_state *ns, const char *filename) FAST_FUNC;
+ 
+ 
++#ifndef KERNEL_BUSYBOX_NO_NETWORK
+ /* Networking */
+ /* This structure defines protocol families and their handlers. */
+ struct aftype {
+@@ -1605,6 +1617,7 @@
+ const struct aftype *get_aftype(const char *name) FAST_FUNC;
+ const struct hwtype *get_hwtype(const char *name) FAST_FUNC;
+ const struct hwtype *get_hwntype(int type) FAST_FUNC;
++#endif
+ 
+ 
+ extern int fstype_matches(const char *fstype, const char *comma_list) FAST_FUNC;
+--- a/libbb/Kbuild.src
++++ b/libbb/Kbuild.src
+@@ -46,7 +46,6 @@
+ lib-y += get_volsize.o
+ lib-y += herror_msg.o
+ lib-y += human_readable.o
+-lib-y += inet_common.o
+ lib-y += inode_hash.o
+ lib-y += isdirectory.o
+ lib-y += kernel_version.o
+@@ -111,12 +110,10 @@
+ lib-y += wfopen_input.o
+ lib-y += write.o
+ lib-y += xatonum.o
+-lib-y += xconnect.o
+ lib-y += xfuncs.o
+ lib-y += xfuncs_printf.o
+ lib-y += xfunc_die.o
+ lib-y += xgetcwd.o
+-lib-y += xgethostbyname.o
+ lib-y += xreadlink.o
+ lib-y += xrealloc_vector.o
+ 
+--- a/libbb/bb_getsockname.c
++++ b/libbb/bb_getsockname.c
+@@ -4,7 +4,6 @@
+  *
+  * Licensed under GPLv2, see file LICENSE in this source tree.
+  */
+-//kbuild:lib-y += bb_getsockname.o
+ 
+ #include "libbb.h"
+ 
