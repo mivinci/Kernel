@@ -14,8 +14,8 @@ typedef struct Ttyalarm        Ttyalarm;
 struct Ttyserial
 {
   Serialring *rx, *tx;
-  u64         epoch;
-  u32         queued;
+  u64         epoch, drainpos;
+  u32         queued, draining;
   u8          output[2 * TTY_BATCH + 8];
 };
 struct Ttyserialresult
@@ -41,6 +41,14 @@ struct Ttyalarm
 isize ttyalarmset(Ttyalarm *alarm, u64 deadline);
 /* Borrow distinct coherent rings for the lifetime of this attachment. */
 isize ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch);
+/* Hold the already published TX prefix for one admitted control request.
+   The event loop owns the original request and releases the fence after
+   committing the control operation or after cancellation. */
+isize ttyserialdrainstart(Ttyserial *io, u64 *position);
+/* Given a physical observation from the bound serial peer, return zero
+   when the fixed prefix has drained. The fence stays held until end. */
+isize ttyserialdraincheck(const Ttyserial *io, u64 epoch, u64 position);
+void  ttyserialdrainend(Ttyserial *io);
 /* Accept a bounded logical output prefix into private staging. Returns the
    logical bytes accepted, or zero if the previous batch still owns staging. */
 isize ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size);

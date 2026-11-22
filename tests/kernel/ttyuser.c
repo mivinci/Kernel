@@ -17,6 +17,30 @@ static Ttyinput   line;
   } while (0)
 
 static void
+ttyserialdrainchecktest(void)
+{
+  Ttyserial       io;
+  Ttyserialresult result;
+  u64             target, duplicate = UINT64_MAX;
+  u8              byte;
+  CHECK(!serialinit(&rx, 1) && !serialinit(&tx, 1) && !ttyinputinit(&line, 1) &&
+        !ttyserialinit(&io, &rx, &tx, 1));
+  CHECK(serialwrite(&tx, 1, "a", 1) == 1 && !ttyserialdrainstart(&io, &target) && target == 1 &&
+        ttyserialdrainstart(&io, &duplicate) == -ERR_BUSY && duplicate == UINT64_MAX &&
+        ttyserialdraincheck(&io, 1, target) == -ERR_PEER);
+  CHECK(serialwrite(&rx, 1, "b", 1) == 1 &&
+        !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && io.queued == 1 &&
+        result.hints == SERIAL_RX_ROOM && !result.again && tx.producer == target &&
+        ttyserialoutput(&io, attr.oflag, "c", 1) == 0);
+  CHECK(serialread(&tx, 1, &byte, 1) == 1 && byte == 'a' &&
+        ttyserialdraincheck(&io, 1, 0) == -ERR_WOULD_BLOCK &&
+        ttyserialdraincheck(&io, 2, target) == -ERR_STALE && !ttyserialdraincheck(&io, 1, target));
+  ttyserialdrainend(&io);
+  CHECK(!ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) &&
+        result.hints == SERIAL_TX_READY && serialread(&tx, 1, &byte, 1) == 1 && byte == 'b');
+}
+
+static void
 ttyserialcheck(void)
 {
   Ttyserial       io;
@@ -200,6 +224,7 @@ ttyusercheck(void)
   attr.lflag = TTY_ICANON | TTY_ECHO | TTY_ISIG;
   attr.ispeed = attr.ospeed = 115200;
   CHECK(!ttyattrcheck(&attr, 115200));
+  ttyserialdrainchecktest();
   attr.cc[31] = 1;
   CHECK(ttyattrcheck(&attr, 115200) == -ERR_NOTSUP);
   attr.cc[31] = 0;

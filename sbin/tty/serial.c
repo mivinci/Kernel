@@ -34,8 +34,44 @@ ttyserialinit(Ttyserial *io, Serialring *rx, Serialring *tx, u64 epoch)
   io->rx = rx;
   io->tx = tx;
   io->epoch = epoch;
-  io->queued = 0;
+  io->drainpos = 0;
+  io->queued = io->draining = 0;
   return 0;
+}
+
+isize
+ttyserialdrainstart(Ttyserial *io, u64 *position)
+{
+  isize error;
+  if (!io || !position)
+    return -ERR_INVALID;
+  if (io->draining)
+    return -ERR_BUSY;
+  error = serialwrite(io->tx, io->epoch, NULL, 0);
+  if (error)
+    return error;
+  io->drainpos = __atomic_load_n(&io->tx->producer, __ATOMIC_RELAXED);
+  io->draining = 1;
+  *position = io->drainpos;
+  return 0;
+}
+
+isize
+ttyserialdraincheck(const Ttyserial *io, u64 epoch, u64 position)
+{
+  if (!io || !io->tx || !io->draining)
+    return -ERR_STATE;
+  if (epoch != io->epoch)
+    return -ERR_STALE;
+  if (position > io->drainpos || position > __atomic_load_n(&io->tx->consumer, __ATOMIC_ACQUIRE))
+    return -ERR_PEER;
+  return position == io->drainpos ? 0 : -ERR_WOULD_BLOCK;
+}
+
+void
+ttyserialdrainend(Ttyserial *io)
+{
+  io->draining = 0;
 }
 
 isize
@@ -45,7 +81,7 @@ ttyserialoutput(Ttyserial *io, u64 oflag, const void *data, u32 size)
   isize encoded;
   if (!io || !io->tx || size > TTY_BATCH || (size && !data))
     return -ERR_INVALID;
-  if (io->queued)
+  if (io->queued || io->draining)
     return 0;
   encoded = ttyencode(oflag, data, size, io->output, 2 * TTY_BATCH, &accepted);
   if (encoded < 0)
@@ -69,7 +105,7 @@ ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8
   count = (u32) MIN(slot->args[1], TTY_BATCH);
   if (!count)
     return 0;
-  if (io->queued)
+  if (io->queued || io->draining)
     return -ERR_WOULD_BLOCK;
   for (i = 0; i < count; i++)
     snapshot[i] = page[slot->args[2] + i];
@@ -420,7 +456,7 @@ ttyserialstep(Ttyserial *io, Ttyinput *input, const Termarg *mode, u32 rxlimit,
       return 0;
     }
   }
-  if (!io->queued) {
+  if (!io->queued || io->draining) {
     out->again = rxlimit && received == rxlimit;
     return 0;
   }
