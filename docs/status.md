@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage562：卷归属检查拒绝跨 inode 共享块，覆盖孤儿尾块和间接索引冲突；双架构 QEMU `virtiodev` 与 50 项 FS 主机测试通过。
 - stage561：已解码根 inode 可检查目录身份、链接及块分配；双架构 QEMU `virtiodev` 与 50 项 FS 主机测试通过。
 - stage560：只读准入只接受有效 EMPTY，避免读取尚未重放的 home 块。双架构 QEMU `virtiodev` 和 49 项 FS 主机测试通过；实际挂载待接。
 - stage559：FS 可按节点重建 cwd 路径，跨挂载、改名重试与错误不写输出通过双架构 QEMU `runtime`；`GETCWD` IPC 待接。

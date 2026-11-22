@@ -317,19 +317,14 @@ claimblock(const Blockmap *allocation, Blockmap *seen, u32 blocks, u32 block)
   return 1;
 }
 
-isize
-loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *map, const Loadindex *index,
-              const Blockmap *allocation, u32 blocks)
+static isize
+mapclaims(const Loadmap *map, const Loadindex *index, const Blockmap *allocation, u32 blocks,
+          u32 directory, Blockmap *seen)
 {
-  Blockmap seen = {0};
-  u32      logical, limit = LOAD_DIRECT, block, eof;
-  if (!allocation || blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || allocated > 1)
-    return -ERR_INVALID;
-  if (kind != VNODE_DIR || loadreclaimkind(FS_ROOT, allocated, map, links, 0) != RECLAIM_TAIL)
-    return -ERR_STATE;
+  u32 logical, limit = LOAD_DIRECT, block, eof;
   eof = (u32) ((map->file.length + FS_BLOCK_BYTES - 1) / FS_BLOCK_BYTES);
   if (map->indirect) {
-    if (!claimblock(allocation, &seen, blocks, map->indirect))
+    if (!claimblock(allocation, seen, blocks, map->indirect))
       return -ERR_STATE;
     if (!index)
       return -ERR_WOULD_BLOCK;
@@ -337,17 +332,56 @@ loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *map, const Load
       return -ERR_STATE;
     limit += LOAD_INDIRECT;
   }
-  if (eof > limit)
+  if (directory && eof > limit)
     return -ERR_STATE;
   for (logical = 0; logical < limit; logical++) {
     block = logical < LOAD_DIRECT ? map->direct[logical] : index->entries[logical - LOAD_DIRECT];
     if (!block) {
-      if (logical < eof)
+      if (directory && logical < eof)
         return -ERR_STATE;
     } else if (logical >= FS_FILE_BYTES / FS_BLOCK_BYTES ||
-               !claimblock(allocation, &seen, blocks, block))
+               !claimblock(allocation, seen, blocks, block))
       return -ERR_STATE;
   }
+  return 0;
+}
+
+isize
+loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *map, const Loadindex *index,
+              const Blockmap *allocation, u32 blocks)
+{
+  Blockmap seen = {0};
+  if (!allocation || blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS || allocated > 1)
+    return -ERR_INVALID;
+  if (kind != VNODE_DIR || loadreclaimkind(FS_ROOT, allocated, map, links, 0) != RECLAIM_TAIL)
+    return -ERR_STATE;
+  return mapclaims(map, index, allocation, blocks, 1, &seen);
+}
+
+isize
+loadmapclaim(u32 inode, u32 kind, u32 links, const Loadmap *map, const Loadindex *index,
+             const Blockmap *allocation, u32 blocks, Blockmap *owners)
+{
+  Blockmap seen = {0};
+  isize    error;
+  u32      i, words;
+  if (blocks <= FS_DATA_START || blocks > FS_MAX_BLOCKS ||
+      !separate(owners, sizeof(*owners), allocation, sizeof(*allocation)) ||
+      !separate(owners, sizeof(*owners), map, sizeof(*map)) ||
+      (index && !separate(owners, sizeof(*owners), index, sizeof(*index))))
+    return -ERR_INVALID;
+  if ((kind != VNODE_DIR && kind != VNODE_FILE && kind != VNODE_LINK) ||
+      (inode == FS_ROOT && kind != VNODE_DIR) || loadreclaimkind(inode, 1, map, links, 0) < 0)
+    return -ERR_STATE;
+  error = mapclaims(map, index, allocation, blocks, kind == VNODE_DIR, &seen);
+  if (error)
+    return error;
+  words = (blocks + 63) / 64;
+  for (i = 0; i < words; i++)
+    if (seen.used[i] & owners->used[i])
+      return -ERR_STATE;
+  for (i = 0; i < words; i++)
+    owners->used[i] |= seen.used[i];
   return 0;
 }
 

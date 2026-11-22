@@ -191,8 +191,10 @@ static void  journaldrain(Journaltransport *, Journal *);
 static void
 testroot(u32 blocks)
 {
-  static Blockmap allocation;
-  Loadmap         map = {{FS_ROOT, 1, 1, FS_BLOCK_BYTES}, {FS_DATA_START}, 0};
+  static Blockmap        allocation, owners;
+  static const Loadindex index = {FS_DATA_START, {0}};
+  Loadmap                map = {{FS_ROOT, 1, 1, FS_BLOCK_BYTES}, {FS_DATA_START}, 0};
+  Loadmap                orphan = {{FS_ROOT + 1, 1, 1, 0}, {FS_DATA_START + 1, FS_DATA_START}, 0};
   REQUIRE(loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) == -ERR_STATE, 330);
   allocation.used[FS_DATA_START / 64] |= UINT64_C(1) << (FS_DATA_START % 64);
   REQUIRE(!loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) &&
@@ -205,6 +207,25 @@ testroot(u32 blocks)
   map.indirect = 0;
   map.direct[1] = FS_DATA_START;
   REQUIRE(loadrootcheck(1, VNODE_DIR, 1, &map, NULL, &allocation, blocks) == -ERR_STATE, 333);
+  map.direct[1] = 0;
+  REQUIRE(!loadmapclaim(FS_ROOT, VNODE_DIR, 1, &map, NULL, &allocation, blocks, &owners) &&
+              loadmapclaim(FS_ROOT + 1, VNODE_FILE, 0, &orphan, NULL, &allocation, blocks,
+                           &owners) == -ERR_STATE &&
+              owners.used[FS_DATA_START / 64] == (UINT64_C(1) << (FS_DATA_START % 64)),
+          334);
+  orphan.direct[1] = 0;
+  REQUIRE(!loadmapclaim(FS_ROOT + 1, VNODE_FILE, 0, &orphan, NULL, &allocation, blocks, &owners) &&
+              owners.used[FS_DATA_START / 64] == allocation.used[FS_DATA_START / 64],
+          335);
+  orphan.direct[0] = 0;
+  orphan.indirect = FS_DATA_START;
+  orphan.file.inode++;
+  REQUIRE(loadmapclaim(FS_ROOT + 2, VNODE_FILE, 0, &orphan, NULL, &allocation, blocks, &owners) ==
+                  -ERR_WOULD_BLOCK &&
+              loadmapclaim(FS_ROOT + 2, VNODE_FILE, 0, &orphan, &index, &allocation, blocks,
+                           &owners) == -ERR_STATE &&
+              owners.used[FS_DATA_START / 64] == allocation.used[FS_DATA_START / 64],
+          336);
 }
 
 static void

@@ -131,6 +131,12 @@ isize loadreclaimkind(u32 inode, u32 allocated, const Loadmap *, u32 links, u32 
    The caller still validates directory records and cross-inode ownership. */
 isize loadrootcheck(u32 allocated, u32 kind, u32 links, const Loadmap *, const Loadindex *,
                     const Blockmap *, u32 blocks);
+/* Accumulate one allocated inode from a stable volume scan. Start with a
+   separate zeroed owners map and visit each allocated slot exactly once,
+   including orphans and their unreclaimed tails. Reject aliases with prior
+   owners. On error or WOULD_BLOCK the owners map stays unchanged. */
+isize loadmapclaim(u32 inode, u32 kind, u32 links, const Loadmap *, const Loadindex *,
+                   const Blockmap *, u32 blocks, Blockmap *owners);
 struct Loadslot
 {
   Loadfile file;
