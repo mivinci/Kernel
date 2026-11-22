@@ -704,6 +704,56 @@ static Filepool  pool;
 static Rbank     bank;
 
 static void
+querypipes(const int fds[2], u32 hangup)
+{
+  Filelease          lease;
+  Fileslot           slot = {0};
+  Filepoll           rows[2];
+  volatile Filepoll *page;
+  Fdview             view;
+  Fileref            ref;
+  Msg                message = {{FS_POLL_QUERY, work.state.map.connid, 0, 0}};
+  Ipcmsg             result;
+  u32                i;
+  for (i = 0; i < ARRAY_SIZE(rows); i++) {
+    CHECK(!sysfdobserve(&table, fds[hangup ? 0 : i], &view) &&
+          !sysfilerefview(&pool, work.state.self, view.file, &ref));
+    rows[i].session = ref.session;
+    rows[i].fd_generation = view.tag.generation;
+    rows[i].events = hangup ? 0 : FS_POLL_IN | FS_POLL_OUT;
+    rows[i].revents = UINT64_MAX;
+  }
+  slot.span = 1;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.payload_bytes = sizeof(rows);
+  slot.args[0] = ARRAY_SIZE(rows);
+  slot.args[2] = 1;
+  for (i = 0; i < (hangup ? 1U : 2U); i++) {
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    message.words[2] = slot.seq = lease.seq;
+    message.words[3] = lease.slot;
+    page = (volatile Filepoll *) (work.state.map.address + FS_DATA_OFFSET +
+                                  lease.slot * FS_SLOT_BYTES);
+    if (i)
+      rows[1].session = UINT64_MAX;
+    CHECK(
+        !__sys_copy((void *) page, rows, sizeof(rows)) &&
+        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &message, 0, &result) && result.words[1] == lease.seq);
+    if (i)
+      CHECK((isize) result.words[0] == -ESTALE && !result.words[2] && !result.words[3] &&
+            page[0].revents == UINT64_MAX && page[1].revents == UINT64_MAX);
+    else
+      CHECK(!result.words[0] && result.words[2] == (hangup ? 2U : 1U) &&
+            result.words[3] == sizeof(rows) && page[0].revents == (hangup ? FS_POLL_HUP : 0) &&
+            page[1].revents == (hangup ? FS_POLL_HUP : FS_POLL_OUT) &&
+            page[0].fd_generation == rows[0].fd_generation && page[1].session == rows[1].session);
+    CHECK(!sysconnworkrelease(&work, &cache, lease));
+  }
+}
+
+static void
 serviceclient(const Bootview *boot)
 {
   Fdtag      held;
@@ -751,6 +801,7 @@ serviceclient(const Bootview *boot)
   submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 103);
   CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
         fd[0] == 0 && fd[1] == 2);
+  querypipes(fd, 0);
   submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 104);
   CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) &&
         business == -ENFILE && fd[0] == 0 && fd[1] == 2 && !pipe.operation.lease.seq &&
@@ -770,6 +821,7 @@ serviceclient(const Bootview *boot)
         !__sys_sigmask(SIGNAL_SETMASK, mask, &ignored) && !foreground.lease.seq &&
         !background.lease.seq &&
         sysfilerefview(&pool, work.state.self, closing, &reference) == -ERR_STALE);
+  querypipes(fd, 1);
   /* Leave the read reference to the service's LIFE path. */
   pipeiotrace[0] = 7;
 }

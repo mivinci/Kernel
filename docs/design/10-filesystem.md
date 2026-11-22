@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage433：管道后端接入即时 `POLL_QUERY`，按 15 篇已定的事件位检查原调用者的会话，先计算整组结果，再只改写原槽的 `revents`。成功回复为 `[0,seq,非零revents条目数,数组字节数]`；HUP/ERR 无须订阅，多个条目可查询同一会话。ARM64/RV64 QEMU `pipeio` 经真实 IPC 验证空读端与可写端、无订阅也报告 HUP、后一条会话错误时整组输出不变；10 项文件页主机测试及改动文件格式检查通过。`POLL_WAIT` 和公开 `poll()` 尚未接入。
+
 stage431：LOAD 与普通 READ 共用 `Cachefill` 的缺块读票校验。ARM64/RV64 QEMU `runtime` 验证首块的迟到完成无法推进次块，原 LOAD 继续等待次块的正确完成，再一次性交付数据。ARM64 夹具曾因保留已映射代码的管理 Handle 耗尽本地资源表，导致后续 `ATTACH` 无法预留接收槽；映射完成后释放这些 Handle，完整场景通过。37 项 FS 主机测试和改动文件的格式检查通过。LOAD 的设备完成仍由夹具提供，生产 FS/blk IPC 尚未接入。
 
 stage430：普通 READ 使用私有 `Cachefill` 保存缺块读票，只有匹配的完成才归还记录。ARM64/RV64 QEMU `virtiodev` 在两笔真实块读完成后走同一入口填充缓存，拒绝误用另一块的读票及重复完成；双架构 `pipeio`、37 项 FS 主机测试及格式通过。两场景分别验证原 READ 和实际设备完成，生产 FS/blk IPC 尚未接通。

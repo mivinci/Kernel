@@ -29,6 +29,12 @@
 #define FS_POLL_QUERY       11
 #define FS_POLL_WAIT        12
 #define FS_POLL_ROWS        128
+#define FS_POLL_IN          1
+#define FS_POLL_PRI         2
+#define FS_POLL_OUT         4
+#define FS_POLL_ERR         8
+#define FS_POLL_HUP         16
+#define FS_POLL_NVAL        32
 #define FS_FORK_SNAPSHOT    16
 #define FS_FORK_PREPARE     17
 #define FS_EXEC_PREPARE     18

@@ -71,6 +71,7 @@ fsstep(Fsservice *fs)
   case FS_CLOSE:
   case FS_DUPREF:
   case FS_SEEK:
+  case FS_POLL_QUERY:
   case FS_READ:
   case FS_WRITE:
     return pipedispatch(&fs->pipes, fs->links, fs->nlinks, &input);

@@ -40,6 +40,47 @@ advance(Pipewait *wait)
   return error;
 }
 
+static isize
+pollquery(Pipetable *table, Filelink *link, const Ipcmsg *call, const Fileslot *slot, Msg *reply)
+{
+  Filepoll           rows[FS_POLL_ROWS];
+  volatile Filepoll *page;
+  u32                i, ready = 0;
+  u64                state;
+  isize              error;
+  error = sysfilepollrows(&link->watch.active, call->request, (const volatile void *) link->address,
+                          FS_CONN_BYTES, call->words[3], slot, rows, ARRAY_SIZE(rows));
+  if (error)
+    return error;
+  for (i = 0; i < slot->args[0]; i++) {
+    Pipeready snapshot;
+    u64       events = rows[i].events;
+    if (!rows[i].fd_generation || events & ~(u64) (FS_POLL_IN | FS_POLL_PRI | FS_POLL_OUT |
+                                                   FS_POLL_ERR | FS_POLL_HUP | FS_POLL_NVAL))
+      return -ERR_INVALID;
+    error = pipefileready(table, call->source, call->image, rows[i].session, &snapshot);
+    if (error)
+      return error;
+    rows[i].revents = (snapshot.readable ? events & FS_POLL_IN : 0) |
+                      (snapshot.room ? events & FS_POLL_OUT : 0) |
+                      (snapshot.error ? FS_POLL_ERR : 0) | (snapshot.hup ? FS_POLL_HUP : 0);
+    ready += !!rows[i].revents;
+  }
+  error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_DRAINING)
+    return -ERR_PEER;
+  if (state & RQ_CHECK_CANCEL)
+    return -ERR_INTERRUPTED;
+  page = (volatile Filepoll *) (link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES);
+  for (i = 0; i < slot->args[0]; i++)
+    page[i].revents = rows[i].revents;
+  reply->words[2] = ready;
+  reply->words[3] = slot->payload_bytes;
+  return 0;
+}
+
 isize
 pipepump(Pipedispatch *dispatch)
 {
@@ -116,6 +157,17 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
   }
   page = (volatile u8 *) (link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES);
   switch (opcode) {
+  case FS_POLL_QUERY:
+    error = pollquery(dispatch->table, link, call, &slot, &reply);
+    if (error == -ERR_PEER) {
+      error = ipc_rqfinish(call->request);
+      return error ? error : sysfilefinish(&link->watch.active, call->request);
+    }
+    if (error == -ERR_INTERRUPTED) {
+      reply.words[0] = (u64) -EINTR;
+      return respond(link, call->request, &reply);
+    }
+    break;
   case FS_PIPE:
     error = -ERR_INVALID;
     if (slot.object || slot.span != 1 || slot.payload_bytes || slot.args[0] ||
