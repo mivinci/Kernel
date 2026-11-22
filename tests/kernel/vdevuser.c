@@ -1695,6 +1695,16 @@ blkclient(const Bootview *boot, Handle call)
           441);
   blk.stale = 0;
   {
+    u64 connid = blk.connid;
+    blk.connid = connid + 1;
+    REQUIRE(blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STALE && !mounts.serial &&
+                !root.mount && !root.number && !dirs.published,
+            546);
+    REQUIRE(blkprobestep(&homeprobe, blksuper, blkretired) == -ERR_STALE && !blk.rpc, 546);
+    homeprobe.failed = 0;
+    blk.connid = connid;
+  }
+  {
     Vnode point = {1, 2, 1, VNODE_DIR};
     REQUIRE(blkmountadd(&mounting, &mounts, &root, &point) == -EINVAL && !mounts.serial &&
                 !root.mount && !root.number && !root.generation && !root.kind && !dirs.published,

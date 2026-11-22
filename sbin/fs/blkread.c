@@ -9,9 +9,16 @@ STATIC_ASSERT(CACHE_BYTES <= BLK_MAX_IO, block_read_fits_slot);
 STATIC_ASSERT(CACHE_BYTES == FS_BLOCK_BYTES, block_read_matches_volume);
 
 static int
+volumeconnection(const Blkprobe *probe)
+{
+  return probe->blk->address && probe->blk->call == probe->call &&
+         probe->blk->connid == probe->connid;
+}
+
+static int
 volumestale(const Blkprobe *probe)
 {
-  return probe->blk->stale || probe->blk->ended ||
+  return !volumeconnection(probe) || probe->blk->stale || probe->blk->ended ||
          probe->blk->info.geometry_generation != probe->generation;
 }
 
@@ -43,6 +50,8 @@ blkprobestep(Blkprobe *probe, isize (*layout)(const u8 *, Fslayout *, u8 *),
   info = &blk->info;
   if (probe->failed)
     return probe->failed;
+  if (probe->generation && !volumeconnection(probe))
+    return probe->failed = -ERR_STALE;
   if (probe->sequence) {
     if (!blk->rpc || blk->seq != probe->sequence || blk->opcode != BLK_READ)
       return probe->failed = -ERR_STATE;
@@ -82,6 +91,8 @@ submit:
     if (info->logical_bytes > UINT32_MAX || info->physical_bytes > UINT32_MAX ||
         info->alignment_bytes > UINT32_MAX)
       return probe->failed = -ERR_NOTSUP;
+    probe->call = blk->call;
+    probe->connid = blk->connid;
     probe->generation = info->geometry_generation;
     probe->geometry = (Fsgeometry){info->capacity_bytes,
                                    info->logical_bytes,

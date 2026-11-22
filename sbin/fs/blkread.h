@@ -56,7 +56,8 @@ struct Blkprobe
   Fslayout    layout;
   Fsgeometry  geometry;
   Journalmark mark;
-  u64         generation, sequence;
+  Handle      call;
+  u64         connid, generation, sequence;
   isize       failed;
   u32         phase;
   u8          uuid[16], bytes[FS_BLOCK_BYTES];
