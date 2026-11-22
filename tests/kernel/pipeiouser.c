@@ -1588,7 +1588,7 @@ openselect(Openjob *job, const Fscontext *context, Vnode **start, u32 *follow)
 {
   CHECK(*start == context->cwd && *follow == 1);
   openvalidate(job);
-  return job->slot.object || job->slot.args[0] || job->slot.args[1] ? -EINVAL : 0;
+  return fsfileoptions(&job->slot);
 }
 
 static isize
@@ -1606,14 +1606,10 @@ static isize
 opencomplete(Openjob *job, Vnode *node)
 {
   Openfixture *fixture = job->backend;
+  u32          attempt = fixture->completed++;
   openvalidate(job);
-  CHECK(node == &fixture->file && fixture->holds == 3 && fixture->completed < 3);
-  u32 attempt = fixture->completed++;
-  return fsfileopen(&fixture->files, job, node, attempt > 1 ? VACCESS_R | VACCESS_W : VACCESS_R, 22,
-                    32,
-                    attempt > 1 ? 0600
-                    : attempt   ? 0400
-                                : 0200);
+  CHECK(node == &fixture->file && fixture->holds == 3 && attempt < 4);
+  return fsfileopen(&fixture->files, job, node, 22, 32, attempt > 1 ? 0600 : attempt ? 0400 : 0200);
 }
 
 static void
@@ -1677,7 +1673,7 @@ openlength(void *context, const Vnode *node, u64 *length)
 }
 
 static void
-openwritecheck(u64 session, u64 offset, int positional, isize expected, u64 accepted)
+openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
 {
   Filelease    lease;
   Fileslot     slot = {0};
@@ -1693,7 +1689,7 @@ openwritecheck(u64 session, u64 offset, int positional, isize expected, u64 acce
   slot.args[0] = offset;
   slot.args[1] = 2;
   slot.args[2] = FS_SLOT_BYTES - 2;
-  slot.args[3] = positional ? FS_IO_POSITIONAL : 0;
+  slot.args[3] = flags;
   slot.payload_bytes = FS_SLOT_BYTES;
   page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
   page[FS_SLOT_BYTES - 2] = 'W';
@@ -1792,8 +1788,13 @@ openserver(const Bootview *boot)
         !fsstep(&fs) && file.position == 19 && !blocks[0].dirty &&
         !loadclose(&fixture.loads, load, link.watch.owner.pid, link.watch.owner.image));
   CHECK(!fsstep(&fs) && file.position == 19 && blocks[0].dirty && !fsstep(&fs) && !fsstep(&fs) &&
-        file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && file.refs == 1 &&
-        !fsstep(&fs) && !file.node && !file.refs &&
+        file.position == 20 && !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) &&
+        file.position == 20 && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) && !file.node);
+  CHECK(!fsstep(&fs) && file.access == (VACCESS_R | VACCESS_W) &&
+        file.flags == (FS_OPEN_APPEND | FS_OPEN_NONBLOCK) && !file.position && !fsstep(&fs) &&
+        file.refs == 2 && !fsstep(&fs) && !file.position && !fsstep(&fs) && !file.position &&
+        !fsstep(&fs) && !file.position && !fsstep(&fs) && file.refs == 1 && !fsstep(&fs) &&
+        !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -1830,6 +1831,7 @@ static void
 openclient(const Bootview *boot)
 {
   u32     i;
+  int     append = 0;
   Pipekey key = {0}, dup, reopened = {0};
   setup(boot, &work, &cache, &bank);
 open:
@@ -1845,6 +1847,9 @@ open:
     slot.state = FS_SLOT_SUBMITTED;
     slot.span = 1;
     slot.payload_bytes = FS_SLOT_BYTES;
+    slot.args[0] = reopened.reference ? FS_OPEN_RDWR : FS_OPEN_RDONLY;
+    if (append)
+      slot.args[0] |= FS_OPEN_APPEND | FS_OPEN_NONBLOCK | FS_OPEN_CLOEXEC;
     slot.args[2] = i == 4 ? UINT64_MAX : FS_SLOT_BYTES - 3;
     slot.args[3] = 3;
     slot.args[4] = i == 6;
@@ -1886,6 +1891,14 @@ open:
     CHECK(key.session != reopened.session);
     dup.reference = refcall(&work, &cache, FS_DUPREF, key);
     CHECK(dup.reference && dup.reference != key.reference);
+    if (append) {
+      openwritecheck(dup.session, 0, 0, -ENOSYS, 0);
+      openwritecheck(key.session, 0, FS_IO_APPEND, -ENOSYS, 0);
+      openwritecheck(dup.session, 3, FS_IO_POSITIONAL, 0, 2);
+      CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
+      pipeiotrace[0] = 7;
+      return;
+    }
     openseek(key.session, FS_SEEK_SET, 19, 0, 19);
     openreadcheck(dup.session, 3, 1, 2, 'P');
     openseek(key.session, FS_SEEK_CUR, 0, 0, 19);
@@ -1893,14 +1906,16 @@ open:
     openreadcheck(dup.session, 0, 0, 0, '?');
     openseek(key.session, FS_SEEK_SET, 19, 0, 19);
     openwritecheck(dup.session, 0, 0, -ETXTBSY, 0);
-    openwritecheck(dup.session, 3, 1, 0, 2);
+    openwritecheck(dup.session, 3, FS_IO_POSITIONAL, 0, 2);
     openseek(key.session, FS_SEEK_CUR, 0, 0, 19);
     openwritecheck(key.session, 0, 0, 0, 1);
     openreadcheck(dup.session, 3, 1, 2, 'W');
     openreadcheck(dup.session, 19, 1, 1, 'W');
+    openwritecheck(key.session, 0, FS_IO_APPEND, -EINVAL, 0);
     CHECK(!refcall(&work, &cache, FS_CLOSE, dup) && !refcall(&work, &cache, FS_CLOSE, key));
-    pipeiotrace[0] = 7;
-    return;
+    reopened = key;
+    append = 1;
+    goto open;
   }
   dup.reference = refcall(&work, &cache, FS_DUPREF, key);
   CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key));

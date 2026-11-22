@@ -13,7 +13,7 @@ struct Fsfile
 {
   Vnode   *node;
   u64      session, position;
-  u32      access, refs;
+  u32      access, flags, refs;
   Readjob *head, *tail;
 };
 struct Fsref
@@ -36,7 +36,8 @@ struct Fsfiles
 
 /* Check the request's captured credentials against the resolved node's
    metadata before publishing an ordinary File with its own offset. */
-isize fsfileopen(Fsfiles *, Openjob *, Vnode *, u32 access, u32 owner, u32 group, u32 mode);
+isize fsfileoptions(const Fileslot *);
+isize fsfileopen(Fsfiles *, Openjob *, Vnode *, u32 owner, u32 group, u32 mode);
 isize fsfileclose(Fsfiles *, Handle, u64 image, u64 session, u64 ref);
 isize fsfiledup(Fsfiles *, Handle, u64 image, u64 session, u64 ref, u64 *out);
 /* Borrow while the serialized loop handles a synchronous operation. */

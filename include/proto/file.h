@@ -15,6 +15,16 @@
 #define FS_SLOT_QUARANTINED 3
 #define FS_HELLO            1
 #define FS_OPEN             2
+#define FS_OPEN_RDONLY      0
+#define FS_OPEN_WRONLY      1
+#define FS_OPEN_RDWR        2
+#define FS_OPEN_ACCMODE     3
+#define FS_OPEN_CREAT       0x40
+#define FS_OPEN_EXCL        0x80
+#define FS_OPEN_TRUNC       0x200
+#define FS_OPEN_APPEND      0x400
+#define FS_OPEN_NONBLOCK    0x800
+#define FS_OPEN_CLOEXEC     0x80000
 #define FS_ATTACH           3
 #define FS_READ             4
 #define FS_WRITE            5

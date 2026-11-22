@@ -124,6 +124,13 @@ fsdatastart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
   u32     access = call->words[0] == FS_WRITE ? VACCESS_W : VACCESS_R;
   if (!file || !(file->access & access))
     return reject(link, call, file ? -EBADF : -ESTALE);
+  if (access == VACCESS_W) {
+    u64 flags = slot->args[3];
+    if ((flags & FS_IO_APPEND) && (!(file->flags & FS_OPEN_APPEND) || (flags & FS_IO_POSITIONAL)))
+      return reject(link, call, -EINVAL);
+    if ((file->flags & FS_OPEN_APPEND) && !(flags & FS_IO_POSITIONAL))
+      return reject(link, call, -ENOSYS);
+  }
   return reads ? enqueue(reads, files, file, link, call, slot) : reject(link, call, -ENOSYS);
 }
 

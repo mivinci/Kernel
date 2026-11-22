@@ -63,18 +63,35 @@ drop(Fsfiles *table, Fsref *ref)
 }
 
 isize
-fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 access, u32 owner, u32 group, u32 mode)
+fsfileoptions(const Fileslot *slot)
+{
+  u64 flags = slot->args[0];
+  u64 mutation = FS_OPEN_CREAT | FS_OPEN_EXCL | FS_OPEN_TRUNC;
+  u64 known = mutation | FS_OPEN_ACCMODE | FS_OPEN_APPEND | FS_OPEN_NONBLOCK | FS_OPEN_CLOEXEC;
+  if (slot->object || (flags & ~known) || (flags & FS_OPEN_ACCMODE) == FS_OPEN_ACCMODE)
+    return -EINVAL;
+  return flags & mutation ? -ENOSYS : 0;
+}
+
+isize
+fsfileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 mode)
 {
   const Ipcmsg *call = &job->call;
   Msg           reply = {{0, job->slot.seq, 0, 0}};
   Fsfile       *file = NULL;
   Fsref        *ref = NULL;
   u64           state;
-  u32           i;
+  u32           i, access, flags;
   isize         error, status;
-  status = node->kind != VNODE_FILE || !access || (access & ~(VACCESS_R | VACCESS_W))
-               ? -EINVAL
-               : vaccess(&job->cred, owner, group, mode, access, 0);
+  flags = (u32) job->slot.args[0];
+  access = flags & FS_OPEN_ACCMODE;
+  access = access == FS_OPEN_RDONLY   ? VACCESS_R
+           : access == FS_OPEN_WRONLY ? VACCESS_W
+                                      : VACCESS_R | VACCESS_W;
+  status = fsfileoptions(&job->slot);
+  if (!status)
+    status =
+        node->kind != VNODE_FILE ? -EINVAL : vaccess(&job->cred, owner, group, mode, access, 0);
   if (status)
     goto respond;
   for (i = 0; i < table->nfiles; i++)
@@ -104,6 +121,7 @@ respond:
   file->session = FS_FILE_SESSION | ++table->serial;
   file->node = node;
   file->access = access;
+  file->flags = flags & (FS_OPEN_APPEND | FS_OPEN_NONBLOCK);
   file->refs = 1;
   *ref = (Fsref){call->source, call->image, ++table->serial, file};
   *(volatile u64 *) (job->link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES) =
