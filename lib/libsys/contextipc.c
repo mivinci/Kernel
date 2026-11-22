@@ -1291,6 +1291,36 @@ restore:
 }
 
 isize
+sysctxopenresolve(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, Conncache *cache,
+                  Fdtable *table, Opencreate *open, Handle space, u64 address, Bootmap *map,
+                  Rkey *active, isize *failure)
+{
+  isize error;
+  if (!storage(bank, failure, sizeof(*failure), active) ||
+      !separate(connections, SYSCONN_COUNT * sizeof(*connections), failure, sizeof(*failure)) ||
+      !separate(pool, sizeof(*pool), failure, sizeof(*failure)) ||
+      !separate(cache, sizeof(*cache), failure, sizeof(*failure)) ||
+      !separate(table, sizeof(*table), failure, sizeof(*failure)) ||
+      !separate(open, sizeof(*open), failure, sizeof(*failure)) ||
+      !separate(map, sizeof(*map), failure, sizeof(*failure)) || *failure > 0)
+    return -ERR_INVALID;
+  if (!*failure) {
+    error = sysctxopeninstall(bank, layer, pool, connections, cache, table, open, space, address,
+                              map, active);
+    if (error >= 0 || active->sequence || !open->operation.lease.seq || error == -ERR_INTERRUPTED ||
+        error == -ERR_WOULD_BLOCK)
+      return error;
+    *failure = error;
+  }
+  error = sysctxopencancel(bank, layer, pool, connections, cache, table, open, space, map, active);
+  if (error)
+    return error;
+  error = *failure;
+  *failure = 0;
+  return error;
+}
+
+isize
 sysctxcreateresult(Rbank *bank, Connpeer self, Rkey key)
 {
   Rctx   *context;

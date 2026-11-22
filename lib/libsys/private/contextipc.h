@@ -118,6 +118,13 @@ isize sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, C
 isize sysctxopencancel(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
                        Conncache *cache, struct Fdtable *table, struct Opencreate *open,
                        Handle space, Bootmap *map, Rkey *active);
+/* Resolve an ACKed resource OPEN when no address retry is desired. Start with
+   failure zero. A failed install with no active ATTACH continuation enters
+   compensation; keep all records until cleanup returns the original error and
+   clears failure. A successful install returns the new fd. */
+isize sysctxopenresolve(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
+                        Conncache *cache, struct Fdtable *table, struct Opencreate *open,
+                        Handle space, u64 address, Bootmap *map, Rkey *active, isize *failure);
 /* Create local descriptors over an established FS connection. Both private
    records start zeroed, and remain caller-owned across interruption or
    incomplete drain (ERR_WOULD_BLOCK after submitted peer death). Re-enter
