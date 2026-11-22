@@ -28,6 +28,11 @@ struct Fscontexts
    and their established namespace relationship. Each entry owns two holds,
    even when root and cwd denote the same node. */
 isize fscontextadd(Fscontexts *table, Handle pid, u64 image, Vnode *root, Vnode *cwd, u32 mask);
+/* Install independent holds from the exact version captured by the parent
+   snapshot. The caller must first verify the target's preparation relation,
+   inherited credentials and lifecycle observation. */
+isize fscontextinherit(Fscontexts *, Handle parent, u64 image, u64 version, Handle child,
+                       u64 childimage);
 /* Borrow until the next table mutation. Take separate node holds before
    yielding or making the result part of a pending operation. */
 const Fscontext *fscontextfind(const Fscontexts *table, Handle pid, u64 image);

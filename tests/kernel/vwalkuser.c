@@ -207,7 +207,7 @@ cwdcheck(Walktest *test)
 static int
 contextcheck(Walktest *test)
 {
-  Fscontext        entries[1] = {{0}};
+  Fscontext        entries[2] = {{0}};
   Fscontexts       table = {entries, ARRAY_SIZE(entries), &ops, test, 0};
   const Fscontext *entry;
   Vnode           *root = &test->nodes[0], *cwd = &test->nodes[2], *out = NULL;
@@ -223,8 +223,7 @@ contextcheck(Walktest *test)
   if (!entry || entry->root != root || entry->cwd != root || entry->mask != 027 ||
       test->refs[0] != 2 || fscontextfind(&table, pid, 2) || fscontextfind(&table, reused, 1) ||
       fscontextremove(&table, pid, 2) != -ESTALE ||
-      fscontextadd(&table, pid, 1, root, root, 0) != -EEXIST ||
-      fscontextadd(&table, reused, 1, root, root, 0) != -ENFILE)
+      fscontextadd(&table, pid, 1, root, root, 0) != -EEXIST)
     return 2;
   version = entry->version;
   if (fscontextchdir(&table, pid, 1, &stale) != -ESTALE || entry->version != version ||
@@ -232,6 +231,19 @@ contextcheck(Walktest *test)
       entry->cwd != cwd || test->refs[0] != 1 || test->refs[2] != 1 ||
       vmountdel(&test->mounts, cwd->mount) != -EBUSY)
     return 3;
+  {
+    const Fscontext *child;
+    u64              captured = entry->version;
+    if (fscontextinherit(&table, pid, 1, version, reused, 1) != -ESTALE ||
+        fscontextfind(&table, reused, 1) || fscontextinherit(&table, pid, 1, captured, reused, 1) ||
+        fscontextinherit(&table, pid, 1, captured, reused, 1) != -EEXIST ||
+        fscontextinherit(&table, pid, 1, captured, reused, 2) != -ENFILE ||
+        !(child = fscontextfind(&table, reused, 1)) || child->version <= captured ||
+        child->root != root || child->cwd != cwd || child->mask != 027 || test->refs[0] != 2 ||
+        test->refs[2] != 2 || fscontextumask(&table, pid, 1, 022) != 027 || child->mask != 027 ||
+        fscontextremove(&table, reused, 1) || test->refs[0] != 1 || test->refs[2] != 1)
+      return 7;
+  }
   if (vwalkinit(&walk, &test->mounts, &ops, test, entry->root, entry->cwd, ".", sizeof("."), 1) ||
       runwalk(&walk, &out) || out != cwd)
     return 4;

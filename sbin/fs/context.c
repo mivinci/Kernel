@@ -55,6 +55,16 @@ fscontextadd(Fscontexts *table, Handle pid, u64 image, Vnode *root, Vnode *cwd, 
 }
 
 isize
+fscontextinherit(Fscontexts *table, Handle parent, u64 image, u64 version, Handle child,
+                 u64 childimage)
+{
+  const Fscontext *source = fscontextfind(table, parent, image);
+  if (!source || source->version != version)
+    return -ESTALE;
+  return fscontextadd(table, child, childimage, source->root, source->cwd, source->mask);
+}
+
+isize
 fscontextchdir(Fscontexts *table, Handle pid, u64 image, Vnode *cwd)
 {
   Fscontext *entry = find(table, pid, image);
