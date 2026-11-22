@@ -364,6 +364,37 @@ forgetreclaim(const Reclaimtx *work)
 }
 
 isize
+reclaimprepare(const Journal *journal, Cache *cache, const Loadmap *map, const Loadindex *index,
+               const Blockmap *io, const Blockmap *committed, Blockmap *prepared, Reclaim *batch)
+{
+  Blockmap allocation, busy;
+  u32      i;
+  isize    error;
+  if (!cache || !journal || cache->blocks != journal->blocks || journal->blocks > FS_MAX_BLOCKS ||
+      !separate(committed, sizeof(*committed), prepared, sizeof(*prepared)) ||
+      !separate(committed, sizeof(*committed), batch, sizeof(*batch)) ||
+      !separate(prepared, sizeof(*prepared), batch, sizeof(*batch)) ||
+      !separate(prepared, sizeof(*prepared), map, sizeof(*map)) ||
+      (index && !separate(prepared, sizeof(*prepared), index, sizeof(*index))) ||
+      (io && (!separate(io, sizeof(*io), prepared, sizeof(*prepared)) ||
+              !separate(io, sizeof(*io), batch, sizeof(*batch)))))
+    return -ERR_INVALID;
+  if (journal->phase != JOURNAL_IDLE || journal->active || journal->txid)
+    return -ERR_STATE;
+  error = cachereclaimbusy(cache, &busy);
+  if (error)
+    return error;
+  if (io)
+    for (i = 0; i < ARRAY_SIZE(busy.used); i++)
+      busy.used[i] |= io->used[i];
+  allocation = *committed;
+  error = loadreclaim(map, index, FS_DATA_START, (u32) journal->blocks, &busy, &allocation, batch);
+  if (error == 1)
+    *prepared = allocation;
+  return error;
+}
+
+isize
 journalreclaim(Reclaimtx *work, Journal *journal, Cache *cache, const Reclaim *batch, Loadmap *live,
                Loadindex *index, Blockmap *allocation, const Mapmeta *encoded)
 {

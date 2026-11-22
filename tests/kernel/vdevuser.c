@@ -412,6 +412,7 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
     records[0][i] = 0;
   records[0][offset] = 1;
   records[0][offset + 76] = 100;
+  busy.used[1] = UINT64_C(1) << (100 - 64);
   REQUIRE(!loadmapshrink(map, 0, &staged) &&
               !journalshrink(&shrink, journal, cache, map, &staged, &meta),
           286);
@@ -424,8 +425,10 @@ testtruncate(Blkqueue *queue, Handle binding, u64 irqevent, Journal *journal, Ca
   }
   REQUIRE(step == 10 && !shrinkpublish(&shrink) && !map->file.length && map->direct[1] == 100 &&
               committed->used[1] == before && journal->last == 49 &&
-              loadreclaim(map, NULL, FS_DATA_START, (u32) journal->blocks, &busy, prepared,
-                          &batch) == 1 &&
+              reclaimprepare(journal, cache, map, NULL, &busy, committed, prepared, &batch) ==
+                  -ERR_BUSY &&
+              prepared->used[1] == before &&
+              reclaimprepare(journal, cache, map, NULL, NULL, committed, prepared, &batch) == 1 &&
               batch.count == 1 && batch.blocks[0] == 100,
           289);
   records[0][offset + 76] = 0;

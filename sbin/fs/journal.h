@@ -145,6 +145,13 @@ isize journalreclaim(Reclaimtx *, Journal *, struct Cache *, const struct Reclai
 /* After durable EMPTY, forget the affected cache bindings and consume the
    transaction once, updating live pointers and returning blocks to the allocator. */
 isize reclaimpublish(Reclaimtx *);
+/* Prepare the next batch from the committed bitmap and current cache state.
+   Add any independent transport ownership in io. Hold the inode and volume
+   writer guards through encoding and submission. As with loadreclaim, zero
+   or error leaves the proposed outputs unchanged. */
+isize reclaimprepare(const Journal *, struct Cache *, const struct Loadmap *,
+                     const struct Loadindex *, const struct Blockmap *io,
+                     const struct Blockmap *committed, struct Blockmap *prepared, struct Reclaim *);
 /* Commit the inode image encoded from loadmapshrink. Equal lengths need
    no transaction. Keep distinct, immutable staging/record storage and hold
    the inode mutation guard and volume writer until publication or recovery.
