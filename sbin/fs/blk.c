@@ -2,6 +2,7 @@
 #include "journal.h"
 #include "private/bootstrap.h"
 #include "private/file.h"
+#include "private/syscall.h"
 #include <errno.h>
 
 static void
@@ -26,8 +27,8 @@ payload(const Fsblk *blk)
   return (volatile u8 *) (uintptr_t) (blk->address + PROTO_DATA_OFFSET);
 }
 
-isize
-fsblkbind(Fsblk *blk, Handle call, const Bootmap *map, u64 device)
+static isize
+bind(Fsblk *blk, Handle call, const Bootmap *map, u64 device)
 {
   Filehead head;
   isize    error;
@@ -44,6 +45,131 @@ fsblkbind(Fsblk *blk, Handle call, const Bootmap *map, u64 device)
   blk->connid = map->connid;
   blk->device = device;
   blk->seq = 1;
+  return 0;
+}
+
+isize
+fsblkhello(Blkattach *work, Handle call, Handle space, u64 address, u64 device, u64 seq)
+{
+  Connpeer  peer;
+  Connclaim claim = {{1, 0, 0}, seq, 1};
+  Ipcmsg    result = {0};
+  Msg       msg = {{BLK_WORD(BLK_HELLO), 0, seq, UINT64_MAX}};
+  isize     error;
+  if (!work || work->call || work->map.mapped || work->memory || !device || !seq ||
+      seq == UINT64_MAX || handlekind(space) != HANDLE_RESOURCE || address < BOOT_USER_LO ||
+      address >= BOOT_USER_HI || PROTO_CONN_BYTES > BOOT_USER_HI - address || (address & PAGE_MASK))
+    return -ERR_INVALID;
+  error = sysconnpeer(call, &peer);
+  if (error)
+    return error;
+  /* Private bookkeeping uses the generic no-reuse HELLO response shape. */
+  error = sysbootprepare(&work->boot, claim, FS_HELLO, UINT64_MAX, 0);
+  if (error)
+    return error;
+  error = ipc_call(call, &msg, CALL_ASYNC | CALL_RECV_MEM, &result);
+  if (handlekind(result.request) != HANDLE_RPC) {
+    isize cleanup = sysbootunprepare(&work->boot, claim);
+    return cleanup ? cleanup : error ? error : -ERR_STATE;
+  }
+  work->call = call;
+  work->space = space;
+  work->address = address;
+  work->peerimage = peer.image;
+  work->device = device;
+  return sysbootsubmitted(&work->boot, claim, &result.request);
+}
+
+static isize
+bootack(Bootstrap *boot, Connclaim claim)
+{
+  isize error = sysbootpoll(boot, claim);
+  if (!error)
+    error = sysbootfinished(boot, claim);
+  if (!error && boot->state != SYSBOOT_ACKED)
+    error = sysbootack(boot, claim);
+  return error;
+}
+
+isize
+fsblkattached(Blkattach *work, Fsblk *blk, isize *status)
+{
+  Bootstrap *boot;
+  Connclaim  claim;
+  isize      error;
+  if (!work || !blk || !status || !work->call || blk->address || work->memory)
+    return -ERR_INVALID;
+  boot = &work->boot;
+  claim = boot->claim;
+  error = bootack(boot, claim);
+  if (error)
+    return error;
+  if (boot->status)
+    return boot->status;
+  if (boot->kind == IPC_NONE && !boot->flags && (isize) boot->words[0] < 0 &&
+      boot->words[1] == claim.seq && !boot->words[2] && !boot->words[3]) {
+    *status = (isize) boot->words[0];
+    return sysbootfinish(boot, claim);
+  }
+  if (!work->map.mapped) {
+    error = sysbootmap(boot, claim, work->space, work->address, work->peerimage, &work->map);
+    if (error)
+      return error;
+  }
+  if (!work->map.verified)
+    return -ERR_INVALID;
+  error = sysbootresource(boot, claim, &work->memory);
+  if (!error)
+    error = sysbootfinish(boot, claim);
+  if (!error)
+    error = bind(blk, work->call, &work->map, work->device);
+  if (!error) {
+    blk->seq = claim.seq;
+    *status = 0;
+  }
+  return error;
+}
+
+isize
+fsblkdetach(Blkattach *work, Fsblk *blk)
+{
+  Bootstrap *boot;
+  Connclaim  claim;
+  isize      error;
+  if (!work || !blk || !work->call || (blk->address && blk->address != work->map.address))
+    return -ERR_INVALID;
+  if (blk->rpc)
+    return -ERR_BUSY;
+  boot = &work->boot;
+  claim = boot->claim;
+  if (boot->state != SYSBOOT_FREE) {
+    error = bootack(boot, claim);
+    if (error)
+      return error;
+  }
+  if (work->map.mapped) {
+    error = sysbootunmap(work->space, &work->map);
+    if (error)
+      return error;
+    blk->address = 0;
+  }
+  if (boot->resource) {
+    error = sysbootresource(boot, claim, &work->memory);
+    if (error)
+      return error;
+  }
+  if (work->memory) {
+    error = __sys_free(work->memory);
+    if (error)
+      return error;
+    work->memory = 0;
+  }
+  if (boot->state != SYSBOOT_FREE) {
+    error = sysbootfinish(boot, claim);
+    if (error)
+      return error;
+  }
+  work->call = 0;
   return 0;
 }
 

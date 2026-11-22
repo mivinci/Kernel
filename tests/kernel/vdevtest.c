@@ -100,7 +100,7 @@ loadclient(Handle pid, Imageid server)
   struct
   {
     Boot     header;
-    Resentry resources[2];
+    Resentry resources[3];
   } packet;
   Rtable *table = proctable(pid);
   u32     i;
@@ -117,6 +117,8 @@ loadclient(Handle pid, Imageid server)
   packet.resources[0].handle = testresource(table, LOCAL_SPACE);
   packet.resources[1].tag = VTEST_BLK_CALL;
   REQUIRE(!localendpoint(table, server, LOCAL_CALL, LOCAL_USE, 0, 0, &packet.resources[1].handle));
+  packet.resources[2].tag = BOOT_SELF_ALLOC;
+  packet.resources[2].handle = testresource(table, LOCAL_ALLOC);
   testloadmapped(pid, vdev_image, (u64) (vdev_image_end - vdev_image), &packet, sizeof(packet));
 }
 static void

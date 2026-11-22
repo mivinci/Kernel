@@ -3,16 +3,24 @@
 #include <proto/blk.h>
 #include <sys/channel.h>
 #include "cache.h"
+#include "private/bootstrap.h"
 
-typedef struct Fsblk    Fsblk;
-typedef struct Blkfetch Blkfetch;
+typedef struct Fsblk     Fsblk;
+typedef struct Blkattach Blkattach;
+typedef struct Blkfetch  Blkfetch;
 struct Readjob;
 struct Readfetch;
 struct Loadjob;
 struct Loadfetch;
 struct Journal;
 typedef isize (*Blkfetchdone)(void *, Handle, const Cacheio *, isize, const void *);
-struct Bootmap;
+struct Blkattach
+{
+  Bootstrap boot;
+  Bootmap   map;
+  Handle    call, space, memory;
+  u64       address, peerimage, device;
+};
 struct Fsblk
 {
   Handle  call, rpc;
@@ -23,10 +31,16 @@ struct Fsblk
   u8      data[BLK_MAX_IO];
 };
 
-/* Fresh private state. The mount owner keeps the verified mapping and
-   fixed CALL alive for the whole binding, and reserves slot zero exclusively.
-   All operations are serialized by that owner. */
-isize fsblkbind(Fsblk *, Handle call, const struct Bootmap *, u64 device);
+/* Start a single HELLO on the fixed CALL. Use zero-initialized records;
+   the mount owner reserves the VA and slot zero, keeps the CALL alive,
+   and serializes all operations. Poll returns zero with either a bound
+   Fsblk or a validated negative business status. */
+isize fsblkhello(Blkattach *, Handle call, Handle space, u64 address, u64 device, u64 seq);
+isize fsblkattached(Blkattach *, Fsblk *, isize *status);
+/* Settle the original bootstrap and release the local mapping and MEM.
+   The owner must first stop using Fsblk and drain its I/O. This does not
+   close the server's peer entry; it stays owned by the client image. */
+isize fsblkdetach(Blkattach *, Fsblk *);
 /* On success one original RPC is owned. A failure leaves no submitted I/O.
    WRITE input is copied before submission and is independent of the mapping. */
 isize fsblksubmit(Fsblk *, u32 opcode, u64 offset, u32 bytes, const void *write);

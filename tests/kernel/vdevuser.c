@@ -1326,62 +1326,75 @@ blkdecodedir(const u8 *bytes, Dirrecord *record)
 static void
 blkclient(const Bootview *boot, Handle call)
 {
-  static Fsblk              blk;
-  static Blkprobe           probe;
-  static Blkprobe           homeprobe;
-  static Blkread            reader;
-  static Cacheblock         storage;
-  static Txn                txn;
-  static Cacheblock         syncstorage[2];
-  static Blkfetch           fetch;
-  static Journal            recovered;
-  static Blkowners          owners;
-  static Blkowners          home;
-  Dirnode                   nodes[FS_INODES] = {{0}};
-  Blkdir                    dirs = {0};
-  Blkmount                  mounting = {0};
-  Blkmount                  abandoned = {0};
-  Vmounts                   mounts = {0};
-  Vnode                     root = {0, FS_ROOT, 1, VNODE_DIR};
-  u8                        namebytes[256];
-  u32                       nameoffsets[8];
-  static u8                 data[PAGE_SIZE];
-  static u8                 snapshot[PAGE_SIZE];
-  const Loadmap             file = {{2, 1, 1, PAGE_SIZE}, {192}, 0};
-  const Handle              request = ((u64) HANDLE_REQUEST << 59) | (1U << 16);
-  Syncwork                  sync = {&txn, snapshot, 1, 0};
-  Blklog                    log = {&blk, &txn.journal, {0}, 0, 0};
-  Cache                     dirty = {0};
-  Cachekey                  key = {0};
-  Cachefill                 waiting = {0};
-  Cacheio                   ticket;
-  u8                       *dst;
-  const u64                 address = 0x2300000;
-  Handle                    space = bootresource(boot, BOOT_SELF_SPACE);
-  Msg                       message = {{BLK_WORD(BLK_HELLO), 0, 1, UINT64_MAX}};
-  Ipcmsg                    result;
-  Maparg                    mapping = {0, 0, address, PROTO_CONN_BYTES, MAP_READ | MAP_WRITE, 0};
-  const volatile Protohead *head = (const volatile Protohead *) (uintptr_t) address;
-  Bootmap                   map;
-  Cache                     cache = {0};
-  u32                       i, op;
-  Msg                       badhello = {{BLK_WORD(BLK_HELLO), 0, 1, 0}};
-  REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result), 360);
-  if (result.kind == IPC_NONE) {
-    REQUIRE((isize) result.words[0] == -ERR_NOTSUP && result.words[1] == message.words[2], 361);
-    return;
+  static Fsblk      blk;
+  static Blkprobe   probe;
+  static Blkprobe   homeprobe;
+  static Blkread    reader;
+  static Cacheblock storage;
+  static Txn        txn;
+  static Cacheblock syncstorage[2];
+  static Blkfetch   fetch;
+  static Journal    recovered;
+  static Blkowners  owners;
+  static Blkowners  home;
+  Dirnode           nodes[FS_INODES] = {{0}};
+  Blkdir            dirs = {0};
+  Blkmount          mounting = {0};
+  Blkmount          abandoned = {0};
+  Vmounts           mounts = {0};
+  Vnode             root = {0, FS_ROOT, 1, VNODE_DIR};
+  u8                namebytes[256];
+  u32               nameoffsets[8];
+  static u8         data[PAGE_SIZE];
+  static u8         snapshot[PAGE_SIZE];
+  const Loadmap     file = {{2, 1, 1, PAGE_SIZE}, {192}, 0};
+  const Handle      request = ((u64) HANDLE_REQUEST << 59) | (1U << 16);
+  Syncwork          sync = {&txn, snapshot, 1, 0};
+  Blklog            log = {&blk, &txn.journal, {0}, 0, 0};
+  Cache             dirty = {0};
+  Cachekey          key = {0};
+  Cachefill         waiting = {0};
+  Cacheio           ticket;
+  u8               *dst;
+  const u64         address = 0x2300000;
+  Handle            space = bootresource(boot, BOOT_SELF_SPACE);
+  Msg               message = {{BLK_WORD(BLK_HELLO), 0, 1, UINT64_MAX}};
+  Ipcmsg            result;
+  Blkattach         attaching = {0};
+  Cache             cache = {0};
+  u32               i, op;
+  Msg               badhello = {{BLK_WORD(BLK_HELLO), 0, 1, 0}};
+  {
+    isize status = 1;
+    REQUIRE(!fsblkhello(&attaching, call, space, address, 1, 1) &&
+                fsblkhello(&attaching, call, space, address, 1, 1) == -ERR_INVALID &&
+                !ipc_rqwait(attaching.boot.rpc, RQ_FINISH, &result) &&
+                !sysbootpoll(&attaching.boot, attaching.boot.claim),
+            360);
+    if (attaching.boot.kind == IPC_RESOURCE_REPLY) {
+      Allocarg reserve = {PAGE_SIZE, ALLOC_DATA, 0, 0, 0, 0};
+      Maparg   overlap = {0, 0, address, PAGE_SIZE, MAP_READ | MAP_WRITE, 0};
+      REQUIRE(!__sys_alloc(bootresource(boot, BOOT_SELF_ALLOC), &reserve, &overlap.mem) &&
+                  !__sys_map(space, &overlap) &&
+                  fsblkattached(&attaching, &blk, &status) == -ERR_STATE && status == 1 &&
+                  !blk.address && !attaching.boot.rpc && attaching.boot.resource &&
+                  !attaching.map.mapped && !__sys_unmap(space, address) && !__sys_free(overlap.mem),
+              363);
+    }
+    REQUIRE(!fsblkattached(&attaching, &blk, &status), 360);
+    if (status) {
+      REQUIRE(status == -ERR_NOTSUP && !blk.address && !fsblkdetach(&attaching, &blk), 361);
+      return;
+    }
+    REQUIRE(blk.address == address && attaching.memory && !attaching.boot.rpc &&
+                attaching.map.verified && blk.seq == 1,
+            362);
   }
-  REQUIRE(result.kind == IPC_RESOURCE_REPLY && result.words[1] == 1 && result.words[2] &&
-              result.words[3] == PROTO_CONN_BYTES,
-          362);
-  mapping.mem = (Handle) result.words[0];
-  REQUIRE(!__sys_map(space, &mapping), 363);
-  map = (Bootmap){address, PROTO_CONN_BYTES, result.words[2], head->serverimage, 1, 1};
   REQUIRE(!ipc_call(call, &badhello, 0, &result) && result.kind == IPC_NONE &&
               (isize) result.words[0] == -EINVAL && result.words[1] == 1 && !result.words[2] &&
               !result.words[3],
           456);
-  REQUIRE(!fsblkbind(&blk, call, &map, 1) && !fsblksubmit(&blk, BLK_INFO, 0, 0, NULL), 364);
+  REQUIRE(!fsblksubmit(&blk, BLK_INFO, 0, 0, NULL), 364);
   blkcollect(&blk, NULL, 0);
   REQUIRE(blk.info.geometry_generation == 2 && blk.info.capacity_bytes == 2048 * 512 &&
               blk.info.logical_bytes == PAGE_SIZE && blk.info.flags == BLK_FLUSHABLE,
@@ -1598,7 +1611,7 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result) && result.kind == IPC_NONE &&
               (isize) result.words[0] == -EIO && result.words[1] == message.words[2],
           462);
-  REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
+  REQUIRE(!fsblkdetach(&attaching, &blk) && !blk.address && !attaching.memory, 368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
 
