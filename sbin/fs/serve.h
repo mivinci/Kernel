@@ -34,9 +34,11 @@ struct Fsservice
   /* Optional volume journal bridge. The loop settles its ticket before
      file and reclaim workers try to submit more I/O. */
   Blklog *log;
+  u64     loadalarm;
 };
 
 /* The caller supplies actual authorities, an exclusive VA arena, and fixed
-   zeroed storage. One serialized iteration; blocks when there is no work. */
+   zeroed storage. The loop owns the process alarm and uses TIMER as a wakeup.
+   One serialized iteration; blocks when there is no work. */
 isize fsstep(Fsservice *fs);
 #endif

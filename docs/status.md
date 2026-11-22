@@ -20,7 +20,7 @@
 
 ## 最新验证
 
-- `FS_LOAD` 的块映射暂未就绪时保留原请求；双架构 `pipeio` 验证恢复同一请求后继续读取。
+- `FS_LOAD` 等待块映射时保留原请求；双架构 `pipeio` 验证同一请求可恢复，以及无新 IPC 或磁盘完成时也会按期返回 ETIMEDOUT。
 - `fcntl(F_DUPFD_CLOEXEC)` 原子发布带 CLOEXEC 的别名，共用原 File；双架构 QEMU `pipeio`、`libsys` 已验证，完整 exec 继承仍待接。
 - `Elfsource` 可从已授权的 `FS_LOAD` 会话精确读块；双架构 QEMU `pipeio` 核对 ELF 头、段字节与旧版本拒绝。生产会话授权和基于 FS 的镜像替换仍待接。
 - virtio MMIO 精确窗口适配器已纳入 SDK；双架构 `virtiodev` 验证越界拒绝及真实设备访问。生产库存仍只交付 UART。

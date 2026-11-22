@@ -343,7 +343,8 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         NULL,
                         NULL,
                         NULL,
-                        NULL};
+                        NULL,
+                        0};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
   } else if (interrupt == 1) {
@@ -2378,6 +2379,7 @@ openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
   Filewatch        *watch = &fs->links[0].watch;
   Msg               reply = {{0, 0, 0, 0}};
   Ipcmsg            gate, event;
+  u64               now, deadline, guard;
   CHECK(!cacheinit(&fixture.cache, &backing, 1, 128) && !ipc_recv(0, 0, &gate) &&
         gate.kind == IPC_CALL && gate.words[0] == FS_ATTACH &&
         !loadopen(table, &fixture.map.file, watch->owner.pid, watch->owner.image, 0, UINT64_MAX,
@@ -2423,6 +2425,19 @@ openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
   CHECK(!fsstep(fs) && !fsloadpump(&loads) && !job.io.request);
   CHECK(!fsstep(fs) && !job.io.request); /* Stale version through Elfsource. */
   CHECK(!loadclose(table, reply.words[2], watch->owner.pid, watch->owner.image));
+  CHECK(!ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL && gate.words[0] == FS_ATTACH &&
+        !sysfilenow(&now));
+  deadline = now + UINT64_C(250000000);
+  CHECK(!loadopen(table, &fixture.map.file, watch->owner.pid, watch->owner.image, now, deadline,
+                  &reply.words[2]) &&
+        !ipc_reply(gate.request, &reply));
+  fixture.resolving = 4;
+  CHECK(!fsstep(fs) && job.io.request && !job.work.request && fs->loadalarm == deadline &&
+        loadwrite(table, fixture.map.file.inode, &guard) == -ERR_BUSY);
+  CHECK(!fsstep(fs) && !sysfilenow(&now) && now >= deadline && job.io.request &&
+        fixture.resolving == 2 && !fsloadpump(&loads) && !job.io.request &&
+        fixture.resolving == 2 && !loaddeadline(table) &&
+        !loadwrite(table, fixture.map.file.inode, &guard) && !loadunwrite(table, guard));
   fs->loads = NULL;
 }
 
@@ -2462,7 +2477,8 @@ openserver(const Bootview *boot)
                        NULL,
                        NULL,
                        NULL,
-                       NULL};
+                       NULL,
+                       0};
   u32            i;
   const Loadfile executable = {2, 1, 1, 20};
   u64            load;
@@ -2768,6 +2784,12 @@ openloadclient(void)
   CHECK(elfread(&source, plan.segments[0].offset, bytes, sizeof(bytes)) == -ERR_STATE &&
         load.business == -ESTALE && !load.pending.key.lease.seq && !load.submitted &&
         bytes[0] == 'L' && bytes[1] == 'D');
+  CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result) && result.words[2]);
+  load.session = result.words[2];
+  load.identity[2]++;
+  CHECK(elfread(&source, plan.segments[0].offset, bytes, sizeof(bytes)) == -ERR_STATE &&
+        load.business == -ETIMEDOUT && !load.pending.key.lease.seq && !load.submitted &&
+        bytes[0] == 'L' && bytes[1] == 'D');
 }
 
 static void
@@ -3006,7 +3028,8 @@ publicchdirserver(const Bootview *boot)
                        NULL,
                        NULL,
                        NULL,
-                       NULL};
+                       NULL,
+                       0};
   Sigsel         target = {SIGNAL_SELECT_PID, 0};
   Ipcmsg         request, event;
   Fileslot       slot;

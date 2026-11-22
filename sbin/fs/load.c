@@ -630,6 +630,19 @@ loadsweep(Loadtable *table, u64 now)
       stop(&table->slots[i], -ERR_TIMEDOUT);
 }
 
+u64
+loaddeadline(const Loadtable *table)
+{
+  u64 deadline = 0;
+  u32 i;
+  for (i = 0; i < LOAD_SLOTS; i++) {
+    const Loadslot *entry = &table->slots[i];
+    if (entry->id && entry->pid && !entry->stopped && (!deadline || entry->deadline < deadline))
+      deadline = entry->deadline;
+  }
+  return deadline;
+}
+
 void
 loadretire(Loadtable *table, Handle pid, u64 image)
 {

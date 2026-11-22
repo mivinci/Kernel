@@ -169,6 +169,7 @@ isize loadstatus(Loadtable *table, u64 session, u64 ticket, u64 now);
 isize loadfinish(Loadtable *table, u64 session, u64 ticket, u64 now);
 isize loadclose(Loadtable *table, u64 session, Handle pid, u64 image);
 void  loadsweep(Loadtable *table, u64 now);
+u64   loaddeadline(const Loadtable *table);
 void  loadretire(Loadtable *table, Handle pid, u64 image);
 /* Hold across content changes or inode reclamation, including deferred IO;
    renaming a path without changing or reclaiming its inode needs no guard. */
