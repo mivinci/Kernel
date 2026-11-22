@@ -190,18 +190,19 @@ static void  journaldrain(Journaltransport *, Journal *);
 static void
 testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config)
 {
-  static Journal   journal, idle;
-  static u8        images[3][JOURNAL_BYTES];
-  Journalblock     metadata[2];
-  Journalio        io;
-  Journaltransport transport = {queue, binding, irqevent, 0, {0}, &journal};
-  Fsgeometry       geometry;
-  u32              i, j, count = 0;
-  u64              stride = JOURNAL_BYTES / VBLK_SECTOR;
-  u64              blocks = config->sectors / stride;
-  Fslayout         layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
-  Journalmark      mark = {47, 0, 0, 0};
-  Journalhead      head = {47, {65, 66}, 1, 2, 11, 12};
+  static Journal    journal, idle;
+  static u8         images[3][JOURNAL_BYTES];
+  Journalblock      metadata[2];
+  Journalio         io;
+  Journaltransport  transport = {queue, binding, irqevent, 0, {0}, &journal};
+  Fsgeometry        geometry;
+  u32               i, j, count = 0;
+  u64               stride = JOURNAL_BYTES / VBLK_SECTOR;
+  u64               blocks = config->sectors / stride;
+  Fslayout          layout = {blocks, 1, 64, 65, 66, 67, 99, 1, 4096, 1024, 1};
+  Journalmark       mark = {47, 0, 0, 0};
+  const Journalmark fresh = {0, 0, 0, 0};
+  Journalhead       head = {47, {65, 66}, 1, 2, 11, 12};
   REQUIRE(config->blocksize == JOURNAL_BYTES, 193);
   geometry.bytes = config->sectors * VBLK_SECTOR;
   geometry.logical = config->blocksize;
@@ -255,6 +256,17 @@ testredo(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config
               !journal.last,
           250);
   geometry.flush = config->flush;
+  {
+    Journalblock data = {FS_DATA_START, images[0]};
+    Journalplan  plan = {NULL, NULL, NULL, NULL, &data, 0, 1};
+    REQUIRE(
+        !journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
+            !journalbegin(&idle, &plan) && !idle.txid && !journalstop(&idle) &&
+            journalrecover(&idle, &layout, &geometry, &fresh, NULL, NULL, 0, 0, NULL, NULL, NULL) ==
+                -ERR_STATE &&
+            idle.data_count == 1 && idle.data[0].bytes == images[0] && !journalrelease(&idle),
+        246);
+  }
   REQUIRE(!journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL, NULL) &&
               idle.last == 47 && journalnext(&idle, &io) == -ERR_STATE &&
               journalrecover(&idle, &layout, &geometry, &mark, NULL, NULL, 0, 0, NULL, NULL,

@@ -941,7 +941,10 @@ journalrecover(Journal *journal, const Fslayout *layout, const Fsgeometry *devic
   u32   i;
   if (!journal || !mark)
     return -ERR_INVALID;
-  if (journal->active || journal->txid || (journal->blocks && journal->phase != JOURNAL_STOPPED))
+  /* Data-only work can own snapshots with txid zero. Until release it is
+     still the old transaction, even if no device request is outstanding. */
+  if (journal->active || journal->txid || journal->metadata_count || journal->data_count ||
+      (journal->blocks && journal->phase != JOURNAL_STOPPED))
     return -ERR_STATE;
   error = fslayoutcheck(layout, device, 1);
   if (error)
