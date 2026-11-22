@@ -436,7 +436,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
       }
       {
         static Cacheblock blocks[2];
-        u8                scratch[CACHE_BYTES];
+        u8                scratch[CACHE_BYTES] = {0};
         const Loadmap     map = {{7, 1, 1, CACHE_BYTES + 2}, {5}, 0};
         const u64         cursors[] = {2, 2, 3, CACHE_BYTES + 1, CACHE_BYTES + 2, CACHE_BYTES + 2};
         Cache             cache = {0};
@@ -459,12 +459,12 @@ serviceloop(const Bootview *boot, u32 interrupt)
                   !position && page[0] == 0xa5);
             stale = fetch.ticket;
             stale.serial++;
-            CHECK(filereadcomplete(&readwork, &stale, 1) == -ERR_STALE);
-            fetch.destination[0] = 'A';
-            fetch.destination[1] = 'B';
-            fetch.destination[2] = 'C';
-            fetch.destination[CACHE_BYTES - 1] = 'Z';
-            CHECK(!filereadcomplete(&readwork, &fetch.ticket, 1));
+            scratch[0] = 'A';
+            scratch[1] = 'B';
+            scratch[2] = 'C';
+            scratch[CACHE_BYTES - 1] = 'Z';
+            CHECK(filereadcomplete(&readwork, &stale, scratch, sizeof(scratch)) == -ERR_STALE &&
+                  !filereadcomplete(&readwork, &fetch.ticket, scratch, sizeof(scratch)));
           }
           if (i == 3)
             CHECK(!fileseek(&link.watch.active, &request, &row, map.file.length, &position));
@@ -1656,7 +1656,7 @@ static isize
 openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
 {
   Openfixture *fixture = context;
-  CHECK(!fixture->fetch.destination && fetch->block == 5 && job->file->position == 19);
+  CHECK(!fixture->fetch.block && fetch->block == 5 && job->file->position == 19);
   fixture->fetch = *fetch;
   return 0;
 }
@@ -1681,7 +1681,7 @@ openserver(const Bootview *boot)
   Fsfile          file = {0};
   Fsref           refs[2] = {{0}};
   Cacheblock      blocks[1];
-  u8              scratch[CACHE_BYTES];
+  u8              scratch[CACHE_BYTES] = {0};
   Readjob         reader[2] = {0};
   Fsreads         reads = {reader,          ARRAY_SIZE(reader), 0, &fixture, scratch, openreadbind,
                            openreadrelease, openreadsubmit};
@@ -1721,7 +1721,7 @@ openserver(const Bootview *boot)
         file.refs == 1 && fixture.holds == 3);
   for (i = 0; i < 5; i++)
     CHECK(!fsstep(&fs));
-  CHECK(file.position == 19 && !fsstep(&fs) && fixture.fetch.destination && file.refs == 2 &&
+  CHECK(file.position == 19 && !fsstep(&fs) && fixture.fetch.block && file.refs == 2 &&
         !fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs));
   {
     Ipcmsg event;
@@ -1732,8 +1732,13 @@ openserver(const Bootview *boot)
   }
   CHECK(!fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs) && file.refs == 2 &&
         file.node);
-  fixture.fetch.destination[19] = 'R';
-  CHECK(!filereadcomplete(&reader[0].work, &fixture.fetch.ticket, 1) &&
+  scratch[19] = 'R';
+  CHECK(fsreadcomplete(&reader[0], reader[1].call.request, &fixture.fetch.ticket, scratch,
+                       sizeof(scratch)) == -ERR_STALE &&
+        fsreadcomplete(&reader[0], reader[0].call.request, &fixture.fetch.ticket, scratch, 19) ==
+            -ERR_INVALID &&
+        !fsreadcomplete(&reader[0], reader[0].call.request, &fixture.fetch.ticket, scratch,
+                        sizeof(scratch)) &&
         !fsreadpump(&reads, &fixture.files) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);

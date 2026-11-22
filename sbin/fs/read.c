@@ -2,14 +2,17 @@
 #include <errno.h>
 
 isize
-filereadcomplete(Readwork *work, const Cacheio *ticket, u32 success)
+filereadcomplete(Readwork *work, const Cacheio *ticket, const void *block, u32 bytes)
 {
   isize error;
   if (!work)
     return -ERR_STALE;
-  error = cachefillfinish(&work->fill, ticket, success);
+  if (!block && bytes)
+    return -ERR_INVALID;
+  error = block ? cachefillcopy(&work->fill, ticket, block, bytes)
+                : cachefillfinish(&work->fill, ticket, 0);
   if (!error)
-    work->failed = !success;
+    work->failed = !block;
   return error;
 }
 
@@ -69,10 +72,11 @@ fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *c
       blocks[0] = span.first;
       blocks[1] = span.next;
       for (i = 0; i < ARRAY_SIZE(blocks); i++) {
+        u8 *destination;
         if (!blocks[i])
           continue;
-        error = cachefillstart(&work->fill, cache, blocks[i], CACHE_DATA, &fetch->ticket,
-                               &fetch->destination);
+        error =
+            cachefillstart(&work->fill, cache, blocks[i], CACHE_DATA, &fetch->ticket, &destination);
         if (error == 1) {
           fetch->block = blocks[i];
           return 1;

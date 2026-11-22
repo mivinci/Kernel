@@ -9,7 +9,6 @@ typedef struct Readfetch Readfetch;
 struct Readfetch
 {
   Cacheio ticket;
-  u8     *destination;
   u32     block;
 };
 struct Readwork
@@ -28,6 +27,6 @@ struct Readwork
 isize fileread(Readwork *work, Readfetch *fetch, Fileinflight *active, const Ipcmsg *call,
                const Fileslot *slot, const Loadmap *map, const Loadindex *index, Cache *cache,
                u32 first, u64 *position, void *scratch, volatile u8 *page);
-/* Only after the issued lower-level access has actually drained. */
-isize filereadcomplete(Readwork *work, const Cacheio *ticket, u32 success);
+/* After transport drains: a full independent block, or NULL/0 for failure. */
+isize filereadcomplete(Readwork *work, const Cacheio *ticket, const void *block, u32 bytes);
 #endif

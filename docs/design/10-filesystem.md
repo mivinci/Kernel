@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage462：普通 READ 的缺块提交只交付块号和读票，完成时须匹配原 REQUEST 与读票，再从已排空的独立缓冲提交完整块。ARM64、RV64 QEMU `pipeio` 验证错请求和短块保留原读票，正确完成后原 READ 与后续 SEEK 按序回复。生产块运输仍待接入。
+
 stage461：`cachefillcopy` 从已排空的独立缓冲接收一个完整块，先核对原读票、长度和缓存所有权，再复制并结束读票。ARM64、RV64 QEMU `virtiodev` 用实际块设备将两个缺块读入独立缓冲，验证短块、错票和重复完成被拒绝，两块均提交后才交付跨块数据。此项不新增 FS↔blk IPC。
 
 stage460：取消或退役的非队首 READ/SEEK 可独立出队，归还原槽和 File 引用，无须等待队首读票。仍存活的任务保持原顺序；队首已有下游访问时仍须排空。ARM64、RV64 QEMU `pipeio` 验证真实 IPC 下排队 SEEK 先以 EINTR 收尾，原 READ 仍持有读票且输出和偏移未变；复用空位提交的下一次 SEEK 在原 READ 完成后返回正确偏移。

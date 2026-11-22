@@ -26,7 +26,7 @@ struct Fsreads
   /* Supply a stable map and indirect snapshot through release. */
   isize (*bind)(void *, Readjob *);
   void (*release)(void *, Readjob *);
-  /* On success finish via filereadcomplete after the device stops writing,
+  /* Copy the ticket, then finish via fsreadcomplete after transport drains
      and wake the loop. Failure means no external access was started. */
   isize (*submit)(void *, Readjob *, const Readfetch *);
 };
@@ -35,5 +35,6 @@ struct Fsreads
 isize fsreadstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsseekstart(Fsreads *, Fsfiles *, Fsfile *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsreadpump(Fsreads *, Fsfiles *);
+isize fsreadcomplete(Readjob *, Handle, const Cacheio *, const void *, u32);
 int   fsreadbusy(const Fsreads *, const Filelink *);
 #endif

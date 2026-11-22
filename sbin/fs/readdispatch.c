@@ -78,7 +78,7 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
       break;
     if (!reads->submit(reads->backend, job, &fetch))
       return 0;
-    status = filereadcomplete(&job->work, &fetch.ticket, 0);
+    status = filereadcomplete(&job->work, &fetch.ticket, NULL, 0);
     if (status)
       return status;
   }
@@ -176,4 +176,12 @@ fsreadbusy(const Fsreads *reads, const Filelink *link)
       if (reads->jobs[i].file && reads->jobs[i].link == link)
         return 1;
   return 0;
+}
+
+isize
+fsreadcomplete(Readjob *job, Handle request, const Cacheio *ticket, const void *block, u32 bytes)
+{
+  if (!job || !job->file || job->call.request != request)
+    return -ERR_STALE;
+  return filereadcomplete(&job->work, ticket, block, bytes);
 }
