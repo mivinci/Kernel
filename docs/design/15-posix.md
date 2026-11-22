@@ -159,6 +159,8 @@ ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实
 
 `sprintf` / `vsprintf` 同样复用现有格式子集，用于 ash 的作业 PID 和错误文本格式化。调用者须提供足够的缓冲空间；成功写入结尾 NUL 并返回不含 NUL 的字节数。
 
+`getline` 和 `getdelim` 复用 `FILE` 预读，按需扩展调用者持有的缓冲区。返回长度包括已读取的分隔符、不包括结尾 NUL；记录可含内嵌 NUL。EOF 前的短记录仍返回长度，无数据的 EOF 返回 -1 并设置 EOF 指示；读取或分配失败设置流错误指示，已分配的缓冲仍由调用者释放。见 [getdelim](https://pubs.opengroup.org/onlinepubs/9799919799/functions/getdelim.html)。
+
 libc 的私有 `pathsearch` 实现按固定 PATH 快照查找命令的顺序，供后续 `posix_spawnp` 与 sh 共用：名称含 `/` 时直接尝试；空路径分量从 cwd 尝试；ENOENT、ENOTDIR 继续搜索，遇 EACCES 记下并继续，没有成功项时优先返回 EACCES。ENOEXEC 原样返回，不启动脚本替代。最多 32 个分量，PATH 和单个候选路径各最多 4096 字节（含 NUL），不截断。4 项主机测试用回调核对候选顺序、失败归并和容量边界，ARM64/RV64 SDK 构建通过。此处尚未调用文件系统或发布进程。
 
 `<spawn.h>` 提供 `posix_spawn_file_actions_init/destroy/addopen/addclose/adddup2`。列表按登记顺序保存最多 128 项；`addopen` 自持路径副本，登记不打开文件。私有遍历器在首个动作错误处停止；未来 spawn 调用者须先捕获稳定列表，再将动作应用到未发布的子进程，并在出错时撤销准备。ARM64/RV64 QEMU `runtime` 验证路径副本、无效 fd、动作顺序、失败后不执行下一项、释放列表及 PATH 候选顺序。实际子 fd 表操作、CLOEXEC 收尾与 `posix_spawn` 发布未接。

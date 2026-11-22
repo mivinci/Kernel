@@ -1454,6 +1454,8 @@ brokenclient(void)
   int              fds[2], alias;
   char             byte = 0;
   char             formatted[601];
+  char            *line = NULL;
+  size_t           capacity = 0;
   struct pollfd    ready[3];
   u64              before, after, i;
   CHECK(!sysfileimagefs(0, ADDRESS, &peer) &&
@@ -1489,16 +1491,27 @@ brokenclient(void)
   if (fds[1] != 2)
     CHECK(!close(2));
   alias = dup(fds[1]);
-  CHECK(fds[0] == 0 && alias >= 0 && !close(fds[1]) && write(alias, "e\n\377zq", 5) == 5 &&
-        !close(alias) && poll(ready, 3, 0) == 2 && ready[0].revents == (POLLIN | POLLHUP) &&
-        ready[1].revents == POLLNVAL && !ready[2].revents);
+  memset(formatted, 'a', sizeof(formatted));
+  formatted[300] = 0;
+  formatted[600] = ':';
+  CHECK(fds[0] == 0 && alias >= 0 && !close(fds[1]) &&
+        write(alias, formatted, sizeof(formatted)) == sizeof(formatted) &&
+        write(alias, "e\n\377zq", 5) == 5 && !close(alias) && poll(ready, 3, 0) == 2 &&
+        ready[0].revents == (POLLIN | POLLHUP) && ready[1].revents == POLLNVAL &&
+        !ready[2].revents);
+  errno = EDOM;
+  CHECK(getdelim(&line, &capacity, ':', stdin) == sizeof(formatted) &&
+        capacity > sizeof(formatted) && !memcmp(line, formatted, sizeof(formatted)) &&
+        !line[sizeof(formatted)] && errno == EDOM);
   CHECK(getchar() == 'e' && ungetc('E', stdin) == 'E' && fgetc(stdin) == 'E' &&
         ungetc('X', stdin) == 'X' && !fflush(stdin) &&
         fgets(formatted, sizeof(formatted), stdin) == formatted && !memcmp(formatted, "\n", 2) &&
         getc(stdin) == 255 && fread(formatted, 2, 2, stdin) == 1 && !memcmp(formatted, "zq", 2) &&
         feof(stdin) && !ferror(stdin));
-  CHECK(ungetc('!', stdin) == '!' && !feof(stdin) && fgetc(stdin) == '!' && fgetc(stdin) == EOF &&
-        feof(stdin) && !close(fds[0]));
+  CHECK(ungetc('!', stdin) == '!' && !feof(stdin) && getline(&line, &capacity, stdin) == 1 &&
+        !strcmp(line, "!") && getline(&line, &capacity, stdin) == -1 && feof(stdin) &&
+        !ferror(stdin) && !close(fds[0]));
+  free(line);
   clearerr(stdin);
   CHECK(!feof(stdin) && fgetc(stdin) == EOF && errno == EBADF && ferror(stdin) && !feof(stdin));
   CHECK(!sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);

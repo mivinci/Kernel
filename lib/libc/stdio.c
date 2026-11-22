@@ -419,6 +419,81 @@ fgetc(FILE *stream)
   return input(stream, (char *) &byte, 1, 0) ? byte : EOF;
 }
 
+ssize_t
+getdelim(char **line, size_t *capacity, int delimiter, FILE *stream)
+{
+  const size_t limit = (size_t) INT64_MAX + 1;
+  size_t       used = 0;
+  int          error, saved = errno;
+  if (!line || !capacity || delimiter < 0 || delimiter > 255) {
+    stream->failed = 1;
+    errno = EINVAL;
+    return -1;
+  }
+  if (!readable(stream))
+    return -1;
+  for (;;) {
+    const char *start, *end;
+    char        pushed;
+    size_t      count, need;
+    if (stream->pushed != EOF) {
+      pushed = (char) stream->pushed;
+      start = &pushed;
+      count = 1;
+    } else {
+      if (stream->position == stream->used && !refill(stream)) {
+        if (!stream->ended)
+          return -1;
+        break;
+      }
+      start = stream->buffer + stream->position;
+      count = stream->used - stream->position;
+    }
+    end = memchr(start, delimiter, count);
+    if (end)
+      count = (size_t) (end - start) + 1;
+    if (count >= limit - used) {
+      error = EOVERFLOW;
+      goto failed;
+    }
+    need = used + count + 1;
+    if (!*line || *capacity < need) {
+      size_t size = *line ? *capacity : 0;
+      char  *next;
+      size = MAX(need, size > limit / 2 ? limit : MAX(size * 2, 128));
+      next = realloc(*line, size);
+      if (!next) {
+        error = ENOMEM;
+        goto failed;
+      }
+      *line = next;
+      *capacity = size;
+    }
+    memcpy(*line + used, start, count);
+    used += count;
+    (*line)[used] = 0;
+    if (stream->pushed != EOF)
+      stream->pushed = EOF;
+    else
+      stream->position += count;
+    if (end)
+      break;
+  }
+  errno = saved;
+  return used ? (ssize_t) used : -1;
+
+failed:
+  stream->failed = 1;
+  errno = error;
+  return -1;
+}
+
+ssize_t
+getline(char **line, size_t *capacity, FILE *stream)
+{
+  return getdelim(line, capacity, '\n', stream);
+}
+
 int
 getc(FILE *stream)
 {

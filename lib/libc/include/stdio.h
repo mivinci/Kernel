@@ -41,6 +41,10 @@ int    vfprintf(FILE *stream, const char *format, va_list arguments)
     __attribute__((format(printf, 2, 0)));
 int printf(const char *format, ...) __attribute__((format(printf, 1, 2)));
 int vprintf(const char *format, va_list arguments) __attribute__((format(printf, 1, 0)));
+
+ssize_t getdelim(char **line, size_t *capacity, int delimiter, FILE *stream);
+ssize_t getline(char **line, size_t *capacity, FILE *stream);
+
 /* Memory formatting: integers, pointer, byte string/character and %%. */
 int snprintf(char *buffer, size_t size, const char *format, ...)
     __attribute__((format(printf, 3, 4)));
