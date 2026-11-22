@@ -2001,10 +2001,13 @@ openreclaimjournal(Loadmap *shortened, Loadindex *index, Blockmap *allocation, C
         loadmapspan(&shortened->file, shortened, index, 99, 128, 20, 1, &span) == -ERR_INVALID);
 
   CHECK(!cacheget(cache, 101, CACHE_DATA, &key) && !cachereadbegin(cache, &key, &fill, &bytes) &&
+        !cacheput(cache, &key) && !cachereclaimbusy(cache, &busy) &&
+        loadreclaim(shortened, index, 99, 128, &busy, &prepared, &batch) == -ERR_BUSY &&
+        prepared.used[1] == original && !cachecomplete(cache, &fill, 1));
+  CHECK(!cacheget(cache, 101, CACHE_DATA, &key) && !cacheedit(cache, &key, 0, "z", 1) &&
         !cacheput(cache, &key) && !cachebusy(cache, &busy) &&
         loadreclaim(shortened, index, 99, 128, &busy, &prepared, &batch) == -ERR_BUSY &&
-        prepared.used[1] == original && !cachecomplete(cache, &fill, 1) &&
-        !cachebusy(cache, &busy));
+        !cachereclaimbusy(cache, &busy));
   meta.inode = NULL;
   meta.bitmap = maprecords[1];
   meta.index = maprecords[2];

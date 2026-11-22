@@ -67,6 +67,12 @@ isize cacheforget(Cache *, const u64 *blocks, u32 count);
 /* Replace the snapshot with all referenced, dirty or I/O-owned blocks.
    The volume writer adds any independent device ownership before reclaim. */
 isize cachebusy(Cache *, struct Blockmap *);
+/* Reclaim may discard dirty data for blocks beyond committed EOF. Metadata,
+   references and device access still block reclamation. */
+isize cachereclaimbusy(Cache *, struct Blockmap *);
+/* Same as cacheforget, but the last discard entries are verified obsolete
+   data blocks. Reject metadata in that suffix even if clean. */
+isize cacheforgettail(Cache *, const u64 *blocks, u32 count, u32 discard);
 isize cacheview(Cache *cache, const Cachekey *key, const u8 **out, u64 *version);
 /* Snapshot at most one page of file data, possibly spanning two blocks.
    The caller resolves blocks from the pinned file version; zero is a hole.

@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage533：截短回收可以丢弃已不在 EOF 内、也无引用或 I/O 的脏数据块；双架构 QEMU `pipeio` 和 43 项 FS 主机测试通过。
 - stage532：日志重放与增长经异步提交路径使用实际设备；双架构 QEMU `virtiodev` 通过。生产恢复输入仍待接。
 - stage531：`FS_SYNC` 共用异步日志推进，保留原请求和快照收尾；双架构 QEMU `pipeio`、`virtiodev` 及 43 项 FS 主机测试通过。
 - stage530：截短和回收共用异步日志推进，在途 I/O 不重发；双架构 QEMU `virtiodev` 和 43 项 FS 主机测试通过。

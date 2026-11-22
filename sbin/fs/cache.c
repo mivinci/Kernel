@@ -60,8 +60,8 @@ find(Cache *cache, const Cachekey *key, Cacheblock **out, u32 pinned)
   return 0;
 }
 
-isize
-cachebusy(Cache *cache, Blockmap *out)
+static isize
+busyblocks(Cache *cache, Blockmap *out, u32 reclaim)
 {
   u32 i;
   if (!external(cache, out, sizeof(*out)) || cache->blocks > FS_MAX_BLOCKS)
@@ -75,10 +75,23 @@ cachebusy(Cache *cache, Blockmap *out)
     out->used[i] = 0;
   for (i = 0; i < cache->capacity; i++) {
     const Cacheblock *entry = &cache->entries[i];
-    if (entry->bound && (entry->references || entry->dirty || entry->io))
+    if (entry->bound &&
+        (entry->references || entry->io || (entry->dirty && (!reclaim || entry->metadata))))
       out->used[entry->block / 64] |= UINT64_C(1) << (entry->block % 64);
   }
   return 0;
+}
+
+isize
+cachebusy(Cache *cache, Blockmap *out)
+{
+  return busyblocks(cache, out, 0);
+}
+
+isize
+cachereclaimbusy(Cache *cache, Blockmap *out)
+{
+  return busyblocks(cache, out, 1);
 }
 
 isize
@@ -169,10 +182,11 @@ cacheinvalidate(Cache *cache, Cachekey *owned)
   return 0;
 }
 isize
-cacheforget(Cache *cache, const u64 *blocks, u32 count)
+cacheforgettail(Cache *cache, const u64 *blocks, u32 count, u32 discard)
 {
   u32 i, j;
-  if (!count || count > CACHE_MAX || !external(cache, blocks, (u64) count * sizeof(*blocks)))
+  if (!count || count > CACHE_MAX || discard > count ||
+      !external(cache, blocks, (u64) count * sizeof(*blocks)))
     return -ERR_INVALID;
   for (j = 0; j < count; j++)
     if (blocks[j] >= cache->blocks)
@@ -181,10 +195,14 @@ cacheforget(Cache *cache, const u64 *blocks, u32 count)
     Cacheblock *entry = &cache->entries[i];
     if (!valid(entry))
       return -ERR_STATE;
-    if (entry->bound && (entry->references || entry->io || entry->dirty))
+    if (entry->bound)
       for (j = 0; j < count; j++)
-        if (entry->block == blocks[j])
-          return -ERR_BUSY;
+        if (entry->block == blocks[j]) {
+          if (j >= count - discard && entry->metadata)
+            return -ERR_STATE;
+          if (entry->references || entry->io || (entry->dirty && j < count - discard))
+            return -ERR_BUSY;
+        }
   }
   for (i = 0; i < cache->capacity; i++) {
     Cacheblock *entry = &cache->entries[i];
@@ -196,6 +214,12 @@ cacheforget(Cache *cache, const u64 *blocks, u32 count)
         }
   }
   return 0;
+}
+
+isize
+cacheforget(Cache *cache, const u64 *blocks, u32 count)
+{
+  return cacheforgettail(cache, blocks, count, 0);
 }
 
 isize

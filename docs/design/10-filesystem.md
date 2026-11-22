@@ -772,6 +772,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage533：已提交 EOF 之外的整块可以在回收事务开始时丢弃无引用、无在途 I/O 的脏数据缓存。同步只扫描 EOF 内，不能依赖它写回这些已不可见的块。元数据仍适用原缓存门禁，分配位仍等到日志退休后才发布。ARM64/RV64 QEMU `pipeio` 验证脏尾块不会卡住回收，在途读取和新引用仍会阻止回收；43 项 FS 主机测试通过。
+
 stage532：ARM64/RV64 QEMU `virtiodev` 的日志重放与增长也使用异步 `journalpump` 和同一个块队列适配器。重放在 EMPTY 刷盘前拒绝退休；各路径验证过期票据及未对齐传输被拒，并核对最终盘面与 I/O 次数。恢复输入仍由夹具提供。
 
 stage531：`FS_SYNC` 与截短、回收共用 `journalpump`。同步仍绑定原 REQUEST，提交层接收已校验的字节范围，完成必须匹配原票据；缓存快照保持到排空和释放。ARM64/RV64 QEMU `pipeio` 与 `virtiodev` 均通过，覆盖取消后收尾、失败保留脏块及实际 WRITE/FLUSH；43 项 FS 主机测试通过。

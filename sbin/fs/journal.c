@@ -350,12 +350,17 @@ static isize
 forgetreclaim(const Reclaimtx *work)
 {
   u64 blocks[LOAD_RECLAIM + 3];
-  u32 i, count = 0;
+  u32 i, count = 0, discard = 0;
   for (i = 0; i < work->journal->metadata_count; i++)
     blocks[count++] = work->journal->metadata[i].block;
+  if (work->live->indirect && !work->batch->map.indirect)
+    blocks[count++] = work->live->indirect;
   for (i = 0; i < work->batch->count; i++)
-    blocks[count++] = work->batch->blocks[i];
-  return cacheforget(work->cache, blocks, count);
+    if (work->batch->blocks[i] != work->live->indirect) {
+      blocks[count++] = work->batch->blocks[i];
+      discard++;
+    }
+  return cacheforgettail(work->cache, blocks, count, discard);
 }
 
 isize
