@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage549：块队列拒绝与 virtio 环页交叠的请求窗口，ARM64/RV64 QEMU `virtiodev` 通过。
 - stage548：块队列拒绝地址范围交叠的 DMA 请求窗口；ARM64/RV64 QEMU `virtiodev` 和 41 项 virtio 主机测试通过。
 - stage547：`O_CREAT` 命中已有文件时无需创建回调，缺失名称仍要求后端支持创建。ARM64/RV64 QEMU `pipeio` 通过。
 - stage546：ARM64/RV64 QEMU `pipeio` 验证独占创建在日志 COMMITTED 持久后被信号取消，返回 EINTR，保留名称且没有 File 引用泄漏。

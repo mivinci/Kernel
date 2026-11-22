@@ -511,7 +511,8 @@ startqueue(Vdev *device, Vring *ring, u64 epoch, const Testdma *dma)
   REQUIRE(!vstart(device), 172);
 }
 static void
-resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config)
+resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *config,
+             const u64 addresses[3])
 {
   Vdev     *device = queue->device;
   Vring    *ring = queue->ring;
@@ -549,14 +550,16 @@ resetpending(Blkqueue *queue, Handle binding, u64 irqevent, const Vblkconfig *co
     error = blkqrecover(queue, now());
   } while (error == -ERR_WOULD_BLOCK);
   REQUIRE(error == -ERR_BUSY && sync.after == 2 && request->held == 6 &&
-              blkqinit(queue, device, ring, request, queue->buffers, queue->count) == -ERR_STATE &&
+              blkqinit(queue, device, ring, request, queue->buffers, queue->count, addresses) ==
+                  -ERR_STATE &&
               blkqsubmit(queue, 0, VBLK_READ, 0, config->blocksize, NULL, blksync, device) ==
                   -ERR_STATE,
           229);
   REQUIRE(!virtioread(device->ops.context, 0x60, &causes) && !causes &&
               !blkqrecover(queue, now()) && sync.after == 4 && !request->active && !request->held &&
               fault.after == 1 && !request[1].held &&
-              blkqinit(queue, device, ring, request, queue->buffers, queue->count) == -ERR_STALE,
+              blkqinit(queue, device, ring, request, queue->buffers, queue->count, addresses) ==
+                  -ERR_STALE,
           189);
   vdev_trace[16]++;
   vdev_trace[39]++;
@@ -751,7 +754,8 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   Blkdma     buffers[2];
   Vblkconfig fresh;
   Testdma    dma;
-  u32        count, more;
+  u64        ringaddr[3];
+  u32        count, more, i;
   Handle     binding = bootresource(sysboot(), VTEST_IRQ_TAG + member);
   u64        irqevent = UINT64_C(1) << (IRQ_BIT_MIN + member);
   u64        stride = config->blocksize / VBLK_SECTOR;
@@ -759,37 +763,51 @@ testblock(Vdev *device, const Vblkconfig *config, u32 member)
   REQUIRE(binding > 0, 182);
   dma.va = VTEST_DMA_BASE + member * VTEST_PAGES * PAGE_SIZE;
   dma.addresses = &vdev_trace[VTEST_DMA_TRACE + member * VTEST_PAGES];
+  for (i = 0; i < ARRAY_SIZE(ringaddr); i++)
+    ringaddr[i] = dma.addresses[i];
   startqueue(device, &ring, 1, &dma);
   transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, stride, 1,
            config->readonly ? 0xa7 : 0x51, &prior, NULL);
   testbuffer(&dma, 3, &buffers[0]);
   testbuffer(&dma, 6, &buffers[1]);
   buffers[1].statusaddr = buffers[0].dataaddr + PAGE_SIZE - 1;
-  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)) ==
+  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
                   -ERR_INVALID &&
               !queue.state,
           224);
   testbuffer(&dma, 6, &buffers[1]);
   buffers[1].status = buffers[0].data;
-  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)) ==
+  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
                   -ERR_INVALID &&
               !queue.state,
           224);
   testbuffer(&dma, 6, &buffers[1]);
-  REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)), 224);
+  buffers[1].statusaddr = dma.addresses[2] + PAGE_SIZE - 1;
+  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
+                  -ERR_INVALID &&
+              !queue.state,
+          224);
+  testbuffer(&dma, 6, &buffers[1]);
+  buffers[1].status = (volatile u8 *) ring.avail;
+  REQUIRE(blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) ==
+                  -ERR_INVALID &&
+              !queue.state,
+          224);
+  testbuffer(&dma, 6, &buffers[1]);
+  REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr), 224);
   if (!config->readonly) {
     testflush(&queue, binding, irqevent, 2 * stride);
     transfer(device, &ring, 1, binding, irqevent, config, &dma, VBLK_READ, 2 * stride, 4, 0x37,
              NULL, NULL);
   }
-  resetpending(&queue, binding, irqevent, config);
+  resetpending(&queue, binding, irqevent, config, ringaddr);
   REQUIRE(!vblkfeatures(device) && !vblkconfig(device, &fresh) &&
               fresh.sectors == config->sectors && fresh.readonly == config->readonly &&
               fresh.flush == config->flush && fresh.blocksize == config->blocksize &&
               fresh.physical == config->physical && fresh.alignment == config->alignment,
           183);
   startqueue(device, &ring, 2, &dma);
-  REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests)) &&
+  REQUIRE(!blkqinit(&queue, device, &ring, requests, buffers, ARRAY_SIZE(requests), ringaddr) &&
               blkqmatch(&queue, &prior) == -ERR_STALE,
           230);
   REQUIRE(vrpoll(&ring, 1, stale, &count, &more) == -ERR_STALE && !count && !more, 184);

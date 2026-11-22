@@ -68,9 +68,16 @@ blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *count, u
 }
 
 static int
-windows(const Blkdma *buffer, u32 count, u32 cpu)
+windows(const Blkdma *buffer, u32 count, const u64 pages[3], u32 cpu)
 {
   u32 i, j, k, l;
+  for (i = 0; i < 3; i++) {
+    if (!IS_ALIGNED(pages[i], PAGE_SIZE) || PAGE_SIZE > UINT64_MAX - pages[i])
+      return 0;
+    for (j = 0; j < i; j++)
+      if (pages[j] == pages[i])
+        return 0;
+  }
   for (i = 0; i < count; i++) {
     const Blkdma *a = &buffer[i];
     const u64     base[] = {cpu ? (uintptr_t) a->header : a->headaddr,
@@ -84,6 +91,9 @@ windows(const Blkdma *buffer, u32 count, u32 cpu)
         return 0;
       if (!size[k])
         continue;
+      for (j = 0; j < 3; j++)
+        if (base[k] < pages[j] + PAGE_SIZE && pages[j] < base[k] + size[k])
+          return 0;
       for (j = 0; j <= i; j++) {
         const Blkdma *b = &buffer[j];
         const u64     other[] = {cpu ? (uintptr_t) b->header : b->headaddr,
@@ -101,12 +111,13 @@ windows(const Blkdma *buffer, u32 count, u32 cpu)
 
 int
 blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
-         u32 count)
+         u32 count, const u64 addresses[3])
 {
+  u64 pages[3];
   u32 i;
   int error;
   if (!queue || !device || !ring || !ring->initialized || !slots || !buffers || !count ||
-      count > VQ_SIZE)
+      count > VQ_SIZE || !addresses)
     return -ERR_INVALID;
   if (queue->state && (queue->state != BLK_STOPPED || device != queue->device))
     return -ERR_STATE;
@@ -114,7 +125,10 @@ blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdm
     return -ERR_STALE;
   if (device->state != VDEV_LIVE)
     return -ERR_STATE;
-  if (!windows(buffers, count, 0) || !windows(buffers, count, 1))
+  pages[0] = (uintptr_t) ring->desc;
+  pages[1] = (uintptr_t) ring->avail;
+  pages[2] = (uintptr_t) ring->used;
+  if (!windows(buffers, count, addresses, 0) || !windows(buffers, count, pages, 1))
     return -ERR_INVALID;
   error = vblkconfig(device, &queue->config);
   if (error)

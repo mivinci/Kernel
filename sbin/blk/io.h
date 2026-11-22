@@ -41,10 +41,11 @@ int blkirqpoll(Vdev *device, Vring *ring, u64 generation, Vdone *done, u32 *coun
    of its configured ring. Reinitialize only after recovery, with a newer
    generation on the same device. The event loop serializes operations and
    stops polling the old ring when recovery starts. Keep buffers immutable.
-   Request windows must be disjoint in CPU and device address space; the
-   caller also owns the mappings and isolates them from ring storage. */
+   Pass the same device addresses (desc, avail, used) installed by vqueue.
+   Request windows must be disjoint from each other and from those three
+   ring pages in both address spaces. The caller owns the mappings. */
 int blkqinit(Blkqueue *queue, Vdev *device, Vring *ring, Vblkreq *slots, const Blkdma *buffers,
-             u32 count);
+             u32 count, const u64 addresses[3]);
 /* Drain more before rearming IRQ. An observed CONFIG keeps submission
    blocked until refresh succeeds, even after the IRQ hint is cleared.
    Transport and buffer ownership faults close the queue until recovery. */
