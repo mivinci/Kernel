@@ -243,6 +243,8 @@ waitevent(u64 deadline, u64 events, u64 mask, u32 *restart, void (*cancel)(void 
     return -ERR_BUSY;
   if (sleepfault)
     return sleepfault;
+  if (rqprogress && rqprogress())
+    events |= EVENT_RQ_DONE;
   if (deadline) {
     error = systimeradd(&sleepheap, deadline, &ticket);
     if (error)
@@ -264,6 +266,8 @@ waitevent(u64 deadline, u64 events, u64 mask, u32 *restart, void (*cancel)(void 
     sleepfault = cancelled;
   if (blocked || cancelled)
     return blocked ? blocked : cancelled;
+  if (rqprogress)
+    rqprogress();
   if (wait.ticket)
     return error;
   if (wait.result == -ERR_INTERRUPTED) {

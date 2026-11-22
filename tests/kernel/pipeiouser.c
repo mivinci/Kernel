@@ -1870,12 +1870,13 @@ openclient(const Bootview *boot)
 static void
 lateopenserver(const Bootview *boot)
 {
-  Filelink link = {0};
-  Fileslot row;
-  Ipcmsg   request, gate, close;
-  Msg      reply = {{0, 0, 0, 0}};
-  Sigsel   target = {SIGNAL_SELECT_PID, 0};
-  u64      flags;
+  Filelink              link = {0};
+  Fileslot              row;
+  Ipcmsg                request, gate, close;
+  Msg                   reply = {{0, 0, 0, 0}};
+  Sigsel                target = {SIGNAL_SELECT_PID, 0};
+  const struct timespec pause = {0, 30000000};
+  u64                   flags;
   CHECK(!ipc_recv(0, 0, &request) &&
         !sysfilehello(&link, 1, bootresource(boot, 256), bootresource(boot, BOOT_SELF_ALLOC),
                       bootresource(boot, BOOT_SELF_SPACE), ADDRESS, &request));
@@ -1889,7 +1890,8 @@ lateopenserver(const Bootview *boot)
   reply.words[1] = request.words[2];
   reply.words[2] = 456;
   reply.words[3] = sizeof(u64);
-  CHECK(!ipc_reply(gate.request, &reply) && !ipc_reply(request.request, &reply) &&
+  CHECK(!ipc_reply(gate.request, &reply) && !nanosleep(&pause, NULL) &&
+        !ipc_reply(request.request, &reply) &&
         !sysfilefinish(&link.watch.active, request.request) && !ipc_recv(0, 0, &close) &&
         close.words[0] == FS_CLOSE && !sysfilelinkaccept(&link, 1, &close, &row) &&
         row.object == 456 && row.args[0] == 123);
@@ -1915,12 +1917,12 @@ lateopenclient(void)
   Opencreate       open = {0};
   Rkey             active = {0};
   struct sigaction action = {0};
-  struct timespec  pause = {0, 30000000};
   Msg              gate = {{PIPETEST, 0, 0, 0}};
   Ipcmsg           reply;
   Fdview           fd;
   int              number = -2;
   isize            business = 9;
+  u64              mask, ignored, deadline, now;
   action.sa_handler = lateopensignal;
   CHECK(!sigaction(SIGUSR1, &action, NULL) && !sysfileimage(&image) &&
         !sysfileimagefs(0, ADDRESS, &peer));
@@ -1928,8 +1930,14 @@ lateopenclient(void)
             -ERR_TIMEDOUT &&
         caught == 1 && !open.operation.lease.seq && !active.sequence && number == -2 &&
         business == 9 && !sysfdobserve(&image->fds, 0, &fd) && fd.tag.state == SYSFD_FREE &&
-        !ipc_call(peer->state.call, &gate, CALL_CONTROL, &reply) && !nanosleep(&pause, NULL) &&
-        !sysfilerefconnection(&image->files, peer->state.self, peer->state.tag));
+        !ipc_call(peer->state.call, &gate, CALL_CONTROL, &reply) &&
+        !__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask) && !systimernow(&now));
+  deadline = now + UINT64_C(500000000);
+  do {
+    CHECK(!systimerwait(deadline, EVENT_TIMER, mask) && !systimernow(&now) && now < deadline);
+  } while (peer->state.operations[0].phase || peer->state.operations[1].phase ||
+           sysfilerefconnection(&image->files, peer->state.self, peer->state.tag));
+  CHECK(!__sys_sigmask(SIGNAL_SETMASK, mask, &ignored));
   pipeiotrace[0] = 7;
 }
 
