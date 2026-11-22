@@ -19,6 +19,8 @@ isize sysfileopenprepare(Filepool *pool, Connwork *work, Conncache *cache, Fdtab
                          u64 fdflags, Opencreate *open, Msg *message);
 isize sysfileopenabort(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                        Opencreate *open);
+isize sysfileopencheck(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
+                       Opencreate *open);
 /* With caught signals blocked and the original CALL handed off, request
    cooperative cancellation once. The original RPC and fd remain owned by OPEN. */
 isize sysfileopeninterrupt(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,

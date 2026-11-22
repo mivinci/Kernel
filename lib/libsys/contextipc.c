@@ -1056,6 +1056,50 @@ sysctxopenconnect(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
 }
 
 isize
+sysctxopeninstall(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections, Conncache *cache,
+                  Fdtable *table, Opencreate *open, Handle space, u64 address, Bootmap *map,
+                  Rkey *active)
+{
+  const u64 bytes = SYSCONN_COUNT * sizeof(*connections);
+  Connwork *source;
+  Slotop   *op;
+  u64       mask, ignored;
+  isize     error, restored, business = 0;
+  if (layer >= RCTX_LAYERS || !storage(bank, connections, bytes, active) ||
+      !storage(bank, open, sizeof(*open), active) ||
+      !storage(bank, table, sizeof(*table), active) || !storage(bank, map, sizeof(*map), active) ||
+      !separate(connections, bytes, table, sizeof(*table)) ||
+      !separate(connections, bytes, open, sizeof(*open)) ||
+      !separate(map, sizeof(*map), open, sizeof(*open)) ||
+      !separate(map, sizeof(*map), table, sizeof(*table)) ||
+      open->operation.connection.index >= SYSCONN_COUNT || open->operation.lease.slot / 2 != layer)
+    return -ERR_INVALID;
+  source = &connections[open->operation.connection.index];
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfileopencheck(pool, source, cache, table, open);
+  if (!error) {
+    op = &source->state.operations[open->operation.lease.slot];
+    if (op->phase != SYSOP_ACKED || op->kind != IPC_RESOURCE_REPLY)
+      error = -ERR_STATE;
+  }
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  if (error || restored)
+    return error ? error : restored;
+  error = sysctxopenconnect(bank, layer, pool, connections, cache, &open->operation, space, address,
+                            0, map, active);
+  if (error)
+    return error;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfileopenfinish(pool, source, cache, table, open, &business);
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
+  return restored ? restored : error;
+}
+
+isize
 sysctxopenrevoke(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                  const Opkey *key, u64 deadline, Rkey *active)
 {

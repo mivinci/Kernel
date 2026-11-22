@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage491：资源 OPEN 在 ATTACH 成功后才发布 fd；双架构 QEMU `runtime` 验证换址和复用，71 项主机测试通过。
 - stage490：定时事件等待可推进文件后台收尾；双架构 QEMU `pipeio` 验证迟到 OPEN 引用在等待期限前关闭。
 - stage489：私有 OPEN 仅在原生确认未交付且启用 SA_RESTART 时重提。双架构 QEMU `runtime` 和 71 项主机测试通过。
 - stage488：私有 OPEN 超时后由镜像事件推进收尾；双架构 QEMU `pipeio` 验证迟到成功只关闭原引用。

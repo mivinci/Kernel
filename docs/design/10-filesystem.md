@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage491：`sysctxopeninstall` 在发 ATTACH 前校验原资源 OPEN 和 fd 预留，接管成功后才发布描述符。冷连接仍由调用方提供已保留地址；ARM64/RV64 QEMU `runtime` 验证地址冲突时保留 fd 预留和原 ATTACH，换址后只发布一次，复用已有连接时保留 CLOEXEC 且不重新映射；71 项主机测试通过。公开 `open()`、地址登记和失败时自动补偿仍待接入。
+
 stage490：运行库的定时事件等待在睡前和醒后推进原文件请求，并在有后台 RPC 时一并等待完成事件，避免其他等待消费完成提示却没有清理文件槽。ARM64/RV64 QEMU `pipeio` 验证 OPEN 前台超时后，客户端只做定时事件等待，也能在截止前关闭迟到成功留下的引用。公开 `open()` 尚未接入。
 
 stage489：私有 OPEN 收到原生 `ERR_CANCELLED` 并排空原请求后，可在 `SA_RESTART` 下用当前层已保存的路径重新提交；没有 `SA_RESTART` 则返回中断。服务业务错误、未知结果和已经完成的请求不走该重启分支。ARM64/RV64 QEMU `runtime` 在异步提交刚返回时注入信号，验证未交付的 OPEN 有无 `SA_RESTART` 的两种结果，并回归已交付 OPEN 的迟到成功；71 项主机测试通过。公开 `open()` 和连接地址登记仍未接入。

@@ -204,31 +204,32 @@ bootstrap(Bootstrap *record, Connclaim claim, Handle call, u64 options)
 static u64
 attachfirst(const Bootview *boot)
 {
-  Opkey   key;
-  Conntag tag;
-  Bootmap mapped = {0};
-  Rkey    active = {0};
-  Handle  space = bootresource(boot, BOOT_SELF_SPACE), rpc;
-  u64     sequence;
-  u64     files[2], source = 0;
-  key = begin(FS_OPEN, "/bound", 0);
-  collect(&key);
-  CHECK(sysfilecreatebackend(&pool, &work, &cache, &key, &tag) == -ERR_STATE &&
-        !sysfilecreateack(&pool, &work, &cache, &key));
-  CHECK(sysctxopenconnect(&contexts, 0, &pool, connections, &cache, &key, space, ADDRESS, 0,
+  Opencreate open = {0};
+  Conntag    tag;
+  Bootmap    mapped = {0};
+  Rkey       active = {0};
+  Handle     space = bootresource(boot, BOOT_SELF_SPACE), rpc;
+  u64        sequence;
+  int        number = -2;
+  isize      business = 9;
+  Fdview     fd;
+  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/bound", 0, 0, 0, &open,
+                         &active, &number, &business) == 1);
+  filecreatetrace[1]++;
+  CHECK(sysctxopeninstall(&contexts, 0, &pool, connections, &cache, &fds, &open, space, ADDRESS,
                           &mapped, &active) < 0 &&
+        !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED &&
         !mapped.mapped && !active.sequence && backend_work.state.bootstrap.state == SYSBOOT_RESULT);
   tag = backend_work.state.tag;
   rpc = backend_work.state.bootstrap.rpc;
   sequence = backend_work.state.bootstrap.claim.seq;
-  CHECK(rpc &&
-        !sysctxopenconnect(&contexts, 0, &pool, connections, &cache, &key, space, ADDRESS + 0x10000,
-                           0, &mapped, &active) &&
+  number = (int) sysctxopeninstall(&contexts, 0, &pool, connections, &cache, &fds, &open, space,
+                                   ADDRESS + 0x10000, &mapped, &active);
+  CHECK(rpc && number >= 0 && !open.operation.lease.seq &&
         backend_work.state.bootstrap.state == SYSBOOT_FREE && backend_work.state.map.verified &&
-        cache.entries[tag.index].sequence == sequence);
-  zero(files, sizeof(files));
-  CHECK(!sysfilecreatefinish(&pool, &work, &cache, &key, files, &source) && files[0] && !source);
-  return files[0];
+        cache.entries[tag.index].sequence == sequence && !sysfdobserve(&fds, number, &fd) &&
+        !sysfddetach(&fds, fd.tag, &fd));
+  return fd.file;
 }
 static void
 resourceopens(const Bootview *boot)
@@ -262,13 +263,12 @@ resourceopens(const Bootview *boot)
         tag.generation == backend_work.state.tag.generation &&
         tag.index == backend_work.state.tag.index);
   zero(&mapped, sizeof(mapped));
-  CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED &&
-        !sysctxopenconnect(&contexts, 0, &pool, connections, &cache, &key,
-                           bootresource(boot, BOOT_SELF_SPACE), 0, 0, &mapped, &active) &&
-        !mapped.mapped && !mapped.verified);
-  number = (int) sysfileopenfinish(&pool, &work, &cache, &fds, &open, &business);
-  CHECK(number >= 0 && !business && !sysfdobserve(&fds, (u32) number, &fd) &&
-        fd.flags == BOOT_FD_CLOEXEC && !sysfddetach(&fds, fd.tag, &fd));
+  CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED);
+  number = (int) sysctxopeninstall(&contexts, 0, &pool, connections, &cache, &fds, &open,
+                                   bootresource(boot, BOOT_SELF_SPACE), 0, &mapped, &active);
+  CHECK(number >= 0 && !mapped.mapped && !mapped.verified &&
+        !sysfdobserve(&fds, (u32) number, &fd) && fd.flags == BOOT_FD_CLOEXEC &&
+        !sysfddetach(&fds, fd.tag, &fd));
   reused = fd.file;
   for (i = 0; i < SYSCONN_COUNT - 2; i++) {
     peer.image++;

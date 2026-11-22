@@ -101,6 +101,12 @@ isize sysctxopenattach(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, C
 isize sysctxopenconnect(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
                         Conncache *cache, const Opkey *operation, Handle space, u64 address,
                         u64 deadline, Bootmap *map, Rkey *active);
+/* Complete an ACKed resource OPEN and return its newly published fd. A cold
+   ATTACH uses the caller's reserved address. Keep the original continuations
+   on failure for retry or explicit compensation. */
+isize sysctxopeninstall(Rbank *bank, u32 layer, Filepool *pool, Connwork *connections,
+                        Conncache *cache, struct Fdtable *table, struct Opencreate *open,
+                        Handle space, u64 address, Bootmap *map, Rkey *active);
 /* Revoke the exact OPEN token over the creator-owned CALL without a directory
    entry. Retain active across interruption. ERR_WOULD_BLOCK can mean the original
    peer ended with an accepted ABORT still draining; retry without resubmitting.

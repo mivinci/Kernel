@@ -1030,6 +1030,13 @@ opencheck(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Open
 }
 
 isize
+sysfileopencheck(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open)
+{
+  Createop *create;
+  return opencheck(pool, work, cache, table, open, &create);
+}
+
+isize
 sysfileopeninterrupt(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table,
                      Opencreate *open, u64 now)
 {
