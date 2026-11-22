@@ -49,7 +49,10 @@ isize fsfileclose(Fsfiles *, Handle, u64 image, u64 session, u64 ref);
 isize fsfiledup(Fsfiles *, Handle, u64 image, u64 session, u64 ref, u64 *out);
 /* Borrow while the serialized loop handles a synchronous operation. */
 Fsfile *fsfilefind(Fsfiles *, Handle, u64 image, u64 session);
-isize   fsfilehold(Fsfile *);
-void    fsfiledrop(Fsfiles *, Fsfile *);
-void    fsfileretire(Fsfiles *, Handle, u64 image);
+/* Keep the exact source reference's File alive during inheritance. The
+   hold has no client identity and does not authorize I/O. */
+isize fsfileholdref(Fsfiles *, Handle, u64 image, u64 session, u64 reference, Fsfile **out);
+isize fsfilehold(Fsfile *);
+void  fsfiledrop(Fsfiles *, Fsfile *);
+void  fsfileretire(Fsfiles *, Handle, u64 image);
 #endif

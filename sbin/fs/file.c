@@ -37,6 +37,22 @@ fsfilefind(Fsfiles *table, Handle pid, u64 image, u64 session)
 }
 
 isize
+fsfileholdref(Fsfiles *table, Handle pid, u64 image, u64 session, u64 id, Fsfile **out)
+{
+  Fsref *ref;
+  isize  error;
+  if (!table || !out || *out || !id)
+    return -ERR_INVALID;
+  ref = find(table, pid, image, session, id);
+  if (!ref)
+    return -ERR_STALE;
+  error = fsfilehold(ref->file);
+  if (!error)
+    *out = ref->file;
+  return error;
+}
+
+isize
 fsfilehold(Fsfile *file)
 {
   if (file->refs == UINT32_MAX)

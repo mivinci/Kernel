@@ -3371,7 +3371,21 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && file.position == 3); /* fseek's flush fails before seeking. */
   CHECK(!fsstep(&fs) && file.position == 3);
   publicappendcheck(&fixture);
-  CHECK(!fsstep(&fs) && !file.refs);
+  {
+    Fsfile *hold = NULL;
+    CHECK(fsfileholdref(&fixture.files, ref.pid, ref.image, file.session, ref.id + 1, &hold) ==
+              -ERR_STALE &&
+          !hold &&
+          fsfileholdref(&fixture.files, ref.pid, ref.image + 1, file.session, ref.id, &hold) ==
+              -ERR_STALE &&
+          !hold &&
+          !fsfileholdref(&fixture.files, ref.pid, ref.image, file.session, ref.id, &hold) &&
+          hold == &file && file.refs == 2);
+    CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.node == &fixture.file &&
+          file.position == 3);
+    fsfiledrop(&fixture.files, hold);
+    CHECK(!file.refs && !file.node);
+  }
   CHECK(context.pid == target.target && fixture.holds == 2);
   for (steps = 0; steps < 8 && link.ready; steps++)
     CHECK(!fsstep(&fs));
