@@ -1,4 +1,5 @@
 #include "readdispatch.h"
+#include "blk.h"
 #include <errno.h>
 
 static isize
@@ -151,8 +152,11 @@ advance(Fsreads *reads, Fsfiles *files, Readjob *job)
                       reads->scratch, page, job->loads);
     if (status != 1)
       break;
-    if (!reads->submit(reads->backend, job, &fetch))
+    status = reads->submit(reads->backend, job, &fetch);
+    if (!status)
       return 0;
+    if (status == -ERR_WOULD_BLOCK)
+      return fsreadretry(job, job->call.request, &fetch.ticket);
     status = filereadcomplete(&job->work, &fetch.ticket, NULL, 0);
     if (status)
       return status;
@@ -278,4 +282,25 @@ fsreadcomplete(Readjob *job, Handle request, const Cacheio *ticket, const void *
   if (!job || !job->file || job->call.request != request)
     return -ERR_STALE;
   return filereadcomplete(&job->work, ticket, block, bytes);
+}
+
+isize
+fsreadretry(Readjob *job, Handle request, const Cacheio *ticket)
+{
+  if (!job || !job->file || job->call.request != request)
+    return -ERR_STALE;
+  return cachefillfinish(&job->work.fill, ticket, 0);
+}
+
+static isize
+readfetched(void *job, Handle request, const Cacheio *ticket, isize status, const void *data)
+{
+  return status == -EAGAIN ? fsreadretry(job, request, ticket)
+                           : fsreadcomplete(job, request, ticket, data, data ? CACHE_BYTES : 0);
+}
+
+isize
+blkfetchread(void *context, Readjob *job, const Readfetch *fetch)
+{
+  return blkfetchstart(context, job, job->call.request, &fetch->ticket, fetch->block, readfetched);
 }

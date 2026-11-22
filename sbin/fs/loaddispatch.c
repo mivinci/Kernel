@@ -1,4 +1,5 @@
 #include "loaddispatch.h"
+#include "blk.h"
 #include <errno.h>
 
 static isize
@@ -52,6 +53,8 @@ advance(Fsloads *loads, Loadjob *job, u64 now)
     error = loads->submit(loads->backend, job, &fetch);
     if (!error)
       return 0;
+    if (error == -ERR_WOULD_BLOCK)
+      return loadcacheretry(&job->work, job->io.request, &fetch.ticket);
     error = loadcachecomplete(&job->work, job->io.request, &fetch.ticket, NULL, 0);
     if (error)
       return error;
@@ -138,4 +141,19 @@ fsloadretire(Fsloads *loads, const Filelink *link)
     if (loads->jobs[i].io.request && loads->jobs[i].link == link)
       return 1;
   return 0;
+}
+
+static isize
+loadfetched(void *context, Handle request, const Cacheio *ticket, isize status, const void *data)
+{
+  Loadjob *job = context;
+  return status == -EAGAIN
+             ? loadcacheretry(&job->work, request, ticket)
+             : loadcachecomplete(&job->work, request, ticket, data, data ? CACHE_BYTES : 0);
+}
+
+isize
+blkfetchload(void *context, Loadjob *job, const Loadfetch *fetch)
+{
+  return blkfetchstart(context, job, job->io.request, &fetch->ticket, fetch->block, loadfetched);
 }

@@ -340,6 +340,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         NULL,
                         0,
                         NULL,
+                        NULL,
                         NULL};
   if (interrupt >= 8) {
     pollserverscript(boot, &fs, &file, interrupt == 8);
@@ -2326,6 +2327,7 @@ struct Loadfixture
   Loadmap   map;
   Cache     cache;
   Loadfetch fetch;
+  u32       busy;
 };
 
 static isize
@@ -2343,6 +2345,10 @@ openloadsubmit(void *context, Loadjob *job, const Loadfetch *fetch)
   Loadfixture *fixture = context;
   CHECK(job->io.request && job->work.fill.cache && fetch->block == FS_DATA_START);
   fixture->fetch = *fetch;
+  if (fixture->busy) {
+    fixture->busy = 0;
+    return -ERR_WOULD_BLOCK;
+  }
   return 0;
 }
 
@@ -2369,7 +2375,22 @@ openloadserver(Fsservice *fs, Loadtable *table, u8 *block)
         watch->active.requests[job.io.slot] == job.io.request &&
         !loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, NULL, 0) &&
         !fsloadpump(&loads) && !job.io.request && !watch->active.requests[job.io.slot]);
-  CHECK(!fsstep(fs) && job.io.request && job.work.fill.cache);
+  fixture.busy = 1;
+  CHECK(!fsstep(fs) && job.io.request && !job.work.fill.cache && !job.work.next &&
+        !job.work.failed && !fixture.busy);
+  {
+    Cacheio blocked = fixture.fetch.ticket;
+    CHECK(!fsloadpump(&loads) && job.io.request && job.work.fill.cache &&
+          fixture.fetch.ticket.serial > blocked.serial);
+  }
+  {
+    Cacheio old = fixture.fetch.ticket;
+    Handle  request = job.io.request;
+    CHECK(!loadcacheretry(&job.work, request, &old) && !job.work.fill.cache && !job.work.next &&
+          !job.work.failed && !fsloadpump(&loads) && job.io.request == request &&
+          job.work.fill.cache && fixture.fetch.ticket.serial > old.serial &&
+          loadcacheretry(&job.work, request, &old) == -ERR_STALE);
+  }
   block[3] = 'L';
   block[4] = 'D';
   CHECK(!loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, block, CACHE_BYTES) &&
@@ -2411,6 +2432,7 @@ openserver(const Bootview *boot)
                        {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
                        &open,
                        0,
+                       NULL,
                        NULL,
                        NULL};
   u32            i;
@@ -2458,6 +2480,16 @@ openserver(const Bootview *boot)
   }
   CHECK(!fsstep(&fs) && file.position == 19 && file.refs == 3 && !fsstep(&fs) && file.refs == 2 &&
         file.node);
+  {
+    Cacheio old = fixture.fetch.ticket;
+    Handle  request = reader[0].call.request;
+    CHECK(!fsreadretry(&reader[0], request, &old) && !reader[0].work.fill.cache &&
+          !reader[0].work.failed && file.position == 19);
+    fixture.fetch.block = 0;
+    CHECK(!fsreadpump(&reads, &fixture.files) && reader[0].call.request == request &&
+          fixture.fetch.block == FS_DATA_START && fixture.fetch.ticket.serial > old.serial &&
+          fsreadretry(&reader[0], request, &old) == -ERR_STALE);
+  }
   scratch[19] = 'R';
   scratch[3] = 'P';
   CHECK(fsreadcomplete(&reader[0], reader[1].call.request, &fixture.fetch.ticket, scratch,
@@ -2929,6 +2961,7 @@ publicchdirserver(const Bootview *boot)
                        {&pipes, NULL, 0, NULL, 0, &fixture.files, NULL},
                        &open,
                        0,
+                       NULL,
                        NULL,
                        NULL};
   Sigsel         target = {SIGNAL_SELECT_PID, 0};

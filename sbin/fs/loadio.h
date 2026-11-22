@@ -53,4 +53,7 @@ isize loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, 
 /* Full independent block on success, NULL/0 on failure. */
 isize loadcachecomplete(Loadcache *work, Handle request, const Cacheio *ticket, const void *block,
                         u32 bytes);
+/* Only after draining a definite non-submission. Keep the span and block
+   cursor; the next pump rechecks cancellation and the LOAD deadline. */
+isize loadcacheretry(Loadcache *, Handle, const Cacheio *);
 #endif

@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <errno.h>
 #include <sys/channel.h>
 #include <abi/time.h>
 #include <abi/syscall.h>
@@ -1053,8 +1054,47 @@ static const u32 blkopcodes[] = {
     BLK_WRITE, BLK_WRITE, BLK_FLUSH, BLK_WRITE, BLK_FLUSH, /* replay and retire */
     BLK_READ,  BLK_READ,                                   /* re-probe home */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
-    BLK_READ,  BLK_READ,  BLK_READ                         /* root directory */
+    BLK_READ,  BLK_READ,  BLK_READ,                        /* root directory */
+    BLK_READ                                               /* file cache fill */
 };
+
+static isize
+blkfilldone(void *job, Handle request, const Cacheio *ticket, isize status, const void *data)
+{
+  REQUIRE(request == 1 && (!status || status == -EAGAIN), 450);
+  return status ? cachefillfinish(job, ticket, 0) : cachefillcopy(job, ticket, data, CACHE_BYTES);
+}
+
+static void
+blkfillcheck(Fsblk *blk, Cache *cache)
+{
+  static Blkfetch work;
+  Cachefill       fill = {0};
+  Cacheio         ticket, old = {0};
+  Cachekey        key;
+  Ipcmsg          msg;
+  u8             *dst;
+  const u8       *bytes;
+  u64             version;
+  u32             i;
+  work.blk = blk;
+  for (i = 0; i < 2; i++) {
+    REQUIRE(
+        cachefillstart(&fill, cache, 192, CACHE_DATA, &ticket, &dst) == 1 &&
+            (!i || ticket.serial != old.serial || ticket.key.generation != old.key.generation) &&
+            !blkfetchstart(&work, &fill, 1, &ticket, 192, blkfilldone) &&
+            blkfetchstart(&work, &fill, 1, &ticket, 192, blkfilldone) == -ERR_WOULD_BLOCK &&
+            !ipc_rqwait(blk->rpc, RQ_FINISH, &msg) && fill.cache && !blkfetchpoll(&work) &&
+            !fill.cache && !blk->rpc && !work.job && work.status == (i ? 0 : -EAGAIN),
+        451);
+    old = ticket;
+  }
+  REQUIRE(!cacheget(cache, 192, CACHE_DATA, &key) && !cacheview(cache, &key, &bytes, &version),
+          452);
+  for (i = 0; i < CACHE_BYTES; i++)
+    REQUIRE(bytes[i] == (u8) (0xd3 + i * 23), 453);
+  REQUIRE(!cacheput(cache, &key), 454);
+}
 
 static void
 blkcollect(Fsblk *blk, void *read, u32 bytes)
@@ -1506,6 +1546,7 @@ blkclient(const Bootview *boot, Handle call)
               !dirgraphedge(&dirs.graph, 3, 2, 1, VNODE_DIR) &&
               dirgraphstep(&dirs.graph) == -ERR_STATE,
           432);
+  blkfillcheck(&blk, &cache);
   REQUIRE(!__sys_unmap(space, address) && !__sys_free(mapping.mem), 368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
@@ -1547,7 +1588,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
     /* Exercise redo, re-probe, home bitmap and directory READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 1 == ARRAY_SIZE(blkopcodes)) {
+    if (i == 11 || i == 22 || i == 24 || i + 2 >= ARRAY_SIZE(blkopcodes)) {
       queue->configpending = 1;
       REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 448);
       queue->configpending = 0;

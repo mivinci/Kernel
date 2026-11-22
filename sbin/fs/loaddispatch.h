@@ -24,7 +24,8 @@ struct Fsloads
   isize (*resolve)(void *, const Loadio *, Cache **, Loadspan *);
   /* On success the backend owns the read until it reports the exact
      completion to loadcachecomplete and wakes the service. On error it
-     retains neither the ticket nor any outstanding access. */
+     retains neither the ticket nor any outstanding access. WOULD_BLOCK
+     keeps the job; the backend must wake the loop for retry. */
   isize (*submit)(void *, Loadjob *, const Loadfetch *);
 };
 

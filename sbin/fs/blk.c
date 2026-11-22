@@ -177,3 +177,50 @@ fsblkpoll(Fsblk *blk, void *read, u32 capacity, isize *status)
   blk->saved = 0;
   return 0;
 }
+
+isize
+blkfetchstart(Blkfetch *work, void *job, Handle request, const Cacheio *ticket, u32 block,
+              Blkfetchdone done)
+{
+  isize error;
+  if (!work || !work->blk || !job || !request || !ticket || !ticket->serial || !done)
+    return -ERR_INVALID;
+  if (work->job || work->blk->rpc)
+    return -ERR_WOULD_BLOCK;
+  error = fsblksubmit(work->blk, BLK_READ, (u64) block * CACHE_BYTES, CACHE_BYTES, NULL);
+  if (error)
+    return error;
+  work->done = done;
+  work->job = job;
+  work->request = request;
+  work->rpc = work->blk->rpc;
+  work->sequence = work->blk->seq;
+  work->ticket = *ticket;
+  return 0;
+}
+
+isize
+blkfetchpoll(Blkfetch *work)
+{
+  isize error;
+  if (!work || !work->blk)
+    return -ERR_INVALID;
+  if (!work->job)
+    return 0;
+  if (!work->collected) {
+    if (work->blk->rpc != work->rpc || work->blk->seq != work->sequence ||
+        work->blk->opcode != BLK_READ)
+      return -ERR_STATE;
+    error = fsblkpoll(work->blk, work->data, sizeof(work->data), &work->status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+    work->collected = 1;
+  }
+  error = work->done(work->job, work->request, &work->ticket, work->status,
+                     work->status ? NULL : work->data);
+  if (!error) {
+    work->job = NULL;
+    work->collected = 0;
+  }
+  return error;
+}

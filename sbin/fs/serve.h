@@ -4,6 +4,7 @@
 #include "open.h"
 #include "loaddispatch.h"
 #include "journal.h"
+#include "blk.h"
 
 typedef struct Fsservice Fsservice;
 typedef struct Fsreclaim Fsreclaim;
@@ -28,6 +29,7 @@ struct Fsservice
   Fsloads     *loads;
   /* Volume owner supplies a started batch and signals after lower drain. */
   Fsreclaim *reclaim;
+  Blkfetch  *fetch;
 };
 
 /* The caller supplies actual authorities, an exclusive VA arena, and fixed

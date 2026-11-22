@@ -65,6 +65,8 @@ fsstep(Fsservice *fs)
   isize      error;
   u32        again = 0;
   Fsreclaim *reclaim = fs->reclaim;
+  if (fs->fetch && (error = blkfetchpoll(fs->fetch)))
+    return error;
   error = fsloadpump(fs->loads);
   if (error)
     return error;
@@ -98,7 +100,7 @@ fsstep(Fsservice *fs)
       again = reclaim->scan && reclaim->scan->left;
   }
   error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
-                       (fs->loads ? fs->loads->events : 0) |
+                       (fs->fetch ? EVENT_RQ_DONE : 0) | (fs->loads ? fs->loads->events : 0) |
                        (fs->pipes.reads ? fs->pipes.reads->events : 0) |
                        (fs->reclaim ? fs->reclaim->events : 0),
                    again ? RECV_NONBLOCK : 0, &input);

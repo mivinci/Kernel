@@ -140,6 +140,14 @@ loadcachecomplete(Loadcache *work, Handle request, const Cacheio *ticket, const 
 }
 
 isize
+loadcacheretry(Loadcache *work, Handle request, const Cacheio *ticket)
+{
+  if (!work || !request || work->request != request)
+    return -ERR_STALE;
+  return cachefillfinish(&work->fill, ticket, 0);
+}
+
+isize
 loadcachepump(Loadcache *work, Loadio *io, Loadfetch *out, void *scratch, u64 now)
 {
   isize error;

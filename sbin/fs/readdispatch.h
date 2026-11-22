@@ -32,7 +32,8 @@ struct Fsreads
   isize (*bind)(void *, Readjob *);
   void (*release)(void *, Readjob *);
   /* Copy the ticket, then finish via fsreadcomplete after transport drains
-     and wake the loop. Failure means no external access was started. */
+     and wake the loop. Failure means no external access was started.
+     WOULD_BLOCK keeps the job; the backend must wake the loop for retry. */
   isize (*submit)(void *, Readjob *, const Readfetch *);
   /* On the first call snapshot the input and take any needed inode guard.
      Subsequent calls get NULL input and the original request state. Return
@@ -55,5 +56,8 @@ isize fssyncstart(Fsreads *, Fsfiles *, Filelink *, const Ipcmsg *, const Filesl
 isize fsseekstart(Fsreads *, Fsfiles *, Fsfile *, Filelink *, const Ipcmsg *, const Fileslot *);
 isize fsreadpump(Fsreads *, Fsfiles *);
 isize fsreadcomplete(Readjob *, Handle, const Cacheio *, const void *, u32);
+/* After draining a definite non-submission, release the old fill ticket.
+   The next pump rechecks the original request before issuing a new ticket. */
+isize fsreadretry(Readjob *, Handle, const Cacheio *);
 int   fsreadbusy(const Fsreads *, const Filelink *);
 #endif

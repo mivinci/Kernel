@@ -2,8 +2,15 @@
 #define _FS_BLK_H
 #include <proto/blk.h>
 #include <sys/channel.h>
+#include "cache.h"
 
-typedef struct Fsblk Fsblk;
+typedef struct Fsblk    Fsblk;
+typedef struct Blkfetch Blkfetch;
+struct Readjob;
+struct Readfetch;
+struct Loadjob;
+struct Loadfetch;
+typedef isize (*Blkfetchdone)(void *, Handle, const Cacheio *, isize, const void *);
 struct Bootmap;
 struct Fsblk
 {
@@ -27,4 +34,26 @@ isize fsblksubmit(Fsblk *, u32 opcode, u64 offset, u32 bytes, const void *write)
    INFO installs the verified geometry in info. On error the RPC and slot
    remain owned for retry, and output is untouched. */
 isize fsblkpoll(Fsblk *, void *read, u32 capacity, isize *status);
+
+struct Blkfetch
+{
+  Fsblk       *blk;
+  Blkfetchdone done;
+  void        *job;
+  Handle       request, rpc;
+  Cacheio      ticket;
+  u64          sequence;
+  isize        status;
+  u32          collected;
+  u8           data[CACHE_BYTES];
+};
+
+/* One lower read at a time. The caller keeps the upper job and cache ticket
+   alive; done receives the fixed result only after lower FINISH and ACK. */
+isize blkfetchstart(Blkfetch *, void *job, Handle request, const Cacheio *, u32 block,
+                    Blkfetchdone);
+isize blkfetchpoll(Blkfetch *);
+/* Submit callbacks for a file service whose backend context is Blkfetch. */
+isize blkfetchread(void *, struct Readjob *, const struct Readfetch *);
+isize blkfetchload(void *, struct Loadjob *, const struct Loadfetch *);
 #endif
