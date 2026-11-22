@@ -1,0 +1,13 @@
+--- a/include/platform.h
++++ b/include/platform.h
+@@ -424,9 +424,8 @@
+ #define HAVE_UNLOCKED_LINE_OPS 1
+ #define HAVE_GETLINE 1
+ #define HAVE_XTABS 1
+-#define HAVE_MNTENT_H 1
++/* Mount utilities are disabled in the initial Kernel applet set. */
+ #define HAVE_NET_ETHERNET_H 1
+-#define HAVE_SYS_STATFS_H 1
+ #define HAVE_PRINTF_PERCENTM 1
+ #define HAVE_WAIT3 1
+ #define HAVE_DEV_FD 1

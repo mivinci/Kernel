@@ -45,6 +45,8 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 准备工具现在应用固定的[网络依赖补丁](../../bin/sh/busybox-1.37.0-network.patch)：最小 applet 配置跳过 `libbb.h` 的 socket 和解析器声明，并从生成的 `libbb/Kbuild` 排除 `bb_getsockname.o`、`inet_common.o`、`xconnect.o`、`xgethostbyname.o`。从干净归档重跑后，两套 SDK 的依赖日志均不再包含 `arpa/inet.h`、`netdb.h` 或 `sys/socket.h`。目标链接仍待验收；之后启用网络 applet 时须恢复并验证对应对象。
 
+[平台补丁](../../bin/sh/busybox-1.37.0-platform.patch) 移除上游对 `<mntent.h>` 和 `<sys/statfs.h>` 可用性的默认假设。最小配置未启用挂载或磁盘用量工具；两架构的预处理依赖均不再包含这两个头。该调整没有提供挂载查询接口。
+
 准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，另外各十个单元均在 `dirent.h` 停住；依赖日志确认 `sys/time.h` 已从目标 SDK 解析。探针不执行完整构建或链接。
 
 **阶段 C：最小 applet 集合跑通**

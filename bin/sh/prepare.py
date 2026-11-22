@@ -98,6 +98,7 @@ def prepare(archive, out):
 
     run('pid-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-pid.patch').read_bytes())
     run('network-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-network.patch').read_bytes())
+    run('platform-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-platform.patch').read_bytes())
     configure(source, run)
     generate_applets(source, run, out)
     return source
