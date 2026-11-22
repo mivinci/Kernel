@@ -117,7 +117,7 @@ server(const Bootview *boot)
   static Pipewait waits[2];
   Piperef         refs[3] = {{0}};
   Pipetable       table = {files, refs, ARRAY_SIZE(files), ARRAY_SIZE(refs), 0};
-  Pipedispatch    dispatch = {&table, waits, ARRAY_SIZE(waits)};
+  Pipedispatch    dispatch = {&table, waits, ARRAY_SIZE(waits), NULL, 0};
   Pipekey         keys[2];
   Pipe           *pipe = &files[0].stream;
   Filelink        link = {0};
@@ -259,6 +259,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
   static Filelink link;
   static Pipefile file;
   static Pipewait wait;
+  static Pipepoll poll;
   static Piperef  refs[2];
   Pipetable       table = {&file, refs, 1, ARRAY_SIZE(refs), 0};
   Fsservice       fs = {bootresource(boot, 256),
@@ -267,7 +268,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         ADDRESS,
                         &link,
                         1,
-                        {&table, &wait, 1}};
+                        {&table, &wait, 1, &poll, 1}};
   if (interrupt == 1) {
     Ipcmsg request, gate;
     Sigsel target = {SIGNAL_SELECT_PID, 0};
@@ -410,7 +411,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
     CHECK(!fsstep(&fs));
   } while (!table.serial || link.ready);
   CHECK(!link.memory && !link.address && !link.watch.owner.cookie && !wait.io.request &&
-        !file.stream.refs[0] && !file.stream.refs[1]);
+        !poll.request && !file.stream.refs[0] && !file.stream.refs[1]);
   pipeiotrace[0] = 7;
 }
 
@@ -712,9 +713,9 @@ querypipes(const int fds[2], u32 hangup)
   volatile Filepoll *page;
   Fdview             view;
   Fileref            ref;
-  Msg                message = {{FS_POLL_QUERY, work.state.map.connid, 0, 0}};
-  Ipcmsg             result;
-  u32                i;
+  Msg    message = {{hangup ? FS_POLL_WAIT : FS_POLL_QUERY, work.state.map.connid, 0, 0}};
+  Ipcmsg result;
+  u32    i;
   for (i = 0; i < ARRAY_SIZE(rows); i++) {
     CHECK(!sysfdobserve(&table, fds[hangup ? 0 : i], &view) &&
           !sysfilerefview(&pool, work.state.self, view.file, &ref));
@@ -750,6 +751,79 @@ querypipes(const int fds[2], u32 hangup)
             page[1].revents == (hangup ? FS_POLL_HUP : FS_POLL_OUT) &&
             page[0].fd_generation == rows[0].fd_generation && page[1].session == rows[1].session);
     CHECK(!sysconnworkrelease(&work, &cache, lease));
+  }
+}
+
+static volatile void *
+submitrow(u64 opcode, Fileslot *slot, Filelease *lease, const void *input, u64 options,
+          Ipcmsg *result)
+{
+  Msg          call = {{opcode, work.state.map.connid, 0, 0}};
+  volatile u8 *page;
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, lease));
+  call.words[2] = slot->seq = lease->seq;
+  call.words[3] = lease->slot;
+  page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease->slot * FS_SLOT_BYTES);
+  CHECK(
+      !__sys_copy((void *) page, input, slot->payload_bytes) &&
+      !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease->slot * FS_DESC_BYTES),
+                  slot, sizeof(*slot)) &&
+      !ipc_call(work.state.call, &call, options, result));
+  return page;
+}
+
+static void
+waitpipes(const int fds[2])
+{
+  Fileslot           slot = {0}, write = {0};
+  Filelease          lease, other;
+  Filepoll           row;
+  volatile Filepoll *page;
+  Ipcmsg             result;
+  Fileref            ref;
+  Fdview             view;
+  Handle             rpc;
+  u32                i;
+  CHECK(!sysfdobserve(&table, fds[0], &view) &&
+        !sysfilerefview(&pool, work.state.self, view.file, &ref));
+  row.session = ref.session;
+  row.fd_generation = view.tag.generation;
+  row.events = FS_POLL_IN;
+  row.revents = UINT64_MAX;
+  slot.span = 1;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.payload_bytes = sizeof(row);
+  slot.args[0] = slot.args[2] = 1;
+  CHECK(!sysfdobserve(&table, fds[1], &view) &&
+        !sysfilerefview(&pool, work.state.self, view.file, &ref));
+  write.object = ref.session;
+  write.span = write.payload_bytes = write.args[1] = 1;
+  write.state = FS_SLOT_SUBMITTED;
+  for (i = 0; i < 2; i++) {
+    page = submitrow(FS_POLL_WAIT, &slot, &lease, &row, CALL_ASYNC, &result);
+    rpc = result.request;
+    (void) submitrow(FS_POLL_WAIT, &slot, &other, &row, 0, &result);
+    CHECK((isize) result.words[0] == -EAGAIN && result.words[1] == other.seq && !result.words[2] &&
+          !result.words[3] && !sysconnworkrelease(&work, &cache, other) &&
+          ipc_rqpoll(rpc, 0, &result) == -ERR_WOULD_BLOCK && page->revents == UINT64_MAX);
+    if (!i)
+      CHECK(!ipc_rqcancel(rpc));
+    else {
+      /* Only the admitted snapshot determines readiness after a defer. */
+      page->session = UINT64_MAX;
+      page->events = 0;
+      (void) submitrow(FS_WRITE, &write, &other, "z", 0, &result);
+      CHECK(!result.words[0] && result.words[2] == 1 && !sysconnworkrelease(&work, &cache, other));
+    }
+    CHECK(!ipc_rqwait(rpc, 0, &result) && result.words[1] == lease.seq);
+    if (!i)
+      CHECK((isize) result.words[0] == -EINTR && !result.words[2] && !result.words[3] &&
+            page->revents == UINT64_MAX);
+    else
+      CHECK(!result.words[0] && result.words[2] == 1 && result.words[3] == sizeof(row) &&
+            page->revents == FS_POLL_IN && page->session == UINT64_MAX && !page->events);
+    CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+          !sysconnworkrelease(&work, &cache, lease));
   }
 }
 
@@ -802,6 +876,7 @@ serviceclient(const Bootview *boot)
   CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) && !business &&
         fd[0] == 0 && fd[1] == 2);
   querypipes(fd, 0);
+  waitpipes(fd);
   submitpipe(&bank, &work, &cache, &pool, &table, &pipe, 104);
   CHECK(!sysfilepipefinish(&pool, &work, &cache, &table, &pipe, fd, &business) &&
         business == -ENFILE && fd[0] == 0 && fd[1] == 2 && !pipe.operation.lease.seq &&

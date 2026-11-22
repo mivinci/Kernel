@@ -5,6 +5,7 @@
 #include "private/filewatch.h"
 
 typedef struct Pipewait     Pipewait;
+typedef struct Pipepoll     Pipepoll;
 typedef struct Pipedispatch Pipedispatch;
 struct Pipewait
 {
@@ -12,11 +13,21 @@ struct Pipewait
   Pipefile *file;
   Filelink *link;
 };
+struct Pipepoll
+{
+  Handle    request;
+  Filelink *link;
+  u64       seq;
+  u32       slot, count;
+  Filepoll  rows[FS_POLL_ROWS];
+};
 struct Pipedispatch
 {
   Pipetable *table;
   Pipewait  *waits;
   u32        count;
+  Pipepoll  *polls;
+  u32        npolls;
 };
 
 /* Serialized FS loop; waits are preallocated and initially zero. Dispatch

@@ -41,44 +41,94 @@ advance(Pipewait *wait)
 }
 
 static isize
-pollquery(Pipetable *table, Filelink *link, const Ipcmsg *call, const Fileslot *slot, Msg *reply)
+pollstep(Pipetable *table, Pipepoll *poll, u32 waiting, isize status)
 {
-  Filepoll           rows[FS_POLL_ROWS];
+  Filelink          *link = poll->link;
   volatile Filepoll *page;
+  Msg                reply = {{(u64) status, poll->seq, 0, 0}};
   u32                i, ready = 0;
   u64                state;
   isize              error;
-  error = sysfilepollrows(&link->watch.active, call->request, (const volatile void *) link->address,
-                          FS_CONN_BYTES, call->words[3], slot, rows, ARRAY_SIZE(rows));
-  if (error)
-    return error;
-  for (i = 0; i < slot->args[0]; i++) {
+  for (i = 0; !status && i < poll->count; i++) {
     Pipeready snapshot;
-    u64       events = rows[i].events;
-    if (!rows[i].fd_generation || events & ~(u64) (FS_POLL_IN | FS_POLL_PRI | FS_POLL_OUT |
-                                                   FS_POLL_ERR | FS_POLL_HUP | FS_POLL_NVAL))
-      return -ERR_INVALID;
-    error = pipefileready(table, call->source, call->image, rows[i].session, &snapshot);
-    if (error)
-      return error;
-    rows[i].revents = (snapshot.readable ? events & FS_POLL_IN : 0) |
-                      (snapshot.room ? events & FS_POLL_OUT : 0) |
-                      (snapshot.error ? FS_POLL_ERR : 0) | (snapshot.hup ? FS_POLL_HUP : 0);
-    ready += !!rows[i].revents;
+    Filepoll *row = &poll->rows[i];
+    u64       events = row->events;
+    if (!row->fd_generation || events & ~(u64) (FS_POLL_IN | FS_POLL_PRI | FS_POLL_OUT |
+                                                FS_POLL_ERR | FS_POLL_HUP | FS_POLL_NVAL))
+      status = -EINVAL;
+    else {
+      error = pipefileready(table, link->watch.owner.pid, link->watch.owner.image, row->session,
+                            &snapshot);
+      if (error)
+        status = fileerror(error);
+      else {
+        row->revents = (snapshot.readable ? events & FS_POLL_IN : 0) |
+                       (snapshot.room ? events & FS_POLL_OUT : 0) |
+                       (snapshot.error ? FS_POLL_ERR : 0) | (snapshot.hup ? FS_POLL_HUP : 0);
+        ready += !!row->revents;
+      }
+    }
   }
-  error = ipc_rqcheck(call->request, &state);
+  error = ipc_rqcheck(poll->request, &state);
   if (error)
     return error;
-  if (state == RQ_CHECK_DRAINING)
-    return -ERR_PEER;
-  if (state & RQ_CHECK_CANCEL)
-    return -ERR_INTERRUPTED;
-  page = (volatile Filepoll *) (link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES);
-  for (i = 0; i < slot->args[0]; i++)
-    page[i].revents = rows[i].revents;
-  reply->words[2] = ready;
-  reply->words[3] = slot->payload_bytes;
-  return 0;
+  if (state == RQ_CHECK_DRAINING) {
+    error = ipc_rqfinish(poll->request);
+    if (!error)
+      error = sysfilefinish(&link->watch.active, poll->request);
+  } else {
+    if (state & RQ_CHECK_CANCEL)
+      status = -EINTR;
+    if (!status) {
+      if (waiting && !ready)
+        return -ERR_WOULD_BLOCK;
+      page = (volatile Filepoll *) (link->address + FS_DATA_OFFSET + poll->slot * FS_SLOT_BYTES);
+      for (i = 0; i < poll->count; i++)
+        page[i].revents = poll->rows[i].revents;
+      reply.words[2] = ready;
+      reply.words[3] = poll->count * sizeof(Filepoll);
+    }
+    reply.words[0] = (u64) status;
+    error = respond(link, poll->request, &reply);
+  }
+  if (!error)
+    poll->request = 0;
+  return error;
+}
+
+static isize
+pollstart(Pipedispatch *dispatch, Filelink *link, const Ipcmsg *call, const Fileslot *slot)
+{
+  Pipepoll draft;
+  u32      i;
+  isize    error;
+  draft.request = call->request;
+  draft.link = link;
+  draft.seq = call->words[2];
+  draft.slot = (u32) call->words[3];
+  draft.count = 0;
+  error = sysfilepollrows(&link->watch.active, draft.request, (const volatile void *) link->address,
+                          FS_CONN_BYTES, draft.slot, slot, draft.rows, ARRAY_SIZE(draft.rows));
+  if (!error)
+    draft.count = (u32) slot->args[0];
+  error = pollstep(dispatch->table, &draft, call->words[0] == FS_POLL_WAIT, fileerror(error));
+  if (error != -ERR_WOULD_BLOCK)
+    return error;
+  for (i = 0; i < dispatch->npolls && dispatch->polls[i].request; i++) {
+  }
+  error = i == dispatch->npolls ? -ERR_BUSY : ipc_defer(draft.request);
+  if (!error) {
+    Pipepoll *poll = &dispatch->polls[i];
+    poll->link = draft.link;
+    poll->seq = draft.seq;
+    poll->slot = draft.slot;
+    poll->count = draft.count;
+    for (i = 0; i < draft.count; i++)
+      poll->rows[i] = draft.rows[i];
+    poll->request = draft.request;
+    return 0;
+  }
+  return pollstep(dispatch->table, &draft, 0, error == -ERR_BUSY ? -EAGAIN : fileerror(error));
 }
 
 isize
@@ -98,6 +148,14 @@ pipepump(Pipedispatch *dispatch)
       progress |= !error;
     }
   } while (progress);
+  for (i = 0; i < dispatch->npolls; i++) {
+    Pipepoll *poll = &dispatch->polls[i];
+    if (!poll->request)
+      continue;
+    error = pollstep(dispatch->table, poll, 1, 0);
+    if (error && error != -ERR_WOULD_BLOCK)
+      return error;
+  }
   return 0;
 }
 
@@ -110,6 +168,15 @@ pipedrain(void *context, Filelink *link)
   error = pipefileretire(dispatch->table, link->watch.owner.pid, link->watch.owner.image);
   if (error)
     return error;
+  for (i = 0; i < dispatch->npolls; i++) {
+    Pipepoll *poll = &dispatch->polls[i];
+    if (!poll->request || poll->link != link)
+      continue;
+    error = sysfilewatchdrain(&link->watch, poll->request);
+    if (error)
+      return error;
+    poll->request = 0;
+  }
   for (i = 0; i < dispatch->count; i++) {
     Pipewait *wait = &dispatch->waits[i];
     if (!wait->io.request || wait->link != link)
@@ -158,16 +225,8 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
   page = (volatile u8 *) (link->address + FS_DATA_OFFSET + call->words[3] * FS_SLOT_BYTES);
   switch (opcode) {
   case FS_POLL_QUERY:
-    error = pollquery(dispatch->table, link, call, &slot, &reply);
-    if (error == -ERR_PEER) {
-      error = ipc_rqfinish(call->request);
-      return error ? error : sysfilefinish(&link->watch.active, call->request);
-    }
-    if (error == -ERR_INTERRUPTED) {
-      reply.words[0] = (u64) -EINTR;
-      return respond(link, call->request, &reply);
-    }
-    break;
+  case FS_POLL_WAIT:
+    return pollstart(dispatch, link, call, &slot);
   case FS_PIPE:
     error = -ERR_INVALID;
     if (slot.object || slot.span != 1 || slot.payload_bytes || slot.args[0] ||
