@@ -9,6 +9,7 @@ typedef struct Blkread     Blkread;
 typedef struct Blkredoload Blkredoload;
 typedef struct Blkprobe    Blkprobe;
 typedef struct Blkredo     Blkredo;
+typedef struct Blkowners   Blkowners;
 struct Blkread
 {
   Fsblk    *blk;
@@ -75,6 +76,30 @@ struct Blkredo
    payload. Only then may the owner use images, and must keep the work alive
    and unchanged through scan, replay and release. Zero means I/O pending. */
 isize blkredostep(Blkredo *);
+
+struct Blkowners
+{
+  Blkredo    *redo;
+  Blkredoload load;
+  isize (*inodemap)(const u8 *, Inodemap *);
+  isize (*blockmap)(const u8 *, u32, Blockmap *);
+  Inodemap   inodes;
+  Blockmap   allocation;
+  Loadowners owners;
+  Redoscan   scan;
+  isize      failed;
+  u32        phase;
+};
+
+/* After the probe, supply zeroed work, the redo state, decoders, a cold cache
+   sized for the volume and its block reader. This drives log verification,
+   both bitmaps and one inode-table batch per call. One means the ownership
+   scan is complete. Zero means continue now or wait for blk->rpc if present. */
+isize blkownersstep(Blkowners *);
+/* Admit a writable journal from that scan. The exclusive mount owner
+   supplies the independently verified fault boundary and the encoded EMPTY
+   record for this transaction. Keep snapshots stable through release. */
+isize blkredoadmit(const Blkowners *, Journal *, u32 faultbytes, u32 faultoffset, const u8 *empty);
 
 /* Fresh zeroed read state with blk set. The serialized volume owner
    reserves the connection through completion. Zero is a cache hit;

@@ -234,6 +234,102 @@ blkreadinode(Blkread *read, Cache *cache, const Redoscan *scan, u32 inode, void 
                      (inode % slots) * FS_INODE_BYTES, FS_INODE_BYTES, out);
 }
 
+enum
+{
+  OwnersRedo,
+  OwnersInodes,
+  OwnersBlocks,
+  OwnersScan,
+  OwnersDone
+};
+
+isize
+blkownersstep(Blkowners *work)
+{
+  Blkredoload    *load;
+  const Blkprobe *probe;
+  Redoscan       *scan;
+  isize           error, status;
+  u32             i;
+  if (!work || !work->redo || !(probe = work->redo->probe) || !work->inodemap || !work->blockmap)
+    return -ERR_INVALID;
+  load = &work->load;
+  scan = &work->scan;
+  if (!load->read || !load->cache || !load->inode || !load->indirect ||
+      load->read->blk != probe->blk || load->cache->blocks != probe->layout.blocks)
+    return -ERR_INVALID;
+  if (work->failed)
+    return work->failed;
+  if (work->phase == OwnersRedo) {
+    error = blkredostep(work->redo);
+    if (error != 1)
+      return error;
+    scan->blocks = (u32) probe->layout.blocks;
+    scan->count = work->redo->head.count;
+    for (i = 0; i < scan->count; i++)
+      scan->images[i] = work->redo->images[i];
+    work->phase = OwnersInodes;
+  }
+  if (load->read->fill.cache) {
+    error = blkreadpoll(load->read, &status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+    if (status)
+      return work->failed = probe->blk->stale ? -ERR_STALE : -ERR_STATE;
+  }
+  if (probe->blk->stale || probe->blk->info.geometry_generation != probe->generation)
+    return work->failed = -ERR_STALE;
+  if (work->phase == OwnersDone)
+    return 1;
+  if (work->phase < OwnersScan) {
+    u32 block = work->phase == OwnersInodes ? FS_INODE_MAP : FS_BLOCK_MAP;
+    error = blkreadview(load->read, load->cache, scan, block, CACHE_META, load->bytes);
+    if (error == -ERR_WOULD_BLOCK)
+      return 0;
+    if (!error)
+      error = work->phase == OwnersInodes
+                  ? work->inodemap(load->bytes, &work->inodes)
+                  : work->blockmap(load->bytes, scan->blocks, &work->allocation);
+    if (error)
+      return work->failed = error < 0 ? error : -ERR_STATE;
+    if (++work->phase < OwnersScan)
+      return 0;
+    error = redoscaninit(scan, scan->blocks, work->redo->images, scan->count, &work->inodes,
+                         &work->allocation, &work->owners);
+  } else {
+    error = redoscanstep(scan, blkredoload, load);
+    if (error == -ERR_WOULD_BLOCK)
+      return 0;
+    if (error == 1)
+      work->phase = OwnersDone;
+  }
+  if (error < 0)
+    work->failed = error;
+  return error;
+}
+
+isize
+blkredoadmit(const Blkowners *work, Journal *journal, u32 faultbytes, u32 faultoffset,
+             const u8 *empty)
+{
+  const Blkredo  *redo;
+  const Blkprobe *probe;
+  Fsgeometry      geometry;
+  if (!work || !(redo = work->redo) || !(probe = redo->probe) || !journal)
+    return -ERR_INVALID;
+  if (work->failed || redo->failed)
+    return work->failed ? work->failed : redo->failed;
+  if (work->phase != OwnersDone || probe->blk->rpc)
+    return -ERR_WOULD_BLOCK;
+  if (probe->blk->stale || probe->blk->info.geometry_generation != probe->generation)
+    return -ERR_STALE;
+  geometry = probe->geometry;
+  geometry.faultbytes = faultbytes;
+  geometry.faultoffset = faultoffset;
+  return journalrecover(journal, &probe->layout, &geometry, &probe->mark, &redo->head, redo->images,
+                        redo->head.count, redo->crc ^ redo->finalxor, empty, &work->scan);
+}
+
 isize
 blkredoload(void *context, const Redoscan *scan, u32 ino, Redoinode *out)
 {

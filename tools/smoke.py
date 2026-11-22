@@ -1576,14 +1576,14 @@ def exercise(args, run_dir, record):
                     pages={device["mmio"][0]["base"]&~4095 for device in transports}
                     expected=dict(pages=len(pages),probes=len(transports),empty=len(transports)-3,found=3,
                                   negotiated=3,resets=8,rng=1,rwsectors=1024,rosectors=128,
-                                  reads=20,writes=35,flushes=26,interrupts=79,retired=2,blkrpc=1,
+                                  reads=21,writes=38,flushes=28,interrupts=85,retired=2,blkrpc=1,
                                   dmagrain=64 if args.arch == "arm64" else 0,charged=0,
                                   dmapages=9*len(transports),
                                   allocated=transition["tables"])
                     if checks != [expected]:
                         raise SmokeError("virtio MMIO discovery, I/O or reset mismatch")
                     stats = {row.get("device"): row["stats"] for row in qmp.command("query-blockstats")}
-                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 21),
+                    for name, sectors, seed, blocksize, reads in (("rw", 1024, 0x51, 4096, 22),
                                                                   ("ro", 128, 0xa7, 512, 3)):
                         disk = Path(temporary) / (name + ".raw")
                         counters = stats.get(name, {})
@@ -1601,11 +1601,9 @@ def exercise(args, run_dir, record):
                             expected_image[base:base + blocksize] = bytes(
                                 (0xb4 + i * 37) & 0xff for i in range(blocksize))
                             expected_image[100 * blocksize + 3:100 * blocksize + 5] = b"xy"
-                            for block, index in ((1, 2), (18, 4)):
-                                base = block * blocksize
-                                expected_image[base:base + blocksize] = bytes(
-                                    (0xc1 + index * 7 + i * 19) & 0xff for i in range(blocksize))
-                            for block in (2, 67):
+                            expected_image[blocksize:2 * blocksize] = bytes(
+                                (0xcf + i * 19) & 0xff for i in range(blocksize))
+                            for block in (2, 67, 68):
                                 base = block * blocksize
                                 expected_image[base:base + blocksize] = bytes(blocksize)
                                 expected_image[base + 2 * 128] = 1
@@ -1623,7 +1621,9 @@ def exercise(args, run_dir, record):
                             base = 192 * blocksize
                             expected_image[base:base + blocksize] = bytes(
                                 (0xd3 + i * 23) & 0xff for i in range(blocksize))
-                            if counters.get("wr_bytes") != 35 * blocksize or counters.get("flush_operations") != 26:
+                            base = 18 * blocksize
+                            expected_image[base:base + blocksize] = bytes([0x5a]) * blocksize
+                            if counters.get("wr_bytes") != 38 * blocksize or counters.get("flush_operations") != 28:
                                 raise SmokeError(f"virtio backing write/flush count mismatch: {counters}")
                         if disk.read_bytes() != expected_image:
                             raise SmokeError(f"virtio backing image mismatch: {name}")
