@@ -299,6 +299,7 @@ sysoppeerended(Connwork *work, Conncache *cache, const Opkey *key)
 static isize
 interruptible(const Slotop *op)
 {
+  /* CLOSE keeps its mandatory cleanup path after the descriptor is detached. */
   if (op->flags & SYSOP_BACKGROUND ||
       (op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
        op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_OPEN &&
@@ -478,8 +479,9 @@ sysoprecover(Connwork *work, Conncache *cache, const Opkey *key, u64 *file)
   if (work->state.ended != 1 || entry.state != SYSCONN_DRAINING ||
       entry.peer.pid != work->state.peer.pid || entry.peer.image != work->state.peer.image)
     return -ERR_STATE;
+  /* A lost PATH reply cannot tell us whether a namespace change committed. */
   if ((op->opcode != FS_READ && op->opcode != FS_WRITE && op->opcode != FS_SEEK &&
-       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC && op->opcode != FS_PATH) ||
+       op->opcode != FS_TTYCTL && op->opcode != FS_SYNC) ||
       op->flags & SYSOP_CREATOR)
     return -ERR_NOTSUP;
   if (op->phase == SYSOP_PREPARED)

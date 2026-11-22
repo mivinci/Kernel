@@ -18,7 +18,7 @@ class State(C.Structure):
 
 
 class ForkStateTests(unittest.TestCase):
-    extra_sources = (*support.ContextIpcTests.extra_sources, 'fd.c', 'forkstate.c')
+    extra_sources = (*support.ContextIpcTests.extra_sources, 'forkstate.c')
     tearDownClass = classmethod(support.ContextIpcTests.tearDownClass.__func__)
     result = support.ContextIpcTests.result
     adopt = support.ContextIpcTests.adopt

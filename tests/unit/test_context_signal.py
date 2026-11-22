@@ -76,7 +76,7 @@ class ContextSignalTests(unittest.TestCase):
         self.assertEqual(self.lib.sysctxfinish(self.b, self.self, key), 0)
         self.assertEqual(self.lib.sysctxopwait(self.b, self.self, 0, self.w, self.c,
                                               C.byref(operation), C.byref(key)), 0)
-        self.assertEqual(self.lib.sysctxinterruptible(self.b, self.self, key), 0 if span == 1 else -18)
+        self.assertEqual(self.lib.sysctxinterruptible(self.b, self.self, key), 0)
         message = bootstrap.Message()
         message.words[:] = [0, operation.lease.seq, length, length]
         self.returned(key, message=message)

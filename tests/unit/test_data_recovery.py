@@ -90,6 +90,14 @@ class DataRecoveryTests(unittest.TestCase):
         self.setUp();key=self.prepare();self.op(key).flags|=64;self.mark()
         before=bytes(self.work);self.assertEqual(self.recover(key),(-18,0));self.assertEqual(bytes(self.work),before)
 
+    def test_delivered_path_with_lost_reply_still_owns_its_operation(self):
+        key = self.prepare(span=2)
+        self.fail_request(key)
+        self.mark()
+        before, acks = bytes(self.work), self.lib.testget(1)
+        self.assertEqual(self.recover(key), (-18, 0))
+        self.assertEqual((bytes(self.work), self.lib.testget(1)), (before, acks))
+
     def test_nonzero_output_alias_and_changed_peer_do_not_consume_the_pin(self):
         key=self.prepare();self.fail_request(key);self.mark();before=bytes(self.work)
         self.assertEqual(self.recover(key,C.c_uint64(100)),(-1,100));self.assertEqual(bytes(self.work),before)

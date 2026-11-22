@@ -821,6 +821,8 @@ stage563：ARM64/RV64 QEMU `virtiodev` 由已解码归属夹具分类重放目�
 
 stage564：`journalview` 为恢复扫描从已验证的日志镜像选择目标块；未覆盖的合法块交由调用方读 home，重复目标或非法范围拒绝。ARM64/RV64 QEMU `virtiodev` 在同一重放夹具验证位图与目录块覆盖、home 回退及拒绝路径。生产扫描和解码仍待接。
 
+stage571：PATH 仍可进入 `SA_RESTART` 中断路径，但后端退出时，丢失回复不能证明命名操作未提交。普通数据 I/O 的恢复入口拒绝回收原 PATH 记录，不 ACK、不归还槽；OPEN 仍由 creator 接管，CLOSE 沿必需清理路径。56 项主机专项通过，覆盖已提交 PATH 丢失回复后的账本保留，并修复测试重复链接 `fd.c`。双架构 QEMU `pipeio` 回归公开 `chdir()` 与原请求取消。
+
 stage570：挂载归属扫描拒绝普通 inode 的链接数超过卷内 inode 总数；目录链接结构仍留给父关系校验。ARM64/RV64 QEMU `virtiodev` 和 50 项 FS 主机测试通过。生产 inode 解码仍待接。
 
 stage569：只读准入在有效 EMPTY 后还要求同一卷 home 扫描完整；未开始、尚在推进、失败或带日志覆盖的扫描均不发布挂载。ARM64/RV64 QEMU `virtiodev` 验证暂停、完成、卷大小不匹配、扫描失败及日志覆盖拒绝，50 项 FS 主机测试通过。生产解码和挂载仍待接。
