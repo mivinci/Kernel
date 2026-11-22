@@ -48,11 +48,11 @@ __wrap_hal_user_enter(Hctx *context)
     CHECK(!procinfo(creatorclient, &process) &&
           !spaceread(process.space, filecreate_trace_address, trace, sizeof(trace)));
     stage = trace[6];
-    if ((stage == 1 || stage == 2) && context->tf.pc == trace[7] && !(injected & (1UL << stage))) {
+    if (stage >= 1 && stage <= 4 && context->tf.pc == trace[7] && !(injected & (1UL << stage))) {
       injected |= 1UL << stage;
       for (i = 0; i < sizeof(info); i++)
         ((u8 *) &info)[i] = 0;
-      info.signum = SIGNAL_USR1;
+      info.signum = stage <= 2 ? SIGNAL_USR1 : SIGNAL_USR2;
       CHECK(!procsigqueue(creatorclient, &info));
       procuserreturn(context);
     }
@@ -171,7 +171,7 @@ filecreatetest(void)
     if (!i)
       CHECK(trace[1] == 12 && trace[2] == 10 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1 &&
             trace[10] == 2 && trace[11] == 1 && trace[12] == 1 && trace[13] == 5 &&
-            trace[14] == BOOT_FD_COUNT + 1 && injected == 6);
+            trace[14] == BOOT_FD_COUNT + 1 && injected == 30);
     else if (i == 1)
       CHECK(trace[1] == 8 && trace[2] == 8 && trace[4] == 4);
     else

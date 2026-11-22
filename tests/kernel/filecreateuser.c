@@ -787,6 +787,30 @@ client(const Bootview *boot)
   closefile(ids[0], 0);
   filecreatetrace[3] = 1;
   {
+    struct sigaction action = {0};
+    u32              i;
+    action.sa_handler = openhandler;
+    for (i = 0; i < 2; i++) {
+      Opencreate open = {0};
+      Rkey       active = {0};
+      int        number = -2;
+      isize      business = 9, outcome;
+      u64        sequence = contexts.sequence;
+      action.sa_flags = i ? SA_RESTART : 0;
+      CHECK(!sigaction(SIGUSR2, &action, NULL));
+      filecreatetrace[7] = (u64) (uintptr_t) __sys_ctxreturn_begin;
+      filecreatetrace[6] = 3 + i;
+      outcome = sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/missing", 0, 0, 0,
+                                 &open, &active, &number, &business);
+      filecreatetrace[6] = 0;
+      CHECK(!active.sequence && !open.operation.lease.seq &&
+            contexts.sequence == sequence + 1 + i && !sysfdobserve(&fds, 2, &detached) &&
+            detached.tag.state == SYSFD_FREE);
+      CHECK(i ? !outcome && number == -1 && business == -ENOENT
+              : outcome == -ERR_INTERRUPTED && number == -2);
+    }
+  }
+  {
     Opencreate open = {0};
     Rkey       active = {0};
     int        number = -2;

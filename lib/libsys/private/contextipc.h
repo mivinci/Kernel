@@ -84,7 +84,8 @@ struct Fdtable;
    One transfers the ACKed resource result to the caller's ATTACH/ABORT path;
    neither output changes. On signal, collect the original result or request
    cooperative cancellation and wait to its original deadline. If that wait
-   times out, keep open for later collection; never submit the path again. */
+   times out, keep open for later collection. Only native queued cancellation
+   and SA_RESTART allow a fresh submission from the same private snapshot. */
 isize sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
                        struct Fdtable *table, const char *path, u64 flags, u64 mode, u64 fdflags,
                        struct Opencreate *open, Rkey *active, int *fd, isize *business);

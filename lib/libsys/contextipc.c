@@ -806,7 +806,7 @@ sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
 
 static isize
 openwait(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Opencreate *open,
-         u64 mask, int *fd, isize *business)
+         u64 mask, int *fd, isize *business, u32 *retry)
 {
   u32   interrupted = 0, restart;
   u64   now, deadline;
@@ -831,8 +831,10 @@ openwait(Filepool *pool, Connwork *work, Conncache *cache, Fdtable *table, Openc
         return error ? error : -ERR_TIMEDOUT;
     }
     waited = systimerwaitsignal(deadline, EVENT_RQ_DONE, mask, &restart);
-    if (waited == -ERR_INTERRUPTED)
+    if (waited == -ERR_INTERRUPTED) {
       interrupted = 1;
+      *retry &= restart;
+    }
   }
 }
 
@@ -845,6 +847,7 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
   Msg      message;
   u64      args[8] = {flags, mode, 0, 0};
   u64      mask, ignored;
+  u32      retry;
   isize    error, status;
   if (layer >= RCTX_LAYERS || !storage(bank, work, sizeof(*work), active) ||
       !storage(bank, pool, sizeof(*pool), active) ||
@@ -878,13 +881,20 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
       error = -ERR_BUSY;
     else if (bank->sequence == UINT64_MAX)
       error = -ERR_OVERFLOW;
-    else {
-      void *snapshot = bank->snapshots[layer];
-      error = sysargstring(snapshot, FS_SLOT_BYTES, path, &args[3]);
-      if (!error)
-        error = sysfileopenprepare(pool, work, cache, table, layer, bank->sequence + 1, args,
-                                   snapshot, args[3], fdflags, open, &message);
+    else
+      error = sysargstring(bank->snapshots[layer], FS_SLOT_BYTES, path, &args[3]);
+    if (error)
+      goto restore;
+  }
+prepare:
+  retry = args[3] != 0;
+  if (!open->operation.lease.seq) {
+    if (bank->sequence == UINT64_MAX) {
+      error = -ERR_OVERFLOW;
+      goto restore;
     }
+    error = sysfileopenprepare(pool, work, cache, table, layer, bank->sequence + 1, args,
+                               bank->snapshots[layer], args[3], fdflags, open, &message);
   }
   if (!error)
     error = sysfilecreatecheck(pool, work, cache, &open->operation);
@@ -901,12 +911,19 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
     Slotop *op = &work->state.operations[open->operation.lease.slot];
     if (!error || error == 1 || error == -ERR_CANCELLED ||
         ((error == -ERR_PEER || error == -ERR_INTERRUPTED) && op->phase != SYSOP_PREPARED))
-      error = openwait(pool, work, cache, table, open, mask, fd, business);
+      error = openwait(pool, work, cache, table, open, mask, fd, business, &retry);
     else if (op->phase == SYSOP_PREPARED) {
       status = sysfileopenabort(pool, work, cache, table, open);
       if (status)
         error = status;
     }
+  }
+  /* Only the native result proves the request was removed before delivery.
+     A service business EINTR or a timeout cannot authorize replay here. */
+  if (error == -ERR_CANCELLED && !open->operation.lease.seq) {
+    if (retry)
+      goto prepare;
+    error = -ERR_INTERRUPTED;
   }
 restore:
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);

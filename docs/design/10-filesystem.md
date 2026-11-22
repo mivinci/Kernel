@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage489：私有 OPEN 收到原生 `ERR_CANCELLED` 并排空原请求后，可在 `SA_RESTART` 下用当前层已保存的路径重新提交；没有 `SA_RESTART` 则返回中断。服务业务错误、未知结果和已经完成的请求不走该重启分支。ARM64/RV64 QEMU `runtime` 在异步提交刚返回时注入信号，验证未交付的 OPEN 有无 `SA_RESTART` 的两种结果，并回归已交付 OPEN 的迟到成功；71 项主机测试通过。公开 `open()` 和连接地址登记仍未接入。
+
 stage488：私有镜像 OPEN 在信号取消到期后归还 fd 并将原槽交给文件事件推进器。推进器领取迟到结果，普通引用交给 CLOSE，资源准备交给按 token 的 ABORT；两种路径共用原请求完成提示。ARM64/RV64 QEMU `pipeio` 验证服务端在前台返回超时后回复普通成功，客户端只做 `nanosleep` 即收尾原引用，未发布 fd。资源 ABORT 仍使用 stage487 的独立验收。公开 `open()` 尚未接入。
 
 stage487：后台收尾领取迟到的资源 OPEN 后，在原工作页记录并异步提交精确 token 的控制 ABORT。成功须等原 ABORT 排空并 ACK 才归还创建槽；不创建连接目录项，也不发 ATTACH。移交仅允许发生在原 OPEN ACK 之前，以免与已开始的 ATTACH 冲突。ARM64/RV64 QEMU `runtime` 验证目录已满时仍可撤销原准备引用，且同一后端的既有连接仍能关闭其他引用；86 项主机测试通过。镜像事件循环尚未接入此路径。
