@@ -181,7 +181,7 @@ cwdstep(Fscwd *work, char *out, u64 capacity, u32 *bytes)
     length = sizeof(work->path) - work->first;
     if (length > capacity)
       return -ERANGE;
-    memcpy(out, work->path + work->first, length);
+    memmove(out, work->path + work->first, length);
     *bytes = length;
     return 0;
   }

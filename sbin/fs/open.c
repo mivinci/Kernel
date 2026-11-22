@@ -1,6 +1,13 @@
 #include "open.h"
 #include "file.h"
 #include <errno.h>
+#include <string.h>
+
+static int
+getcwdcall(const Ipcmsg *call, const Fileslot *slot)
+{
+  return call->words[0] == FS_PATH && slot->args[0] == FS_PATH_GETCWD;
+}
 
 static isize
 replypath(Handle request, u64 seq, Filelink *link, isize status, u32 committed)
@@ -27,12 +34,59 @@ finish(Handle request, u64 seq, Filelink *link, isize status)
 }
 
 static isize
+advancecwd(Fsopen *open, Openjob *job)
+{
+  Handle request = job->call.request;
+  u64    state;
+  isize  error;
+  Msg    reply = {{0, job->slot.seq, 0, 0}};
+  for (;;) {
+    error = ipc_rqcheck(request, &state);
+    if (error)
+      return error;
+    if (state != RQ_CHECK_LIVE) {
+      if (job->cwd.waiting) {
+        error = open->cancel(job);
+        if (error == -ERR_WOULD_BLOCK)
+          return 0;
+        if (error)
+          return error;
+        job->cwd.waiting = 0;
+      }
+      fscwddrop(&job->cwd);
+      error = finish(request, job->slot.seq, job->link, -EINTR);
+      break;
+    }
+    if (job->cwdready) {
+      reply.words[0] = (u64) job->cwdstatus;
+      reply.words[3] = job->cwdbytes;
+      if (job->cwdbytes)
+        memcpy((void *) (job->link->address + FS_DATA_OFFSET + job->call.words[3] * FS_SLOT_BYTES),
+               job->cwd.path, job->cwdbytes);
+      error = ipc_reply(request, &reply);
+      if (!error)
+        error = sysfilefinish(&job->link->watch.active, request);
+      break;
+    }
+    job->cwdstatus = fscwdstep(&job->cwd, job->cwd.path, job->slot.args[1], &job->cwdbytes);
+    if (job->cwdstatus == VWALK_WAIT)
+      return 0;
+    job->cwdready = job->cwdstatus != VWALK_MORE;
+  }
+  if (!error)
+    job->call.request = 0;
+  return error;
+}
+
+static isize
 advance(Fsopen *open, Openjob *job)
 {
   Handle request = job->call.request;
   Vnode *node = NULL;
   u64    state;
   isize  status, error;
+  if (getcwdcall(&job->call, &job->slot))
+    return advancecwd(open, job);
   if (job->changedcwd) {
     error = replypath(request, job->slot.seq, job->link, 0, 1);
     goto done;
@@ -154,6 +208,32 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   job->waiting = 0;
   job->reserved = NULL;
   job->node = job->parent = NULL;
+  if (getcwdcall(call, &slot)) {
+    if (!open->cwdops || !open->cancel) {
+      error = -ENOSYS;
+      goto rejected;
+    }
+    if (slot.object || slot.span != 1 || slot.payload_bytes || !slot.args[1] ||
+        slot.args[1] > FS_SLOT_BYTES) {
+      error = -EINVAL;
+      goto rejected;
+    }
+    for (i = 2; i < ARRAY_SIZE(slot.args); i++)
+      if (slot.args[i]) {
+        error = -EINVAL;
+        goto rejected;
+      }
+    job->cwdready = job->cwdbytes = 0;
+    error = fscwdinit(&job->cwd, open->mounts, open->cwdops, job, context);
+    if (!error) {
+      error = ipc_defer(request);
+      if (!error)
+        return advancecwd(open, job);
+      fscwddrop(&job->cwd);
+      error = -EAGAIN;
+    }
+    goto rejected;
+  }
   start = context->cwd;
   error = 0;
   if (call->words[0] == FS_OPEN) {
@@ -174,6 +254,7 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
     vwalkdrop(&job->walk);
     error = -EAGAIN;
   }
+rejected:
   error = finish(request, slot.seq, link, error);
   if (!error)
     job->call.request = 0;

@@ -10,6 +10,7 @@ struct Fsref;
 struct Openjob
 {
   Vwalk         walk;
+  Fscwd         cwd;
   Ipcmsg        call;
   Fileslot      slot;
   Filelink     *link;
@@ -18,7 +19,8 @@ struct Openjob
   struct Fsref *reserved;
   void         *backend;
   Vcred         cred;
-  u32           mask, waiting, changedcwd;
+  u32           mask, waiting, changedcwd, cwdready, cwdbytes;
+  isize         cwdstatus;
 };
 struct Fsopen
 {
@@ -49,6 +51,7 @@ struct Fsopen
      with abandon set, drain the original operation and close any
      unpublished reference; do not undo an already committed creation. */
   isize (*create)(Openjob *, Vnode *parent, u32 abandon);
+  const Fscwdops *cwdops; /* Callbacks receive Openjob *; cancel drains either lookup. */
 };
 
 isize fsopenstart(Fsopen *, Filelink *, u32, const Ipcmsg *);

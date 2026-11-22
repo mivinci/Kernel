@@ -1592,6 +1592,25 @@ openwalkdrop(void *context, Vnode *node)
   opendrop(job->backend, node);
 }
 
+static u64
+cwdversion(void *context)
+{
+  (void) context;
+  return 1;
+}
+
+static isize
+cwdname(void *context, const Vnode *node, Vnode **parent, const char **name, u32 *length)
+{
+  Openjob     *job = context;
+  Openfixture *fixture = job->backend;
+  CHECK(node == &fixture->dir);
+  *parent = &fixture->root;
+  *name = "d";
+  *length = 1;
+  return openwalkhold(job, *parent);
+}
+
 static isize
 opensearch(void *context, const Vnode *node)
 {
@@ -2365,10 +2384,11 @@ openserver(const Bootview *boot)
   static Filelink link;
   static Txn      synctxn;
   static u8       syncsnapshot[FS_BLOCK_BYTES];
-  Openjob         job = {0};
+  static Openjob  job;
   Openfixture     fixture = {0};
   const Vwalkops  ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops  pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
+  const Fscwdops  cwd = {openwalkhold, openwalkdrop, cwdversion, cwdname};
   Fsfile          file = {0};
   Fsref           refs[2] = {{0}};
   Cacheblock      blocks[1];
@@ -2380,8 +2400,8 @@ openserver(const Bootview *boot)
   Pipetable      pipes = {0};
   Fscontext      context = {0};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,   0,
-                         &fixture,  openselect,      opencancel, opencomplete, NULL};
+  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,    0,
+                         &fixture,  openselect,      opencancel, opencomplete, NULL, &cwd};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
@@ -2495,6 +2515,7 @@ openserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && job.waiting && context.cwd == &fixture.root && context.version == 1 &&
         !fsstep(&fs) && !job.call.request && context.cwd == &fixture.dir && context.version == 2 &&
         !fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3 && fixture.holds == 2 &&
+        !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2 &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   openloadserver(&fs, &fixture.loads, scratch);
@@ -2592,6 +2613,34 @@ chdircheck(const char *path, u64 bytes, isize expected, int delayed)
     CHECK(!ipc_call(work.state.call, &request, 0, &result));
   CHECK((isize) result.words[0] == expected && result.words[1] == lease.seq && !result.words[2] &&
         !result.words[3] && !sysconnworkrelease(&work, &cache, lease));
+}
+
+static void
+getcwdcheck(u64 capacity, isize expected)
+{
+  Filelease    lease;
+  Fileslot     slot = {0};
+  Msg          request = {{FS_PATH, work.state.map.connid, 0, 0}};
+  Ipcmsg       result;
+  volatile u8 *page;
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  request.words[2] = slot.seq = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.args[0] = FS_PATH_GETCWD;
+  slot.args[1] = capacity;
+  page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+  page[0] = page[1] = page[2] = page[3] = 0xa5;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &request, 0, &result) && (isize) result.words[0] == expected &&
+        result.words[1] == lease.seq && !result.words[2] && page[3] == 0xa5);
+  if (expected)
+    CHECK(!result.words[3] && page[0] == 0xa5 && page[1] == 0xa5 && page[2] == 0xa5);
+  else
+    CHECK(result.words[3] == 3 && page[0] == '/' && page[1] == 'd' && !page[2]);
+  CHECK(!sysconnworkrelease(&work, &cache, lease));
 }
 
 static void
@@ -2722,6 +2771,8 @@ open:
       chdircheck("/n", sizeof("/n"), -EACCES, 0);
       chdircheck("/d", sizeof("/d"), 0, 1);
       chdircheck(".", sizeof("."), 0, 0);
+      getcwdcheck(2, -ERANGE);
+      getcwdcheck(3, 0);
       openloadclient();
       pipeiotrace[0] = 7;
       return;
@@ -2855,7 +2906,7 @@ publicchdirserver(const Bootview *boot)
 {
   Filelink       link = {0};
   Openfixture    fixture = {0};
-  Openjob        job = {0};
+  static Openjob job;
   Fscontext      context = {0};
   Pipetable      pipes = {0};
   Fsfile         file = {0};
@@ -2864,8 +2915,8 @@ publicchdirserver(const Bootview *boot)
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,         0,
-                         &fixture,  openselect,      opencancel, opencomplete, opencreate};
+  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,          0,
+                         &fixture,  openselect,      opencancel, opencomplete, opencreate, NULL};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
