@@ -76,13 +76,16 @@ isize sysctxopenio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwo
 struct Pipecreate;
 struct Opencreate;
 struct Fdtable;
-/* Drive OPEN using an established FS connection and a private path snapshot.
+/* Drive OPEN using an established FS connection. Capture the application path
+   in the existing layer scratch before reserving anything. An inaccessible path
+   returns ERR_FAULT; a path without NUL in the first slot returns ERR_LIMIT.
+   A continuation uses only the original request and ignores the input arguments.
    Zero means a completed ordinary result (fd is -1 on business failure).
    One transfers the ACKed resource result to the caller's ATTACH/ABORT path;
    neither output changes. Retain both continuations across interruption. */
 isize sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
-                       struct Fdtable *table, const u64 args[8], const void *path, u64 bytes,
-                       u64 flags, struct Opencreate *open, Rkey *active, int *fd, isize *business);
+                       struct Fdtable *table, const char *path, u64 flags, u64 mode, u64 fdflags,
+                       struct Opencreate *open, Rkey *active, int *fd, isize *business);
 /* Drive the exact captured OPEN token against an initialized backend work
    page. A cold connection needs a caller-reserved VA; reuse needs no VA.
    Keep map and active across retries. Errors leave outstanding ownership

@@ -784,14 +784,20 @@ sysctxpipecreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
 
 isize
 sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
-                 Fdtable *table, const u64 args[8], const void *path, u64 bytes, u64 flags,
+                 Fdtable *table, const char *path, u64 flags, u64 mode, u64 fdflags,
                  Opencreate *open, Rkey *active, int *fd, isize *business)
 {
   Connpeer self;
   Msg      message;
+  u64      args[8] = {flags, mode, 0, 0};
   u64      mask, ignored;
   isize    error, status;
-  if (!bank || !work || !open || !active || layer >= RCTX_LAYERS ||
+  if (layer >= RCTX_LAYERS || !storage(bank, work, sizeof(*work), active) ||
+      !storage(bank, pool, sizeof(*pool), active) ||
+      !storage(bank, cache, sizeof(*cache), active) ||
+      !storage(bank, table, sizeof(*table), active) ||
+      !storage(bank, open, sizeof(*open), active) ||
+      !separate(bank, sizeof(*bank), active, sizeof(*active)) ||
       !separate(open, sizeof(*open), active, sizeof(*active)) ||
       !separate(fd, sizeof(*fd), business, sizeof(*business)) ||
       !separate(fd, sizeof(*fd), bank, sizeof(*bank)) ||
@@ -802,7 +808,12 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
       !separate(fd, sizeof(*fd), work, sizeof(*work)) ||
       !separate(fd, sizeof(*fd), cache, sizeof(*cache)) ||
       !separate(business, sizeof(*business), bank, sizeof(*bank)) ||
-      !separate(business, sizeof(*business), active, sizeof(*active)))
+      !separate(business, sizeof(*business), active, sizeof(*active)) ||
+      !separate(business, sizeof(*business), open, sizeof(*open)) ||
+      !separate(business, sizeof(*business), table, sizeof(*table)) ||
+      !separate(business, sizeof(*business), work, sizeof(*work)) ||
+      !separate(business, sizeof(*business), cache, sizeof(*cache)) ||
+      !separate(business, sizeof(*business), pool, sizeof(*pool)))
     return -ERR_INVALID;
   self = work->state.self;
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
@@ -813,9 +824,13 @@ sysctxopencreate(Rbank *bank, u32 layer, Filepool *pool, Connwork *work, Conncac
       error = -ERR_BUSY;
     else if (bank->sequence == UINT64_MAX)
       error = -ERR_OVERFLOW;
-    else
-      error = sysfileopenprepare(pool, work, cache, table, layer, bank->sequence + 1, args, path,
-                                 bytes, flags, open, &message);
+    else {
+      void *snapshot = bank->snapshots[layer];
+      error = sysargstring(snapshot, FS_SLOT_BYTES, path, &args[3]);
+      if (!error)
+        error = sysfileopenprepare(pool, work, cache, table, layer, bank->sequence + 1, args,
+                                   snapshot, args[3], fdflags, open, &message);
+    }
   }
   status = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   if (error || status)

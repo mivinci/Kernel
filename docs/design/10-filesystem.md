@@ -770,6 +770,8 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
+stage476：`sysctxopencreate` 在预留 fd 和创建请求前，按页安全读取应用路径到当前层的私有暂存区，生成 OPEN 的路径长度（含 NUL）。提交后的继续操作沿用原槽，不再读取应用地址。ARM64、RV64 QEMU `runtime` 验证坏地址与无终止符路径不发请求、不占 fd，含 NUL 恰好 4096 字节的路径能送达服务；28 项参数捕获和 IPC 上下文主机测试通过。公开 `open()` 仍待接入。
+
 stage475：`sysctxopenrevoke` 用 OPEN 持有的固定 CALL 和原 token 发控制预算 ABORT，目录满时仍可推进。它等待原 RPC 排空并核对 `[0,seq,0,0]`，确认后才撤销本地创建记录；错误或结果未知时保留清理责任。`sysfileopendiscard` 在撤销或已证明的后端终结且排空后才归还预留 fd。ATTACH 的运输清理仍独立。双架构 QEMU `runtime` 验证目录满时在 ATTACH 前取消、ATTACH 后本地接管失败及继续已准备好的 ABORT；fd 在撤销前保持预留，原有 File 可正常关闭。双架构 `pipeio` 回归及 54 项主机测试通过。公开 `open()` 尚未接入。
 
 stage474：`sysctxopenattach` 用已捕获的资源 OPEN token 推进 ATTACH。冷连接须核验原回复的 MEM 和共享页，再确认请求并接管 File；热连接只接受原 connid，不重复映射。映射地址冲突且未建立映射时，可换地址继续处理同一回复。双架构 QEMU `runtime` 验证真实 ATTACH 的冷路径地址冲突和热路径复用，`pipeio` 回归共用握手路径，18 项 IPC 上下文主机测试通过。后端选择、VA 预留和失败补偿仍由调用方负责，公开 `open()` 尚未接入。

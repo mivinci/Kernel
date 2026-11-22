@@ -234,8 +234,6 @@ resourceopens(const Bootview *boot)
 {
   Opencreate open = {0};
   Rkey       active = {0};
-  const u64  args[8] = {0, 0, 0, 7};
-  const u64  cancelargs[8] = {0, 0, 0, 8};
   Fdview     fd;
   int        number = -2;
   isize      business = 9;
@@ -249,8 +247,8 @@ resourceopens(const Bootview *boot)
   u32        i, reserved;
   bound = attachfirst(boot);
   CHECK(!sysconnpeer(backend_work.state.call, &peer));
-  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/reuse", 7,
-                         BOOT_FD_CLOEXEC, &open, &active, &number, &business) == 1 &&
+  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/reuse", 0, 0, BOOT_FD_CLOEXEC,
+                         &open, &active, &number, &business) == 1 &&
         number == -2 && business == 9 && !active.sequence &&
         !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED);
   filecreatetrace[1]++;
@@ -271,9 +269,8 @@ resourceopens(const Bootview *boot)
   peer.image++;
   CHECK(sysconnbind(&cache, peer, &tag) == -ERR_CAPACITY);
   for (i = 0; i < 2; i++) {
-    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, cancelargs,
-                           i ? "/failed" : "/cancel", 8, 0, &open, &active, &number,
-                           &business) == 1);
+    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, i ? "/failed" : "/cancel", 0,
+                           0, 0, &open, &active, &number, &business) == 1);
     filecreatetrace[1]++;
     key = open.operation;
     reserved = open.tag.index;
@@ -726,11 +723,24 @@ client(const Bootview *boot)
   {
     Opencreate missing = {0};
     Rkey       active = {0};
-    const u64  args[8] = {0, 0, 0, 9};
+    char       longpath[FS_SLOT_BYTES];
     int        number = -2;
-    isize      business;
-    CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/missing", 9, 0,
-                            &missing, &active, &number, &business) &&
+    isize      business = 9;
+    u64        i, sequence = contexts.sequence;
+    for (i = 0; i < sizeof(longpath); i++)
+      longpath[i] = 'm';
+    longpath[0] = '/';
+    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds,
+                           (const char *) (uintptr_t) BOOT_USER_HI, 0, 0, 0, &missing, &active,
+                           &number, &business) == -ERR_FAULT &&
+          sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
+                           &active, &number, &business) == -ERR_LIMIT &&
+          contexts.sequence == sequence && !missing.operation.lease.seq && !active.sequence &&
+          number == -2 && business == 9 && !sysfdobserve(&fds, 2, &detached) &&
+          detached.tag.state == SYSFD_FREE);
+    longpath[sizeof(longpath) - 1] = 0;
+    CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
+                            &active, &number, &business) &&
           number == -1 && business == -ENOENT && !missing.operation.lease.seq &&
           !sysfdobserve(&fds, 2, &detached) && detached.tag.state == SYSFD_FREE);
     filecreatetrace[1]++;
@@ -2366,7 +2376,7 @@ iorecoverclient(const Bootview *boot, u32 mode)
         !sysfdobserve(&fds, 0, &fd) && fd.tag.state == SYSFD_RESERVED && !fd.file &&
         !sysfileopenabort(&pool, &work, &cache, &fds, &open) && !sysfdobserve(&fds, 0, &fd) &&
         fd.tag.state == SYSFD_FREE);
-  CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, args, "/a", 3, BOOT_FD_CLOEXEC,
+  CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/a", 0, 0, BOOT_FD_CLOEXEC,
                           &open, &opening, &number, &outcome) &&
         !number && !outcome && !open.operation.lease.seq && !opening.sequence &&
         !sysfdobserve(&fds, 0, &fd) && fd.flags == BOOT_FD_CLOEXEC);
