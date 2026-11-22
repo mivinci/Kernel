@@ -311,6 +311,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/pipedispatch.c','pipedispatch'),
         compile_adoption(ROOT/'sbin/fs/seek.c','fs-seek'),
         compile_adoption(ROOT/'sbin/fs/read.c','fs-read'),
+        compile_adoption(ROOT/'sbin/fs/readdispatch.c','fs-readdispatch'),
         compile_adoption(ROOT/'sbin/fs/load.c','fs-load'),
         compile_adoption(ROOT/'sbin/fs/cache.c','fs-cache'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])

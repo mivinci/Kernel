@@ -36,15 +36,30 @@ fsfilefind(Fsfiles *table, Handle pid, u64 image, u64 session)
   return NULL;
 }
 
+isize
+fsfilehold(Fsfile *file)
+{
+  if (file->refs == UINT32_MAX)
+    return -ERR_OVERFLOW;
+  file->refs++;
+  return 0;
+}
+
+void
+fsfiledrop(Fsfiles *table, Fsfile *file)
+{
+  if (!--file->refs) {
+    table->pins->drop(table->backend, file->node);
+    *file = (Fsfile){0};
+  }
+}
+
 static void
 drop(Fsfiles *table, Fsref *ref)
 {
   Fsfile *file = ref->file;
   *ref = (Fsref){0};
-  if (!--file->refs) {
-    table->pins->drop(table->backend, file->node);
-    *file = (Fsfile){0};
-  }
+  fsfiledrop(table, file);
 }
 
 isize

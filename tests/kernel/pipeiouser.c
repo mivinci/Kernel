@@ -123,7 +123,7 @@ server(const Bootview *boot)
   static Pipewait waits[2];
   Piperef         refs[3] = {{0}};
   Pipetable       table = {files, refs, ARRAY_SIZE(files), ARRAY_SIZE(refs), 0};
-  Pipedispatch    dispatch = {&table, waits, ARRAY_SIZE(waits), NULL, 0, NULL};
+  Pipedispatch    dispatch = {&table, waits, ARRAY_SIZE(waits), NULL, 0, NULL, NULL};
   Pipekey         keys[2];
   Pipe           *pipe = &files[0].stream;
   Filelink        link = {0};
@@ -333,7 +333,7 @@ serviceloop(const Bootview *boot, u32 interrupt)
                         ADDRESS,
                         &link,
                         1,
-                        {&table, &wait, 1, &poll, 1, NULL},
+                        {&table, &wait, 1, &poll, 1, NULL, NULL},
                         NULL,
                         0};
   if (interrupt >= 8) {
@@ -1489,10 +1489,12 @@ static const isize openerrors[] = {-ESTALE, 0, -EACCES, -EINVAL, -EINVAL, -EINVA
 typedef struct Openfixture Openfixture;
 struct Openfixture
 {
-  Vmounts mounts;
-  Vnode   root, file;
-  Fsfiles files;
-  u32     holds, attempts, searches, completed, blocked, cancelled;
+  Vmounts   mounts;
+  Vnode     root, file;
+  Fsfiles   files;
+  Cache     cache;
+  Readfetch fetch;
+  u32       holds, attempts, searches, completed, blocked, cancelled;
 };
 
 static isize
@@ -1610,33 +1612,53 @@ opencomplete(Openjob *job, Vnode *node)
 }
 
 static void
-openseeks(u64 session)
+openseek(u64 session, u64 whence, isize offset, isize status, u64 position)
 {
-  const u64   whence[] = {FS_SEEK_SET, FS_SEEK_CUR, FS_SEEK_END, FS_SEEK_CUR, FS_SEEK_CUR};
-  const isize offsets[] = {9, 3, -1, -40, 0};
-  const u64   positions[] = {9, 12, 19, 0, 19};
-  u32         i;
-  for (i = 0; i < ARRAY_SIZE(whence); i++) {
-    Filelease lease;
-    Fileslot  slot = {0};
-    Ipcmsg    result;
-    Msg       request = {{FS_SEEK, work.state.map.connid, 0, 0}};
-    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
-    slot.seq = request.words[2] = lease.seq;
-    request.words[3] = lease.slot;
-    slot.state = FS_SLOT_SUBMITTED;
-    slot.span = 1;
-    slot.object = session;
-    slot.args[0] = (u64) offsets[i];
-    slot.args[1] = whence[i];
-    CHECK(
-        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+  Filelease lease;
+  Fileslot  slot = {0};
+  Ipcmsg    result;
+  Msg       request = {{FS_SEEK, work.state.map.connid, 0, 0}};
+  CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  slot.seq = request.words[2] = lease.seq;
+  request.words[3] = lease.slot;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = session;
+  slot.args[0] = (u64) offset;
+  slot.args[1] = whence;
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)) &&
-        !ipc_call(work.state.call, &request, 0, &result) &&
-        (isize) result.words[0] == (i == 3 ? -EINVAL : 0) && result.words[1] == lease.seq &&
-        result.words[2] == positions[i] && !result.words[3] &&
+        !ipc_call(work.state.call, &request, 0, &result) && (isize) result.words[0] == status &&
+        result.words[1] == lease.seq && result.words[2] == position && !result.words[3] &&
         !sysconnworkrelease(&work, &cache, lease));
-  }
+}
+
+static isize
+openreadbind(void *context, Readjob *job)
+{
+  static const Loadmap map = {{2, 1, 1, 20}, {5}, 0};
+  Openfixture         *fixture = context;
+  CHECK(job->file->node == &fixture->file);
+  job->map = &map;
+  job->cache = &fixture->cache;
+  job->first = 4;
+  return 0;
+}
+
+static void
+openreadrelease(void *context, Readjob *job)
+{
+  Openfixture *fixture = context;
+  CHECK(job->file->node == &fixture->file && !job->work.fill.cache && !job->work.span.cache);
+}
+
+static isize
+openreadsubmit(void *context, Readjob *job, const Readfetch *fetch)
+{
+  Openfixture *fixture = context;
+  CHECK(!fixture->fetch.destination && fetch->block == 5 && job->file->position == 19);
+  fixture->fetch = *fetch;
+  return 0;
 }
 
 static isize
@@ -1658,22 +1680,27 @@ openserver(const Bootview *boot)
   const Vwalkops  pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   Fsfile          file = {0};
   Fsref           refs[2] = {{0}};
-  Pipetable       pipes = {0};
-  Fscontext       context = {0};
-  Fscontexts      contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen          open = {&contexts, &fixture.mounts, &ops,       &job,       1,
-                          0,         &fixture,        openselect, opencancel, opencomplete};
-  Fsservice       fs = {bootresource(boot, 256),
-                        bootresource(boot, BOOT_SELF_ALLOC),
-                        bootresource(boot, BOOT_SELF_SPACE),
-                        ADDRESS,
-                        &link,
-                        1,
-                        {&pipes, NULL, 0, NULL, 0, &fixture.files},
-                        &open,
-                        0};
-  u32             i;
+  Cacheblock      blocks[1];
+  u8              scratch[CACHE_BYTES];
+  Readjob         reader = {0};
+  Fsreads reads = {&reader, 1, 0, &fixture, scratch, openreadbind, openreadrelease, openreadsubmit};
+  Pipetable  pipes = {0};
+  Fscontext  context = {0};
+  Fscontexts contexts = {&context, 1, &pin, &fixture, 0};
+  Fsopen     open = {&contexts, &fixture.mounts, &ops,       &job,       1,
+                     0,         &fixture,        openselect, opencancel, opencomplete};
+  Fsservice  fs = {bootresource(boot, 256),
+                   bootresource(boot, BOOT_SELF_ALLOC),
+                   bootresource(boot, BOOT_SELF_SPACE),
+                   ADDRESS,
+                   &link,
+                   1,
+                   {&pipes, NULL, 0, NULL, 0, &fixture.files, &reads},
+                   &open,
+                   0};
+  u32        i;
   fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
+  CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 16));
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};
   CHECK(!vmountadd(&fixture.mounts, &fixture.root, NULL));
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
@@ -1693,7 +1720,11 @@ openserver(const Bootview *boot)
         file.refs == 1 && fixture.holds == 3);
   for (i = 0; i < 5; i++)
     CHECK(!fsstep(&fs));
-  CHECK(file.position == 19 && !fsstep(&fs) && !file.node && !file.refs &&
+  CHECK(file.position == 19 && !fsstep(&fs) && fixture.fetch.destination && file.refs == 2 &&
+        !fsstep(&fs) && file.position == 19 && !fsstep(&fs) && file.refs == 1 && file.node);
+  fixture.fetch.destination[19] = 'R';
+  CHECK(!filereadcomplete(&reader.work, &fixture.fetch.ticket, 1) &&
+        !fsreadpump(&reads, &fixture.files) && !file.node && !file.refs &&
         !fscontextremove(&contexts, link.watch.owner.pid, link.watch.owner.image) &&
         !fixture.holds);
   pipeiotrace[0] = 7;
@@ -1753,8 +1784,39 @@ openclient(const Bootview *boot)
   dup.session = key.session;
   dup.reference = refcall(&work, &cache, FS_DUPREF, key);
   CHECK(dup.reference && dup.reference != key.reference && !refcall(&work, &cache, FS_CLOSE, key));
-  openseeks(dup.session);
-  CHECK(!refcall(&work, &cache, FS_CLOSE, dup));
+  openseek(dup.session, FS_SEEK_SET, 9, 0, 9);
+  openseek(dup.session, FS_SEEK_CUR, 3, 0, 12);
+  openseek(dup.session, FS_SEEK_END, -1, 0, 19);
+  openseek(dup.session, FS_SEEK_CUR, -40, -EINVAL, 0);
+  openseek(dup.session, FS_SEEK_CUR, 0, 0, 19);
+  {
+    Filelease      lease;
+    Fileslot       slot = {0};
+    Msg            request = {{FS_READ, work.state.map.connid, 0, 0}};
+    Ipcmsg         result, drain;
+    Handle         rpc;
+    volatile char *page;
+    CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+    request.words[2] = slot.seq = lease.seq;
+    request.words[3] = lease.slot;
+    slot.state = FS_SLOT_SUBMITTED;
+    slot.span = 1;
+    slot.object = dup.session;
+    slot.payload_bytes = slot.args[1] = 1;
+    page = (volatile char *) (work.state.map.address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+    page[0] = 'P';
+    CHECK(
+        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+    rpc = result.request;
+    openseek(dup.session, FS_SEEK_SET, 0, -EAGAIN, 0);
+    CHECK(page[0] == 'P' && !refcall(&work, &cache, FS_CLOSE, dup) &&
+          !ipc_rqwait(rpc, 0, &result) && !result.words[0] && result.words[1] == lease.seq &&
+          result.words[2] == 1 && result.words[3] == 1 && page[0] == 'R' &&
+          !ipc_rqwait(rpc, RQ_FINISH, &drain) && !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) &&
+          !sysconnworkrelease(&work, &cache, lease));
+  }
   pipeiotrace[0] = 7;
 }
 

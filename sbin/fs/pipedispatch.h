@@ -3,6 +3,7 @@
 #include "pipefile.h"
 #include "pipeio.h"
 #include "file.h"
+#include "readdispatch.h"
 #include "private/filewatch.h"
 
 typedef struct Pipewait     Pipewait;
@@ -30,6 +31,7 @@ struct Pipedispatch
   Pipepoll  *polls;
   u32        npolls;
   Fsfiles   *regular;
+  Fsreads   *reads;
 };
 
 /* Serialized FS loop; waits are preallocated and initially zero. Dispatch

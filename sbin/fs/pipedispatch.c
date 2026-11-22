@@ -282,6 +282,10 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
         error = -ERR_STALE;
         break;
       }
+      if (file->read) {
+        reply.words[0] = (u64) -EAGAIN;
+        return respond(link, call->request, &reply);
+      }
       if (slot.args[1] == FS_SEEK_END) {
         isize status = table->length ? table->length(table->backend, file->node, &length) : -ENOSYS;
         if (status) {
@@ -304,6 +308,12 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     error = sysfileargs(opcode, &slot);
     if (error)
       break;
+    if (dispatch->regular && (slot.object & FS_FILE_SESSION)) {
+      if (opcode == FS_READ)
+        return fsreadstart(dispatch->reads, dispatch->regular, link, call, &slot);
+      reply.words[0] = (u64) -ENOSYS;
+      return respond(link, call->request, &reply);
+    }
     end = opcode == FS_READ ? PIPE_READ : PIPE_WRITE;
     for (i = 0; i < dispatch->count && dispatch->waits[i].io.request; i++) {
     }

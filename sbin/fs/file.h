@@ -13,6 +13,7 @@ struct Fsfile
   Vnode *node;
   u64    session, position;
   u32    access, refs;
+  Handle read;
 };
 struct Fsref
 {
@@ -39,5 +40,7 @@ isize fsfileclose(Fsfiles *, Handle, u64 image, u64 session, u64 ref);
 isize fsfiledup(Fsfiles *, Handle, u64 image, u64 session, u64 ref, u64 *out);
 /* Borrow while the serialized loop handles a synchronous operation. */
 Fsfile *fsfilefind(Fsfiles *, Handle, u64 image, u64 session);
+isize   fsfilehold(Fsfile *);
+void    fsfiledrop(Fsfiles *, Fsfile *);
 void    fsfileretire(Fsfiles *, Handle, u64 image);
 #endif

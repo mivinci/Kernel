@@ -50,7 +50,7 @@ static isize
 drain(void *context, Filelink *link)
 {
   Fsservice *fs = context;
-  if (fsopenbusy(fs->open, link)) {
+  if (fsopenbusy(fs->open, link) || fsreadbusy(fs->pipes.reads, link)) {
     fs->retiring = 1;
     return -ERR_WOULD_BLOCK;
   }
@@ -65,6 +65,9 @@ fsstep(Fsservice *fs)
   error = fsopenpump(fs->open);
   if (error)
     return error;
+  error = fsreadpump(fs->pipes.reads, fs->pipes.regular);
+  if (error)
+    return error;
   if (fs->retiring) {
     fs->retiring = 0;
     error = sysfilelinksweep(fs->links, fs->nlinks, drain, fs);
@@ -74,7 +77,9 @@ fsstep(Fsservice *fs)
   error = pipepump(&fs->pipes);
   if (error)
     return error;
-  error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0), 0, &input);
+  error = ipc_recv(EVENT_LIFE | EVENT_RQ_CANCEL | (fs->open ? fs->open->events : 0) |
+                       (fs->pipes.reads ? fs->pipes.reads->events : 0),
+                   0, &input);
   if (error)
     return error == -ERR_INTERRUPTED ? 0 : error;
   if (input.kind == IPC_EVENT) {
