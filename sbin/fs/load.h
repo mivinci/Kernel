@@ -2,18 +2,20 @@
 #define _FS_LOAD_H
 #include <types.h>
 #include <abi/base.h>
+#include "geometry.h"
 
 #define LOAD_SLOTS    32
 #define LOAD_DIRECT   12
 #define LOAD_INDIRECT 1024
 
-typedef struct Loadfile  Loadfile;
-typedef struct Loadslot  Loadslot;
-typedef struct Loadtable Loadtable;
-typedef struct Loadmap   Loadmap;
-typedef struct Loadindex Loadindex;
-typedef struct Loadspan  Loadspan;
-typedef struct Writeplan Writeplan;
+typedef struct Loadfile   Loadfile;
+typedef struct Loadslot   Loadslot;
+typedef struct Loadtable  Loadtable;
+typedef struct Loadmap    Loadmap;
+typedef struct Loadindex  Loadindex;
+typedef struct Loadspan   Loadspan;
+typedef struct Writeplan  Writeplan;
+typedef struct Writeimage Writeimage;
 struct Loadfile
 {
   u64 inode, generation, version, length;
@@ -51,6 +53,18 @@ struct Writeplan
    extending and hold inode mutation authority from EOF selection to commit. */
 isize loadmapwrite(const Loadmap *, const Loadindex *, u32 data_start, u32 blocks, u64 offset,
                    u64 bytes, Writeplan *);
+
+struct Writeimage
+{
+  u32 block, tail;
+  u8  data[FS_BLOCK_BYTES], taildata[FS_BLOCK_BYTES];
+};
+/* Prepare independent full data blocks in private storage. The caller still
+   holds the map and mutation guard, and supplies the reserved target block
+   for a hole plus the pinned old images for any existing target or distinct
+   tail. A shared target/tail is written as one image. No cache or map edit. */
+isize loadwritestage(const Writeplan *, u32 data_start, u32 blocks, u32 reserved,
+                     const void *olddata, const void *oldtail, const void *input, Writeimage *);
 struct Loadslot
 {
   Loadfile file;

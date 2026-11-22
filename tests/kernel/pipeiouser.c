@@ -1703,6 +1703,27 @@ openwritecheck(u64 session, u64 offset, u64 flags, isize expected, u64 accepted)
 }
 
 static void
+openwritestage(void)
+{
+  static Writeimage image;
+  static u8         tail[FS_BLOCK_BYTES];
+  const Loadmap     map = {{2, 1, 1, 20}, {5}, 0};
+  Writeplan         plan;
+  u32               i;
+  for (i = 0; i < sizeof(tail); i++)
+    tail[i] = 0xa5;
+  CHECK(!loadmapwrite(&map, NULL, 4, 16, 2 * FS_BLOCK_BYTES + 3, 2, &plan));
+  CHECK(loadwritestage(&plan, 4, 16, 5, NULL, tail, "xy", &image) == -ERR_INVALID && !image.block &&
+        !image.tail);
+  CHECK(!loadwritestage(&plan, 4, 16, 6, NULL, tail, "xy", &image) && image.block == 6 &&
+        image.tail == 5);
+  for (i = 0; i < FS_BLOCK_BYTES; i++) {
+    CHECK(image.data[i] == (i == 3 ? 'x' : i == 4 ? 'y' : 0));
+    CHECK(image.taildata[i] == (i < 20 ? 0xa5 : 0) && tail[i] == 0xa5);
+  }
+}
+
+static void
 openserver(const Bootview *boot)
 {
   static Filelink link;
@@ -1734,6 +1755,7 @@ openserver(const Bootview *boot)
   u32             i;
   const Loadfile  executable = {2, 1, 1, 20};
   u64             load;
+  openwritestage();
   fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 16));
   fixture.root = (Vnode){0, 1, 1, VNODE_DIR};

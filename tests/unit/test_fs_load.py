@@ -31,6 +31,11 @@ class WritePlan(C.Structure):
         'logical', 'block', 'offset', 'bytes', 'tail', 'zerooff', 'zerobytes', 'newindex')]
 
 
+class WriteImage(C.Structure):
+    _fields_ = [('block', C.c_uint32), ('tail', C.c_uint32),
+                ('data', C.c_uint8 * 4096), ('taildata', C.c_uint8 * 4096)]
+
+
 class Slot(C.Structure):
     _fields_ = [('file', File)] + [(name, U) for name in ('id', 'image', 'deadline', 'read')] + [
         ('pid', I), ('stopped', I)]
@@ -60,6 +65,9 @@ class FsLoadTests(unittest.TestCase):
         cls.lib.loadmapwrite.argtypes = [C.POINTER(Map), C.POINTER(Index), C.c_uint32,
                                         C.c_uint32, U, U, C.POINTER(WritePlan)]
         cls.lib.loadmapwrite.restype = I
+        cls.lib.loadwritestage.argtypes = [C.POINTER(WritePlan)] + [C.c_uint32] * 3 + [
+            C.c_void_p] * 3 + [C.POINTER(WriteImage)]
+        cls.lib.loadwritestage.restype = I
         args = {
             'loadopen': [C.POINTER(File), I, U, U, U, C.POINTER(U)],
             'loadread': [U, I, U, C.POINTER(File), U, U, U, C.POINTER(U)],
@@ -128,6 +136,22 @@ class FsLoadTests(unittest.TestCase):
         self.assertEqual(resolve(13 * 4096, index=C.byref(index)), -7)
         self.assertEqual(bytes(plan), snapshot)
         self.assertEqual(resolve(4 * 1024 * 1024), -20)
+
+    def test_same_tail_growth_preserves_prefix_and_isolates_staged_edit(self):
+        mapping, plan, image = Map(), WritePlan(), WriteImage()
+        mapping.file, mapping.direct[0] = File(7, 2, 3, 16), 101
+        self.assertEqual(self.lib.loadmapwrite(C.byref(mapping), None, 99, 200, 20, 2,
+                                             C.byref(plan)), 0)
+        old = C.create_string_buffer(b'@' * 4096)
+        stage = self.lib.loadwritestage
+        self.assertEqual(stage(C.byref(plan), 99, 200, 0, old, None, b'ab', C.byref(image)), 0)
+        self.assertEqual((image.block, image.tail), (101, 0))
+        self.assertEqual(bytes(image.data), b'@' * 16 + bytes(4) + b'ab' + b'@' * (4096 - 22))
+        self.assertEqual(old.raw[:4096], b'@' * 4096)
+        before = bytes(image)
+        self.assertEqual(stage(C.byref(plan), 99, 200, 0, image.data, None, b'ab',
+                               C.byref(image)), -1)
+        self.assertEqual(bytes(image), before)
 
     def open(self, file=None, pid=5, image=11, now=1, deadline=10, status=0):
         session = U()

@@ -110,6 +110,51 @@ loadmapwrite(const Loadmap *map, const Loadindex *index, u32 start, u32 blocks, 
   return 0;
 }
 
+static int
+separate(const void *a, usize bytes, const void *b, usize count)
+{
+  uintptr_t x = (uintptr_t) a, y = (uintptr_t) b;
+  return a && b && bytes <= UINT64_MAX - x && count <= UINT64_MAX - y &&
+         (x + bytes <= y || y + count <= x);
+}
+
+isize
+loadwritestage(const Writeplan *plan, u32 start, u32 blocks, u32 reserved, const void *olddata,
+               const void *oldtail, const void *input, Writeimage *out)
+{
+  const u8 *data = olddata, *tail = oldtail, *source = input;
+  u32       block, tailblock, i;
+  if (!out || !separate(plan, sizeof(*plan), out, sizeof(*out)) || !start || start >= blocks ||
+      !plan->bytes || plan->offset >= FS_BLOCK_BYTES ||
+      plan->bytes > FS_BLOCK_BYTES - plan->offset ||
+      (plan->block ? reserved || !olddata : !reserved || olddata) ||
+      !separate(input, plan->bytes, out, sizeof(*out)) ||
+      (olddata && !separate(olddata, FS_BLOCK_BYTES, out, sizeof(*out))))
+    return -ERR_INVALID;
+  block = plan->block ? plan->block : reserved;
+  tailblock = plan->tail == plan->block ? 0 : plan->tail;
+  if (block < start || block >= blocks ||
+      (tailblock && (tailblock < start || tailblock >= blocks || tailblock == block)) ||
+      (!!tailblock != !!oldtail) ||
+      (oldtail && !separate(oldtail, FS_BLOCK_BYTES, out, sizeof(*out))) ||
+      (!!plan->tail != !!plan->zerobytes) || plan->zerooff >= FS_BLOCK_BYTES ||
+      plan->zerobytes > FS_BLOCK_BYTES - plan->zerooff ||
+      (plan->tail && !tailblock && plan->zerooff + plan->zerobytes > plan->offset))
+    return -ERR_INVALID;
+  for (i = 0; i < FS_BLOCK_BYTES; i++)
+    out->data[i] = data ? data[i] : 0;
+  if (tailblock)
+    for (i = 0; i < FS_BLOCK_BYTES; i++)
+      out->taildata[i] = tail[i];
+  for (i = plan->zerooff; i < plan->zerooff + plan->zerobytes; i++)
+    (tailblock ? out->taildata : out->data)[i] = 0;
+  for (i = 0; i < plan->bytes; i++)
+    out->data[plan->offset + i] = source[i];
+  out->block = block;
+  out->tail = tailblock;
+  return 0;
+}
+
 static isize
 reserve(Loadtable *table, u64 inode, const Loadfile *file, Loadslot **out)
 {
