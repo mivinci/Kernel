@@ -71,8 +71,8 @@ fsfileoptions(const Fileslot *slot)
               FS_OPEN_CLOEXEC;
   if (slot->object || (flags & ~known) || (flags & FS_OPEN_ACCMODE) == FS_OPEN_ACCMODE)
     return -EINVAL;
-  if (flags & mutation)
-    return -ENOSYS;
+  if ((flags & mutation) == FS_OPEN_EXCL)
+    return -EINVAL;
   return (flags & FS_OPEN_TRUNC) && !(flags & FS_OPEN_ACCMODE) ? -EINVAL : 0;
 }
 

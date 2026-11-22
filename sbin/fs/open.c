@@ -38,6 +38,8 @@ advance(Fsopen *open, Openjob *job)
   }
   if (job->node)
     goto complete;
+  if (job->parent)
+    goto create;
   for (;;) {
     error = ipc_rqcheck(request, &state);
     if (error)
@@ -71,6 +73,9 @@ advance(Fsopen *open, Openjob *job)
         status = fscontextchdir(open->contexts, job->call.source, job->call.image, node);
         job->changedcwd = !status;
         error = replypath(request, job->slot.seq, job->link, status, job->changedcwd);
+      } else if (status == VWALK_MISSING) {
+        job->parent = node;
+        goto create;
       } else {
         job->node = node;
         goto complete;
@@ -87,6 +92,17 @@ complete:
     return 0;
   open->ops->drop(job, job->node);
   job->node = NULL;
+  goto completed;
+create:
+  error = ipc_rqcheck(request, &state);
+  if (error)
+    return error;
+  error = open->create(job, job->parent, state != RQ_CHECK_LIVE);
+  if (error == OPEN_WAIT)
+    return 0;
+  open->ops->drop(job, job->parent);
+  job->parent = NULL;
+completed:
   if (!error)
     error = sysfilefinish(&job->link->watch.active, request);
   else
@@ -133,12 +149,17 @@ fsopenstart(Fsopen *open, Filelink *links, u32 count, const Ipcmsg *call)
   job->changedcwd = 0;
   job->waiting = 0;
   job->reserved = NULL;
+  job->node = job->parent = NULL;
   start = context->cwd;
   error = call->words[0] == FS_OPEN ? open->select(job, context, &start, &follow) : 0;
+  if (!error && call->words[0] == FS_OPEN && (slot.args[0] & FS_OPEN_CREAT) && !open->create)
+    error = -ENOSYS;
   if (!error)
     error = vrequestpath(&job->walk, open->mounts, open->ops, job, context->root, start, follow,
                          &job->cred, link, call, &slot);
   if (!error) {
+    if (call->words[0] == FS_OPEN && (slot.args[0] & FS_OPEN_CREAT))
+      job->walk.create = slot.args[0] & FS_OPEN_EXCL ? VWALK_EXCLUSIVE : VWALK_CREATE;
     /* Reserve native deferred ownership before any backend can return WAIT. */
     error = ipc_defer(request);
     if (!error)

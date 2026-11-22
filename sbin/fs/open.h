@@ -14,6 +14,7 @@ struct Openjob
   Fileslot      slot;
   Filelink     *link;
   Vnode        *node;
+  Vnode        *parent;
   struct Fsref *reserved;
   void         *backend;
   Vcred         cred;
@@ -40,6 +41,13 @@ struct Fsopen
      the dispatcher releases the claimed slot. A native failure must leave
      the request unconsumed and no publication outstanding. */
   isize (*complete)(Openjob *, Vnode *);
+  /* Handle a missing final name in job->walk.part under the backend's
+     mutation guard. Recheck permission and absence; for a raced existing
+     name honor EXCL or resolve it under the ordinary OPEN rules. The
+     completion contract is the same as for complete. On a resumed call
+     with abandon set, drain the original operation and close any
+     unpublished reference; do not undo an already committed creation. */
+  isize (*create)(Openjob *, Vnode *parent, u32 abandon);
 };
 
 isize fsopenstart(Fsopen *, Filelink *, u32, const Ipcmsg *);

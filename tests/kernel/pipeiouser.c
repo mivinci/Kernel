@@ -1618,7 +1618,10 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     *out = name[0] == 'd' ? &fixture->dir : name[0] == 'n' ? &fixture->denied : &fixture->file;
     return openhold(fixture, *out);
   }
-  CHECK(dir == &fixture->root && bytes == 1 && name[0] == 'x');
+  CHECK(dir == &fixture->root && bytes == 1);
+  if (name[0] == 'm')
+    return -ENOENT;
+  CHECK(name[0] == 'x');
   if (fixture->blocked)
     return VWALK_WAIT;
   if (!fixture->attempts++) {
@@ -1743,6 +1746,18 @@ opencomplete(Openjob *job, Vnode *node)
   openvalidate(job);
   CHECK(node == &fixture->file && fixture->holds == (job->reserved ? 4 : 3) && attempt < 4);
   return fsfileopen(&fixture->files, job, node, 22, 32, attempt > 1 ? 0600 : attempt ? 0400 : 0200);
+}
+
+static isize
+opencreate(Openjob *job, Vnode *parent, u32 abandon)
+{
+  Openfixture *fixture = job->backend;
+  Msg          reply = {{(u64) -EACCES, job->slot.seq, 0, 0}};
+  openvalidate(job);
+  CHECK(!abandon && parent == &fixture->root && job->walk.part.bytes == 1 &&
+        job->walk.part.name[0] == 'm' && job->cred.uid == 22 && job->mask == 027 &&
+        job->slot.args[1] == 0600 && fixture->holds == 3);
+  return ipc_reply(job->call.request, &reply);
 }
 
 static void
@@ -2332,8 +2347,8 @@ openserver(const Bootview *boot)
   Pipetable      pipes = {0};
   Fscontext      context = {0};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,       1,
-                         0,         &fixture,        openselect, opencancel, opencomplete};
+  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,   0,
+                         &fixture,  openselect,      opencancel, opencomplete, NULL};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
@@ -2816,8 +2831,8 @@ publicchdirserver(const Bootview *boot)
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
-  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,       1,
-                         0,         &fixture,        openselect, opencancel, opencomplete};
+  Fsopen         open = {&contexts, &fixture.mounts, &ops,       &job,         1,         0,
+                         &fixture,  openselect,      opencancel, opencomplete, opencreate};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
@@ -2849,7 +2864,8 @@ publicchdirserver(const Bootview *boot)
   target.target = link.watch.owner.pid;
   CHECK(!fscontextadd(&contexts, target.target, link.watch.owner.image, &fixture.root,
                       &fixture.root, 027));
-  CHECK(!fsstep(&fs) && !file.refs && !fixture.searches); /* Unsupported mutation. */
+  CHECK(!fsstep(&fs) && !file.refs && fixture.searches == 1 && !job.parent && fixture.holds == 2);
+  fixture.searches = 0;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R &&
         file.flags == FS_OPEN_NONBLOCK && file.node == &fixture.file);
   CHECK(!fsstep(&fs) && !file.node && !file.refs);
@@ -2962,9 +2978,9 @@ publicchdirclient(void)
   CHECK(!sysfileimagefs(0, ADDRESS, &peer));
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
         open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT &&
-        open("/x", O_WRONLY | O_CREAT, 0600) == -1 && errno == ENOSYS);
+        open("/m", O_WRONLY | O_CREAT, 0600) == -1 && errno == EACCES);
   fd = open("/x", O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  CHECK(fd == 0 && errno == ENOSYS && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
+  CHECK(fd == 0 && errno == EACCES && fcntl(fd, F_GETFD) == FD_CLOEXEC && !close(fd));
   CHECK(open("/x", O_RDONLY | O_TRUNC) == -1 && errno == EINVAL);
   action.sa_handler = lateopensignal;
   action.sa_flags = SA_RESTART;

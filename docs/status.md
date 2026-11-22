@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage544：公开 `open(O_CREAT)` 已经真实 IPC 到达创建后端并传回 EACCES；ARM64/RV64 QEMU `pipeio` 和 46 项 FS 主机测试通过。生产事务、成功发布及异步取消待验。
 - stage543：路径遍历可向创建方交付缺失名称和父目录引用，独占模式拒绝已存在的最终链接。双架构 QEMU `pipeio` 通过，OPEN 分派待接。
 - stage542：创建可将新目录块、块位图和一级间接索引纳入同一日志，退休后才更新活目录和子 inode。双架构 QEMU `pipeio` 和 46 项 FS 主机测试通过；生产目录编码及 `O_CREAT` 待接。
 - stage541：已有目录块内的插入、父/子 inode 更新及 inode 占用位可进同一事务，退休后才发布。双架构 QEMU `pipeio` 和 46 项 FS 主机测试通过；目录编码、扩容及生产 `O_CREAT` 接线待做。
