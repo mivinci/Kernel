@@ -123,6 +123,7 @@ def build(args):
     libc_sources.append(ROOT / 'lib/libc/dup.c')
     libc_sources.append(ROOT / 'lib/libc/poll.c')
     libc_sources.append(ROOT / 'lib/libc/termios.c')
+    libc_sources.extend(ROOT / 'lib/libc' / name for name in ('abort.c', 'assert.c'))
     csu_sources = [ROOT / 'lib/csu/start.c', ROOT / 'lib/csu' / args.arch / 'start.S']
     runtime_source = ROOT / 'tests/kernel/runtimeuser.c'
     extra_units = [(source, sdk / 'obj' / source.relative_to(ROOT).with_suffix('.o'))

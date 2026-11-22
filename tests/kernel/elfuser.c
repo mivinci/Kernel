@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -259,6 +260,18 @@ main(int argc, char **argv)
   elf_trace[3] = 1;
   reader.malformed = 0;
   REQUIRE(!elfcheck(&source, 64, &plan), 230);
+  memset(&spawn, 0, sizeof(spawn));
+  work->parent_space = space;
+  work->scratch = 0x2000000;
+  work->scratch_bytes = BOOT_MAX_BYTES;
+  bootpacket(0, '5');
+  REQUIRE(!sysspawnprepare(&spawn, create, &args, NULL, &control) && !control &&
+              !sysspawnfill(&spawn, &source, &plan, &packet, packet.header.bytes),
+          237);
+  pid = work->pid;
+  REQUIRE(sysspawnpublish(&spawn) == pid && waitpid(pid, &status, 0) == pid &&
+              WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+          238);
   bootpacket(0, '4');
   replacement.elf.parent_space = space;
   replacement.elf.scratch = 0x2000000;

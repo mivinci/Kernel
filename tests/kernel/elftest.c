@@ -100,7 +100,7 @@ elftest(void)
     REQUIRE(procwork(trace[0] == 99 ? 32 : 8) >= 0 && prepwork(8) >= 0);
   }
   REQUIRE(exited == 3 && trace[0] == 99 && trace[1] == 2 && trace[2] == 4 && trace[3] == 1 &&
-          trace[4] > 1 && trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 7);
+          trace[4] > 1 && trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 8);
   REQUIRE(life.imagegen == 3 && replaced.image == 3 && replaced.space.index != parent.space.index &&
           replaced.life.generation == parent.life.generation &&
           replaced.life.index == parent.life.index);

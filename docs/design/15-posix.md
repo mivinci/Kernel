@@ -13,6 +13,7 @@
 | 状态 | 接口/头文件范围 | 语义与边界 | 测试与验收方法 |
 | --- | --- | --- | --- |
 | 本阶段 | main、exit、_exit、atexit；stdlib.h/unistd.h | csu 构造 argc/argv/environ；退出码、清理与直接退出分开；退出不隐含持久化 | 参数可修改、回调逆序、正常/直接退出差异、后端失联及退出资源守恒 |
+| 本阶段 | assert、abort；assert.h/stdlib.h | 断言失败尝试向 stderr 输出诊断，异常终止不运行正常退出回调 | NDEBUG 不求值；父进程能看到 SIGABRT，即使孩子预先屏蔽并忽略它 |
 | 本阶段 | errno.h：errno、错误常量；string.h：strerror | 逐接口使用规定返回方式；不是所有接口都返回 -1；成功不保证清零 errno | 错误值/返回值表驱动测试，信号处理保存恢复 errno；posix_spawn 等直接返回错误编号 |
 | 本阶段 | string.h、stdlib.h、stdio.h 的基础子集 | memcpy/memmove/memset、strlen/strcmp/strchr、malloc/calloc/realloc/free、strtol/strtoul、整数 printf/snprintf 为起始集合；不是完整 ISO C 库 | 重叠拷贝、零长度、算术溢出、分配失败保留旧块、格式长度/截断和有界输出；补充函数逐项登记 |
 | 本阶段 | getenv/setenv/unsetenv、environ、getopt | 环境存于进程自身，spawn 显式传递；参数解析不依赖 fs | 空值、覆盖/删除、子进程环境隔离及非法名称 |
@@ -153,6 +154,8 @@ ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证成功判定、管道、已关闭
 stage446：`int tcgetattr(int fd, struct termios *attributes)` 由 libc 提供，头文件为 `termios.h`。按 [POSIX.1-2024 tcgetattr](https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcgetattr.html) 核对原型、成功返回 0、无效 fd 的 EBADF 和非终端的 ENOTTY。首版公开字段对应 11 篇的标志、控制字符和输入/输出速率，布局与 `Termarg` 一致。libsys 固定原 File，通过同一连接发送 `TTYCTL/GETATTR`，只在原请求完成且序号、返回值和 80 字节长度匹配后写入应用对象。管道后端经会话校验后返回 ENOTTY；坏输出地址返回 EFAULT，格式错误的回复返回 EIO。请求沿原账本处理取消与回收。
 
 `cfgetispeed` 和 `cfgetospeed` 从调用者持有的 `struct termios` 分别读取输入、输出速率，不读设备或改动 `errno`。双架构 QEMU `pipeio` 用同一份经公开 `tcgetattr` 取得的夹具回复核对两个不同值；生产串口速率发现或修改未接入。
+
+`assert.h` 每次包含时重新读取 NDEBUG。启用的断言只求值一次，失败时尝试向 fd 2 写入含表达式、文件、行和函数名的有界诊断，再进入 `abort()`。`abort()` 解封并递送 SIGABRT；若首次递送返回，则恢复默认动作并再次递送，不走 atexit。双架构 QEMU `elf` 验证公开头重复包含、启用与禁用时的求值规则，并由父进程通过 `waitpid` 确认屏蔽且忽略 SIGABRT 的子进程仍因该信号退出。该载荷没有 stderr；诊断文本的实际输出未验收。
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证夹具返回属性、坏长度保留输出、坏输出地址后可再次查询，以及管道 ENOTTY 和无效 fd EBADF。17 项请求账本主机测试和格式检查通过。成功属性由测试服务提供，生产 TTY 文件连接仍待接入。
 

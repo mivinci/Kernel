@@ -9,6 +9,7 @@ void         *realloc(void *pointer, size_t bytes);
 void          free(void *pointer);
 int           atexit(void (*function)(void));
 NORETURN void exit(int status);
+NORETURN void abort(void);
 char         *getenv(const char *name);
 int           setenv(const char *name, const char *value, int overwrite);
 int           unsetenv(const char *name);

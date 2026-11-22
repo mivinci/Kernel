@@ -1,9 +1,22 @@
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/boot.h>
 #include <unistd.h>
 #include "private/start.h"
 #include "private/syscall.h"
+
+#define NDEBUG
+#include <assert.h>
+static int
+disabledassert(void)
+{
+  int evaluated = 0;
+  assert(++evaluated);
+  return evaluated;
+}
+#undef NDEBUG
+#include <assert.h>
 
 static volatile u64 initialized = UINT64_C(0x123456789abcdef0);
 static volatile u32 constructed;
@@ -30,6 +43,19 @@ main(int argc, char **argv)
       strcmp(argv[0], "runtime") || strcmp(argv[1], "alpha") || strcmp(argv[2], "beta") ||
       strcmp(value, "value"))
     return 163;
+  if (!strcmp(mode, "5")) {
+    struct sigaction ignored = {0};
+    sigset_t         blocked;
+    int              evaluated = 0;
+    ignored.sa_handler = SIG_IGN;
+    assert(++evaluated == 1);
+    if (evaluated != 1 || disabledassert() || sigemptyset(&blocked) ||
+        sigaddset(&blocked, SIGABRT) || sigprocmask(SIG_BLOCK, &blocked, NULL) ||
+        sigaction(SIGABRT, &ignored, NULL))
+      return 172;
+    assert(evaluated == 0);
+    return 173;
+  }
   replacing = !strcmp(mode, "4");
   override = !strcmp(mode, "1");
   if ((!replacing && !override && strcmp(mode, "2")) || __sys_getid(&pid, &image, &parent) ||
