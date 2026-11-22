@@ -1067,6 +1067,7 @@ static const u32 blkopcodes[] = {
     BLK_READ,  BLK_READ,                                   /* re-probe home */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  /* home-only scan */
     BLK_READ,  BLK_READ,  BLK_READ,                        /* root directory */
+    BLK_READ,  BLK_READ,                                   /* directory lookup */
     BLK_READ                                               /* file cache fill */
 };
 
@@ -1083,7 +1084,7 @@ blkfillcheck(Fsblk *blk, Cache *cache)
   static Blkfetch work;
   Cachefill       fill = {0};
   Cacheio         ticket, old = {0};
-  Cachekey        key;
+  Cachekey        key = {0};
   Ipcmsg          msg;
   u8             *dst;
   const u8       *bytes;
@@ -1311,6 +1312,16 @@ blkdecodedir(const u8 *bytes, Dirrecord *record)
     *record = (Dirrecord){34, 1, PAGE_SIZE - 24, 59, VNODE_FILE};
   }
   return 0;
+}
+
+static isize
+blklookupdecode(const u8 *bytes, Dirrecord *record)
+{
+  if (bytes[0] == 0xb4) {
+    *record = (Dirrecord){0, 0, PAGE_SIZE, 0, 0};
+    return 0;
+  }
+  return blkdecodedir(bytes, record);
 }
 
 static void
@@ -1562,6 +1573,25 @@ blkclient(const Bootview *boot, Handle call)
               mounts.entries[0].root == &root &&
               blkmountadd(&mounting, &mounts, &root, NULL) == -ERR_STATE,
           440);
+  {
+    const Loadmap map = {{FS_ROOT, 1, 1, 2 * PAGE_SIZE}, {109, 99}, 0};
+    char          name[59];
+    Blkfind       lookup = {&home, &map, NULL, blklookupdecode, name, sizeof(name), 0, 0, {0}, 0};
+    Dirrecord     found = {0};
+    isize         step = 0;
+    for (i = 0; i < sizeof(name); i++)
+      name[i] = (char) home.load.bytes[40 + i];
+    REQUIRE(!cacheinit(&cache, &storage, 1, 256), 473);
+    for (i = 0; i < 12 && !step; i++) {
+      REQUIRE(!found.inode, 473);
+      step = blkfindstep(&lookup, &found);
+      if (!step && blk.rpc)
+        REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 474);
+    }
+    REQUIRE(step == 1 && found.inode == 34 && found.generation == 1 &&
+                lookup.offset == 2 * PAGE_SIZE && !blk.rpc,
+            475);
+  }
   REQUIRE(dirgraphedge(&dirs.graph, FS_ROOT, 34, 1, VNODE_FILE) == -ERR_STATE, 430);
   dirs.graph.next = 0;
   nodes[35] = nodes[36] = (Dirnode){1, VNODE_FILE, 1};
@@ -1569,6 +1599,27 @@ blkclient(const Bootview *boot, Handle call)
   data[1] = 1;
   data[16] = 'a';
   data[17] = 0;
+  {
+    Dirrecord found = {0};
+    REQUIRE(dirblockfind(nodes, data, 24, blknamed, "a", 1, &found) == 1 && found.inode == 35 &&
+                found.generation == 1 && found.kind == VNODE_FILE &&
+                !dirblockfind(nodes, data, 24, blknamed, "ab", 2, &found) && found.inode == 35,
+            470);
+    for (i = 24; i < 48; i++)
+      data[i] = 0;
+    data[24] = 36;
+    data[25] = 1;
+    data[40] = 'a';
+    found.inode = 0;
+    REQUIRE(dirblockfind(nodes, data, 48, blknamed, "a", 1, &found) == -ERR_STATE && !found.inode &&
+                dirblockfind(nodes, data, 25, blknamed, "a", 1, &found) == -ERR_STATE &&
+                !found.inode,
+            471);
+    nodes[35].generation++;
+    REQUIRE(dirblockfind(nodes, data, 24, blknamed, "a", 1, &found) == -ERR_STATE && !found.inode,
+            472);
+    nodes[35].generation--;
+  }
   REQUIRE(!dirgraphblock(&dirs.graph, &dirs.names, FS_ROOT, data, 24, blknamed), 435);
   data[0] = 36;
   REQUIRE(!dirgraphblock(&dirs.graph, &dirs.names, FS_ROOT, data, 24, blknamed) &&
@@ -1654,7 +1705,8 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   for (i = 0; i < ARRAY_SIZE(blkopcodes); i++) {
     REQUIRE(!ipc_recv(0, 0, &input) && input.words[0] == BLK_WORD(blkopcodes[i]), 372);
     /* Exercise redo, re-probe, home bitmap and directory READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 2 >= ARRAY_SIZE(blkopcodes)) {
+    if (i == 11 || i == 22 || i == 24 || i + 4 == ARRAY_SIZE(blkopcodes) ||
+        i + 2 >= ARRAY_SIZE(blkopcodes)) {
       queue->configpending = 1;
       REQUIRE(!blktransportcall(&transport, &input) && !transport.active, 448);
       queue->configpending = 0;

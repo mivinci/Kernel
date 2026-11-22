@@ -504,6 +504,71 @@ blkdirstep(Blkdir *work)
   return 0;
 }
 
+isize
+blkfindstep(Blkfind *work, Dirrecord *out)
+{
+  Blkowners      *home;
+  const Blkprobe *probe;
+  const Loadfile *file;
+  const Dirnode  *node;
+  Blkredoload    *load;
+  Loadspan        span;
+  Dirrecord       match;
+  isize           error, status;
+  u32             bytes;
+  if (!work || !out || !(home = work->home) || !(probe = home->home) || home->phase != OwnersDone ||
+      home->failed || !home->load.nodes || !work->map || !work->name || !work->namelen ||
+      work->namelen > 255 || !work->decode)
+    return -ERR_INVALID;
+  if (work->failed)
+    return work->failed;
+  file = &work->map->file;
+  if (!file->inode || file->inode >= FS_INODES || work->offset > file->length)
+    return work->failed = -ERR_STATE;
+  node = &home->load.nodes[file->inode];
+  if (node->kind != VNODE_DIR || !node->links || node->generation != file->generation)
+    return work->failed = -ERR_STALE;
+  load = &home->load;
+  if (load->read->fill.cache) {
+    error = blkreadpoll(load->read, &status);
+    if (error)
+      return error == -ERR_WOULD_BLOCK ? 0 : error;
+    if (status == -EAGAIN)
+      return 0;
+    if (status)
+      return work->failed = probe->blk->stale ? -ERR_STALE : -EIO;
+  }
+  if (probe->blk->stale || probe->blk->ended ||
+      probe->blk->info.geometry_generation != probe->generation)
+    return work->failed = -ERR_STALE;
+  if (work->offset == file->length) {
+    if (!work->found)
+      return -ENOENT;
+    *out = work->match;
+    return 1;
+  }
+  bytes = (u32) MIN(file->length - work->offset, FS_BLOCK_BYTES);
+  error = loadmapspan(file, work->map, work->index, FS_DATA_START, home->scan.blocks, work->offset,
+                      bytes, &span);
+  if (error || !span.first)
+    return work->failed = -ERR_STATE;
+  error = blkreadview(load->read, load->cache, &home->scan, span.first, CACHE_META, load->bytes);
+  if (error == -ERR_WOULD_BLOCK)
+    return 0;
+  if (error)
+    return work->failed = error;
+  error = dirblockfind(home->load.nodes, load->bytes, bytes, work->decode, work->name,
+                       work->namelen, &match);
+  if (error < 0 || (error && work->found))
+    return work->failed = error < 0 ? error : -ERR_STATE;
+  if (error) {
+    work->match = match;
+    work->found = 1;
+  }
+  work->offset += bytes;
+  return 0;
+}
+
 enum
 {
   MountProbe,

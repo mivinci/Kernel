@@ -123,6 +123,70 @@ dirnamesstep(Dirnames *names)
   return names->heap == 1;
 }
 
+static isize
+recordnext(const u8 *bytes, u32 valid, u32 *offset, Dirdecode decode, Dirrecord *record,
+           const u8 **name)
+{
+  const u32 header = 16;
+  u32       i, left = valid - *offset;
+  if (left < header || decode(bytes + *offset, record) || record->reclen < header ||
+      (record->reclen & 7) || record->reclen > left)
+    return -ERR_STATE;
+  *name = bytes + *offset + header;
+  *offset += record->reclen;
+  if (!record->inode)
+    return 0;
+  if (record->inode >= FS_INODES || !record->namelen || record->namelen > 255 ||
+      record->namelen >= record->reclen - header || (*name)[record->namelen])
+    return -ERR_STATE;
+  for (i = 0; i < record->namelen; i++)
+    if (!(*name)[i] || (*name)[i] == '/')
+      return -ERR_STATE;
+  return 1;
+}
+
+isize
+dirblockfind(const Dirnode *nodes, const u8 *bytes, u32 valid, Dirdecode decode, const char *name,
+             u32 namelen, Dirrecord *out)
+{
+  Dirrecord match;
+  u32       offset = 0, found = 0, i;
+  if (!nodes || !bytes || !valid || valid > FS_BLOCK_BYTES || !decode || !name || !namelen ||
+      namelen > 255 || !out ||
+      (name[0] == '.' && (namelen == 1 || (namelen == 2 && name[1] == '.'))))
+    return -ERR_INVALID;
+  for (i = 0; i < namelen; i++)
+    if (!name[i] || name[i] == '/')
+      return -ERR_INVALID;
+  while (offset < valid) {
+    Dirrecord      record = {0};
+    const u8      *entry;
+    const Dirnode *node;
+    isize          result = recordnext(bytes, valid, &offset, decode, &record, &entry);
+    if (result < 0)
+      return result;
+    if (!result)
+      continue;
+    node = &nodes[record.inode];
+    if (!record.generation || record.generation != node->generation || !node->links ||
+        record.kind != node->kind || record.kind < VNODE_FILE || record.kind > VNODE_LINK)
+      return -ERR_STATE;
+    if (record.namelen != namelen)
+      continue;
+    for (i = 0; i < namelen && entry[i] == (u8) name[i]; i++)
+      ;
+    if (i == namelen) {
+      if (found)
+        return -ERR_STATE;
+      match = record;
+      found = 1;
+    }
+  }
+  if (found)
+    *out = match;
+  return found;
+}
+
 isize
 dirgraphblock(Dirgraph *graph, Dirnames *names, u32 directory, const u8 *bytes, u32 valid,
               Dirdecode decode)
@@ -140,25 +204,14 @@ dirgraphblock(Dirgraph *graph, Dirnames *names, u32 directory, const u8 *bytes, 
   if (from->kind != VNODE_DIR || !from->links)
     return graph->failed = -ERR_STATE;
   while (offset < valid) {
-    const u32      header = 16;
     Dirrecord      record = {0};
     const u8      *name;
     const Dirnode *target;
-    u32            i;
-    isize          error;
-    if (valid - offset < header || decode(bytes + offset, &record) || record.reclen < header ||
-        (record.reclen & 7) || record.reclen > valid - offset)
-      return graph->failed = -ERR_STATE;
-    name = bytes + offset + header;
-    offset += record.reclen;
-    if (!record.inode)
+    isize          error = recordnext(bytes, valid, &offset, decode, &record, &name);
+    if (error < 0)
+      return graph->failed = error;
+    if (!error)
       continue;
-    if (record.inode >= FS_INODES || !record.namelen || record.namelen > 255 ||
-        record.namelen >= record.reclen - header || name[record.namelen])
-      return graph->failed = -ERR_STATE;
-    for (i = 0; i < record.namelen; i++)
-      if (!name[i] || name[i] == '/')
-        return graph->failed = -ERR_STATE;
     if (name[0] == '.' && (record.namelen == 1 || (record.namelen == 2 && name[1] == '.'))) {
       target = &graph->nodes[record.inode];
       if (record.kind != VNODE_DIR || target->kind != VNODE_DIR || !target->links ||

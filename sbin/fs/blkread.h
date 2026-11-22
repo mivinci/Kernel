@@ -15,6 +15,7 @@ typedef struct Blkredo     Blkredo;
 typedef struct Blkowners   Blkowners;
 typedef struct Blkdir      Blkdir;
 typedef struct Blkmount    Blkmount;
+typedef struct Blkfind     Blkfind;
 struct Blkread
 {
   Fsblk    *blk;
@@ -124,6 +125,25 @@ struct Blkdir
    and records ordinary edges.
    One means the traversal and graph checks both completed; zero continues. */
 isize blkdirstep(Blkdir *);
+
+struct Blkfind
+{
+  Blkowners       *home;
+  const Loadmap   *map;
+  const Loadindex *index;
+  Dirdecode        decode;
+  const char      *name;
+  u32              namelen;
+  u32              found;
+  u64              offset;
+  Dirrecord        match;
+  isize            failed;
+};
+/* Zero progress fields and supply pinned directory map/index and immutable
+   component from the same stable volume view. Own the home reader until
+   completion or external drain. Zero continues, one publishes a match;
+   absence returns -ENOENT. Output is untouched until success. */
+isize blkfindstep(Blkfind *, Dirrecord *);
 struct Blkmount
 {
   Blkprobe   *probe, *after;
