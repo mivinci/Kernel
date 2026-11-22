@@ -15,6 +15,7 @@
 #include "private/connection.h"
 #include "private/contextipc.h"
 #include "private/elfloadfs.h"
+#include "private/execmanifest.h"
 #include "private/filecreate.h"
 #include "private/fileimage.h"
 #include "private/filewatch.h"
@@ -3378,13 +3379,26 @@ publicchdirserver(const Bootview *boot)
           !hold &&
           fsfileholdref(&fixture.files, ref.pid, ref.image + 1, file.session, ref.id, &hold) ==
               -ERR_STALE &&
-          !hold &&
-          !fsfileholdref(&fixture.files, ref.pid, ref.image, file.session, ref.id, &hold) &&
-          hold == &file && file.refs == 2);
-    CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.node == &fixture.file &&
-          file.position == 3);
-    fsfiledrop(&fixture.files, hold);
-    CHECK(!file.refs && !file.node);
+          !hold && file.refs == 1);
+    {
+      static Execmanifest snapshot;
+      Fsfile             *holds[2] = {0};
+      snapshot.captured = 1;
+      snapshot.pid = ref.pid;
+      snapshot.source_image = ref.image;
+      snapshot.groups[0] = (Execgroup){file.session, ref.id, 2, 0};
+      snapshot.groups[1] = (Execgroup){file.session, ref.id + 1, 1, 0};
+      snapshot.count = 2;
+      CHECK(fsfileholdsnapshot(&fixture.files, &snapshot, holds, ARRAY_SIZE(holds)) == -ERR_STALE &&
+            !holds[0] && !holds[1] && file.refs == 1);
+      snapshot.count = 1;
+      CHECK(!fsfileholdsnapshot(&fixture.files, &snapshot, holds, ARRAY_SIZE(holds)) &&
+            holds[0] == &file && file.refs == 2);
+      CHECK(!fsstep(&fs) && !ref.file && file.refs == 1 && file.node == &fixture.file &&
+            file.position == 3);
+      fsfiledropsnapshot(&fixture.files, holds, snapshot.count);
+      CHECK(!holds[0] && !file.refs && !file.node);
+    }
   }
   CHECK(context.pid == target.target && fixture.holds == 2);
   for (steps = 0; steps < 8 && link.ready; steps++)

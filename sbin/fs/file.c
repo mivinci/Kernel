@@ -1,4 +1,5 @@
 #include "file.h"
+#include "private/execmanifest.h"
 #include <errno.h>
 
 static Fsref *
@@ -50,6 +51,41 @@ fsfileholdref(Fsfiles *table, Handle pid, u64 image, u64 session, u64 id, Fsfile
   if (!error)
     *out = ref->file;
   return error;
+}
+
+isize
+fsfileholdsnapshot(Fsfiles *table, const Execmanifest *snapshot, Fsfile **holds, u32 capacity)
+{
+  u32   i;
+  isize error;
+  if (!table || !holds || !snapshot || !snapshot->captured || !snapshot->count ||
+      snapshot->count > BOOT_FD_COUNT || snapshot->count > capacity)
+    return -ERR_INVALID;
+  for (i = 0; i < snapshot->count; i++)
+    if (holds[i])
+      return -ERR_BUSY;
+  for (i = 0; i < snapshot->count; i++) {
+    const Execgroup *group = &snapshot->groups[i];
+    error = fsfileholdref(table, snapshot->pid, snapshot->source_image, group->session,
+                          group->reference, &holds[i]);
+    if (error) {
+      fsfiledropsnapshot(table, holds, i);
+      return error;
+    }
+  }
+  return 0;
+}
+
+void
+fsfiledropsnapshot(Fsfiles *table, Fsfile **holds, u32 count)
+{
+  while (count) {
+    count--;
+    if (holds[count]) {
+      fsfiledrop(table, holds[count]);
+      holds[count] = NULL;
+    }
+  }
 }
 
 isize

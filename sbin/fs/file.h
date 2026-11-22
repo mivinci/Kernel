@@ -9,6 +9,7 @@ typedef struct Fsfile  Fsfile;
 typedef struct Fsref   Fsref;
 typedef struct Fsfiles Fsfiles;
 typedef struct Readjob Readjob;
+struct Execmanifest;
 struct Fsfile
 {
   Vnode   *node;
@@ -52,6 +53,10 @@ Fsfile *fsfilefind(Fsfiles *, Handle, u64 image, u64 session);
 /* Keep the exact source reference's File alive during inheritance. The
    hold has no client identity and does not authorize I/O. */
 isize fsfileholdref(Fsfiles *, Handle, u64 image, u64 session, u64 reference, Fsfile **out);
+/* One hold per grouped source reference. Storage starts empty and belongs
+   to the snapshot until its holds are released or moved to the child. */
+isize fsfileholdsnapshot(Fsfiles *, const struct Execmanifest *, Fsfile **holds, u32 capacity);
+void  fsfiledropsnapshot(Fsfiles *, Fsfile **holds, u32 count);
 isize fsfilehold(Fsfile *);
 void  fsfiledrop(Fsfiles *, Fsfile *);
 void  fsfileretire(Fsfiles *, Handle, u64 image);
