@@ -44,6 +44,14 @@ isize sysfileargs(u64 opcode, const Fileslot *slot);
    backend before using or writing any rows. */
 isize sysfilepollrows(const Fileinflight *active, Handle request, const volatile void *region,
                       u64 bytes, u32 index, const Fileslot *slot, Filepoll *out, u32 capacity);
+/* Encode an already captured client group into its reserved one-page lease.
+   The caller owns the lease and the disjoint private input. */
+isize sysfilepollstage(volatile void *region, u64 bytes, Filelease lease, const Filepoll *rows,
+                       u32 count, u64 deadline, u64 generation);
+/* Decode a successful ordinary reply after native FINISH. Validate the
+   echoed rows against the original private group before updating revents. */
+isize sysfilepollresult(const volatile void *region, u64 bytes, Filelease lease, const u64 words[4],
+                        Filepoll *rows, u32 count);
 /* Zero-initialized private ledger for one exact service connection. The
    serialized service loop verifies source and connid before admission.
    Keep the full REQUEST reserved through defer, cancellation and downstream

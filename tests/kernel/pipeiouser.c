@@ -708,9 +708,9 @@ static void
 querypipes(const int fds[2], u32 hangup)
 {
   Filelease          lease;
-  Fileslot           slot = {0};
   Filepoll           rows[2];
   volatile Filepoll *page;
+  void              *region = (void *) work.state.map.address;
   Fdview             view;
   Fileref            ref;
   Msg    message = {{hangup ? FS_POLL_WAIT : FS_POLL_QUERY, work.state.map.connid, 0, 0}};
@@ -724,33 +724,37 @@ querypipes(const int fds[2], u32 hangup)
     rows[i].events = hangup ? 0 : FS_POLL_IN | FS_POLL_OUT;
     rows[i].revents = UINT64_MAX;
   }
-  slot.span = 1;
-  slot.state = FS_SLOT_SUBMITTED;
-  slot.payload_bytes = sizeof(rows);
-  slot.args[0] = ARRAY_SIZE(rows);
-  slot.args[2] = 1;
   for (i = 0; i < (hangup ? 1U : 2U); i++) {
+    Handle rpc;
     CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
-    message.words[2] = slot.seq = lease.seq;
+    message.words[2] = lease.seq;
     message.words[3] = lease.slot;
     page = (volatile Filepoll *) (work.state.map.address + FS_DATA_OFFSET +
                                   lease.slot * FS_SLOT_BYTES);
     if (i)
       rows[1].session = UINT64_MAX;
-    CHECK(
-        !__sys_copy((void *) page, rows, sizeof(rows)) &&
-        !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
-                    &slot, sizeof(slot)) &&
-        !ipc_call(work.state.call, &message, 0, &result) && result.words[1] == lease.seq);
+    CHECK(!sysfilepollstage(region, FS_CONN_BYTES, lease, rows, ARRAY_SIZE(rows), 0, 1) &&
+          !page[0].revents && !page[1].revents &&
+          !ipc_call(work.state.call, &message, CALL_ASYNC, &result));
+    rpc = result.request;
+    CHECK(!ipc_rqwait(rpc, RQ_FINISH, &result) && !ipc_rqpoll(rpc, 0, &result) &&
+          result.kind == IPC_NONE && result.words[1] == lease.seq);
     if (i)
       CHECK((isize) result.words[0] == -ESTALE && !result.words[2] && !result.words[3] &&
-            page[0].revents == UINT64_MAX && page[1].revents == UINT64_MAX);
-    else
-      CHECK(!result.words[0] && result.words[2] == (hangup ? 2U : 1U) &&
-            result.words[3] == sizeof(rows) && page[0].revents == (hangup ? FS_POLL_HUP : 0) &&
-            page[1].revents == (hangup ? FS_POLL_HUP : FS_POLL_OUT) &&
-            page[0].fd_generation == rows[0].fd_generation && page[1].session == rows[1].session);
-    CHECK(!sysconnworkrelease(&work, &cache, lease));
+            !page[0].revents && !page[1].revents);
+    else {
+      u64 valid = page[1].revents;
+      page[1].revents = FS_POLL_NVAL;
+      CHECK(sysfilepollresult(region, FS_CONN_BYTES, lease, result.words, rows, ARRAY_SIZE(rows)) ==
+                -ERR_STATE &&
+            rows[0].revents == UINT64_MAX && rows[1].revents == UINT64_MAX);
+      page[1].revents = valid;
+      CHECK(sysfilepollresult(region, FS_CONN_BYTES, lease, result.words, rows, ARRAY_SIZE(rows)) ==
+                (hangup ? 2 : 1) &&
+            rows[0].revents == (hangup ? FS_POLL_HUP : 0) &&
+            rows[1].revents == (hangup ? FS_POLL_HUP : FS_POLL_OUT));
+    }
+    CHECK(!ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE) && !sysconnworkrelease(&work, &cache, lease));
   }
 }
 

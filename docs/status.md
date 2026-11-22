@@ -20,6 +20,7 @@
 
 ## 最新验证
 
+- stage435（2026-11-22）：libsys 接入 poll 单组请求编码与整组结果校验，双架构 QEMU `pipeio` 通过；公开 `poll()` 未接。
 - stage434（2026-11-22）：管道接入 `POLL_WAIT`；双架构 QEMU 验证挂起、写入唤醒、取消收尾和等待名额复用，公开 `poll()` 未接。
 - stage433（2026-11-22）：管道接入即时 `POLL_QUERY`，双架构 QEMU 验证可写、挂断和整组错误不改输出；长期等待及公开 `poll()` 未接。
 - stage432（2026-11-22）：blk 队列按顺序排空 WRITE 与 FLUSH；双架构 QEMU `virtiodev` 验证真实设备的写入、FLUSH 门禁与回读。生产运输仍待定稿。

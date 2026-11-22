@@ -114,6 +114,79 @@ sysfilepollrows(const Fileinflight *active, Handle request, const volatile void 
   return 0;
 }
 
+static int
+pollpage(const volatile void *region, u64 bytes, Filelease lease, const Filepoll *rows, u32 count)
+{
+  return bytes == FS_CONN_BYTES && !((uintptr_t) region & 7) && lease.seq && lease.span == 1 &&
+         spanvalid(lease.slot, lease.span) && count && count <= FS_POLL_ROWS &&
+         separate(region, bytes, rows, count * sizeof(*rows));
+}
+
+isize
+sysfilepollstage(volatile void *region, u64 bytes, Filelease lease, const Filepoll *rows, u32 count,
+                 u64 deadline, u64 generation)
+{
+  volatile u8       *base = region;
+  volatile Filepoll *output;
+  volatile u8       *descriptor;
+  Fileslot           slot;
+  u32                i;
+  if (!generation || !pollpage(region, bytes, lease, rows, count))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++)
+    if (!rows[i].session || !rows[i].fd_generation ||
+        rows[i].events & ~(u64) (FS_POLL_IN | FS_POLL_PRI | FS_POLL_OUT))
+      return -ERR_INVALID;
+  output = (volatile Filepoll *) (base + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+  for (i = 0; i < count; i++) {
+    output[i].session = rows[i].session;
+    output[i].fd_generation = rows[i].fd_generation;
+    output[i].events = rows[i].events;
+    output[i].revents = 0;
+  }
+  for (i = 0; i < sizeof(slot); i++)
+    ((volatile u8 *) &slot)[i] = 0;
+  slot.seq = lease.seq;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = lease.span;
+  slot.payload_bytes = count * sizeof(*rows);
+  slot.args[0] = count;
+  slot.args[1] = deadline;
+  slot.args[2] = generation;
+  descriptor = base + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES;
+  for (i = 0; i < sizeof(slot); i++)
+    descriptor[i] = ((const u8 *) &slot)[i];
+  return 0;
+}
+
+isize
+sysfilepollresult(const volatile void *region, u64 bytes, Filelease lease, const u64 words[4],
+                  Filepoll *rows, u32 count)
+{
+  const volatile u8       *base = region;
+  const volatile Filepoll *page;
+  u64                      events[FS_POLL_ROWS];
+  u32                      i, ready = 0;
+  if (!words || !pollpage(region, bytes, lease, rows, count))
+    return -ERR_INVALID;
+  if (words[0] || words[1] != lease.seq || words[2] > count || words[3] != count * sizeof(*rows))
+    return -ERR_STATE;
+  page = (const volatile Filepoll *) (base + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES);
+  for (i = 0; i < count; i++) {
+    u64 ordinary = rows[i].events & (FS_POLL_IN | FS_POLL_PRI | FS_POLL_OUT);
+    events[i] = page[i].revents;
+    if (page[i].session != rows[i].session || page[i].fd_generation != rows[i].fd_generation ||
+        page[i].events != rows[i].events || events[i] & ~(ordinary | FS_POLL_ERR | FS_POLL_HUP))
+      return -ERR_STATE;
+    ready += !!events[i];
+  }
+  if (ready != words[2])
+    return -ERR_STATE;
+  for (i = 0; i < count; i++)
+    rows[i].revents = events[i];
+  return ready;
+}
+
 isize
 sysfileaccept(Fileinflight *active, const volatile void *region, u64 bytes, u64 slot, u64 seq,
               Handle request, Fileslot *out)
