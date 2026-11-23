@@ -55,4 +55,7 @@ isize pipefilepin(Pipetable *table, Handle pid, u64 image, u64 session, u32 end,
 /* With no output, only check ownership. A returned private hold keeps the
    endpoint alive without giving the holder a client reference. */
 isize pipefileref(Pipetable *, Handle, u64 image, Pipekey, Pipefile **out);
+/* Transfer one snapshot hold to the exact child; failure leaves it owned by
+   the snapshot. The caller must verify the child's construction first. */
+isize pipefileinherit(Pipetable *, Handle, u64 image, Pipekey, Pipefile **hold);
 #endif

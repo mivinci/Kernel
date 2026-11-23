@@ -122,6 +122,20 @@ filelifetime(Handle pid, u64 image)
         !pipefileclose(&table, pid, image, keys[PIPE_READ]) &&
         !pipefileready(&table, pid, image, keys[PIPE_WRITE].session, &ready) && ready.error &&
         !ready.room && !ready.hup && !ready.readable && !pipefileretire(&table, pid, image));
+  {
+    Pipefile *hold = NULL;
+    Handle child = pid == 2 ? 3 : 2;
+    CHECK(!pipefilecreate(&table, pid, image, 0, cred, keys) &&
+          !pipefileref(&table, pid, image, keys[PIPE_WRITE], &hold) &&
+          !pipefileclose(&table, pid, image, keys[PIPE_WRITE]) &&
+          piperead(&files[0].stream, &byte, 1) == -ERR_WOULD_BLOCK &&
+          !pipefileinherit(&table, child, 1, keys[PIPE_WRITE], &hold) && !hold &&
+          !pipefileref(&table, child, 1, keys[PIPE_WRITE], NULL) &&
+          pipewrite(&files[0].stream, "z", 1) == 1 &&
+          piperead(&files[0].stream, &byte, 1) == 1 && byte == 'z' &&
+          !pipefileclose(&table, child, 1, keys[PIPE_WRITE]) &&
+          piperead(&files[0].stream, &byte, 1) == 0 && !pipefileretire(&table, pid, image));
+  }
 }
 
 static void

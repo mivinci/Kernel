@@ -105,6 +105,29 @@ closeone(Pipetable *table, Piperef *ref)
 }
 
 isize
+pipefileinherit(Pipetable *table, Handle pid, u64 image, Pipekey key, Pipefile **hold)
+{
+  Piperef *free = NULL;
+  u32 i, end;
+  if (!table || !hold || !*hold || !pidvalid(pid) || !image || !key.session || !key.reference)
+    return -ERR_INVALID;
+  if (lookup(table, key.session, &end) != *hold)
+    return -ERR_STALE;
+  for (i = 0; i < table->nrefs; i++) {
+    Piperef *ref = &table->refs[i];
+    if (!ref->pid && !free)
+      free = ref;
+    if (ref->pid == pid && ref->image == image && ref->reference == key.reference)
+      return -ERR_STATE;
+  }
+  if (!free)
+    return -ERR_CAPACITY;
+  install(free, pid, image, key);
+  *hold = NULL;
+  return 0;
+}
+
+isize
 pipefileclose(Pipetable *table, Handle pid, u64 image, Pipekey key)
 {
   u32 i;
