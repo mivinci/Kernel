@@ -62,7 +62,7 @@ int
 sysbootfds(const Bootfd *fds, u64 count)
 {
   u64 seen[(BOOT_FD_COUNT + 63) / 64] = {0};
-  u64 i, word, bit;
+  u64 i, j, word, bit;
   if (count > BOOT_FD_COUNT || (count && !fds))
     return 0;
   for (i = 0; i < count; i++) {
@@ -75,6 +75,11 @@ sysbootfds(const Bootfd *fds, u64 count)
     if (seen[word] & bit)
       return 0;
     seen[word] |= bit;
+    /* Syntactic aliases must agree before the runtime resolves CALL peers. */
+    for (j = 0; j < i; j++)
+      if (fds[j].backend_call == fd->backend_call && fds[j].reference_id == fd->reference_id &&
+          (fds[j].session != fd->session || fds[j].prepare_token != fd->prepare_token))
+        return 0;
   }
   return 1;
 }

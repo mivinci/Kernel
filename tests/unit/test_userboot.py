@@ -256,12 +256,12 @@ class UserBootTests(unittest.TestCase):
             struct.pack_into('<II',data,144,152,length);data[152:]=b'x'*(length-1)+b'\0'
             self.check(data,-1 if extra else 0)
 
-    def test_fd_ids_flags_reserved_and_duplicate_rows(self):
+    def test_fd_ids_flags_reference_and_duplicate_rows(self):
         data=bytearray(240);handle=(2<<59)|(1<<16)
         struct.pack_into('<18Q',data,0,BOOT_MAGIC,BOOT_FORMAT,len(data),0,0,0,0,0,0,0,2,144,0,0,USER_LO,USER_HI,0,0)
-        for i in range(2):struct.pack_into('<6Q',data,144+i*48,i,0,handle,1,7,0)
+        for i in range(2):struct.pack_into('<6Q',data,144+i*48,i,0,handle,1,7,9)
         self.check(data)
-        for offset,value in ((144,128),(152,2),(160,1),(184,1),(192,0)):
+        for offset,value in ((144,128),(152,2),(160,1),(184,0),(192,0),(216,2),(224,8)):
             bad=bytearray(data);struct.pack_into('<Q',bad,offset,value);self.check(bad,-1)
 
     def test_package_view_range_pair_and_format_two_are_checked(self):
