@@ -10,7 +10,7 @@
 - libsys 已接本地 fd/File、pipe、原 RPC 收尾、私有 spawn 及部分 exec/FS_LOAD 路径。公开 POSIX 前端、完整 exec 继承、作业控制和标准运行环境仍在收口。
 - `FS_LOAD` 等块映射时的取消排空已接：`PREPARED` 本地撤销，`WAITING` 先协作取消，再经 FINISH、ACK 释放槽。双架构 `pipeio` 已通过，后续继续 FS/blk 生产接线。
 - 公开 SDK 的最小程序和 miniz 已通过双架构静态构建。普通程序的 stdout 和退出状态、BusyBox 完整构建和运行仍未验收。已记录的 BusyBox 首错是 `sys/times.h` 和 `dirent.h`。
-- 本地有 blk 启动接线的在途改动。PID 迁移已让调度与信号直接使用内部运行槽，双架构 QEMU `sigframe` 已通过。发号及公开 ABI 尚未切换。
+- 本地有 blk 启动接线的在途改动。PID 迁移已让调度、信号和 IRQ 直接使用内部运行槽，双架构 QEMU `sigframe` 与 `irqbind` 已通过。发号及公开 ABI 尚未切换。
 
 ## 未决与阻塞
 

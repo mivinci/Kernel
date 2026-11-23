@@ -13,7 +13,7 @@ struct Binding
   Imageid image;
   Event  *event;
   Handle  owner;
-  u32     source, bit, state, next;
+  u32     source, bit, state, next, slot;
 };
 #ifndef IRQ_GENERATION_MAX
 #define IRQ_GENERATION_MAX (~(u64) 0)
@@ -94,7 +94,12 @@ irqnew(u32 source, Imageid id, Event *event, u32 bit, Irqid *out)
     return -ERR_STALE;
   if (image.state != IMAGE_ACTIVE && image.state != IMAGE_PREPARING)
     return -ERR_STATE;
-  slot = handleindex(image.pid);
+  {
+    Life life;
+    if (lifestat(image.life, &life))
+      return -ERR_STALE;
+    slot = life.run;
+  }
   if (slot >= PROCS)
     return -ERR_INVALID;
   if (sources[source].binding)
@@ -125,6 +130,7 @@ irqnew(u32 source, Imageid id, Event *event, u32 bit, Irqid *out)
   binding->image.reserved = 0;
   binding->event = event;
   binding->owner = image.pid;
+  binding->slot = slot;
   binding->source = source;
   binding->bit = bit;
   binding->state = IRQ_DISABLED;
@@ -146,7 +152,9 @@ revoke(Binding *binding)
     return;
   if (!binding->state || !binding->event || sources[binding->source].binding != index + 1)
     panic("IRQ revoke source");
-  link = &heads[handleindex(binding->owner)];
+  if (binding->slot >= PROCS)
+    panic("IRQ owner slot");
+  link = &heads[binding->slot];
   while (*link && *link != index + 1) {
     if (++count > 16)
       panic("IRQ revoke chain");
@@ -193,13 +201,16 @@ void
 irqend(Imageid image)
 {
   Image    owner;
+  Life     life;
   Binding *binding;
   u32      entry, next, count = 0;
   if (!initialized)
     return;
-  if (imagestat(image, &owner) || owner.state != IMAGE_ENDED)
+  if (imagestat(image, &owner) || owner.state != IMAGE_ENDED || lifestat(owner.life, &life))
     panic("IRQ image end");
-  for (entry = heads[handleindex(owner.pid)]; entry; entry = next) {
+  if (life.run >= PROCS)
+    return;
+  for (entry = heads[life.run]; entry; entry = next) {
     binding = &bindings[entry - 1];
     next = binding->next;
     if (++count > 16 || binding->owner != owner.pid)
@@ -287,6 +298,7 @@ irqcheck(void)
 {
   Binding *binding;
   Image    image;
+  Life     life;
   u32      i, j, entry, count, seen[IRQS];
   for (i = 0; i < IRQS; i++)
     seen[i] = 0;
@@ -297,7 +309,7 @@ irqcheck(void)
         return -ERR_STATE;
       binding = &bindings[entry - 1];
       if (seen[entry - 1]++ || binding->state < IRQ_DISABLED || binding->state > IRQ_DELIVERED ||
-          handleindex(binding->owner) != i)
+          binding->slot != i)
         return -ERR_STATE;
     }
   }
@@ -315,7 +327,7 @@ irqcheck(void)
     }
     if (seen[i] != 1 || sources[binding->source].binding != i + 1 || !binding->event ||
         imagestat(binding->image, &image) || image.state == IMAGE_ENDED ||
-        image.pid != binding->owner)
+        image.pid != binding->owner || lifestat(image.life, &life) || life.run != binding->slot)
       return -ERR_STATE;
     for (j = i + 1; j < IRQS; j++)
       if (bindings[j].state && bindings[j].state != IRQ_REVOKED &&
