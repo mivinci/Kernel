@@ -1824,7 +1824,7 @@ forktables(Rtable *source, Rtable *target, const Createarg *limits, u32 staged)
       source->count < 3 ||
       (limits && (limits->reserved || limits->resources != target->count || !limits->pending ||
                   limits->pending > PENDING_CALLS)) ||
-      handletype(source->owner) != HANDLE_PROCESS || handletype(target->owner) != HANDLE_PROCESS ||
+      !pidvalid(source->owner) || !pidvalid(target->owner) ||
       source->owner == target->owner || !source->image || !target->image ||
       acctstat(source->acct, &parent) || acctstat(target->acct, &child) ||
       parent.state != AC_ACTIVE || child.state != AC_ACTIVE || parent.set != child.set ||

@@ -65,7 +65,7 @@ sessionfind(Handle sid, Handle *out)
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (handletype(sid) != HANDLE_PROCESS)
+  if (!pidvalid(sid))
     return -ERR_INVALID;
   for (i = 0; i < GROUPS; i++)
     if (groups[i].kind == HANDLE_SESSION && groups[i].id == sid) {
@@ -82,7 +82,7 @@ sessioncreate(Handle sid, Handle *out)
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (handletype(sid) != HANDLE_PROCESS)
+  if (!pidvalid(sid))
     return -ERR_INVALID;
   if (!sessionfind(sid, &existing))
     return -ERR_STATE;
@@ -99,7 +99,7 @@ groupfind(Handle pgid, Handle session, Handle *out)
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (handletype(pgid) != HANDLE_PROCESS)
+  if (!pidvalid(pgid))
     return -ERR_INVALID;
   if (!find(session, HANDLE_SESSION))
     return -ERR_BAD_HANDLE;
@@ -117,7 +117,7 @@ groupmatch(Handle pgid, Handle *out)
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (handletype(pgid) != HANDLE_PROCESS)
+  if (!pidvalid(pgid))
     return -ERR_BAD_HANDLE;
   for (i = 0; i < GROUPS; i++)
     if (groups[i].kind == HANDLE_GROUP && groups[i].id == pgid && groups[i].processes) {
@@ -136,7 +136,7 @@ groupcreate(Handle pgid, Handle session, Handle *out)
   *out = 0;
   if (!s)
     return -ERR_BAD_HANDLE;
-  if (handletype(pgid) != HANDLE_PROCESS)
+  if (!pidvalid(pgid))
     return -ERR_INVALID;
   if (!groupfind(pgid, session, &existing))
     return -ERR_STATE;
@@ -303,7 +303,7 @@ groupcheck(void)
     if (!g->kind)
       continue;
     if (!g->generation || g->generation > HANDLE_GENERATION_MAX || !g->refs ||
-        handletype(g->id) != HANDLE_PROCESS || g->members > g->processes)
+        !pidvalid(g->id) || g->members > g->processes)
       return -ERR_STATE;
     if (g->kind == HANDLE_GROUP) {
       s = find(g->session, HANDLE_SESSION);
@@ -334,7 +334,7 @@ int
 groupidused(Handle pgid)
 {
   u32 i;
-  if (handletype(pgid) != HANDLE_PROCESS)
+  if (!pidvalid(pgid))
     return -ERR_INVALID;
   for (i = 0; i < GROUPS; i++)
     if (groups[i].kind == HANDLE_GROUP && groups[i].id == pgid)

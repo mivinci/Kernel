@@ -833,7 +833,7 @@ rqcount(Handle pid, u64 image, u32 *out)
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if (handletype(pid) != HANDLE_PROCESS)
+  if (!pidvalid(pid))
     return -ERR_INVALID;
   for (i = 0; i < REQUESTS; i++)
     if (queryroles(&requests[i], pid, image))
@@ -867,7 +867,7 @@ rqquery(Handle pid, u64 image, u64 cursor, Queryrec *records, u32 count, u32 *wr
     return -ERR_INVALID;
   *written = 0;
   *next = 0;
-  if (handletype(pid) != HANDLE_PROCESS || !records || !count || count > QUERY_RECORDS ||
+  if (!pidvalid(pid) || !records || !count || count > QUERY_RECORDS ||
       cursor >> 59)
     return -ERR_INVALID;
   if (cursor) {

@@ -78,7 +78,7 @@ setpgid(pid_t pid, pid_t pgid)
     return (int) failure(-ERR_INVALID, 0);
   /* A nonexistent destination group is EPERM, rather than a missing target
      process's ESRCH. Classification never grants access to that group. */
-  if (pgid && handlekind(pgid) != HANDLE_PROCESS)
+  if (pgid && !pidvalid(pgid))
     return (int) failure(-ERR_DENIED, 0);
   error = __sys_setpg(pid, pgid);
   return error ? (int) failure(error, 1) : 0;

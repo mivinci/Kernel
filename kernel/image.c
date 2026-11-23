@@ -235,7 +235,7 @@ int
 imagefind(Handle pid, u64 number, Imageid *out)
 {
   u32 i;
-  if (!out || handletype(pid) != HANDLE_PROCESS || !number)
+  if (!out || !pidvalid(pid) || !number)
     return -ERR_INVALID;
   for (i = 0; i < IMAGES; i++)
     if (images[i].state && images[i].pid == pid && images[i].number == number) {

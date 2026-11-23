@@ -112,7 +112,7 @@ create(Rtable *source, Rtable *target, Lifeid life, Imageid identity, u32 origin
   u64     now;
   int     error;
   if (!source || !target || !out || source == target || source->state != LOCAL_OPEN ||
-      target->state != LOCAL_OPEN || handletype(source->owner) != HANDLE_PROCESS ||
+      target->state != LOCAL_OPEN || !pidvalid(source->owner) ||
       !source->image || lifestat(life, &l) || l.pid != target->owner || !target->image)
     return -ERR_INVALID;
   if (origin == PREP_EXEC) {
@@ -588,8 +588,8 @@ preprelated(Handle owner, u64 sourceimage, Handle target, u64 number, Imageid *o
   Life  life;
   u32   i;
   int   usable;
-  if (!out || handletype(owner) != HANDLE_PROCESS || !sourceimage ||
-      handletype(target) != HANDLE_PROCESS || (target == owner && !number))
+  if (!out || !pidvalid(owner) || !sourceimage || !pidvalid(target) ||
+      (target == owner && !number))
     return -ERR_INVALID;
   out->generation = 0;
   out->index = out->reserved = 0;

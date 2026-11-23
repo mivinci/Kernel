@@ -46,5 +46,10 @@ handlekind(Handle handle)
   kind = (uint32_t) (word >> 59);
   return kind >= HANDLE_PROCESS && kind <= HANDLE_TERMINAL ? kind : 0;
 }
+static __inline__ int
+pidvalid(int64_t pid)
+{
+  return handlekind(pid) == HANDLE_PROCESS;
+}
 #endif
 #endif
