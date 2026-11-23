@@ -274,7 +274,7 @@ main(int argc, char **argv)
           237);
   pid = work->pid;
   REQUIRE(sysspawnpublish(&spawn) == pid && waitpid(pid, &status, 0) == pid &&
-              WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+              WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT && !WCOREDUMP(status),
           238);
   bootpacket(0, '4');
   replacement.elf.parent_space = space;

@@ -255,6 +255,8 @@ waitpid将0/正完整PID/负组/-1选择器直接交原生wait，先拒绝未知
 
 WIFEXITED/WEXITSTATUS/WIFSIGNALED/WTERMSIG/WIFSTOPPED/WSTOPSIG/WIFCONTINUED按同一状态编码定义，输入表达式各求值一次。这些状态数值属于本SDK，不承诺Linux二进制兼容。POSIX官方wait页面本次访问未成功取得内容；此交付依据已冻结接口和项目状态编码，不声称已完成POSIX原文逐条审计或标准合规。完整信号中断/重启、errno保存恢复和异步安全验收仍待后续真实信号路径。
 
+公开 `<sys/wait.h>` 提供 ash 作业状态显示使用的 `WCOREDUMP(status)`，从信号终止状态读取既有 core 位，参数只求值一次。主机测试核对模拟的有无 core 两种编码；ARM64、RV64 QEMU `elf` 核对真实 `SIGABRT` 退出不报告 core。目前内核不生成 core 文件。
+
 验证：elf两架构真实用户父以常规waitpid检查WNOHANG的status不变与errno保留，收取真实csu/main孩子的退出42，再以只读Boot作为另一孩子status输出得到EFAULT；下一次waitpid/ECHILD，证实已收取结果不复活。init场景使用常规getpid/getppid核对PID1/父0和活孤儿父1。6项新增host覆盖全部状态编码（含信号/FAULT/CORE及模拟STOP/CONT）、NULL status、输出故障后的消费、错误转换、选择器/选项及重复父查询；模拟结果不冒充内核未实现的信号/STOP事件。本地完整253项host、格式及92个两架构QEMU通过；最后宽度断言后两架构elf和6项host再验通过，日志build/host/stage38-libc-wait/。未执行CI或真实硬件标准验收。
 
 管理强杀状态验证接续（2026-11-16）：init真实用户场景新增两次CONTROL terminate阻塞/已唤醒未恢复的组wait父进程，常规wait取得SIGNALLED结果并核对WIFSIGNALED/WTERMSIG=9；其活孩子/已结束未收取孩子均由init正常wait退出22/11。此前信号状态编码的host证据增加了这条真实管理强杀结果，但sigsend、捕获信号及STOP/CONT仍未实现；详细窗口/引用守恒见03末尾。

@@ -9,6 +9,7 @@
 #define WEXITSTATUS(status)  (((unsigned int) (status) >> 8) & 0xffU)
 #define WIFSIGNALED(status)  ((((unsigned int) (status) & 0x7fU) - 1U) < 0x7eU)
 #define WTERMSIG(status)     ((unsigned int) (status) & 0x7fU)
+#define WCOREDUMP(status)    ((unsigned int) (status) & 0x80U)
 #define WIFSTOPPED(status)   (((unsigned int) (status) & 0xffU) == 0x7fU)
 #define WSTOPSIG(status)     (((unsigned int) (status) >> 8) & 0xffU)
 #define WIFCONTINUED(status) ((unsigned int) (status) == 0xffffU)

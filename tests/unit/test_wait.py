@@ -39,9 +39,10 @@ isize __sys_copy(void *destination,const void *source,u64 bytes){
 }
 u64 test_macros(int status){
  return (u64)WIFEXITED(status)|((u64)WIFSIGNALED(status)<<1)|((u64)WIFSTOPPED(status)<<2)|
- ((u64)WIFCONTINUED(status)<<3)|((u64)WEXITSTATUS(status)<<8)|((u64)WTERMSIG(status)<<16)|((u64)WSTOPSIG(status)<<24);
+ ((u64)WIFCONTINUED(status)<<3)|((u64)!!WCOREDUMP(status)<<4)|
+ ((u64)WEXITSTATUS(status)<<8)|((u64)WTERMSIG(status)<<16)|((u64)WSTOPSIG(status)<<24);
 }
-int test_evaluations(void){int status=0;WIFSIGNALED(status++);return status;}
+int test_evaluations(void){int status=0;WIFSIGNALED(status++);WCOREDUMP(status++);return status;}
 ''')
         command=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'lib/libsys/include'),'-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'include')]
@@ -71,8 +72,10 @@ int test_evaluations(void){int status=0;WIFSIGNALED(status++);return status;}
             self.lib.test_result(0,123,kind,code);output=C.c_int(-1)
             self.assertEqual(self.lib.user_waitpid(123,C.byref(output),0),123)
             self.assertEqual(output.value,expected);self.assertEqual(self.lib.test_macros(output.value)&15,flags)
+            if flags == 2:
+                self.assertEqual(bool(self.lib.test_macros(output.value)&16),bool(code&0x200))
             self.assertEqual(self.error[0],33)
-        self.assertEqual(self.lib.test_evaluations(),1)
+        self.assertEqual(self.lib.test_evaluations(),2)
 
     def test_nonblocking_no_result_does_not_access_even_an_invalid_output(self):
         self.lib.test_result(0,0,0,0)
