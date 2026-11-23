@@ -2,6 +2,13 @@
 #include "private/syscall.h"
 #include <errno.h>
 
+enum
+{
+  Irqidle,
+  Irqpoll,
+  Irqrearm
+};
+
 isize
 blkservicecall(Blkservice *service, const Ipcmsg *call)
 {
@@ -50,18 +57,21 @@ advance(Blkservice *service)
 {
   Blktransport *transport = service->transport;
   isize         error;
-  if (service->pending) {
+  if (service->pending == Irqpoll) {
     Vdone done[VQ_BATCH];
     u32   count, more, causes;
     error = blktransportpoll(transport, done, &count, &more, &causes);
     if (error)
       return error;
-    if (!more) {
-      error = __sys_irqack(service->irq);
-      if (error)
-        return error;
-      service->pending = 0;
-    }
+    if (more)
+      return 0;
+    service->pending = Irqrearm;
+  }
+  if (service->pending == Irqrearm) {
+    error = __sys_irqack(service->irq);
+    if (error)
+      return error;
+    service->pending = Irqidle;
   }
   if (blktransportonline(transport) && transport->queue->configpending) {
     Vblkconfig config;
@@ -105,7 +115,7 @@ blkservestep(Blkservice *service)
     return blkservicecall(service, &input);
   if (input.kind == IPC_EVENT) {
     if ((input.words[0] & service->irqevent) && blktransportonline(service->transport))
-      service->pending = 1;
+      service->pending = Irqpoll;
     if (input.words[0] & EVENT_LIFE)
       service->retiring = 1;
     return advance(service);
@@ -116,6 +126,6 @@ blkservestep(Blkservice *service)
 isize
 blkservestop(Blkservice *service, u64 now)
 {
-  service->pending = 0;
+  service->pending = Irqidle;
   return blktransportrecover(service->transport, now);
 }

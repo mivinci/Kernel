@@ -49,7 +49,8 @@ class BlkTransportTests(unittest.TestCase):
                      'validation', 'queue capacity', 'exact link busy', 'client reap',
                      'immediate reply and ledger retry with active I/O',
                      'flush ordering and geometry backpressure',
-                     'used batch survives a request check failure', 'config retry without a new IRQ')
+                     'used batch survives a request check failure', 'config retry without a new IRQ',
+                     'IRQ rearm retry does not poll the device again')
         for library in self.libraries:
             for index, scenario in enumerate(scenarios):
                 with self.subTest(scenario=scenario):

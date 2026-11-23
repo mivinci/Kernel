@@ -2103,8 +2103,13 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
                 !blkservicecall(&service, &input) && transport.active == 1,
             372);
     if (i + 1 == ARRAY_SIZE(blkopcodes)) {
-      while (transport.active)
-        REQUIRE(!blkservestep(&service), 457);
+      isize rearm = 0;
+      service.irq = 0;
+      while (transport.active && !rearm)
+        rearm = blkservestep(&service);
+      REQUIRE(rearm == -ERR_BAD_HANDLE && !transport.active && service.pending, 457);
+      service.irq = binding;
+      REQUIRE(!blkservestep(&service), 457);
       REQUIRE(!service.pending && !__sys_alarmcancel(&alarm), 458);
       vdev_trace[38]++;
       break;

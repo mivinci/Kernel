@@ -53,6 +53,9 @@ static isize        defererror, replyerror, finishrequesterror, finishledgererro
 static Handle       request;
 static u64          requeststate;
 static u64          recvoptions;
+static u64          recvevent;
+static u32          irqreads, irqacks;
+static isize        irqerror;
 static u32          configreads, configchanges;
 static Msg          result;
 
@@ -487,6 +490,7 @@ vinterrupt(Vdev *input, u32 *causes)
   (void) input;
   if (!causes)
     return -ERR_INVALID;
+  irqreads++;
   *causes = 0;
   return 0;
 }
@@ -884,9 +888,14 @@ reaptest(void)
 isize
 ipc_recv(u64 mask, u64 options, Ipcmsg *out)
 {
-  (void) mask;
-  (void) out;
   recvoptions = options;
+  if (recvevent & mask) {
+    *out = (Ipcmsg){0};
+    out->kind = IPC_EVENT;
+    out->words[0] = recvevent;
+    recvevent = 0;
+    return 0;
+  }
   return options == RECV_NONBLOCK ? -ERR_WOULD_BLOCK : -ERR_INTERRUPTED;
 }
 
@@ -894,7 +903,24 @@ isize
 __sys_irqack(Handle binding)
 {
   (void) binding;
-  return -ERR_STATE;
+  irqacks++;
+  return irqerror;
+}
+
+static int
+rearmretrytest(void)
+{
+  Blkservice service = {0};
+  CHECK(!resettest());
+  service.transport = &transport;
+  service.irqevent = (u64) 1 << 16;
+  recvevent = service.irqevent;
+  irqreads = irqacks = 0;
+  irqerror = -ERR_STATE;
+  CHECK(blkservestep(&service) == -ERR_STATE && irqreads == 1 && irqacks == 1 && service.pending);
+  irqerror = 0;
+  CHECK(!blkservestep(&service) && irqreads == 1 && irqacks == 2 && !service.pending);
+  return 0;
 }
 
 static int
@@ -958,6 +984,8 @@ blktransporttest(u32 scenario)
     return completionbatchtest();
   case 16:
     return configretrytest();
+  case 17:
+    return rearmretrytest();
   default:
     return __LINE__;
   }
