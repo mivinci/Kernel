@@ -51,6 +51,7 @@
 #define QUERY_LIFE           4
 #define QUERY_RESOURCE       5
 #define QUERY_BOOT_RESOURCE  6
+#define QUERY_TIMES          7
 #define QUERY_RECORDS        16
 #ifndef __ASSEMBLER__
 #include <types.h>

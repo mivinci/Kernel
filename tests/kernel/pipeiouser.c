@@ -11,6 +11,7 @@
 #include <sys/channel.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/times.h>
 #include "private/close.h"
 #include "private/connection.h"
 #include "private/contextipc.h"
@@ -1532,6 +1533,13 @@ brokenclient(void)
   CHECK(!feof(stdin) && fgetc(stdin) == EOF && errno == EBADF && ferror(stdin) && !feof(stdin));
   CHECK(!feof_unlocked(stdin) && ferror_unlocked(stdin) && fileno_unlocked(stdin) == 0 &&
         getc_unlocked(stdin) == EOF && errno == EBADF);
+  {
+    struct tms usage;
+    clock_t    ticks = times(&usage);
+    CHECK(sysconf(_SC_CLK_TCK) == 100 && ticks >= 0 && usage.tms_utime >= 0 &&
+          usage.tms_stime >= 0 && times(NULL) >= ticks && errno == EBADF);
+    CHECK(times((struct tms *) 1) == -1 && errno == EFAULT);
+  }
   CHECK(!sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
   alias = dup(fds[0]);
   CHECK(alias >= 0 && !close(fds[0]) && write(fds[1], "r", 1) == 1 && read(alias, &byte, 1) == 1 &&

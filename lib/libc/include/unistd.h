@@ -5,6 +5,7 @@
 #include <sys/seek.h>
 #define _SC_PAGESIZE  1
 #define _SC_PAGE_SIZE _SC_PAGESIZE
+#define _SC_CLK_TCK   2
 extern char **environ;
 extern char  *optarg;
 extern int    opterr, optind, optopt;

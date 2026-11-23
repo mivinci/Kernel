@@ -3,7 +3,8 @@
 #include <sys/types.h>
 #include <abi/time.h>
 
-typedef int clockid_t;
+typedef int     clockid_t;
+typedef int64_t clock_t;
 struct timespec
 {
   time_t tv_sec;

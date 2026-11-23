@@ -142,7 +142,7 @@ static int  terminate(Proc *p);
 static Proc *
 find(Handle pid)
 {
-  u32   slot;
+  u32 slot;
   if (!pidvalid(pid))
     return NULL;
   for (slot = 0; slot < PROCS; slot++) {
@@ -346,8 +346,8 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if ((booting ? parent != 0 : !pidvalid(parent)) || !limit || peak < limit ||
-      !resources || resources > LOCALS)
+  if ((booting ? parent != 0 : !pidvalid(parent)) || !limit || peak < limit || !resources ||
+      resources > LOCALS)
     return -ERR_INVALID;
   if (booting) {
     if (processes[0].state || processes[0].generation)
@@ -3318,9 +3318,11 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
   *written = *next = 0;
   if (!current || source != current->resources || current->state != PROC_RUNNING || vm_paused)
     return -ERR_STATE;
-  if (!count || count > QUERY_RECORDS || kind < QUERY_PROC || kind > QUERY_BOOT_RESOURCE ||
-      cursor >> 59 || (cursor && !(cursor >> 16)))
+  if (!count || count > QUERY_RECORDS || kind < QUERY_PROC || kind > QUERY_TIMES || cursor >> 59 ||
+      (cursor && !(cursor >> 16)))
     return -ERR_INVALID;
+  if (kind == QUERY_TIMES && (authority || cursor))
+    return authority ? -ERR_DENIED : -ERR_INVALID;
   if (kind == QUERY_BOOT_RESOURCE) {
     error = bootresourcequery(source, authority, cursor, records, (u32) count, &n, &following);
     if (error)
@@ -3394,6 +3396,29 @@ procquery(Rtable *source, Handle authority, u64 kind, u64 cursor, u64 address, u
           return error;
         n = 1;
       }
+    } else if (kind == QUERY_TIMES) {
+      u64 now, elapsed, total, user;
+      error = clockmono(&now);
+      if (error)
+        return error;
+      if (now < dispatched)
+        return -ERR_OVERFLOW;
+      elapsed = now - dispatched;
+      if (elapsed > UINT64_MAX - current->cpu_ns)
+        return -ERR_OVERFLOW;
+      total = current->cpu_ns + elapsed;
+      user = user_ns[current - processes];
+      if (user_running || user > total)
+        return -ERR_STATE;
+      querybase(&records[0], kind, life.pid, current->generation);
+      records[0].image = source->image;
+      records[0].data[0] = user;
+      records[0].data[1] = total - user;
+      error = lifechildusage(identity, &records[0].data[2], &records[0].data[3]);
+      if (error)
+        return error;
+      records[0].data[4] = now;
+      n = 1;
     } else if (kind == QUERY_LIFE) {
       querybase(&records[0], kind, life.pid, life.sequence);
       records[0].data[0] = (u64) life.parent;
