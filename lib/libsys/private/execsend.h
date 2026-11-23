@@ -8,6 +8,8 @@ struct Execsend
 {
   Opkey       key;
   Fileinherit rows[BOOT_FD_COUNT];
+  isize       business;
+  u64         snapshot;
 };
 
 /* Prepare the slot for the exact connection, using an independently owned
@@ -17,4 +19,12 @@ struct Execsend
    capture until the backend preparation/compensation has been resolved. */
 isize sysexecfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context,
                      u64 owner, u64 target_image, u64 deadline, u64 *owned_file, Execsend *send);
+/* Same pin ownership rules. Zero token stages SNAPSHOT; a returned token
+   stages PREPARE for the same child. */
+isize sysforkfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context,
+                     u64 owner, Connpeer child, u64 token, u64 deadline, u64 *owned_file,
+                     Execsend *send);
+/* Reap an already submitted fork manifest, saving its reply before ACK.
+   On success owned_file receives the operation pin and the key is cleared. */
+isize sysforkfdcollect(Connwork *work, Conncache *cache, Execsend *send, u64 *owned_file);
 #endif

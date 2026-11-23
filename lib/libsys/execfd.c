@@ -159,15 +159,16 @@ sysexecfdboot(const Execfds *capture, Connpeer backend, Handle call, u64 token, 
   return (isize) count;
 }
 
-isize
-sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u64 deadline,
-                  u64 args[8], Fileinherit *rows, u64 capacity)
+static isize
+fdmanifest(const Execfds *capture, Connpeer backend, Connpeer target, u64 token, u64 deadline,
+           u64 args[8], Fileinherit *rows, u64 capacity, int fork)
 {
   const Execfd *fd;
   u64           bytes, i, count = 0;
   if (!capture || !capture->pool || capture->ready != 1 || capture->count > BOOT_FD_COUNT)
     return -ERR_STATE;
-  if (!pidvalid(backend.pid) || !backend.image || target_image <= capture->self.image ||
+  if (!pidvalid(backend.pid) || !backend.image || !pidvalid(target.pid) || !target.image ||
+      (fork ? target.pid == capture->self.pid : target.image <= capture->self.image) ||
       !deadline || capacity > BOOT_FD_COUNT ||
       !separate(args, 8 * sizeof(*args), capture, sizeof(*capture)) ||
       !separate(args, 8 * sizeof(*args), capture->pool, sizeof(*capture->pool)))
@@ -195,11 +196,27 @@ sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u6
     rows[count].reference_id = fd->reference;
     count++;
   }
-  args[0] = (u64) capture->self.pid;
-  args[1] = target_image;
+  args[0] = (u64) target.pid;
+  args[1] = target.image;
   args[2] = capture->self.image;
   args[3] = deadline;
   args[4] = count;
-  args[5] = args[6] = args[7] = 0;
+  args[5] = args[7] = 0;
+  args[6] = token;
   return (isize) count;
+}
+
+isize
+sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u64 deadline,
+                  u64 args[8], Fileinherit *rows, u64 capacity)
+{
+  Connpeer target = {capture ? capture->self.pid : 0, target_image};
+  return fdmanifest(capture, backend, target, 0, deadline, args, rows, capacity, 0);
+}
+
+isize
+sysforkfdmanifest(const Execfds *capture, Connpeer backend, Connpeer child, u64 token,
+                  u64 deadline, u64 args[8], Fileinherit *rows, u64 capacity)
+{
+  return fdmanifest(capture, backend, child, token, deadline, args, rows, capacity, 1);
 }

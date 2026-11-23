@@ -2874,12 +2874,18 @@ procgrant(Rtable *source, Handle authority, Handle resource, u64 rights, u64 off
           u64 inherit, Handle *out)
 {
   Proc *p;
+  Rtable *target;
   int   error;
   if (!out)
     return -ERR_INVALID;
   *out = 0;
   if (inherit & ~3UL)
     return -ERR_INVALID;
+  error = localqueryprep(source, authority, &target);
+  if (!error)
+    return localcopy(source, resource, target, rights, offset, length, (u32) inherit, out);
+  if (error != -ERR_BAD_HANDLE)
+    return error;
   error = targetproc(source, authority, CONTROL_INSTALL, &p);
   if (error)
     return error;

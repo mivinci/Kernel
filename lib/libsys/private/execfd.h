@@ -33,6 +33,10 @@ isize sysexecfdrelease(Execfds *capture);
    or negative status. No match produces an empty manifest, not a request. */
 isize sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u64 deadline,
                         u64 args[8], Fileinherit *rows, u64 capacity);
+/* Fork keeps every descriptor flag. Use token zero for SNAPSHOT and the
+   backend's returned token for PREPARE, with the same capture and child. */
+isize sysforkfdmanifest(const Execfds *capture, Connpeer backend, Connpeer child, u64 token,
+                        u64 deadline, u64 args[8], Fileinherit *rows, u64 capacity);
 /* Pack surviving aliases for one prepared backend. call is the target's
    local CALL, and token belongs to this exact backend preparation. */
 isize sysexecfdboot(const Execfds *capture, Connpeer backend, Handle call, u64 token, Bootfd *rows,

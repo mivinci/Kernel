@@ -67,15 +67,18 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
   Packet packet;
   Config config;
   u32    i, j, peer;
-  for (i = 0; i < count; i++)
-    CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
+  for (i = 0; i < count; i++) {
+    u64 pages = roles[i] == 'R' || roles[i] == 'T' ? 384 : 256;
+    CHECK(!procnew(set, 1, pages, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
+  }
   for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
     peer = count == 2 ? 1 - i : (i ? 0 : 1);
     for (j = 0; j < sizeof(packet); j++)
       ((u8 *) &packet)[j] = 0;
-    CHECK(!localendpoint(table, processes[peer].identity, LOCAL_CALL, LOCAL_USE, 0,
-                         roles[i] == 'R' || roles[i] == 'T' ? LOCAL_EXEC : 0, &call));
+    CHECK(!localendpoint(table, processes[peer].identity, LOCAL_CALL,
+                         LOCAL_USE | (roles[i] == 'R' || roles[i] == 'T' ? LOCAL_GRANT : 0),
+                         0, 0, &call));
     packet.header.magic = BOOT_MAGIC;
     packet.header.format = BOOT_FORMAT;
     packet.header.bytes = sizeof(packet);
@@ -294,6 +297,8 @@ execclaimtest(int reuse)
           !spaceread(proc[i].space, filecreate_trace_address, trace, sizeof(trace))) {
         putstr(" line=");
         puthex(trace[15]);
+        putstr(" load_status=");
+        puthex(trace[14]);
       }
       putstr("\n");
       panic("exec claim result");

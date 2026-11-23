@@ -323,7 +323,7 @@ def build(args):
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.name in ('term.c','input.c','serial.c','wait.c')],
         *[compile_adoption(source,'fs-'+source.stem) for source in fs_load_sources]])
     filecreate_image=sdk/'filecreateuser.img'
-    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],240 if stdout_probe else 156))
+    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],240 if stdout_probe else 160))
     filecreate_inspect=invoke('inspect-filecreate',[tools['readelf']['path'],'-s',str(filecreate_elf)])
     filecreate_rows=[line.split() for line in filecreate_inspect.splitlines() if line.split() and line.split()[-1]=='filecreatetrace']
     if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')
@@ -349,7 +349,7 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/blklog.c','fs-blklog'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
-    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],217))
+    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],220))
     pipeio_inspect=invoke('inspect-pipeio',[tools['readelf']['path'],'-s',str(pipeio_elf)])
     pipeio_rows=[line.split() for line in pipeio_inspect.splitlines() if line.split() and line.split()[-1]=='pipeiotrace']
     if len(pipeio_rows)!=1 or int(pipeio_rows[0][2])!=16:raise BuildError('pipe I/O trace missing')

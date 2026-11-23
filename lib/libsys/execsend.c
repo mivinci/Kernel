@@ -9,9 +9,9 @@ separate(const void *a, u64 bytes, const void *b, u64 length)
          (x + bytes <= y || y + length <= x);
 }
 
-isize
-sysexecfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context, u64 owner,
-               u64 target_image, u64 deadline, u64 *owned_file, Execsend *send)
+static isize
+fdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context, u64 owner,
+        Connpeer target, u64 token, u64 deadline, u64 *owned_file, Execsend *send, u32 opcode)
 {
   Fileslot slot;
   Fileref  pin;
@@ -31,8 +31,12 @@ sysexecfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 con
     return -ERR_STALE;
   if (send->key.lease.seq)
     return -ERR_BUSY;
-  count = sysexecfdmanifest(capture, work->state.peer, target_image, deadline, slot.args,
-                            send->rows, BOOT_FD_COUNT);
+  if (opcode == FS_EXEC_PREPARE)
+    count = sysexecfdmanifest(capture, work->state.peer, target.image, deadline, slot.args,
+                              send->rows, BOOT_FD_COUNT);
+  else
+    count = sysforkfdmanifest(capture, work->state.peer, target, token, deadline, slot.args,
+                              send->rows, BOOT_FD_COUNT);
   if (count <= 0)
     return count < 0 ? count : -ERR_STALE;
   error = sysfilerefview(capture->pool, capture->self, *owned_file, &pin);
@@ -45,7 +49,7 @@ sysexecfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 con
   slot.span = slot.payload_bytes > FS_SLOT_BYTES ? 2 : 1;
   slot.object = slot.reserved[0] = slot.reserved[1] = slot.reserved[2] = 0;
   key = &send->key;
-  error = sysopprepare(work, cache, context, (u32) slot.span, owner, owned_file, 0, FS_EXEC_PREPARE,
+  error = sysopprepare(work, cache, context, (u32) slot.span, owner, owned_file, 0, opcode,
                        deadline, key);
   if (error)
     return error;
@@ -69,5 +73,71 @@ sysexecfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 con
     key->lease.seq = 0;
     return error;
   }
+  send->business = 0;
+  send->snapshot = 0;
   return 0;
+}
+
+isize
+sysexecfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context, u64 owner,
+               u64 target_image, u64 deadline, u64 *owned_file, Execsend *send)
+{
+  Connpeer target = {0, target_image};
+  return fdbegin(capture, work, cache, context, owner, target, 0, deadline, owned_file, send,
+                 FS_EXEC_PREPARE);
+}
+
+isize
+sysforkfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context, u64 owner,
+               Connpeer child, u64 token, u64 deadline, u64 *owned_file, Execsend *send)
+{
+  return fdbegin(capture, work, cache, context, owner, child, token, deadline, owned_file, send,
+                 token ? FS_FORK_PREPARE : FS_FORK_SNAPSHOT);
+}
+
+isize
+sysforkfdcollect(Connwork *work, Conncache *cache, Execsend *send, u64 *owned_file)
+{
+  const Slotop *op;
+  isize         error;
+  if (!separate(send, sizeof(*send), work, sizeof(*work)) ||
+      !separate(send, sizeof(*send), cache, sizeof(*cache)) ||
+      !separate(owned_file, sizeof(*owned_file), send, sizeof(*send)) ||
+      !separate(owned_file, sizeof(*owned_file), work, sizeof(*work)) ||
+      !separate(owned_file, sizeof(*owned_file), cache, sizeof(*cache)) || *owned_file)
+    return -ERR_INVALID;
+  error = sysopcheck(work, cache, &send->key);
+  if (error)
+    return error;
+  op = &work->state.operations[send->key.lease.slot];
+  if (op->opcode != FS_FORK_SNAPSHOT && op->opcode != FS_FORK_PREPARE)
+    return -ERR_INVALID;
+  if (op->phase == SYSOP_WAITING) {
+    error = sysoppoll(work, cache, &send->key);
+    if (error)
+      return error;
+  }
+  if (op->phase == SYSOP_RESULT) {
+    error = sysopfinished(work, cache, &send->key);
+    if (error)
+      return error;
+    if (op->status || op->words[1] != send->key.lease.seq || op->words[3] ||
+        (isize) op->words[0] > 0 ||
+        (!!op->words[2] != (!op->words[0] && op->opcode == FS_FORK_SNAPSHOT)))
+      return op->status ? op->status : -ERR_STATE;
+    send->business = (isize) op->words[0];
+    send->snapshot = op->words[2];
+    error = sysopsaved(work, cache, &send->key);
+    if (error)
+      return error;
+  }
+  if (op->phase != SYSOP_ACKED) {
+    error = sysopack(work, cache, &send->key);
+    if (error)
+      return error;
+  }
+  error = sysopfinish(work, cache, &send->key, owned_file);
+  if (!error)
+    send->key.lease.seq = 0;
+  return error;
 }

@@ -171,6 +171,24 @@ class ExecFdTests(unittest.TestCase):
         self.assertEqual(pack(C.byref(self.out), Peer(pid(3), 1), 11, 123, args, None, 0), 0)
         self.assertEqual(args[4], 0)
 
+    def test_fork_manifest_keeps_cloexec_and_targets_exact_child(self):
+        file = self.new(80, 81)
+        self.put(1, file, 1)
+        self.assertEqual(self.snapshot(), 0)
+        args, rows = (U * 8)(), (WireRow * 1)()
+        pack = self.lib.sysforkfdmanifest
+        pack.argtypes = [C.POINTER(Capture), Peer, Peer, U, U, C.POINTER(U),
+                         C.POINTER(WireRow), U]
+        pack.restype = C.c_int64
+        child = Peer(pid(3), 1)
+        for token in (0, 456):
+            self.assertEqual(pack(C.byref(self.out), self.peer, child, token, 123,
+                                  args, rows, 1), 1)
+            self.assertEqual(list(args), [child.pid, 1, self.self.image, 123, 1, 0, token, 0])
+            self.assertEqual((rows[0].fd, rows[0].flags, rows[0].reference), (1, 1, 81))
+        self.assertEqual(pack(C.byref(self.out), self.peer, self.self, 0, 123,
+                              args, rows, 1), -1)
+
     def test_boot_rows_preserve_alias_identity_and_skip_cloexec(self):
         file = self.new(80, 81)
         self.put(0, file)

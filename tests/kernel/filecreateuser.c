@@ -719,50 +719,44 @@ client(const Bootview *boot)
   execmanifest(boot, first, BOOT_FD_COUNT);
   {
     Forkret     forked;
-    Filelease   lease;
-    Fileref     ref;
-    Fileslot    slot = {0};
-    Fileinherit rows[2];
-    Msg         prepare = {{FS_FORK_SNAPSHOT, work.state.map.connid, 0, 0}};
+    Fdtag       tag;
+    Fdview      fd;
+    Connpeer    child;
+    Msg         prepare;
     Msg         check = {{FORKWATCH, 0, 0, 0}};
-    u64         address = work.state.map.address;
-    u64         token = 0;
+    u64         token = 0, pin, closing = 0;
+    Handle      rpc;
     u32         attempt;
+    for (attempt = 0; attempt < 2; attempt++)
+      CHECK(!sysfilerefalias(&pool, work.state.self, first) && !sysfdreserve(&fds, 0, &tag) &&
+            tag.index == attempt &&
+            !sysfdpublish(&fds, tag, first, attempt ? 0 : BOOT_FD_CLOEXEC));
     CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked) &&
-          !sysfilerefview(&pool, work.state.self, first, &ref));
-    slot.state = FS_SLOT_SUBMITTED;
-    slot.span = 1;
-    slot.payload_bytes = sizeof(rows);
-    slot.args[0] = (u64) forked.pid;
-    slot.args[1] = 1;
-    slot.args[2] = work.state.self.image;
-    slot.args[3] = UINT64_MAX;
-    slot.args[4] = ARRAY_SIZE(rows);
-    rows[0] = (Fileinherit){
-        0,           BOOT_FD_CLOEXEC, (u64) work.state.peer.pid, work.state.peer.image,
-        ref.session, ref.reference};
-    rows[1] = rows[0];
-    rows[1].fd = 1;
-    rows[1].flags = 0;
+          !sysexecfds(&execfds, &fds, &pool, &cache, work.state.self));
+    child = (Connpeer){forked.pid, 1};
     for (attempt = 0; attempt < 4; attempt++) {
-      CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
-      prepare.words[2] = slot.seq = lease.seq;
-      prepare.words[3] = lease.slot;
-      slot.args[6] = attempt == 1 ? token + 1 : token;
-      CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
-                        sizeof(rows)) &&
-            !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
-                        sizeof(slot)) &&
-            !ipc_call(work.state.call, &prepare, 0, &result) &&
-            (isize) result.words[0] == (attempt & 1 ? -ESTALE : 0) &&
-            result.words[1] == lease.seq && !sysconnworkrelease(&work, &cache, lease));
+      pin = first;
+      CHECK(!sysfilerefpin(&pool, work.state.self, pin) &&
+            !sysforkfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, child,
+                            attempt == 1 ? token + 1 : token, UINT64_MAX, &pin, &execsend) &&
+            !pin && !sysoprequest(&work, &cache, &execsend.key, &prepare) &&
+            !ipc_call(work.state.call, &prepare, CALL_ASYNC, &result));
+      rpc = result.request;
+      CHECK(!sysopsubmitted(&work, &cache, &execsend.key, &rpc) && !rpc &&
+            !ipc_rqwait(result.request, 0, &result) &&
+            !sysopcapture(&work, &cache, &execsend.key, 0, &result) &&
+            !sysforkfdcollect(&work, &cache, &execsend, &pin) &&
+            execsend.business == (attempt & 1 ? -ESTALE : 0) && !execsend.key.lease.seq &&
+            pin == first && !sysfilerefunpin(&pool, work.state.self, pin));
       if (!attempt) {
-        token = result.words[2];
+        token = execsend.snapshot;
         CHECK(token && token != UINT64_MAX);
-        prepare.words[0] = FS_FORK_PREPARE;
       }
     }
-    CHECK(!__sys_forkabort(forked.construct));
+    CHECK(!sysexecfdrelease(&execfds) && !__sys_forkabort(forked.construct));
+    for (attempt = 0; attempt < 2; attempt++)
+      CHECK(!sysfdobserve(&fds, attempt, &fd) &&
+            !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);
     check.words[1] = (u64) forked.pid;
     CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
   }
@@ -1083,7 +1077,8 @@ claimsource(const Bootview *boot, int reuse)
   next.elf.parent_space = bootresource(boot, BOOT_SELF_SPACE);
   next.elf.scratch = 0x2000000;
   next.elf.scratch_bytes = BOOT_MAX_BYTES;
-  CHECK(!elfcheck(&source, 128, &plan) && !sysexecprepare(&next, 0));
+  /* The new image receives a shared connection page on its first claim. */
+  CHECK(!elfcheck(&source, 128, &plan) && !sysexecprepare(&next, 1));
   pin = file;
   CHECK(!sysexecfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, next.elf.image, 100, &pin,
                         &execsend) &&
@@ -1113,8 +1108,11 @@ claimsource(const Bootview *boot, int reuse)
   packet.resources[0].tag = BOOT_SELF_SPACE;
   packet.resources[1].tag = BOOT_SELF_ALLOC;
   packet.resources[2].tag = reuse ? EXEC_CLAIM_READY : EXEC_CLAIM_CALL;
-  packet.resources[2].handle = work.state.call;
-  CHECK(!sysexecfill(&next, &source, &plan, &packet, sizeof(packet)));
+  CHECK(!__sys_grant(next.elf.view, work.state.call, RESOURCE_USE, 0, 0, 0,
+                     &packet.resources[2].handle));
+  packet.fd.backend_call = packet.resources[2].handle;
+  filecreatetrace[14] = (u64) sysexecfill(&next, &source, &plan, &packet, sizeof(packet));
+  CHECK(!filecreatetrace[14]);
   CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
   call.words[0] = FS_READ;
   call.words[2] = slot.seq = lease.seq;

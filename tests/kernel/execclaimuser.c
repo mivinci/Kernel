@@ -54,12 +54,22 @@ claim(const Bootview *boot)
             -ERR_STALE ||
         sysctxexecclaim(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active))
       return 72;
-  } else if (sysfileclaimrange(EXEC_CLAIM_ADDRESS) ||
-             sysfileimageio(0, (int) opened.tag.index, FS_READ, NULL, &received, sizeof(received),
-                            &io) ||
-             io.native || io.business || io.count != sizeof(received) ||
-             received != EXEC_CLAIM_MARKER)
-    return 72;
+  } else {
+    isize error = sysfileclaimrange(EXEC_CLAIM_ADDRESS);
+    if (error)
+      return 80 - (int) error;
+    error = sysfileclaimfd(0, (int) opened.tag.index, EXEC_CLAIM_ADDRESS);
+    if (error)
+      return 180 - (int) error;
+    error = sysfileimageio(0, (int) opened.tag.index, FS_READ, NULL, &received, sizeof(received),
+                           &io);
+    if (error)
+      return 110 - (int) error;
+    if (io.native)
+      return 140 - (int) io.native;
+    if (io.business || io.count != sizeof(received) || received != EXEC_CLAIM_MARKER)
+      return 170;
+  }
   if (sysfileclaimfd(0, (int) opened.tag.index, EXEC_CLAIM_ADDRESS) ||
       sysconnview(&cache, tag, &entry) || entry.state != SYSCONN_READY ||
       entry.connid != EXEC_CLAIM_CONNID || work.state.map.address != EXEC_CLAIM_ADDRESS ||
