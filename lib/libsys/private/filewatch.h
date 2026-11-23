@@ -61,6 +61,10 @@ isize sysopenclose(Openprep *pool, u32 count, Handle client, u64 image, u64 sess
    1 while a logical close is owed, or 0 for a tombstone. Retire only after
    closing the reference or saving its cleanup. */
 isize sysopenabort(const Openprep *prep, const Ipcmsg *call);
+/* Settle the original ABORT. A nonzero connid must match the supplied ready
+   link and its caller. A revoke error preserves the reference and REQUEST. */
+isize sysopenabortreply(Openprep *pool, u32 count, const Filelink *link, const Ipcmsg *call,
+                        Openrevoke revoke, void *context);
 int   sysopenexpired(const Openprep *prep, u64 now);
 int   sysopenorphan(const Openprep *prep, const Fileowner *owner);
 void  sysopenretire(Openprep *prep);

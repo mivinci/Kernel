@@ -2041,7 +2041,8 @@ static isize
 revokepreparation(void *context, const Openprep *prep)
 {
   u64 *closed = context;
-  CHECK(prep->state == Openpending && prep->session && prep->reference);
+  CHECK((prep->state == Openpending || prep->state == Openattached) && prep->session &&
+        prep->reference);
   (*closed)++;
   return 0;
 }
@@ -2174,6 +2175,14 @@ backend(const Bootview *boot, u32 recover)
       token = input.words[3];
       CHECK(!input.words[1] && input.words[2] && token);
       prep = sysopenlookup(preps, ARRAY_SIZE(preps), token);
+      if (input.words[0] == FS_ABORT && recover != 3) {
+        status = prep ? sysopenabort(prep, &input) : -ERR_STALE;
+        CHECK(
+            !sysopenabortreply(preps, ARRAY_SIZE(preps), NULL, &input, revokepreparation, &closed));
+        if (status >= 0)
+          filecreatetrace[4]++;
+        continue;
+      }
       reply.words[1] = input.words[2];
       if (!prep) {
         reply.words[0] = (u64) -ESTALE;
@@ -2187,19 +2196,6 @@ backend(const Bootview *boot, u32 recover)
         filecreatetrace[4] = 1;
         filecreatetrace[0] = 2;
         return;
-      }
-      if (input.words[0] == FS_ABORT) {
-        status = sysopenabort(prep, &input);
-        if (status == 1) {
-          sysopenretire(prep);
-          closed++;
-        }
-        if (status < 0)
-          reply.words[0] = (u64) (status == -ERR_DENIED ? -EACCES : -ESTALE);
-        else
-          filecreatetrace[4]++;
-        CHECK(!ipc_reply(input.request, &reply));
-        continue;
       }
       CHECK(!sysfilenow(&now));
       status = sysopenattach(prep, &input, now);

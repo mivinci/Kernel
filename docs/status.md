@@ -20,7 +20,7 @@
 
 ## 最新验证
 
-- 后端可沿原 ATTACH 首次交付 MEM 或确认复用已就绪连接。ARM64、RV64 QEMU `runtime` 覆盖容量不足、分配失败回滚、错误镜像拒绝和最终关闭。生产 TTY/VFS 发权及接线待做。
+- 后端可沿原 ATTACH 首次交付 MEM 或确认复用已就绪连接，并沿原 ABORT 只撤销对应 token 的引用。ARM64、RV64 QEMU `runtime` 覆盖分配失败回滚、错误镜像拒绝、重复撤销及其余引用继续可用。生产 TTY/VFS 发权及接线待做。
 - 块卷目录游标让出后核对 inode 版本，版本变化时拒绝沿用旧偏移。双架构 QEMU `virtiodev` 验证版本变化和正常续读；生产版本发布及公开 `readdir` 待接。
 - `FORK_PREPARE` 的私有校验使用服务持有的快照；后端按子镜像观察区分准备、发布、撤销及发布后结束。ARM64、RV64 QEMU `runtime` 验证原 IPC 的 token 核对及子镜像准备、撤销；实际子引用和 Bootfd 交付仍待接。
 - FS 事件循环已接普通文件和管道的 `FORK_SNAPSHOT`。双架构 QEMU `pipeio` 验证父关闭后保留文件偏移，管道读端等待快照到期才收到 EOF。子引用准备和领取待接。

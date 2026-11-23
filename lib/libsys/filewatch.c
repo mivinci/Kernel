@@ -193,6 +193,50 @@ sysopenabort(const Openprep *prep, const Ipcmsg *call)
   return prep->state == Openpending || prep->state == Openattached;
 }
 
+isize
+sysopenabortreply(Openprep *pool, u32 count, const Filelink *link, const Ipcmsg *call,
+                  Openrevoke revoke, void *context)
+{
+  Msg       reply = {{0, 0, 0, 0}};
+  Openprep *prep;
+  u64       state, connid;
+  isize     error;
+  if (!pool || !count || count > SYSOPEN_POOL_MAX || !revoke || !call || call->kind != IPC_CALL ||
+      call->words[0] != FS_ABORT)
+    return -ERR_INVALID;
+  error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_DRAINING)
+    return ipc_rqfinish(call->request);
+  reply.words[1] = call->words[2];
+  connid = call->words[1];
+  if (state & RQ_CHECK_CANCEL)
+    reply.words[0] = (u64) -EINTR;
+  else if (state != RQ_CHECK_LIVE)
+    return -ERR_STATE;
+  else if (!call->words[2] || !call->words[3])
+    reply.words[0] = (u64) -EINVAL;
+  else if (connid &&
+           (!link || !link->ready || link->watch.connid != connid || !link->watch.owner.cookie ||
+            link->watch.owner.reason || link->watch.owner.pid != call->source ||
+            link->watch.owner.image != call->image))
+    reply.words[0] = (u64) -ESTALE;
+  else {
+    prep = sysopenlookup(pool, count, call->words[3]);
+    error = prep ? sysopenabort(prep, call) : -ERR_STALE;
+    if (error < 0)
+      reply.words[0] = (u64) (error == -ERR_DENIED ? -EACCES : -ESTALE);
+    else if (error == 1) {
+      error = revoke(context, prep);
+      if (error)
+        return error;
+      sysopenretire(prep);
+    }
+  }
+  return ipc_reply(call->request, &reply);
+}
+
 int
 sysopenexpired(const Openprep *prep, u64 now)
 {
