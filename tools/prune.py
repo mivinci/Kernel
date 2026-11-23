@@ -160,6 +160,8 @@ def plan(root, keep=20, grace_hours=24, now=None, measure=True):
         except (ValueError, OSError) as exc:
             raise ValueError('cannot read retention reference ' + str(source)) from exc
         for text in strings(value):
+            if 'build/' not in text:
+                continue
             text = text.replace(str(root) + '/build/', 'build/')
             for match in PATH.finditer(text):
                 path = match.group()
