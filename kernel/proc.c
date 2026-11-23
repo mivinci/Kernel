@@ -73,6 +73,7 @@ struct Proc
   /* Keep the 16-byte aligned switch context first to avoid internal padding. */
   Hkctx     kernel;
   u64       generation;
+  Handle    pid;
   Lifeid    life;
   Imageid   identity;
   Prepid    prep;
@@ -125,8 +126,7 @@ static u32       readyhead = PG_NONE, readytail = PG_NONE;
 static Handle
 pidof(const Proc *p)
 {
-  u32 slot = (u32) (p - processes);
-  return slot == 0 && p->generation == 1 ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
+  return p->pid;
 }
 static void wakeone(Proc *p);
 static void ready(Proc *p);
@@ -359,6 +359,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   p->wait_cursor = 0;
   p->generation++;
   pid = booting ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
+  p->pid = pid;
   eventinit(&p->events);
   error = lifecreaterun(set, pid, parent, slot, &p->life);
   if (error) {
