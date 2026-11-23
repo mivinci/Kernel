@@ -209,13 +209,19 @@ sysforkfdprepare(Forksend *tx, const Execfds *capture, Connwork *works, Conncach
   Fileref ref;
   isize error;
   if (!tx || !capture || !works || !cache || !bank || layer >= RCTX_LAYERS ||
-      tx->count > FIX_CONN_COUNT)
+      tx->count > FIX_CONN_COUNT || !pidvalid(child.pid) || !child.image)
     return -ERR_INVALID;
+  if (tx->child.pid && (tx->child.pid != child.pid || tx->child.image != child.image))
+    return -ERR_STALE;
+  tx->child = child;
   for (;;) {
     if (!tx->representative) {
       error = sysforkfdnext(capture, &tx->cursor, &peer, &tx->representative);
-      if (error <= 0)
+      if (error <= 0) {
+        if (!error)
+          tx->ready = 1;
         return error;
+      }
     }
     if (tx->count == FIX_CONN_COUNT)
       return -ERR_CAPACITY;
@@ -264,6 +270,9 @@ sysforkfdabort(Forksend *tx, Execfds *capture, Connwork *works, Conncache *cache
   isize     error;
   if (!tx || !capture || !works || !cache || !child)
     return -ERR_INVALID;
+  if (tx->child.pid && tx->child.pid != child->pid)
+    return -ERR_STALE;
+  tx->ready = 0;
   error = sysforkcancel(child);
   if (error)
     return error;
@@ -291,4 +300,26 @@ sysforkfdabort(Forksend *tx, Execfds *capture, Connwork *works, Conncache *cache
     tx->pin = 0;
   }
   return sysexecfdrelease(capture);
+}
+
+isize
+sysforkfdpublish(Forksend *tx, Elfwork *child, Rbank *bank, Connpeer parent, const Forkfix *fix)
+{
+  Forkfix plan;
+  if (!tx || !child || !bank || !fix || fix->connections || fix->connection_count)
+    return -ERR_INVALID;
+  if (tx->child.pid != child->pid)
+    return -ERR_STALE;
+  if (tx->ready != 1 || tx->count > FIX_CONN_COUNT || tx->representative || tx->snapshot ||
+      tx->pin || tx->send.key.lease.seq)
+    return -ERR_STATE;
+  plan.address = fix->address;
+  plan.capacity = fix->capacity;
+  plan.buffer = fix->buffer;
+  plan.resources = fix->resources;
+  plan.resource_count = fix->resource_count;
+  plan.connections = tx->peers;
+  plan.connection_count = tx->count;
+  tx->ready = 0;
+  return sysforkfinish(child, bank, parent, &plan);
 }

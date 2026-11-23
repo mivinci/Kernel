@@ -3,7 +3,7 @@
 #include "execfd.h"
 #include "operation.h"
 #include "context.h"
-#include "elf.h"
+#include "fork.h"
 
 typedef struct Execsend Execsend;
 typedef struct Forksend Forksend;
@@ -19,7 +19,8 @@ struct Forksend
   Execsend send;
   Fixconn  peers[FIX_CONN_COUNT];
   u64      representative, snapshot, pin;
-  u32      cursor, count;
+  Connpeer child;
+  u32      cursor, count, ready;
 };
 
 /* Prepare the slot for the exact connection, using an independently owned
@@ -53,4 +54,7 @@ isize sysforkfdprepare(Forksend *tx, const Execfds *capture, Connwork *works, Co
    retains its slot and pin until drained; WOULD_BLOCK permits retry. */
 isize sysforkfdabort(Forksend *tx, Execfds *capture, Connwork *works, Conncache *cache,
                      Elfwork *child);
+/* Publish only the child for which this transaction collected every peer. */
+isize sysforkfdpublish(Forksend *tx, Elfwork *child, Rbank *bank, Connpeer parent,
+                       const Forkfix *fix);
 #endif

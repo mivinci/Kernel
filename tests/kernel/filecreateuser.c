@@ -721,6 +721,7 @@ client(const Bootview *boot)
     Forkret     forked;
     Forksend    transaction = {0};
     Elfwork     pending = {0};
+    Forkfix     handoff = {0};
     Fdtag       tag;
     Fdview      fd;
     Connpeer    child, backend;
@@ -758,13 +759,17 @@ client(const Bootview *boot)
     child = (Connpeer){forked.pid, 1};
     pending.view = forked.construct;
     pending.pid = forked.pid;
+    CHECK(sysforkfdpublish(&transaction, &pending, &contexts, work.state.self, &handoff) ==
+              -ERR_STALE && pending.view == forked.construct);
     CHECK(!sysforkfdprepare(&transaction, &execfds, connections, &cache, &contexts, 0, child,
                             UINT64_MAX) &&
           transaction.count == 1 && transaction.peers[0].pid == work.state.peer.pid &&
           transaction.peers[0].image == work.state.peer.image && transaction.peers[0].token &&
           !transaction.pin && !transaction.send.key.lease.seq &&
           !sysforkfdabort(&transaction, &execfds, connections, &cache, &pending) &&
-          !pending.view && !execfds.count);
+          !pending.view && !execfds.count &&
+          sysforkfdpublish(&transaction, &pending, &contexts, work.state.self, &handoff) ==
+              -ERR_STATE);
     for (attempt = 0; attempt < 2; attempt++)
       CHECK(!sysfdobserve(&fds, attempt, &fd) &&
             !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);
