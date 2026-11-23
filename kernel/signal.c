@@ -473,7 +473,7 @@ sigchild(Imageid id, Handle child, u32 ruid, u64 reason, u64 status)
   Siginfo info;
   Signal *s;
   Image   image;
-  if (child == 1 || handlekind(child) != HANDLE_PROCESS)
+  if (child == 1 || !pidvalid(child))
     return -ERR_INVALID;
   if (reason == WAIT_EXITED) {
     if (status & ~((u64) 255 | WAIT_SIGNALLED | WAIT_FAULT) ||

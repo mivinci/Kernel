@@ -135,7 +135,7 @@ static Proc *
 find(Handle pid)
 {
   u32   slot;
-  if (handletype(pid) != HANDLE_PROCESS)
+  if (!pidvalid(pid))
     return NULL;
   for (slot = 0; slot < PROCS; slot++) {
     Proc *p = &processes[slot];
@@ -338,7 +338,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   if (!out)
     return -ERR_INVALID;
   *out = 0;
-  if ((booting ? parent != 0 : handletype(parent) != HANDLE_PROCESS) || !limit || peak < limit ||
+  if ((booting ? parent != 0 : !pidvalid(parent)) || !limit || peak < limit ||
       !resources || resources > LOCALS)
     return -ERR_INVALID;
   if (booting) {
@@ -1902,14 +1902,14 @@ procwait(Handle selector, u32 options, Liferesult *out, Childsel *retry)
     if (error)
       return error;
   } else if (selector > 0) {
-    if (handletype(selector) != HANDLE_PROCESS)
+    if (!pidvalid(selector))
       return -ERR_BAD_HANDLE;
     choice.kind = WAIT_SELECT_PID;
     choice.value = selector;
   } else if (selector < -1) {
     if ((u64) selector == ((u64) 1 << 63))
       return -ERR_INVALID;
-    if (handletype(-selector) != HANDLE_PROCESS)
+    if (!pidvalid(-selector))
       return -ERR_BAD_HANDLE;
     choice.kind = WAIT_SELECT_GROUP;
     error = groupmatch(-selector, &choice.value);
@@ -2630,7 +2630,7 @@ procsigsend(u64 address, u64 signum)
         return error;
       control = 1;
     } else {
-      if (handletype(selector.target) != HANDLE_PROCESS)
+      if (!pidvalid(selector.target))
         return -ERR_BAD_HANDLE;
       p = find(selector.target);
     }
@@ -2644,7 +2644,7 @@ procsigsend(u64 address, u64 signum)
       if (!selector.target)
         group = sender.group;
       else {
-        if (handletype(selector.target) != HANDLE_PROCESS)
+        if (!pidvalid(selector.target))
           return -ERR_BAD_HANDLE;
         error = groupmatch(selector.target, &group);
         if (error)
@@ -2738,7 +2738,7 @@ procttybind(Rtable *source, Handle authority, Handle sid)
   error = localterminalaccess(source, authority, TERMINAL_BIND, &terminal, &signals);
   if (error)
     return error;
-  if (handletype(sid) != HANDLE_PROCESS)
+  if (!pidvalid(sid))
     return -ERR_BAD_HANDLE;
   error = sessionfind(sid, &session);
   if (error)
@@ -3473,7 +3473,7 @@ procsetpg(Handle pid, Handle pgid)
     pid = pidof(current);
   if (!pgid)
     pgid = pid;
-  if (handletype(pgid) != HANDLE_PROCESS)
+  if (!pidvalid(pgid))
     return -ERR_BAD_HANDLE;
   error = jobrecord(pid, &identity, &life, &old);
   if (error)

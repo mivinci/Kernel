@@ -104,8 +104,7 @@ lifecreaterun(Setid set, Handle pid, Handle parent, u32 run, Lifeid *out)
   Life *l;
   u32   i, slot = PG_NONE;
   int   error;
-  if (!out || handletype(pid) != HANDLE_PROCESS ||
-      (pid == 1 ? parent != 0 : handletype(parent) != HANDLE_PROCESS) || pid == parent)
+  if (!out || !pidvalid(pid) || (pid == 1 ? parent != 0 : !pidvalid(parent)) || pid == parent)
     return -ERR_INVALID;
   if (run >= PROCS)
     return -ERR_INVALID;
@@ -439,7 +438,7 @@ lifereparent(Lifeid id, Handle oldparent, Handle newparent)
   Life *l = find(id);
   if (!l)
     return -ERR_STALE;
-  if (handletype(newparent) != HANDLE_PROCESS || newparent == l->pid)
+  if (!pidvalid(newparent) || newparent == l->pid)
     return -ERR_INVALID;
   if (!l->waitref || (l->state != LIFE_LIVE && l->state != LIFE_ENDED))
     return -ERR_STATE;
@@ -462,7 +461,7 @@ lifecollect(Lifeid id, Handle parent, Liferesult *out)
   out->reason = out->code = 0;
   if (!l)
     return -ERR_STALE;
-  if (handletype(parent) != HANDLE_PROCESS || parentof(l) != parent)
+  if (!pidvalid(parent) || parentof(l) != parent)
     return -ERR_DENIED;
   if (l->state == LIFE_LIVE)
     return -ERR_WOULD_BLOCK;
@@ -494,7 +493,7 @@ lifetake(Lifeid id, Handle parent, u32 options, Liferesult *out)
     return -ERR_INVALID;
   if (!l)
     return -ERR_STALE;
-  if (handletype(parent) != HANDLE_PROCESS || parentof(l) != parent)
+  if (!pidvalid(parent) || parentof(l) != parent)
     return -ERR_DENIED;
   if (l->state == LIFE_ENDED)
     return lifecollect(id, parent, out);
@@ -695,7 +694,7 @@ lifefindpid(Handle pid, Lifeid *out)
     return -ERR_INVALID;
   out->generation = 0;
   out->index = out->reserved = 0;
-  if (handletype(pid) != HANDLE_PROCESS)
+  if (!pidvalid(pid))
     return -ERR_BAD_HANDLE;
   for (i = 0; i < LIFES; i++) {
     l = &lives[i];
@@ -723,10 +722,10 @@ lifeselect(Handle parent, const Childsel *choice, u32 start, u32 options, Lifeid
   ready->index = ready->reserved = *matched = 0;
   if (!choice || choice->reserved || start >= LIFES ||
       options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED) ||
-      handletype(parent) != HANDLE_PROCESS || choice->kind > WAIT_SELECT_GROUP ||
+      !pidvalid(parent) || choice->kind > WAIT_SELECT_GROUP ||
       (choice->kind == WAIT_SELECT_ANY && choice->value))
     return -ERR_INVALID;
-  if (choice->kind == WAIT_SELECT_PID && handletype(choice->value) != HANDLE_PROCESS)
+  if (choice->kind == WAIT_SELECT_PID && !pidvalid(choice->value))
     return -ERR_BAD_HANDLE;
   if (choice->kind == WAIT_SELECT_GROUP &&
       (handletype(choice->value) != HANDLE_GROUP || groupstat(choice->value, &group)))
@@ -808,7 +807,7 @@ lifecheck(void)
     entry = runlife[i];
     if (entry && (entry > LIFES || !lives[entry - 1].state || lives[entry - 1].run != i))
       return -ERR_STATE;
-    if (childhint[i] && !handletype(childhint[i]))
+    if (childhint[i] && !pidvalid(childhint[i]))
       return -ERR_STATE;
   }
   return 0;

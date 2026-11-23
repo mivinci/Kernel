@@ -185,7 +185,7 @@ int
 hal_user_fork(Hctx *out, const Hctx *parent, u64 pid, u64 fixva)
 {
   u32 i;
-  if (!out || !parent || out == parent || pid <= 1 || handlekind((Handle) pid) != HANDLE_PROCESS ||
+  if (!out || !parent || out == parent || pid <= 1 || !pidvalid((Handle) pid) ||
       (fixva && (fixva < BOOT_USER_LO || fixva >= BOOT_USER_HI || (fixva & 7))) ||
       parent->tf.cause != 8 || parent->tf.x[17] != SYS_FORKPREP ||
       parent->tf.pc >= BOOT_USER_HI - 4)
