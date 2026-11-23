@@ -964,6 +964,8 @@ sysfileimagefs(u32 layer, u64 address, Connwork **out)
       goto restore;
   }
   work = &state->connections[fstag.index];
+  if (!address && execbase)
+    address = execbase + fstag.index * FS_CONN_BYTES;
   connecting = 1;
   error = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   if (!error)
@@ -1778,6 +1780,24 @@ posixio(isize status, const Fileioresult *result, int writing)
   default:
     return -EIO;
   }
+}
+
+isize
+sysfilepipeposix(u32 layer, int *fds)
+{
+  Fileioresult result = {0};
+  Connwork *work;
+  isize status;
+  if (!fds)
+    return -EFAULT;
+  status = sysfileimagefs(layer, 0, &work);
+  if (!status)
+    status = sysfileimagepipepair(layer, fds, &result.business);
+  if (status == -ERR_CAPACITY)
+    return -EMFILE;
+  if (status == -ERR_NOTSUP || status == -ERR_NOSYS)
+    return -ENOSYS;
+  return posixio(status, &result, 0);
 }
 
 isize

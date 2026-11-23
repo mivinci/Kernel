@@ -93,6 +93,7 @@ isize sysfileimagepipe(u32 layer, Connwork *work, Pipecreate *pipe, Rkey *active
 /* Publish a pair through the ready FS connection, retaining the original
    creation across caught signals. */
 isize sysfileimagepipepair(u32 layer, int *fds, isize *business);
+isize sysfilepipeposix(u32 layer, int *fds);
 /* Drive OPEN on the established FS connection. A resource success retains
    its foreground continuation; timeout transfers the original operation to
    the image worker and releases the unpublished descriptor. */

@@ -3707,7 +3707,8 @@ publicchdirclient(void)
   char             cwd[4] = "xxx";
   char             link[9] = "????????";
   char            *owned;
-  CHECK(!sysfileimagefs(0, ADDRESS, &peer));
+  CHECK(!sysfileclaimrange(ADDRESS) && !sysfileimagefs(0, 0, &peer) &&
+        peer->state.map.address == ADDRESS);
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
         open((const char *) (uintptr_t) 1, O_RDONLY) == -1 && errno == EFAULT);
   fd = open("/m", O_WRONLY | O_CREAT | O_EXCL, 0U);
@@ -3774,7 +3775,7 @@ publicchdirclient(void)
   CHECK(stream && fileno(stream) == 0 && fcntl(0, F_GETFD) == FD_CLOEXEC &&
         fwrite("W\0", 1, 2, stream) == 2 && ftello(stream) == 3 && fputs("XY", stream) >= 0 &&
         fseek(stream, 0, SEEK_SET) == -1 && errno == ENOSPC && ferror(stream));
-  CHECK(!pipe(ends));
+  CHECK(!sysfilepipeposix(0, ends));
   publicforksnapshot(peer, fileno(stream), ends[1]);
   CHECK(!close(ends[1]));
   CHECK(fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
