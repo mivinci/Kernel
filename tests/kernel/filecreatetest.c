@@ -98,7 +98,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     packet.resources[1].handle = testresource(table, LOCAL_ALLOC);
     packet.resources[2].tag = 256;
     packet.resources[2].handle = call;
-    if (roles[i] == '0') {
+    if (roles[i] == '0' || roles[i] == 'R') {
       Createpolicy policy = {0};
       policy.set = set;
       policy.memlimit = pages;
@@ -119,7 +119,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     if (i) {
       CHECK(!localobserve(
           table,
-          OBSERVE_SOURCE | (roles[i] == '1' ? OBSERVE_CHILD : 0) |
+          OBSERVE_SOURCE | (roles[i] == '1' || roles[i] == 'S' ? OBSERVE_CHILD : 0) |
               (roles[i] == '1' || roles[i] == 'S' || roles[i] == 'U' ? OBSERVE_FUTURE : 0),
           &call));
       packet.resources[packet.header.resource_count].tag = 258;
@@ -312,13 +312,24 @@ execclaimtest(int reuse)
   u32        i, turns = 0;
   int        error;
   pgstat(&before);
-  CHECK(!setcreate(2048, 4096, 2, &set) &&
+  CHECK(!setcreate(2048, 4096, 3, &set) &&
         !bootimagecheck(filecreate_image, (u64) (filecreate_image_end - filecreate_image), &image));
   loadroles(set, &image, pid, proc, reuse ? "TU" : "RS", 2);
   for (i = 0; i < 2; i++) {
     CHECK(!procinfo(pid[i], &proc[i]));
     while (proc[i].state != PROC_EXITING) {
+      /* Advance retired exec roots while the replacement image runs. */
+      if (proc[i].image > 1)
+        CHECK(procwork(32) >= 0);
       error = procrunone();
+      if (turns == 511 &&
+          !spaceread(proc[1].space, filecreate_trace_address, trace, sizeof(trace))) {
+        putstr("EXECCLAIM backend_line=");
+        puthex(trace[15]);
+        putstr(" fork_stage=");
+        puthex(trace[9]);
+        putstr("\n");
+      }
       CHECK((!error || error == -ERR_WOULD_BLOCK) && ++turns < 512);
       if (error)
         CHECK(procidle() >= 0);

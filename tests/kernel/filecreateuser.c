@@ -1102,7 +1102,7 @@ claimsource(const Bootview *boot, int reuse)
   struct Claimboot
   {
     Boot     header;
-    Resentry resources[3];
+    Resentry resources[4];
     Bootfd   fd;
   };
   Claimboot packet = {0};
@@ -1157,7 +1157,7 @@ claimsource(const Bootview *boot, int reuse)
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = sizeof(packet);
-  packet.header.resource_count = ARRAY_SIZE(packet.resources);
+  packet.header.resource_count = firstfd ? 4 : 3;
   packet.header.resources_off = offsetof(Claimboot, resources);
   packet.header.fd_count = 1;
   packet.header.fds_off = offsetof(Claimboot, fd);
@@ -1166,6 +1166,10 @@ claimsource(const Bootview *boot, int reuse)
   packet.resources[0].tag = BOOT_SELF_SPACE;
   packet.resources[1].tag = BOOT_SELF_ALLOC;
   packet.resources[2].tag = reuse ? EXEC_CLAIM_READY : EXEC_CLAIM_CALL;
+  if (firstfd) {
+    packet.resources[3].tag = BOOT_CREATE;
+    packet.resources[3].handle = bootresource(boot, BOOT_CREATE);
+  }
   CHECK(!__sys_grant(next.elf.view, work.state.call, RESOURCE_USE, 0, 0, 0,
                      &packet.resources[2].handle));
   packet.fd.backend_call = packet.resources[2].handle;
@@ -1344,6 +1348,60 @@ claimbackend(const Bootview *boot, int reuse)
             !sysfilefinish(&links[1].watch.active, input.request));
       sent += accepted;
     }
+    {
+      Filelink child = {0};
+      u64 childkey[5] = {(u64) target->pid, target->image, 100, 1000, 0};
+      Msg reply;
+      /* The exec reservation owns its copy; release the manifest workspace. */
+      execplan.count = 0;
+      filecreatetrace[9] = 1;
+      CHECK(!ipc_recv(0, 0, &input) && input.words[0] == FS_FORK_SNAPSHOT &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysforksnapshot(&forksnapshot, &links[1].watch, &input, &slot,
+                             (const void *) (links[1].address + FS_DATA_OFFSET +
+                                             input.words[3] * FS_SLOT_BYTES),
+                             self, 0, execreference, childkey, 71));
+      reply = (Msg){{0, slot.seq, 71, 0}};
+      CHECK(!ipc_reply(input.request, &reply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+      filecreatetrace[9] = 2;
+      CHECK(!ipc_recv(0, 0, &input) && input.words[0] == FS_FORK_PREPARE &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysforkprepare(&execplan, &forksnapshot, &links[1].watch, &input, &slot,
+                            (const void *) (links[1].address + FS_DATA_OFFSET +
+                                            input.words[3] * FS_SLOT_BYTES), self, 0) &&
+            !sysforkobserve(&child.watch.owner, permit, &input, execplan.child,
+                            execplan.target_image) &&
+            !sysfileprepay(&child, 1, 0, alloc, space, ADDRESS + 2 * FS_CONN_BYTES));
+      reply = (Msg){{0, slot.seq, 0, 0}};
+      CHECK(!ipc_reply(input.request, &reply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+      filecreatetrace[9] = 3;
+      CHECK(!ipc_recv(0, 0, &input) && input.source == child.watch.owner.pid &&
+            input.image == child.watch.owner.image && input.words[0] == FS_ATTACH &&
+            !input.words[1] && input.words[2] && input.words[3] == 71);
+      Resreply delivery = {child.memory, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES,
+                           {input.words[2], child.watch.connid, FS_CONN_BYTES}};
+      CHECK(!ipc_reply_resource(input.request, &delivery));
+      child.ready = 1;
+      child.prepaid = 0;
+      filecreatetrace[9] = 4;
+      CHECK(!ipc_recv(0, 0, &input) && input.words[0] == FS_READ &&
+            !sysfilelinkaccept(&child, 1, &input, &slot) && !sysfileargs(FS_READ, &slot) &&
+            slot.object == 100 && slot.args[1] == 1);
+      *(volatile u8 *) (child.address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) = 0x5a;
+      reply = (Msg){{0, slot.seq, 1, 1}};
+      CHECK(!ipc_reply(input.request, &reply) && !sysfilefinish(&child.watch.active, input.request));
+      filecreatetrace[9] = 5;
+      for (;;) {
+        isize state = sysforktarget(&child.watch.owner);
+        if (state == SYSEXEC_ENDED)
+          break;
+        CHECK(state == SYSEXEC_ACTIVE && !ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input));
+      }
+      CHECK(!sysfilelinkclose(&child));
+      filecreatetrace[9] = 6;
+    }
   } else
 #endif
   {
@@ -1390,10 +1448,13 @@ claimbackend(const Bootview *boot, int reuse)
           sysexecclaim(&execreserve, &old->owner, &links[1], &input) == -ERR_STALE &&
           !ipc_reply(input.request, &stale));
   }
-  do {
-    CHECK(!ipc_recv(EVENT_LIFE, 0, &input) && input.kind == IPC_EVENT &&
-          input.words[0] == EVENT_LIFE && !sysfileownerread(target));
-  } while (!target->reason);
+  for (;;) {
+    CHECK(!sysfileownerread(target));
+    if (target->reason)
+      break;
+    CHECK(!ipc_recv(EVENT_LIFE, RECV_EVENTS_ONLY, &input) && input.kind == IPC_EVENT &&
+          input.words[0] == EVENT_LIFE);
+  }
   CHECK(target->reason == OBS_EXIT &&
         !sysexecdiscard(&execreserve, &old->owner, target, execdrop, &held) && !held &&
         !sysfilelinkclose(&links[1]) && !sysfilelinkclose(&links[0]));

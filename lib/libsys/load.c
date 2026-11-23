@@ -214,6 +214,25 @@ fdcalls(Elfwork *work, const Bootview *boot)
   return left ? -ERR_BAD_HANDLE : 0;
 }
 static isize
+inheritedcreate(Handle handle)
+{
+  Queryrec rows[4];
+  u64 cursor = 0, count, next, i;
+  isize error;
+  do {
+    error = __sys_query(0, QUERY_RESOURCE, cursor, rows, ARRAY_SIZE(rows), &count, &next);
+    if (error)
+      return error;
+    for (i = 0; i < count; i++)
+      if ((Handle) rows[i].data[0] == handle && rows[i].data[1] == RESOURCE_CREATE &&
+          (rows[i].data[2] & RESOURCE_USE))
+        return 0;
+    cursor = next;
+  } while (cursor);
+  return -ERR_BAD_HANDLE;
+}
+
+static isize
 startup(Elfwork *work, const void *data, u64 bytes)
 {
   Handle    self[3], handle;
@@ -246,6 +265,10 @@ startup(Elfwork *work, const void *data, u64 bytes)
       continue;
     slot = entries[i].tag - BOOT_SELF_SPACE;
     handle = self[slot];
+    /* Exec moves CREATE at commit, after preparation-table enumeration. */
+    if (!handle && slot == 2 && work->image > 1 && entries[i].handle &&
+        !inheritedcreate(entries[i].handle))
+      handle = entries[i].handle;
     if (!handle || (entries[i].handle && entries[i].handle != handle))
       return -ERR_INVALID;
     entries[i].handle = handle;

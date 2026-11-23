@@ -308,6 +308,10 @@ stage192：`sysfixview` 检查固定头、父 PID/Image 和子 PID 的精确匹�
 
 stage193：libsys 私有 fork 桩保存原生结果到本次调用的私有输出。父得到 CONSTRUCT/PID，子得到零 CONSTRUCT、自身 PID 和 Fix 地址；调用者先据 CONSTRUCT 区分分支。提交返回 PID，撤销沿用原生状态。应用可见的子端修复和信号前置协作仍待接入。
 
+本地 musl 探针在 ARM64、RV64 QEMU `runtime` 验证了 exec 后短写续传、公开 `fork()`、子进程首次 `read()` 触发 ATTACH 并读到后端字节，以及父进程 `waitpid()` 收到退出码 43。该结果使用测试后端和本地 musl 适配，不代表生产 FS 或默认 SDK 已交付。
+
+本地 musl 适配已在 ARM64、RV64 QEMU 验证公开 `fork()` 和 `waitpid()`：有 CREATE 权限的进程创建子进程，子进程检查继承的 TLS，父进程通过 `waitpid()` 收取退出码 43，再次收取返回 `ECHILD`；无 CREATE 权限返回 `EPERM`。探针在嵌入汇编中记录载荷哈希，防止 ELF 内容变动而符号地址不变时复用旧对象。该验证不覆盖公开 fork 后的继承 fd I/O 或 wait 的停止、继续路径；musl 适配尚未推送和更新子模块指针。
+
 stage194：父端 `sysfixload` 从本次 CONSTRUCT 分配子 Acct 出资的内存，通过调用者预留的临时地址复制并验证 Fix。先解除父方可写临时映射，再建立子方只读映射。失败复用 `elfclean` 清理，清理调用失败时保留工作记录供重试。准备的提交和撤销由调用者协调，运行库上下文修复仍待接。
 
 fork/exec/spawn目标共享区由服务预付，绑定目标会话及观察/清理容量；父只取得目标token/描述，不取得可冒充孩子使用的Mem Handle。目标表保底接收槽、按需领取、镜像生命周期及重复交付按上述第5项修订执行。子本地Fix修复后返回0，新csu本地Boot初始化后进入应用，二者均不以远端批量接入为返回条件。每次接入只在当前镜像内安装一次资源，不将父收到的Mem Handle整数拷到子。

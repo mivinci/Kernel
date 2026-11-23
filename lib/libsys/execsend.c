@@ -197,7 +197,16 @@ sysforkfddrive(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Execsen
     if (error || status)
       return error ? error : status;
   }
-  return sysforkfdcollect(work, cache, send, owned_file);
+  error = sysforkfdcollect(work, cache, send, owned_file);
+  if (error == -ERR_WOULD_BLOCK && op->phase == SYSOP_RESULT && op->rpc && !op->status) {
+    Ipcmsg result;
+    /* A backend may be preempted between replying and ending access to
+       the manifest. Keep the original lease until that RPC is finished. */
+    error = ipc_rqwait(op->rpc, RQ_FINISH, &result);
+    if (!error)
+      error = sysforkfdcollect(work, cache, send, owned_file);
+  }
+  return error;
 }
 
 isize
