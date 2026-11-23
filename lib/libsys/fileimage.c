@@ -1,6 +1,7 @@
 #include "private/fileimage.h"
 #include "private/argument.h"
 #include "private/close.h"
+#include "private/execfd.h"
 #include "private/sigentry.h"
 #include "private/start.h"
 #include "private/syscall.h"
@@ -14,6 +15,9 @@ static Fileimage image;
 static Conntag   fstag;
 static Rkey      hello;
 static Bootmap   candidate;
+static Bootmap   execmaps[SYSCONN_COUNT];
+static Rkey      execkeys[SYSCONN_COUNT];
+static u64       execbase;
 static u32       initialized, connecting, closing, draining;
 static void      closeprogress(Fileimage *state);
 static int       fileprogress(Fileimage *state);
@@ -482,13 +486,40 @@ sysfileimagecache(Fileimage *state)
 }
 
 isize
-sysfileimage(Fileimage **out)
+sysfilebootfds(Fileimage *state, Connpeer self, const Bootfd *rows, u64 count)
+{
+  Connpeer   peers[BOOT_FD_COUNT];
+  Conntag    tags[BOOT_FD_COUNT];
+  Conncache *cache;
+  u64        i;
+  isize      error;
+  if (!state)
+    return -ERR_INVALID;
+  cache = sysfileimagecache(state);
+  error = sysconncheck(cache, self);
+  if (!error)
+    error = sysconnbootpeers(rows, count, peers);
+  if (error)
+    return error;
+  for (i = 0; i < count; i++) {
+    Handle redundant = 0;
+    error = sysconnbootbind(state->connections, cache, peers[i], rows[i].backend_call, &tags[i],
+                            &redundant);
+    if (error)
+      return error;
+    /* Boot resources can also name this CALL. Do not revoke it here. */
+  }
+  return sysexecfdload(&state->fds, &state->files, self, rows, tags, count);
+}
+
+static isize
+initimage(const Bootview *boot, Fileimage **out)
 {
   Connpeer self;
   Handle   parent;
   u64      mask, ignored;
   isize    error, restored;
-  if (!out || !sysboot()->header)
+  if (!out || !boot || !boot->header)
     return -ERR_INVALID;
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)
@@ -499,13 +530,12 @@ sysfileimage(Fileimage **out)
   else if (!error) {
     error = sysconninit(sysfileimagecache(&image), self);
     if (!error)
-      error = sysfilerefinit(&image.files, self);
+      error = sysfilebootfds(&image, self, boot->fds, boot->header->fd_count);
     if (!error)
       error = sysctxinit(&image.contexts, self);
     if (!error)
       error = sysctxsigbind(&image.contexts);
     if (!error) {
-      sysfdinit(&image.fds);
       initialized = 1;
       systimerbindrq(fileevents);
     }
@@ -513,6 +543,93 @@ sysfileimage(Fileimage **out)
   restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   if (!error && !restored)
     *out = &image;
+  return error ? error : restored;
+}
+
+isize
+sysfileimage(Fileimage **out)
+{
+  return initimage(sysboot(), out);
+}
+
+isize
+sysfilebootinstall(const Bootview *boot, void *context)
+{
+  Fileimage *state;
+  (void) context;
+  if (initialized)
+    return -ERR_STATE;
+  return initimage(boot, &state);
+}
+
+isize
+sysfileclaimrange(u64 address)
+{
+  if ((address & PAGE_MASK) || address < BOOT_USER_LO || address >= BOOT_USER_HI ||
+      SYSCONN_COUNT * FS_CONN_BYTES > BOOT_USER_HI - address)
+    return -ERR_INVALID;
+  if (execbase && execbase != address)
+    return -ERR_STATE;
+  execbase = address;
+  return 0;
+}
+
+isize
+sysfileclaimfd(u32 layer, int fd, u64 address)
+{
+  Fileimage *state;
+  Conncache *cache;
+  Connwork  *work;
+  Fdview     descriptor;
+  Fileref    ref;
+  Connentry  entry;
+  Connclaim  claim;
+  Handle     call, space;
+  u64        mask, ignored;
+  isize      error, restored;
+  if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
+    return -ERR_BAD_HANDLE;
+  if (layer >= RCTX_LAYERS || (address & PAGE_MASK))
+    return -ERR_INVALID;
+  error = sysfileimage(&state);
+  if (error)
+    return error;
+  cache = sysfileimagecache(state);
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysfdobserve(&state->fds, (u32) fd, &descriptor);
+  if (!error && descriptor.tag.state != SYSFD_LIVE)
+    error = -ERR_BAD_HANDLE;
+  if (!error)
+    error = sysfilerefview(&state->files, cache->self, descriptor.file, &ref);
+  if (!error)
+    error = sysconnview(cache, ref.connection, &entry);
+  if (!error && entry.state != SYSCONN_READY) {
+    if (!address && execbase)
+      address = execbase + ref.connection.index * FS_CONN_BYTES;
+    if (address < BOOT_USER_LO || address >= BOOT_USER_HI ||
+        FS_CONN_BYTES > BOOT_USER_HI - address) {
+      error = -ERR_INVALID;
+      goto restoreclaim;
+    }
+    work = &state->connections[ref.connection.index];
+    space = bootresource(sysboot(), BOOT_SELF_SPACE);
+    if (!space || !ref.token)
+      error = -ERR_STATE;
+    else if (entry.state == SYSCONN_CONNECTING && work->state.bootstrap.opcode == FS_EXEC_CLAIM)
+      error = 0;
+    else if (state->contexts.sequence == UINT64_MAX)
+      error = -ERR_OVERFLOW;
+    else
+      error = sysconnexecprepare(work, cache, state->contexts.sequence + 1, 0, ref.token, &claim,
+                                 &call);
+    if (!error)
+      error = sysctxexecclaim(&state->contexts, layer, work, cache, space, address,
+                              &execmaps[ref.connection.index], &execkeys[ref.connection.index]);
+  }
+restoreclaim:
+  restored = __sys_sigmask(SIGNAL_SETMASK, mask, &ignored);
   return error ? error : restored;
 }
 
@@ -1266,6 +1383,11 @@ imageio(u32 layer, int fd, u64 opcode, const void *input, void *output, u64 byte
   u64        payload;
   u32        restart, interrupted = 0, retry = 1;
   isize      error, discard, business = 0;
+  if (execbase && opcode != FS_PATH) {
+    error = sysfileclaimfd(layer, fd, 0);
+    if (error)
+      return error;
+  }
   error = sysfileimage(&state);
   if (error)
     return error;

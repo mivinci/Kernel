@@ -5,7 +5,10 @@
 #include <sys/mman.h>
 #include <string.h>
 struct Boot;
-extern long                  sysstartargs(const struct Boot *, int *, char ***, char ***);
+struct Bootview;
+extern long                  sysfilebootinstall(const struct Bootview *, void *);
+extern long                  sysstartargswithfds(const struct Boot *, int *, char ***, char ***,
+                                                 long (*)(const struct Bootview *, void *));
 extern void                  __sys_exit(unsigned long) __attribute__((noreturn));
 extern const size_t          __native_tls[4];
 static struct tls_module     tls;
@@ -67,7 +70,8 @@ csustart(const struct Boot *boot)
   char    **argv, **envp;
   pthread_t td;
   size_t    align = __native_tls[3];
-  if (sysstartargs(boot, &argc, &argv, &envp) || align > 64 || !align || __native_tls[2] > 2048)
+  if (sysstartargswithfds(boot, &argc, &argv, &envp, sysfilebootinstall) || align > 64 || !align ||
+      __native_tls[2] > 2048)
     __sys_exit(120);
   tls.image = (void *) __native_tls[0];
   tls.len = __native_tls[1];

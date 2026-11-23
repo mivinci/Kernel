@@ -87,6 +87,12 @@ isize sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadli
                          Connclaim *claim, Handle *call);
 isize sysconnexecprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, u64 token,
                          Connclaim *claim, Handle *call);
+/* Resolve Bootfd CALLs to exact backend images without modifying the cache. */
+isize sysconnbootpeers(const Bootfd *rows, u64 count, Connpeer *peers);
+/* Bind a startup CALL into its exact peer's work slot. Repeated rows may
+   name the same CALL; distinct redundant handles remain caller-owned. */
+isize sysconnbootbind(Connwork *works, Conncache *cache, Connpeer peer, Handle call, Conntag *tag,
+                      Handle *redundant);
 /* Cold native lookup first. First distinct owned CALL moves into the work
    page; another Handle to the exact same peer moves to initially-zero redundant
    for explicit caller release. Same Handle is not two owned references.

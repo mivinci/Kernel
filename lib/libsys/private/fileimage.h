@@ -58,7 +58,16 @@ isize sysfilepollcollect(Connwork *work, Conncache *cache, Opkey *key, Filepoll 
 
 /* One shared file state per image, initialized on demand. Inherited image
    repair must be wired before these records can be used by a fork child. */
-isize      sysfileimage(Fileimage **out);
+isize sysfileimage(Fileimage **out);
+/* Claim an inherited fd using a caller-reserved connection mapping range. */
+isize sysfileclaimfd(u32 layer, int fd, u64 address);
+/* Supply a disjoint reserved range of SYSCONN_COUNT * FS_CONN_BYTES bytes. */
+isize sysfileclaimrange(u64 address);
+struct Bootview;
+isize sysfilebootinstall(const struct Bootview *boot, void *context);
+/* Import into unpublished image state. On failure the startup caller must
+   exit; some CALL handles may already belong to the image's work slots. */
+isize      sysfilebootfds(Fileimage *state, Connpeer self, const Bootfd *rows, u64 count);
 Conncache *sysfileimagecache(Fileimage *image);
 /* Resolve the fixed Boot FS endpoint and continue its initial HELLO. The
    caller provides a reserved mapping address for the cold path. A failed

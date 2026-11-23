@@ -188,6 +188,52 @@ sysconnexecprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, u6
 {
   return prepareclaim(work, cache, owner, deadline, FS_EXEC_CLAIM, token, claim, call);
 }
+
+isize
+sysconnbootpeers(const Bootfd *rows, u64 count, Connpeer *peers)
+{
+  u64   i, j, backends = 0;
+  isize error;
+  if (count > BOOT_FD_COUNT ||
+      (count && !separate(rows, count * sizeof(*rows), peers, count * sizeof(*peers))))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    for (j = 0; j < i && rows[j].backend_call != rows[i].backend_call; j++) {
+    }
+    if (j < i)
+      peers[i] = peers[j];
+    else {
+      error = sysconnpeer(rows[i].backend_call, &peers[i]);
+      if (error)
+        return error;
+    }
+    for (j = 0; j < i; j++)
+      if (peers[j].pid == peers[i].pid && peers[j].image == peers[i].image)
+        break;
+    if (j == i && ++backends > SYSCONN_COUNT)
+      return -ERR_CAPACITY;
+  }
+  return 0;
+}
+isize
+sysconnbootbind(Connwork *works, Conncache *cache, Connpeer peer, Handle call, Conntag *tag,
+                Handle *redundant)
+{
+  Connwork *work;
+  isize     error;
+  if (!works || !tag || !redundant || *redundant || call <= 0)
+    return -ERR_INVALID;
+  error = sysconnbind(cache, peer, tag);
+  if (error)
+    return error;
+  work = &works[tag->index];
+  if (work->state.tag.index != tag->index || work->state.tag.generation != tag->generation) {
+    error = sysconnworkinit(work, cache, *tag);
+    if (error)
+      return error;
+  }
+  return work->state.call == call ? 0 : sysconnworktakecall(work, cache, &call, redundant);
+}
 isize
 sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag)
 {

@@ -1254,8 +1254,20 @@ claimbackend(const Bootview *boot, int reuse)
   }
   stale.words[1] = reuse ? 3 : 2;
   CHECK(!ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
-        old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held &&
-        !ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
+        old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held);
+  if (!reuse) {
+    Msg readreply = {{0, 0, sizeof(u64), sizeof(u64)}};
+    CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid && input.image == target->image &&
+          input.words[0] == FS_READ &&
+          !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+          !sysfileargs(FS_READ, &slot) && slot.object == 100 && slot.args[1] == sizeof(u64));
+    *(volatile u64 *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) =
+        EXEC_CLAIM_MARKER;
+    readreply.words[1] = slot.seq;
+    CHECK(!ipc_reply(input.request, &readreply) &&
+          !sysfilefinish(&links[1].watch.active, input.request));
+  }
+  CHECK(!ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
         sysexecclaim(&execreserve, &old->owner, &links[1], &input) == -ERR_STALE &&
         !ipc_reply(input.request, &stale));
   do {
