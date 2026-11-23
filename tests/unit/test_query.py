@@ -27,7 +27,7 @@ class ResourceQueryTests(unittest.TestCase):
     def test_cursor_snapshot_does_not_follow_a_reused_slot(self):
         def body():
             t,storage,_,space,allocator=self.table(3)
-            t.owner=self.lib.handlepack(1,7,7);t.image=91
+            t.owner=(2 + (7) * 64 + (7));t.image=91
             old=self.allocate(t,allocator)
             error,rows,cursor=self.query(t,count=1)
             self.assertEqual((error,len(rows),rows[0].data[0]),(0,1,space))
@@ -53,14 +53,14 @@ class ResourceQueryTests(unittest.TestCase):
 
     def test_endpoint_rows_keep_fixed_image_and_hide_internal_scope_fields(self):
         def body():
-            t,*_=self.table();t.owner=self.lib.handlepack(1,7,7);t.image=91
+            t,*_=self.table();t.owner=(2 + (7) * 64 + (7));t.image=91
             image=self.image();call=self.install(t,image)
             notify=self.install(t,image,kind=7,bits=1<<40,inherit=1)
             error,rows,following=self.query(t)
             self.assertEqual((error,len(rows),following),(0,4,0))
             for row,handle in zip(rows[2:],(call,notify)):
                 self.assertEqual((row.data[0],row.data[3],row.data[4]),(handle,0,0))
-                self.assertEqual((row.data[6],row.data[7]),(self.lib.handlepack(1,1,1),1))
+                self.assertEqual((row.data[6],row.data[7]),((2 + (1) * 64 + (1)),1))
                 self.assertEqual(list(row.data[8:]),[0]*12)
                 self.assertEqual((row.pid,row.image),(t.owner,91))
             self.assertEqual(self.lib.imageend(image,2),0)

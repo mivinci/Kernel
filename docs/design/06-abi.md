@@ -14,7 +14,7 @@ include/abi按base/syscall/ipc/proc/mem/event/signal/boot.h分；include/proto�
 
 ## 编码与寄存器（已冻结）
 
-Handle=s64，符号位0、类别4位、代次43位、索引16位；有效值>0，0无效，初始init PID=1是唯一例外。类别：PROCESS_ID=1、RESOURCE=2、REQUEST=3、RPC=4、SESSION_ID=5、GROUP_ID=6、TERMINAL_ID=7，其余保留。位运算使用u64，代次从1起，耗尽拒绝不回绕。PUBLIC PID/PGID/SID规则见03；OBS cookie不是Handle类别或授权对象。
+Handle=s64，符号位0、类别4位、代次43位、索引16位；有效值>0，0无效。类别：RESOURCE=2、REQUEST=3、RPC=4、SESSION_ID=5、GROUP_ID=6、TERMINAL_ID=7，其余保留。位运算使用u64，代次从1起，耗尽拒绝不回绕。公开 PID/PGID/SID 为正 32 位编号，原生寄存器及记录字段保留既有宽度，规则见03。OBS cookie 独立于 Handle 编码。
 
 RV64调用号a7，输入依次a0..a6；ARM64调用号x8，输入x0..x6。表内未列输入为0，RV64 a6/ARM64 x6仅reply_recv使用，其他为0；ARM64 x7输入为0。返回status在a0/x0，负数为原生错误，非负结果按表解释。IPC结果固定：kind=a1/x1、source=a2/x2、request=a3/x3、words[4]=a4..a7/x4..x7、image=t0/x9。recv的event_mask放a1/x1；reply_recv放a6/x6。a7既是调用号又是输出最后业务字，桩必须声明读写。
 

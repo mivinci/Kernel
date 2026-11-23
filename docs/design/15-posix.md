@@ -27,7 +27,7 @@
 | 本阶段 | pipe、poll；poll.h | 有界字节流、PIPE_BUF 内写入原子性、EOF/EPIPE/SIGPIPE、非阻塞；poll 为状态观察而非资源预留 | 满/空管道、最后读写引用关闭、多写者、短写、订阅竞态、HUP/ERR/NVAL 与 fd 复用 |
 | 本阶段 | posix_spawn/posix_spawnp 及 file_actions/attr 基础接口；spawn.h | 文件 open/close/dup2 动作按顺序执行，PATH 搜索、信号掩码/默认动作及进程组属性；支持标志逐项公布；不等同原生 spawn | 重定向/管道、CLOEXEC 处理顺序、PATH/环境、每一步失败、退出状态与资源回滚；不支持属性明确拒绝 |
 | 本阶段 | wait/waitpid、sys/wait.h 状态宏 | 等待子进程/指定组，WNOHANG/WUNTRACED/WCONTINUED；区分正常退出、信号终止和停止继续 | 多子进程、重复等待、事件先后/确认、组长先退出、无匹配子进程及信号中断 |
-| 本阶段 | getpid/getppid/getpgrp/getpgid/getsid、setpgid/setsid、kill/raise | pid_t 与 Handle 同为有符号 64 位，正 PID 沿用 PROCESS_ID 身份；0、负组 ID 和特殊值仅按接口解释；组/会话对外编号与内部 Handle 分开，授权核对完整实例 | PID 分配/复用与陈旧内部引用、组信号、权限拒绝、会话边界、kill(pid,0) 存在/权限检查 |
+| 本阶段 | getpid/getppid/getpgrp/getpgid/getsid、setpgid/setsid、kill/raise | pid_t 为有符号 32 位，正 PID 由内核单调发放；0、负组 ID 和特殊值仅按接口解释；组/会话对外编号与内部 Handle 分开，授权核对完整实例 | PID 耗尽、运行槽复用与陈旧内部引用、组信号、权限拒绝、会话边界、kill(pid,0) 存在/权限检查 |
 | 本阶段 | sigaction/sigprocmask/sigpending/sigsuspend、sigemptyset/sigfillset/sigaddset/sigdelset/sigismember | 支持信号和 SA_* 标志逐项冻结；KILL/STOP 特例、pending 合并、原子换掩码并等待、EINTR/重启按接口处理；不宣称全部信号功能 | pending 与睡眠竞态、屏蔽/解除、默认动作、嵌套及上下文恢复、异步安全允许表、SA_RESTART 场景 |
 | 本阶段 | tcgetattr/tcsetattr/tcflush/tcdrain、cfgetispeed/cfgetospeed、isatty/ttyname、tcgetpgrp/tcsetpgrp；termios.h | 行/原始模式、VMIN/VTIME、回显和特殊字符；前后台组检查；支持 termios 字段逐项列举 | 阻塞组合、模式切换、排空/刷新、后台读写、Ctrl-C/Z、前台切换与挂断 |
 | 本阶段 | clock_gettime/clock_getres、nanosleep；time.h | CLOCK_MONOTONIC 与 CLOCK_REALTIME 分开；明确实时时钟来源/未校时策略、分辨率、溢出与剩余睡眠时间 | 两架构频率换算、单调性、信号中断剩余时间、校时不改变单调截止时间 |

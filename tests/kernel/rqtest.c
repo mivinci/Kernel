@@ -28,7 +28,7 @@ static void
 actor(Actor *a, Setid set, Handle pid)
 {
   a->pid = pid;
-  REQUIRE(!lifecreaterun(set, pid, 1, handleindex(pid), &a->life));
+  REQUIRE(!lifecreaterun(set, pid, 1, (u32) ((pid - 2) % 64), &a->life));
   REQUIRE(!imagecreate(a->life, 0, &a->image));
   REQUIRE(!rqreserve(&a->quota, a->life, 0));
   REQUIRE(!rqmailinit(&a->mail, a->image));
@@ -73,8 +73,8 @@ execmailtest(Setid set)
   Imageid       old, next;
   Handle        authority = handlepack(HANDLE_RESOURCE, 1, 7), request, oldrpc;
   Msg           message = {{41, 0, 0, 0}};
-  actor(&runner, set, handlepack(HANDLE_PROCESS, 707, 1));
-  actor(&peer, set, handlepack(HANDLE_PROCESS, 707, 2));
+  actor(&runner, set, (2 + (707) * 64 + (1)));
+  actor(&peer, set, (2 + (707) * 64 + (2)));
   old = runner.image;
   REQUIRE(!acctcreate(set, 32, 32, &acct) && !spacecreate(acct, &space) &&
           !localinit(&resources, slots, 4, acct, space));
@@ -182,11 +182,11 @@ rqtest(void)
   byte = (u8 *) &b;
   for (i = 0; i < sizeof(b); i++)
     byte[i] = 0;
-  actor(&b, set, handlepack(HANDLE_PROCESS, 1, PROCS - 2));
+  actor(&b, set, (2 + (1) * 64 + (PROCS - 2)));
   for (j = 0; j < 4; j++)
     bulk.words[j] = j;
   for (i = 0; i + 1 < ORDINARY_QUOTAS; i++) {
-    actor(&a, set, handlepack(HANDLE_PROCESS, i + 1, PROCS - 1));
+    actor(&a, set, (2 + (i + 1) * 64 + (PROCS - 1)));
     owners[i] = a.life;
     servers[i] = b.image;
     for (j = 0; j < OUT_REQUESTS; j++) {
@@ -208,7 +208,7 @@ rqtest(void)
     }
   }
   REQUIRE(
-      !lifecreaterun(set, handlepack(HANDLE_PROCESS, ORDINARY_QUOTAS + 1, PROCS - 1), 1, PROCS - 1, &candidate));
+      !lifecreaterun(set, (2 + (ORDINARY_QUOTAS + 1) * 64 + (PROCS - 1)), 1, PROCS - 1, &candidate));
   byte = (u8 *) &recovery;
   for (i = 0; i < sizeof(recovery); i++)
     byte[i] = 0;
@@ -245,8 +245,8 @@ rqtest(void)
   byte = (u8 *) &b;
   for (i = 0; i < sizeof(b); i++)
     byte[i] = 0;
-  actor(&a, set, handlepack(HANDLE_PROCESS, 100, 1));
-  actor(&b, set, handlepack(HANDLE_PROCESS, 100, 2));
+  actor(&a, set, (2 + (100) * 64 + (1)));
+  actor(&b, set, (2 + (100) * 64 + (2)));
   id = submit(&a, &b, IPC_CALL, 11);
   REQUIRE(!rqrecv(&b.mail, &received) && received.kind == IPC_CALL && received.source == a.pid &&
           received.image == 1 && received.request == rqhandle(id, HANDLE_REQUEST));
@@ -275,7 +275,7 @@ rqtest(void)
   REQUIRE(!rqhold(id) && !rqrecv(&b.mail, &received) && !rqdefer(&b.mail, received.request));
   oldcaller = a.life;
   endactor(&a);
-  actor(&a, set, handlepack(HANDLE_PROCESS, 101, 1));
+  actor(&a, set, (2 + (101) * 64 + (1)));
   fresh = submit(&a, &b, IPC_CALL, 22);
   REQUIRE(rqcheck(&b.mail, received.request) == 4 && !rqreply(&b.mail, received.request, &reply));
   REQUIRE(!rqstat(id, &info) && info.status == -ERR_PEER && !rqdrop(id));
@@ -288,7 +288,7 @@ rqtest(void)
   endactor(&b);
   REQUIRE(!rqresult(fresh, a.image, 0, &result) && result.status == -ERR_PEER);
   REQUIRE(!rqack(fresh, a.image, ACK_RESULT) && rqack(fresh, a.image, ACK_RELEASE) == -ERR_STATE);
-  actor(&b, set, handlepack(HANDLE_PROCESS, 101, 2));
+  actor(&b, set, (2 + (101) * 64 + (2)));
   REQUIRE(rqreply(&b.mail, received.request, &reply) == -ERR_BAD_HANDLE);
   REQUIRE(rqclean(fresh, b.image) == -ERR_BAD_HANDLE && !rqclean(fresh, oldimage));
   REQUIRE(!rqresult(fresh, a.image, RQ_FINISH, &result) && !rqack(fresh, a.image, ACK_RELEASE));

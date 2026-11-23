@@ -152,7 +152,7 @@ grouptest(void)
   REQUIRE(!procdestroy(pids[2]));
   clean(pids[2]);
   REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[4]) && !procinfo(pids[4], &info[4]));
-  REQUIRE(handleindex(pids[4]) == handleindex(pids[0]) && pids[4] != pids[0]);
+  REQUIRE(info[4].run == info[0].run && pids[4] != pids[0]);
   replacement = pids[4];
   REQUIRE(!lifeorphan(inherited, &orphan) && orphan == 1);
   orphan_checks++;

@@ -106,7 +106,7 @@ execinherittest(void)
   Prepid        prep;
   Rtable       *checked;
   Handle        create, memory, channel, late, space, allocator, view;
-  Handle        pid = handlepack(HANDLE_PROCESS, 700, PROCS - 1);
+  Handle        pid = (2 + (700) * 64 + (PROCS - 1));
   Createpolicy  policy;
   Pgstat        before, after;
   Hpte          entry;
@@ -197,7 +197,7 @@ execpreptest(void)
   Memid         original;
   Pgstat        before, after;
   Hpte          alias;
-  Handle        pid = handlepack(HANDLE_PROCESS, 1, PROCS - 1);
+  Handle        pid = (2 + (1) * 64 + (PROCS - 1));
   Handle        oldcap, futurecap, previous = 0, view, data, ignored, futurealloc;
   Handle        owner;
   u64           ticket, duplicate, marker = 0x31415926, value;
@@ -419,7 +419,7 @@ preptest(void)
   REQUIRE(!lifeacct(aborted.life, &located) && located.generation == aborted.acct.generation &&
           located.index == aborted.acct.index);
   REQUIRE(!procnew(set, parentpid, 256, 512, LOCALS, &other) && !procinfo(other, &fresh));
-  REQUIRE(handleindex(other) == handleindex(pid) && other != pid &&
+  REQUIRE(fresh.run == aborted.run && other != pid &&
           fresh.acct.index != aborted.acct.index);
   REQUIRE(!lifeacct(aborted.life, &located) && located.generation == aborted.acct.generation &&
           located.index == aborted.acct.index && !lifeacct(fresh.life, &located) &&

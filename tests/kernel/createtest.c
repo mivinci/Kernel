@@ -34,7 +34,7 @@ actor(Actor *a, Setid set, u32 slot, u32 pending)
   u32 i;
   for (i = 0; i < sizeof(*a); i++)
     ((u8 *) a)[i] = 0;
-  REQUIRE(!lifecreaterun(set, handlepack(HANDLE_PROCESS, 1, slot), 1, slot, &a->life));
+  REQUIRE(!lifecreaterun(set, (2 + (1) * 64 + (slot)), 1, slot, &a->life));
   REQUIRE(!imagecreate(a->life, 0, &a->image) && !rqreserve(&a->quota, a->life, 0));
   REQUIRE(!rqmailinit(&a->mail, a->image) && !rqmailconfigure(&a->mail, pending));
   REQUIRE(!lifepublish(a->life) && !imageactivate(a->image));

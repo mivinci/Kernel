@@ -28,7 +28,7 @@ localtest(void)
   u64        bits;
   const u8   bytes[4] = {1, 2, 3, 4};
   pgstat(&before);
-  REQUIRE(handletype(1) == HANDLE_PROCESS && !handletype(-1) && !handletype(0));
+  REQUIRE(pidvalid(1) && !handletype(1) && !handletype(-1) && !handletype(0));
   REQUIRE(!handlepack(HANDLE_RESOURCE, HANDLE_GENERATION_MAX + 1, 0));
   out = handlepack(HANDLE_RESOURCE, HANDLE_GENERATION_MAX, 65535);
   REQUIRE(out > 0 && handlegen(out) == HANDLE_GENERATION_MAX && handleindex(out) == 65535);
@@ -38,7 +38,7 @@ localtest(void)
           !localinit(&tables[1], entries[1], LOCALS, acct, b));
   REQUIRE(!localspace(&tables[0], 3, &aspace) && !localallocator(&tables[0], 5, &aalloc));
   REQUIRE(!localspace(&tables[1], 3, &bspace) && !localallocator(&tables[1], 5, &balloc));
-  REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, 1, 1), 1, 1, &life));
+  REQUIRE(!lifecreaterun(group, (2 + (1) * 64 + (1)), 1, 1, &life));
   REQUIRE(!imagecreate(life, 0, &oldimage));
   REQUIRE(!localendpoint(&tables[0], oldimage, LOCAL_CALL, LOCAL_USE | LOCAL_GRANT, 0,
                          LOCAL_FORK | LOCAL_EXEC, &call));

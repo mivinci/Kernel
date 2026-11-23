@@ -32,7 +32,7 @@ class SignalJobTests(unittest.TestCase):
         def body():
             self.lib.sigchild.argtypes = [support.Imageid, C.c_int64, C.c_uint32, C.c_uint64, C.c_uint64]
             self.lib.sigcancel.argtypes = [support.Imageid, C.c_uint64]
-            pid = (1 << 59) | (7 << 16) | 9
+            pid = (2 + 7 * 64 + 9)
             action = Action(2, 0x10080, 0x10040, 0, 8, 0)
             self.assertEqual(self.lib.siginstall(self.identity, 17, C.byref(action)), 0)
             for reason, status in ((2, 19), (2, 20), (2, 21), (2, 22), (3, 0)):

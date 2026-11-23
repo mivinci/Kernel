@@ -85,7 +85,7 @@ class LocalTests(unittest.TestCase):
 
     def test_handle_categories_boundaries_and_reserved_init_identity(self):
         def body():
-            for kind in range(1,8):
+            for kind in range(2,8):
                 for generation in (1,MAXGEN):
                     for index in (0,65535):
                         value = self.lib.handlepack(kind,generation,index)
@@ -93,11 +93,11 @@ class LocalTests(unittest.TestCase):
                         self.assertEqual(self.lib.handletype(value),kind)
                         self.assertEqual(self.lib.handlegen(value),generation)
                         self.assertEqual(self.lib.handleindex(value),index)
-            self.assertEqual(self.lib.handletype(1),1)
+            self.assertEqual(self.lib.handletype(1),0)
             self.assertEqual(self.lib.handlegen(1),0)
             for value in (0,-1,-(1<<63),1<<59,8<<59):
                 self.assertEqual(self.lib.handletype(value),0)
-            for args in ((0,1,0),(8,1,0),(2,0,0),(2,MAXGEN+1,0),(2,1,65536)):
+            for args in ((0,1,0),(1,1,0),(8,1,0),(2,0,0),(2,MAXGEN+1,0),(2,1,65536)):
                 self.assertEqual(self.lib.handlepack(*args),0)
         for lib in self.libs:
             self.exercise(lib,body)

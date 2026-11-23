@@ -21,8 +21,8 @@ imagetest(void)
   Life    life;
   Image   image;
   Imageid fresh, stale;
-  Handle  oldpid = handlepack(HANDLE_PROCESS, 1, PROCS - 1),
-         pid = handlepack(HANDLE_PROCESS, 2, PROCS - 1), constructed;
+  Handle  oldpid = (2 + (1) * 64 + (PROCS - 1)),
+         pid = (2 + (2) * 64 + (PROCS - 1)), constructed;
   Liferesult result;
   u32        i;
   Pgstat     before, after;

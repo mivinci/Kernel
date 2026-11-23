@@ -53,7 +53,7 @@ forktreetest(void)
   for (mode = 0; mode < 3; mode++) {
     REQUIRE(!setcreate(512, 512, 4, &set));
     for (i = 0; i < 2; i++) {
-      pids[i] = handlepack(HANDLE_PROCESS, 7000 + mode * 2 + i, i + 1);
+      pids[i] = (2 + (7000 + mode * 2 + i) * 64 + (i + 1));
       REQUIRE(!acctcreate(set, 128, 128, &accounts[i]) && !spacecreate(accounts[i], &roots[i]) &&
               !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&
               !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&
@@ -183,7 +183,7 @@ forkbuildtest(void)
   for (mode = 0; mode < 3; mode++) {
     REQUIRE(!setcreate(512, 512, 4, &set));
     for (i = 0; i < 2; i++) {
-      pids[i] = handlepack(HANDLE_PROCESS, 8000 + mode * 2 + i, i + 1);
+      pids[i] = (2 + (8000 + mode * 2 + i) * 64 + (i + 1));
       REQUIRE(!acctcreate(set, mode == 2 && i ? 1 : 128, mode == 2 && i ? 1 : 128, &accounts[i]) &&
               !spacecreate(accounts[i], &roots[i]) &&
               !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&

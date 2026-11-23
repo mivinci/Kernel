@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 TAGS = (1, 2, 0x100, 0x101, 0x102, 0x103, 0x104)
 HANDLES = tuple((2 << 59) | (1 << 16) | i for i in range(7))
-PID = (1 << 59) | (2 << 16) | 3
+PID = (2 + 2 * 64 + 3)
 
 
 class Bootview(C.Structure):
@@ -250,7 +250,7 @@ class SerialStartTests(unittest.TestCase):
         for lib in self.libs:
             result = self.parse(lib)
             callback, calls = self.install(lib)
-            for pid, image, parent in ((1, 1, 0), (2, 7, 1), (PID, 0, 1), (PID, 7, PID)):
+            for pid, image, parent in ((1, 1, 0), (1 << 31, 7, 1), (PID, 0, 1), (PID, 7, PID)):
                 lib.serialmockid(pid, image, parent, 0)
                 self.assertEqual(lib.serialcheck(C.byref(result)), -5)
             self.assertFalse(calls)

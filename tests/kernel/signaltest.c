@@ -145,7 +145,7 @@ signaltest(void)
   REQUIRE(!imagestat(info[1].identity, &image) && !image.owner && !image.cleanup &&
           image.observers == 1);
   REQUIRE(!procnew(set, 1, 64, 128, 8, &pids[2]) && !procinfo(pids[2], &info[2]));
-  REQUIRE(handleindex(pids[2]) == handleindex(pids[1]) && pids[2] != pids[1]);
+  REQUIRE(info[2].run == info[1].run && pids[2] != pids[1]);
   REQUIRE(!sigstat(info[2].identity, &signal) && signal.pid == pids[2] && signal.slots == 2 &&
           !signal.depth && !signal.mask && !signal.pending && signal.bytes == bytes);
   REQUIRE(sigstat(info[1].identity, &signal) == -ERR_STALE &&

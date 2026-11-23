@@ -58,7 +58,7 @@ class LifeTests(unittest.TestCase):
         support.AddressSpaceTests.exercise(self,lib,body)
 
     def pid(self,generation=1,slot=1):
-        return self.lib.handlepack(1,generation,slot)
+        return (2 + (generation) * 64 + (slot))
     def create(self,generation=1,slot=1):
         out=Lifeid()
         self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(generation,slot),1,slot,C.byref(out)),0)

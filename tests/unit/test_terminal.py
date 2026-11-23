@@ -71,7 +71,7 @@ void restorecount(Handle id){Terminal *t=find(id);if(!t)abort();t->refs=1;}
 
     def relation(self, kind, index, session=0):
         out = C.c_int64()
-        pid = self.lib.handlepack(1, 1, index)
+        pid = (2 + (1) * 64 + (index))
         error = (self.lib.sessioncreate(pid, C.byref(out)) if kind == 5 else
                  self.lib.groupcreate(pid, session, C.byref(out)))
         self.assertEqual(error, 0)

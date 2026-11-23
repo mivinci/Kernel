@@ -2,7 +2,7 @@ import ctypes as C
 import unittest
 import test_signal_context as support
 
-PID=(1<<59)|(123<<16)|2
+PID=(2 + 123 * 64 + 2)
 FIX=0x2000000
 
 
@@ -47,7 +47,7 @@ class ForkContextTests(unittest.TestCase):
     def test_bad_pid_fix_null_or_alias_never_modifies_output_or_parent(self):
         for arch,kind,lib in self.targets:
             parent=self.raw(arch,kind,lib);before=parent.bytes()
-            for pid,fix in ((0,0),(1,0),(2,0),((2<<59)|(1<<16)|2,0),((1<<59)|2,0),
+            for pid,fix in ((0,0),(1,0),(1<<31,0),((2<<59)|(1<<16)|2,0),((1<<59)|2,0),
                             ((1<<64)-1,0),(PID,1),(PID,0xfff8),(PID,1<<38),(PID,FIX+1)):
                 output=support.Context(kind);C.memset(output.pointer,0xa5,output.size);original=output.bytes()
                 self.assertEqual(lib.hal_user_fork(output.pointer,parent.pointer,pid,fix),-1,(arch,pid,fix))

@@ -35,7 +35,7 @@ class GroupTests(unittest.TestCase):
         subprocess.run(cmd,check=True,capture_output=True)
         self.lib=C.CDLL(str(so));signatures(self.lib)
     def tearDown(self):self.tmp.cleanup()
-    def pid(self,i):return self.lib.handlepack(1,1,i)
+    def pid(self,i):return (2 + (1) * 64 + (i))
     def session(self,i):
         h=C.c_int64();self.assertEqual(self.lib.sessioncreate(self.pid(i),C.byref(h)),0);return h.value
     def group(self,i,s):

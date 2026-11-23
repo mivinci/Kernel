@@ -10,11 +10,11 @@
 - libsys 已接本地 fd/File、pipe、原 RPC 收尾、私有 spawn 及部分 exec/FS_LOAD 路径。公开 POSIX 前端、完整 exec 继承、作业控制和标准运行环境仍在收口。
 - `FS_LOAD` 等块映射时的取消排空已接：`PREPARED` 本地撤销，`WAITING` 先协作取消，再经 FINISH、ACK 释放槽。双架构 `pipeio` 已通过，后续继续 FS/blk 生产接线。
 - 公开 SDK 的最小程序和 miniz 已通过双架构静态构建。普通程序的 stdout 和退出状态、BusyBox 完整构建和运行仍未验收。已记录的 BusyBox 首错是 `sys/times.h` 和 `dirent.h`。
-- 本地有 blk 启动接线的在途改动。PID 迁移已让调度、信号和 IRQ 直接使用内部运行槽，双架构 QEMU `sigframe` 与 `irqbind` 已通过。发号及公开 ABI 尚未切换。
+- 本地有 blk 启动接线的在途改动。调度、信号和 IRQ 直接使用内部运行槽。
 
 ## 未决与阻塞
 
-- [03](design/03-process.md#32-位-pid-试行方案) 已记录原生与 POSIX 共用单调 32 位 PID 的试行方案，当前 ABI 仍是 64 位编码 PID。
+- [03](design/03-process.md#32-位-pid) 的单调 32 位 PID 已在本地实现。双架构 QEMU `procs`、`control`、`sigsend`、`groups` 通过，BusyBox 尚待验证。
 - [06](design/06-abi.md) 的 `QUERY_TIMES=7` 自身 CPU 时间查询仍是候选，确认前不实现。
 - [04](design/04-ipc.md) 的原生 rqclean 仍待冻结 `CONTROL_CLEAN` 权限、参数和初始 init 持有方式；当前 `0x1b` 为 NOTSUP，不能把可信夹具代收尾当作原生 ABI。
 - [08](design/08-runtime.md) 的堆/连接 VA 登记、连接预付地址责任和短屏蔽信号更新范围仍待确认；当前 malloc/free 不承诺处理函数重入。

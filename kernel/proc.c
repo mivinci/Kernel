@@ -73,7 +73,7 @@ struct Proc
   /* Keep the 16-byte aligned switch context first to avoid internal padding. */
   Hkctx     kernel;
   u64       generation;
-  Handle    pid;
+  int32_t   pid;
   Lifeid    life;
   Imageid   identity;
   Prepid    prep;
@@ -107,6 +107,14 @@ struct Execimage
   Prepid  prep;
 };
 static Proc processes[PROCS];
+static u32  lastpid = 1;
+#if BOOT_CASE == 21
+void
+proctestpidlimit(void)
+{
+  lastpid = INT32_MAX - 1;
+}
+#endif
 /* Per Run slot, kept outside the 512-byte scheduler record. */
 static u64       user_ns[PROCS];
 static Local     entries[PROCS][LOCALS];
@@ -346,6 +354,8 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
       return -ERR_STATE;
     slot = 0;
   } else {
+    if (lastpid == INT32_MAX)
+      return -ERR_OVERFLOW;
     for (slot = 1; slot < PROCS; slot++)
       if (!processes[slot].state && processes[slot].generation < HANDLE_GENERATION_MAX)
         break;
@@ -358,7 +368,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   user_ns[slot] = 0;
   p->wait_cursor = 0;
   p->generation++;
-  pid = booting ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
+  pid = booting ? 1 : ++lastpid;
   p->pid = pid;
   eventinit(&p->events);
   error = lifecreaterun(set, pid, parent, slot, &p->life);
@@ -742,6 +752,7 @@ procinfo(Handle pid, Procinfo *out)
   out->configured = p->configured != 0;
   out->phase = p->state == PROC_EXITING ? p->phase.cleanup : 0;
   out->resources = p->resources->count;
+  out->run = (u32) (p - processes);
   return 0;
 }
 Rtable *

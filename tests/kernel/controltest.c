@@ -133,7 +133,7 @@ controltest(void)
         REQUIRE(life.reason == LIFE_EXIT && life.code == 42);
         clean(pids[1], info[1].life);
         REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[2]) && !procinfo(pids[2], &info[2]));
-        REQUIRE(handleindex(pids[1]) == handleindex(pids[2]) && pids[1] != pids[2]);
+        REQUIRE(info[1].run == info[2].run && pids[1] != pids[2]);
         load(pids[2], &info[2], &info[0], 2);
         REQUIRE(!procpublish(pids[2]));
         reused = 1;

@@ -73,7 +73,7 @@ static isize lookup(void *ctx, Handle pid, u64 image, u64 session, u64 reference
   return image == 1 && (session == 13 || session == 14) && reference == 17 ? 0 : -ERR_STALE;
 }
 isize forkmanifest(u64 scenario, Execmanifest *out, const Execmanifest *snapshot) {
-  Handle parent = ((u64) HANDLE_PROCESS << 59) | (1U << 16) | 2;
+  Handle parent = 68;
   Ipcmsg call = {IPC_CALL, parent, ((u64) HANDLE_REQUEST << 59) | (1U << 16),
                  {FS_FORK_PREPARE, 29, 3, 0}, 1};
   Connpeer backend = {parent + 2, 4};
@@ -112,7 +112,7 @@ isize __sys_observe(Handle permit, Handle basis, u64 relation, Handle pid, u64 i
   return 0;
 }
 isize forkobserve(u64 scenario, Fileowner *owner) {
-  Handle parent = ((u64) HANDLE_PROCESS << 59) | (1U << 16) | 2;
+  Handle parent = 68;
   Ipcmsg call = {IPC_CALL, parent, ((u64) HANDLE_REQUEST << 59) | (1U << 16),
                  {FS_FORK_PREPARE, 0, 1, 0}, 1};
   childpid = parent + 1;

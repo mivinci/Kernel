@@ -47,7 +47,7 @@ class PrepTests(unittest.TestCase):
             self.targetimages={}
             self.targets=[]; self.scopes=[]
             self.source,self.slots,self.source_space,self.spacecap,self.alloccap=self.table(16)
-            self.source.owner=lib.handlepack(1,1,1); self.source.image=1
+            self.source.owner=(2 + (1) * 64 + (1)); self.source.image=1
             try:
                 method()
             finally:
@@ -84,7 +84,7 @@ class PrepTests(unittest.TestCase):
         self.assertEqual(self.lib.spacecreate(acct,C.byref(space)),0)
         table=support.Table(); storage=(support.Local*16)()
         self.assertEqual(self.lib.localinit(C.byref(table),storage,16,acct,space),0)
-        table.owner=self.lib.handlepack(1,1,len(self.targets)+2); table.image=1
+        table.owner=(2 + (1) * 64 + (len(self.targets)+2)); table.image=1
         self.assertEqual(self.lib.lifecreaterun(self.sid,table.owner,self.source.owner,len(self.targets)+2,C.byref(life)),0)
         image=Imageid()
         self.assertEqual(self.lib.imagecreate(life,0,C.byref(image)),0)
@@ -301,14 +301,14 @@ class PrepTests(unittest.TestCase):
             for number in (0,1):
                 self.assertEqual(self.lib.preprelated(owner,image,target.owner,number,C.byref(out)),0)
                 self.assertEqual((out.generation,out.index),(self.info(prep).identity.generation,self.info(prep).identity.index))
-            for who,number in ((self.lib.handlepack(1,2,1),image),(owner,image+1)):
+            for who,number in (((2 + (2) * 64 + (1)),image),(owner,image+1)):
                 self.assertEqual(self.lib.preprelated(who,number,target.owner,0,C.byref(out)),-4)
             self.assertEqual(self.lib.preprelated(owner,image,owner,0,C.byref(out)),-1)
             self.source.epoch+=1
             self.assertEqual(self.lib.preprelated(owner,image,target.owner,0,C.byref(out)),-6)
             self.source.epoch-=1
             self.assertEqual(self.lib.prepcancel(prep),0)
-            self.source.owner=self.lib.handlepack(1,2,1);self.source.epoch+=1
+            self.source.owner=(2 + (2) * 64 + (1));self.source.epoch+=1
             self.assertEqual(self.lib.preprelated(owner,image,target.owner,0,C.byref(out)),0)
             self.assertEqual(self.lib.preprelated(self.source.owner,image,target.owner,0,C.byref(out)),-4)
         for lib in self.libs:self.exercise(lib,body)

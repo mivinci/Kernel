@@ -58,7 +58,7 @@ forkcleantest(void)
   int        error;
   pgstat(&before);
   for (mode = 0; mode < 4; mode++) {
-    parent = handlepack(HANDLE_PROCESS, 9000 + mode, 61);
+    parent = (2 + (9000 + mode) * 64 + (61));
     REQUIRE(!setcreate(512, 512, 8, &set) && !acctcreate(set, 128, 128, &acct) &&
             !spacecreate(acct, &root) && !lifecreaterun(set, parent, 1, 61, &life) &&
             !lifebindacct(life, acct) && !imagecreate(life, 0, &image) &&

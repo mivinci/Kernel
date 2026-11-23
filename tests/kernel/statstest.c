@@ -143,7 +143,7 @@ statstest(void)
   REQUIRE(!procusage(pids[1], &user, &kernel) && user && kernel);
   collect(pids[1], info[1].life);
   REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[2]) && !procinfo(pids[2], &info[2]));
-  REQUIRE(handleindex(pids[2]) == handleindex(pids[1]) && pids[2] != pids[1]);
+  REQUIRE(info[2].run == info[1].run && pids[2] != pids[1]);
   REQUIRE(!procusage(pids[2], &user, &kernel) && !user && !kernel);
   REQUIRE(!localcontrol(observer, info[2].life, CONTROL_QUERY, (Handle *) &replacement[0]));
   replacement[1] = (u64) pids[2];

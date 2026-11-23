@@ -197,7 +197,7 @@ terminatetest(void)
         REQUIRE(!procdestroy(pids[7]));
         clean(pids[7]);
         REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[8]) && !procinfo(pids[8], &info[8]));
-        REQUIRE(handleindex(pids[1]) == handleindex(pids[8]) && pids[1] != pids[8]);
+        REQUIRE(info[1].run == info[8].run && pids[1] != pids[8]);
         load(pids[8], &info[8], info, 8);
         REQUIRE(!procpublish(pids[8]) && !proctimerstart());
         reused = 1;

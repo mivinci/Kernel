@@ -80,7 +80,7 @@ class SignalFrameTests(unittest.TestCase):
             lib.sigchild.argtypes=[Imageid,C.c_int64,C.c_uint32,C.c_uint64,C.c_uint64]
             action=support.Action(2,0x10080,0x10040,0,8,0)
             self.assertEqual(lib.siginstall(self.identity,17,C.byref(action)),0)
-            pid=(1<<59)|(7<<16)|9
+            pid=(2 + 7 * 64 + 9)
             self.assertEqual(lib.sigchild(self.identity,pid,123,1,31),0)
             self.assertEqual(lib.sigchild(self.identity,pid+1,456,1,9|256),0)
             self.assertEqual(lib.sigdeliver(self.identity,self.mapped,self.user.pointer),0)
@@ -102,7 +102,7 @@ class SignalFrameTests(unittest.TestCase):
         def body():
             lib=self.lib
             lib.sigchild.argtypes=[Imageid,C.c_int64,C.c_uint32,C.c_uint64,C.c_uint64]
-            pid=(1<<59)|(7<<16)|9
+            pid=(2 + 7 * 64 + 9)
             before=self.snapshot(self.identity).pending
             for child,reason,status in ((0,1,0),(1,1,0),(2<<59,1,0),(pid,2,0),
                                         (pid,1,1<<63),(pid,1,1024),(pid,1,256),(pid,1,256|32)):

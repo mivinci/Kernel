@@ -1,6 +1,5 @@
 #ifndef _ABI_BASE_H
 #define _ABI_BASE_H
-#define HANDLE_PROCESS        1
 #define HANDLE_RESOURCE       2
 #define HANDLE_REQUEST        3
 #define HANDLE_RPC            4
@@ -33,23 +32,21 @@
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 typedef int64_t Handle;
-/* Syntax only, not lifetime or authority. PID 1 is the sole encoding exception. */
+/* Syntax only, not lifetime or authority. */
 static __inline__ uint32_t
 handlekind(Handle handle)
 {
   uint64_t word = (uint64_t) handle;
   uint32_t kind;
-  if (handle == 1)
-    return HANDLE_PROCESS;
   if (handle <= 0 || !((word >> 16) & HANDLE_GENERATION_MAX))
     return 0;
   kind = (uint32_t) (word >> 59);
-  return kind >= HANDLE_PROCESS && kind <= HANDLE_TERMINAL ? kind : 0;
+  return kind >= HANDLE_RESOURCE && kind <= HANDLE_TERMINAL ? kind : 0;
 }
 static __inline__ int
 pidvalid(int64_t pid)
 {
-  return handlekind(pid) == HANDLE_PROCESS;
+  return pid > 0 && pid <= INT32_MAX;
 }
 #endif
 #endif

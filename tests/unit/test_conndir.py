@@ -30,7 +30,7 @@ class Cache(C.Structure):
 
 
 def pid(index):
-    return (1<<59)|(7<<16)|index
+    return (2 + 7 * 64 + index)
 
 
 STUB=r'''

@@ -75,7 +75,7 @@ class ElfLoaderTests(unittest.TestCase):
         return Source(None,len(data),self.reader)
 
     def test_fix_load_releases_parent_alias_and_maps_read_only_child_bytes(self):
-        target=(1<<59)|(4<<16)|3
+        target=(2 + 4 * 64 + 3)
         payload=struct.pack('<11Q',1,88,1,1,target,0,0,64,0,0,0)
         source=self.window+PAGE
         destination=0x50000
@@ -98,7 +98,7 @@ class ElfLoaderTests(unittest.TestCase):
                     lib.mock_abort()
 
     def test_fork_publication_failure_preserves_first_error_and_retries_exact_cleanup(self):
-        target=(1<<59)|(4<<16)|3
+        target=(2 + 4 * 64 + 3)
         payload=struct.pack('<15Q',1,120,1,1,target,0,0,64,*([0]*7))
         source=self.window+PAGE
         C.memmove(source,payload,len(payload))

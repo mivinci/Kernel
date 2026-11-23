@@ -40,7 +40,7 @@ sigexectest(void)
   u32        mode;
   u64        frame;
   u64        usr1 = (u64) 1 << (SIGNAL_USR1 - 1), usr2 = (u64) 1 << (SIGNAL_USR2 - 1);
-  Handle     pid = handlepack(HANDLE_PROCESS, 3010, 1);
+  Handle     pid = (2 + (3010) * 64 + (1));
   pgstat(&before);
   REQUIRE(!setcreate(64, 64, 1, &set) && !acctcreate(set, 64, 64, &acct) &&
           !spacecreate(acct, &space) && !lifecreaterun(set, pid, 1, 1, &owner) &&
@@ -136,7 +136,7 @@ sigforktest(void)
   for (mode = 0; mode < 2; mode++) {
     REQUIRE(!setcreate(128, 128, 4, &set));
     for (i = 0; i < 2; i++) {
-      pids[i] = handlepack(HANDLE_PROCESS, 3000 + mode * 2 + i, 1 + i);
+      pids[i] = (2 + (3000 + mode * 2 + i) * 64 + (1 + i));
       REQUIRE(!acctcreate(set, 32, 32, &accounts[i]) && !spacecreate(accounts[i], &spaces[i]) &&
               !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&
               !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&

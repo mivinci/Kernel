@@ -23,7 +23,7 @@ class EndpointTests(unittest.TestCase):
             lib.localendpoint.argtypes=[C.POINTER(support.Table),Imageid,C.c_uint32,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)]
             lib.localchannel.argtypes=[C.POINTER(support.Table),C.c_int64,C.c_uint32,C.POINTER(Imageid),C.POINTER(C.c_uint64)]
             self.life=Lifeid();self.images=[]
-            self.assertEqual(lib.lifecreaterun(self.sid,lib.handlepack(1,1,1),1,1,C.byref(self.life)),0)
+            self.assertEqual(lib.lifecreaterun(self.sid,(2 + (1) * 64 + (1)),1,1,C.byref(self.life)),0)
             try:method()
             finally:
                 for image in self.images:

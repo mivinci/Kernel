@@ -81,7 +81,7 @@ class LocalForkTests(unittest.TestCase):
 
     def context(self,table,active=False):
         life=Lifeid();image=images.Imageid()
-        pid=self.lib.handlepack(1,900+len(self.contexts),len(self.contexts)+10)
+        pid=(2 + (900+len(self.contexts)) * 64 + (len(self.contexts)+10))
         self.assertEqual(self.lib.lifecreaterun(self.sid,pid,1,len(self.contexts)+10,C.byref(life)),0)
         self.assertEqual(self.lib.imagecreate(life,0,C.byref(image)),0)
         if active:

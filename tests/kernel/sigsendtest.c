@@ -580,7 +580,7 @@ snapshot(u32 zero)
   old = receivers[31].pid;
   kill(&receivers[31]);
   create(set, 10, 50, &replacement);
-  CHECK(replacement.pid != old && handleindex(replacement.pid) == handleindex(old));
+  CHECK(replacement.pid != old && replacement.info.run == receivers[31].info.run);
   join(&replacement, &receivers[0]);
   load(&replacement, 0, 1);
   CHECK(!procstop(replacement.pid, SIGNAL_STOP));

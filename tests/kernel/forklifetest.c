@@ -166,7 +166,7 @@ forklifetest(void)
   for (mode = 0; mode < 5; mode++) {
     REQUIRE(!setcreate(512, 512, 8, &set) && !acctcreate(set, 64, 64, &acct) &&
             !spacecreate(acct, &space));
-    parentpid = handlepack(HANDLE_PROCESS, 5000 + mode, 50);
+    parentpid = (2 + (5000 + mode) * 64 + (50));
     REQUIRE(!lifecreaterun(set, parentpid, 1, 50, &parentlife) && !lifebindacct(parentlife, acct) &&
             !imagecreate(parentlife, 0, &image) && !sigreserve(image));
     cred.ruid = 1000;

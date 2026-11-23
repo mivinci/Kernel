@@ -20,7 +20,7 @@ jobs(void)
   Liferesult stopped, result;
   Lifefault  fault;
   u32        matched;
-  Handle     pid = handlepack(HANDLE_PROCESS, 1000, 1);
+  Handle     pid = (2 + (1000) * 64 + (1));
   REQUIRE(!setcreate(64, 128, 1, &budget) && !lifecreaterun(budget, pid, 1, 1, &identity) &&
           !lifebootgroup(identity) && !lifepublish(identity));
   REQUIRE(!lifestat(identity, &state) && !groupstat(state.group, &before));
@@ -57,7 +57,7 @@ jobs(void)
           state.fault.pc == fault.pc && state.fault.address == fault.address &&
           state.fault.cause == fault.cause && !lifedetach(identity));
   REQUIRE(lifestat(identity, &state) == -ERR_STALE);
-  REQUIRE(!lifecreaterun(budget, handlepack(HANDLE_PROCESS, 1001, 1), 1, 1, &fresh) &&
+  REQUIRE(!lifecreaterun(budget, (2 + (1001) * 64 + (1)), 1, 1, &fresh) &&
           !lifestat(fresh, &state) && !state.stopped && !state.sequence && !lifecancel(fresh) &&
           !lifedetach(fresh) && !lifecheck() && !groupcheck());
   REQUIRE(!setstat(budget, &account) && !account.instances && !account.charged &&
@@ -67,8 +67,8 @@ static void
 usagecheck(Setid group)
 {
   Lifeid     parent, child, grandchild, reused;
-  Handle     ppid = handlepack(HANDLE_PROCESS, 1, 4), cpid = handlepack(HANDLE_PROCESS, 1, 5);
-  Handle     gpid = handlepack(HANDLE_PROCESS, 1, 6);
+  Handle     ppid = (2 + (1) * 64 + (4)), cpid = (2 + (1) * 64 + (5));
+  Handle     gpid = (2 + (1) * 64 + (6));
   Liferesult result;
   u64        user, kernel;
   REQUIRE(!lifecreaterun(group, ppid, 1, 4, &parent) && !lifepublish(parent) &&
@@ -79,7 +79,7 @@ usagecheck(Setid group)
           !lifechildusage(child, &user, &kernel) && !user && !kernel);
   REQUIRE(!lifeendusage(grandchild, LIFE_EXIT, 0, NULL, 11, 13) && !lifedetach(grandchild) &&
           !lifechildusage(child, &user, &kernel) && !user && !kernel);
-  REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, 2, 6), cpid, 6, &reused) &&
+  REQUIRE(!lifecreaterun(group, (2 + (2) * 64 + (6)), cpid, 6, &reused) &&
           !lifechildusage(reused, &user, &kernel) && !user && !kernel && !lifecancel(reused) &&
           !lifedetach(reused));
   REQUIRE(!lifetake(grandchild, cpid, 0, &result) && !lifechildusage(child, &user, &kernel) &&
@@ -88,7 +88,7 @@ usagecheck(Setid group)
           !lifedetach(child) && !lifechildusage(parent, &user, &kernel) && user == 28 &&
           kernel == 32);
   REQUIRE(!lifechildpolicy(parent, LIFE_AUTOCHILD) &&
-          !lifecreaterun(group, handlepack(HANDLE_PROCESS, 2, 5), ppid, 5, &child) &&
+          !lifecreaterun(group, (2 + (2) * 64 + (5)), ppid, 5, &child) &&
           !lifepublish(child) && !lifeendusage(child, LIFE_EXIT, 0, NULL, 31, 37) &&
           !lifedetach(child) && !lifechildusage(parent, &user, &kernel) && user == 28 &&
           kernel == 32);
@@ -112,31 +112,31 @@ lifetest(void)
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, LIFES, &group));
   for (i = 0; i < LIFES; i++) {
-    REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, i + 1, 1), 1, 1, &retained[i]));
+    REQUIRE(!lifecreaterun(group, (2 + (i + 1) * 64 + (1)), 1, 1, &retained[i]));
     REQUIRE(!lifepublish(retained[i]) && !lifeend(retained[i], LIFE_EXIT, i & 255, NULL));
     REQUIRE(lifeend(retained[i], LIFE_SIGNAL, 9, NULL) == -ERR_STATE);
     REQUIRE(!lifedetach(retained[i]));
   }
   REQUIRE(!setstat(group, &set) && set.instances == LIFES);
-  REQUIRE(lifecreaterun(group, handlepack(HANDLE_PROCESS, LIFES + 1, 1), 1, 1, &fresh) == -ERR_CAPACITY);
+  REQUIRE(lifecreaterun(group, (2 + (LIFES + 1) * 64 + (1)), 1, 1, &fresh) == -ERR_CAPACITY);
   REQUIRE(!lifehold(retained[0], LIFE_CLEANUP) && !lifecollect(retained[0], 1, &result));
-  REQUIRE(result.pid == handlepack(HANDLE_PROCESS, 1, 1) && result.code == 0);
+  REQUIRE(result.pid == (2 + (1) * 64 + (1)) && result.code == 0);
   REQUIRE(!lifestat(retained[0], &old) && old.cleanup == 1 && old.instance == 0);
-  REQUIRE(lifecreaterun(group, handlepack(HANDLE_PROCESS, LIFES + 1, 1), 1, 1, &fresh) == -ERR_CAPACITY);
+  REQUIRE(lifecreaterun(group, (2 + (LIFES + 1) * 64 + (1)), 1, 1, &fresh) == -ERR_CAPACITY);
   REQUIRE(!lifedrop(retained[0], LIFE_CLEANUP));
-  REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, LIFES + 1, 1), 1, 1, &fresh));
+  REQUIRE(!lifecreaterun(group, (2 + (LIFES + 1) * 64 + (1)), 1, 1, &fresh));
   REQUIRE(fresh.index == retained[0].index && fresh.generation > retained[0].generation);
   REQUIRE(lifestat(retained[0], &old) == -ERR_STALE);
   REQUIRE(!lifecancel(fresh) && !lifedetach(fresh));
   for (i = 1; i < LIFES; i++) {
-    REQUIRE(!lifestat(retained[i], &old) && old.pid == handlepack(HANDLE_PROCESS, i + 1, 1));
+    REQUIRE(!lifestat(retained[i], &old) && old.pid == (2 + (i + 1) * 64 + (1)));
     REQUIRE(!lifecollect(retained[i], 1, &result) && result.code == (i & 255));
   }
-  ppid = handlepack(HANDLE_PROCESS, LIFES + 2, 1);
-  cpid = handlepack(HANDLE_PROCESS, 1, 2);
+  ppid = (2 + (LIFES + 2) * 64 + (1));
+  cpid = (2 + (1) * 64 + (2));
   REQUIRE(!lifecreaterun(group, ppid, 1, 1, &parent) && !lifepublish(parent));
   REQUIRE(!lifecreaterun(group, cpid, ppid, 2, &child) && !lifepublish(child));
-  REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, 1, 3), ppid, 3, &live) && !lifepublish(live));
+  REQUIRE(!lifecreaterun(group, (2 + (1) * 64 + (3)), ppid, 3, &live) && !lifepublish(live));
   REQUIRE(!lifeend(child, LIFE_EXIT, 42, NULL));
   REQUIRE(!lifeend(parent, LIFE_EXIT, 0, NULL));
   /* Logical collection precedes both physical parent rewriting and run cleanup. */
@@ -151,7 +151,7 @@ lifetest(void)
   REQUIRE(!lifecollect(child, 1, &result) && result.code == 42);
   REQUIRE(!lifedetach(child));
   REQUIRE(!lifedetach(parent) && !lifecollect(parent, 1, &result));
-  REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, LIFES + 3, 1), 1, 1, &fresh));
+  REQUIRE(!lifecreaterun(group, (2 + (LIFES + 3) * 64 + (1)), 1, 1, &fresh));
   REQUIRE(!lifestat(live, &old) && old.parent == 1);
   REQUIRE(!lifecancel(fresh) && !lifedetach(fresh));
   REQUIRE(!lifeend(live, LIFE_EXIT, 7, NULL) && !lifecollect(live, 1, &result));

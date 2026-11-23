@@ -146,7 +146,7 @@ credtest(void)
         collect(pids[0], info[0].life);
         REQUIRE(!lifestat(info[2].life, &life) && life.state == LIFE_ABORTED);
         REQUIRE(!procnew(set, 1, 256, 512, LOCALS, &pids[3]) && !procinfo(pids[3], &info[3]));
-        REQUIRE(handleindex(pids[0]) == handleindex(pids[3]) && pids[0] != pids[3]);
+        REQUIRE(info[0].run == info[3].run && pids[0] != pids[3]);
         cred.ruid = 210;
         cred.euid = 220;
         cred.rgid = 230;

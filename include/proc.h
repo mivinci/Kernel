@@ -28,7 +28,7 @@ struct Procinfo
   Spaceid  space;
   Kstackid stack;
   u64      image;
-  u32      state, configured, phase, resources;
+  u32      state, configured, phase, resources, run;
 };
 /* Trusted split accounting; the public QUERY_PROC total stays unchanged. */
 int  procusage(Handle pid, u64 *user_ns, u64 *kernel_ns);

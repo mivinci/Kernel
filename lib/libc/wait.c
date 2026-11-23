@@ -1,7 +1,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include "private/syscall.h"
-STATIC_ASSERT(sizeof(pid_t) == sizeof(Handle), wait_pid_width);
+STATIC_ASSERT(sizeof(pid_t) == sizeof(int32_t), wait_pid_width);
 STATIC_ASSERT(sizeof(int) == 4, wait_status_width);
 static pid_t
 failure(isize error)

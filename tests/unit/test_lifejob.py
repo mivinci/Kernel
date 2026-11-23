@@ -285,7 +285,7 @@ u32 outstanding(void){return instances;}
                     getattr(lib, name).argtypes = arguments
                 for stopped in (False, True):
                     identity, state, result = support.Lifeid(), support.Life(), support.Result()
-                    pid = (1 << 59) | ((9 + int(stopped)) << 16) | 1
+                    pid = 10 + int(stopped)
                     self.assertEqual(lib.lifecreaterun(Setid(1, 0, 0), pid, 1,1,C.byref(identity)), 0)
                     self.assertEqual(lib.lifebootgroup(identity), 0)
                     self.assertEqual(lib.lifepublish(identity), 0)

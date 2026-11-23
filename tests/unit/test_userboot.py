@@ -113,8 +113,8 @@ class UserBootTests(unittest.TestCase):
         cls.lib.bootarg.argtypes=[C.POINTER(View),C.c_uint64,C.c_uint32];cls.lib.bootarg.restype=C.c_void_p
 
     def test_fix_pack_roundtrip_has_exact_regions_and_leaves_failed_destination_untouched(self):
-        source=(1<<59)|(7<<16)|2
-        target=(1<<59)|(8<<16)|3
+        source=(2 + 7 * 64 + 2)
+        target=(2 + 8 * 64 + 3)
         resource=(2<<59)|(4<<16)|5
         layers=(C.c_uint64*6)(1,1,7,2,0,0)
         connections=(C.c_uint64*6)(source,9,101,source,10,102)
@@ -146,8 +146,8 @@ class UserBootTests(unittest.TestCase):
         self.assertEqual((count.value,C.string_at(entry,48)),(2,bytes(connections)))
 
     def test_fix_envelope_bounds_contexts_and_checks_exact_identities(self):
-        source=(1<<59)|(7<<16)|2
-        target=(1<<59)|(8<<16)|3
+        source=(2 + 7 * 64 + 2)
+        target=(2 + 8 * 64 + 3)
         resource=(2<<59)|(4<<16)|5
         data=(C.c_uint64*16)(1,128,source,9,target,1,96,64,*([0]*4),1,resource,0,0)
         result=FixView()
@@ -180,7 +180,7 @@ class UserBootTests(unittest.TestCase):
         self.assertEqual(self.lib.sysfixlayers(C.byref(view),C.byref(out)),-1)
 
     def test_fix_connections_require_unique_backend_images_and_child_tokens(self):
-        backend=(1<<59)|(7<<16)|2
+        backend=(2 + 7 * 64 + 2)
         data=(C.c_uint64*13)(0,0,0,0,0,0,2,backend,9,101,backend,10,102)
         view=FixView(1,0,C.addressof(data),C.sizeof(data))
         out=C.c_void_p();count=C.c_uint64()

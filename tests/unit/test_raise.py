@@ -51,12 +51,12 @@ class RaiseTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
 
-    def reset(self,lib,pid=0x0800001234560007,error=0):
+    def reset(self,lib,pid=0x12345607,error=0):
         lib.testreset(pid,error);self.errno=lib.raise_errno();self.errno[0]=33
 
     def test_valid_signals_use_full_current_pid_and_explicit_pid_selector(self):
         for lib in self.libs:
-            for pid in (1,0x0800001234560007,0x0fffffffffff0001):
+            for pid in (1,0x12345607,0x7fffffff):
                 for signum in range(1,33):
                     if not SUPPORTED&(1<<(signum-1)):continue
                     self.reset(lib,pid);self.assertEqual(lib.user_raise(signum),0)
@@ -74,11 +74,11 @@ class RaiseTests(unittest.TestCase):
             for native,error in ((-1,22),(-7,11),(-8,11),(-9,11),(-10,12),(-18,38),(-19,38),(-2,5),(-4,5),(-5,5),(-12,5),(-999,5)):
                 self.reset(lib,error=native);self.assertEqual(lib.user_raise(10),-1)
                 self.assertEqual((self.errno[0],lib.testget(0),lib.testget(1)),(error,2,1))
-                self.assertEqual((lib.testget(3),lib.testget(4)),(1,0x0800001234560007))
+                self.assertEqual((lib.testget(3),lib.testget(4)),(1,0x12345607))
 
     def test_reentrant_raise_keeps_the_outer_selector_owned_on_its_stack(self):
         for lib in self.libs:
             self.reset(lib);lib.testnested();self.assertEqual(lib.user_raise(10),0)
             self.assertEqual([lib.testget(i) for i in (0,1,2,3,4,5,6,7,8)],
-                             [4,2,2,1,0x0800001234560007,18,0,1,3])
+                             [4,2,2,1,0x12345607,18,0,1,3])
             self.assertEqual(self.errno[0],33)

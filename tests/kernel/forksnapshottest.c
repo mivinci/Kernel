@@ -56,7 +56,7 @@ forksnapshottest(void)
   for (mode = 0; mode < 4; mode++) {
     REQUIRE(!setcreate(256, 256, 4, &set));
     for (i = 0; i < 2; i++) {
-      pids[i] = handlepack(HANDLE_PROCESS, 4000 + mode * 2 + i, i + 1);
+      pids[i] = (2 + (4000 + mode * 2 + i) * 64 + (i + 1));
       REQUIRE(!acctcreate(set, 64, 64, &accounts[i]) && !spacecreate(accounts[i], &spaces[i]) &&
               !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&
               !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&

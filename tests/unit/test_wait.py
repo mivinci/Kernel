@@ -26,7 +26,7 @@ u64 test_copies(void){return copies;}
 u64 test_options(void){return seen_options;}
 Handle test_selector(void){return seen_selector;}
 void test_parent(Handle pid){parent=pid;}
-isize __sys_getid(Handle *pid,u64 *image,Handle *ppid){*pid=0x0800000000010002UL;*image=7;*ppid=parent;return 0;}
+isize __sys_getid(Handle *pid,u64 *image,Handle *ppid){*pid=0x00010002UL;*image=7;*ppid=parent;return 0;}
 isize __sys_wait(Handle selector,u64 options,Handle *pid,u64 *event,u64 *value,u64 *sequence){
  calls++;seen_selector=selector;seen_options=options;
  *pid=failure?0:child;*event=kind;*value=code;*sequence=2;child=0;
@@ -53,8 +53,8 @@ int test_evaluations(void){int status=0;WIFSIGNALED(status++);WCOREDUMP(status++
             command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
         subprocess.run(command,check=True,capture_output=True)
         cls.lib=C.CDLL(str(path))
-        specs={'user_waitpid':([C.c_int64,C.c_void_p,C.c_int],C.c_int64),'user_wait':([C.c_void_p],C.c_int64),
-               'user_getpid':([],C.c_int64),'user_getppid':([],C.c_int64),'user___errno_location':([],C.POINTER(C.c_int)),
+        specs={'user_waitpid':([C.c_int32,C.c_void_p,C.c_int],C.c_int32),'user_wait':([C.c_void_p],C.c_int32),
+               'user_getpid':([],C.c_int32),'user_getppid':([],C.c_int32),'user___errno_location':([],C.POINTER(C.c_int)),
                'test_result':([C.c_int64,C.c_int64,C.c_uint64,C.c_uint64],None),'test_parent':([C.c_int64],None),
                'test_calls':([],C.c_uint64),'test_copies':([],C.c_uint64),'test_options':([],C.c_uint64),
                'test_selector':([],C.c_int64),'test_macros':([C.c_int],C.c_uint64),'test_evaluations':([],C.c_int)}
@@ -99,7 +99,7 @@ int test_evaluations(void){int status=0;WIFSIGNALED(status++);WCOREDUMP(status++
             self.assertEqual((self.error[0],output.value,self.lib.test_copies()),(errno,77,0))
 
     def test_selectors_and_options_are_preserved_and_bad_options_do_not_enter_kernel(self):
-        for selector in (0,-1,0x0800000000010002,-0x0800000000010002,-(1<<63)):
+        for selector in (0,-1,0x00010002,-0x00010002,-(1<<31)):
             self.lib.test_result(0,0,0,0)
             self.assertEqual(self.lib.user_waitpid(selector,None,7),0)
             self.assertEqual((self.lib.test_selector(),self.lib.test_options()),(selector,7))
@@ -109,7 +109,7 @@ int test_evaluations(void){int status=0;WIFSIGNALED(status++);WCOREDUMP(status++
             self.assertEqual((self.error[0],self.lib.test_calls()),(22,0))
 
     def test_identity_queries_use_full_pid_and_follow_current_parent(self):
-        self.assertEqual(self.lib.user_getpid(),0x0800000000010002)
-        for parent in (0x0800000000090001,1,0):
+        self.assertEqual(self.lib.user_getpid(),0x00010002)
+        for parent in (0x00090001,1,0):
             self.lib.test_parent(parent);self.assertEqual(self.lib.user_getppid(),parent)
         self.assertEqual(self.error[0],33)

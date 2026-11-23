@@ -150,7 +150,7 @@ proctest(void)
   Rtable    *t;
   Allocarg   args;
   Pgstat     before, after;
-  u32        i;
+  u32        i, firstslot;
   pgstat(&before);
   REQUIRE(!setcreate(4096, 8192, PROCS, &set));
   for (i = 1; i < 6; i++) {
@@ -174,6 +174,8 @@ proctest(void)
   load(b);
   REQUIRE(!procinfo(a, &info));
   first = info.life;
+  REQUIRE(!lifestat(first, &retained));
+  firstslot = retained.run;
   REQUIRE(!procinfo(b, &info));
   second = info.life;
   REQUIRE(!procpublish(a) && !procpublish(b));
@@ -181,7 +183,8 @@ proctest(void)
   REQUIRE(!procrunone() && runs == 1);
   clean(a);
   REQUIRE(procinfo(a, &info) == -ERR_STALE && !lifestat(first, &retained) && retained.pid == a);
-  REQUIRE(!procnew(set, 1, 128, 256, LOCALS, &c) && handleindex(c) == handleindex(a) && c != a);
+  REQUIRE(!procnew(set, 1, 128, 256, LOCALS, &c) && c > b && c <= INT32_MAX &&
+          !procinfo(c, &info) && !lifestat(info.life, &retained) && retained.run == firstslot);
   t = proctable(c);
   allocator = resource(t, LOCAL_ALLOC);
   args.bytes = PAGE_SIZE;
@@ -196,6 +199,16 @@ proctest(void)
   clean(b);
   REQUIRE(!lifecollect(second, 1, &result) && result.pid == b && result.code == 42);
   REQUIRE(procrunone() == -ERR_WOULD_BLOCK);
+  {
+    extern void proctestpidlimit(void);
+    proctestpidlimit();
+    REQUIRE(!procnew(set, 1, 128, 256, LOCALS, &c) && c == INT32_MAX);
+    REQUIRE(!procdestroy(c));
+    clean(c);
+    a = 77;
+    REQUIRE(procnew(set, 1, 128, 256, LOCALS, &a) == -ERR_OVERFLOW && !a);
+    REQUIRE(procnew(set, 1, 128, 256, LOCALS, &a) == -ERR_OVERFLOW && !a);
+  }
   REQUIRE(!setstat(set, &group) && !group.charged && !group.instances && !setclose(set));
   pgstat(&after);
   REQUIRE(after.allocated == before.allocated && after.free == before.free && !acctcheck() &&

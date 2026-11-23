@@ -42,9 +42,9 @@ isize __sys_enter(u64 nr,const u64 args[7],void *raw){
             command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
         subprocess.run(command,check=True,capture_output=True)
         cls.lib=C.CDLL(str(path))
-        signatures={'user_getpgrp':([],C.c_int64),'user_getpgid':([C.c_int64],C.c_int64),
-                    'user_getsid':([C.c_int64],C.c_int64),'user_setpgid':([C.c_int64,C.c_int64],C.c_int),
-                    'user_setsid':([],C.c_int64),'user___errno_location':([],C.POINTER(C.c_int)),
+        signatures={'user_getpgrp':([],C.c_int32),'user_getpgid':([C.c_int32],C.c_int32),
+                    'user_getsid':([C.c_int32],C.c_int32),'user_setpgid':([C.c_int32,C.c_int32],C.c_int),
+                    'user_setsid':([],C.c_int32),'user___errno_location':([],C.POINTER(C.c_int)),
                     'test_result':([C.c_int64,C.c_int64,C.c_int64],None),
                     'test_number':([],C.c_uint64),'test_calls':([],C.c_uint64),'test_arg':([C.c_uint32],C.c_uint64),
                     '__sys_getpg':([C.c_int64,C.POINTER(C.c_int64),C.POINTER(C.c_int64)],C.c_int64),
@@ -55,7 +55,7 @@ isize __sys_enter(u64 nr,const u64 args[7],void *raw){
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
 
-    def reset(self,error=0,pgid=0x0800000000010002,sid=0x0800000000010001):
+    def reset(self,error=0,pgid=0x00010002,sid=0x00010001):
         self.lib.test_result(error,pgid,sid);self.error=self.lib.user___errno_location();self.error[0]=33
 
     def check_args(self,number,expected):
@@ -63,18 +63,18 @@ isize __sys_enter(u64 nr,const u64 args[7],void *raw){
         self.assertEqual([self.lib.test_arg(i) for i in range(7)],list(expected)+[0]*(7-len(expected)))
 
     def test_queries_keep_full_ids_and_read_each_current_group(self):
-        pid=0x0800000001230003
+        pid=0x01230003
         for selector in (0,pid,1):
-            self.reset();self.assertEqual(self.lib.user_getpgid(selector),0x0800000000010002)
+            self.reset();self.assertEqual(self.lib.user_getpgid(selector),0x00010002)
             self.check_args(0x66,[selector]);self.assertEqual(self.error[0],33)
-            self.reset();self.assertEqual(self.lib.user_getsid(selector),0x0800000000010001)
+            self.reset();self.assertEqual(self.lib.user_getsid(selector),0x00010001)
             self.check_args(0x66,[selector]);self.assertEqual(self.error[0],33)
-        for group in (0x0800000000010002,0x080000000fff0002,1):
+        for group in (0x00010002,0x0fff0002,1):
             self.reset(pgid=group);self.assertEqual(self.lib.user_getpgrp(),group)
             self.check_args(0x66,[0]);self.assertEqual(self.error[0],33)
 
     def test_setters_forward_zero_and_pid_one_without_reencoding(self):
-        pid=0x0800000001230003;pgid=0x0800000004560004
+        pid=0x01230003;pgid=0x04560004
         for target,group in ((0,0),(pid,0),(pid,pgid),(0,1)):
             self.reset();self.assertEqual(self.lib.user_setpgid(target,group),0)
             self.check_args(0x67,[target,group]);self.assertEqual(self.error[0],33)
@@ -82,7 +82,7 @@ isize __sys_enter(u64 nr,const u64 args[7],void *raw){
         self.check_args(0x68,[]);self.assertEqual(self.error[0],33)
 
     def test_negative_selectors_fail_before_native_call(self):
-        for value in (-1,-(1<<63)):
+        for value in (-1,-(1<<31)):
             for name in ('user_getpgid','user_getsid'):
                 self.reset();self.assertEqual(getattr(self.lib,name)(value),-1)
                 self.assertEqual((self.error[0],self.lib.test_calls()),(22,0))
@@ -91,12 +91,12 @@ isize __sys_enter(u64 nr,const u64 args[7],void *raw){
                 self.assertEqual((self.error[0],self.lib.test_calls()),(22,0))
 
     def test_destination_syntax_is_eperm_but_missing_target_is_esrch(self):
-        for group in (2,0x1000000000010002,0x0800000000000002,0x7800000000010002):
+        for group in (-2, -(1<<31)):
             self.reset();self.assertEqual(self.lib.user_setpgid(0,group),-1)
-            self.assertEqual((self.error[0],self.lib.test_calls()),(1,0))
+            self.assertEqual((self.error[0],self.lib.test_calls()),(22,0))
         self.reset(-3);self.assertEqual(self.lib.user_setpgid(2,0),-1)
         self.assertEqual((self.error[0],self.lib.test_calls()),(3,1))
-        self.reset(-5);self.assertEqual(self.lib.user_setpgid(0,0x080000000fff0002),-1)
+        self.reset(-5);self.assertEqual(self.lib.user_setpgid(0,0x0fff0002),-1)
         self.assertEqual((self.error[0],self.lib.test_calls()),(1,1))
 
     def test_native_errors_are_mapped_per_operation(self):

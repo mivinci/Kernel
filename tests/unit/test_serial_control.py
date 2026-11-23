@@ -10,8 +10,8 @@ import test_uart as uart_test
 import test_serial_ring as ring_test
 
 ROOT = Path(__file__).resolve().parents[2]
-PID = (1 << 59) | (2 << 16) | 3
-PEER = (1 << 59) | (8 << 16) | 4
+PID = (2 + 2 * 64 + 3)
+PEER = (2 + 8 * 64 + 4)
 HANDLE = (2 << 59) | (3 << 16) | 9
 MASK = (1 << 32) | (1 << 33)
 Notify = C.CFUNCTYPE(C.c_int64, C.c_int64, C.c_uint64)

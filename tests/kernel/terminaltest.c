@@ -100,7 +100,7 @@ terminaltest(void)
   Group      relation;
   Liferesult result;
   Pgstat     before, after;
-  Handle     pid = handlepack(HANDLE_PROCESS, 1, PROCS - 1);
+  Handle     pid = (2 + (1) * 64 + (PROCS - 1));
   Handle     sid, foreign, first, second, alien, terminal, replacement, full = 99;
   u32        i;
   pgstat(&before);
@@ -109,10 +109,10 @@ terminaltest(void)
   CHECK(!terminalstat(terminal, &snapshot) && snapshot.epoch == 1 && !snapshot.session &&
         !snapshot.foreground && snapshot.refs == 1);
   CHECK(!sessioncreate(pid, &sid) &&
-        !sessioncreate(handlepack(HANDLE_PROCESS, 1, PROCS - 2), &foreign));
+        !sessioncreate((2 + (1) * 64 + (PROCS - 2)), &foreign));
   CHECK(!groupcreate(pid, sid, &first) &&
-        !groupcreate(handlepack(HANDLE_PROCESS, 1, PROCS - 3), sid, &second) &&
-        !groupcreate(handlepack(HANDLE_PROCESS, 1, PROCS - 2), foreign, &alien));
+        !groupcreate((2 + (1) * 64 + (PROCS - 3)), sid, &second) &&
+        !groupcreate((2 + (1) * 64 + (PROCS - 2)), foreign, &alien));
   CHECK(terminalset(terminal, first, 1) == -ERR_STATE);
   CHECK(!terminalbind(terminal, sid) && terminalbind(terminal, sid) == -ERR_STATE);
   CHECK(terminalset(terminal, alien, 1) == -ERR_DENIED);
