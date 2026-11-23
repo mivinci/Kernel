@@ -50,6 +50,9 @@ isize sysfilepollabandon(Fileimage *state, Opkey *key);
 isize sysfilepollsubmit(Connwork *work, Conncache *cache, const Opkey *key);
 /* Complete a bounded poll over private descriptors. */
 isize sysfileimagepoll(u32 layer, Pollfd *fds, u32 count, int timeout);
+/* Snapshot one slot's worth of two buffers, then submit exactly one WRITE. */
+isize sysfileimagewritepair(u32 layer, int fd, const void *first, u64 firstbytes,
+                            const void *second, u64 secondbytes, Fileioresult *result);
 /* Nonblocking collection. FINISH precedes payload validation and ACK.
    Keep the same private rows and result across retries. Zero returns the
    group's pin exactly once, clears the key, and publishes its outcome. */
@@ -63,6 +66,8 @@ isize sysfileimage(Fileimage **out);
 isize sysfileclaimfd(u32 layer, int fd, u64 address);
 /* Supply a disjoint reserved range of SYSCONN_COUNT * FS_CONN_BYTES bytes. */
 isize sysfileclaimrange(u64 address);
+/* Split the runtime's unused image range into heap and connection slots. */
+isize sysfileheapinit(u64 low, u64 high);
 struct Bootview;
 isize sysfilebootinstall(const struct Bootview *boot, void *context);
 /* Import into unpublished image state. On failure the startup caller must

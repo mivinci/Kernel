@@ -67,6 +67,12 @@ claim(const Bootview *boot)
       entry.owner || active.sequence || *marker != EXEC_CLAIM_MARKER ||
       (ready && memory != work.state.memory))
     return 73;
+  if (!ready) {
+    /* A single request must carry both pieces in order. */
+    if (sysfileimagewritepair(0, (int) opened.tag.index, "ab", 2, "cde", 3, &io) || io.native ||
+        io.business || io.count != 5)
+      return 77;
+  }
   *marker = ~EXEC_CLAIM_MARKER;
   duplicate.words[2] = entry.sequence + 1;
   if (ipc_call(work.state.call, &duplicate, CALL_RECV_MEM, &result) || result.kind != IPC_NONE ||

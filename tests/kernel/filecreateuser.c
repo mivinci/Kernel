@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include <errno.h>
 #include <signal.h>
 #include <sys/boot.h>
@@ -1264,6 +1266,15 @@ claimbackend(const Bootview *boot, int reuse)
     *(volatile u64 *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) =
         EXEC_CLAIM_MARKER;
     readreply.words[1] = slot.seq;
+    CHECK(!ipc_reply(input.request, &readreply) &&
+          !sysfilefinish(&links[1].watch.active, input.request));
+    CHECK(
+        !ipc_recv(0, 0, &input) && input.source == target->pid && input.image == target->image &&
+        input.words[0] == FS_WRITE && !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+        !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 5 &&
+        !memcmp((const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
+                "abcde", 5));
+    readreply = (Msg){{0, slot.seq, 5, 0}};
     CHECK(!ipc_reply(input.request, &readreply) &&
           !sysfilefinish(&links[1].watch.active, input.request));
   }

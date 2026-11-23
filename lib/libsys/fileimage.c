@@ -6,6 +6,7 @@
 #include "private/start.h"
 #include "private/syscall.h"
 #include "private/timer.h"
+#include "private/vm.h"
 #include <abi/signal.h>
 #include <errno.h>
 #include <proto/file.h>
@@ -572,6 +573,19 @@ sysfileclaimrange(u64 address)
     return -ERR_STATE;
   execbase = address;
   return 0;
+}
+
+isize
+sysfileheapinit(u64 low, u64 high)
+{
+  u64   bytes = SYSCONN_COUNT * FS_CONN_BYTES;
+  isize error;
+  if (high > BOOT_IMAGE_HI || high <= low || bytes >= high - low || ((low | high) & PAGE_MASK))
+    return -ERR_INVALID;
+  if (execbase && execbase != high - bytes)
+    return -ERR_STATE;
+  error = sysvminit(low, high - bytes);
+  return error ? error : sysfileclaimrange(high - bytes);
 }
 
 isize
@@ -1475,6 +1489,21 @@ sysfileimageposio(u32 layer, int fd, u64 opcode, const void *input, void *output
   if (offset < 0)
     return -ERR_INVALID;
   return imageio(layer, fd, opcode, input, output, bytes, (u64) offset, 1, result);
+}
+
+isize
+sysfileimagewritepair(u32 layer, int fd, const void *first, u64 firstbytes, const void *second,
+                      u64 secondbytes, Fileioresult *result)
+{
+  u8    snapshot[FS_SLOT_BYTES];
+  u64   head = MIN(firstbytes, FS_SLOT_BYTES);
+  u64   tail = MIN(secondbytes, FS_SLOT_BYTES - head);
+  isize error = 0;
+  if (head)
+    error = __sys_copy(snapshot, first, head);
+  if (!error && tail)
+    error = __sys_copy(snapshot + head, second, tail);
+  return error ? error : imageio(layer, fd, FS_WRITE, snapshot, NULL, head + tail, 0, 0, result);
 }
 
 isize

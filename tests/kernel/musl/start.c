@@ -19,7 +19,7 @@ static __thread volatile int zero __attribute__((aligned(64)));
 volatile unsigned long musl_probe_role;
 volatile unsigned long musl_probe_turn;
 extern char            __image_end[];
-extern long            sysvminit(unsigned long, unsigned long);
+extern long            sysfileheapinit(unsigned long, unsigned long);
 extern long            sysvmget(unsigned long, void **), sysvmgetguarded(unsigned long, void **),
     sysvmput(void *);
 static size_t aux_end[2];
@@ -106,7 +106,7 @@ csustart(const struct Boot *boot)
     volatile unsigned char *a, *b;
     libc.auxv = aux_end;
     libc.page_size = 4096;
-    if (sysvminit((size_t) __image_end, 0x3ffe000000UL))
+    if (sysfileheapinit((size_t) __image_end, 0x3ffe000000UL))
       __sys_exit(124);
     a = malloc(32);
     b = malloc(131072);
