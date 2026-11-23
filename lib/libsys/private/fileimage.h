@@ -65,6 +65,10 @@ isize sysfilepollcollect(Connwork *work, Conncache *cache, Opkey *key, Filepoll 
 /* One shared file state per image, initialized on demand. Inherited image
    repair must be wired before these records can be used by a fork child. */
 isize sysfileimage(Fileimage **out);
+/* scratch names a caller-reserved, currently unmapped page. */
+isize sysfileimagefork(u64 scratch, u64 deadline);
+isize sysfilefork(void);
+isize sysfilereadposix(u32 layer, int fd, void *buffer, u64 bytes);
 /* Claim an inherited fd using a caller-reserved connection mapping range. */
 isize sysfileclaimfd(u32 layer, int fd, u64 address);
 /* Supply a disjoint reserved range of SYSCONN_COUNT * FS_CONN_BYTES bytes. */

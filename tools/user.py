@@ -323,7 +323,7 @@ def build(args):
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.name in ('term.c','input.c','serial.c','wait.c')],
         *[compile_adoption(source,'fs-'+source.stem) for source in fs_load_sources]])
     filecreate_image=sdk/'filecreateuser.img'
-    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],240 if stdout_probe else 160))
+    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],240 if stdout_probe else 200))
     filecreate_inspect=invoke('inspect-filecreate',[tools['readelf']['path'],'-s',str(filecreate_elf)])
     filecreate_rows=[line.split() for line in filecreate_inspect.splitlines() if line.split() and line.split()[-1]=='filecreatetrace']
     if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')

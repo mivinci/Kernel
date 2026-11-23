@@ -169,6 +169,19 @@ filecreatetest(void)
       break;
     error = procrunone();
     CHECK(!error || error == -ERR_WOULD_BLOCK);
+    if (turns == 1023) {
+      for (i = 0; i < 3; i++) {
+        putstr("FILECREATE stalled actor=");
+        puthex(i);
+        putstr(" state=");
+        puthex(processes[i].state);
+        if (!spaceread(processes[i].space, filecreate_trace_address, trace, sizeof(trace))) {
+          putstr(" failure_line=");
+          puthex(trace[15]);
+        }
+        putstr("\n");
+      }
+    }
     CHECK(++turns < 1024);
     if (error)
       CHECK(procidle() >= 0);

@@ -11,6 +11,7 @@
 #include "private/close.h"
 #include "private/fd.h"
 #include "private/execsend.h"
+#include "private/fileimage.h"
 #include "private/execmanifest.h"
 #include "private/elf.h"
 #include "private/contextipc.h"
@@ -48,7 +49,9 @@ static Execsend       execsend;
 static Execmanifest   execplan;
 static Execmanifest   forksnapshot;
 static Execreserve    execreserve;
-static Rbank          contexts;
+static Rbank          defaultcontexts;
+static Rbank         *contextbank = &defaultcontexts;
+#define bank (*contextbank)
 static Rkey           active_key;
 static Ttyinput       ttyline;
 static Serialring     ttyrx, ttytx;
@@ -141,11 +144,11 @@ begin(u64 opcode, const char *path, u64 source)
   CHECK(!sysfilecreateprepare(&pool, &work, &cache, 0, 100 + filecreatetrace[1], opcode, object,
                               &source, args, path, bytes, &key, &message) &&
         !source &&
-        !sysctxcreatecall(&contexts, work.state.self, 0, &pool, &work, &cache, &key, &active_key));
+        !sysctxcreatecall(&bank, work.state.self, 0, &pool, &work, &cache, &key, &active_key));
   filecreatetrace[6] = !filecreatetrace[1] ? 1 : 0;
-  CHECK(!sysctxinvoke(&contexts, work.state.self, active_key) &&
-        !sysctxhandoff(&contexts, work.state.self, active_key) &&
-        !sysctxfinish(&contexts, work.state.self, active_key));
+  CHECK(!sysctxinvoke(&bank, work.state.self, active_key) &&
+        !sysctxhandoff(&bank, work.state.self, active_key) &&
+        !sysctxfinish(&bank, work.state.self, active_key));
   filecreatetrace[6] = 0;
   filecreatetrace[1]++;
   return key;
@@ -153,12 +156,12 @@ begin(u64 opcode, const char *path, u64 source)
 static void
 collect(Opkey *key)
 {
-  CHECK(!sysctxcreatewait(&contexts, work.state.self, 0, &pool, &work, &cache, key, &active_key));
+  CHECK(!sysctxcreatewait(&bank, work.state.self, 0, &pool, &work, &cache, key, &active_key));
   filecreatetrace[6] = filecreatetrace[10] == 1 ? 2 : 0;
-  CHECK(!sysctxinvoke(&contexts, work.state.self, active_key) &&
-        !sysctxhandoff(&contexts, work.state.self, active_key) &&
-        !sysctxcreateresult(&contexts, work.state.self, active_key) &&
-        !sysctxfinish(&contexts, work.state.self, active_key));
+  CHECK(!sysctxinvoke(&bank, work.state.self, active_key) &&
+        !sysctxhandoff(&bank, work.state.self, active_key) &&
+        !sysctxcreateresult(&bank, work.state.self, active_key) &&
+        !sysctxfinish(&bank, work.state.self, active_key));
   filecreatetrace[6] = 0;
 }
 static void
@@ -220,17 +223,17 @@ attachfirst(const Bootview *boot)
   int        number = -2;
   isize      business = 9;
   Fdview     fd;
-  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/bound", 0, 0, 0, &open,
+  CHECK(sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/bound", 0, 0, 0, &open,
                          &active, &number, &business) == 1);
   filecreatetrace[1]++;
-  CHECK(sysctxopeninstall(&contexts, 0, &pool, connections, &cache, &fds, &open, space, ADDRESS,
+  CHECK(sysctxopeninstall(&bank, 0, &pool, connections, &cache, &fds, &open, space, ADDRESS,
                           &mapped, &active) < 0 &&
         !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED &&
         !mapped.mapped && !active.sequence && backend_work.state.bootstrap.state == SYSBOOT_RESULT);
   tag = backend_work.state.tag;
   rpc = backend_work.state.bootstrap.rpc;
   sequence = backend_work.state.bootstrap.claim.seq;
-  number = (int) sysctxopeninstall(&contexts, 0, &pool, connections, &cache, &fds, &open, space,
+  number = (int) sysctxopeninstall(&bank, 0, &pool, connections, &cache, &fds, &open, space,
                                    ADDRESS + 0x10000, &mapped, &active);
   CHECK(rpc && number >= 0 && !open.operation.lease.seq &&
         backend_work.state.bootstrap.state == SYSBOOT_FREE && backend_work.state.map.verified &&
@@ -255,7 +258,7 @@ resourceopens(const Bootview *boot)
   u32        i, reserved;
   bound = attachfirst(boot);
   CHECK(!sysconnpeer(backend_work.state.call, &peer));
-  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/reuse", 0, 0, BOOT_FD_CLOEXEC,
+  CHECK(sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/reuse", 0, 0, BOOT_FD_CLOEXEC,
                          &open, &active, &number, &business) == 1 &&
         number == -2 && business == 9 && !active.sequence &&
         !sysfdobserve(&fds, open.tag.index, &fd) && fd.tag.state == SYSFD_RESERVED);
@@ -270,7 +273,7 @@ resourceopens(const Bootview *boot)
         tag.index == backend_work.state.tag.index);
   zero(&mapped, sizeof(mapped));
   CHECK(work.state.operations[key.lease.slot].phase == SYSOP_ACKED);
-  number = (int) sysctxopeninstall(&contexts, 0, &pool, connections, &cache, &fds, &open,
+  number = (int) sysctxopeninstall(&bank, 0, &pool, connections, &cache, &fds, &open,
                                    bootresource(boot, BOOT_SELF_SPACE), 0, &mapped, &active);
   CHECK(number >= 0 && !mapped.mapped && !mapped.verified &&
         !sysfdobserve(&fds, (u32) number, &fd) && fd.flags == BOOT_FD_CLOEXEC &&
@@ -288,9 +291,9 @@ resourceopens(const Bootview *boot)
     Ipcmsg    result;
     Handle    rpc;
     isize     progress;
-    CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, contexts.sequence + 1, args, "/cancel",
+    CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, bank.sequence + 1, args, "/cancel",
                               8, 0, &open, &message) &&
-          !sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &open.operation,
+          !sysctxopenio(&bank, work.state.self, 0, &pool, &work, &cache, &open.operation,
                         &active));
     key = open.operation;
     reserved = open.tag.index;
@@ -311,7 +314,7 @@ resourceopens(const Bootview *boot)
   }
   {
     isize failure = 0;
-    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/failed", 0, 0, 0, &open,
+    CHECK(sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/failed", 0, 0, 0, &open,
                            &active, &number, &business) == 1);
     filecreatetrace[1]++;
     key = open.operation;
@@ -320,7 +323,7 @@ resourceopens(const Bootview *boot)
     zero(&mapped, sizeof(mapped));
     CHECK(sysfileopendiscard(&pool, &work, &cache, &fds, &open) == -ERR_STATE &&
           !sysfdobserve(&fds, reserved, &fd) && fd.tag.state == SYSFD_RESERVED &&
-          sysctxopenresolve(&contexts, 0, &pool, connections, &cache, &fds, &open,
+          sysctxopenresolve(&bank, 0, &pool, connections, &cache, &fds, &open,
                             bootresource(boot, BOOT_SELF_SPACE), 0, &mapped, &active,
                             &failure) == -ERR_INVALID &&
           !failure && !active.sequence && work.state.bootstrap.state == SYSBOOT_FREE &&
@@ -353,7 +356,7 @@ resourceopens(const Bootview *boot)
 static void
 creatorhandler(int signum)
 {
-  Rctx        *outer = &contexts.contexts[0];
+  Rctx        *outer = &bank.contexts[0];
   const Opkey *mainkey = &outer->route.operation;
   Createop    *maincreate = &work.state.creators[mainkey->lease.slot];
   Opkey        key;
@@ -362,7 +365,7 @@ creatorhandler(int signum)
   u64          args[8], source = 0, files[2], id, reference;
   CHECK(signum == SIGNAL_USR1 && outer->active && outer->phase == RCTX_CLEANING &&
         outer->route.delivered && outer->route.pool == &pool && mainkey->lease.slot == 0 &&
-        sysctxfinish(&contexts, work.state.self, active_key) == -ERR_BUSY);
+        sysctxfinish(&bank, work.state.self, active_key) == -ERR_BUSY);
   reference = maincreate->values[0].reference;
   if (filecreatetrace[6] == 1) {
     CHECK(maincreate->phase == SYSFILE_CREATE_PREPARED &&
@@ -379,15 +382,15 @@ creatorhandler(int signum)
   CHECK(!sysfilecreateprepare(&pool, &work, &cache, SYSFILE_SIGNAL1, 700 + filecreatetrace[10],
                               FS_OPEN, 0, &source, args, "/signal", 8, &key, &message) &&
         key.lease.slot == 2 &&
-        !sysctxcreatecall(&contexts, work.state.self, 1, &pool, &work, &cache, &key, &invocation) &&
-        !sysctxinvoke(&contexts, work.state.self, invocation) &&
-        !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxfinish(&contexts, work.state.self, invocation) &&
-        !sysctxcreatewait(&contexts, work.state.self, 1, &pool, &work, &cache, &key, &invocation) &&
-        !sysctxinvoke(&contexts, work.state.self, invocation) &&
-        !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxcreateresult(&contexts, work.state.self, invocation) &&
-        !sysctxfinish(&contexts, work.state.self, invocation));
+        !sysctxcreatecall(&bank, work.state.self, 1, &pool, &work, &cache, &key, &invocation) &&
+        !sysctxinvoke(&bank, work.state.self, invocation) &&
+        !sysctxhandoff(&bank, work.state.self, invocation) &&
+        !sysctxfinish(&bank, work.state.self, invocation) &&
+        !sysctxcreatewait(&bank, work.state.self, 1, &pool, &work, &cache, &key, &invocation) &&
+        !sysctxinvoke(&bank, work.state.self, invocation) &&
+        !sysctxhandoff(&bank, work.state.self, invocation) &&
+        !sysctxcreateresult(&bank, work.state.self, invocation) &&
+        !sysctxfinish(&bank, work.state.self, invocation));
   filecreatetrace[1]++;
   id = work.state.creators[key.lease.slot].files[0];
   zero(files, sizeof(files));
@@ -408,7 +411,7 @@ static void
 creatorsignals(void)
 {
   struct sigaction action = {0};
-  CHECK(!sysctxinit(&contexts, work.state.self) && !sysctxsigbind(&contexts));
+  CHECK(!sysctxinit(&bank, work.state.self) && !sysctxsigbind(&bank));
   action.sa_handler = creatorhandler;
   CHECK(!sigaction(SIGUSR1, &action, NULL));
   action.sa_handler = openhandler;
@@ -709,6 +712,11 @@ client(const Bootview *boot)
   CHECK(!ipc_call(work.state.call, &stale, 0, &result) && (isize) result.words[0] == -ESTALE &&
         result.words[1] == 1);
   head->connid = work.state.map.connid;
+  {
+    Fileimage *runtime;
+    CHECK(!sysfileimage(&runtime));
+    contextbank = &runtime->contexts;
+  }
   creatorsignals();
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
@@ -744,7 +752,7 @@ client(const Bootview *boot)
       CHECK(!sysfilerefpin(&pool, work.state.self, pin) &&
             !sysforkfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, child,
                             attempt == 1 ? token + 1 : token, UINT64_MAX, &pin, &execsend) &&
-            !pin && !sysforkfddrive(&contexts, 0, &work, &cache, &execsend, &pin) &&
+            !pin && !sysforkfddrive(&bank, 0, &work, &cache, &execsend, &pin) &&
             execsend.business == (attempt & 1 ? -ESTALE : 0) && !execsend.key.lease.seq &&
             pin == first && !sysfilerefunpin(&pool, work.state.self, pin));
       if (!attempt) {
@@ -759,16 +767,16 @@ client(const Bootview *boot)
     child = (Connpeer){forked.pid, 1};
     pending.view = forked.construct;
     pending.pid = forked.pid;
-    CHECK(sysforkfdpublish(&transaction, &pending, &contexts, work.state.self, &handoff) ==
+    CHECK(sysforkfdpublish(&transaction, &pending, &bank, work.state.self, &handoff) ==
               -ERR_STALE && pending.view == forked.construct);
-    CHECK(!sysforkfdprepare(&transaction, &execfds, connections, &cache, &contexts, 0, child,
+    CHECK(!sysforkfdprepare(&transaction, &execfds, connections, &cache, &bank, 0, child,
                             UINT64_MAX) &&
           transaction.count == 1 && transaction.peers[0].pid == work.state.peer.pid &&
           transaction.peers[0].image == work.state.peer.image && transaction.peers[0].token &&
           !transaction.pin && !transaction.send.key.lease.seq &&
           !sysforkfdabort(&transaction, &execfds, connections, &cache, &pending) &&
           !pending.view && !execfds.count &&
-          sysforkfdpublish(&transaction, &pending, &contexts, work.state.self, &handoff) ==
+          sysforkfdpublish(&transaction, &pending, &bank, work.state.self, &handoff) ==
               -ERR_STATE);
     for (attempt = 0; attempt < 2; attempt++)
       CHECK(!sysfdobserve(&fds, attempt, &fd) &&
@@ -776,61 +784,28 @@ client(const Bootview *boot)
     check.words[1] = (u64) forked.pid;
     CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
     {
-      Connwork *inherited[] = {&work};
-      Handle space = bootresource(boot, BOOT_SELF_SPACE), waited;
-      Forkdetach detach = {inherited, ARRAY_SIZE(inherited), space};
-      Forkresume resume = {{&fds, &pool, &cache, &contexts}, PAGE_SIZE, NULL, 0, &detach, space};
-      Elfwork build = {0};
-      Fixconn buffer[FIX_CONN_COUNT + 4];
-      Forkfix fix = {0x2000000, sizeof(buffer), buffer, NULL, 0, NULL, 0};
-      Forksend send = {0};
+      Fileimage *runtime;
+      Handle waited;
       Fileref copied;
       u64 kind, code, sequence;
       isize pid;
       for (attempt = 0; attempt < 2; attempt++)
         CHECK(!sysfilerefalias(&pool, work.state.self, first) && !sysfdreserve(&fds, 0, &tag) &&
               !sysfdpublish(&fds, tag, first, attempt ? 0 : BOOT_FD_CLOEXEC));
-      build.parent_space = space;
-      build.scratch = fix.address;
-      build.scratch_bytes = PAGE_SIZE;
       CHECK(!__sys_inherit(work.state.call, 1)); /* FORK */
-      pid = sysforkwithfds(bootresource(boot, BOOT_CREATE), 1, &resume, &build, &fix,
-                           &execfds, &send, connections, 0, UINT64_MAX);
+      CHECK(!sysfileimage(&runtime) && !sysfileclaimrange(ADDRESS));
+      memcpy(runtime->connections, connections, sizeof(connections));
+      memcpy(&runtime->fds, &fds, sizeof(fds));
+      memcpy(&runtime->files, &pool, sizeof(pool));
+      pid = sysfileimagefork(0x2000000, UINT64_MAX);
       CHECK(pid >= 0);
       if (!pid) {
-        Conntag tag;
-        Connclaim claim;
-        Bootmap map = {0};
-        Rkey active = {0};
-        Handle call = work.state.call, redundant = 0, endpoint;
-        Filelease lease;
-        Fileslot slot = {0};
         u64 data;
-        Msg read;
-        CHECK(!sysfdobserve(&fds, 0, &fd) && fd.file == first && fd.flags == BOOT_FD_CLOEXEC &&
-              !sysfilerefview(&pool, contexts.self, first, &copied) && copied.aliases == 2 &&
+        CHECK(!sysfdobserve(&runtime->fds, 0, &fd) && fd.file == first &&
+              fd.flags == BOOT_FD_CLOEXEC &&
+              !sysfilerefview(&runtime->files, runtime->contexts.self, first, &copied) && copied.aliases == 2 &&
               copied.reference && copied.token);
-        tag = copied.connection;
-        CHECK(!sysconnworkfork(&work, &cache, (Connpeer){work.state.self.pid, work.state.self.image},
-                               tag, copied.token) &&
-              !sysconnworktakecall(&work, &cache, &call, &redundant) && !redundant &&
-              !sysconnforkprepare(&work, &cache, 1, 0, &claim, &endpoint) &&
-              !sysctxforkattach(&contexts, 0, &work, &cache, space, ADDRESS, &map, &active));
-        CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
-        slot.seq = lease.seq;
-        slot.state = FS_SLOT_SUBMITTED;
-        slot.span = 1;
-        slot.object = copied.session;
-        slot.args[0] = copied.reference;
-        slot.args[1] = slot.payload_bytes = sizeof(data);
-        read = (Msg){{FS_READ, work.state.map.connid, lease.seq, lease.slot}};
-        CHECK(!__sys_copy((void *) (ADDRESS + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
-                          sizeof(slot)) &&
-              !ipc_call(endpoint, &read, 0, &result) && !result.words[0] &&
-              result.words[1] == lease.seq && result.words[2] == sizeof(data) &&
-              !__sys_copy(&data, (const void *) (ADDRESS + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES),
-                          sizeof(data)) && data == IO_VALUE &&
-              !sysconnworkrelease(&work, &cache, lease));
+        CHECK(sysfilereadposix(0, 0, &data, sizeof(data)) == sizeof(data) && data == IO_VALUE);
         __sys_exit(43);
       }
       CHECK(!__sys_wait(pid, 0, &waited, &kind, &code, &sequence) && waited == pid &&
@@ -875,7 +850,7 @@ client(const Bootview *boot)
   closefile(ids[1], 0);
   CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 100 + filecreatetrace[1], lateargs,
                             "/late", 6, 0, &late, &gate) &&
-        !sysctxopenio(&contexts, work.state.self, 0, &pool, &work, &cache, &late.operation,
+        !sysctxopenio(&bank, work.state.self, 0, &pool, &work, &cache, &late.operation,
                       &latectx));
   filecreatetrace[1]++;
   key = late.operation;
@@ -925,16 +900,16 @@ client(const Bootview *boot)
       Rkey       active = {0};
       int        number = -2;
       isize      business = 9, outcome;
-      u64        sequence = contexts.sequence;
+      u64        sequence = bank.sequence;
       action.sa_flags = i ? SA_RESTART : 0;
       CHECK(!sigaction(SIGUSR2, &action, NULL));
       filecreatetrace[7] = (u64) (uintptr_t) __sys_ctxreturn_begin;
       filecreatetrace[6] = 3 + i;
-      outcome = sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/missing", 0, 0, 0,
+      outcome = sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/missing", 0, 0, 0,
                                  &open, &active, &number, &business);
       filecreatetrace[6] = 0;
       CHECK(!active.sequence && !open.operation.lease.seq &&
-            contexts.sequence == sequence + 1 + i && !sysfdobserve(&fds, 2, &detached) &&
+            bank.sequence == sequence + 1 + i && !sysfdobserve(&fds, 2, &detached) &&
             detached.tag.state == SYSFD_FREE);
       CHECK(i ? !outcome && number == -1 && business == -ENOENT
               : outcome == -ERR_INTERRUPTED && number == -2);
@@ -945,7 +920,7 @@ client(const Bootview *boot)
     Rkey       active = {0};
     int        number = -2;
     isize      business = 9;
-    CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/wake", 0, 0, 0, &open,
+    CHECK(!sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/wake", 0, 0, 0, &open,
                             &active, &number, &business) &&
           number == 2 && !business && !active.sequence && !open.operation.lease.seq &&
           !sysfdobserve(&fds, number, &detached) && !sysfddetach(&fds, detached.tag, &detached));
@@ -958,21 +933,21 @@ client(const Bootview *boot)
     char       longpath[FS_SLOT_BYTES];
     int        number = -2;
     isize      business = 9;
-    u64        i, sequence = contexts.sequence;
+    u64        i, sequence = bank.sequence;
     for (i = 0; i < sizeof(longpath); i++)
       longpath[i] = 'm';
     longpath[0] = '/';
-    CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds,
+    CHECK(sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds,
                            (const char *) (uintptr_t) BOOT_USER_HI, 0, 0, 0, &missing, &active,
                            &number, &business) == -ERR_FAULT &&
           number == -2 && business == 9 &&
-          !sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
+          !sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
                             &active, &number, &business) &&
-          contexts.sequence == sequence && !missing.operation.lease.seq && !active.sequence &&
+          bank.sequence == sequence && !missing.operation.lease.seq && !active.sequence &&
           number == -1 && business == -ENAMETOOLONG && !sysfdobserve(&fds, 2, &detached) &&
           detached.tag.state == SYSFD_FREE);
     longpath[sizeof(longpath) - 1] = 0;
-    CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
+    CHECK(!sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, longpath, 0, 0, 0, &missing,
                             &active, &number, &business) &&
           number == -1 && business == -ENOENT && !missing.operation.lease.seq &&
           !sysfdobserve(&fds, 2, &detached) && detached.tag.state == SYSFD_FREE);
@@ -1030,7 +1005,7 @@ exitclient(const Bootview *boot)
   Fileref   reference;
   u64       files[2] = {0, 0}, source = 0;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
   complete(&key, 0, files, &source);
@@ -1571,7 +1546,7 @@ server(const Bootview *boot, u32 recover)
         CHECK(input.words[0] == FS_READ &&
               !sysfilelinkaccept(&childlink, 1, &input, &descriptor) &&
               !sysfileargs(FS_READ, &descriptor) && descriptor.object == sessions[0] &&
-              descriptor.args[0] == references[0] && descriptor.args[1] == sizeof(u64));
+              descriptor.args[0] == 0 && descriptor.args[1] == sizeof(u64));
         *(volatile u64 *) (childlink.address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) =
             IO_VALUE;
         CHECK(!ipc_reply(input.request, &datareply) &&
@@ -2208,7 +2183,7 @@ vfsdeathclient(const Bootview *boot, u32 timeout)
   Handle    rpc;
   u64       bound;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   bound = attachfirst(boot);
   key = begin(FS_OPEN, "/reuse", 0);
   collect(&key);
@@ -2568,7 +2543,7 @@ deadclient(const Bootview *boot)
   u32       steps = 0;
   isize     error;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
   zero(files, sizeof(files));
@@ -2626,8 +2601,8 @@ pipedeadclient(const Bootview *boot)
   int        pair[2] = {-1, -1};
   u32        i, steps = 0;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
-  CHECK(sysctxpipecreate(&contexts, 0, &pool, &work, &cache, &fds, &pipe, &active_key, pair,
+  CHECK(!sysctxinit(&bank, work.state.self));
+  CHECK(sysctxpipecreate(&bank, 0, &pool, &work, &cache, &fds, &pipe, &active_key, pair,
                          &business) == -ERR_WOULD_BLOCK &&
         !active_key.sequence && work.state.ended == 1 && !sysfdcheckpair(&fds, pipe.tags) &&
         pair[0] == -1 && pair[1] == -1 && business == 123);
@@ -2637,7 +2612,7 @@ pipedeadclient(const Bootview *boot)
   filecreatetrace[6] = 6;
   do {
     CHECK(++steps < 64 && !__sys_yield());
-    error = sysctxpipecreate(&contexts, 0, &pool, &work, &cache, &fds, &pipe, &active_key, pair,
+    error = sysctxpipecreate(&bank, 0, &pool, &work, &cache, &fds, &pipe, &active_key, pair,
                              &business);
   } while (error == -ERR_WOULD_BLOCK);
   CHECK(error == -ERR_PEER && !pipe.operation.lease.seq && !active_key.sequence && !business &&
@@ -2668,22 +2643,22 @@ createdeadclient(const Bootview *boot, u64 opcode)
     return;
   }
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(opcode, opcode == FS_OPEN ? "/a" : NULL, 0);
-  CHECK(!sysctxcreatewait(&contexts, work.state.self, 0, &pool, &work, &cache, &key, &active_key));
-  status = sysctxinvoke(&contexts, work.state.self, active_key);
-  CHECK(status == -ERR_PEER && !sysctxhandoff(&contexts, work.state.self, active_key) &&
-        !sysctxfinish(&contexts, work.state.self, active_key));
+  CHECK(!sysctxcreatewait(&bank, work.state.self, 0, &pool, &work, &cache, &key, &active_key));
+  status = sysctxinvoke(&bank, work.state.self, active_key);
+  CHECK(status == -ERR_PEER && !sysctxhandoff(&bank, work.state.self, active_key) &&
+        !sysctxfinish(&bank, work.state.self, active_key));
   zero(args, sizeof(args));
   args[3] = 3;
   CHECK(
       !sysfilecreateprepare(&pool, &work, &cache, SYSFILE_MAIN, 900, FS_OPEN, 0, &source, args,
                             "/q", 3, &retry, &message) &&
-      !sysctxcreatecall(&contexts, work.state.self, 0, &pool, &work, &cache, &retry, &active_key) &&
-      sysctxinvoke(&contexts, work.state.self, active_key) == -ERR_PEER &&
-      !sysctxhandoff(&contexts, work.state.self, active_key) &&
-      !sysctxpeerended(&contexts, work.state.self, active_key) &&
-      !sysctxfinish(&contexts, work.state.self, active_key) &&
+      !sysctxcreatecall(&bank, work.state.self, 0, &pool, &work, &cache, &retry, &active_key) &&
+      sysctxinvoke(&bank, work.state.self, active_key) == -ERR_PEER &&
+      !sysctxhandoff(&bank, work.state.self, active_key) &&
+      !sysctxpeerended(&bank, work.state.self, active_key) &&
+      !sysctxfinish(&bank, work.state.self, active_key) &&
       !sysfilecreateabort(&pool, &work, &cache, &retry, &source) && !source &&
       sysfilecreatefailed(&pool, &work, &cache, &key) == -ERR_WOULD_BLOCK);
   filecreatetrace[7] = 1;
@@ -2803,8 +2778,8 @@ resourceendclient(const Bootview *boot, u32 submitted)
   int        number = -2;
   isize      error, business = 9;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
-  CHECK(sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/bound", 0, 0, 0, &open,
+  CHECK(!sysctxinit(&bank, work.state.self));
+  CHECK(sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/bound", 0, 0, 0, &open,
                          &invocation, &number, &business) == 1);
   filecreatetrace[1]++;
   key = open.operation;
@@ -2824,7 +2799,7 @@ resourceendclient(const Bootview *boot, u32 submitted)
     CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
           !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
   }
-  error = sysctxopenrevoke(&contexts, 0, &pool, &work, &cache, &key, 0, &invocation);
+  error = sysctxopenrevoke(&bank, 0, &pool, &work, &cache, &key, 0, &invocation);
   if (submitted) {
     CHECK(error == -ERR_WOULD_BLOCK && !invocation.sequence &&
           sysfileopendiscard(&pool, &work, &cache, &fds, &open) == -ERR_STATE &&
@@ -2833,7 +2808,7 @@ resourceendclient(const Bootview *boot, u32 submitted)
     filecreatetrace[6] = 6;
     do {
       CHECK(++steps < 64 && !__sys_yield());
-      error = sysctxopenrevoke(&contexts, 0, &pool, &work, &cache, &key, 0, &invocation);
+      error = sysctxopenrevoke(&bank, 0, &pool, &work, &cache, &key, 0, &invocation);
     } while (error == -ERR_WOULD_BLOCK);
   }
   CHECK(!error && !invocation.sequence && !sysfileopendiscard(&pool, &work, &cache, &fds, &open) &&
@@ -2873,10 +2848,10 @@ iodraft(u64 file, u64 opcode, u64 owner, Opkey *key)
     CHECK(!__sys_copy((void *) (uintptr_t) (work.state.map.address + FS_DATA_OFFSET +
                                             key->lease.slot * FS_SLOT_BYTES),
                       &value, 8));
-  CHECK(!sysctxopcall(&contexts, work.state.self, 0, &work, &cache, key, 0, &invocation) &&
-        !sysctxinvoke(&contexts, work.state.self, invocation) &&
-        !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxfinish(&contexts, work.state.self, invocation));
+  CHECK(!sysctxopcall(&bank, work.state.self, 0, &work, &cache, key, 0, &invocation) &&
+        !sysctxinvoke(&bank, work.state.self, invocation) &&
+        !sysctxhandoff(&bank, work.state.self, invocation) &&
+        !sysctxfinish(&bank, work.state.self, invocation));
 }
 static void
 iorecoverclient(const Bootview *boot, u32 mode)
@@ -2894,14 +2869,14 @@ iorecoverclient(const Bootview *boot, u32 mode)
   isize      outcome, error;
   int        number = -2;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   sysfdinit(&fds);
   CHECK(!sysfileopenprepare(&pool, &work, &cache, &fds, 0, 99, args, "/a", 3, BOOT_FD_CLOEXEC,
                             &open, &message) &&
         !sysfdobserve(&fds, 0, &fd) && fd.tag.state == SYSFD_RESERVED && !fd.file &&
         !sysfileopenabort(&pool, &work, &cache, &fds, &open) && !sysfdobserve(&fds, 0, &fd) &&
         fd.tag.state == SYSFD_FREE);
-  CHECK(!sysctxopencreate(&contexts, 0, &pool, &work, &cache, &fds, "/a", 0, 0, BOOT_FD_CLOEXEC,
+  CHECK(!sysctxopencreate(&bank, 0, &pool, &work, &cache, &fds, "/a", 0, 0, BOOT_FD_CLOEXEC,
                           &open, &opening, &number, &outcome) &&
         !number && !outcome && !open.operation.lease.seq && !opening.sequence &&
         !sysfdobserve(&fds, 0, &fd) && fd.flags == BOOT_FD_CLOEXEC);
@@ -2910,10 +2885,10 @@ iorecoverclient(const Bootview *boot, u32 mode)
   if (mode == 2)
     iodraft(file, FS_READ, 801, &success);
   iodraft(file, mode == 1 ? FS_WRITE : FS_READ, 802, &failed);
-  CHECK(!sysctxopwait(&contexts, work.state.self, 0, &work, &cache, &failed, &invocation));
-  outcome = sysctxinvoke(&contexts, work.state.self, invocation);
-  CHECK(outcome == -ERR_PEER && !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxfinish(&contexts, work.state.self, invocation) &&
+  CHECK(!sysctxopwait(&bank, work.state.self, 0, &work, &cache, &failed, &invocation));
+  outcome = sysctxinvoke(&bank, work.state.self, invocation);
+  CHECK(outcome == -ERR_PEER && !sysctxhandoff(&bank, work.state.self, invocation) &&
+        !sysctxfinish(&bank, work.state.self, invocation) &&
         !sysoppeerended(&work, &cache, &failed) &&
         ((const volatile Fileslot *) (uintptr_t) (work.state.map.address + FS_DESC_OFFSET +
                                                   failed.lease.slot * FS_DESC_BYTES))
@@ -2968,7 +2943,7 @@ creatorbackendclient(const Bootview *boot, u32 mode)
   Ipcmsg    result;
   isize     error;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
   CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
@@ -2991,7 +2966,7 @@ creatorbackendclient(const Bootview *boot, u32 mode)
     CHECK(!sysfilecreateack(&pool, &work, &cache, &key) &&
           !sysfilecreateattachprepare(&pool, &work, &cache, &key, &backend_work, 0, &claim, &call));
   }
-  CHECK(!sysctxbootcall(&contexts, work.state.self, 0, &backend_work.state.bootstrap, claim, call,
+  CHECK(!sysctxbootcall(&bank, work.state.self, 0, &backend_work.state.bootstrap, claim, call,
                         CALL_RECV_MEM, &invocation));
   if (!mode) {
     zero(&message, sizeof(message));
@@ -3001,13 +2976,13 @@ creatorbackendclient(const Bootview *boot, u32 mode)
     CHECK(!ipc_rqwait(rpc, 0, &result) && !result.words[0] &&
           !ipc_rqack(rpc, ACK_RESULT | ACK_RELEASE));
   } else
-    CHECK(!sysctxinvoke(&contexts, work.state.self, invocation) &&
-          !sysctxhandoff(&contexts, work.state.self, invocation) &&
-          !sysctxrewait(&contexts, work.state.self, invocation));
-  CHECK(sysctxinvoke(&contexts, work.state.self, invocation) == -ERR_PEER &&
-        !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxbootpeerended(&contexts, work.state.self, invocation, &backend_work, &cache) &&
-        !sysctxfinish(&contexts, work.state.self, invocation));
+    CHECK(!sysctxinvoke(&bank, work.state.self, invocation) &&
+          !sysctxhandoff(&bank, work.state.self, invocation) &&
+          !sysctxrewait(&bank, work.state.self, invocation));
+  CHECK(sysctxinvoke(&bank, work.state.self, invocation) == -ERR_PEER &&
+        !sysctxhandoff(&bank, work.state.self, invocation) &&
+        !sysctxbootpeerended(&bank, work.state.self, invocation, &backend_work, &cache) &&
+        !sysctxfinish(&bank, work.state.self, invocation));
   if (mode) {
     CHECK(sysfilecreatebackendended(&pool, &work, &cache, &key, &backend_work, claim) ==
               -ERR_WOULD_BLOCK &&
@@ -3077,20 +3052,20 @@ bootpeerclient(const Bootview *boot, u32 mode)
           !sysconnbegin(&cache, tag, 1, &claim) &&
           !sysbootprepare(&work.state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0));
   }
-  CHECK(!sysctxinit(&contexts, work.state.self) &&
-        !sysctxbootcall(&contexts, work.state.self, 0, &work.state.bootstrap, claim,
+  CHECK(!sysctxinit(&bank, work.state.self) &&
+        !sysctxbootcall(&bank, work.state.self, 0, &work.state.bootstrap, claim,
                         work.state.call, CALL_RECV_MEM, &invocation));
   if (!mode)
     while (!filecreatetrace[7])
       CHECK(!__sys_yield());
   else
-    CHECK(!sysctxinvoke(&contexts, work.state.self, invocation) &&
-          !sysctxhandoff(&contexts, work.state.self, invocation) &&
-          !sysctxrewait(&contexts, work.state.self, invocation));
-  CHECK(sysctxinvoke(&contexts, work.state.self, invocation) == -ERR_PEER &&
-        !sysctxhandoff(&contexts, work.state.self, invocation) &&
-        !sysctxbootpeerended(&contexts, work.state.self, invocation, &work, &cache) &&
-        !sysctxfinish(&contexts, work.state.self, invocation) && work.state.ended == 1 &&
+    CHECK(!sysctxinvoke(&bank, work.state.self, invocation) &&
+          !sysctxhandoff(&bank, work.state.self, invocation) &&
+          !sysctxrewait(&bank, work.state.self, invocation));
+  CHECK(sysctxinvoke(&bank, work.state.self, invocation) == -ERR_PEER &&
+        !sysctxhandoff(&bank, work.state.self, invocation) &&
+        !sysctxbootpeerended(&bank, work.state.self, invocation, &work, &cache) &&
+        !sysctxfinish(&bank, work.state.self, invocation) && work.state.ended == 1 &&
         !sysconnview(&cache, tag, &entry) && entry.state == SYSCONN_DRAINING);
   zero(&map, sizeof(map));
   if (mode) {
@@ -3132,7 +3107,7 @@ reuseabortclient(const Bootview *boot)
   Msg       message;
   Ipcmsg    result;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
   CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
@@ -3203,7 +3178,7 @@ mapdiscardclient(const Bootview *boot)
   Msg       message;
   Ipcmsg    result;
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
   CHECK(!sysfilecreateack(&pool, &work, &cache, &key));
@@ -3264,7 +3239,7 @@ mapsalvageclient(const Bootview *boot)
   Ipcmsg    result;
   Handle    space = bootresource(boot, BOOT_SELF_SPACE);
   setup(boot);
-  CHECK(!sysctxinit(&contexts, work.state.self));
+  CHECK(!sysctxinit(&bank, work.state.self));
   key = begin(FS_OPEN, "/bound", 0);
   collect(&key);
   CHECK(!sysfilecreateack(&pool, &work, &cache, &key));

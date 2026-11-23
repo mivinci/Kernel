@@ -2,6 +2,7 @@
 #include "private/argument.h"
 #include "private/close.h"
 #include "private/execfd.h"
+#include "private/execsend.h"
 #include "private/sigentry.h"
 #include "private/start.h"
 #include "private/syscall.h"
@@ -19,6 +20,7 @@ static Bootmap   candidate;
 static Bootmap   execmaps[SYSCONN_COUNT];
 static Rkey      execkeys[SYSCONN_COUNT];
 static u64       execbase;
+static u64       forkscratch;
 static u32       initialized, connecting, closing, draining;
 static void      closeprogress(Fileimage *state);
 static int       fileprogress(Fileimage *state);
@@ -553,6 +555,86 @@ sysfileimage(Fileimage **out)
   return initimage(sysboot(), out);
 }
 
+/* Keep the staging state alive if the old backend has not drained yet. */
+static Execfds forkcapture;
+static Forksend forksend;
+static Elfwork forkwork;
+static u32 forking;
+
+isize
+sysfileimagefork(u64 scratch, u64 deadline)
+{
+  const Bootview *boot = sysboot();
+  Fileimage *state;
+  Conncache *cache;
+  Connwork *aliases[SYSCONN_COUNT];
+  Forkdetach detach;
+  Forkresume resume;
+  u64 buffer[PAGE_SIZE / sizeof(u64)];
+  Forkfix fix = {scratch, sizeof(buffer), buffer, NULL, 0, NULL, 0};
+  Handle authority, space;
+  u64 mask, ignored;
+  u32 i;
+  isize status;
+  if (scratch < BOOT_USER_LO || scratch >= BOOT_IMAGE_HI || (scratch & PAGE_MASK) || !deadline)
+    return -ERR_INVALID;
+  authority = bootresource(boot, BOOT_CREATE);
+  space = bootresource(boot, BOOT_SELF_SPACE);
+  if (!authority || !space)
+    return -ERR_BAD_HANDLE;
+  status = sysfileimage(&state);
+  if (status)
+    return status;
+  status = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (status)
+    return status;
+  cache = sysfileimagecache(state);
+  if (forking) {
+    status = -ERR_BUSY;
+    goto restore;
+  }
+  forking = 1;
+  if (forkwork.view || forkwork.memory || forkwork.mapped || forkcapture.pool) {
+    status = sysforkfdabort(&forksend, &forkcapture, state->connections, cache, &forkwork);
+    if (!status)
+      status = -ERR_BUSY;
+    goto settle;
+  }
+  detach.works = aliases;
+  detach.count = 0;
+  detach.space = space;
+  for (i = 0; i < SYSCONN_COUNT; i++)
+    if (state->connections[i].state.map.mapped)
+      aliases[detach.count++] = &state->connections[i];
+  resume.state.fds = &state->fds;
+  resume.state.files = &state->files;
+  resume.state.connections = cache;
+  resume.state.contexts = &state->contexts;
+  resume.available = PAGE_SIZE;
+  resume.files = NULL;
+  resume.file_count = 0;
+  resume.detach = &detach;
+  resume.space = space;
+  forkwork.parent_space = space;
+  forkwork.scratch = scratch;
+  forkwork.scratch_bytes = PAGE_SIZE;
+  status = sysforkwithfds(authority, 1, &resume, &forkwork, &fix, &forkcapture, &forksend,
+                          state->connections, 0, deadline);
+settle:
+  if (!forkwork.view && !forkwork.memory && !forkwork.mapped && !forkcapture.pool) {
+    forkwork.pid = 0;
+    forkwork.failure = 0;
+    forksend.child.pid = 0;
+    forksend.cursor = forksend.count = forksend.ready = 0;
+    forksend.representative = forksend.snapshot = 0;
+  }
+  forking = 0;
+restore:
+  if (__sys_sigmask(SIGNAL_SETMASK, mask, &ignored))
+    __sys_exit(128 + SIGNAL_SEGV);
+  return status;
+}
+
 isize
 sysfilebootinstall(const Bootview *boot, void *context)
 {
@@ -578,14 +660,96 @@ sysfileclaimrange(u64 address)
 isize
 sysfileheapinit(u64 low, u64 high)
 {
-  u64   bytes = SYSCONN_COUNT * FS_CONN_BYTES;
+  u64   bytes = SYSCONN_COUNT * FS_CONN_BYTES, scratch;
   isize error;
-  if (high > BOOT_IMAGE_HI || high <= low || bytes >= high - low || ((low | high) & PAGE_MASK))
+  if (high > BOOT_IMAGE_HI || high <= low || bytes + PAGE_SIZE >= high - low ||
+      ((low | high) & PAGE_MASK))
     return -ERR_INVALID;
   if (execbase && execbase != high - bytes)
     return -ERR_STATE;
-  error = sysvminit(low, high - bytes);
-  return error ? error : sysfileclaimrange(high - bytes);
+  scratch = high - bytes - PAGE_SIZE;
+  error = sysvminit(low, scratch);
+  if (!error)
+    error = sysfileclaimrange(high - bytes);
+  if (!error)
+    forkscratch = scratch;
+  return error;
+}
+
+isize
+sysfilefork(void)
+{
+  u64 deadline;
+  isize error;
+  if (!forkscratch)
+    return -ERR_STATE;
+  error = systimernow(&deadline);
+  if (error)
+    return error;
+  if (deadline > UINT64_MAX - UINT64_C(10000000000))
+    return -ERR_OVERFLOW;
+  return sysfileimagefork(forkscratch, deadline + UINT64_C(10000000000));
+}
+
+isize
+sysfileforkposix(void)
+{
+  isize status = sysfilefork();
+  if (status >= 0)
+    return status;
+  switch (status) {
+  case -ERR_BUSY:
+  case -ERR_CAPACITY:
+  case -ERR_LIMIT:
+    return -EAGAIN;
+  case -ERR_NOMEM:
+    return -ENOMEM;
+  case -ERR_INTERRUPTED:
+    return -EINTR;
+  case -ERR_DENIED:
+  case -ERR_BAD_HANDLE:
+    return -EPERM;
+  case -ERR_NOTSUP:
+    return -ENOSYS;
+  default:
+    return -EIO;
+  }
+}
+
+isize
+syswaitposix(int selector, int *status, unsigned options)
+{
+  Handle pid;
+  u64 kind, code, sequence;
+  int encoded;
+  isize error;
+  if (options & ~(WAIT_WNOHANG | WAIT_WUNTRACED | WAIT_WCONTINUED))
+    return -EINVAL;
+  error = __sys_wait(selector, options, &pid, &kind, &code, &sequence);
+  switch (error) {
+  case 0: break;
+  case -ERR_CHILD:
+  case -ERR_BAD_HANDLE:
+  case -ERR_STALE: return -ECHILD;
+  case -ERR_INTERRUPTED: return -EINTR;
+  case -ERR_INVALID: return -EINVAL;
+  case -ERR_BUSY: return -EAGAIN;
+  default: return -EIO;
+  }
+  if (!pid)
+    return 0;
+  if (kind == WAIT_EXITED)
+    encoded = code & WAIT_SIGNALLED ? (int) (code & 0x7f) | (code & WAIT_CORE ? 0x80 : 0)
+                                    : (int) ((code & 0xff) << 8);
+  else if (kind == WAIT_STOPPED)
+    encoded = (int) ((code & 0xff) << 8) | 0x7f;
+  else if (kind == WAIT_CONTINUED)
+    encoded = 0xffff;
+  else
+    return -EIO;
+  if (status && __sys_copy(status, &encoded, sizeof(encoded)))
+    return -EFAULT;
+  return pid;
 }
 
 isize
@@ -600,6 +764,7 @@ sysfileclaimfd(u32 layer, int fd, u64 address)
   Connclaim  claim;
   Handle     call, space;
   u64        mask, ignored;
+  u32        opcode;
   isize      error, restored;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
     return -ERR_BAD_HANDLE;
@@ -629,16 +794,38 @@ sysfileclaimfd(u32 layer, int fd, u64 address)
     }
     work = &state->connections[ref.connection.index];
     space = bootresource(sysboot(), BOOT_SELF_SPACE);
+    if (entry.state == SYSCONN_UNCLAIMED && work->state.self.pid != cache->self.pid) {
+      Connpeer parent = work->state.self;
+      Connpeer peer;
+      Handle   inherited = work->state.call, redundant = 0;
+      error = sysconnpeer(inherited, &peer);
+      if (!error && (peer.pid != entry.peer.pid || peer.image != entry.peer.image))
+        error = -ERR_STALE;
+      if (!error)
+        error = sysconnworkfork(work, cache, parent, ref.connection, ref.token);
+      if (!error)
+        error = sysconnworktakecall(work, cache, &inherited, &redundant);
+      if (error)
+        goto restoreclaim;
+    }
+    opcode = work->state.fork_token ? FS_ATTACH : FS_EXEC_CLAIM;
     if (!space || !ref.token)
       error = -ERR_STATE;
-    else if (entry.state == SYSCONN_CONNECTING && work->state.bootstrap.opcode == FS_EXEC_CLAIM)
+    else if (opcode == FS_ATTACH && ref.token != work->state.fork_token)
+      error = -ERR_STALE;
+    else if (entry.state == SYSCONN_CONNECTING && work->state.bootstrap.opcode == opcode)
       error = 0;
     else if (state->contexts.sequence == UINT64_MAX)
       error = -ERR_OVERFLOW;
+    else if (opcode == FS_ATTACH)
+      error = sysconnforkprepare(work, cache, state->contexts.sequence + 1, 0, &claim, &call);
     else
       error = sysconnexecprepare(work, cache, state->contexts.sequence + 1, 0, ref.token, &claim,
                                  &call);
-    if (!error)
+    if (!error && opcode == FS_ATTACH)
+      error = sysctxforkattach(&state->contexts, layer, work, cache, space, address,
+                               &execmaps[ref.connection.index], &execkeys[ref.connection.index]);
+    else if (!error)
       error = sysctxexecclaim(&state->contexts, layer, work, cache, space, address,
                               &execmaps[ref.connection.index], &execkeys[ref.connection.index]);
   }
@@ -1506,18 +1693,15 @@ sysfileimagewritepair(u32 layer, int fd, const void *first, u64 firstbytes, cons
   return error ? error : imageio(layer, fd, FS_WRITE, snapshot, NULL, head + tail, 0, 0, result);
 }
 
-isize
-sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, const void *second,
-                      u64 secondbytes)
+static isize
+posixio(isize status, const Fileioresult *result, int writing)
 {
-  Fileioresult result;
-  isize status = sysfileimagewritepair(layer, fd, first, firstbytes, second, secondbytes, &result);
   if (!status) {
-    status = result.native;
+    status = result->native;
     if (!status) {
-      if (!result.business)
-        return (isize) result.count;
-      if (result.business == -EPIPE) {
+      if (!result->business)
+        return (isize) result->count;
+      if (writing && result->business == -EPIPE) {
         Sigsel self;
         Handle pid, parent;
         u64    imageid;
@@ -1527,7 +1711,7 @@ sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, cons
           (void) __sys_sigsend(&self, SIGNAL_PIPE);
         }
       }
-      return result.business < 0 && result.business >= -INT32_MAX ? result.business : -EIO;
+      return result->business < 0 && result->business >= -INT32_MAX ? result->business : -EIO;
     }
   }
   switch (status) {
@@ -1569,6 +1753,23 @@ isize
 sysfileimagestat(u32 layer, int fd, Filestat *output, Fileioresult *result)
 {
   return imageio(layer, fd, FS_STAT, NULL, output, FS_STAT_BYTES, 0, 0, result);
+}
+
+isize
+sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, const void *second,
+                      u64 secondbytes)
+{
+  Fileioresult result;
+  isize status = sysfileimagewritepair(layer, fd, first, firstbytes, second, secondbytes, &result);
+  return posixio(status, &result, 1);
+}
+
+isize
+sysfilereadposix(u32 layer, int fd, void *buffer, u64 bytes)
+{
+  Fileioresult result;
+  isize status = sysfileimageio(layer, fd, FS_READ, NULL, buffer, bytes, &result);
+  return posixio(status, &result, 0);
 }
 
 isize
