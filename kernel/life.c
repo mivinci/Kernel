@@ -20,15 +20,25 @@ addusage(u64 a, u64 b)
 static u16    runlife[PROCS];
 static u64    retired[PROCS];
 static Handle childhint[PROCS];
+static Life *
+runowner(Handle pid)
+{
+  u32 slot, entry;
+  for (slot = 0; slot < PROCS; slot++) {
+    entry = runlife[slot];
+    if (entry && lives[entry - 1].pid == pid)
+      return &lives[entry - 1];
+  }
+  return NULL;
+}
 static void
 changed(Handle parent)
 {
-  u32 slot;
-  if (handletype(parent) != HANDLE_PROCESS)
-    return;
-  slot = handleindex(parent);
-  if (slot < PROCS)
-    childhint[slot] = parent;
+  Life *owner = runowner(parent);
+  if (owner)
+    childhint[owner->run] = parent;
+  else if (parent == 1)
+    childhint[0] = parent;
 }
 static Handle
 parentof(const Life *l)
@@ -184,12 +194,8 @@ collected(Life *l, Handle parent)
 static Life *
 liveparent(Handle pid)
 {
-  u32   slot = handleindex(pid), entry;
-  Life *l;
-  if (slot >= PROCS || !(entry = runlife[slot]) || entry > LIFES)
-    return NULL;
-  l = &lives[entry - 1];
-  return l->pid == pid && l->state == LIFE_LIVE ? l : NULL;
+  Life *l = runowner(pid);
+  return l && l->state == LIFE_LIVE ? l : NULL;
 }
 int
 lifepublish(Lifeid id)
@@ -751,11 +757,11 @@ lifeselect(Handle parent, const Childsel *choice, u32 start, u32 options, Lifeid
 int
 lifehint(Handle parent)
 {
-  u32 slot;
-  if (handletype(parent) != HANDLE_PROCESS)
+  Life *owner = runowner(parent);
+  u32   slot = owner ? owner->run : 0;
+  if (!owner && parent != 1)
     return 0;
-  slot = handleindex(parent);
-  if (slot >= PROCS || childhint[slot] != parent)
+  if (childhint[slot] != parent)
     return 0;
   childhint[slot] = 0;
   return 1;
@@ -809,8 +815,7 @@ lifecheck(void)
     if (entry && (entry > LIFES || !lives[entry - 1].state || lives[entry - 1].run != i))
       return -ERR_STATE;
     if (retired[i] > HANDLE_GENERATION_MAX ||
-        (childhint[i] &&
-         (handletype(childhint[i]) != HANDLE_PROCESS || handleindex(childhint[i]) != i)))
+        (childhint[i] && !handletype(childhint[i])))
       return -ERR_STATE;
   }
   return 0;
