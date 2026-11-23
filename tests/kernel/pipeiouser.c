@@ -3385,11 +3385,13 @@ publicchdirserver(const Bootview *boot)
 {
   static Fsfork  records[2];
   Fsforks        forks = {records, ARRAY_SIZE(records), 0};
-  Piperef        refs[2] = {0};
-  Filelink       link = {0};
+  Piperef        refs[4] = {0};
+  Filelink       links[2] = {0};
+#define link links[0]
   Openfixture    fixture = {0};
   static Openjob job;
-  Fscontext      context = {0};
+  Fscontext      namespaces[2] = {0};
+  Fscontext     *parentns = &namespaces[0];
   Pipetable      pipes = {&servicepipe, refs, 1, ARRAY_SIZE(refs), 0};
   Fsfile         file = {0};
   Fsref          ref = {0};
@@ -3402,15 +3404,15 @@ publicchdirserver(const Bootview *boot)
   const Vwalkops ops = {openwalkhold, openwalkdrop, opensearch, openlookup, openparent, openlink};
   const Vwalkops pin = {openhold, opendrop, NULL, NULL, NULL, NULL};
   const Fscwdops cwd = {openwalkhold, openwalkdrop, cwdversion, cwdname};
-  Fscontexts     contexts = {&context, 1, &pin, &fixture, 0};
+  Fscontexts     contexts = {namespaces, ARRAY_SIZE(namespaces), &pin, &fixture, 0};
   Fsopen         open = {&contexts,  &fixture.mounts, &ops,         &job,       1,    0, &fixture,
                          openselect, opencancel,      opencomplete, opencreate, &cwd, 0};
   Fsservice      fs = {bootresource(boot, 256),
                        bootresource(boot, BOOT_SELF_ALLOC),
                        bootresource(boot, BOOT_SELF_SPACE),
                        ADDRESS,
-                       &link,
-                       1,
+                       links,
+                       ARRAY_SIZE(links),
                        {&pipes, &servicewait, 1, NULL, 0, &fixture.files, NULL},
                        &open,
                        0,
@@ -3476,9 +3478,9 @@ publicchdirserver(const Bootview *boot)
   CHECK(fixture.cancelled && !fixture.length && fixture.map.file.version == 2 &&
         fixture.map.direct[0] == FS_DATA_START && ref.pid == target.target && file.refs == 1);
   CHECK(!fsstep(&fs) && !file.node && !file.refs);
-  CHECK(!fsstep(&fs) && context.cwd == &fixture.root && context.version == 1);
-  CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 2);
-  CHECK(!fsstep(&fs) && context.cwd == &fixture.dir && context.version == 3);
+  CHECK(!fsstep(&fs) && parentns->cwd == &fixture.root && parentns->version == 1);
+  CHECK(!fsstep(&fs) && parentns->cwd == &fixture.dir && parentns->version == 2);
+  CHECK(!fsstep(&fs) && parentns->cwd == &fixture.dir && parentns->version == 3);
   fixture.cwdmore = 70;
   CHECK(!fsstep(&fs) && job.call.request && open.again && fixture.cwdmore == 38);
   CHECK(!fsstep(&fs) && job.call.request && open.again && fixture.cwdmore == 6);
@@ -3571,12 +3573,12 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 1); /* PIPE */
   CHECK(!fsstep(&fs) && !forks.serial && !records[0].manifest.count && file.refs == 1);
   CHECK(!fsstep(&fs) && forks.serial == 1 && records[0].manifest.count == 2 &&
-        records[0].manifest.nrows == 3 && records[0].context == context.version &&
+        records[0].manifest.nrows == 3 && records[0].context == parentns->version &&
         records[0].holds[0].file == &file && records[0].holds[1].pipe == &servicepipe &&
         records[0].manifest.groups[0].retained == 2 && file.refs == 2 &&
         servicepipe.stream.refs[PIPE_WRITE] == 2);
   CHECK(!fsstep(&fs) && fs.alarm && forks.serial == 2 && file.refs == 3 &&
-        records[1].manifest.snapshot == 2 && records[1].context == context.version &&
+        records[1].manifest.snapshot == 2 && records[1].context == parentns->version &&
         records[0].manifest.child == records[1].manifest.child &&
         records[0].manifest.target_image != records[1].manifest.target_image &&
         servicepipe.stream.refs[PIPE_WRITE] == 3);
@@ -3588,7 +3590,7 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 2); /* CLOSE write end. */
   CHECK(!fsstep(&fs) && file.position == 3);                       /* fclose's flush. */
   CHECK(!fsstep(&fs) && !ref.file && file.refs == 2 && file.position == 3);
-  CHECK(context.pid == target.target && fixture.holds == 3);
+  CHECK(parentns->pid == target.target && fixture.holds == 3);
   CHECK(!fsstep(&fs) && servicewait.io.request && servicepipe.stream.refs[PIPE_WRITE] == 2);
   /* The first timer wakes the loop, but only expiry of the final writer may
      complete the original READ. The client cannot issue anything meanwhile. */
@@ -3599,9 +3601,11 @@ publicchdirserver(const Bootview *boot)
   CHECK(!records[1].manifest.count && !records[1].holds[0].file && !records[1].holds[1].pipe &&
         !servicewait.io.request && !servicepipe.stream.refs[PIPE_WRITE] &&
         !servicepipe.stream.refs[PIPE_READ] && !file.refs && !file.node);
-  for (steps = 0; steps < 8 && link.ready; steps++)
+  for (steps = 0; steps < 32 && (link.ready || links[1].watch.owner.cookie); steps++)
     CHECK(!fsstep(&fs));
-  CHECK(!context.pid && !fixture.holds && !link.ready && !link.watch.owner.cookie);
+  CHECK(!parentns->pid && !namespaces[1].pid && !fixture.holds && !link.ready &&
+        !link.watch.owner.cookie && !links[1].watch.owner.cookie && !records[0].token);
+#undef link
   pipeiotrace[0] = 7;
 }
 
@@ -3832,6 +3836,19 @@ publicchdirclient(void)
   CHECK(!close(ends[1]));
   CHECK(fclose(stream) == EOF && errno == ENOSPC && fcntl(0, F_GETFD) == -1 && errno == EBADF);
   CHECK(!read(ends[0], &byte, 1) && byte == 'x' && !close(ends[0]));
+  {
+    Handle waited;
+    u64 kind, code, sequence;
+    isize child;
+    CHECK(!sysfilepipeposix(0, ends));
+    child = sysfileimagefork(0x2000000, UINT64_MAX);
+    CHECK(child >= 0);
+    if (!child)
+      __sys_exit(write(ends[1], "z", 1) == 1 ? 43 : 44);
+    CHECK(!__sys_wait(child, 0, &waited, &kind, &code, &sequence) && waited == child &&
+          kind == WAIT_EXITED && code == 43 && !close(ends[1]) &&
+          read(ends[0], &byte, 1) == 1 && byte == 'z' && !close(ends[0]));
+  }
   pipeiotrace[0] = 7;
 }
 

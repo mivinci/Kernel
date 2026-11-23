@@ -73,12 +73,25 @@ testactors(const char *roles)
       CHECK(!localendpoint(table, processes[0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[2].handle));
     else
-      CHECK(!localobserve(table, OBSERVE_SOURCE, &packet.resources[2].handle));
-    if (packet.header.resource_count == 4) {
+      CHECK(!localobserve(table, OBSERVE_SOURCE | (roles[i] == 'E' ? OBSERVE_CHILD : 0),
+                          &packet.resources[2].handle));
+    if (roles[i] == 'e') {
+      Createpolicy policy = {0};
+      policy.set = set;
+      policy.memlimit = policy.exec_limit = 512;
+      policy.resources = LOCALS;
+      policy.pending = PENDING_CALLS;
+      policy.rights = CREATE_USE;
+      CHECK(!localcreate(table, &policy, &packet.resources[3].handle));
+      packet.resources[3].tag = BOOT_CREATE;
+    }
+    if (packet.header.resource_count == 4 && roles[i] != 'e') {
       packet.resources[3].tag = 257;
       CHECK(!localendpoint(table, processes[client ? 1 : 0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[3].handle));
     }
+    if (roles[i] == 'e')
+      packet.header.resource_count = 4;
     testloadmapped(pids[i], pipeio_image, (u64) (pipeio_image_end - pipeio_image), &packet,
                    sizeof(packet));
     CHECK(!procpublish(pids[i]));
