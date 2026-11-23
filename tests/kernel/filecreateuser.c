@@ -721,10 +721,10 @@ client(const Bootview *boot)
     Forkret     forked;
     Fdtag       tag;
     Fdview      fd;
-    Connpeer    child;
+    Connpeer    child, backend;
     Msg         check = {{FORKWATCH, 0, 0, 0}};
-    u64         token = 0, pin, closing = 0;
-    u32         attempt;
+    u64         token = 0, pin, representative, closing = 0;
+    u32         attempt, cursor = 0;
     for (attempt = 0; attempt < 2; attempt++)
       CHECK(!sysfilerefalias(&pool, work.state.self, first) && !sysfdreserve(&fds, 0, &tag) &&
             tag.index == attempt &&
@@ -732,8 +732,12 @@ client(const Bootview *boot)
     CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked) &&
           !sysexecfds(&execfds, &fds, &pool, &cache, work.state.self));
     child = (Connpeer){forked.pid, 1};
+    CHECK(sysforkfdnext(&execfds, &cursor, &backend, &representative) == 1 &&
+          representative == first && backend.pid == work.state.peer.pid &&
+          backend.image == work.state.peer.image &&
+          !sysforkfdnext(&execfds, &cursor, &backend, &representative));
     for (attempt = 0; attempt < 4; attempt++) {
-      pin = first;
+      pin = representative;
       CHECK(!sysfilerefpin(&pool, work.state.self, pin) &&
             !sysforkfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, child,
                             attempt == 1 ? token + 1 : token, UINT64_MAX, &pin, &execsend) &&

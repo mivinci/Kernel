@@ -10,6 +10,31 @@ separate(const void *a, u64 bytes, const void *b, u64 length)
          (x + bytes <= y || y + length <= x);
 }
 
+isize
+sysforkfdnext(const Execfds *capture, u32 *cursor, Connpeer *peer, u64 *file)
+{
+  u32 i, j;
+  if (!capture || !cursor || !peer || !file)
+    return -ERR_INVALID;
+  if (!capture->pool || capture->ready != 1 || capture->count > BOOT_FD_COUNT ||
+      *cursor > capture->count)
+    return -ERR_STATE;
+  for (i = *cursor; i < capture->count; i++) {
+    Connpeer candidate = capture->entries[i].backend;
+    for (j = 0; j < i; j++)
+      if (capture->entries[j].backend.pid == candidate.pid &&
+          capture->entries[j].backend.image == candidate.image)
+        break;
+    if (j != i)
+      continue;
+    *peer = candidate;
+    *file = capture->entries[i].file;
+    *cursor = i + 1;
+    return 1;
+  }
+  return 0;
+}
+
 static isize
 fdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u32 context, u64 owner,
         Connpeer target, u64 token, u64 deadline, u64 *owned_file, Execsend *send, u32 opcode)

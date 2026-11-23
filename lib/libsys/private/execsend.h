@@ -32,4 +32,7 @@ isize sysforkfdcollect(Connwork *work, Conncache *cache, Execsend *send, u64 *ow
    operation retains ownership unless collection has already released it. */
 isize sysforkfddrive(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Execsend *send,
                      u64 *owned_file);
+/* Select the next backend in first-fd order. Advance cursor only after
+   selecting a peer. Returns 1 with a representative File, or 0 at end. */
+isize sysforkfdnext(const Execfds *capture, u32 *cursor, Connpeer *peer, u64 *file);
 #endif
