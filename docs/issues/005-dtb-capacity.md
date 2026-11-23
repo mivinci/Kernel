@@ -14,7 +14,7 @@
 
 ## 建议修复
 
-1. 上调 `NODES/PROPS/DEPTH/DT_DEVICES/DT_REGS`，取值与依据记入 status。
+1. 上调 `NODES/PROPS/DEPTH/DT_DEVICES/DT_REGS`，取值与依据记入对应设计主题。
 2. 增加上述 compatible 别名；`snps,dw-apb-uart` 按 16550 处理。
 3. 把真实板 DTB 纳入主机测试：以 NEO3、VisionFive 2 的 DTB 为输入，断言 UART/GIC/PLIC/内存/reserved 解析结果。
 4. 解析失败必须显式报错并停在该阶段，不静默继续。

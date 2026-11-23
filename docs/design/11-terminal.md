@@ -489,7 +489,7 @@ ttybind=0x69/getfg=0x6a及libsys私有桩已接。Proc以TERMINAL业务权解析
 - [ ] read/write 在零进展、部分进展、已固定结果及进展未知四阶段注入信号；handler 关闭/复用原 fd，外层不读写替代文件，read 快照不丢失，查询故障不伪报零进展。
 - [ ] 处理函数执行后按接口验证 SA_RESTART 或 EINTR；QUEUED取消已终结时不复活，ACCEPTED协作取消仍保留原结果，旧共享槽未收尾时不复用，服务崩溃不会无限重试。
 
-全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，完整执行与证据记录在本主题末尾，当前接续摘要见 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 阶段 13：IRQ、serial、tty 与控制终端
 

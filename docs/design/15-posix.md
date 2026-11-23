@@ -91,7 +91,7 @@ libc 导出标准 API，libsys 实现 fd/连接/服务适配和负错误码协�
 环境修改接口登记（2026-11-21，libc/envset.c，stdlib.h；实现/验收见文末）：`int setenv(const char *name,const char *value,int overwrite)`复制参数，非零overwrite替换、零overwrite且已存在时保持环境和指针不变；无名/含`=`为EINVAL，分配失败ENOMEM且环境不变。`int unsetenv(const char *name)`删除匹配，未找到成功且环境不变，非法名称EINVAL；实现不分配，不产生额外ENOMEM路径。二者会更新environ并可能使先前getenv结果失效，属于单线程、非异步信号安全接口；有效输入成功时本实现保持errno。直接NULL名称/值额外拒绝为EINVAL，不把这些无效C输入当作规范有效用例。原文：[setenv](https://pubs.opengroup.org/onlinepubs/9799919799/functions/setenv.html)、[unsetenv](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unsetenv.html)。
 新增硬链接、追加原子性、PID 选择器与组号协议、实时时钟与标准属性等是待补齐设计，不因本表存在而视为原状态机已覆盖；阶段 00 冻结具体契约后进入对应实现阶段。
 
-验收分三层：host 测试检查纯库逻辑/布局/错误转换；RV64 与 ARM64 QEMU 测试真实服务和故障路径；选取有明确版本的外部单线程静态程序重新编译运行，登记补丁与缺失接口。三层结果分别记入 status.md，不以自编小程序替代外部软件兼容结论。
+验收分三层：host 测试检查纯库逻辑/布局/错误转换；RV64 与 ARM64 QEMU 测试真实服务和故障路径；选取有明确版本的外部单线程静态程序重新编译运行，登记补丁与缺失接口。三层结果记入对应设计主题末尾，当前接续摘要见 [status.md](../status.md)，不以自编小程序替代外部软件兼容结论。
 每个纳入接口至少覆盖正常、边界、权限/无效参数、资源耗尽、信号/取消及适用的服务故障路径；不适用项标明原因。系统容量限制通过公开查询或明确配置报告，超限失败不得泄漏资源。
 
 规范参考：[POSIX.1-2024](https://pubs.opengroup.org/onlinepubs/9799919799/)、[函数索引](https://pubs.opengroup.org/onlinepubs/9799919799/functions/contents.html)。初次在线正文访问返回403；后续成功取得的逐符号原文与核对范围登记在对应条目/验收中，不能将本表视为整套标准已审计。基础机制实现或部分函数通过不等于完整标准兼容。
@@ -229,7 +229,7 @@ stage446：`int tcgetattr(int fd, struct termios *attributes)` 由 libc 提供�
 
 ARM64、RV64 QEMU `pipeio` 经真实 IPC 验证夹具返回属性、坏长度保留输出、坏输出地址后可再次查询，以及管道 ENOTTY 和无效 fd EBADF。17 项请求账本主机测试和格式检查通过。成功属性由测试服务提供，生产 TTY 文件连接仍待接入。
 
-全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，完整执行与证据记录在本主题末尾，当前接续摘要见 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 兼容清单执行项
 

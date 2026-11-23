@@ -42,7 +42,7 @@ testactors(const char *roles)
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set));
   for (i = 0; i < count; i++)
-    CHECK(!procnew(set, 1, 256, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
+    CHECK(!procnew(set, 1, 512, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
   for (i = 0; i < count; i++) {
     Rtable *table = proctable(pids[i]);
     int     client = i + 1 == count;
@@ -106,7 +106,7 @@ testactors(const char *roles)
     }
     if (ended == count)
       break;
-    CHECK(++turns < 384);
+    CHECK(++turns < 1024);
     error = procrunone();
     if (error == -ERR_WOULD_BLOCK)
       CHECK(procidle() >= 0);
@@ -141,4 +141,5 @@ pipeiotest(void)
   testactors("Ff");
   testactors("Gg");
   testactors("HJh");
+  testactors("Ee");
 }

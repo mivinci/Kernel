@@ -22,11 +22,11 @@ isize
 elfloadfsread(void *context, u64 offset, void *destination, u64 bytes)
 {
   Elfloadfs *source = context;
-  Ipcmsg     result;
+  Ipcmsg     result = {0};
   Msg        request;
   Handle     rpc;
   u64        mask, options = CALL_ASYNC;
-  isize      error;
+  isize      error, submitted;
   if (!source || !destination)
     return -ERR_INVALID;
   if (source->pending.key.lease.seq || source->submitted)
@@ -44,13 +44,13 @@ elfloadfsread(void *context, u64 offset, void *destination, u64 bytes)
     options |= CALL_CONTROL;
   if (!error)
     error = ipc_call(source->work->state.call, &request, options, &result);
-  if (error) {
+  if (handlekind(result.request) != HANDLE_RPC) {
     isize cleanup = abortread(source);
-    return restore(mask, cleanup ? cleanup : error);
+    return restore(mask, cleanup ? cleanup : error ? error : -ERR_STATE);
   }
   rpc = source->submitted = result.request;
-  error = sysopsubmitted(source->work, source->cache, &source->pending.key, &source->submitted);
-  error = restore(mask, error);
+  submitted = sysopsubmitted(source->work, source->cache, &source->pending.key, &source->submitted);
+  error = restore(mask, submitted ? submitted : error);
   if (error)
     return error;
   do {
@@ -75,6 +75,7 @@ isize
 elfloadfsdrain(Elfloadfs *source)
 {
   u64   mask;
+  u32   phase;
   isize error;
   if (!source)
     return -ERR_INVALID;
@@ -87,10 +88,16 @@ elfloadfsdrain(Elfloadfs *source)
     error = sysopsubmitted(source->work, source->cache, &source->pending.key, &source->submitted);
   if (!error)
     error = sysopcheck(source->work, source->cache, &source->pending.key);
-  if (!error &&
-      source->work->state.operations[source->pending.key.lease.slot].phase == SYSOP_PREPARED)
-    error = abortread(source);
-  else if (!error)
-    error = sysloadcollect(source->work, source->cache, &source->pending, NULL);
+  if (!error) {
+    phase = source->work->state.operations[source->pending.key.lease.slot].phase;
+    if (phase == SYSOP_PREPARED)
+      error = abortread(source);
+    else {
+      if (phase == SYSOP_WAITING)
+        error = sysopcancel(source->work, source->cache, &source->pending.key);
+      if (!error)
+        error = sysloadcollect(source->work, source->cache, &source->pending, NULL);
+    }
+  }
   return restore(mask, error);
 }

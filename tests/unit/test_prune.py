@@ -62,31 +62,49 @@ class PruneTest(unittest.TestCase):
         report = prune.plan(self.root, keep=0, grace_hours=24)
         self.assertEqual(self.kept(report), {old})
 
+    def test_recent_protection_does_not_hide_failure_reason(self):
+        run = self.fixture(1, record={'ok': False})
+        os.utime(run, None)
+        report = prune.plan(self.root, keep=1, grace_hours=24)
+        row = next(row for row in report['directories'] if row['path'] == str(run.relative_to(self.root)))
+        self.assertTrue(row['keep'])
+        self.assertEqual(row['reasons'], ['failed', 'recent-count', 'recent-time'])
+
     def test_failure_incomplete_and_board_evidence_never_deleted(self):
         failed = self.fixture(1, record={'ok': False})
+        errored = self.fixture(4, record={'ok': True, 'error': 'guest failed'})
         incomplete = self.fixture(2)
         (incomplete / 'result.json').unlink()
         self.write('build/boards/neo3/run/result.json', {'ok': True})
         board = self.fixture(3, 'arm64/boards/runs')
         report = self.report()
-        self.assertEqual(self.kept(report), {failed, incomplete})
+        self.assertEqual(self.kept(report), {failed, errored, incomplete})
         prune.apply(self.root, report)
         self.assertTrue((self.root / 'build/boards/neo3/run/result.json').exists())
         self.assertTrue(board.exists())
 
     def test_preview_preserves_every_byte_and_reports_reclaim(self):
         run = self.fixture(1)
+        clean = self.fixture(2, 'arm64/runs',
+                             record={'ok': True, 'error': None, 'cleanup_error': None})
         before = (run / 'result.json').read_bytes()
         report = self.report()
         self.assertEqual((run / 'result.json').read_bytes(), before)
-        self.assertEqual(report['reclaim_files'], 1)
+        self.assertEqual(self.kept(report), set())
+        self.assertEqual(report['reclaim_files'], 2)
         self.assertGreater(report['reclaim_bytes'], 0)
+        self.assertEqual(set(prune.apply(self.root, report)),
+                         {str(run.relative_to(self.root)), str(clean.relative_to(self.root))})
 
     def test_new_reference_between_preview_and_apply_is_respected(self):
         run = self.fixture(1)
         report = self.report()
+        self.assertGreater(report['reclaim_bytes'], 0)
+        self.assertEqual(report['reclaim_files'], 1)
         self.write('build/host/stage2/evidence.json', {'result': str(run / 'result.json')})
         self.assertEqual(prune.apply(self.root, report), [])
+        self.assertEqual(report['reclaim_bytes'], 0)
+        self.assertEqual(report['reclaim_files'], 0)
         self.assertTrue(run.exists())
 
     def test_manifest_last_run_and_suite_reference_protect_whole_directory(self):
@@ -98,6 +116,20 @@ class PruneTest(unittest.TestCase):
         self.write('build/host/stage2/evidence.json', {'result': str(suite / 'good/result.json')})
         self.assertEqual(self.kept(self.report()), {logs, suite})
 
+    def test_reason_summary_counts_distinct_references_once(self):
+        first = self.fixture(1, 'arm64/packageboot/suite-' + '1' * 32)
+        second = self.fixture(2, 'arm64/packageboot/suite-' + '2' * 32)
+        self.write('build/host/stage1/evidence.json',
+                   {'results': [str(first / 'result.json'), str(first / 'result.json')]})
+        self.write('build/host/stage2/evidence.json', {'result': str(second / 'result.json')})
+        args = ['prune', '--keep', '0', '--grace-hours', '0']
+        output = io.StringIO()
+        with patch.object(prune, 'ROOT', self.root), patch.object(sys, 'argv', args), \
+                redirect_stdout(output):
+            prune.main()
+        self.assertIn('reference=2', output.getvalue())
+        self.assertNotIn('reference=3', output.getvalue())
+
     def test_sdk_requires_published_result_after_successful_commands(self):
         complete = self.fixture(1, 'arm64/sdk/runs')
         interrupted = self.fixture(2, 'arm64/sdk/runs')
@@ -106,11 +138,67 @@ class PruneTest(unittest.TestCase):
             self.write(str((run / 'commands.json').relative_to(self.root)),
                        [{'ok': run != failed}])
         (interrupted / 'result.json').unlink()
+        interrupted = self.root / 'build/arm64/sdk/runs' / ('%032x' % 4)
+        interrupted.mkdir()
+        self.write(str((interrupted / 'commands.json').relative_to(self.root)), [{'ok': True}])
         (interrupted / 'result.json').symlink_to(complete / 'result.json')
+        os.utime(interrupted, (1, 1))
 
         report = self.report()
-        self.assertEqual(self.kept(report), {interrupted, failed})
+        self.assertEqual(self.kept(report), {self.root / 'build/arm64/sdk/runs' / ('%032x' % 2),
+                                             interrupted, failed}, [
+            (r['path'], r['reasons']) for r in report['directories']])
         self.assertEqual(prune.apply(self.root, report), [str(complete.relative_to(self.root))])
+
+    def test_build_requires_final_result_after_successful_commands(self):
+        complete = self.fixture(1, 'arm64/runs')
+        interrupted = self.fixture(2, 'arm64/runs')
+        for run in (complete, interrupted):
+            self.write(str((run / 'commands.json').relative_to(self.root)), [{'ok': True}])
+        (interrupted / 'result.json').unlink()
+        report = self.report()
+        self.assertEqual(self.kept(report), {interrupted})
+        self.assertEqual(prune.apply(self.root, report), [str(complete.relative_to(self.root))])
+
+    def test_partial_suite_is_not_complete(self):
+        complete = self.root / ('build/arm64/packageboot/suite-' + '1' * 32)
+        partial = self.root / ('build/arm64/packageboot/suite-' + '2' * 32)
+        for suite in (complete, partial):
+            self.write(str((suite / 'first/result.json').relative_to(self.root)), {'ok': True})
+            os.utime(suite, (1, 1))
+        self.write(str((complete / 'second/result.json').relative_to(self.root)), {'ok': True})
+        self.write(str((complete / 'suite.json').relative_to(self.root)), [
+            {'fixture': 'first', 'ok': True, 'result': str(complete / 'first/result.json')},
+            {'fixture': 'second', 'ok': True, 'result': str(complete / 'second/result.json')},
+        ])
+        report = self.report()
+        self.assertEqual(self.kept(report), {partial})
+        self.assertEqual(prune.apply(self.root, report), [str(complete.relative_to(self.root))])
+
+    def test_suite_symlink_is_not_followed(self):
+        complete = self.root / ('build/arm64/packageboot/suite-' + '1' * 32)
+        linked = self.root / ('build/arm64/packageboot/suite-' + '2' * 32)
+        self.write(str((complete / 'first/result.json').relative_to(self.root)), {'ok': True})
+        self.write(str((complete / 'suite.json').relative_to(self.root)), [
+            {'fixture': 'first', 'ok': True, 'result': str(complete / 'first/result.json')},
+        ])
+        self.write(str((linked / 'first/result.json').relative_to(self.root)), {'ok': True})
+        (linked / 'suite.json').symlink_to(complete / 'suite.json')
+        os.utime(linked, (1, 1))
+        report = self.report()
+        self.assertEqual(self.kept(report), {linked})
+        self.assertEqual(prune.apply(self.root, report), [str(complete.relative_to(self.root))])
+
+    def test_suite_result_must_stay_inside_its_directory(self):
+        suite = self.root / ('build/arm64/packageboot/suite-' + '1' * 32)
+        outside = self.write('build/arm64/packageboot/result.json', {'ok': True})
+        self.write(str((suite / 'suite.json').relative_to(self.root)), [
+            {'fixture': 'first', 'ok': True, 'result': str(outside)},
+        ])
+        os.utime(suite, (1, 1))
+        report = self.report()
+        self.assertEqual(self.kept(report), {suite})
+        self.assertEqual(prune.apply(self.root, report), [])
 
     def test_symlinks_do_not_escape_build(self):
         outside = self.root / 'outside'

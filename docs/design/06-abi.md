@@ -155,6 +155,12 @@ ARM64、RV64 QEMU `stats` 验证用户和系统计时都有进展、未调度期
 
 退出提交把进程自己的用户、系统时间与它此前收取的子进程时间一起固定到 Life。父进程只有收取最终退出结果时才累计这份快照；停止、继续、再次收取及自动收取均不计入。快照不依赖 Run 槽，收取归当前合法父进程；计数上限饱和，不阻止 `wait` 收取。双架构 QEMU `life` 验证 Run 槽复用、孙辈时间传递及自动收取不计入。公开 `times()` 尚未接入。
 
+### `times()` 的自身时间查询（候选，待确认）
+
+建议增加 `QUERY_TIMES=7`，复用 `query` 和 192 字节 `Queryrec`，保持 `QUERY_PROC` 及其 `cpu_ns` 不变。仅接受 `authority=0`、`cursor=0`；非零授权返回 `DENIED`，不通过 CONTROL、SYSTEM 或准备视图开放他人时间查询。沿用 `count=1..16` 和请求输出区整段预检，有效查询只返回一条、`next_cursor=0`。`pid/image/stamp` 取当前运行身份，与自身 PROC 记录一致。关中断时用同一次单调时钟采样计算当前调度片段和 elapsed；`data[0..4]` 依次为自身用户、自身系统、已收取子进程用户、已收取子进程系统、单调 elapsed，单位为纳秒，其余字清零。
+
+libc 用有符号 64 位 `clock_t`，按固定 `100` tick/s 向下取整，`sysconf(_SC_CLK_TCK)` 返回相同值。`times()` 返回 elapsed 的 tick；非空 `struct tms *` 通过既有受检查复制写入四个计数，空指针只取返回值。验收需在两架构检查自身计时、最终 `wait` 前后子进程累计和重复收取、与单调时钟同一时间基准、无效输出地址，以及非自身查询被拒。
+
 ### query的主体选择（交叉复核修订）
 
 query(0,kind,cursor,outptr,count)为明确的本主体查询：PROC/ACCT/LIFE只返回当前调用者自己的记录，RESOURCE只枚举当前镜像本地授权，RQ只枚举本主体作为caller或receiver实际持有的请求；不按cursor中的索引扩大到其他主体。BOOT_RESOURCE不接受authority=0。管理查询仍要求显式CONTROL QUERY或SYSTEM既定权限，只枚举其授权范围；普通CALL、PID、REQUEST等整数不能作为管理authority来补权。
@@ -276,7 +282,7 @@ create、forkcommit等关键结果走寄存器。posix_spawn先核对pid输出�
 - [ ] 分别注入未交付失败、已交付中断、执行后回复前崩溃，核对通信状态、业务结果和收尾记录，不重复执行副作用。
 - [ ] IPC 成功携带业务错误时正确转换 errno；结果不确定不伪报成功，正常错误清零和 EINTR 收尾 Handle 例外均符合 ABI。
 
-全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，实际结果记录在 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，完整执行与证据记录在本主题末尾，当前接续摘要见 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 阶段 05：最小用户态与 ABI
 

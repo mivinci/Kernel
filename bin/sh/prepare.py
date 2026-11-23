@@ -19,8 +19,8 @@ HERE = Path(__file__).resolve().parent
 OPTION = re.compile(r'(?:# )?(CONFIG_[A-Z0-9_]+)(?:=.*| is not set)')
 APPLETS = ('ash', 'cat', 'cp', 'echo', 'ls', 'mkdir', 'mv', 'rm', 'sh', 'sleep', 'test')
 TARGETS = {'arm64': 'aarch64-none-elf', 'riscv': 'riscv64-none-elf'}
-# ash's job control links kill.o even without a standalone kill applet.
-PROBES = ('shell/ash.c', 'procps/kill.c', 'libbb/xatonum.c',
+# ash's kill builtin also needs the signal-name table when the applet is off.
+PROBES = ('shell/ash.c', 'procps/kill.c', 'libbb/u_signal_names.c', 'libbb/xatonum.c',
           *(f'coreutils/{name}.c' for name in APPLETS if name not in ('ash', 'sh')))
 
 

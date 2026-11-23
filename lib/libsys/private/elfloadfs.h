@@ -17,7 +17,7 @@ struct Elfloadfs
 /* Caller owns the connection and version-pinned session through all reads
    and any outstanding drain. Start with pending and submitted zero. */
 isize elfloadfsread(void *context, u64 offset, void *destination, u64 bytes);
-/* Discard a failed read's outstanding result. Nonblocking; retry WOULD_BLOCK
-   without releasing the connection, slot or session. */
+/* Cancel an outstanding read and discard its result after FINISH. Nonblocking;
+   retry WOULD_BLOCK without releasing the connection, slot or session. */
 isize elfloadfsdrain(Elfloadfs *source);
 #endif

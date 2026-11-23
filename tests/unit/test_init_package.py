@@ -111,7 +111,8 @@ class InitMainTests(unittest.TestCase):
 #include "'''+str(ROOT/'sbin/init/main.c')+'''"
 #undef main
 const u8 init_config[1]={0},init_config_end[1]={0};
-static jmp_buf jump;
+static jmp_buf jumps[64];
+static int runat;
 static Boot initial;
 static Bootview view;
 static Resentry resources[2];
@@ -120,7 +121,7 @@ static u64 machine;
 const Bootview *sysboot(void){return &view;}
 u32 elfmachine(void){return (u32)machine;}
 isize __sys_getid(Handle *pid,u64 *image,Handle *parent){*pid=scenario==1?2:1;*image=1;*parent=0;return 0;}
-NORETURN void mock_exit(int code){result=code;longjmp(jump,1);}
+NORETURN void mock_exit(int code){result=code;longjmp(jumps[runat],1);}
 isize manifestopen(const void *data,u64 bytes,u64 target,Manifest *out){
   (void)data;(void)bytes;(void)out;if(target!=machine)mock_exit(242);
   return scenario==6?-ERR_INVALID:0;
@@ -159,7 +160,7 @@ isize ipc_recv(u64 mask,u64 options,Ipcmsg *out){
     options!=(scenario==10?RECV_NONBLOCK:0)||!out)mock_exit(241);
   if(scenario==5&&receives==1)return -ERR_INTERRUPTED;
   if(scenario==4)return -ERR_STATE;
-  if(scenario!=9&&receives>(scenario==5?2:1)){result=0;longjmp(jump,1);}
+  if(scenario!=9&&receives>(scenario==5?2:1)){result=0;longjmp(jumps[runat],1);}
   out->kind=scenario==11||scenario==12?IPC_CALL:IPC_EVENT;
   out->source=out->request=0;out->words[0]=EVENT_CHILD;return 0;
 }
@@ -172,7 +173,8 @@ int exercise(const void *data,u64 bytes,u64 target,int mode){
   resources[1].tag=BOOT_SELF_ALLOC;resources[1].handle=((Handle)HANDLE_RESOURCE<<59)|(1UL<<16)|1;
   view.header=&initial;view.resources=resources;
   argv[0]=mode==2?"wrong":"sbin/init";argv[1]=0;
-  if(!setjmp(jump))initprogram(1,argv);
+  runat=(runat+1)%64;
+  if(!setjmp(jumps[runat]))initprogram(1,argv);
   return result;
 }
 u64 value(u32 index){return index==0?initstate.phase:index==1?initstate.reaped:index==2?initstate.files:

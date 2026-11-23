@@ -2,7 +2,7 @@
 """Explicit retention of generated run directories; preview unless --apply."""
 
 import argparse
-from collections import deque
+from collections import Counter, defaultdict, deque
 import json
 import math
 import os
@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import time
 from run import run_guard
 from build import BOOT_CASES
@@ -66,25 +67,53 @@ def jsonfiles(directory):
 
 
 def completion(directory):
-    """Unknown/failed records stay intact, including interrupted build commands."""
-    # The SDK writes commands incrementally, before publishing its artifacts.
-    sdk = directory.parent.name == 'runs' and directory.parent.parent.name == 'sdk'
-    terminal = False
-    for p in jsonfiles(directory):
-        if p.name == 'failure.json':
-            return 'failed'
-        if p.name not in ('result.json', 'commands.json'):
+    """Separate failure evidence from incomplete or successful runs."""
+    records = list(jsonfiles(directory))
+    if any((directory / name).is_symlink() for name in ('result.json', 'suite.json')):
+        return 'incomplete'
+    if any(p.name == 'failure.json' for p in records):
+        return 'failed'
+    for p in records:
+        if p.name not in ('commands.json', 'result.json', 'suite.json'):
             continue
         try:
             value = read(p)
         except (ValueError, OSError):
             return 'unreadable'
-        records = value if isinstance(value, list) else [value]
-        if not records or any(not isinstance(r, dict) or r.get('ok') is not True for r in records):
+        items = value if isinstance(value, list) else [value]
+        if (items and any(not isinstance(item, dict) or item.get('ok') is False or
+                          any(item.get(name) not in (None, '') for name in ('error', 'cleanup_error'))
+                          for item in items)):
+            return 'failed'
+        if (not items or any(not isinstance(item, dict) or item.get('ok') is not True
+                             for item in items)):
             return 'failed-or-incomplete'
-        if not sdk or p == directory / 'result.json':
-            terminal = True
-    return None if terminal else 'incomplete'
+    final = directory / 'suite.json' if (directory / 'suite.json').is_file() else directory / 'result.json'
+    if not final.is_file():
+        return 'incomplete'
+    try:
+        value = read(final)
+    except (ValueError, OSError):
+        return 'unreadable'
+    items = value if isinstance(value, list) else [value]
+    if (items and any(not isinstance(item, dict) or item.get('ok') is False or
+                      any(item.get(name) not in (None, '') for name in ('error', 'cleanup_error'))
+                      for item in items)):
+        return 'failed'
+    if not items or any(not isinstance(item, dict) or item.get('ok') is not True for item in items):
+        return 'failed-or-incomplete'
+    if final.name == 'suite.json':
+        for item in items:
+            result = directory / str(item.get('result', ''))
+            if result.is_symlink() or not result.is_file():
+                return 'failed-or-incomplete'
+            try:
+                result.relative_to(directory)
+            except ValueError:
+                return 'failed-or-incomplete'
+    # A run directory cannot skip its top-level result merely because it contains
+    # success-looking fixture results or an incremental command journal.
+    return None
 
 
 def inventory(directory):
@@ -103,7 +132,7 @@ def inventory(directory):
     return dict(bytes=size, files=files)
 
 
-def plan(root, keep=20, grace_hours=24, now=None, measure=True):
+def plan(root, keep=20, grace_hours=24, now=None, measure=True, progress=None):
     root = root.resolve()
     build = root / 'build'
     if build.is_symlink():
@@ -117,6 +146,8 @@ def plan(root, keep=20, grace_hours=24, now=None, measure=True):
     reasons = {p: set() for p in candidates}
     pending = deque()
     visited = set()
+    if progress:
+        progress(f'Checking retention for {len(candidates)} run directories')
 
     def protect(p, why):
         if not reasons[p]:
@@ -134,17 +165,20 @@ def plan(root, keep=20, grace_hours=24, now=None, measure=True):
                 p = directory / name
                 if p.is_file():
                     pending.append(p)
-    for parent in {p.parent for p in candidates}:
-        ordered = sorted((p for p in candidates if p.parent == parent),
-                         key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
-        for p in ordered[:keep]:
-            protect(p, 'recent-count')
+    groups = defaultdict(list)
     for p in candidates:
-        if now - p.stat().st_mtime < grace_hours * 3600:
-            protect(p, 'recent-time')
-        state = completion(p) if not reasons[p] else None
-        if state:
-            protect(p, state)
+        info = p.stat()
+        groups[p.parent].append((info.st_mtime_ns, p, info.st_mtime))
+    for group in groups.values():
+        group.sort(reverse=True)
+        for _, p, _ in group[:keep]:
+            protect(p, 'recent-count')
+        for _, p, modified in group:
+            if now - modified < grace_hours * 3600:
+                protect(p, 'recent-time')
+            state = completion(p)
+            if state:
+                protect(p, state)
 
     # Prefix lookup avoids comparing every reference to every run directory.
     bypath = {p.relative_to(root).as_posix(): p for p in candidates}
@@ -177,6 +211,8 @@ def plan(root, keep=20, grace_hours=24, now=None, measure=True):
                     if target:
                         protect(target, 'reference:' + str(source.relative_to(root)))
                         break
+    if progress and measure:
+        progress(f'Measuring {sum(not why for why in reasons.values())} eligible run directories')
     rows = []
     for p in candidates:
         rows.append(dict(path=str(p.relative_to(root)), keep=bool(reasons[p]),
@@ -193,7 +229,7 @@ def apply(root, report):
     # directory since preview. Never broaden the original deletion set.
     current = plan(root, report['keep'], report['grace_hours'], measure=False)
     allowed = {r['path'] for r in current['directories'] if not r['keep']}
-    deleted = []
+    actual = []
     for row in report['directories']:
         if row['keep'] or row['path'] not in allowed:
             continue
@@ -201,21 +237,41 @@ def apply(root, report):
         if p.is_symlink() or any(parent.is_symlink() for parent in p.parents):
             raise ValueError('symlink in deletion path: ' + str(p))
         shutil.rmtree(p)
-        deleted.append(row['path'])
-    return deleted
+        actual.append(row)
+    report['reclaim_bytes'] = sum(row['bytes'] for row in actual)
+    report['reclaim_files'] = sum(row['files'] for row in actual)
+    return [row['path'] for row in actual]
 
 
 def execute(args):
-    report = plan(ROOT, args.keep, args.grace_hours)
+    def progress(message):
+        print('prune: ' + message, file=sys.stderr, flush=True)
+
+    report = plan(ROOT, args.keep, args.grace_hours, progress=progress)
+    counts = Counter()
     for row in report['directories']:
+        if row['keep']:
+            references = {reason for reason in row['reasons']
+                          if reason.startswith('reference:') and
+                          not reason.partition(':')[2].startswith(row['path'] + '/')}
+            counts.update({reason.partition(':')[0] for reason in row['reasons']
+                           if not reason.startswith('reference:')})
+            if references:
+                counts['reference'] += 1
         size = '' if row['keep'] else ' (%d bytes)' % row['bytes']
         print('%s %s%s: %s' % ('KEEP' if row['keep'] else 'DELETE',
               row['path'], size, ', '.join(row['reasons'])))
-    print('Reclaim: %d bytes, %d files; %s' % (report['reclaim_bytes'],
-          report['reclaim_files'], 'applying' if args.apply else 'dry-run'))
+    if counts:
+        print('Retained by reason (counts may overlap): ' + ', '.join(
+              f'{reason}={count}' for reason, count in sorted(counts.items())))
+    print('%s reclaim: %d bytes, %d files' % ('Reclaim' if args.apply else 'Preview',
+          report['reclaim_bytes'], report['reclaim_files']))
     report['dry_run'] = not args.apply
     if args.apply:
+        progress('Rechecking retention before deletion')
         report['deleted'] = apply(ROOT, report)
+        print('Deleted: %d bytes, %d files' % (report['reclaim_bytes'],
+              report['reclaim_files']))
     if args.report:
         args.report.write_text(json.dumps(report, indent=2) + '\n')
 

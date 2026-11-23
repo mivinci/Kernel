@@ -153,6 +153,7 @@ hal_ipc_finish(Hctx *context, isize status, const u64 outputs[8])
 {
   hal_syscall_finish(context, status, outputs);
   context->tf.x[9] = status < 0 ? 0 : outputs[7];
+  /* SYS_CALL may return an owned RPC with an interrupted or retained error. */
   context->tf.x[3] = outputs[2];
 }
 

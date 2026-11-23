@@ -2967,6 +2967,116 @@ openloadclient(void)
 }
 
 static void
+readdrainserver(const Bootview *boot)
+{
+  static Filelink    link;
+  static Cacheblock  backing;
+  static Loadjob     job;
+  static Loadfixture fixture;
+  static Loadtable   table;
+  static u8          block[CACHE_BYTES];
+  static u8          scratch[CACHE_BYTES];
+  Fsloads            loads = {
+                 .table = &table, .jobs = &job, .count = 1, .scratch = scratch, .backend = &fixture};
+  Fsservice    fs = {.observe = bootresource(boot, 256),
+                     .allocator = bootresource(boot, BOOT_SELF_ALLOC),
+                     .space = bootresource(boot, BOOT_SELF_SPACE),
+                     .arena = ADDRESS,
+                     .links = &link,
+                     .nlinks = 1,
+                     .loads = &loads};
+  volatile u8 *page;
+  Msg          reply = {{0, 0, 0, 0}};
+  Ipcmsg       attach, gate, event;
+  Connpeer     caller;
+  u64          flags;
+  fixture = (Loadfixture){.map = {{2, 1, 2, 130}, {FS_DATA_START}, 0}};
+  CHECK(!cacheinit(&fixture.cache, &backing, 1, 128));
+  loads.resolve = openloadresolve;
+  loads.submit = openloadsubmit;
+  CHECK(!fsstep(&fs) && link.ready);
+  CHECK(!ipc_recv(0, 0, &attach) && attach.words[0] == FS_ATTACH &&
+        !loadopen(&table, &fixture.map.file, link.watch.owner.pid, link.watch.owner.image, 0,
+                  UINT64_MAX, &reply.words[2]) &&
+        !ipc_reply(attach.request, &reply));
+  CHECK(!ipc_recv(0, 0, &attach) && attach.kind == IPC_CALL && attach.words[0] == FS_LOAD &&
+        !fsloadstart(&loads, &link, 1, &attach));
+  caller.pid = attach.source;
+  caller.image = attach.image;
+  CHECK(job.io.request && job.work.fill.cache && fixture.fetch.block &&
+        link.watch.active.requests[job.io.slot] == job.io.request && job.io.bytes == 2);
+  page = (volatile u8 *) (link.address + FS_DATA_OFFSET + job.io.slot * FS_SLOT_BYTES);
+  page[0] = '?';
+  page[1] = '?';
+  /* The control gate orders cancellation after admission. Its synchronous
+     reply proves the service has started and blocked this exact LOAD. */
+  CHECK(!ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL && gate.words[0] == PIPETEST &&
+        gate.words[1] == 1 && gate.source == caller.pid && gate.image == caller.image &&
+        !ipc_reply(gate.request, &reply));
+  block[128] = 'L';
+  block[129] = 'D';
+  CHECK(!ipc_recv(EVENT_RQ_CANCEL, 0, &event) && event.kind == IPC_EVENT &&
+        event.words[0] == EVENT_RQ_CANCEL && !ipc_rqcheck(job.io.request, &flags) &&
+        flags == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
+        !loadcachecomplete(&job.work, job.io.request, &fixture.fetch.ticket, block, CACHE_BYTES) &&
+        !fsloadpump(&loads) && !job.io.request && !link.watch.active.requests[job.io.slot] &&
+        !job.work.request && !job.work.span.cache && !job.work.fill.cache && !job.work.failed &&
+        page[0] == '?' && page[1] == '?');
+  pipeiotrace[0] = 7;
+}
+
+static void
+readdrainclient(const Bootview *boot)
+{
+  Msg          attach = {{FS_ATTACH, 0, 0, 0}};
+  Msg          request;
+  Ipcmsg       result, finish;
+  isize        progress;
+  Elfloadfs    load = {.work = &work,
+                       .cache = &cache,
+                       .identity = {2, 1, 2, 130},
+                       .owner = 1,
+                       .layer = SYSFILE_MAIN};
+  Msg          gate = {{PIPETEST, 0, 0, 0}};
+  u8           bytes[2] = {'?', '?'};
+  volatile u8 *page;
+  Handle       rpc;
+  u32          slot;
+  setup(boot, &work, &cache, &bank);
+  CHECK(!ipc_call(work.state.call, &attach, CALL_CONTROL, &result) && result.words[2]);
+  load.session = result.words[2];
+  CHECK(!sysloadstage(&work, &cache, SYSFILE_MAIN, load.owner, load.session, load.identity, 128,
+                      sizeof(bytes), &load.pending));
+  CHECK(!sysoprequest(&work, &cache, &load.pending.key, &request));
+  CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
+  CHECK(handlekind(result.request) == HANDLE_RPC);
+  rpc = result.request;
+  load.submitted = rpc;
+  CHECK(!sysopsubmitted(&work, &cache, &load.pending.key, &load.submitted));
+  page = (volatile u8 *) (work.state.map.address + FS_DATA_OFFSET +
+                          load.pending.key.lease.slot * FS_SLOT_BYTES);
+  page[0] = '?';
+  page[1] = '?';
+  gate.words[1] = 1;
+  CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &result));
+  slot = load.pending.key.lease.slot;
+  CHECK(!sysopcheck(&work, &cache, &load.pending.key) &&
+        work.state.operations[slot].phase == SYSOP_WAITING);
+  progress = elfloadfsdrain(&load);
+  if (!progress)
+    CHECK(!load.pending.key.lease.seq && !load.submitted && !load.pending.native &&
+          load.pending.business == -EINTR && !work.state.operations[slot].phase);
+  else
+    CHECK(progress == -ERR_WOULD_BLOCK && load.pending.key.lease.seq && !load.submitted);
+  if (progress)
+    CHECK(!ipc_rqwait(rpc, RQ_FINISH, &finish) && !elfloadfsdrain(&load));
+  CHECK(!load.pending.key.lease.seq && !load.submitted && !load.pending.native &&
+        load.pending.business == -EINTR && !work.state.operations[slot].phase && page[0] == '?' &&
+        page[1] == '?');
+  pipeiotrace[0] = 7;
+}
+
+static void
 openstatcheck(u64 session, u64 unused, isize expected)
 {
   Filelease          lease;
@@ -3701,6 +3811,10 @@ main(int argc, char **argv)
     serviceloop(boot, argv[0][0] == 'H' ? 8 : 9);
   else if (argv[0][0] == 'h')
     pollbothclient(boot);
+  else if (argv[0][0] == 'E')
+    readdrainserver(boot);
+  else if (argv[0][0] == 'e')
+    readdrainclient(boot);
   else if (argv[0][0] == 'I')
     serviceloop(boot, 1);
   else if (argv[0][0] == 'i')
