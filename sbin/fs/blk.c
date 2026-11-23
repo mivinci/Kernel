@@ -4,6 +4,7 @@
 #include "private/file.h"
 #include "private/syscall.h"
 #include <errno.h>
+#include <string.h>
 
 static void
 copy(volatile void *out, const volatile void *in, u32 bytes)
@@ -169,7 +170,9 @@ fsblkdetach(Blkattach *work, Fsblk *blk)
     if (error)
       return error;
   }
-  work->call = 0;
+  /* Geometry and terminal status belong to the old connection. */
+  memset(blk, 0, sizeof(*blk));
+  memset(work, 0, sizeof(*work));
   return 0;
 }
 

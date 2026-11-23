@@ -2034,7 +2034,13 @@ blkclient(const Bootview *boot, Handle call)
   REQUIRE(!ipc_call(call, &message, CALL_RECV_MEM, &result) && result.kind == IPC_NONE &&
               (isize) result.words[0] == -EIO && result.words[1] == message.words[2],
           462);
-  REQUIRE(!fsblkdetach(&attaching, &blk) && !blk.address && !attaching.memory, 368);
+  REQUIRE(blk.info.geometry_generation && blk.connid && blk.seq > 1, 368);
+  blk.ended = blk.stale = 1;
+  REQUIRE(!fsblkdetach(&attaching, &blk) && !blk.address && !blk.call && !blk.connid && !blk.seq &&
+              !blk.info.geometry_generation && !blk.nextinfo.geometry_generation && !blk.stale &&
+              !blk.ended && !attaching.memory && !attaching.call && !attaching.map.connid &&
+              fsblksubmit(&blk, BLK_INFO, 0, 0, NULL) == -ERR_INVALID,
+          368);
   vdev_trace[VTEST_BLK_RPC] = 1;
 }
 

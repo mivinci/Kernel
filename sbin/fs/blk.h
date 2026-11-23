@@ -40,7 +40,8 @@ isize fsblkattached(Blkattach *, Fsblk *, isize *status);
 int   fsblkbound(const Blkattach *, const Fsblk *);
 /* Settle the original bootstrap and release the local mapping and MEM.
    The owner must first stop using Fsblk and drain its I/O. This does not
-   close the server's peer entry; it stays owned by the client image. */
+   close the server's peer entry; it stays owned by the client image. On
+   success both local records are reset for use with a new connection. */
 isize fsblkdetach(Blkattach *, Fsblk *);
 /* On success one original RPC is owned. A failure leaves no submitted I/O.
    WRITE input is copied before submission and is independent of the mapping. */
