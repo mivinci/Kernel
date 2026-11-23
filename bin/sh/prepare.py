@@ -97,7 +97,6 @@ def prepare(archive, out):
         if result.returncode:
             raise ValueError(f'{name} failed: {log}')
 
-    run('pid-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-pid.patch').read_bytes())
     run('network-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-network.patch').read_bytes())
     run('platform-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-platform.patch').read_bytes())
     configure(source, run)

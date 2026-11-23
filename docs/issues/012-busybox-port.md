@@ -144,7 +144,7 @@ A2 固定使用 [miniz 3.1.2](https://github.com/richgel999/miniz/tree/3.1.2) �
 
 BusyBox 1.37.0 的 PID 审查发现，`ash` 的 `rootpid`、`initialpgrp`、`forkshell`、`waitproc`/`waitone` 及若干调用点会把完整 PID/PGID 收窄为 `int`；`$$`/`$!` 展开、`PPID`、`jobs` 输出和 `wait`/`kill` 数字参数也有收窄路径。特别是 `waitone` 会用收窄后的值匹配 `procstat` 的 `pid_t`，可能收取了结果却找不到作业。移植时须对这些路径保留完整 `pid_t`，并扩大 PID 文本缓冲；普通退出码、信号号及作业编号仍使用原类型。此缺口不修改 15 篇已经确定的系统 PID ABI。
 
-[BusyBox 1.37.0 PID 补丁](../../bin/sh/busybox-1.37.0-pid.patch) 已接上这些路径，由 `bin/sh/prepare.py` 应用到干净源码；已核对补丁可从固定上游归档重放。目标构建仍受上述公开头限制，尚不能算宽 PID 的运行验收。
+32 位 PID 迁移通过双架构内核验证后，已移除旧 PID 补丁及 `prepare.py` 中的应用步骤。两架构均可从固定归档完成源码准备，ash 语法探针仍缺 `sys/times.h`。32 位 PID 脚本通过宿主 Bash 检查，目标 ash 构建、链接及运行待验收。
 
 ## 明确不进范围
 

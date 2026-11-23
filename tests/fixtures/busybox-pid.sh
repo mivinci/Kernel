@@ -22,12 +22,7 @@ read -r reported_child reported_parent < "$scratch/pids" || fail 'missing child 
 [ "$reported_child" = "$child" ] || fail "child reports $reported_child, expected $child"
 [ "$reported_parent" = "$$" ] || fail "child reports parent $reported_parent, expected $$"
 
-# A host smoke run can check the script but cannot prove wide PID preservation.
-if [ "${3:-wide}" = wide ]; then
-    case "$child" in
-        [1-9]??????????*) ;;
-        ??????????) [ "$child" -gt 4294967295 ] || fail "expected a child PID wider than 32 bits, got $child" ;;
-        *) fail "expected a child PID wider than 32 bits, got $child" ;;
-    esac
-fi
+for pid in "$child" "$reported_parent"; do
+    [ "$pid" -ge 1 ] && [ "$pid" -le 2147483647 ] || fail "PID outside positive 32-bit range: $pid"
+done
 echo 'busybox-pid: PASS'

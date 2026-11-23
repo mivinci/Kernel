@@ -25,7 +25,7 @@
 
 ## 下一步
 
-1. 完成单调 32 位 PID 迁移，验证运行槽复用、旧孩子收取、旧 CONTROL 和编号耗尽，再撤 PID 补丁。
+1. 单调 32 位 PID 已合入，BusyBox PID 补丁已撤。复查双架构探针仍缺 `sys/times.h`；待补齐 SDK 和生产用户态后验证 ash 的 PID 与作业控制行为。
 2. 继续生产 FS/blk、持久格式和固定挂载，接通 serial/tty、设备节点、标准 fd 和退出观察。用公开 SDK 的最小程序和 miniz 验证普通程序启动。
 3. 依据 [BusyBox 接续计划](issues/012-busybox-port.md#接续计划用项目自身的-abi-和-sdk-支持原版-busybox) 边做边验证。补 SDK 实际缺口，收口公开 fork/exec、fd 继承、pipe/dup2 和作业控制，再在两架构 QEMU 跑通 ash。现有补丁逐项撤除，不新增或扩大源码补丁。
 4. ash 通过 M3 验收后，按设计推进 net，补齐 socket SDK 并验收原版 BusyBox 零补丁构建。继续完成图形和 GPU 机制，最后做 GUI。
