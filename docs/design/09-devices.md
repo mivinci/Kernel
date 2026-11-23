@@ -290,6 +290,8 @@ IRQ_SOURCE/原生bind及生产设备发权的待确认项继续保持关闭；�
 
 方向已确认，内核内部 DMA 分配和固定已实现；公开发权与结束 ABI 仍待冻结。
 
+独立 blk 的双架构 `blkservice` 场景已验证同一域给队列和缓冲提供 9 页 DMA，真实 VirtIO 设备完成写入、刷新和读回，服务关停后普通引用随之释放。夹具确认设备复位后，通过内核可信入口完成 AFTER 并结束旧域，核对固定页、设备映射及 blk 的费用归还。测试 PID 1 保持存活，宿主另核对磁盘字节和 QEMU I/O 计数。证据为 ARM64 `daa6cd35531b467aab1b0269f00c07ec` 和 RV64 `197ac60ab60c4aba8f1ef716c613ee89`。生产 init 尚不能通过原生接口执行这套发权和退役流程。
+
 ### virtio 描述符所有权核心（2026-11-17）
 
 `lib/libvirtio/queue.c`现提供CPU私有Vq与128个Vslot（每槽16字节、整表2072字节），无动态分配、libc或内核HAL依赖；两架构SDK分别生成libvirtio.a及clangd条目。内部接口为vqinit/vqreserve/vqpublish/vqcancel/vqcomplete，不是新syscall或冻结的公开设备协议。引用[OASIS virtio 1.3 CSD01](https://docs.oasis-open.org/virtio/virtio/v1.3/csd01/virtio-v1.3-csd01.html)的2.7.5/2.7.8：used.id为链首，used.len只计设备可写部分；本实现不协商IN_ORDER/INDIRECT等改变这些假设的特性。
