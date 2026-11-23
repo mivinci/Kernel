@@ -720,6 +720,7 @@ client(const Bootview *boot)
   {
     Forkret     forked;
     Forksend    transaction = {0};
+    Elfwork     pending = {0};
     Fdtag       tag;
     Fdview      fd;
     Connpeer    child, backend;
@@ -755,12 +756,15 @@ client(const Bootview *boot)
     CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
     CHECK(!__sys_forkprep(bootresource(boot, BOOT_CREATE), 0, &forked));
     child = (Connpeer){forked.pid, 1};
+    pending.view = forked.construct;
+    pending.pid = forked.pid;
     CHECK(!sysforkfdprepare(&transaction, &execfds, connections, &cache, &contexts, 0, child,
                             UINT64_MAX) &&
           transaction.count == 1 && transaction.peers[0].pid == work.state.peer.pid &&
           transaction.peers[0].image == work.state.peer.image && transaction.peers[0].token &&
           !transaction.pin && !transaction.send.key.lease.seq &&
-          !sysexecfdrelease(&execfds) && !__sys_forkabort(forked.construct));
+          !sysforkfdabort(&transaction, &execfds, connections, &cache, &pending) &&
+          !pending.view && !execfds.count);
     for (attempt = 0; attempt < 2; attempt++)
       CHECK(!sysfdobserve(&fds, attempt, &fd) &&
             !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);

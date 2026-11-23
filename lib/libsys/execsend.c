@@ -254,3 +254,41 @@ sysforkfdprepare(Forksend *tx, const Execfds *capture, Connwork *works, Conncach
     tx->representative = tx->snapshot = 0;
   }
 }
+
+isize
+sysforkfdabort(Forksend *tx, Execfds *capture, Connwork *works, Conncache *cache,
+               Elfwork *child)
+{
+  Connwork *work;
+  Opkey    *key;
+  isize     error;
+  if (!tx || !capture || !works || !cache || !child)
+    return -ERR_INVALID;
+  error = sysforkcancel(child);
+  if (error)
+    return error;
+  key = &tx->send.key;
+  if (key->lease.seq) {
+    if (key->connection.index >= SYSCONN_COUNT || tx->pin)
+      return -ERR_STATE;
+    work = &works[key->connection.index];
+    error = sysopcheck(work, cache, key);
+    if (error)
+      return error;
+    if (work->state.operations[key->lease.slot].phase == SYSOP_PREPARED) {
+      error = sysopabort(work, cache, key, &tx->pin);
+      if (!error)
+        key->lease.seq = 0;
+    } else
+      error = sysforkfdcollect(work, cache, &tx->send, &tx->pin);
+    if (error)
+      return error;
+  }
+  if (tx->pin) {
+    error = sysfilerefunpin(capture->pool, capture->self, tx->pin);
+    if (error)
+      return error;
+    tx->pin = 0;
+  }
+  return sysexecfdrelease(capture);
+}

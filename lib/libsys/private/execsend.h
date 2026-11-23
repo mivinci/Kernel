@@ -3,6 +3,7 @@
 #include "execfd.h"
 #include "operation.h"
 #include "context.h"
+#include "elf.h"
 
 typedef struct Execsend Execsend;
 typedef struct Forksend Forksend;
@@ -48,4 +49,8 @@ isize sysforkfdnext(const Execfds *capture, u32 *cursor, Connpeer *peer, u64 *fi
    until the original request and child preparation have been resolved. */
 isize sysforkfdprepare(Forksend *tx, const Execfds *capture, Connwork *works, Conncache *cache,
                        Rbank *bank, u32 layer, Connpeer child, u64 deadline);
+/* Revoke publication before releasing local state. An outstanding request
+   retains its slot and pin until drained; WOULD_BLOCK permits retry. */
+isize sysforkfdabort(Forksend *tx, Execfds *capture, Connwork *works, Conncache *cache,
+                     Elfwork *child);
 #endif
