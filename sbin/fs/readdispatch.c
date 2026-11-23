@@ -75,10 +75,7 @@ statfile(Fsreads *reads, Readjob *job, volatile u8 *page)
     job->started = 1;
     if (job->result == -ERR_WOULD_BLOCK)
       return -ERR_WOULD_BLOCK;
-    if (job->result > 0 || (!job->result && (job->metadata.reserved ||
-                                             job->metadata.atime_ns >= UINT64_C(1000000000) ||
-                                             job->metadata.mtime_ns >= UINT64_C(1000000000) ||
-                                             job->metadata.ctime_ns >= UINT64_C(1000000000))))
+    if (job->result > 0 || (!job->result && !filestatvalid(&job->metadata)))
       job->result = -EIO;
     job->completed = 1;
   }

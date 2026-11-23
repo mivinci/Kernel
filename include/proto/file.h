@@ -95,11 +95,19 @@ struct Filestat
   int64_t mtime_sec;
   u64     mtime_ns;
   int64_t ctime_sec;
-  u64     ctime_ns, reserved;
+  u64     ctime_ns, rdev;
 };
 STATIC_ASSERT(sizeof(Filestat) == FS_STAT_BYTES, file_stat_size);
 STATIC_ASSERT(offsetof(Filestat, atime_sec) == 72, file_stat_atime);
-STATIC_ASSERT(offsetof(Filestat, reserved) == 120, file_stat_reserved);
+STATIC_ASSERT(offsetof(Filestat, rdev) == 120, file_stat_rdev);
+static __inline__ int
+filestatvalid(const Filestat *record)
+{
+  u64 kind = record->mode & 0170000;
+  return (!record->rdev || kind == 0020000 || kind == 0060000) &&
+         record->atime_ns < UINT64_C(1000000000) && record->mtime_ns < UINT64_C(1000000000) &&
+         record->ctime_ns < UINT64_C(1000000000);
+}
 STATIC_ASSERT(sizeof(Filepoll) == 32 && FS_POLL_ROWS * sizeof(Filepoll) == FS_SLOT_BYTES,
               file_poll_rows_fit_page);
 STATIC_ASSERT(offsetof(Filepoll, revents) == 24, file_poll_output_offset);

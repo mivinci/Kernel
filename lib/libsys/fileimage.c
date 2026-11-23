@@ -1208,9 +1208,7 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
             storage = (uintptr_t) key;
             if (!error && address < storage + sizeof(*key) && storage < address + expected)
               error = -ERR_FAULT;
-            if (!error && (record.reserved || record.atime_ns >= UINT64_C(1000000000) ||
-                           record.mtime_ns >= UINT64_C(1000000000) ||
-                           record.ctime_ns >= UINT64_C(1000000000)))
+            if (!error && !filestatvalid(&record))
               error = -ERR_STATE;
             if (!error)
               error = __sys_copy(output, &record, sizeof(record));

@@ -1471,7 +1471,7 @@ brokenclient(void)
     Fileioresult result;
     Filestat     reader, writer;
     CHECK(!sysfileimagestat(0, fds[0], &reader, &result) && !result.native && !result.business &&
-          reader.ino && reader.mode == 0010600 && !reader.size && !reader.reserved &&
+          reader.ino && reader.mode == 0010600 && !reader.size && !reader.rdev &&
           reader.uid == geteuid() && reader.gid == getegid());
     CHECK(write(fds[1], "s", 1) == 1 && !sysfileimagestat(0, fds[1], &writer, &result) &&
           !result.native && !result.business && writer.ino == reader.ino && writer.size == 1 &&
@@ -3120,7 +3120,7 @@ openstatcheck(u64 session, u64 unused, isize expected)
     CHECK(page->size == 20);
     CHECK(page->atime_sec == -2);
     CHECK(page->atime_ns == 123);
-    CHECK(!page->reserved);
+    CHECK(!page->rdev);
   }
   CHECK(!sysconnworkrelease(&work, &cache, lease));
 }
@@ -3766,7 +3766,7 @@ publicchdirclient(void)
     CHECK(!stat.size);
     CHECK(stat.atime_sec == -2);
     CHECK(stat.atime_ns == 123);
-    CHECK(!stat.reserved);
+    CHECK(!stat.rdev);
   }
   CHECK(stream && fileno(stream) == 0 && fputs("x", stream) == EOF && errno == EBADF &&
         ferror(stream) && !fclose(stream) && fcntl(0, F_GETFD) == -1 && errno == EBADF);

@@ -757,13 +757,13 @@ fs重启使旧连接/未恢复会话失效，不按路径重开冒充原File。�
 
 ### 文件payload和磁盘格式的确定补充
 
-线上固定参数均u64并置于描述符args[8]，未用字为0；下列原参数数组不再是payload前缀。字符串/数组引用相对首数据页，固定输出仍放payload，不解释裸用户指针。OPEN为[flags,mode,path_off,path_bytes]；ATTACH/EXEC_CLAIM使用上述无槽prepare_token格式，不在尚未建立的共享区中读取输入；READ/WRITE为[offset,length,data_off,io_flags]，io_flags POSITIONAL=1、APPEND=2，后者权限及共享File状态同时核验；CLOSE/DUPREF为[reference_id]；SEEK为[s64 offset,whence]；STAT输出128字节[dev,ino,mode,nlink,uid,gid,size,blksize,blocks,atime_sec,atime_ns,mtime_sec,mtime_ns,ctime_sec,ctime_ns,reserved]。PATH为[subcode,path1_off,path1_bytes,path2_off,path2_bytes,arg0,arg1]；PIPE为[flags,capacity]，capacity首版8192；SYNC为[data_only]；TTYCTL为[subcode,arg0,arg1,data_off,data_bytes]；ABORT无槽携带prepare_token。未知flags/subcode在副作用前拒绝。
+线上固定参数均u64并置于描述符args[8]，未用字为0；下列原参数数组不再是payload前缀。字符串/数组引用相对首数据页，固定输出仍放payload，不解释裸用户指针。OPEN为[flags,mode,path_off,path_bytes]；ATTACH/EXEC_CLAIM使用上述无槽prepare_token格式，不在尚未建立的共享区中读取输入；READ/WRITE为[offset,length,data_off,io_flags]，io_flags POSITIONAL=1、APPEND=2，后者权限及共享File状态同时核验；CLOSE/DUPREF为[reference_id]；SEEK为[s64 offset,whence]；STAT输出128字节[dev,ino,mode,nlink,uid,gid,size,blksize,blocks,atime_sec,atime_ns,mtime_sec,mtime_ns,ctime_sec,ctime_ns,rdev]。PATH为[subcode,path1_off,path1_bytes,path2_off,path2_bytes,arg0,arg1]；PIPE为[flags,capacity]，capacity首版8192；SYNC为[data_only]；TTYCTL为[subcode,arg0,arg1,data_off,data_bytes]；ABORT无槽携带prepare_token。未知flags/subcode在副作用前拒绝。
 
 FORK_SNAPSHOT/FORK_PREPARE/EXEC_PREPARE固定参数占args的64字节[pid,image,sourceimage,deadline,count,entries_off,token,reserved]，entries_off固定0；payload条目48字节[fd,flags,backend_pid,backend_image,session,reference_id]，最多128项6144字节，一次用最多两数据页提交/读取同一只读快照，不跨新Rq拼接一次继承事务。token绑定真实source、连接connid和seq，仅原构造关系可用；确认准备完成前记录全部引用、观察和清理容量。fork目标共享区只在服务侧预付，父reply只带token；子发布后首次需要后端时的真实ATTACH才resource reply到子表，子返回0不等待它，父收到的本地Handle不得当子授权。EXEC_CLAIM按上述无槽消息来自真实目标image，服务从token记录恢复清单，不能靠自报token冒充。LOAD固定参数args的64字节[inode,generation,content_version,file_length,offset,bytes,data_off,flags]，只读同一装载会话版本；大文件读块仍属同次LOAD，不重新按路径定位。
 
 TTYCTL子码GETATTR=1、SETATTR=2、DRAIN=3、FLUSH=4、GETSIZE=5、SETSIZE=6；Termarg=80字节[iflag,oflag,cflag,lflag,ispeed,ospeed,cc[32]]，前6个u64，cc字节数组32；只接受11列出的位与控制字符，cflag首版8位/无奇偶/1停止位，未知组合ENOTSUP，速度只支持启动设备既定速率。尺寸四u32 rows/cols/xpixel/ypixel，总16；PTY后续扩展沿此TTY接口，不让term持设备权限。
 
-`proto/file.h` 的 `Filestat` 对应上述 128 字节线记录，时间的秒字段有符号。现有记录没有公开 `struct stat` 所需的 `st_rdev`，用于描述字符或块设备节点自身的设备号。候选使用最后一个保留字表示 `rdev`，普通节点写零，`dev` 仍表示节点所在卷；确认前保留原布局与字段含义，不接入公开接口。
+`proto/file.h` 的 `Filestat` 对应上述 128 字节线记录，时间的秒字段有符号。最后一个字（偏移 120）是 `rdev`，表示字符或块设备节点自身的设备号；其他节点必须写零。`dev` 仍表示节点所在卷。客户端与服务端均核验该规则和纳秒范围；公开 `struct stat` 及生产设备节点尚待接入。
 
 GETATTR 的 arg0/arg1 为零，data_bytes 为 80，data_off 指向一页内预留的输出。成功回复 `[0,seq,0,80]`，原数据页只改写这 80 字节。
 

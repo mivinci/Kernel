@@ -331,7 +331,7 @@ pipedispatch(Pipedispatch *dispatch, Filelink *links, u32 count, const Ipcmsg *c
     else
       return fsstatstart(dispatch->reads, table, link, call, &slot);
     if (!reply.words[0]) {
-      stat.reserved = 0;
+      stat.rdev = 0;
       for (i = 0; i < sizeof(stat); i++)
         page[i] = bytes[i];
       reply.words[3] = sizeof(stat);
