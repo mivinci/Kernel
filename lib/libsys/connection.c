@@ -71,8 +71,8 @@ sysconnforkunmaps(Connwork *const *works, u64 count, Connpeer parent, Connpeer c
 {
   u64   i, j;
   isize error;
-  if (count > SYSCONN_COUNT || (count && !works) || handlekind(parent.pid) != HANDLE_PROCESS ||
-      !parent.image || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
+  if (count > SYSCONN_COUNT || (count && !works) || !pidvalid(parent.pid) ||
+      !parent.image || !pidvalid(child.pid) || !child.image ||
       parent.pid == child.pid || handlekind(childspace) != HANDLE_RESOURCE)
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
@@ -111,7 +111,7 @@ sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, 
   Connstate *s;
   isize      error;
   if (!separate(work, sizeof(work->state), cache, sizeof(*cache)) ||
-      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || cache->self.pid == parent.pid ||
+      !pidvalid(parent.pid) || !parent.image || cache->self.pid == parent.pid ||
       !token)
     return -ERR_INVALID;
   error = sysconncheck(cache, cache->self);

@@ -21,7 +21,7 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
   Execgroup   *group;
   int          fork = opcode != FS_EXEC_PREPARE;
   if (!lookup || !separate(out, watch, sizeof(*watch)) || !separate(out, call, sizeof(*call)) ||
-      !separate(out, slot, sizeof(*slot)) || handlekind(backend.pid) != HANDLE_PROCESS ||
+      !separate(out, slot, sizeof(*slot)) || !pidvalid(backend.pid) ||
       !backend.image)
     return -ERR_INVALID;
   if (out->count)
@@ -36,7 +36,7 @@ manifest(Execmanifest *out, const Filewatch *watch, const Ipcmsg *call, const Fi
   if (!count || count > BOOT_FD_COUNT || slot->args[5] || slot->args[7] || slot->object ||
       slot->args[2] != call->image || (opcode == FS_FORK_SNAPSHOT && slot->args[6]))
     return -ERR_INVALID;
-  if (fork ? handlekind((Handle) slot->args[0]) != HANDLE_PROCESS ||
+  if (fork ? !pidvalid((Handle) slot->args[0]) ||
                  slot->args[0] == (u64) call->source || !slot->args[1]
            : slot->args[6] || slot->args[0] != (u64) call->source || slot->args[1] <= call->image)
     return -ERR_INVALID;
@@ -190,7 +190,7 @@ observeprepared(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 relatio
 {
   u64   cookie, state, reason;
   isize error;
-  if (!owner || !call || call->kind != IPC_CALL || handlekind(call->source) != HANDLE_PROCESS ||
+  if (!owner || !call || call->kind != IPC_CALL || !pidvalid(call->source) ||
       handlekind(call->request) != HANDLE_REQUEST || !call->image)
     return -ERR_INVALID;
   if (owner->cookie || owner->pid || owner->image || owner->reason)
@@ -219,7 +219,7 @@ sysexecobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, u64 target)
 isize
 sysforkobserve(Fileowner *owner, Handle permit, const Ipcmsg *call, Handle child, u64 image)
 {
-  if (!call || call->words[0] != FS_FORK_PREPARE || handlekind(child) != HANDLE_PROCESS ||
+  if (!call || call->words[0] != FS_FORK_PREPARE || !pidvalid(child) ||
       child == call->source || !image)
     return -ERR_INVALID;
   return observeprepared(owner, permit, call, OBS_CHILD, child, image);

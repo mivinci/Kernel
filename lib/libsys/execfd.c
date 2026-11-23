@@ -91,7 +91,7 @@ sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u6
   u64           bytes, i, count = 0;
   if (!capture || !capture->pool || capture->ready != 1 || capture->count > BOOT_FD_COUNT)
     return -ERR_STATE;
-  if (handlekind(backend.pid) != HANDLE_PROCESS || !backend.image ||
+  if (!pidvalid(backend.pid) || !backend.image ||
       target_image <= capture->self.image || !deadline || capacity > BOOT_FD_COUNT ||
       !separate(args, 8 * sizeof(*args), capture, sizeof(*capture)) ||
       !separate(args, 8 * sizeof(*args), capture->pool, sizeof(*capture->pool)))

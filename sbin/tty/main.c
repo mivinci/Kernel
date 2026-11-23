@@ -110,7 +110,7 @@ resource(u32 slot, const Queryrec *row, Handle pid)
     return 0;
   if (slot == TtyInit)
     return data[1] == RESOURCE_CALL && data[6] == 1;
-  return data[1] == RESOURCE_NOTIFY && handlekind((Handle) data[6]) == HANDLE_PROCESS &&
+  return data[1] == RESOURCE_NOTIFY && pidvalid((Handle) data[6]) &&
          data[6] != 1 && data[6] != (u64) pid;
 }
 
@@ -224,7 +224,7 @@ main(int argc, char **argv)
   error = ttyboot(sysboot(), &number);
   if (!error)
     error = __sys_getid(&pid, &image, &parent);
-  if (!error && (parent != 1 || pid == 1 || handlekind(pid) != HANDLE_PROCESS || !image))
+  if (!error && (parent != 1 || pid == 1 || !pidvalid(pid) || !image))
     error = -ERR_DENIED;
   if (!error)
     error = inventory(pid, image);

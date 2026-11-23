@@ -158,7 +158,7 @@ sysfixview(const void *data, u64 available, Handle source, u64 image, Handle tar
       header->bytes < sizeof(Fix) || header->bytes > BOOT_MAX_BYTES || header->bytes > available ||
       header->resource_count > BOOT_RESOURCE_COUNT || header->source_pid != source ||
       header->source_image != image || header->target_pid != target || !image || source == target ||
-      target == 1 || handlekind(source) != HANDLE_PROCESS || handlekind(target) != HANDLE_PROCESS)
+      target == 1 || !pidvalid(source) || !pidvalid(target))
     return -ERR_INVALID;
   table.offset = header->resources_off;
   table.bytes = header->resource_count * sizeof(Resentry);
@@ -198,7 +198,7 @@ fixconnections(const Fixconn *entries, u64 count)
 {
   u64 i, j;
   for (i = 0; i < count; i++) {
-    if (handlekind(entries[i].pid) != HANDLE_PROCESS || !entries[i].image || !entries[i].token)
+    if (!pidvalid(entries[i].pid) || !entries[i].image || !entries[i].token)
       return 0;
     for (j = 0; j < i; j++)
       if (entries[i].pid == entries[j].pid && entries[i].image == entries[j].image)
@@ -224,7 +224,7 @@ sysfixpack(const Fixspec *spec, void *data, u64 capacity)
   if (!spec || !data || (((uintptr_t) spec | (uintptr_t) data) & 7) ||
       spec->resource_count > BOOT_RESOURCE_COUNT || spec->connection_count > FIX_CONN_COUNT ||
       !spec->image || spec->source == spec->target || spec->target == 1 ||
-      handlekind(spec->source) != HANDLE_PROCESS || handlekind(spec->target) != HANDLE_PROCESS)
+      !pidvalid(spec->source) || !pidvalid(spec->target))
     return -ERR_INVALID;
   connbytes = spec->connection_count * sizeof(*connections);
   resbytes = spec->resource_count * sizeof(*entries);
@@ -308,7 +308,7 @@ sysfixtoken(const Fixview *view, Handle pid, u64 image, u64 *token)
   if (!token)
     return -ERR_INVALID;
   *token = 0;
-  if (handlekind(pid) != HANDLE_PROCESS || !image)
+  if (!pidvalid(pid) || !image)
     return -ERR_INVALID;
   error = sysfixconnections(view, &entries, &count);
   if (error)

@@ -204,7 +204,7 @@ fdcalls(Elfwork *work, const Bootview *boot)
         return -ERR_BAD_HANDLE;
       if (!(record->data[2] & RESOURCE_USE))
         return -ERR_DENIED;
-      if (handlekind((Handle) record->data[6]) != HANDLE_PROCESS || !record->data[7])
+      if (!pidvalid((Handle) record->data[6]) || !record->data[7])
         return -ERR_STATE;
       needed[slot] = 0;
       left--;

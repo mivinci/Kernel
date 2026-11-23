@@ -28,7 +28,7 @@ peer(Serialctl *control, Handle handle, u64 image, Handle *pid)
       if (rows[i].stamp != (((u64) handle >> 16) & HANDLE_GENERATION_MAX) ||
           rows[i].data[1] != RESOURCE_NOTIFY || rows[i].data[2] != RESOURCE_USE ||
           rows[i].data[3] || rows[i].data[4] || rows[i].data[5] ||
-          handlekind((Handle) rows[i].data[6]) != HANDLE_PROCESS ||
+          !pidvalid((Handle) rows[i].data[6]) ||
           (Handle) rows[i].data[6] == control->pid)
         return -ERR_DENIED;
       if (rows[i].data[7] != image)
@@ -50,7 +50,7 @@ isize
 serialctlinit(Serialctl *control, Handle pid, u64 image, u64 initimage)
 {
   u32 i;
-  if (!control || pid == 1 || handlekind(pid) != HANDLE_PROCESS || !image || !initimage)
+  if (!control || pid == 1 || !pidvalid(pid) || !image || !initimage)
     return -ERR_INVALID;
   for (i = 0; i < sizeof(*control); i++)
     ((u8 *) control)[i] = 0;

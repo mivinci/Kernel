@@ -13,7 +13,7 @@ sysopenreserve(Openprep *pool, u32 count, Openlimit limit, const Fileowner *owne
   u32       i, slot = count, clients = 0, preparers = 0;
   if (!pool || !count || count > SYSOPEN_POOL_MAX || !owner || !owner->cookie || owner->reason ||
       !limit.client || limit.client > count || !limit.preparer || limit.preparer > count ||
-      handlekind(client) != HANDLE_PROCESS || !image || !token || !session || !reference ||
+      !pidvalid(client) || !image || !token || !session || !reference ||
       !deadline || (owner->pid == client && owner->image == image))
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
@@ -167,7 +167,7 @@ sysopenclose(Openprep *pool, u32 count, Handle client, u64 image, u64 session, u
   Openprep *prep;
   isize     error;
   if (!pool || !count || count > SYSOPEN_POOL_MAX || !revoke ||
-      handlekind(client) != HANDLE_PROCESS || !image || !session || !reference)
+      !pidvalid(client) || !image || !session || !reference)
     return -ERR_INVALID;
   prep = openref(pool, count, client, image, session, reference, 1);
   if (!prep)
@@ -334,7 +334,7 @@ sysfileowner(Fileowner *owner, Handle permit, const Ipcmsg *source)
   u64   cookie, state, reason;
   isize status;
   if (!owner || !source || source->kind != IPC_CALL ||
-      handlekind(source->source) != HANDLE_PROCESS || !source->image ||
+      !pidvalid(source->source) || !source->image ||
       handlekind(source->request) != HANDLE_REQUEST)
     return -ERR_INVALID;
   if (owner->cookie && (owner->pid != source->source || owner->image != source->image))

@@ -4,7 +4,7 @@ STATIC_ASSERT(FIX_LAYER_COUNT == RCTX_LAYERS, fix_context_layer_count);
 static int
 identity(Connpeer self)
 {
-  return handlekind(self.pid) == HANDLE_PROCESS && self.image;
+  return pidvalid(self.pid) && self.image;
 }
 static int
 separate(const void *a, u64 bytes, const void *b, u64 length)

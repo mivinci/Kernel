@@ -6,7 +6,7 @@
 static int
 peerok(Connpeer peer)
 {
-  return handlekind(peer.pid) == HANDLE_PROCESS && peer.image;
+  return pidvalid(peer.pid) && peer.image;
 }
 static int
 same(Connpeer a, Connpeer b)
@@ -72,7 +72,7 @@ sysconnforkcheck(Conncache *cache, Connpeer parent, const Fixconn *entries, u64 
   if (count > SYSCONN_COUNT || (count && !entries))
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
-    if (handlekind(entries[i].pid) != HANDLE_PROCESS || !entries[i].image || !entries[i].token)
+    if (!pidvalid(entries[i].pid) || !entries[i].image || !entries[i].token)
       return -ERR_INVALID;
     for (j = 0; j < i; j++)
       if (entries[i].pid == entries[j].pid && entries[i].image == entries[j].image)

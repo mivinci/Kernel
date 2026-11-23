@@ -161,7 +161,7 @@ serialcheck(Serialboot *boot)
   error = __sys_getid(&pid, &image, &parent);
   if (error)
     return error;
-  if (pid == 1 || handlekind(pid) != HANDLE_PROCESS || !image || parent != 1)
+  if (pid == 1 || !pidvalid(pid) || !image || parent != 1)
     return -ERR_DENIED;
   for (batch = 0; batch < BOOT_RESOURCE_COUNT; batch++) {
     written = next = 0;

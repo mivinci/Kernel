@@ -7,7 +7,7 @@ static Fscontext *
 find(const Fscontexts *table, Handle pid, u64 image)
 {
   u32 i;
-  if (!table || !table->entries || handlekind(pid) != HANDLE_PROCESS || !image)
+  if (!table || !table->entries || !pidvalid(pid) || !image)
     return NULL;
   for (i = 0; i < table->count; i++)
     if (table->entries[i].pid == pid && table->entries[i].image == image)
@@ -27,7 +27,7 @@ fscontextadd(Fscontexts *table, Handle pid, u64 image, Vnode *root, Vnode *cwd, 
   u32   i, free;
   isize error;
   if (!table || !table->entries || !table->ops || !table->ops->hold || !table->ops->drop ||
-      handlekind(pid) != HANDLE_PROCESS || !image || !root || !cwd || mask & ~0777U)
+      !pidvalid(pid) || !image || !root || !cwd || mask & ~0777U)
     return -EINVAL;
   if (root->kind != VNODE_DIR || cwd->kind != VNODE_DIR)
     return -ENOTDIR;

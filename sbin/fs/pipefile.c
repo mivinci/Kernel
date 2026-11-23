@@ -35,7 +35,7 @@ pipefilecreate(Pipetable *table, Handle pid, u64 image, u32 nonblock, Vcred cred
   Pipefile *file = NULL;
   Piperef  *refs[2];
   u32       i, n = 0;
-  if (handlekind(pid) != HANDLE_PROCESS || !image || nonblock > 1)
+  if (!pidvalid(pid) || !image || nonblock > 1)
     return -ERR_INVALID;
   if (table->serial > FS_FILE_SESSION - 5)
     return -ERR_OVERFLOW;

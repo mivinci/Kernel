@@ -224,7 +224,7 @@ sysctxfixplan(Rbank *bank, Connpeer parent, Fixlayer out[FIX_LAYER_COUNT])
   u32      i, j;
   isize    error;
   if (!separate(bank, sizeof(*bank), out, sizeof(layers)) || ((uintptr_t) out & 7) ||
-      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image)
+      !pidvalid(parent.pid) || !parent.image)
     return -ERR_INVALID;
   if (bank->self.pid != parent.pid || bank->self.image != parent.image)
     return -ERR_STALE;
@@ -266,8 +266,8 @@ isize
 sysctxfixwaitcheck(Rbank *bank, Connpeer parent, Connpeer child,
                    const Fixlayer layers[FIX_LAYER_COUNT])
 {
-  if (!bank || !layers || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
-      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || child.pid == parent.pid ||
+  if (!bank || !layers || !pidvalid(child.pid) || !child.image ||
+      !pidvalid(parent.pid) || !parent.image || child.pid == parent.pid ||
       !separate(bank, sizeof(*bank), layers, sizeof(*layers) * FIX_LAYER_COUNT))
     return -ERR_INVALID;
   return fixroutes(bank, parent, layers);
@@ -277,8 +277,8 @@ sysctxfixwait(Rbank *bank, Connpeer parent, Connpeer child, const Fixlayer layer
 {
   u32   i, j;
   isize error;
-  if (!bank || !layers || handlekind(child.pid) != HANDLE_PROCESS || !child.image ||
-      handlekind(parent.pid) != HANDLE_PROCESS || !parent.image || child.pid == parent.pid ||
+  if (!bank || !layers || !pidvalid(child.pid) || !child.image ||
+      !pidvalid(parent.pid) || !parent.image || child.pid == parent.pid ||
       !separate(bank, sizeof(*bank), layers, sizeof(*layers) * FIX_LAYER_COUNT))
     return -ERR_INVALID;
   if (bank->self.pid == child.pid && bank->self.image == child.image)

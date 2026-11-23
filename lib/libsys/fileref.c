@@ -2,7 +2,7 @@
 static int
 identity(Connpeer self)
 {
-  return handlekind(self.pid) == HANDLE_PROCESS && self.image;
+  return pidvalid(self.pid) && self.image;
 }
 static isize
 source(const Filepool *pool, Connpeer self)

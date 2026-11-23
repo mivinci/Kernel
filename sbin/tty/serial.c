@@ -453,7 +453,7 @@ ttyopenaccess(void *context, Handle pid, u64 image, u64 session, u64 opcode)
   u32             i, flags = 0;
   int             found = 0;
   if (!opens || !opens->refs || !opens->flags || opens->count > SYSOPEN_POOL_MAX ||
-      handlekind(pid) != HANDLE_PROCESS || !image || !session)
+      !pidvalid(pid) || !image || !session)
     return -EINVAL;
   for (i = 0; i < opens->count; i++) {
     const Openprep *ref = &opens->refs[i];
