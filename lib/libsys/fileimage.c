@@ -1517,6 +1517,16 @@ sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, cons
     if (!status) {
       if (!result.business)
         return (isize) result.count;
+      if (result.business == -EPIPE) {
+        Sigsel self;
+        Handle pid, parent;
+        u64    imageid;
+        if (!__sys_getid(&pid, &imageid, &parent)) {
+          self.kind = SIGNAL_SELECT_PID;
+          self.target = pid;
+          (void) __sys_sigsend(&self, SIGNAL_PIPE);
+        }
+      }
       return result.business < 0 && result.business >= -INT32_MAX ? result.business : -EIO;
     }
   }

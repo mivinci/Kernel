@@ -312,12 +312,18 @@ def build(args):
     fs_load_sources = [ROOT/'sbin/fs'/name for name in ('load.c', 'loadio.c', 'cache.c')]
     claim_payload = link_adoption('execclaimuser', [compile_adoption(
         ROOT/'tests/kernel/execclaimuser.c', 'execclaimuser')],startup=False)
+    stdout_probe = os.environ.get('MIVINCI_TEST_STDOUT')
+    if stdout_probe:
+        stdout_probe = Path(stdout_probe).resolve()
+        read_elf(stdout_probe, profile['machine'], kind=2)
+        flags.append('-DMIVINCI_TEST_STDOUT')
     filecreate_elf=link_adoption('filecreateuser',[compile_adoption(ROOT/'tests/kernel/filecreateuser.c','filecreateuser'),
         embedded_elf(claim_payload, 'execclaim_elf'),
+        *([embedded_elf(stdout_probe, 'musl_stdout_elf')] if stdout_probe else []),
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.name in ('term.c','input.c','serial.c','wait.c')],
         *[compile_adoption(source,'fs-'+source.stem) for source in fs_load_sources]])
     filecreate_image=sdk/'filecreateuser.img'
-    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],156))
+    filecreate_image.write_bytes(pack(filecreate_elf.read_bytes(),profile['machine'],240 if stdout_probe else 156))
     filecreate_inspect=invoke('inspect-filecreate',[tools['readelf']['path'],'-s',str(filecreate_elf)])
     filecreate_rows=[line.split() for line in filecreate_inspect.splitlines() if line.split() and line.split()[-1]=='filecreatetrace']
     if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')

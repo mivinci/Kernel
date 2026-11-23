@@ -53,7 +53,7 @@ isize sysfileimagepoll(u32 layer, Pollfd *fds, u32 count, int timeout);
 /* Snapshot one slot's worth of two buffers, then submit exactly one WRITE. */
 isize sysfileimagewritepair(u32 layer, int fd, const void *first, u64 firstbytes,
                             const void *second, u64 secondbytes, Fileioresult *result);
-/* Returns bytes or a negative POSIX errno. The libc owns SIGPIPE delivery. */
+/* Returns bytes or a negative POSIX errno; EPIPE also queues native SIGPIPE. */
 isize sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes,
                             const void *second, u64 secondbytes);
 /* Nonblocking collection. FINISH precedes payload validation and ACK.

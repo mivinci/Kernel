@@ -19,7 +19,8 @@ for arch in arm64 riscv; do
   (cd "$out" && CC="clang --target=$target-linux-musl $*" AR=llvm-ar RANLIB=llvm-ranlib \
     "$src/configure" --target="$target-linux-musl" --disable-shared --disable-wrapper &&
     make -j4 lib/libc.a) >"$out/musl-build.log" 2>&1
-  for unit in tests/kernel/musl/start.c "$src/src/malloc/mallocng/malloc.c"; do
+  for unit in tests/kernel/musl/start.c "$src/src/malloc/mallocng/malloc.c" \
+    "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c"; do
     clang --target="$target-linux-musl" "$@" -DMIVINCI_NATIVE -O2 -nostdinc -ffreestanding -fno-stack-protector \
       -ftls-model=local-exec '-Dhidden=__attribute__((visibility("hidden")))' \
       -isystem "$(clang -print-resource-dir)/include" -I"$src/arch/$target" -I"$src/arch/generic" \
@@ -27,8 +28,18 @@ for arch in arm64 riscv; do
       -I"$src/include" -I"$src/src/malloc/mallocng" -c "$unit" -o "$out/$(basename "$unit" .c).o"
   done
   clang --target="$target-linux-musl" "$@" -c "lib/csu/$arch/start.S" -o "$out/entry.o"
+  clang --target="$target-linux-musl" "$@" -DMUSL_PROBE_INHERITED_STDOUT \
+    -O2 -nostdinc -ffreestanding -fno-stack-protector -ftls-model=local-exec \
+    '-Dhidden=__attribute__((visibility("hidden")))' \
+    -isystem "$(clang -print-resource-dir)/include" -I"$src/arch/$target" -I"$src/arch/generic" \
+    -I"$out/obj/src/internal" -I"$src/src/internal" -I"$out/obj/include" \
+    -I"$src/include" -c tests/kernel/musl/start.c -o "$out/inherited-start.o"
+  ld.lld -T lib/libsys/user.ld --strip-all "$out/entry.o" "$out/inherited-start.o" "$out/malloc.o" \
+    "$out/__stdio_write.o" "$out/__stdout_write.o" "$out/lib/libc.a" \
+    "build/$arch/sdk/libsys.a" -o "$out/inherited-stdout.elf"
   ld.lld -T lib/libsys/user.ld "$out/entry.o" "$out/start.o" "$out/malloc.o" \
-    "$out/lib/libc.a" "build/$arch/sdk/libsys.a" -o "$out/probe.elf"
+    "$out/__stdio_write.o" "$out/__stdout_write.o" "$out/lib/libc.a" \
+    "build/$arch/sdk/libsys.a" -o "$out/probe.elf"
   python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/probe.elf" \
     --output "$out/probe.pkg"
   python3 tools/smoke.py --arch "$arch" --case normal --qmp-stdio --firmware "$firmware" \
@@ -56,4 +67,7 @@ musl_turn_address: .quad {values['musl_probe_turn']}
 PY
   python3 tools/build.py --kind kernel --case musl --arch "$arch" --timeout 120
   python3 tools/smoke.py --arch "$arch" --case musl --qmp-stdio --firmware "$firmware"
+  MIVINCI_TEST_STDOUT="$PWD/$out/inherited-stdout.elf" \
+    python3 tools/build.py --kind kernel --case pipeio --arch "$arch" --timeout 120
+  python3 tools/smoke.py --arch "$arch" --case pipeio --qmp-stdio --firmware "$firmware"
 done

@@ -68,10 +68,15 @@ claim(const Bootview *boot)
       (ready && memory != work.state.memory))
     return 73;
   if (!ready) {
+    u64 pending, mask;
     /* A single request must carry both pieces in order. */
     if (sysfilewritepairposix(0, (int) opened.tag.index, "ab", 2, "cde", 3) != 3 ||
         sysfilewritepairposix(0, (int) opened.tag.index, "de", 2, NULL, 0) != 2)
       return 77;
+    if (__sys_sigmask(SIGNAL_BLOCK, (u64) 1 << (SIGNAL_PIPE - 1), &mask) ||
+        sysfilewritepairposix(0, (int) opened.tag.index, "x", 1, NULL, 0) != -EPIPE ||
+        __sys_sigpending(&pending) || !(pending & ((u64) 1 << (SIGNAL_PIPE - 1))))
+      return 78;
   }
   *marker = ~EXEC_CLAIM_MARKER;
   duplicate.words[2] = entry.sequence + 1;

@@ -2,6 +2,7 @@
 #include "libc.h"
 #include <errno.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <sys/mman.h>
 #include <string.h>
 struct Boot;
@@ -26,6 +27,20 @@ static size_t aux_end[2];
 static void  *meta, *large_map;
 extern long   __sys_copy(void *, const void *, unsigned long);
 extern long   __sys_yield(void);
+extern long   sysfilewritepairposix(unsigned int, int, const void *, unsigned long, const void *,
+                                    unsigned long);
+
+ssize_t
+__mivinci_stdio_write(int fd, const void *first, size_t firstbytes, const void *second,
+                      size_t secondbytes)
+{
+  long result = sysfilewritepairposix(0, fd, first, firstbytes, second, secondbytes);
+  if (result < 0) {
+    errno = (int) -result;
+    return -1;
+  }
+  return result;
+}
 void *
 native_meta(size_t n)
 {
@@ -126,5 +141,13 @@ csustart(const struct Boot *boot)
     if (sysvmput(meta) || !__sys_copy(&byte, meta, 1))
       __sys_exit(128);
   }
+#ifdef MUSL_PROBE_INHERITED_STDOUT
+  if (fwrite("native stdout", 1, 13, stdout) != 13 || fflush(stdout) || ferror(stdout))
+    __sys_exit(130);
+#else
+  if (fwrite("native stdout", 1, 13, stdout) != 13 || fflush(stdout) != EOF || !ferror(stdout) ||
+      errno != EBADF)
+    __sys_exit(130);
+#endif
   __sys_exit(42);
 }

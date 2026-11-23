@@ -60,6 +60,9 @@ static const Loadindex loadindex = {102, {101}};
 static Cacheblock      loadblocks[2];
 volatile u64           filecreatetrace[16];
 extern const u8        execclaim_elf[], execclaim_elf_end[];
+#ifdef MIVINCI_TEST_STDOUT
+extern const u8 musl_stdout_elf[], musl_stdout_elf_end[];
+#endif
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
@@ -1036,8 +1039,8 @@ execdrain(void *context, Filelink *link)
 static isize
 claimelfread(void *context, u64 offset, void *data, u64 bytes)
 {
-  (void) context;
-  return __sys_copy(data, execclaim_elf + offset, bytes);
+  const u8 *image = context ? context : execclaim_elf;
+  return __sys_copy(data, image + offset, bytes);
 }
 
 static void
@@ -1062,9 +1065,17 @@ claimsource(const Bootview *boot, int reuse)
   Filelease lease;
   Fileslot  slot = {0};
   u64       file, pin;
+  u32       firstfd = 0;
+#ifdef MIVINCI_TEST_STDOUT
+  if (!reuse) {
+    source.context = (void *) musl_stdout_elf;
+    source.bytes = musl_stdout_elf_end - musl_stdout_elf;
+    firstfd = 1;
+  }
+#endif
   setup(boot);
   CHECK(!sysfilerefnew(&pool, work.state.self, work.state.tag, 100, 1000, 0, &file) &&
-        !sysfdreserve(&fds, 0, &fd) && !sysfdpublish(&fds, fd, file, 0) &&
+        !sysfdreserve(&fds, firstfd, &fd) && !sysfdpublish(&fds, fd, file, 0) &&
         !sysfilerefpin(&pool, work.state.self, file));
   CHECK(!sysfilerefnew(&pool, work.state.self, work.state.tag, 100, 1001, 0, &pin) &&
         !sysfdreserve(&fds, 1, &fd) && !sysfdpublish(&fds, fd, pin, BOOT_FD_CLOEXEC) &&
@@ -1257,39 +1268,72 @@ claimbackend(const Bootview *boot, int reuse)
   stale.words[1] = reuse ? 3 : 2;
   CHECK(!ipc_recv(0, 0, &input) && !sysexecclaim(&execreserve, &old->owner, &links[1], &input) &&
         old->owner.reason == OBS_EXEC && links[1].ready && !links[1].prepaid && held);
+#ifdef MIVINCI_TEST_STDOUT
   if (!reuse) {
-    Msg readreply = {{0, 0, sizeof(u64), sizeof(u64)}};
-    CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid && input.image == target->image &&
-          input.words[0] == FS_READ &&
-          !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
-          !sysfileargs(FS_READ, &slot) && slot.object == 100 && slot.args[1] == sizeof(u64));
-    *(volatile u64 *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) =
-        EXEC_CLAIM_MARKER;
-    readreply.words[1] = slot.seq;
-    CHECK(!ipc_reply(input.request, &readreply) &&
-          !sysfilefinish(&links[1].watch.active, input.request));
-    CHECK(
-        !ipc_recv(0, 0, &input) && input.source == target->pid && input.image == target->image &&
-        input.words[0] == FS_WRITE && !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
-        !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 5 &&
-        !memcmp((const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
+    const char text[] = "native stdout";
+    u32        sent = 0;
+    while (sent < sizeof(text) - 1) {
+      u32 left = sizeof(text) - 1 - sent;
+      u32 accepted = sent ? left : 4;
+      Msg reply;
+      CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid &&
+            input.image == target->image && input.words[0] == FS_WRITE &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == left &&
+            !memcmp(
+                (const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
+                text + sent, left));
+      reply = (Msg){{0, slot.seq, accepted, 0}};
+      CHECK(!ipc_reply(input.request, &reply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+      sent += accepted;
+    }
+  } else
+#endif
+  {
+    if (!reuse) {
+      Msg readreply = {{0, 0, sizeof(u64), sizeof(u64)}};
+      CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid &&
+            input.image == target->image && input.words[0] == FS_READ &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysfileargs(FS_READ, &slot) && slot.object == 100 && slot.args[1] == sizeof(u64));
+      *(volatile u64 *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) =
+          EXEC_CLAIM_MARKER;
+      readreply.words[1] = slot.seq;
+      CHECK(!ipc_reply(input.request, &readreply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+      CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid &&
+            input.image == target->image && input.words[0] == FS_WRITE &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 5 &&
+            !memcmp(
+                (const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
                 "abcde", 5));
-    readreply = (Msg){{0, slot.seq, 3, 0}};
-    CHECK(!ipc_reply(input.request, &readreply) &&
-          !sysfilefinish(&links[1].watch.active, input.request));
-    CHECK(
-        !ipc_recv(0, 0, &input) && input.source == target->pid && input.image == target->image &&
-        input.words[0] == FS_WRITE && !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
-        !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 2 &&
-        !memcmp((const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
+      readreply = (Msg){{0, slot.seq, 3, 0}};
+      CHECK(!ipc_reply(input.request, &readreply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+      CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid &&
+            input.image == target->image && input.words[0] == FS_WRITE &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 2 &&
+            !memcmp(
+                (const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
                 "de", 2));
-    readreply = (Msg){{0, slot.seq, 2, 0}};
-    CHECK(!ipc_reply(input.request, &readreply) &&
-          !sysfilefinish(&links[1].watch.active, input.request));
+      readreply = (Msg){{0, slot.seq, 2, 0}};
+      CHECK(!ipc_reply(input.request, &readreply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+      CHECK(!ipc_recv(0, 0, &input) && input.source == target->pid &&
+            input.image == target->image && input.words[0] == FS_WRITE &&
+            !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+            !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 1);
+      readreply = (Msg){{(u64) -EPIPE, slot.seq, 0, 0}};
+      CHECK(!ipc_reply(input.request, &readreply) &&
+            !sysfilefinish(&links[1].watch.active, input.request));
+    }
+    CHECK(!ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
+          sysexecclaim(&execreserve, &old->owner, &links[1], &input) == -ERR_STALE &&
+          !ipc_reply(input.request, &stale));
   }
-  CHECK(!ipc_recv(0, 0, &input) && *marker == ~EXEC_CLAIM_MARKER &&
-        sysexecclaim(&execreserve, &old->owner, &links[1], &input) == -ERR_STALE &&
-        !ipc_reply(input.request, &stale));
   do {
     CHECK(!ipc_recv(EVENT_LIFE, 0, &input) && input.kind == IPC_EVENT &&
           input.words[0] == EVENT_LIFE && !sysfileownerread(target));
