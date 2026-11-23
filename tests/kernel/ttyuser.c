@@ -136,6 +136,23 @@ ttyserialcheck(void)
   CHECK(serialread(&tx, 1, readback, sizeof(readback)) == 7 && readback[0] == '^' &&
         readback[1] == 'C' && readback[2] == '\r' && readback[3] == '\n' && readback[4] == 'z' &&
         readback[5] == '\r' && readback[6] == '\n');
+  {
+    u64 producer = tx.producer;
+    /* Closing RX alone still permits TX. Driver failure does not. */
+    CHECK(ttyserialwrite(&io, attr.oflag, &write, page) == 2 &&
+          !ttyserialstep(&io, &line, &attr, SERIAL_BATCH, &result) && !io.queued &&
+          tx.producer == producer + 2);
+    producer = tx.producer;
+    __atomic_store_n(&rx.flags, SERIAL_ERROR, __ATOMIC_RELEASE);
+    CHECK(ttyserialwrite(&io, attr.oflag, &write, page) == -ERR_STATE && !io.queued &&
+          tx.producer == producer);
+    __atomic_store_n(&rx.flags, SERIAL_EOF, __ATOMIC_RELEASE);
+    __atomic_store_n(&tx.flags, SERIAL_ERROR, __ATOMIC_RELEASE);
+    CHECK(ttyserialwrite(&io, attr.oflag, &write, page) == -ERR_STATE && !io.queued &&
+          tx.producer == producer);
+    write.args[1] = 0;
+    CHECK(!ttyserialwrite(&io, attr.oflag, &write, page) && tx.producer == producer);
+  }
 }
 
 static void

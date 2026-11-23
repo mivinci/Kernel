@@ -98,13 +98,19 @@ ttyserialwrite(Ttyserial *io, u64 oflag, const Fileslot *slot, const volatile u8
   isize status = sysfileargs(FS_WRITE, slot);
   if (status)
     return status;
-  if (!io || !io->tx || (slot->args[1] && !page))
+  if (!io || !io->rx || !io->tx || (slot->args[1] && !page))
     return -ERR_INVALID;
   if (slot->args[3] & FS_IO_POSITIONAL)
     return -ERR_NOTSUP;
   count = (u32) MIN(slot->args[1], TTY_BATCH);
   if (!count)
     return 0;
+  /* The serial driver reports device failure on RX even when TX is idle. */
+  if (__atomic_load_n(&io->rx->flags, __ATOMIC_ACQUIRE) & SERIAL_ERROR)
+    return -ERR_STATE;
+  status = serialwrite(io->tx, io->epoch, NULL, 0);
+  if (status)
+    return status;
   if (io->queued || io->draining)
     return -ERR_WOULD_BLOCK;
   for (i = 0; i < count; i++)
