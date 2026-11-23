@@ -1,0 +1,3 @@
+[submodule "lib/musl"]
+	path = lib/musl
+	url = https://github.com/mivinci/musl.git
