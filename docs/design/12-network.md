@@ -155,6 +155,8 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 
 ## 执行与验收
 
+静态 musl 运行基线就绪后即可接 socket/fd、poll 和网络 applet；启动时动态链接和 pthread 是独立的第一期验收项，不阻塞 net。
+
 全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，完整执行与证据记录在本主题末尾，当前接续摘要见 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 网络执行项

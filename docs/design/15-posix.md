@@ -35,7 +35,7 @@
 | 本阶段（net 阶段） | socket/bind/connect/listen/accept/send/recv/sendto/recvfrom/shutdown、getsockname/getpeername、getsockopt/setsockopt、getaddrinfo/freeaddrinfo；sys/socket.h 等 | 先 AF_INET 的 TCP/UDP 与明确选项，阻塞/非阻塞/poll 一致；DNS 错误使用 EAI_*；不承诺 AF_UNIX、IPv6 或所有 socket 选项 | 回环/双端、连接失败、部分发送、半关闭、UDP 边界、名称解析、超时取消和服务重启 |
 | 本阶段设计已冻结，未实现 | fork、_Fork、execve 及基于它的 exec 包装 | fork 父返回子PID/子返回0、私有内存隔离与共享File；_Fork跳过注册钩子并提供信号安全路径；exec保留PID替换静态ELF、成功不返回、失败保留旧镜像；继承/IPC按03/04/08冻结规格 | 父子隔离/共享偏移、handler内_Fork、在途结果、逐步失败、身份不变及资源守恒；未实现不得宣称兼容 |
 | 暂不支持 | vfork、system/popen | vfork 有共享地址空间/父暂停专门语义，不因fork纳入而自动支持；system/popen 待fork/exec及shell具体契约成立后另行列入 | SDK 准确报告缺失，不用同名桩冒充可用，也不把vfork实现为未经说明的别名 |
-| 暂不支持 | pthread_*、线程 TLS、线程同步接口 | 当前每进程单线程；errno 访问方式为将来隔离留边界不代表已有线程 | 多线程配置在构建/移植检查中明确拒绝 |
+| 第一期目标，尚未交付 | 基础 pthread、线程 TLS 和同步等待 | 当前 SDK 仍以静态单线程为运行基线；启动时动态链接与 pthread 按 [运行时执行项](08-runtime.md#执行与验收) 独立验收 | 双架构 QEMU 验证动态共享库 TLS 和双线程阻塞 IPC |
 | 暂不支持 | POSIX mmap/munmap/mprotect/msync、shm_open、命名信号量、文件/记录锁 | 原生整段 map/unmap 不满足文件映射、部分解除/保护修改等语义；共享内存机制不是这些接口的替代实现 | 原生测试与兼容测试分开，不暴露不完整同名实现来通过探测 |
 | 暂不支持 | 完整实时调度/优先级、实时信号排队、POSIX timer_*、完整 locale/宽字符/浮点数学集合、动态加载 | 不在本阶段完整承诺内；具体增加项须单独列语义和测试；静态链接不是 POSIX 接口支持的替代指标 | 选项宏/SDK 清单准确，软件依赖审计能报告缺口 |
 | 原生扩展 | Boot、Handle、sys/channel.h 的 ipc_*、__sys_* 私有入口、资源授权/IRQ/DMA/管理接口 | 不属于 POSIX；Handle 保持完整代次身份，__sys_* 不作为应用稳定 API | 独立运行时无需自研 libc 可启动/IPC/退出；服务权限、取消收尾和陈旧 Handle 验证 |

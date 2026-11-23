@@ -14,11 +14,11 @@
 定义用户栈、argc/argv、环境变量、启动资源布局；加载完成前不允许运行。
 用户态库直接协调 spawn/fork/exec，wait 和 exit 直接进入内核。内核不接收程序路径、不读取 ELF、不调用 fs。
 获权调用者以创建、映射、配置和发布机制实现 spawn；wait 直接原子领取内核 Life 中的结果。
-fork 与配套 exec 已纳入设计目标，动态链接仍不在首版范围；先支持静态 ELF 的进程复制/镜像替换，具体契约和失败路径完成后才能声称源码兼容。
+fork 与配套 exec 已纳入设计目标，启动时动态链接也纳入第一期验收；先支持静态 ELF 的进程复制/镜像替换，具体契约和失败路径完成后才能声称源码兼容。
 
 ### 加载与启动约定（已确定）
 
-首版支持无需动态链接/运行时重定位的静态 ELF；用户态加载器校验架构/位宽、文件与地址范围及溢出、filesz≤memsz、
+静态运行基线支持无需动态链接/运行时重定位的静态 ELF；用户态加载器校验架构/位宽、文件与地址范围及溢出、filesz≤memsz、
 装载段重叠/启动区冲突和入口可执行性，加载文件内容并清零 BSS；不支持的格式明确拒绝。
 代码最终 RX、只读数据 R、数据/用户栈 RW，默认无 W+X，执行前完成 HAL 所需缓存同步。
 Boot 是用户进程启动信息结构，与 U-Boot 引导程序无关。Boot 为有界只读启动信息，描述 argv/env、获授服务 Handle、标准流初始化及控制终端；可变内容使用区域内偏移和长度。
@@ -122,7 +122,7 @@ fork 不能只复制 libc/libsys 堆内存：子进程应继承应用可见数�
 父在途异步/取消请求仍归父及原清理关系，fork 不因它们存在就无限等待全部业务完成。子库内部记录在可见用户返回前修复，悬空原生 RPC 不自动变成对子进程有效的请求；原生扩展的继承/失效规则单独文档化。
 可替换 libc 须有 fork prepare/parent/child 协作边界，libsys 不直接窥探第三方 malloc/stdio 私有布局；本轮单线程不代表可以省略信号重入和库内状态冻结。
 不在 fork 前隐式 fflush 所有流；stdio 缓冲属于被复制的用户数据，父子都 exit 时可能各自刷新，调用者使用 exec/_exit 等正常规则控制，不能改变 fork 内存语义。
-exec 保持 PID、Life、父子/组/会话身份，准备新的静态 ELF 地址空间和 Boot，再原子替换用户镜像；成功不回旧程序，提交前失败保留旧程序。不能用 create新PID+terminate旧PID 冒充 exec。
+exec 保持 PID、Life、父子/组/会话身份，准备新的 ELF 地址空间和 Boot（静态基线先交付），再原子替换用户镜像；成功不回旧程序，提交前失败保留旧程序。不能用 create新PID+terminate旧PID 冒充 exec。
 exec 的 FD_CLOEXEC、信号动作重置、旧请求/缓冲收尾及资源权限保留需独立冻结。新镜像准备与旧镜像可并存的峰值预算必须显式计算，静态链接不消除该问题。
 posix_spawn 保留，共用加载/继承/发布机制，可以直接构建新镜像，不要求为了复用接口先复制整个父地址空间；shell 的 Unix 路径可采用 fork→重定向→exec→wait。
 
@@ -300,7 +300,7 @@ argv/env条目Strref=(u32 offset,u32 length)，8字节；总参数/环境字节�
 
 启动fd条目48字节，六u64=[fd,flags,backend_call,session,prepare_token,reserved]，数量<=128、fd不重复，flags只FD_CLOEXEC=1（普通exec结果不含该项），session和prepare_token均须非零。prepare_token在字节32，绑定目标image的服务准备；不是旧connid。共享Mem由新source用无槽[EXEC_CLAIM或ATTACH,0,bootstrap_seq,prepare_token]首次领取，MEM回复给出本次connid/bytes；若本镜像对该后端已有可用连接，则同次token普通确认复用，不重复交付MEM。fd先建立为待接入记录，首次需要后端时map校验后才发布该连接为可传输；新启动代码不能直接复用旧镜像VA或共享槽。资源表里必要CALL通过显式EXEC继承、构造grant或运行中resource reply获得；所有底层权仍限定对端PID/image。
 
-ELF只接受ELF64/little-endian/ET_EXEC、EM_AARCH64=183或EM_RISCV=243，版本1，静态无PT_INTERP/PT_DYNAMIC，程序头<=32、e_phentsize=56，入口及PT_LOAD检查越界、文件/内存长度、对齐和权限合并。PT_GNU_STACK若要求执行拒绝；不支持脚本#!或动态重定位，ENOEXEC。不沿用旧镜像格式。init装载描述固定外头64字节[magic,format,bytes,entry,segment_count,segments_off,boot_off,boot_bytes]，段表48字节[file_off,file_bytes,va,mem_bytes,prot,reserved]，只允许与本架构页/权限匹配的预校验静态映像；内核不解析全部普通ELF。启动包目录由init解释，路径和段引用只限该包内。
+现有静态装载路径只接受ELF64/little-endian/ET_EXEC、EM_AARCH64=183或EM_RISCV=243，版本1，静态无PT_INTERP/PT_DYNAMIC，程序头<=32、e_phentsize=56，入口及PT_LOAD检查越界、文件/内存长度、对齐和权限合并。PT_GNU_STACK若要求执行拒绝；不支持脚本#!或动态重定位，ENOEXEC。不沿用旧镜像格式。init装载描述固定外头64字节[magic,format,bytes,entry,segment_count,segments_off,boot_off,boot_bytes]，段表48字节[file_off,file_bytes,va,mem_bytes,prot,reserved]，只允许与本架构页/权限匹配的预校验静态映像；内核不解析全部普通ELF。启动包目录由init解释，路径和段引用只限该包内。
 
 fork子修复区Fix的头64字节：format=1、bytes、source_pid、source_image、target_pid、resource_count、resources_off、contexts_off。资源表复用Resentry，运行库上下文固定3层。Fix中的待接入连接同样保存目标prepare_token，实际connid必须由子真实source领取，不复制父connid作为有效目标连接。一个目标镜像对同一后端的三层Rctx只描述同一待接入连接，不为每层预付/领取一整块连接区。Fix区<=65536、只读普通内存、来源为本次构造，forkcommit只核验安全范围/准备归属，libsys核验自身完整内容。子继承允许的应用Handle保持值；非继承槽保留代次墓碑，不在子重新生成同值。SELF/ALLOC重绑定孩子，不继承父RPC/REQUEST、管理/IRQ/DMA或父准备Handle。
 
@@ -528,6 +528,10 @@ ARM64 用户陷入与返回已保存、恢复 `TPIDR_EL0`。复用上下文尾�
 
 静态入口可从链接器隐藏符号 `__native_tls` 读取四个 `u64`：模板地址、初始化字节、总字节、对齐。无 TLS 时总字节为零，不访问模板；仅有 `.tbss` 时不读取模板，直接清零分配区。混合模板的总字节含对齐间隙。两架构实测空模板、仅初始化、仅零填充和混合四种布局与 `PT_TLS` 一致；无需向 Boot 添加 ELF 文件头或 Linux auxv。
 
+`tools/musl-probe.sh` 从 `lib/musl` 构建测试 ELF，只链接 musl 和 libsys。`musl` QEMU 场景在两个地址空间用不同线程指针地址、TLS 值和 `errno` 交替运行四轮，并核对两者均以 42 退出（ARM64 `18a8adbbb7ab42c4ae5e9ce00958c451`，RV64 `0d0d25d0aff84dffbf3f110b47d7a095`）。fd/Fix 仍在 `sysstart` 中拒绝：已有真实 `EXEC_CLAIM` 夹具使用私有标签，不能当作生产 Bootfd 接管。musl 的标准输出经过 `__stdio_write` 的 `writev`，首写还可能查询 `TIOCGWINSZ`；端口应将这些操作接到同一原生 fd 层，不能发出上游 Linux 调用或用调试串口替代 fd 1。
+
+stdio 接线的验收边界：`sysfileimageio` 已负责原请求裁决、取消和按既有信号策略重启，返回实际字节数和业务错误。musl 侧须使用这一结果推进缓冲区；发生短写时仅续写未提交部分，不能用多个独立 `write` 冒充公开 `writev` 的单次管道写。断管沿现有 fd 行为产生 `SIGPIPE` 和 `EPIPE`。验收用继承的 fd 1 将 musl 的缓冲与新输出交给真实后端，核对确切字节顺序、短写和断管；成功退出或有串口文字不足以证明完成。
+
 上游构建基线已验证：在 v1.2.5 源码树外分别以 `aarch64`、`riscv64` 代入 `$arch`，执行 `CC="clang --target=$arch-linux-musl" AR=llvm-ar RANLIB=llvm-ranlib "$src/configure" --target="$arch-linux-musl" --disable-shared --disable-wrapper`，再执行 `make -j4 lib/libc.a`。两架构均产出静态归档。这一步只验证上游源可交叉编译；归档仍使用上游 Linux 调用层，不能作为原生 SDK 使用。原生端口优先接 Boot/Fix、主线程 TLS 与退出，验证后再将可运行的端口提交锁定为构建依赖。
 
 临时启动探针仅链接 musl 与 libsys，已在 ARM64 `f2be16daa1b34f909adf0eb2c455e6e9`、RV64 `94e9d7e33ea548a884fc51131b4f54ac` 通过原生启动包验证：Boot 参数解析、主线程 TLS 初值和零填充、`errno` 读写及原生退出状态 42。RV64 端口须与原生 SDK 一致使用 `-march=rv64gc -mabi=lp64`。探针未覆盖 fd/Fix、分配器、标准输出和进程间隔离。
@@ -536,7 +540,18 @@ mallocng 接入边界：上游 `src/malloc/mallocng/malloc.c` 的元数据路径
 
 嵌套exec直接返回EAGAIN资源冲突扩展，不抢走外层准备；handler成功exec/退出则不再恢复外层，旧镜像终结清理接管。handler修改fd/cwd后，已接受准备仍用原稳定快照，必要构造关系失效则明确失败，不混用新旧版本。用户变量指向已free的库私有句柄不造成资源重新安装。
 
+## 第一期启动与线程边界
+
+Boot/Fix 继续使用原生协议。静态启动桥由 libsys 校验和接管 Boot、建立本地 fd 表，远端引用按需领取；musl 负责 TLS、构造函数、stdio 和退出清理。未来 ELF 解释器从已验证的主镜像装载信息启动，取得共享库所需访问权，完成重定位、TLS 注册和权限收紧后才运行应用。`__native_tls` 仅描述静态主程序模板，不作为动态 TLS ABI。装载失败在 exec 提交前保留旧镜像；提交后解释器失败按新镜像启动失败退出。解释器授权、查找规则、重定位集合和交付格式须在实现前冻结。
+
+地址空间、fd 表与凭据归进程；映像身份约束远端文件引用。寄存器、TLS、信号掩码、活动信号帧和阻塞/Rctx 恢复状态归线程；当前线程和本地调度状态归 CPU。两个线程同时在途的请求须独立裁决与排空；共享 fd 的关闭不把迟到结果写入复用表项。本地关中断和信号屏蔽均不作为跨 CPU 的互斥。线程创建、等待与唤醒、退出/join、信号投递和多线程 fork/exec 的接口及同步规则须先冻结；不把单线程路径直接当作 pthread 实现。
+
 ## 执行与验收
+
+- [ ] 先收口上述状态归属和装载边界；用静态 musl 在 ARM64、RV64 QEMU 跑通继承 fd 1 的真实输出、`fork → dup2 → exec → wait`、信号返回及原版 ash 作业控制。达到静态验收后切换默认 SDK；旧 libc 不参与 musl 链接或回退。
+- [ ] 静态基线可回归后，尽早在两架构运行带共享库 TLS 的动态小程序，验证解释器、装载与重定位、权限收紧、初始化及 TLS 值；覆盖缺失或拒绝的解释器/库、非法 ELF 以及失败后的资源回收。
+- [ ] 同阶段运行双线程管道小程序：A 阻塞读，B 写入并唤醒；核对 TLS、errno、在途请求和信号恢复独立，fd 表共享。扩展覆盖关闭与复用、join、进程退出、多线程 fork/exec 和失败清理，两架构均须通过。
+- [ ] 第一期收尾必须通过启动时动态链接和 pthread 基础验收；`dlopen()` 和 pthread 取消不作为当前基础验收项，若要纳入需单独定范围。net 沿静态基线推进，与这两项收尾无前置依赖。
 
 - [ ] 故障转后台原子移动唯一RPC/File/页责任，Rctx复用不覆盖原结果；私有8*4 KiB工作区含bootstrap和槽记录、双页只占一个头记录，旧页未归还形成背压。
 - [ ] 后台记录不保存迟到写应用指针；迟到资源先接管再补偿/free/ack，exec/退出只转交已有内核/服务责任，不保留旧C栈或依赖旧私有页执行。

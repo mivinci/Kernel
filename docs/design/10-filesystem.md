@@ -741,7 +741,7 @@ ACTIVE的待接入token没有独立TTL，引用/预付页按持有者实际计�
 
 ### fd/close、poll 与exec交接
 
-继承 reference_id 待确认（2026-11-21）：当前 FORK_PREPARE 只回复 token，但本地子 Fileref 还需要精确 reference_id，线上尚未定义其取得方式。建议把引用键明确为真实客户端 PID/image 加 reference_id；准备时在目标命名空间沿用源 reference_id 数值，建立独立的目标引用并共享原 File/session，父子关闭各自引用互不撤销。后端的引用分配器须避让该目标所有已准备/已领取 ID，重复 fd 别名只准备同一个引用；token 仍只授权真实目标领取。本项尚未确认，未改线上结构或实现目标引用分配，也不能由当前 Filefork 测试自行选择的数值推导生产规则。
+继承 reference_id（已确定）：FORK_PREPARE 只需回复 token；引用键为真实客户端 PID/image 加 reference_id；准备时在目标命名空间沿用源 reference_id 数值，建立独立的目标引用并共享原 File/session，父子关闭各自引用互不撤销。后端的引用分配器须避让该目标所有已准备/已领取 ID，重复 fd 别名只准备同一个引用；token 仍只授权真实目标领取。Bootfd 交付与目标引用分配尚未实现；当前 Filefork 夹具不构成生产验收。
 
 Fd记录64字节上限，含本地代次/File会话、标志、连接/保留槽、关闭责任索引。每进程128fd、256关闭责任记录（每条64字节上限）；发布新fd前保证责任和必要共享槽/控制推进容量。别名可聚合后端引用，但本地代次、FD_CLOEXEC独立；dup2先固定源，新引用保证成功后再替换，旧关闭按原身份推进。记录满在新open/dup返回ENOMEM，不将其伪报EMFILE。close自身不临时申请记录；摘除前表项被handler替换则EBADF且不动新项，摘除后错误不恢复fd。无SA_RESTART的捕获中断按EINTR保留/EINPROGRESS已摘除；SA_RESTART只继续原记录。后端1秒控制期限不能取得可信关闭结果时EIO、后台保留责任；不无限重试，服务死亡恢复链接管隔离。posix_close不纳入首版SDK，不声明完整POSIX版本能力。
 

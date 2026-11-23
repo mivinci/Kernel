@@ -4,7 +4,7 @@
 
 ## 当前接续点
 
-- 主线为 M3：启动包/init → fd/Fix、serial/tty → blk/fs → 原生 fork/exec、pipe/dup2、作业控制，最终跑通 BusyBox ash。net 与图形/GPU 机制排在 M3 后，GUI 最后实现。
+- 主线为 M3：启动包/init → fd/Fix、serial/tty → blk/fs → 原生 fork/exec、pipe/dup2、作业控制，最终跑通 BusyBox ash。net 沿静态 musl 基线推进；启动时动态链接和 pthread 基础能力为独立第一期验收项。图形/GPU 机制就绪后再做 GUI。
 - ARM64、RV64 QEMU 已具备单主核启动、内存/Space/Mem/Mmap、进程与 IPC 基础、信号/终端基础、用户态服务框架及块设备 transport。当前不是 SMP，也没有实物板、完整 CI 或性能验收。
 - 默认启动包包含实际 `sbin/init`、`sbin/serial`、`sbin/tty`；serial/tty 晚绑定与 UART 回显已局部验证。生产 FS/blk 启动、固定挂载和普通应用运行路径尚未接通。
 - libsys 已接本地 fd/File、pipe、原 RPC 收尾、私有 spawn 及部分 exec/FS_LOAD 路径。公开 POSIX 前端、完整 exec 继承、作业控制和标准运行环境仍在收口。
@@ -18,7 +18,7 @@
 - [06](design/06-abi.md) 的 `QUERY_TIMES=7` 自身 CPU 时间查询仍是候选，确认前不实现。
 - [04](design/04-ipc.md) 的原生 rqclean 仍待冻结 `CONTROL_CLEAN` 权限、参数和初始 init 持有方式；当前 `0x1b` 为 NOTSUP，不能把可信夹具代收尾当作原生 ABI。
 - [08](design/08-runtime.md) 的堆/连接 VA 登记、连接预付地址责任和短屏蔽信号更新范围仍待确认；当前 malloc/free 不承诺处理函数重入。
-- [10](design/10-filesystem.md) 尚待确认后端继承引用的 `reference_id` 命名空间与 Bootfd 交付、生产 TTY/VFS 首次 `OBSERVE_SOURCE` 发权，以及磁盘 magic/CRC、端序、inode flags、目录 type 等持久格式。
+- [10](design/10-filesystem.md) 继承引用键已确定为 `(PID, image, reference_id)`；仍待接入 Bootfd 交付、生产 TTY/VFS 首次 `OBSERVE_SOURCE` 发权，以及磁盘 magic/CRC、端序、inode flags、目录 type 等持久格式。
 - [11](design/11-terminal.md) 尚待冻结 setfg/ttysignal 的后台 TTOU、错误与停放规则，以及公开 kill 对未收取 ENDED Life 的选择语义；生产终端前台切换未接。
 - exec-only 文件的可信装载授权、DMA 公开发权/结束 ABI 仍未冻结；设备未确认停机前不得回收 DMA 缓冲。
 - [13](design/13-graphics.md) 图形线协议仍为候选；GUI 要等 headless sh、图形/GPU 机制全部就绪后再做。
@@ -28,7 +28,7 @@
 1. 单调 32 位 PID 已合入，BusyBox PID 补丁已撤。复查双架构探针仍缺 `sys/times.h`；待补齐 SDK 和生产用户态后验证 ash 的 PID 与作业控制行为。
 2. 继续生产 FS/blk、持久格式和固定挂载，接通 serial/tty、设备节点、标准 fd 和退出观察。用公开 SDK 的最小程序和 miniz 验证普通程序启动。
 3. 依据 [BusyBox 接续计划](issues/012-busybox-port.md#接续计划用项目自身的-abi-和-sdk-支持原版-busybox) 边做边验证。补 SDK 实际缺口，收口公开 fork/exec、fd 继承、pipe/dup2 和作业控制，再在两架构 QEMU 跑通 ash。现有补丁逐项撤除，不新增或扩大源码补丁。
-4. ash 通过 M3 验收后，按设计推进 net，补齐 socket SDK 并验收原版 BusyBox 零补丁构建。继续完成图形和 GPU 机制，最后做 GUI。
+4. 按 [运行时执行项](design/08-runtime.md#执行与验收) 尽早验证动态共享库 TLS 和单核双线程阻塞 IPC。沿静态基线推进 net、socket SDK 和原版 BusyBox 网络验收，无需等待动态链接和 pthread 收尾。继续完成图形和 GPU 机制，最后做 GUI。
 
 ## 硬件与问题
 
