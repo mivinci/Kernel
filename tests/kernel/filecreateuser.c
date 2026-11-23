@@ -793,13 +793,44 @@ client(const Bootview *boot)
       build.parent_space = space;
       build.scratch = fix.address;
       build.scratch_bytes = PAGE_SIZE;
+      CHECK(!__sys_inherit(work.state.call, 1)); /* FORK */
       pid = sysforkwithfds(bootresource(boot, BOOT_CREATE), 1, &resume, &build, &fix,
                            &execfds, &send, connections, 0, UINT64_MAX);
       CHECK(pid >= 0);
       if (!pid) {
+        Conntag tag;
+        Connclaim claim;
+        Bootmap map = {0};
+        Rkey active = {0};
+        Handle call = work.state.call, redundant = 0, endpoint;
+        Filelease lease;
+        Fileslot slot = {0};
+        u64 data;
+        Msg read;
         CHECK(!sysfdobserve(&fds, 0, &fd) && fd.file == first && fd.flags == BOOT_FD_CLOEXEC &&
               !sysfilerefview(&pool, contexts.self, first, &copied) && copied.aliases == 2 &&
               copied.reference && copied.token);
+        tag = copied.connection;
+        CHECK(!sysconnworkfork(&work, &cache, (Connpeer){work.state.self.pid, work.state.self.image},
+                               tag, copied.token) &&
+              !sysconnworktakecall(&work, &cache, &call, &redundant) && !redundant &&
+              !sysconnforkprepare(&work, &cache, 1, 0, &claim, &endpoint) &&
+              !sysctxforkattach(&contexts, 0, &work, &cache, space, ADDRESS, &map, &active));
+        CHECK(!sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+        slot.seq = lease.seq;
+        slot.state = FS_SLOT_SUBMITTED;
+        slot.span = 1;
+        slot.object = copied.session;
+        slot.args[0] = copied.reference;
+        slot.args[1] = slot.payload_bytes = sizeof(data);
+        read = (Msg){{FS_READ, work.state.map.connid, lease.seq, lease.slot}};
+        CHECK(!__sys_copy((void *) (ADDRESS + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
+                          sizeof(slot)) &&
+              !ipc_call(endpoint, &read, 0, &result) && !result.words[0] &&
+              result.words[1] == lease.seq && result.words[2] == sizeof(data) &&
+              !__sys_copy(&data, (const void *) (ADDRESS + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES),
+                          sizeof(data)) && data == IO_VALUE &&
+              !sysconnworkrelease(&work, &cache, lease));
         __sys_exit(43);
       }
       CHECK(!__sys_wait(pid, 0, &waited, &kind, &code, &sequence) && waited == pid &&
@@ -1410,6 +1441,7 @@ server(const Bootview *boot, u32 recover)
   Filewatch *watch = &link->watch;
   Fileowner *target = &links[1].watch.owner;
   Fileowner  child = {0};
+  Filelink   childlink = {0};
   u64        held = 0;
   u64        sessions[8], references[8], created = 0, closed = 0, nextsession = 100, nextref = 1000;
   Openprep   ttyrefs[8] = {{0}};
@@ -1520,6 +1552,32 @@ server(const Bootview *boot, u32 recover)
       CHECK(!sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) && drain.attempts == 2);
       closed = 2;
       break;
+    }
+    if (!recover && child.cookie && input.source == child.pid && input.image == child.image) {
+      CHECK(input.kind == IPC_CALL && sysforktarget(&child) == SYSEXEC_ACTIVE);
+      if (input.words[0] == FS_ATTACH) {
+        Resreply delivery;
+        CHECK(!input.words[1] && input.words[2] && input.words[3] == 71 && !childlink.memory);
+        childlink.watch.owner = child;
+        CHECK(!sysfileprepay(&childlink, 1, 0, bootresource(boot, BOOT_SELF_ALLOC), space,
+                              ADDRESS + 2 * FS_CONN_BYTES));
+        delivery = (Resreply){childlink.memory, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES,
+                             {input.words[2], childlink.watch.connid, FS_CONN_BYTES}};
+        CHECK(!ipc_reply_resource(input.request, &delivery));
+        childlink.ready = 1;
+        childlink.prepaid = 0;
+      } else {
+        Msg datareply = {{0, input.words[2], sizeof(u64), sizeof(u64)}};
+        CHECK(input.words[0] == FS_READ &&
+              !sysfilelinkaccept(&childlink, 1, &input, &descriptor) &&
+              !sysfileargs(FS_READ, &descriptor) && descriptor.object == sessions[0] &&
+              descriptor.args[0] == references[0] && descriptor.args[1] == sizeof(u64));
+        *(volatile u64 *) (childlink.address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES) =
+            IO_VALUE;
+        CHECK(!ipc_reply(input.request, &datareply) &&
+              !sysfilefinish(&childlink.watch.active, input.request));
+      }
+      continue;
     }
     CHECK(input.kind == IPC_CALL && input.source == peer.pid && input.image == peer.image);
     opcode = input.words[0];
@@ -1752,6 +1810,15 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (!recover && opcode == FORKWATCH) {
+      if (childlink.memory) {
+        CHECK(childlink.watch.owner.cookie == child.cookie &&
+              sysforktarget(&childlink.watch.owner) == SYSEXEC_ENDED &&
+              !sysfilelinkclose(&childlink));
+        child.cookie = 0;
+        CHECK(input.words[2] && child.pid == (Handle) input.words[1] &&
+              !ipc_reply(input.request, &reply));
+        continue;
+      }
       CHECK(child.pid == (Handle) input.words[1] &&
             sysforktarget(&child) == (input.words[2] ? SYSEXEC_ENDED : SYSEXEC_ABORTED) &&
             child.reason == (input.words[2] ? OBS_EXIT : OBS_ABORT) &&

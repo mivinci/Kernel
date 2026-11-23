@@ -706,6 +706,13 @@ sysctxexecclaim(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle
   return bootconnect(bank, layer, work, cache, space, address, map, active, FS_EXEC_CLAIM);
 }
 
+isize
+sysctxforkattach(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space, u64 address,
+                 Bootmap *map, Rkey *active)
+{
+  return bootconnect(bank, layer, work, cache, space, address, map, active, FS_ATTACH);
+}
+
 static isize
 createio(Rbank *bank, Connpeer self, u32 layer, Filepool *pool, Connwork *work, Conncache *cache,
          const Opkey *key, u64 opcode, Rkey *active)

@@ -50,6 +50,9 @@ isize sysctxbootwait(Rbank *bank, Connpeer self, u32 layer, Bootstrap *record, C
    the external map stays empty, and an ordinary reply keeps the old mapping. */
 isize sysctxhello(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space,
                   u64 address, Bootmap *map, Rkey *active);
+/* First attachment of the fork child's inherited directory entry. */
+isize sysctxforkattach(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space,
+                       u64 address, Bootmap *map, Rkey *active);
 isize sysctxexecclaim(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Handle space,
                       u64 address, Bootmap *map, Rkey *active);
 isize sysctxopcall(Rbank *bank, Connpeer self, u32 layer, Connwork *work, Conncache *cache,
