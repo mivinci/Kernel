@@ -55,7 +55,7 @@ forktreetest(void)
     for (i = 0; i < 2; i++) {
       pids[i] = handlepack(HANDLE_PROCESS, 7000 + mode * 2 + i, i + 1);
       REQUIRE(!acctcreate(set, 128, 128, &accounts[i]) && !spacecreate(accounts[i], &roots[i]) &&
-              !lifecreate(set, pids[i], i ? pids[0] : 1, &lives[i]) &&
+              !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&
               !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&
               !localinit(&tables[i], entries[i], 16, accounts[i], roots[i]));
       tables[i].owner = pids[i];
@@ -186,7 +186,7 @@ forkbuildtest(void)
       pids[i] = handlepack(HANDLE_PROCESS, 8000 + mode * 2 + i, i + 1);
       REQUIRE(!acctcreate(set, mode == 2 && i ? 1 : 128, mode == 2 && i ? 1 : 128, &accounts[i]) &&
               !spacecreate(accounts[i], &roots[i]) &&
-              !lifecreate(set, pids[i], i ? pids[0] : 1, &lives[i]) &&
+              !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&
               !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&
               !localinit(&tables[i], entries[i], 16, accounts[i], roots[i]));
       tables[i].owner = pids[i];

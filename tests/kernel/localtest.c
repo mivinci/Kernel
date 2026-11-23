@@ -38,7 +38,7 @@ localtest(void)
           !localinit(&tables[1], entries[1], LOCALS, acct, b));
   REQUIRE(!localspace(&tables[0], 3, &aspace) && !localallocator(&tables[0], 5, &aalloc));
   REQUIRE(!localspace(&tables[1], 3, &bspace) && !localallocator(&tables[1], 5, &balloc));
-  REQUIRE(!lifecreate(group, handlepack(HANDLE_PROCESS, 1, 1), 1, &life));
+  REQUIRE(!lifecreaterun(group, handlepack(HANDLE_PROCESS, 1, 1), 1, 1, &life));
   REQUIRE(!imagecreate(life, 0, &oldimage));
   REQUIRE(!localendpoint(&tables[0], oldimage, LOCAL_CALL, LOCAL_USE | LOCAL_GRANT, 0,
                          LOCAL_FORK | LOCAL_EXEC, &call));

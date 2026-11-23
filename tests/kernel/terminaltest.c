@@ -104,7 +104,7 @@ terminaltest(void)
   Handle     sid, foreign, first, second, alien, terminal, replacement, full = 99;
   u32        i;
   pgstat(&before);
-  CHECK(!setcreate(128, 256, 1, &set) && !lifecreate(set, pid, 1, &identity));
+  CHECK(!setcreate(128, 256, 1, &set) && !lifecreaterun(set, pid, 1, PROCS - 1, &identity));
   CHECK(!imagecreate(identity, 0, &old) && !terminalnew(old, &terminal));
   CHECK(!terminalstat(terminal, &snapshot) && snapshot.epoch == 1 && !snapshot.session &&
         !snapshot.foreground && snapshot.refs == 1);

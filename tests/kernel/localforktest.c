@@ -55,7 +55,7 @@ localforktest(void)
   REQUIRE(!spacecreate(a, &sa) && !spacecreate(b, &sb));
   for (i = 0; i < 2; i++) {
     pids[i] = handlepack(HANDLE_PROCESS, 500 + i, 1 + i);
-    REQUIRE(!lifecreate(set, pids[i], 1, &lives[i]) && !imagecreate(lives[i], 0, &images[i]));
+    REQUIRE(!lifecreaterun(set, pids[i], 1, i + 1, &lives[i]) && !imagecreate(lives[i], 0, &images[i]));
   }
   REQUIRE(!lifepublish(lives[0]) && !imageactivate(images[0]));
   for (i = 0; i < LOCALS; i++)

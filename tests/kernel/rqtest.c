@@ -28,7 +28,7 @@ static void
 actor(Actor *a, Setid set, Handle pid)
 {
   a->pid = pid;
-  REQUIRE(!lifecreate(set, pid, 1, &a->life));
+  REQUIRE(!lifecreaterun(set, pid, 1, handleindex(pid), &a->life));
   REQUIRE(!imagecreate(a->life, 0, &a->image));
   REQUIRE(!rqreserve(&a->quota, a->life, 0));
   REQUIRE(!rqmailinit(&a->mail, a->image));
@@ -208,7 +208,7 @@ rqtest(void)
     }
   }
   REQUIRE(
-      !lifecreate(set, handlepack(HANDLE_PROCESS, ORDINARY_QUOTAS + 1, PROCS - 1), 1, &candidate));
+      !lifecreaterun(set, handlepack(HANDLE_PROCESS, ORDINARY_QUOTAS + 1, PROCS - 1), 1, PROCS - 1, &candidate));
   byte = (u8 *) &recovery;
   for (i = 0; i < sizeof(recovery); i++)
     byte[i] = 0;

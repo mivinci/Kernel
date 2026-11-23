@@ -28,7 +28,7 @@ imagetest(void)
   Pgstat     before, after;
   int        error;
   REQUIRE(!setcreate(128, 256, 4, &set));
-  REQUIRE(!lifecreate(set, oldpid, 1, &oldlife));
+  REQUIRE(!lifecreaterun(set, oldpid, 1, PROCS - 1, &oldlife));
   for (i = 0; i < IMAGES; i++) {
     REQUIRE(!imagecreate(oldlife, 7, &retained[i]));
     REQUIRE(!imagestat(retained[i], &image) && image.number == (u64) i + 1);
@@ -65,7 +65,7 @@ imagetest(void)
     REQUIRE(!imagedrop(retained[i], IMAGE_CLEANUP));
   REQUIRE(!lifecancel(oldlife) && !lifedetach(oldlife));
   REQUIRE(!lifestat(oldlife, &life) && life.run == PG_NONE && life.cleanup == 1 && !life.instance);
-  REQUIRE(!lifecreate(set, pid, 1, &freshlife) && freshlife.index != oldlife.index);
+  REQUIRE(!lifecreaterun(set, pid, 1, PROCS - 1, &freshlife) && freshlife.index != oldlife.index);
   REQUIRE(!imagecreate(freshlife, 0, &fresh) && !lifepublish(freshlife) && !imageactivate(fresh));
   REQUIRE(!imagestat(fresh, &image) && image.pid == pid && image.number == 1);
   REQUIRE(!imagestat(retained[0], &image) && image.pid == oldpid && image.number == 1 &&

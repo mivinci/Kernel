@@ -114,7 +114,7 @@ execinherittest(void)
   u64           address = 0x10000, notify = (u64) 1 << 32;
   pgstat(&before);
   REQUIRE(!setcreate(32, 64, 1, &set) && !acctcreate(set, 32, 64, &acct) &&
-          !lifecreate(set, pid, 1, &life) && !lifebindacct(life, acct) &&
+          !lifecreaterun(set, pid, 1, PROCS - 1, &life) && !lifebindacct(life, acct) &&
           !imagecreate(life, 0, &old) && !lifepublish(life) && !imageactivate(old) &&
           !spacecreate(acct, &oldspace) && !localinit(&source, oldslots, 8, acct, oldspace));
   source.owner = pid;
@@ -205,7 +205,7 @@ execpreptest(void)
   u64           va = 0x10000;
   pgstat(&before);
   REQUIRE(!setcreate(4, 10, 1, &set) && !acctcreate(set, 4, 10, &acct) &&
-          !lifecreate(set, pid, 1, &life) && !lifebindacct(life, acct) &&
+          !lifecreaterun(set, pid, 1, PROCS - 1, &life) && !lifebindacct(life, acct) &&
           !imagecreate(life, 0, &running) && !lifepublish(life));
   REQUIRE(!spacecreate(acct, &oldspace) && !localinit(&source, oldslots, 16, acct, oldspace));
   source.owner = pid;

@@ -43,7 +43,7 @@ sigexectest(void)
   Handle     pid = handlepack(HANDLE_PROCESS, 3010, 1);
   pgstat(&before);
   REQUIRE(!setcreate(64, 64, 1, &set) && !acctcreate(set, 64, 64, &acct) &&
-          !spacecreate(acct, &space) && !lifecreate(set, pid, 1, &owner) &&
+          !spacecreate(acct, &space) && !lifecreaterun(set, pid, 1, 1, &owner) &&
           !lifebindacct(owner, acct) && !imagecreate(owner, 0, &old) && !sigreserve(old) &&
           !lifepublish(owner) && !imageactivate(old));
   REQUIRE(!memcode(acct, PAGE_SIZE, &code) && !memseal(code) &&
@@ -138,7 +138,7 @@ sigforktest(void)
     for (i = 0; i < 2; i++) {
       pids[i] = handlepack(HANDLE_PROCESS, 3000 + mode * 2 + i, 1 + i);
       REQUIRE(!acctcreate(set, 32, 32, &accounts[i]) && !spacecreate(accounts[i], &spaces[i]) &&
-              !lifecreate(set, pids[i], i ? pids[0] : 1, &lives[i]) &&
+              !lifecreaterun(set, pids[i], i ? pids[0] : 1, i + 1, &lives[i]) &&
               !lifebindacct(lives[i], accounts[i]) && !imagecreate(lives[i], 0, &images[i]) &&
               !sigreserve(images[i]));
     }
