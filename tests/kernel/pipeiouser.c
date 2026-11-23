@@ -3351,8 +3351,19 @@ publicchdirserver(const Bootview *boot)
         fixture.holds == 3 && fixture.linkmore > 38);
   CHECK(!fsopenpump(&open) && open.again && job.waiting && fixture.linkmore);
   CHECK(!fsopenpump(&open) && !open.again && job.waiting && !fixture.linkmore && !fixture.linkwait);
-  CHECK(!fsopenpump(&open) && !job.call.request && fixture.holds == 2 && !fsstep(&fs) &&
-        !fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
+  CHECK(!fsopenpump(&open) && !job.call.request && fixture.holds == 2 && !fsstep(&fs));
+  {
+    const char invalid[] = {'a', '\0', 'b'};
+    Msg        malformed = {{0, 0, 0, sizeof(invalid)}};
+    CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_PATH &&
+          !sysfilelinkaccept(&link, 1, &request, &slot) && slot.args[0] == FS_PATH_READLINK);
+    malformed.words[1] = slot.seq;
+    CHECK(!__sys_copy((void *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES),
+                      invalid, sizeof(invalid)) &&
+          !ipc_reply(request.request, &malformed) &&
+          !sysfilefinish(&link.watch.active, request.request));
+  }
+  CHECK(!fsstep(&fs) && !fsstep(&fs) && fixture.holds == 2);
   CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_PATH &&
         !sysfilelinkaccept(&link, 1, &request, &slot) && slot.args[0] == FS_PATH_CHDIR &&
         !ipc_defer(request.request));
@@ -3611,6 +3622,7 @@ publicchdirclient(void)
   free(owned);
   CHECK(readlink("/l", link, 3) == 3 && !strcmp(link, "../?????") &&
         readlink("/l", link, sizeof(link)) == 7 && !strcmp(link, "../data?") &&
+        readlink("/l", link, sizeof(link)) == -1 && errno == EIO && !strcmp(link, "../data?") &&
         readlink("/x", link, sizeof(link)) == -1 && errno == EINVAL && !strcmp(link, "../data?") &&
         readlink("/l", (char *) (uintptr_t) 1, 3) == -1 && errno == EFAULT);
   CHECK(chdir("/d") == -1 && errno == EINTR && caught == 3 && !peer->state.operations[0].phase &&

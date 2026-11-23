@@ -1095,8 +1095,8 @@ sysfileiorestart(Fileimage *state, Opkey *key, u64 bytes)
 }
 
 static isize
-copycwd(Fileimage *state, Connwork *work, Conncache *cache, const Opkey *key, u64 bytes,
-        void *output)
+copypath(Fileimage *state, Connwork *work, Conncache *cache, const Opkey *key, u64 bytes,
+         void *output, u32 cwd)
 {
   u8   *path = state->contexts.snapshots[key->lease.slot / 2];
   u64   i;
@@ -1107,9 +1107,9 @@ copycwd(Fileimage *state, Connwork *work, Conncache *cache, const Opkey *key, u6
   error = sysopcopy(work, cache, key, 0, bytes, path);
   if (error)
     return error;
-  if (path[0] != '/' || path[bytes - 1])
+  if (cwd && (path[0] != '/' || path[bytes - 1]))
     return -ERR_STATE;
-  for (i = 1; i + 1 < bytes; i++)
+  for (i = 0; i < bytes - cwd; i++)
     if (!path[i])
       return -ERR_STATE;
   return __sys_copy(output, path, bytes);
@@ -1197,8 +1197,8 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
           storage = (uintptr_t) result;
           if (address < storage + sizeof(*result) && storage < address + expected)
             error = -ERR_FAULT;
-          else if (cwd)
-            error = copycwd(state, work, cache, key, expected, output);
+          else if (cwd || readlink)
+            error = copypath(state, work, cache, key, expected, output, cwd);
           else if (op->opcode == FS_STAT) {
             Filestat record;
             error = sysopcopy(work, cache, key, 0, sizeof(record), &record);
