@@ -422,6 +422,50 @@ sysfilewatchaccept(Filewatch *watch, const volatile void *region, u64 bytes, con
 }
 
 isize
+sysopenclosereply(Openprep *pool, u32 count, Filewatch *watch, const Ipcmsg *call,
+                  const Fileslot *slot, Openrevoke revoke, void *context)
+{
+  Msg       reply = {{0, 0, 0, 0}};
+  Openprep *prep;
+  u64       state;
+  isize     error;
+  if (!pool || !count || count > SYSOPEN_POOL_MAX || !revoke || !watch || !watch->owner.cookie ||
+      !call || call->kind != IPC_CALL || call->words[0] != FS_CLOSE || !slot)
+    return -ERR_INVALID;
+  if (call->source != watch->owner.pid || call->image != watch->owner.image ||
+      call->words[1] != watch->connid || call->words[2] != slot->seq ||
+      call->words[3] >= FS_CONN_SLOTS || !call->request ||
+      watch->active.requests[call->words[3]] != call->request)
+    return -ERR_STALE;
+  error = ipc_rqcheck(call->request, &state);
+  if (error)
+    return error;
+  if (state == RQ_CHECK_DRAINING) {
+    error = ipc_rqfinish(call->request);
+    return error ? error : sysfilefinish(&watch->active, call->request);
+  }
+  if (state != RQ_CHECK_LIVE && state != (RQ_CHECK_LIVE | RQ_CHECK_CANCEL))
+    return -ERR_STATE;
+  reply.words[1] = slot->seq;
+  if (sysfileargs(FS_CLOSE, slot))
+    reply.words[0] = (u64) -EINVAL;
+  else {
+    prep = openref(pool, count, call->source, call->image, slot->object, slot->args[0], 1);
+    if (!prep)
+      reply.words[0] = (u64) -ESTALE;
+    else if (prep->state == Openattached) {
+      /* CLOSE is a cleanup obligation even after cooperative cancellation. */
+      error = revoke(context, prep);
+      if (error)
+        return error;
+      sysopenretire(prep);
+    }
+  }
+  error = ipc_reply(call->request, &reply);
+  return error ? error : sysfilefinish(&watch->active, call->request);
+}
+
+isize
 sysfilewatchdrain(Filewatch *watch, Handle request)
 {
   u32   i;

@@ -696,6 +696,8 @@ HELLO/ATTACH/EXEC_CLAIM的参数全部来自寄存器快照和服务私有准备
 
 后端可用 `sysopenabortreply` 在原请求上处理撤销。非零连接号须匹配已就绪连接和实际调用者；撤销回调成功后才退役引用，回调失败则保留引用与原 REQUEST。已看到协作取消时回复 EINTR，不执行撤销；强制终结时只收尾。ARM64、RV64 QEMU `runtime` 验证无槽 ABORT 撤销待领取或已接入的引用、重复清理不二次撤销，以及同连接其余引用继续可用。
 
+后端的 `sysopenclosereply` 使用已入账的原槽快照，以客户端 PID/image、session 和 reference_id 定位普通 OPEN 的精确引用。回调成功才退役引用，回复后才释放服务侧原请求的槽记录。协作取消不解除 CLOSE 的清理责任；若原请求已被机制强制终结，则本次仅收尾，余下引用由镜像终结清理接管。ARM64、RV64 QEMU `runtime` 验证单连接多引用分别关闭，以及准备超时或 VFS 结束后错误引用被拒、正确引用仍可关闭并归还原槽。
+
 VFS OPEN交付后端CALL时，资源reply业务三字固定为[seq,session,prepare_token]。客户端持该session和token，向后端发送无槽ATTACH；首次MEM交付得到connid/region_bytes后才map；普通复用确认仅核对已经持有的同一映射，不执行第二次安装/map，随后才能使用该会话。连接头connid/bytes必须与本次资源回复匹配；不能把旧镜像connid或token当新连接connid。普通FS OPEN已经有HELLO连接，不需要再建立一次共享区，成功普通reply中的value为新session。
 
 后端的私有 `sysopenfirst` 先核对准备 token 与真实客户端 PID/image，再沿 HELLO 的路径建立连接、登记镜像观察、分配并映射共享区，经原 ATTACH 资源回复交付 MEM。`sysopenreuse` 另核对服务私有连接已就绪、观察仍有效且属于同一 PID/image，经原 ATTACH 普通回复连接号和长度。两条路径都在回复成功后提交准备引用；检查时已看到取消或请求正在排空，则只收尾，准备引用仍归原撤销路径。分配或资源回复失败时归还首次建连的本地责任；若强制终结先于回复提交，内核不会向新镜像安装 MEM，后端按镜像观察清理旧连接和引用。生产 TTY 的首次连接发权仍待接入。

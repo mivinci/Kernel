@@ -2293,24 +2293,27 @@ backend(const Bootview *boot, u32 recover)
       continue;
     }
     CHECK(input.words[0] == FS_CLOSE && input.words[1] == CONNID && input.words[3] == 6);
-    if (recover >= 9)
-      CHECK(!sysfilewatchaccept(&watch, head, FS_CONN_BYTES, &input, &descriptor));
-    else
-      CHECK(!sysfilerequest(head, FS_CONN_BYTES, 6, input.words[2], &descriptor));
+    if (!recover || recover >= 9) {
+      Filewatch *connection = recover ? &watch : &links[1].watch;
+      CHECK(!sysfilewatchaccept(connection, head, FS_CONN_BYTES, &input, &descriptor));
+      if (recover >= 9 && sysopenref(preps, ARRAY_SIZE(preps), &input, &descriptor))
+        CHECK(cancelled == 1);
+      CHECK(!sysopenclosereply(preps, ARRAY_SIZE(preps), connection, &input, &descriptor,
+                               revokepreparation, &closed) &&
+            !connection->active.requests[6]);
+      continue;
+    }
+    CHECK(!sysfilerequest(head, FS_CONN_BYTES, 6, input.words[2], &descriptor));
     CHECK(!sysfileargs(FS_CLOSE, &descriptor));
     prep = sysopenref(preps, ARRAY_SIZE(preps), &input, &descriptor);
     if (!prep)
       reply.words[0] = (u64) -ESTALE;
     else {
-      if (recover >= 9)
-        CHECK(prep == &preps[0] && cancelled == 1);
       sysopenretire(prep);
       closed++;
     }
     reply.words[1] = input.words[2];
     CHECK(!ipc_reply(input.request, &reply));
-    if (recover >= 9)
-      CHECK(!sysfilefinish(&watch.active, input.request));
   }
   CHECK(memory);
   if (!recover)

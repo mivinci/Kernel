@@ -107,6 +107,10 @@ isize sysfilewatch(Filewatch *watch, Handle permit, const Ipcmsg *source, u64 co
 isize sysfilewatchread(Filewatch *watch);
 isize sysfilewatchaccept(Filewatch *watch, const volatile void *region, u64 bytes,
                          const Ipcmsg *source, Fileslot *out);
+/* Close the exact reference from an admitted slot. On revoke failure the
+   service retains the original REQUEST and slot for retry. */
+isize sysopenclosereply(Openprep *pool, u32 count, Filewatch *watch, const Ipcmsg *call,
+                        const Fileslot *slot, Openrevoke revoke, void *context);
 /* Caller has stopped every downstream access for this request. Finish the
    original retired REQUEST and only then release its registered slots. */
 isize sysfilewatchdrain(Filewatch *watch, Handle request);
