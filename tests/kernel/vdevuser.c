@@ -1057,6 +1057,7 @@ testflush(Blkqueue *queue, Handle binding, u64 irqevent, u64 sector)
   vdev_trace[3]++;
 }
 #define MOUNT_TIMEOUT_GATE UINT64_C(0x6d6f756e74)
+#define HELLO_CANCEL_GATE  UINT64_C(0x68656c6c6f)
 
 static const u32 blkopcodes[] = {
     BLK_WRITE, BLK_FLUSH,                                  /* data-only transaction */
@@ -1485,6 +1486,21 @@ blkclient(const Bootview *boot, Handle call)
   u32               i, op;
   Msg               badhello = {{BLK_WORD(BLK_HELLO), 0, 1, 0}};
   probe.blk = &blk;
+  {
+    const Msg gate = {{HELLO_CANCEL_GATE, 0, 0, 0}};
+    Handle    rpc;
+    REQUIRE(!fsblkhello(&attaching, call, space, address, 1, 2) &&
+                !ipc_call(call, &gate, 0, &result) && result.words[0] == HELLO_CANCEL_GATE,
+            547);
+    rpc = attaching.boot.rpc;
+    REQUIRE(fsblkdetach(&attaching, &blk) == -ERR_WOULD_BLOCK && attaching.boot.rpc == rpc &&
+                attaching.boot.state == SYSBOOT_WAITING && !blk.address &&
+                !ipc_call(call, &gate, 0, &result) && result.words[0] == HELLO_CANCEL_GATE &&
+                !fsblkdetach(&attaching, &blk) && !attaching.call && !attaching.boot.rpc &&
+                !attaching.memory && !attaching.map.mapped && !blk.address &&
+                ipc_rqpoll(rpc, 0, &result) == -ERR_STALE,
+            548);
+  }
   {
     isize status = 1;
     REQUIRE(!fsblkhello(&attaching, call, space, address, 1, 1) &&
@@ -2056,6 +2072,31 @@ blkclient(const Bootview *boot, Handle call)
 }
 
 static void
+hellocancel(void)
+{
+  const Msg reply = {{HELLO_CANCEL_GATE, 0, 0, 0}};
+  Ipcmsg    hello, gate;
+  u64       state;
+  REQUIRE(!ipc_recv(0, 0, &hello) && hello.kind == IPC_CALL &&
+              hello.words[0] == BLK_WORD(BLK_HELLO) && hello.words[2] == 2 &&
+              !ipc_defer(hello.request),
+          547);
+  REQUIRE(!ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL && gate.words[0] == HELLO_CANCEL_GATE &&
+              gate.source == hello.source && gate.image == hello.image &&
+              !ipc_rqcheck(hello.request, &state) && state == RQ_CHECK_LIVE &&
+              !ipc_reply(gate.request, &reply),
+          547);
+  REQUIRE(!ipc_recv(EVENT_RQ_CANCEL, RECV_EVENTS_ONLY, &gate) && gate.kind == IPC_EVENT &&
+              gate.words[0] == EVENT_RQ_CANCEL && !ipc_recv(0, 0, &gate) && gate.kind == IPC_CALL &&
+              gate.words[0] == HELLO_CANCEL_GATE && gate.source == hello.source &&
+              gate.image == hello.image && !ipc_rqcheck(hello.request, &state) &&
+              state == (RQ_CHECK_LIVE | RQ_CHECK_CANCEL) &&
+              !ipc_reply(hello.request, &(Msg){{(u64) -ECANCELED, hello.words[2], 0, 0}}) &&
+              !ipc_reply(gate.request, &reply),
+          548);
+}
+
+static void
 blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
 {
   const Bootview *boot = sysboot();
@@ -2075,6 +2116,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
   Vdone           done[VQ_BATCH];
   u32             count, more, causes, i;
   u64             alarm, started;
+  hellocancel();
   REQUIRE(!blktransportinit(&transport, queue, &link, 1, jobs, ARRAY_SIZE(jobs), 1, blksync,
                             queue->device),
           369);
@@ -2350,6 +2392,7 @@ main(int argc, char **argv)
   if (!vdev_trace[VTEST_BLK_RPC]) {
     Ipcmsg input;
     Msg    reply = {{(u64) -ERR_NOTSUP, 1, 0, 0}};
+    hellocancel();
     REQUIRE(!ipc_recv(0, 0, &input) && input.kind == IPC_CALL &&
                 input.words[0] == BLK_WORD(BLK_HELLO) && !ipc_reply(input.request, &reply),
             377);

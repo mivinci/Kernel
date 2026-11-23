@@ -139,6 +139,11 @@ fsblkdetach(Blkattach *work, Fsblk *blk)
     return -ERR_BUSY;
   boot = &work->boot;
   claim = boot->claim;
+  if (boot->state == SYSBOOT_WAITING) {
+    error = sysbootcancel(boot, claim);
+    if (error)
+      return error;
+  }
   if (boot->state != SYSBOOT_FREE) {
     error = bootack(boot, claim);
     if (error)
