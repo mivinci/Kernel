@@ -939,16 +939,30 @@ client(const Bootview *boot)
 static void
 exitclient(const Bootview *boot)
 {
-  Opkey  key;
-  Msg    message;
-  Ipcmsg result;
-  u64    files[2] = {0, 0}, source = 0;
+  Opkey     key;
+  Msg       message;
+  Ipcmsg    result;
+  Filelease lease;
+  Fileslot  slot = {0};
+  Fileref   reference;
+  u64       files[2] = {0, 0}, source = 0;
   setup(boot);
   CHECK(!sysctxinit(&contexts, work.state.self));
   key = begin(FS_OPEN, "/a", 0);
   collect(&key);
   complete(&key, 0, files, &source);
   CHECK(files[0] && !files[1] && !source);
+  CHECK(!sysfilerefview(&pool, work.state.self, files[0], &reference) &&
+        !sysconnworkreserve(&work, &cache, SYSFILE_MAIN, 1, &lease));
+  slot.seq = lease.seq;
+  slot.state = FS_SLOT_SUBMITTED;
+  slot.span = 1;
+  slot.object = reference.session;
+  slot.payload_bytes = slot.args[1] = 1;
+  message = (Msg){{FS_READ, work.state.map.connid, lease.seq, lease.slot}};
+  CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
+                    &slot, sizeof(slot)) &&
+        !ipc_call(work.state.call, &message, CALL_ASYNC, &result) && result.request);
   (void) begin(FS_OPEN, "/late", 0);
   message.words[0] = SEEN;
   message.words[1] = message.words[2] = message.words[3] = 0;
@@ -958,9 +972,10 @@ exitclient(const Bootview *boot)
 typedef struct Exitdrain Exitdrain;
 struct Exitdrain
 {
-  Handle request;
-  u64   *references;
-  u32    attempts;
+  Handle      request;
+  u64        *references;
+  Ttypending *tty;
+  u32         attempts;
 };
 
 static isize
@@ -971,7 +986,8 @@ drainexit(void *context, Filelink *link)
         drain->references[1]);
   if (++drain->attempts == 1)
     return -ERR_WOULD_BLOCK;
-  CHECK(!sysfilewatchdrain(&link->watch, drain->request));
+  CHECK(!sysfilewatchdrain(&link->watch, drain->request) &&
+        !ttyfiledrain(drain->tty, &link->watch));
   drain->references[0] = drain->references[1] = 0;
   return 0;
 }
@@ -1288,7 +1304,7 @@ server(const Bootview *boot, u32 recover)
   u64             ttynow, ttyalarm = 0, generation;
   u8              output[3];
   u32             ttyseen = 0;
-  if (!recover)
+  if (!recover || recover == 12)
     CHECK(!ttyinputinit(&ttyline, 1) && !serialinit(&ttyrx, 1) && !serialinit(&ttytx, 1) &&
           !ttyserialinit(&ttyio, &ttyrx, &ttytx, 1));
   CHECK(!sysconnpeer(bootresource(boot, 256), &peer) && !ipc_recv(0, 0, &input) &&
@@ -1355,17 +1371,18 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (input.kind == IPC_EVENT) {
-      Exitdrain drain = {pending, references, 0};
+      Exitdrain drain = {pending, references, &ttydeferred, 0};
       Handle    pid;
       u64       state, reason, image, cookie = watch->owner.cookie;
-      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && pending && created == 2 && !closed &&
+      CHECK(recover == 12 && input.words[0] == EVENT_LIFE && pending && ttydeferred.call.request &&
+            created == 2 && !closed &&
             sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) == -ERR_WOULD_BLOCK &&
             watch->owner.cookie == cookie && link->memory && link->address);
       CHECK(sysfilelinkaccept(links, ARRAY_SIZE(links), &deferred, &descriptor) == -ERR_PEER &&
             sysfilelinkclose(link) == -ERR_BUSY);
       CHECK(!sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) && drain.attempts == 2 &&
-            !references[0] && !references[1] && !link->memory && !link->address &&
-            !watch->owner.cookie &&
+            !references[0] && !references[1] && !ttydeferred.call.request && !ttydeferred.page &&
+            !link->memory && !link->address && !watch->owner.cookie &&
             __sys_obsread(cookie, &state, &reason, &pid, &image) == -ERR_STALE);
       CHECK(!sysfilelinksweep(links, ARRAY_SIZE(links), drainexit, &drain) && drain.attempts == 2);
       closed = 2;
@@ -1488,7 +1505,9 @@ server(const Bootview *boot, u32 recover)
         CHECK(!ipc_reply(input.request, &reply));
         continue;
       }
-      CHECK(recover == 12 && pending && created == 2 && !ipc_reply(input.request, &reply));
+      CHECK(recover == 12 && pending && ttydeferred.call.request && created == 2 &&
+            ttyfiledrain(&ttydeferred, &links[1].watch) == -ERR_STALE &&
+            ttyfiledrain(&ttydeferred, watch) == -ERR_BUSY && !ipc_reply(input.request, &reply));
       continue;
     }
     if (opcode == LOADTEST) {
@@ -1636,6 +1655,13 @@ server(const Bootview *boot, u32 recover)
     if (opcode == FS_READ || opcode == FS_WRITE || opcode == FS_CLOSE || opcode == FS_DUPREF)
       CHECK(!sysfileargs(opcode, &descriptor));
     data = (volatile u64 *) (ADDRESS + FS_DATA_OFFSET + slot * FS_SLOT_BYTES);
+    if (recover == 12 && opcode == FS_READ) {
+      CHECK(created == 1 && descriptor.object == sessions[0] &&
+            !ttyfilestart(&ttyio, &ttyline, &ttymode, &watch->active, &input, &descriptor,
+                          (volatile u8 *) data, 0, 0, &ttydeferred, &ttyalarm) &&
+            ttydeferred.call.request == input.request && !ttyalarm);
+      continue;
+    }
     if (!recover && opcode == FS_EXEC_PREPARE) {
       Connpeer backend;
       Handle   parent;

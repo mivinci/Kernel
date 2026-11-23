@@ -111,6 +111,9 @@ isize ttyfiledefer(Ttypending *pending, const Fileinflight *active, const Ipcmsg
                    const Fileslot *slot, volatile u8 *page, const Ttywait *wait);
 isize ttyfileresume(Ttypending *pending, Ttyserial *io, Ttyinput *input, u64 oflag,
                     Fileinflight *active, u64 now, u64 *next);
+/* Drop a deferred I/O record only after the ended owner's original request
+   has finished. No access to the shared data page is needed. */
+isize ttyfiledrain(Ttypending *pending, Filewatch *watch);
 /* Use the wait snapshot taken at admission. While blocked, next is the
    absolute alarm deadline, or zero for an untimed wait. */
 isize ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call,

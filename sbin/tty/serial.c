@@ -374,6 +374,25 @@ ttyfileresume(Ttypending *pending, Ttyserial *io, Ttyinput *input, u64 oflag, Fi
 }
 
 isize
+ttyfiledrain(Ttypending *pending, Filewatch *watch)
+{
+  const Ipcmsg *call;
+  isize         error;
+  if (!pending || !watch)
+    return -ERR_INVALID;
+  call = &pending->call;
+  if (!call->request)
+    return 0;
+  if (call->source != watch->owner.pid || call->image != watch->owner.image ||
+      call->words[1] != watch->connid || !fileowns(&watch->active, call, &pending->slot))
+    return -ERR_STALE;
+  error = sysfilewatchdrain(watch, call->request);
+  if (!error)
+    *pending = (Ttypending){0};
+  return error;
+}
+
+isize
 ttyfilereadwait(Ttyinput *input, Fileinflight *active, const Ipcmsg *call, const Fileslot *slot,
                 volatile u8 *page, Ttywait *wait, u64 now, u64 *next)
 {
