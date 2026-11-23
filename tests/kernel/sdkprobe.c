@@ -4,6 +4,8 @@
 #include <string.h>
 #include <unistd.h>
 
+_Static_assert(sizeof(pid_t) == 4 && (pid_t) -1 < 0, "POSIX PID must be signed 32-bit");
+
 static int
 compare(const void *left, const void *right)
 {

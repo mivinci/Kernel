@@ -23,7 +23,7 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 ## 接续计划：用项目自身的 ABI 和 SDK 支持原版 BusyBox
 
-目标是从固定归档构建未经修改的 BusyBox 1.37.0。保留项目配置和目标构建脚本，三个源码补丁按以下顺序撤除。当前 32 位 PID 迁移尚未完成，补丁均保留。
+目标是从固定归档构建未经修改的 BusyBox 1.37.0。保留项目配置和目标构建脚本。32 位 PID 迁移已合入，PID 补丁已撤，平台和网络补丁仍用于过渡验证。
 
 按设计边实现边验证。探针遇到缺口时，优先补齐本项目的 ABI、libc、SDK 或服务接线，也可用 BusyBox 已有的选项缩小验证范围。现有补丁仅用于过渡验证，不再新增或扩大 BusyBox 源码补丁来绕过系统缺口。原版构建暂时走不通时，记录实际缺口，继续用公开 SDK 小程序或对应的 QEMU 场景验证已完成的能力。
 
@@ -142,7 +142,7 @@ A2 固定使用 [miniz 3.1.2](https://github.com/richgel999/miniz/tree/3.1.2) �
 - 阶段 C 须更新 [busybox-pid.sh](../../tests/fixtures/busybox-pid.sh) 的旧宽 PID 断言，改验公开 PID 均在 `1..INT32_MAX`，保留 `$$`、`PPID` 和 `kill -0` 的核对，以及父 shell 通过 `$!` 收取退出码 37 的断言。编号上限与耗尽另由内核场景验证。宿主执行只检查脚本，不能取代目标运行。
 - **不以"能编过"替代"能跑"**；各阶段结论分别记录，不用阶段 A 的成功推断阶段 C 可用。
 
-BusyBox 1.37.0 的 PID 审查发现，`ash` 的 `rootpid`、`initialpgrp`、`forkshell`、`waitproc`/`waitone` 及若干调用点会把完整 PID/PGID 收窄为 `int`；`$$`/`$!` 展开、`PPID`、`jobs` 输出和 `wait`/`kill` 数字参数也有收窄路径。特别是 `waitone` 会用收窄后的值匹配 `procstat` 的 `pid_t`，可能收取了结果却找不到作业。移植时须对这些路径保留完整 `pid_t`，并扩大 PID 文本缓冲；普通退出码、信号号及作业编号仍使用原类型。此缺口不修改 15 篇已经确定的系统 PID ABI。
+旧 64 位 PID ABI 下，BusyBox 1.37.0 的 ash 会在作业管理、`$$`、`$!`、`PPID` 及 `wait`/`kill` 参数等路径把 PID/PGID 收窄为 `int`。当前 ABI 的所有公开 PID 均可用 `int` 表示，相关路径仍须用目标 ash 验证。
 
 32 位 PID 迁移通过双架构内核验证后，已移除旧 PID 补丁及 `prepare.py` 中的应用步骤。两架构均可从固定归档完成源码准备，ash 语法探针仍缺 `sys/times.h`。32 位 PID 脚本通过宿主 Bash 检查，目标 ash 构建、链接及运行待验收。
 
