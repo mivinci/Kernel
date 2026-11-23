@@ -84,7 +84,7 @@ bootpacket(Handle fdcall, char mode)
     packet.header.fd_count = 1;
     packet.header.fds_off = offsetof(Packet, fd);
     packet.fd.backend_call = fdcall;
-    packet.fd.session = packet.fd.prepare_token = 1;
+    packet.fd.session = packet.fd.prepare_token = packet.fd.reference_id = 1;
   }
   REQUIRE(!sysargboot(&snapshot, &packet.header, sizeof(packet)) && packet.header.argc == 3 &&
               packet.header.envc == 2 && packet.header.bytes < PAGE_SIZE &&

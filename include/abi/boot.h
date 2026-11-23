@@ -64,7 +64,7 @@ struct Bootfd
 {
   u64    fd, flags;
   Handle backend_call;
-  u64    session, prepare_token, reserved;
+  u64    session, prepare_token, reference_id;
 };
 struct Fix
 {
@@ -80,6 +80,7 @@ STATIC_ASSERT(sizeof(Strref) == 8, boot_string_entry);
 STATIC_ASSERT(sizeof(Resentry) == 32, boot_resource_entry);
 STATIC_ASSERT(sizeof(Bootfd) == 48, boot_fd_entry);
 STATIC_ASSERT(offsetof(Bootfd, prepare_token) == 32, boot_prepare_token);
+STATIC_ASSERT(offsetof(Bootfd, reference_id) == 40, boot_fd_reference);
 STATIC_ASSERT(sizeof(Boot) == BOOT_HEADER_BYTES, boot_header);
 STATIC_ASSERT(offsetof(Boot, bytes) == 16, boot_bytes);
 STATIC_ASSERT(offsetof(Boot, user_lo) == 112, boot_user_lo);

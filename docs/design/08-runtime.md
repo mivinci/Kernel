@@ -298,7 +298,7 @@ host新增旧格式拒绝、窗口边界/溢出/单边字段、模板禁止包�
 
 argv/env条目Strref=(u32 offset,u32 length)，8字节；总参数/环境字节与指针数换算开销合计<=16384，argc/envc各<=256。资源条目Resentry=32字节，tag/handle/flags/reserved四u64；tag SELF_SPACE=1、SELF_ALLOC=2、CREATE=3、FS_CALL=4、TTY_CALL=5、TERMINAL=6、SYSTEM=7、BOOT_IMAGE=8、其余受信设备tag从256起，重复必需tag拒绝，flags继承位按03，不凭tag造权。
 
-启动fd条目48字节，六u64=[fd,flags,backend_call,session,prepare_token,reserved]，数量<=128、fd不重复，flags只FD_CLOEXEC=1（普通exec结果不含该项），session和prepare_token均须非零。prepare_token在字节32，绑定目标image的服务准备；不是旧connid。共享Mem由新source用无槽[EXEC_CLAIM或ATTACH,0,bootstrap_seq,prepare_token]首次领取，MEM回复给出本次connid/bytes；若本镜像对该后端已有可用连接，则同次token普通确认复用，不重复交付MEM。fd先建立为待接入记录，首次需要后端时map校验后才发布该连接为可传输；新启动代码不能直接复用旧镜像VA或共享槽。资源表里必要CALL通过显式EXEC继承、构造grant或运行中resource reply获得；所有底层权仍限定对端PID/image。
+启动fd条目48字节，六u64=[fd,flags,backend_call,session,prepare_token,reference_id]，数量<=128、fd不重复，flags只FD_CLOEXEC=1（普通exec结果不含该项），session、prepare_token 和 reference_id 均须非零；reference_id 在字节 40，沿用源引用编号并由目标 PID/image 独立持有。prepare_token在字节32，绑定目标image的服务准备；不是旧connid。共享Mem由新source用无槽[EXEC_CLAIM或ATTACH,0,bootstrap_seq,prepare_token]首次领取，MEM回复给出本次connid/bytes；若本镜像对该后端已有可用连接，则同次token普通确认复用，不重复交付MEM。fd先建立为待接入记录，首次需要后端时map校验后才发布该连接为可传输；新启动代码不能直接复用旧镜像VA或共享槽。资源表里必要CALL通过显式EXEC继承、构造grant或运行中resource reply获得；所有底层权仍限定对端PID/image。
 
 现有静态装载路径只接受ELF64/little-endian/ET_EXEC、EM_AARCH64=183或EM_RISCV=243，版本1，静态无PT_INTERP/PT_DYNAMIC，程序头<=32、e_phentsize=56，入口及PT_LOAD检查越界、文件/内存长度、对齐和权限合并。PT_GNU_STACK若要求执行拒绝；不支持脚本#!或动态重定位，ENOEXEC。不沿用旧镜像格式。init装载描述固定外头64字节[magic,format,bytes,entry,segment_count,segments_off,boot_off,boot_bytes]，段表48字节[file_off,file_bytes,va,mem_bytes,prot,reserved]，只允许与本架构页/权限匹配的预校验静态映像；内核不解析全部普通ELF。启动包目录由init解释，路径和段引用只限该包内。
 

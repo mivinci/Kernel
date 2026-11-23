@@ -67,7 +67,7 @@ sysbootfds(const Bootfd *fds, u64 count)
     return 0;
   for (i = 0; i < count; i++) {
     const Bootfd *fd = &fds[i];
-    if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~((u64) BOOT_FD_CLOEXEC) || fd->reserved ||
+    if (fd->fd >= BOOT_FD_COUNT || fd->flags & ~((u64) BOOT_FD_CLOEXEC) || !fd->reference_id ||
         !resource(fd->backend_call) || !fd->session || !fd->prepare_token)
       return 0;
     word = fd->fd / 64;
