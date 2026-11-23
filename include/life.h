@@ -74,6 +74,7 @@ STATIC_ASSERT(sizeof(Cred) == 16, cred_size);
 STATIC_ASSERT(sizeof(Life) <= 128, life_budget);
 STATIC_ASSERT(offsetof(Life, stopped) == 127, life_stopped_offset);
 int lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out);
+int lifecreaterun(Setid set, Handle pid, Handle parent, u32 run, Lifeid *out);
 /* Trusted boot/test constructor only; native CREATE must supply validated IDs. */
 int lifecredentials(Lifeid id, const Cred *cred);
 /* Trusted current-parent policy; affects only subsequent child exit commits. */

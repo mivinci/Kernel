@@ -90,13 +90,17 @@ reap(Life *l)
 int
 lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
 {
+  return lifecreaterun(set, pid, parent, handleindex(pid), out);
+}
+int
+lifecreaterun(Setid set, Handle pid, Handle parent, u32 run, Lifeid *out)
+{
   Life *l;
-  u32   i, slot = PG_NONE, run;
+  u32   i, slot = PG_NONE;
   int   error;
   if (!out || handletype(pid) != HANDLE_PROCESS ||
       (pid == 1 ? parent != 0 : handletype(parent) != HANDLE_PROCESS) || pid == parent)
     return -ERR_INVALID;
-  run = handleindex(pid);
   if (run >= PROCS)
     return -ERR_INVALID;
   for (i = 0; i < LIFES; i++) {

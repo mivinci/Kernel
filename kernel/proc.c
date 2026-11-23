@@ -360,7 +360,7 @@ newproc(Setid set, Handle parent, u64 limit, u64 peak, u32 resources, u32 bootin
   p->generation++;
   pid = booting ? 1 : handlepack(HANDLE_PROCESS, p->generation, slot);
   eventinit(&p->events);
-  error = lifecreate(set, pid, parent, &p->life);
+  error = lifecreaterun(set, pid, parent, slot, &p->life);
   if (error) {
     p->state = 0;
     return error;
