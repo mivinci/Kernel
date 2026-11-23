@@ -12,7 +12,15 @@ SECTIONS
   . = 0x10000;
   .text : { *(.text._start) *(.text .text.*) } :text
   . = ALIGN(4096);
-  .rodata : { *(.rodata .rodata.*) } :rodata
+  .rodata : {
+    *(.rodata .rodata.*)
+    . = ALIGN(8);
+    PROVIDE_HIDDEN(__native_tls = .);
+    QUAD(ADDR(.tdata))
+    QUAD(SIZEOF(.tdata))
+    QUAD(SIZEOF(.tbss) ? ADDR(.tbss) + SIZEOF(.tbss) - ADDR(.tdata) : SIZEOF(.tdata))
+    QUAD(MAX(ALIGNOF(.tdata), ALIGNOF(.tbss)))
+  } :rodata
   .preinit_array ALIGN(8) : {
     PROVIDE_HIDDEN(__preinit_array_start = .);
     KEEP(*(.preinit_array))
@@ -32,7 +40,7 @@ SECTIONS
   } :rodata
   . = ALIGN(4096);
   .data : { *(.data .data.*) *(.sdata .sdata.*) } :data
-  .tdata : { *(.tdata .tdata.*) } :data :tls
+  .tdata ALIGN(MAX(ALIGNOF(.tdata), ALIGNOF(.tbss))) : { *(.tdata .tdata.*) } :data :tls
   .tbss (NOLOAD) : { *(.tbss .tbss.*) *(.tcommon) } :data :tls
   .bss (NOLOAD) : { *(.bss .bss.*) *(.sbss .sbss.*) *(COMMON) } :data
   PROVIDE_HIDDEN(__image_end = ALIGN(4096));
