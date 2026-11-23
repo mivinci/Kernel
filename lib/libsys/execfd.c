@@ -84,6 +84,36 @@ samepeer(Connpeer a, Connpeer b)
 }
 
 isize
+sysexecfdboot(const Execfds *capture, Connpeer backend, Handle call, u64 token, Bootfd *rows,
+              u64 capacity)
+{
+  const Execfd *fd;
+  u64           i, count = 0;
+  if (!capture || !capture->pool || capture->ready != 1 || capture->count > BOOT_FD_COUNT)
+    return -ERR_STATE;
+  if (!pidvalid(backend.pid) || !backend.image || call <= 0 || !token || capacity > BOOT_FD_COUNT ||
+      (capacity &&
+       (!separate(rows, capacity * sizeof(*rows), capture, sizeof(*capture)) ||
+        !separate(rows, capacity * sizeof(*rows), capture->pool, sizeof(*capture->pool)))))
+    return -ERR_INVALID;
+  for (i = 0; i < capture->count; i++) {
+    fd = &capture->entries[i];
+    if (samepeer(fd->backend, backend) && !(fd->flags & BOOT_FD_CLOEXEC))
+      count++;
+  }
+  if (count > capacity)
+    return -ERR_CAPACITY;
+  count = 0;
+  for (i = 0; i < capture->count; i++) {
+    fd = &capture->entries[i];
+    if (!samepeer(fd->backend, backend) || (fd->flags & BOOT_FD_CLOEXEC))
+      continue;
+    rows[count++] = (Bootfd){fd->fd, 0, call, fd->session, token, fd->reference};
+  }
+  return (isize) count;
+}
+
+isize
 sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u64 deadline,
                   u64 args[8], Fileinherit *rows, u64 capacity)
 {
@@ -91,8 +121,8 @@ sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_image, u6
   u64           bytes, i, count = 0;
   if (!capture || !capture->pool || capture->ready != 1 || capture->count > BOOT_FD_COUNT)
     return -ERR_STATE;
-  if (!pidvalid(backend.pid) || !backend.image ||
-      target_image <= capture->self.image || !deadline || capacity > BOOT_FD_COUNT ||
+  if (!pidvalid(backend.pid) || !backend.image || target_image <= capture->self.image ||
+      !deadline || capacity > BOOT_FD_COUNT ||
       !separate(args, 8 * sizeof(*args), capture, sizeof(*capture)) ||
       !separate(args, 8 * sizeof(*args), capture->pool, sizeof(*capture->pool)))
     return -ERR_INVALID;

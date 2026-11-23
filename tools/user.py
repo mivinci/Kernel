@@ -294,9 +294,9 @@ def build(args):
         assembly=sdk/'init-config.S'
         assembly.write_text('/* configuration sha256: '+digest(artifact)+' */\n.section .rodata\n.balign 8\n.global init_config,init_config_end\ninit_config:\n.incbin '+json.dumps(str(artifact))+'\ninit_config_end:\n')
         return compile_adoption(assembly,'init-config')
-    def link_adoption(label,objects,libraries=()):
+    def link_adoption(label,objects,libraries=(),startup=True):
         artifact=sdk/(label+'.elf')
-        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',str(crt),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
+        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',*([str(crt)] if startup else []),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
     tty_sources=[ROOT/name for name in ('tests/kernel/ttywaituser.c','tests/kernel/ttyuser.c',
@@ -311,7 +311,7 @@ def build(args):
     (sdk/'ttyimage.S').write_text('/* image sha256: '+digest(tty_image)+' */\n.section .rodata\n.balign 8\n.global tty_image,tty_image_end,tty_trace_address\ntty_image:\n.incbin '+json.dumps(str(tty_image))+'\ntty_image_end:\n.balign 8\ntty_trace_address:\n.quad '+str(int(tty_rows[0][1],16))+'\n')
     fs_load_sources = [ROOT/'sbin/fs'/name for name in ('load.c', 'loadio.c', 'cache.c')]
     claim_payload = link_adoption('execclaimuser', [compile_adoption(
-        ROOT/'tests/kernel/execclaimuser.c', 'execclaimuser')])
+        ROOT/'tests/kernel/execclaimuser.c', 'execclaimuser')],startup=False)
     filecreate_elf=link_adoption('filecreateuser',[compile_adoption(ROOT/'tests/kernel/filecreateuser.c','filecreateuser'),
         embedded_elf(claim_payload, 'execclaim_elf'),
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.name in ('term.c','input.c','serial.c','wait.c')],

@@ -1046,6 +1046,7 @@ claimsource(const Bootview *boot, int reuse)
   {
     Boot     header;
     Resentry resources[3];
+    Bootfd   fd;
   };
   Claimboot packet = {0};
   Execwork  next = {0};
@@ -1083,12 +1084,17 @@ claimsource(const Bootview *boot, int reuse)
         !sysopfinished(&work, &cache, &execsend.key) && !sysopsaved(&work, &cache, &execsend.key) &&
         !sysopack(&work, &cache, &execsend.key) &&
         !sysopfinish(&work, &cache, &execsend.key, &pin) && pin == file &&
-        !sysfilerefunpin(&pool, work.state.self, pin) && !sysexecfdrelease(&execfds));
+        !sysfilerefunpin(&pool, work.state.self, pin));
+  CHECK(sysexecfdboot(&execfds, work.state.peer, work.state.call, result.words[2], &packet.fd, 1) ==
+            1 &&
+        !sysexecfdrelease(&execfds));
   packet.header.magic = BOOT_MAGIC;
   packet.header.format = BOOT_FORMAT;
   packet.header.bytes = sizeof(packet);
   packet.header.resource_count = ARRAY_SIZE(packet.resources);
   packet.header.resources_off = offsetof(Claimboot, resources);
+  packet.header.fd_count = 1;
+  packet.header.fds_off = offsetof(Claimboot, fd);
   packet.header.user_lo = BOOT_USER_LO;
   packet.header.user_hi = BOOT_USER_HI;
   packet.resources[0].tag = BOOT_SELF_SPACE;

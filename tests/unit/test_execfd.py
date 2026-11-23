@@ -28,6 +28,10 @@ class WireRow(C.Structure):
                                         'session', 'reference')]
 
 
+class BootRow(C.Structure):
+    _fields_ = [(name, U) for name in ('fd', 'flags', 'call', 'session', 'token', 'reference')]
+
+
 class ExecFdTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -166,6 +170,23 @@ class ExecFdTests(unittest.TestCase):
                          (2, 1, 8, 91))
         self.assertEqual(pack(C.byref(self.out), Peer(pid(3), 1), 11, 123, args, None, 0), 0)
         self.assertEqual(args[4], 0)
+
+    def test_boot_rows_preserve_alias_identity_and_skip_cloexec(self):
+        file = self.new(80, 81)
+        self.put(0, file)
+        for fd, flags in ((1, 1), (2, 0)):
+            self.assertEqual(self.lib.sysfilerefalias(self.pp, self.self, file), 0)
+            self.put(fd, file, flags)
+        self.assertEqual(self.snapshot(), 0)
+        pack = self.lib.sysexecfdboot
+        pack.argtypes = [C.POINTER(Capture), Peer, C.c_int64, U, C.POINTER(BootRow), U]
+        pack.restype = C.c_int64
+        rows = (BootRow * 2)()
+        self.assertLess(pack(C.byref(self.out), self.peer, 400, 123, rows, 1), 0)
+        self.assertEqual(rows[0].reference, 0)
+        self.assertEqual(pack(C.byref(self.out), self.peer, 400, 123, rows, 2), 2)
+        self.assertEqual([(r.fd, r.flags, r.call, r.session, r.token, r.reference) for r in rows],
+                         [(0, 0, 400, 80, 123, 81), (2, 0, 400, 80, 123, 81)])
 
     def test_manifest_capacity_failure_does_not_touch_output(self):
         first = self.new(80, 81)

@@ -10,25 +10,23 @@ static Rbank     bank;
 static Connwork  work;
 static Conncache cache;
 
-int
-main(int argc, char **argv)
+static int
+claim(const Bootview *boot)
 {
-  const Bootview *boot = sysboot();
-  Handle          ready = bootresource(boot, EXEC_CLAIM_READY);
-  Handle          call = ready ? ready : bootresource(boot, EXEC_CLAIM_CALL), redundant = 0, parent;
-  Handle          space = bootresource(boot, BOOT_SELF_SPACE);
-  Handle          memory = 0;
-  Connpeer        self, peer;
-  Conntag         tag;
-  Connclaim       claim;
-  Connentry       entry;
-  Bootmap         map = {0};
-  Rkey            active = {0};
-  Msg             duplicate = {{FS_EXEC_CLAIM, 0, 2, EXEC_CLAIM_TOKEN}};
-  Ipcmsg          result;
-  volatile u64   *marker = (volatile u64 *) (EXEC_CLAIM_ADDRESS + FS_DATA_OFFSET);
-  (void) argv;
-  if (argc || __sys_getid(&self.pid, &self.image, &parent) || self.pid <= 1 || self.image != 2)
+  Handle        ready = bootresource(boot, EXEC_CLAIM_READY);
+  Handle        call = boot->fds[0].backend_call, redundant = 0, parent;
+  Handle        space = bootresource(boot, BOOT_SELF_SPACE);
+  Handle        memory = 0;
+  Connpeer      self, peer;
+  Conntag       tag;
+  Connclaim     claim;
+  Connentry     entry;
+  Bootmap       map = {0};
+  Rkey          active = {0};
+  Msg           duplicate = {{FS_EXEC_CLAIM, 0, 2, boot->fds[0].prepare_token}};
+  Ipcmsg        result;
+  volatile u64 *marker = (volatile u64 *) (EXEC_CLAIM_ADDRESS + FS_DATA_OFFSET);
+  if (__sys_getid(&self.pid, &self.image, &parent) || self.pid <= 1 || self.image != 2)
     return 71;
   if (sysctxinit(&bank, self) || sysconninit(&cache, self) || sysconnpeer(call, &peer) ||
       sysconnbind(&cache, peer, &tag) || sysconnworkinit(&work, &cache, tag) ||
@@ -42,7 +40,7 @@ main(int argc, char **argv)
         sysconnreusebegin(&cache, tag, 2, &claim))
       return 75;
   }
-  if (sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, EXEC_CLAIM_TOKEN, 0) ||
+  if (sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, duplicate.words[3], 0) ||
       sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) != -ERR_STALE)
     return 72;
   if (sysctxexecclaim(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) ||
@@ -58,4 +56,15 @@ main(int argc, char **argv)
       (isize) result.words[0] != -ESTALE || result.words[1] != duplicate.words[2])
     return 74;
   return 42;
+}
+
+void
+_start(const Boot *packet)
+{
+  Bootview boot;
+  if (bootcheck(packet, packet->bytes, &boot) || packet->argc || packet->fd_count != 1 ||
+      boot.fds[0].fd || boot.fds[0].flags || boot.fds[0].session != 100 ||
+      boot.fds[0].reference_id != 1000 || boot.fds[0].prepare_token != EXEC_CLAIM_TOKEN)
+    __sys_exit(70);
+  __sys_exit(claim(&boot));
 }
