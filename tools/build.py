@@ -47,7 +47,7 @@ BOOT_CASES = {
     "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48,
     "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52, "bootpkg": 53,
     "cpus": 54, "tty": 55, "jobs": 56, "sigsend": 57, "pipeio": 58,
-    "blkservice": 59,
+    "blkservice": 59, "musl": 60,
 }
 
 
@@ -229,6 +229,9 @@ def build(args, directory, run_dir):
             sources += [ROOT/'tests/kernel/cputest.c', ROOT/'tests/kernel'/args.arch/'cpustart.c']
         if args.case == "bootpkg":
             sources += [ROOT / "tests/kernel/bootviewtest.c", ROOT / "tests/kernel/load.c"]
+        if args.case == "musl":
+            sources += [ROOT / "tests/kernel/musltest.c", ROOT / "tests/kernel/load.c",
+                        ROOT / "build/musl-native-probe" / args.arch / "image.S"]
         if args.case == "registers":
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):

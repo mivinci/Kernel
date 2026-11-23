@@ -276,6 +276,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
     elif case == "cow":
         if ready != ["READY cow-restored"] or panics or traps:
             raise SmokeError("COW branch scenario did not finish")
+    elif case == "musl":
+        if ready != ["READY musl-restored"] or panics or traps:
+            raise SmokeError("musl TLS isolation did not finish")
     elif case == "heap":
         if ready != ["READY heap-restored"] or panics or traps:
             raise SmokeError("libc heap scenario did not finish")
@@ -1286,6 +1289,7 @@ def exercise(args, run_dir, record):
                     "READY spaces-restored\n" if args.case == "spaces" else
                     "READY cow-restored\n" if args.case == "cow" else
                     "READY heap-restored\n" if args.case == "heap" else
+                    "READY musl-restored\n" if args.case == "musl" else
                     "READY virtiodev-restored\n" if args.case == "virtiodev" else
                     "READY blkservice-restored\n" if args.case == "blkservice" else
                     "READY mmiogroup-restored\n" if args.case == "mmiogroup" else

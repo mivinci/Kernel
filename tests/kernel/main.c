@@ -11,7 +11,10 @@ testmain(Hvs *space, const Dtinfo *hardware, u64 cpu)
 #if BOOT_CASE == 47 || BOOT_CASE == 48
   chipcpu(hardware, cpu);
 #endif
-#if BOOT_CASE == 59
+#if BOOT_CASE == 60
+  musltest();
+  putstr("READY musl-restored\n");
+#elif BOOT_CASE == 59
   blkservicetest(hardware);
   putstr("READY blkservice-restored\n");
 #elif BOOT_CASE == 58

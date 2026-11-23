@@ -9,16 +9,20 @@ extern long                  sysstartargs(const struct Boot *, int *, char ***, 
 extern void                  __sys_exit(unsigned long) __attribute__((noreturn));
 extern const size_t          __native_tls[4];
 static struct tls_module     tls;
-static unsigned char         storage[4096] __attribute__((aligned(64)));
+static unsigned char         storage[2][4096] __attribute__((aligned(64)));
 static __thread int          initialized = 42;
 static __thread volatile int zero __attribute__((aligned(64)));
-extern char                  __image_end[];
-extern long                  sysvminit(unsigned long, unsigned long);
-extern long sysvmget(unsigned long, void **), sysvmgetguarded(unsigned long, void **),
+/* A kernel fixture can seed this before publishing the image. */
+volatile unsigned long musl_probe_role;
+volatile unsigned long musl_probe_turn;
+extern char            __image_end[];
+extern long            sysvminit(unsigned long, unsigned long);
+extern long            sysvmget(unsigned long, void **), sysvmgetguarded(unsigned long, void **),
     sysvmput(void *);
 static size_t aux_end[2];
 static void  *meta, *large_map;
 extern long   __sys_copy(void *, const void *, unsigned long);
+extern long   __sys_yield(void);
 void *
 native_meta(size_t n)
 {
@@ -73,18 +77,27 @@ csustart(const struct Boot *boot)
   libc.tls_head = &tls;
   libc.tls_cnt = 1;
   libc.tls_align = align;
-  libc.tls_size = sizeof storage;
-  td = __copy_tls(storage);
+  libc.tls_size = sizeof storage[0];
+  td = __copy_tls(storage[musl_probe_role == 2]);
   td->self = td;
   if (__set_thread_area(TP_ADJ(td)) || __pthread_self() != td)
     __sys_exit(121);
-  if (initialized != 42 || zero || errno || argc < 1 || !argv[0] || !envp)
+  if (initialized != 42 || zero || errno || (argc && !argv[0]) || !envp || musl_probe_role > 2)
     __sys_exit(122);
-  initialized++;
-  errno = 77;
-  zero = 33;
-  if (initialized != 43 || zero != 33 || errno != 77)
-    __sys_exit(123);
+  {
+    int role = (int) musl_probe_role;
+    int turn;
+    initialized = 43 + role;
+    errno = 77 + role;
+    zero = 33 + role;
+    for (turn = 0; turn < 4; turn++) {
+      musl_probe_turn = turn + 1;
+      if (__sys_yield() || __pthread_self() != td)
+        __sys_exit(129);
+      if (initialized != 43 + role || zero != 33 + role || errno != 77 + role)
+        __sys_exit(123);
+    }
+  }
   {
     volatile unsigned char *a, *b;
     libc.auxv = aux_end;

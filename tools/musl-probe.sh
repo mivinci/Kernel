@@ -33,4 +33,27 @@ for arch in arm64 riscv; do
     --output "$out/probe.pkg"
   python3 tools/smoke.py --arch "$arch" --case normal --qmp-stdio --firmware "$firmware" \
     --initrd "$out/probe.pkg" --init-elf "$out/probe.elf" --init-exit 42
+  python3 - "$out" "$arch" <<'PY'
+import pathlib, subprocess, sys
+sys.path.insert(0, 'tools')
+from elf import pack
+out = pathlib.Path(sys.argv[1]).resolve()
+elf = out / 'probe.elf'
+image = out / 'probe.img'
+image.write_bytes(pack(elf.read_bytes(), {'arm64': 183, 'riscv': 243}[sys.argv[2]]))
+rows = subprocess.check_output(['llvm-nm', '-P', str(elf)], text=True).splitlines()
+values = {row[0]: int(row[2], 16) for line in rows if len(row := line.split()) >= 3}
+(out / 'image.S').write_text(f'''.section .rodata
+.balign 8
+.global musl_image,musl_image_end,musl_role_address,musl_turn_address
+musl_image:
+.incbin "{image}"
+musl_image_end:
+.balign 8
+musl_role_address: .quad {values['musl_probe_role']}
+musl_turn_address: .quad {values['musl_probe_turn']}
+''')
+PY
+  python3 tools/build.py --kind kernel --case musl --arch "$arch" --timeout 120
+  python3 tools/smoke.py --arch "$arch" --case musl --qmp-stdio --firmware "$firmware"
 done
