@@ -742,6 +742,8 @@ static u32
 timecheck(void)
 {
   struct timespec monotonic, later, realtime, resolution, rt_resolution, before, invalid;
+  Queryrec        rows[2];
+  u64             written, next;
   u32             checks = 0;
 #define TCHECK(c, n)                                                                               \
   do {                                                                                             \
@@ -752,11 +754,26 @@ timecheck(void)
   TCHECK(!clock_gettime(CLOCK_MONOTONIC, &monotonic) && monotonic.tv_sec >= 0 &&
              monotonic.tv_nsec >= 0 && monotonic.tv_nsec < 1000000000 && errno == EDOM,
          256);
+  REQUIRE(!__sys_query(0, QUERY_PROC, 0, &rows[0], 1, &written, &next) && written == 1 && !next,
+          170);
+  REQUIRE(__sys_query(1, QUERY_TIMES, 0, &rows[1], 1, &written, &next) == -ERR_DENIED &&
+              __sys_query(0, QUERY_TIMES, 0, (Queryrec *) 0x3000000, 1, &written, &next) ==
+                  -ERR_FAULT,
+          171);
+  REQUIRE(!__sys_query(0, QUERY_TIMES, 0, &rows[1], 1, &written, &next) && written == 1 && !next &&
+              rows[1].type == QUERY_TIMES && rows[1].pid == rows[0].pid &&
+              rows[1].image == rows[0].image && rows[1].stamp == rows[0].stamp &&
+              rows[1].data[0] + rows[1].data[1] >= rows[0].data[5] && !rows[1].data[2] &&
+              !rows[1].data[3],
+          172);
   TCHECK(!clock_gettime(CLOCK_MONOTONIC, &later) &&
              (later.tv_sec > monotonic.tv_sec ||
               (later.tv_sec == monotonic.tv_sec && later.tv_nsec >= monotonic.tv_nsec)) &&
              errno == EDOM,
          257);
+  REQUIRE(rows[1].data[4] >= (u64) monotonic.tv_sec * 1000000000 + (u64) monotonic.tv_nsec &&
+              rows[1].data[4] <= (u64) later.tv_sec * 1000000000 + (u64) later.tv_nsec,
+          173);
   TCHECK(!clock_gettime(CLOCK_REALTIME, &realtime) && realtime.tv_sec >= 0 &&
              realtime.tv_nsec >= 0 && realtime.tv_nsec < 1000000000 && errno == EDOM,
          258);
