@@ -5,12 +5,20 @@
 #include "context.h"
 
 typedef struct Execsend Execsend;
+typedef struct Forksend Forksend;
 struct Execsend
 {
   Opkey       key;
   Fileinherit rows[BOOT_FD_COUNT];
   isize       business;
   u64         snapshot;
+};
+struct Forksend
+{
+  Execsend send;
+  Fixconn  peers[FIX_CONN_COUNT];
+  u64      representative, snapshot, pin;
+  u32      cursor, count;
 };
 
 /* Prepare the slot for the exact connection, using an independently owned
@@ -35,4 +43,9 @@ isize sysforkfddrive(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, E
 /* Select the next backend in first-fd order. Advance cursor only after
    selecting a peer. Returns 1 with a representative File, or 0 at end. */
 isize sysforkfdnext(const Execfds *capture, u32 *cursor, Connpeer *peer, u64 *file);
+/* Zero-initialized transaction, one stable capture and child throughout.
+   Only zero return permits publication. On failure keep the transaction
+   until the original request and child preparation have been resolved. */
+isize sysforkfdprepare(Forksend *tx, const Execfds *capture, Connwork *works, Conncache *cache,
+                       Rbank *bank, u32 layer, Connpeer child, u64 deadline);
 #endif

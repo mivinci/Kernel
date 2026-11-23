@@ -199,3 +199,58 @@ sysforkfddrive(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Execsen
   }
   return sysforkfdcollect(work, cache, send, owned_file);
 }
+
+isize
+sysforkfdprepare(Forksend *tx, const Execfds *capture, Connwork *works, Conncache *cache,
+                 Rbank *bank, u32 layer, Connpeer child, u64 deadline)
+{
+  Connpeer peer;
+  Connwork *work;
+  Fileref ref;
+  isize error;
+  if (!tx || !capture || !works || !cache || !bank || layer >= RCTX_LAYERS ||
+      tx->count > FIX_CONN_COUNT)
+    return -ERR_INVALID;
+  for (;;) {
+    if (!tx->representative) {
+      error = sysforkfdnext(capture, &tx->cursor, &peer, &tx->representative);
+      if (error <= 0)
+        return error;
+    }
+    if (tx->count == FIX_CONN_COUNT)
+      return -ERR_CAPACITY;
+    error = sysfilerefview(capture->pool, capture->self, tx->representative, &ref);
+    if (error)
+      return error;
+    work = &works[ref.connection.index];
+    if (!tx->send.key.lease.seq) {
+      if (bank->sequence == UINT64_MAX)
+        return -ERR_OVERFLOW;
+      if (!tx->pin) {
+        error = sysfilerefpin(capture->pool, capture->self, tx->representative);
+        if (error)
+          return error;
+        tx->pin = tx->representative;
+      }
+      error = sysforkfdbegin(capture, work, cache, layer, bank->sequence + 1, child,
+                             tx->snapshot, deadline, &tx->pin, &tx->send);
+      if (error)
+        return error;
+    }
+    error = sysforkfddrive(bank, layer, work, cache, &tx->send, &tx->pin);
+    if (error)
+      return error;
+    error = sysfilerefunpin(capture->pool, capture->self, tx->pin);
+    if (error)
+      return error;
+    tx->pin = 0;
+    if (tx->send.business)
+      return tx->send.business;
+    if (!tx->snapshot) {
+      tx->snapshot = tx->send.snapshot;
+      continue;
+    }
+    tx->peers[tx->count++] = (Fixconn){work->state.peer.pid, work->state.peer.image, tx->snapshot};
+    tx->representative = tx->snapshot = 0;
+  }
+}
