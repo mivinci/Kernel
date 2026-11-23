@@ -281,10 +281,20 @@ main(int argc, char **argv)
           result == child && kind == WAIT_CONTINUED && !code && sequence == 3);
     jobtrace[3] = 2;
     jobtrace[5] = sequence;
+    CHECK(!__sys_query(0, QUERY_TIMES, 0, &row, 1, &written, &next) && written == 1 && !next &&
+          !row.data[2] && !row.data[3]);
     CHECK(!__sys_wait(child, 0, &result, &kind, &code, &sequence) && result == child &&
           kind == WAIT_EXITED && code == 42 && sequence == 4);
-    jobtrace[3] = 3;
     jobtrace[6] = sequence;
+    {
+      Queryrec collected;
+      CHECK(!__sys_query(0, QUERY_TIMES, 0, &collected, 1, &written, &next) && written == 1 &&
+            !next && (collected.data[2] || collected.data[3]));
+      CHECK(__sys_wait(child, WAIT_WNOHANG, &result, &kind, &code, &sequence) == -ERR_CHILD);
+      CHECK(!__sys_query(0, QUERY_TIMES, 0, &row, 1, &written, &next) && written == 1 && !next &&
+            row.data[2] == collected.data[2] && row.data[3] == collected.data[3]);
+    }
+    jobtrace[3] = 3;
   } else if (mode == 8) {
     if (child && jobtrace[1]) {
       variant = jobtrace[1];
