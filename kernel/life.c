@@ -20,6 +20,7 @@ addusage(u64 a, u64 b)
 static u16    runlife[PROCS];
 static u64    retired[PROCS];
 static Handle childhint[PROCS];
+static u16    parentlife[LIFES];
 static Life *
 runowner(Handle pid)
 {
@@ -30,6 +31,13 @@ runowner(Handle pid)
       return &lives[entry - 1];
   }
   return NULL;
+}
+static void
+setparent(Life *child, Handle pid)
+{
+  Life *parent = runowner(pid);
+  child->parent = pid;
+  parentlife[child - lives] = parent ? (u16) (parent - lives + 1) : 0;
 }
 static void
 changed(Handle parent)
@@ -48,6 +56,14 @@ parentof(const Life *l)
   if (l->parent == 1 || l->pid == 1 ||
       (l->state != LIFE_LIVE && !(l->state == LIFE_ENDED && l->waitref)))
     return l->parent;
+  entry = parentlife[l - lives];
+  if (entry) {
+    parent = &lives[entry - 1];
+    return parent->pid == l->parent &&
+                   (parent->state == LIFE_LIVE || parent->state == LIFE_CONSTRUCT)
+               ? l->parent
+               : 1;
+  }
   slot = handleindex(l->parent);
   if (slot >= PROCS)
     return l->parent; /* Only trusted synthetic constructors may lack a parent. */
@@ -130,7 +146,7 @@ lifecreaterun(Setid set, Handle pid, Handle parent, u32 run, Lifeid *out)
   finalusage[slot] = childusage[slot] = (Usage){0, 0};
   l->generation++;
   l->pid = pid;
-  l->parent = parent;
+  setparent(l, parent);
   l->sequence = l->imagegen = l->account = 0;
   l->set = settag(set);
   l->group = 0;
@@ -181,7 +197,7 @@ lifechildpolicy(Lifeid id, u32 policy)
 static void
 collected(Life *l, Handle parent)
 {
-  l->parent = parent;
+  setparent(l, parent);
   l->waitref = 0;
   if (l->group) {
     if (groupdetach(l->group))
@@ -452,7 +468,7 @@ lifereparent(Lifeid id, Handle oldparent, Handle newparent)
   if (l->parent != oldparent)
     return -ERR_DENIED;
   changed(parentof(l));
-  l->parent = newparent;
+  setparent(l, newparent);
   changed(parentof(l));
   return 0;
 }
@@ -779,7 +795,7 @@ lifework(u32 scans)
     cursor = (cursor + 1) % LIFES;
     if ((l->state == LIFE_LIVE || (l->state == LIFE_ENDED && l->waitref)) && l->parent != 1 &&
         parentof(l) == 1) {
-      l->parent = 1;
+      setparent(l, 1);
       changed(1);
       changedcount++;
     }
