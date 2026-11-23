@@ -282,6 +282,9 @@ def validate_output(text, arch, case, names, ram_mb=256, init_exit=None, cpus=1)
     elif case == "virtiodev":
         if ready != ["READY virtiodev-restored"] or panics or traps:
             raise SmokeError("virtio MMIO negotiation did not finish")
+    elif case == "blkservice":
+        if ready != ["READY blkservice-restored"] or panics or traps:
+            raise SmokeError("PID1 blk service I/O, shutdown or cleanup did not finish")
     elif case == "mmiogroup":
         if ready != ["READY mmiogroup-restored"] or panics or traps:
             raise SmokeError("MMIO page group test did not finish")
@@ -1220,7 +1223,7 @@ def exercise(args, run_dir, record):
         if args.initrd:
             command += ['-initrd', str(args.initrd)]
             record['initrd'] = dict(path=str(args.initrd), bytes=args.initrd.stat().st_size, sha256=digest(args.initrd))
-        if args.virtio:
+        if args.virtio and args.case != "blkservice":
             command += ["-device", "virtio-rng-device"]
         if args.case == "virtiodev":
             for name, sectors, readonly, blocksize in (("rw", 1024, "off", 4096), ("ro", 128, "on", 512)):
@@ -1232,6 +1235,14 @@ def exercise(args, run_dir, record):
                     image.write(bytes((seed + i * 37) & 0xff for i in range(blocksize)))
                 command += ["-drive", f"if=none,format=raw,id={name},file={disk},readonly={readonly},cache=writeback",
                             "-device", f"virtio-blk-device,drive={name},logical_block_size={blocksize},physical_block_size=4096"]
+        if args.case == "blkservice":
+            disk = Path(temporary) / "blkservice.raw"
+            with disk.open("wb") as image:
+                image.truncate(1024 * 512)
+            command += ["-drive", f"if=none,format=raw,id=blkservice,file={disk},cache=writeback",
+                        "-device",
+                        "virtio-blk-device,drive=blkservice,bus=virtio-mmio-bus.0,"
+                        "logical_block_size=4096,physical_block_size=4096"]
         if args.trace:
             command += ["-d", "int,guest_errors", "-D", str(run_dir / "trace.log")]
         if getattr(args,'uart_trace',False):
@@ -1276,6 +1287,7 @@ def exercise(args, run_dir, record):
                     "READY cow-restored\n" if args.case == "cow" else
                     "READY heap-restored\n" if args.case == "heap" else
                     "READY virtiodev-restored\n" if args.case == "virtiodev" else
+                    "READY blkservice-restored\n" if args.case == "blkservice" else
                     "READY mmiogroup-restored\n" if args.case == "mmiogroup" else
                     "READY irqbind-restored\n" if args.case == "irqbind" else
                     "READY irqchip-restored\n" if args.case == "irqchip" else
@@ -1629,6 +1641,43 @@ def exercise(args, run_dir, record):
                             raise SmokeError(f"virtio backing image mismatch: {name}")
                     record["virtio_device"]=checks[0]
                     record["virtio_blockstats"] = {name: stats[name] for name in ("rw", "ro") if name in stats}
+                if args.case == "blkservice":
+                    checks = [fields(line) for line in serial.read_text().splitlines()
+                              if line.startswith("BLKSERVICECHECK ")]
+                    expected = dict(ready=1, client=42, shutdown=1, service=0, reset=1,
+                                    dma=9, charged=0)
+                    if (len(checks) != 1 or checks[0].pop("allocated", 0) < transition["tables"] or
+                            checks[0] != expected):
+                        raise SmokeError("PID1 blk service completion/resource summary mismatch")
+                    sdk_manifest = json.loads(
+                        (ROOT / "build" / args.arch / "sdk/manifest.json").read_text())
+                    proof = probe_package_init(
+                        qmp, run_dir, args, record, "blkservice-proof",
+                        address=sdk_manifest["blkservice_init_trace_address"])
+                    if (proof[0] <= 1 or proof[1] != 7 or proof[2] == 0 or proof[3] != 1 or
+                            proof[4] != 1024 * 512 or proof[5] != 4096 or
+                            proof[6:12] != [1, 1, 1, 1, 1, 1] or
+                            proof[12:] != [0, 0, 0, 0]):
+                        raise SmokeError("PID1 blk service retained proof mismatch")
+                    stats = {row.get("device"): row["stats"]
+                             for row in qmp.command("query-blockstats")}
+                    counters = stats.get("blkservice", {})
+                    if (counters.get("rd_bytes") != 4096 or
+                            counters.get("wr_bytes") != 4096 or
+                            counters.get("flush_operations") != 1):
+                        raise SmokeError(f"blk backing I/O counters mismatch: {counters}")
+                    image = Path(temporary) / "blkservice.raw"
+                    saved = run_dir / "blkservice.raw"
+                    shutil.copyfile(image, saved)
+                    expected_image = bytearray(1024 * 512)
+                    expected_image[4096:8192] = bytes(
+                        (0xD6 + i * 29) & 0xFF for i in range(4096))
+                    if saved.read_bytes() != expected_image:
+                        raise SmokeError("blk backing image differs from the PID1 write/flush result")
+                    record["blk_service"] = checks[0]
+                    record["blk_service_proof"] = proof
+                    record["blk_blockstats"] = counters
+                    record["blk_backing_sha256"] = digest(saved)
                 if args.case == "mmiogroup":
                     checks=[fields(line) for line in serial.read_text().splitlines() if line.startswith("MMIOGROUPCHECK ")]
                     transports=[device for device in record["discovery"]["devices"] if device["kind"]==3]
@@ -1722,7 +1771,7 @@ def exercise(args, run_dir, record):
                             {"children":7,"retained":3,"automatic":4,"old_result":1,"child_info":2,"charged":0,"allocated":transition["tables"]}):
                         raise SmokeError("signal mask/action/child policy mismatch")
                     record["signal_configuration"]=checks[0]
-                if args.case in ("init", "initfatal", "normal", "sigsend"):
+                if args.case in ("init", "initfatal", "normal", "sigsend", "blkservice"):
                     retained = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITRETAIN ")]
                     stacks = [fields(line) for line in serial.read_text().splitlines() if line.startswith("INITSTACK ")]
                     if (len(retained) != 1 or retained[0].get("charged",0) <= 20 or len(stacks) != 4 or
@@ -2123,7 +2172,9 @@ def main():
     if args.case == "virtiodev":
         args.virtio = True
     if args.timeout is None:
-        args.timeout = max(25 if args.case in ("timer", "irq", "runtime") else 10, args.ram / 32)
+        args.timeout = max(45 if args.case == "blkservice" else
+                           25 if args.case in ("timer", "irq", "runtime") else 10,
+                           args.ram / 32)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     run_dir = ROOT / "build" / args.arch / "smoke" / uuid.uuid4().hex

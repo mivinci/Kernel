@@ -2111,6 +2111,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
                              0x2300000,
                              irqevent,
                              0,
+                             0,
                              0};
   Ipcmsg          input;
   Vdone           done[VQ_BATCH];

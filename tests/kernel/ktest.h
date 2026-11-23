@@ -15,6 +15,7 @@ void chiptest(const Dtinfo *hardware);
 void bindtest(const Dtinfo *hardware);
 void grouppagetest(const Dtinfo *hardware);
 void vdevtest(const Dtinfo *hardware);
+void blkservicetest(const Dtinfo *hardware);
 void heaptest(void);
 void cowpagetest(void);
 void snapshotest(void);

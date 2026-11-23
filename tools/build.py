@@ -47,6 +47,7 @@ BOOT_CASES = {
     "sigframe": 45, "sigsuspend": 46, "irqchip": 47, "irqbind": 48,
     "mmiogroup": 49, "virtiodev": 50, "heap": 51, "cow": 52, "bootpkg": 53,
     "cpus": 54, "tty": 55, "jobs": 56, "sigsend": 57, "pipeio": 58,
+    "blkservice": 59,
 }
 
 
@@ -232,7 +233,7 @@ def build(args, directory, run_dir):
             sources.append(ROOT / "tests/kernel" / args.arch / "traptest.c")
         if args.case in ("registers", "fault"):
             sources.append(ROOT / "tests/kernel" / args.arch / "probe.S")
-        if args.case in ("libsys", "runtime", "pipeio", "tty", "jobs", "sigsend", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "heap", "cow"):
+        if args.case in ("libsys", "runtime", "pipeio", "tty", "jobs", "sigsend", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "blkservice", "heap", "cow"):
             invoke("build-sdk", [sys.executable, str(ROOT / "tools/user.py"), "--arch", args.arch,
                                   "--cc", tools["cc"]["path"], "--ld", tools["ld"]["path"],
                                   "--ar", tools["ar"]["path"], "--readelf", tools["readelf"]["path"]])
@@ -263,6 +264,9 @@ def build(args, directory, run_dir):
                 sources += [ROOT / "tests/kernel/heaptest.c", directory / "sdk/heapimage.S"]
             elif args.case == "virtiodev":
                 sources += [ROOT / "tests/kernel/vdevtest.c", directory / "sdk/vdevimage.S"]
+            elif args.case == "blkservice":
+                sources += [ROOT / "tests/kernel/blkservice.c", directory / "sdk/blkserviceimage.S",
+                            directory / "sdk/blkservice.S"]
             elif args.case == "mmiogroup":
                 sources += [ROOT / "tests/kernel/grouppagetest.c", directory / "sdk/groupimage.S"]
             elif args.case == "irqbind":

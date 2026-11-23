@@ -150,7 +150,7 @@ def build(args):
     init_sources = [ROOT/'sbin/init'/name for name in ('main.c','package.c','manifest.c','service.c')]
     init_directory = directory/'sbin'
     init_directory.mkdir(exist_ok=True)
-    def program(name, program_sources, program_headers, configuration=None):
+    def program(name, program_sources, program_headers, configuration=None, libraries=()):
         if not all(p.is_relative_to(ROOT/'sbin'/name) for p in program_sources + program_headers):
             raise BuildError('production program sources must belong to its service directory')
         objects = []
@@ -171,7 +171,7 @@ def build(args):
         temporary = init_directory/(name+'.tmp.elf')
         link = [tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections',
                 '--build-id=none','-Map='+str(init_directory/(name+'.map')),str(crt),
-                *objects,str(libc_archive),str(archive),'-o',str(temporary)]
+                *objects,*map(str,libraries),str(libc_archive),str(archive),'-o',str(temporary)]
         invoke('link-'+name,link)
         info = read_elf(temporary,profile['machine'],kind=2)
         pack(temporary.read_bytes(),profile['machine'],256)
@@ -179,6 +179,9 @@ def build(args):
         (init_directory/(name+'.manifest.json')).write_text(json.dumps(dict(arch=args.arch,
             artifact=str(artifact.relative_to(ROOT)),sha256=digest(artifact),elf=info,
             sources={str(p.relative_to(ROOT)):digest(p) for p in program_sources+program_headers},
+            headers=sorted(str(p.relative_to(ROOT)) for p in program_headers),
+            libraries=[dict(path=str(path.relative_to(ROOT)),sha256=digest(path))
+                       for path in libraries],
             link=link,no_test_payload=True,libc_sha256=digest(libc_archive),
             libsys_sha256=digest(archive),crt_sha256=digest(crt),
             configuration_sha256=digest(configuration) if configuration else None),indent=2)+'\n')
@@ -189,6 +192,11 @@ def build(args):
     tty_service_sources = [ROOT/'sbin/tty'/name for name in ('main.c','term.c','input.c','serial.c','wait.c')]
     tty_service_headers = [ROOT/'sbin/tty'/name for name in ('term.h','input.h','serial.h','wait.h')]
     tty_service = program('tty',tty_service_sources,tty_service_headers)
+    blk_sources = [ROOT/'sbin/blk'/name for name in
+                   ('main.c','start.c','io.c','transport.c','serve.c')]
+    blk_headers = [ROOT/'sbin/blk'/name for name in
+                   ('start.h','io.h','transport.h','serve.h')]
+    blk_elf = program('blk',blk_sources,blk_headers,libraries=(virtio_archive,))
     init_configuration = ROOT/'config/boot.json'
     init_config = sdk/'init.cfg'
     configuration = json.loads(init_configuration.read_text())
@@ -363,6 +371,34 @@ def build(args):
     serial_peer=link_adoption('serialpeer',[compile_adoption(ROOT/'tests/kernel/serialpeer.c','serialpeer'),
         *[obj for source,obj in zip(tty_sources,tty_objects) if source.parent == ROOT/'sbin/tty']])
     serial_service_test=link_adoption('serialservice',[compile_adoption(ROOT/'tests/kernel/serialservice.c','serialservice'),embedded_elf(serial_elf,'serial_service'),embedded_elf(serial_peer,'serial_peer'),embedded_elf(tty_service,'tty_service')])
+    blkservice_init=link_adoption('blkserviceinit',[
+        compile_adoption(ROOT/'tests/kernel/blkserviceinit.c','blkserviceinit')])
+    blkservice_init_image=sdk/'blkserviceinit.img'
+    blkservice_init_image.write_bytes(pack(blkservice_init.read_bytes(),profile['machine'],192))
+    inspection=invoke('inspect-blkservice-init',
+                       [tools['readelf']['path'],'-h','-l','-s',str(blkservice_init)])
+    blkservice_init_rows=[line.split() for line in inspection.splitlines()
+                          if line.split() and line.split()[-1]=='blkserviceinittrace']
+    if len(blkservice_init_rows)!=1 or int(blkservice_init_rows[0][2])!=128:
+        raise BuildError('blkservice init trace missing or has wrong size')
+    (sdk/'blkserviceimage.S').write_text(
+        '/* image sha256: '+digest(blkservice_init_image)+' */\n.section .rodata\n.balign 8\n'
+        '.global blkserviceinit_image,blkserviceinit_image_end,blkserviceinittrace_address\n'
+        'blkserviceinit_image:\n.incbin '+json.dumps(str(blkservice_init_image))+
+        '\nblkserviceinit_image_end:\n.balign 8\nblkserviceinittrace_address:\n.quad '+
+        str(int(blkservice_init_rows[0][1],16))+'\n')
+    blk_service_image = sdk/'blk_service.img'
+    with blk_service_image.open('wb') as output:
+        output.write(pack(blk_elf.read_bytes(),profile['machine'],192))
+    (sdk/'blkservice.S').write_text(
+        '/* image sha256: '+digest(blk_service_image)+' */\n.section .rodata\n.balign 8\n'
+        '.global blk_service,blk_service_end,blkdiag_address\n'
+        'blk_service:\n'
+        '.incbin '+json.dumps(str(blk_service_image))+'\n'
+        'blk_service_end:\n.balign 8\nblkdiag_address:\n.quad '+
+        str(int([line.split() for line in invoke(
+            'inspect-blk',[tools['readelf']['path'],'-s',str(blk_elf)]).splitlines()
+            if line.split() and line.split()[-1]=='blkdiag'][0][1],16))+'\n')
     init_service_sources=[ROOT/'sbin/init'/name for name in ('service.c','manifest.c','package.c')]
     serial_config = sdk/'init-serial.cfg'
     serial_config.write_bytes(initcfg.generate(dict(configuration, services=[
@@ -514,7 +550,13 @@ def build(args):
                     init_artifact=str(init_elf.relative_to(ROOT)),init_artifact_sha256=digest(init_elf),
                     serial_artifact=str(serial_elf.relative_to(ROOT)),serial_artifact_sha256=digest(serial_elf),
                     tty_service_artifact=str(tty_service.relative_to(ROOT)),tty_service_sha256=digest(tty_service),
+                    blk_artifact=str(blk_elf.relative_to(ROOT)),blk_sha256=digest(blk_elf),
                     serial_service_test=str(serial_service_test.relative_to(ROOT)),serial_peer_artifact=str(serial_peer.relative_to(ROOT)),
+                    service_auth_test=str(service_auth.relative_to(ROOT)),
+                    blkservice_init_artifact=str(blkservice_init.relative_to(ROOT)),
+                    blkservice_init_image_sha256=digest(blkservice_init_image),
+                    blkservice_init_trace_address=int(blkservice_init_rows[0][1],16),
+                    blk_service_image_sha256=digest(blk_service_image),
                     init_service_test=str(init_service_test.relative_to(ROOT)),no_ready_artifact=str(no_ready.relative_to(ROOT)),
                     bind_failure_artifact=str(bind_failure.relative_to(ROOT)),
                     init_config_artifact=str(init_config.relative_to(ROOT)),init_config_sha256=digest(init_config),
@@ -530,7 +572,7 @@ def build(args):
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
                     library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + tty_service_sources + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + tty_service_sources + blk_sources + blk_headers + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[row['source'] for row in exported.values()], run_log=str(run.relative_to(ROOT)),

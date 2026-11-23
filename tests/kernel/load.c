@@ -3,8 +3,10 @@
 #include <diag.h>
 #define REQUIRE(c)                                                                                 \
   do {                                                                                             \
-    if (!(c))                                                                                      \
+    if (!(c)) {                                                                                    \
+      putstr("test image load assertion: " #c "\n");                                               \
       panic("trusted test image loading");                                                         \
+    }                                                                                              \
   } while (0)
 Handle
 testresource(Rtable *table, u32 kind)

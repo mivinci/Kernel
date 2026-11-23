@@ -62,7 +62,7 @@ smoke: build
 	$(if $(and $(filter normal,$(if $(CASE),$(CASE),normal)),$(if $(INITRD),,yes)),$(MAKE) bootpkg ARCH="$(ARCH)",@true)
 	$(PYTHON) tools/smoke.py --arch "$(ARCH)" --case "$(if $(CASE),$(CASE),normal)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)") $(if $(TRACE),--trace) $(if $(RAM),--ram "$(RAM)") $(if $(CPUS),--cpus "$(CPUS)") $(if $(BOOT_HART),--boot-hart "$(BOOT_HART)") $(if $(VIRTIO),--virtio) $(if $(INITRD),--initrd "$(INITRD)",$(if $(filter normal,$(if $(CASE),$(CASE),normal)),--initrd "build/$(ARCH)/boot.pkg"))
 scenario:
-	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|pipeio|tty|jobs|sigsend|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|heap|cow|bootpkg|cpus) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
+	@case "$(CASE)" in registers|fault|pages|textwrite|rodatawrite|dataexec|guard|null|identity|alias|unmapped|budget|spaces|memory|seal|user|switch|stacks|locals|life|procs|prep|syscalls|timer|irq|images|requests|ipc|ipcdepth|events|control|terminate|creds|groups|stats|createauth|sigreserve|spawn|libsys|runtime|pipeio|tty|jobs|sigsend|elf|init|initfatal|sigconfig|sigframe|sigsuspend|irqchip|irqbind|mmiogroup|virtiodev|blkservice|heap|cow|bootpkg|cpus) ;; *) echo "unsupported CASE" >&2; exit 1;; esac
 ifeq ($(CASE),bootpkg)
 	$(MAKE) build sdk ARCH="$(ARCH)" CASE=bootpkg
 	$(PYTHON) tests/bootpkg.py --arch "$(ARCH)" $(if $(QEMU),--qemu "$(QEMU)") $(if $(OPENSBI),--firmware "$(OPENSBI)")
@@ -175,6 +175,8 @@ test-qemu:
 	$(MAKE) scenario ARCH=arm64 CASE=mmiogroup
 	$(MAKE) scenario ARCH=riscv CASE=virtiodev
 	$(MAKE) scenario ARCH=arm64 CASE=virtiodev
+	$(MAKE) scenario ARCH=riscv CASE=blkservice
+	$(MAKE) scenario ARCH=arm64 CASE=blkservice
 	$(MAKE) scenario ARCH=riscv CASE=heap
 	$(MAKE) scenario ARCH=arm64 CASE=heap
 	$(MAKE) scenario ARCH=riscv CASE=cow

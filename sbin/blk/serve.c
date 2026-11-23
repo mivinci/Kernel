@@ -89,10 +89,9 @@ advance(Blkservice *service)
 }
 
 isize
-blkservestep(Blkservice *service)
+blkservestepmask(Blkservice *service, u64 mask, u64 options)
 {
   Ipcmsg input;
-  u64    options;
   isize  error = blktransportpump(service->transport);
   if (error)
     return error;
@@ -104,15 +103,14 @@ blkservestep(Blkservice *service)
     return error;
   /* Once old jobs have drained, a mixed config snapshot needs another
      sample. Its IRQ was already acknowledged, so a new hint is not required. */
-  options = blktransportonline(service->transport) && service->transport->queue->configpending &&
-                    !service->transport->active
-                ? RECV_NONBLOCK
-                : 0;
-  error = ipc_recv(service->irqevent | EVENT_LIFE | EVENT_RQ_CANCEL, options, &input);
+  if (blktransportonline(service->transport) && service->transport->queue->configpending &&
+      !service->transport->active)
+    options |= RECV_NONBLOCK;
+  error = ipc_recv(mask, options, &input);
   if (error)
     return error == -ERR_INTERRUPTED || (options && error == -ERR_WOULD_BLOCK) ? 0 : error;
   if (input.kind == IPC_CALL)
-    return blkservicecall(service, &input);
+    return service->dispatch ? service->dispatch(service, &input) : blkservicecall(service, &input);
   if (input.kind == IPC_EVENT) {
     if ((input.words[0] & service->irqevent) && blktransportonline(service->transport))
       service->pending = Irqpoll;
@@ -121,6 +119,12 @@ blkservestep(Blkservice *service)
     return advance(service);
   }
   return 0;
+}
+
+isize
+blkservestep(Blkservice *service)
+{
+  return blkservestepmask(service, service->irqevent | EVENT_LIFE | EVENT_RQ_CANCEL, 0);
 }
 
 isize

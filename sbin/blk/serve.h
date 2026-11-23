@@ -3,18 +3,24 @@
 #include "transport.h"
 
 typedef struct Blkservice Blkservice;
+typedef isize (*Blkdispatch)(Blkservice *, const Ipcmsg *);
 struct Blkservice
 {
   Blktransport *transport;
   Handle        observe, allocator, space, irq;
   u64           arena, irqevent;
   u32           pending, retiring;
+  /* Optional owner dispatcher for control CALLs. It may forward block CALLs. */
+  Blkdispatch dispatch;
 };
 
 /* The owner supplies a live transport, a dedicated IRQ bit,
    an armed binding and a private connection arena. On error the owner keeps
    the transport and DMA storage so it can retry or run device recovery. */
 isize blkservestep(Blkservice *);
+/* The production owner supplies the complete event set it needs while still
+   waiting for asynchronous bookkeeping such as the PID1 READY result. */
+isize blkservestepmask(Blkservice *, u64 mask, u64 options);
 isize blkservicecall(Blkservice *, const Ipcmsg *);
 /* Stop this instance without rearming its IRQ. Retry with monotonic time
    until reset, DMA handback and original requests have all settled. */
