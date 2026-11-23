@@ -6,7 +6,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import BuildError
-from sdkheaders import PRIVATE_ROOTS, export_private_headers, check_private_headers
+from sdkheaders import (PRIVATE_ROOTS, export_private_headers, check_private_headers,
+                        export_public_headers, check_public_headers)
 
 
 class SdkHeaderTests(unittest.TestCase):
@@ -109,3 +110,18 @@ class SdkHeaderTests(unittest.TestCase):
         private.symlink_to(self.sdk / 'saved', target_is_directory=True)
         with self.assertRaisesRegex(BuildError, 'directory is a symlink'):
             self.export()
+
+    def test_public_export_removes_a_withdrawn_libc_header(self):
+        self.write('include/types.h', 'types\n')
+        self.write('include/abi/layout.inc', 'layout\n')
+        self.write('lib/libsys/include/sys/channel.h', 'channel\n')
+        self.write('lib/libc/include/time.h', 'time\n')
+        withdrawn = self.write('lib/libc/include/sys/stat.h', 'unfinished stat\n')
+        export_public_headers(self.root, self.sdk)
+        withdrawn.unlink()
+        with self.assertRaisesRegex(BuildError, 'extra=sys/stat.h'):
+            check_public_headers(self.root, self.sdk)
+        manifest = export_public_headers(self.root, self.sdk)
+        self.assertFalse((self.sdk / 'include/sys/stat.h').exists())
+        self.assertEqual(set(manifest), {'types.h', 'abi/layout.inc', 'sys/channel.h', 'time.h'})
+        self.assertEqual(manifest, check_public_headers(self.root, self.sdk))

@@ -14,7 +14,8 @@ import uuid
 from build import ROOT, PROFILES, COMMON, BuildError, compilation_database, digest, read_elf
 from elf import pack
 from run import install_stop_handlers, run_command, run_guard
-from sdkheaders import export_private_headers, check_private_headers
+from sdkheaders import (export_private_headers, check_private_headers, export_public_headers,
+                        check_public_headers)
 import initcfg
 
 
@@ -41,17 +42,7 @@ def build(args):
         tools[name] = dict(path=str(Path(executable).absolute()), version=invoke(name + '-version', [executable, '--version']))
     if 'clang' not in tools['cc']['version'].lower():
         raise BuildError('this profile requires Clang')
-    exported = [ROOT / 'include/types.h', *sorted((ROOT / 'include/abi').rglob('*.h')),
-                *sorted((ROOT / 'include/proto').glob('*.h')),
-                *sorted((ROOT / 'include/abi').glob('*.inc')),
-                *sorted((ROOT / 'lib/libsys/include/sys').glob('*.h')),
-                *sorted((ROOT / 'lib/libc/include').rglob('*.h'))]
-    for source in exported:
-        target = sdk / 'include' / (source.relative_to(ROOT / 'include') if source.is_relative_to(ROOT / 'include')
-                                    else source.relative_to(ROOT / 'lib/libsys/include') if source.is_relative_to(ROOT / 'lib/libsys/include')
-                                    else source.relative_to(ROOT / 'lib/libc/include'))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+    exported = export_public_headers(ROOT, sdk)
     private_headers = export_private_headers(ROOT, sdk)
     flags = profile['flags'] + COMMON + ['-fno-jump-tables', '-ffunction-sections', '-fdata-sections',
             '-I' + str(sdk / 'include'), '-I' + str(sdk)]
@@ -509,6 +500,8 @@ def build(args):
     headers += [ROOT / 'tests/kernel/fdtableuser.h']
     headers += [ROOT / 'tests/kernel/fileuser.h']
     headers += list((ROOT / 'include/proto').glob('*.h'))
+    if check_public_headers(ROOT, sdk) != exported:
+        raise BuildError('SDK public header sources changed during build')
     final_private_headers = check_private_headers(ROOT, sdk)
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
@@ -540,7 +533,7 @@ def build(args):
                     linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + tty_service_sources + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
-                    exported_headers=[str(p.relative_to(ROOT)) for p in exported], run_log=str(run.relative_to(ROOT)),
+                    exported_headers=[row['source'] for row in exported.values()], run_log=str(run.relative_to(ROOT)),
                     no_undefined_symbols=True, runtime='custom libsys-only entry and csu/libc main', guest_executed=False)
     (sdk / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (sdk / 'last-run.json').write_text(json.dumps(dict(ok=True, run_log=str(run.relative_to(ROOT)))) + '\n')
@@ -557,8 +550,11 @@ def main():
         parser.add_argument('--' + name, default=default)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--cross', default='')
-    parser.add_argument('--check-private-headers', action='store_true',
+    checks = parser.add_mutually_exclusive_group()
+    checks.add_argument('--check-private-headers', action='store_true',
                         help='check existing SDK exports without copying or compiling')
+    checks.add_argument('--check-public-headers', action='store_true',
+                        help='check existing public SDK exports without copying or compiling')
     args = parser.parse_args()
     if args.cross:
         parser.error("CROSS/GCC profile is not implemented; use explicit LLVM tools")
@@ -572,10 +568,13 @@ def main():
             if args.check_private_headers:
                 check_private_headers(ROOT, ROOT / 'build' / args.arch / 'sdk')
                 print(args.arch + ': SDK private headers match source')
+            elif args.check_public_headers:
+                check_public_headers(ROOT, ROOT / 'build' / args.arch / 'sdk')
+                print(args.arch + ': SDK public headers match source')
             else:
                 build(args)
     except (BuildError, OSError, ValueError) as error:
-        if not args.check_private_headers:
+        if not (args.check_private_headers or args.check_public_headers):
             failure = ROOT / 'build' / args.arch / 'sdk/last-run.json'
             failure.parent.mkdir(parents=True, exist_ok=True)
             failure.write_text(json.dumps(dict(ok=False, error=str(error))) + '\n')

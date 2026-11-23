@@ -735,6 +735,8 @@ tools/sdkheaders.py先计算完整映射，再重建生成的SDK private目录�
 
 最终完整722项host与fmt-check通过，新增/删除探针共四次两架构SDK构建通过，独立检查在失败/成功时均保留导出及原last-run状态；源码与精确导出manifest、运行产物不变的证据见evidence.json。未改内核运行代码，未重跑QEMU；issue010本地修复完成，非CI/板端验收。
 
+公开 `sdk/include` 同样按源文件集合重建，并在 SDK 构建结束前核对路径与内容。可用 `python3 tools/user.py --arch arm64 --check-public-headers` 只读检查现有导出，RV64 用 `riscv`。此次 8 项头文件专项及双架构 SDK 构建通过；重建移除了残留的 `sys/stat.h`，BusyBox 两架构依赖扫描现在都将它列为缺失。此项只修正 SDK 导出和阶段 B 的诊断，未新增 `stat` 或验证 BusyBox 运行。
+
 ### Rctx 原生返回窗口接续（2026-11-20）
 
 libsys 新增私有 context 模块：调用方为当前 PID/image 预付一个50712字节 Rbank，包含三层各512字节 Rctx 和各16KiB快照空间。全银行共用不回绕的序号，层号加序号识别一次调用；不全局分配，也不能重新初始化仍有责任的银行。本点仅保存七个标量参数，快照空间尚未接参数专用复制。
