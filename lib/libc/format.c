@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
+#include <string.h>
 #include <types.h>
 #include "private/format.h"
 typedef struct Output Output;
@@ -188,7 +189,7 @@ __libc_format(char *buffer, size_t size, Formatemit sink, void *context, const c
   const char *start, *text;
   size_t      width, count;
   u32         flags, next, length, base;
-  int         raw, precision;
+  int         raw, precision, saved_errno = errno;
   char        conversion, byte, sign;
   intmax_t    signed_value;
   uintmax_t   value;
@@ -263,8 +264,8 @@ __libc_format(char *buffer, size_t size, Formatemit sink, void *context, const c
       break;
     }
     format++;
-    if (conversion == 's' && length == FORMAT_DEFAULT) {
-      text = va_arg(copy, const char *);
+    if ((conversion == 's' || conversion == 'm') && length == FORMAT_DEFAULT) {
+      text = conversion == 'm' ? strerror(saved_errno) : va_arg(copy, const char *);
       if (!text && precision != 0) {
         out.error = EINVAL;
         break;

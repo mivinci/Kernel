@@ -83,6 +83,13 @@ int testv(char *buffer,size_t size,const char *format,...) {
         self.assertEqual((actual,output),(expected,data),(format,size))
         self.assertEqual(error,33)
 
+    def test_errno_message_consumes_no_argument(self):
+        self.lib.user_strerror.restype=C.c_char_p
+        message=self.lib.user_strerror(33)
+        expected=b'['+message[:5]+b']:42'
+        length,output,error=self.call(b'[%.5m]:%d',(C.c_int(42),))
+        self.assertEqual((length,output[:length+1],error),(len(expected),expected+b'\0',33))
+
     def test_truncation_terminator_embedded_nul_and_zero_capacity(self):
         args=(C.c_char_p(b'hello'),C.c_int(-12),C.c_uint(0x2a),C.c_int(0))
         format=b'%s:%+06d:%#x:%c!'
