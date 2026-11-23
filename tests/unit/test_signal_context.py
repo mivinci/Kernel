@@ -17,7 +17,7 @@ class ArmTrap(C.Structure):
 class RvFp(C.Structure):
     _fields_=[('f',C.c_uint64*32),('fcsr',C.c_uint64),('reserved',C.c_uint64)]
 class ArmFp(C.Structure):
-    _fields_=[('q',C.c_uint64*64),('fpsr',C.c_uint32),('fpcr',C.c_uint32),('reserved',C.c_uint64)]
+    _fields_=[('q',C.c_uint64*64),('fpsr',C.c_uint32),('fpcr',C.c_uint32),('tpidr',C.c_uint64)]
 class Rv(C.Structure):
     _fields_=[('tf',RvTrap),('fp',RvFp)]
 class Arm(C.Structure):
@@ -242,7 +242,7 @@ class SignalContextTests(unittest.TestCase):
                 else:
                     if bad==0:candidate.value.fp.fpcr^=1<<26
                     elif bad==1:candidate.value.fp.fpsr|=1<<5
-                    else:candidate.value.fp.reserved=1
+                    else:candidate.value.fp.tpidr=1
                 C.memset(output.pointer,0xa5,output.size);before=output.bytes()
                 self.assertEqual(lib.hal_signal_restore(output.pointer,trusted.pointer,candidate.pointer),-1)
                 self.assertEqual(output.bytes(),before)

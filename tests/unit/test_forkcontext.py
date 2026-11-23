@@ -20,12 +20,13 @@ class ForkContextTests(unittest.TestCase):
             user.value.tf.pc=0x10000;user.value.tf.cause=8;user.value.tf.status=0x6020
             for index in range(32):user.value.fp.f[index]=0x3ff0000000000000+index
             user.value.fp.fcsr=0x9f
+            user.value.fp.reserved=0
         else:
             user.value.tf.x[8]=0x49;user.value.tf.sp=0x30000
             user.value.tf.pc=0x10004;user.value.tf.cause=0x15<<26;user.value.tf.status=0xa0000080
             for index in range(64):user.value.fp.q[index]=0x3ff0000000000000+index
             user.value.fp.fpcr=0x01800000;user.value.fp.fpsr=0x0800009f
-        user.value.fp.reserved=0
+            user.value.fp.tpidr=0x34560
         lib.hal_user_fork.argtypes=[C.c_void_p,C.c_void_p,C.c_uint64,C.c_uint64]
         return user
 
@@ -62,7 +63,8 @@ class ForkContextTests(unittest.TestCase):
     def test_bad_raw_trap_privilege_pc_sp_and_reserved_fp_are_rejected_atomically(self):
         for arch,kind,lib in self.targets:
             for invalid in ('number','cause','privilege','irq-state' if arch=='riscv' else 'illegal-state',
-                            'pc-low','pc-top','pc-align','sp-align','sp-top','fp-reserved','zero-register' if arch=='riscv' else 'pc-before-svc'):
+                            'pc-low','pc-top','pc-align','sp-align','sp-top',
+                            *(('fp-reserved','zero-register') if arch=='riscv' else ('pc-before-svc',))):
                 parent=self.raw(arch,kind,lib)
                 if invalid=='number':parent.value.tf.x[17 if arch=='riscv' else 8]=0x4a
                 if invalid=='cause':parent.value.tf.cause=15 if arch=='riscv' else (0x24<<26)|64|15
