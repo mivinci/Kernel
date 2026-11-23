@@ -61,10 +61,11 @@ find(Imageid id)
 {
   Signal *s;
   Image   image;
+  Life    life;
   u32     index;
-  if (imagestat(id, &image))
+  if (imagestat(id, &image) || lifestat(image.life, &life))
     return NULL;
-  index = handleindex(image.pid);
+  index = life.run;
   if (index >= PROCS)
     return NULL;
   s = &signals[index];
@@ -78,13 +79,14 @@ sigreserve(Imageid id)
 {
   Signal *s;
   Image   image;
+  Life    life;
   u32     index;
   int     error;
-  if (imagestat(id, &image))
+  if (imagestat(id, &image) || lifestat(image.life, &life))
     return -ERR_STALE;
   if (image.state != IMAGE_PREPARING)
     return -ERR_STATE;
-  index = handleindex(image.pid);
+  index = life.run;
   if (index >= PROCS)
     return -ERR_INVALID;
   s = &signals[index];
@@ -361,7 +363,7 @@ nextcookie(Signal *s, u64 *out)
 {
   if (s->sequence >= SIG_COOKIE_MAX)
     return -ERR_OVERFLOW;
-  *out = (++s->sequence << SIG_COOKIE_SHIFT) | handleindex(s->owner);
+  *out = (++s->sequence << SIG_COOKIE_SHIFT) | (u32) (s - signals);
   return 0;
 }
 int
@@ -1020,6 +1022,7 @@ sigcheck(void)
 {
   Signal *s;
   Image   image;
+  Life    life;
   u32     i, j;
   for (i = 0; i < PROCS; i++) {
     s = &signals[i];
@@ -1028,7 +1031,8 @@ sigcheck(void)
     if (!s->owner)
       continue;
     if (imagestat(s->identity, &image) || s->owner != image.pid || s->image != image.number ||
-        handleindex(s->owner) != i || !image.cleanup || s->depth > SIGNAL_DEPTH || s->forked > 1 ||
+        lifestat(image.life, &life) || life.run != i || !image.cleanup || s->depth > SIGNAL_DEPTH ||
+        s->forked > 1 ||
         sigmaskvalid(s->mask) || (s->mask & SIGNAL_UNMASKABLE) || sigmaskvalid(s->pending) ||
         (s->initial_ignore & (~SIGNAL_SUPPORTED | SIGNAL_UNMASKABLE)))
       return -ERR_STATE;

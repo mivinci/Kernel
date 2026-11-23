@@ -1682,7 +1682,7 @@ procidle(void)
 static void
 ready(Proc *p)
 {
-  u32 slot = handleindex(pidof(p));
+  u32 slot = (u32) (p - processes);
   p->state = PROC_READY;
   p->next = PG_NONE;
   if (readytail == PG_NONE)

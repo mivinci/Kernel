@@ -9,10 +9,12 @@
 - 默认启动包包含实际 `sbin/init`、`sbin/serial`、`sbin/tty`；serial/tty 晚绑定与 UART 回显已局部验证。生产 FS/blk 启动、固定挂载和普通应用运行路径尚未接通。
 - libsys 已接本地 fd/File、pipe、原 RPC 收尾、私有 spawn 及部分 exec/FS_LOAD 路径。公开 POSIX 前端、完整 exec 继承、作业控制和标准运行环境仍在收口。
 - `FS_LOAD` 等块映射时的取消排空已接：`PREPARED` 本地撤销，`WAITING` 先协作取消，再经 FINISH、ACK 释放槽。双架构 `pipeio` 已通过，后续继续 FS/blk 生产接线。
-- BusyBox A1/A2 静态构建已过两架构 SDK；普通程序 stdout/退出码及 BusyBox 编译运行未验收，当前目标头缺口首错为 `sys/times.h`、`dirent.h`。
+- 公开 SDK 的最小程序和 miniz 已通过双架构静态构建。普通程序的 stdout 和退出状态、BusyBox 完整构建和运行仍未验收。已记录的 BusyBox 首错是 `sys/times.h` 和 `dirent.h`。
+- 本地有 blk 启动接线的在途改动。PID 迁移已让调度与信号直接使用内部运行槽，双架构 QEMU `sigframe` 已通过。发号及公开 ABI 尚未切换。
 
 ## 未决与阻塞
 
+- [03](design/03-process.md#32-位-pid-试行方案) 已记录原生与 POSIX 共用单调 32 位 PID 的试行方案，当前 ABI 仍是 64 位编码 PID。
 - [06](design/06-abi.md) 的 `QUERY_TIMES=7` 自身 CPU 时间查询仍是候选，确认前不实现。
 - [04](design/04-ipc.md) 的原生 rqclean 仍待冻结 `CONTROL_CLEAN` 权限、参数和初始 init 持有方式；当前 `0x1b` 为 NOTSUP，不能把可信夹具代收尾当作原生 ABI。
 - [08](design/08-runtime.md) 的堆/连接 VA 登记、连接预付地址责任和短屏蔽信号更新范围仍待确认；当前 malloc/free 不承诺处理函数重入。
@@ -23,10 +25,10 @@
 
 ## 下一步
 
-1. 继续块缓存、日志、持久格式和生产 FS/blk 启动接线，实现固定挂载与普通程序运行路径。
-2. 完成生产 serial/tty 双向路径、固定文件服务、标准 fd/stdout 与普通进程退出观察。
-3. 收口 fork/exec 继承、Fix 与后端 fd 接线，再完成 pipe/dup2、会话/进程组和完整作业控制。
-4. 以 BusyBox ash 的实际运行作为 M3 生态验收，再推进 net 与图形/GPU 机制，最后进入 GUI。
+1. 完成单调 32 位 PID 迁移，验证运行槽复用、旧孩子收取、旧 CONTROL 和编号耗尽，再撤 PID 补丁。
+2. 继续生产 FS/blk、持久格式和固定挂载，接通 serial/tty、设备节点、标准 fd 和退出观察。用公开 SDK 的最小程序和 miniz 验证普通程序启动。
+3. 依据 [BusyBox 接续计划](issues/012-busybox-port.md#接续计划用项目自身的-abi-和-sdk-支持原版-busybox) 边做边验证。补 SDK 实际缺口，收口公开 fork/exec、fd 继承、pipe/dup2 和作业控制，再在两架构 QEMU 跑通 ash。现有补丁逐项撤除，不新增或扩大源码补丁。
+4. ash 通过 M3 验收后，按设计推进 net，补齐 socket SDK 并验收原版 BusyBox 零补丁构建。继续完成图形和 GPU 机制，最后做 GUI。
 
 ## 硬件与问题
 
