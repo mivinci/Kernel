@@ -1530,6 +1530,8 @@ brokenclient(void)
   free(line);
   clearerr(stdin);
   CHECK(!feof(stdin) && fgetc(stdin) == EOF && errno == EBADF && ferror(stdin) && !feof(stdin));
+  CHECK(!feof_unlocked(stdin) && ferror_unlocked(stdin) && fileno_unlocked(stdin) == 0 &&
+        getc_unlocked(stdin) == EOF && errno == EBADF);
   CHECK(!sysfileimagepipe(0, peer, &pipe, &active, fds, &business) && !business);
   alias = dup(fds[0]);
   CHECK(alias >= 0 && !close(fds[0]) && write(fds[1], "r", 1) == 1 && read(alias, &byte, 1) == 1 &&
