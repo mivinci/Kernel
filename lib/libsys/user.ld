@@ -4,6 +4,7 @@ PHDRS
   text PT_LOAD FLAGS(5);
   rodata PT_LOAD FLAGS(4);
   data PT_LOAD FLAGS(6);
+  tls PT_TLS FLAGS(4);
   stack PT_GNU_STACK FLAGS(6);
 }
 SECTIONS
@@ -31,6 +32,8 @@ SECTIONS
   } :rodata
   . = ALIGN(4096);
   .data : { *(.data .data.*) *(.sdata .sdata.*) } :data
+  .tdata : { *(.tdata .tdata.*) } :data :tls
+  .tbss (NOLOAD) : { *(.tbss .tbss.*) *(.tcommon) } :data :tls
   .bss (NOLOAD) : { *(.bss .bss.*) *(.sbss .sbss.*) *(COMMON) } :data
   PROVIDE_HIDDEN(__image_end = ALIGN(4096));
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
