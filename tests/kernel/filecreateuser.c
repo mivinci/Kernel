@@ -722,10 +722,8 @@ client(const Bootview *boot)
     Fdtag       tag;
     Fdview      fd;
     Connpeer    child;
-    Msg         prepare;
     Msg         check = {{FORKWATCH, 0, 0, 0}};
     u64         token = 0, pin, closing = 0;
-    Handle      rpc;
     u32         attempt;
     for (attempt = 0; attempt < 2; attempt++)
       CHECK(!sysfilerefalias(&pool, work.state.self, first) && !sysfdreserve(&fds, 0, &tag) &&
@@ -739,13 +737,7 @@ client(const Bootview *boot)
       CHECK(!sysfilerefpin(&pool, work.state.self, pin) &&
             !sysforkfdbegin(&execfds, &work, &cache, SYSFILE_MAIN, 1, child,
                             attempt == 1 ? token + 1 : token, UINT64_MAX, &pin, &execsend) &&
-            !pin && !sysoprequest(&work, &cache, &execsend.key, &prepare) &&
-            !ipc_call(work.state.call, &prepare, CALL_ASYNC, &result));
-      rpc = result.request;
-      CHECK(!sysopsubmitted(&work, &cache, &execsend.key, &rpc) && !rpc &&
-            !ipc_rqwait(result.request, 0, &result) &&
-            !sysopcapture(&work, &cache, &execsend.key, 0, &result) &&
-            !sysforkfdcollect(&work, &cache, &execsend, &pin) &&
+            !pin && !sysforkfddrive(&contexts, 0, &work, &cache, &execsend, &pin) &&
             execsend.business == (attempt & 1 ? -ESTALE : 0) && !execsend.key.lease.seq &&
             pin == first && !sysfilerefunpin(&pool, work.state.self, pin));
       if (!attempt) {

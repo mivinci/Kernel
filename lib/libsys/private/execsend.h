@@ -2,6 +2,7 @@
 #define _LIBSYS_EXECSEND_H
 #include "execfd.h"
 #include "operation.h"
+#include "context.h"
 
 typedef struct Execsend Execsend;
 struct Execsend
@@ -27,4 +28,8 @@ isize sysforkfdbegin(const Execfds *capture, Connwork *work, Conncache *cache, u
 /* Reap an already submitted fork manifest, saving its reply before ACK.
    On success owned_file receives the operation pin and the key is cleared. */
 isize sysforkfdcollect(Connwork *work, Conncache *cache, Execsend *send, u64 *owned_file);
+/* Drive the original request through the runtime context. On error, the
+   operation retains ownership unless collection has already released it. */
+isize sysforkfddrive(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Execsend *send,
+                     u64 *owned_file);
 #endif

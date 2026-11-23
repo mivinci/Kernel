@@ -1,4 +1,5 @@
 #include "private/execsend.h"
+#include "private/contextipc.h"
 #include "private/syscall.h"
 
 static int
@@ -140,4 +141,36 @@ sysforkfdcollect(Connwork *work, Conncache *cache, Execsend *send, u64 *owned_fi
   if (!error)
     send->key.lease.seq = 0;
   return error;
+}
+
+isize
+sysforkfddrive(Rbank *bank, u32 layer, Connwork *work, Conncache *cache, Execsend *send,
+                u64 *owned_file)
+{
+  Rkey    active;
+  Slotop *op;
+  isize   error, status;
+  if (!bank || !work || !cache || !send || !owned_file || *owned_file)
+    return -ERR_INVALID;
+  error = sysopcheck(work, cache, &send->key);
+  if (error)
+    return error;
+  op = &work->state.operations[send->key.lease.slot];
+  if (op->opcode != FS_FORK_SNAPSHOT && op->opcode != FS_FORK_PREPARE)
+    return -ERR_INVALID;
+  while (op->phase == SYSOP_PREPARED || op->phase == SYSOP_WAITING) {
+    if (op->phase == SYSOP_PREPARED)
+      error = sysctxopcall(bank, cache->self, layer, work, cache, &send->key, 0, &active);
+    else
+      error = sysctxopwait(bank, cache->self, layer, work, cache, &send->key, &active);
+    if (error)
+      return error;
+    status = sysctxinvoke(bank, cache->self, active);
+    error = sysctxhandoff(bank, cache->self, active);
+    if (!error)
+      error = sysctxfinish(bank, cache->self, active);
+    if (error || status)
+      return error ? error : status;
+  }
+  return sysforkfdcollect(work, cache, send, owned_file);
 }
