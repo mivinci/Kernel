@@ -67,9 +67,9 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
   Handle call;
   Packet packet;
   Config config;
+  const u64 pages = 448;
   u32    i, j, peer;
   for (i = 0; i < count; i++) {
-    u64 pages = roles[i] == 'R' || roles[i] == 'T' ? 384 : 256;
     CHECK(!procnew(set, 1, pages, 512, LOCALS, &pids[i]) && !procinfo(pids[i], &processes[i]));
   }
   for (i = 0; i < count; i++) {
@@ -101,7 +101,7 @@ loadroles(Setid set, const Bootimage *image, Handle *pids, Procinfo *processes, 
     if (roles[i] == '0') {
       Createpolicy policy = {0};
       policy.set = set;
-      policy.memlimit = 256;
+      policy.memlimit = pages;
       policy.exec_limit = 512;
       policy.resources = LOCALS;
       policy.pending = PENDING_CALLS;
@@ -326,12 +326,21 @@ execclaimtest(int reuse)
     }
     CHECK(!lifestat(proc[i].life, &life));
     if (life.reason != LIFE_EXIT || life.code != 42) {
+      Acct account;
       putstr("EXECCLAIM actor=");
       puthex(i);
       putstr(" image=");
       puthex(proc[i].image);
       putstr(" code=");
       puthex(life.code);
+      if (!acctstat(proc[i].acct, &account)) {
+        putstr(" used=");
+        puthex(account.used);
+        putstr(" reserved=");
+        puthex(account.reserved);
+        putstr(" limit=");
+        puthex(account.limit);
+      }
       if (proc[i].image == 1 &&
           !spaceread(proc[i].space, filecreate_trace_address, trace, sizeof(trace))) {
         putstr(" line=");
