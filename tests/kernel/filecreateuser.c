@@ -1274,7 +1274,16 @@ claimbackend(const Bootview *boot, int reuse)
         !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 5 &&
         !memcmp((const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
                 "abcde", 5));
-    readreply = (Msg){{0, slot.seq, 5, 0}};
+    readreply = (Msg){{0, slot.seq, 3, 0}};
+    CHECK(!ipc_reply(input.request, &readreply) &&
+          !sysfilefinish(&links[1].watch.active, input.request));
+    CHECK(
+        !ipc_recv(0, 0, &input) && input.source == target->pid && input.image == target->image &&
+        input.words[0] == FS_WRITE && !sysfilelinkaccept(links, ARRAY_SIZE(links), &input, &slot) &&
+        !sysfileargs(FS_WRITE, &slot) && slot.object == 100 && slot.args[1] == 2 &&
+        !memcmp((const void *) (links[1].address + FS_DATA_OFFSET + input.words[3] * FS_SLOT_BYTES),
+                "de", 2));
+    readreply = (Msg){{0, slot.seq, 2, 0}};
     CHECK(!ipc_reply(input.request, &readreply) &&
           !sysfilefinish(&links[1].watch.active, input.request));
   }

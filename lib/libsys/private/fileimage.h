@@ -53,6 +53,9 @@ isize sysfileimagepoll(u32 layer, Pollfd *fds, u32 count, int timeout);
 /* Snapshot one slot's worth of two buffers, then submit exactly one WRITE. */
 isize sysfileimagewritepair(u32 layer, int fd, const void *first, u64 firstbytes,
                             const void *second, u64 secondbytes, Fileioresult *result);
+/* Returns bytes or a negative POSIX errno. The libc owns SIGPIPE delivery. */
+isize sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes,
+                            const void *second, u64 secondbytes);
 /* Nonblocking collection. FINISH precedes payload validation and ACK.
    Keep the same private rows and result across retries. Zero returns the
    group's pin exactly once, clears the key, and publishes its outcome. */

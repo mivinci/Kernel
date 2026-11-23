@@ -1507,6 +1507,41 @@ sysfileimagewritepair(u32 layer, int fd, const void *first, u64 firstbytes, cons
 }
 
 isize
+sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, const void *second,
+                      u64 secondbytes)
+{
+  Fileioresult result;
+  isize status = sysfileimagewritepair(layer, fd, first, firstbytes, second, secondbytes, &result);
+  if (!status) {
+    status = result.native;
+    if (!status) {
+      if (!result.business)
+        return (isize) result.count;
+      return result.business < 0 && result.business >= -INT32_MAX ? result.business : -EIO;
+    }
+  }
+  switch (status) {
+  case -ERR_BAD_HANDLE:
+    return -EBADF;
+  case -ERR_FAULT:
+    return -EFAULT;
+  case -ERR_INVALID:
+    return -EINVAL;
+  case -ERR_INTERRUPTED:
+  case -ERR_CANCELLED:
+    return -EINTR;
+  case -ERR_BUSY:
+  case -ERR_CAPACITY:
+  case -ERR_LIMIT:
+    return -EAGAIN;
+  case -ERR_NOMEM:
+    return -ENOMEM;
+  default:
+    return -EIO;
+  }
+}
+
+isize
 sysfileimageseek(u32 layer, int fd, int64_t offset, int whence, Fileioresult *result)
 {
   if ((u32) whence > FS_SEEK_END)

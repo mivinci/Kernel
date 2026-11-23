@@ -69,8 +69,8 @@ claim(const Bootview *boot)
     return 73;
   if (!ready) {
     /* A single request must carry both pieces in order. */
-    if (sysfileimagewritepair(0, (int) opened.tag.index, "ab", 2, "cde", 3, &io) || io.native ||
-        io.business || io.count != 5)
+    if (sysfilewritepairposix(0, (int) opened.tag.index, "ab", 2, "cde", 3) != 3 ||
+        sysfilewritepairposix(0, (int) opened.tag.index, "de", 2, NULL, 0) != 2)
       return 77;
   }
   *marker = ~EXEC_CLAIM_MARKER;
