@@ -10,6 +10,11 @@
 .global user_kernelfault
 .global user_nx
 user_begin:
+ mrs x9, tpidr_el0
+ cbnz x9, user_bad
+ mov x9, #0x1234
+ msr tpidr_el0, x9
+ mov x9, #0
  cbnz x1, user_bad
  cbnz x2, user_bad
  cbnz x3, user_bad

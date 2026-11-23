@@ -198,8 +198,9 @@ hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate)
   if (!out || !trusted || !candidate || (trusted->tf.status & 31) ||
       ((candidate->tf.status ^ trusted->tf.status) & ~SIGNAL_NZCV) ||
       candidate->tf.cause != trusted->tf.cause || candidate->tf.address != trusted->tf.address ||
-      !signaladdress(candidate->tf.pc, candidate->tf.sp) || candidate->fp.reserved ||
-      trusted->fp.reserved || ((candidate->fp.fpcr ^ trusted->fp.fpcr) & ~SIGNAL_FPCR_EDIT) ||
+      !signaladdress(candidate->tf.pc, candidate->tf.sp) ||
+      candidate->fp.tpidr != trusted->fp.tpidr ||
+      ((candidate->fp.fpcr ^ trusted->fp.fpcr) & ~SIGNAL_FPCR_EDIT) ||
       ((candidate->fp.fpsr ^ trusted->fp.fpsr) & ~SIGNAL_FPSR_EDIT))
     return HAL_CONTEXT_BAD;
   /* Keep every other original legal FP control/status bit, rather than
@@ -218,7 +219,6 @@ hal_signal_restore(Hctx *out, const Hctx *trusted, const Hctx *candidate)
   out->tf.address = address;
   out->fp.fpcr = fpcr;
   out->fp.fpsr = fpsr;
-  out->fp.reserved = 0;
   return 0;
 }
 

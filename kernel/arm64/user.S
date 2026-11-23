@@ -15,6 +15,8 @@ hal_user_enter:
  msr vbar_el1, x9
  isb
  arch_restore_fp x30
+ ldr x9, [x30, #HC_TPIDR]
+ msr tpidr_el0, x9
  ldr x9, [x30, #TF_SP]
  msr sp_el0, x9
  ldr x9, [x30, #TF_PC]
@@ -67,6 +69,8 @@ userirqentry:
  mov x9, #0x8000000000000000
  str x9, [sp, #TF_CAUSE]
 userstate:
+ mrs x9, tpidr_el0
+ str x9, [sp, #HC_TPIDR]
  mrs x9, sp_el0
  str x9, [sp, #TF_SP]
  mrs x9, elr_el1

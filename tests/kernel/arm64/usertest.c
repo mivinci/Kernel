@@ -15,8 +15,10 @@ arch_usercheck(Hctx *context, u32 phase)
       if (context->fp.q[i] != (i % 2 ? 0x600UL : 0x500UL) + i / 2)
         panic("user SIMD registers");
     if (context->tf.sp != 0x3fffff0000UL || context->fp.fpsr != 0x1f ||
-        context->fp.fpcr != 0x400000 || context->fp.reserved)
+        context->fp.fpcr != 0x400000 || context->fp.tpidr != (phase ? 0x5678 : 0x1234))
       panic("user control");
+    if (!phase)
+      context->fp.tpidr = 0x5678;
     pc += (phase + 1) * 4;
   } else if (phase == 2)
     pc = 0x10000 + (u64) (user_bootfault - user_begin);

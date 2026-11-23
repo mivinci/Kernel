@@ -32,7 +32,7 @@ arch_sigcontext(Hctx *context, u32 mode)
   candidate.fp.fpsr = 1U << 5;
   contextreject(&trusted, &candidate);
   contextcopy(&candidate, &trusted);
-  candidate.fp.reserved = 1;
+  candidate.fp.tpidr = 1;
   contextreject(&trusted, &candidate);
   contextcopy(&candidate, &trusted);
   candidate.tf.pc = 0x10001;

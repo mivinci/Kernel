@@ -7,7 +7,7 @@
 #define KC_REG(n)        ((n) * 8)
 #define FP_REG(n)        ((n) * 16)
 #define FP_CONTROL       512
-#define FP_RESERVED      520
+#define HC_TPIDR         (TF_SIZE + 520)
 #define FP_SIZE          528
 #define HC_FP            TF_SIZE
 #define HC_SIZE          (TF_SIZE + FP_SIZE)
@@ -39,7 +39,7 @@ struct Fpstate
 {
   u64 q[64];
   u32 fpsr, fpcr;
-  u64 reserved;
+  u64 tpidr;
 } ALIGNED(16);
 struct Hctx
 {
@@ -48,7 +48,7 @@ struct Hctx
 } ALIGNED(16);
 STATIC_ASSERT(__alignof__(Fpstate) == 16, fp_align);
 STATIC_ASSERT(sizeof(Fpstate) == FP_SIZE, fp_size);
-STATIC_ASSERT(offsetof(Fpstate, reserved) == FP_RESERVED, fp_reserved);
+STATIC_ASSERT(offsetof(Hctx, fp.tpidr) == HC_TPIDR, context_tpidr);
 STATIC_ASSERT(offsetof(Fpstate, q[0]) == FP_REG(0), fp_reg0);
 STATIC_ASSERT(offsetof(Fpstate, q[2]) == FP_REG(1), fp_reg1);
 STATIC_ASSERT(offsetof(Fpstate, q[4]) == FP_REG(2), fp_reg2);

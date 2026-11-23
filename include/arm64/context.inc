@@ -41,7 +41,6 @@
  str w9, [sp, #(HC_FP+FP_CONTROL)]
  mrs x9, fpcr
  str w9, [sp, #(HC_FP+FP_CONTROL+4)]
- str xzr, [sp, #(HC_FP+FP_RESERVED)]
 .endm
 .macro arch_restore_fp base
  ldp q0, q1, [\base, #(HC_FP+FP_REG(0))]

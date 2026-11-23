@@ -18,7 +18,7 @@ arch_forkcontext(Hctx *out, u64 pid, u64 fixva)
   parent.fp.q[62] = parent.fp.q[63] = 0x5678;
   parent.fp.fpcr = 0x01800000;
   parent.fp.fpsr = 0x0800009f;
-  parent.fp.reserved = 0;
+  parent.fp.tpidr = 0;
   forkcontextcopy(&snapshot, &parent);
   FORKCTX_ASSERT(!hal_user_fork(out, &parent, pid, fixva) && forkcontextequal(&snapshot, &parent));
   FORKCTX_ASSERT(out->tf.pc == 0x10004 && out->tf.x[2] == pid && out->tf.x[3] == fixva &&
