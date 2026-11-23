@@ -23,6 +23,8 @@ struct Fsfork
   Execmanifest manifest;
   Forkhold     holds[BOOT_FD_COUNT];
   u64          context;
+  u64          token; /* Nonzero after preparation, until child ATTACH. */
+  u32          link;
 };
 struct Fsforks
 {
@@ -63,4 +65,7 @@ struct Fsservice
    zeroed storage. The loop owns the process alarm and uses TIMER as a wakeup.
    One serialized iteration; blocks when there is no work. */
 isize fsstep(Fsservice *fs);
+/* Move a verified snapshot into a fresh child namespace. On failure the
+   record is consumed and every reference from this transfer is released. */
+isize fsforktransfer(Fsservice *fs, Fsfork *record, Connpeer child);
 #endif

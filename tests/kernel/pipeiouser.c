@@ -1202,7 +1202,12 @@ serviceclient(const Bootview *boot)
   CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -EBUSY &&
         result.words[1] == 23);
   invalid.words[0] = FS_ATTACH;
-  CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ENOSYS);
+  invalid.words[1] = work.state.map.connid;
+  CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -EINVAL &&
+        result.words[1] == 23);
+  invalid.words[1] = 0;
+  CHECK(!ipc_call(work.state.call, &invalid, 0, &result) && (isize) result.words[0] == -ESTALE &&
+        result.words[1] == 23 && !result.words[2] && !result.words[3]);
   CHECK(!sysfilerefinit(&pool, work.state.self) && !sysfdreserve(&table, 1, &held) &&
         !sysfilepipeprepare(&pool, &work, &cache, &table, SYSFILE_MAIN, 99, &pipe, &invalid) &&
         !sysfilepipeabort(&pool, &work, &cache, &table, &pipe) && !pipe.operation.lease.seq);
@@ -2179,7 +2184,7 @@ openwrite(u64 session, u64 offset, u64 flags, isize expected, u64 accepted, int 
   CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)));
   if (cancel) {
-    Msg    gate = {{FS_ATTACH, 0, 0, 0}};
+    Msg    gate = {{UINT64_MAX, 0, 0, 0}};
     Ipcmsg drain;
     Handle rpc;
     CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
@@ -2840,7 +2845,7 @@ opensynccheck(u64 session, u64 dataonly, isize expected)
   CHECK(!__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)));
   if (dataonly == 1) {
-    Msg    gate = {{FS_ATTACH, 0, 0, 0}};
+    Msg    gate = {{UINT64_MAX, 0, 0, 0}};
     Ipcmsg drain;
     Handle rpc;
     CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
@@ -2958,9 +2963,10 @@ openloadclient(void)
         !__sys_copy((void *) (work.state.map.address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES),
                     &slot, sizeof(slot)));
     if (attempt == 1) {
+      Msg unsupported = {{UINT64_MAX, 0, 0, 0}};
       CHECK(!ipc_call(work.state.call, &request, CALL_ASYNC, &result));
       rpc = result.request;
-      CHECK(!ipc_call(work.state.call, &gate, CALL_CONTROL, &drain) &&
+      CHECK(!ipc_call(work.state.call, &unsupported, CALL_CONTROL, &drain) &&
             (isize) drain.words[0] == -ENOSYS &&
             ipc_rqpoll(rpc, RQ_FINISH, &drain) == -ERR_WOULD_BLOCK && !ipc_rqcancel(rpc) &&
             !ipc_rqwait(rpc, 0, &result) && !ipc_rqwait(rpc, RQ_FINISH, &drain) &&
@@ -3575,6 +3581,10 @@ publicchdirserver(const Bootview *boot)
         records[0].manifest.target_image != records[1].manifest.target_image &&
         servicepipe.stream.refs[PIPE_WRITE] == 3);
   CHECK(!fsstep(&fs) && forks.serial == 2 && file.refs == 3);      /* Table full. */
+  CHECK(!fsstep(&fs) && records[0].manifest.snapshot == 1 &&
+        records[0].manifest.count == 2 && file.refs == 3); /* Wrong PREPARE token. */
+  CHECK(!fsstep(&fs) && records[0].manifest.count == 2 && !records[0].token &&
+        records[1].manifest.count == 2 && file.refs == 3); /* Token for another image. */
   CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 2); /* CLOSE write end. */
   CHECK(!fsstep(&fs) && file.position == 3);                       /* fclose's flush. */
   CHECK(!fsstep(&fs) && !ref.file && file.refs == 2 && file.position == 3);
@@ -3718,6 +3728,22 @@ publicforksnapshot(Connwork *peer, int fd, int writer)
           (isize) result.words[0] == status[i] && result.words[1] == lease.seq &&
           result.words[2] == (i == 1 || i == 2 ? i : 0) && !result.words[3] &&
           !sysconnworkrelease(peer, cache, lease));
+  }
+  request.words[0] = FS_FORK_PREPARE;
+  slot.args[3] = now + UINT64_C(1000000000);
+  for (i = 0; i < 2; i++) {
+    CHECK(!sysconnworkreserve(peer, cache, SYSFILE_MAIN, 1, &lease));
+    request.words[2] = slot.seq = lease.seq;
+    request.words[3] = lease.slot;
+    slot.args[1] = peer->state.peer.image + i;
+    slot.args[6] = i ? 1 : UINT64_MAX;
+    CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), rows,
+                      sizeof(rows)) &&
+          !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
+                      sizeof(slot)) &&
+          !ipc_call(peer->state.call, &request, 0, &result) &&
+          (isize) result.words[0] == -ESTALE && result.words[1] == lease.seq &&
+          !result.words[2] && !result.words[3] && !sysconnworkrelease(peer, cache, lease));
   }
 }
 
