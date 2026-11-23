@@ -11,6 +11,8 @@ isize sysvminit(u64 low, u64 high);
 /* bytes is page-aligned. DATA pages are zeroed, RW/NX, charged to SELF_ALLOC.
    Every successful Mem management reference is dropped after map. */
 isize sysvmget(u64 bytes, void **out);
+/* Like sysvmget, with one reserved, unmapped page before the returned base. */
+isize sysvmgetguarded(u64 bytes, void **out);
 /* Exact returned base only. Failed cleanup stays reserved for later retry;
    it never makes partially mapped memory available to another allocation. */
 isize sysvmput(void *address);

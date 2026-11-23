@@ -7,7 +7,7 @@
 typedef struct Vregion Vregion;
 struct Vregion
 {
-  u64    address, bytes;
+  u64    address, bytes, guard;
   Handle handle;
   u32    mapped, state;
 };
@@ -44,12 +44,12 @@ cleanup(Vregion *r, Handle space)
     r->handle = 0;
   }
   while (r->mapped) {
-    error = __sys_unmap(space, r->address + (u64) (r->mapped - 1) * SYSVM_CHUNK);
+    error = __sys_unmap(space, r->address + r->guard + (u64) (r->mapped - 1) * SYSVM_CHUNK);
     if (error)
       return error;
     r->mapped--;
   }
-  r->address = r->bytes = 0;
+  r->address = r->bytes = r->guard = 0;
   r->state = 0;
   return 0;
 }
@@ -77,8 +77,8 @@ findrange(u64 bytes, u64 *out)
   }
   return 0;
 }
-isize
-sysvmget(u64 bytes, void **out)
+static isize
+getregion(u64 bytes, u64 guard, void **out)
 {
   Allocarg allocation;
   Maparg   mapping;
@@ -90,7 +90,8 @@ sysvmget(u64 bytes, void **out)
   if (!out)
     return -ERR_INVALID;
   *out = NULL;
-  if (!initialized || !bytes || (bytes & PAGE_MASK) || bytes > high - low)
+  if (!initialized || !bytes || (bytes & PAGE_MASK) || guard > high - low ||
+      bytes > high - low - guard)
     return -ERR_INVALID;
   if ((bytes - 1) / SYSVM_CHUNK >= UINT32_MAX)
     return -ERR_OVERFLOW;
@@ -113,14 +114,15 @@ sysvmget(u64 bytes, void **out)
   mapping.prot = MAP_READ | MAP_WRITE;
   mapping.reserved = 0;
   for (attempt = 0; attempt < SYSVM_PROBES; attempt++) {
-    if (!findrange(bytes, &address))
+    if (!findrange(bytes + guard, &address))
       return -ERR_NOMEM;
     r->address = address;
-    r->bytes = bytes;
+    r->bytes = bytes + guard;
+    r->guard = guard;
     r->handle = 0;
     r->mapped = 0;
     r->state = VM_BUILDING;
-    cursor = address + bytes;
+    cursor = address + r->bytes;
     if (cursor == high)
       cursor = low;
     error = 0;
@@ -131,7 +133,7 @@ sysvmget(u64 bytes, void **out)
       if (error)
         break;
       mapping.mem = r->handle;
-      mapping.address = address + offset;
+      mapping.address = address + guard + offset;
       mapping.length = amount;
       error = __sys_map(space, &mapping);
       if (error)
@@ -144,7 +146,7 @@ sysvmget(u64 bytes, void **out)
     }
     if (!error) {
       r->state = VM_ACTIVE;
-      *out = (void *) address;
+      *out = (void *) (address + guard);
       return 0;
     }
     r->state = VM_CLEANUP;
@@ -157,6 +159,16 @@ sysvmget(u64 bytes, void **out)
   return -ERR_NOMEM;
 }
 isize
+sysvmget(u64 bytes, void **out)
+{
+  return getregion(bytes, 0, out);
+}
+isize
+sysvmgetguarded(u64 bytes, void **out)
+{
+  return getregion(bytes, PAGE_SIZE, out);
+}
+isize
 sysvmput(void *address)
 {
   Handle space;
@@ -167,7 +179,7 @@ sysvmput(void *address)
   if (space <= 0)
     return -ERR_BAD_HANDLE;
   for (i = 0; i < SYSVM_REGIONS; i++)
-    if (regions[i].state == VM_ACTIVE && regions[i].address == (u64) address)
+    if (regions[i].state == VM_ACTIVE && regions[i].address + regions[i].guard == (u64) address)
       break;
   if (i == SYSVM_REGIONS)
     return -ERR_BAD_HANDLE;

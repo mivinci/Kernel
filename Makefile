@@ -22,7 +22,7 @@ NM ?= llvm-nm
 ARCH ?=
 KEEP ?= 20
 GRACE_HOURS ?= 24
-SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -type f \( -name '*.h' -o -name '*.c' \))
+SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -path lib/musl -prune -o -type f \( -name '*.h' -o -name '*.c' \) -print)
 
 .PHONY: all help build hardware compdb sdk sdk-audit bootpkg clean clean-runs fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
 all: $(if $(strip $(ARCH)),build,help)

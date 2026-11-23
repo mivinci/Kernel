@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include "private/start.h"
 #include "private/syscall.h"
+#include "private/vm.h"
 volatile u64 heap_trace[32];
 static void *early;
 extern char  __image_end[];
@@ -134,6 +135,16 @@ main(int argc, char **argv)
   if (heap_trace[10])
     REQUIRE(!__sys_unmap(space, heap_trace[10]), 221);
   REQUIRE(errno == EDOM, 222);
+  {
+    void *guarded;
+    u8    byte = 0xff;
+    REQUIRE(!sysvmgetguarded(PAGE_SIZE, &guarded) && !*(u8 *) guarded, 225);
+    REQUIRE(__sys_copy(&byte, (void *) ((u64) guarded - PAGE_SIZE), 1) == -ERR_FAULT &&
+                byte == 0xff,
+            226);
+    *(u8 *) guarded = 42;
+    REQUIRE(!sysvmput(guarded) && __sys_copy(&byte, guarded, 1) == -ERR_FAULT, 227);
+  }
   heap_trace[0] = 2;
   REQUIRE(!__sys_yield(), 223);
   heap_trace[0] = 99;

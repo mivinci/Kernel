@@ -530,6 +530,10 @@ ARM64 用户陷入与返回已保存、恢复 `TPIDR_EL0`。复用上下文尾�
 
 上游构建基线已验证：在 v1.2.5 源码树外分别以 `aarch64`、`riscv64` 代入 `$arch`，执行 `CC="clang --target=$arch-linux-musl" AR=llvm-ar RANLIB=llvm-ranlib "$src/configure" --target="$arch-linux-musl" --disable-shared --disable-wrapper`，再执行 `make -j4 lib/libc.a`。两架构均产出静态归档。这一步只验证上游源可交叉编译；归档仍使用上游 Linux 调用层，不能作为原生 SDK 使用。原生端口优先接 Boot/Fix、主线程 TLS 与退出，验证后再将可运行的端口提交锁定为构建依赖。
 
+临时启动探针仅链接 musl 与 libsys，已在 ARM64 `f2be16daa1b34f909adf0eb2c455e6e9`、RV64 `94e9d7e33ea548a884fc51131b4f54ac` 通过原生启动包验证：Boot 参数解析、主线程 TLS 初值和零填充、`errno` 读写及原生退出状态 42。RV64 端口须与原生 SDK 一致使用 `-march=rv64gc -mabi=lp64`。探针未覆盖 fd/Fix、分配器、标准输出和进程间隔离。
+
+mallocng 接入边界：上游 `src/malloc/mallocng/malloc.c` 的元数据路径先尝试 `brk`，失败时保留不可访问的地址范围，再逐页启用元数据；大对象使用匿名映射并在释放时解除。当前 `sysvmget` 只提供整段 RW/NX，不能把 `PROT_NONE` 映射成可读写，也不能让 `mprotect` 假成功。端口应保留 mallocng 的对象分配逻辑，用 libsys 为其保留地址范围、留下实际未映射的保护页并映射所需元数据页；暂不承诺通用 `brk` 或 `mprotect`。普通匿名映射可继续用 `sysvmget/sysvmput`；未接原生重新映射时保留 realloc 的分配、复制、释放路径。另需为上游 `get_random_secret` 提供原生入口，避免在没有 Linux auxv 的启动路径解引用 `libc.auxv`。后续验收应实际触发首次元数据分配、跨页大对象及释放，检查保护页未映射和失败后的资源归还。
+
 嵌套exec直接返回EAGAIN资源冲突扩展，不抢走外层准备；handler成功exec/退出则不再恢复外层，旧镜像终结清理接管。handler修改fd/cwd后，已接受准备仍用原稳定快照，必要构造关系失效则明确失败，不混用新旧版本。用户变量指向已free的库私有句柄不造成资源重新安装。
 
 ## 执行与验收
