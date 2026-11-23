@@ -792,7 +792,6 @@ client(const Bootview *boot)
       for (attempt = 0; attempt < 2; attempt++)
         CHECK(!sysfilerefalias(&pool, work.state.self, first) && !sysfdreserve(&fds, 0, &tag) &&
               !sysfdpublish(&fds, tag, first, attempt ? 0 : BOOT_FD_CLOEXEC));
-      CHECK(!__sys_inherit(work.state.call, 1)); /* FORK */
       CHECK(!sysfileimage(&runtime) && !sysfileclaimrange(ADDRESS));
       memcpy(runtime->connections, connections, sizeof(connections));
       memcpy(&runtime->fds, &fds, sizeof(fds));

@@ -9,6 +9,7 @@
 #include "private/timer.h"
 #include "private/vm.h"
 #include <abi/signal.h>
+#include <abi/resource.h>
 #include <errno.h>
 #include <proto/file.h>
 #include <proto/tty.h>
@@ -561,6 +562,28 @@ static Forksend forksend;
 static Elfwork forkwork;
 static u32 forking;
 
+static isize
+forkcall(Handle call)
+{
+  Queryrec records[4];
+  u64 cursor = 0, count, next, i;
+  isize error;
+  do {
+    error = __sys_query(0, QUERY_RESOURCE, cursor, records, ARRAY_SIZE(records), &count, &next);
+    if (error)
+      return error;
+    for (i = 0; i < count; i++) {
+      if ((Handle) records[i].data[0] != call || records[i].data[1] != RESOURCE_CALL)
+        continue;
+      if (records[i].data[5] & RESOURCE_INHERIT_FORK)
+        return 0;
+      return __sys_inherit(call, records[i].data[5] | RESOURCE_INHERIT_FORK);
+    }
+    cursor = next;
+  } while (cursor);
+  return -ERR_BAD_HANDLE;
+}
+
 isize
 sysfileimagefork(u64 scratch, u64 deadline)
 {
@@ -603,6 +626,28 @@ sysfileimagefork(u64 scratch, u64 deadline)
   detach.works = aliases;
   detach.count = 0;
   detach.space = space;
+  for (i = 0; i < BOOT_FD_COUNT; i++) {
+    const Fdentry *fd = &state->fds.entries[i];
+    Fileref ref;
+    Connentry entry;
+    Connwork *work;
+    if (fd->state != SYSFD_LIVE)
+      continue;
+    status = sysfilerefview(&state->files, cache->self, fd->file, &ref);
+    if (!status)
+      status = sysconnview(cache, ref.connection, &entry);
+    if (status)
+      goto settle;
+    if (entry.state != SYSCONN_READY) {
+      status = sysfileclaimfd(0, (int) i, 0);
+      if (status)
+        goto settle;
+    }
+    work = &state->connections[ref.connection.index];
+    status = forkcall(work->state.call);
+    if (status)
+      goto settle;
+  }
   for (i = 0; i < SYSCONN_COUNT; i++)
     if (state->connections[i].state.map.mapped)
       aliases[detach.count++] = &state->connections[i];
