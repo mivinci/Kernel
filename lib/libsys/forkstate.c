@@ -13,6 +13,57 @@ separate(Region a, Region b)
          (a.address && b.address && a.bytes <= UINT64_MAX - x && b.bytes <= UINT64_MAX - y &&
           (x + a.bytes <= y || y + b.bytes <= x));
 }
+
+isize
+sysforkfiles(const Forkstate *state, Connpeer parent, const Fixconn *connections,
+             u64 connection_count, Filefork *files, u64 capacity)
+{
+  u64   count = 0, i, j, k;
+  isize error;
+  if (!state || !state->fds || !state->files || !state->connections || !files ||
+      capacity > BOOT_FD_COUNT || connection_count > FIX_CONN_COUNT ||
+      (connection_count && !connections))
+    return -ERR_INVALID;
+  error = sysfdcheck(state->fds);
+  if (!error)
+    error = sysconnforkcheck(state->connections, parent, connections, connection_count);
+  if (error)
+    return error;
+  for (i = 0; i < BOOT_FD_COUNT; i++) {
+    const Fdentry *fd = &state->fds->entries[i];
+    Connentry      peer;
+    Fileref        ref;
+    if (fd->state == SYSFD_RESERVED)
+      return -ERR_NOTSUP;
+    if (fd->state != SYSFD_LIVE)
+      continue;
+    for (j = 0; j < count && files[j].file != fd->file; j++)
+      ;
+    if (j < count) {
+      files[j].aliases++;
+      continue;
+    }
+    if (count == capacity)
+      return -ERR_CAPACITY;
+    error = sysfilerefview(state->files, parent, fd->file, &ref);
+    if (!error)
+      error = sysconnview(state->connections, ref.connection, &peer);
+    if (error)
+      return error;
+    if (ref.connection.generation == UINT64_MAX)
+      return -ERR_OVERFLOW;
+    for (k = 0; k < connection_count; k++)
+      if (connections[k].pid == peer.peer.pid && connections[k].image == peer.peer.image)
+        break;
+    if (k == connection_count)
+      return -ERR_STALE;
+    ref.connection.generation++;
+    files[count++] = (Filefork){fd->file,
+                               {ref.connection, ref.session, ref.reference, connections[k].token},
+                               1, 0};
+  }
+  return (isize) count;
+}
 isize
 sysforkstatecheck(const Forkstate *state, Connpeer parent, Connpeer child,
                   const Fixlayer layers[FIX_LAYER_COUNT], const Filefork *files, u64 file_count,

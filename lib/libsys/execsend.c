@@ -323,3 +323,50 @@ sysforkfdpublish(Forksend *tx, Elfwork *child, Rbank *bank, Connpeer parent, con
   tx->ready = 0;
   return sysforkfinish(child, bank, parent, &plan);
 }
+
+isize
+sysforkwithfds(Handle authority, u64 reserve, const Forkresume *resume, Elfwork *work,
+                const Forkfix *fix, Execfds *capture, Forksend *tx, Connwork *works,
+                u32 layer, u64 deadline)
+{
+  const Forkstate *state;
+  Connpeer         parent, child;
+  Forkret          result;
+  u64              mask, ignored;
+  isize            error, cleanup;
+  if (!resume || !work || !fix || !capture || !tx || !works || !deadline ||
+      layer >= RCTX_LAYERS || !resume->state.contexts || !resume->detach || resume->files ||
+      resume->file_count || work->view || work->pid || work->mapped || work->memory ||
+      work->reserved || work->failure || work->parent_space != resume->space ||
+      fix->capacity > resume->available || fix->connections || fix->connection_count ||
+      tx->child.pid || tx->pin || tx->send.key.lease.seq)
+    return -ERR_INVALID;
+  state = &resume->state;
+  parent = state->contexts->self;
+  error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
+  if (error)
+    return error;
+  error = sysforkresume(authority, reserve, resume, &result);
+  if (!error && result.construct) {
+    work->view = result.construct;
+    work->pid = result.pid;
+    child.pid = result.pid;
+    child.image = 1;
+    error = sysexecfds(capture, state->fds, state->files, state->connections, parent);
+    if (!error)
+      error = sysforkfdprepare(tx, capture, works, state->connections, state->contexts,
+                               layer, child, deadline);
+    if (!error)
+      error = sysexecfdrelease(capture);
+    if (!error)
+      error = sysforkfdpublish(tx, work, state->contexts, parent, fix);
+    if (error < 0) {
+      cleanup = sysforkfdabort(tx, capture, works, state->connections, work);
+      if (cleanup)
+        error = cleanup;
+    }
+  }
+  if (__sys_sigmask(SIGNAL_SETMASK, mask, &ignored))
+    __sys_exit(128 + SIGNAL_SEGV);
+  return error;
+}

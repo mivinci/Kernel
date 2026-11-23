@@ -45,6 +45,8 @@ isize sysforkfinish(Elfwork *work, Rbank *bank, Connpeer parent, const Forkfix *
 /* Both child entries use the same private, initially zeroed marker. This
    detaches all inherited transport aliases listed by the caller, using the
    validated child SELF_SPACE. Null detach means no inherited aliases.
+   With no explicit File plan, prepared Fix peers supply the tokens for
+   copied fd aliases. Continuation pins require an explicit plan.
    Marker and inputs must be disjoint from the mutable tables. */
 isize sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const Forkret *result,
                     u64 available, const Filefork *files, u64 file_count, const Forkdetach *detach);

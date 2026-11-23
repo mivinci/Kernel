@@ -7,6 +7,7 @@ sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const For
   Fixview         view;
   const Fixlayer *layers;
   const Fixconn  *connections;
+  Filefork        derived[BOOT_FD_COUNT];
   Connpeer        child;
   Handle          ignored;
   u64             count, mask, replaced;
@@ -31,6 +32,14 @@ sysforkrepair(Forkdone *done, const Forkstate *state, Connpeer parent, const For
       status = sysfixlayers(&view, &layers);
     if (!status)
       status = sysfixconnections(&view, &connections, &count);
+    if (!status && count && !files && !file_count) {
+      status = sysforkfiles(state, parent, connections, count, derived, ARRAY_SIZE(derived));
+      if (status >= 0) {
+        files = derived;
+        file_count = (u64) status;
+        status = 0;
+      }
+    }
     if (!status && detach) {
       status =
           sysforkstateadmit(state, parent, child, layers, files, file_count, connections, count);

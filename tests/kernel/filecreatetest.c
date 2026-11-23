@@ -4,6 +4,7 @@
 #include <abi/observe.h>
 #include <bootimage.h>
 #include <diag.h>
+#include <prep.h>
 #include <signal.h>
 #include <rq.h>
 typedef struct Packet Packet;
@@ -149,6 +150,7 @@ filecreatetest(void)
   Pgstat     before, after;
   u64        trace[16];
   u32        i, turns = 0, ended;
+  Handle     forkchild = 0;
   int        error;
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set) &&
@@ -186,6 +188,8 @@ filecreatetest(void)
     }
     CHECK(trace[0] == 2);
     if (!i)
+      forkchild = (Handle) trace[9];
+    if (!i)
       CHECK(trace[1] == 12 && trace[2] == 10 && trace[3] == 1 && trace[4] == 3 && trace[5] == 1 &&
             trace[10] == 2 && trace[11] == 1 && trace[12] == 1 && trace[13] == 5 &&
             trace[14] == BOOT_FD_COUNT + 1 && injected == 30);
@@ -197,8 +201,30 @@ filecreatetest(void)
     }
     CHECK(!error && !lifecollect(processes[i].life, 1, &result));
   }
-  for (i = 0; i < 256; i++)
-    CHECK(procwork(32) >= 0);
+  /* The published fork child can still be retiring its copied mappings
+     after wait has collected the exit result. Drive both cleanup workers. */
+  for (i = 0; i < 2048; i++) {
+    CHECK(!setstat(set, &budget));
+    if (!budget.charged && !budget.instances && budget.refs == 1)
+      break;
+    CHECK(procwork(32) >= 0 && prepwork(32) >= 0);
+  }
+  if (budget.charged || budget.instances || budget.refs != 1) {
+    Procinfo child;
+    putstr("FORKCLEAN charged=");
+    puthex(budget.charged);
+    putstr(" instances=");
+    puthex(budget.instances);
+    putstr(" refs=");
+    puthex(budget.refs);
+    if (!procinfo(forkchild, &child)) {
+      putstr(" child_state=");
+      puthex(child.state);
+      putstr(" child_phase=");
+      puthex(child.phase);
+    }
+    putstr("\n");
+  }
   CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&

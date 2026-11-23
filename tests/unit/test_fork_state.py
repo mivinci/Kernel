@@ -41,6 +41,8 @@ class ForkStateTests(unittest.TestCase):
             'sysfilerefalias': [C.POINTER(Pool), Peer, C.c_uint64],
             'sysfilerefreserve': [C.POINTER(Pool), Peer, C.c_uint32, C.POINTER(Stage)],
             'sysfilerefforkcheck': [C.POINTER(Pool), Peer, Peer, C.POINTER(Fork), C.c_uint64],
+            'sysforkfiles': [C.POINTER(State), Peer, C.POINTER(Connection), C.c_uint64,
+                             C.POINTER(Fork), C.c_uint64],
             'sysforkstatecheck': [C.POINTER(State), Peer, Peer, C.c_void_p, C.POINTER(Fork),
                                   C.c_uint64, C.POINTER(Connection), C.c_uint64]}
         for name, args in signatures.items():
@@ -84,6 +86,17 @@ class ForkStateTests(unittest.TestCase):
     def test_combined_admission_keeps_aliases_cloexec_and_all_source_state(self):
         self.reserve(17)
         self.check()
+
+    def test_child_plan_retains_reference_number_and_groups_aliases(self):
+        before = self.snapshot()
+        plan = (Fork * 2)()
+        derive = self.lib.sysforkfiles
+        self.assertEqual(derive(C.byref(self.state), self.self, self.connections, 0, plan, 2), -4)
+        self.assertEqual(derive(C.byref(self.state), self.self, self.connections, 1, plan, 2), 1)
+        expected = Fork(self.file, Value(Tag(self.tag.generation + 1, self.tag.index, 0),
+                                         55, 77, 701), 2, 0)
+        self.assertEqual(bytes(plan[0]), bytes(expected))
+        self.assertEqual(self.snapshot(), before)
 
     def test_individually_valid_file_plan_cannot_use_another_directory_incarnation(self):
         self.pool.entries[self.file & 255].connection.generation += 1

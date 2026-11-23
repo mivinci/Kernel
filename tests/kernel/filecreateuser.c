@@ -775,6 +775,43 @@ client(const Bootview *boot)
             !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);
     check.words[1] = (u64) forked.pid;
     CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
+    {
+      Connwork *inherited[] = {&work};
+      Handle space = bootresource(boot, BOOT_SELF_SPACE), waited;
+      Forkdetach detach = {inherited, ARRAY_SIZE(inherited), space};
+      Forkresume resume = {{&fds, &pool, &cache, &contexts}, PAGE_SIZE, NULL, 0, &detach, space};
+      Elfwork build = {0};
+      Fixconn buffer[FIX_CONN_COUNT + 4];
+      Forkfix fix = {0x2000000, sizeof(buffer), buffer, NULL, 0, NULL, 0};
+      Forksend send = {0};
+      Fileref copied;
+      u64 kind, code, sequence;
+      isize pid;
+      for (attempt = 0; attempt < 2; attempt++)
+        CHECK(!sysfilerefalias(&pool, work.state.self, first) && !sysfdreserve(&fds, 0, &tag) &&
+              !sysfdpublish(&fds, tag, first, attempt ? 0 : BOOT_FD_CLOEXEC));
+      build.parent_space = space;
+      build.scratch = fix.address;
+      build.scratch_bytes = PAGE_SIZE;
+      pid = sysforkwithfds(bootresource(boot, BOOT_CREATE), 1, &resume, &build, &fix,
+                           &execfds, &send, connections, 0, UINT64_MAX);
+      CHECK(pid >= 0);
+      if (!pid) {
+        CHECK(!sysfdobserve(&fds, 0, &fd) && fd.file == first && fd.flags == BOOT_FD_CLOEXEC &&
+              !sysfilerefview(&pool, contexts.self, first, &copied) && copied.aliases == 2 &&
+              copied.reference && copied.token);
+        __sys_exit(43);
+      }
+      CHECK(!__sys_wait(pid, 0, &waited, &kind, &code, &sequence) && waited == pid &&
+            kind == WAIT_EXITED && code == 43);
+      filecreatetrace[9] = (u64) pid;
+      check.words[1] = (u64) pid;
+      check.words[2] = 1;
+      CHECK(!ipc_call(work.state.call, &check, CALL_CONTROL, &result) && !result.words[0]);
+      for (attempt = 0; attempt < 2; attempt++)
+        CHECK(!sysfdobserve(&fds, attempt, &fd) &&
+              !sysfdclose(&fds, &pool, work.state.self, fd.tag, &closing) && !closing);
+    }
   }
   loadreads();
   ttygetattr(first);
@@ -1715,8 +1752,10 @@ server(const Bootview *boot, u32 recover)
       continue;
     }
     if (!recover && opcode == FORKWATCH) {
-      CHECK(child.pid == (Handle) input.words[1] && sysforktarget(&child) == SYSEXEC_ABORTED &&
-            child.reason == OBS_ABORT && !sysfileownerclose(&child) && !child.cookie &&
+      CHECK(child.pid == (Handle) input.words[1] &&
+            sysforktarget(&child) == (input.words[2] ? SYSEXEC_ENDED : SYSEXEC_ABORTED) &&
+            child.reason == (input.words[2] ? OBS_EXIT : OBS_ABORT) &&
+            !sysfileownerclose(&child) && !child.cookie &&
             !ipc_reply(input.request, &reply));
       continue;
     }

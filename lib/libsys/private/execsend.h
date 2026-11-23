@@ -57,4 +57,9 @@ isize sysforkfdabort(Forksend *tx, Execfds *capture, Connwork *works, Conncache 
 /* Publish only the child for which this transaction collected every peer. */
 isize sysforkfdpublish(Forksend *tx, Elfwork *child, Rbank *bank, Connpeer parent,
                        const Forkfix *fix);
+/* Caller provides persistent, initially empty workspaces. If cleanup cannot
+   finish, they remain owned by the parent for sysforkfdabort retry. */
+isize sysforkwithfds(Handle authority, u64 reserve, const Forkresume *resume, Elfwork *work,
+                      const Forkfix *fix, Execfds *capture, Forksend *tx, Connwork *works,
+                      u32 layer, u64 deadline);
 #endif

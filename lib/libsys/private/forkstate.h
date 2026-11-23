@@ -10,6 +10,10 @@ struct Forkstate
   Conncache *connections;
   Rbank     *contexts;
 };
+/* Derive child File values from the copied fd table and prepared Fix peers.
+   This path retains fd aliases only; continuation pins need their own plan. */
+isize sysforkfiles(const Forkstate *state, Connpeer parent, const Fixconn *connections,
+                   u64 connection_count, Filefork *files, u64 capacity);
 /* Read-only local admission, not backend authority or permission to publish.
    The coordinator supplies prepared references and derives pins from typed
    continuations separately. Reserved creator/fd repair is still separate.
