@@ -37,7 +37,7 @@ class PrepTests(unittest.TestCase):
                 'prepcomplete':[Prepid], 'prepcancel':[Prepid], 'prepdrop':[Prepid],
                 'prepclean':[Prepid,C.c_uint32], 'prepexpire':[C.c_uint64,C.c_uint32], 'test_now':[C.c_uint64],
                 'localconstruct':[C.POINTER(support.Table),Prepid,C.c_uint64,C.POINTER(C.c_int64)],
-                'lifecreate':[self.sid.__class__,C.c_int64,C.c_int64,C.POINTER(Lifeid)],
+                'lifecreaterun':[self.sid.__class__,C.c_int64,C.c_int64,C.c_uint32, C.POINTER(Lifeid)],
                 'lifepublish':[Lifeid],'lifecancel':[Lifeid],'lifedetach':[Lifeid],
                 'lifeend':[Lifeid,C.c_uint32,C.c_uint32,C.c_void_p],
                 'lifestat':[Lifeid,C.POINTER(Life)],'lifecollect':[Lifeid,C.c_int64,C.POINTER(Result)],
@@ -85,7 +85,7 @@ class PrepTests(unittest.TestCase):
         table=support.Table(); storage=(support.Local*16)()
         self.assertEqual(self.lib.localinit(C.byref(table),storage,16,acct,space),0)
         table.owner=self.lib.handlepack(1,1,len(self.targets)+2); table.image=1
-        self.assertEqual(self.lib.lifecreate(self.sid,table.owner,self.source.owner,C.byref(life)),0)
+        self.assertEqual(self.lib.lifecreaterun(self.sid,table.owner,self.source.owner,len(self.targets)+2,C.byref(life)),0)
         image=Imageid()
         self.assertEqual(self.lib.imagecreate(life,0,C.byref(image)),0)
         self.targetimages[(life.generation,life.index)]=image

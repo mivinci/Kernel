@@ -40,7 +40,7 @@ class OrphanGroupTests(unittest.TestCase):
 
     def member(self,slot,group,parent=1,generation=1,publish=True):
         out=support.Lifeid()
-        self.assertEqual(self.lib.lifecreate(self.sid,self.pid(generation,slot),parent,C.byref(out)),0)
+        self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(generation,slot),parent,slot,C.byref(out)),0)
         self.lives.append(out)
         self.assertEqual(self.lib.lifebindgroup(out,group),0)
         if publish:self.assertEqual(self.lib.lifepublish(out),0)

@@ -67,7 +67,7 @@ class SignalForkTests(unittest.TestCase):
         self.assertEqual(self.lib.acctcreate(self.sid,128,128,C.byref(acct)),0)
         self.assertEqual(self.lib.spacecreate(acct,C.byref(space)),0);self.ids.append(space)
         index=slot if slot is not None else len(self.children)+2
-        self.assertEqual(self.lib.lifecreate(self.sid,self.pid(1300+len(self.children),index),parent or self.pid(1200,1),C.byref(life)),0)
+        self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(1300+len(self.children),index),parent or self.pid(1200,1),index,C.byref(life)),0)
         self.lives.append(life);self.assertEqual(self.lib.lifebindacct(life,acct),0)
         image=self.image(life)
         self.assertEqual(self.lib.sigreserve(image),0)

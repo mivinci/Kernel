@@ -94,11 +94,6 @@ reap(Life *l)
   l->state = 0;
 }
 int
-lifecreate(Setid set, Handle pid, Handle parent, Lifeid *out)
-{
-  return lifecreaterun(set, pid, parent, handleindex(pid), out);
-}
-int
 lifecreaterun(Setid set, Handle pid, Handle parent, u32 run, Lifeid *out)
 {
   Life *l;

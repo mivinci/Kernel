@@ -66,8 +66,15 @@ find(Imageid id)
   if (imagestat(id, &image) || lifestat(image.life, &life))
     return NULL;
   index = life.run;
-  if (index >= PROCS)
+  if (index >= PROCS) {
+    for (index = 0; index < PROCS; index++) {
+      s = &signals[index];
+      if (s->owner == image.pid && s->image == image.number &&
+          s->identity.generation == id.generation && s->identity.index == id.index)
+        return s;
+    }
     return NULL;
+  }
   s = &signals[index];
   return s->owner == image.pid && s->image == image.number &&
                  s->identity.generation == id.generation && s->identity.index == id.index
@@ -1031,7 +1038,8 @@ sigcheck(void)
     if (!s->owner)
       continue;
     if (imagestat(s->identity, &image) || s->owner != image.pid || s->image != image.number ||
-        lifestat(image.life, &life) || life.run != i || !image.cleanup || s->depth > SIGNAL_DEPTH ||
+        lifestat(image.life, &life) || (life.run != i && image.state != IMAGE_ENDED) ||
+        !image.cleanup || s->depth > SIGNAL_DEPTH ||
         s->forked > 1 ||
         sigmaskvalid(s->mask) || (s->mask & SIGNAL_UNMASKABLE) || sigmaskvalid(s->pending) ||
         (s->initial_ignore & (~SIGNAL_SUPPORTED | SIGNAL_UNMASKABLE)))

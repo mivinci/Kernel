@@ -273,7 +273,7 @@ u32 outstanding(void){return instances;}
                 subprocess.run(command, check=True, capture_output=True)
                 lib = C.CDLL(str(artifact))
                 for name, arguments in {
-                    'lifecreate': [Setid, C.c_int64, C.c_int64, C.POINTER(support.Lifeid)],
+                    'lifecreaterun': [Setid, C.c_int64, C.c_int64, C.c_uint32, C.POINTER(support.Lifeid)],
                     'lifebootgroup': [support.Lifeid], 'lifepublish': [support.Lifeid],
                     'lifestop': [support.Lifeid, C.c_uint32], 'lifecontinue': [support.Lifeid],
                     'lifejobcheck': [support.Lifeid, C.c_uint32],
@@ -286,7 +286,7 @@ u32 outstanding(void){return instances;}
                 for stopped in (False, True):
                     identity, state, result = support.Lifeid(), support.Life(), support.Result()
                     pid = (1 << 59) | ((9 + int(stopped)) << 16) | 1
-                    self.assertEqual(lib.lifecreate(Setid(1, 0, 0), pid, 1, C.byref(identity)), 0)
+                    self.assertEqual(lib.lifecreaterun(Setid(1, 0, 0), pid, 1,1,C.byref(identity)), 0)
                     self.assertEqual(lib.lifebootgroup(identity), 0)
                     self.assertEqual(lib.lifepublish(identity), 0)
                     if not stopped:

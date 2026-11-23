@@ -27,7 +27,7 @@ class LifeTests(unittest.TestCase):
     def exercise(self,lib,method):
         def body():
             for name,args in {'handlepack':[C.c_uint32,C.c_uint64,C.c_uint32],
-                'lifecreate':[Setid,C.c_int64,C.c_int64,C.POINTER(Lifeid)],
+                'lifecreaterun':[Setid,C.c_int64,C.c_int64,C.c_uint32, C.POINTER(Lifeid)],
                 'lifebindacct':[Lifeid,support.Acctid],
                 'lifechildpolicy':[Lifeid,C.c_uint32],
                 'lifeacct':[Lifeid,C.POINTER(support.Acctid)], 'lifecredentials':[Lifeid,C.POINTER(Cred)], 'lifepublish':[Lifeid],'lifecancel':[Lifeid],'lifedetach':[Lifeid],
@@ -61,7 +61,7 @@ class LifeTests(unittest.TestCase):
         return self.lib.handlepack(1,generation,slot)
     def create(self,generation=1,slot=1):
         out=Lifeid()
-        self.assertEqual(self.lib.lifecreate(self.sid,self.pid(generation,slot),1,C.byref(out)),0)
+        self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(generation,slot),1,slot,C.byref(out)),0)
         self.lives.append(out)
         return out
     def stat(self,lid):
@@ -154,13 +154,13 @@ class LifeTests(unittest.TestCase):
                 lid=self.create(i+1); ids.append(lid)
                 self.lib.lifepublish(lid); self.lib.lifeend(lid,1,i,None); self.lib.lifedetach(lid)
             out=Lifeid(77,77,77)
-            self.assertEqual(self.lib.lifecreate(self.sid,self.pid(5),1,C.byref(out)),-9)
+            self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(5),1,1,C.byref(out)),-9)
             self.assertEqual(out.generation,77)
             self.lib.lifecollect(ids[0],1,C.byref(Result()))
             fresh=self.create(5)
             self.assertEqual(fresh.index,ids[0].index)
             self.assertGreater(fresh.generation,ids[0].generation)
-            self.assertEqual(self.lib.lifecreate(self.sid,self.pid(6),1,C.byref(out)),-6)
+            self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(6),1,1,C.byref(out)),-6)
             self.assertEqual(self.lib.lifestat(ids[0],C.byref(Life())),-4)
         for lib in self.libs: self.exercise(lib,body)
 
@@ -270,7 +270,7 @@ class LifeTests(unittest.TestCase):
             self.assertEqual(self.lib.lifesetgroup(parent,group.value),0)
             self.assertEqual(self.lib.groupdrop(group.value),0);self.assertEqual(self.lib.groupdrop(session.value),0)
             self.assertEqual(self.lib.lifepublish(parent),0)
-            child=Lifeid();self.assertEqual(self.lib.lifecreate(self.sid,self.pid(slot=2),self.pid(),C.byref(child)),0);self.lives.append(child)
+            child=Lifeid();self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(slot=2),self.pid(),2,C.byref(child)),0);self.lives.append(child)
             self.assertEqual(self.lib.lifebootgroup(child),0);self.assertEqual(self.lib.lifepublish(child),0)
             self.assertEqual(self.stat(child).group,group.value)
             self.assertEqual(self.lib.lifeend(parent,1,42,None),0);self.assertEqual(self.lib.lifedetach(parent),0)
@@ -300,7 +300,7 @@ class LifeTests(unittest.TestCase):
             children=[]
             for slot in (2,3):
                 child=Lifeid()
-                self.assertEqual(self.lib.lifecreate(self.sid,self.pid(100,slot),self.pid(100,1),C.byref(child)),0)
+                self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(100,slot),self.pid(100,1),slot,C.byref(child)),0)
                 self.lives.append(child); children.append(child)
                 self.assertEqual(self.lib.lifepublish(child),0)
             self.assertEqual(self.lib.lifeend(children[0],1,42,None),0)
@@ -350,7 +350,7 @@ class LifeTests(unittest.TestCase):
 
     def child(self,parent,generation,slot):
         identity=Lifeid()
-        self.assertEqual(self.lib.lifecreate(self.sid,self.pid(generation,slot),self.stat(parent).pid,C.byref(identity)),0)
+        self.assertEqual(self.lib.lifecreaterun(self.sid,self.pid(generation,slot),self.stat(parent).pid,slot,C.byref(identity)),0)
         self.lives.append(identity);self.assertEqual(self.lib.lifepublish(identity),0)
         return identity
 

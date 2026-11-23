@@ -60,7 +60,7 @@ class ControlTests(unittest.TestCase):
             t,*_=self.table();old=self.life;cap=self.control(t,33)
             self.assertEqual(self.lib.lifecancel(old),0)
             self.assertEqual(self.lib.lifedetach(old),0)
-            fresh=Lifeid();self.assertEqual(self.lib.lifecreate(self.sid,self.lib.handlepack(1,2,1),1,C.byref(fresh)),0)
+            fresh=Lifeid();self.assertEqual(self.lib.lifecreaterun(self.sid,self.lib.handlepack(1,2,1),1,1,C.byref(fresh)),0)
             try:
                 error,target,_=self.check(t,cap,32)
                 self.assertEqual((error,target.generation,target.index),(0,old.generation,old.index))

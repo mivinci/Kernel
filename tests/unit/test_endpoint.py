@@ -15,7 +15,7 @@ class EndpointTests(unittest.TestCase):
     def exercise(self,lib,method):
         def body():
             signatures(lib)
-            lib.lifecreate.argtypes=[self.sid.__class__,C.c_int64,C.c_int64,C.POINTER(Lifeid)]
+            lib.lifecreaterun.argtypes=[self.sid.__class__,C.c_int64,C.c_int64,C.c_uint32, C.POINTER(Lifeid)]
             lib.lifecancel.argtypes=[Lifeid];lib.lifedetach.argtypes=[Lifeid]
             lib.lifepublish.argtypes=[Lifeid]
             lib.lifestat.argtypes=[Lifeid,C.POINTER(Life)]
@@ -23,7 +23,7 @@ class EndpointTests(unittest.TestCase):
             lib.localendpoint.argtypes=[C.POINTER(support.Table),Imageid,C.c_uint32,C.c_uint64,C.c_uint64,C.c_uint32,C.POINTER(C.c_int64)]
             lib.localchannel.argtypes=[C.POINTER(support.Table),C.c_int64,C.c_uint32,C.POINTER(Imageid),C.POINTER(C.c_uint64)]
             self.life=Lifeid();self.images=[]
-            self.assertEqual(lib.lifecreate(self.sid,lib.handlepack(1,1,1),1,C.byref(self.life)),0)
+            self.assertEqual(lib.lifecreaterun(self.sid,lib.handlepack(1,1,1),1,1,C.byref(self.life)),0)
             try:method()
             finally:
                 for image in self.images:
