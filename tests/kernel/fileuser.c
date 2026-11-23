@@ -16,7 +16,7 @@ openpoolcheck(void)
   const Openlimit limit = {1, 1};
   Openprep        pool[1] = {{0}};
   Openprep       *prep;
-  Handle          client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  Handle          client = 2;
   Ipcmsg          call = {0};
   u64             old, current = 0;
 
@@ -52,7 +52,7 @@ openlimitcheck(void)
   Fileowner       vfs = {1, 1, 1, 0}, newer = {1, 2, 2, 0};
   const Openlimit limit = {1, 1};
   Openprep        pool[3] = {{0}};
-  Handle          client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  Handle          client = 2;
   u64             first, second, untouched = 0;
   CHECK(!sysopenreserve(pool, 3, limit, &vfs, client, 1, 7, 8, 10, &first));
   CHECK(sysopenreserve(pool, 3, limit, &vfs, client, 2, 9, 10, 20, &untouched) == -ERR_CAPACITY);
@@ -78,7 +78,7 @@ opensweepcheck(void)
   Fileowner       owner = {1, 1, 1, 0};
   const Openlimit limit = {3, 3};
   Openprep        pool[3] = {{0}};
-  Handle          client = (Handle) (UINT64_C(1) << 59 | UINT64_C(1) << 16 | 2);
+  Handle          client = 2;
   u64             one, two, three;
   u32             retired;
   int             fail = 1;

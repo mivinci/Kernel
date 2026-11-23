@@ -214,8 +214,8 @@ contextcheck(Walktest *test)
   Vnode            stale = {UINT64_MAX, 1, 1, VNODE_DIR};
   Vwalk            walk = {0};
   u64              version;
-  const Handle     pid = (UINT64_C(1) << 59) | (UINT64_C(1) << 16) | 2;
-  const Handle     reused = pid + (UINT64_C(1) << 16);
+  const Handle     pid = 2;
+  const Handle     reused = 3;
   if (fscontextfind(&table, pid, 1) || fscontextadd(&table, pid, 1, root, &stale, 027) != -ESTALE ||
       !unheld(test) || fscontextadd(&table, pid, 1, root, root, 027))
     return 1;

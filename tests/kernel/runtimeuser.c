@@ -704,7 +704,7 @@ static u32
 groupcheck(void)
 {
   pid_t       pid = getpid();
-  const pid_t missing = (pid_t) UINT64_C(0x080000000100ffff);
+  const pid_t missing = INT32_MAX;
   u32         checks = 0;
 #define GCHECK(c, n)                                                                               \
   do {                                                                                             \
@@ -712,17 +712,17 @@ groupcheck(void)
     checks++;                                                                                      \
   } while (0)
   errno = EDOM;
-  GCHECK(pid > (pid_t) UINT32_MAX, 220);
+  GCHECK(pid > 1 && pid < missing, 220);
   GCHECK(getpgrp() == 1 && getpgid(0) == 1 && getsid(0) == 1 && errno == EDOM, 221);
   GCHECK(getpgid(pid) == 1 && getsid(pid) == 1 && errno == EDOM, 222);
   GCHECK(getpgid(-1) == -1 && errno == EINVAL, 223);
   GCHECK(getsid(-1) == -1 && errno == EINVAL, 224);
-  GCHECK(getpgid(2) == -1 && errno == ESRCH, 225);
+  GCHECK(getpgid(missing - 1) == -1 && errno == ESRCH, 225);
   GCHECK(getpgid(missing) == -1 && errno == ESRCH, 226);
   GCHECK(getsid(missing) == -1 && errno == ESRCH, 227);
   GCHECK(setpgid(-1, 0) == -1 && errno == EINVAL, 228);
   GCHECK(setpgid(0, -1) == -1 && errno == EINVAL, 229);
-  GCHECK(setpgid(0, 2) == -1 && errno == EPERM && getpgrp() == 1 && errno == EPERM, 230);
+  GCHECK(setpgid(0, missing - 1) == -1 && errno == EPERM && getpgrp() == 1 && errno == EPERM, 230);
   GCHECK(setpgid(missing, 0) == -1 && errno == ESRCH, 231);
   GCHECK(setpgid(0, missing) == -1 && errno == EPERM, 232);
   errno = EDOM;
