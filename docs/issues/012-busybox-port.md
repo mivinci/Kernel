@@ -60,7 +60,7 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 [平台补丁](../../bin/sh/busybox-1.37.0-platform.patch) 移除上游对 `<mntent.h>` 和 `<sys/statfs.h>` 可用性的默认假设。最小配置未启用挂载或磁盘用量工具；两架构的预处理依赖均不再包含这两个头。该调整没有提供挂载查询接口。
 
-相同补丁去掉 `libbb.h` 中无条件引入的 `<sys/param.h>`。通用 `MIN`/`MAX` 已有上游局部定义，`setbit`/`clrbit` 使用 `platform.h` 自带的实现。两架构从固定归档重跑后，所探测的 12 个翻译单元均不再把此头列为依赖；语法探针首错仍为 `sys/times.h` 或 `dirent.h`。
+ARM64 和 RV64 的公开 SDK 现已导出 `<sys/param.h>` 及位图宏。上游 `libbb.h` 恢复引入该头，`platform.h` 恢复默认的 `HAVE_SETBIT`，这两处已从平台补丁撤除。完整目标构建仍待验收。
 
 最小配置保留 ash 的 `echo` 内建，与 15 篇的 sh 目标一致，独立 `echo` applet 也仍在生成表中。平台补丁关闭 unlocked stdio 的可选宏替换，让 BusyBox 使用 SDK 已提供的普通 `getc`、`fgets`、`fputs` 等入口。固定归档的重新配置核对了 `ENABLE_ASH_ECHO=1` 和原有 11 个 applet；上述缺头仍阻止目标语法检查和链接验收。
 
