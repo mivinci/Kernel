@@ -528,6 +528,8 @@ ARM64 用户陷入与返回已保存、恢复 `TPIDR_EL0`。复用上下文尾�
 
 静态入口可从链接器隐藏符号 `__native_tls` 读取四个 `u64`：模板地址、初始化字节、总字节、对齐。无 TLS 时总字节为零，不访问模板；仅有 `.tbss` 时不读取模板，直接清零分配区。混合模板的总字节含对齐间隙。两架构实测空模板、仅初始化、仅零填充和混合四种布局与 `PT_TLS` 一致；无需向 Boot 添加 ELF 文件头或 Linux auxv。
 
+上游构建基线已验证：在 v1.2.5 源码树外分别以 `aarch64`、`riscv64` 代入 `$arch`，执行 `CC="clang --target=$arch-linux-musl" AR=llvm-ar RANLIB=llvm-ranlib "$src/configure" --target="$arch-linux-musl" --disable-shared --disable-wrapper`，再执行 `make -j4 lib/libc.a`。两架构均产出静态归档。这一步只验证上游源可交叉编译；归档仍使用上游 Linux 调用层，不能作为原生 SDK 使用。原生端口优先接 Boot/Fix、主线程 TLS 与退出，验证后再将可运行的端口提交锁定为构建依赖。
+
 嵌套exec直接返回EAGAIN资源冲突扩展，不抢走外层准备；handler成功exec/退出则不再恢复外层，旧镜像终结清理接管。handler修改fd/cwd后，已接受准备仍用原稳定快照，必要构造关系失效则明确失败，不混用新旧版本。用户变量指向已free的库私有句柄不造成资源重新安装。
 
 ## 执行与验收
