@@ -15,10 +15,7 @@ addusage(u64 a, u64 b)
 {
   return b > UINT64_MAX - a ? UINT64_MAX : a + b;
 }
-/* Cached run owner and monotonic death watermark make logical adoption O(1).
-   Actual Proc constructors never reuse a full PID generation. */
 static u16    runlife[PROCS];
-static u64    retired[PROCS];
 static Handle childhint[PROCS];
 static u16    parentlife[LIFES];
 static Life *
@@ -52,7 +49,7 @@ static Handle
 parentof(const Life *l)
 {
   Life *parent;
-  u32   slot, entry;
+  u32   entry;
   if (l->parent == 1 || l->pid == 1 ||
       (l->state != LIFE_LIVE && !(l->state == LIFE_ENDED && l->waitref)))
     return l->parent;
@@ -64,24 +61,7 @@ parentof(const Life *l)
                ? l->parent
                : 1;
   }
-  slot = handleindex(l->parent);
-  if (slot >= PROCS)
-    return l->parent; /* Only trusted synthetic constructors may lack a parent. */
-  entry = runlife[slot];
-  if (entry && entry <= LIFES) {
-    parent = &lives[entry - 1];
-    if (parent->pid == l->parent && (parent->state == LIFE_LIVE || parent->state == LIFE_CONSTRUCT))
-      return l->parent;
-  }
-  return handlegen(l->parent) <= retired[slot] ? 1 : l->parent;
-}
-static void
-retire(const Life *l)
-{
-  u32 slot = handleindex(l->pid);
-  u64 generation = handlegen(l->pid);
-  if (slot < PROCS && generation > retired[slot])
-    retired[slot] = generation;
+  return l->parent;
 }
 static Life *
 find(Lifeid id)
@@ -278,7 +258,6 @@ lifecancel(Lifeid id)
     l->group = 0;
   }
   l->state = LIFE_ABORTED;
-  retire(l);
   return 0;
 }
 int
@@ -372,7 +351,6 @@ lifeendusage(Lifeid id, u32 reason, u32 code, const Lifefault *fault, u64 user, 
   }
   l->sequence++;
   l->state = LIFE_ENDED;
-  retire(l);
   owner = parentof(l);
   parent = liveparent(owner);
   l->exit_policy = parent ? parent->child_policy : 0;
@@ -822,16 +800,15 @@ lifecheck(void)
       return -ERR_STATE;
     if ((l->child_policy | l->exit_policy) & ~(LIFE_AUTOCHILD | LIFE_IGNORECHLD))
       return -ERR_STATE;
-    if (l->run != PG_NONE &&
-        (l->run >= PROCS || runlife[l->run] != i + 1 || handleindex(l->pid) != l->run))
+    if (parentlife[i] > LIFES ||
+        (l->run != PG_NONE && (l->run >= PROCS || runlife[l->run] != i + 1)))
       return -ERR_STATE;
   }
   for (i = 0; i < PROCS; i++) {
     entry = runlife[i];
     if (entry && (entry > LIFES || !lives[entry - 1].state || lives[entry - 1].run != i))
       return -ERR_STATE;
-    if (retired[i] > HANDLE_GENERATION_MAX ||
-        (childhint[i] && !handletype(childhint[i])))
+    if (childhint[i] && !handletype(childhint[i]))
       return -ERR_STATE;
   }
   return 0;
