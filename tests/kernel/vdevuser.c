@@ -1493,8 +1493,10 @@ blkclient(const Bootview *boot, Handle call)
                 !sysbootpoll(&attaching.boot, attaching.boot.claim),
             360);
     if (attaching.boot.kind == IPC_RESOURCE_REPLY) {
-      Allocarg reserve = {PAGE_SIZE, ALLOC_DATA, 0, 0, 0, 0};
-      Maparg   overlap = {0, 0, address, PAGE_SIZE, MAP_READ | MAP_WRITE, 0};
+      Allocarg           reserve = {PAGE_SIZE, ALLOC_DATA, 0, 0, 0, 0};
+      Maparg             overlap = {0, 0, address, PAGE_SIZE, MAP_READ | MAP_WRITE, 0};
+      volatile Filehead *head = (volatile Filehead *) address;
+      Handle             resource = attaching.boot.resource;
       REQUIRE(!__sys_alloc(bootresource(boot, BOOT_SELF_ALLOC), &reserve, &overlap.mem) &&
                   !__sys_map(space, &overlap) &&
                   blkmountstartup(&(Blkmount){.probe = &probe}, &attaching, &mounts, &root,
@@ -1503,6 +1505,15 @@ blkclient(const Bootview *boot, Handle call)
                   attaching.boot.resource && !attaching.map.mapped &&
                   !__sys_unmap(space, address) && !__sys_free(overlap.mem),
               363);
+      REQUIRE(!sysbootmap(&attaching.boot, attaching.boot.claim, space, address,
+                          attaching.peerimage, &attaching.map),
+              363);
+      head->magic = 0;
+      REQUIRE(fsblkattached(&attaching, &blk, &status) == -ERR_INVALID && status == 1 &&
+                  !blk.address && !attaching.memory && attaching.boot.resource == resource &&
+                  attaching.boot.state == SYSBOOT_ACKED && attaching.map.verified,
+              363);
+      head->magic = FS_CONN_MAGIC;
     }
     REQUIRE(!fsblkattached(&attaching, &blk, &status), 360);
     if (status) {

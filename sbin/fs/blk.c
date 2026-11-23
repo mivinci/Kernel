@@ -29,24 +29,15 @@ payload(const Fsblk *blk)
 }
 
 static isize
-bind(Fsblk *blk, Handle call, const Bootmap *map, u64 device)
+bindcheck(const Fsblk *blk, Handle call, const Bootmap *map, u64 device)
 {
   Filehead head;
-  isize    error;
   if (!blk || blk->address || call <= 0 || !map || !map->mapped || !map->verified ||
       !map->address || (map->address & PAGE_MASK) || map->address > UINT64_MAX - PROTO_CONN_BYTES ||
       map->bytes != PROTO_CONN_BYTES || !map->connid || !map->serverimage || !device)
     return -ERR_INVALID;
-  error = sysfilehead((const volatile void *) (uintptr_t) map->address, map->bytes, map->connid,
-                      map->serverimage, &head);
-  if (error)
-    return error;
-  blk->call = call;
-  blk->address = map->address;
-  blk->connid = map->connid;
-  blk->device = device;
-  blk->seq = 1;
-  return 0;
+  return sysfilehead((const volatile void *) (uintptr_t) map->address, map->bytes, map->connid,
+                     map->serverimage, &head);
 }
 
 isize
@@ -117,14 +108,19 @@ fsblkattached(Blkattach *work, Fsblk *blk, isize *status)
     if (error)
       return error;
   }
-  if (!work->map.verified)
-    return -ERR_INVALID;
+  /* A rejected shared header must leave the acknowledged HELLO and its MEM
+     together, so retry and detach still refer to the original delivery. */
+  error = bindcheck(blk, work->call, &work->map, work->device);
+  if (error)
+    return error;
   error = sysbootresource(boot, claim, &work->memory);
   if (!error)
     error = sysbootfinish(boot, claim);
-  if (!error)
-    error = bind(blk, work->call, &work->map, work->device);
   if (!error) {
+    blk->call = work->call;
+    blk->address = work->map.address;
+    blk->connid = work->map.connid;
+    blk->device = work->device;
     blk->seq = claim.seq;
     *status = 0;
   }
