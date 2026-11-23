@@ -60,6 +60,30 @@ fsfileholdref(Fsfiles *table, Handle pid, u64 image, u64 session, u64 id, Fsfile
 }
 
 isize
+fsfileinherit(Fsfiles *table, Handle pid, u64 image, u64 session, u64 id, Fsfile **hold)
+{
+  Fsref *free;
+  u32 i;
+  if (!table || !hold || !*hold || !pidvalid(pid) || !image || !id)
+    return -ERR_INVALID;
+  for (i = 0; i < table->nfiles; i++)
+    if (&table->files[i] == *hold)
+      break;
+  if (i == table->nfiles || !(*hold)->refs || (*hold)->session != session)
+    return -ERR_STALE;
+  for (i = 0; i < table->nrefs; i++)
+    if (table->refs[i].file && table->refs[i].pid == pid && table->refs[i].image == image &&
+        table->refs[i].id == id)
+      return -ERR_STATE;
+  free = refslot(table);
+  if (!free)
+    return -ERR_CAPACITY;
+  *free = (Fsref){pid, image, id, *hold};
+  *hold = NULL;
+  return 0;
+}
+
+isize
 fsfileholdsnapshot(Fsfiles *table, const Execmanifest *snapshot, Fsfile **holds, u32 capacity)
 {
   u32   i;

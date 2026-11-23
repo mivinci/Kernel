@@ -3535,6 +3535,18 @@ publicchdirserver(const Bootview *boot)
       fsfiledropsnapshot(&fixture.files, holds, snapshot.count);
       CHECK(!holds[0] && file.refs == 1);
     }
+    {
+      Fsref inherited = {0};
+      Fsfiles child = fixture.files;
+      child.refs = &inherited;
+      child.nrefs = 1;
+      CHECK(!fsfileholdref(&fixture.files, ref.pid, ref.image, file.session, ref.id, &hold) &&
+            fsfileinherit(&child, ref.pid, ref.image + 1, file.session + 1, ref.id, &hold) ==
+                -ERR_STALE && hold == &file && file.refs == 2 &&
+            !fsfileinherit(&child, ref.pid, ref.image + 1, file.session, ref.id, &hold) &&
+            !hold && inherited.file == &file && inherited.id == ref.id && file.refs == 2 &&
+            !fsfileclose(&child, ref.pid, ref.image + 1, file.session, ref.id) && file.refs == 1);
+    }
   }
   CHECK(!fsstep(&fs) && servicepipe.stream.refs[PIPE_WRITE] == 1); /* PIPE */
   CHECK(!fsstep(&fs) && !forks.serial && !records[0].manifest.count && file.refs == 1);

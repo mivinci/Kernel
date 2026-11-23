@@ -54,6 +54,8 @@ isize   fsfilerefcheck(void *, Handle, u64 image, u64 session, u64 reference);
 /* Keep the exact source reference's File alive during inheritance. The
    hold has no client identity and does not authorize I/O. */
 isize fsfileholdref(Fsfiles *, Handle, u64 image, u64 session, u64 reference, Fsfile **out);
+/* Move a snapshot hold into a previously verified child's namespace. */
+isize fsfileinherit(Fsfiles *, Handle, u64 image, u64 session, u64 reference, Fsfile **hold);
 /* One hold per grouped source reference. Storage starts empty and belongs
    to the snapshot until its holds are released or moved to the child. */
 isize fsfileholdsnapshot(Fsfiles *, const struct Execmanifest *, Fsfile **holds, u32 capacity);
