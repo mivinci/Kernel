@@ -28,6 +28,10 @@ class Table(C.Structure):
     _fields_ = [('entries', Entry * 128)]
 
 
+class Load(C.Structure):
+    _fields_ = [(name, C.c_uint64) for name in ('fd', 'file', 'flags')]
+
+
 class FdTableTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -42,6 +46,7 @@ class FdTableTests(unittest.TestCase):
         cls.lib = C.CDLL(str(library))
         declarations = {
             'sysfdinit': [C.POINTER(Table)], 'sysfdcheck': [C.POINTER(Table)],
+            'sysfdload': [C.POINTER(Table), C.POINTER(Load), C.c_uint64],
             'sysfdforkcheck': [C.POINTER(Table), C.POINTER(Fork), C.c_uint64],
             'sysfdobserve': [C.POINTER(Table), C.c_uint32, C.POINTER(View)],
             'sysfdreserve': [C.POINTER(Table), C.c_uint32, C.POINTER(Tag)],
@@ -73,6 +78,17 @@ class FdTableTests(unittest.TestCase):
         out = Tag()
         self.assertEqual(self.lib.sysfdreserve(C.byref(self.table), minimum, C.byref(out)), 0)
         return out
+
+    def test_boot_import_is_exact_and_atomic_across_aliases(self):
+        table = C.byref(self.table)
+        rows = (Load * 2)(Load(1, 42, 0), Load(7, 42, 1))
+        reserved = self.reserve(7)
+        self.assertNotEqual(self.lib.sysfdload(table, rows, 2), 0)
+        self.assertEqual(self.view(1).file, 0)
+        self.assertEqual(self.lib.sysfdcancel(table, reserved), 0)
+        self.assertEqual(self.lib.sysfdload(table, rows, 2), 0)
+        self.assertEqual((self.view(1).file, self.view(7).file, self.view(7).flags), (42, 42, 1))
+        self.assertEqual(self.view(0).file, 0)
 
     def publish(self, file, flags=0, minimum=0):
         tag = self.reserve(minimum)
