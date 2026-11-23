@@ -64,7 +64,7 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 最小配置保留 ash 的 `echo` 内建，与 15 篇的 sh 目标一致，独立 `echo` applet 也仍在生成表中。平台补丁关闭 unlocked stdio 的可选宏替换，让 BusyBox 使用 SDK 已提供的普通 `getc`、`fgets`、`fputs` 等入口。固定归档的重新配置核对了 `ENABLE_ASH_ECHO=1` 和原有 11 个 applet；上述缺头仍阻止目标语法检查和链接验收。
 
-平台补丁也关闭上游默认的 `HAVE_PRINTF_PERCENTM`，避免 ash 在 `cd`、`fork` 或重定向等失败时把 SDK 不支持的 `%m` 交给格式化函数。用两套公开 SDK 预处理上游的诊断宏，确认展开为 `%s` 加 `strerror(errno)`。这是宏展开检查，尚未运行 ash。
+libc 已支持 `%m`，平台补丁已恢复上游默认的 `HAVE_PRINTF_PERCENTM`。主机测试验证 `%m` 读取格式化开始时的 `errno`、支持字符串精度且不消费值参数。公开 SDK 的最小程序也包含该检查，目标运行仍待普通程序启动路径接通。
 
 准备命令可追加 `--probe-sdk arm64 build/arm64/sdk --probe-sdk riscv build/riscv/sdk`，并用 `--clang` 指定目标 Clang。探针为两架构各写一份依赖日志，并把每个翻译单元的命令和语法诊断分别落盘；任何单元失败都会使探针最终返回非零。探针包含 `procps/kill.c` 和 `libbb/u_signal_names.c`，因为 ash 的作业控制即使关闭独立 `kill` applet 也会编入 kill 与信号名单元。对干净归档实测，两架构的 ash 仍在 `sys/times.h` 停住，`kill.c`、`u_signal_names.c` 和其余九个单元均在 `dirent.h` 停住。`sys/time.h` 从目标 SDK 解析；`sys/utsname.h` 只由未启用的 Bash 兼容模式使用，已从最小配置的依赖日志中消失。探针不执行完整构建或链接。
 

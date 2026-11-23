@@ -23,6 +23,10 @@ main(int argc, char **argv)
   unsigned int        hash = 2166136261U;
   size_t              i, sent = 0;
   char                text[32], line[160];
+  errno = EINVAL;
+  if (snprintf(text, sizeof(text), "%m") != (int) strlen(strerror(EINVAL)) ||
+      strcmp(text, strerror(EINVAL)) || errno != EINVAL)
+    return EXIT_FAILURE;
   if (block) {
     memcpy(block, pattern, sizeof(pattern));
     allocated = !memcmp(block, pattern, sizeof(pattern));
