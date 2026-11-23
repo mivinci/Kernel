@@ -73,7 +73,8 @@ testactors(const char *roles)
       CHECK(!localendpoint(table, processes[0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[2].handle));
     else
-      CHECK(!localobserve(table, OBSERVE_SOURCE | (roles[i] == 'E' ? OBSERVE_CHILD : 0),
+      CHECK(!localobserve(table, OBSERVE_SOURCE |
+                                    (roles[i] == 'E' ? OBSERVE_CHILD | OBSERVE_FUTURE : 0),
                           &packet.resources[2].handle));
     if (roles[i] == 'e') {
       Createpolicy policy = {0};

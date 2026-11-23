@@ -328,7 +328,10 @@ def build(args):
     filecreate_rows=[line.split() for line in filecreate_inspect.splitlines() if line.split() and line.split()[-1]=='filecreatetrace']
     if len(filecreate_rows)!=1 or int(filecreate_rows[0][2])!=128:raise BuildError('creator trace missing')
     (sdk/'filecreateimage.S').write_text('/* image sha256: '+digest(filecreate_image)+' */\n.section .rodata\n.balign 8\n.global filecreate_image,filecreate_image_end,filecreate_trace_address\nfilecreate_image:\n.incbin '+json.dumps(str(filecreate_image))+'\nfilecreate_image_end:\n.balign 8\nfilecreate_trace_address:\n.quad '+str(int(filecreate_rows[0][1],16))+'\n')
+    pipeexec_elf=link_adoption('pipeexecuser',[compile_adoption(
+        ROOT/'tests/kernel/pipeexecuser.c','pipeexecuser')])
     pipeio_elf=link_adoption('pipeiouser',[compile_adoption(ROOT/'tests/kernel/pipeiouser.c','pipeiouser'),
+        embedded_elf(pipeexec_elf, 'pipeexec_elf'),
         compile_adoption(ROOT/'sbin/fs/pipe.c','pipe'), compile_adoption(ROOT/'sbin/fs/pipeio.c','pipeio'),
         compile_adoption(ROOT/'sbin/fs/pipefile.c','pipefile'),
         compile_adoption(ROOT/'sbin/fs/access.c','fs-access'),

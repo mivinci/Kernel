@@ -69,13 +69,14 @@ forkrelease(Fsservice *fs, Fsfork *record, u32 count)
   record->context = 0;
 }
 
-isize
-fsforktransfer(Fsservice *fs, Fsfork *record, Connpeer child)
+static isize
+inheritrefs(Fsservice *fs, Fsfork *record, Connpeer child)
 {
   u32 count, i;
   isize error;
   if (!fs || !record || !pidvalid(child.pid) || !child.image ||
-      child.pid != record->manifest.child || child.image != record->manifest.target_image)
+      child.pid != (record->manifest.child ? record->manifest.child : record->manifest.pid) ||
+      child.image != record->manifest.target_image)
     return -ERR_INVALID;
   count = record->manifest.count;
   if (!count || count > BOOT_FD_COUNT)
@@ -83,6 +84,8 @@ fsforktransfer(Fsservice *fs, Fsfork *record, Connpeer child)
   for (i = 0; i < count; i++) {
     const Execgroup *group = &record->manifest.groups[i];
     Forkhold *hold = &record->holds[i];
+    if (!group->retained)
+      continue;
     if (group->session & FS_FILE_SESSION)
       error = fsfileinherit(fs->pipes.regular, child.pid, child.image, group->session,
                             group->reference, &hold->file);
@@ -92,6 +95,8 @@ fsforktransfer(Fsservice *fs, Fsfork *record, Connpeer child)
     if (error) {
       while (i) {
         const Execgroup *moved = &record->manifest.groups[--i];
+        if (!moved->retained)
+          continue;
         if (moved->session & FS_FILE_SESSION)
           (void) fsfileclose(fs->pipes.regular, child.pid, child.image, moved->session,
                              moved->reference);
@@ -152,6 +157,8 @@ forkhold(Fsservice *fs, Fsfork *record)
   isize         error;
   for (i = 0; i < m->count; i++) {
     const Execgroup *g = &m->groups[i];
+    if (!g->retained)
+      continue;
     if (g->session & FS_FILE_SESSION)
       error = fsfileholdref(fs->pipes.regular, m->pid, m->source_image, g->session, g->reference,
                             &record->holds[i].file);
@@ -261,6 +268,20 @@ forksnapshot(Fsservice *fs, const Ipcmsg *call)
   return error || !link ? error : sysfilefinish(&link->watch.active, call->request);
 }
 
+/* A prepaid or retiring link still owns its slot, even when it is not ready. */
+static u32
+inheritlink(const Fsservice *fs)
+{
+  u32 i;
+  for (i = 0; i < fs->nlinks; i++) {
+    const Filelink *link = &fs->links[i];
+    if (!link->watch.owner.cookie && !link->watch.connid && !link->memory && !link->address &&
+        !link->ready && !link->prepaid)
+      break;
+  }
+  return i;
+}
+
 static isize
 forkprepare(Fsservice *fs, const Ipcmsg *call)
 {
@@ -306,12 +327,7 @@ forkprepare(Fsservice *fs, const Ipcmsg *call)
   }
   child.pid = plan.child;
   child.image = plan.target_image;
-  for (i = 0; i < fs->nlinks; i++) {
-    Filelink *link = &fs->links[i];
-    if (!link->watch.owner.cookie && !link->watch.connid && !link->memory && !link->address &&
-        !link->ready && !link->prepaid)
-      break;
-  }
+  i = inheritlink(fs);
   status = -ENFILE;
   if (i == fs->nlinks)
     goto recheck;
@@ -338,7 +354,7 @@ forkprepare(Fsservice *fs, const Ipcmsg *call)
   if (sysforktarget(&target->watch.owner) != SYSEXEC_PENDING)
     goto recheck;
   status = -ENFILE;
-  if (fsforktransfer(fs, record, child))
+  if (inheritrefs(fs, record, child))
     goto recheck;
   transferred = 1;
   record->link = i;
@@ -369,6 +385,108 @@ reply:
 }
 
 static isize
+execprepare(Fsservice *fs, const Ipcmsg *call)
+{
+  Fsfork *record = NULL;
+  Filelink *source, *target = NULL;
+  Fileslot slot;
+  const Fscontext *context;
+  Connpeer self, next = {0};
+  Handle parent;
+  u64 state, now, token = 0;
+  u32 i;
+  isize error, status = -ESTALE;
+  int inherited = 0, moved = 0;
+  if (!fs->forks || !fs->open || !fs->open->contexts)
+    return reject(call, -ENOSYS);
+  if (sysfilelinkaccept(fs->links, fs->nlinks, call, &slot))
+    return reject(call, -ESTALE);
+  source = &fs->links[call->words[1] & 65535];
+  error = ipc_rqcheck(call->request, &state);
+  if (error || state != RQ_CHECK_LIVE)
+    goto reply;
+  context = fscontextfind(fs->open->contexts, call->source, call->image);
+  if (!context)
+    goto recheck;
+  for (i = 0; i < fs->forks->count; i++) {
+    Fsfork *entry = &fs->forks->records[i];
+    if (entry->token && entry->execsource == (u32) (source - fs->links) + 1) {
+      status = -EBUSY;
+      goto recheck;
+    }
+    if (!record && !entry->token && !entry->manifest.count)
+      record = entry;
+  }
+  i = inheritlink(fs);
+  status = -ENFILE;
+  if (!record || i == fs->nlinks)
+    goto recheck;
+  status = -EOVERFLOW;
+  if (fs->forks->serial == UINT64_MAX)
+    goto recheck;
+  status = -EIO;
+  if (__sys_getid(&self.pid, &self.image, &parent) || sysfilenow(&now))
+    goto recheck;
+  error = sysexecmanifest(&record->manifest, &source->watch, call, &slot,
+                         (const void *) (source->address + FS_DATA_OFFSET +
+                                         call->words[3] * FS_SLOT_BYTES), self, now, forkref, fs);
+  status = error == -ERR_TIMEDOUT ? -ETIMEDOUT : -ESTALE;
+  if (error)
+    goto recheck;
+  next = (Connpeer){call->source, record->manifest.target_image};
+  target = &fs->links[i];
+  if (sysexecobserve(&target->watch.owner, fs->observe, call, next.image))
+    goto recheck;
+  status = fscontextinherit(fs->open->contexts, call->source, call->image, context->version,
+                            next.pid, next.image);
+  if (status)
+    goto recheck;
+  inherited = 1;
+  status = -ENFILE;
+  if (sysfileprepay(fs->links, fs->nlinks, i, fs->allocator, fs->space, fs->arena) ||
+      forkhold(fs, record))
+    goto recheck;
+  status = -ESTALE;
+  if (sysexecstate(&source->watch.owner, &target->watch.owner) != SYSEXEC_PENDING)
+    goto recheck;
+  status = -ETIMEDOUT;
+  if (sysfilenow(&now) || now >= record->manifest.deadline)
+    goto recheck;
+  status = -ENFILE;
+  if (inheritrefs(fs, record, next))
+    goto recheck;
+  moved = 1;
+  token = ++fs->forks->serial;
+  record->link = i;
+  status = 0;
+recheck:
+  error = ipc_rqcheck(call->request, &state);
+reply:
+  if (!error) {
+    Msg msg = {{(u64) (state & RQ_CHECK_CANCEL ? -EINTR : status), call->words[2],
+                state == RQ_CHECK_LIVE ? token : 0, 0}};
+    error = state == RQ_CHECK_DRAINING ? ipc_rqfinish(call->request)
+                                     : ipc_reply(call->request, &msg);
+  }
+  if (!error && state == RQ_CHECK_LIVE && token) {
+    record->token = token;
+    record->execsource = (u32) (source - fs->links) + 1;
+  } else if (target) {
+    forkrelease(fs, record, record->manifest.count);
+    if (moved) {
+      if (fs->pipes.regular)
+        fsfileretire(fs->pipes.regular, next.pid, next.image);
+      if (fs->pipes.table)
+        (void) pipefileretire(fs->pipes.table, next.pid, next.image);
+    }
+    if (inherited)
+      (void) fscontextremove(fs->open->contexts, next.pid, next.image);
+    (void) sysfilelinkclose(target);
+  }
+  return error ? error : sysfilefinish(&source->watch.active, call->request);
+}
+
+static isize
 forkattach(Fsservice *fs, const Ipcmsg *call)
 {
   u32 i;
@@ -388,10 +506,14 @@ forkattach(Fsservice *fs, const Ipcmsg *call)
     isize error;
     if (record->token != call->words[3] || record->link >= fs->nlinks)
       continue;
+    if (!!record->execsource != (call->words[0] == FS_EXEC_CLAIM))
+      return reject(call, -ESTALE);
     link = &fs->links[record->link];
     if (!link->prepaid || link->watch.owner.pid != call->source ||
         link->watch.owner.image != call->image ||
-        sysforktarget(&link->watch.owner) != SYSEXEC_ACTIVE)
+        (record->execsource
+             ? sysexecstate(&fs->links[record->execsource - 1].watch.owner, &link->watch.owner)
+             : sysforktarget(&link->watch.owner)) != SYSEXEC_ACTIVE)
       return reject(call, -ESTALE);
     Resreply reply = {link->memory, MAP_READ | MAP_WRITE, 0, FS_CONN_BYTES,
                       {call->words[2], link->watch.connid, FS_CONN_BYTES}};
@@ -400,6 +522,10 @@ forkattach(Fsservice *fs, const Ipcmsg *call)
       link->prepaid = 0;
       link->ready = 1;
       record->token = 0;
+      if (record->execsource) {
+        record->execsource = 0;
+        fs->retiring = 1;
+      }
     } else if (!ipc_rqcheck(call->request, &state) && state == RQ_CHECK_DRAINING) {
       return ipc_rqfinish(call->request);
     }
@@ -414,23 +540,36 @@ drain(void *context, Filelink *link)
   Fsservice *fs = context;
   isize      error;
   u32        i;
+  int        keep = 0;
   forksweep(fs, link, NULL);
   if (fs->forks)
     for (i = 0; i < fs->forks->count; i++)
-      if (fs->forks->records[i].token && fs->forks->records[i].link < fs->nlinks &&
-          &fs->links[fs->forks->records[i].link] == link)
-        fs->forks->records[i].token = 0;
+      if (fs->forks->records[i].token) {
+        Fsfork *record = &fs->forks->records[i];
+        if (record->link < fs->nlinks && &fs->links[record->link] == link) {
+          record->token = 0;
+          if (record->execsource)
+            fs->retiring = 1;
+          record->execsource = 0;
+        } else if (record->execsource == (u32) (link - fs->links) + 1) {
+          keep = 1;
+        }
+      }
   if (fsloadretire(fs->loads, link) || fsopenbusy(fs->open, link) ||
       fsreadbusy(fs->pipes.reads, link)) {
     fs->retiring = 1;
     return -ERR_WOULD_BLOCK;
   }
   error = pipedrain(&fs->pipes, link);
-  if (error || !fs->open || !fs->open->contexts)
+  if (error)
     return error;
   /* Drop only the ended image's namespace after its jobs have drained. */
-  error = fscontextremove(fs->open->contexts, link->watch.owner.pid, link->watch.owner.image);
-  return error == -ESTALE ? 0 : error;
+  if (fs->open && fs->open->contexts) {
+    error = fscontextremove(fs->open->contexts, link->watch.owner.pid, link->watch.owner.image);
+    if (error && error != -ESTALE)
+      return error;
+  }
+  return keep ? -ERR_WOULD_BLOCK : 0;
 }
 
 isize
@@ -520,7 +659,10 @@ fsstep(Fsservice *fs)
     return forksnapshot(fs, &input);
   case FS_FORK_PREPARE:
     return forkprepare(fs, &input);
+  case FS_EXEC_PREPARE:
+    return execprepare(fs, &input);
   case FS_ATTACH:
+  case FS_EXEC_CLAIM:
     return forkattach(fs, &input);
   case FS_OPEN:
   case FS_PATH:

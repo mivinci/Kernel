@@ -3385,12 +3385,12 @@ publicchdirserver(const Bootview *boot)
 {
   static Fsfork  records[2];
   Fsforks        forks = {records, ARRAY_SIZE(records), 0};
-  Piperef        refs[4] = {0};
-  Filelink       links[2] = {0};
+  Piperef        refs[6] = {0};
+  Filelink       links[3] = {0};
 #define link links[0]
   Openfixture    fixture = {0};
   static Openjob job;
-  Fscontext      namespaces[2] = {0};
+  Fscontext      namespaces[3] = {0};
   Fscontext     *parentns = &namespaces[0];
   Pipetable      pipes = {&servicepipe, refs, 1, ARRAY_SIZE(refs), 0};
   Fsfile         file = {0};
@@ -3481,6 +3481,18 @@ publicchdirserver(const Bootview *boot)
   CHECK(!fsstep(&fs) && parentns->cwd == &fixture.root && parentns->version == 1);
   CHECK(!fsstep(&fs) && parentns->cwd == &fixture.dir && parentns->version == 2);
   CHECK(!fsstep(&fs) && parentns->cwd == &fixture.dir && parentns->version == 3);
+  /* An exec target shares the PID but must own a separate namespace entry. */
+  {
+    const Fscontext *next;
+    u64 image = parentns->image + 1;
+    CHECK(!fscontextinherit(&contexts, parentns->pid, parentns->image, parentns->version,
+                            parentns->pid, image));
+    next = fscontextfind(&contexts, parentns->pid, image);
+    CHECK(next && next != parentns && next->root == parentns->root && next->cwd == parentns->cwd &&
+          next->mask == parentns->mask && next->version != parentns->version);
+    CHECK(!fscontextremove(&contexts, parentns->pid, image) &&
+          fscontextfind(&contexts, parentns->pid, parentns->image) == parentns);
+  }
   fixture.cwdmore = 70;
   CHECK(!fsstep(&fs) && job.call.request && open.again && fixture.cwdmore == 38);
   CHECK(!fsstep(&fs) && job.call.request && open.again && fixture.cwdmore == 6);
@@ -3604,7 +3616,9 @@ publicchdirserver(const Bootview *boot)
   for (steps = 0; steps < 32 && (link.ready || links[1].watch.owner.cookie); steps++)
     CHECK(!fsstep(&fs));
   CHECK(!parentns->pid && !namespaces[1].pid && !fixture.holds && !link.ready &&
-        !link.watch.owner.cookie && !links[1].watch.owner.cookie && !records[0].token);
+        !link.watch.owner.cookie && !links[1].watch.owner.cookie && !links[1].prepaid &&
+        !links[1].memory && !records[0].token && !records[0].execsource &&
+        !records[1].token && !records[1].execsource);
 #undef link
   pipeiotrace[0] = 7;
 }
@@ -3751,6 +3765,14 @@ publicforksnapshot(Connwork *peer, int fd, int writer)
   }
 }
 
+extern const u8 pipeexec_elf[], pipeexec_elf_end[];
+
+static isize
+pipeexecread(void *context, u64 offset, void *data, u64 bytes)
+{
+  return __sys_copy(data, (const u8 *) context + offset, bytes);
+}
+
 static void
 publicchdirclient(void)
 {
@@ -3847,7 +3869,100 @@ publicchdirclient(void)
       __sys_exit(write(ends[1], "z", 1) == 1 ? 43 : 44);
     CHECK(!__sys_wait(child, 0, &waited, &kind, &code, &sequence) && waited == child &&
           kind == WAIT_EXITED && code == 43 && !close(ends[1]) &&
-          read(ends[0], &byte, 1) == 1 && byte == 'z' && !close(ends[0]));
+          read(ends[0], &byte, 1) == 1 && byte == 'z');
+    /* Once child retirement drops its write reference, the drained pipe reaches EOF. */
+    CHECK(!read(ends[0], &byte, 1) && !close(ends[0]));
+  }
+  for (u32 attempt = 0; attempt < 3; attempt++) {
+    Fileimage *image;
+    Conncache *cache;
+    Fdview fd;
+    Fileref ref;
+    Filelease lease;
+    Fileslot slot = {0};
+    Fileinherit row;
+    Handle view;
+    u64 target, now, address, token;
+    Ipcmsg result;
+    CHECK(!sysfilepipeposix(0, ends));
+    if (attempt == 2) {
+      Handle waited;
+      u64 kind, code, sequence;
+      isize child = sysfileimagefork(0x2000000, UINT64_MAX);
+      CHECK(child >= 0);
+      if (child) {
+        CHECK(!close(ends[1]) && !__sys_wait(child, 0, &waited, &kind, &code, &sequence) &&
+              waited == child && kind == WAIT_EXITED && code == 43 &&
+              read(ends[0], &byte, 1) == 1 && byte == 'e' && !read(ends[0], &byte, 1) &&
+              !close(ends[0]));
+        break;
+      }
+      CHECK(!sysfileclaimfd(0, ends[1], 0) && !sysfileimage(&image));
+      peer = &image->connections[0];
+    }
+    CHECK(!sysfileimage(&image) &&
+          !sysfdobserve(&image->fds, ends[1], &fd) &&
+          !sysfilerefview(&image->files, peer->state.self, fd.file, &ref) &&
+          !__sys_execprep(bootresource(sysboot(), BOOT_SELF_SPACE), 0, &view, &target) &&
+          !sysfilenow(&now));
+    cache = sysfileimagecache(image);
+    CHECK(!sysconnworkreserve(peer, cache, SYSFILE_MAIN, 1, &lease));
+    address = peer->state.map.address;
+    row = (Fileinherit){ends[1], 0, peer->state.peer.pid, peer->state.peer.image,
+                        ref.session, ref.reference};
+    slot.state = FS_SLOT_SUBMITTED;
+    slot.span = 1;
+    slot.seq = lease.seq;
+    slot.payload_bytes = sizeof(row);
+    slot.args[0] = peer->state.self.pid;
+    slot.args[1] = target;
+    slot.args[2] = peer->state.self.image;
+    slot.args[3] = now + UINT64_C(500000000);
+    slot.args[4] = 1;
+    CHECK(!__sys_copy((void *) (address + FS_DATA_OFFSET + lease.slot * FS_SLOT_BYTES), &row,
+                      sizeof(row)) &&
+          !__sys_copy((void *) (address + FS_DESC_OFFSET + lease.slot * FS_DESC_BYTES), &slot,
+                      sizeof(slot)) &&
+          !ipc_call(peer->state.call,
+                    &(Msg){{FS_EXEC_PREPARE, peer->state.map.connid, lease.seq, lease.slot}}, 0,
+                    &result) && !result.words[0] && result.words[1] == lease.seq &&
+          result.words[2] && !sysconnworkrelease(peer, cache, lease));
+    token = result.words[2];
+    if (attempt == 2) {
+      struct {
+        Boot header;
+        Resentry resources[2];
+        Bootfd fd;
+      } packet = {0};
+      Execwork work = {0};
+      Elfplan plan;
+      Elfsource source = {(void *) pipeexec_elf, pipeexec_elf_end - pipeexec_elf, pipeexecread};
+      Handle backend;
+      packet.header = (Boot){.magic = BOOT_MAGIC, .format = BOOT_FORMAT, .bytes = sizeof(packet),
+                            .resource_count = 2, .resources_off = sizeof(Boot), .fd_count = 1,
+                            .fds_off = sizeof(Boot) + sizeof(packet.resources),
+                            .user_lo = BOOT_USER_LO, .user_hi = BOOT_USER_HI};
+      packet.resources[0].tag = BOOT_SELF_SPACE;
+      packet.resources[1].tag = BOOT_SELF_ALLOC;
+      CHECK(!__sys_grant(view, peer->state.call, RESOURCE_USE, 0, 0, 0, &backend));
+      packet.fd = (Bootfd){1, 0, backend, ref.session, token, ref.reference};
+      work.elf.view = view;
+      work.elf.pid = peer->state.self.pid;
+      work.elf.image = target;
+      work.elf.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
+      work.elf.scratch = 0x2000000;
+      work.elf.scratch_bytes = BOOT_MAX_BYTES;
+      CHECK(!elfcheck(&source, 128, &plan) && !sysexecfill(&work, &source, &plan, &packet,
+                                                        sizeof(packet)));
+      (void) sysexecpublish(&work);
+      CHECK(0);
+    }
+    /* The old image knows the token, but only the published target may claim it. */
+    CHECK(!ipc_call(peer->state.call, &(Msg){{FS_EXEC_CLAIM, 0, 1, token}}, 0, &result) &&
+          (isize) result.words[0] == -ESTALE && result.words[1] == 1 && !result.words[2] &&
+          !result.words[3] && !__sys_execabort(view));
+    CHECK(write(ends[1], "a", 1) == 1 && !close(ends[1]) && read(ends[0], &byte, 1) == 1 &&
+          byte == 'a' && !read(ends[0], &byte, 1) && !close(ends[0]));
   }
   pipeiotrace[0] = 7;
 }

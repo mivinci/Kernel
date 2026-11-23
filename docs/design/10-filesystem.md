@@ -835,7 +835,11 @@ inode128字节：generation(u32)@0、mode(u32)@4、uid/gid/nlink(u32)@8/12/16、
 
 ## 执行与验收
 
-ARM64、RV64 QEMU 的 `pipeio` 已验证：测试客户端通过正式 FS 分派创建管道并执行 `sysfileimagefork`，子进程用继承的写端写入一个字节，父进程核对退出状态并从读端读回该字节；夹具还检查连接、命名空间和准备 token 的清理。此项尚未覆盖 musl 公开 `fork()`、管道后的 `exec` 或默认启动的 FS。
+ARM64、RV64 QEMU 的 `pipeio` 已验证：测试客户端通过正式 FS 分派创建管道并执行 `sysfileimagefork`，子进程用继承的写端写入一个字节，父进程核对退出状态、关闭自己的写端并读回该字节，随后再读得到 EOF。夹具还检查连接、命名空间和准备 token 的清理。此项尚未覆盖 musl 公开 `fork()`、管道后的 `exec` 或默认启动的 FS。
+
+FS 接入 exec 交接时，旧连接的通用 sweep 必须等依赖该观察 cookie 的 exec 记录完成状态判定。目标已发布时，先保证目标引用独立归属并排空旧镜像的工作，再退休旧引用；在领取或目标退出路径不再依赖旧 cookie 后才关闭旧观察。目标取消则只回滚目标侧，即使到了准备期限也不能把仍为 PREPARING 的目标当成已取消。现有 `sysexecstate` / `sysexecclaim` 要求旧观察仍在，不能只凭 token 或新连接已预付就允许领取。
+
+ARM64、RV64 QEMU `pipeio` 已通过正式 FS 的 `EXEC_PREPARE` / `EXEC_CLAIM`：子进程用私有 ELF 装载器换镜像，新镜像通过 Bootfd 领取 stdout 并写入管道，父进程核对字节、退出状态和 EOF。另验证旧镜像持 token 领取被拒绝，以及连续两次撤销准备后可复用连接槽。未覆盖公开 `execve`、生产路径查找或原版 ash。
 
 stage540：空闲 inode 槽可用旧 generation 加一准备空文件视图；耗尽时报 OVERFLOW，根和已占用槽不复用。新 inode 行和占用位同一事务写入，退休后才发布新代次。ARM64/RV64 QEMU `pipeio` 验证孤儿退休后复用、退休前代次不变及拒绝回绕；46 项 FS 主机测试通过。生产目录创建仍需把目录项与新 inode 纳入同一事务。
 
