@@ -134,15 +134,15 @@ static int  terminate(Proc *p);
 static Proc *
 find(Handle pid)
 {
-  Proc *p;
   u32   slot;
   if (handletype(pid) != HANDLE_PROCESS)
     return NULL;
-  slot = handleindex(pid);
-  if (slot >= PROCS)
-    return NULL;
-  p = &processes[slot];
-  return p->state && pidof(p) == pid ? p : NULL;
+  for (slot = 0; slot < PROCS; slot++) {
+    Proc *p = &processes[slot];
+    if (p->state && pidof(p) == pid)
+      return p;
+  }
+  return NULL;
 }
 static void
 park(Proc *p, u32 resume)
