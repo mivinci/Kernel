@@ -30,18 +30,20 @@ claim(const Bootview *boot)
     return 71;
   if (sysctxinit(&bank, self) || sysconninit(&cache, self) || sysconnpeer(call, &peer) ||
       sysconnbind(&cache, peer, &tag) || sysconnworkinit(&work, &cache, tag) ||
-      sysconnworktakecall(&work, &cache, &call, &redundant) || call || redundant ||
-      sysconnbegin(&cache, tag, 1, &claim))
+      sysconnworktakecall(&work, &cache, &call, &redundant) || call || redundant)
     return 72;
   if (ready) {
-    if (sysbootprepare(&work.state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0) ||
+    if (sysconnbegin(&cache, tag, 1, &claim) ||
+        sysbootprepare(&work.state.bootstrap, claim, FS_HELLO, UINT64_MAX, 0) ||
         sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) ||
         !(memory = work.state.memory) || *marker != EXEC_CLAIM_MARKER ||
-        sysconnreusebegin(&cache, tag, 2, &claim))
+        sysconnreusebegin(&cache, tag, 2, &claim) ||
+        sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, duplicate.words[3], 0))
       return 75;
-  }
-  if (sysbootprepare(&work.state.bootstrap, claim, FS_EXEC_CLAIM, duplicate.words[3], 0) ||
-      sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) != -ERR_STALE)
+  } else if (sysconnexecprepare(&work, &cache, 1, 0, duplicate.words[3], &claim, &call) ||
+             call != boot->fds[0].backend_call)
+    return 72;
+  if (sysctxhello(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) != -ERR_STALE)
     return 72;
   if (sysctxexecclaim(&bank, 0, &work, &cache, space, EXEC_CLAIM_ADDRESS, &map, &active) ||
       sysconnview(&cache, tag, &entry) || entry.state != SYSCONN_READY ||

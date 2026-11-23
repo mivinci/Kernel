@@ -85,6 +85,8 @@ isize sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag
    No blocking or native submission; caller excludes caught signals. */
 isize sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline,
                          Connclaim *claim, Handle *call);
+isize sysconnexecprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, u64 token,
+                         Connclaim *claim, Handle *call);
 /* Cold native lookup first. First distinct owned CALL moves into the work
    page; another Handle to the exact same peer moves to initially-zero redundant
    for explicit caller release. Same Handle is not two owned references.

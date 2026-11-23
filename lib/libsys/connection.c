@@ -71,9 +71,9 @@ sysconnforkunmaps(Connwork *const *works, u64 count, Connpeer parent, Connpeer c
 {
   u64   i, j;
   isize error;
-  if (count > SYSCONN_COUNT || (count && !works) || !pidvalid(parent.pid) ||
-      !parent.image || !pidvalid(child.pid) || !child.image ||
-      parent.pid == child.pid || handlekind(childspace) != HANDLE_RESOURCE)
+  if (count > SYSCONN_COUNT || (count && !works) || !pidvalid(parent.pid) || !parent.image ||
+      !pidvalid(child.pid) || !child.image || parent.pid == child.pid ||
+      handlekind(childspace) != HANDLE_RESOURCE)
     return -ERR_INVALID;
   for (i = 0; i < count; i++) {
     const Bootmap *map;
@@ -110,9 +110,8 @@ sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, 
   Connentry  entry;
   Connstate *s;
   isize      error;
-  if (!separate(work, sizeof(work->state), cache, sizeof(*cache)) ||
-      !pidvalid(parent.pid) || !parent.image || cache->self.pid == parent.pid ||
-      !token)
+  if (!separate(work, sizeof(work->state), cache, sizeof(*cache)) || !pidvalid(parent.pid) ||
+      !parent.image || cache->self.pid == parent.pid || !token)
     return -ERR_INVALID;
   error = sysconncheck(cache, cache->self);
   if (!error)
@@ -137,9 +136,9 @@ sysconnworkfork(Connwork *work, Conncache *cache, Connpeer parent, Conntag tag, 
     s->fork_token = token;
   return error;
 }
-isize
-sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, Connclaim *claim,
-                   Handle *call)
+static isize
+prepareclaim(Connwork *work, Conncache *cache, u64 owner, u64 deadline, u64 opcode, u64 token,
+             Connclaim *claim, Handle *call)
 {
   Connentry  entry;
   Connclaim  prepared;
@@ -156,7 +155,7 @@ sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, Co
   s = &work->state;
   if (entry.state == SYSCONN_DRAINING)
     return -ERR_PEER;
-  if (!s->fork_token || handlekind(s->call) != HANDLE_RESOURCE)
+  if (!(opcode == FS_ATTACH ? s->fork_token : token) || handlekind(s->call) != HANDLE_RESOURCE)
     return -ERR_STATE;
   if (sysbootcheck(&s->bootstrap))
     return -ERR_STATE;
@@ -165,7 +164,8 @@ sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, Co
   error = sysconnbegin(cache, s->tag, owner, &prepared);
   if (error)
     return error;
-  error = sysbootprepare(&s->bootstrap, prepared, FS_ATTACH, s->fork_token, deadline);
+  error = sysbootprepare(&s->bootstrap, prepared, opcode,
+                         opcode == FS_ATTACH ? s->fork_token : token, deadline);
   if (error) {
     if (sysconnrollback(cache, prepared))
       return -ERR_STATE;
@@ -174,6 +174,19 @@ sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, Co
   *claim = prepared;
   *call = s->call;
   return 0;
+}
+isize
+sysconnforkprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, Connclaim *claim,
+                   Handle *call)
+{
+  return prepareclaim(work, cache, owner, deadline, FS_ATTACH, 0, claim, call);
+}
+
+isize
+sysconnexecprepare(Connwork *work, Conncache *cache, u64 owner, u64 deadline, u64 token,
+                   Connclaim *claim, Handle *call)
+{
+  return prepareclaim(work, cache, owner, deadline, FS_EXEC_CLAIM, token, claim, call);
 }
 isize
 sysconnworkinit(Connwork *work, Conncache *cache, Conntag tag)
