@@ -97,10 +97,21 @@ opensweepcheck(void)
 u32
 fileusercheck(void)
 {
-  Filehead *head = (Filehead *) area, copied;
-  Fileslot *slot = (Fileslot *) ((u8 *) area + FS_DESC_OFFSET), descriptor;
-  Filelease active[6], extra, stale;
-  u32       i;
+  Filehead  *head = (Filehead *) area, copied;
+  Fileslot  *slot = (Fileslot *) ((u8 *) area + FS_DESC_OFFSET), descriptor;
+  Filelease  active[6], extra, stale;
+  u32        i;
+  Filedirent entry = {0};
+  entry.ino = 2;
+  entry.type = FS_DIRENT_DIR;
+  entry.namelen = 1;
+  entry.name[0] = 'a';
+  CHECK(filedirentvalid(&entry));
+  entry.name[1] = 'b';
+  CHECK(!filedirentvalid(&entry));
+  entry.name[1] = 0;
+  entry.name[255] = 1;
+  CHECK(!filedirentvalid(&entry));
   openpoolcheck();
   openlimitcheck();
   opensweepcheck();

@@ -56,6 +56,12 @@
 #define FS_LOAD             22
 #define FS_TTYCTL           23
 #define FS_PIPE             24
+#define FS_READDIR          25
+#define FS_DIRENT_BYTES     272
+#define FS_DIRENT_UNKNOWN   0
+#define FS_DIRENT_FILE      1
+#define FS_DIRENT_DIR       2
+#define FS_DIRENT_LINK      3
 #define FS_IO_POSITIONAL    1
 #define FS_IO_APPEND        2
 #define FS_PATH_LOOKUP      1
@@ -77,6 +83,30 @@ typedef Protoslot          Fileslot;
 typedef struct Fileinherit Fileinherit;
 typedef struct Filepoll    Filepoll;
 typedef struct Filestat    Filestat;
+typedef struct Filedirent  Filedirent;
+struct Filedirent
+{
+  u64 ino;
+  u32 type, namelen;
+  u8  name[256];
+};
+STATIC_ASSERT(sizeof(Filedirent) == FS_DIRENT_BYTES, file_dirent_size);
+STATIC_ASSERT(offsetof(Filedirent, name) == 16, file_dirent_name);
+static __inline__ int
+filedirentvalid(const Filedirent *entry)
+{
+  u32 i;
+  if (!entry->ino || entry->type > FS_DIRENT_LINK || !entry->namelen ||
+      entry->namelen >= sizeof(entry->name))
+    return 0;
+  for (i = 0; i < entry->namelen; i++)
+    if (!entry->name[i] || entry->name[i] == '/')
+      return 0;
+  for (; i < sizeof(entry->name); i++)
+    if (entry->name[i])
+      return 0;
+  return 1;
+}
 /* One descriptor row of a FORK/EXEC preparation snapshot. */
 struct Fileinherit
 {
