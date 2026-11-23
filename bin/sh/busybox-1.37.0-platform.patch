@@ -45,3 +45,26 @@
  #include "busybox.h" /* for applet_names */
  #if ENABLE_FEATURE_SH_EMBEDDED_SCRIPTS
  # include "embedded_scripts.h"
+--- a/coreutils/test.c
++++ b/coreutils/test.c
+@@ -76,8 +76,6 @@
+ //usage:       "1\n"
+ 
+ #include "libbb.h"
+-#include <regex.h>
+-#include <fnmatch.h>
+ 
+ /* This is a NOFORK applet. Be very careful! */
+ 
+@@ -156,6 +154,11 @@
+ # define BASH_TEST2 0
+ #endif
+ 
++#if BASH_TEST2
++# include <regex.h>
++# include <fnmatch.h>
++#endif
++
+ enum token {
+ 	EOI,
+ 

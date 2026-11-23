@@ -55,6 +55,8 @@ M3 尚未交付可用的 sh。原有 guest 测试由项目自行编写，难以�
 
 准备工具也运行上游的 `generate_BUFSIZ.sh`，按配置使用普通静态缓冲区，为 `cat` 和 `ls` 生成真实的 `common_bufsiz.h`。每架构的 `*-missing-headers.log` 把未解析的头与引用它的翻译单元并列，帮助区分公共头缺口和单个 applet 的依赖；例如 `sys/times.h` 来自 ash，`regex.h` 来自 `test`。这份依赖报告不代表每个头里的接口都被链接引用。
 
+普通 POSIX `test` 不使用正则或模式匹配；上游只在 Bash `[[ … ]]` 路径调用这些函数。平台补丁让 `regex.h` 和 `fnmatch.h` 随上游的 `BASH_TEST2` 条件引入。两架构从固定归档重新生成最小配置并扫描依赖，确认保留 `test`、关闭 `[[ … ]]`，且普通 `test` 不再引入这两个头。语法检查仍分别卡在 `sys/times.h` 和 `dirent.h`，未通过 BusyBox 构建或运行验收。
+
 **阶段 C：最小 applet 集合跑通**
 
 只编无网络、无 `/proc` 依赖的 applet：`sh`(ash)、`cat`、`ls`、`echo`、`mkdir`、`rm`、`mv`、`cp`、`test`、`sleep`。判据见下节。
