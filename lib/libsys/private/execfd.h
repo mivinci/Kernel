@@ -37,4 +37,8 @@ isize sysexecfdmanifest(const Execfds *capture, Connpeer backend, u64 target_ima
    local CALL, and token belongs to this exact backend preparation. */
 isize sysexecfdboot(const Execfds *capture, Connpeer backend, Handle call, u64 token, Bootfd *rows,
                     u64 capacity);
+/* Import validated Bootfd rows with their resolved connection tags into a
+   fresh, unpublished descriptor table and File pool. No IPC. */
+isize sysexecfdload(Fdtable *table, Filepool *pool, Connpeer self, const Bootfd *rows,
+                    const Conntag *tags, u64 count);
 #endif

@@ -2,7 +2,7 @@
 #include <proto/file.h>
 #include <sys/channel.h>
 #include "private/contextipc.h"
-#include "private/fd.h"
+#include "private/execfd.h"
 #include "private/start.h"
 #include "private/syscall.h"
 #include "execclaimuser.h"
@@ -28,7 +28,6 @@ claim(const Bootview *boot)
   Rkey          active = {0};
   Msg           duplicate = {{FS_EXEC_CLAIM, 0, 2, boot->fds[0].prepare_token}};
   Ipcmsg        result;
-  Fdload        row;
   Fdview        opened;
   Fileref       reference;
   volatile u64 *marker = (volatile u64 *) (EXEC_CLAIM_ADDRESS + FS_DATA_OFFSET);
@@ -38,14 +37,9 @@ claim(const Bootview *boot)
       sysconnbind(&cache, peer, &tag) || sysconnworkinit(&work, &cache, tag) ||
       sysconnworktakecall(&work, &cache, &call, &redundant) || call || redundant)
     return 72;
-  sysfdinit(&fds);
-  row.fd = boot->fds[0].fd;
-  row.flags = boot->fds[0].flags;
-  if (sysfilerefinit(&files, self) ||
-      sysfilerefnew(&files, self, tag, boot->fds[0].session, boot->fds[0].reference_id,
-                    boot->fds[0].prepare_token, &row.file) ||
-      sysfdload(&fds, &row, 1) || sysfdobserve(&fds, (u32) row.fd, &opened) ||
-      opened.tag.state != SYSFD_LIVE || sysfilerefview(&files, self, opened.file, &reference))
+  if (sysexecfdload(&fds, &files, self, boot->fds, &tag, 1) ||
+      sysfdobserve(&fds, (u32) boot->fds[0].fd, &opened) || opened.tag.state != SYSFD_LIVE ||
+      sysfilerefview(&files, self, opened.file, &reference))
     return 76;
   if (reference.session != boot->fds[0].session || reference.reference != boot->fds[0].reference_id)
     return 76;

@@ -84,6 +84,52 @@ samepeer(Connpeer a, Connpeer b)
 }
 
 isize
+sysexecfdload(Fdtable *table, Filepool *pool, Connpeer self, const Bootfd *rows,
+              const Conntag *tags, u64 count)
+{
+  Fdload local[BOOT_FD_COUNT];
+  u64    i, j;
+  isize  error;
+  if (!table || !pool || count > BOOT_FD_COUNT || (count && (!rows || !tags)))
+    return -ERR_INVALID;
+  for (i = 0; i < count; i++) {
+    if (!tags[i].generation || tags[i].index >= SYSCONN_COUNT || tags[i].reserved ||
+        !rows[i].session || !rows[i].reference_id || !rows[i].prepare_token)
+      return -ERR_INVALID;
+    for (j = 0; j < i; j++)
+      if (tags[j].index == tags[i].index && tags[j].generation == tags[i].generation &&
+          rows[j].reference_id == rows[i].reference_id &&
+          (rows[j].session != rows[i].session || rows[j].prepare_token != rows[i].prepare_token))
+        return -ERR_INVALID;
+  }
+  error = sysfilerefinit(pool, self);
+  if (error)
+    return error;
+  sysfdinit(table);
+  for (i = 0; i < count; i++) {
+    local[i].fd = rows[i].fd;
+    local[i].flags = rows[i].flags;
+    for (j = 0; j < i; j++)
+      if (tags[j].index == tags[i].index && tags[j].generation == tags[i].generation &&
+          rows[j].reference_id == rows[i].reference_id)
+        break;
+    if (j < i) {
+      local[i].file = local[j].file;
+      error = sysfilerefalias(pool, self, local[i].file);
+    } else
+      error = sysfilerefnew(pool, self, tags[i], rows[i].session, rows[i].reference_id,
+                            rows[i].prepare_token, &local[i].file);
+    if (error)
+      break;
+  }
+  if (!error)
+    error = sysfdload(table, local, count);
+  if (error)
+    (void) sysfilerefinit(pool, self);
+  return error;
+}
+
+isize
 sysexecfdboot(const Execfds *capture, Connpeer backend, Handle call, u64 token, Bootfd *rows,
               u64 capacity)
 {
