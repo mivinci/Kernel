@@ -35,6 +35,15 @@ int    fputs(const char *text, FILE *stream);
 int    fputc(int byte, FILE *stream);
 int    putc(int byte, FILE *stream);
 int    putchar(int byte);
+int    getc_unlocked(FILE *stream);
+int    getchar_unlocked(void);
+int    putc_unlocked(int byte, FILE *stream);
+int    putchar_unlocked(int byte);
+char  *fgets_unlocked(char *text, int size, FILE *stream);
+int    fputs_unlocked(const char *text, FILE *stream);
+int    feof_unlocked(FILE *stream);
+int    ferror_unlocked(FILE *stream);
+int    fileno_unlocked(FILE *stream);
 int    puts(const char *text);
 int    fprintf(FILE *stream, const char *format, ...) __attribute__((format(printf, 2, 3)));
 int    vfprintf(FILE *stream, const char *format, va_list arguments)

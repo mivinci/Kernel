@@ -18,12 +18,11 @@
  #define HAVE_SIGHANDLER_T 1
  #define HAVE_STPCPY 1
  #define HAVE_STPNCPY 1
-@@ -421,12 +420,10 @@
+@@ -421,12 +420,11 @@
  #define HAVE_VASPRINTF 1
  #define HAVE_USLEEP 1
--#define HAVE_UNLOCKED_STDIO 1
--#define HAVE_UNLOCKED_LINE_OPS 1
-+/* The Kernel SDK exposes standard stdio; keep those calls as written. */
+ #define HAVE_UNLOCKED_STDIO 1
+ #define HAVE_UNLOCKED_LINE_OPS 1
  #define HAVE_GETLINE 1
  #define HAVE_XTABS 1
 -#define HAVE_MNTENT_H 1

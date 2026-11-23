@@ -594,6 +594,51 @@ putc(int byte, FILE *stream)
 }
 
 int
+getc_unlocked(FILE *stream)
+{
+  return getc(stream);
+}
+int
+getchar_unlocked(void)
+{
+  return getchar();
+}
+int
+putc_unlocked(int byte, FILE *stream)
+{
+  return putc(byte, stream);
+}
+int
+putchar_unlocked(int byte)
+{
+  return putchar(byte);
+}
+char *
+fgets_unlocked(char *text, int size, FILE *stream)
+{
+  return fgets(text, size, stream);
+}
+int
+fputs_unlocked(const char *text, FILE *stream)
+{
+  return fputs(text, stream);
+}
+int
+feof_unlocked(FILE *stream)
+{
+  return feof(stream);
+}
+int
+ferror_unlocked(FILE *stream)
+{
+  return ferror(stream);
+}
+int
+fileno_unlocked(FILE *stream)
+{
+  return fileno(stream);
+}
+int
 putchar(int byte)
 {
   return fputc(byte, stdout);
