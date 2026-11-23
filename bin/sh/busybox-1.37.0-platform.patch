@@ -1,24 +1,6 @@
---- a/include/libbb.h
-+++ b/include/libbb.h
-@@ -53,7 +53,6 @@
- #include <sys/wait.h>
- #include <termios.h>
- #include <time.h>
--#include <sys/param.h>
- #include <pwd.h>
- #include <grp.h>
- #if ENABLE_FEATURE_SHADOWPASSWDS
 --- a/include/platform.h
 +++ b/include/platform.h
-@@ -409,7 +409,6 @@
- #define HAVE_MKDTEMP 1
- #define HAVE_TTYNAME_R 1
- #define HAVE_PTSNAME_R 1
--#define HAVE_SETBIT 1
- #define HAVE_SIGHANDLER_T 1
- #define HAVE_STPCPY 1
- #define HAVE_STPNCPY 1
-@@ -421,12 +420,11 @@
+@@ -421,12 +421,11 @@
  #define HAVE_VASPRINTF 1
  #define HAVE_USLEEP 1
  #define HAVE_UNLOCKED_STDIO 1
