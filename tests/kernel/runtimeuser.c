@@ -1004,7 +1004,7 @@ static void
 pipecheck(void)
 {
   static Pipe pipe;
-  static u8   first[PIPE_CAPACITY], second[PIPE_ATOMIC], output[PIPE_CAPACITY];
+  static u8   first[PIPE_CAPACITY], second[PIPE_BUF], output[PIPE_CAPACITY];
   u32         i;
   for (i = 0; i < sizeof(first); i++)
     first[i] = (u8) (i * 17 + (i >> 8));
@@ -1013,7 +1013,7 @@ pipecheck(void)
   REQUIRE(!pipehold(&pipe, PIPE_WRITE) && !pipedrop(&pipe, PIPE_WRITE) &&
               piperead(&pipe, output, sizeof(output)) == -ERR_WOULD_BLOCK,
           126);
-  REQUIRE(pipewrite(&pipe, first, PIPE_ATOMIC + 1) == PIPE_ATOMIC + 1 &&
+  REQUIRE(pipewrite(&pipe, first, PIPE_CAPACITY - PIPE_BUF + 1) == PIPE_CAPACITY - PIPE_BUF + 1 &&
               pipewrite(&pipe, second, sizeof(second)) == -ERR_WOULD_BLOCK &&
               piperead(&pipe, output, 2) == 2 && !memcmp(output, first, 2) &&
               pipewrite(&pipe, second, sizeof(second)) == sizeof(second),
@@ -1021,8 +1021,8 @@ pipecheck(void)
   REQUIRE(pipewrite(&pipe, first, sizeof(first)) == 1 && !pipedrop(&pipe, PIPE_WRITE) &&
               pipehold(&pipe, PIPE_WRITE) == -ERR_STALE &&
               piperead(&pipe, output, sizeof(output)) == sizeof(output) &&
-              !memcmp(output, first + 2, PIPE_ATOMIC - 1) &&
-              !memcmp(output + PIPE_ATOMIC - 1, second, sizeof(second)) &&
+              !memcmp(output, first + 2, PIPE_CAPACITY - PIPE_BUF - 1) &&
+              !memcmp(output + PIPE_CAPACITY - PIPE_BUF - 1, second, sizeof(second)) &&
               output[PIPE_CAPACITY - 1] == first[0] && !piperead(&pipe, output, sizeof(output)),
           128);
   REQUIRE(!pipedrop(&pipe, PIPE_READ), 129);

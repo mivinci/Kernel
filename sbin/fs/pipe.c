@@ -67,7 +67,7 @@ pipewrite(Pipe *pipe, const void *data, u32 bytes)
   if (!pipe->refs[PIPE_READ])
     return -ERR_PEER;
   room = PIPE_CAPACITY - pipe->bytes;
-  if (!room || (bytes <= PIPE_ATOMIC && room < bytes))
+  if (!room || (bytes <= FS_PIPE_BUF && room < bytes))
     return -ERR_WOULD_BLOCK;
   bytes = MIN(bytes, room);
   tail = pipe->head + pipe->bytes;

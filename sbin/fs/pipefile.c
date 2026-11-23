@@ -178,7 +178,7 @@ pipefilestat(Pipetable *table, Handle pid, u64 image, u64 session, Filestat *out
                     .uid = file->owner.uid,
                     .gid = file->owner.gid,
                     .size = file->stream.bytes,
-                    .blksize = PIPE_ATOMIC};
+                    .blksize = FS_PIPE_BUF};
   return 0;
 }
 

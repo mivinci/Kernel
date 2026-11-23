@@ -153,6 +153,8 @@ ARM64、RV64 QEMU `runtime` 验证 `time()` 和 `gettimeofday()` 读取同一实
 
 公开 SDK 的 `<limits.h>` 在保留 Clang 整数限制的基础上提供 `PATH_MAX=4096`（含 NUL）和 `NAME_MAX=255`（不含 NUL）。VFS 路径解析和 SDK 共用 `proto/path.h` 中的定义。ARM64、RV64 均用 SDK 与 Clang 基础头独立检查了这些宏，未引入宿主系统头。
 
+`<limits.h>` 同时公布 `PIPE_BUF=4096`，供 ash 判断 here-doc 能否一次写入。SDK 与文件服务共用原子写上限，编译时核对单个请求槽能够容纳。ARM64、RV64 QEMU `runtime` 使用公开常量验证管道空间差一字节时不写入、腾出空间后整段写入，以及短写和读回顺序。
+
 公开 SDK 的 `<paths.h>` 提供 ash 作业控制所用的 `_PATH_TTY`，取 10 篇规定的 `/dev/tty`。双架构 BusyBox 依赖探针均解析到目标 SDK 的头。该宏只公布路径，控制终端的实际解析仍由 devfs 实现。
 
 公开 SDK 提供 BusyBox ash 用到的 `<string.h>` 扩展 `strchrnul`：按无符号字节查找，未匹配时返回结尾 NUL 的地址。它无需分配或系统调用。

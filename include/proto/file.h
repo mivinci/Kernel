@@ -1,5 +1,6 @@
 #ifndef _PROTO_FILE_H
 #define _PROTO_FILE_H
+#include <proto/pipe.h>
 #include <proto/slot.h>
 #define FS_CONN_MAGIC       PROTO_CONN_MAGIC
 #define FS_CONN_SLOTS       PROTO_CONN_SLOTS
@@ -103,4 +104,5 @@ STATIC_ASSERT(sizeof(Filepoll) == 32 && FS_POLL_ROWS * sizeof(Filepoll) == FS_SL
               file_poll_rows_fit_page);
 STATIC_ASSERT(offsetof(Filepoll, revents) == 24, file_poll_output_offset);
 STATIC_ASSERT(sizeof(Fileinherit) == 48, file_inherit_record);
+STATIC_ASSERT(FS_PIPE_BUF <= FS_SLOT_BYTES, pipe_atomic_write_fits_file_slot);
 #endif

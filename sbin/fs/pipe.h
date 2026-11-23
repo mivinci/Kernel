@@ -2,9 +2,9 @@
 #define _FS_PIPE_H
 #include <types.h>
 #include <abi/base.h>
+#include <proto/pipe.h>
 
 #define PIPE_CAPACITY 8192
-#define PIPE_ATOMIC   4096
 #define PIPE_READ     0
 #define PIPE_WRITE    1
 
