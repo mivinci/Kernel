@@ -1,13 +1,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 
 static _Thread_local volatile int tls = 41;
-static int initialized;
-static volatile sig_atomic_t caught;
+static int                        initialized;
+static volatile sig_atomic_t      caught;
 
 static void
 handler(int sig)
@@ -27,11 +29,11 @@ init(void)
 int
 main(int argc, char **argv, char **envp)
 {
-  sigset_t mask, old, current;
-  struct sigaction action = {0}, queried;
+  sigset_t            mask, old, current;
+  struct sigaction    action = {0}, queried;
   const unsigned long self[] = {1, 1};
-  int ends[2] = {-1, -1};
-  sigset_t saved;
+  int                 ends[2] = {-1, -1};
+  sigset_t            saved;
   __block_all_sigs(&saved);
   if (sigprocmask(SIG_SETMASK, 0, &current) || sigismember(&current, SIGUSR1) != 1)
     return 51;
@@ -46,15 +48,14 @@ main(int argc, char **argv, char **envp)
       queried.sa_handler != handler || queried.sa_flags != SA_RESTART ||
       __sys_sigsend(self, SIGUSR1) || caught != SIGUSR1)
     return 45;
-  if (initialized != 42 || tls != 42 || errno || argc != 1 ||
-      strcmp(argv[0], "sbin/init") || !envp)
+  if (initialized != 42 || tls != 42 || errno || argc != 1 || strcmp(argv[0], "sbin/init") || !envp)
     return 43;
   char byte = 'x';
-  if (read(0, &byte, 1) != -1 || errno != EBADF || byte != 'x' ||
-      write(1, &byte, 1) != -1 || errno != EBADF)
+  if (read(0, &byte, 1) != -1 || errno != EBADF || byte != 'x' || write(1, &byte, 1) != -1 ||
+      errno != EBADF)
     return 46;
-  if (dup2(0, 1) != -1 || errno != EBADF || pipe(ends) != -1 || errno != ENOSYS ||
-      ends[0] != -1 || ends[1] != -1)
+  if (dup2(0, 1) != -1 || errno != EBADF || pipe(ends) != -1 || errno != ENOSYS || ends[0] != -1 ||
+      ends[1] != -1)
     return 47;
   if (close(1) != -1 || errno != EBADF)
     return 48;
@@ -66,5 +67,14 @@ main(int argc, char **argv, char **envp)
     return 52;
   if (open("/dev/null", O_RDONLY) != -1 || errno != ENOSYS)
     return 53;
+  if (syscall(SYS_read, 0, &byte, 1) != -1 || errno != ENOSYS || byte != 'x')
+    return 54;
+  char *heap = malloc(64);
+  if (!heap)
+    return 55;
+  memcpy(heap, "musl", 5);
+  if (strcmp(heap, "musl"))
+    return 56;
+  free(heap);
   _exit(256 + 42);
 }

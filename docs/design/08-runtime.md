@@ -555,6 +555,8 @@ Boot/Fix 继续使用原生协议。静态启动桥由 libsys 校验和接管 Bo
 - **原生启动（Kernel `lib/csu`）**：从 Boot 取得 argv/envp、SELF 资源和继承的 fd。静态入口负责初始 TLS、musl 状态和构造函数；动态入口由解释器在完成重定位和 TLS 安装后进入 libc 启动，不能在应用侧再初始化一次。当前只验证了静态最小入口，完整退出、动态启动和 pthread 尚未验收。
 - **原生接口适配（项目根目录 `compat/musl/`）**：把文件、进程、信号、时间、内存、终端、socket 接口接到 libsys。静态构建显式链接可独立替换的对象，首先接入 `_Exit` 和 `_exit`。进入动态构建时，这些实现要编入目标 `libc.so`，在构建时排除对应 Linux 实现，并检查 libc 隐藏调用也走原生路径。动态方案不依赖应用先定义同名符号或 `LD_PRELOAD`。
 - **musl fork**：只维护涉及内部状态或构建选择的改动，例如启动解释器、TLS/DTV、线程创建与回收、取消点、分配器和内部 syscall 入口。线程私有状态不放进进程全局单槽；第一期单核运行仍按支持后续 SMP 的归属划分 CPU、线程和进程状态。
+
+在 `lib/musl` 子模块内直接维护端口。先提交并推送到 `mivinci/musl`，再提交 Kernel 的子模块指针，保证其他 checkout 能取到引用的版本。
 - **内核与服务**：exec 按路径取得版本固定的程序和解释器，完成装载权限检查、fd 交接及失败回滚；动态装载需要确定 `PT_INTERP` 解析、引导信息和映射责任。pthread 需要原生线程启动、等待与唤醒等机制；socket 由 libsys 连接 `net` 服务并复用 fd 生命周期。BusyBox 保持上游源码，静态 ash 和 `net` 可先验证，不必等动态装载收尾。
 - **构建与验收**：静态、动态产物使用相同的原生接口实现；ARM64 和 RV64 分别使用目标 compiler-rt。验收依次覆盖静态 ash 的 fd、管道和作业控制，动态程序调用共享库及使用 TLS，双线程阻塞 IPC 与退出回收，以及原版 BusyBox 网络 applet 通过 `net` 收发。构建和静态链接成功不能代替上述运行验收。
 
@@ -985,6 +987,8 @@ BusyBox 和 musl 探针使用的身份、信号处理和进程计时适配统一
 内核侧 `runtime` 验收不再编译旧 libc 的 `string.c`；FS 结构体赋值所需的 `memcpy`、`memset` 由只用于该场景的 freestanding 实现提供。ARM64、RV64 `runtime` 通过（`fea342d9b7d84a998510a3931db9ae82`、`ad251bb4d5b3485f9d79acf8e4def3aa`）。ash 验收的启动器也改用 musl 服务入口；双架构用最小退出码 37 载荷验证装载、等待和资源回收（`77c6e5b7e849455e9ad6b33c5f9e62f6`、`a957f4f0d5924b14a3137e077c8f970f`），本次没有重跑 BusyBox ash。
 
 musl fork 的 `MIVINCI_NATIVE=1` 构建屏蔽 C 内联 Linux syscall，并从归档排除两架构对应的 Linux 汇编入口。双架构生产用静态归档反汇编未见 `svc` 或 `ecall`；QEMU 验证与原生 `create` 编号相同的 Linux `read` 返回 `ENOSYS` 且不改缓冲区，`vfork` 和 `pthread_cancel` 同样报告 `ENOSYS`（ARM64 `f288a07a49cf40d4b69787ca795b96e0`，RV64 `3546517d7db44fdeb726e29ffa6525ab`）。接入后默认启动包通过 ARM64、RV64 `normal`（`26a86405c5694e0c93c6dc185988eae4`、`f184bd1774dc48ccbd6ba0fd4ab7abd2`）。公开 SDK 仍未切到此归档。
+
+SDK 构建生成 `sdk/musl/app-crt0.o`，集中链接已有静态应用适配。`tools/musl-csu-smoke.sh` 消费该对象和原生 musl 归档，验证 Boot 参数、构造函数、TLS、信号、公开 fd 错误路径、malloc/free 及原始 syscall `ENOSYS`；ARM64 和 RV64 QEMU 分别为 `b5a759c81aab4dc3b69b2539bfbd6a90`、`84489957229b4e5ea198223e5cd2fbeb`。公开头、默认 SDK 和其余旧载荷仍待切换。
 
 ### A2 第三方压缩库静态构建验收
 

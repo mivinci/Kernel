@@ -179,10 +179,10 @@ def build(args):
     resource = invoke('cc-resource-dir', [tools['cc']['path'], '-print-resource-dir']).strip()
     service_flags = target_flags + COMMON + ['-std=c99', '-ffunction-sections', '-fdata-sections',
                                             *header_flags(args.arch, sdk, resource)]
+    internal = [str(musl_source / 'src/include'), str(musl_source / 'src/internal')]
     startup = []
     for unit in (csu_sources[1], ROOT / 'lib/csu/musl.c', ROOT / 'compat/musl/exit.c'):
         obj = musl / unit.with_suffix('.o').name
-        internal = [str(musl_source / 'src/include'), str(musl_source / 'src/internal')]
         command = [tools['cc']['path'], *['-I' + path for path in internal], *service_flags,
                    '-Wno-unused-parameter', '-DMIVINCI_MUSL_SERVICE',
                    '-c', str(unit), '-o', str(obj)]
@@ -193,6 +193,25 @@ def build(args):
     service_crt = musl / 'crt0.o'
     invoke('link-musl-csu', [tools['ld']['path'], '-r', '-m', profile['emulation'],
                             *startup, '-o', str(service_crt)])
+    # Link the adapters explicitly in the static application entry object so
+    # musl's internal references cannot select Linux members from its archive.
+    app_start = [startup[0], startup[2]]
+    compat = ROOT / 'compat/musl'
+    app_sources = [ROOT / 'lib/csu/musl.c', *(compat / name for name in (
+        'fork.c', 'group.c', 'identity.c', 'io.c', 'memory.c', 'open.c', 'raise.c',
+        'sigaction.c', 'sigmask.c', 'sleep.c', 'time.c', 'times.c', 'wait.c'))]
+    for unit in app_sources:
+        obj = musl / ('app-' + unit.with_suffix('.o').name)
+        command = [tools['cc']['path'], *['-I' + path for path in internal], *service_flags,
+                   '-Wno-unused-parameter', '-D_GNU_SOURCE', '-DMIVINCI_MUSL',
+                   '-c', str(unit), '-o', str(obj)]
+        invoke('compile-musl-app-' + unit.stem, command)
+        read_elf(obj, profile['machine'], allow_undefined=True)
+        entries.append(dict(directory=str(ROOT), file=str(unit), output=str(obj), arguments=command))
+        app_start.append(str(obj))
+    app_crt = musl / 'app-crt0.o'
+    invoke('link-musl-app-csu', [tools['ld']['path'], '-r', '-m', profile['emulation'],
+                                *app_start, '-o', str(app_crt)])
     init_sources = [ROOT/'sbin/init'/name for name in ('main.c','package.c','manifest.c','service.c')]
     init_directory = directory/'sbin'
     init_directory.mkdir(exist_ok=True)

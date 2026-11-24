@@ -1,10 +1,8 @@
 #!/bin/sh
-# Requires a configured musl build and a built Kernel SDK for the given arch.
+# Run the static application startup from the built Kernel SDK.
 set -eu
 arch=${1:?pass arm64 or riscv}
-src=$(cd "${2:?pass the musl source directory}" && pwd)
-obj=$(cd "${3:?pass the configured musl build directory}" && pwd)
-firmware=${4:-${OPENSBI:-}}
+firmware=${2:-${OPENSBI:-}}
 cd "$(dirname "$0")/.."
 case $arch in
   arm64) cpu=aarch64; set -- ;;
@@ -14,18 +12,20 @@ esac
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 resource=$(clang -print-resource-dir)/include
-for unit in lib/csu/musl.c compat/musl/exit.c compat/musl/io.c compat/musl/open.c compat/musl/sigmask.c compat/musl/wait.c compat/musl/sigaction.c compat/musl/identity.c tests/kernel/musl/csumain.c; do
-  clang --target="$cpu-linux-musl" "$@" -O2 -ffreestanding -fno-stack-protector -nostdinc \
-    -isystem "$resource" -I"$src/arch/$cpu" -I"$src/arch/generic" -I"$src/src/include" \
-    -I"$src/src/internal" -I"$obj/obj/include" -I"$src/include" -Iinclude -Ilib/libsys \
-    -DMIVINCI_MUSL -D_POSIX_C_SOURCE=200809L \
-    -c "$unit" -o "$out/$(basename "$unit").o"
-done
-clang --target="$cpu-linux-musl" "$@" -c "lib/csu/$arch/start.S" -o "$out/entry.o"
-ld.lld -T lib/libsys/user.ld "$out/entry.o" "$out/musl.c.o" "$out/csumain.c.o" \
-  "$out/exit.c.o" "$out/io.c.o" "$out/open.c.o" "$out/sigmask.c.o" "$out/wait.c.o" "$out/sigaction.c.o" "$out/identity.c.o" "$obj/lib/libc.a" "build/$arch/sdk/libsys.a" -o "$out/init.elf"
+sdk=build/$arch/sdk
+musl=$sdk/musl
+src=lib/musl
+clang --target="$cpu-linux-musl" "$@" -O2 -ffreestanding -fno-stack-protector -nostdinc \
+  -isystem "$resource" -I"$musl/obj/include" -I"$src/arch/$cpu" -I"$src/arch/generic" \
+  -I"$src/include" -D_GNU_SOURCE -c tests/kernel/musl/csumain.c -o "$out/main.o"
+ld.lld -T "$sdk/user.ld" --gc-sections "$musl/app-crt0.o" "$out/main.o" \
+  "$musl/lib/libc.a" "$sdk/libsys.a" -o "$out/init.elf"
 python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/init.elf" --output "$out/init.pkg"
-set -- --arch "$arch" --case normal --qmp-stdio --initrd "$out/init.pkg" --init-elf "$out/init.elf" --init-exit 42
+# mallocng retains one metadata page after free, beyond its unmapped guard.
+image_end=$(llvm-nm -P "$out/init.elf" | awk '$1 == "__image_end" { print $3 }')
+test -n "$image_end"
+set -- --arch "$arch" --case normal --qmp-stdio --initrd "$out/init.pkg" --init-elf "$out/init.elf" --init-exit 42 \
+  --init-heap-page "$((0x$image_end + 4096))"
 if [ -n "$firmware" ]; then
   set -- "$@" --firmware "$firmware"
 fi
