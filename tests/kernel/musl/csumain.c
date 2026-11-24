@@ -50,5 +50,7 @@ main(int argc, char **argv, char **envp)
     return 47;
   if (close(1) != -1 || errno != EBADF)
     return 48;
+  if (getpid() != 1 || getppid() != 0)
+    return 49;
   _exit(256 + 42);
 }
