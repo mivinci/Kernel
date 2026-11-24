@@ -1,6 +1,6 @@
 #ifndef _FS_DEV_H
 #define _FS_DEV_H
-#include "walk.h"
+#include "file.h"
 
 typedef struct Fsdev Fsdev;
 struct Fsdev
@@ -10,5 +10,6 @@ struct Fsdev
 };
 
 /* The caller installs this directory at /dev and owns its lifetime. */
+isize fsdevpublish(Fsdev *, Fsfiles *);
 isize fsdevlookup(Fsdev *, const Vnode *, const char *, u32, Vnode **);
 #endif

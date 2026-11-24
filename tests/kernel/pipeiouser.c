@@ -3460,9 +3460,9 @@ publicchdirserver(const Bootview *boot)
     Vnode *node = NULL;
     CHECK(fsdevlookup(&fixture.dev, &fixture.dev.root, "null", 4, &node) == -ENOENT && !node);
   }
-  fixture.dev.published = 1;
+  CHECK(!fsdevpublish(&fixture.dev, &fixture.files) &&
+        fsdevpublish(&fixture.dev, &fixture.files) == -EBUSY);
   fixture.unbound = fixture.dev.null;
-  fixture.files.nullnode = &fixture.dev.null;
   fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.length = 20;
