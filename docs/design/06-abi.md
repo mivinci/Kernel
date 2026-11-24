@@ -161,7 +161,7 @@ ARM64、RV64 QEMU `stats` 验证用户和系统计时都有进展、未调度期
 
 libc 用有符号 64 位 `clock_t`，按固定 `100` tick/s 向下取整，`sysconf(_SC_CLK_TCK)` 返回相同值。`times()` 返回 elapsed 的 tick；非空 `struct tms *` 通过既有受检查复制写入四个计数，空指针只取返回值。验收需在两架构检查自身计时、最终 `wait` 前后子进程累计和重复收取、与单调时钟同一时间基准、无效输出地址，以及非自身查询被拒。
 
-原生查询与当前 SDK 封装已接。ARM64、RV64 QEMU `pipeio` 验证每秒 100 tick、非负自身计数、空输出取时间、成功保留 errno 和无效输出返回 EFAULT，证据分别为 `6b8ae68cb7c74ee2a0c6437437e74437297`、`946713739fb44a6793a974a7597f89c2`。完整查询验收仍待完成；本轮 `runtime` 在目录遍历断言退出，未执行到计时测试。
+原生查询与当前 SDK 封装已接。ARM64、RV64 QEMU `runtime` 验证自身查询身份、与 `QUERY_PROC` 一致的 CPU 总量下界、非零授权拒绝和无效输出地址，并用两次 `CLOCK_MONOTONIC` 采样夹住原生 elapsed 和公开 `times()` 的 tick（`7e28d4d7eb384cbb846638b64f987c71`、`1929b9107298454bbf8a672ea89df80a`）。双架构 `jobs` 验证仅最终收取退出结果累计子进程纳秒，停止、继续和重复收取均不累计，且 `times()` 的子进程字段与原生纳秒换算一致（`0fbecf2b7e5f416393750f06c3879912`、`a62af2d0b2a84cc58f412519c975c8dd`）。双架构 `pipeio` 验证每秒 100 tick、空输出取时间、成功保留 errno 和坏地址返回 EFAULT（`ba6bfb9f83e64c0aabe31273b5934fcf`、`7672c89def41441680bee8e5f034601e`）。这些结果覆盖当前 SDK；musl/BusyBox 的 `times()` 仍待接入和验收。
 
 ### query的主体选择（交叉复核修订）
 

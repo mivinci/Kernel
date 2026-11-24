@@ -15,6 +15,7 @@
 #include <strings.h>
 #include <sys/channel.h>
 #include <sys/time.h>
+#include <sys/times.h>
 #include <time.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -742,6 +743,8 @@ static u32
 timecheck(void)
 {
   struct timespec monotonic, later, realtime, resolution, rt_resolution, before, invalid;
+  struct tms      usage;
+  clock_t         elapsed;
   Queryrec        rows[2];
   u64             written, next;
   u32             checks = 0;
@@ -766,6 +769,7 @@ timecheck(void)
               rows[1].data[0] + rows[1].data[1] >= rows[0].data[5] && !rows[1].data[2] &&
               !rows[1].data[3],
           172);
+  elapsed = times(&usage);
   TCHECK(!clock_gettime(CLOCK_MONOTONIC, &later) &&
              (later.tv_sec > monotonic.tv_sec ||
               (later.tv_sec == monotonic.tv_sec && later.tv_nsec >= monotonic.tv_nsec)) &&
@@ -774,6 +778,12 @@ timecheck(void)
   REQUIRE(rows[1].data[4] >= (u64) monotonic.tv_sec * 1000000000 + (u64) monotonic.tv_nsec &&
               rows[1].data[4] <= (u64) later.tv_sec * 1000000000 + (u64) later.tv_nsec,
           173);
+  REQUIRE(elapsed >= (clock_t) (rows[1].data[4] / 10000000) &&
+              elapsed <= later.tv_sec * 100 + later.tv_nsec / 10000000 &&
+              usage.tms_utime >= (clock_t) (rows[1].data[0] / 10000000) &&
+              usage.tms_stime >= (clock_t) (rows[1].data[1] / 10000000) && !usage.tms_cutime &&
+              !usage.tms_cstime,
+          174);
   TCHECK(!clock_gettime(CLOCK_REALTIME, &realtime) && realtime.tv_sec >= 0 &&
              realtime.tv_nsec >= 0 && realtime.tv_nsec < 1000000000 && errno == EDOM,
          258);

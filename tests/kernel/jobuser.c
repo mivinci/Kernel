@@ -1,6 +1,7 @@
 /* Real syscall/continuation payload; job transitions come from the CPU fixture. */
 #include <sys/boot.h>
 #include <sys/channel.h>
+#include <sys/times.h>
 #include <sys/wait.h>
 #include <errno.h>
 #include <signal.h>
@@ -265,6 +266,7 @@ main(int argc, char **argv)
     CHECK(!__sys_terminate(peer) && !__sys_query(peer, QUERY_LIFE, 0, &row, 1, &written, &next) &&
           written == 1 && !next && row.data[1] == 2 && row.data[2] == 9);
   } else if (mode == 7) {
+    struct tms usage;
     action.kind = SIGNAL_HANDLER;
     action.handler = (u64) handler;
     action.trampoline = (u64) trampoline;
@@ -283,6 +285,7 @@ main(int argc, char **argv)
     jobtrace[5] = sequence;
     CHECK(!__sys_query(0, QUERY_TIMES, 0, &row, 1, &written, &next) && written == 1 && !next &&
           !row.data[2] && !row.data[3]);
+    CHECK(times(&usage) >= 0 && !usage.tms_cutime && !usage.tms_cstime);
     CHECK(!__sys_wait(child, 0, &result, &kind, &code, &sequence) && result == child &&
           kind == WAIT_EXITED && code == 42 && sequence == 4);
     jobtrace[6] = sequence;
@@ -290,6 +293,8 @@ main(int argc, char **argv)
       Queryrec collected;
       CHECK(!__sys_query(0, QUERY_TIMES, 0, &collected, 1, &written, &next) && written == 1 &&
             !next && (collected.data[2] || collected.data[3]));
+      CHECK(times(&usage) >= 0 && usage.tms_cutime == (clock_t) (collected.data[2] / 10000000) &&
+            usage.tms_cstime == (clock_t) (collected.data[3] / 10000000));
       CHECK(__sys_wait(child, WAIT_WNOHANG, &result, &kind, &code, &sequence) == -ERR_CHILD);
       CHECK(!__sys_query(0, QUERY_TIMES, 0, &row, 1, &written, &next) && written == 1 && !next &&
             row.data[2] == collected.data[2] && row.data[3] == collected.data[3]);
