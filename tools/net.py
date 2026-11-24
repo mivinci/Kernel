@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from build import COMMON, PROFILES, ROOT, BuildError, read_elf
+from bootpkg import pack
 
 
 def build(args):
@@ -38,6 +39,20 @@ def build(args):
     subprocess.run([args.ar, 'rcs', str(temporary), *objects], check=True)
     temporary.replace(archive)
     print(archive.relative_to(ROOT))
+    if args.loopback:
+        sdk = directory.parent / 'sdk'
+        source = ROOT / 'tests/kernel/netlouser.c'
+        obj, elf = (directory / name for name in ('netlouser.o', 'netlouser.elf'))
+        if not (sdk / 'crt0.o').is_file():
+            raise BuildError('build the SDK before linking the loopback probe')
+        subprocess.run([args.cc, *flags, '-c', str(source), '-o', str(obj)], check=True)
+        subprocess.run([args.ld, '-m', profile['emulation'], '-T', str(sdk / 'user.ld'),
+                        '--gc-sections', str(sdk / 'crt0.o'), str(obj), str(archive),
+                        str(sdk / 'libc.a'), str(sdk / 'libsys.a'), '-o', str(elf)], check=True)
+        read_elf(elf, profile['machine'], kind=2)
+        package = directory / 'netlo.pkg'
+        package.write_bytes(pack([('sbin/init', elf.read_bytes())], profile['machine']))
+        print(package.relative_to(ROOT))
 
 
 def main():
@@ -45,6 +60,8 @@ def main():
     parser.add_argument('--arch', choices=PROFILES, required=True)
     parser.add_argument('--cc', default='clang')
     parser.add_argument('--ar', default='llvm-ar')
+    parser.add_argument('--ld', default='ld.lld')
+    parser.add_argument('--loopback', action='store_true')
     try:
         build(parser.parse_args())
     except (BuildError, OSError, subprocess.CalledProcessError) as error:

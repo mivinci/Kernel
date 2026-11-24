@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：lwIP 已固定版本并完成两架构交叉构建；net 服务和网络运行验收尚未完成。
+状态：lwIP 已完成两架构构建与原生 UDP 回环验证；net 服务和网卡验收尚未完成。
 
 ## net 与网络 fd（已确定）
 
@@ -173,3 +173,5 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 上游源码已固定为 `lib/lwip` 子模块。从官方仓库核对 `STABLE-2_2_0_RELEASE` 指向 `0a0452b2c39bdd91e252aef045c115f88f6ca773`，并核对检出版本为 2.2.0。上游源码未修改。需要此依赖时运行 `git submodule update --init -- lib/lwip`。
 
 `make net-stack ARCH=arm64|riscv`（分别指定架构）把原版 lwIP 的 IPv4、ARP、ICMP、UDP、TCP 与本地时钟适配编为 `libnetstack.a`。端口使用单事件循环配置，内部内存、回环队列和协议池具有编译期上限；时钟使用单调毫秒并按 lwIP 的 32 位规则回绕。两架构归档均编译成功，并与项目 libc/libsys 链接成无未解析符号的用户态 ELF。此处未启动 ELF；定时器推进、回环收发、socket/fd 与网卡均待运行验收。
+
+在已有 SDK 上运行 `python3 tools/net.py --arch <arch> --loopback` 生成独立 PID1 测试包 `build/<arch>/net/netlo.pkg`。ARM64、RV64 QEMU `normal` 分别通过（`1c4033b7325e4e23b581caf9e16e3a8b`、`5687c850202b43328961d859e0f74e04`）。探针通过 lwIP raw API 发送两条不同长度且含 NUL 的 UDP 数据报，轮询回环前无回调，轮询后逐条核对来源、端口、长度和字节；用原生休眠推进 `sys_check_timeouts`，确认回调在单调时钟满 20 ms 后只执行一次。宿主用 `--init-elf build/<arch>/net/netlouser.elf --init-exit 42` 核对包内 ELF 与探针退出码。TCP 半关闭、公开 socket/fd 和网卡仍待接入或验收。
