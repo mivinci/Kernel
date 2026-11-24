@@ -966,6 +966,8 @@ ARM64、RV64 QEMU `runtime` 核对 libc 启动仍拒绝缺少 `reference_id` 的
 
 `tools/musl-probe.sh` 使用与 BusyBox 构建相同的 `compat/musl` fork、wait、信号屏蔽和 fd 入口。ARM64、RV64 QEMU 验证空 fd 报 EBADF、无 FS 时 `pipe()` 报 ENOSYS 且不修改输出、fork 后保留 TLS 以及 wait 收取退出状态；带后端的 `runtime` 夹具另验证 exec 后从 Bootfd 领取 stdout、短写续传、fork 后 `dup2` 到 fd 0 并读取继承引用。此项不代替 BusyBox 管道或生产启动验收。
 
+`libc/times.c` 直接复用原生 `QUERY_TIMES` 和受检查复制，不引用 musl。`tools/musl-probe.sh` 与 BusyBox 链接脚本显式将这一个对象替换上游 `times()`，避免改变上游源码。ARM64、RV64 QEMU `normal`、`musl`、`runtime` 六项均通过（`b0c24a1b1cb54469b493fc031e50b3be`、`efa14ee358154cf8b591ca09aaa62588`、`0bce9fc606564c92967820f6ff47e708`、`8ff282a27d9146489dae766f518d4351`、`ffb3a324184b4178aa63bab950c0f222`、`bfd8eaa0dbfc4ec69c6d29bbb50685c7`）。启动探针验证 100 tick/s、空输出取时间、成功保留 errno、自身四字段非负及子进程字段为零；完整子进程累计仍由 SDK `jobs` 验收。该项尚未在 BusyBox applet 中实测。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。

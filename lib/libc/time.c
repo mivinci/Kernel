@@ -89,13 +89,13 @@ times(struct tms *value)
   Queryrec   record;
   struct tms local;
   u64        written, next, ns_per_tick;
-  isize      error;
-  error = __sys_query(0, QUERY_TIMES, 0, &record, 1, &written, &next);
-  if (error || written != 1 || next || record.type != QUERY_TIMES) {
+  long       tickrate = sysconf(_SC_CLK_TCK);
+  isize      error = __sys_query(0, QUERY_TIMES, 0, &record, 1, &written, &next);
+  if (error || written != 1 || next || record.type != QUERY_TIMES || tickrate != 100) {
     errno = error == -ERR_OVERFLOW ? EOVERFLOW : EIO;
     return -1;
   }
-  ns_per_tick = UINT64_C(1000000000) / (u64) sysconf(_SC_CLK_TCK);
+  ns_per_tick = UINT64_C(1000000000) / (u64) tickrate;
   local.tms_utime = (clock_t) (record.data[0] / ns_per_tick);
   local.tms_stime = (clock_t) (record.data[1] / ns_per_tick);
   local.tms_cutime = (clock_t) (record.data[2] / ns_per_tick);

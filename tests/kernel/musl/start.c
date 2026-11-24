@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <sys/times.h>
 #include <sys/wait.h>
 #include <string.h>
 #include <unistd.h>
@@ -160,6 +161,15 @@ csustart(const struct Boot *boot)
   if (fwrite("native stdout", 1, 13, stdout) != 13 || fflush(stdout) != EOF || !ferror(stdout) ||
       errno != EBADF)
     __sys_exit(130);
+  {
+    struct tms usage;
+    clock_t    before;
+    errno = EDOM;
+    before = times(&usage);
+    if (before < 0 || times(NULL) < before || sysconf(_SC_CLK_TCK) != 100 || errno != EDOM ||
+        usage.tms_utime < 0 || usage.tms_stime < 0 || usage.tms_cutime || usage.tms_cstime)
+      __sys_exit(139);
+  }
   errno = 0;
   {
     pid_t child = fork();
