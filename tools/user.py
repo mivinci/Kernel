@@ -164,7 +164,7 @@ def build(args):
                  'AR=' + shlex.quote(tools['ar']['path']), 'RANLIB=:',
                  str(musl_source / 'configure'), '--target=' + target,
                  '--disable-shared', '--disable-wrapper']
-    native_make = ['MIVINCI_NATIVE=1', 'lib/libc.a']
+    native_make = ['KERNEL_NATIVE=1', 'lib/libc.a']
     config_key = json.dumps([configure, digest(musl_source / 'configure'), tools['cc']['version'], native_make])
     stamp = musl / 'kernel-config.json'
     # The outer Makefile uses different ARCH names and its own CC, AR and flags.
@@ -191,7 +191,7 @@ def build(args):
     for unit in (csu_sources[1], ROOT / 'lib/csu/musl.c', ROOT / 'compat/musl/exit.c'):
         obj = musl / unit.with_suffix('.o').name
         command = [tools['cc']['path'], *['-I' + path for path in internal], *service_flags,
-                   '-Wno-unused-parameter', '-DMIVINCI_MUSL_SERVICE',
+                   '-Wno-unused-parameter', '-DKERNEL_MUSL_SERVICE',
                    '-c', str(unit), '-o', str(obj)]
         invoke('musl-start-' + unit.stem, command)
         read_elf(obj, profile['machine'], allow_undefined=True)
@@ -210,7 +210,7 @@ def build(args):
     for unit in app_sources:
         obj = musl / ('app-' + unit.with_suffix('.o').name)
         command = [tools['cc']['path'], *['-I' + path for path in internal], *service_flags,
-                   '-Wno-unused-parameter', '-D_GNU_SOURCE', '-DMIVINCI_MUSL',
+                   '-Wno-unused-parameter', '-D_GNU_SOURCE', '-DKERNEL_MUSL',
                    '-c', str(unit), '-o', str(obj)]
         invoke('compile-musl-app-' + unit.stem, command)
         read_elf(obj, profile['machine'], allow_undefined=True)

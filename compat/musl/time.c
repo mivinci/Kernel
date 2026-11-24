@@ -50,7 +50,7 @@ clock_gettime(clockid_t clock, struct timespec *value)
   return clockread(clock, value, 0);
 }
 
-#ifdef MIVINCI_MUSL
+#ifdef KERNEL_MUSL
 /* musl calls this hidden entry internally, including from timespec_get. */
 __attribute__((alias("clock_gettime"), visibility("hidden"))) int
 __clock_gettime(clockid_t, struct timespec *);

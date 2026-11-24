@@ -986,7 +986,7 @@ BusyBox 和 musl 探针使用的身份、信号处理和进程计时适配统一
 
 内核侧 `runtime` 验收不再编译旧 libc 的 `string.c`；FS 结构体赋值所需的 `memcpy`、`memset` 由只用于该场景的 freestanding 实现提供。ARM64、RV64 `runtime` 通过（`fea342d9b7d84a998510a3931db9ae82`、`ad251bb4d5b3485f9d79acf8e4def3aa`）。ash 验收的启动器也改用 musl 服务入口；双架构用最小退出码 37 载荷验证装载、等待和资源回收（`77c6e5b7e849455e9ad6b33c5f9e62f6`、`a957f4f0d5924b14a3137e077c8f970f`），本次没有重跑 BusyBox ash。
 
-musl fork 的 `MIVINCI_NATIVE=1` 构建屏蔽 C 内联 Linux syscall，并从归档排除两架构对应的 Linux 汇编入口。双架构生产用静态归档反汇编未见 `svc` 或 `ecall`；QEMU 验证与原生 `create` 编号相同的 Linux `read` 返回 `ENOSYS` 且不改缓冲区，`vfork` 和 `pthread_cancel` 同样报告 `ENOSYS`（ARM64 `f288a07a49cf40d4b69787ca795b96e0`，RV64 `3546517d7db44fdeb726e29ffa6525ab`）。接入后默认启动包通过 ARM64、RV64 `normal`（`26a86405c5694e0c93c6dc185988eae4`、`f184bd1774dc48ccbd6ba0fd4ab7abd2`）。公开 SDK 仍未切到此归档。
+musl fork 的 `KERNEL_NATIVE=1` 构建屏蔽 C 内联 Linux syscall，并从归档排除两架构对应的 Linux 汇编入口。双架构生产用静态归档反汇编未见 `svc` 或 `ecall`；QEMU 验证与原生 `create` 编号相同的 Linux `read` 返回 `ENOSYS` 且不改缓冲区，`vfork` 和 `pthread_cancel` 同样报告 `ENOSYS`（ARM64 `f288a07a49cf40d4b69787ca795b96e0`，RV64 `3546517d7db44fdeb726e29ffa6525ab`）。接入后默认启动包通过 ARM64、RV64 `normal`（`26a86405c5694e0c93c6dc185988eae4`、`f184bd1774dc48ccbd6ba0fd4ab7abd2`）。公开 SDK 仍未切到此归档。
 
 SDK 构建生成 `sdk/musl/app-crt0.o`，集中链接已有静态应用适配。`tools/musl-csu-smoke.sh` 消费该对象和原生 musl 归档，验证 Boot 参数、构造函数、TLS、信号、公开 fd 错误路径、malloc/free 及原始 syscall `ENOSYS`；ARM64 和 RV64 QEMU 分别为 `b5a759c81aab4dc3b69b2539bfbd6a90`、`84489957229b4e5ea198223e5cd2fbeb`。公开头、默认 SDK 和其余旧载荷仍待切换。
 

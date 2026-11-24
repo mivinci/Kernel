@@ -27,16 +27,17 @@ read(int fd, void *buffer, size_t bytes)
 }
 
 ssize_t
-__mivinci_stdio_write(int fd, const void *first, size_t firstbytes, const void *second,
-                      size_t secondbytes)
+__kernel_stdio_write(int fd, const void *first, size_t firstbytes, const void *second,
+                     size_t secondbytes)
 {
-  return posix(sysfilewritepairposix(__libc_sigdepth(), fd, first, firstbytes, second, secondbytes));
+  return posix(
+      sysfilewritepairposix(__libc_sigdepth(), fd, first, firstbytes, second, secondbytes));
 }
 
 ssize_t
 write(int fd, const void *buffer, size_t bytes)
 {
-  return __mivinci_stdio_write(fd, buffer, bytes, 0, 0);
+  return __kernel_stdio_write(fd, buffer, bytes, 0, 0);
 }
 
 int

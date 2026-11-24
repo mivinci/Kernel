@@ -5,7 +5,7 @@
 
 struct Boot;
 struct Bootview;
-#ifdef MIVINCI_MUSL_SERVICE
+#ifdef KERNEL_MUSL_SERVICE
 extern long sysstartargs(const struct Boot *, int *, char ***, char ***);
 #else
 extern long sysstartargswithfds(const struct Boot *, int *, char ***, char ***,
@@ -32,7 +32,7 @@ csustart(const struct Boot *boot)
   pthread_t td;
   size_t    align = __native_tls[3], i;
   long      error;
-#ifdef MIVINCI_MUSL_SERVICE
+#ifdef KERNEL_MUSL_SERVICE
   /* These services talk directly to libsys and have no inherited fds or heap. */
   error = sysstartargs(boot, &argc, &argv, &envp);
 #else
@@ -56,7 +56,7 @@ csustart(const struct Boot *boot)
   td->locale = &libc.global_locale;
   if (__set_thread_area(TP_ADJ(td)))
     __sys_exit(127);
-#ifndef MIVINCI_MUSL_SERVICE
+#ifndef KERNEL_MUSL_SERVICE
   if (sysfileheapinit((size_t) __image_end, 0x3ffe000000UL))
     __sys_exit(127);
 #endif

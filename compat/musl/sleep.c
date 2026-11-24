@@ -44,7 +44,7 @@ nanosleep(const struct timespec *request, struct timespec *remaining)
   return -1;
 }
 
-#ifdef MIVINCI_MUSL
+#ifdef KERNEL_MUSL
 int
 clock_nanosleep(clockid_t clock, int flags, const struct timespec *request,
                 struct timespec *remaining)

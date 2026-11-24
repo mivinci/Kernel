@@ -134,7 +134,7 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
       return failure(error);
     if (input.sa_flags & ~ACTION_FLAGS)
       return failure(-ERR_INVALID);
-#ifdef MIVINCI_MUSL
+#ifdef KERNEL_MUSL
     native.mask = input.sa_mask.__bits[0] & SIGNAL_SUPPORTED;
     native.flags = (input.sa_flags & SA_NODEFER ? SIGNAL_NODEFER : 0) |
                    (input.sa_flags & SA_RESETHAND ? SIGNAL_RESETHAND : 0) |
@@ -173,7 +173,7 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
                         : previous.kind == SIGNAL_IGNORE
                             ? SIG_IGN
                             : (void (*)(int))(uintptr_t) previous.handler;
-#ifdef MIVINCI_MUSL
+#ifdef KERNEL_MUSL
   output.sa_mask.__bits[0] = previous.mask;
   output.sa_flags = (previous.flags & SIGNAL_NODEFER ? SA_NODEFER : 0) |
                     (previous.flags & SIGNAL_RESETHAND ? SA_RESETHAND : 0) |
@@ -190,7 +190,7 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
   return error ? failure(error) : 0;
 }
 
-#ifdef MIVINCI_MUSL
+#ifdef KERNEL_MUSL
 int __sigaction(int, const struct sigaction *, struct sigaction *)
     __attribute__((visibility("hidden"), alias("sigaction")));
 int __libc_sigaction(int, const struct sigaction *, struct sigaction *)

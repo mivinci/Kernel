@@ -23,7 +23,7 @@ for arch in arm64 riscv; do
     "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c" \
     compat/musl/fork.c compat/musl/group.c compat/musl/identity.c compat/musl/wait.c compat/musl/sigmask.c compat/musl/io.c \
     compat/musl/raise.c compat/musl/sigaction.c compat/musl/sleep.c compat/musl/time.c compat/musl/times.c; do
-    clang --target="$target-linux-musl" "$@" -DMIVINCI_NATIVE -DMIVINCI_MUSL -D_GNU_SOURCE \
+    clang --target="$target-linux-musl" "$@" -DKERNEL_NATIVE -DKERNEL_MUSL -D_GNU_SOURCE \
       -O2 -nostdinc -ffreestanding -fno-stack-protector -ftls-model=local-exec \
       -isystem "$(clang -print-resource-dir)/include" -I"$src/arch/$target" -I"$src/arch/generic" \
       -I"$out/obj/src/internal" -I"$src/src/include" -I"$src/src/internal" -I"$out/obj/include" \

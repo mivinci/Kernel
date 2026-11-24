@@ -34,7 +34,7 @@ for unit in "$root/compat/musl/memory.c" "$src/src/malloc/mallocng/malloc.c" \
   "$root/compat/musl/io.c" "$root/compat/musl/open.c" "$root/compat/musl/wait.c" "$root/compat/musl/fork.c" \
   "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c"; do
   clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -nostdinc \
-    -DMIVINCI_NATIVE -DMIVINCI_MUSL -D_GNU_SOURCE -isystem "$resource" -I"$src/arch/$cpu" \
+    -DKERNEL_NATIVE -DKERNEL_MUSL -D_GNU_SOURCE -isystem "$resource" -I"$src/arch/$cpu" \
     -I"$src/arch/generic" -I"$obj/obj/src/internal" -I"$src/src/include" \
     -I"$src/src/internal" -I"$obj/obj/include" -I"$src/include" -I"$root/include" -I"$root/lib/libsys" \
     -c "$unit" -o "$out/$(basename "$unit" .c).o"
