@@ -157,7 +157,7 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 
 静态 musl 运行基线就绪后即可接 socket/fd、poll 和网络 applet；启动时动态链接和 pthread 是独立的第一期验收项，不阻塞 net。
 
-全部为待执行项；通用测试纪律见 [总览](00-overview.md#执行与验收)，完整执行与证据记录在本主题末尾，当前接续摘要见 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
+通用测试纪律见 [总览](00-overview.md#执行与验收)，完整执行与证据记录在本主题末尾，当前接续摘要见 [status.md](../status.md)。阶段编号是执行依赖，不要求与文档编号相同。
 
 ### 网络执行项
 
@@ -169,3 +169,5 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 测试方法：host 协议测试及两架构真实收发，覆盖 TCP 半关闭/部分发送、UDP 边界、DNS 失败、连接取消和服务重启；持续流量时检查 sh 仍有进展。
 
 验收：核对实际数据而非假设备回包；记录硬件矩阵和不支持选项，配额有界、旧会话失效、无缓冲提前复用。
+
+上游源码已固定为 `lib/lwip` 子模块。从官方仓库核对 `STABLE-2_2_0_RELEASE` 指向 `0a0452b2c39bdd91e252aef045c115f88f6ca773`，并核对检出版本为 2.2.0。上游源码未修改；适配和构建接线、回环和网卡运行验收仍待完成。需要此依赖时运行 `git submodule update --init -- lib/lwip`。

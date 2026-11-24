@@ -1,3 +1,6 @@
 [submodule "lib/musl"]
 	path = lib/musl
 	url = https://github.com/mivinci/musl.git
+[submodule "lib/lwip"]
+	path = lib/lwip
+	url = https://github.com/lwip-tcpip/lwip.git
