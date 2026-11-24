@@ -1,9 +1,11 @@
 #include <errno.h>
 #include <unistd.h>
+#include <abi/base.h>
 
 extern long sysfilereadposix(unsigned int, int, void *, unsigned long);
 extern long sysfiledup2posix(int, int);
 extern long sysfilepipeposix(unsigned int, int *);
+extern long sysfileimageclose(int);
 extern long sysfilewritepairposix(unsigned int, int, const void *, unsigned long, const void *,
                                  unsigned long);
 
@@ -46,4 +48,14 @@ int
 pipe(int fds[2])
 {
   return (int) posix(sysfilepipeposix(0, fds));
+}
+
+int
+close(int fd)
+{
+  long status = sysfileimageclose(fd);
+  if (!status)
+    return 0;
+  errno = status == -ERR_BAD_HANDLE ? EBADF : status == -ERR_INTERRUPTED ? EINPROGRESS : EIO;
+  return -1;
 }

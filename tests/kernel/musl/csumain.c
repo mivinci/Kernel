@@ -48,5 +48,7 @@ main(int argc, char **argv, char **envp)
   if (dup2(0, 1) != -1 || errno != EBADF || pipe(ends) != -1 || errno != ENOSYS ||
       ends[0] != -1 || ends[1] != -1)
     return 47;
+  if (close(1) != -1 || errno != EBADF)
+    return 48;
   _exit(256 + 42);
 }
