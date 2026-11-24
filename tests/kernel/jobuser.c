@@ -75,8 +75,9 @@ install(u32 signum, u64 kind)
   return __sys_sigaction(signum, &action, NULL);
 }
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
+  (void) envp;
   Ipcmsg   message, answer;
   Msg      words = {{UINT64_C(0x4a4f4253), 0, 0, 0}};
   Queryrec row;

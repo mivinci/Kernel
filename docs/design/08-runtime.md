@@ -1002,6 +1002,8 @@ SDK 现在通过 musl 的 `install-headers` 将目标架构标准头与 libsys �
 
 `sdk-audit` 已切到 musl：预处理只消费 `sdk/musl/include`、Clang 基础头和可选的上游 miniz 头，并按 SDK 清单核对实际用到的导出头摘要。A1 和 miniz 3.1.2 A2 分别用 musl 应用入口、原生 musl、libsys 和目标 compiler-rt 静态链接成功；ARM64（`6e1777d2d9d942dfaa999a9961056fce`、`2d438a696e834adcab58151929e6b181`）、RV64（`dc7f9454abb442a29fab68c76bc98a57`、`6590f82825764dc2be7238c137119147`）均无未定义符号和动态依赖。本次未运行这两份载荷，实际 stdout 仍待验收。
 
+`jobs` 载荷改用 musl SDK。ARM64、RV64 QEMU 均通过（`a929777e938848efa663ed71a2b41740`、`9be826998be748ea9938bfb8ca3707a3`），保留对进程组等待、停止与继续、`waitpid` 中断和重启，以及收取孩子前后 `times()` 计时的检查。此场景不替代原版 BusyBox ash 的作业控制验收。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。
