@@ -134,8 +134,18 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
       return failure(error);
     if (input.sa_flags & ~ACTION_FLAGS)
       return failure(-ERR_INVALID);
+#ifdef MIVINCI_MUSL
+    native.mask = input.sa_mask.__bits[0] & SIGNAL_SUPPORTED;
+    native.flags = (input.sa_flags & SA_NODEFER ? SIGNAL_NODEFER : 0) |
+                   (input.sa_flags & SA_RESETHAND ? SIGNAL_RESETHAND : 0) |
+                   (input.sa_flags & SA_NOCLDSTOP ? SIGNAL_NOCLDSTOP : 0) |
+                   (input.sa_flags & SA_NOCLDWAIT ? SIGNAL_NOCLDWAIT : 0) |
+                   (input.sa_flags & SA_SIGINFO ? SIGNAL_SIGINFO : 0) |
+                   (input.sa_flags & SA_RESTART ? SIGNAL_RESTART : 0);
+#else
     native.mask = input.sa_mask;
     native.flags = (u64) input.sa_flags;
+#endif
     handler =
         input.sa_flags & SA_SIGINFO ? (uintptr_t) input.sa_sigaction : (uintptr_t) input.sa_handler;
     if (handler == (uintptr_t) SIG_DFL)
@@ -152,7 +162,9 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
   if (error || !old)
     return error ? failure(error) : 0;
   if (previous.kind == SIGNAL_HANDLER &&
-      (previous.trampoline != (uintptr_t) trampoline || previous.flags & ~(u64) ACTION_FLAGS))
+      (previous.trampoline != (uintptr_t) trampoline ||
+       previous.flags & ~(u64) (SIGNAL_NODEFER | SIGNAL_RESETHAND | SIGNAL_NOCLDSTOP |
+                                SIGNAL_NOCLDWAIT | SIGNAL_SIGINFO | SIGNAL_RESTART)))
     return failure(-ERR_NOTSUP);
   if (previous.kind == SIGNAL_HANDLER && (previous.flags & SIGNAL_SIGINFO))
     output.sa_sigaction = (void (*)(int, siginfo_t *, void *))(uintptr_t) previous.handler;
@@ -161,9 +173,24 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
                         : previous.kind == SIGNAL_IGNORE
                             ? SIG_IGN
                             : (void (*)(int))(uintptr_t) previous.handler;
+#ifdef MIVINCI_MUSL
+  output.sa_mask.__bits[0] = previous.mask;
+  output.sa_flags = (previous.flags & SIGNAL_NODEFER ? SA_NODEFER : 0) |
+                    (previous.flags & SIGNAL_RESETHAND ? SA_RESETHAND : 0) |
+                    (previous.flags & SIGNAL_NOCLDSTOP ? SA_NOCLDSTOP : 0) |
+                    (previous.flags & SIGNAL_NOCLDWAIT ? SA_NOCLDWAIT : 0) |
+                    (previous.flags & SIGNAL_SIGINFO ? SA_SIGINFO : 0) |
+                    (previous.flags & SIGNAL_RESTART ? SA_RESTART : 0);
+#else
   output.sa_mask = previous.mask;
   output.sa_flags = (int) previous.flags;
+#endif
   /* Do not undo the kernel's committed action if fetching the old action fails. */
   error = __sys_copy(old, &output, sizeof(output));
   return error ? failure(error) : 0;
 }
+
+#ifdef MIVINCI_MUSL
+int __libc_sigaction(int, const struct sigaction *, struct sigaction *)
+    __attribute__((visibility("hidden"), alias("sigaction")));
+#endif
