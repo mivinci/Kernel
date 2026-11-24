@@ -3998,7 +3998,8 @@ publicchdirclient(void)
   fd = open("/dev/null", O_RDWR);
   CHECK(fd == 0 && open("/dev/fake", O_RDONLY) == -1 && errno == ENODEV &&
         open("/dev/null", O_RDONLY) == -1 && errno == ENOENT);
-  CHECK(write(fd, "null", 4) == 4 && !read(fd, &byte, 1) &&
+  byte = 'x';
+  CHECK(write(fd, "null", 4) == 4 && !read(fd, &byte, 1) && byte == 'x' &&
         lseek(fd, 0, SEEK_SET) == -1 && errno == ESPIPE && !close(fd));
   pipeiotrace[0] = 7;
 }
