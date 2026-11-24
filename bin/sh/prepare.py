@@ -74,7 +74,7 @@ def generate_applets(source, run, out):
         raise ValueError('upstream generated an unexpected applet table')
 
 
-def prepare(archive, out):
+def prepare(archive, out, upstream=False):
     content = archive.read_bytes()
     if hashlib.sha256(content).hexdigest() != SHA256:
         raise ValueError(f'{VERSION} archive SHA-256 mismatch')
@@ -97,8 +97,9 @@ def prepare(archive, out):
         if result.returncode:
             raise ValueError(f'{name} failed: {log}')
 
-    run('network-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-network.patch').read_bytes())
-    run('platform-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-platform.patch').read_bytes())
+    if not upstream:
+        run('network-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-network.patch').read_bytes())
+        run('platform-patch', ['patch', '-f', '-p1'], (HERE / f'{VERSION}-platform.patch').read_bytes())
     configure(source, run)
     generate_applets(source, run, out)
     run('common-buffer', ['sh', 'scripts/generate_BUFSIZ.sh', 'include/common_bufsiz.h'])
@@ -154,6 +155,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('archive', type=Path)
     parser.add_argument('out', type=Path, help='new directory for source and logs')
+    parser.add_argument('--upstream', action='store_true', help='prepare without BusyBox source patches')
     parser.add_argument('--probe-sdk', action='append', nargs=2, metavar=('ARCH', 'SDK'),
                         default=[], help='check selected sources against a public SDK')
     parser.add_argument('--clang', default='clang', help='Clang used by the target probe')
@@ -163,7 +165,7 @@ def main():
         if len(sdks) != len(args.probe_sdk) or sdks.keys() - TARGETS.keys():
             raise ValueError('specify each probe SDK architecture once: arm64, riscv')
         out = args.out.resolve()
-        source = prepare(args.archive, out)
+        source = prepare(args.archive, out, upstream=args.upstream)
         print(source, flush=True)
         clang = str(Path(args.clang).resolve()) if '/' in args.clang else args.clang
         if sdks and not probe(source, out, sdks, clang):
