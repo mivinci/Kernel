@@ -25,6 +25,7 @@
 #include "private/syscall.h"
 #include "private/timer.h"
 #include "../../sbin/fs/pipefile.h"
+#include "../../sbin/fs/dev.h"
 #include "../../sbin/fs/access.h"
 #include "../../sbin/fs/journal.h"
 #include "../../sbin/fs/mount.h"
@@ -1683,7 +1684,8 @@ struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file, dir, denied, created, abandoned, symlink, dev, nullnode, unbound;
+  Vnode     root, file, dir, denied, created, abandoned, symlink, unbound;
+  Fsdev     dev;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1764,7 +1766,7 @@ opensearch(void *context, const Vnode *node)
     }
     return vaccess(&job->cred, 22, 32, node == &fixture->denied ? 0600 : 0700, VACCESS_X, 1);
   }
-  if (node == &fixture->dev)
+  if (node == &fixture->dev.root)
     return vaccess(&job->cred, 22, 32, 0755, VACCESS_X, 1);
   CHECK(node == &fixture->root);
   return vaccess(&job->cred, 22, 32, fixture->searches++ == 2 ? 0010 : 0100, VACCESS_X, 1);
@@ -1784,19 +1786,18 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     *out = name[0] == 'd' ? &fixture->dir : name[0] == 'n' ? &fixture->denied : &fixture->file;
     return openhold(fixture, *out);
   }
-  if (dir == &fixture->dev) {
-    if (bytes != 4)
-      return -ENOENT;
-    if (!memcmp(name, "null", 4))
-      *out = &fixture->nullnode;
-    else if (!memcmp(name, "fake", 4))
+  if (dir == &fixture->dev.root) {
+    if (bytes == 4 && !memcmp(name, "fake", 4))
       *out = &fixture->unbound;
-    else
-      return -ENOENT;
+    else {
+      isize error = fsdevlookup(&fixture->dev, dir, name, bytes, out);
+      if (error)
+        return error;
+    }
     return openhold(fixture, *out);
   }
   if (dir == &fixture->root && bytes == 3 && !memcmp(name, "dev", 3)) {
-    *out = &fixture->dev;
+    *out = &fixture->dev.root;
     return openhold(fixture, *out);
   }
   CHECK(dir == &fixture->root && bytes == 1);
@@ -3453,10 +3454,15 @@ publicchdirserver(const Bootview *boot)
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
   fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
-  fixture.nullnode = (Vnode){fixture.root.mount, 8, 1, VNODE_CHAR};
-  fixture.dev = (Vnode){fixture.root.mount, 9, 1, VNODE_DIR};
-  fixture.unbound = fixture.nullnode;
-  fixture.files.nullnode = &fixture.nullnode;
+  fixture.dev.null = (Vnode){fixture.root.mount, 8, 1, VNODE_CHAR};
+  fixture.dev.root = (Vnode){fixture.root.mount, 9, 1, VNODE_DIR};
+  {
+    Vnode *node = NULL;
+    CHECK(fsdevlookup(&fixture.dev, &fixture.dev.root, "null", 4, &node) == -ENOENT && !node);
+  }
+  fixture.dev.published = 1;
+  fixture.unbound = fixture.dev.null;
+  fixture.files.nullnode = &fixture.dev.null;
   fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.length = 20;
