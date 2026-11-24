@@ -112,7 +112,7 @@ def build(args):
     libc_sources.extend(ROOT / 'compat/musl' / name for name in ('identity.c', 'sigaction.c', 'time.c', 'times.c'))
     libc_sources.append(ROOT / 'lib/libc/pathsearch.c')
     libc_sources.append(ROOT / 'lib/libc/spawnfiles.c')
-    libc_sources.append(ROOT / 'lib/libc/sleep.c')
+    libc_sources.append(ROOT / 'compat/musl/sleep.c')
     libc_sources.append(ROOT / 'lib/libc/getopt.c')
     libc_sources.append(ROOT / 'lib/libc/formatfd.c')
     libc_sources.append(ROOT / 'lib/libc/formatalloc.c')

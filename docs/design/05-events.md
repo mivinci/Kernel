@@ -218,6 +218,8 @@ stage385：ARM64/RV64 QEMU `runtime` 对已进入原生等待的 `nanosleep` 发
 
 stage384：公开 `nanosleep` 使用受检查的时长快照和原绝对截止，只接收 TIMER 事件。标准信号入口在运行用户 handler 前取单调时间，撤销原任务并固定成功或 EINTR/剩余量；返回现场若位于读票号到阻塞之间，则跳过已取消的等待。每层睡眠有独立记录，handler 可再次睡眠。ARM64/RV64 QEMU `runtime` 验证不早返回、成功保留 rem、非法输入、req/rem 同址、SA_RESTART 下的 EINTR、handler 内再次睡眠且跨过原截止，以及 rem 复制失败优先返回 EFAULT。双架构 `sigframe` 回归信号与 fork 既有路径。未单独注入等待指令窗口、STOP/CONT 与 handler 内 fork 的睡眠组合；其他运行库任务尚未接入该闹钟。
 
+相对休眠适配已移到 `compat/musl`。`nanosleep`、`sleep` 和 musl 的公开/隐藏 `clock_nanosleep` 入口共用 libsys 定时器；`clock_nanosleep` 直接返回错误号，不改 errno，绝对模式仍不支持。ARM64/RV64 musl 启动探针核对实际经过时间、剩余量保留及错误契约（`bbb89c401f474414a47d3ca7f6d890cb`、`a7e2a77b75d14d828302b1693eedf364`），同轮双架构 TLS 场景及 `runtime` 既有信号与休眠用例通过。
+
 stage383：libsys 私有定时器用 64 项小根堆复用唯一原生闹钟。以截止和票号排序，取消按精确票号。仅在最早截止变化或队列清空时改设闹钟，原生设置失败保留任务和代次。事件循环以单调时间取出到期任务，收到旧代次通知时不能据此判定任务到期。ARM64/RV64 QEMU `runtime` 验证旧通知已交付后取消并重设、同一截止顺序取出、未到期拒绝和满堆回收。公开 `nanosleep` 与信号入口尚未接入。
 
 - [ ] nanosleep 不早返回，其他任务/普通通知不误完成；信号和 SA_RESTART 组合仍返回约定 EINTR/剩余量，不消费普通消息。

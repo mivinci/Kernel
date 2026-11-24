@@ -182,6 +182,20 @@ csustart(const struct Boot *boot)
     if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &mono) != -1 || errno != EINVAL)
       __sys_exit(141);
   }
+  if (!musl_probe_role) {
+    const struct timespec tick = {0, 2000000}, invalid = {0, 1000000000};
+    struct timespec       before, after, rem = {7, 8};
+    errno = EDOM;
+    if (clock_gettime(CLOCK_MONOTONIC, &before) || nanosleep(&tick, &rem) ||
+        clock_nanosleep(CLOCK_MONOTONIC, 0, &tick, &rem) ||
+        clock_gettime(CLOCK_MONOTONIC, &after) || rem.tv_sec != 7 || rem.tv_nsec != 8 ||
+        (after.tv_sec - before.tv_sec) * 1000000000L + after.tv_nsec - before.tv_nsec < 4000000 ||
+        clock_nanosleep(CLOCK_REALTIME, 0, &invalid, &rem) != EINVAL ||
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &tick, &rem) != ENOTSUP || errno != EDOM)
+      __sys_exit(142);
+    if (nanosleep(&invalid, &rem) != -1 || errno != EINVAL || rem.tv_sec != 7 || rem.tv_nsec != 8)
+      __sys_exit(143);
+  }
   errno = 0;
   {
     pid_t child = fork();
