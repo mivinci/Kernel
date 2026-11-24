@@ -27,6 +27,7 @@ main(int argc, char **argv, char **envp)
   sigset_t mask, old, current;
   struct sigaction action = {0}, queried;
   const unsigned long self[] = {1, 1};
+  int ends[2] = {-1, -1};
   if (sigemptyset(&mask) || sigaddset(&mask, SIGUSR1) || sigprocmask(SIG_BLOCK, &mask, &old) ||
       sigismember(&old, SIGUSR1) || sigprocmask(SIG_SETMASK, 0, &current) ||
       sigismember(&current, SIGUSR1) != 1 || sigprocmask(SIG_SETMASK, &old, 0))
@@ -44,5 +45,8 @@ main(int argc, char **argv, char **envp)
   if (read(0, &byte, 1) != -1 || errno != EBADF || byte != 'x' ||
       write(1, &byte, 1) != -1 || errno != EBADF)
     return 46;
+  if (dup2(0, 1) != -1 || errno != EBADF || pipe(ends) != -1 || errno != ENOSYS ||
+      ends[0] != -1 || ends[1] != -1)
+    return 47;
   _exit(256 + 42);
 }

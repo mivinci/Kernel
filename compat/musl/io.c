@@ -2,6 +2,8 @@
 #include <unistd.h>
 
 extern long sysfilereadposix(unsigned int, int, void *, unsigned long);
+extern long sysfiledup2posix(int, int);
+extern long sysfilepipeposix(unsigned int, int *);
 extern long sysfilewritepairposix(unsigned int, int, const void *, unsigned long, const void *,
                                  unsigned long);
 
@@ -32,4 +34,16 @@ ssize_t
 write(int fd, const void *buffer, size_t bytes)
 {
   return __mivinci_stdio_write(fd, buffer, bytes, 0, 0);
+}
+
+int
+dup2(int oldfd, int newfd)
+{
+  return (int) posix(sysfiledup2posix(oldfd, newfd));
+}
+
+int
+pipe(int fds[2])
+{
+  return (int) posix(sysfilepipeposix(0, fds));
 }
