@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 static _Thread_local volatile int tls = 41;
 static int initialized;
@@ -52,5 +53,7 @@ main(int argc, char **argv, char **envp)
     return 48;
   if (getpid() != 1 || getppid() != 0)
     return 49;
+  if (waitpid(-1, 0, WNOHANG) != -1 || errno != ECHILD)
+    return 50;
   _exit(256 + 42);
 }

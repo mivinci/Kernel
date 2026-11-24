@@ -14,7 +14,7 @@ esac
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 resource=$(clang -print-resource-dir)/include
-for unit in lib/csu/musl.c compat/musl/exit.c compat/musl/io.c compat/musl/sigmask.c lib/libc/sigaction.c lib/libc/identity.c tests/kernel/musl/csumain.c; do
+for unit in lib/csu/musl.c compat/musl/exit.c compat/musl/io.c compat/musl/sigmask.c compat/musl/wait.c lib/libc/sigaction.c lib/libc/identity.c tests/kernel/musl/csumain.c; do
   clang --target="$cpu-linux-musl" "$@" -O2 -ffreestanding -fno-stack-protector -nostdinc \
     -isystem "$resource" -I"$src/arch/$cpu" -I"$src/arch/generic" -I"$src/src/include" \
     -I"$src/src/internal" -I"$obj/obj/include" -I"$src/include" -Iinclude -Ilib/libsys \
@@ -23,7 +23,7 @@ for unit in lib/csu/musl.c compat/musl/exit.c compat/musl/io.c compat/musl/sigma
 done
 clang --target="$cpu-linux-musl" "$@" -c "lib/csu/$arch/start.S" -o "$out/entry.o"
 ld.lld -T lib/libsys/user.ld "$out/entry.o" "$out/musl.c.o" "$out/csumain.c.o" \
-  "$out/exit.c.o" "$out/io.c.o" "$out/sigmask.c.o" "$out/sigaction.c.o" "$out/identity.c.o" "$obj/lib/libc.a" "build/$arch/sdk/libsys.a" -o "$out/init.elf"
+  "$out/exit.c.o" "$out/io.c.o" "$out/sigmask.c.o" "$out/wait.c.o" "$out/sigaction.c.o" "$out/identity.c.o" "$obj/lib/libc.a" "build/$arch/sdk/libsys.a" -o "$out/init.elf"
 python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/init.elf" --output "$out/init.pkg"
 set -- --arch "$arch" --case normal --qmp-stdio --initrd "$out/init.pkg" --init-elf "$out/init.elf" --init-exit 42
 if [ -n "$firmware" ]; then
