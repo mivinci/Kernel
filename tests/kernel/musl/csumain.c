@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
@@ -63,5 +64,7 @@ main(int argc, char **argv, char **envp)
     return 50;
   if (!strerror(EBADF)[0])
     return 52;
+  if (open("/dev/null", O_RDONLY) != -1 || errno != ENOSYS)
+    return 53;
   _exit(256 + 42);
 }
