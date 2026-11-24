@@ -294,7 +294,7 @@ main(int argc, char **argv)
   do {
     error = sysexecprepare(&replacement, 0);
     if (error == -ERR_BUSY)
-      REQUIRE(++retries < 64 && !__sys_yield(), 232);
+      REQUIRE(++retries < 128 && !__sys_yield(), 232);
   } while (error == -ERR_BUSY);
   REQUIRE(!error && !sysexecfill(&replacement, &source, &plan, &packet, packet.header.bytes), 234);
   /* After sealing the target the loader no longer needs the source or Boot. */

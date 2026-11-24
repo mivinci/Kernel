@@ -69,6 +69,8 @@ isize elfcheck(const Elfsource *source, u64 max_pages, Elfplan *out);
    and exact temporary handle. Dirty work must not be overwritten/reused. */
 isize elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
               Elfwork *work, Config *out);
+isize elfexec(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
+              Elfwork *work, Config *out);
 isize elfclean(Elfwork *work);
 /* Initialize like Execwork. An absent mask override samples the application
    mask: call prepare outside any temporary library signal block. Any CONTROL

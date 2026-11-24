@@ -97,7 +97,9 @@ elftest(void)
       }
       break;
     }
-    REQUIRE(procwork(trace[0] == 99 ? 32 : 8) >= 0 && prepwork(8) >= 0);
+    for (i = 0; i < (PROCS + 31) / 32; i++)
+      REQUIRE(procwork(32) >= 0);
+    REQUIRE(prepwork(8) >= 0);
   }
   REQUIRE(exited == 3 && trace[0] == 99 && trace[1] == 2 && trace[2] == 4 && trace[3] == 1 &&
           trace[4] > 1 && trace[5] == 6 && trace[6] == 6 && trace[7] == 2 && trace[14] == 8);

@@ -958,6 +958,10 @@ ELF 装载器按目标资源槽合并多个 Bootfd 引用的同一个 CALL；同
 
 `EXEC_CLAIM` 也可在已有 READY 连接上继续：核对原空间与地址，只接受与原 connid 匹配的普通回复；完成原 RPC 并 ACK 后清除本次预留，保留已有 MEM 和共享映射。双架构 QEMU `runtime` 在真实 exec 换图后，由夹具先交付预付连接，再调用实际服务端领取逻辑，核对同一 MEM、地址及数据可见性、重复领取被拒绝与退出后费用归零。生产启动描述符和 TTY 分派仍待接入。
 
+exec 装载时，Bootfd 可以引用目标准备表中的 CALL，也可以引用同一 PID 当前镜像中明确标记 `RESOURCE_INHERIT_EXEC` 的 CALL。两者均须匹配完整 Handle、USE 权和固定对端身份；同槽的目标准备条目冲突时拒绝。后者由内核在 exec 提交时按既有规则原槽移交，不另发一份 CALL；普通 spawn 只查目标准备表。ARM64、RV64 QEMU `pipeio` 验证 fork 后换镜像，通过继承的 fd 1 向父进程写入数据，随后读到 EOF；退出与资源退役分开推进，最后页和账目回到基线。装载器主机测试另覆盖普通 spawn 拒绝从源表取 CALL、仅标记 FORK 的 CALL 不可用于 exec。此验收使用私有装载入口，未覆盖公开 `execve()` 按路径装载。
+
+ARM64、RV64 QEMU `elf` 回归也通过：夹具在重试前让 CPU 清理分批扫描完整 Proc 表，等待已撤销镜像归还目标准备槽，再验证新准备、换图和回收。撤销与实际退役仍是两个阶段。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。

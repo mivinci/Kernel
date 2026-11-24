@@ -1,6 +1,8 @@
 #include "ktest.h"
 #include "load.h"
 #include <diag.h>
+#include <prep.h>
+#include <rq.h>
 #include <abi/boot.h>
 
 extern const u8  pipeio_image[], pipeio_image_end[];
@@ -37,7 +39,7 @@ testactors(const char *roles)
   Life       life;
   Liferesult result;
   u64        trace[2];
-  u32        i, j, ended, turns = 0, count = roles[2] ? 3 : 2;
+  u32        i, j, ended = 0, turns = 0, count = roles[2] ? 3 : 2;
   int        error;
   pgstat(&before);
   CHECK(!setcreate(4096, 8192, 4, &set));
@@ -73,10 +75,12 @@ testactors(const char *roles)
       CHECK(!localendpoint(table, processes[0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[2].handle));
     else
-      CHECK(!localobserve(table, OBSERVE_SOURCE |
-                                    (roles[i] == 'E' ? OBSERVE_CHILD | OBSERVE_FUTURE : 0),
-                          &packet.resources[2].handle));
-    if (roles[i] == 'e') {
+      CHECK(!localobserve(
+          table,
+          OBSERVE_SOURCE |
+              (roles[i] == 'E' || roles[i] == 'K' ? OBSERVE_CHILD | OBSERVE_FUTURE : 0),
+          &packet.resources[2].handle));
+    if (roles[i] == 'e' || roles[i] == 'k') {
       Createpolicy policy = {0};
       policy.set = set;
       policy.memlimit = policy.exec_limit = 512;
@@ -91,17 +95,18 @@ testactors(const char *roles)
       CHECK(!localendpoint(table, processes[client ? 1 : 0].identity, LOCAL_CALL, LOCAL_USE, 0, 0,
                            &packet.resources[3].handle));
     }
-    if (roles[i] == 'e')
+    if (roles[i] == 'e' || roles[i] == 'k')
       packet.header.resource_count = 4;
     testloadmapped(pids[i], pipeio_image, (u64) (pipeio_image_end - pipeio_image), &packet,
                    sizeof(packet));
     CHECK(!procpublish(pids[i]));
   }
   for (;;) {
-    ended = 0;
     for (i = 0; i < count; i++) {
       u32 reason = roles[i] == 'b' ? LIFE_SIGNAL : LIFE_EXIT;
       u32 code = reason == LIFE_SIGNAL ? SIGNAL_PIPE : 42;
+      if (ended & (1U << i))
+        continue;
       CHECK(!lifestat(processes[i].life, &life));
       if (life.state != LIFE_ENDED)
         continue;
@@ -116,11 +121,13 @@ testactors(const char *roles)
         putstr("\n");
       }
       CHECK(life.reason == reason && life.code == code && trace[0] == 7 && !trace[1]);
-      ended++;
+      ended |= 1U << i;
     }
-    if (ended == count)
+    if (ended == (1U << count) - 1)
       break;
-    CHECK(++turns < 1024);
+    CHECK(++turns < 8192);
+    /* Match production dispatch: ready actors cannot starve retirement. */
+    CHECK(procwork(1) >= 0 && prepwork(1) >= 0);
     error = procrunone();
     if (error == -ERR_WOULD_BLOCK)
       CHECK(procidle() >= 0);
@@ -130,8 +137,23 @@ testactors(const char *roles)
   for (i = 0; i < count; i++) {
     while ((error = procclean(pids[i])) > 0) {
     }
-    CHECK(!error && !lifecollect(processes[i].life, 1, &result));
+    CHECK((!error || error == -ERR_STALE) && !lifecollect(processes[i].life, 1, &result));
   }
+  /* Exit notification precedes retirement. A descendant can still hold
+     shared backing after all fixture actors have reported exit. */
+  for (turns = 0; turns < 8192; turns++) {
+    u32 sweep;
+    int worked = 0;
+    for (sweep = 0; sweep < ((PROCS > PREPS ? PROCS : PREPS) + 31) / 32; sweep++) {
+      int retired = procwork(32);
+      int prepared = prepwork(32);
+      CHECK(retired >= 0 && prepared >= 0);
+      worked += retired + prepared;
+    }
+    if (!worked)
+      break;
+  }
+  CHECK(turns < 8192);
   CHECK(!setstat(set, &budget) && !budget.charged && !budget.instances && !setclose(set));
   pgstat(&after);
   CHECK(before.free == after.free && before.allocated == after.allocated && !pgcheck() &&

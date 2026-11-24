@@ -41,12 +41,13 @@
 #define TEST_OFFSET INT64_C(0x100000003)
 
 volatile u64 pipeiotrace[2];
+static int execchild;
 
 #define CHECK(c)                                                                                   \
   do {                                                                                             \
     if (!(c)) {                                                                                    \
       pipeiotrace[1] = __LINE__;                                                                   \
-      __sys_exit(191);                                                                             \
+      __sys_exit(execchild ? (__LINE__ & 255) : 191);                                               \
     }                                                                                              \
   } while (0)
 
@@ -1770,6 +1771,8 @@ opensearch(void *context, const Vnode *node)
   if (node == &fixture->dev.root)
     return vaccess(&job->cred, 22, 32, 0755, VACCESS_X, 1);
   CHECK(node == &fixture->root);
+  if (job->walk.part.bytes == 3 && !memcmp(job->walk.part.name, "dev", 3))
+    return vaccess(&job->cred, 22, 32, 0755, VACCESS_X, 1);
   return vaccess(&job->cred, 22, 32, fixture->searches++ == 2 ? 0010 : 0100, VACCESS_X, 1);
 }
 
@@ -3646,11 +3649,27 @@ publicchdirserver(const Bootview *boot)
   CHECK(!records[1].manifest.count && !records[1].holds[0].file && !records[1].holds[1].pipe &&
         !servicewait.io.request && !servicepipe.stream.refs[PIPE_WRITE] &&
         !servicepipe.stream.refs[PIPE_READ] && !file.refs && !file.node);
-  for (steps = 0; steps < 32 && (link.ready || links[1].watch.owner.cookie); steps++)
+  /* Continue serving the parent through fork, exec, and devfs before drain. */
+  for (steps = 0; steps < 256; steps++) {
+    u32 i;
+    for (i = 0; i < ARRAY_SIZE(links); i++)
+      if (links[i].ready || links[i].watch.owner.cookie || namespaces[i].pid)
+        break;
+    if (i == ARRAY_SIZE(links))
+      break;
     CHECK(!fsstep(&fs));
-  CHECK(!parentns->pid && !namespaces[1].pid && !fixture.holds && !link.ready &&
-        !link.watch.owner.cookie && !links[1].watch.owner.cookie && !links[1].prepaid &&
-        !links[1].memory && !records[0].token && !records[0].execsource &&
+  }
+  pipeiotrace[0] = (parentns->pid ? 1 : 0) | (namespaces[1].pid ? 2 : 0) |
+                   (namespaces[2].pid ? 4 : 0);
+  CHECK(!pipeiotrace[0]);
+  pipeiotrace[0] = ((u64) fixture.holds << 32) | file.refs;
+  CHECK(!fixture.holds);
+  for (steps = 0; steps < ARRAY_SIZE(links); steps++) {
+    pipeiotrace[0] = steps;
+    CHECK(!links[steps].ready && !links[steps].watch.owner.cookie);
+    CHECK(!links[steps].prepaid && !links[steps].memory);
+  }
+  CHECK(!records[0].token && !records[0].execsource &&
         !records[1].token && !records[1].execsource);
 #undef link
   pipeiotrace[0] = 7;
@@ -3895,9 +3914,11 @@ publicchdirclient(void)
   {
     Handle waited;
     u64 kind, code, sequence;
-    isize child;
+    isize child, drained;
     CHECK(!sysfilepipeposix(0, ends));
     child = sysfileimagefork(0x2000000, UINT64_MAX);
+    if (child < 0)
+      pipeiotrace[0] = (u64) -child;
     CHECK(child >= 0);
     if (!child)
       __sys_exit(write(ends[1], "z", 1) == 1 ? 43 : 44);
@@ -3905,7 +3926,11 @@ publicchdirclient(void)
           kind == WAIT_EXITED && code == 43 && !close(ends[1]) &&
           read(ends[0], &byte, 1) == 1 && byte == 'z');
     /* Once child retirement drops its write reference, the drained pipe reaches EOF. */
-    CHECK(!read(ends[0], &byte, 1) && !close(ends[0]));
+    drained = read(ends[0], &byte, 1);
+    if (drained < 0)
+      pipeiotrace[0] = errno;
+    CHECK(!drained);
+    CHECK(!close(ends[0]));
   }
   for (attempt = 0; attempt < 3; attempt++) {
     Fileimage *image;
@@ -3925,20 +3950,41 @@ publicchdirclient(void)
       isize child = sysfileimagefork(0x2000000, UINT64_MAX);
       CHECK(child >= 0);
       if (child) {
-        CHECK(!close(ends[1]) && !__sys_wait(child, 0, &waited, &kind, &code, &sequence) &&
-              waited == child && kind == WAIT_EXITED && code == 43 &&
-              read(ends[0], &byte, 1) == 1 && byte == 'e' && !read(ends[0], &byte, 1) &&
-              !close(ends[0]));
+        CHECK(!close(ends[1]));
+        CHECK(!__sys_wait(child, 0, &waited, &kind, &code, &sequence));
+        pipeiotrace[0] = (kind << 32) | code;
+        CHECK(waited == child && kind == WAIT_EXITED && code == 43);
+        CHECK(read(ends[0], &byte, 1) == 1 && byte == 'e');
+        CHECK(!read(ends[0], &byte, 1));
+        CHECK(!close(ends[0]));
         break;
       }
+      execchild = 1;
       CHECK(!sysfileclaimfd(0, ends[1], 0) && !sysfileimage(&image));
       peer = &image->connections[0];
     }
-    CHECK(!sysfileimage(&image) &&
-          !sysfdobserve(&image->fds, ends[1], &fd) &&
-          !sysfilerefview(&image->files, peer->state.self, fd.file, &ref) &&
-          !__sys_execprep(bootresource(sysboot(), BOOT_SELF_SPACE), 0, &view, &target) &&
-          !sysfilenow(&now));
+    CHECK(!sysfileimage(&image));
+    CHECK(!sysfdobserve(&image->fds, ends[1], &fd));
+    CHECK(!sysfilerefview(&image->files, peer->state.self, fd.file, &ref));
+    {
+      Handle space = bootresource(sysboot(), BOOT_SELF_SPACE);
+      const struct timespec pause = {0, 1000000};
+      u64 until;
+      isize error = -ERR_BUSY;
+      /* An aborted image retains the preparation slot until retirement. */
+      CHECK(!sysfilenow(&now));
+      until = now + UINT64_C(2000000000);
+      do {
+        error = __sys_execprep(space, 0, &view, &target);
+        if (error != -ERR_BUSY)
+          break;
+        CHECK(!nanosleep(&pause, NULL) && !sysfilenow(&now));
+      } while (now < until);
+      if (error)
+        pipeiotrace[0] = ((u64) attempt << 32) | (u64) -error;
+      CHECK(!error);
+    }
+    CHECK(!sysfilenow(&now));
     cache = sysfileimagecache(image);
     CHECK(!sysconnworkreserve(peer, cache, SYSFILE_MAIN, 1, &lease));
     address = peer->state.map.address;
@@ -3972,13 +4018,15 @@ publicchdirclient(void)
       Elfplan plan;
       Elfsource source = {(void *) pipeexec_elf, pipeexec_elf_end - pipeexec_elf, pipeexecread};
       Handle backend;
+      isize error;
       packet.header = (Boot){.magic = BOOT_MAGIC, .format = BOOT_FORMAT, .bytes = sizeof(packet),
                             .resource_count = 2, .resources_off = sizeof(Boot), .fd_count = 1,
                             .fds_off = sizeof(Boot) + sizeof(packet.resources),
                             .user_lo = BOOT_USER_LO, .user_hi = BOOT_USER_HI};
       packet.resources[0].tag = BOOT_SELF_SPACE;
       packet.resources[1].tag = BOOT_SELF_ALLOC;
-      CHECK(!__sys_grant(view, peer->state.call, RESOURCE_USE, 0, 0, 0, &backend));
+      backend = peer->state.call;
+      CHECK(!__sys_inherit(backend, RESOURCE_INHERIT_FORK | RESOURCE_INHERIT_EXEC));
       packet.fd = (Bootfd){1, 0, backend, ref.session, token, ref.reference};
       work.elf.view = view;
       work.elf.pid = peer->state.self.pid;
@@ -3986,10 +4034,14 @@ publicchdirclient(void)
       work.elf.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
       work.elf.scratch = 0x2000000;
       work.elf.scratch_bytes = BOOT_MAX_BYTES;
-      CHECK(!elfcheck(&source, 128, &plan) && !sysexecfill(&work, &source, &plan, &packet,
-                                                        sizeof(packet)));
-      (void) sysexecpublish(&work);
-      CHECK(0);
+      error = elfcheck(&source, 128, &plan);
+      if (error)
+        __sys_exit(64 + ((u64) -error & 31));
+      error = sysexecfill(&work, &source, &plan, &packet, sizeof(packet));
+      if (error)
+        __sys_exit(96 + ((u64) -error & 31));
+      error = sysexecpublish(&work);
+      __sys_exit(128 + ((u64) -error & 31));
     }
     /* The old image knows the token, but only the published target may claim it. */
     CHECK(!ipc_call(peer->state.call, &(Msg){{FS_EXEC_CLAIM, 0, 1, token}}, 0, &result) &&
@@ -3999,11 +4051,19 @@ publicchdirclient(void)
           byte == 'a' && !read(ends[0], &byte, 1) && !close(ends[0]));
   }
   fd = open("/dev/null", O_RDWR);
-  CHECK(fd == 0 && open("/dev/fake", O_RDONLY) == -1 && errno == ENODEV &&
-        open("/dev/null", O_RDONLY) == -1 && errno == ENOENT);
+  pipeiotrace[0] = fd < 0 ? (u64) errno : (u64) fd << 32;
+  CHECK(fd == 0);
+  CHECK(open("/dev/fake", O_RDONLY) == -1 && errno == ENODEV);
+  CHECK(open("/dev/null", O_RDONLY) == -1 && errno == ENOENT);
   byte = 'x';
-  CHECK(write(fd, "null", 4) == 4 && !read(fd, &byte, 1) && byte == 'x' &&
-        lseek(fd, 0, SEEK_SET) == -1 && errno == ESPIPE && !close(fd));
+  {
+    isize written = write(fd, "null", 4);
+    pipeiotrace[0] = written < 0 ? (u64) errno : (u64) written << 32;
+    CHECK(written == 4);
+  }
+  CHECK(!read(fd, &byte, 1) && byte == 'x');
+  CHECK(lseek(fd, 0, SEEK_SET) == -1 && errno == ESPIPE);
+  CHECK(!close(fd));
   pipeiotrace[0] = 7;
 }
 

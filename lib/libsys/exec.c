@@ -31,7 +31,7 @@ sysexecfill(Execwork *work, const Elfsource *source, const Elfplan *plan, const 
   elf = &work->elf;
   if (!elf->view || elf->failure || work->config.entry)
     return -ERR_STATE;
-  error = elfload(source, plan, boot, bytes, elf, &work->config);
+  error = elfexec(source, plan, boot, bytes, elf, &work->config);
   if (error && !elf->failure)
     elf->failure = error;
   return error;

@@ -33,7 +33,7 @@
 #define LOCAL_LOAD       4
 #define LOCAL_GRANT      RESOURCE_GRANT
 #define LOCAL_FORK       1
-#define LOCAL_EXEC       2
+#define LOCAL_EXEC       RESOURCE_INHERIT_EXEC
 #define LOCAL_SEAL       8
 #define LOCAL_OPEN       1
 #define LOCAL_CLOSING    2

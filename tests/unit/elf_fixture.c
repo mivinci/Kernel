@@ -7,10 +7,11 @@
 #define VIEW    101
 #define SPACE   102
 #define PID     103
+static u64 exec_source;
 isize
 __sys_getid(Handle *pid, u64 *image, Handle *parent)
 {
-  *pid = 1;
+  *pid = exec_source ? PID : 1;
   *image = 1;
   *parent = 0;
   return 0;
@@ -42,6 +43,11 @@ mock_fd_call(u64 rights, u64 image, u64 peer, u64 peer_image)
   fd_peer = peer;
   fd_peer_image = peer_image;
 }
+void
+mock_exec_source(u64 inherit)
+{
+  exec_source = inherit + 1;
+}
 static int
 fault(void)
 {
@@ -59,6 +65,7 @@ void
 mock_reset(u64 window)
 {
   mock_fd_call(0, 0, 0, 0);
+  exec_source = 0;
   memset(memories, 0, sizeof(memories));
   memset(targets, 0, sizeof(targets));
   scratch = window;
@@ -166,6 +173,21 @@ __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count
   u32 i;
   if (fault())
     return -ERR_NOMEM;
+  if (!authority && kind == QUERY_RESOURCE && !cursor && count && exec_source) {
+    memset(records, 0, sizeof(*records));
+    records[0].type = QUERY_RESOURCE;
+    records[0].pid = PID;
+    records[0].image = 1;
+    records[0].data[0] = (2UL << 59) | (7UL << 16) | 3;
+    records[0].data[1] = RESOURCE_CALL;
+    records[0].data[2] = RESOURCE_USE;
+    records[0].data[5] = exec_source - 1;
+    records[0].data[6] = 1;
+    records[0].data[7] = 1;
+    *written = 1;
+    *next = 0;
+    return 0;
+  }
   if (authority != VIEW || kind != QUERY_RESOURCE || count < 3)
     return -ERR_INVALID;
   if (cursor) {
@@ -190,7 +212,7 @@ __sys_query(Handle authority, u64 kind, u64 cursor, Queryrec *records, u64 count
   for (i = 0; i < 3; i++) {
     records[i].type = QUERY_RESOURCE;
     records[i].pid = PID;
-    records[i].image = 1;
+    records[i].image = exec_source ? 2 : 1;
     records[i].data[0] = (2UL << 59) | (7UL << 16) | i;
     records[i].data[1] = i == 0 ? 2 : i == 1 ? 3 : 1;
   }

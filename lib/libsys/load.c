@@ -168,7 +168,7 @@ resources(Elfwork *work, Handle handles[3])
   return handles[0] && handles[1] ? 0 : -ERR_STATE;
 }
 static isize
-fdcalls(Elfwork *work, const Bootview *boot)
+fdcalls(Elfwork *work, const Bootview *boot, int exec)
 {
   Queryrec records[4];
   Handle   needed[BOOT_RESOURCE_COUNT];
@@ -198,8 +198,10 @@ fdcalls(Elfwork *work, const Bootview *boot)
     for (i = 0; i < written; i++) {
       const Queryrec *record = &records[i];
       u32             slot = record->data[0] & UINT16_MAX;
-      if (slot >= ARRAY_SIZE(needed) || !needed[slot] || needed[slot] != (Handle) record->data[0])
+      if (slot >= ARRAY_SIZE(needed) || !needed[slot])
         continue;
+      if (needed[slot] != (Handle) record->data[0])
+        return -ERR_BAD_HANDLE;
       if (record->data[1] != RESOURCE_CALL)
         return -ERR_BAD_HANDLE;
       if (!(record->data[2] & RESOURCE_USE))
@@ -211,14 +213,48 @@ fdcalls(Elfwork *work, const Bootview *boot)
     }
     cursor = next;
   } while (left && cursor);
+  if (left && exec) {
+    Handle pid, parent;
+    u64    image;
+    error = __sys_getid(&pid, &image, &parent);
+    if (error)
+      return error;
+    if (pid != work->pid || image >= work->image)
+      return -ERR_STATE;
+    cursor = total = 0;
+    do {
+      error = __sys_query(0, QUERY_RESOURCE, cursor, records, ARRAY_SIZE(records), &written, &next);
+      if (error)
+        return error;
+      total += written;
+      if (written > ARRAY_SIZE(records) || total > BOOT_RESOURCE_COUNT ||
+          (next && (!written || next == cursor)))
+        return -ERR_STATE;
+      for (i = 0; i < written; i++) {
+        const Queryrec *record = &records[i];
+        u32             slot = record->data[0] & UINT16_MAX;
+        if (record->type != QUERY_RESOURCE || record->pid != pid || record->image != image)
+          return -ERR_STATE;
+        if (slot >= ARRAY_SIZE(needed) || !needed[slot] || needed[slot] != (Handle) record->data[0])
+          continue;
+        if (record->data[1] != RESOURCE_CALL || !(record->data[2] & RESOURCE_USE) ||
+            !(record->data[5] & RESOURCE_INHERIT_EXEC) || !pidvalid((Handle) record->data[6]) ||
+            !record->data[7])
+          return -ERR_BAD_HANDLE;
+        needed[slot] = 0;
+        left--;
+      }
+      cursor = next;
+    } while (left && cursor);
+  }
   return left ? -ERR_BAD_HANDLE : 0;
 }
 static isize
 inheritedcreate(Handle handle)
 {
   Queryrec rows[4];
-  u64 cursor = 0, count, next, i;
-  isize error;
+  u64      cursor = 0, count, next, i;
+  isize    error;
   do {
     error = __sys_query(0, QUERY_RESOURCE, cursor, rows, ARRAY_SIZE(rows), &count, &next);
     if (error)
@@ -233,7 +269,7 @@ inheritedcreate(Handle handle)
 }
 
 static isize
-startup(Elfwork *work, const void *data, u64 bytes)
+startup(Elfwork *work, const void *data, u64 bytes, int exec)
 {
   Handle    self[3], handle;
   Boot     *boot;
@@ -278,7 +314,7 @@ startup(Elfwork *work, const void *data, u64 bytes)
     return -ERR_INVALID;
   error = bootcheck(destination, bytes, &checked);
   if (!error)
-    error = fdcalls(work, &checked);
+    error = fdcalls(work, &checked, exec);
   if (!error)
     error = unalias(work);
   if (!error)
@@ -324,9 +360,9 @@ page(const Elfsource *source, const Elfplan *plan, Elfwork *work, u64 address)
     error = mapping(work, work->view, address, PAGE_SIZE, prot);
   return error ? error : elfclean(work);
 }
-isize
-elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes,
-        Elfwork *work, Config *out)
+static isize
+load(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bootbytes, Elfwork *work,
+     Config *out, int exec)
 {
   u64   i, address, end, next = 0;
   isize error, cleanup;
@@ -344,7 +380,7 @@ elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 boot
   if (work->sigmask & ~SIGNAL_SUPPORTED)
     return -ERR_INVALID;
   work->failure = 0;
-  error = startup(work, boot, bootbytes);
+  error = startup(work, boot, bootbytes, exec);
   for (i = 0; !error && i < plan->count; i++) {
     address = MAX(next, ALIGN_DOWN(plan->segments[i].va, PAGE_SIZE));
     end = ALIGN_UP(plan->segments[i].va + plan->segments[i].memsz, PAGE_SIZE);
@@ -370,4 +406,18 @@ elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 boot
   out->bootsz = bootbytes;
   out->sigmask = work->sigmask;
   return 0;
+}
+
+isize
+elfload(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bytes, Elfwork *work,
+        Config *out)
+{
+  return load(source, plan, boot, bytes, work, out, 0);
+}
+
+isize
+elfexec(const Elfsource *source, const Elfplan *plan, const void *boot, u64 bytes, Elfwork *work,
+        Config *out)
+{
+  return load(source, plan, boot, bytes, work, out, 1);
 }

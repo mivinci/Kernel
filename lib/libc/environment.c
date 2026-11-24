@@ -3,11 +3,20 @@
 #include <stdlib.h>
 #include <unistd.h>
 char **environ;
+static isize
+deferbootfds(const Bootview *boot, void *context)
+{
+  /* sysfileimage imports these validated rows on the first file operation. */
+  (void) boot;
+  (void) context;
+  return 0;
+}
+
 isize
 libcenv(const Boot *boot, int *argc, char ***argv)
 {
   char **envp;
-  isize  error = sysstartargs(boot, argc, argv, &envp);
+  isize  error = sysstartargswithfds(boot, argc, argv, &envp, deferbootfds);
   if (!error)
     environ = envp;
   return error;

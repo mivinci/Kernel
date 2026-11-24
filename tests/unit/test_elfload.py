@@ -48,11 +48,13 @@ class ElfLoaderTests(unittest.TestCase):
             for name,args,returns in (
                 ('elfcheck',[C.POINTER(Source),C.c_uint64,C.POINTER(Plan)],C.c_int64),
                 ('elfload',[C.POINTER(Source),C.POINTER(Plan),C.c_void_p,C.c_uint64,C.POINTER(Work),C.POINTER(Config)],C.c_int64),
+                ('elfexec',[C.POINTER(Source),C.POINTER(Plan),C.c_void_p,C.c_uint64,C.POINTER(Work),C.POINTER(Config)],C.c_int64),
                 ('sysfixload',[C.POINTER(Work),C.c_uint64,C.c_void_p,C.c_uint64],C.c_int64),
                 ('sysforkpublish',[C.POINTER(Work),C.c_uint64,C.c_void_p,C.c_uint64],C.c_int64),
                 ('sysforkcancel',[C.POINTER(Work)],C.c_int64),
                 ('mock_fork_fail',[C.c_int64,C.c_int64],None),
                 ('mock_fd_call',[C.c_uint64]*4,None),
+                ('mock_exec_source',[C.c_uint64],None),
                 ('elfclean',[C.POINTER(Work)],C.c_int64),('mock_reset',[C.c_uint64],None),
                 ('mock_fail',[C.c_uint32],None),('mock_cleanup_fail',[C.c_uint32,C.c_uint32],None),
                 ('mock_peek',[C.c_uint64,C.c_void_p,C.c_uint64,C.POINTER(C.c_uint64)],C.c_int)):
@@ -186,7 +188,7 @@ class ElfLoaderTests(unittest.TestCase):
                                   peer=peer, peer_image=peer_image):
                     source, parsed, work, template, config = self.setup_load(machine, lib)
                     lib.mock_fd_call(rights, image, peer, peer_image)
-                    entries = struct.pack('<12Q', 0, 0, call, 31, 9, 0, 7, 1, other, 31, 9, 0)
+                    entries = struct.pack('<12Q', 0, 0, call, 31, 9, 41, 7, 1, other, 31, 9, 41)
                     data = bytearray(template.raw[:-1] + entries)
                     struct.pack_into('<Q', data, 16, len(data))
                     struct.pack_into('<2Q', data, 80, 2, len(data) - len(entries))
@@ -197,6 +199,27 @@ class ElfLoaderTests(unittest.TestCase):
                     self.assertEqual(config.entry, 0 if expected else USER_LO)
                     self.assertEqual(packet.raw[:-1], data)
                     self.assertEqual(bool(lib.mock_live()), not expected)
+                    lib.mock_abort()
+
+    def test_exec_accepts_only_source_calls_marked_for_exec(self):
+        call = (2 << 59) | (7 << 16) | 3
+        for machine, lib in self.libs:
+            for entry, inherit, expected in (('elfload', 2, -3), ('elfexec', 1, -3),
+                                             ('elfexec', 2, 0)):
+                with self.subTest(machine=machine, entry=entry, inherit=inherit):
+                    source, parsed, work, template, config = self.setup_load(machine, lib)
+                    work.image = 2
+                    lib.mock_exec_source(inherit)
+                    rows = struct.pack('<6Q', 1, 0, call, 31, 9, 41)
+                    data = bytearray(template.raw[:-1] + rows)
+                    struct.pack_into('<Q', data, 16, len(data))
+                    struct.pack_into('<2Q', data, 80, 1, len(data) - len(rows))
+                    packet = C.create_string_buffer(bytes(data))
+                    self.assertEqual(getattr(lib, entry)(C.byref(source), C.byref(parsed), packet,
+                                                         len(data), C.byref(work),
+                                                         C.byref(config)), expected)
+                    self.assertEqual((work.failure, work.memory, work.mapped), (expected, 0, 0))
+                    self.assertEqual(config.entry, 0 if expected else USER_LO)
                     lib.mock_abort()
 
     def test_failed_cleanup_keeps_exact_work_until_explicit_retry(self):
