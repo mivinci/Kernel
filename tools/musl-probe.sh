@@ -21,7 +21,7 @@ for arch in arm64 riscv; do
     make -j4 lib/libc.a) >"$out/musl-build.log" 2>&1
   for unit in tests/kernel/musl/start.c "$src/src/malloc/mallocng/malloc.c" \
     "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c" \
-    compat/musl/fork.c compat/musl/wait.c compat/musl/sigmask.c compat/musl/io.c \
+    compat/musl/fork.c compat/musl/group.c compat/musl/identity.c compat/musl/wait.c compat/musl/sigmask.c compat/musl/io.c \
     compat/musl/sigaction.c compat/musl/sleep.c compat/musl/time.c compat/musl/times.c; do
     clang --target="$target-linux-musl" "$@" -DMIVINCI_NATIVE -DMIVINCI_MUSL -D_GNU_SOURCE \
       -O2 -nostdinc -ffreestanding -fno-stack-protector -ftls-model=local-exec \
@@ -37,11 +37,11 @@ for arch in arm64 riscv; do
     -I"$out/obj/src/internal" -I"$src/src/include" -I"$src/src/internal" -I"$out/obj/include" \
     -I"$src/include" -c tests/kernel/musl/start.c -o "$out/inherited-start.o"
   ld.lld -T lib/libsys/user.ld -z max-page-size=4096 --strip-all "$out/entry.o" "$out/inherited-start.o" "$out/malloc.o" \
-    "$out/__stdio_write.o" "$out/__stdout_write.o" "$out/fork.o" "$out/wait.o" \
+    "$out/__stdio_write.o" "$out/__stdout_write.o" "$out/fork.o" "$out/group.o" "$out/identity.o" "$out/wait.o" \
     "$out/sigmask.o" "$out/io.o" "$out/sigaction.o" "$out/sleep.o" "$out/time.o" "$out/times.o" "$out/lib/libc.a" \
     "build/$arch/sdk/libsys.a" -o "$out/inherited-stdout.elf"
   ld.lld -T lib/libsys/user.ld "$out/entry.o" "$out/start.o" "$out/malloc.o" \
-    "$out/__stdio_write.o" "$out/__stdout_write.o" "$out/fork.o" "$out/wait.o" \
+    "$out/__stdio_write.o" "$out/__stdout_write.o" "$out/fork.o" "$out/group.o" "$out/identity.o" "$out/wait.o" \
     "$out/sigmask.o" "$out/io.o" "$out/sigaction.o" "$out/sleep.o" "$out/time.o" "$out/times.o" "$out/lib/libc.a" \
     "build/$arch/sdk/libsys.a" -o "$out/probe.elf"
   python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/probe.elf" \

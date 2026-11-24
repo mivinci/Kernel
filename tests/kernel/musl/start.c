@@ -198,6 +198,7 @@ csustart(const struct Boot *boot)
   }
   errno = 0;
   {
+    pid_t oldgroup = getpgrp(), oldsession = getsid(0);
     pid_t child = fork();
     if (musl_probe_role == 1) {
       int status;
@@ -208,6 +209,12 @@ csustart(const struct Boot *boot)
         errno = 0;
         if (read(0, &byte, sizeof(byte)) != -1 || errno != EBADF || byte != 0x5a)
           __sys_exit(135);
+        if (oldgroup <= 0 || oldsession <= 0 || getpgid(0) != oldgroup || getsid(0) != oldsession ||
+            setpgid(0, oldgroup) || setsid() != getpid() || getsid(0) != getpid() ||
+            getpgrp() != getpid())
+          __sys_exit(144);
+        if (setsid() != -1 || errno != EPERM)
+          __sys_exit(145);
         __sys_exit(43);
       }
       if (child < 0)

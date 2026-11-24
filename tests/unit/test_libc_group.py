@@ -36,7 +36,7 @@ isize __sys_enter(u64 nr,const u64 args[7],void *raw){
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'lib/libsys/include'),'-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'include')]
         for name in ('getpgrp','getpgid','getsid','setpgid','setsid','__errno_location','strerror'):
             command+=['-D'+name+'=user_'+name]
-        command += [str(ROOT/'lib/libc'/name) for name in ('group.c','errno.c')]+[str(ROOT/'lib/libsys/process.c'),str(shim),'-o',str(path)]
+        command += [str(ROOT/'compat/musl/group.c'),str(ROOT/'lib/libc/errno.c'),str(ROOT/'lib/libsys/process.c'),str(shim),'-o',str(path)]
         if sys.platform=='darwin':
             sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
             command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]
