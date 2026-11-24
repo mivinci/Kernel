@@ -108,6 +108,7 @@ def build(args):
     # The normal runtime has a separate entry object and one-way library order.
     libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'credential.c', 'group.c', 'wait.c', 'signal.c', 'sigaction.c', 'raise.c', 'time.c', 'sysconf.c')]
     libc_sources.append(ROOT / 'lib/libc/pathsearch.c')
+    libc_sources.append(ROOT / 'lib/libc/times.c')
     libc_sources.append(ROOT / 'lib/libc/spawnfiles.c')
     libc_sources.append(ROOT / 'lib/libc/sleep.c')
     libc_sources.append(ROOT / 'lib/libc/getopt.c')
