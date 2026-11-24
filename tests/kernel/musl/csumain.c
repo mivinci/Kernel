@@ -15,6 +15,7 @@ handler(int sig)
 }
 
 extern long __sys_sigsend(const void *, unsigned long);
+extern void __block_all_sigs(void *), __restore_sigs(void *);
 
 __attribute__((constructor)) static void
 init(void)
@@ -29,6 +30,11 @@ main(int argc, char **argv, char **envp)
   struct sigaction action = {0}, queried;
   const unsigned long self[] = {1, 1};
   int ends[2] = {-1, -1};
+  sigset_t saved;
+  __block_all_sigs(&saved);
+  if (sigprocmask(SIG_SETMASK, 0, &current) || sigismember(&current, SIGUSR1) != 1)
+    return 51;
+  __restore_sigs(&saved);
   if (sigemptyset(&mask) || sigaddset(&mask, SIGUSR1) || sigprocmask(SIG_BLOCK, &mask, &old) ||
       sigismember(&old, SIGUSR1) || sigprocmask(SIG_SETMASK, 0, &current) ||
       sigismember(&current, SIGUSR1) != 1 || sigprocmask(SIG_SETMASK, &old, 0))

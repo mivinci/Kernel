@@ -5,6 +5,28 @@
 
 extern isize __sys_sigmask(u64, u64, u64 *);
 
+/* The native ABI has no libc-private signals in its current namespace. */
+void
+__block_all_sigs(void *saved)
+{
+  if (__sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, saved))
+    __builtin_trap();
+}
+
+void
+__block_app_sigs(void *saved)
+{
+  __block_all_sigs(saved);
+}
+
+void
+__restore_sigs(void *saved)
+{
+  u64 ignored;
+  if (__sys_sigmask(SIGNAL_SETMASK, *(const u64 *) saved, &ignored))
+    __builtin_trap();
+}
+
 int
 pthread_sigmask(int how, const sigset_t *restrict set, sigset_t *restrict old)
 {
