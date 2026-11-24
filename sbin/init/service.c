@@ -13,6 +13,12 @@
 
 typedef struct Packet Packet;
 typedef struct Work   Work;
+typedef struct Uart   Uart;
+struct Uart
+{
+  Handle mmio, irq;
+  u64    kind, offset, bytes, shift, width, mapbytes;
+};
 struct Packet
 {
   Boot     header;
@@ -28,6 +34,7 @@ struct Work
   Elfwork         load;
   Config          config;
   Packet          packet;
+  Uart            uart;
   u64             wake;
   u64             observation;
   Msg             request, reply;
@@ -59,8 +66,8 @@ Queryrec               serviceaccounts[INITCFG_SERVICES], initaccount;
 static Work            operations[INITCFG_SERVICES];
 static const Manifest *policy;
 static const Package  *catalog;
-static Handle          space, allocator, creator, system, listener, observer, mmio, irqsource;
-static u64             ownimage, uartkind, uartoffset, uartbytes, uartshift, uartwidth, mapbytes;
+static Handle          space, allocator, creator, system, listener, observer;
+static u64             ownimage;
 static u32             serialindex;
 
 static isize
@@ -109,6 +116,7 @@ number(char text[21], u64 value)
 static isize
 arguments(Packet *packet, u32 index)
 {
+  const Uart *uart = &operations[index].uart;
   u64         data[25], mask;
   char        numbers[5][21];
   const char *argv[8];
@@ -117,12 +125,12 @@ arguments(Packet *packet, u32 index)
   argv[0] = (const char *) policy->service[index].image;
   switch (policy->service[index].kind) {
   case INITCFG_SERIAL:
-    argv[1] = uartkind == BOOT_UART_NS16550 ? "ns16550" : "pl011";
-    argv[2] = number(numbers[0], uartoffset);
-    argv[3] = number(numbers[1], uartbytes);
+    argv[1] = uart->kind == BOOT_UART_NS16550 ? "ns16550" : "pl011";
+    argv[2] = number(numbers[0], uart->offset);
+    argv[3] = number(numbers[1], uart->bytes);
     argv[4] = number(numbers[2], servicestate[index].number);
-    argv[5] = number(numbers[3], uartshift);
-    argv[6] = number(numbers[4], uartwidth);
+    argv[5] = number(numbers[3], uart->shift);
+    argv[6] = number(numbers[4], uart->width);
     argv[7] = 0;
     break;
   case INITCFG_TTY:
@@ -277,6 +285,7 @@ cleanup(u32 index, u64 now)
 static isize
 serialresources(u32 index, Handle handles[5])
 {
+  const Uart   *uart = &operations[index].uart;
   Servicestate *state = &servicestate[index];
   Allocarg      alloc;
   u64           address = SERVICE_RING_LO + (u64) index * SERVICE_STRIDE;
@@ -298,9 +307,10 @@ serialresources(u32 index, Handle handles[5])
   }
   error = __sys_grant(state->view, listener, RESOURCE_USE, 0, 0, 0, &handles[0]);
   if (!error)
-    error = __sys_grant(state->view, mmio, MAP_READ | MAP_WRITE, 0, mapbytes, 0, &handles[1]);
+    error = __sys_grant(state->view, uart->mmio, MAP_READ | MAP_WRITE, 0, uart->mapbytes, 0,
+                        &handles[1]);
   if (!error)
-    error = __sys_irqbind(state->control, irqsource, SERIAL_IRQ_BIT, &handles[2]);
+    error = __sys_irqbind(state->control, uart->irq, SERIAL_IRQ_BIT, &handles[2]);
   for (i = 0; !error && i < 2; i++)
     error = __sys_grant(state->view, state->rings[i], MAP_READ | MAP_WRITE, 0, SERIAL_RING_BYTES, 0,
                         &handles[3 + i]);
@@ -437,6 +447,7 @@ serviceinit(const Manifest *manifest, const Package *package, const Bootview *bo
   u32      batches = 0;
   Handle   pid, parent;
   isize    error;
+  Uart    *uart = NULL;
   if (!manifest || !package || !boot || !image)
     return -ERR_INVALID;
   if (policy)
@@ -478,37 +489,47 @@ serviceinit(const Manifest *manifest, const Package *package, const Bootview *bo
   } while (cursor);
   if (!listener || !observer)
     return -ERR_DENIED;
+  for (i = 0; i < manifest->count; i++) {
+    if (manifest->service[i].kind != INITCFG_SERIAL)
+      continue;
+    if (uart)
+      return -ERR_INVALID;
+    serialindex = (u32) i;
+    uart = &operations[i].uart;
+  }
+  if (!uart)
+    return -ERR_INVALID;
   error = __sys_query(system, QUERY_BOOT_RESOURCE, 0, rows, 1, &written, &next);
   if (error || written != 1 || next)
     return error ? error : -ERR_STATE;
-  mmio = (Handle) rows[0].data[0];
-  irqsource = (Handle) rows[0].data[4];
-  uartkind = rows[0].data[1];
-  uartoffset = rows[0].data[2] & PAGE_MASK;
-  uartbytes = rows[0].data[3];
-  uartshift = rows[0].data[6];
-  uartwidth = rows[0].data[7];
-  if (rows[0].type != QUERY_BOOT_RESOURCE || rows[0].pid != 1 || rows[0].image != image || !mmio ||
-      !irqsource || rows[0].data[5] ||
-      (uartkind != BOOT_UART_NS16550 && uartkind != BOOT_UART_PL011) || uartshift > 4 ||
-      (uartwidth != 1 && uartwidth != 4) || (uartoffset & (uartwidth - 1)) ||
-      (uartkind == BOOT_UART_NS16550 && ((UINT64_C(1) << uartshift) & (uartwidth - 1))) ||
-      (uartkind == BOOT_UART_PL011 && (uartshift || uartwidth != 4)) ||
-      uartbytes < (uartkind == BOOT_UART_PL011 ? 0x4c : (UINT64_C(5) << uartshift) + uartwidth) ||
-      uartbytes > UINT64_MAX - uartoffset || uartbytes + uartoffset > UINT64_MAX - PAGE_MASK)
+  uart->mmio = (Handle) rows[0].data[0];
+  uart->irq = (Handle) rows[0].data[4];
+  uart->kind = rows[0].data[1];
+  uart->offset = rows[0].data[2] & PAGE_MASK;
+  uart->bytes = rows[0].data[3];
+  uart->shift = rows[0].data[6];
+  uart->width = rows[0].data[7];
+  if (rows[0].type != QUERY_BOOT_RESOURCE || rows[0].pid != 1 || rows[0].image != image ||
+      !uart->mmio || !uart->irq || rows[0].data[5] ||
+      (uart->kind != BOOT_UART_NS16550 && uart->kind != BOOT_UART_PL011) || uart->shift > 4 ||
+      (uart->width != 1 && uart->width != 4) || (uart->offset & (uart->width - 1)) ||
+      (uart->kind == BOOT_UART_NS16550 && ((UINT64_C(1) << uart->shift) & (uart->width - 1))) ||
+      (uart->kind == BOOT_UART_PL011 && (uart->shift || uart->width != 4)) ||
+      uart->bytes <
+          (uart->kind == BOOT_UART_PL011 ? 0x4c : (UINT64_C(5) << uart->shift) + uart->width) ||
+      uart->bytes > UINT64_MAX - uart->offset ||
+      uart->bytes + uart->offset > UINT64_MAX - PAGE_MASK)
     return -ERR_INVALID;
   for (j = 8; j < ARRAY_SIZE(rows[0].data); j++)
     if (rows[0].data[j])
       return -ERR_INVALID;
-  mapbytes = ALIGN_UP(uartoffset + uartbytes, PAGE_SIZE);
+  uart->mapbytes = ALIGN_UP(uart->offset + uart->bytes, PAGE_SIZE);
   policy = manifest;
   catalog = package;
   for (i = 0; i < policy->count; i++) {
     servicestate[i].number = policy->service[i].number;
     servicestate[i].state = SERVICE_STARTING;
     servicestate[i].stage = StageImage;
-    if (policy->service[i].kind == INITCFG_SERIAL)
-      serialindex = (u32) i;
   }
   return 0;
 }
