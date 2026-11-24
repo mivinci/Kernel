@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -76,5 +77,8 @@ main(int argc, char **argv, char **envp)
   if (strcmp(heap, "musl"))
     return 56;
   free(heap);
+  char formatted[16];
+  if (snprintf(formatted, sizeof(formatted), "%.3Lf", 1.125L) != 5 || strcmp(formatted, "1.125"))
+    return 57;
   _exit(256 + 42);
 }

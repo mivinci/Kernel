@@ -14,11 +14,16 @@ trap 'rm -rf "$out"' EXIT
 resource=$(clang -print-resource-dir)/include
 sdk=build/$arch/sdk
 musl=$sdk/musl
+builtins=${BUILTINS:-build/$arch/compiler-rt/lib/generic/libclang_rt.builtins-$cpu.a}
+if [ ! -f "$builtins" ]; then
+  echo "missing $builtins: run tools/build-builtins.sh or set BUILTINS" >&2
+  exit 1
+fi
 clang --target="$cpu-linux-musl" "$@" -O2 -ffreestanding -fno-stack-protector -nostdinc \
   -isystem "$musl/include" -isystem "$resource" \
   -D_GNU_SOURCE -c tests/kernel/musl/csumain.c -o "$out/main.o"
 ld.lld -T "$sdk/user.ld" --gc-sections "$musl/app-crt0.o" "$out/main.o" \
-  "$musl/lib/libc.a" "$sdk/libsys.a" -o "$out/init.elf"
+  "$musl/lib/libc.a" "$sdk/libsys.a" "$builtins" -o "$out/init.elf"
 python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/init.elf" --output "$out/init.pkg"
 # mallocng retains one metadata page after free, beyond its unmapped guard.
 image_end=$(llvm-nm -P "$out/init.elf" | awk '$1 == "__image_end" { print $3 }')
