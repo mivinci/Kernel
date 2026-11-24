@@ -191,6 +191,8 @@ sigaction(int signum, const struct sigaction *action, struct sigaction *old)
 }
 
 #ifdef MIVINCI_MUSL
+int __sigaction(int, const struct sigaction *, struct sigaction *)
+    __attribute__((visibility("hidden"), alias("sigaction")));
 int __libc_sigaction(int, const struct sigaction *, struct sigaction *)
     __attribute__((visibility("hidden"), alias("sigaction")));
 #endif
