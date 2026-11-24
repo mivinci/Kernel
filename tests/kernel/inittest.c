@@ -163,8 +163,17 @@ inittest(void)
   REQUIRE(!procrunone());
   panic("init exit unexpectedly returned");
 #else
+  trace[0] = 0;
   do {
-    REQUIRE(!procrunone() && ++turns < 256);
+    int error = procrunone();
+    if (error) {
+      putstr("INIT stalled stage=");
+      puthex(trace[0]);
+      putstr(" error=");
+      puthex((u64) -error);
+      putstr("\n");
+    }
+    REQUIRE(!error && ++turns < 256);
     REQUIRE(!spaceread(root.space, init_trace_address, trace, sizeof(trace)));
     if (trace[1]) {
       putstr("INITRESULT stage=");

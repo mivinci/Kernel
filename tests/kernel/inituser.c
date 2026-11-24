@@ -20,8 +20,9 @@ failed(u64 code)
       failed(n);                                                                                   \
   } while (0)
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
+  (void) envp;
   Handle   pid, parent, channel, pending = 0, leaf = 0, leaf_source = 0, collected;
   u64      image, kind, code, sequence;
   u32      i;

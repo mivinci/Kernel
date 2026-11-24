@@ -8,8 +8,9 @@
       exit(n);                                                                                     \
   } while (0)
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
+  (void) envp;
   Handle pid, parent;
   u64    image;
   Msg    words;

@@ -9,8 +9,9 @@ static Elfwork  preparation;
       exit(n);                                                                                     \
   } while (0)
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
+  (void) envp;
   Handle ended, live, pid, parent, channel;
   u64    image;
   Msg    words;
@@ -22,7 +23,7 @@ main(int argc, char **argv)
     Handle collected;
     u64    kind, code, sequence;
     REQUIRE(!adoptspawn(adopt_leaf, (u64) (adopt_leaf_end - adopt_leaf),
-                        !strcmp(argv[0], "ready") ? "wake" : "live", 64, 4, channel, 1,
+                        !strcmp(argv[0], "ready") ? "wake" : "live", 96, 4, channel, 1,
                         &preparation, &live, NULL),
             166);
     words.words[0] = ADOPT_WAIT_READY;
@@ -36,10 +37,10 @@ main(int argc, char **argv)
     exit(168);
   }
   REQUIRE(!strcmp(argv[0], "parent"), 169);
-  REQUIRE(!adoptspawn(adopt_leaf, (u64) (adopt_leaf_end - adopt_leaf), "ended", 64, 4, channel, 1,
+  REQUIRE(!adoptspawn(adopt_leaf, (u64) (adopt_leaf_end - adopt_leaf), "ended", 96, 4, channel, 1,
                       &preparation, &ended, NULL),
           163);
-  REQUIRE(!adoptspawn(adopt_leaf, (u64) (adopt_leaf_end - adopt_leaf), "live", 64, 4, channel, 1,
+  REQUIRE(!adoptspawn(adopt_leaf, (u64) (adopt_leaf_end - adopt_leaf), "live", 96, 4, channel, 1,
                       &preparation, &live, NULL),
           164);
   words.words[0] = ADOPT_PARENT_READY;

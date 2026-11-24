@@ -361,9 +361,10 @@ def build(args):
     # Distinct real ELFs let the PID-1 fixture exercise orphan adoption without
     # weakening init's fatal-exit invariant or adding test syscalls.
     adoption_sources = []
-    def compile_adoption(source,label):
+    def compile_adoption(source,label,*,musl_native=False):
         obj=sdk / 'obj' / (label+'.o')
-        command=[tools['cc']['path'],*flags,'-I'+str(ROOT/'tests/kernel'),'-c',str(source),'-o',str(obj)]
+        command=[tools['cc']['path'],*(service_flags if musl_native else flags),
+                 '-I'+str(ROOT/'tests/kernel'),'-c',str(source),'-o',str(obj)]
         invoke('compile-'+label,command)
         read_elf(obj,profile['machine'],allow_undefined=True)
         entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
@@ -377,9 +378,10 @@ def build(args):
         assembly=sdk/'init-config.S'
         assembly.write_text('/* configuration sha256: '+digest(artifact)+' */\n.section .rodata\n.balign 8\n.global init_config,init_config_end\ninit_config:\n.incbin '+json.dumps(str(artifact))+'\ninit_config_end:\n')
         return compile_adoption(assembly,'init-config')
-    def link_adoption(label,objects,libraries=(),startup=True):
+    def link_adoption(label,objects,libraries=(),startup=True,*,musl_native=False):
         artifact=sdk/(label+'.elf')
-        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',*([str(crt)] if startup else []),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc_archive),str(archive),'-o',str(artifact)])
+        entry, libc = (app_crt, musl_archive) if musl_native else (crt, libc_archive)
+        invoke('link-'+label,[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',*([str(entry)] if startup else []),*[str(obj) for obj in objects],*[str(lib) for lib in libraries],str(libc),str(archive),'-o',str(artifact)])
         read_elf(artifact,profile['machine'],kind=2)
         return artifact
     tty_sources=[ROOT/name for name in ('tests/kernel/ttywaituser.c','tests/kernel/ttyuser.c',
@@ -501,10 +503,12 @@ def build(args):
         *[compile_adoption(source,'init-manager-'+source.stem) for source in init_service_sources],embedded_config(serial_config)])
     no_ready=link_adoption('noready',[compile_adoption(ROOT/'tests/kernel/noready.c','noready'),compile_adoption(serial_start_source,'noready-start')])
     bind_failure=link_adoption('serialbindfail',[compile_adoption(ROOT/'tests/kernel/serialbindfail.c','serialbindfail'),sdk/'obj/noready-start.o'])
-    leaf=link_adoption('adoptleaf',[compile_adoption(ROOT/'tests/kernel/adoptleaf.c','adoptleaf')])
-    helper=compile_adoption(ROOT/'tests/kernel/adopt.c','adopt-helper')
-    parent_test=link_adoption('adoptparent',[compile_adoption(ROOT/'tests/kernel/adoptparent.c','adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')])
-    init_test=link_adoption('inituser',[compile_adoption(ROOT/'tests/kernel/inituser.c','inituser'),helper,embedded_elf(parent_test,'adopt_parent')])
+    def adoption_unit(name):
+        return compile_adoption(ROOT/'tests/kernel'/(name+'.c'),name,musl_native=True)
+    leaf=link_adoption('adoptleaf',[adoption_unit('adoptleaf')],musl_native=True)
+    helper=adoption_unit('adopt')
+    parent_test=link_adoption('adoptparent',[adoption_unit('adoptparent'),helper,embedded_elf(leaf,'adopt_leaf')],musl_native=True)
+    init_test=link_adoption('inituser',[adoption_unit('inituser'),helper,embedded_elf(parent_test,'adopt_parent')],musl_native=True)
     init_image=sdk/'inituser.img'
     init_image.write_bytes(pack(init_test.read_bytes(),profile['machine'],256))
     inspection=invoke('inspect-init-test',[tools['readelf']['path'],'-h','-l','-s',str(init_test)])
