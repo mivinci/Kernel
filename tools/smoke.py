@@ -811,7 +811,18 @@ def audit_package_init(qmp, run_dir, args, record, transition):
         if i==count-1 and (offset+len(data))%4096:
             pa=edges[0 if offset and count==1 else edge]['base']
         expected[0x3ffe000000+i*4096]=dict(prot=1,kind='package',pa=pa,data=logical[i*4096:(i+1)*4096])
-    if set(leaves)!=set(expected):raise SmokeError('unexpected init mapping or missing image/Boot/stack/package page')
+    extra = sorted(leaves.keys() - expected.keys())
+    missing = sorted(expected.keys() - leaves.keys())
+    heap = sorted(getattr(args, 'init_heap_page', []))
+    if extra != heap or missing:
+        record['init_mapping_difference'] = dict(extra=extra, missing=missing)
+        raise SmokeError(f'init mapping mismatch: {len(extra)} extra, {len(missing)} missing pages')
+    for va in heap:
+        if va <= max(image) or va >= 0x3ffe000000 or va % 4096:
+            raise SmokeError(f'expected init heap page outside heap range: {va:x}')
+        expected[va] = dict(prot=3, kind='heap')
+    if heap:
+        record['init_heap_pages'] = heap
     private=set();kernel_tables={int(p.stem,16) for p in (run_dir/'tables').glob('*.bin')}
     stack_pages={x['pa'] for x in retained['stacks']}
     for va,item in expected.items():
@@ -827,7 +838,8 @@ def audit_package_init(qmp, run_dir, args, record, transition):
             private.add(pa)
             if item['kind']=='image' and not prot&2 and physical(pa)!=item['data']:
                 raise SmokeError('init immutable image bytes differ from native ELF')
-    if retained['charged']!=len(tables)+len(private)+5:
+    charged_after = retained['charged'] + len(heap)
+    if charged_after!=len(tables)+len(private)+5:
         raise SmokeError('PID1 Acct charge differs from private pages/tables/kernel stack')
     metadata=record['pages']['metadata'];path=run_dir/'init-page-metadata.bin'
     qmp.command('pmemsave',{'val':metadata['base'],'size':metadata['size'],'filename':str(path)})
@@ -840,7 +852,7 @@ def audit_package_init(qmp, run_dir, args, record, transition):
             index+=region['size']//4096
         raise SmokeError('accounted init page outside RAM metadata')
     owned=set(tables)|private|stack_pages|{retained['stack_table']}
-    if len(owned)!=retained['charged'] or not retained.get('acct'):
+    if len(owned)!=charged_after or not retained.get('acct'):
         raise SmokeError('init physical ownership classes overlap')
     for pa in owned:
         meta=page_record(pa)
@@ -2150,6 +2162,8 @@ def main():
     parser.add_argument('--initrd', type=Path)
     parser.add_argument('--init-elf',type=Path,help='ELF corresponding to the package init for page/symbol audit')
     parser.add_argument('--init-exit',type=int,help='expect fatal native PID1 exit with this code')
+    parser.add_argument('--init-heap-page', action='append', type=lambda x: int(x, 0), default=[],
+                        help='expect this additional writable private page at PID1 exit')
     parser.add_argument('--bootpkg-error', choices=PACKAGE_ERRORS)
     parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--qemu")
