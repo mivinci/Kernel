@@ -16,6 +16,16 @@ fsdevpublish(Fsdev *dev, Fsfiles *files)
 }
 
 isize
+fsdevwithdraw(Fsdev *dev, Fsfiles *files)
+{
+  if (!dev || !files || !dev->published || files->nullnode != &dev->null)
+    return -EINVAL;
+  dev->published = 0;
+  files->nullnode = NULL;
+  return 0;
+}
+
+isize
 fsdevlookup(Fsdev *dev, const Vnode *dir, const char *name, u32 bytes, Vnode **out)
 {
   if (!dev || dir != &dev->root || !name || !out)

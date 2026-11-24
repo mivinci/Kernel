@@ -1787,9 +1787,11 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     return openhold(fixture, *out);
   }
   if (dir == &fixture->dev.root) {
-    if (bytes == 4 && !memcmp(name, "fake", 4))
+    if (bytes == 4 && !memcmp(name, "fake", 4)) {
+      /* Drive withdrawal while the client still owns the original fd. */
+      CHECK(!fsdevwithdraw(&fixture->dev, &fixture->files));
       *out = &fixture->unbound;
-    else {
+    } else {
       isize error = fsdevlookup(&fixture->dev, dir, name, bytes, out);
       if (error)
         return error;
@@ -3993,9 +3995,10 @@ publicchdirclient(void)
     CHECK(write(ends[1], "a", 1) == 1 && !close(ends[1]) && read(ends[0], &byte, 1) == 1 &&
           byte == 'a' && !read(ends[0], &byte, 1) && !close(ends[0]));
   }
-  CHECK(open("/dev/fake", O_RDONLY) == -1 && errno == ENODEV);
   fd = open("/dev/null", O_RDWR);
-  CHECK(fd == 0 && write(fd, "null", 4) == 4 && !read(fd, &byte, 1) &&
+  CHECK(fd == 0 && open("/dev/fake", O_RDONLY) == -1 && errno == ENODEV &&
+        open("/dev/null", O_RDONLY) == -1 && errno == ENOENT);
+  CHECK(write(fd, "null", 4) == 4 && !read(fd, &byte, 1) &&
         lseek(fd, 0, SEEK_SET) == -1 && errno == ESPIPE && !close(fd));
   pipeiotrace[0] = 7;
 }
