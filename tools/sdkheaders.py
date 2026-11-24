@@ -32,11 +32,13 @@ def check_private_headers(root, sdk):
     return check_headers(root, sdk / 'private', 'private', private_headers(root))
 
 
-def public_headers(root):
+def public_headers(root, *, legacy=True):
     result = {}
-    for directory, patterns in (('include', ('types.h', 'abi/**/*.h', 'proto/*.h', 'abi/*.inc')),
-                                ('lib/libsys/include', ('sys/*.h',)),
-                                ('lib/libc/include', ('**/*.h',))):
+    roots = [('include', ('types.h', 'abi/**/*.h', 'proto/*.h', 'abi/*.inc')),
+             ('lib/libsys/include', ('sys/*.h',))]
+    if legacy:
+        roots.append(('lib/libc/include', ('**/*.h',)))
+    for directory, patterns in roots:
         source_root = root / directory
         if not source_root.is_dir() or source_root.is_symlink():
             raise BuildError('SDK public source directory missing or symlink: ' + directory)
@@ -84,6 +86,19 @@ def export_private_headers(root, sdk):
 
 def export_public_headers(root, sdk):
     return export_headers(root, sdk / 'include', 'public', public_headers(root))
+
+
+def export_musl_headers(root, sdk, standard):
+    expected = public_headers(root, legacy=False)
+    for source in sorted(standard.rglob('*.h')):
+        name = source.relative_to(standard).as_posix()
+        if name in expected:
+            raise BuildError('musl SDK header collision: ' + name)
+        expected[name] = source
+    for required in ('bits/alltypes.h', 'bits/syscall.h', 'unistd.h'):
+        if required not in expected:
+            raise BuildError('missing installed musl SDK header: ' + required)
+    return export_headers(root, sdk / 'musl/include', 'musl public', expected)
 
 
 def export_headers(root, directory, kind, expected):

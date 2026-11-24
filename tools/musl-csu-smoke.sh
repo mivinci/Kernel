@@ -14,10 +14,9 @@ trap 'rm -rf "$out"' EXIT
 resource=$(clang -print-resource-dir)/include
 sdk=build/$arch/sdk
 musl=$sdk/musl
-src=lib/musl
 clang --target="$cpu-linux-musl" "$@" -O2 -ffreestanding -fno-stack-protector -nostdinc \
-  -isystem "$resource" -I"$musl/obj/include" -I"$src/arch/$cpu" -I"$src/arch/generic" \
-  -I"$src/include" -D_GNU_SOURCE -c tests/kernel/musl/csumain.c -o "$out/main.o"
+  -isystem "$musl/include" -isystem "$resource" \
+  -D_GNU_SOURCE -c tests/kernel/musl/csumain.c -o "$out/main.o"
 ld.lld -T "$sdk/user.ld" --gc-sections "$musl/app-crt0.o" "$out/main.o" \
   "$musl/lib/libc.a" "$sdk/libsys.a" -o "$out/init.elf"
 python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/init.elf" --output "$out/init.pkg"

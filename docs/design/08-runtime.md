@@ -990,6 +990,8 @@ musl fork 的 `MIVINCI_NATIVE=1` 构建屏蔽 C 内联 Linux syscall，并从归
 
 SDK 构建生成 `sdk/musl/app-crt0.o`，集中链接已有静态应用适配。`tools/musl-csu-smoke.sh` 消费该对象和原生 musl 归档，验证 Boot 参数、构造函数、TLS、信号、公开 fd 错误路径、malloc/free 及原始 syscall `ENOSYS`；ARM64 和 RV64 QEMU 分别为 `b5a759c81aab4dc3b69b2539bfbd6a90`、`84489957229b4e5ea198223e5cd2fbeb`。公开头、默认 SDK 和其余旧载荷仍待切换。
 
+SDK 现在通过 musl 的 `install-headers` 将目标架构标准头与 libsys 的公开原生头合并到 `sdk/musl/include`。应用启动探针不再直接读取子模块源码，双架构 QEMU 通过（`97fc82a8c88543eca433ee12302d8786`、`4613c55fed6d461cb00810cecc5ce2ae`）；net 回环使用同一组导出头，双架构通过（`3204d221669f41bbb45ee16dd4c935c7`、`255d1292990a44f688303d1fa3c21b20`）。默认 `sdk/include` 仍供旧载荷使用。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。

@@ -32,7 +32,7 @@ def build(args):
     _, target_flags = target_profile(args.arch)
     flags = [*target_flags, *COMMON, '-ffunction-sections', '-fdata-sections',
              '-I' + str(port), '-I' + str(upstream / 'include'),
-             *header_flags(args.arch, sdk, resource)]
+             *header_flags(sdk, resource), '-I' + str(sdk)]
     objects = []
     for source in [*(upstream / name for name in sources), port / 'clock.c']:
         obj = directory / source.with_suffix('.o').name

@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 import shutil
 import sys
+import tempfile
 import uuid
 
 from build import ROOT, PROFILES, COMMON, BuildError, compilation_database, digest, read_elf
@@ -17,7 +18,7 @@ from elf import pack
 from muslprofile import header_flags, target_profile
 from run import install_stop_handlers, run_command, run_guard
 from sdkheaders import (export_private_headers, check_private_headers, export_public_headers,
-                        check_public_headers)
+                        check_public_headers, export_musl_headers)
 import initcfg
 
 
@@ -176,10 +177,16 @@ def build(args):
     invoke('musl-build', upstream_make + ['-j4', *native_make], cwd=musl,
            timeout=max(args.timeout, 120))
     musl_archive = musl / 'lib/libc.a'
+    with tempfile.TemporaryDirectory(prefix='headers-', dir=musl) as installed:
+        invoke('musl-install-headers', upstream_make + ['-j4', 'includedir=' + installed,
+                                                       'install-headers'], cwd=musl)
+        export_musl_headers(ROOT, sdk, Path(installed))
     resource = invoke('cc-resource-dir', [tools['cc']['path'], '-print-resource-dir']).strip()
     service_flags = target_flags + COMMON + ['-std=c99', '-ffunction-sections', '-fdata-sections',
-                                            *header_flags(args.arch, sdk, resource)]
-    internal = [str(musl_source / 'src/include'), str(musl_source / 'src/internal')]
+                                            *header_flags(sdk, resource), '-I' + str(sdk)]
+    cpu = target.split('-', 1)[0]
+    internal = [str(musl_source / path) for path in ('src/include', 'src/internal',
+                                                    'arch/' + cpu, 'arch/generic')]
     startup = []
     for unit in (csu_sources[1], ROOT / 'lib/csu/musl.c', ROOT / 'compat/musl/exit.c'):
         obj = musl / unit.with_suffix('.o').name
