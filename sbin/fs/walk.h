@@ -12,6 +12,7 @@ enum
   VNODE_FILE = 1,
   VNODE_DIR,
   VNODE_LINK,
+  VNODE_CHAR,
 };
 enum
 {

@@ -3,18 +3,26 @@
 #include <errno.h>
 
 static isize
-reject(Filelink *link, const Ipcmsg *call, isize status)
+replycount(Filelink *link, const Ipcmsg *call, isize status, u64 count)
 {
-  Msg   reply = {{(u64) status, call->words[2], 0, 0}};
+  Msg   reply = {{(u64) status, call->words[2], count, 0}};
   u64   state;
   isize error = ipc_rqcheck(call->request, &state);
   if (error)
     return error;
-  if (state & RQ_CHECK_CANCEL)
+  if (state & RQ_CHECK_CANCEL) {
     reply.words[0] = (u64) -EINTR;
+    reply.words[2] = 0;
+  }
   error =
       state == RQ_CHECK_DRAINING ? ipc_rqfinish(call->request) : ipc_reply(call->request, &reply);
   return error ? error : sysfilefinish(&link->watch.active, call->request);
+}
+
+static isize
+reject(Filelink *link, const Ipcmsg *call, isize status)
+{
+  return replycount(link, call, status, 0);
 }
 
 static void
@@ -240,6 +248,9 @@ fsdatastart(Fsreads *reads, Fsfiles *files, Filelink *link, const Ipcmsg *call,
   u32     access = call->words[0] == FS_WRITE ? VACCESS_W : VACCESS_R;
   if (!file || !(file->access & access))
     return reject(link, call, file ? -EBADF : -ESTALE);
+  if (file->node->kind == VNODE_CHAR)
+    return slot->args[3] & FS_IO_POSITIONAL ? reject(link, call, -ESPIPE)
+           : replycount(link, call, 0, access == VACCESS_W ? slot->args[1] : 0);
   if (access == VACCESS_W) {
     u64 flags = slot->args[3];
     if ((flags & FS_IO_APPEND) && (!(file->flags & FS_OPEN_APPEND) || (flags & FS_IO_POSITIONAL)))
@@ -276,6 +287,8 @@ isize
 fsseekstart(Fsreads *reads, Fsfiles *files, Fsfile *file, Filelink *link, const Ipcmsg *call,
             const Fileslot *slot)
 {
+  if (file->node->kind == VNODE_CHAR)
+    return reject(link, call, -ESPIPE);
   return file->head ? enqueue(reads, files, file, link, call, slot)
                     : seek(files, file, link, call, slot);
 }

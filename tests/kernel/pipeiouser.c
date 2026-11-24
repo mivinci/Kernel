@@ -1683,7 +1683,7 @@ struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file, dir, denied, created, abandoned, symlink;
+  Vnode     root, file, dir, denied, created, abandoned, symlink, nullnode, unbound;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1785,6 +1785,10 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
   CHECK(dir == &fixture->root && bytes == 1);
   if (name[0] == 'z')
     return -ENOENT;
+  if (name[0] == 'u' || name[0] == 'v') {
+    *out = name[0] == 'u' ? &fixture->nullnode : &fixture->unbound;
+    return openhold(fixture, *out);
+  }
   if (name[0] == 'm' || name[0] == 'q') {
     Vnode *entry = name[0] == 'm' ? &fixture->created : &fixture->abandoned;
     if (!entry->number)
@@ -1928,6 +1932,8 @@ static isize
 opencomplete(Openjob *job, Vnode *node)
 {
   Openfixture *fixture = job->backend;
+  if (node->kind == VNODE_CHAR)
+    return fsfileopen(&fixture->files, job, node, 22, 32, 0666);
   u32          attempt = job->reserved ? fixture->completed - 1 : fixture->completed++;
   openvalidate(job);
   CHECK(node == &fixture->file && fixture->holds == (job->reserved ? 4 : 3) && attempt < 4);
@@ -3434,6 +3440,9 @@ publicchdirserver(const Bootview *boot)
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
   fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
+  fixture.nullnode = (Vnode){fixture.root.mount, 8, 1, VNODE_CHAR};
+  fixture.unbound = fixture.nullnode;
+  fixture.files.nullnode = &fixture.nullnode;
   fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
   fixture.length = 20;
@@ -3964,6 +3973,10 @@ publicchdirclient(void)
     CHECK(write(ends[1], "a", 1) == 1 && !close(ends[1]) && read(ends[0], &byte, 1) == 1 &&
           byte == 'a' && !read(ends[0], &byte, 1) && !close(ends[0]));
   }
+  CHECK(open("/v", O_RDONLY) == -1 && errno == ENODEV);
+  fd = open("/u", O_RDWR);
+  CHECK(fd == 0 && write(fd, "null", 4) == 4 && !read(fd, &byte, 1) &&
+        lseek(fd, 0, SEEK_SET) == -1 && errno == ESPIPE && !close(fd));
   pipeiotrace[0] = 7;
 }
 

@@ -168,6 +168,7 @@ fileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 mo
   u64           state;
   u32           i, access, flags;
   isize         error, status;
+  int           null = node->kind == VNODE_CHAR && node == table->nullnode;
   if (ref)
     goto truncate;
   flags = (u32) job->slot.args[0];
@@ -176,13 +177,15 @@ fileopen(Fsfiles *table, Openjob *job, Vnode *node, u32 owner, u32 group, u32 mo
            : access == FS_OPEN_WRONLY ? VACCESS_W
                                       : VACCESS_R | VACCESS_W;
   status = fsfileoptions(&job->slot);
-  if (!status && node->kind != VNODE_FILE)
+  if (!status && node->kind == VNODE_CHAR && !null)
+    status = -ENODEV;
+  if (!status && node->kind != VNODE_FILE && !null)
     status = -EINVAL;
   if (!status && !created)
     status = vaccess(&job->cred, owner, group, mode, access, 0);
   if (status)
     goto respond;
-  if (!created && (flags & FS_OPEN_TRUNC) && !table->truncate) {
+  if (!created && !null && (flags & FS_OPEN_TRUNC) && !table->truncate) {
     status = -ENOSYS;
     goto respond;
   }
@@ -214,7 +217,7 @@ respond:
   file->flags = flags & (FS_OPEN_APPEND | FS_OPEN_NONBLOCK);
   file->refs = 1;
   *ref = (Fsref){0, 0, ++table->serial, file};
-  if (!created && (flags & FS_OPEN_TRUNC)) {
+  if (!created && !null && (flags & FS_OPEN_TRUNC)) {
     job->reserved = ref;
   truncate:
     error = ipc_rqcheck(call->request, &state);

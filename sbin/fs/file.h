@@ -37,6 +37,8 @@ struct Fsfiles
      on cancellation, return -EINTR only after draining and establishing no
      effect. Once committed, finish with success even if cancelled. */
   isize (*truncate)(Openjob *, Vnode *, u32 cancelled);
+  /* Pinned by the publisher for this table's lifetime; never resolved by rdev. */
+  const Vnode *nullnode;
 };
 
 /* Check the request's captured credentials against the resolved node's
