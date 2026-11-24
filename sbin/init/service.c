@@ -35,6 +35,7 @@ struct Work
   Config          config;
   Packet          packet;
   Uart            uart;
+  Handle          creator;
   u64             wake;
   u64             observation;
   Msg             request, reply;
@@ -66,7 +67,7 @@ Queryrec               serviceaccounts[INITCFG_SERVICES], initaccount;
 static Work            operations[INITCFG_SERVICES];
 static const Manifest *policy;
 static const Package  *catalog;
-static Handle          space, allocator, creator, system, listener, observer;
+static Handle          space, allocator, system, listener, observer;
 static u64             ownimage;
 static u32             serialindex;
 
@@ -457,10 +458,14 @@ serviceinit(const Manifest *manifest, const Package *package, const Bootview *bo
     return error ? error : -ERR_DENIED;
   space = bootresource(boot, BOOT_SELF_SPACE);
   allocator = bootresource(boot, BOOT_SELF_ALLOC);
-  creator = bootresource(boot, BOOT_CREATE);
   system = bootresource(boot, BOOT_SYSTEM);
-  if (!space || !allocator || !creator || !system)
+  if (!space || !allocator || !system)
     return -ERR_DENIED;
+  for (i = 0; i < manifest->count; i++) {
+    operations[i].creator = bootresource(boot, manifest->service[i].creator);
+    if (!operations[i].creator)
+      return -ERR_DENIED;
+  }
   do {
     if (batches++ == BOOT_RESOURCE_COUNT)
       return -ERR_LIMIT;
@@ -611,7 +616,8 @@ servicestep(u64 now, u32 *work, u64 *next)
         args.exec_limit = configuration->exec_limit;
         args.resources = (u32) configuration->resources;
         args.pending = (u32) configuration->pending;
-        error = __sys_create(creator, &args, &state->view, &state->pid, &state->control);
+        error =
+            __sys_create(operations[i].creator, &args, &state->view, &state->pid, &state->control);
         if (!error) {
           state->image = 1;
           operation->load.view = state->view;
