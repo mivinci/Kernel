@@ -12,9 +12,10 @@ static const u8_t second[] = {0x52, 0xaa, 0x79, 0x00, 0x17};
 static ip_addr_t  loopback;
 static unsigned   received, invalid, expired;
 
-#define TCP_PAYLOAD (2 * TCP_MSS + 71)
+#define TCP_PAYLOAD (TCP_SND_BUF + 71)
 static u8_t     stream[TCP_PAYLOAD];
-static unsigned connected, accepted, streambytes, streamreads, serverfin, clientfin, responsebytes;
+static unsigned connected, accepted, streambytes, streamreads, streamacked;
+static unsigned serverfin, clientfin, responsebytes;
 
 static void
 receive(void *arg, struct udp_pcb *pcb, struct pbuf *packet, const ip_addr_t *source, u16_t port)
@@ -124,6 +125,15 @@ connectstream(void *arg, struct tcp_pcb *pcb, err_t error)
   return ERR_OK;
 }
 
+static err_t
+ackstream(void *arg, struct tcp_pcb *pcb, u16_t length)
+{
+  (void) arg;
+  (void) pcb;
+  streamacked += length;
+  return ERR_OK;
+}
+
 static int
 tcpcheck(const struct timespec *tick)
 {
@@ -137,6 +147,7 @@ tcpcheck(const struct timespec *tick)
   tcp_accept(listener, acceptstream);
   tcp_err(client, tcperror);
   tcp_recv(client, readstream);
+  tcp_sent(client, ackstream);
   if (tcp_connect(client, &loopback, 18102, connectstream) != ERR_OK || connected || accepted)
     return 69;
   for (i = 0; i < 32 && (!connected || !accepted) && !invalid; i++) {
@@ -149,7 +160,22 @@ tcpcheck(const struct timespec *tick)
     return 71;
   for (i = 0; i < sizeof(stream); i++)
     stream[i] = (u8_t) (i * 37 + i / 256);
-  if (tcp_write(client, stream, sizeof(stream), TCP_WRITE_FLAG_COPY) != ERR_OK ||
+  if (tcp_write(client, stream, TCP_SND_BUF, TCP_WRITE_FLAG_COPY) != ERR_OK || tcp_sndbuf(client) ||
+      tcp_write(client, stream + TCP_SND_BUF, sizeof(stream) - TCP_SND_BUF, TCP_WRITE_FLAG_COPY) !=
+          ERR_MEM ||
+      tcp_sndbuf(client) || streamacked || tcp_output(client) != ERR_OK)
+    return 75;
+  for (i = 0; i < 128 && streamacked < TCP_SND_BUF && !invalid; i++) {
+    netif_poll_all();
+    sys_check_timeouts();
+    if (streamacked < TCP_SND_BUF && nanosleep(tick, NULL))
+      return 76;
+  }
+  if (invalid || streamacked != TCP_SND_BUF || streambytes != TCP_SND_BUF ||
+      tcp_sndbuf(client) != TCP_SND_BUF)
+    return 77;
+  if (tcp_write(client, stream + TCP_SND_BUF, sizeof(stream) - TCP_SND_BUF, TCP_WRITE_FLAG_COPY) !=
+          ERR_OK ||
       tcp_shutdown(client, 0, 1) != ERR_OK || serverfin || clientfin)
     return 72;
   for (i = 0; i < 64 && !clientfin && !invalid; i++) {

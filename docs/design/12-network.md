@@ -177,3 +177,5 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 在已有 SDK 上运行 `python3 tools/net.py --arch <arch> --loopback` 生成独立 PID1 测试包 `build/<arch>/net/netlo.pkg`。探针通过 lwIP raw API 发送两条不同长度且含 NUL 的 UDP 数据报，轮询回环前无回调，轮询后逐条核对来源、端口、长度和字节；用原生休眠推进 `sys_check_timeouts`，确认回调在单调时钟满 20 ms 后只执行一次。宿主用 `--init-elf build/<arch>/net/netlouser.elf --init-exit 42` 核对包内 ELF 与探针退出码。
 
 ARM64、RV64 QEMU `normal` 进一步验证 TCP 握手、跨多次接收回调逐字节核对 2991 字节，以及客户端半关闭写端：服务端先收到 EOF，随后仍能沿原连接回复，客户端核对回复字节并收到服务端 EOF（`bc69ba638c744bf1aa72591858d7956a`、`fe809831020b498f9cb895f31e6f2722`，同一测试同时覆盖 UDP 和定时器）。这是 raw API 回环证据，公开 socket/fd、背压和网卡仍待接入或验收。
+
+同一回环探针随后加入 TCP 发送缓冲压力：先写满 5840 字节，在推进协议前确认再写 71 字节得到 `ERR_MEM` 且没有消耗容量；轮询收到对端 ACK 后，核对首批字节和发送额度完整恢复，再重试余下 71 字节并完成双向半关闭。ARM64、RV64 QEMU `normal` 均通过（`b9bd53c33eb445d2824440d2f4ea4f51`、`2246f16d7a12493ab6c093209b55e0d8`）。这一验收覆盖 lwIP 本地发送缓冲的背压；公开 fd 的短写、`EAGAIN`、`poll` 和实体网卡上不回 ACK 的场景仍待验证。
