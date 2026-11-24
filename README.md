@@ -18,7 +18,7 @@ make bootpkg ARCH=arm64
 
 需要 Clang、LLD、LLVM ar 和 LLVM readelf；可用 `CC`、`LD`、`AR`、`READELF` 指定路径。架构产物分别位于 `build/riscv/` 和 `build/arm64/`，内核为 `normal/kernel.elf`，ARM64 另生成 `normal/Image`。
 
-`CASE=elf` 和链接 musl 浮点格式化需要目标 compiler-rt builtins。从 LLVM 源码树构建（需 CMake 和 Ninja）：`sh tools/build-builtins.sh arm64 /path/to/llvm-project/compiler-rt`。RV64 将 `arm64` 换为 `riscv`；运行 `test-all` 前准备两架构的归档。
+`sdk-audit`、`CASE=elf` 和链接 musl 浮点格式化需要目标 compiler-rt builtins。从 LLVM 源码树构建（需 CMake 和 Ninja）：`sh tools/build-builtins.sh arm64 /path/to/llvm-project/compiler-rt`。RV64 将 `arm64` 换为 `riscv`；运行 `test-all` 前准备两架构的归档。
 
 使用 QEMU 启动和验证：
 

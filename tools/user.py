@@ -181,7 +181,7 @@ def build(args):
     with tempfile.TemporaryDirectory(prefix='headers-', dir=musl) as installed:
         invoke('musl-install-headers', upstream_make + ['-j4', 'includedir=' + installed,
                                                        'install-headers'], cwd=musl)
-        export_musl_headers(ROOT, sdk, Path(installed))
+        musl_headers = export_musl_headers(ROOT, sdk, Path(installed))
     resource = invoke('cc-resource-dir', [tools['cc']['path'], '-print-resource-dir']).strip()
     service_flags = target_flags + COMMON + ['-std=c99', '-ffunction-sections', '-fdata-sections',
                                             *header_flags(sdk, resource), '-I' + str(sdk)]
@@ -639,6 +639,7 @@ def build(args):
     if final_private_headers != private_headers:
         raise BuildError('SDK private sources changed during build')
     manifest = dict(arch=args.arch, artifact=str(artifact.relative_to(ROOT)), elf=elf,
+                    musl_headers={name: row['sha256'] for name, row in musl_headers.items()},
                     tty_artifact=str(tty_elf.relative_to(ROOT)),tty_sha256=digest(tty_elf),tty_image_sha256=digest(tty_image),
                     sigsend_artifact=str(send_elf.relative_to(ROOT)),sigsend_sha256=digest(send_elf),sigsend_image_sha256=digest(send_image),
                     fault_artifact=str(fault_user.relative_to(ROOT)),fault_sha256=digest(fault_user),fault_image_sha256=digest(fault_image),

@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -13,6 +14,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from build import COMMON, PROFILES, ROOT, BuildError, digest, read_elf
+from muslprofile import target_profile
 from run import run_guard
 
 MINIZ = 'miniz-3.1.2'
@@ -42,9 +44,8 @@ def amalgamate(archive, out, run):
     return build / 'amalgamation'
 
 
-def checkheaders(text, source, include, resource, extra, public):
+def checkheaders(text, source, include, resource, extra, public, manifest):
     headers = set()
-    libc_headers = ROOT / 'lib/libc/include'
     for marker in re.findall(r'^# \d+ "([^"]+)"', text, re.MULTILINE):
         if marker.startswith('<') and marker.endswith('>'):
             continue
@@ -52,12 +53,10 @@ def checkheaders(text, source, include, resource, extra, public):
         if header == source or header in extra:
             continue
         if header.is_relative_to(include):
-            relative = header.relative_to(include)
-            exported = ROOT / 'include/types.h' if relative.as_posix() == 'types.h' else (
-                libc_headers / relative)
-            if not exported.is_file() or exported.read_bytes() != header.read_bytes():
-                raise BuildError(f'header is not a current libc export: {header}')
-            headers.add(relative.as_posix())
+            relative = header.relative_to(include).as_posix()
+            if manifest.get(relative) != digest(header):
+                raise BuildError(f'header is not a current musl SDK export: {header}')
+            headers.add(relative)
             continue
         if header.parent == resource and re.fullmatch(r'stdint\.h|(?:__)?std(?:arg|def)(?:_\w+)?\.h',
                                                        header.name):
@@ -77,17 +76,27 @@ def audit(args, sdk, out):
         return result.stdout
 
     profile = PROFILES[args.arch]
-    include = sdk / 'include'
+    musl = sdk / 'musl'
+    include = musl / 'include'
+    manifest = json.loads((sdk / 'manifest.json').read_text())
+    if manifest.get('arch') != args.arch or not manifest.get('musl_headers'):
+        raise BuildError('build the target musl SDK before auditing it')
+    target, target_flags = target_profile(args.arch)
+    cpu = target.split('-', 1)[0]
+    builtins = Path(os.environ.get('BUILTINS') or sdk.parent /
+                    'compiler-rt/lib/generic' / ('libclang_rt.builtins-' + cpu + '.a')).resolve()
+    if not builtins.is_file():
+        raise BuildError('missing target compiler-rt: run tools/build-builtins.sh or set BUILTINS')
     resource = Path(run('resource-dir', args.cc, '-print-resource-dir').strip()) / 'include'
     resource = resource.resolve()
-    base = [args.cc, *profile['flags'], *COMMON, '-ffunction-sections', '-fdata-sections']
-    flags = ['-nostdinc', '-isystem', str(include), '-isystem', str(resource)]
+    base = [args.cc, *target_flags, *COMMON, '-std=c99', '-ffunction-sections', '-fdata-sections']
+    flags = ['-D_GNU_SOURCE', '-nostdinc', '-isystem', str(include), '-isystem', str(resource)]
     extra = set()
 
     def compile_unit(source, public):
         stem = source.stem
         text = run(f'{stem}-preprocess', *base, *flags, '-E', str(source))
-        checkheaders(text, source, include, resource, extra, public)
+        checkheaders(text, source, include, resource, extra, public, manifest['musl_headers'])
         # Compile the exact translation unit that passed the include audit.
         unit = out / f'{stem}.i'
         unit.write_text(text)
@@ -109,8 +118,8 @@ def audit(args, sdk, out):
     objects.insert(0, compile_unit(source, {'errno.h', 'stdio.h', 'stdlib.h', 'string.h', 'unistd.h'}))
     elf = out / f'{stem}.elf'
     run('link', args.ld, '-m', profile['emulation'], '-static', '-T', str(sdk / 'user.ld'),
-        '--gc-sections', '--build-id=none', f'-Map={stem}.map', str(sdk / 'crt0.o'),
-        *objects, str(sdk / 'libc.a'), str(sdk / 'libsys.a'), '-o', str(elf))
+        '--gc-sections', '--build-id=none', f'-Map={stem}.map', str(musl / 'app-crt0.o'),
+        *objects, str(musl / 'lib/libc.a'), str(sdk / 'libsys.a'), str(builtins), '-o', str(elf))
     read_elf(elf, profile['machine'], kind=2)
     description = run('file', 'file', '-b', str(elf))
     if not description.startswith('ELF 64-bit LSB executable') or 'statically linked' not in description:
