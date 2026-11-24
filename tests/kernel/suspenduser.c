@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <string.h>
 #include <sys/channel.h>
 #include "private/syscall.h"
 #include "private/start.h"
@@ -17,7 +18,8 @@ extern u64   frame_fp(u64 mode);
 static int
 caught(u64 mask)
 {
-  sigset_t set = mask;
+  sigset_t set = {0};
+  set.__bits[0] = mask;
   return sigsuspend(&set);
 }
 static void
@@ -70,11 +72,13 @@ trampoline(u64 signum, const Siginfo *info, void *context, u64 function, u64 add
   __sys_sigreturn((void *) address);
 }
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
-  u64    mode, old, mask, pending;
-  Sigact action;
-  Ipcmsg event;
+  u64      mode, old, mask;
+  sigset_t pending, empty = {0};
+  Sigact   action;
+  Ipcmsg   event;
+  (void) envp;
   REQUIRE(argc == 1 && argv[0][0] >= '0' && argv[0][0] <= '8', 190);
   mode = (u64) (argv[0][0] - '0');
   suspend_trace[1] = mode;
@@ -96,7 +100,9 @@ main(int argc, char **argv)
   suspend_trace[0] = 1;
   REQUIRE(!__sys_yield(), 193);
   if (mode == 3) {
-    REQUIRE(caught((u64) 1 << 63) == -1 && errno == EINVAL, 194);
+    REQUIRE(__sys_sigsuspend((u64) 1 << 63) == -ERR_INVALID && sigsuspend(NULL) == -1 &&
+                errno == EFAULT,
+            194);
     REQUIRE(!__sys_sigmask(SIGNAL_BLOCK, 0, &mask) && mask == BIT(SIGNAL_USR1), 195);
     suspend_trace[7] = 1;
   }
@@ -110,7 +116,8 @@ main(int argc, char **argv)
           198);
   REQUIRE(frame_fp(1) == 1, 199);
   REQUIRE(suspend_trace[4] == (mode == 1 || mode == 2 ? 2U : 1U), 200);
-  REQUIRE(!sigpending(&pending) && !pending, 201);
+  memset(&pending, 0xff, sizeof(pending));
+  REQUIRE(!sigpending(&pending) && !memcmp(&pending, &empty, sizeof(pending)), 201);
   if (mode == 1)
     REQUIRE(!ipc_recv((u64) 1 << 32, RECV_NONBLOCK | RECV_EVENTS_ONLY, &event) &&
                 event.kind == IPC_EVENT && event.words[0] == ((u64) 1 << 32),

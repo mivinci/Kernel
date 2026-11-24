@@ -1004,6 +1004,8 @@ SDK 现在通过 musl 的 `install-headers` 将目标架构标准头与 libsys �
 
 `jobs` 载荷改用 musl SDK。ARM64、RV64 QEMU 均通过（`a929777e938848efa663ed71a2b41740`、`9be826998be748ea9938bfb8ca3707a3`），保留对进程组等待、停止与继续、`waitpid` 中断和重启，以及收取孩子前后 `times()` 计时的检查。此场景不替代原版 BusyBox ash 的作业控制验收。
 
+`sigsuspend` 载荷改用 musl SDK。`sigpending()` 把原生待处理位转换为完整的 musl `sigset_t`；`sigsuspend()` 先受检查复制输入，再按原生支持的信号位等待。ARM64、RV64 QEMU 全项通过（`860f9fcc16f0474d9fefe33a49bd7ffe`、`069ec0a51fae44dd981c1102744e7f25`），包括嵌套等待、掩码和 FP 现场恢复、无效原生掩码及公开接口空指针。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。
