@@ -37,8 +37,12 @@ main(int argc, char **argv, char **envp)
       queried.sa_handler != handler || queried.sa_flags != SA_RESTART ||
       __sys_sigsend(self, SIGUSR1) || caught != SIGUSR1)
     return 45;
-  if (initialized == 42 && tls == 42 && !errno && argc == 1 &&
-      !strcmp(argv[0], "sbin/init") && envp)
-    _exit(256 + 42);
-  return 43;
+  if (initialized != 42 || tls != 42 || errno || argc != 1 ||
+      strcmp(argv[0], "sbin/init") || !envp)
+    return 43;
+  char byte = 'x';
+  if (read(0, &byte, 1) != -1 || errno != EBADF || byte != 'x' ||
+      write(1, &byte, 1) != -1 || errno != EBADF)
+    return 46;
+  _exit(256 + 42);
 }
