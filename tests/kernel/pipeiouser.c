@@ -1683,7 +1683,7 @@ struct Openfixture
 {
   Loadtable loads;
   Vmounts   mounts;
-  Vnode     root, file, dir, denied, created, abandoned, symlink, nullnode, unbound;
+  Vnode     root, file, dir, denied, created, abandoned, symlink, dev, nullnode, unbound;
   Fsfiles   files;
   Cache     cache;
   Readfetch fetch;
@@ -1764,6 +1764,8 @@ opensearch(void *context, const Vnode *node)
     }
     return vaccess(&job->cred, 22, 32, node == &fixture->denied ? 0600 : 0700, VACCESS_X, 1);
   }
+  if (node == &fixture->dev)
+    return vaccess(&job->cred, 22, 32, 0755, VACCESS_X, 1);
   CHECK(node == &fixture->root);
   return vaccess(&job->cred, 22, 32, fixture->searches++ == 2 ? 0010 : 0100, VACCESS_X, 1);
 }
@@ -1782,13 +1784,24 @@ openlookup(void *context, const Vnode *dir, const char *name, u32 bytes, Vnode *
     *out = name[0] == 'd' ? &fixture->dir : name[0] == 'n' ? &fixture->denied : &fixture->file;
     return openhold(fixture, *out);
   }
+  if (dir == &fixture->dev) {
+    if (bytes != 4)
+      return -ENOENT;
+    if (!memcmp(name, "null", 4))
+      *out = &fixture->nullnode;
+    else if (!memcmp(name, "fake", 4))
+      *out = &fixture->unbound;
+    else
+      return -ENOENT;
+    return openhold(fixture, *out);
+  }
+  if (dir == &fixture->root && bytes == 3 && !memcmp(name, "dev", 3)) {
+    *out = &fixture->dev;
+    return openhold(fixture, *out);
+  }
   CHECK(dir == &fixture->root && bytes == 1);
   if (name[0] == 'z')
     return -ENOENT;
-  if (name[0] == 'u' || name[0] == 'v') {
-    *out = name[0] == 'u' ? &fixture->nullnode : &fixture->unbound;
-    return openhold(fixture, *out);
-  }
   if (name[0] == 'm' || name[0] == 'q') {
     Vnode *entry = name[0] == 'm' ? &fixture->created : &fixture->abandoned;
     if (!entry->number)
@@ -3441,6 +3454,7 @@ publicchdirserver(const Bootview *boot)
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
   fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
   fixture.nullnode = (Vnode){fixture.root.mount, 8, 1, VNODE_CHAR};
+  fixture.dev = (Vnode){fixture.root.mount, 9, 1, VNODE_DIR};
   fixture.unbound = fixture.nullnode;
   fixture.files.nullnode = &fixture.nullnode;
   fixture.symlink = (Vnode){fixture.root.mount, 7, 1, VNODE_LINK};
@@ -3973,8 +3987,8 @@ publicchdirclient(void)
     CHECK(write(ends[1], "a", 1) == 1 && !close(ends[1]) && read(ends[0], &byte, 1) == 1 &&
           byte == 'a' && !read(ends[0], &byte, 1) && !close(ends[0]));
   }
-  CHECK(open("/v", O_RDONLY) == -1 && errno == ENODEV);
-  fd = open("/u", O_RDWR);
+  CHECK(open("/dev/fake", O_RDONLY) == -1 && errno == ENODEV);
+  fd = open("/dev/null", O_RDWR);
   CHECK(fd == 0 && write(fd, "null", 4) == 4 && !read(fd, &byte, 1) &&
         lseek(fd, 0, SEEK_SET) == -1 && errno == ESPIPE && !close(fd));
   pipeiotrace[0] = 7;
