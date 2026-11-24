@@ -41,7 +41,7 @@ build:
 	$(PYTHON) tools/build.py --kind kernel --case "$(if $(CASE),$(CASE),normal)" --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 sdk:
 	$(PYTHON) tools/user.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
-net-stack:
+net-stack: sdk
 	$(PYTHON) tools/net.py --arch "$(ARCH)" --cc "$(CC)" --ar "$(AR)"
 sdk-audit: sdk
 	$(PYTHON) tests/sdkaudit.py --arch "$(ARCH)" --cc "$(CC)" --ld "$(LD)" --readelf "$(READELF)" --nm "$(NM)" $(if $(MINIZ_ARCHIVE),--miniz-archive "$(MINIZ_ARCHIVE)")

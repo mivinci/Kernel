@@ -179,3 +179,5 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 ARM64、RV64 QEMU `normal` 进一步验证 TCP 握手、跨多次接收回调逐字节核对 2991 字节，以及客户端半关闭写端：服务端先收到 EOF，随后仍能沿原连接回复，客户端核对回复字节并收到服务端 EOF（`bc69ba638c744bf1aa72591858d7956a`、`fe809831020b498f9cb895f31e6f2722`，同一测试同时覆盖 UDP 和定时器）。这是 raw API 回环证据，公开 socket/fd、背压和网卡仍待接入或验收。
 
 同一回环探针随后加入 TCP 发送缓冲压力：先写满 5840 字节，在推进协议前确认再写 71 字节得到 `ERR_MEM` 且没有消耗容量；轮询收到对端 ACK 后，核对首批字节和发送额度完整恢复，再重试余下 71 字节并完成双向半关闭。ARM64、RV64 QEMU `normal` 均通过（`b9bd53c33eb445d2824440d2f4ea4f51`、`2246f16d7a12493ab6c093209b55e0d8`）。这一验收覆盖 lwIP 本地发送缓冲的背压；公开 fd 的短写、`EAGAIN`、`poll` 和实体网卡上不回 ACK 的场景仍待验证。
+
+`make net-stack` 现在使用与生产服务相同的 musl 头；回环包也链接同一套 musl 启动对象和静态库。协议时钟与测试等待直接调用 libsys。ARM64 和 RV64 QEMU `normal` 重新验证了 UDP、定时器、TCP 背压和半关闭（`13a44ef3d40e42e3b4f860c883a84064`、`a7bdffc5ff1c4acaaa779a847ab7dbb7`）。这两个 ELF 的系统调用指令均位于 libsys 原生入口。公开 socket 与网卡尚未接入。

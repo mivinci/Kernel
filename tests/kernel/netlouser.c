@@ -5,7 +5,7 @@
 #include <lwip/timeouts.h>
 #include <lwip/udp.h>
 #include <string.h>
-#include <time.h>
+#include "private/timer.h"
 
 static const u8_t first[] = {0x41, 0x00, 0xfe};
 static const u8_t second[] = {0x52, 0xaa, 0x79, 0x00, 0x17};
@@ -16,6 +16,13 @@ static unsigned   received, invalid, expired;
 static u8_t     stream[TCP_PAYLOAD];
 static unsigned connected, accepted, streambytes, streamreads, streamacked;
 static unsigned serverfin, clientfin, responsebytes;
+
+static isize
+delay(u64 tick)
+{
+  u64 remaining;
+  return sysnanosleep(tick, &remaining);
+}
 
 static void
 receive(void *arg, struct udp_pcb *pcb, struct pbuf *packet, const ip_addr_t *source, u16_t port)
@@ -135,7 +142,7 @@ ackstream(void *arg, struct tcp_pcb *pcb, u16_t length)
 }
 
 static int
-tcpcheck(const struct timespec *tick)
+tcpcheck(u64 tick)
 {
   struct tcp_pcb *listener = tcp_new(), *client = tcp_new();
   unsigned        i;
@@ -153,7 +160,7 @@ tcpcheck(const struct timespec *tick)
   for (i = 0; i < 32 && (!connected || !accepted) && !invalid; i++) {
     netif_poll_all();
     sys_check_timeouts();
-    if ((!connected || !accepted) && nanosleep(tick, NULL))
+    if ((!connected || !accepted) && delay(tick))
       return 70;
   }
   if (invalid || connected != 1 || accepted != 1)
@@ -168,7 +175,7 @@ tcpcheck(const struct timespec *tick)
   for (i = 0; i < 128 && streamacked < TCP_SND_BUF && !invalid; i++) {
     netif_poll_all();
     sys_check_timeouts();
-    if (streamacked < TCP_SND_BUF && nanosleep(tick, NULL))
+    if (streamacked < TCP_SND_BUF && delay(tick))
       return 76;
   }
   if (invalid || streamacked != TCP_SND_BUF || streambytes != TCP_SND_BUF ||
@@ -181,7 +188,7 @@ tcpcheck(const struct timespec *tick)
   for (i = 0; i < 64 && !clientfin && !invalid; i++) {
     netif_poll_all();
     sys_check_timeouts();
-    if (!clientfin && nanosleep(tick, NULL))
+    if (!clientfin && delay(tick))
       return 73;
   }
   netif_poll_all();
@@ -192,12 +199,15 @@ tcpcheck(const struct timespec *tick)
 }
 
 int
-main(void)
+main(int argc, char **argv, char **envp)
 {
-  struct udp_pcb       *sender, *receiver;
-  const struct timespec tick = {0, 10000000L};
-  u32_t                 start;
-  unsigned              i;
+  struct udp_pcb *sender, *receiver;
+  const u64       tick = 10000000;
+  u32_t           start;
+  unsigned        i;
+  (void) argc;
+  (void) argv;
+  (void) envp;
   lwip_init();
   IP_ADDR4(&loopback, 127, 0, 0, 1);
   sender = udp_new();
@@ -217,12 +227,12 @@ main(void)
   start = sys_now();
   sys_timeout(20, timeout, &expired);
   for (i = 0; i < 32 && !expired; i++) {
-    if (nanosleep(&tick, NULL))
+    if (delay(tick))
       return 64;
     sys_check_timeouts();
   }
   if (expired != 1 || (u32_t) (sys_now() - start) < 20)
     return 65;
   sys_check_timeouts();
-  return expired == 1 ? tcpcheck(&tick) : 66;
+  return expired == 1 ? tcpcheck(tick) : 66;
 }

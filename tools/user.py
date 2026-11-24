@@ -14,6 +14,7 @@ import uuid
 
 from build import ROOT, PROFILES, COMMON, BuildError, compilation_database, digest, read_elf
 from elf import pack
+from muslprofile import header_flags, target_profile
 from run import install_stop_handlers, run_command, run_guard
 from sdkheaders import (export_private_headers, check_private_headers, export_public_headers,
                         check_public_headers)
@@ -157,30 +158,26 @@ def build(args):
         raise BuildError('missing musl source: run git submodule update --init lib/musl')
     musl = sdk / 'musl'
     musl.mkdir(exist_ok=True)
-    cpu = 'aarch64' if args.arch == 'arm64' else 'riscv64'
-    target = cpu + '-linux-musl'
-    target_flags = ['--target=' + target]
-    if args.arch == 'riscv':
-        target_flags.extend(['-march=rv64gc', '-mabi=lp64'])
+    target, target_flags = target_profile(args.arch)
     configure = ['env', 'CC=' + shlex.join([tools['cc']['path'], *target_flags]),
                  'AR=' + shlex.quote(tools['ar']['path']), 'RANLIB=:',
                  str(musl_source / 'configure'), '--target=' + target,
                  '--disable-shared', '--disable-wrapper']
     config_key = json.dumps([configure, digest(musl_source / 'configure'), tools['cc']['version']])
     stamp = musl / 'kernel-config.json'
+    # The outer Makefile uses different ARCH names and its own CC, AR and flags.
+    upstream_make = ['env', '-u', 'MAKEFLAGS', '-u', 'MFLAGS', '-u', 'MAKEOVERRIDES', 'make']
     if not (musl / 'config.mak').is_file() or not stamp.is_file() or stamp.read_text() != config_key:
         if (musl / 'config.mak').is_file():
-            invoke('musl-clean', ['make', 'clean'], cwd=musl)
+            invoke('musl-clean', upstream_make + ['clean'], cwd=musl)
         invoke('musl-configure', configure, cwd=musl)
         stamp.write_text(config_key)
-    invoke('musl-build', ['make', '-j4', 'lib/libc.a'], cwd=musl, timeout=max(args.timeout, 120))
+    invoke('musl-build', upstream_make + ['-j4', 'lib/libc.a'], cwd=musl,
+           timeout=max(args.timeout, 120))
     musl_archive = musl / 'lib/libc.a'
     resource = invoke('cc-resource-dir', [tools['cc']['path'], '-print-resource-dir']).strip()
-    musl_headers = [str(musl / 'obj/include'), str(musl_source / 'arch' / cpu),
-                    str(musl_source / 'arch/generic'), str(musl_source / 'include')]
-    service_flags = target_flags + COMMON + ['-std=c99', '-D_POSIX_C_SOURCE=200809L', '-nostdinc',
-                     '-isystem' + resource + '/include', '-ffunction-sections', '-fdata-sections',
-                     *['-I' + path for path in musl_headers], '-I' + str(sdk / 'include'), '-I' + str(sdk)]
+    service_flags = target_flags + COMMON + ['-std=c99', '-ffunction-sections', '-fdata-sections',
+                                            *header_flags(args.arch, sdk, resource)]
     startup = []
     for unit in (csu_sources[1], ROOT / 'lib/csu/musl.c', ROOT / 'compat/musl/exit.c'):
         obj = musl / unit.with_suffix('.o').name

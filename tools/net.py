@@ -6,6 +6,7 @@ import sys
 
 from build import COMMON, PROFILES, ROOT, BuildError, read_elf
 from bootpkg import pack
+from muslprofile import header_flags, target_profile
 
 
 def build(args):
@@ -23,9 +24,15 @@ def build(args):
     )
     directory = ROOT / 'build' / args.arch / 'net'
     directory.mkdir(parents=True, exist_ok=True)
-    flags = [*profile['flags'], *COMMON, '-ffunction-sections', '-fdata-sections',
+    sdk = directory.parent / 'sdk'
+    musl = sdk / 'musl'
+    if not (musl / 'crt0.o').is_file():
+        raise BuildError('build the SDK before building net')
+    resource = subprocess.check_output([args.cc, '-print-resource-dir'], text=True).strip()
+    _, target_flags = target_profile(args.arch)
+    flags = [*target_flags, *COMMON, '-ffunction-sections', '-fdata-sections',
              '-I' + str(port), '-I' + str(upstream / 'include'),
-             '-I' + str(ROOT / 'lib/libc/include'), '-I' + str(ROOT / 'include')]
+             *header_flags(args.arch, sdk, resource)]
     objects = []
     for source in [*(upstream / name for name in sources), port / 'clock.c']:
         obj = directory / source.with_suffix('.o').name
@@ -40,15 +47,12 @@ def build(args):
     temporary.replace(archive)
     print(archive.relative_to(ROOT))
     if args.loopback:
-        sdk = directory.parent / 'sdk'
         source = ROOT / 'tests/kernel/netlouser.c'
         obj, elf = (directory / name for name in ('netlouser.o', 'netlouser.elf'))
-        if not (sdk / 'crt0.o').is_file():
-            raise BuildError('build the SDK before linking the loopback probe')
         subprocess.run([args.cc, *flags, '-c', str(source), '-o', str(obj)], check=True)
         subprocess.run([args.ld, '-m', profile['emulation'], '-T', str(sdk / 'user.ld'),
-                        '--gc-sections', str(sdk / 'crt0.o'), str(obj), str(archive),
-                        str(sdk / 'libc.a'), str(sdk / 'libsys.a'), '-o', str(elf)], check=True)
+                        '--gc-sections', str(musl / 'crt0.o'), str(obj), str(archive),
+                        str(musl / 'lib/libc.a'), str(sdk / 'libsys.a'), '-o', str(elf)], check=True)
         read_elf(elf, profile['machine'], kind=2)
         package = directory / 'netlo.pkg'
         package.write_bytes(pack([('sbin/init', elf.read_bytes())], profile['machine']))
