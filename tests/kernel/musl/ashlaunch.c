@@ -21,7 +21,8 @@ readash(void *context, u64 offset, void *destination, u64 bytes)
 int
 main(int argc, char **argv)
 {
-  const char *const command[] = {"ash", "-c", "exit 37", NULL};
+  /* A foreground subshell exercises fork/wait without requiring /dev/null. */
+  const char *const command[] = {"ash", "-c", "(exit 37); exit $?", NULL};
   Boot *boot = (Boot *) packet.bytes;
   Resentry *resources = (Resentry *) (packet.bytes + sizeof(Boot));
   Elfsource source = {(void *) ash_elf, ash_elf_end - ash_elf, readash};
@@ -38,13 +39,14 @@ main(int argc, char **argv)
   (void) argv;
   boot->magic = BOOT_MAGIC;
   boot->format = BOOT_FORMAT;
-  boot->bytes = sizeof(Boot) + 2 * sizeof(Resentry);
+  boot->bytes = sizeof(Boot) + 3 * sizeof(Resentry);
   boot->resources_off = sizeof(Boot);
-  boot->resource_count = 2;
+  boot->resource_count = 3;
   boot->user_lo = BOOT_USER_LO;
   boot->user_hi = BOOT_USER_HI;
   resources[0].tag = BOOT_SELF_SPACE;
   resources[1].tag = BOOT_SELF_ALLOC;
+  resources[2].tag = BOOT_CREATE;
   work.elf.parent_space = bootresource(sysboot(), BOOT_SELF_SPACE);
   work.elf.scratch = 0x2000000;
   work.elf.scratch_bytes = BOOT_MAX_BYTES;

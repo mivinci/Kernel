@@ -4,6 +4,20 @@
 #include <abi/signal.h>
 
 extern isize __sys_sigmask(u64, u64, u64 *);
+extern isize __sys_sigsuspend(u64);
+
+int
+sigsuspend(const sigset_t *set)
+{
+  isize status;
+  if (!set) {
+    errno = EFAULT;
+    return -1;
+  }
+  status = __sys_sigsuspend(set->__bits[0] & SIGNAL_SUPPORTED);
+  errno = status == -ERR_INTERRUPTED ? EINTR : EIO;
+  return -1;
+}
 
 /* The native ABI has no libc-private signals in its current namespace. */
 void

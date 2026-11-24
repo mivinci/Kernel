@@ -30,7 +30,8 @@ clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -n
   -c "$root/compat/musl/exit.c" -o "$out/exit.o"
 for unit in "$root/compat/musl/memory.c" "$src/src/malloc/mallocng/malloc.c" \
   "$root/compat/musl/sigmask.c" "$root/lib/libc/sigaction.c" "$root/lib/libc/identity.c" \
-  "$root/compat/musl/io.c" "$root/compat/musl/wait.c" "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c"; do
+  "$root/compat/musl/io.c" "$root/compat/musl/wait.c" "$root/compat/musl/fork.c" \
+  "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c"; do
   clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -nostdinc \
     -DMIVINCI_NATIVE -DMIVINCI_MUSL -D_GNU_SOURCE -isystem "$resource" -I"$src/arch/$cpu" \
     -I"$src/arch/generic" -I"$obj/obj/src/internal" -I"$src/src/include" \
@@ -38,7 +39,7 @@ for unit in "$root/compat/musl/memory.c" "$src/src/malloc/mallocng/malloc.c" \
     -c "$unit" -o "$out/$(basename "$unit" .c).o"
 done
 link="ld.lld --gc-sections -T '$root/lib/libsys/user.ld' '$out/entry.o' '$out/csu.o' '$out/exit.o' '$out/memory.o' '$out/malloc.o' '$out/sigmask.o' '$out/sigaction.o' '$out/io.o' '$out/__stdio_write.o' '$out/__stdout_write.o' --start-group"
-link="$link '$out/identity.o' '$out/wait.o' \$(core-y) \$(libs-y) '$obj/lib/libc.a' '$root/build/$arch/sdk/libsys.a' '$rt' --end-group -o \$@"
+link="$link '$out/identity.o' '$out/wait.o' '$out/fork.o' \$(core-y) \$(libs-y) '$obj/lib/libc.a' '$root/build/$arch/sdk/libsys.a' '$rt' --end-group -o \$@"
 if ! make -C "$tree" -j"${JOBS:-4}" CC="$cc" AR=llvm-ar NM=llvm-nm \
   "cmd_busybox__=$link" busybox_unstripped >"$out/build.log" 2>&1; then
   echo "BusyBox build failed: $out/build.log" >&2
