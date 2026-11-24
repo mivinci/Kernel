@@ -309,6 +309,8 @@ unsetenv不分配，从首个匹配洞向前压缩可写指针表，移除全部
 
 stage171已接公开raise：当前单线程运行库按完整自身PID发送支持的非零信号；捕获同步返回、屏蔽合并、忽略、两层嵌套、自我KILL及STOP/实际另一进程CONT已在双架构验证。raise(0)选择Issue 8 pthread_kill允许的EINVAL分支，不改变kill的空信号语义。4项O0/O2主机专项、1135项完整host、格式、8次QEMU及8份内核诊断journal、SDK/真实载荷/生产隔离证据见11末尾及build/host/stage171-libc-raise/。
 
+单线程 `raise()` 适配已归入 `compat/musl`，BusyBox 和旧 SDK 共用。ARM64/RV64 musl 启动探针验证捕获 `SIGUSR1` 时在 `raise()` 返回前递送、成功保留 errno，以及 `raise(0)` 拒绝且不递送（`b7628eacbfc6454e90b6edf09cf94b17`、`a7fb492a8ff44b6a8919b59033d5db15`）。双架构 `musl`、`runtime` 同轮通过。pthread 启用前须为 `raise()` 接入线程定向语义。
+
 这不是完整公开信号层：原生安装的测试handler/trampoline不替代公开sigaction、标准siginfo转换、Rctx/Fix或SA_RESTART。公开kill未接：原生仅存活Run的范围与POSIX尚未收取僵尸的存在/权限语义冲突，扩大到僵尸Life及256项快照的候选已提出待用户确认，未实现受限临时封装或静默改变既定授权。原文与候选见11基础语义；整体POSIX/sh/net目标未完成。
 
 stage306：`string.h` 与 libc 提供 C locale 的 `strcoll`、`strxfrm`，可用于后续路径展开结果排序。RV64、ARM64 QEMU `runtime` 验证高位字节的比较和排序键结果一致、空串、零容量查询、恰好容纳终止符，以及容量不足时保持缓冲和 errno；格式检查通过。路径通配及其他 locale 仍待实现。

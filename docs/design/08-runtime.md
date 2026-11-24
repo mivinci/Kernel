@@ -562,7 +562,15 @@ Boot/Fix 继续使用原生协议。静态启动桥由 libsys 校验和接管 Bo
 
 原版 BusyBox 的静态构建接入原生分配器后，ARM64 QEMU 追踪显示启动继续到 musl 的 `__libc_sigaction`。该实现仍发出 Linux `rt_sigprocmask`，并假定返回后 x9 保存原地址基址；实际在下一条写入 `0x4c8` 时触发数据异常。RV64 同样以 SIGSEGV 退出，故障指令尚未单独定位。后续须接通 musl 内部和公开信号入口；不得用改变内核寄存器约定绕过未移植的 Linux 调用。
 
-- [ ] 先收口上述状态归属和装载边界；用静态 musl 在 ARM64、RV64 QEMU 跑通继承 fd 1 的真实输出、`fork → dup2 → exec → wait`、信号返回及原版 ash 作业控制。达到静态验收后切换默认 SDK；旧 libc 不参与 musl 链接或回退。
+- [ ] 隔离 musl 内部的 Linux syscall 入口（含取消点和架构汇编）；已确定且具备原生语义的操作经 libsys，未移植的操作报 `ENOSYS`。验收覆盖与原生编号重叠的 Linux 调用，确认不会向内核提交该编号。
+- [ ] 切换 SDK 的标准头、启动对象和 libc 归档，迁移仍使用旧 libc 的 QEMU 载荷，删除 `lib/libc` 和构建入口。SDK 切换与 ash 功能验收并行；不发布未经隔离的上游归档，也不保留旧 libc 回退。
+- [ ] 收口状态归属和装载边界；用静态 musl 在 ARM64、RV64 QEMU 跑通继承 fd 1 的真实输出、`fork → dup2 → exec → wait`、信号返回及原版 ash 作业控制。
+
+静态 musl 的接线按语义推进：
+
+- 现有适配集中在 `compat/musl`：退出、身份和进程组、fork/wait、信号动作和掩码、基础 fd I/O、open、内存、时钟和休眠。归档和 SDK 要同时覆盖公开入口及 musl 的隐藏调用；仅将适配对象加入探针链接不等于 SDK 已接通。
+- 可继续复用 libsys 的部分包括身份查询、信号发送、fd 复制与 I/O，以及已确定语义的路径操作。Linux ABI 的编号、结构体及取消语义不直接透传。
+- pthread 的创建、回收、取消和等待唤醒、动态解释器、socket 和未冻结的 FS 操作仍需对应机制。原始调用返回 `ENOSYS`；上游函数若假设调用必成功，公开入口需要单独适配或明确拒绝。
 - [ ] 静态基线可回归后，尽早在两架构运行带共享库 TLS 的动态小程序，验证解释器、装载与重定位、权限收紧、初始化及 TLS 值；覆盖缺失或拒绝的解释器/库、非法 ELF 以及失败后的资源回收。
 - [ ] 同阶段运行双线程管道小程序：A 阻塞读，B 写入并唤醒；核对 TLS、errno、在途请求和信号恢复独立，fd 表共享。扩展覆盖关闭与复用、join、进程退出、多线程 fork/exec 和失败清理，两架构均须通过。
 - [ ] 第一期收尾必须通过启动时动态链接和 pthread 基础验收；`dlopen()` 和 pthread 取消不作为当前基础验收项，若要纳入需单独定范围。net 沿静态基线推进，与这两项收尾无前置依赖。
@@ -973,6 +981,10 @@ SDK 和 musl 共用原生 `times()` 适配，其中以 `QUERY_TIMES` 取得计�
 BusyBox 和 musl 探针使用的身份、信号处理和进程计时适配统一归 `compat/musl`。迁移期间旧 SDK 从此处编译同一份源码；musl 不从旧 libc 目录取实现。搬移后 `musl-probe.sh` 与 `musl-csu-smoke.sh` 均通过双架构 QEMU。ARM64 `normal`、`musl`、`runtime`、csu 分别为 `30b6f4145bcb4a3b8fc235af474c3162`、`66368057008a4c33856af2bc04137315`、`681c3056a8c744b693481b2526147abd`、`cf2b89c173c846e9a3ed6ed6904d1b97`；RV64 分别为 `c1d2cd9d26bb447087107ec00440c1a9`、`79ce197bf7ff4f2cb9aefbb3fa2d662c`、`f5d2eb15072b48fe82867702d1bd0318`、`db78cf4928ef40959608025fb4123a83`。默认启动包和公开 SDK 尚未切换。
 
 生产 `init`、`serial`、`tty`、`blk` 随后改为从固定 musl 子模块构建和链接。四者直接使用 libsys；服务启动复用 Boot 参数、静态 TLS、构造函数和原生退出，只接收无继承 fd 的 Boot，不初始化应用堆和 fd 表，保留已有服务预算。ARM64、RV64 `packageboot` 全套通过，覆盖默认启动、serial/tty 实际输入与回显和监督失败收尾（`dd76d8507e8647398c899d5976f6c12d`、`413e8d48e28c40438d6e4fc565a1f31e`）；生产 blk 的夹具启动与真实 I/O 也在双架构 `blkservice` 通过（`08f69a1a0d554866a0c944c468294c41`、`7f7398f64e874a19bbb3dd999dc20248`）。公开 SDK、net 回环载荷及其他 QEMU 载荷仍有旧 libc 依赖；删除前须切换这些使用点，并确保未移植的 musl Linux syscall 路径不会进入原生内核。
+
+内核侧 `runtime` 验收不再编译旧 libc 的 `string.c`；FS 结构体赋值所需的 `memcpy`、`memset` 由只用于该场景的 freestanding 实现提供。ARM64、RV64 `runtime` 通过（`fea342d9b7d84a998510a3931db9ae82`、`ad251bb4d5b3485f9d79acf8e4def3aa`）。ash 验收的启动器也改用 musl 服务入口；双架构用最小退出码 37 载荷验证装载、等待和资源回收（`77c6e5b7e849455e9ad6b33c5f9e62f6`、`a957f4f0d5924b14a3137e077c8f970f`），本次没有重跑 BusyBox ash。
+
+musl fork 的 `MIVINCI_NATIVE=1` 构建屏蔽 C 内联 Linux syscall，并从归档排除两架构对应的 Linux 汇编入口。双架构生产用静态归档反汇编未见 `svc` 或 `ecall`；QEMU 验证与原生 `create` 编号相同的 Linux `read` 返回 `ENOSYS` 且不改缓冲区，`vfork` 和 `pthread_cancel` 同样报告 `ENOSYS`（ARM64 `f288a07a49cf40d4b69787ca795b96e0`，RV64 `3546517d7db44fdeb726e29ffa6525ab`）。接入后默认启动包通过 ARM64、RV64 `normal`（`26a86405c5694e0c93c6dc185988eae4`、`f184bd1774dc48ccbd6ba0fd4ab7abd2`）。公开 SDK 仍未切到此归档。
 
 ### A2 第三方压缩库静态构建验收
 

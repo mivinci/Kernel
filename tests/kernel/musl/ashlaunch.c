@@ -5,11 +5,11 @@
 #include "private/syscall.h"
 
 extern const u8 ash_elf[], ash_elf_end[];
-static u8 arguments[BOOT_ARG_BYTES];
+static u8       arguments[BOOT_ARG_BYTES];
 static union
 {
   u64 align;
-  u8 bytes[BOOT_MAX_BYTES];
+  u8  bytes[BOOT_MAX_BYTES];
 } packet;
 
 static isize
@@ -19,24 +19,25 @@ readash(void *context, u64 offset, void *destination, u64 bytes)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   /* A foreground subshell exercises fork/wait without requiring /dev/null. */
   const char *const command[] = {"ash", "-c", "(exit 37); exit $?", NULL};
-  Boot *boot = (Boot *) packet.bytes;
-  Resentry *resources = (Resentry *) (packet.bytes + sizeof(Boot));
-  Elfsource source = {(void *) ash_elf, ash_elf_end - ash_elf, readash};
-  Spawnwork work = {0};
-  Createarg create = {0};
-  Handle control, waited;
-  u64 kind, status, sequence, written, next;
-  u32 turns;
-  Queryrec row;
-  isize pid;
-  Elfplan plan;
-  Argsnap snapshot;
+  Boot             *boot = (Boot *) packet.bytes;
+  Resentry         *resources = (Resentry *) (packet.bytes + sizeof(Boot));
+  Elfsource         source = {(void *) ash_elf, ash_elf_end - ash_elf, readash};
+  Spawnwork         work = {0};
+  Createarg         create = {0};
+  Handle            control, waited;
+  u64               kind, status, sequence, written, next;
+  u32               turns;
+  Queryrec          row;
+  isize             pid;
+  Elfplan           plan;
+  Argsnap           snapshot;
   (void) argc;
   (void) argv;
+  (void) envp;
   boot->magic = BOOT_MAGIC;
   boot->format = BOOT_FORMAT;
   boot->bytes = sizeof(Boot) + 3 * sizeof(Resentry);

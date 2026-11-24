@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/mman.h>
@@ -31,6 +32,16 @@ static size_t aux_end[2];
 static void  *meta, *large_map;
 extern long   __sys_copy(void *, const void *, unsigned long);
 extern long   __sys_yield(void);
+#ifndef MUSL_PROBE_INHERITED_STDOUT
+static volatile sig_atomic_t raised;
+
+static void
+capture(int signum)
+{
+  raised = signum;
+}
+#endif
+
 void *
 native_meta(size_t n)
 {
@@ -181,6 +192,16 @@ csustart(const struct Boot *boot)
       __sys_exit(140);
     if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &mono) != -1 || errno != EINVAL)
       __sys_exit(141);
+  }
+  if (!musl_probe_role) {
+    struct sigaction action = {0};
+    action.sa_handler = capture;
+    errno = EDOM;
+    if (sigemptyset(&action.sa_mask) || sigaction(SIGUSR1, &action, NULL) || raise(SIGUSR1) ||
+        raised != SIGUSR1 || errno != EDOM)
+      __sys_exit(146);
+    if (raise(0) != -1 || errno != EINVAL || raised != SIGUSR1)
+      __sys_exit(147);
   }
   if (!musl_probe_role) {
     const struct timespec tick = {0, 2000000}, invalid = {0, 1000000000};

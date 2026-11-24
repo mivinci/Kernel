@@ -24,8 +24,8 @@ sdk=build/$arch/sdk
 clang --target="$cpu-none-elf" -I"$out" -c "$out/embed.S" -o "$out/embed.o"
 clang --target="$cpu-none-elf" -ffreestanding -I"$sdk/include" -Iinclude -Ilib/libsys \
   -c tests/kernel/musl/ashlaunch.c -o "$out/launch.o"
-ld.lld -T lib/libsys/user.ld "$sdk/crt0.o" "$out/launch.o" "$out/embed.o" \
-  --start-group "$sdk/libc.a" "$sdk/libsys.a" --end-group -o "$out/init.elf"
+ld.lld -T lib/libsys/user.ld --gc-sections "$sdk/musl/crt0.o" "$out/launch.o" "$out/embed.o" \
+  "$sdk/musl/lib/libc.a" "$sdk/libsys.a" -o "$out/init.elf"
 python3 tools/bootpkg.py pack --arch "$arch" --entry "sbin/init=$out/init.elf" --output "$out/init.pkg"
 set -- --arch "$arch" --case normal --qmp-stdio --initrd "$out/init.pkg" --init-elf "$out/init.elf" --init-exit 37
 if [ -n "$firmware" ]; then

@@ -108,8 +108,8 @@ def build(args):
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.
-    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'credential.c', 'wait.c', 'signal.c', 'raise.c', 'sysconf.c')]
-    libc_sources.extend(ROOT / 'compat/musl' / name for name in ('group.c', 'identity.c', 'sigaction.c', 'time.c', 'times.c'))
+    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'credential.c', 'wait.c', 'signal.c', 'sysconf.c')]
+    libc_sources.extend(ROOT / 'compat/musl' / name for name in ('group.c', 'identity.c', 'raise.c', 'sigaction.c', 'time.c', 'times.c'))
     libc_sources.append(ROOT / 'lib/libc/pathsearch.c')
     libc_sources.append(ROOT / 'lib/libc/spawnfiles.c')
     libc_sources.append(ROOT / 'compat/musl/sleep.c')
@@ -163,7 +163,8 @@ def build(args):
                  'AR=' + shlex.quote(tools['ar']['path']), 'RANLIB=:',
                  str(musl_source / 'configure'), '--target=' + target,
                  '--disable-shared', '--disable-wrapper']
-    config_key = json.dumps([configure, digest(musl_source / 'configure'), tools['cc']['version']])
+    native_make = ['MIVINCI_NATIVE=1', 'lib/libc.a']
+    config_key = json.dumps([configure, digest(musl_source / 'configure'), tools['cc']['version'], native_make])
     stamp = musl / 'kernel-config.json'
     # The outer Makefile uses different ARCH names and its own CC, AR and flags.
     upstream_make = ['env', '-u', 'MAKEFLAGS', '-u', 'MFLAGS', '-u', 'MAKEOVERRIDES', 'make']
@@ -172,7 +173,7 @@ def build(args):
             invoke('musl-clean', upstream_make + ['clean'], cwd=musl)
         invoke('musl-configure', configure, cwd=musl)
         stamp.write_text(config_key)
-    invoke('musl-build', upstream_make + ['-j4', 'lib/libc.a'], cwd=musl,
+    invoke('musl-build', upstream_make + ['-j4', *native_make], cwd=musl,
            timeout=max(args.timeout, 120))
     musl_archive = musl / 'lib/libc.a'
     resource = invoke('cc-resource-dir', [tools['cc']['path'], '-print-resource-dir']).strip()

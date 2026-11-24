@@ -39,7 +39,7 @@ class RaiseTests(unittest.TestCase):
             cmd=['clang','-std=c89','-'+level,'-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'lib/libsys/include'),'-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'include'),
                  '-Draise=user_raise','-Dgetpid=user_getpid','-Dgetppid=user_getppid','-D__errno_location=raise_errno','-Dstrerror=raise_strerror']
-            cmd += [str(ROOT/'lib/libc'/name) for name in ('raise.c','errno.c')]
+            cmd += [str(ROOT/'compat/musl/raise.c'),str(ROOT/'lib/libc/errno.c')]
             cmd += [str(ROOT/'compat/musl/identity.c')]
             cmd += [str(ROOT/'lib/libsys'/name) for name in ('syscall.c','signal.c')]+[str(shim),'-o',str(path)]
             if sys.platform=='darwin':
