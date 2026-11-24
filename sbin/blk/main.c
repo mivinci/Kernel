@@ -319,7 +319,7 @@ recoverfailed(void)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   Ipcmsg message;
   Msg    ready = {{INIT_WORD(INIT_READY), 1, 0, 0}};
@@ -327,6 +327,7 @@ main(int argc, char **argv)
   isize  error;
   (void) argc;
   (void) argv;
+  (void) envp;
   blkrun.phase = 1;
   error = blkstartboot(sysboot(), &blkrun.boot);
   if (!error)

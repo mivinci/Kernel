@@ -110,8 +110,8 @@ resource(u32 slot, const Queryrec *row, Handle pid)
     return 0;
   if (slot == TtyInit)
     return data[1] == RESOURCE_CALL && data[6] == 1;
-  return data[1] == RESOURCE_NOTIFY && pidvalid((Handle) data[6]) &&
-         data[6] != 1 && data[6] != (u64) pid;
+  return data[1] == RESOURCE_NOTIFY && pidvalid((Handle) data[6]) && data[6] != 1 &&
+         data[6] != (u64) pid;
 }
 
 static isize
@@ -209,7 +209,7 @@ reject(const Ipcmsg *message)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   Handle          pid, parent, session;
   Ipcmsg          message;
@@ -220,6 +220,7 @@ main(int argc, char **argv)
   isize           error;
   (void) argc;
   (void) argv;
+  (void) envp;
   ttystate.phase = 1;
   error = ttyboot(sysboot(), &number);
   if (!error)

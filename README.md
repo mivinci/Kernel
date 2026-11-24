@@ -9,6 +9,7 @@
 使用 LLVM 工具链构建：
 
 ```sh
+git submodule update --init lib/musl
 make ARCH=riscv
 make ARCH=arm64
 make sdk ARCH=arm64

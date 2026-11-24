@@ -972,6 +972,8 @@ SDK 和 musl 共用原生 `times()` 适配，其中以 `QUERY_TIMES` 取得计�
 
 BusyBox 和 musl 探针使用的身份、信号处理和进程计时适配统一归 `compat/musl`。迁移期间旧 SDK 从此处编译同一份源码；musl 不从旧 libc 目录取实现。搬移后 `musl-probe.sh` 与 `musl-csu-smoke.sh` 均通过双架构 QEMU。ARM64 `normal`、`musl`、`runtime`、csu 分别为 `30b6f4145bcb4a3b8fc235af474c3162`、`66368057008a4c33856af2bc04137315`、`681c3056a8c744b693481b2526147abd`、`cf2b89c173c846e9a3ed6ed6904d1b97`；RV64 分别为 `c1d2cd9d26bb447087107ec00440c1a9`、`79ce197bf7ff4f2cb9aefbb3fa2d662c`、`f5d2eb15072b48fe82867702d1bd0318`、`db78cf4928ef40959608025fb4123a83`。默认启动包和公开 SDK 尚未切换。
 
+生产 `init`、`serial`、`tty`、`blk` 随后改为从固定 musl 子模块构建和链接。四者直接使用 libsys；服务启动复用 Boot 参数、静态 TLS、构造函数和原生退出，只接收无继承 fd 的 Boot，不初始化应用堆和 fd 表，保留已有服务预算。ARM64、RV64 `packageboot` 全套通过，覆盖默认启动、serial/tty 实际输入与回显和监督失败收尾（`dd76d8507e8647398c899d5976f6c12d`、`413e8d48e28c40438d6e4fc565a1f31e`）；生产 blk 的夹具启动与真实 I/O 也在双架构 `blkservice` 通过（`08f69a1a0d554866a0c944c468294c41`、`7f7398f64e874a19bbb3dd999dc20248`）。公开 SDK、net 回环载荷及其他 QEMU 载荷仍有旧 libc 依赖；删除前须切换这些使用点，并确保未移植的 musl Linux syscall 路径不会进入原生内核。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。

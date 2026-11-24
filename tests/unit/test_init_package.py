@@ -174,7 +174,7 @@ int exercise(const void *data,u64 bytes,u64 target,int mode){
   view.header=&initial;view.resources=resources;
   argv[0]=mode==2?"wrong":"sbin/init";argv[1]=0;
   runat=(runat+1)%64;
-  if(!setjmp(jumps[runat]))initprogram(1,argv);
+  if(!setjmp(jumps[runat]))initprogram(1,argv,0);
   return result;
 }
 u64 value(u32 index){return index==0?initstate.phase:index==1?initstate.reaped:index==2?initstate.files:

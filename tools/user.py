@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shlex
 import shutil
 import sys
 import uuid
@@ -28,8 +29,8 @@ def build(args):
     run.mkdir(parents=True)
     commands = []
     tools = {}
-    def invoke(label, command):
-        result = run_command(command, run / (label + '.log'), args.timeout, cwd=ROOT)
+    def invoke(label, command, cwd=ROOT, timeout=None):
+        result = run_command(command, run / (label + '.log'), args.timeout if timeout is None else timeout, cwd=cwd)
         commands.append(dict(asdict(result), ok=result.ok))
         (run / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
         if not result.ok:
@@ -148,6 +149,52 @@ def build(args):
     invoke('link-csu', [tools['ld']['path'], '-r', '-m', profile['emulation'],
                        *[str(obj) for _, obj in extra_units[len(libc_sources):-1]], '-o', str(crt)])
     read_elf(crt, profile['machine'], allow_undefined=True)
+
+    # Production services start with musl; the legacy runtime below is still
+    # used by fixtures pending migration of their libc dependencies.
+    musl_source = ROOT / 'lib/musl'
+    if not (musl_source / 'configure').is_file():
+        raise BuildError('missing musl source: run git submodule update --init lib/musl')
+    musl = sdk / 'musl'
+    musl.mkdir(exist_ok=True)
+    cpu = 'aarch64' if args.arch == 'arm64' else 'riscv64'
+    target = cpu + '-linux-musl'
+    target_flags = ['--target=' + target]
+    if args.arch == 'riscv':
+        target_flags.extend(['-march=rv64gc', '-mabi=lp64'])
+    configure = ['env', 'CC=' + shlex.join([tools['cc']['path'], *target_flags]),
+                 'AR=' + shlex.quote(tools['ar']['path']), 'RANLIB=:',
+                 str(musl_source / 'configure'), '--target=' + target,
+                 '--disable-shared', '--disable-wrapper']
+    config_key = json.dumps([configure, digest(musl_source / 'configure'), tools['cc']['version']])
+    stamp = musl / 'kernel-config.json'
+    if not (musl / 'config.mak').is_file() or not stamp.is_file() or stamp.read_text() != config_key:
+        if (musl / 'config.mak').is_file():
+            invoke('musl-clean', ['make', 'clean'], cwd=musl)
+        invoke('musl-configure', configure, cwd=musl)
+        stamp.write_text(config_key)
+    invoke('musl-build', ['make', '-j4', 'lib/libc.a'], cwd=musl, timeout=max(args.timeout, 120))
+    musl_archive = musl / 'lib/libc.a'
+    resource = invoke('cc-resource-dir', [tools['cc']['path'], '-print-resource-dir']).strip()
+    musl_headers = [str(musl / 'obj/include'), str(musl_source / 'arch' / cpu),
+                    str(musl_source / 'arch/generic'), str(musl_source / 'include')]
+    service_flags = target_flags + COMMON + ['-std=c99', '-D_POSIX_C_SOURCE=200809L', '-nostdinc',
+                     '-isystem' + resource + '/include', '-ffunction-sections', '-fdata-sections',
+                     *['-I' + path for path in musl_headers], '-I' + str(sdk / 'include'), '-I' + str(sdk)]
+    startup = []
+    for unit in (csu_sources[1], ROOT / 'lib/csu/musl.c', ROOT / 'compat/musl/exit.c'):
+        obj = musl / unit.with_suffix('.o').name
+        internal = [str(musl_source / 'src/include'), str(musl_source / 'src/internal')]
+        command = [tools['cc']['path'], *['-I' + path for path in internal], *service_flags,
+                   '-Wno-unused-parameter', '-DMIVINCI_MUSL_SERVICE',
+                   '-c', str(unit), '-o', str(obj)]
+        invoke('musl-start-' + unit.stem, command)
+        read_elf(obj, profile['machine'], allow_undefined=True)
+        entries.append(dict(directory=str(ROOT), file=str(unit), output=str(obj), arguments=command))
+        startup.append(str(obj))
+    service_crt = musl / 'crt0.o'
+    invoke('link-musl-csu', [tools['ld']['path'], '-r', '-m', profile['emulation'],
+                            *startup, '-o', str(service_crt)])
     init_sources = [ROOT/'sbin/init'/name for name in ('main.c','package.c','manifest.c','service.c')]
     init_directory = directory/'sbin'
     init_directory.mkdir(exist_ok=True)
@@ -163,7 +210,7 @@ def build(args):
         for source in units:
             obj = sdk/'obj/sbin'/name/source.with_suffix('.o').name
             obj.parent.mkdir(parents=True,exist_ok=True)
-            command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
+            command = [tools['cc']['path'],*service_flags,'-c',str(source),'-o',str(obj)]
             invoke('compile-'+name+'-'+source.stem,command)
             read_elf(obj,profile['machine'],allow_undefined=True)
             entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
@@ -171,8 +218,8 @@ def build(args):
         artifact = init_directory/(name+'.elf')
         temporary = init_directory/(name+'.tmp.elf')
         link = [tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections',
-                '--build-id=none','-Map='+str(init_directory/(name+'.map')),str(crt),
-                *objects,*map(str,libraries),str(libc_archive),str(archive),'-o',str(temporary)]
+                '--build-id=none','-Map='+str(init_directory/(name+'.map')),str(service_crt),
+                *objects,*map(str,libraries),str(musl_archive),str(archive),'-o',str(temporary)]
         invoke('link-'+name,link)
         info = read_elf(temporary,profile['machine'],kind=2)
         pack(temporary.read_bytes(),profile['machine'],256)
@@ -183,8 +230,8 @@ def build(args):
             headers=sorted(str(p.relative_to(ROOT)) for p in program_headers),
             libraries=[dict(path=str(path.relative_to(ROOT)),sha256=digest(path))
                        for path in libraries],
-            link=link,no_test_payload=True,libc_sha256=digest(libc_archive),
-            libsys_sha256=digest(archive),crt_sha256=digest(crt),
+            link=link,no_test_payload=True,libc_sha256=digest(musl_archive),
+            libsys_sha256=digest(archive),crt_sha256=digest(service_crt),
             configuration_sha256=digest(configuration) if configuration else None),indent=2)+'\n')
         return artifact
     serial_sources = [ROOT/'sbin/serial'/name for name in ('main.c','start.c','uart.c','io.c','control.c')]

@@ -60,7 +60,7 @@ now(void)
 }
 
 static void
-alarm(u64 deadline)
+armdeadline(u64 deadline)
 {
   u64   generation;
   isize error = __sys_alarmset(deadline, &generation);
@@ -137,7 +137,7 @@ readyresult(u64 deadline)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   Ipcmsg message;
   Msg    report;
@@ -146,6 +146,7 @@ main(int argc, char **argv)
   u32    again, acknowledge = 0;
   isize  error;
   (void) argv;
+  (void) envp;
   serialstate.phase = 1;
   error = argc == 7 ? serialboot(sysboot(), &boot) : -ERR_INVALID;
   if (!error)
@@ -180,7 +181,7 @@ main(int argc, char **argv)
     current = now();
     if (current >= deadline)
       failed(115, -ERR_TIMEDOUT);
-    alarm(current + MIN(RETRY_NS, deadline - current));
+    armdeadline(current + MIN(RETRY_NS, deadline - current));
     error = ipc_recv(EVENT_TIMER | EVENT_RQ_CANCEL, 0, &message);
     if (error == -ERR_INTERRUPTED)
       continue;
@@ -208,7 +209,7 @@ main(int argc, char **argv)
     failed(120, error ? error : -ERR_STATE);
   ready = message.request;
   serialstate.phase = 2;
-  alarm(deadline);
+  armdeadline(deadline);
   for (;;) {
     readyresult(deadline);
     error = serialiostep(&io, &hints, &again);

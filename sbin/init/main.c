@@ -58,7 +58,7 @@ now(void)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   const Bootview *boot = sysboot();
   const Bootitem *own;
@@ -67,6 +67,7 @@ main(int argc, char **argv)
   u32             work, reapwork, phase;
   Ipcmsg          message;
   isize           error;
+  (void) envp;
   if (__sys_getid(&pid, &image, &parent) || pid != 1 || parent || !image)
     failed(100);
   initstate.pid = (u64) pid;

@@ -873,7 +873,7 @@ def audit_package_init(qmp, run_dir, args, record, transition):
         if exits!=[dict(reason=1,code=args.init_exit)]:raise SmokeError('wrong package PID1 exit reason/code')
     if 'serialproof' in user_symbols:
         proof=struct.unpack('<8Q',read(user_symbols['serialproof'],64))
-        if (proof[0]>>59!=1 or not (proof[0]>>16)&((1<<43)-1) or not 1<=proof[1]<=4096 or
+        if (not 1<proof[0]<=0x7fffffff or not 1<=proof[1]<=4096 or
                 proof[2:6]!=(1,7,7,7) or proof[6] not in (1,2) or proof[7]!=1):
             raise SmokeError('native serial startup/shared rings/READY-parent retirement proof mismatch')
         record['serial_startup']=dict(pid=proof[0],retirement_queries=proof[1],retired=True,
@@ -895,14 +895,14 @@ def audit_package_init(qmp, run_dir, args, record, transition):
                                        repeat_after_mutation=True,fatal_restored_output=True)
     if 'serialserviceproof' in user_symbols:
         proof=struct.unpack('<16Q',read(user_symbols['serialserviceproof'],128))
-        if (proof[0]!=1 or proof[1]>>59!=1 or proof[2] not in (1,2,3) or proof[6]!=1 or
+        if (proof[0]!=1 or not 1<proof[1]<=0x7fffffff or proof[2] not in (1,2,3) or proof[6]!=1 or
                 proof[7] not in (1,2) or any(proof[10:13]+proof[14:])):
             raise SmokeError('actual serial service READY/retirement proof mismatch')
         tty = proof[2]==3
         if proof[13]!=int(tty):raise SmokeError('tty did not return to idle after echo')
         if proof[2] in (1,3):
             counts = (8,9) if tty else (7,24)
-            if (proof[3]>>59!=1 or proof[4:6]!=counts or proof[8:10]!=(1,1) or
+            if (not 1<proof[3]<=0x7fffffff or proof[4:6]!=counts or proof[8:10]!=(1,1) or
                     record.get('serial_input',{}).get('sent')!=counts[0] or
                     len(record.get('serial_injection_gates',[]))!=2):
                 raise SmokeError('actual serial service late-binding/external byte exchange mismatch')

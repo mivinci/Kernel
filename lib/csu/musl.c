@@ -5,15 +5,19 @@
 
 struct Boot;
 struct Bootview;
+#ifdef MIVINCI_MUSL_SERVICE
+extern long sysstartargs(const struct Boot *, int *, char ***, char ***);
+#else
 extern long sysstartargswithfds(const struct Boot *, int *, char ***, char ***,
                                 long (*)(const struct Bootview *, void *));
 extern long sysfilebootinstall(const struct Bootview *, void *);
 extern long sysfileheapinit(unsigned long, unsigned long);
-extern void __sys_exit(unsigned long) __attribute__((noreturn));
-extern const size_t __native_tls[4];
 extern char __image_end[];
-extern char **__environ;
-extern int main(int, char **, char **);
+#endif
+extern void         __sys_exit(unsigned long) __attribute__((noreturn));
+extern const size_t __native_tls[4];
+extern char       **__environ;
+extern int          main(int, char **, char **);
 extern void (*const __init_array_start[])(void), (*const __init_array_end[])(void);
 
 static struct tls_module tls;
@@ -23,12 +27,18 @@ static size_t auxv[] = {6, 4096, 0, 0}; /* AT_PAGESZ, AT_NULL */
 void __attribute__((noreturn))
 csustart(const struct Boot *boot)
 {
-  int argc;
-  char **argv, **envp;
+  int       argc;
+  char    **argv, **envp;
   pthread_t td;
-  size_t align = __native_tls[3], i;
-  if (sysstartargswithfds(boot, &argc, &argv, &envp, sysfilebootinstall) || align > 64 ||
-      (align && (align & (align - 1))) || __native_tls[2] > 2048)
+  size_t    align = __native_tls[3], i;
+  long      error;
+#ifdef MIVINCI_MUSL_SERVICE
+  /* These services talk directly to libsys and have no inherited fds or heap. */
+  error = sysstartargs(boot, &argc, &argv, &envp);
+#else
+  error = sysstartargswithfds(boot, &argc, &argv, &envp, sysfilebootinstall);
+#endif
+  if (error || align > 64 || (align && (align & (align - 1))) || __native_tls[2] > 2048)
     __sys_exit(127);
   if (!align)
     align = 1;
@@ -44,8 +54,12 @@ csustart(const struct Boot *boot)
   td = __copy_tls(initial_tls);
   td->self = td;
   td->locale = &libc.global_locale;
-  if (__set_thread_area(TP_ADJ(td)) || sysfileheapinit((size_t) __image_end, 0x3ffe000000UL))
+  if (__set_thread_area(TP_ADJ(td)))
     __sys_exit(127);
+#ifndef MIVINCI_MUSL_SERVICE
+  if (sysfileheapinit((size_t) __image_end, 0x3ffe000000UL))
+    __sys_exit(127);
+#endif
   libc.page_size = 4096;
   libc.auxv = auxv;
   __environ = envp;
