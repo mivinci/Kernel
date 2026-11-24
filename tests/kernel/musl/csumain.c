@@ -61,5 +61,7 @@ main(int argc, char **argv, char **envp)
     return 49;
   if (waitpid(-1, 0, WNOHANG) != -1 || errno != ECHILD)
     return 50;
+  if (!strerror(EBADF)[0])
+    return 52;
   _exit(256 + 42);
 }

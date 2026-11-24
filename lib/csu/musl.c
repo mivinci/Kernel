@@ -43,6 +43,7 @@ csustart(const struct Boot *boot)
   libc.tls_size = sizeof(initial_tls);
   td = __copy_tls(initial_tls);
   td->self = td;
+  td->locale = &libc.global_locale;
   if (__set_thread_area(TP_ADJ(td)) || sysfileheapinit((size_t) __image_end, 0x3ffe000000UL))
     __sys_exit(127);
   libc.page_size = 4096;
