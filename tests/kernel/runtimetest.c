@@ -73,7 +73,7 @@ startup(Handle pid, u32 mode)
     boot->fds_off = cursor;
     fd = (Bootfd *) (packet + cursor);
     fd->backend_call = call;
-    fd->session = fd->prepare_token = fd->reference_id = 1;
+    fd->session = fd->prepare_token = 1;
     cursor += sizeof(Bootfd);
   }
   if (mode == 9) {

@@ -962,6 +962,8 @@ exec 装载时，Bootfd 可以引用目标准备表中的 CALL，也可以引用
 
 ARM64、RV64 QEMU `elf` 回归也通过：夹具在重试前让 CPU 清理分批扫描完整 Proc 表，等待已撤销镜像归还目标准备槽，再验证新准备、换图和回收。撤销与实际退役仍是两个阶段。
 
+ARM64、RV64 QEMU `runtime` 核对 libc 启动仍拒绝缺少 `reference_id` 的 Bootfd，且不会调用 `main`；结构合法的 Bootfd 可随启动参数保留，实际后端连接和引用领取延后到文件层。`pipeio` 覆盖有真实后端的正例。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。
