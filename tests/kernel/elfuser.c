@@ -95,7 +95,7 @@ bootpacket(Handle fdcall, char mode)
   elf_trace[14]++;
 }
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   const Bootview *own = sysboot();
   Elfsource       source;
@@ -115,6 +115,7 @@ main(int argc, char **argv)
   gid_t           group = 42;
   isize           error;
   int             status;
+  (void) envp;
   REQUIRE(argc == 0 && argv && !argv[0] && getpid() > 1 && getppid() == 1, 181);
   create = bootresource(own, BOOT_CREATE);
   space = bootresource(own, BOOT_SELF_SPACE);

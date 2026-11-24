@@ -34,7 +34,7 @@ isize __sys_enter(u64 number,const u64 args[7],void *raw){
         command += ['-I'+str(ROOT/path) for path in ('lib/libc/include','lib/libsys/include','lib/libsys','include')]
         for name in ('getuid','geteuid','getgid','getegid','__errno_location','strerror'):
             command += ['-D'+name+'=user_'+name]
-        command += [str(ROOT/path) for path in ('lib/libc/credential.c','lib/libc/errno.c','lib/libsys/process.c')]
+        command += [str(ROOT/path) for path in ('compat/musl/credential.c','lib/libc/errno.c','lib/libsys/process.c')]
         command += [str(shim), '-o', str(library)]
         if sys.platform == 'darwin':
             sdk = subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()

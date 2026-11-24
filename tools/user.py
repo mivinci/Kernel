@@ -109,8 +109,8 @@ def build(args):
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.
-    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'credential.c', 'wait.c', 'signal.c', 'sysconf.c')]
-    libc_sources.extend(ROOT / 'compat/musl' / name for name in ('group.c', 'identity.c', 'raise.c', 'sigaction.c', 'time.c', 'times.c'))
+    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'wait.c', 'signal.c', 'sysconf.c')]
+    libc_sources.extend(ROOT / 'compat/musl' / name for name in ('credential.c', 'group.c', 'identity.c', 'raise.c', 'sigaction.c', 'time.c', 'times.c'))
     libc_sources.append(ROOT / 'lib/libc/pathsearch.c')
     libc_sources.append(ROOT / 'lib/libc/spawnfiles.c')
     libc_sources.append(ROOT / 'compat/musl/sleep.c')
@@ -205,7 +205,7 @@ def build(args):
     app_start = [startup[0], startup[2]]
     compat = ROOT / 'compat/musl'
     app_sources = [ROOT / 'lib/csu/musl.c', *(compat / name for name in (
-        'fork.c', 'group.c', 'identity.c', 'io.c', 'memory.c', 'open.c', 'raise.c',
+        'credential.c', 'fork.c', 'group.c', 'identity.c', 'io.c', 'memory.c', 'open.c', 'raise.c',
         'sigaction.c', 'sigmask.c', 'sleep.c', 'time.c', 'times.c', 'wait.c'))]
     for unit in app_sources:
         obj = musl / ('app-' + unit.with_suffix('.o').name)
@@ -326,14 +326,14 @@ def build(args):
     parent_source = ROOT / 'tests/kernel/elfuser.c'
     parent_units = [(parent_source,sdk / 'obj/elfuser.o'),(payload_source,sdk / 'obj/payloadelf.o')]
     for i,(source,obj) in enumerate(parent_units):
-        command = [tools['cc']['path'],*flags,'-c',str(source),'-o',str(obj)]
+        command = [tools['cc']['path'],*service_flags,'-c',str(source),'-o',str(obj)]
         invoke('loader-compile-' + str(i),command)
         read_elf(obj,profile['machine'],allow_undefined=True)
         entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
     parent = sdk / 'elfuser.elf'
     parent_tmp = sdk / 'elfuser.tmp.elf'
     invoke('link-loader',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',
-                         '-Map=' + str(sdk / 'elfuser.map'),str(crt),*[str(obj) for _,obj in parent_units],str(libc_archive),str(archive),'-o',str(parent_tmp)])
+                         '-Map=' + str(sdk / 'elfuser.map'),str(app_crt),*[str(obj) for _,obj in parent_units],str(musl_archive),str(archive),'-o',str(parent_tmp)])
     read_elf(parent_tmp,profile['machine'],kind=2)
     parent_content = pack(parent_tmp.read_bytes(),profile['machine'],128)
     os.replace(parent_tmp,parent)
