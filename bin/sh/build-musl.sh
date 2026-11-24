@@ -24,7 +24,11 @@ clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -n
   -isystem "$resource" -I"$src/arch/$cpu" -I"$src/arch/generic" -I"$src/src/include" \
   -I"$src/src/internal" -I"$obj/obj/include" -I"$src/include" \
   -c "$root/lib/csu/musl.c" -o "$out/csu.o"
-link="ld.lld --gc-sections -T '$root/lib/libsys/user.ld' '$out/entry.o' '$out/csu.o' --start-group"
+clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -nostdinc \
+  -isystem "$resource" -isystem "$obj/obj/include" -isystem "$src/arch/$cpu" \
+  -isystem "$src/arch/generic" -isystem "$src/include" \
+  -c "$root/compat/musl/exit.c" -o "$out/exit.o"
+link="ld.lld --gc-sections -T '$root/lib/libsys/user.ld' '$out/entry.o' '$out/csu.o' '$out/exit.o' --start-group"
 link="$link \$(core-y) \$(libs-y) '$obj/lib/libc.a' '$root/build/$arch/sdk/libsys.a' '$rt' --end-group -o \$@"
 if ! make -C "$tree" -j"${JOBS:-4}" CC="$cc" AR=llvm-ar NM=llvm-nm \
   "cmd_busybox__=$link" busybox_unstripped >"$out/build.log" 2>&1; then

@@ -1,6 +1,7 @@
 /* Compile with the port's musl internal headers and without stack protection. */
 #include "pthread_impl.h"
 #include "libc.h"
+#include <stdlib.h>
 
 struct Boot;
 struct Bootview;
@@ -49,5 +50,5 @@ csustart(const struct Boot *boot)
   __environ = envp;
   for (i = 0; __init_array_start + i < __init_array_end; i++)
     __init_array_start[i]();
-  __sys_exit(main(argc, argv, envp));
+  _Exit(main(argc, argv, envp));
 }
