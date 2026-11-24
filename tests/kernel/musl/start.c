@@ -1,10 +1,12 @@
-#include "pthread_impl.h"
-#include "libc.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <string.h>
+#include <unistd.h>
+#include "pthread_impl.h"
+#include "libc.h"
 struct Boot;
 struct Bootview;
 extern long                  sysfilebootinstall(const struct Bootview *, void *);
@@ -27,20 +29,6 @@ static size_t aux_end[2];
 static void  *meta, *large_map;
 extern long   __sys_copy(void *, const void *, unsigned long);
 extern long   __sys_yield(void);
-extern long   sysfilewritepairposix(unsigned int, int, const void *, unsigned long, const void *,
-                                    unsigned long);
-
-ssize_t
-__mivinci_stdio_write(int fd, const void *first, size_t firstbytes, const void *second,
-                      size_t secondbytes)
-{
-  long result = sysfilewritepairposix(0, fd, first, firstbytes, second, secondbytes);
-  if (result < 0) {
-    errno = (int) -result;
-    return -1;
-  }
-  return result;
-}
 void *
 native_meta(size_t n)
 {
@@ -142,12 +130,62 @@ csustart(const struct Boot *boot)
       __sys_exit(128);
   }
 #ifdef MUSL_PROBE_INHERITED_STDOUT
-  if (fwrite("native stdout", 1, 13, stdout) != 13 || fflush(stdout) || ferror(stdout))
-    __sys_exit(130);
+  errno = 0;
+  if (fwrite("native stdout", 1, 13, stdout) != 13)
+    __sys_exit(140 + errno);
+  if (fflush(stdout) || ferror(stdout))
+    __sys_exit(175 + errno);
+  {
+    int   status;
+    pid_t child = fork();
+    if (!child) {
+      unsigned char byte = 0;
+      if (dup2(1, 0) != 0)
+        __sys_exit(137);
+      __sys_exit(read(0, &byte, 1) == 1 && byte == 0x5a ? 43 : 135);
+    }
+    if (child < 0)
+      __sys_exit(140 + errno);
+    if (waitpid(child, &status, 0) != child)
+      __sys_exit(175 + errno);
+    if (status != (43 << 8))
+      __sys_exit(136);
+  }
 #else
+  {
+    int fds[2] = {-1, -1};
+    if (pipe(fds) != -1 || errno != ENOSYS || fds[0] != -1 || fds[1] != -1)
+      __sys_exit(138);
+  }
   if (fwrite("native stdout", 1, 13, stdout) != 13 || fflush(stdout) != EOF || !ferror(stdout) ||
       errno != EBADF)
     __sys_exit(130);
+  errno = 0;
+  {
+    pid_t child = fork();
+    if (musl_probe_role == 1) {
+      int status;
+      if (!child) {
+        unsigned char byte = 0x5a;
+        if (initialized != 44 || zero != 34)
+          __sys_exit(132);
+        errno = 0;
+        if (read(0, &byte, sizeof(byte)) != -1 || errno != EBADF || byte != 0x5a)
+          __sys_exit(135);
+        __sys_exit(43);
+      }
+      if (child < 0)
+        __sys_exit(140 + errno);
+      if (waitpid(child, &status, 0) != child)
+        __sys_exit(175 + errno);
+      if (status != (43 << 8))
+        __sys_exit(133);
+      if (waitpid(child, NULL, 0) != -1 || errno != ECHILD)
+        __sys_exit(134);
+    } else if (child != -1 || errno != EPERM) {
+      __sys_exit(131);
+    }
+  }
 #endif
   __sys_exit(42);
 }

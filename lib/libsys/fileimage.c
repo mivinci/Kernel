@@ -2106,6 +2106,26 @@ sysfileimagedup2(int fd, int target)
 }
 
 isize
+sysfiledup2posix(int fd, int target)
+{
+  isize status = sysfileimagedup2(fd, target);
+  switch (status) {
+  case -ERR_BAD_HANDLE:
+    return -EBADF;
+  case -ERR_CAPACITY:
+    return -EMFILE;
+  case -ERR_NOMEM:
+    return -ENOMEM;
+  case -ERR_BUSY:
+    return -EBUSY;
+  case -ERR_INVALID:
+    return -EINVAL;
+  default:
+    return status < 0 ? -EIO : status;
+  }
+}
+
+isize
 sysfileimagedupfrom(int fd, int minimum, u64 flags)
 {
   return duplicate(fd, minimum, 0, flags);
