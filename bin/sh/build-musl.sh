@@ -1,0 +1,34 @@
+#!/bin/sh
+# Build unmodified BusyBox against an existing musl build and Kernel SDK.
+set -eu
+arch=${1:?pass arm64 or riscv}
+archive=${2:?pass the BusyBox archive}
+out=${3:?pass a new output directory}
+src=$(cd "${4:?pass the musl source directory}" && pwd)
+obj=$(cd "${5:?pass the configured musl build directory}" && pwd)
+rt=${6:?pass the target compiler-rt builtins archive}
+rt=$(cd "$(dirname "$rt")" && pwd)/$(basename "$rt")
+root=$(cd "$(dirname "$0")/../.." && pwd)
+case $arch in
+  arm64) cpu=aarch64; abi= ;;
+  riscv) cpu=riscv64; abi='-march=rv64gc -mabi=lp64' ;;
+  *) echo "unknown architecture: $arch" >&2; exit 2 ;;
+esac
+test -f "$rt"
+tree=$(python3 "$root/bin/sh/prepare.py" "$archive" "$out" --upstream)
+out=$(dirname "$tree")
+resource=$(clang -print-resource-dir)/include
+cc="clang --target=$cpu-linux-musl $abi -fuse-ld=lld -nostdinc -isystem '$resource' -isystem '$obj/obj/include' -isystem '$src/arch/$cpu' -isystem '$src/arch/generic' -isystem '$src/include'"
+clang --target="$cpu-linux-musl" $abi -c "$root/lib/csu/$arch/start.S" -o "$out/entry.o"
+clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -nostdinc \
+  -isystem "$resource" -I"$src/arch/$cpu" -I"$src/arch/generic" -I"$src/src/include" \
+  -I"$src/src/internal" -I"$obj/obj/include" -I"$src/include" \
+  -c "$root/lib/csu/musl.c" -o "$out/csu.o"
+link="ld.lld --gc-sections -T '$root/lib/libsys/user.ld' '$out/entry.o' '$out/csu.o' --start-group"
+link="$link \$(core-y) \$(libs-y) '$obj/lib/libc.a' '$root/build/$arch/sdk/libsys.a' '$rt' --end-group -o \$@"
+if ! make -C "$tree" -j"${JOBS:-4}" CC="$cc" AR=llvm-ar NM=llvm-nm \
+  "cmd_busybox__=$link" busybox_unstripped >"$out/build.log" 2>&1; then
+  echo "BusyBox build failed: $out/build.log" >&2
+  exit 1
+fi
+printf '%s\n' "$tree/busybox_unstripped"
