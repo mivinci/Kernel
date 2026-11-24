@@ -193,7 +193,7 @@ def prepare(qmp, directory, args, record, names, retained):
         if state[0] != 1 or state[7] or len(children) != 2:
             raise ValueError('default init did not commit both services')
         for number, row in enumerate((registry, tty), 1):
-            if (row[:3] != (number, 2, 8) or row[3] >> 59 != 1 or row[4] != 1
+            if (row[:3] != (number, 2, 8) or not 1 < row[3] <= 0x7fffffff or row[4] != 1
                     or not row[5] or any(row[6:11]) or row[11:13] != (1, 0)):
                 raise ValueError('READY registry owns an invalid preparation/deadline/result')
         if not all(registry[13:15]) or registry[15] != 7 or any(tty[13:15]) or tty[15] != 4:

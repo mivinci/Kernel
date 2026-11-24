@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <abi/resource.h>
 #include <proto/tty.h>
 #include <sys/boot.h>
 #include <sys/channel.h>
@@ -2683,7 +2684,8 @@ openserver(const Bootview *boot)
   openwritestage();
   fixture.length = 20;
   fixture.map = (Loadmap){{2, 1, 1, 20}, {FS_DATA_START}, 0};
-  fixture.files = (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL};
+  fixture.files =
+      (Fsfiles){&file, refs, 1, ARRAY_SIZE(refs), 0, &pin, &fixture, openlength, NULL, NULL};
   CHECK(!cacheinit(&fixture.cache, blocks, ARRAY_SIZE(blocks), 128));
   CHECK(!txninit(&synctxn, &fixture.cache, 0));
   fixture.sync = (Syncwork){&synctxn, syncsnapshot, 1, 0};
@@ -3455,7 +3457,7 @@ publicchdirserver(const Bootview *boot)
   fixture.dir = (Vnode){fixture.root.mount, 3, 1, VNODE_DIR};
   fixture.denied = (Vnode){fixture.root.mount, 4, 1, VNODE_DIR};
   fixture.file = (Vnode){fixture.root.mount, 2, 1, VNODE_FILE};
-  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate};
+  fixture.files = (Fsfiles){&file, &ref, 1, 1, 0, &pin, &fixture, openlength, publictruncate, NULL};
   fixture.dev.null = (Vnode){fixture.root.mount, 8, 1, VNODE_CHAR};
   fixture.dev.root = (Vnode){fixture.root.mount, 9, 1, VNODE_DIR};
   {
@@ -3816,6 +3818,7 @@ publicchdirclient(void)
   char             cwd[4] = "xxx";
   char             link[9] = "????????";
   char            *owned;
+  u32              attempt;
   CHECK(!sysfileclaimrange(ADDRESS) && !sysfileimagefs(0, 0, &peer) &&
         peer->state.map.address == ADDRESS);
   CHECK(open("", O_RDONLY) == -1 && errno == ENOENT &&
@@ -3904,7 +3907,7 @@ publicchdirclient(void)
     /* Once child retirement drops its write reference, the drained pipe reaches EOF. */
     CHECK(!read(ends[0], &byte, 1) && !close(ends[0]));
   }
-  for (u32 attempt = 0; attempt < 3; attempt++) {
+  for (attempt = 0; attempt < 3; attempt++) {
     Fileimage *image;
     Conncache *cache;
     Fdview fd;

@@ -6,7 +6,7 @@
 
 1. **单设备假设**：`serviceinit()` 只发一次 `QUERY_BOOT_RESOURCE` 取 UART 的 `mmio`/`irqsource`/`kind`/`offset`/`bytes`/`shift`/`width`，`mapbytes`、`uartkind`、`uartoffset` 等全部是文件级 `static` 单例。启动第二个设备（virtio-net、framebuffer）没有对应路径。
 2. **授权靠扫表推断**：`listener` 与 `observer` 由 `serviceinit()` 遍历 init 自己的资源表取得——按 `RESOURCE_CALL + RESOURCE_USE|RESOURCE_GRANT + count 1 + image 匹配` 和 `RESOURCE_OBSERVE + OBSERVE_MONITOR` 做模式匹配。同类资源出现第二个时，`if (listener) return -ERR_STATE` 会直接报错。
-3. **argv 硬编码 UART 语义**：`arguments()` 把 UART 参数格式化成十进制字符串固定放进 `argv[1..6]`，tty 靠覆盖 `argv[1]`/`argv[2]` 绕过。新增服务类型必须改这段代码。
+3. **argv 曾硬编码 UART 语义**：`arguments()` 现按服务类型构造参数；serial 和 tty 保留各自的原布局，新增类型须显式定义参数契约。10 项 init 主机测试及 ARM64、RV64 默认启动 smoke 已通过。
 4. **预留字段未生效**：`Servicecfg.creator` 解码后从未使用（`service.c` 零引用）；`flags` 恒等 `INITCFG_REQUIRED`。清单格式留了扩展位，实现没用到。
 
 ## 影响

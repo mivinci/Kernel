@@ -115,16 +115,22 @@ arguments(Packet *packet, u32 index)
   Argsnap     snapshot;
   isize       error, restore;
   argv[0] = (const char *) policy->service[index].image;
-  argv[1] = uartkind == BOOT_UART_NS16550 ? "ns16550" : "pl011";
-  argv[2] = number(numbers[0], uartoffset);
-  argv[3] = number(numbers[1], uartbytes);
-  argv[4] = number(numbers[2], servicestate[index].number);
-  argv[5] = number(numbers[3], uartshift);
-  argv[6] = number(numbers[4], uartwidth);
-  argv[7] = 0;
-  if (policy->service[index].kind == INITCFG_TTY) {
-    argv[1] = argv[4];
+  switch (policy->service[index].kind) {
+  case INITCFG_SERIAL:
+    argv[1] = uartkind == BOOT_UART_NS16550 ? "ns16550" : "pl011";
+    argv[2] = number(numbers[0], uartoffset);
+    argv[3] = number(numbers[1], uartbytes);
+    argv[4] = number(numbers[2], servicestate[index].number);
+    argv[5] = number(numbers[3], uartshift);
+    argv[6] = number(numbers[4], uartwidth);
+    argv[7] = 0;
+    break;
+  case INITCFG_TTY:
+    argv[1] = number(numbers[0], servicestate[index].number);
     argv[2] = 0;
+    break;
+  default:
+    return -ERR_NOTSUP;
   }
   error = __sys_sigmask(SIGNAL_BLOCK, SIGNAL_SUPPORTED, &mask);
   if (error)

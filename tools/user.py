@@ -352,7 +352,8 @@ def build(args):
         compile_adoption(ROOT/'sbin/fs/blklog.c','fs-blklog'),
         compile_adoption(ROOT/'sbin/fs/serve.c','fs-serve')])
     pipeio_image=sdk/'pipeiouser.img'
-    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],224))
+    # The combined FS fixture includes both the client runtime and server state.
+    pipeio_image.write_bytes(pack(pipeio_elf.read_bytes(),profile['machine'],288))
     pipeio_inspect=invoke('inspect-pipeio',[tools['readelf']['path'],'-s',str(pipeio_elf)])
     pipeio_rows=[line.split() for line in pipeio_inspect.splitlines() if line.split() and line.split()[-1]=='pipeiotrace']
     if len(pipeio_rows)!=1 or int(pipeio_rows[0][2])!=16:raise BuildError('pipe I/O trace missing')
