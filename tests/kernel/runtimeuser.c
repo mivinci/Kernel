@@ -1190,6 +1190,7 @@ main(int argc, char **argv)
   }
   {
     char *text = NULL;
+    int   written = 17;
     errno = EDOM;
     REQUIRE(asprintf(&text, "%s:%03d", "ash", 7) == 7 && !strcmp(text, "ash:007") && errno == EDOM,
             190);
@@ -1197,7 +1198,8 @@ main(int argc, char **argv)
     REQUIRE(asprintf(&text, "%.*s", 0, "ash") == 0 && !*text && errno == EDOM, 190);
     free(text);
     text = NULL;
-    REQUIRE(asprintf(&text, "%f", 1.0) == -1 && !text && errno == EINVAL, 190);
+    REQUIRE(asprintf(&text, "%n", &written) == -1 && !text && errno == EINVAL && written == 17,
+            190);
   }
   runtime_trace[10] = groupcheck();
   runtime_trace[11] = queuecheck();
