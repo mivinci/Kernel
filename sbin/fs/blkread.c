@@ -718,6 +718,33 @@ blkiteryield(Blkiter *work)
   return 0;
 }
 
+isize
+blkiterentry(Blkiter *work, Filedirent *out)
+{
+  Filedirent entry = {0};
+  Dirrecord  record;
+  const u8  *name;
+  isize      result;
+  u32        i;
+  if (!out)
+    return -ERR_INVALID;
+  result = blkiterstep(work, &record, &name);
+  if (result != 1)
+    return result;
+  entry.ino = record.inode;
+  entry.type = record.kind == VNODE_FILE  ? FS_DIRENT_FILE
+               : record.kind == VNODE_DIR ? FS_DIRENT_DIR
+                                          : FS_DIRENT_LINK;
+  entry.namelen = record.namelen;
+  for (i = 0; i < record.namelen; i++)
+    entry.name[i] = name[i];
+  result = blkiteryield(work);
+  if (result)
+    return work->failed = result;
+  *out = entry;
+  return 1;
+}
+
 static isize
 mountwait(Blkmount *work, Blkattach *attach, u64 deadline)
 {

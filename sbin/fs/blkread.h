@@ -8,6 +8,7 @@
 #include "journal.h"
 #include "load.h"
 #include "walk.h"
+#include <proto/file.h>
 
 typedef struct Blkread     Blkread;
 typedef struct Blkredoload Blkredoload;
@@ -156,6 +157,11 @@ struct Blkiter
    Zero continues, one returns a row and a name borrowed from reader
    scratch, two is EOF. Only a row updates the record and name outputs. */
 isize blkiterstep(Blkiter *, Dirrecord *, const u8 **name);
+/* For a single directory request, seed a private iterator with the open
+   File's committed offset/version. Same results as blkiterstep, but a row
+   is copied out and the reader released before returning 1. Only the
+   dispatcher commits the new offset/version after accepting the result. */
+isize blkiterentry(Blkiter *, Filedirent *);
 /* After copying a row, let other operations use the volume reader. Keep the
    cursor, but reload scratch metadata when resuming in the same volume view.
    Never hand off a pending fill; the original work must finish or stop it. */

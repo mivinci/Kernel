@@ -334,7 +334,7 @@ vdevtest(const Dtinfo *info)
             trace[16] == 2 * trace[14] + trace[18] + trace[19] &&
             trace[22] == 3 * trace[18] + 2 * trace[19] && trace[2] == 38 * trace[18] &&
             trace[3] == 28 * trace[18] &&
-            trace[38] == trace[2] + trace[3] + trace[22] + 51 * trace[VTEST_BLK_RPC] &&
+            trace[38] == trace[2] + trace[3] + trace[22] + 60 * trace[VTEST_BLK_RPC] &&
             trace[39] == trace[18] + trace[19] && resize == trace[18] &&
             trace[VTEST_CAPACITY] == 2 * trace[20] && trace[VTEST_PARALLEL] == 2 * trace[18] &&
             trace[VTEST_BLK_RPC] == trace[18] && clientrpc == trace[VTEST_BLK_RPC]);
@@ -350,7 +350,7 @@ vdevtest(const Dtinfo *info)
     readonly += (u32) trace[19];
     rwsectors += trace[20];
     rosectors += trace[21];
-    reads += (u32) (trace[22] + trace[VTEST_PARALLEL] + 51 * trace[VTEST_BLK_RPC]);
+    reads += (u32) (trace[22] + trace[VTEST_PARALLEL] + 60 * trace[VTEST_BLK_RPC]);
     writes += (u32) trace[2];
     flushes += (u32) trace[3];
     pages++;

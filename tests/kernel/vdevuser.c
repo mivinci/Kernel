@@ -1074,6 +1074,9 @@ static const u32 blkopcodes[] = {
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,             /* root directory */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ,
     BLK_READ,                                  /* directory iteration across yield */
+    BLK_READ,  BLK_READ,  BLK_READ,             /* speculative record */
+    BLK_READ,  BLK_READ,  BLK_READ,             /* retry the same record */
+    BLK_READ,  BLK_READ,  BLK_READ,             /* resume to EOF */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ, /* directory lookup */
     BLK_READ,  BLK_READ,  BLK_READ,  BLK_READ, /* symlink name */
     BLK_READ,  BLK_READ,                       /* link inode and contents */
@@ -1850,6 +1853,38 @@ blkclient(const Bootview *boot, Handle call)
     REQUIRE(step == 2 && waits == 6 && !blk.rpc && iter.offset == 2 * FS_BLOCK_BYTES &&
                 item.inode == 34 && blkiterstep(&iter, &item, &name) == 2 && !blkiterstop(&iter),
             527);
+    {
+      Blkiter    cursor = {.home = &home,
+                           .decode = blkdecodedir,
+                           .inode = (u32) root.number,
+                           .generation = (u32) root.generation};
+      Blkiter    read = cursor;
+      Filedirent entry = {.ino = 99};
+      u32        pass;
+      for (pass = 0; pass < 3; pass++) {
+        read = cursor;
+        for (i = 0, step = 0; i < 12 && !step; i++) {
+          step = blkiterentry(&read, &entry);
+          if (!step && blk.rpc)
+            REQUIRE(!ipc_rqwait(blk.rpc, RQ_FINISH, &result), 566);
+        }
+        REQUIRE(!home.load.reader && !blk.rpc && filedirentvalid(&entry) && entry.ino == 34 &&
+                    entry.type == FS_DIRENT_FILE && entry.namelen == 59 &&
+                    entry.name[0] == (u8) (0xb1 + 40 * 37) &&
+                    entry.name[58] == (u8) (0xb1 + 98 * 37),
+                567);
+        if (pass < 2)
+          REQUIRE(step == 1 && !cursor.offset && read.offset == FS_BLOCK_BYTES && read.version == 1,
+                  568);
+        if (pass == 1) {
+          /* The first result was discarded; commit only the retry. */
+          cursor.offset = read.offset;
+          cursor.version = read.version;
+        }
+      }
+      REQUIRE(step == 2 && read.offset == 2 * FS_BLOCK_BYTES && cursor.offset == FS_BLOCK_BYTES,
+              569);
+    }
   }
   {
     static Vwalk   walk;
@@ -2148,7 +2183,7 @@ blkrpc(Blkqueue *queue, Handle binding, u64 irqevent)
               443);
     }
     /* Exercise redo, re-probe, home bitmap, directory and link READ retries. */
-    if (i == 11 || i == 22 || i == 24 || i + 26 == ARRAY_SIZE(blkopcodes) ||
+    if (i == 11 || i == 22 || i == 24 || i == 32 ||
         i + 12 == ARRAY_SIZE(blkopcodes) || i + 10 == ARRAY_SIZE(blkopcodes) ||
         i + 8 == ARRAY_SIZE(blkopcodes) || i + 6 == ARRAY_SIZE(blkopcodes) ||
         i + 1 == ARRAY_SIZE(blkopcodes)) {
