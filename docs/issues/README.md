@@ -23,5 +23,8 @@
 | [012](012-busybox-port.md) | 缺外部 C 软件验收，libc 广度未经第三方源码检验 | P2 | 进行中：双架构 A1、A2 静态构建已验，运行待接 stdout |
 | [013](013-init-respawn-policy.md) | init 缺 respawn 与 required/optional 分级，任一服务失败即全系统停机 | **P1** | 待处理：sh 退出即停机，需公开 fork/exec 后验收 |
 | [014](014-init-device-discovery.md) | init 的设备发现与 listener/observer 授权为单例硬编码 | P2 | 待处理：阻碍 net/图形服务拉起 |
+| [015](015-initcfg-in-package.md) | 服务清单编入 init 二进制，改清单需重编 | P2 | 待处理：清单改为包条目 `sbin/init.cfg`，校验不减 |
+| [016](016-boot-package-ab-slot.md) | 启动包单槽，更新无原子性与回退 | **P1** | 待处理：A/B 双槽 + 包头代次；真机部分待硬件（003） |
+| [017](017-ext2-on-disk-format.md) | 盘上格式为自造格式，无镜像工具、验收自证 | **P1** | 待处理：改 ext2 兼容，日志置于已分配块（方案 B），先做只读 |
 
 2026-11-18 用户确认暂无实物板（NanoPi NEO3 / VisionFive 2）。001、005、006 的本地实现已完成，等待上板确认；007 的非一致 DMA 与 RV 后端可在 QEMU 继续推进；003 按“无主机观测演练”在 QEMU 上先建验收方法。
