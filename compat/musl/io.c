@@ -6,6 +6,7 @@ extern long sysfilereadposix(unsigned int, int, void *, unsigned long);
 extern long sysfiledup2posix(int, int);
 extern long sysfilepipeposix(unsigned int, int *);
 extern long sysfileimageclose(int);
+extern unsigned int __libc_sigdepth(void);
 extern long sysfilewritepairposix(unsigned int, int, const void *, unsigned long, const void *,
                                  unsigned long);
 
@@ -22,14 +23,14 @@ posix(long result)
 ssize_t
 read(int fd, void *buffer, size_t bytes)
 {
-  return posix(sysfilereadposix(0, fd, buffer, bytes));
+  return posix(sysfilereadposix(__libc_sigdepth(), fd, buffer, bytes));
 }
 
 ssize_t
 __mivinci_stdio_write(int fd, const void *first, size_t firstbytes, const void *second,
                       size_t secondbytes)
 {
-  return posix(sysfilewritepairposix(0, fd, first, firstbytes, second, secondbytes));
+  return posix(sysfilewritepairposix(__libc_sigdepth(), fd, first, firstbytes, second, secondbytes));
 }
 
 ssize_t
@@ -47,7 +48,7 @@ dup2(int oldfd, int newfd)
 int
 pipe(int fds[2])
 {
-  return (int) posix(sysfilepipeposix(0, fds));
+  return (int) posix(sysfilepipeposix(__libc_sigdepth(), fds));
 }
 
 int
