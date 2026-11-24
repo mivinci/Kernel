@@ -108,18 +108,28 @@ def prepare(archive, out, upstream=False):
     return source
 
 
-def probe(source, out, sdk, clang):
+def probe(source, out, sdk, clang, musl):
     resource = subprocess.check_output([clang, '-print-resource-dir'], text=True, timeout=10)
     builtin = Path(resource.strip()).resolve() / 'include'
     if not (builtin / 'stdarg.h').is_file():
         raise ValueError(f'Clang builtin headers missing: {builtin}')
     passed = True
     for arch, directory in sdk.items():
-        included = Path(directory).resolve() / 'include'
+        target = TARGETS[arch]
+        includes = [Path(directory).resolve() / 'include']
+        features = []
+        if musl:
+            cpu = target.split('-')[0]
+            target = f'{cpu}-linux-musl'
+            includes = [Path(directory).resolve() / 'obj/include', musl / 'arch' / cpu,
+                        musl / 'arch/generic', musl / 'include']
+            features = ['-D_GNU_SOURCE']
+        included = includes[-1]
         if not (included / 'unistd.h').is_file():
             raise ValueError(f'public SDK headers missing: {included}')
-        command = [clang, f'--target={TARGETS[arch]}', '-std=gnu99', '-ffreestanding',
-                   '-nostdinc', '-I', 'include', '-isystem', str(included),
+        command = [clang, f'--target={target}', '-std=gnu99', '-ffreestanding', *features,
+                   '-nostdinc', '-I', 'include',
+                   *(part for path in includes for part in ('-isystem', str(path))),
                    '-isystem', str(builtin), '-include', 'include/autoconf.h']
         missing = {}
         with (out / f'{arch}-deps.log').open('x') as log:
@@ -159,6 +169,8 @@ def main():
     parser.add_argument('--probe-sdk', action='append', nargs=2, metavar=('ARCH', 'SDK'),
                         default=[], help='check selected sources against a public SDK')
     parser.add_argument('--clang', default='clang', help='Clang used by the target probe')
+    parser.add_argument('--musl-source', type=Path,
+                        help='use musl headers; each probe SDK path is a configured musl build directory')
     args = parser.parse_args()
     try:
         sdks = dict(args.probe_sdk)
@@ -168,7 +180,8 @@ def main():
         source = prepare(args.archive, out, upstream=args.upstream)
         print(source, flush=True)
         clang = str(Path(args.clang).resolve()) if '/' in args.clang else args.clang
-        if sdks and not probe(source, out, sdks, clang):
+        if sdks and not probe(source, out, sdks, clang,
+                              args.musl_source.resolve() if args.musl_source else None):
             return 1
     except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError) as error:
         print(error, file=sys.stderr)
