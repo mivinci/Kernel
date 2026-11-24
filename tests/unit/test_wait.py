@@ -47,7 +47,8 @@ int test_evaluations(void){int status=0;WIFSIGNALED(status++);WCOREDUMP(status++
         command=['clang','-std=c89','-O2','-ffreestanding','-fno-builtin','-Wall','-Wextra','-Werror','-shared','-fPIC',
                  '-I'+str(ROOT/'lib/libc/include'),'-I'+str(ROOT/'lib/libsys/include'),'-I'+str(ROOT/'lib/libsys'),'-I'+str(ROOT/'include')]
         for name in ('wait','waitpid','getpid','getppid','__errno_location','strerror'):command+=['-D'+name+'=user_'+name]
-        command += [str(ROOT/'lib/libc'/name) for name in ('wait.c','identity.c','errno.c')]+[str(shim),'-o',str(path)]
+        command += [str(ROOT/'lib/libc'/name) for name in ('wait.c','errno.c')]
+        command += [str(ROOT/'compat/musl/identity.c'),str(shim),'-o',str(path)]
         if sys.platform=='darwin':
             sdk=subprocess.check_output(['xcrun','--show-sdk-path'],text=True).strip()
             command+=['-isysroot',sdk,'-Wl,-syslibroot,'+sdk]

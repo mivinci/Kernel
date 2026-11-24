@@ -106,9 +106,9 @@ def build(args):
     resource_address=int(resource_rows[0][1],16)
     assembly.write_text('/* image sha256: ' + digest(image) + ' */\n.section .rodata\n.balign 8\n.global libsys_image,libsys_image_end,libsys_resource_address\nlibsys_image:\n.incbin "' + str(image) + '"\nlibsys_image_end:\n.balign 8\nlibsys_resource_address:\n.quad '+str(resource_address)+'\n')
     # The normal runtime has a separate entry object and one-way library order.
-    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'identity.c', 'credential.c', 'group.c', 'wait.c', 'signal.c', 'sigaction.c', 'raise.c', 'time.c', 'sysconf.c')]
+    libc_sources = [ROOT / 'lib/libc' / name for name in ('string.c', 'strdup.c', 'ctype.c', 'fnmatch.c', 'allocate.c', 'number.c', 'sort.c', 'format.c', 'environment.c', 'envset.c', 'errno.c', 'exit.c', 'start.c', 'credential.c', 'group.c', 'wait.c', 'signal.c', 'raise.c', 'time.c', 'sysconf.c')]
+    libc_sources.extend(ROOT / 'compat/musl' / name for name in ('identity.c', 'sigaction.c', 'times.c'))
     libc_sources.append(ROOT / 'lib/libc/pathsearch.c')
-    libc_sources.append(ROOT / 'lib/libc/times.c')
     libc_sources.append(ROOT / 'lib/libc/spawnfiles.c')
     libc_sources.append(ROOT / 'lib/libc/sleep.c')
     libc_sources.append(ROOT / 'lib/libc/getopt.c')
@@ -128,7 +128,7 @@ def build(args):
                    for source in libc_sources + csu_sources + [runtime_source]]
     for i, (source, obj) in enumerate(extra_units):
         obj.parent.mkdir(parents=True, exist_ok=True)
-        command = [tools['cc']['path'], *flags, '-c', str(source), '-o', str(obj)]
+        command = [tools['cc']['path'], *flags, '-I' + str(ROOT / 'compat/musl'), '-c', str(source), '-o', str(obj)]
         invoke('runtime-compile-' + str(i), command)
         read_elf(obj, profile['machine'], allow_undefined=True)
         entries.append(dict(directory=str(ROOT), file=str(source), output=str(obj), arguments=command))
@@ -532,7 +532,7 @@ def build(args):
     kernel = json.loads(previous.read_text()) if previous.exists() else []
     kernel = [x for x in kernel if '/sdk/' not in x['output']]
     compilation_database(directory, kernel + entries)
-    headers = list((ROOT / 'include/abi').rglob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
+    headers = list((ROOT / 'include/abi').rglob('*.h')) + list((ROOT / 'lib/libsys').rglob('*.h')) + list((ROOT / 'lib/libc').rglob('*.h')) + list((ROOT / 'compat/musl').rglob('*.h')) + list((ROOT / 'lib/libvirtio').rglob('*.h')) + [ROOT / 'tests/kernel/adopt.h', ROOT / 'tests/kernel/ringuser.h', ROOT / 'tests/kernel/virtiouser.h']
     headers += list((ROOT / 'include/abi').glob('*.inc'))
     headers += list((ROOT / 'include/proto').glob('*.h'))
     headers += [ROOT / 'sbin/serial/uart.h']

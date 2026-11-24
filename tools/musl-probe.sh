@@ -21,7 +21,7 @@ for arch in arm64 riscv; do
     make -j4 lib/libc.a) >"$out/musl-build.log" 2>&1
   for unit in tests/kernel/musl/start.c "$src/src/malloc/mallocng/malloc.c" \
     "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c" \
-    compat/musl/fork.c compat/musl/wait.c compat/musl/sigmask.c compat/musl/io.c lib/libc/sigaction.c lib/libc/times.c; do
+    compat/musl/fork.c compat/musl/wait.c compat/musl/sigmask.c compat/musl/io.c compat/musl/sigaction.c compat/musl/times.c; do
     clang --target="$target-linux-musl" "$@" -DMIVINCI_NATIVE -DMIVINCI_MUSL -D_GNU_SOURCE \
       -O2 -nostdinc -ffreestanding -fno-stack-protector -ftls-model=local-exec \
       -isystem "$(clang -print-resource-dir)/include" -I"$src/arch/$target" -I"$src/arch/generic" \

@@ -966,9 +966,11 @@ ARM64、RV64 QEMU `runtime` 核对 libc 启动仍拒绝缺少 `reference_id` 的
 
 `tools/musl-probe.sh` 使用与 BusyBox 构建相同的 `compat/musl` fork、wait、信号屏蔽和 fd 入口。ARM64、RV64 QEMU 验证空 fd 报 EBADF、无 FS 时 `pipe()` 报 ENOSYS 且不修改输出、fork 后保留 TLS 以及 wait 收取退出状态；带后端的 `runtime` 夹具另验证 exec 后从 Bootfd 领取 stdout、短写续传、fork 后 `dup2` 到 fd 0 并读取继承引用。此项不代替 BusyBox 管道或生产启动验收。
 
-SDK 和 musl 共用 `lib/libc/times.c`，其中以原生 `QUERY_TIMES` 取得计数，再经受检查复制交付。`tools/musl-probe.sh` 与 BusyBox 链接脚本显式使用同一个对象替换上游 `times()`，无需修改上游源码。启动探针验证 100 tick/s、空输出取时间、成功保留 errno、自身计数非负及尚未收取子进程时其计数为零；完整子进程累计由 SDK `jobs` 验收。该项尚未在 BusyBox applet 中实测。
+SDK 和 musl 共用原生 `times()` 适配，其中以 `QUERY_TIMES` 取得计数，再经受检查复制交付。`tools/musl-probe.sh` 与 BusyBox 链接脚本显式使用同一个对象替换上游 `times()`，无需修改上游源码。启动探针验证 100 tick/s、空输出取时间、成功保留 errno、自身计数非负及尚未收取子进程时其计数为零；完整子进程累计由 SDK `jobs` 验收。该项尚未在 BusyBox applet 中实测。
 
 补齐共享源文件和 SDK 构建入口后，`tools/musl-probe.sh` 重新通过 ARM64 和 RV64 的 `normal`、`musl`、`runtime` 六项 QEMU 验收。ARM64 运行记录：`fec2dbbfba3c43579cb65368db3cc7b6`、`ad47fc48116a4aa4a0072ea3d5c993fb`、`9994b62c80cf4e5a8cb8fdce87015bc1`；RV64：`f586bf864b034afa88b75022fdf6208c`、`173430376c614324995606c40bfb1066`、`80ffcb19b1aa402483e575f3cc77790d`。
+
+BusyBox 和 musl 探针使用的身份、信号处理和进程计时适配统一归 `compat/musl`。迁移期间旧 SDK 从此处编译同一份源码；musl 不从旧 libc 目录取实现。搬移后 `musl-probe.sh` 与 `musl-csu-smoke.sh` 均通过双架构 QEMU。ARM64 `normal`、`musl`、`runtime`、csu 分别为 `30b6f4145bcb4a3b8fc235af474c3162`、`66368057008a4c33856af2bc04137315`、`681c3056a8c744b693481b2526147abd`、`cf2b89c173c846e9a3ed6ed6904d1b97`；RV64 分别为 `c1d2cd9d26bb447087107ec00440c1a9`、`79ce197bf7ff4f2cb9aefbb3fa2d662c`、`f5d2eb15072b48fe82867702d1bd0318`、`db78cf4928ef40959608025fb4123a83`。默认启动包和公开 SDK 尚未切换。
 
 ### A2 第三方压缩库静态构建验收
 

@@ -29,7 +29,7 @@ clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -n
   -isystem "$src/arch/generic" -isystem "$src/include" \
   -c "$root/compat/musl/exit.c" -o "$out/exit.o"
 for unit in "$root/compat/musl/memory.c" "$src/src/malloc/mallocng/malloc.c" \
-  "$root/compat/musl/sigmask.c" "$root/lib/libc/sigaction.c" "$root/lib/libc/identity.c" "$root/lib/libc/times.c" \
+  "$root/compat/musl/sigmask.c" "$root/compat/musl/sigaction.c" "$root/compat/musl/identity.c" "$root/compat/musl/times.c" \
   "$root/compat/musl/io.c" "$root/compat/musl/open.c" "$root/compat/musl/wait.c" "$root/compat/musl/fork.c" \
   "$src/src/stdio/__stdio_write.c" "$src/src/stdio/__stdout_write.c"; do
   clang --target="$cpu-linux-musl" $abi -O2 -ffreestanding -fno-stack-protector -nostdinc \

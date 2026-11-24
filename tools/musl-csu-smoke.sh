@@ -14,7 +14,7 @@ esac
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 resource=$(clang -print-resource-dir)/include
-for unit in lib/csu/musl.c compat/musl/exit.c compat/musl/io.c compat/musl/open.c compat/musl/sigmask.c compat/musl/wait.c lib/libc/sigaction.c lib/libc/identity.c tests/kernel/musl/csumain.c; do
+for unit in lib/csu/musl.c compat/musl/exit.c compat/musl/io.c compat/musl/open.c compat/musl/sigmask.c compat/musl/wait.c compat/musl/sigaction.c compat/musl/identity.c tests/kernel/musl/csumain.c; do
   clang --target="$cpu-linux-musl" "$@" -O2 -ffreestanding -fno-stack-protector -nostdinc \
     -isystem "$resource" -I"$src/arch/$cpu" -I"$src/arch/generic" -I"$src/src/include" \
     -I"$src/src/internal" -I"$obj/obj/include" -I"$src/include" -Iinclude -Ilib/libsys \

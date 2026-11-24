@@ -1,5 +1,5 @@
-#ifndef LIBC_SIGDEPTH_H
-#define LIBC_SIGDEPTH_H
+#ifndef MUSL_COMPAT_SIGDEPTH_H
+#define MUSL_COMPAT_SIGDEPTH_H
 
 #include <stdint.h>
 
