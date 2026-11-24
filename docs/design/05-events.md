@@ -206,7 +206,7 @@ alarmset(T1) 返回代次10，随后 alarmset(T2) 返回11；即便旧代次10�
 
 事件位固定：bit0 TIMER、1 RQ_DONE、2 RQ_CANCEL、3 CHILD、4 LIFE；5..15保留内核；16..31 IRQ独占位；32..63用户通知位。用户notify只允许后32位、bits非零且为授权掩码子集。EVENT words[0]=所取位，words[1]=含TIMER时的alarm代次，否则0，words[2..3]=0，source/request/image=0。IRQ bit超出16..31或冲突拒绝，不能随配置移动位。
 
-CLOCK_MONOTONIC=1、CLOCK_REALTIME=2；time/getres返回s64秒和规范u64纳秒。RTC未校准时REALTIME从纪元随MONOTONIC推进，query报告uncalibrated；只有SYSTEM CLOCK可校时。时钟转换使用商/余数避免乘法溢出；getres报告硬件计数可表示的向上取整纳秒分辨率，而非固定1ns。闹钟deadline=u64单调ns，0是过去时刻不是取消，代次u64从1起、耗尽OVERFLOW且保持原设置。
+原生选择器为 `ABI_CLOCK_MONOTONIC=1`、`ABI_CLOCK_REALTIME=2`；time/getres返回s64秒和规范u64纳秒。公开 libc 的 `clockid_t` 值由适配层转换为原生选择器，例如 musl 的 `CLOCK_REALTIME=0` 转为原生 2。RTC未校准时REALTIME从纪元随MONOTONIC推进，query报告uncalibrated；只有SYSTEM CLOCK可校时。时钟转换使用商/余数避免乘法溢出；getres报告硬件计数可表示的向上取整纳秒分辨率，而非固定1ns。闹钟deadline=u64单调ns，0是过去时刻不是取消，代次u64从1起、耗尽OVERFLOW且保持原设置。
 
 每进程一个alarm；libsys逻辑任务数组64项、小根堆，禁止业务库直接绕过它覆盖alarm。IRQ计时到期只置事件及内核准备到期标记；内核准备deadline由内核独立维护，不能被用户alarmcancel取消。tick处理最多8个准备、正常CPU安全出口每批32项清理；服务自己的准备/轮询超时在事件循环推进，不能靠父继续运行才释放。
 
@@ -356,3 +356,5 @@ MMIO升级后的最终完整回归为334项host、格式和102个两架构QEMU�
 stage281补齐`time.h`的`clock_gettime`与`clock_getres`、`sys/types.h`的64位`time_t`及私有`__sys_clock_getres`。两者共用定宽查询与公开`timespec`转换：成功返回0并保留errno，INVALID映射EINVAL、OVERFLOW映射EOVERFLOW、NOTSUP/NOSYS映射ENOSYS，输出复制故障映射EFAULT；非法内核纳秒结果按EIO拒绝且不写调用者结构。`clock_getres(clock,NULL)`只验证时钟并成功，`clock_gettime(clock,NULL)`经受检查复制返回EFAULT。
 
 5项时间接口主机测试覆盖16字节布局、两种syscall编号与完整clockid转发、成功保持errno、错误映射、NULL分辨率输出、复制故障及非规范结果；完整主机回归1252项通过。RV64及ARM64 QEMU的runtime场景在5个成功启动模式中各执行10项公开接口检查，包括MONOTONIC/REALTIME、连续MONOTONIC不倒退、实际非零分辨率、非法时钟、NULL输出和errno。
+
+公开时钟适配移到 `compat/musl`，旧 SDK 和 musl 构建共用该实现。适配层拒绝未支持的 `clockid_t`，musl 的隐藏 `__clock_gettime` 也走这条路径。双架构 QEMU 探针实测两种时钟、非零分辨率、`timespec_get(TIME_UTC)`、成功保留 errno 和不支持的时钟返回 EINVAL。ARM64 `normal`/`musl`/`runtime`：`3cec82567747449581a9c53e86b18e17`、`b13de125eeba41b793e6f2a37397cbff`、`944dd12c52574d58acdcf925496dbad9`；RV64：`5d43e97ec1c34d358dac03a3fb83d2cd`、`f8c9811f9d364bc2a00c9917652f1a4f`、`8c4f2bd4e302436198e5ec7a4b4ab8a9`。

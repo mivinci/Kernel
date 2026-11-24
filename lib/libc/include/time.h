@@ -3,6 +3,9 @@
 #include <sys/types.h>
 #include <abi/time.h>
 
+#define CLOCK_MONOTONIC ABI_CLOCK_MONOTONIC
+#define CLOCK_REALTIME  ABI_CLOCK_REALTIME
+
 typedef int     clockid_t;
 typedef int64_t clock_t;
 struct timespec

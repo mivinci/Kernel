@@ -40,7 +40,7 @@ int
 clocktime(u64 id, isize *seconds, u64 *nanos)
 {
   u64 elapsed, whole;
-  if (id != CLOCK_MONOTONIC && id != CLOCK_REALTIME)
+  if (id != ABI_CLOCK_MONOTONIC && id != ABI_CLOCK_REALTIME)
     return -ERR_INVALID;
   if (!frequency)
     return -ERR_NOTSUP;
@@ -56,7 +56,7 @@ int
 clockres(u64 id, isize *seconds, u64 *nanos)
 {
   u64 resolution;
-  if (id != CLOCK_MONOTONIC && id != CLOCK_REALTIME)
+  if (id != ABI_CLOCK_MONOTONIC && id != ABI_CLOCK_REALTIME)
     return -ERR_INVALID;
   if (!frequency)
     return -ERR_NOTSUP;
@@ -70,7 +70,7 @@ clockmono(u64 *nanos)
 {
   isize seconds;
   u64   fractionns;
-  int   error = clocktime(CLOCK_MONOTONIC, &seconds, &fractionns);
+  int   error = clocktime(ABI_CLOCK_MONOTONIC, &seconds, &fractionns);
   if (error)
     return error;
   if ((u64) seconds > (~0UL - fractionns) / NS)

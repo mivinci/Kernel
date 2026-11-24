@@ -417,7 +417,7 @@ runtimenow(void)
 {
   int64_t seconds;
   u64     ns;
-  REQUIRE(!__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &ns) && seconds >= 0 &&
+  REQUIRE(!__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &ns) && seconds >= 0 &&
               (u64) seconds <= (UINT64_MAX - ns) / UINT64_C(1000000000),
           93);
   return (u64) seconds * UINT64_C(1000000000) + ns;

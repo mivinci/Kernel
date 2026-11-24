@@ -51,7 +51,7 @@ now(void)
 {
   int64_t seconds;
   u64     nanos;
-  if (__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos) || seconds < 0 ||
+  if (__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &nanos) || seconds < 0 ||
       nanos >= UINT64_C(1000000000) || (u64) seconds > (UINT64_MAX - nanos) / UINT64_C(1000000000))
     failed(107);
   return (u64) seconds * UINT64_C(1000000000) + nanos;

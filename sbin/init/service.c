@@ -661,7 +661,7 @@ servicestep(u64 now, u32 *work, u64 *next)
           state->view = 0;
           state->flags |= STARTED;
           state->stage = StageReady;
-          error = __sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos);
+          error = __sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &nanos);
           if (error)
             return error;
           if (seconds < 0 || nanos >= UINT64_C(1000000000))

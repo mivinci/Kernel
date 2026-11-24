@@ -22,7 +22,7 @@ now(void)
 {
   int64_t seconds;
   u64     nanos;
-  if (__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos) || seconds < 0)
+  if (__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &nanos) || seconds < 0)
     __sys_exit(200);
   return (u64) seconds * UINT64_C(1000000000) + nanos;
 }

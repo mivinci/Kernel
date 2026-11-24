@@ -302,7 +302,7 @@ sysfilenow(u64 *now)
   isize   status;
   if (!now)
     return -ERR_INVALID;
-  status = __sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &ns);
+  status = __sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &ns);
   if (status)
     return status;
   if (seconds < 0 || ns >= UINT64_C(1000000000) ||

@@ -5,6 +5,7 @@
 #include <sys/times.h>
 #include <sys/wait.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include "pthread_impl.h"
 #include "libc.h"
@@ -169,6 +170,17 @@ csustart(const struct Boot *boot)
     if (before < 0 || times(NULL) < before || sysconf(_SC_CLK_TCK) != 100 || errno != EDOM ||
         usage.tms_utime < 0 || usage.tms_stime < 0 || usage.tms_cutime || usage.tms_cstime)
       __sys_exit(139);
+  }
+  {
+    struct timespec mono, realtime, resolution;
+    errno = EDOM;
+    if (clock_gettime(CLOCK_MONOTONIC, &mono) || clock_gettime(CLOCK_REALTIME, &realtime) ||
+        clock_getres(CLOCK_REALTIME, &resolution) || (!resolution.tv_sec && !resolution.tv_nsec) ||
+        timespec_get(&realtime, TIME_UTC) != TIME_UTC || realtime.tv_sec < mono.tv_sec ||
+        realtime.tv_nsec < 0 || realtime.tv_nsec >= 1000000000L || errno != EDOM)
+      __sys_exit(140);
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &mono) != -1 || errno != EINVAL)
+      __sys_exit(141);
   }
   errno = 0;
   {

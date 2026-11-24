@@ -33,7 +33,7 @@ static u64         signalmask;
 isize
 __sys_clock_gettime(u64 clock, int64_t *seconds, u64 *nanos)
 {
-  CHECK(clock == CLOCK_MONOTONIC);
+  CHECK(clock == ABI_CLOCK_MONOTONIC);
   *seconds = (int64_t) (timestamp / UINT64_C(1000000000));
   *nanos = timestamp % UINT64_C(1000000000);
   return 0;

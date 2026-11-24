@@ -44,7 +44,7 @@ struct Resetsync
 static u64
 now(void)
 {
-  const u64 args[7] = {CLOCK_MONOTONIC, 0, 0, 0, 0, 0, 0};
+  const u64 args[7] = {ABI_CLOCK_MONOTONIC, 0, 0, 0, 0, 0, 0};
   Sysret    result;
   REQUIRE(!__sys_enter(SYS_CLOCK_GETTIME, args, &result) && result.values[1] < 1000000000 &&
               result.values[0] <= (~(u64) 0 - 999999999) / 1000000000,

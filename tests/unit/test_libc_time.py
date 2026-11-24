@@ -98,7 +98,7 @@ void test_copy_error(isize error) { copy_error = error; }
                    '-D__sys_clock_gettime=time_sys_clock_gettime',
                    '-D__sys_clock_getres=time_sys_clock_getres',
                    '-D__sys_copy=time_sys_copy',
-                   str(ROOT / 'lib/libc/time.c'), str(shim), '-o', str(library)]
+                   str(ROOT / 'compat/musl/time.c'), str(shim), '-o', str(library)]
         if sys.platform == 'darwin':
             sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
             command += ['-isysroot', sdk, '-Wl,-syslibroot,' + sdk]
@@ -133,7 +133,7 @@ void test_copy_error(isize error) { copy_error = error; }
         self.assertEqual(C.sizeof(Timespec), 16)
         for function, number in ((self.lib.user_clock_gettime, 0x21),
                                  (self.lib.user_clock_getres, 0x22)):
-            for clock in (1, 2, -1):
+            for clock in (1, 2):
                 value = Timespec(99, 99)
                 self.lib.test_reset(0, 7, 123456789)
                 C.c_int.in_dll(self.lib, 'time_test_error').value = 33
@@ -162,9 +162,10 @@ void test_copy_error(isize error) { copy_error = error; }
         self.assertEqual(self.lib.user_clock_getres(1, None), 0)
         self.assertEqual((self.error(), self.lib.test_query_calls(),
                           self.lib.test_copy_calls()), (33, 1, 0))
-        self.lib.test_reset(-1, 0, 0)
+        self.lib.test_reset(0, 0, 0)
         self.assertEqual(self.lib.user_clock_getres(0, None), -1)
-        self.assertEqual((self.error(), self.lib.test_copy_calls()), (22, 0))
+        self.assertEqual((self.error(), self.lib.test_query_calls(), self.lib.test_copy_calls()),
+                         (22, 0, 0))
 
     def test_clock_gettime_null_and_output_faults_are_efault(self):
         C.c_int.in_dll(self.lib, 'time_test_error').value = 33

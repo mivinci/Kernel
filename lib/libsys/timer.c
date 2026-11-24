@@ -13,7 +13,7 @@ systimernow(u64 *out)
   isize     error;
   if (!out)
     return -ERR_INVALID;
-  error = __sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos);
+  error = __sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &nanos);
   if (error)
     return error;
   if (seconds < 0 || nanos >= second || (u64) seconds > (UINT64_MAX - nanos) / second)

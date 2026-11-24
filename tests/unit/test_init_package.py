@@ -142,7 +142,7 @@ isize servicemessage(const Ipcmsg *m,u64 tick){
   if(m->kind!=IPC_CALL||tick!=1000000001UL)mock_exit(247);messages++;return scenario==12?-ERR_STATE:0;
 }
 isize __sys_clock_gettime(u64 kind,int64_t *seconds,u64 *nanos){
-  if(kind!=CLOCK_MONOTONIC)mock_exit(248);*seconds=1;*nanos=1;return 0;
+  if(kind!=ABI_CLOCK_MONOTONIC)mock_exit(248);*seconds=1;*nanos=1;return 0;
 }
 isize __sys_alarmset(u64 deadline,u64 *generation){
   if(deadline!=1000000002UL)mock_exit(249);*generation=1;return 0;

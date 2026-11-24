@@ -1,7 +1,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
-#include <abi/proc.h>
+#include <abi/time.h>
 #include "private/syscall.h"
 
 static int
@@ -9,10 +9,18 @@ clockread(clockid_t clock, struct timespec *value, int resolution)
 {
   struct timespec local;
   int64_t         seconds;
-  u64             nanos;
+  u64             nanos, selector;
   isize           error;
-  error = resolution ? __sys_clock_getres((u64) clock, &seconds, &nanos)
-                     : __sys_clock_gettime((u64) clock, &seconds, &nanos);
+  if (clock == CLOCK_MONOTONIC)
+    selector = ABI_CLOCK_MONOTONIC;
+  else if (clock == CLOCK_REALTIME)
+    selector = ABI_CLOCK_REALTIME;
+  else {
+    errno = EINVAL;
+    return -1;
+  }
+  error = resolution ? __sys_clock_getres(selector, &seconds, &nanos)
+                     : __sys_clock_gettime(selector, &seconds, &nanos);
   if (error) {
     errno = error == -ERR_INVALID                         ? EINVAL
             : error == -ERR_OVERFLOW                      ? EOVERFLOW
@@ -41,6 +49,12 @@ clock_gettime(clockid_t clock, struct timespec *value)
 {
   return clockread(clock, value, 0);
 }
+
+#ifdef MIVINCI_MUSL
+/* musl calls this hidden entry internally, including from timespec_get. */
+__attribute__((alias("clock_gettime"), visibility("hidden"))) int
+__clock_gettime(clockid_t, struct timespec *);
+#endif
 
 int
 clock_getres(clockid_t clock, struct timespec *value)

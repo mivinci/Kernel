@@ -41,7 +41,7 @@ mononow(void)
   const u64 second = UINT64_C(1000000000);
   int64_t   seconds;
   u64       ns;
-  if (__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &ns) || seconds < 0 || ns >= second ||
+  if (__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &ns) || seconds < 0 || ns >= second ||
       (u64) seconds > (UINT64_MAX - ns) / second)
     return UINT64_MAX; /* Still capture the result. No cancellation deadline can be formed. */
   return (u64) seconds * second + ns;

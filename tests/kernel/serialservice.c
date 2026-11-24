@@ -274,7 +274,7 @@ idle(u64 received, u64 transmitted, u32 flag)
   Queryrec row, peer;
   u64      written, next, nanos;
   int64_t  seconds, start;
-  CHECK(!__sys_clock_gettime(CLOCK_MONOTONIC, &start, &nanos), 148);
+  CHECK(!__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &start, &nanos), 148);
   for (;;) {
     CHECK(!__sys_query(driver.control, QUERY_PROC, 0, &row, 1, &written, &next) && written == 1 &&
               !next && row.pid == driver.pid && row.image == 1 && row.data[3] != PROCESS_EXITING &&
@@ -288,7 +288,7 @@ idle(u64 received, u64 transmitted, u32 flag)
         row.data[3] == PROCESS_BLOCKED && !row.data[4] && peer.data[3] == PROCESS_BLOCKED &&
         !peer.data[4])
       break;
-    CHECK(!__sys_yield() && !__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &nanos) &&
+    CHECK(!__sys_yield() && !__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &nanos) &&
               seconds - start < 10,
           147);
   }
@@ -310,7 +310,7 @@ main(int argc, char **argv)
   timeout = !strcmp(argv[0], "tests/serial-timeout");
   tty = !strcmp(argv[0], "tests/serial-tty");
   inventory();
-  CHECK(!__sys_clock_gettime(CLOCK_MONOTONIC, &seconds, &seconds_ns) && seconds >= 0 &&
+  CHECK(!__sys_clock_gettime(ABI_CLOCK_MONOTONIC, &seconds, &seconds_ns) && seconds >= 0 &&
             (u64) seconds < (UINT64_MAX - seconds_ns) / UINT64_C(1000000000),
         123);
   CHECK(!__sys_alarmset((u64) seconds * UINT64_C(1000000000) + seconds_ns + UINT64_C(20000000000),
