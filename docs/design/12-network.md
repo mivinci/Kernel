@@ -2,7 +2,7 @@
 
 [设计总览](00-overview.md) · [实现状态](../status.md) · [执行与验收](#执行与验收)
 
-状态：设计方案，尚未实现；本篇的确定项、待定项和验收要求均不代表代码已交付。
+状态：lwIP 已固定版本并完成两架构交叉构建；net 服务和网络运行验收尚未完成。
 
 ## net 与网络 fd（已确定）
 
@@ -170,4 +170,6 @@ IPv6、DHCP、`AF_UNIX`、raw socket、`SO_REUSEADDR`、GSO/checksum offload、�
 
 验收：核对实际数据而非假设备回包；记录硬件矩阵和不支持选项，配额有界、旧会话失效、无缓冲提前复用。
 
-上游源码已固定为 `lib/lwip` 子模块。从官方仓库核对 `STABLE-2_2_0_RELEASE` 指向 `0a0452b2c39bdd91e252aef045c115f88f6ca773`，并核对检出版本为 2.2.0。上游源码未修改；适配和构建接线、回环和网卡运行验收仍待完成。需要此依赖时运行 `git submodule update --init -- lib/lwip`。
+上游源码已固定为 `lib/lwip` 子模块。从官方仓库核对 `STABLE-2_2_0_RELEASE` 指向 `0a0452b2c39bdd91e252aef045c115f88f6ca773`，并核对检出版本为 2.2.0。上游源码未修改。需要此依赖时运行 `git submodule update --init -- lib/lwip`。
+
+`make net-stack ARCH=arm64|riscv`（分别指定架构）把原版 lwIP 的 IPv4、ARP、ICMP、UDP、TCP 与本地时钟适配编为 `libnetstack.a`。端口使用单事件循环配置，内部内存、回环队列和协议池具有编译期上限；时钟使用单调毫秒并按 lwIP 的 32 位规则回绕。两架构归档均编译成功，并与项目 libc/libsys 链接成无未解析符号的用户态 ELF。此处未启动 ELF；定时器推进、回环收发、socket/fd 与网卡均待运行验收。

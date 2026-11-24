@@ -22,9 +22,9 @@ NM ?= llvm-nm
 ARCH ?=
 KEEP ?= 20
 GRACE_HOURS ?= 24
-SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit -path lib/musl -prune -o -type f \( -name '*.h' -o -name '*.c' \) -print)
+SOURCES := $(shell find include kernel lib bin sbin tests/kernel tests/unit \( -path lib/musl -o -path lib/lwip \) -prune -o -type f \( -name '*.h' -o -name '*.c' \) -print)
 
-.PHONY: all help build hardware compdb sdk sdk-audit bootpkg clean clean-runs fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
+.PHONY: all help build hardware compdb sdk sdk-audit net-stack bootpkg clean clean-runs fmt fmt-check unit smoke scenario bench test-all test-qemu test-memory test-cpus
 all: $(if $(strip $(ARCH)),build,help)
 help:
 	@echo "make ARCH=riscv|arm64 : 构建最小启动 ELF（CASE=normal|registers|fault|pages）"
@@ -41,6 +41,8 @@ build:
 	$(PYTHON) tools/build.py --kind kernel --case "$(if $(CASE),$(CASE),normal)" --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
 sdk:
 	$(PYTHON) tools/user.py --arch "$(ARCH)" --cross "$(CROSS)" --cc "$(CC)" --ld "$(LD)" --ar "$(AR)" --readelf "$(READELF)"
+net-stack:
+	$(PYTHON) tools/net.py --arch "$(ARCH)" --cc "$(CC)" --ar "$(AR)"
 sdk-audit: sdk
 	$(PYTHON) tests/sdkaudit.py --arch "$(ARCH)" --cc "$(CC)" --ld "$(LD)" --readelf "$(READELF)" --nm "$(NM)" $(if $(MINIZ_ARCHIVE),--miniz-archive "$(MINIZ_ARCHIVE)")
 bootpkg: sdk
