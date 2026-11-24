@@ -1162,7 +1162,7 @@ static int
 ioopcode(u64 opcode)
 {
   return opcode == FS_READ || opcode == FS_WRITE || opcode == FS_SEEK || opcode == FS_TTYCTL ||
-         opcode == FS_SYNC || opcode == FS_STAT || opcode == FS_PATH;
+         opcode == FS_SYNC || opcode == FS_STAT || opcode == FS_PATH || opcode == FS_READDIR;
 }
 
 static isize
@@ -1210,6 +1210,8 @@ iostage(Fileimage *state, u32 layer, Connwork *work, u64 pin, u64 session, u64 o
           descriptor.args[0] = FS_PATH_CHDIR;
           descriptor.args[2] = bytes;
         }
+      } else if (opcode == FS_READDIR) {
+        descriptor.payload_bytes = 0;
       } else if (opcode != FS_STAT) {
         descriptor.args[0] = offset;
         descriptor.args[1] = opcode == FS_SEEK ? positional : bytes;
@@ -1268,7 +1270,8 @@ stagefd(Fileimage *state, u32 layer, int fd, u64 opcode, const void *input, u64 
   if (!state || !out || !key || layer >= RCTX_LAYERS || bytes > FS_SLOT_BYTES ||
       !ioopcode(opcode) || (opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
       (opcode == FS_SYNC && (bytes || offset > 1 || positional)) ||
-      (opcode == FS_STAT && (bytes != FS_STAT_BYTES || offset || positional)))
+      (opcode == FS_STAT && (bytes != FS_STAT_BYTES || offset || positional)) ||
+      (opcode == FS_READDIR && (bytes != FS_DIRENT_BYTES || offset || positional)))
     return -ERR_INVALID;
   if (fd < 0 || (u32) fd >= BOOT_FD_COUNT)
     return -ERR_BAD_HANDLE;
@@ -1500,7 +1503,8 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
     return error;
   op = &work->state.operations[key->lease.slot];
   if (!ioopcode(op->opcode) || (op->opcode == FS_TTYCTL && bytes != sizeof(Termarg)) ||
-      (op->opcode == FS_SYNC && bytes) || (op->opcode == FS_STAT && bytes != FS_STAT_BYTES))
+      (op->opcode == FS_SYNC && bytes) || (op->opcode == FS_STAT && bytes != FS_STAT_BYTES) ||
+      (op->opcode == FS_READDIR && bytes != FS_DIRENT_BYTES))
     return -ERR_INVALID;
   cwd = op->opcode == FS_PATH && subcode == FS_PATH_GETCWD;
   readlink = op->opcode == FS_PATH && subcode == FS_PATH_READLINK;
@@ -1524,6 +1528,9 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
       value_limit = 0;
       if (!op->words[0])
         expected = bytes;
+    } else if (op->opcode == FS_READDIR) {
+      value_limit = 1;
+      expected = op->words[2] ? FS_DIRENT_BYTES : 0;
     } else if (cwd || readlink) {
       value_limit = 0;
       expected = op->words[3];
@@ -1574,6 +1581,19 @@ fileiofinish(Fileimage *state, const Opkey *key, void *output, u64 bytes, u64 su
             if (!error && address < storage + sizeof(*key) && storage < address + expected)
               error = -ERR_FAULT;
             if (!error && !filestatvalid(&record))
+              error = -ERR_STATE;
+            if (!error)
+              error = __sys_copy(output, &record, sizeof(record));
+          } else if (op->opcode == FS_READDIR) {
+            Filedirent record;
+            error = sysopcopy(work, cache, key, 0, sizeof(record), &record);
+            storage = work->state.map.address;
+            if (!error && address < storage + FS_CONN_BYTES && storage < address + expected)
+              error = -ERR_FAULT;
+            storage = (uintptr_t) key;
+            if (!error && address < storage + sizeof(*key) && storage < address + expected)
+              error = -ERR_FAULT;
+            if (!error && !filedirentvalid(&record))
               error = -ERR_STATE;
             if (!error)
               error = __sys_copy(output, &record, sizeof(record));
@@ -1783,6 +1803,23 @@ posixio(isize status, const Fileioresult *result, int writing)
 }
 
 isize
+sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, const void *second,
+                      u64 secondbytes)
+{
+  Fileioresult result;
+  isize status = sysfileimagewritepair(layer, fd, first, firstbytes, second, secondbytes, &result);
+  return posixio(status, &result, 1);
+}
+
+isize
+sysfilereadposix(u32 layer, int fd, void *buffer, u64 bytes)
+{
+  Fileioresult result;
+  isize status = sysfileimageio(layer, fd, FS_READ, NULL, buffer, bytes, &result);
+  return posixio(status, &result, 0);
+}
+
+isize
 sysfilepipeposix(u32 layer, int *fds)
 {
   Fileioresult result = {0};
@@ -1821,20 +1858,9 @@ sysfileimagestat(u32 layer, int fd, Filestat *output, Fileioresult *result)
 }
 
 isize
-sysfilewritepairposix(u32 layer, int fd, const void *first, u64 firstbytes, const void *second,
-                      u64 secondbytes)
+sysfileimagereaddir(u32 layer, int fd, Filedirent *output, Fileioresult *result)
 {
-  Fileioresult result;
-  isize status = sysfileimagewritepair(layer, fd, first, firstbytes, second, secondbytes, &result);
-  return posixio(status, &result, 1);
-}
-
-isize
-sysfilereadposix(u32 layer, int fd, void *buffer, u64 bytes)
-{
-  Fileioresult result;
-  isize status = sysfileimageio(layer, fd, FS_READ, NULL, buffer, bytes, &result);
-  return posixio(status, &result, 0);
+  return imageio(layer, fd, FS_READDIR, NULL, output, FS_DIRENT_BYTES, 0, 0, result);
 }
 
 isize

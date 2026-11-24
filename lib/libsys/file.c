@@ -73,7 +73,7 @@ sysfileargs(u64 opcode, const Fileslot *slot)
     used = 1;
   else if (opcode == FS_SEEK)
     used = 2;
-  else if (opcode == FS_STAT)
+  else if (opcode == FS_STAT || opcode == FS_READDIR)
     used = 0;
   else
     return -ERR_NOTSUP;
@@ -84,6 +84,8 @@ sysfileargs(u64 opcode, const Fileslot *slot)
       return -ERR_INVALID;
   if (opcode == FS_STAT)
     return slot->payload_bytes == FS_STAT_BYTES ? 0 : -ERR_INVALID;
+  if (opcode == FS_READDIR)
+    return !slot->payload_bytes ? 0 : -ERR_INVALID;
   if (opcode == FS_SYNC)
     return !slot->payload_bytes && slot->args[0] <= 1 ? 0 : -ERR_INVALID;
   if (used == 1)

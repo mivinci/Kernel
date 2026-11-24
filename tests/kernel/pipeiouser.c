@@ -3566,8 +3566,29 @@ publicchdirserver(const Bootview *boot)
   fixture.searches = 0;
   fs.pipes.reads = &reads;
   CHECK(!fsstep(&fs) && file.refs == 1 && file.access == VACCESS_R && file.node == &fixture.file &&
-        !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && !file.position &&
-        !link.watch.active.requests[0] && !fsstep(&fs) && !file.refs);
+        !fsstep(&fs) && !fsstep(&fs) && !fsstep(&fs) && !file.position);
+  {
+    Filedirent entry = {2, FS_DIRENT_FILE, 1, {'/'}};
+    for (steps = 0; steps < 4; steps++) {
+      Msg directory = {{0, 0, 0, 0}};
+      CHECK(!ipc_recv(0, 0, &request) && request.words[0] == FS_READDIR &&
+            !sysfilelinkaccept(&link, 1, &request, &slot) && !sysfileargs(FS_READDIR, &slot) &&
+            slot.object == file.session);
+      directory.words[1] = slot.seq;
+      if (steps < 2) {
+        directory.words[2] = 1;
+        directory.words[3] = sizeof(entry);
+        CHECK(
+            !__sys_copy((void *) (link.address + FS_DATA_OFFSET + request.words[3] * FS_SLOT_BYTES),
+                        &entry, sizeof(entry)));
+        entry.name[0] = 'x';
+      } else if (steps == 3)
+        directory.words[0] = (u64) -ESTALE;
+      CHECK(!ipc_reply(request.request, &directory) &&
+            !sysfilefinish(&link.watch.active, request.request));
+    }
+  }
+  CHECK(!link.watch.active.requests[0] && !fsstep(&fs) && !file.refs);
   fixture.length = fixture.map.file.length = 1;
   opendisk[0] = 'p';
   CHECK(!fsstep(&fs));
@@ -3899,6 +3920,19 @@ publicchdirclient(void)
     CHECK(stat.atime_sec == -2);
     CHECK(stat.atime_ns == 123);
     CHECK(!stat.rdev);
+  }
+  {
+    Fileioresult result;
+    Filedirent   entry = {99, 0, 0, {0}};
+    int          number = fileno(stream);
+    CHECK(!sysfileimagereaddir(0, number, &entry, &result) && result.native == -ERR_STATE &&
+          !result.count && entry.ino == 99);
+    CHECK(!sysfileimagereaddir(0, number, &entry, &result) && !result.native && !result.business &&
+          result.count == 1 && entry.ino == 2 && entry.namelen == 1 && entry.name[0] == 'x');
+    CHECK(!sysfileimagereaddir(0, number, &entry, &result) && !result.native && !result.business &&
+          !result.count && entry.ino == 2 && entry.name[0] == 'x');
+    CHECK(!sysfileimagereaddir(0, number, &entry, &result) && !result.native &&
+          result.business == -ESTALE && !result.count && entry.ino == 2);
   }
   CHECK(stream && fileno(stream) == 0 && fputs("x", stream) == EOF && errno == EBADF &&
         ferror(stream) && !fclose(stream) && fcntl(0, F_GETFD) == -1 && errno == EBADF);
