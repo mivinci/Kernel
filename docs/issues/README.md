@@ -21,5 +21,7 @@
 | [010](010-sdk-private-export.md) | SDK 私有头导出靠手工名单、无一致性检查 | P2 | 已修复：自动导出/精确检查，两架构SDK及722项host通过 |
 | [011](011-run-retention.md) | 测试证据目录无保留策略 | P2 | 已修复：默认预览/引用保护/运行锁，实际清理并验完整保留内容；746项host及双架构启动通过 |
 | [012](012-busybox-port.md) | 缺外部 C 软件验收，libc 广度未经第三方源码检验 | P2 | 进行中：双架构 A1、A2 静态构建已验，运行待接 stdout |
+| [013](013-init-respawn-policy.md) | init 缺 respawn 与 required/optional 分级，任一服务失败即全系统停机 | **P1** | 待处理：sh 退出即停机，需公开 fork/exec 后验收 |
+| [014](014-init-device-discovery.md) | init 的设备发现与 listener/observer 授权为单例硬编码 | P2 | 待处理：阻碍 net/图形服务拉起 |
 
 2026-11-18 用户确认暂无实物板（NanoPi NEO3 / VisionFive 2）。001、005、006 的本地实现已完成，等待上板确认；007 的非一致 DMA 与 RV 后端可在 QEMU 继续推进；003 按“无主机观测演练”在 QEMU 上先建验收方法。
