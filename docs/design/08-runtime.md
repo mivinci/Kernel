@@ -996,6 +996,8 @@ SDK 现在通过 musl 的 `install-headers` 将目标架构标准头与 libsys �
 
 `tools/build-builtins.sh` 从 LLVM 源码构建目标 compiler-rt，RV64 使用 `rv64gc/lp64`，ARM64 不构建当前不支持的 SME 入口。使用 LLVM 18.1.8 生成的两份归档链接 musl 应用探针，QEMU 验证 `snprintf` 的 `long double` 输出为 `1.125`（ARM64 `030d17744e4547bf8ad412fb9e20c523`、RV64 `afe7ee8920424aa286e48584c913cfc4`）。这验证了构建依赖与浮点格式化；ELF 子载荷和默认 SDK 尚未切换。
 
+`CASE=elf` 单独构建 musl 子载荷并链接目标 compiler-rt；常规 SDK 和启动包无需为测试断言链接 builtins。ARM64、RV64 QEMU 全项通过（`1386a2feacd546b49f0b7888bf036181`、`202896e0cdab4825aaf838a2939d258b`），覆盖故意欠配、换镜像和资源回收，以及 musl 断言在子进程屏蔽且忽略 SIGABRT 后仍以该信号终止。诊断文本仍未验收。
+
 ### A2 第三方压缩库静态构建验收
 
 从 [miniz 3.1.2 源码归档](https://codeload.github.com/richgel999/miniz/tar.gz/refs/tags/3.1.2) 取得 `tar.gz`，对 ARM64 和 RV64 分别执行 `make sdk-audit ARCH=<架构> MINIZ_ARCHIVE=/path/to/miniz-3.1.2.tar.gz`（需 CMake）。目标核对固定 SHA-256，用上游合并规则生成 `miniz.c` 和 `miniz.h`，禁用归档、文件 I/O、时间和 zlib 兼容别名。目标编译无宿主头路径；独立载荷和上游源码均只用公开 SDK、Clang 基础头及经上述步骤生成的 `miniz.h`。构建产物、链接映射、归档摘要及检查日志保存在各自 `build/<架构>/sdk/runs/` 的运行目录内。

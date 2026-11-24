@@ -238,7 +238,8 @@ def build(args, directory, run_dir):
         if args.case in ("libsys", "runtime", "pipeio", "tty", "jobs", "sigsend", "elf", "init", "initfatal", "sigconfig", "sigframe", "sigsuspend", "irqbind", "mmiogroup", "virtiodev", "blkservice", "heap", "cow"):
             invoke("build-sdk", [sys.executable, str(ROOT / "tools/user.py"), "--arch", args.arch,
                                   "--cc", tools["cc"]["path"], "--ld", tools["ld"]["path"],
-                                  "--ar", tools["ar"]["path"], "--readelf", tools["readelf"]["path"]])
+                                  "--ar", tools["ar"]["path"], "--readelf", tools["readelf"]["path"],
+                                  *(["--elf-fixture"] if args.case == "elf" else [])])
             sources.append(ROOT / "tests/kernel/load.c")
             if args.case == "libsys":
                 sources += [ROOT / "tests/kernel/libsysload.c", directory / "sdk/libsysimage.S"]

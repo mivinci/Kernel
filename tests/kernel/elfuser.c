@@ -30,6 +30,10 @@ static Handle  pressure[128];
 static u64     argument_storage[BOOT_ARG_BYTES / sizeof(u64)];
 static char    argument_word[] = "alpha";
 static char    environment_word[] = "MODE=1";
+enum
+{
+  Childpages = 96
+};
 #define REQUIRE(c, n)                                                                              \
   do {                                                                                             \
     if (!(c))                                                                                      \
@@ -143,14 +147,14 @@ main(int argc, char **argv, char **envp)
     elf_trace[0] = scenario + 1;
     reader.fail_after = ~(u64) 0;
     reader.malformed = reader.reads = 0;
-    REQUIRE(!elfcheck(&source, 64, &plan) && plan.pages > 3 && plan.count > 1 &&
+    REQUIRE(!elfcheck(&source, Childpages, &plan) && plan.pages > 3 && plan.count > 1 &&
                 plan.segments[1].filesz,
             184);
     memset(&args, 0, sizeof(args));
     /* Success fixtures fund the selected ELF plus stack/Boot/kernel metadata;
        the explicit underfunded case remains independent of payload growth. */
     args.memlimit = scenario == 2 ? 16 : plan.pages + 64;
-    args.exec_limit = 128;
+    args.exec_limit = args.memlimit + 64;
     args.resources = 3;
     args.pending = 1;
     args.ruid = ids[0];
@@ -261,10 +265,10 @@ main(int argc, char **argv, char **envp)
   }
   reader.malformed = 1;
   reader.fail_after = ~(u64) 0;
-  REQUIRE(elfcheck(&source, 64, &plan) == -ERR_INVALID && !plan.entry && !plan.pages, 206);
+  REQUIRE(elfcheck(&source, Childpages, &plan) == -ERR_INVALID && !plan.entry && !plan.pages, 206);
   elf_trace[3] = 1;
   reader.malformed = 0;
-  REQUIRE(!elfcheck(&source, 64, &plan), 230);
+  REQUIRE(!elfcheck(&source, Childpages, &plan), 230);
   memset(&spawn, 0, sizeof(spawn));
   work->parent_space = space;
   work->scratch = 0x2000000;

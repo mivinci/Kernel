@@ -121,7 +121,8 @@ def build(args):
     libc_sources.append(ROOT / 'lib/libc/dup.c')
     libc_sources.append(ROOT / 'lib/libc/poll.c')
     libc_sources.append(ROOT / 'lib/libc/termios.c')
-    libc_sources.extend(ROOT / 'lib/libc' / name for name in ('abort.c', 'assert.c', 'locale.c', 'strcasecmp.c'))
+    libc_sources.append(ROOT / 'compat/musl/abort.c')
+    libc_sources.extend(ROOT / 'lib/libc' / name for name in ('assert.c', 'locale.c', 'strcasecmp.c'))
     libc_sources.append(ROOT / 'lib/libc/strsignal.c')
     libc_sources.append(ROOT / 'lib/libc/path.c')
     libc_sources.append(ROOT / 'lib/libc' / args.arch / 'setjmp.S')
@@ -205,7 +206,7 @@ def build(args):
     app_start = [startup[0], startup[2]]
     compat = ROOT / 'compat/musl'
     app_sources = [ROOT / 'lib/csu/musl.c', *(compat / name for name in (
-        'credential.c', 'fork.c', 'group.c', 'identity.c', 'io.c', 'memory.c', 'open.c', 'raise.c',
+        'abort.c', 'credential.c', 'fork.c', 'group.c', 'identity.c', 'io.c', 'memory.c', 'open.c', 'raise.c',
         'sigaction.c', 'sigmask.c', 'sleep.c', 'time.c', 'times.c', 'wait.c'))]
     for unit in app_sources:
         obj = musl / ('app-' + unit.with_suffix('.o').name)
@@ -309,44 +310,54 @@ def build(args):
     (sdk / 'runtimeimage.S').write_text('/* image sha256: ' + digest(runtime_image) + ' */\n.section .rodata\n.balign 8\n'
         '.global runtime_image,runtime_image_end,runtime_trace_address\nruntime_image:\n.incbin "' + str(runtime_image) +
         '"\nruntime_image_end:\n.balign 8\nruntime_trace_address:\n.quad ' + str(trace_address) + '\n')
-    # Keep the loader payload independent of the growing runtime test suite.
-    child_source = ROOT / 'tests/kernel/elfchild.c'
-    child_object = sdk / 'obj/elfchild.o'
-    child = sdk / 'elfchild.elf'
-    command = [tools['cc']['path'],*flags,'-c',str(child_source),'-o',str(child_object)]
-    invoke('compile-elfchild',command)
-    entries.append(dict(directory=str(ROOT),file=str(child_source),output=str(child_object),arguments=command))
-    invoke('link-elfchild',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),
-                           '--gc-sections','--build-id=none',str(crt),str(child_object),
-                           str(libc_archive),str(archive),'-o',str(child)])
-    read_elf(child,profile['machine'],kind=2)
-    payload_source = sdk / 'payloadelf.S'
-    payload_source.write_text('/* payload sha256: ' + digest(child) + ' */\n.section .rodata\n.balign 8\n'
-        '.global payload_elf,payload_elf_end\npayload_elf:\n.incbin "' + str(child) + '"\npayload_elf_end:\n')
-    parent_source = ROOT / 'tests/kernel/elfuser.c'
-    parent_units = [(parent_source,sdk / 'obj/elfuser.o'),(payload_source,sdk / 'obj/payloadelf.o')]
-    for i,(source,obj) in enumerate(parent_units):
-        command = [tools['cc']['path'],*service_flags,'-c',str(source),'-o',str(obj)]
-        invoke('loader-compile-' + str(i),command)
-        read_elf(obj,profile['machine'],allow_undefined=True)
-        entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
-    parent = sdk / 'elfuser.elf'
-    parent_tmp = sdk / 'elfuser.tmp.elf'
-    invoke('link-loader',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',
-                         '-Map=' + str(sdk / 'elfuser.map'),str(app_crt),*[str(obj) for _,obj in parent_units],str(musl_archive),str(archive),'-o',str(parent_tmp)])
-    read_elf(parent_tmp,profile['machine'],kind=2)
-    parent_content = pack(parent_tmp.read_bytes(),profile['machine'],128)
-    os.replace(parent_tmp,parent)
-    parent_inspect = invoke('inspect-loader',[tools['readelf']['path'],'-h','-l','-s',str(parent)])
-    parent_rows = [line.split() for line in parent_inspect.splitlines() if line.split() and line.split()[-1] == 'elf_trace']
-    if len(parent_rows) != 1 or int(parent_rows[0][2]) != 128:
-        raise BuildError('loader trace symbol is missing or has wrong size')
-    parent_trace = int(parent_rows[0][1],16)
-    parent_image = sdk / 'elfuser.img'
-    parent_image.write_bytes(parent_content)
-    (sdk / 'elfimage.S').write_text('/* image sha256: ' + digest(parent_image) + ' */\n.section .rodata\n.balign 8\n'
-        '.global elf_image,elf_image_end,elf_trace_address\nelf_image:\n.incbin "' + str(parent_image) +
-        '"\nelf_image_end:\n.balign 8\nelf_trace_address:\n.quad ' + str(parent_trace) + '\n')
+    loader_manifest = {}
+    if args.elf_fixture:
+        builtins = Path(os.environ.get('BUILTINS') or
+                        directory / 'compiler-rt/lib/generic' / ('libclang_rt.builtins-' + cpu + '.a'))
+        if not builtins.is_file():
+            raise BuildError('missing target compiler-rt: run tools/build-builtins.sh or set BUILTINS')
+        # Keep the loader payload independent of the growing runtime test suite.
+        child_source = ROOT / 'tests/kernel/elfchild.c'
+        child_object = sdk / 'obj/elfchild.o'
+        child = sdk / 'elfchild.elf'
+        command = [tools['cc']['path'],*service_flags,'-c',str(child_source),'-o',str(child_object)]
+        invoke('compile-elfchild',command)
+        entries.append(dict(directory=str(ROOT),file=str(child_source),output=str(child_object),arguments=command))
+        invoke('link-elfchild',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),
+                               '--gc-sections','--strip-debug','--build-id=none','-z','max-page-size=4096',
+                               str(app_crt),str(child_object),
+                               str(musl_archive),str(archive),str(builtins),'-o',str(child)])
+        read_elf(child,profile['machine'],kind=2)
+        payload_source = sdk / 'payloadelf.S'
+        payload_source.write_text('/* payload sha256: ' + digest(child) + ' */\n.section .rodata\n.balign 8\n'
+            '.global payload_elf,payload_elf_end\npayload_elf:\n.incbin "' + str(child) + '"\npayload_elf_end:\n')
+        parent_source = ROOT / 'tests/kernel/elfuser.c'
+        parent_units = [(parent_source,sdk / 'obj/elfuser.o'),(payload_source,sdk / 'obj/payloadelf.o')]
+        for i,(source,obj) in enumerate(parent_units):
+            command = [tools['cc']['path'],*service_flags,'-c',str(source),'-o',str(obj)]
+            invoke('loader-compile-' + str(i),command)
+            read_elf(obj,profile['machine'],allow_undefined=True)
+            entries.append(dict(directory=str(ROOT),file=str(source),output=str(obj),arguments=command))
+        parent = sdk / 'elfuser.elf'
+        parent_tmp = sdk / 'elfuser.tmp.elf'
+        invoke('link-loader',[tools['ld']['path'],'-m',profile['emulation'],'-T',str(linker),'--gc-sections','--build-id=none',
+                             '-Map=' + str(sdk / 'elfuser.map'),str(app_crt),*[str(obj) for _,obj in parent_units],str(musl_archive),str(archive),'-o',str(parent_tmp)])
+        read_elf(parent_tmp,profile['machine'],kind=2)
+        parent_content = pack(parent_tmp.read_bytes(),profile['machine'],128)
+        os.replace(parent_tmp,parent)
+        parent_inspect = invoke('inspect-loader',[tools['readelf']['path'],'-h','-l','-s',str(parent)])
+        parent_rows = [line.split() for line in parent_inspect.splitlines() if line.split() and line.split()[-1] == 'elf_trace']
+        if len(parent_rows) != 1 or int(parent_rows[0][2]) != 128:
+            raise BuildError('loader trace symbol is missing or has wrong size')
+        parent_trace = int(parent_rows[0][1],16)
+        parent_image = sdk / 'elfuser.img'
+        parent_image.write_bytes(parent_content)
+        (sdk / 'elfimage.S').write_text('/* image sha256: ' + digest(parent_image) + ' */\n.section .rodata\n.balign 8\n'
+            '.global elf_image,elf_image_end,elf_trace_address\nelf_image:\n.incbin "' + str(parent_image) +
+            '"\nelf_image_end:\n.balign 8\nelf_trace_address:\n.quad ' + str(parent_trace) + '\n')
+        loader_manifest = dict(loader_artifact=str(parent.relative_to(ROOT)),
+                               loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image),
+                               loader_builtins_sha256=digest(builtins))
     # Distinct real ELFs let the PID-1 fixture exercise orphan adoption without
     # weakening init's fatal-exit invariant or adding test syscalls.
     adoption_sources = []
@@ -653,8 +664,8 @@ def build(args):
                     runtime_artifact=str(runtime.relative_to(ROOT)), runtime_artifact_sha256=digest(runtime),
                     runtime_image_sha256=digest(runtime_image), libc_archive=str(libc_archive.relative_to(ROOT)),
                     startup_object=str(crt.relative_to(ROOT)),
-                    library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), loader_artifact=str(parent.relative_to(ROOT)), loader_artifact_sha256=digest(parent), loader_image_sha256=digest(parent_image), tools=tools, cflags=flags,
-                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + tty_service_sources + blk_sources + blk_headers + init_service_sources + runtime_support + tty_sources + [runtime_source,parent_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
+                    library_audit_sha256=digest(audit), libc_audit_sha256=digest(libc_audit), **loader_manifest, tools=tools, cflags=flags,
+                    linker_sha256=digest(linker), sources={str(p.relative_to(ROOT)):digest(p) for p in sources + [user] + virtio_sources + libc_sources + csu_sources + init_sources + serial_sources + tty_service_sources + blk_sources + blk_headers + init_service_sources + runtime_support + tty_sources + ([parent_source, child_source] if args.elf_fixture else []) + [runtime_source,uart_source,serial_start_source,serial_io_source] + [p for p in adoption_sources if p.is_relative_to(ROOT/"tests")]},
                     headers={str(p.relative_to(ROOT)):digest(p) for p in headers},
                     init_test_sha256=digest(init_test),init_image_sha256=digest(init_image),
                     exported_headers=[row['source'] for row in exported.values()], run_log=str(run.relative_to(ROOT)),
@@ -674,6 +685,7 @@ def main():
         parser.add_argument('--' + name, default=default)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--cross', default='')
+    parser.add_argument('--elf-fixture', action='store_true', help='build the ELF loader fixture')
     checks = parser.add_mutually_exclusive_group()
     checks.add_argument('--check-private-headers', action='store_true',
                         help='check existing SDK exports without copying or compiling')

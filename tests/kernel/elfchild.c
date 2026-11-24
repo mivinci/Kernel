@@ -29,7 +29,7 @@ initialize(void)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
   const Bootview *view = sysboot();
   const char     *mode = getenv("MODE");
@@ -39,6 +39,7 @@ main(int argc, char **argv)
   Handle          pid, parent, space, allocator, create;
   u64             image, count, next, mask;
   int             replacing, override;
+  (void) envp;
   if (!constructed || !view || !mode || !value || argc != 3 || !argv || argv[3] ||
       strcmp(argv[0], "runtime") || strcmp(argv[1], "alpha") || strcmp(argv[2], "beta") ||
       strcmp(value, "value"))
